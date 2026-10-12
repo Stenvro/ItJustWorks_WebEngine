@@ -5,6 +5,7 @@ import type { PlacedReference } from './cell-records.ts';
 
 const reference = (overrides: Partial<PlacedReference>): PlacedReference => ({
   formId: 1,
+  editorId: '',
   type: 'REFR',
   base: 2,
   position: [0, 0, 0],

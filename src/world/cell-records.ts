@@ -175,6 +175,8 @@ export function resolveCellLighting(
 
 export interface PlacedReference {
   readonly formId: number;
+  /** Only some references have one (e.g. enable-parent markers). */
+  readonly editorId: string;
   readonly type: string;
   readonly base: number;
   readonly position: readonly [number, number, number];
@@ -194,6 +196,7 @@ export function parseReference(record: GameRecord): PlacedReference {
   const xesp = record.fields.first('XESP');
   return {
     formId: record.formId,
+    editorId: record.editorId ?? '',
     type: record.type,
     base: record.formIdField('NAME') ?? 0,
     position: placement

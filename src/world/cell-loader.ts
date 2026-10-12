@@ -16,7 +16,7 @@ import {
   type PlacedReference,
   type Rgb,
 } from './cell-records.ts';
-import type { RecordDatabase } from './record-db.ts';
+import type { GameRecord, RecordDatabase } from './record-db.ts';
 
 export interface CellObject {
   readonly reference: number;
@@ -91,27 +91,57 @@ export interface LoadCellOptions {
   readonly enableState?: EnableState;
 }
 
+interface EnableContext {
+  readonly db: RecordDatabase;
+  readonly state: EnableState;
+  readonly cache: Map<number, boolean>;
+  /** All-enabled: "...Start" markers whose upgraded counterpart exists (lowercase). */
+  readonly replaced: ReadonlySet<string>;
+}
+
 /** Enabled state of a reference, following enable parents (and their opposite flag). */
 async function isEnabled(
-  db: RecordDatabase,
+  context: EnableContext,
   ref: PlacedReference,
-  state: EnableState,
-  cache: Map<number, boolean>,
   depth = 0,
 ): Promise<boolean> {
-  const cached = cache.get(ref.formId);
+  const cached = context.cache.get(ref.formId);
   if (cached !== undefined) return cached;
-  let enabled = state === 'all-enabled' || !ref.initiallyDisabled;
+  let enabled =
+    context.state === 'all-enabled'
+      ? !context.replaced.has(ref.editorId.toLowerCase())
+      : !ref.initiallyDisabled;
   if (ref.enableParent && depth < 16) {
-    const parentRecord = await db.get(ref.enableParent.formId);
+    const parentRecord = await context.db.get(ref.enableParent.formId);
     if (parentRecord) {
-      const parent = parseReference(parentRecord);
-      const parentEnabled = await isEnabled(db, parent, state, cache, depth + 1);
+      const parentEnabled = await isEnabled(context, parseReference(parentRecord), depth + 1);
       enabled = ref.enableParent.opposite ? !parentEnabled : parentEnabled;
     }
   }
-  cache.set(ref.formId, enabled);
+  context.cache.set(ref.formId, enabled);
   return enabled;
+}
+
+/**
+ * Player homes keep their unfurnished look behind "<Room>Start" markers that the upgrade
+ * scripts disable once "<Room>" is bought. With every upgrade on, those Start markers must
+ * be off, or old crates and hay overlap the new furniture.
+ * TODO(M8): run the real Papyrus upgrade scripts instead of this naming rule.
+ */
+async function replacedStartMarkers(
+  db: RecordDatabase,
+  refs: readonly PlacedReference[],
+): Promise<Set<string>> {
+  const parents = new Set<string>();
+  for (const ref of refs) {
+    if (!ref.enableParent) continue;
+    const parent = await db.get(ref.enableParent.formId);
+    const editorId = parent?.editorId;
+    if (editorId) parents.add(editorId.toLowerCase());
+  }
+  return new Set(
+    [...parents].filter((name) => name.endsWith('start') && parents.has(name.slice(0, -5))),
+  );
 }
 
 export async function loadCellData(
@@ -131,16 +161,30 @@ export async function loadCellData(
   const skip = (reason: string): void => {
     skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
   };
-  const enabledCache = new Map<number, boolean>();
   let entrance: [number, number, number] | undefined;
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
 
-  for (const refId of db.cellReferences(cellFormId)) {
-    const record = await db.get(refId);
-    if (!record || record.deleted) continue;
-    const ref = parseReference(record);
-    if (!(await isEnabled(db, ref, enableState, enabledCache))) continue;
+  const records = (await Promise.all(db.cellReferences(cellFormId).map((id) => db.get(id)))).filter(
+    (record): record is GameRecord => record !== undefined && !record.deleted,
+  );
+  const references = records.map((record) => ({ record, ref: parseReference(record) }));
+  const context: EnableContext = {
+    db,
+    state: enableState,
+    cache: new Map(),
+    replaced:
+      enableState === 'all-enabled'
+        ? await replacedStartMarkers(
+            db,
+            references.map((entry) => entry.ref),
+          )
+        : new Set(),
+  };
+
+  for (const { record, ref } of references) {
+    const refId = ref.formId;
+    if (!(await isEnabled(context, ref))) continue;
     const base = await db.get(ref.base);
     if (!base) {
       skip('reference to a missing base object');
