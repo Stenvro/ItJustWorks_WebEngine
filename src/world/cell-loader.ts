@@ -19,6 +19,7 @@ import {
   type Rgb,
 } from './cell-records.ts';
 import { parseTextureSet, placeDecal, type PlacedDecal, type TextureSet } from './decal.ts';
+import { parseStaticDirectional, type StaticDirectional } from './material-object.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
 
 export interface CellObject {
@@ -29,6 +30,8 @@ export interface CellObject {
   readonly world: Mat4;
   /** Water activators (ACTI WNAM): the type of the model's water surfaces. */
   readonly water: number | undefined;
+  /** Statics (STAT DNAM): the snow, ash, moss or ice laid over its upward-facing parts. */
+  readonly directional?: StaticDirectional;
 }
 
 /** A decal reference: a texture set (TXST with decal data) projected inside a box. */
@@ -75,6 +78,13 @@ export interface CellData {
   readonly skipped: readonly string[];
   /** Where to start the camera: a door into the cell, or its centre. */
   readonly entrance: readonly [number, number, number];
+}
+
+/** A static's directional material, as a spreadable field. */
+function directionalOf(base: GameRecord): { directional?: StaticDirectional } {
+  if (base.type !== 'STAT') return {};
+  const directional = parseStaticDirectional(base);
+  return directional ? { directional } : {};
 }
 
 /**
@@ -250,6 +260,7 @@ export async function loadCellData(
       model,
       world: referenceMatrix(ref),
       water: base.type === 'ACTI' ? nonZeroId(base.formIdField('WNAM')) : undefined,
+      ...directionalOf(base),
     });
   }
 

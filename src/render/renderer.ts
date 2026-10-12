@@ -23,6 +23,7 @@ import {
   PRECIPITATION_OCCLUSION_LAYER,
   SHADOW_MAP_SIZE,
   type FrameShadows,
+  type LargeRefMask,
   type LodMask,
   type SceneLighting,
   type WaterFrame,
@@ -75,6 +76,8 @@ export interface SceneView {
   readonly sky?: () => SkyFrame | undefined;
   /** Loaded cells, where distant LOD gives way. */
   readonly lodMask?: () => LodMask | undefined;
+  /** Cells whose large references are loaded, where their object LOD gives way. */
+  readonly largeRefMask?: () => LargeRefMask | undefined;
   /** Sky colours for water reflections and the weather's water tint. */
   readonly water?: () => WaterFrame | undefined;
   /** Imagespace of the frame (eye adaptation, bloom, grading); none: the image as rendered. */
@@ -245,6 +248,7 @@ export class Renderer {
         view.lodMask?.(),
         shadows,
         { width: targets.width, height: targets.height, near: view.camera.near },
+        view.largeRefMask?.(),
       );
       wind = windVelocity(lighting);
     }

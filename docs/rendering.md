@@ -31,6 +31,44 @@ camera's right and up axes, the shadow map and its comparison sampler, the scene
 clamping sampler. The terrain shader samples 17 textures (8 diffuse, 8 normal maps, the shadow
 map), more than WebGPU's default of 16, so the device asks for the adapter's limit (up to 32).
 
+## Lighting shader
+
+BSLightingShaderProperty (`shaders/lighting.wgsl`) follows the engine's lighting pixel shader
+as Community Shaders' near-vanilla Lighting.hlsl (v0.7.4) reproduces it, with the material
+constants of Nukem9's decompiled `BSLightingShader`:
+
+1. Normal: tangent space, or model space stored **x, z, y** (MSN materials and LOD land).
+   Specular mask: the normal map's alpha, or with model-space normals the specular map (texture
+   set slot 7).
+2. Lights (sun with its shadow, point lights fading as 1 − (d/r)²): diffuse `saturate(n·l)`;
+   specular `pow(saturate(h·n), glossiness)` without an n·l test. Anisotropic (hair):
+   `h·n` becomes 1 − |a·l − a·h| with a = normalize(0.5 n + vertex normal), times 0.7 l.z.
+   With the unshadowed light colour: soft lighting (`SLSF2 0x2000000`, smoothstep of
+   (rolloff + n·l) / (1 + rolloff) minus that of n·l; for point lights the engine passes the
+   unnormalized light vector), rim lighting (`0x4000000`, (1 − n·v)^power · saturate(v·−l)),
+   both times the rim / soft map (slot 2), and back lighting (`0x8000000`, saturate(−n·l)
+   times the back light map, slot 7). Missing maps are black (the engine binds no texture).
+3. Colour: (directional ambient + emit + lights) × diffuse, then × vertex colours (hair: the
+   tint by the vertex green, `(g · (tint − 1) + 1)`; skin tint: the facegen RGB tint formula).
+   Emit is the emissive colour with Own_Emit, or the emissive colour × the glow map (type 2
+   with SLSF2 Glow_Map): so glow is coloured by the diffuse texture.
+4. Multi-layer parallax (type 11): the inner layer (slot 6) seen through the surface, offset by
+   (thickness × layer alpha / 1024) along the view reflected about the scaled normal map, blended
+   by saturate(n·v) × (1 − diffuse alpha); it has the environment map too.
+5. Environment map: the cube map in the reflection, times the environment mask (else the
+   specular mask) × the scale, **times the diffuse light** (dark where the surface is dark).
+6. Specular: lights × specular mask × specular colour × strength.
+7. Directional materials (snow, ash, ice on statics and object LOD) and their multi-index snow
+   pass: see [formats/esm.md](formats/esm.md#directional-materials). Objects counted as snow
+   (STAT flag or SLSF2 `0x10000000`) lose their specular, as the engine's snow shader replaces
+   it with its own rim light. TODO(M4): the snow shader's mask buffer, rim light, sparkles and
+   subsurface scattering (ISSAOComposite, ISSnowSSS).
+8. LOD landscape noise (type 18): diffuse × 0.8333 (p (0.37 − noise) + noise) + 0.37 with
+   `textures\terrain\noise.dds` at 3 × UV and p from the colour's brightness.
+
+SSE's parallax shader (type 3) samples the height map but never offsets the texture
+coordinates, so parallax shapes look like the default shader, as in the original.
+
 ## Effects and particles
 
 BSEffectShaderProperty (`shaders/effect.wgsl`, also used for particles by

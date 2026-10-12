@@ -13,8 +13,20 @@ struct Draw {
   params: vec4f,
   // Lighting: skin/hair tint. Effect: falloff start/stop angle (cos), start/stop opacity.
   extra: vec4f,
-  // Shader flags 1 and 2, NiAlphaProperty flags, shader type.
+  // Shader flags 1 and 2, NiAlphaProperty flags (plus DRAW_* bits above them), shader type.
   flags: vec4u,
+  // Lighting: soft light rolloff, rim light power, 1 when the environment map has a mask.
+  effect: vec4f,
+  // Multi-layer parallax: inner layer thickness, refraction scale, inner layer U and V scale.
+  layer: vec4f,
+  // Directional material: ProjectedUVParams (noise falloff, unused, noise UV scale, threshold).
+  projected: vec4f,
+  // Single pass: the material's colour. Multi-pass: normal dampener, material UV scale.
+  projectedColor: vec4f,
+  // The world direction a surface faces to get the material; multi-pass: cos(max angle) in w.
+  projectedDirection: vec4f,
+  // Sparkle snow (multi-index snow pass) parameters.
+  sparkle: vec4f,
 };
 
 @group(1) @binding(0) var<uniform> draw: Draw;
@@ -22,10 +34,18 @@ struct Draw {
 // Lighting: diffuse. Effect: source texture.
 @group(2) @binding(1) var diffuseMap: texture_2d<f32>;
 @group(2) @binding(2) var normalMap: texture_2d<f32>;
-// Lighting: glow map. Effect: greyscale palette.
+// Lighting: glow map, or the rim / soft light map (slot 2). Effect: greyscale palette.
 @group(2) @binding(3) var glowMap: texture_2d<f32>;
 @group(2) @binding(4) var envMap: texture_cube<f32>;
 @group(2) @binding(5) var envMask: texture_2d<f32>;
+// Lighting: back light map, or the specular map of model-space normal materials (slot 7).
+@group(2) @binding(6) var backLightMap: texture_2d<f32>;
+// Lighting: multi-layer parallax inner layer (slot 6); LOD landscape: the terrain noise.
+@group(2) @binding(7) var layerMap: texture_2d<f32>;
+// The engine's directional material textures: diffuse, normal map (sparkle noise), noise.
+@group(2) @binding(8) var projectedDiffuse: texture_2d<f32>;
+@group(2) @binding(9) var projectedNormal: texture_2d<f32>;
+@group(2) @binding(10) var projectedNoise: texture_2d<f32>;
 
 struct VertexIn {
   @location(0) position: vec3f,
@@ -47,6 +67,15 @@ struct VertexOut {
   @location(4) bitangent: vec3f,
   @location(5) color: vec4f,
 };
+
+// Directional materials: coordinates across the direction surfaces face to get the material
+// (the engine's TexCoord0.zw; single pass faces up, giving world y and -x).
+fn projectedCoordinates(worldPos: vec3f) -> vec2f {
+  let up = safeNormalize(draw.projectedDirection.xyz);
+  let reference = select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0), abs(up.x) > 0.99);
+  let across = safeNormalize(cross(up, reference));
+  return vec2f(dot(worldPos, across), dot(worldPos, cross(up, across)));
+}
 
 fn worldRotation() -> mat3x3f {
   return mat3x3f(draw.world[0].xyz, draw.world[1].xyz, draw.world[2].xyz);

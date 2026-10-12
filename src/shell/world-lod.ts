@@ -11,7 +11,13 @@ import {
 } from '../formats/lod/lod.ts';
 import { identity } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
-import type { GpuModel, GpuScene, GpuWaterType, ModelInstance } from '../render/scene-renderer.ts';
+import type {
+  GpuModel,
+  GpuScene,
+  GpuWaterType,
+  LodSnow,
+  ModelInstance,
+} from '../render/scene-renderer.ts';
 import type { GpuTreeBlock, GpuTreeTypes, TreeLodFrame } from '../render/tree-lod.ts';
 import { CELL_SIZE } from '../world/land.ts';
 import {
@@ -126,6 +132,8 @@ export class WorldLod {
   readonly #settings: LodSettings;
   readonly #water: GpuWaterType | undefined;
   readonly #treeTypes: GpuTreeTypes | undefined;
+  /** Snow on the object LOD of snowy statics (shapes named "objsnow"). */
+  readonly #lodSnow: LodSnow;
   readonly #terrain: BlockSet<GpuModel>;
   readonly #objects: BlockSet<GpuModel>;
   readonly #trees: BlockSet<GpuTreeBlock>;
@@ -140,8 +148,10 @@ export class WorldLod {
     settings: LodSettings,
     water: GpuWaterType | undefined,
     treeTypes: GpuTreeTypes | undefined,
+    lodSnow: LodSnow,
   ) {
     this.#session = session;
+    this.#lodSnow = lodSnow;
     this.#renderer = renderer;
     this.#terminal = terminal;
     this.#name = name;
@@ -188,7 +198,8 @@ export class WorldLod {
         terminal.log('lod', `${listPath}: ${describe(error)}`, 'warn');
       }
     }
-    return new WorldLod(session, renderer, terminal, name, settings, water, treeTypes);
+    const lodSnow = await session.lodSnow();
+    return new WorldLod(session, renderer, terminal, name, settings, water, treeTypes, lodSnow);
   }
 
   /** Chooses and loads the blocks for a camera position. */
@@ -252,7 +263,7 @@ export class WorldLod {
       if (entry.value) instances.push({ model: entry.value, world: identity() });
     }
     const previous = this.#scene;
-    this.#scene = this.#renderer.scene.createScene(instances);
+    this.#scene = this.#renderer.scene.createScene(instances, { lodSnow: this.#lodSnow });
     previous?.destroy();
   }
 

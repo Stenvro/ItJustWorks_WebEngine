@@ -4,6 +4,13 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadCellData } from '../src/world/cell-loader.ts';
 import { parseAddonNode } from '../src/world/cell-records.ts';
+import { parseNif } from '../src/formats/nif/nif.ts';
+import { propertyMaterial } from '../src/render/model-data.ts';
+import {
+  parseMaterialObject,
+  parseStaticDirectional,
+  LOD_MATERIALS,
+} from '../src/world/material-object.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
@@ -35,6 +42,56 @@ describe.skipIf(!hasGamedata())('record database on the local game data', () => 
     }
     // Candle flames (49), torch fire (46) and chimney smoke (56) among them.
     for (const index of [46, 49, 56]) expect(indices.has(index)).toBe(true);
+  });
+
+  it('reads the material objects: single pass with a colour, multi-pass with a shader', async () => {
+    const singlePass: string[] = [];
+    const multiPass: string[] = [];
+    for (const formId of db.formIdsOfType('MATO')) {
+      const record = await db.get(formId);
+      if (!record) continue;
+      const material = parseMaterialObject(record);
+      expect(material.noiseUVScale, material.editorId).toBeGreaterThan(0);
+      if (material.singlePass) {
+        singlePass.push(material.editorId);
+        expect(Math.max(...material.singlePassColor), material.editorId).toBeGreaterThan(0);
+        continue;
+      }
+      // Multi-pass materials keep their shader in DNAM (embedded NIF files); a few test
+      // materials have none and draw nothing.
+      const pass = propertyMaterial(material.properties.map((data) => parseNif(data)));
+      if (material.properties.length > 0) {
+        expect(pass.material, material.editorId).toBeDefined();
+        multiPass.push(material.editorId);
+      }
+    }
+    expect(singlePass).toContain('SnowMaterialObject1P');
+    expect(multiPass).toContain('IceShader01');
+    // The engine's object LOD snow and ash.
+    for (const { plugin, id } of Object.values(LOD_MATERIALS)) {
+      const formId = db.formIdOf(plugin, id);
+      expect(formId, plugin).toBeDefined();
+      expect((await db.get(formId ?? 0))?.type, plugin).toBe('MATO');
+    }
+  });
+
+  it('finds the directional materials of statics', async () => {
+    let withMaterial = 0;
+    let snow = 0;
+    for (const formId of db.formIdsOfType('STAT')) {
+      const record = await db.get(formId);
+      const directional = record && parseStaticDirectional(record);
+      if (!directional) continue;
+      if (directional.consideredSnow) snow++;
+      if (directional.material === 0) continue;
+      withMaterial++;
+      expect((await db.get(directional.material))?.type, record.editorId).toBe('MATO');
+      expect(directional.maxAngle, record.editorId).toBeGreaterThanOrEqual(0);
+      expect(directional.maxAngle, record.editorId).toBeLessThanOrEqual(180);
+    }
+    // Vanilla + DLC: about 2500 statics with a material, a few hundred counted as snow.
+    expect(withMaterial).toBeGreaterThan(2000);
+    expect(snow).toBeGreaterThan(100);
   });
 
   it('opens every plugin without problems', () => {
