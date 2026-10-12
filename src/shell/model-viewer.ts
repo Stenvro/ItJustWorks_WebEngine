@@ -11,6 +11,11 @@ import { studioLighting } from '../render/studio-lighting.ts';
 import { cellSceneLighting } from '../world/cell-lighting.ts';
 import { loadCellData, type CellData } from '../world/cell-loader.ts';
 import {
+  DEFAULT_INTERIOR_IMAGE_SPACE,
+  parseImageSpace,
+  type ImageSpace,
+} from '../world/image-space.ts';
+import {
   enabledReferences,
   findToggles,
   gameStartSelection,
@@ -72,6 +77,8 @@ interface CellView {
   scripted: ReadonlyMap<number, boolean>;
   readonly models: ReadonlyMap<string, GpuModel | undefined>;
   readonly label: string;
+  /** The cell's imagespace (XCIM, else the default interior one). */
+  readonly imageSpace: ImageSpace | undefined;
 }
 
 const numberFormat = new Intl.NumberFormat('en-US');
@@ -276,11 +283,14 @@ export class ModelViewer {
     // Load every model that can appear, so switching upgrades is instant, and find what the
     // player can buy or build here.
     const paths = [...new Set(data.objects.map((object) => object.model))];
-    const [models, actions] = await Promise.all([
+    const [models, actions, imageSpace] = await Promise.all([
       Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)).then(
         (entries) => new Map(entries),
       ),
       this.#homeActions(data),
+      db
+        .get(data.cell.imageSpace ?? DEFAULT_INTERIOR_IMAGE_SPACE)
+        .then((record) => (record?.type === 'IMGS' ? parseImageSpace(record) : undefined)),
     ]);
     if (token !== this.#loadToken) return;
     for (const failure of this.#session?.textures.takeFailures() ?? []) {
@@ -301,6 +311,7 @@ export class ModelViewer {
       scripted,
       models,
       label,
+      imageSpace,
     };
     const [x, y, z] = data.entrance;
     this.#fly.position = [x, y, z + EYE_HEIGHT];
@@ -381,9 +392,20 @@ export class ModelViewer {
       if (model) instances.push({ model, world: object.world });
     }
     const scene = this.#renderer.scene.createScene(instances);
+    const lighting = cellSceneLighting(cell.data, isEnabled);
+    // The imagespace's Sunlight Scale brightens the cell's directional light (HDR).
+    const scale = cell.imageSpace?.hdr.sunlightScale ?? 1;
     this.#present(scene, undefined, {
       camera: 'fly',
-      lighting: cellSceneLighting(cell.data, isEnabled),
+      lighting: {
+        ...lighting,
+        sunColor: [
+          lighting.sunColor[0] * scale,
+          lighting.sunColor[1] * scale,
+          lighting.sunColor[2] * scale,
+        ],
+      },
+      imageSpace: cell.imageSpace,
     });
     return instances.length;
   }
@@ -665,7 +687,13 @@ export class ModelViewer {
   #present(
     scene: GpuScene,
     meshModel: GpuModel | undefined,
-    view: { camera: 'orbit' } | { camera: 'fly'; lighting: ReturnType<typeof cellSceneLighting> },
+    view:
+      | { camera: 'orbit' }
+      | {
+          camera: 'fly';
+          lighting: ReturnType<typeof cellSceneLighting>;
+          imageSpace: ImageSpace | undefined;
+        },
   ): void {
     this.onActivate?.();
     const previousScene = this.#scene;
@@ -683,11 +711,12 @@ export class ModelViewer {
       });
     } else {
       this.#detachControls = this.#fly.attach(this.#canvas);
-      const { lighting } = view;
+      const { lighting, imageSpace } = view;
       this.#renderer.setView({
         scenes: () => [scene],
         camera: this.#fly,
         lighting: () => lighting,
+        imageSpace: () => imageSpace,
         backdrop: false,
       });
     }

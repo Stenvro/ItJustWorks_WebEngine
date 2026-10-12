@@ -6,6 +6,7 @@
 import type { SceneLighting } from '../render/scene-renderer.ts';
 import type { GpuSky, SkyFrame, SkyRenderer } from '../render/sky.ts';
 import { skyShapes } from '../render/sky-data.ts';
+import { blendImageSpaces, parseImageSpace, type ImageSpace } from '../world/image-space.ts';
 import type { GameRecord, RecordDatabase } from '../world/record-db.ts';
 import { skySettings, skyState, type SkySettings, type SkyState } from '../world/sky-state.ts';
 import {
@@ -55,6 +56,9 @@ export class WorldSky {
   readonly #gpu: GpuSky;
   readonly #weathers = new Map<number, Promise<WeatherRecord | undefined>>();
   readonly #regions = new Map<number, Promise<RegionWeather | undefined>>();
+  /** Imagespaces by form id; undefined while loading or if missing. */
+  readonly #imageSpaces = new Map<number, ImageSpace | undefined>();
+  #imageSpace: ImageSpace | undefined;
   readonly #detach: () => void;
   #weather: WeatherRecord | undefined;
   #previous: WeatherRecord | undefined;
@@ -227,6 +231,12 @@ export class WorldSky {
       seconds: this.#seconds,
       settings: this.#settings,
     });
+    const spaces: { space: ImageSpace; weight: number }[] = [];
+    for (const { formId, weight } of this.#state.imageSpaces) {
+      const space = this.#loadImageSpace(formId);
+      if (space) spaces.push({ space, weight });
+    }
+    this.#imageSpace = spaces.length > 0 ? blendImageSpaces(spaces) : undefined;
     return this.#state;
   }
 
@@ -242,13 +252,19 @@ export class WorldSky {
     };
   }
 
+  /** The weather's imagespace of the last frame (blended by time of day). */
+  imageSpace(): ImageSpace | undefined {
+    return this.#imageSpace;
+  }
+
   /** Directional light, ambient and fog of the last frame. */
   lighting(): Omit<SceneLighting, 'lights'> | undefined {
     const state = this.#state;
     if (!state) return undefined;
     // The light fades as the sun (or the night light) nears the horizon.
     const height = Math.abs(state.sunDirection[2]);
-    const fade = Math.min(1, height / 0.05);
+    // The imagespace's Sunlight Scale brightens the directional light (HDR).
+    const fade = Math.min(1, height / 0.05) * (this.#imageSpace?.hdr.sunlightScale ?? 1);
     const [ambientX, ambientNX, ambientY, ambientNY, ambientZ, ambientNZ] = state.ambient.colors;
     const dark = [0, 0, 0] as const;
     return {
@@ -297,6 +313,16 @@ export class WorldSky {
     if (this.#ui.weather.value !== String(formId) && this.#pinned)
       this.#ui.weather.value = String(formId);
     this.#terminal.log('sky', `weather ${weather.editorId}${transition ? ' (changing)' : ''}`);
+  }
+
+  #loadImageSpace(formId: number): ImageSpace | undefined {
+    if (!this.#imageSpaces.has(formId)) {
+      this.#imageSpaces.set(formId, undefined);
+      void this.#db.get(formId).then((record) => {
+        if (record?.type === 'IMGS') this.#imageSpaces.set(formId, parseImageSpace(record));
+      });
+    }
+    return this.#imageSpaces.get(formId);
   }
 
   #weatherRecord(formId: number): Promise<WeatherRecord | undefined> {

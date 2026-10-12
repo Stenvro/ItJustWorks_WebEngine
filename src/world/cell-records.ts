@@ -109,6 +109,13 @@ export interface CellRecord {
   readonly inheritFlags: number;
   /** LTMP: lighting template (LGTM) form id. */
   readonly lightingTemplate: number | undefined;
+  /** XCIM: the interior's imagespace (IMGS). */
+  readonly imageSpace: number | undefined;
+}
+
+function cellImageSpace(record: GameRecord): number | undefined {
+  const id = record.formIdField('XCIM');
+  return id === 0 ? undefined : id;
 }
 
 export function parseCell(record: GameRecord): CellRecord {
@@ -130,6 +137,7 @@ export function parseCell(record: GameRecord): CellRecord {
     lighting,
     inheritFlags,
     lightingTemplate: ltmp === 0 ? undefined : ltmp,
+    imageSpace: cellImageSpace(record),
   };
 }
 

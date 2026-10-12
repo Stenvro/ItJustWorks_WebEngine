@@ -230,6 +230,41 @@ one_wan, new, one_wax, half_wax, three_wax; `sky\moonshadow.dds` hides the stars
 the dark part. `node tools/weather-info.ts` checks every climate and weather against the
 files they name; `node tools/weather-info.ts SkyrimClear 13` prints one weather's sky.
 
+## Imagespaces
+
+**IMGS** (xEdit names): HNAM 9 f32: eye adapt speed, bloom blur radius, bloom threshold,
+bloom scale, receive bloom threshold, white, sunlight scale, sky scale, eye adapt strength.
+CNAM: saturation, brightness, contrast. TNAM: tint amount, red, green, blue. DNAM: depth of
+field strength, distance, range (+ optional blur radius / no-sky flags). Two vanilla records
+use ENAM instead (14 f32: the HDR values without white and adapt strength, then saturation,
+brightness, contrast, 4 unused). Vanilla weather values: speed 35–45, radius 7, threshold
+0.5–0.75, scale 3–5.5, receive 0.2–0.65, white 0.875–1, sunlight scale 2–3, sky scale 0–0.1,
+strength 5–8; saturation 1.4–2.3, brightness 1.1–1.4, contrast 1.4–1.55, tint 0.4–0.8.
+
+Where they apply: a weather's IMSP per time of day (blended with the time-of-day weights and
+across weather transitions); an interior's XCIM, else DefaultImageSpaceInterior (`0x160`;
+728 of 761 vanilla interiors have their own).
+
+**The HDR shader** (`src/render/post.ts`), reconstructed from Community Shaders' ISHDR.hlsl,
+which reproduces the vanilla shader:
+
+1. Eye adaptation: the scene's average luminance (Rec. 709 weights, samples clamped to 50)
+   is followed by two running averages x and y at different rates; each frame moves an
+   average by `rate · Δ`, at least 1/256 and never past the target. The image is multiplied
+   by y / x, so adaptation is temporary: brighter for a moment after going into the dark.
+2. Tone curve: `L (p L + 1) / (L + 1)` per channel with `p = 1 / white²` (white 1 leaves
+   the image unchanged).
+3. Bloom: blurred bright parts are added where the image is darker than the receive
+   threshold: `c += saturate(receive − c) · bloom`.
+4. Grading: `brightness · lerp(lerp(lum, c, saturation), lum · tint, tint amount)`, then
+   contrast around the adapted luminance x: `lerp(x, c, contrast)`.
+
+The directional light is multiplied by the imagespace's sunlight scale. Not documented, so
+approximated (TODO(M13)): how eye adapt speed and strength become the two rates (here
+`1 − e^(−dt · value / 10)` for x and y), how the bright pass uses threshold and scale (here
+`max(c − threshold, 0) · scale`, blurred at quarter resolution with σ = radius / 2) and what
+sky scale does (not applied).
+
 ## Scripts and conditions
 
 **VMAD** (scripts attached to a record): i16 version (5), i16 object format (1: form id, alias,
