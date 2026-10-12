@@ -47,3 +47,6 @@ ShaderCache/
 *.btr
 *.bto
 *.lod
+
+# Eigen achtergrond (zie src/shell/custom-backdrop.ts)
+/public/custom/

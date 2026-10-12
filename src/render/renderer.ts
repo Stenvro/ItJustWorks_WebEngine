@@ -1,11 +1,12 @@
 import type { GpuContext } from './gpu.ts';
-import pipelineCheckShader from './shaders/pipeline-check.wgsl?raw';
+import backdropShader from './shaders/backdrop.wgsl?raw';
 
-/** Rendert één frame per aanroep. Nu alleen de M0-pijplijncheck. */
+/** Rendert één frame per aanroep. Nu alleen de shell-achtergrond. */
 export class Renderer {
   readonly #gpu: GpuContext;
   readonly #pipeline: GPURenderPipeline;
   readonly #frameBuffer: GPUBuffer;
+  /** time, scale, hoogte in CSS-pixels, padding */
   readonly #frameData = new Float32Array(4);
   readonly #bindGroup: GPUBindGroup;
 
@@ -13,12 +14,9 @@ export class Renderer {
     this.#gpu = gpu;
     const { device, format } = gpu;
 
-    const module = device.createShaderModule({
-      label: 'pipeline-check',
-      code: pipelineCheckShader,
-    });
+    const module = device.createShaderModule({ label: 'backdrop', code: backdropShader });
     this.#pipeline = device.createRenderPipeline({
-      label: 'pipeline-check',
+      label: 'backdrop',
       layout: 'auto',
       vertex: { module, entryPoint: 'vs_main' },
       fragment: { module, entryPoint: 'fs_main', targets: [{ format }] },
@@ -37,9 +35,12 @@ export class Renderer {
     });
   }
 
-  render(timeSeconds: number): void {
+  /** `timeSeconds` stuurt de animatie; `pixelScale` is de devicePixelRatio. */
+  render(timeSeconds: number, pixelScale: number): void {
     const { device, context } = this.#gpu;
     this.#frameData[0] = timeSeconds;
+    this.#frameData[1] = pixelScale;
+    this.#frameData[2] = context.canvas.height / pixelScale;
     device.queue.writeBuffer(this.#frameBuffer, 0, this.#frameData);
 
     const encoder = device.createCommandEncoder({ label: 'frame' });
