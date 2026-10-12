@@ -85,6 +85,10 @@ scale, XESP enable parent (form id + flags; `0x1` = opposite state).
   (inverted with the opposite flag). Breezehome's furniture hangs off "WhiterunPlayerHouse..."
   markers that are disabled until the upgrades are bought, so the house starts mostly empty,
   as in the game.
+- `all upgrades` view: every enable parent on, except the unfurnished `...Start` markers and,
+  for upgrades that are alternatives for the same space (Breezehome's alchemy laboratory vs
+  the HearthFires child bedroom), the one from the later plugin. Alternatives are detected as
+  two upgrade markers placing objects at exactly the same spot. TODO(M8): real scripts.
 - **XRDS** on light references is an **offset** added to the LIGH radius (vanilla values
   range from −322 to +55; a negative absolute radius would be meaningless).
 

@@ -145,6 +145,41 @@ async function replacedStartMarkers(
   return new Set(hasUpgrades ? [...parents].filter((name) => name.endsWith('start')) : []);
 }
 
+/**
+ * Some upgrades are alternatives for the same space: Breezehome's room behind the stairs
+ * becomes either an alchemy laboratory (Skyrim.esm) or a child's bedroom (HearthFires.esm).
+ * Two upgrade markers that place objects at exactly the same spot are such alternatives.
+ * With every upgrade on, the one from the earlier plugin (lower form id) is kept, as in a
+ * game where the later option was not chosen.
+ * TODO(M8): follow the real upgrade scripts and the player's choices.
+ */
+async function alternativeUpgradeMarkers(
+  context: EnableContext,
+  refs: readonly PlacedReference[],
+): Promise<Set<string>> {
+  const markersAt = new Map<string, Map<number, string>>();
+  for (const ref of refs) {
+    if (!ref.enableParent || ref.enableParent.opposite) continue;
+    if (!(await isEnabled(context, ref))) continue;
+    const marker = await context.db.get(ref.enableParent.formId);
+    if (!marker?.editorId) continue;
+    const key = [
+      ...ref.position.map((v) => Math.round(v)),
+      ...ref.rotation.map((v) => Math.round(v * 100)),
+    ].join(',');
+    const markers = markersAt.get(key) ?? new Map<number, string>();
+    markers.set(marker.formId, marker.editorId.toLowerCase());
+    markersAt.set(key, markers);
+  }
+  const losers = new Set<string>();
+  for (const markers of markersAt.values()) {
+    if (markers.size < 2) continue;
+    const [, ...later] = [...markers].sort((a, b) => a[0] - b[0]);
+    for (const [, editorId] of later) losers.add(editorId);
+  }
+  return losers;
+}
+
 export async function loadCellData(
   db: RecordDatabase,
   cellFormId: number,
@@ -170,7 +205,7 @@ export async function loadCellData(
     (record): record is GameRecord => record !== undefined && !record.deleted,
   );
   const references = records.map((record) => ({ record, ref: parseReference(record) }));
-  const context: EnableContext = {
+  let context: EnableContext = {
     db,
     state: enableState,
     cache: new Map(),
@@ -182,6 +217,17 @@ export async function loadCellData(
           )
         : new Set(),
   };
+  if (enableState === 'all-enabled') {
+    const alternatives = await alternativeUpgradeMarkers(
+      context,
+      references.map((entry) => entry.ref),
+    );
+    context = {
+      ...context,
+      cache: new Map(),
+      replaced: new Set([...context.replaced, ...alternatives]),
+    };
+  }
 
   for (const { record, ref } of references) {
     const refId = ref.formId;
