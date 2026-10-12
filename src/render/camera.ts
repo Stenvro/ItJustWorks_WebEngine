@@ -12,6 +12,12 @@ export interface OrbitView {
   readonly idleSpin?: number;
   /** Instead of spinning: sway the yaw this many degrees either way while idle. */
   readonly idleSway?: number;
+  /**
+   * Limits how far the user may orbit away from the initial yaw/pitch, in degrees. For
+   * meshes that are only meant to be seen from the front (the main menu logo is a shell).
+   */
+  readonly yawLimit?: number;
+  readonly pitchLimit?: number;
 }
 
 const MIN_PITCH = -1.5;
@@ -32,19 +38,42 @@ export class OrbitCamera {
   #idleSpin = 0;
   #idleSway = 0;
   #baseYaw = 0;
+  #basePitch = 0;
+  #yawLimit = Infinity;
+  #pitchLimit = Infinity;
   #idleTime = 0;
   #interacted = false;
   #near = 1;
 
   /** Sets the viewing direction and idle behaviour; the user regains a fresh idle state. */
   setView(view: OrbitView): void {
+    const radians = (degrees: number | undefined, fallback: number): number =>
+      degrees === undefined ? fallback : (degrees * Math.PI) / 180;
     this.#up = view.up ?? 'z';
     this.yaw = this.#baseYaw = view.yaw ?? 0;
-    this.pitch = view.pitch ?? 0.25;
+    this.pitch = this.#basePitch = view.pitch ?? 0.25;
     this.#idleSpin = view.idleSpin ?? 0;
-    this.#idleSway = ((view.idleSway ?? 0) * Math.PI) / 180;
+    this.#idleSway = radians(view.idleSway, 0);
+    this.#yawLimit = radians(view.yawLimit, Infinity);
+    this.#pitchLimit = radians(view.pitchLimit, Infinity);
     this.#idleTime = 0;
     this.#interacted = false;
+  }
+
+  /** Rotates by the given amounts, respecting the view's limits. */
+  #rotate(deltaYaw: number, deltaPitch: number): void {
+    const clamp = (value: number, min: number, max: number): number =>
+      Math.min(max, Math.max(min, value));
+    this.yaw = clamp(
+      this.yaw + deltaYaw,
+      this.#baseYaw - this.#yawLimit,
+      this.#baseYaw + this.#yawLimit,
+    );
+    this.pitch = clamp(
+      this.pitch + deltaPitch,
+      Math.max(MIN_PITCH, this.#basePitch - this.#pitchLimit),
+      Math.min(MAX_PITCH, this.#basePitch + this.#pitchLimit),
+    );
   }
 
   /** Frames a bounding sphere. */
@@ -114,8 +143,7 @@ export class OrbitCamera {
       if (dragging.pan) {
         this.#pan(dx, dy, element.clientHeight);
       } else {
-        this.yaw -= dx * 0.006;
-        this.pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, this.pitch + dy * 0.006));
+        this.#rotate(-dx * 0.006, dy * 0.006);
       }
     };
     const onUp = (event: PointerEvent): void => {
