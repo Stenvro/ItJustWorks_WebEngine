@@ -16,6 +16,8 @@ export class FlyCamera implements Camera {
   /** Units per second (Skyrim: 1 unit ≈ 1.43 cm, walking ≈ 100 units/s). */
   speed = 260;
   lensShift = 0;
+  /** Near plane (game units). */
+  readonly near = 4;
   readonly #keys = new Set<string>();
 
   get forward(): Vec3 {
@@ -57,7 +59,7 @@ export class FlyCamera implements Camera {
       this.position[2] + forward[2],
     ];
     const view = lookAt(this.position, target, [0, 0, 1]);
-    const projection = perspectiveReversedZ(this.fovY, aspect, 4);
+    const projection = perspectiveReversedZ(this.fovY, aspect, this.near);
     projection[8] = -this.lensShift;
     return multiply(projection, view, out);
   }

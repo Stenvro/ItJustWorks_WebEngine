@@ -1,6 +1,7 @@
 // Draws landscape cells built by terrain-data.ts: one draw per quadrant with its 8 blended
 // textures and normal maps.
 
+import { sphereVisible, type Plane } from './frustum.ts';
 import { DEPTH_FORMAT, SAMPLE_COUNT } from './scene-renderer.ts';
 import frameShader from './shaders/frame.wgsl?raw';
 import terrainShader from './shaders/terrain.wgsl?raw';
@@ -45,9 +46,40 @@ export class TerrainRenderer {
   readonly #indices: GPUBuffer;
   readonly #indexCount: number;
   readonly #sampler: GPUSampler;
+  readonly #shadowPipeline: GPURenderPipeline;
 
-  constructor(device: GPUDevice, colorFormat: GPUTextureFormat, frameLayout: GPUBindGroupLayout) {
+  /** `shadow`: the cascade uniform layout and shadow shader shared with the scene renderer. */
+  constructor(
+    device: GPUDevice,
+    colorFormat: GPUTextureFormat,
+    frameLayout: GPUBindGroupLayout,
+    shadow: { readonly layout: GPUBindGroupLayout; readonly module: GPUShaderModule },
+  ) {
     this.#device = device;
+    this.#shadowPipeline = device.createRenderPipeline({
+      label: 'terrain-shadow',
+      layout: device.createPipelineLayout({
+        label: 'terrain-shadow',
+        bindGroupLayouts: [shadow.layout],
+      }),
+      vertex: {
+        module: shadow.module,
+        entryPoint: 'vs_terrain',
+        buffers: [
+          {
+            arrayStride: TERRAIN_STRIDE,
+            attributes: [{ shaderLocation: 0, format: 'float32x3', offset: 0 }],
+          },
+        ],
+      },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: {
+        format: DEPTH_FORMAT,
+        depthWriteEnabled: true,
+        depthCompare: 'less',
+        depthBiasSlopeScale: 1.5,
+      },
+    });
     this.#materialLayout = device.createBindGroupLayout({
       label: 'terrain-material',
       entries: [
@@ -161,17 +193,40 @@ export class TerrainRenderer {
     return new GpuTerrainCell(gpuQuadrants);
   }
 
+  /** Draws the cells' quadrants inside the view (`planes`: the camera frustum). */
   draw(
     pass: GPURenderPassEncoder,
     frameBindGroup: GPUBindGroup,
     cells: Iterable<GpuTerrainCell>,
+    planes: readonly Plane[],
   ): void {
     pass.setPipeline(this.#pipeline);
     pass.setBindGroup(0, frameBindGroup);
     pass.setIndexBuffer(this.#indices, 'uint16');
     for (const cell of cells) {
       for (const quadrant of cell.quadrants) {
+        if (!sphereVisible(planes, quadrant.center, quadrant.radius)) continue;
         pass.setBindGroup(1, quadrant.bindGroup);
+        pass.setVertexBuffer(0, quadrant.vertices);
+        pass.drawIndexed(this.#indexCount);
+      }
+    }
+  }
+
+  /** Draws the cells into a shadow cascade (bind group with the cascade's dynamic offset). */
+  drawShadows(
+    pass: GPURenderPassEncoder,
+    cascade: GPUBindGroup,
+    offset: number,
+    cells: Iterable<GpuTerrainCell>,
+    planes: readonly Plane[],
+  ): void {
+    pass.setPipeline(this.#shadowPipeline);
+    pass.setBindGroup(0, cascade, [offset]);
+    pass.setIndexBuffer(this.#indices, 'uint16');
+    for (const cell of cells) {
+      for (const quadrant of cell.quadrants) {
+        if (!sphereVisible(planes, quadrant.center, quadrant.radius)) continue;
         pass.setVertexBuffer(0, quadrant.vertices);
         pass.drawIndexed(this.#indexCount);
       }

@@ -3,12 +3,14 @@
 // vertex layout and material state, per-draw uniforms in one buffer (dynamic offsets),
 // opaque first, then blended parts sorted back to front.
 
-import { multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
+import { frustumPlanes, sphereVisible, type Plane } from './frustum.ts';
+import { maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import type { AlphaState, ModelData, ModelPart, VertexLayout } from './model-data.ts';
 import commonShader from './shaders/common.wgsl?raw';
 import frameShader from './shaders/frame.wgsl?raw';
 import effectShader from './shaders/effect.wgsl?raw';
 import lightingShader from './shaders/lighting.wgsl?raw';
+import shadowShader from './shaders/shadow.wgsl?raw';
 import waterShader from './shaders/water.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
 import type { WaterType } from '../world/water.ts';
@@ -20,8 +22,21 @@ export const MAX_LIGHTS = 256;
 /** Size of the WGSL `Draw` struct and the stride between draws (uniform offset alignment). */
 const DRAW_SIZE = 160;
 const DRAW_STRIDE = 256;
-/** WGSL `Frame` struct: 76 floats. */
-const FRAME_FLOATS = 76;
+/** WGSL `Frame` struct: 148 floats. */
+const FRAME_FLOATS = 148;
+/** Sun shadow map: one layer per cascade. */
+export const SHADOW_MAP_SIZE = 2048;
+export const SHADOW_MAP_LAYERS = 4;
+/** Shadow cascade uniforms: one view-projection per 256-byte slot. */
+const CASCADE_STRIDE = 256;
+/** Receiver offsets against shadow acne: depth (0..1 units) and along the normal (texels). */
+const SHADOW_DEPTH_BIAS = 0.0004;
+const SHADOW_NORMAL_OFFSET = 1.5;
+
+/** The sun's shadow cascades of a frame. */
+export interface FrameShadows {
+  readonly cascades: readonly { readonly viewProj: Mat4; readonly far: number }[];
+}
 
 /** Loaded cells, where distant LOD is not drawn: a 7×7 grid from its south-west cell. */
 export interface LodMask {
@@ -43,6 +58,11 @@ const DECAL_SLOPE_BIAS = 1.5;
 const SLSF2_ZBUFFER_WRITE = 0x1;
 const SLSF2_DOUBLE_SIDED = 0x10;
 const SLSF1_ENVIRONMENT_MAPPING = 0x80;
+const SLSF1_CAST_SHADOWS = 0x200;
+/** LOD landscape and LOD object shader types: distant LOD casts no shadows. */
+const LOD_SHADER_TYPES = new Set([9, 13, 15, 18]);
+/** NiAlphaProperty: alpha test on. */
+const ALPHA_TEST = 0x200;
 const SHADER_GLOW = 2;
 
 /** NiAlphaProperty blend modes → WebGPU blend factors. */
@@ -112,6 +132,8 @@ interface GpuPart {
   /** Material textures (unused by water, which takes its type's bind group). */
   readonly bindGroup: GPUBindGroup;
   readonly pass: PartPass;
+  /** Depth-only pipeline for the sun's shadow map (Cast_Shadows parts). */
+  readonly shadowPipeline: GPURenderPipeline | undefined;
 }
 
 /** WGSL `WaterParams`: 11 vec4. */
@@ -188,6 +210,8 @@ interface Draw {
   readonly part: GpuPart;
   readonly uniformOffset: number;
   readonly center: readonly [number, number, number];
+  /** Bounding sphere radius in world units (culling). */
+  readonly radius: number;
   readonly water: GpuWaterType | undefined;
 }
 
@@ -329,6 +353,13 @@ export class SceneRenderer {
   readonly #pipelines = new Map<string, GPURenderPipeline>();
   readonly #fallbackVertices: GPUBuffer;
   readonly #sampler: GPUSampler;
+  readonly #shadowMap: GPUTexture;
+  readonly #cascadeLayout: GPUBindGroupLayout;
+  readonly #cascadeBuffer: GPUBuffer;
+  readonly #cascadeBindGroup: GPUBindGroup;
+  readonly #shadowModule: GPUShaderModule;
+  /** Planes of the camera's frustum this frame (culling). */
+  #planes: readonly Plane[] = [];
 
   constructor(device: GPUDevice, colorFormat: GPUTextureFormat) {
     this.#device = device;
@@ -339,8 +370,41 @@ export class SceneRenderer {
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: {} },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        {
+          binding: 2,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'depth', viewDimension: '2d-array' },
+        },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
       ],
     }));
+    this.#shadowMap = device.createTexture({
+      label: 'sun-shadow-map',
+      size: [SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, SHADOW_MAP_LAYERS],
+      format: DEPTH_FORMAT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.#cascadeLayout = device.createBindGroupLayout({
+      label: 'shadow-cascade',
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.VERTEX,
+          buffer: { hasDynamicOffset: true, minBindingSize: 64 },
+        },
+      ],
+    });
+    this.#cascadeBuffer = device.createBuffer({
+      label: 'shadow-cascades',
+      size: CASCADE_STRIDE * SHADOW_MAP_LAYERS,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.#cascadeBindGroup = device.createBindGroup({
+      label: 'shadow-cascade',
+      layout: this.#cascadeLayout,
+      entries: [{ binding: 0, resource: { buffer: this.#cascadeBuffer, size: 64 } }],
+    });
+    this.#shadowModule = device.createShaderModule({ label: 'shadow', code: shadowShader });
     this.#drawLayout = device.createBindGroupLayout({
       label: 'draw',
       entries: [
@@ -445,6 +509,16 @@ export class SceneRenderer {
       entries: [
         { binding: 0, resource: { buffer: this.#frameBuffer } },
         { binding: 1, resource: { buffer: this.#lightBuffer } },
+        { binding: 2, resource: this.#shadowMap.createView({ dimension: '2d-array' }) },
+        {
+          binding: 3,
+          resource: device.createSampler({
+            label: 'shadow',
+            compare: 'less-equal',
+            magFilter: 'linear',
+            minFilter: 'linear',
+          }),
+        },
       ],
     });
     this.#modules = {
@@ -497,6 +571,14 @@ export class SceneRenderer {
           pipeline: water ? this.#waterPipeline(part) : this.#pipeline(part, blend),
           bindGroup: await this.#materialBindGroup(part, textures),
           pass: water ? 'water' : blend !== undefined ? 'transparent' : 'opaque',
+          shadowPipeline:
+            !water &&
+            blend === undefined &&
+            part.material?.kind === 'lighting' &&
+            (part.material.flags1 & SLSF1_CAST_SHADOWS) !== 0 &&
+            !LOD_SHADER_TYPES.has(part.material.shaderType)
+              ? this.#shadowPipeline(part)
+              : undefined,
         };
       }),
     );
@@ -521,6 +603,7 @@ export class SceneRenderer {
           part,
           uniformOffset: offset,
           center: transformPoint(instance.world, part.part.center),
+          radius: part.part.radius * maxScale(instance.world),
           water: part.pass === 'water' ? instance.water : undefined,
         });
       }
@@ -545,7 +628,9 @@ export class SceneRenderer {
     lighting: SceneLighting,
     timeSeconds = 0,
     lodMask?: LodMask,
+    shadows?: FrameShadows,
   ): void {
+    this.#planes = frustumPlanes(viewProjection);
     const data = this.#frameData;
     data.set(viewProjection, 0);
     data.set([...cameraPosition, 1], 16);
@@ -567,6 +652,19 @@ export class SceneRenderer {
       lodMask?.low ?? 0,
       lodMask?.high ?? 0,
     ]);
+    const cascades = shadows?.cascades ?? [];
+    cascades.slice(0, SHADOW_MAP_LAYERS).forEach((cascade, i) => {
+      data.set(cascade.viewProj, 76 + i * 16);
+      this.#device.queue.writeBuffer(this.#cascadeBuffer, i * CASCADE_STRIDE, cascade.viewProj);
+    });
+    data.set(
+      Array.from({ length: SHADOW_MAP_LAYERS }, (_, i) => cascades[i]?.far ?? 0),
+      140,
+    );
+    data.set(
+      [cascades.length > 0 ? 1 : 0, SHADOW_MAP_SIZE, SHADOW_DEPTH_BIAS, SHADOW_NORMAL_OFFSET],
+      144,
+    );
     this.#device.queue.writeBuffer(this.#frameBuffer, 0, data);
 
     if (lightCount > 0) {
@@ -600,7 +698,7 @@ export class SceneRenderer {
     pass.setVertexBuffer(1, this.#fallbackVertices);
     for (const scene of scenes) {
       for (const draw of scene.draws) {
-        if (draw.part.pass === 'opaque') this.#drawPart(pass, scene, draw);
+        if (draw.part.pass === 'opaque' && this.#visible(draw)) this.#drawPart(pass, scene, draw);
       }
     }
   }
@@ -620,7 +718,7 @@ export class SceneRenderer {
     pass.setVertexBuffer(1, this.#fallbackVertices);
     for (const scene of scenes) {
       for (const draw of scene.draws) {
-        if (draw.part.pass !== 'water') continue;
+        if (draw.part.pass !== 'water' || !this.#visible(draw)) continue;
         const type = draw.water ?? this.defaultWater;
         if (!type) continue;
         const { part } = draw;
@@ -645,7 +743,7 @@ export class SceneRenderer {
     const transparent: { scene: GpuScene; draw: Draw; distance: number }[] = [];
     for (const scene of scenes) {
       for (const draw of scene.draws) {
-        if (draw.part.pass !== 'transparent') continue;
+        if (draw.part.pass !== 'transparent' || !this.#visible(draw)) continue;
         const dx = draw.center[0] - cameraPosition[0];
         const dy = draw.center[1] - cameraPosition[1];
         const dz = draw.center[2] - cameraPosition[2];
@@ -742,6 +840,66 @@ export class SceneRenderer {
     this.#device.queue.writeBuffer(this.#waterFrameBuffer, 0, data);
   }
 
+  /** Planes of the camera's frustum this frame (for culling elsewhere). */
+  get viewPlanes(): readonly Plane[] {
+    return this.#planes;
+  }
+
+  /** The sun's shadow map (its layers are rendered by the frame renderer). */
+  get shadowMap(): GPUTexture {
+    return this.#shadowMap;
+  }
+
+  /** Cascade uniforms (group 0 of shadow pipelines) and their layout, shared with terrain. */
+  get cascadeLayout(): GPUBindGroupLayout {
+    return this.#cascadeLayout;
+  }
+
+  get cascadeBindGroup(): GPUBindGroup {
+    return this.#cascadeBindGroup;
+  }
+
+  /** Dynamic offset of a cascade's uniforms. */
+  cascadeOffset(cascade: number): number {
+    return cascade * CASCADE_STRIDE;
+  }
+
+  get shadowModule(): GPUShaderModule {
+    return this.#shadowModule;
+  }
+
+  /**
+   * Draws the shadow casters of scenes into one cascade: culled by its box, and without
+   * objects too small to show at its resolution (`minRadius`).
+   */
+  drawShadows(
+    pass: GPURenderPassEncoder,
+    scenes: Iterable<GpuScene>,
+    cascade: number,
+    planes: readonly Plane[],
+    minRadius: number,
+  ): void {
+    pass.setBindGroup(0, this.#cascadeBindGroup, [this.cascadeOffset(cascade)]);
+    pass.setVertexBuffer(1, this.#fallbackVertices);
+    for (const scene of scenes) {
+      for (const draw of scene.draws) {
+        const { part } = draw;
+        if (!part.shadowPipeline || draw.radius < minRadius) continue;
+        if (!sphereVisible(planes, draw.center, draw.radius)) continue;
+        pass.setPipeline(part.shadowPipeline);
+        pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
+        pass.setBindGroup(2, part.bindGroup);
+        pass.setVertexBuffer(0, part.vertexBuffer);
+        pass.setIndexBuffer(part.indexBuffer, 'uint16');
+        pass.drawIndexed(part.indexCount);
+      }
+    }
+  }
+
+  #visible(draw: Draw): boolean {
+    return sphereVisible(this.#planes, draw.center, draw.radius);
+  }
+
   #drawPart(pass: GPURenderPassEncoder, scene: GpuScene, draw: Draw): void {
     const { part } = draw;
     pass.setPipeline(part.pipeline);
@@ -799,6 +957,45 @@ export class SceneRenderer {
         { binding: 5, resource: (envMask ?? defaults.white).createView() },
       ],
     });
+  }
+
+  #shadowPipeline(part: ModelPart): GPURenderPipeline {
+    const layout = part.layout;
+    const alphaTest = (part.alpha?.flags ?? 0) & ALPHA_TEST;
+    const doubleSided = ((part.material?.flags2 ?? 0) & SLSF2_DOUBLE_SIDED) !== 0;
+    const withUv = alphaTest !== 0 && layout.uv >= 0;
+    const key = ['shadow', layout.stride, withUv ? layout.uv : -1, doubleSided].join('|');
+    let pipeline = this.#pipelines.get(key);
+    if (!pipeline) {
+      const attributes: GPUVertexAttribute[] = [
+        { shaderLocation: 0, format: 'float32x3', offset: 0 },
+      ];
+      if (withUv) attributes.push({ shaderLocation: 2, format: 'float16x2', offset: layout.uv });
+      pipeline = this.#device.createRenderPipeline({
+        label: key,
+        layout: this.#device.createPipelineLayout({
+          label: 'shadow',
+          bindGroupLayouts: [this.#cascadeLayout, this.#drawLayout, this.#materialLayout],
+        }),
+        vertex: {
+          module: this.#shadowModule,
+          entryPoint: withUv ? 'vs_object_uv' : 'vs_object',
+          buffers: [{ arrayStride: layout.stride, attributes }],
+        },
+        ...(withUv && {
+          fragment: { module: this.#shadowModule, entryPoint: 'fs_alpha_test', targets: [] },
+        }),
+        primitive: { topology: 'triangle-list', cullMode: doubleSided ? 'none' : 'back' },
+        depthStencil: {
+          format: DEPTH_FORMAT,
+          depthWriteEnabled: true,
+          depthCompare: 'less',
+          depthBiasSlopeScale: 1.5,
+        },
+      });
+      this.#pipelines.set(key, pipeline);
+    }
+    return pipeline;
   }
 
   #waterPipeline(part: ModelPart): GPURenderPipeline {

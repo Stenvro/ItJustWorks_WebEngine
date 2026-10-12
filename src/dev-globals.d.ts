@@ -9,6 +9,7 @@ declare global {
       readonly viewer: ModelViewer;
       readonly world: WorldViewer;
       readonly renderer: Renderer;
+      readonly device: GPUDevice;
     };
   }
 }

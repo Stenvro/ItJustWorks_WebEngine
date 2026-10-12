@@ -85,7 +85,7 @@ fn fs_main(in: TerrainOut) -> @location(0) vec4f {
 
   let albedo = base * in.color;
   let toCamera = safeNormalize(frame.cameraPos.xyz - in.worldPos);
-  let light = lightAt(n, in.worldPos, toCamera, 1.0, false);
+  let light = lightAt(n, in.worldPos, toCamera, 1.0, false, sunShadow(in.worldPos, in.normal));
   switch (frame.counts.z) {
     case 1u: {
       return vec4f(albedo, 1.0);
