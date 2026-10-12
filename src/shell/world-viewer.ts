@@ -180,6 +180,7 @@ export class WorldViewer {
       camera: this.#camera,
       lighting: (camera) => this.#lighting(camera.position),
       sky: () => this.#sky?.skyFrame(),
+      imageSpace: () => this.#sky?.imageSpace(),
       backdrop: false,
     });
     document.body.classList.add('has-scene');

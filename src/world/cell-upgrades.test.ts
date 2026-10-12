@@ -52,6 +52,7 @@ const data: CellData = {
     lighting: undefined,
     inheritFlags: 0,
     lightingTemplate: undefined,
+    imageSpace: undefined,
   },
   lighting: undefined,
   objects: [...references.keys()].map((reference) => ({

@@ -223,7 +223,7 @@ export interface SkyState {
   readonly sunGlareSize: number;
   /** Aurora visibility 0..1 (weathers with an aurora model). */
   readonly aurora: number;
-  /** Imagespaces of the time of day and their weights (current weather). */
+  /** Imagespaces of the time of day and their weights (both weathers during a change). */
   readonly imageSpaces: readonly { readonly formId: number; readonly weight: number }[];
 }
 
@@ -462,11 +462,16 @@ export function skyState(input: SkyInput): SkyState {
     aurora *= transition;
   }
 
+  // Imagespaces of the time of day, the fading weather's included.
   const imageSpaces: { formId: number; weight: number }[] = [];
-  input.weather.imageSpaces.forEach((formId, t) => {
-    const weight = weights[t] ?? 0;
-    if (formId !== undefined && weight > 0) imageSpaces.push({ formId, weight });
-  });
+  const addImageSpaces = (weather: WeatherRecord, share: number): void => {
+    weather.imageSpaces.forEach((formId, t) => {
+      const weight = (weights[t] ?? 0) * share;
+      if (formId !== undefined && weight > 0) imageSpaces.push({ formId, weight });
+    });
+  };
+  addImageSpaces(input.weather, transition);
+  if (input.previous) addImageSpaces(input.previous, 1 - transition);
 
   return {
     hour: input.hour,

@@ -8,7 +8,9 @@ import {
   type SceneLighting,
 } from './scene-renderer.ts';
 import backdropShader from './shaders/backdrop.wgsl?raw';
+import { HDR_FORMAT, PostProcessor } from './post.ts';
 import { SkyRenderer, type SkyFrame } from './sky.ts';
+import type { ImageSpace } from '../world/image-space.ts';
 import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
 
 /** Anything that can view a scene: the orbit camera, the free-flying camera, ... */
@@ -26,6 +28,8 @@ export interface SceneView {
   readonly terrain?: () => Iterable<GpuTerrainCell>;
   /** The sky behind everything (exteriors). */
   readonly sky?: () => SkyFrame | undefined;
+  /** Imagespace of the frame (eye adaptation, bloom, grading); none: the image as rendered. */
+  readonly imageSpace?: () => ImageSpace | undefined;
   readonly camera: Camera;
   /** Called every frame (lighting may depend on the camera, e.g. a studio light). */
   readonly lighting: (camera: Camera) => SceneLighting;
@@ -41,13 +45,15 @@ interface RenderTargets {
 }
 
 /**
- * Renders one frame per call: the shell backdrop, then the scene, in one multisampled pass
- * with reversed-Z depth.
+ * Renders one frame per call: the shell backdrop or the sky, then the terrain and scenes, in
+ * one multisampled HDR pass with reversed-Z depth; then the imagespace's post-processing
+ * into the canvas.
  */
 export class Renderer {
   readonly scene: SceneRenderer;
   readonly terrain: TerrainRenderer;
   readonly sky: SkyRenderer;
+  readonly post: PostProcessor;
   readonly #gpu: GpuContext;
   readonly #backdrop: GPURenderPipeline;
   readonly #backdropBuffer: GPUBuffer;
@@ -62,16 +68,17 @@ export class Renderer {
   constructor(gpu: GpuContext) {
     this.#gpu = gpu;
     const { device, format } = gpu;
-    this.scene = new SceneRenderer(device, format);
-    this.terrain = new TerrainRenderer(device, format, this.scene.frameLayout);
-    this.sky = new SkyRenderer(device, format, this.scene.frameLayout);
+    this.scene = new SceneRenderer(device, HDR_FORMAT);
+    this.terrain = new TerrainRenderer(device, HDR_FORMAT, this.scene.frameLayout);
+    this.sky = new SkyRenderer(device, HDR_FORMAT, this.scene.frameLayout);
+    this.post = new PostProcessor(device, format);
 
     const module = device.createShaderModule({ label: 'backdrop', code: backdropShader });
     this.#backdrop = device.createRenderPipeline({
       label: 'backdrop',
       layout: 'auto',
       vertex: { module, entryPoint: 'vs_main' },
-      fragment: { module, entryPoint: 'fs_main', targets: [{ format }] },
+      fragment: { module, entryPoint: 'fs_main', targets: [{ format: HDR_FORMAT }] },
       primitive: { topology: 'triangle-list' },
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'always' },
       multisample: { count: SAMPLE_COUNT },
@@ -90,6 +97,8 @@ export class Renderer {
 
   /** Shows a scene (or only the backdrop). The caller owns the scene and its models. */
   setView(view: SceneView | undefined): void {
+    // A new view starts adapted to itself (like after a loading screen).
+    this.post.resetAdaptation();
     this.#view = view;
   }
 
@@ -130,7 +139,7 @@ export class Renderer {
       colorAttachments: [
         {
           view: targets.color.createView(),
-          resolveTarget: canvasTexture.createView(),
+          resolveTarget: this.post.hdrView(targets.width, targets.height),
           clearValue: sky ? SkyRenderer.clearColor(sky.state) : { r: 0, g: 0, b: 0, a: 1 },
           loadOp: 'clear',
           storeOp: 'discard',
@@ -155,6 +164,14 @@ export class Renderer {
       this.scene.draw(pass, view.scenes(), view.camera.position);
     }
     pass.end();
+    this.post.run(
+      encoder,
+      canvasTexture.createView(),
+      targets.width,
+      targets.height,
+      view?.imageSpace?.(),
+      delta,
+    );
     device.queue.submit([encoder.finish()]);
   }
 
@@ -162,7 +179,7 @@ export class Renderer {
     if (this.#targets?.width === width && this.#targets.height === height) return this.#targets;
     this.#targets?.color.destroy();
     this.#targets?.depth.destroy();
-    const { device, format } = this.#gpu;
+    const { device } = this.#gpu;
     const usage = GPUTextureUsage.RENDER_ATTACHMENT;
     this.#targets = {
       width,
@@ -170,7 +187,7 @@ export class Renderer {
       color: device.createTexture({
         label: 'msaa-color',
         size: [width, height],
-        format,
+        format: HDR_FORMAT,
         sampleCount: SAMPLE_COUNT,
         usage,
       }),
