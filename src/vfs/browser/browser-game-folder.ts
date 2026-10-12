@@ -76,7 +76,7 @@ export class BrowserGameFolder implements GameFolder {
   async #resolve(relativePath: string): Promise<FileSystemFileHandle> {
     const parts = relativePath.split(/[\\/]+/).filter((part) => part !== '');
     const fileName = parts.pop();
-    if (fileName === undefined) throw new Error(`Ongeldig pad: ${relativePath}`);
+    if (fileName === undefined) throw new Error(`Invalid path: ${relativePath}`);
     let directory = this.#data;
     for (const part of parts) directory = await directory.getDirectoryHandle(part);
     return directory.getFileHandle(fileName);

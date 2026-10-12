@@ -67,11 +67,11 @@ function parseHeader(bytes: Uint8Array): BsaHeader & { readonly folderRecordOffs
   const reader = new BinaryReader(bytes);
   const magic = reader.fourCC();
   if (magic !== 'BSA\0')
-    throw new FormatError(`Geen BSA-archief (magic ${JSON.stringify(magic)})`, 0);
+    throw new FormatError(`Not a BSA archive (magic ${JSON.stringify(magic)})`, 0);
   const version = reader.u32();
   if (version !== BSA_VERSION_SSE) {
     throw new FormatError(
-      `BSA-versie ${version} wordt niet ondersteund; Skyrim SE gebruikt versie ${BSA_VERSION_SSE}`,
+      `BSA version ${version} is not supported; Skyrim SE uses version ${BSA_VERSION_SSE}`,
       4,
     );
   }
@@ -86,10 +86,10 @@ function parseHeader(bytes: Uint8Array): BsaHeader & { readonly folderRecordOffs
     fileFlags: reader.u16(),
   };
   if (header.archiveFlags & BsaArchiveFlag.xbox360) {
-    throw new FormatError('Xbox 360-archieven (big-endian) worden niet ondersteund', 12);
+    throw new FormatError('Xbox 360 (big-endian) archives are not supported', 12);
   }
   if (header.folderRecordOffset < HEADER_SIZE) {
-    throw new FormatError(`Ongeldige header-grootte ${header.folderRecordOffset}`, 8);
+    throw new FormatError(`Invalid header size ${header.folderRecordOffset}`, 8);
   }
   return header;
 }
@@ -97,7 +97,7 @@ function parseHeader(bytes: Uint8Array): BsaHeader & { readonly folderRecordOffs
 /** Leest een nul-afgesloten string; geeft tekst en positie na de nul terug. */
 function readZString(bytes: Uint8Array, start: number): [string, number] {
   const end = bytes.indexOf(0, start);
-  if (end < 0) throw new FormatError('Bestandsnaam zonder afsluitende nul', start);
+  if (end < 0) throw new FormatError('File name without terminating null', start);
   return [decodeWindows1252(bytes, start, end), end + 1];
 }
 
@@ -122,7 +122,7 @@ export class BsaArchive {
 
   static async open(source: ByteSource, options: BsaOpenOptions = {}): Promise<BsaArchive> {
     if (source.size < HEADER_SIZE) {
-      throw new FormatError(`Bestand te klein voor een BSA-header (${source.size} bytes)`, 0);
+      throw new FormatError(`File too small for a BSA header (${source.size} bytes)`, 0);
     }
     const header = parseHeader(await source.read(0, HEADER_SIZE));
     const flags = header.archiveFlags;
@@ -139,7 +139,7 @@ export class BsaArchive {
       header.fileCount * FILE_RECORD_SIZE;
     const directoryEnd = fileNamesStart + (hasFileNames ? header.totalFileNameLength : 0);
     if (directoryEnd > source.size) {
-      throw new FormatError(`Index (${directoryEnd} bytes) groter dan het archief`, 0);
+      throw new FormatError(`Index (${directoryEnd} bytes) is larger than the archive`, 0);
     }
     const directory = await source.read(0, directoryEnd);
     const reader = new BinaryReader(directory, header.folderRecordOffset);
@@ -167,7 +167,7 @@ export class BsaArchive {
     for (const folder of folders) {
       fileTotal += folder.fileCount;
       if (fileTotal > header.fileCount) {
-        throw new FormatError('Mappen bevatten meer bestanden dan de header noemt', 0);
+        throw new FormatError('Folders contain more files than the header states', 0);
       }
       reader.seek(folder.blockOffset);
       let folderName = '';
@@ -177,7 +177,7 @@ export class BsaArchive {
         const nul = raw.indexOf(0); // naam is inclusief afsluitende nul
         folderName = decodeWindows1252(raw, 0, nul === -1 ? length : nul);
         if (options.verifyHashes && bsaHash(folderName, true) !== folder.hash) {
-          throw new FormatError(`Hash van map "${folderName}" klopt niet`, folder.blockOffset);
+          throw new FormatError(`Hash mismatch for folder "${folderName}"`, folder.blockOffset);
         }
       }
 
@@ -191,7 +191,7 @@ export class BsaArchive {
           let fileName: string;
           [fileName, namePosition] = readZString(directory, namePosition);
           if (options.verifyHashes && bsaHash(fileName, false) !== fileHash) {
-            throw new FormatError(`Hash van "${folderName}\\${fileName}" klopt niet`, namePosition);
+            throw new FormatError(`Hash mismatch for "${folderName}\\${fileName}"`, namePosition);
           }
           path = normalizePath(folderName === '.' ? fileName : `${folderName}\\${fileName}`);
         }
@@ -208,7 +208,7 @@ export class BsaArchive {
       }
     }
     if (fileTotal !== header.fileCount) {
-      throw new FormatError(`Header noemt ${header.fileCount} bestanden, gevonden ${fileTotal}`, 0);
+      throw new FormatError(`Header states ${header.fileCount} files, found ${fileTotal}`, 0);
     }
 
     return new BsaArchive(source, header, entries, index);
@@ -237,7 +237,7 @@ export class BsaArchive {
   async read(entry: BsaEntry): Promise<Uint8Array> {
     if (entry.offset + entry.size > this.#source.size) {
       throw new FormatError(
-        `"${entry.path ?? '?'}" loopt voorbij het einde van het archief`,
+        `"${entry.path ?? '?'}" runs past the end of the archive`,
         entry.offset,
       );
     }
@@ -250,7 +250,7 @@ export class BsaArchive {
 
     if (raw.length < start + 4) {
       throw new FormatError(
-        `"${entry.path ?? '?'}" is te kort voor gecomprimeerde data`,
+        `"${entry.path ?? '?'}" is too short for compressed data`,
         entry.offset,
       );
     }

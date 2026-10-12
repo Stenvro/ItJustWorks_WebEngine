@@ -18,7 +18,7 @@ export function checkReadRange(size: number, offset: number, length: number): vo
     length < 0 ||
     offset + length > size
   ) {
-    throw new RangeError(`Leesbereik ${offset}+${length} valt buiten bron van ${size} bytes`);
+    throw new RangeError(`Read range ${offset}+${length} is outside source of ${size} bytes`);
   }
 }
 

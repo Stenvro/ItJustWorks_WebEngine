@@ -18,7 +18,7 @@ import { Vfs } from './vfs/vfs.ts';
 
 function byId<T extends HTMLElement>(id: string, type: new () => T): T {
   const element = document.getElementById(id);
-  if (!(element instanceof type)) throw new Error(`Element #${id} ontbreekt in index.html`);
+  if (!(element instanceof type)) throw new Error(`Element #${id} is missing from index.html`);
   return element;
 }
 
@@ -43,7 +43,7 @@ const ui = {
 };
 
 const terminal = new Terminal(ui.log);
-const numberFormat = new Intl.NumberFormat('nl-NL');
+const numberFormat = new Intl.NumberFormat('en-US');
 
 function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -54,9 +54,9 @@ function showFatal(error: unknown): void {
   const message =
     error instanceof GpuUnavailableError
       ? error.message
-      : `Er ging iets mis bij het starten:\n${describeError(error)}`;
-  terminal.log('fout', message.replaceAll('\n', ' '), 'error');
-  ui.status.textContent = 'gestopt';
+      : `Something went wrong during startup:\n${describeError(error)}`;
+  terminal.log('err', message.replaceAll('\n', ' '), 'error');
+  ui.status.textContent = 'halted';
   ui.fatal.textContent = message;
   ui.fatal.hidden = false;
 }
@@ -86,7 +86,7 @@ function startRenderLoop(renderer: Renderer): void {
 
 function describeGpu(gpu: GpuContext): string {
   const { vendor, architecture } = gpu.adapter.info;
-  return [vendor, architecture].filter((part) => part !== '').join(' ') || 'onbekend';
+  return [vendor, architecture].filter((part) => part !== '').join(' ') || 'unknown';
 }
 
 // --- Skyrim-map kiezen en VFS opbouwen ------------------------------------
@@ -121,12 +121,12 @@ function fillTable(list: HTMLElement, rows: readonly [string, string, string][])
 }
 
 function showSummary(vfs: Vfs): void {
-  ui.loadOrderTitle.textContent = `laadvolgorde · ${vfs.loadOrder.length} plugins`;
+  ui.loadOrderTitle.textContent = `load order · ${vfs.loadOrder.length} plugins`;
   fillTable(
     ui.loadOrder,
     vfs.loadOrder.map((entry) => [formatModIndex(entry), entry.name, entry.source]),
   );
-  ui.archiveTitle.textContent = `archieven · ${vfs.archives.length} · laag → hoog`;
+  ui.archiveTitle.textContent = `archives · ${vfs.archives.length} · low → high`;
   fillTable(
     ui.archives,
     vfs.archives.map((mounted, i) => [
@@ -139,22 +139,22 @@ function showSummary(vfs: Vfs): void {
 }
 
 async function useFolder(handle: FileSystemDirectoryHandle, isNewChoice: boolean): Promise<void> {
-  prompt(`map controleren: ${handle.name}`, 'none');
-  ui.status.textContent = 'koppelen';
+  prompt(`checking folder: ${handle.name}`, 'none');
+  ui.status.textContent = 'mounting';
   const resolved = await resolveGameFolder(handle);
   if (!resolved.report.ok) {
     if (!isNewChoice) await forgetGameFolder();
-    terminal.log('vfs', `${handle.name}: ontbreekt ${resolved.report.missing.join(', ')}`, 'error');
-    prompt('Dit is geen Skyrim Special Edition-installatie of Data-map.', 'pick');
-    ui.status.textContent = 'wacht op map';
+    terminal.log('vfs', `${handle.name}: missing ${resolved.report.missing.join(', ')}`, 'error');
+    prompt('This is not a Skyrim Special Edition installation or Data folder.', 'pick');
+    ui.status.textContent = 'awaiting folder';
     return;
   }
   if (isNewChoice) await rememberGameFolder(handle);
   terminal.log(
     'vfs',
     resolved.root
-      ? `installatiemap ${handle.name} · data-map gevonden`
-      : `data-map ${handle.name} (zonder installatiemap)`,
+      ? `install folder ${handle.name} · data folder found`
+      : `data folder ${handle.name} (without install folder)`,
   );
 
   const start = performance.now();
@@ -170,35 +170,35 @@ async function useFolder(handle: FileSystemDirectoryHandle, isNewChoice: boolean
   }
   for (const mounted of vfs.archives) {
     const count = numberFormat.format(mounted.archive.entries.length);
-    terminal.log('bsa', `${mounted.name.padEnd(30)} ${count.padStart(7)} bestanden`);
+    terminal.log('bsa', `${mounted.name.padEnd(30)} ${count.padStart(7)} files`);
   }
   for (const problem of vfs.problems) {
-    terminal.log('let op', `${problem.source}: ${problem.message}`, 'warn');
+    terminal.log('warn', `${problem.source}: ${problem.message}`, 'warn');
   }
   terminal.log(
     'vfs',
-    `${numberFormat.format(vfs.fileCount)} paden geïndexeerd in ${elapsed.toFixed(0)} ms`,
+    `${numberFormat.format(vfs.fileCount)} paths indexed in ${elapsed.toFixed(0)} ms`,
     'ok',
   );
 
-  ui.statVfs.textContent = `${numberFormat.format(vfs.fileCount)} bestanden`;
-  ui.status.textContent = 'gereed';
+  ui.statVfs.textContent = `${numberFormat.format(vfs.fileCount)} files`;
+  ui.status.textContent = 'ready';
   showSummary(vfs);
   prompt(
     vfs.hasCreationClubList
-      ? 'Gereed. Volgende mijlpaal: modellen en textures renderen (M2).'
-      : 'Kies de installatiemap (waar Data in staat) om ook Creation Club-content te laden.',
+      ? 'Ready. Next milestone: rendering models and textures (M2).'
+      : 'Select the install folder (the one containing Data) to load Creation Club content as well.',
     'pick',
   );
-  ui.pick.textContent = 'andere map';
+  ui.pick.textContent = 'change folder';
 }
 
 function run(action: () => Promise<void>): void {
   action().catch((error: unknown) => {
     console.error(error);
-    terminal.log('fout', describeError(error), 'error');
-    prompt('Er ging iets mis. Kies de map opnieuw.', 'pick');
-    ui.status.textContent = 'fout';
+    terminal.log('err', describeError(error), 'error');
+    prompt('Something went wrong. Please select the folder again.', 'pick');
+    ui.status.textContent = 'error';
   });
 }
 
@@ -210,8 +210,8 @@ function onClick(button: HTMLButtonElement, action: () => Promise<void>): void {
 
 async function setupGameFolder(): Promise<void> {
   if (!isFileSystemAccessSupported()) {
-    terminal.log('vfs', 'File System Access API ontbreekt', 'error');
-    prompt('Deze browser kan geen lokale mappen lezen. Gebruik Chrome of Edge.', 'none');
+    terminal.log('vfs', 'File System Access API unavailable', 'error');
+    prompt('This browser cannot read local folders. Use Chrome or Edge.', 'none');
     return;
   }
 
@@ -223,7 +223,7 @@ async function setupGameFolder(): Promise<void> {
   const stored = await getStoredGameFolder();
   switch (stored.status) {
     case 'granted':
-      terminal.log('vfs', `opgeslagen map: ${stored.handle.name}`);
+      terminal.log('vfs', `stored folder: ${stored.handle.name}`);
       run(() => useFolder(stored.handle, false));
       break;
     case 'needs-permission':
@@ -231,19 +231,19 @@ async function setupGameFolder(): Promise<void> {
         if (await requestFolderAccess(stored.handle)) {
           await useFolder(stored.handle, false);
         } else {
-          terminal.log('vfs', 'geen toegang gekregen', 'warn');
-          prompt('Geen toegang gekregen. Kies de map opnieuw.', 'pick');
+          terminal.log('vfs', 'access denied', 'warn');
+          prompt('Access was denied. Please select the folder again.', 'pick');
         }
       });
-      ui.resume.textContent = `toegang ${stored.handle.name}`;
-      ui.status.textContent = 'wacht op toestemming';
-      prompt('De browser vraagt opnieuw toestemming om je Skyrim-map te lezen.', 'resume');
+      ui.resume.textContent = `resume ${stored.handle.name}`;
+      ui.status.textContent = 'awaiting permission';
+      prompt('The browser needs permission again to read your Skyrim folder.', 'resume');
       break;
     case 'none':
-      ui.status.textContent = 'wacht op map';
+      ui.status.textContent = 'awaiting folder';
       prompt(
-        'Kies je Skyrim Special Edition-installatiemap (de map waar "Data" in staat).\n' +
-          'Alles blijft op je eigen computer.',
+        'Select your Skyrim Special Edition install folder (the one containing "Data").\n' +
+          'Everything stays on your own computer.',
         'pick',
       );
       break;
@@ -253,17 +253,17 @@ async function setupGameFolder(): Promise<void> {
 // --- Opstarten ------------------------------------------------------------
 
 async function main(): Promise<void> {
-  terminal.log('sys', 'skyrim web engine · opstarten');
+  terminal.log('sys', 'skyrim web engine · booting');
   terminal.log(
     'sys',
-    `${crossOriginIsolated ? 'cross-origin isolated' : 'niet isolated'} · ${navigator.hardwareConcurrency} threads`,
+    `${crossOriginIsolated ? 'cross-origin isolated' : 'not isolated'} · ${navigator.hardwareConcurrency} threads`,
   );
 
   const gpu = await initGpu(ui.canvas);
   // TODO(M13): device opnieuw aanmaken na verlies (driver-reset) in plaats van stoppen.
   gpu.device.lost
     .then((info) => {
-      if (info.reason !== 'destroyed') showFatal(new Error(`GPU-device verloren: ${info.message}`));
+      if (info.reason !== 'destroyed') showFatal(new Error(`GPU device lost: ${info.message}`));
     })
     .catch(showFatal);
   ui.statGpu.textContent = describeGpu(gpu);
@@ -276,7 +276,7 @@ async function main(): Promise<void> {
   if (backdrop) {
     ui.backdrop.style.backgroundImage = `url("${backdrop}")`;
     ui.backdrop.hidden = false;
-    terminal.log('sys', `eigen achtergrond: ${backdrop}`);
+    terminal.log('sys', `custom backdrop: ${backdrop}`);
   }
 
   await setupGameFolder();

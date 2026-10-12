@@ -78,13 +78,13 @@ describe('BsaArchive', () => {
 
   it('herkent een verkeerde hash als verificatie aan staat', async () => {
     const bytes = buildBsa(files, { corruptFirstFileHash: true });
-    await expect(open(bytes, { verifyHashes: true })).rejects.toThrow(/Hash van/);
+    await expect(open(bytes, { verifyHashes: true })).rejects.toThrow(/Hash mismatch/);
     await expect(open(bytes)).resolves.toBeInstanceOf(BsaArchive);
   });
 
   it('weigert andere magic, versies en afgebroken archieven', async () => {
-    await expect(open(ascii('NOPE'.repeat(10)))).rejects.toThrow(/Geen BSA/);
-    await expect(open(buildBsa(files, { version: 104 }))).rejects.toThrow(/versie 104/);
+    await expect(open(ascii('NOPE'.repeat(10)))).rejects.toThrow(/Not a BSA/);
+    await expect(open(buildBsa(files, { version: 104 }))).rejects.toThrow(/version 104/);
     await expect(open(buildBsa(files).subarray(0, 60))).rejects.toThrow(FormatError);
   });
 

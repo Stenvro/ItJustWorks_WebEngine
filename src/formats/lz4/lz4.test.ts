@@ -49,7 +49,9 @@ describe('decodeLz4Block', () => {
 
   it('gooit als de uitvoer niet past', () => {
     const src = Uint8Array.from([0x16, 0x61, 1, 0]);
-    expect(() => decodeLz4Block(src, 0, src.length, new Uint8Array(5), 0)).toThrow(/groter/);
+    expect(() => decodeLz4Block(src, 0, src.length, new Uint8Array(5), 0)).toThrow(
+      /larger than expected/,
+    );
   });
 });
 
@@ -79,7 +81,7 @@ describe('decompressLz4Frame', () => {
     expect(text(decompressLz4Frame(linked, 8))).toBe('abcdabcd');
 
     const independent = buildFrame(blocks, { independentBlocks: true });
-    expect(() => decompressLz4Frame(independent, 8)).toThrow(/match-offset/);
+    expect(() => decompressLz4Frame(independent, 8)).toThrow(/match offset/);
   });
 
   it('leest aaneengesloten frames en slaat skippable frames over', () => {
@@ -100,15 +102,17 @@ describe('decompressLz4Frame', () => {
 
     const badChecksum = frame.slice();
     badChecksum[6] = (badChecksum[6] ?? 0) ^ 0xff;
-    expect(() => decompressLz4Frame(badChecksum, 3)).toThrow(/header-checksum/);
+    expect(() => decompressLz4Frame(badChecksum, 3)).toThrow(/header checksum/);
 
-    expect(() => decompressLz4Frame(frame, 4)).toThrow(/3 bytes gedecomprimeerd, 4 verwacht/);
+    expect(() => decompressLz4Frame(frame, 4)).toThrow(/decompressed 3 bytes, expected 4/);
   });
 
   it('gooit bij een verkeerde content-checksum als verificatie aan staat', () => {
     const frame = literalFrame(ascii('foo'));
     frame[frame.length - 1] = (frame[frame.length - 1] ?? 0) ^ 0xff;
-    expect(() => decompressLz4Frame(frame, 3, { verifyChecksums: true })).toThrow(/content/);
+    expect(() => decompressLz4Frame(frame, 3, { verifyChecksums: true })).toThrow(
+      /content checksum/,
+    );
     expect(text(decompressLz4Frame(frame, 3))).toBe('foo');
   });
 });

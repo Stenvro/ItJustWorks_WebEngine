@@ -38,7 +38,7 @@ export async function requestFolderAccess(handle: FileSystemDirectoryHandle): Pr
 /** Moet vanuit een klik aangeroepen worden. `undefined` als de gebruiker annuleert. */
 export async function pickGameFolder(): Promise<FileSystemDirectoryHandle | undefined> {
   if (!window.showDirectoryPicker) {
-    throw new Error('Deze browser ondersteunt de File System Access API niet.');
+    throw new Error('This browser does not support the File System Access API.');
   }
   try {
     return await window.showDirectoryPicker({ id: 'skyrim-data', mode: 'read' });

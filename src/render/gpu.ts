@@ -19,20 +19,20 @@ const REQUIRED_FEATURES: readonly GPUFeatureName[] = ['texture-compression-bc'];
 export async function initGpu(canvas: HTMLCanvasElement): Promise<GpuContext> {
   if (!('gpu' in navigator)) {
     throw new GpuUnavailableError(
-      'Deze browser ondersteunt geen WebGPU.\nGebruik een recente versie van Chrome of Edge.',
+      'This browser does not support WebGPU.\nUse a recent version of Chrome or Edge.',
     );
   }
 
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) {
     throw new GpuUnavailableError(
-      'Geen WebGPU-adapter gevonden.\nControleer of hardwareversnelling aan staat in de browser.',
+      'No WebGPU adapter found.\nCheck that hardware acceleration is enabled in the browser.',
     );
   }
 
   const missing = REQUIRED_FEATURES.filter((feature) => !adapter.features.has(feature));
   if (missing.length > 0) {
-    throw new GpuUnavailableError(`De GPU mist vereiste features: ${missing.join(', ')}.`);
+    throw new GpuUnavailableError(`The GPU lacks required features: ${missing.join(', ')}.`);
   }
 
   const device = await adapter.requestDevice({
@@ -44,7 +44,7 @@ export async function initGpu(canvas: HTMLCanvasElement): Promise<GpuContext> {
   });
 
   const context = canvas.getContext('webgpu');
-  if (!context) throw new GpuUnavailableError('Kon geen WebGPU-canvascontext maken.');
+  if (!context) throw new GpuUnavailableError('Could not create a WebGPU canvas context.');
   const format = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format, alphaMode: 'opaque' });
 

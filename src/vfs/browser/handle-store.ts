@@ -19,10 +19,10 @@ function openDb(): Promise<IDBDatabase> {
       resolve(request.result);
     };
     request.onerror = () => {
-      reject(asError(request.error, 'IndexedDB kon niet geopend worden'));
+      reject(asError(request.error, 'Could not open IndexedDB'));
     };
     request.onblocked = () => {
-      reject(new Error('IndexedDB is geblokkeerd door een ander tabblad'));
+      reject(new Error('IndexedDB is blocked by another tab'));
     };
   });
 }
@@ -40,10 +40,10 @@ async function withStore<T>(
         resolve(request.result);
       };
       transaction.onerror = () => {
-        reject(asError(transaction.error, 'IndexedDB-transactie mislukt'));
+        reject(asError(transaction.error, 'IndexedDB transaction failed'));
       };
       transaction.onabort = () => {
-        reject(asError(transaction.error, 'IndexedDB-transactie afgebroken'));
+        reject(asError(transaction.error, 'IndexedDB transaction aborted'));
       };
     });
   } finally {
