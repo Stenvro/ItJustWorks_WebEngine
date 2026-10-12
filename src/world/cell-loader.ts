@@ -34,6 +34,8 @@ export interface CellObject {
   readonly directional?: StaticDirectional;
   /** Trees (TREE CNAM): how their leaves flutter in the wind. */
   readonly leafAnimation?: LeafAnimation;
+  /** XEMI: the light or region whose colour drives the External_Emittance shapes. */
+  readonly emittance?: number;
 }
 
 /** TREE CNAM leaf amplitude and frequency (the lighting shader's TreeParams). */
@@ -62,6 +64,8 @@ export interface CellLight {
   readonly period: number;
   readonly intensityAmplitude: number;
   readonly movementAmplitude: number;
+  /** XEMI: the light or region whose colour the light takes (e.g. sunlight through windows). */
+  readonly emittance?: number;
 }
 
 /** What decides whether a reference is enabled. */
@@ -100,6 +104,12 @@ function leafAnimationOf(base: GameRecord): { leafAnimation?: LeafAnimation } {
   return {
     leafAnimation: { amplitude: view.getFloat32(40, true), frequency: view.getFloat32(44, true) },
   };
+}
+
+/** A reference's emittance source (XEMI), as a spreadable field. */
+function emittanceOf(record: GameRecord): { emittance?: number } {
+  const emittance = nonZeroId(record.formIdField('XEMI'));
+  return emittance === undefined ? {} : { emittance };
 }
 
 /** A static's directional material, as a spreadable field. */
@@ -251,6 +261,7 @@ export async function loadCellData(
           period: light.period,
           intensityAmplitude: light.intensityAmplitude,
           movementAmplitude: light.movementAmplitude,
+          ...emittanceOf(record),
         });
       }
     }
@@ -284,6 +295,7 @@ export async function loadCellData(
       water: base.type === 'ACTI' ? nonZeroId(base.formIdField('WNAM')) : undefined,
       ...directionalOf(base),
       ...leafAnimationOf(base),
+      ...emittanceOf(record),
     });
   }
 

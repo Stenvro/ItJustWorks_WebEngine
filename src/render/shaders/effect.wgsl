@@ -22,10 +22,14 @@ const DRAW_SKY = 0x10000u;
 const DRAW_MULTI_PASS = 0x80000u;
 
 // Light reaching an effect: ambient from its side, the sun (half of it even when facing away:
-// smoke and mist scatter it) and point lights by distance.
+// smoke and mist scatter it) and point lights by distance. With external emittance the
+// reference's XEMI colour (draw.effect.rgb, w = 1) stands for the ambient and the sun.
 fn effectLight(n: vec3f, worldPos: vec3f) -> vec3f {
   let sun = 0.5 + 0.5 * max(dot(n, frame.sunDir.xyz), 0.0);
   var light = directionalAmbient(n) + frame.sunColor.rgb * sun * sunShadow(worldPos, n);
+  if (draw.effect.w > 0.5) {
+    light = draw.effect.rgb;
+  }
   for (var i = 0u; i < frame.counts.x; i++) {
     let point = pointLights[i];
     let offset = point.position - worldPos;

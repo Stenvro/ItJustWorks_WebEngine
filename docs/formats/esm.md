@@ -173,11 +173,31 @@ listed for the cells of the 11 × 11 grid around it are shown: the cells outside
 - **Defaults:** a quadrant without BTXT, a BTXT/ATXT naming LTEX 0 (13,000 vanilla layers) or an
   LTEX that does not exist (0x844 in Skyrim.esm) is drawn with `landscape\dirt02.dds`.
 - Vanilla quadrants have at most 6 layers (7 textures); the shader blends 8.
-- **LTEX:** TNAM texture set (TXST: TX00 diffuse, TX01 normal), SNAM specular exponent.
+- **LTEX:** TNAM texture set (TXST: TX00 diffuse, TX01 normal), SNAM specular exponent (30;
+  80 for river beds), INAM (SSE) flags: `0x1` snow (the diffuse alpha is its snow mask).
   Textures repeat 6 times per cell (`fLandTextureTilingMult` 3 per half cell).
 
 `node tools/land-audit.ts` checks every LAND record: heights, layer counts, and that each land
 texture resolves to files that exist and parse.
+
+## Emittance
+
+**REFR XEMI** (form id; 9182 vanilla references): an outside colour for the reference
+(`src/world/emittance.ts`). It names a LIGH (its colour; candle and Dwemer lights, 1/3 of the
+uses) or a REGN whose weather list holds one weather made for this: FXLightRegionSunlight
+(sunlight colour bright by day, dark blue at night), FXLightRegionInvertWindowWhiterun /
+…Windhelm (white at night, black by day), FXLightRegionCaveBlueSkylight, or an ordinary
+region (WeatherMountains: its most likely weather). The colour is the weather's **sunlight**
+colour at the current hour, blended over the times of day like the sky. Which references use
+it: FX glow fills, mist and dust-beam effects, sunlight bounce and window fill lights in
+interiors, and buildings with window glow maps (WRHouseWind01: glow shapes with SLSF1
+External_Emittance, emissive multiple 2.5).
+
+- Lighting shapes with External_Emittance (`0x20000000`) emit the XEMI colour × their
+  emissive multiple (glow shapes: × the glow map); without XEMI their own emissive colour.
+- Effect shapes with External_Emittance and Effect_Lighting are lit by the XEMI colour instead
+  of the scene's ambient and sun (the effect shader's DLightColor), plus point lights.
+- A LIGH reference with XEMI takes that colour.
 
 ## Trees
 

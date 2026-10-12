@@ -6,6 +6,7 @@ import { parseNif, type NifFile } from '../formats/nif/nif.ts';
 import type { Renderer } from '../render/renderer.ts';
 import { propertyMaterial, type AddonNode } from '../render/model-data.ts';
 import type {
+  EmittanceColor,
   GpuDirectionalMaterial,
   GpuModel,
   GpuWaterType,
@@ -16,7 +17,8 @@ import type {
 } from '../render/scene-renderer.ts';
 import { TextureCache } from '../render/texture-cache.ts';
 import type { Vfs } from '../vfs/vfs.ts';
-import { parseAddonNode } from '../world/cell-records.ts';
+import { parseAddonNode, parseLight } from '../world/cell-records.ts';
+import { emittanceColor, emittanceWeather, type EmittanceSource } from '../world/emittance.ts';
 import {
   HD_LOD_SNOW_THRESHOLD_ANGLE,
   LOD_MATERIALS,
@@ -27,6 +29,12 @@ import {
 } from '../world/material-object.ts';
 import { GameSettings } from '../world/game-settings.ts';
 import { parseWater, WaterFlag, type WaterType } from '../world/water.ts';
+import {
+  parseRegionWeather,
+  parseWeather,
+  type ClimateRecord,
+  type WeatherRecord,
+} from '../world/weather.ts';
 import { ScriptEnvironment } from '../world/player-home.ts';
 import { RecordDatabase } from '../world/record-db.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
@@ -34,6 +42,25 @@ import { PluginIndexer } from '../workers/plugin-indexer.ts';
 import type { Terminal } from './terminal.ts';
 
 const numberFormat = new Intl.NumberFormat('en-US');
+
+/** An emittance colour that the session moves with the hour. */
+interface MutableEmittance {
+  rgb: [number, number, number];
+  version: number;
+}
+
+interface EmittanceEntry {
+  readonly color: MutableEmittance;
+  loaded: { source: EmittanceSource; weather?: WeatherRecord } | undefined;
+}
+
+/** Sets an emittance colour, bumping its version when it changes visibly. */
+function setEmittance(color: MutableEmittance, rgb: readonly [number, number, number]): void {
+  const changed = rgb.some((value, i) => Math.abs(value - (color.rgb[i] ?? 0)) > 1 / 1024);
+  if (!changed) return;
+  color.rgb = [rgb[0], rgb[1], rgb[2]];
+  color.version++;
+}
 
 /**
  * GPU memory for models and textures loaded for the session: past it, the least recently
@@ -66,6 +93,8 @@ export class GameSession {
   /** Material objects (MATO) ready to draw, by form id. */
   readonly #directionalMaterials = new Map<number, Promise<GpuDirectionalMaterial | undefined>>();
   readonly #materialObjects = new Map<number, Promise<MaterialObject | undefined>>();
+  /** Emittance sources (XEMI) by form id, with their current colour. */
+  readonly #emittance = new Map<number, EmittanceEntry>();
   #addonPathsEntry: Promise<Map<number, string>> | undefined;
 
   constructor(device: GPUDevice, renderer: Renderer, vfs: Vfs, terminal: Terminal) {
@@ -249,6 +278,58 @@ export class GameSession {
       this.#materialObjects.set(formId, entry);
     }
     return entry;
+  }
+
+  /**
+   * The colour of an emittance source (REFR XEMI: a light or a region), shared by every
+   * reference naming it; black until the record has loaded. updateEmittance moves it with
+   * the hour.
+   */
+  emittance(formId: number): EmittanceColor {
+    let entry = this.#emittance.get(formId);
+    if (!entry) {
+      const created: EmittanceEntry = { color: { rgb: [0, 0, 0], version: 0 }, loaded: undefined };
+      entry = created;
+      this.#emittance.set(formId, created);
+      void this.#emittanceSource(formId).then((loaded) => {
+        created.loaded = loaded;
+        // A light's colour does not change: set it at once.
+        if (loaded?.source.kind === 'light') setEmittance(created.color, loaded.source.color);
+      });
+    }
+    return entry.color;
+  }
+
+  /**
+   * Moves the emittance colours to a game hour (regions follow their weather's sunlight:
+   * windows lit at night, sunbeams by day). `climate` gives the times of sunrise and sunset.
+   */
+  updateEmittance(hour: number, climate?: ClimateRecord): void {
+    for (const entry of this.#emittance.values()) {
+      const loaded = entry.loaded;
+      if (loaded?.source.kind !== 'region') continue;
+      setEmittance(entry.color, emittanceColor(loaded.source, loaded.weather, climate, hour));
+    }
+  }
+
+  async #emittanceSource(
+    formId: number,
+  ): Promise<{ source: EmittanceSource; weather?: WeatherRecord } | undefined> {
+    const db = await this.db;
+    const record = await db.get(formId);
+    if (record?.type === 'LIGH')
+      return { source: { kind: 'light', color: parseLight(record).color } };
+    if (record?.type !== 'REGN') return undefined;
+    const source: EmittanceSource = {
+      kind: 'region',
+      weathers: parseRegionWeather(record)?.weathers ?? [],
+    };
+    const weatherId = emittanceWeather(source);
+    const weatherRecord = weatherId === undefined ? undefined : await db.get(weatherId);
+    return {
+      source,
+      ...(weatherRecord?.type === 'WTHR' && { weather: parseWeather(weatherRecord) }),
+    };
   }
 
   #waterRecord(formId: number): Promise<WaterType | undefined> {
