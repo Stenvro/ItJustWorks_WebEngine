@@ -13,6 +13,11 @@ export class BlobByteSource implements ByteSource {
     return this.#blob.size;
   }
 
+  /** The Blob itself (it can be sent to a worker without copying its data). */
+  get blob(): Blob {
+    return this.#blob;
+  }
+
   async read(offset: number, length: number): Promise<Uint8Array> {
     checkReadRange(this.size, offset, length);
     return new Uint8Array(await this.#blob.slice(offset, offset + length).arrayBuffer());

@@ -138,9 +138,15 @@ export class RecordDatabase {
 
   /**
    * Indexes every plugin in the VFS load order and loads the string tables of localized
-   * plugins for `language` (the INI's sLanguage, lowercase).
+   * plugins for `language` (the INI's sLanguage, lowercase). `index` reads a plugin's
+   * record headers (the browser does it in workers; by default here).
    */
-  static async open(vfs: Vfs, language = 'english'): Promise<RecordDatabase> {
+  static async open(
+    vfs: Vfs,
+    language = 'english',
+    index: (source: ByteSource, name: string) => Promise<PluginIndex> = (source) =>
+      indexPlugin(source),
+  ): Promise<RecordDatabase> {
     const problems: string[] = [];
     const slotByName = new Map(
       vfs.loadOrder.map((entry, slot) => [asciiLowerCase(entry.name), slot]),
@@ -149,8 +155,8 @@ export class RecordDatabase {
     const plugins = await Promise.all(
       vfs.loadOrder.map(async (entry, slot): Promise<Plugin> => {
         const source = await vfs.openSource(entry.name);
-        const index = await indexPlugin(source);
-        const header = await readRecord(source, index, 0);
+        const pluginIndex = await index(source, entry.name);
+        const header = await readRecord(source, pluginIndex, 0);
         if (header.header.type !== 'TES4')
           throw new Error(`${entry.name}: first record is not TES4`);
         const info = parsePluginInfo(parseFields(header.data));
@@ -172,7 +178,7 @@ export class RecordDatabase {
           }
           strings = new PluginStrings(tables);
         }
-        return { slot, entry, info, index, source, masterSlots, strings };
+        return { slot, entry, info, index: pluginIndex, source, masterSlots, strings };
       }),
     );
     return new RecordDatabase(plugins, problems);

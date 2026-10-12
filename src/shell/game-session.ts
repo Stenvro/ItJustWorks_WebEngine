@@ -14,6 +14,7 @@ import { parseWater, WaterFlag, type WaterType } from '../world/water.ts';
 import { ScriptEnvironment } from '../world/player-home.ts';
 import { RecordDatabase } from '../world/record-db.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
+import { PluginIndexer } from '../workers/plugin-indexer.ts';
 import type { Terminal } from './terminal.ts';
 
 const numberFormat = new Intl.NumberFormat('en-US');
@@ -43,10 +44,15 @@ export class GameSession {
     const loader = new AssetLoader(vfs);
     this.loader = loader;
     this.textures = new TextureCache(device, (path) => loader.loadTexture(path));
-    // TODO(M4): index plugins in a worker; the main thread only does async I/O here, but
-    // splitting ~1.2 million record headers still takes a moment.
+    // The plugins' record headers (~1.2 million) are read in workers.
     const start = performance.now();
-    this.db = RecordDatabase.open(vfs).then((db) => {
+    const indexer = new PluginIndexer();
+    const indexed = RecordDatabase.open(vfs, 'english', (source, name) =>
+      indexer.index(name, source),
+    ).finally(() => {
+      indexer.dispose();
+    });
+    this.db = indexed.then((db) => {
       for (const problem of db.problems) terminal.log('esm', problem, 'warn');
       const records = db.plugins.reduce((sum, plugin) => sum + plugin.index.recordCount, 0);
       terminal.log(

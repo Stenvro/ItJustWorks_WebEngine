@@ -26,12 +26,12 @@ async function limited<T>(task: () => Promise<T>): Promise<T> {
   }
 }
 
-class HttpByteSource implements ByteSource {
+export class HttpByteSource implements ByteSource {
   readonly size: number;
-  readonly #url: string;
+  readonly url: string;
 
   constructor(url: string, size: number) {
-    this.#url = url;
+    this.url = url;
     this.size = size;
   }
 
@@ -39,14 +39,14 @@ class HttpByteSource implements ByteSource {
     checkReadRange(this.size, offset, length);
     if (length === 0) return new Uint8Array(0);
     const bytes = await limited(async () => {
-      const response = await fetch(this.#url, {
+      const response = await fetch(this.url, {
         headers: { Range: `bytes=${offset}-${offset + length - 1}` },
       });
-      if (!response.ok) throw new Error(`HTTP ${response.status} for ${this.#url}`);
+      if (!response.ok) throw new Error(`HTTP ${response.status} for ${this.url}`);
       return new Uint8Array(await response.arrayBuffer());
     });
     if (bytes.length !== length) {
-      throw new Error(`Expected ${length} bytes from ${this.#url}, got ${bytes.length}`);
+      throw new Error(`Expected ${length} bytes from ${this.url}, got ${bytes.length}`);
     }
     return bytes;
   }
