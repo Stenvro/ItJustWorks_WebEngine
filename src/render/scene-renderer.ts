@@ -186,6 +186,7 @@ const PROJECTED_TEXTURES = {
 const LOD_LANDSCAPE_NOISE = 'textures\\terrain\\noise.dds';
 const SHADER_LOD_LANDSCAPE_NOISE = 18;
 const SHADER_MULTI_LAYER_PARALLAX = 11;
+const SHADER_PARALLAX = 3;
 const SLSF1_MODEL_SPACE_NORMALS = 0x1000;
 const SLSF1_SPECULAR = 0x1;
 const SLSF2_GLOW_MAP = 0x40;
@@ -813,7 +814,8 @@ function writeMultiPass(
  * The textures a material binds: diffuse (effect: source), normal map, slot 2 (glow map or
  * rim / soft light map; effect: greyscale palette), environment map and mask, slot 7 (back
  * light map, or the specular map of model-space normals) and slot 6 (the multi-layer
- * parallax inner layer; LOD landscape noise: the terrain noise); '' where none.
+ * parallax inner layer; parallax: the height map, slot 3; LOD landscape noise: the terrain
+ * noise); '' where none.
  */
 function materialTextures(
   material: PartMaterial | undefined,
@@ -839,9 +841,11 @@ function materialTextures(
     backLight || specularMap ? slot(7) : '',
     multiLayer
       ? slot(6)
-      : material.shaderType === SHADER_LOD_LANDSCAPE_NOISE
-        ? LOD_LANDSCAPE_NOISE
-        : '',
+      : material.shaderType === SHADER_PARALLAX
+        ? slot(3)
+        : material.shaderType === SHADER_LOD_LANDSCAPE_NOISE
+          ? LOD_LANDSCAPE_NOISE
+          : '',
   ];
 }
 

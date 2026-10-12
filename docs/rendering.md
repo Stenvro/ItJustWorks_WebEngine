@@ -129,8 +129,11 @@ constants of Nukem9's decompiled `BSLightingShader`:
    from the camera (fLeafAnimDampenDistStart / End); wind = the weather's wind speed (0..1).
    The vertex alpha is the leaf weight, not transparency.
 
-SSE's parallax shader (type 3) samples the height map but never offsets the texture
-coordinates, so parallax shapes look like the default shader, as in the original.
+Parallax (type 3, 11 vanilla shapes in Markarth): the height map (slot 3) shifts the texture
+coordinates by (height × 0.08 − 0.04) along the x and y of the **model-space** view direction,
+as the vanilla pixel shader does (aers' Skyrim-SE-Shader-Tools decompile; a correct version
+would use the tangent-space direction; the bug is kept). Community Shaders 0.7.4 leaves this
+out (it replaces parallax with its own), so that source is not used here.
 
 ## Effects and particles
 
