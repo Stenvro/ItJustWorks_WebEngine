@@ -84,6 +84,11 @@ export class OrbitCamera {
     this.#near = Math.max(0.5, safeRadius / 200);
   }
 
+  /** Near plane: scaled with the model, so small and huge models both fit. */
+  get near(): number {
+    return this.#near;
+  }
+
   get upVector(): Vec3 {
     return this.#up === 'z' ? [0, 0, 1] : [0, 1, 0];
   }

@@ -16,6 +16,12 @@ export class GpuUnavailableError extends Error {
  */
 const REQUIRED_FEATURES: readonly GPUFeatureName[] = ['texture-compression-bc'];
 
+/**
+ * Sampled textures per shader stage: the terrain blends 8 diffuse + 8 normal maps and reads
+ * the sun's shadow map (17); WebGPU's default is 16. Desktop GPUs offer 32 and more.
+ */
+const REQUIRED_SAMPLED_TEXTURES = 17;
+
 export async function initGpu(canvas: HTMLCanvasElement): Promise<GpuContext> {
   if (!('gpu' in navigator)) {
     throw new GpuUnavailableError(
@@ -35,9 +41,17 @@ export async function initGpu(canvas: HTMLCanvasElement): Promise<GpuContext> {
     throw new GpuUnavailableError(`The GPU lacks required features: ${missing.join(', ')}.`);
   }
 
+  const sampledTextures = adapter.limits.maxSampledTexturesPerShaderStage;
+  if (sampledTextures < REQUIRED_SAMPLED_TEXTURES) {
+    throw new GpuUnavailableError(
+      `The GPU allows ${String(sampledTextures)} textures per shader; ` +
+        `${String(REQUIRED_SAMPLED_TEXTURES)} are needed.`,
+    );
+  }
   const device = await adapter.requestDevice({
     label: 'skyrim-web',
     requiredFeatures: [...REQUIRED_FEATURES],
+    requiredLimits: { maxSampledTexturesPerShaderStage: Math.min(sampledTextures, 32) },
   });
   device.addEventListener('uncapturederror', (event) => {
     console.error('[WebGPU]', event.error.message);

@@ -210,6 +210,7 @@ export class WorldViewer {
       water: () => this.#waterFrame(),
       imageSpace: () => this.#sky?.imageSpace(),
       backdrop: false,
+      shadows: true,
     });
     document.body.classList.add('has-scene');
     this.#update();

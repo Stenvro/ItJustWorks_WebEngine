@@ -4,6 +4,7 @@
 // parallax and multi-layer parallax, snow and LOD variants.
 
 const SLSF1_SPECULAR = 0x1u;
+const SLSF1_RECEIVE_SHADOWS = 0x100u;
 const SLSF1_VERTEX_ALPHA = 0x8u;
 const SLSF1_ENVIRONMENT_MAPPING = 0x80u;
 const SLSF1_MODEL_SPACE_NORMALS = 0x1000u;
@@ -72,7 +73,10 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
   let specularMask =
     select(normalSample.a, 1.0, (flags1 & SLSF1_MODEL_SPACE_NORMALS) != 0u) * draw.specular.a;
 
-  let light = lightAt(n, in.worldPos, toCamera, glossiness, hasSpecular);
+  // Receive_Shadows: the sun's cascaded shadow maps darken the surface.
+  let receivesShadows = (flags1 & SLSF1_RECEIVE_SHADOWS) != 0u;
+  let shadow = select(1.0, sunShadow(in.worldPos, safeNormalize(in.normal)), receivesShadows);
+  let light = lightAt(n, in.worldPos, toCamera, glossiness, hasSpecular, shadow);
   let diffuseLight = light.diffuse;
   let specularLight = light.specular;
 

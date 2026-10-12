@@ -1,10 +1,23 @@
+import { frustumPlanes, invert } from './frustum.ts';
 import type { GpuContext } from './gpu.ts';
+import { fitCascades, type Cascade } from './shadow-cascades.ts';
+
+/**
+ * Frames between updates of each shadow cascade: the near ones every frame, the far ones
+ * (large texels, little visible change) every second and fourth frame.
+ */
+const CASCADE_PERIODS: readonly number[] = [1, 1, 2, 4];
+/** Casters smaller than this many shadow-map texels are left out of a cascade. */
+const MIN_CASTER_TEXELS = 3;
 import type { Mat4, Vec3 } from './math.ts';
 import {
   DEPTH_FORMAT,
   SAMPLE_COUNT,
   SceneRenderer,
   type GpuScene,
+  SHADOW_MAP_LAYERS,
+  SHADOW_MAP_SIZE,
+  type FrameShadows,
   type LodMask,
   type SceneLighting,
   type WaterFrame,
@@ -20,6 +33,8 @@ import { TreeLodRenderer, type TreeLodFrame } from './tree-lod.ts';
 /** Anything that can view a scene: the orbit camera, the free-flying camera, ... */
 export interface Camera {
   readonly position: Vec3;
+  /** Near plane of the projection. */
+  readonly near: number;
   update(deltaSeconds: number): void;
   viewProjection(aspect: number, out?: Mat4): Mat4;
 }
@@ -45,6 +60,8 @@ export interface SceneView {
   readonly lighting: (camera: Camera) => SceneLighting;
   /** Draw the shell backdrop behind the scene (model viewer) or not (cells). */
   readonly backdrop: boolean;
+  /** The directional light casts cascaded shadows (exteriors). */
+  readonly shadows?: boolean;
 }
 
 interface RenderTargets {
@@ -82,13 +99,19 @@ export class Renderer {
   readonly #viewProjection = new Float32Array(16);
   #targets: RenderTargets | undefined;
   #view: SceneView | undefined;
+  /** The cascades as last rendered into the shadow map, and a frame counter for updates. */
+  readonly #cascades: Cascade[] = [];
+  #shadowFrame = 0;
   #lastTime: number | undefined;
 
   constructor(gpu: GpuContext) {
     this.#gpu = gpu;
     const { device, format } = gpu;
     this.scene = new SceneRenderer(device, HDR_FORMAT);
-    this.terrain = new TerrainRenderer(device, HDR_FORMAT, this.scene.frameLayout);
+    this.terrain = new TerrainRenderer(device, HDR_FORMAT, this.scene.frameLayout, {
+      layout: this.scene.cascadeLayout,
+      module: this.scene.shadowModule,
+    });
     this.sky = new SkyRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.treeLod = new TreeLodRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.post = new PostProcessor(device, format);
@@ -157,15 +180,38 @@ export class Renderer {
       this.#backdropData[2] = canvasTexture.height / pixelScale;
       device.queue.writeBuffer(this.#backdropBuffer, 0, this.#backdropData);
     }
+    let shadows: FrameShadows | undefined;
+    /** Cascades to render into the shadow map this frame. */
+    const dueCascades: number[] = [];
     if (view) {
       view.camera.update(delta);
       view.camera.viewProjection(targets.width / targets.height, this.#viewProjection);
+      const lighting = view.lighting(view.camera);
+      const inverse = view.shadows ? invert(this.#viewProjection) : undefined;
+      if (inverse) {
+        const fitted = fitCascades(
+          inverse,
+          view.camera.near,
+          lighting.sunDirection,
+          SHADOW_MAP_SIZE,
+        );
+        this.#shadowFrame++;
+        fitted.forEach((cascade, i) => {
+          const period = CASCADE_PERIODS[i] ?? 1;
+          if (this.#cascades[i] !== undefined && this.#shadowFrame % period !== 0) return;
+          this.#cascades[i] = cascade;
+          dueCascades.push(i);
+        });
+        // The shader samples each cascade with the matrix it was rendered with.
+        shadows = { cascades: this.#cascades };
+      }
       this.scene.updateFrame(
         this.#viewProjection,
         view.camera.position,
-        view.lighting(view.camera),
+        lighting,
         timeSeconds,
         view.lodMask?.(),
+        shadows,
       );
     }
 
@@ -175,6 +221,39 @@ export class Renderer {
     const colorView = targets.color.createView();
     const depthView = targets.depth.createView();
     const encoder = device.createCommandEncoder({ label: 'frame' });
+
+    // The sun's shadow map: casters of the loaded cells, one pass per cascade.
+    if (view && shadows) {
+      const terrain = view.terrain ? [...view.terrain()] : [];
+      for (const i of dueCascades) {
+        const cascade = this.#cascades[i];
+        if (!cascade || i >= SHADOW_MAP_LAYERS) continue;
+        const planes = frustumPlanes(cascade.viewProj);
+        const pass = encoder.beginRenderPass({
+          label: `shadow-${String(i)}`,
+          colorAttachments: [],
+          depthStencilAttachment: {
+            view: this.scene.shadowMap.createView({
+              dimension: '2d',
+              baseArrayLayer: i,
+              arrayLayerCount: 1,
+            }),
+            depthClearValue: 1,
+            depthLoadOp: 'clear',
+            depthStoreOp: 'store',
+          },
+        });
+        this.terrain.drawShadows(
+          pass,
+          this.scene.cascadeBindGroup,
+          this.scene.cascadeOffset(i),
+          terrain,
+          planes,
+        );
+        this.scene.drawShadows(pass, scenes, i, planes, cascade.texelSize * MIN_CASTER_TEXELS);
+        pass.end();
+      }
+    }
 
     const opaque = encoder.beginRenderPass({
       label: 'opaque',
@@ -202,7 +281,9 @@ export class Renderer {
     if (view) {
       if (sky) this.sky.draw(opaque, this.scene.frameBindGroup, sky);
       const terrain = view.terrain?.();
-      if (terrain) this.terrain.draw(opaque, this.scene.frameBindGroup, terrain);
+      if (terrain) {
+        this.terrain.draw(opaque, this.scene.frameBindGroup, terrain, this.scene.viewPlanes);
+      }
       const trees = view.trees?.();
       if (trees) this.treeLod.draw(opaque, this.scene.frameBindGroup, trees);
       this.scene.drawOpaque(opaque, scenes);

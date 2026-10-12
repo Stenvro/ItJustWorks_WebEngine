@@ -1,6 +1,6 @@
 // Per-frame data shared by every world shader (objects, terrain, water): camera, the
-// directional light, directional ambient, fog and point lights. Prepended to each shader
-// module in TypeScript. ASCII only.
+// directional light and its cascaded shadow maps, directional ambient, fog and point lights.
+// Prepended to each shader module in TypeScript. ASCII only.
 
 struct Frame {
   viewProj: mat4x4f,
@@ -21,6 +21,11 @@ struct Frame {
   // Distant LOD is hidden in loaded cells: south-west cell of a 7x7 grid (xy) and one bit per
   // cell, row by row from the south-west (zw: bits 0-31, 32-48).
   lodMask: vec4i,
+  // Sun shadows: light view-projection of each cascade, the distance where each ends, and
+  // x: on, y: map size (texels), z: depth bias, w: normal offset in texels.
+  shadowMatrices: array<mat4x4f, 4>,
+  shadowSplits: vec4f,
+  shadowParams: vec4f,
 };
 
 struct PointLight {
@@ -32,6 +37,50 @@ struct PointLight {
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var<storage, read> pointLights: array<PointLight>;
+@group(0) @binding(2) var shadowMap: texture_depth_2d_array;
+@group(0) @binding(3) var shadowSampler: sampler_comparison;
+
+// How much of the sun reaches a point (0 in shadow, 1 lit): the first cascade that holds
+// it, sampled 3x3 with a small offset along the normal against acne, fading out at the end
+// of the shadow distance.
+fn sunShadow(worldPos: vec3f, n: vec3f) -> f32 {
+  if (frame.shadowParams.x < 0.5) {
+    return 1.0;
+  }
+  let distance = length(worldPos - frame.cameraPos.xyz);
+  var cascade = 4u;
+  for (var i = 0u; i < 4u; i++) {
+    if (distance < frame.shadowSplits[i]) {
+      cascade = i;
+      break;
+    }
+  }
+  if (cascade >= 4u) {
+    return 1.0;
+  }
+  let far = frame.shadowSplits[cascade];
+  let near = select(0.0, frame.shadowSplits[max(cascade, 1u) - 1u], cascade > 0u);
+  let texelWorld = 2.0 * (far - near) / frame.shadowParams.y;
+  let offset = n * texelWorld * frame.shadowParams.w;
+  let clip = frame.shadowMatrices[cascade] * vec4f(worldPos + offset, 1.0);
+  let uv = vec2f(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5);
+  if (any(uv < vec2f(0.0)) || any(uv > vec2f(1.0)) || clip.z > 1.0) {
+    return 1.0;
+  }
+  let depth = clip.z - frame.shadowParams.z;
+  let texel = 1.0 / frame.shadowParams.y;
+  var lit = 0.0;
+  for (var y = -1; y <= 1; y++) {
+    for (var x = -1; x <= 1; x++) {
+      let at = uv + vec2f(f32(x), f32(y)) * texel;
+      lit += textureSampleCompareLevel(shadowMap, shadowSampler, at, cascade, depth);
+    }
+  }
+  lit /= 9.0;
+  // The last cascade fades out over its last tenth.
+  let fade = select(0.0, clamp((distance - far * 0.9) / (far * 0.1), 0.0, 1.0), cascade == 3u);
+  return mix(lit, 1.0, fade);
+}
 
 // Whether distant LOD at this position is covered by a loaded cell.
 fn lodHidden(worldPos: vec3f) -> bool {
@@ -63,17 +112,25 @@ struct Lighting {
   specular: vec3f,
 };
 
-// Ambient, the directional light and point lights (brightness falls off as 1 - d^2/r^2).
-// TODO(M4): shadows, the engine's per-object light limit.
-fn lightAt(n: vec3f, worldPos: vec3f, toCamera: vec3f, glossiness: f32, specular: bool) -> Lighting {
+// Ambient, the directional light (times `shadow`: 1 lit, 0 in shadow) and point lights
+// (brightness falls off as 1 - d^2/r^2).
+// TODO(M13): the engine's per-object light limit; shadows of interior point lights.
+fn lightAt(
+  n: vec3f,
+  worldPos: vec3f,
+  toCamera: vec3f,
+  glossiness: f32,
+  specular: bool,
+  shadow: f32,
+) -> Lighting {
   var result: Lighting;
   let toSun = frame.sunDir.xyz;
-  let sunNDotL = max(dot(n, toSun), 0.0);
+  let sunNDotL = max(dot(n, toSun), 0.0) * shadow;
   result.diffuse = directionalAmbient(n) + frame.sunColor.rgb * sunNDotL;
   result.specular = vec3f(0.0);
   if (specular && sunNDotL > 0.0) {
     let halfway = safeNormalize(toSun + toCamera);
-    result.specular += frame.sunColor.rgb * pow(max(dot(n, halfway), 0.0), glossiness);
+    result.specular += frame.sunColor.rgb * pow(max(dot(n, halfway), 0.0), glossiness) * shadow;
   }
   for (var i = 0u; i < frame.counts.x; i++) {
     let light = pointLights[i];

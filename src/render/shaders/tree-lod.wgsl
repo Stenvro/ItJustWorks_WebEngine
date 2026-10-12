@@ -57,6 +57,6 @@ fn fs_tree(input: TreeOut) -> @location(0) vec4f {
     discard;
   }
   let toCamera = safeNormalize(frame.cameraPos.xyz - input.worldPos);
-  let light = lightAt(input.normal, input.worldPos, toCamera, 1.0, false);
+  let light = lightAt(input.normal, input.worldPos, toCamera, 1.0, false, 1.0);
   return vec4f(applyFog(texel.rgb * light.diffuse, input.worldPos), 1.0);
 }
