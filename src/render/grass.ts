@@ -1,5 +1,6 @@
 // Draws grass: for each grass type of a cell, its mesh instanced at every placed plant.
 
+import { gbufferTarget } from './gbuffer.ts';
 import { sphereVisible, type Plane } from './frustum.ts';
 import {
   DEPTH_FORMAT,
@@ -220,7 +221,7 @@ export class GrassRenderer {
         fragment: {
           module: this.#module,
           entryPoint: 'fs_grass',
-          targets: [{ format: this.#colorFormat }],
+          targets: [{ format: this.#colorFormat }, gbufferTarget(false)],
         },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'greater' },
