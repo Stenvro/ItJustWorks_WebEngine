@@ -10,7 +10,12 @@ import { controllerTime, sampleBool, sampleFloat } from './animation.ts';
 import { billboardWorld } from './billboard.ts';
 import { invert } from './frustum.ts';
 import { identity, maxScale, multiply, type Mat4, type Vec3 } from './math.ts';
-import type { ParticleEmitter, ParticleParam, ParticleSystemData } from './particle-data.ts';
+import type {
+  ParticleEmitter,
+  ParticleParam,
+  ParticleSystemData,
+  ParticleTrack,
+} from './particle-data.ts';
 
 /** Floats per drawn particle: position, size, RGBA, atlas rect, axis, rotation. */
 export const PARTICLE_FLOATS = 16;
@@ -28,6 +33,11 @@ export interface ParticleContext {
   readonly camera: Vec3;
   /** Wind velocity in world units per second (BSWindModifier scales it). */
   readonly wind: Vec3;
+  /**
+   * The sequences the object's behavior graph plays (lower-case name, start on the same
+   * clock as `seconds`): their tracks drive the manager-controlled controllers.
+   */
+  readonly sequences?: readonly { readonly sequence: string; readonly start: number }[];
 }
 
 /** Floats of per-particle state (see the S_* offsets). */
@@ -417,8 +427,8 @@ export class ParticleSimulation {
 
     // Controllers.
     this.#params.clear();
-    for (const track of data.tracks) {
-      const time = controllerTime(track.timing, context.seconds);
+    const apply = (track: ParticleTrack, seconds: number): void => {
+      const time = controllerTime(track.timing, seconds);
       const value =
         track.kind === 'float'
           ? sampleFloat(track.source, time)
@@ -426,6 +436,12 @@ export class ParticleSimulation {
             ? 1
             : 0;
       this.#params.set(`${track.target}|${track.param}`, value);
+    };
+    for (const track of data.tracks) apply(track, context.seconds);
+    for (const playing of context.sequences ?? []) {
+      for (const track of data.sequenceTracks.get(playing.sequence) ?? []) {
+        apply(track, context.seconds - playing.start);
+      }
     }
 
     // Spaces: particles live in world space or in the system's own frame.

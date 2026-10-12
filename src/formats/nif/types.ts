@@ -217,6 +217,18 @@ export interface IntegerExtraDataBlock {
   readonly value: number;
 }
 
+/**
+ * BSBehaviorGraphExtraData (on the root node): the Havok Behavior project that animates the
+ * mesh, relative to meshes\.
+ */
+export interface BehaviorGraphExtraDataBlock {
+  readonly kind: 'behavior-graph-extra-data';
+  readonly name: string;
+  readonly graph: string;
+  /** Whether the graph drives the base skeleton (actors) rather than the mesh's own bones. */
+  readonly controlsBaseSkeleton: boolean;
+}
+
 /** BSBound: a box (a skeleton's "BBX": the actor's collision bound). */
 export interface BoundBlock {
   readonly kind: 'bound';
@@ -674,6 +686,7 @@ export type NifBlock =
   | BSShaderTextureSetBlock
   | NiAlphaPropertyBlock
   | IntegerExtraDataBlock
+  | BehaviorGraphExtraDataBlock
   | BoundBlock
   | NiSkinInstanceBlock
   | NiSkinDataBlock

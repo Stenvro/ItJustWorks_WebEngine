@@ -3,9 +3,13 @@
 // vertex layout and material state, per-draw uniforms in one buffer (dynamic offsets),
 // opaque first, then blended parts sorted back to front.
 
+import type { ObjectGraph } from '../animation/object-graph.ts';
+import type { BehaviorGraph } from '../formats/hkx/behavior.ts';
 import {
   animate,
+  animateLayers,
   type AnimationFrame,
+  type AnimationLayer,
   type ModelAnimation,
   playSequence,
   type ModelSequences,
@@ -25,6 +29,7 @@ import type {
 } from './model-data.ts';
 import type { ParticleSystemData } from './particle-data.ts';
 import type { PlacedPart } from './raycast.ts';
+import { REFRACTION_FORMAT } from './refraction.ts';
 import { PARTICLE_FLOATS, ParticleSimulation, type ParticleContext } from './particle-sim.ts';
 import commonShader from './shaders/common.wgsl?raw';
 import frameShader from './shaders/frame.wgsl?raw';
@@ -267,7 +272,8 @@ export function flatAmbient(color: Vec3): SceneLighting['ambient'] {
 }
 
 /** When a part is drawn: with the opaque scene, as water after it, or blended last. */
-type PartPass = 'opaque' | 'water' | 'transparent';
+/** Refraction shapes draw only into the refraction buffer (see refraction.ts). */
+type PartPass = 'opaque' | 'water' | 'transparent' | 'refraction';
 
 interface GpuPart {
   readonly part: ModelPart;
@@ -341,8 +347,13 @@ export class GpuModel {
   readonly parts: readonly GpuPart[];
   /** Controllers that play on their own (evaluated every frame). */
   readonly animation: ModelAnimation | undefined;
-  /** Sequences the game plays on demand (doors). */
+  /** Sequences the game plays on demand (doors) or the behavior graph plays. */
   readonly sequences: ModelSequences | undefined;
+  /**
+   * The behavior graph that decides which sequences play (ModelData.behaviorGraph), resolved
+   * by the session; every placed instance runs its own (ModelInstance.graph).
+   */
+  graph: BehaviorGraph | undefined = undefined;
   readonly particles: readonly GpuParticleSystem[];
   /**
    * Models the engine attaches at AddOnNodes (ADDN: candle flames, torch fire, smoke),
@@ -421,6 +432,8 @@ export interface ModelInstance {
   readonly motion?: InstanceMotion;
   /** The sequence the instance plays (a door opening); its model's sequences. */
   readonly playback?: Playback;
+  /** The instance's running behavior graph (over its model's graph and sequences). */
+  readonly graph?: ObjectGraph;
   /** Water type of the model's water surfaces (the activator's WNAM); default otherwise. */
   readonly water?: GpuWaterType;
   /** A static's directional material (STAT DNAM). */
@@ -511,6 +524,15 @@ interface AnimatedDraw {
   readonly animation: ModelAnimation | undefined;
   /** The instance's own sequence playback (doors), over the model's sequences. */
   readonly playback?: { readonly state: Playback; readonly sequences: ModelSequences };
+  /** The instance's behavior graph and the model's sequences it plays. */
+  readonly graph?: GraphDraw;
+}
+
+/** An instance's running behavior graph with what it plays from. */
+interface GraphDraw {
+  readonly player: ObjectGraph;
+  readonly sequences: ModelSequences;
+  readonly animation: ModelAnimation | undefined;
 }
 
 /** A draw of a moving instance: rewritten when the instance's motion version changes. */
@@ -539,6 +561,8 @@ interface ParticleDraw {
   readonly simulation: ParticleSimulation;
   readonly instanceWorld: Mat4;
   readonly animation: ModelAnimation | undefined;
+  /** The instance's behavior graph: its sequences drive the system's controllers. */
+  readonly graph?: GraphDraw;
   readonly uniformOffset: number;
   /** Where the system sits in the world (update distance before it has particles). */
   readonly origin: readonly [number, number, number];
@@ -703,13 +727,17 @@ function writeAnimatedMaterial(
 
 /** SLSF1 Refraction on the lighting shader (no vanilla effect shader uses it). */
 const SLSF1_REFRACTION = 0x8000;
-const REFRACTION_BLEND: GPUBlendState = {
-  color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-  alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-};
 
 function isRefraction(material: PartMaterial | undefined): boolean {
   return material?.kind === 'lighting' && (material.flags1 & SLSF1_REFRACTION) !== 0;
+}
+
+/** An instance's running behavior graph, if its model has sequences for it to play. */
+function graphDraw(instance: ModelInstance): GraphDraw | undefined {
+  const sequences = instance.model.sequences;
+  return instance.graph && sequences
+    ? { player: instance.graph, sequences, animation: instance.model.animation }
+    : undefined;
 }
 
 function blendState(alpha: AlphaState | undefined): GPUBlendState | undefined {
@@ -1222,9 +1250,9 @@ export class SceneRenderer {
         const indexBuffer = createBuffer(device, part.indices, GPUBufferUsage.INDEX, part.name);
         buffers.push(vertexBuffer, indexBuffer);
         const water = part.material?.kind === 'water';
-        // Refraction shapes blend the shifted scene over it by their mask.
+        // Refraction shapes write the refraction buffer (each covers what is behind it).
         const refraction = isRefraction(part.material);
-        const blend = water ? undefined : refraction ? REFRACTION_BLEND : blendState(part.alpha);
+        const blend = water || refraction ? undefined : blendState(part.alpha);
         return {
           part,
           vertexBuffer,
@@ -1232,7 +1260,13 @@ export class SceneRenderer {
           indexCount: part.indices.length,
           pipeline: water ? this.#waterPipeline(part) : this.#pipeline(part, blend),
           bindGroup: await this.#materialBindGroup(part.material, part.name, textures),
-          pass: water ? 'water' : blend !== undefined ? 'transparent' : 'opaque',
+          pass: water
+            ? 'water'
+            : refraction
+              ? 'refraction'
+              : blend !== undefined
+                ? 'transparent'
+                : 'opaque',
           shadowPipeline:
             !water &&
             !refraction &&
@@ -1338,13 +1372,15 @@ export class SceneRenderer {
         const sequences = instance.model.sequences;
         const playback =
           instance.playback && sequences ? { state: instance.playback, sequences } : undefined;
-        if (animation || part.part.billboard || sky || playback) {
+        const graph = graphDraw(instance);
+        if (animation || part.part.billboard || sky || playback || graph) {
           animated.push({
             offset,
             instanceWorld: instance.world,
             part: part.part,
             animation,
             ...(playback && { playback }),
+            ...(graph && { graph }),
           });
         }
         const floats = new Float32Array(uniforms, offset, DRAW_SIZE / 4);
@@ -1491,11 +1527,13 @@ export class SceneRenderer {
           (Math.round(origin[0]) * 73856093) ^ (Math.round(origin[1]) * 19349663),
           (Math.round(origin[2]) * 83492791) ^ (index + 1),
         );
+        const graph = graphDraw(instance);
         particles.push({
           system,
           simulation: new ParticleSimulation(system.data, seed),
           instanceWorld: instance.world,
           animation,
+          ...(graph && { graph }),
           uniformOffset: offset,
           origin,
           first: 0,
@@ -1653,6 +1691,24 @@ export class SceneRenderer {
       }
       return played.get(playback.state);
     };
+    // Each instance's behavior graph advances, and is evaluated, once per frame.
+    const graphFrames = new Map<ObjectGraph, AnimationFrame>();
+    const graphFrame = (graph: GraphDraw | undefined): AnimationFrame | undefined => {
+      if (!graph) return undefined;
+      let frame = graphFrames.get(graph.player);
+      if (!frame) {
+        graph.player.update(seconds);
+        const layers: AnimationLayer[] = [];
+        if (graph.animation) layers.push({ tracks: graph.animation.tracks, seconds });
+        for (const playing of graph.player.playing) {
+          const sequence = graph.sequences.byName.get(playing.sequence);
+          if (sequence) layers.push({ tracks: sequence.tracks, seconds: seconds - playing.start });
+        }
+        frame = animateLayers(graph.sequences, layers);
+        graphFrames.set(graph.player, frame);
+      }
+      return frame;
+    };
     for (const scene of sceneList) {
       // Moving instances: add-ons follow, then the draws that moved get their new place.
       for (const addon of scene.movingAddons) {
@@ -1677,7 +1733,8 @@ export class SceneRenderer {
         );
       }
       for (const draw of scene.animated) {
-        const frame = playedFrame(draw.playback) ?? frameOf(draw.animation);
+        const frame =
+          playedFrame(draw.playback) ?? graphFrame(draw.graph) ?? frameOf(draw.animation);
         const floats = new Float32Array(scene.uniformData, draw.offset, DRAW_SIZE / 4);
         const billboard = draw.part.billboard;
         if (frame?.hidden.has(draw.part.block)) {
@@ -1717,7 +1774,9 @@ export class SceneRenderer {
         );
       }
     }
-    this.#runParticles(sceneList, seconds, camera, wind, frameOf);
+    this.#runParticles(sceneList, seconds, camera, wind, (draw) =>
+      draw.graph ? graphFrame(draw.graph) : frameOf(draw.animation),
+    );
   }
 
   /** Updates the particle systems and gathers their instances into this frame's buffer. */
@@ -1726,7 +1785,7 @@ export class SceneRenderer {
     seconds: number,
     camera: Vec3,
     wind: Vec3,
-    frameOf: (animation: ModelAnimation | undefined) => AnimationFrame | undefined,
+    frameOf: (draw: ParticleDraw) => AnimationFrame | undefined,
   ): void {
     let needed = 0;
     for (const scene of scenes) {
@@ -1738,7 +1797,7 @@ export class SceneRenderer {
       for (const draw of scene.particles) {
         draw.count = 0;
         const simulation = draw.simulation;
-        const frame = frameOf(draw.animation);
+        const frame = frameOf(draw);
         if (frame?.hidden.has(simulation.data.block)) continue;
         const distance = Math.hypot(
           draw.origin[0] - camera[0],
@@ -1763,6 +1822,7 @@ export class SceneRenderer {
           animated: frame?.worlds,
           camera,
           wind,
+          ...(draw.graph && { sequences: draw.graph.player.playing }),
         };
         simulation.update(context);
         draw.updated = seconds;
@@ -1859,6 +1919,41 @@ export class SceneRenderer {
         pass.drawIndexed(part.indexCount);
       }
     }
+  }
+
+  /** Whether any refraction shape is in view (the frame then runs the refraction passes). */
+  hasRefraction(scenes: Iterable<GpuScene>): boolean {
+    for (const scene of scenes) {
+      if (scene.draws.some((draw) => draw.part.pass === 'refraction' && this.#visible(draw))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Draws the refraction shapes into the refraction buffer, back to front (depth-tested
+   * against the scene, never writing depth).
+   */
+  drawRefraction(
+    pass: GPURenderPassEncoder,
+    scenes: Iterable<GpuScene>,
+    cameraPosition: Vec3,
+  ): void {
+    pass.setBindGroup(0, this.#frameBindGroup);
+    pass.setVertexBuffer(1, this.#fallbackVertices);
+    const shapes: { scene: GpuScene; draw: Draw; distance: number }[] = [];
+    for (const scene of scenes) {
+      for (const draw of scene.draws) {
+        if (draw.part.pass !== 'refraction' || !this.#visible(draw)) continue;
+        const dx = draw.center[0] - cameraPosition[0];
+        const dy = draw.center[1] - cameraPosition[1];
+        const dz = draw.center[2] - cameraPosition[2];
+        shapes.push({ scene, draw, distance: dx * dx + dy * dy + dz * dz });
+      }
+    }
+    shapes.sort((a, b) => b.distance - a.distance);
+    for (const { scene, draw } of shapes) this.#drawPart(pass, scene, draw);
   }
 
   /** Draws the blended parts and particle systems of all scenes back to front. */
@@ -2403,11 +2498,14 @@ export class SceneRenderer {
           module: this.#modules[shader],
           entryPoint: refraction ? 'fs_refraction' : 'fs_main',
           // Opaque parts are drawn in the opaque pass, which also has the G-buffer (written
-          // by the lighting shader); blended ones in the blended pass, which has not.
-          targets: [
-            { format: this.#colorFormat, ...(blend && { blend }) },
-            ...(blend === undefined ? [gbufferTarget(shader === 'lighting')] : []),
-          ],
+          // by the lighting shader); blended ones in the blended pass, which has not;
+          // refraction shapes into the refraction buffer.
+          targets: refraction
+            ? [{ format: REFRACTION_FORMAT }]
+            : [
+                { format: this.#colorFormat, ...(blend && { blend }) },
+                ...(blend === undefined ? [gbufferTarget(shader === 'lighting')] : []),
+              ],
         },
         primitive: { topology: 'triangle-list', cullMode, frontFace: 'ccw' },
         depthStencil: {

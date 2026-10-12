@@ -259,6 +259,11 @@ export interface ParticleSystemData {
   readonly emitters: readonly ParticleEmitter[];
   readonly modifiers: ParticleModifiers;
   readonly tracks: readonly ParticleTrack[];
+  /**
+   * Tracks of the controller manager's sequences by lower-case name, for meshes whose
+   * behavior graph decides which sequences play (evaluated from each sequence's start).
+   */
+  readonly sequenceTracks: ReadonlyMap<string, readonly ParticleTrack[]>;
   /** Model-space matrices (rest pose) of the system and the objects its modifiers use. */
   readonly objects: ReadonlyMap<Ref, Mat4>;
   /**
@@ -351,10 +356,16 @@ function boolTrack(
  * effects waiting for their trigger); the others play on their own from when the object is
  * loaded, as the engine starts every controller of a newly attached effect.
  */
+/**
+ * The tracks of a system's controller chain: 'all' those that play on their own plus the
+ * manager-controlled ones from `sequence` (the idle one); 'free' only the former; 'managed'
+ * only the latter.
+ */
 function particleTracks(
   file: NifFile,
   first: Ref,
-  idle: ControllerSequenceBlock | undefined,
+  sequence: ControllerSequenceBlock | undefined,
+  include: 'all' | 'free' | 'managed' = 'all',
 ): ParticleTrack[] {
   const tracks: ParticleTrack[] = [];
   const push = (track: ParticleTrack | undefined): void => {
@@ -367,8 +378,8 @@ function particleTracks(
     const emitter = EMITTER_CONTROLLERS.has(ctlr.type);
     const param = FLOAT_CONTROLLERS[ctlr.type];
     if ((ctlr.flags & MANAGER_CONTROLLED) !== 0) {
-      const timing = idle && sequenceTiming(idle);
-      for (const block of idle?.blocks ?? []) {
+      const timing = include !== 'free' && sequence && sequenceTiming(sequence);
+      for (const block of timing ? sequence.blocks : []) {
         if (block.controller !== at || !timing) continue;
         if (emitter && block.interpolatorId === 'EmitterActive') {
           push(boolTrack(file, ctlr.name, 'emitterActive', block.interpolator, timing));
@@ -380,7 +391,7 @@ function particleTracks(
           push(floatTrack(file, ctlr.name, param, block.interpolator, timing));
         }
       }
-    } else {
+    } else if (include !== 'managed') {
       const timing = timingOf(ctlr);
       if (emitter) {
         push(floatTrack(file, ctlr.name, 'birthRate', ctlr.interpolator, timing));
@@ -452,6 +463,7 @@ export function buildParticleSystem(
   worlds: ReadonlyMap<Ref, Mat4>,
   material: PartMaterial | undefined,
   alpha: AlphaState | undefined,
+  graphDriven = false,
 ): ParticleSystemData | undefined {
   const system = file.blocks[systemRef];
   if (system?.kind !== 'particle-system') return undefined;
@@ -691,10 +703,22 @@ export function buildParticleSystem(
     };
   }
 
-  // The idle sequence of the model's controller manager, if any.
+  // The idle sequence of the model's controller manager, if any; with a behavior graph the
+  // graph's sequences drive the manager-controlled controllers instead.
   const manager = file.blocks.find((block) => block.kind === 'controller-manager');
   const idle =
-    manager?.kind === 'controller-manager' ? idleSequence(file, manager.sequences) : undefined;
+    manager?.kind === 'controller-manager' && !graphDriven
+      ? idleSequence(file, manager.sequences)
+      : undefined;
+  const sequenceTracks = new Map<string, ParticleTrack[]>();
+  if (graphDriven && manager?.kind === 'controller-manager') {
+    for (const ref of manager.sequences) {
+      const sequence = file.blocks[ref];
+      if (sequence?.kind !== 'controller-sequence') continue;
+      const tracks = particleTracks(file, system.controller, sequence, 'managed');
+      if (tracks.length > 0) sequenceTracks.set(sequence.name.toLowerCase(), tracks);
+    }
+  }
 
   // Objects below billboard nodes turn with them.
   const parents = new Map<Ref, Ref>();
@@ -759,7 +783,8 @@ export function buildParticleSystem(
       lod,
       inactive,
     },
-    tracks: particleTracks(file, system.controller, idle),
+    tracks: particleTracks(file, system.controller, idle, graphDriven ? 'free' : 'all'),
+    sequenceTracks,
     objects,
     billboards,
   };

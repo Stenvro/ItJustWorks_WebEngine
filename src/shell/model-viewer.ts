@@ -66,6 +66,7 @@ import {
 } from '../world/player-home.ts';
 import type { InteriorCell, RecordDatabase } from '../world/record-db.ts';
 import type { GameSession } from './game-session.ts';
+import { startObjectGraph } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
 
 export interface SearchElements {
@@ -398,7 +399,9 @@ export class ModelViewer {
     this.#orbit.setView(view);
     // Particle-only models (master particle systems) have no shapes to measure.
     this.#orbit.fit(model.center, model.radius > 0 ? model.radius : 64);
-    this.#present(this.#renderer.scene.createScene([{ model, world: identity() }]), model, {
+    const graph = startObjectGraph(model, 0);
+    const instance = { model, world: identity(), ...(graph && { graph }) };
+    this.#present(this.#renderer.scene.createScene([instance]), model, {
       camera: 'orbit',
       backdrop: view === LOGO_VIEW,
     });
@@ -624,10 +627,12 @@ export class ModelViewer {
           .get(object.model)
           ?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
       if (model) {
+        const graph = startObjectGraph(model, object.reference);
         const instance: ModelInstance = {
           model,
           world: moves ? new Float32Array(object.world) : object.world,
           ...(moves && { motion: { version: 0 } }),
+          ...(graph && { graph }),
           ...(this.#play && {
             playback: openable(object, model.sequences?.byName.has('open') === true),
           }),

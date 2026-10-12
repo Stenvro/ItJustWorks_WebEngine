@@ -1,5 +1,6 @@
 // Animation of placed models from their NIF controllers: active time controllers on nodes,
-// shaders and alpha properties, and the model's idle sequence (NiControllerManager).
+// shaders and alpha properties, and the sequences of the model's NiControllerManager (the
+// idle one, or those its behavior graph plays: src/animation/object-graph.ts).
 // Evaluates keyframes (linear, quadratic, TBC, constant; quaternion and XYZ rotations)
 // with the controllers' timing and cycle types. Platform-independent.
 // Notes: docs/formats/nif.md ("Animation").
@@ -83,11 +84,20 @@ export interface ModelAnimation {
   readonly roots: readonly Ref[];
 }
 
-/** A named sequence the game plays on demand (a door's "Open" and "Close"). */
+/**
+ * A named sequence the game plays on demand (a door's "Open" and "Close") or a behavior graph
+ * plays. Its clock: start and stop in its own time, frequency, cycle type and text keys.
+ */
 export interface ModelSequence {
   readonly tracks: readonly AnimationTrack[];
   /** Seconds from start to stop. */
   readonly duration: number;
+  readonly start: number;
+  readonly stop: number;
+  readonly frequency: number;
+  /** CycleType. */
+  readonly cycle: number;
+  readonly textKeys: readonly { readonly time: number; readonly text: string }[];
 }
 
 /**
@@ -110,6 +120,13 @@ export interface ModelSequences {
 export interface Playback {
   sequence: string | undefined;
   start: number;
+}
+
+/** Tracks evaluated at their own moment (a sequence that started at its own time). */
+export interface AnimationLayer {
+  readonly tracks: readonly AnimationTrack[];
+  /** Seconds into the layer. */
+  readonly seconds: number;
 }
 
 /** Everything a model's animation sets at one moment. */
@@ -508,7 +525,28 @@ function sequenceTracks(file: NifFile, sequence: ControllerSequenceBlock): Anima
   return tracks;
 }
 
-/** The sequence of a controller manager that plays when the object is placed. */
+/**
+ * The Havok Behavior project a mesh names on its root (BSBehaviorGraphExtraData), as a path
+ * under meshes\, or undefined.
+ */
+export function behaviorGraphPath(file: NifFile): string | undefined {
+  for (const root of file.roots) {
+    const node = file.blocks[root];
+    if (!node || !('extraData' in node)) continue;
+    for (const ref of node.extraData) {
+      const extra = file.blocks[ref];
+      if (extra?.kind === 'behavior-graph-extra-data' && extra.graph !== '') {
+        return `meshes\\${extra.graph}`.toLowerCase();
+      }
+    }
+  }
+  return undefined;
+}
+
+/**
+ * The sequence of a controller manager that plays when the object is placed, for meshes
+ * without a behavior graph (the graph decides otherwise).
+ */
 export function idleSequence(
   file: NifFile,
   sequences: readonly Ref[],
@@ -548,22 +586,31 @@ function sceneGraph(file: NifFile): {
 }
 
 /**
- * The named sequences of a model's controller managers (other than the idle one, which plays
- * on its own), or undefined if it has none.
+ * The named sequences of a model's controller managers, or undefined if it has none. Without
+ * a behavior graph the idle one is left out (it plays on its own, see buildAnimation); with
+ * one, all of them are kept, also those that only send events by their text keys.
  */
-export function buildSequences(file: NifFile): ModelSequences | undefined {
+export function buildSequences(file: NifFile, graphDriven = false): ModelSequences | undefined {
   const byName = new Map<string, ModelSequence>();
   for (const block of file.blocks) {
     if (block.kind !== 'controller-manager') continue;
-    const idle = idleSequence(file, block.sequences);
+    const idle = graphDriven ? undefined : idleSequence(file, block.sequences);
     for (const ref of block.sequences) {
       const sequence = file.blocks[ref];
       if (sequence?.kind !== 'controller-sequence' || sequence === idle) continue;
       const tracks = sequenceTracks(file, sequence);
-      if (tracks.length === 0) continue;
+      const keys = file.blocks[sequence.textKeys];
+      const textKeys = keys?.kind === 'text-keys' ? keys.keys : [];
+      if (tracks.length === 0 && !(graphDriven && textKeys.length > 0)) continue;
+      const frequency = sequence.frequency || 1;
       byName.set(sequence.name.toLowerCase(), {
         tracks,
-        duration: Math.max(0, (sequence.stopTime - sequence.startTime) / (sequence.frequency || 1)),
+        duration: Math.max(0, (sequence.stopTime - sequence.startTime) / frequency),
+        start: sequence.startTime,
+        stop: sequence.stopTime,
+        frequency,
+        cycle: sequence.cycleType,
+        textKeys,
       });
     }
   }
@@ -620,11 +667,15 @@ export function objectWorld(
   return world;
 }
 
-/** The animation of a model, or undefined if nothing in it moves. */
-export function buildAnimation(file: NifFile): ModelAnimation | undefined {
+/**
+ * The animation of a model, or undefined if nothing in it moves: controllers that play on
+ * their own, and the idle sequence unless a behavior graph decides what plays.
+ */
+export function buildAnimation(file: NifFile, graphDriven = false): ModelAnimation | undefined {
   const tracks: AnimationTrack[] = [];
   file.blocks.forEach((block) => {
     if (block.kind === 'controller-manager') {
+      if (graphDriven) return;
       const idle = idleSequence(file, block.sequences);
       if (idle) tracks.push(...sequenceTracks(file, idle));
       return;
@@ -661,18 +712,43 @@ export function animate(animation: ModelAnimation, seconds: number): AnimationFr
   return animateTracks(animation, animation.tracks, seconds);
 }
 
+/**
+ * Evaluates layers of tracks over a model's scene graph (the model's own controllers and the
+ * sequences its behavior graph plays, each at its own moment). Later layers win where they
+ * set the same value. TODO(M7): weighted blending of sequences with weights below 1.
+ */
+export function animateLayers(
+  animation: Pick<ModelAnimation, 'parents' | 'transforms' | 'roots'>,
+  layers: readonly AnimationLayer[],
+): AnimationFrame {
+  return evaluate(
+    animation,
+    layers.flatMap((layer) => layer.tracks.map((track) => ({ track, seconds: layer.seconds }))),
+  );
+}
+
 /** Evaluates tracks over a model's scene graph at a moment. */
 function animateTracks(
   animation: Pick<ModelAnimation, 'parents' | 'transforms' | 'roots'>,
   tracks: readonly AnimationTrack[],
   seconds: number,
 ): AnimationFrame {
+  return evaluate(
+    animation,
+    tracks.map((track) => ({ track, seconds })),
+  );
+}
+
+function evaluate(
+  animation: Pick<ModelAnimation, 'parents' | 'transforms' | 'roots'>,
+  timed: readonly { readonly track: AnimationTrack; readonly seconds: number }[],
+): AnimationFrame {
   const locals = new Map<Ref, NifTransform>();
   const hidden = new Set<Ref>();
   const shaderFloats = new Map<Ref, Map<number, number>>();
   const shaderColors = new Map<Ref, Map<number, Vec3>>();
   const alphaTest = new Map<Ref, number>();
-  for (const track of tracks) {
+  for (const { track, seconds } of timed) {
     const time = controllerTime(track.timing, seconds);
     switch (track.kind) {
       case 'transform': {
@@ -687,7 +763,8 @@ function animateTracks(
         break;
       }
       case 'visibility':
-        if (!sampleBool(track.source, time)) hidden.add(track.block);
+        if (sampleBool(track.source, time)) hidden.delete(track.block);
+        else hidden.add(track.block);
         break;
       case 'shader-float': {
         const values = shaderFloats.get(track.shader) ?? new Map<number, number>();

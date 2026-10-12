@@ -14,7 +14,8 @@
     "src/vfs",
     "src/scripting",
     "src/physics/collision-data.ts",
-    "src/physics/collision-layers.ts"
+    "src/physics/collision-layers.ts",
+    "src/animation"
   ],
   "exclude": ["src/**/*.test.ts", "src/vfs/browser"]
 }

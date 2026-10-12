@@ -49,6 +49,7 @@ import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
 import { cellKey, WorldFlag, Worldspace, type Arrival } from '../world/worldspace.ts';
 import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-references.ts';
 import type { GameSession } from './game-session.ts';
+import { startObjectGraph } from './object-graphs.ts';
 import { WorldLod } from './world-lod.ts';
 import { WorldSky, type SkyElements } from './world-sky.ts';
 import type { Rgb } from '../world/cell-records.ts';
@@ -736,12 +737,14 @@ export class WorldViewer {
       if (!model) return;
       const moves =
         collisions[i]?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
+      const graph = startObjectGraph(model, object.reference);
       placed.push({
         object,
         instance: {
           model,
           world: moves ? new Float32Array(object.world) : object.world,
           ...(moves && { motion: { version: 0 } }),
+          ...(graph && { graph }),
           ...(simulated && {
             playback: openable(object, model.sequences?.byName.has('open') === true),
           }),

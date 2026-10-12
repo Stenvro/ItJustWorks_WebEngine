@@ -13,6 +13,7 @@ import type {
 } from '../formats/nif/types.ts';
 import { normalizePath } from '../formats/paths.ts';
 import {
+  behaviorGraphPath,
   buildAnimation,
   type ModelAnimation,
   buildSequences,
@@ -161,8 +162,13 @@ export interface ModelData {
   readonly leafAnimation?: boolean;
   /** Controllers that play on their own (UV scrolling, turning parts, idle sequence). */
   readonly animation?: ModelAnimation;
-  /** Sequences the game plays on demand (a door's "Open" and "Close"). */
+  /** Sequences the game plays on demand (a door's "Open" and "Close") or the graph plays. */
   readonly sequences?: ModelSequences;
+  /**
+   * The Havok Behavior project that decides which sequences play (BSBehaviorGraphExtraData,
+   * a path under meshes\): src/animation/object-graph.ts.
+   */
+  readonly behaviorGraph?: string;
   /** Particle systems (fire, smoke, dust, ...). */
   readonly particles: readonly ParticleSystemData[];
   /**
@@ -635,6 +641,8 @@ export function buildModel(file: NifFile): ModelData {
     );
   }
 
+  const behaviorGraph = behaviorGraphPath(file);
+  const graphDriven = behaviorGraph !== undefined;
   const particles: ParticleSystemData[] = [];
   if (particleRefs.length > 0) {
     worlds ??= nodeWorlds(file);
@@ -647,13 +655,14 @@ export function buildModel(file: NifFile): ModelData {
         worlds,
         material(file, system.shaderProperty),
         alphaState(getBlock(file, system.alphaProperty, 'alpha')),
+        graphDriven,
       );
       if (built) particles.push(built);
     }
   }
 
-  const animation = buildAnimation(file);
-  const sequences = buildSequences(file);
+  const animation = buildAnimation(file, graphDriven);
+  const sequences = buildSequences(file, graphDriven);
   return {
     parts,
     center,
@@ -666,6 +675,7 @@ export function buildModel(file: NifFile): ModelData {
     }),
     ...(animation && { animation }),
     ...(sequences && { sequences }),
+    ...(behaviorGraph !== undefined && { behaviorGraph }),
     particles,
     addons,
   };

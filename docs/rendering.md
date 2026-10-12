@@ -22,7 +22,9 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
    bound in the frame group (`sceneColor`, `sceneDepth`).
 4. **Water and blended pass:** water surfaces, then blended parts and particle systems of all
    scenes back to front (by bounding sphere centre).
-5. **Post-processing** (`post.ts`): the imagespace's eye adaptation, bloom, tone curve and
+5. **Refraction** (only with refraction shapes in view): the shapes into the refraction
+   buffer, then the image-space refraction of the scene so far (below).
+6. **Post-processing** (`post.ts`): the imagespace's eye adaptation, bloom, tone curve and
    grading into the canvas (see [formats/esm.md](formats/esm.md#imagespaces)), then its depth
    of field (below).
 
@@ -217,11 +219,19 @@ quads overlap unsorted within a system).
 
 **Refraction** (SLSF1 `0x8000` on the lighting shader: heat haze over fires and torches,
 magic barriers, mist; about 360 vanilla shapes, strength 0.05–1): the engine draws these shapes only
-into a refraction buffer (normal map direction, strength, alpha as mask) and an image-space pass
-shifts the scene by normal.xy × 0.05 × strength (x mirrored), blended by the mask
-(`ISRefraction` in the Community Shaders sources). Here the shapes draw that shifted copy of
-the opaque scene directly (`shaders/refraction.wgsl`), blended by their mask in the blended
-pass; their UV controllers scroll the noise. Fire_Refraction (`0x10000`) without Refraction (about
+into a refraction buffer and an image-space pass shifts the finished scene by it
+(`ISRefraction` in the Community Shaders sources), so what is blended behind a barrier (its
+own glow, fire, particles) bends along with the opaque scene. Here (`refraction.ts`): after the
+blended pass the shapes write the buffer (`shaders/refraction.wgsl`, rgba16float, cleared to
+0.5, 0.5, 0, 0): the normal map's xy, the strength (animated by controllers), the mask (diffuse
+alpha × material alpha, × vertex alpha with Vertex_Alpha or Vertex_Colors); depth-tested, no
+depth writes, back to front, where the mask is 0 they leave the buffer as it is. Then the
+composite (`shaders/refraction-composite.wgsl`) reads a copy of the scene: offset 0.1 ×
+strength × (normal − 0.5), x mirrored; past 0.15 and 0.85 of the screen the shifted
+coordinate moves at 0.78 of the rate (blended in by the strength); the mask is read where the
+shifted coordinate lands, so nothing in front of a shape is pulled into it; the result is
+the scene lerped to the shifted scene by that mask. Their UV controllers scroll the noise.
+Fire_Refraction (`0x10000`) without Refraction (about
 50 shapes) is drawn as a regular surface: what it changes in the engine is not documented
 (TODO(M13)).
 
