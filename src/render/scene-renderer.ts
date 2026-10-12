@@ -169,6 +169,9 @@ const DRAW_MULTI_PASS = 0x80000;
 const DRAW_SNOW = 0x100000;
 /** ...and HD object LOD (its vertex alpha shifts the snow line). */
 const DRAW_LOD_HD = 0x200000;
+/** SLSF1 External_Emittance: emit (or effect lighting) from the reference's XEMI. */
+const SLSF1_EXTERNAL_EMITTANCE = 0x20000000;
+const SLSF2_EFFECT_LIGHTING = 0x40000000;
 /** Draw flag (common.wgsl): leaves flutter in the wind (SLSF2 Tree_Anim). */
 const DRAW_TREE_ANIM = 0x400000;
 const SLSF2_TREE_ANIM = 0x20000000;
@@ -398,6 +401,27 @@ export interface ModelInstance {
   readonly directional?: PlacedDirectional;
   /** A tree's leaf amplitude and frequency (TREE CNAM). */
   readonly leafAnimation?: { readonly amplitude: number; readonly frequency: number };
+  /** XEMI: the colour that drives the model's External_Emittance shapes. */
+  readonly emittance?: EmittanceColor;
+}
+
+/**
+ * The current colour of an emittance source (a light, or a region's weather by the hour),
+ * shared by the references that name it; `version` changes with the colour.
+ */
+export interface EmittanceColor {
+  readonly rgb: readonly [number, number, number];
+  readonly version: number;
+}
+
+/** A draw whose emit (lighting) or effect lighting follows an emittance colour. */
+interface EmittanceDraw {
+  readonly offset: number;
+  readonly source: EmittanceColor;
+  /** Lighting: the emissive multiple. Effect: 0 (the colour lights the effect). */
+  readonly multiple: number;
+  readonly effect: boolean;
+  version: number;
 }
 
 /** A material object (MATO) ready to draw: its data and, if multi-pass, its own shader. */
@@ -485,6 +509,8 @@ export class GpuScene {
   readonly uniformData: ArrayBuffer;
   readonly animated: readonly AnimatedDraw[];
   readonly particles: readonly ParticleDraw[];
+  /** Draws whose emit follows an emittance colour (updated when the colour changes). */
+  readonly emittance: readonly EmittanceDraw[];
   /** The models it draws (held while it exists). */
   readonly #models: readonly GpuModel[];
 
@@ -496,6 +522,7 @@ export class GpuScene {
     animated: readonly AnimatedDraw[],
     particles: readonly ParticleDraw[],
     models: readonly GpuModel[],
+    emittance: readonly EmittanceDraw[] = [],
   ) {
     this.draws = draws;
     this.drawBindGroup = drawBindGroup;
@@ -503,6 +530,7 @@ export class GpuScene {
     this.uniformData = uniformData;
     this.animated = animated;
     this.particles = particles;
+    this.emittance = emittance;
     this.#models = models;
     for (const model of models) model.acquire();
   }
@@ -720,6 +748,19 @@ function writeMaterial(floats: Float32Array, uints: Uint32Array, part: MaterialS
   // No directional material: nothing projected (direction up keeps the shader's maths finite).
   floats.set([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0], 48);
   floats.set(material?.sparkle ?? [1, 1, 1, 1], 60);
+}
+
+/**
+ * Writes an emittance colour into a draw: lighting parts emit it times their emissive
+ * multiple; effects (Effect_Lighting) are lit by it instead of the scene (draw.effect).
+ */
+function writeEmittance(floats: Float32Array, entry: EmittanceDraw): void {
+  const [r, g, b] = entry.source.rgb;
+  if (entry.effect) {
+    floats.set([r, g, b, 1], 40);
+  } else {
+    floats.set([r * entry.multiple, g * entry.multiple, b * entry.multiple], 20);
+  }
 }
 
 /**
@@ -1206,6 +1247,7 @@ export class SceneRenderer {
     const draws: Draw[] = [];
     const animated: AnimatedDraw[] = [];
     const particles: ParticleDraw[] = [];
+    const emittance: EmittanceDraw[] = [];
     const world = new Float32Array(16);
     let slot = 0;
     for (const [instanceIndex, instance] of placed.entries()) {
@@ -1225,6 +1267,25 @@ export class SceneRenderer {
         writeMaterial(floats, uints, part.part);
         if (sky) uints[38] = (uints[38] ?? 0) | SKY_DRAW;
         const partMaterial = part.part.material;
+        const source = instance.emittance;
+        if (source && partMaterial && partMaterial.kind !== 'water') {
+          // External_Emittance: the reference's XEMI colour replaces the emissive colour
+          // (lighting, times the emissive multiple) or the effect's light (Effect_Lighting).
+          if ((partMaterial.flags1 & SLSF1_EXTERNAL_EMITTANCE) !== 0) {
+            const effect = partMaterial.kind === 'effect';
+            if (!effect || (partMaterial.flags2 & SLSF2_EFFECT_LIGHTING) !== 0) {
+              const entry: EmittanceDraw = {
+                offset,
+                source,
+                multiple: effect ? 0 : partMaterial.emissiveMultiple,
+                effect,
+                version: source.version,
+              };
+              writeEmittance(floats, entry);
+              emittance.push(entry);
+            }
+          }
+        }
         if (partMaterial?.kind === 'lighting' && (partMaterial.flags2 & SLSF2_TREE_ANIM) !== 0) {
           // Trees have no directional material: the projection slot holds the leaf amplitude,
           // the leaf frequency and whether the leaf animation node runs its timer (without
@@ -1346,7 +1407,7 @@ export class SceneRenderer {
       entries: [{ binding: 0, resource: { buffer, size: DRAW_SIZE } }],
     });
     const models = [...new Set(placed.map((instance) => instance.model))];
-    return new GpuScene(draws, bindGroup, buffer, uniforms, animated, particles, models);
+    return new GpuScene(draws, bindGroup, buffer, uniforms, animated, particles, models, emittance);
   }
 
   updateFrame(
@@ -1489,6 +1550,19 @@ export class SceneRenderer {
           draw.offset,
           scene.uniformData,
           draw.offset,
+          DRAW_SIZE,
+        );
+      }
+      // Emittance colours change with the hour (windows lit at night, sunbeams by day).
+      for (const entry of scene.emittance) {
+        if (entry.version === entry.source.version) continue;
+        entry.version = entry.source.version;
+        writeEmittance(new Float32Array(scene.uniformData, entry.offset, DRAW_SIZE / 4), entry);
+        this.#device.queue.writeBuffer(
+          scene.uniforms,
+          entry.offset,
+          scene.uniformData,
+          entry.offset,
           DRAW_SIZE,
         );
       }

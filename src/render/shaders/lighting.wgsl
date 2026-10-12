@@ -16,6 +16,7 @@ const SLSF1_ENVIRONMENT_MAPPING = 0x80u;
 const SLSF1_RECEIVE_SHADOWS = 0x100u;
 const SLSF1_MODEL_SPACE_NORMALS = 0x1000u;
 const SLSF1_OWN_EMIT = 0x400000u;
+const SLSF1_EXTERNAL_EMITTANCE = 0x20000000u;
 const SLSF2_VERTEX_COLORS = 0x20u;
 const SLSF2_GLOW_MAP = 0x40u;
 const SLSF2_ANISOTROPIC_LIGHTING = 0x200000u;
@@ -344,7 +345,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
   var emit = vec3f(0.0);
   if (shaderType == SHADER_GLOW && (flags2 & SLSF2_GLOW_MAP) != 0u) {
     emit = draw.emissive.rgb * slot2.rgb;
-  } else if ((flags1 & SLSF1_OWN_EMIT) != 0u) {
+  } else if ((flags1 & (SLSF1_OWN_EMIT | SLSF1_EXTERNAL_EMITTANCE)) != 0u) {
+    // External emittance: the reference's XEMI colour (written into emissive) or, without
+    // one, the shape's own emissive colour.
     emit = draw.emissive.rgb;
   }
   let diffuseLight = ambient + emit + lights.diffuse;

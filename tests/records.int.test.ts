@@ -11,6 +11,8 @@ import {
   parseStaticDirectional,
   LOD_MATERIALS,
 } from '../src/world/material-object.ts';
+import { emittanceColor, emittanceWeather, type EmittanceSource } from '../src/world/emittance.ts';
+import { parseRegionWeather, parseWeather } from '../src/world/weather.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
@@ -92,6 +94,30 @@ describe.skipIf(!hasGamedata())('record database on the local game data', () => 
     // Vanilla + DLC: about 2500 statics with a material, a few hundred counted as snow.
     expect(withMaterial).toBeGreaterThan(2000);
     expect(snow).toBeGreaterThan(100);
+  });
+
+  it('lights Whiterun windows at night and sunbeams by day (emittance regions)', async () => {
+    const regionNamed = async (name: string) => {
+      for (const formId of db.formIdsOfType('REGN')) {
+        const record = await db.get(formId);
+        if (record?.editorId === name) return record;
+      }
+      throw new Error(`no region ${name}`);
+    };
+    const colorAt = async (name: string, hour: number): Promise<number> => {
+      const source: EmittanceSource = {
+        kind: 'region',
+        weathers: parseRegionWeather(await regionNamed(name))?.weathers ?? [],
+      };
+      const weatherId = emittanceWeather(source);
+      const weather = weatherId === undefined ? undefined : await db.get(weatherId);
+      const rgb = emittanceColor(source, weather && parseWeather(weather), undefined, hour);
+      return Math.max(...rgb);
+    };
+    expect(await colorAt('FXLightRegionInvertWindowWhiterun', 2)).toBeGreaterThan(0.9);
+    expect(await colorAt('FXLightRegionInvertWindowWhiterun', 13)).toBeLessThan(0.05);
+    expect(await colorAt('FXLightRegionSunlight', 13)).toBeGreaterThan(0.9);
+    expect(await colorAt('FXLightRegionSunlight', 2)).toBeLessThan(0.4);
   });
 
   it('opens every plugin without problems', () => {
