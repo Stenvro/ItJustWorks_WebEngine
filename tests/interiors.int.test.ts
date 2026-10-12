@@ -3,6 +3,8 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parseNif } from '../src/formats/nif/nif.ts';
+import { projectDecals } from '../src/render/decal-projection.ts';
+import { maxScale, transformPoint } from '../src/render/math.ts';
 import { buildModel } from '../src/render/model-data.ts';
 import { loadCellData } from '../src/world/cell-loader.ts';
 import { enabledReferences, findToggles, gameStartSelection } from '../src/world/cell-upgrades.ts';
@@ -78,6 +80,39 @@ describe.skipIf(!hasGamedata())('interiors on the local game data', () => {
     }
     expect(doubled).toBe(0);
   }, 300_000);
+
+  it('projects placed decals onto the surfaces below them', async () => {
+    const data = await loadCellData(db, await cellId('WhiterunDragonsreachBasement'));
+    expect(data.decals.map((decal) => decal.textureSet.editorId)).toContain(
+      'DecalBloodSprayGround',
+    );
+    const parts = [];
+    for (const object of data.objects) {
+      const model = buildModel(parseNif(await vfs.read(object.model)));
+      for (const part of model.parts) {
+        parts.push({
+          part,
+          instanceWorld: object.world,
+          center: transformPoint(object.world, part.center),
+          radius: part.radius * maxScale(object.world),
+        });
+      }
+    }
+    const projected = projectDecals(data.decals, parts);
+    // Vanilla references sit 40–120 units above their surface along the projection axis.
+    let landed = 0;
+    data.decals.forEach((decal, i) => {
+      const moved = projected[i]?.box;
+      if (!moved) return;
+      const shift = Math.hypot(
+        (moved[12] ?? 0) - (decal.box[12] ?? 0),
+        (moved[13] ?? 0) - (decal.box[13] ?? 0),
+        (moved[14] ?? 0) - (decal.box[14] ?? 0),
+      );
+      if (shift > 20 && shift < 200) landed++;
+    });
+    expect(landed).toBeGreaterThanOrEqual(4);
+  }, 120_000);
 
   it('builds the interiors without broken models or missing textures', async () => {
     for (const editorId of ['DLC2RRSeverinHouse', 'WhiterunBreezehome']) {

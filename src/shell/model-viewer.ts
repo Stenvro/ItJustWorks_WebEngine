@@ -6,7 +6,15 @@ import { OrbitCamera, type OrbitView } from '../render/camera.ts';
 import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
-import type { GpuModel, GpuScene, GpuWaterType, ModelInstance } from '../render/scene-renderer.ts';
+import { projectDecals } from '../render/decal-projection.ts';
+import type { GpuDecals } from '../render/decals.ts';
+import {
+  placedParts,
+  type GpuModel,
+  type GpuScene,
+  type GpuWaterType,
+  type ModelInstance,
+} from '../render/scene-renderer.ts';
 import { studioLighting } from '../render/studio-lighting.ts';
 import { cellSceneLighting, pointLights } from '../world/cell-lighting.ts';
 import { loadCellData, type CellData, type CellLight } from '../world/cell-loader.ts';
@@ -85,6 +93,8 @@ interface CellView {
   readonly waterTypes: ReadonlyMap<number, GpuWaterType | undefined>;
   /** The cell's water level (XCLW), drawn as a plane under everything, with its type. */
   readonly waterPlane: { model: GpuModel; type: GpuWaterType | undefined } | undefined;
+  /** Placed decals (blood, scorch marks, puddles), shown by the selection. */
+  readonly decals: GpuDecals | undefined;
 }
 
 /** Half the width of an interior's water plane: it lies under the whole cell. */
@@ -331,17 +341,34 @@ export class ModelViewer {
         session.textures,
       );
     }
-    if (token !== this.#loadToken) return;
-    for (const failure of this.#session?.textures.takeFailures() ?? []) {
-      this.#terminal.log('dds', failure, 'warn');
-    }
-
     const toggles = findToggles(data, actions.controlled);
     // Homes open furnished; "new game" shows them as bought.
     const choices = fullyUpgraded(actions, NEW_GAME);
     const scripted = await this.#playActions(actions, choices);
     if (token !== this.#loadToken) return;
+
+    // Decals land on the nearest surface along their projection (of the objects shown when
+    // the cell opens).
+    const opening = enabledReferences(data, toggles, gameStartSelection(toggles), scripted);
+    const placed = data.objects.flatMap((object) => {
+      const model = opening(object.reference) ? models.get(object.model) : undefined;
+      return model ? [{ model, world: object.world }] : [];
+    });
+    const decals =
+      session &&
+      (await this.#renderer.decals.createDecals(
+        projectDecals(data.decals, placedParts(placed)),
+        session.textures,
+      ));
+    if (token !== this.#loadToken) {
+      decals?.destroy();
+      return;
+    }
+    for (const failure of this.#session?.textures.takeFailures() ?? []) {
+      this.#terminal.log('dds', failure, 'warn');
+    }
     const previousWater = this.#cell?.waterPlane?.model;
+    const previousDecals = this.#cell?.decals;
     this.#cell = {
       data,
       toggles,
@@ -354,6 +381,7 @@ export class ModelViewer {
       imageSpace,
       waterTypes,
       waterPlane: waterPlaneModel && { model: waterPlaneModel, type: waterPlaneType },
+      decals,
     };
     const [x, y, z] = data.entrance;
     this.#fly.position = [x, y, z + EYE_HEIGHT];
@@ -371,6 +399,7 @@ export class ModelViewer {
     this.#renderUpgrades();
     const visible = this.#applyCellSelection();
     previousWater?.destroy();
+    if (previousDecals !== decals) previousDecals?.destroy();
     const what = [
       actions.purchases.length > 0 ? `${String(actions.purchases.length)} purchases` : '',
       actions.house ? 'HearthFire house' : '',
@@ -440,6 +469,7 @@ export class ModelViewer {
       instances.push({ model, world: identity(), ...(type && { water: type }) });
     }
     const scene = this.#renderer.scene.createScene(instances);
+    cell.decals?.select(isEnabled);
     const lighting = cellSceneLighting(cell.data, isEnabled);
     const lights = cell.data.lights.filter((light) => isEnabled(light.reference));
     // The imagespace's Sunlight Scale brightens the cell's directional light (HDR).
@@ -456,6 +486,7 @@ export class ModelViewer {
       },
       imageSpace: cell.imageSpace,
       lights,
+      decals: cell.decals,
     });
     return instances.length;
   }
@@ -745,6 +776,7 @@ export class ModelViewer {
           imageSpace: ImageSpace | undefined;
           /** Placed lights, flickering and pulsing per frame. */
           lights: readonly CellLight[];
+          decals: GpuDecals | undefined;
         },
   ): void {
     this.onActivate?.();
@@ -763,12 +795,13 @@ export class ModelViewer {
       });
     } else {
       this.#detachControls = this.#fly.attach(this.#canvas);
-      const { lighting, imageSpace, lights } = view;
+      const { lighting, imageSpace, lights, decals } = view;
       this.#renderer.setView({
         scenes: () => [scene],
         camera: this.#fly,
         lighting: () => ({ ...lighting, lights: pointLights(lights, performance.now() / 1000) }),
         imageSpace: () => imageSpace,
+        decals: () => (decals ? [decals] : []),
         backdrop: false,
       });
     }
@@ -780,8 +813,10 @@ export class ModelViewer {
   /** Forgets the shown cell and frees what was made for it. */
   #releaseCell(): void {
     const plane = this.#cell?.waterPlane?.model;
+    const decals = this.#cell?.decals;
     this.#cell = undefined;
     plane?.destroy();
+    decals?.destroy();
   }
 
   #reset(): void {

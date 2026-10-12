@@ -352,7 +352,13 @@ async function main(): Promise<void> {
   setupPanels(document);
   setupHideShortcut(ui.shell);
   if (import.meta.env.DEV) {
-    window.skyrimDev = { viewer: modelViewer, world: worldViewer, renderer, device: gpu.device };
+    window.skyrimDev = {
+      viewer: modelViewer,
+      world: worldViewer,
+      renderer,
+      device: gpu.device,
+      session: () => session,
+    };
   }
   startRenderLoop(renderer);
 

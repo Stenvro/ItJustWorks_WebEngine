@@ -18,6 +18,7 @@ import {
   type PlacedReference,
   type Rgb,
 } from './cell-records.ts';
+import { parseTextureSet, placeDecal, type PlacedDecal, type TextureSet } from './decal.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
 
 export interface CellObject {
@@ -28,6 +29,14 @@ export interface CellObject {
   readonly world: Mat4;
   /** Water activators (ACTI WNAM): the type of the model's water surfaces. */
   readonly water: number | undefined;
+}
+
+/** A decal reference: a texture set (TXST with decal data) projected inside a box. */
+export interface CellDecal extends PlacedDecal {
+  readonly reference: number;
+  readonly textureSet: TextureSet;
+  /** The TXST form id (decals sharing it share textures). */
+  readonly base: number;
 }
 
 export interface CellLight {
@@ -58,6 +67,8 @@ export interface CellData {
   readonly objects: readonly CellObject[];
   /** Every light that can be on; filter with `enabledReferences`. */
   readonly lights: readonly CellLight[];
+  /** Every decal that can appear; filter with `enabledReferences`. */
+  readonly decals: readonly CellDecal[];
   /** The cell's references and the enable parents they follow (also outside the cell). */
   readonly references: ReadonlyMap<number, ReferenceState>;
   /** Things not shown yet, with the milestone that adds them. */
@@ -124,6 +135,7 @@ export async function loadCellData(
   const cell = parseCell(await db.require(cellFormId));
   const objects: CellObject[] = [];
   const lights: CellLight[] = [];
+  const decals: CellDecal[] = [];
   const skipped = new Map<string, number>();
   const skip = (reason: string): void => {
     skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
@@ -211,6 +223,21 @@ export async function loadCellData(
       }
     }
 
+    if (base.type === 'TXST') {
+      const textureSet = parseTextureSet(base);
+      if (textureSet.decal) {
+        decals.push({
+          reference: ref.formId,
+          base: ref.base,
+          textureSet,
+          ...placeDecal(textureSet.decal, ref.formId, referenceMatrix(ref)),
+        });
+      } else {
+        skip('texture set without decal data');
+      }
+      continue;
+    }
+
     const model = baseModelPath(base);
     if (!model) {
       if (base.type !== 'LIGH' && base.type !== 'SOUN') skip(`${base.type} without a world model`);
@@ -234,6 +261,7 @@ export async function loadCellData(
     lighting,
     objects,
     lights,
+    decals,
     references,
     skipped: [...skipped].map(([reason, count]) => `${count}× ${reason}`),
     entrance: entrance ?? centre,

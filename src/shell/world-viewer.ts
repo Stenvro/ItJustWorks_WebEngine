@@ -7,16 +7,19 @@ import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
-import type {
-  GpuModel,
-  GpuScene,
-  ModelInstance,
-  LodMask,
-  PointLight,
-  SceneLighting,
-  WaterFlow,
-  WaterFrame,
+import {
+  placedParts,
+  type GpuModel,
+  type GpuScene,
+  type ModelInstance,
+  type LodMask,
+  type PointLight,
+  type SceneLighting,
+  type WaterFlow,
+  type WaterFrame,
 } from '../render/scene-renderer.ts';
+import { projectDecals } from '../render/decal-projection.ts';
+import type { GpuDecals } from '../render/decals.ts';
 import type { GpuGrassField } from '../render/grass.ts';
 import { waterPlane } from '../render/water-data.ts';
 import { parseGrass, placeGrass, type GrassType } from '../world/grass.ts';
@@ -30,7 +33,7 @@ import {
 import { pointLights } from '../world/cell-lighting.ts';
 import { loadCellData, type CellLight } from '../world/cell-loader.ts';
 import { enabledReferences, findToggles, gameStartSelection } from '../world/cell-upgrades.ts';
-import { CELL_SIZE, LAND_GRID, landTexture, type LandData } from '../world/land.ts';
+import { CELL_SIZE, LAND_GRID, landHeightAt, landTexture, type LandData } from '../world/land.ts';
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
 import { cellKey, Worldspace } from '../world/worldspace.ts';
 import type { GameSession } from './game-session.ts';
@@ -62,6 +65,8 @@ interface LoadedCell {
   /** Models made for this cell only (its water plane). */
   owned: GpuModel[];
   grass: GpuGrassField[];
+  /** Placed decals (blood, scorch marks, puddles). */
+  decals: GpuDecals | undefined;
   lights: readonly CellLight[];
   ready: boolean;
 }
@@ -211,6 +216,7 @@ export class WorldViewer {
       scenes: () => this.#readyScenes(),
       trees: () => this.#lod?.trees(),
       grass: () => this.#readyGrass(),
+      decals: () => this.#readyDecals(),
       lodMask: () => this.#lodMask(),
       terrain: () => this.#readyTerrain(),
       camera: this.#camera,
@@ -291,6 +297,7 @@ export class WorldViewer {
         scene: undefined,
         owned: [],
         grass: [],
+        decals: undefined,
         lights: [],
         ready: false,
       };
@@ -332,6 +339,7 @@ export class WorldViewer {
       : Promise.resolve(undefined);
 
     let scene: GpuScene | undefined;
+    let decals: GpuDecals | undefined;
     let lights: CellLight[] = [];
     let cellWaterHeight: number | undefined;
     if (cellId !== undefined) {
@@ -374,9 +382,18 @@ export class WorldViewer {
       }
       scene = this.#renderer.scene.createScene(instances);
       lights = data.lights.filter((light) => isEnabled(light.reference));
+      // Decals land on the first surface along their projection (objects or landscape).
+      const projected = projectDecals(
+        data.decals,
+        placedParts(instances),
+        land ? (x, y) => landHeightAt(land, cell.x, cell.y, x, y) : undefined,
+      );
+      decals = await this.#renderer.decals.createDecals(projected, session.textures);
+      decals?.select(isEnabled);
     }
     cell.terrain = await terrain;
     cell.scene = scene;
+    cell.decals = decals;
     cell.lights = lights;
     if (land) cell.grass = await this.#grass(land, cell, cellWaterHeight);
   }
@@ -459,6 +476,8 @@ export class WorldViewer {
   #free(cell: LoadedCell): void {
     cell.terrain?.destroy();
     cell.scene?.destroy();
+    cell.decals?.destroy();
+    cell.decals = undefined;
     for (const model of cell.owned.splice(0)) model.destroy();
     for (const field of cell.grass.splice(0)) field.destroy();
     cell.terrain = undefined;
@@ -469,6 +488,10 @@ export class WorldViewer {
   *#readyScenes(): Iterable<GpuScene> {
     if (this.#lod) yield* this.#lod.scenes();
     for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
+  }
+
+  *#readyDecals(): Iterable<GpuDecals> {
+    for (const cell of this.#cells.values()) if (cell.ready && cell.decals) yield cell.decals;
   }
 
   *#readyGrass(): Iterable<GpuGrassField> {

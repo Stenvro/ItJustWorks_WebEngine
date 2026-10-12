@@ -1,4 +1,5 @@
 import type { Renderer } from './render/renderer.ts';
+import type { GameSession } from './shell/game-session.ts';
 import type { ModelViewer } from './shell/model-viewer.ts';
 import type { WorldViewer } from './shell/world-viewer.ts';
 
@@ -10,6 +11,8 @@ declare global {
       readonly world: WorldViewer;
       readonly renderer: Renderer;
       readonly device: GPUDevice;
+      /** The mounted game folder's session, if any. */
+      readonly session: () => GameSession | undefined;
     };
   }
 }
