@@ -36,6 +36,8 @@ import { SkyRenderer, type SkyFrame } from './sky.ts';
 import type { ImageSpace } from '../world/image-space.ts';
 import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
 import { TreeLodRenderer, type TreeLodFrame } from './tree-lod.ts';
+import { SnowScattering } from './snow-sss.ts';
+import { Sao } from './sao.ts';
 import { GrassRenderer, type GpuGrassField } from './grass.ts';
 import { DecalRenderer, type GpuDecals } from './decals.ts';
 import { occlusionView, PrecipitationRenderer, type PrecipitationFrame } from './precipitation.ts';
@@ -121,6 +123,12 @@ export class Renderer {
   readonly terrain: TerrainRenderer;
   readonly sky: SkyRenderer;
   readonly treeLod: TreeLodRenderer;
+  /** The improved snow's subsurface scattering, on the opaque scene. */
+  readonly snowScattering: SnowScattering;
+  /** Ambient occlusion of the opaque scene (bSAOEnable). */
+  readonly #sao: Sao;
+  /** bSAOEnable (on in the launcher presets); off for comparisons. */
+  ambientOcclusion = true;
   readonly grass: GrassRenderer;
   readonly decals: DecalRenderer;
   readonly precipitation: PrecipitationRenderer;
@@ -152,6 +160,8 @@ export class Renderer {
     });
     this.sky = new SkyRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.treeLod = new TreeLodRenderer(device, HDR_FORMAT, this.scene.frameLayout);
+    this.snowScattering = new SnowScattering(device);
+    this.#sao = new Sao(device, this.scene.frameLayout, HDR_FORMAT, SAMPLE_COUNT);
     this.grass = new GrassRenderer(device, HDR_FORMAT, this.scene);
     this.decals = new DecalRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.precipitation = new PrecipitationRenderer(device, HDR_FORMAT, this.scene.frameLayout);
@@ -361,17 +371,9 @@ export class Renderer {
       const water = this.scene.hasWater(scenes);
       const decals = view.decals ? [...view.decals()] : [];
       const decalsInView = this.decals.visible(decals, this.scene.viewPlanes);
-      if (
-        this.scene.needsSceneCopies(scenes) ||
-        decalsInView ||
-        precipitation.length > 0 ||
-        depthOfField
-      ) {
-        encoder.copyTextureToTexture(
-          { texture: this.post.hdrTexture(targets.width, targets.height) },
-          { texture: targets.sceneColor },
-          [targets.width, targets.height],
-        );
+      // Copies of the opaque scene: for water, soft effects and particles, decals, the depth of
+      // field and the snow's scattering (which reads them every frame).
+      {
         const resolve = encoder.beginRenderPass({
           label: 'depth-resolve',
           colorAttachments: [
@@ -382,8 +384,31 @@ export class Renderer {
         resolve.setBindGroup(0, targets.depthResolve);
         resolve.draw(3);
         resolve.end();
+        // Ambient occlusion darkens the opaque scene before anything reads it (the engine's
+        // SAO composite comes before the snow's scattering and the blended objects).
+        if (this.ambientOcclusion && !view.backdrop) {
+          this.#sao.run(encoder, this.scene.frameBindGroup, {
+            width: targets.width,
+            height: targets.height,
+            gbuffer: targets.gbufferResolved,
+            color: colorView,
+            resolve: hdrView,
+          });
+        }
+        encoder.copyTextureToTexture(
+          { texture: this.post.hdrTexture(targets.width, targets.height) },
+          { texture: targets.sceneColor },
+          [targets.width, targets.height],
+        );
         this.scene.updateWaterFrame(view.water?.(), targets.width, targets.height);
       }
+      // Snow scattering into the multisampled colour, which the blended pass goes on with.
+      this.snowScattering.run(
+        encoder,
+        colorView,
+        { scene: targets.sceneColor, depth: targets.sceneDepth, gbuffer: targets.gbufferResolved },
+        view.camera.near,
+      );
       const blended = encoder.beginRenderPass({
         label: 'water-and-blended',
         colorAttachments: [

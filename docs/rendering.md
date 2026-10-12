@@ -93,6 +93,29 @@ field (bDynamicDOF, fDynamicDOF*: near and far blur around what the player looks
 changing after fDDOFFocusDelay over fDDOFFocusDuration) follows the player camera's focus:
 TODO(M5), with the player camera.
 
+## Ambient occlusion
+
+The engine's SAO (bSAOEnable, `sao.ts`, `shaders/sao.wgsl`) is McGuire, Mara and Luebke's
+Scalable Ambient Obscurance (HPG 2012): the passes Community Shaders keeps (ISSAOCameraZ,
+ISSAOMinify, ISSAOBlur, ISSAOComposite) are the paper's reference code. After the opaque pass
+and the depth resolve:
+
+1. Camera-space Z from the resolved depth (near / depth; no geometry = 300000), and 5 more mips,
+   each pixel taking one of the 2 × 2 below on a rotated grid.
+2. Raw AO: 11 taps on a 7-turn spiral within fSAORadius 250 (in pixels: 250 × half the screen
+   height × the projection's y scale / Z), a per-pixel random rotation, wider taps from coarser
+   mips; each occludes by `(r² − |v|²)³ · max((v·n − fSAOBias 2.5) / (0.01 + |v|²), 0)`, the
+   sum divided by r⁶ and AO = `max(0, 1 − sum · fSAOIntensity 15 · 5 / 11)`. The normal comes from
+   the G-buffer (bSAONormalMap), else from the depth's derivatives. The depth key is packed
+   into two channels for the blur. This pass is not in the sources; it is the paper's code
+   with the game's values (TODO(M13): fSAOExpFactor 0.11 has no known role, compare with the
+   original).
+3. Blur along x, then y: 7 taps 2 pixels apart, the Gaussian weights + 0.3 (fSAOValueDiffFactor),
+   cut where the depth keys differ (`1 − 2000 |Δkey|`).
+4. Composite into the multisampled colour before the blended pass: colour × AO under the fog
+   (`src + dst · AO` with src = fog colour · fog · (1 − AO)), none on snow (bDeactivateAOOnSnow)
+   or the sky.
+
 ## Lighting shader
 
 BSLightingShaderProperty (`shaders/lighting.wgsl`) follows the engine's lighting pixel shader
