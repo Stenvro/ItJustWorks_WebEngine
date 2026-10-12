@@ -18,6 +18,9 @@ struct Frame {
   counts: vec4u,
   // Time in seconds, unused.
   time: vec4f,
+  // Distant LOD is hidden in loaded cells: south-west cell of a 7x7 grid (xy) and one bit per
+  // cell, row by row from the south-west (zw: bits 0-31, 32-48).
+  lodMask: vec4i,
 };
 
 struct PointLight {
@@ -29,6 +32,17 @@ struct PointLight {
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var<storage, read> pointLights: array<PointLight>;
+
+// Whether distant LOD at this position is covered by a loaded cell.
+fn lodHidden(worldPos: vec3f) -> bool {
+  let cell = vec2i(floor(worldPos.xy / 4096.0)) - frame.lodMask.xy;
+  if (any(cell < vec2i(0)) || any(cell >= vec2i(7))) {
+    return false;
+  }
+  let bit = u32(cell.y * 7 + cell.x);
+  let word = select(bitcast<u32>(frame.lodMask.z), bitcast<u32>(frame.lodMask.w), bit >= 32u);
+  return ((word >> (bit % 32u)) & 1u) != 0u;
+}
 
 fn safeNormalize(v: vec3f) -> vec3f {
   let len = length(v);

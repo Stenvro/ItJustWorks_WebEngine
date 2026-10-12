@@ -113,6 +113,10 @@ fn screenReflection(origin: vec3f, direction: vec3f) -> vec4f {
 
 @fragment
 fn fs_water(input: VertexOut) -> @location(0) vec4f {
+  // LOD water (WaterShaderFlag lod) gives way to the cell water of loaded cells.
+  if ((draw.flags.w & 0x2u) != 0u && lodHidden(input.worldPos)) {
+    discard;
+  }
   let time = frame.time.x;
   let toCamera = frame.cameraPos.xyz - input.worldPos;
   let distance = length(toCamera);

@@ -230,6 +230,18 @@ const parseTriShape: BlockParser = (reader, context, type): BSTriShapeBlock => {
     reader.skip(12); // LOD0/1/2 sizes
   }
 
+  // BSSubIndexTriShape (SSE): segments of the triangle list (flags u8, first index u32,
+  // triangle count u32), e.g. one per cell of a terrain LOD block.
+  let segments: { flags: number; index: number; triangleCount: number }[] | undefined;
+  if (type === 'BSSubIndexTriShape' && context.bsVersion === 100) {
+    const count = readCount(reader, 9);
+    segments = Array.from({ length: count }, () => ({
+      flags: reader.u8(),
+      index: reader.u32(),
+      triangleCount: reader.u32(),
+    }));
+  }
+
   return {
     ...base,
     kind: 'tri-shape',
@@ -244,6 +256,7 @@ const parseTriShape: BlockParser = (reader, context, type): BSTriShapeBlock => {
     vertexData,
     triangles,
     ...(dynamicPositions && { dynamicPositions }),
+    ...(segments && { segments }),
   };
 };
 
@@ -612,6 +625,7 @@ export const BLOCK_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string, B
   ['BSTriShape', parseTriShape],
   ['BSDynamicTriShape', parseTriShape],
   ['BSMeshLODTriShape', parseTriShape],
+  ['BSSubIndexTriShape', parseTriShape],
   ['NiTriShape', parseNiTriShape],
   ['BSLODTriShape', parseNiTriShape],
   ['NiTriShapeData', parseNiTriShapeData],

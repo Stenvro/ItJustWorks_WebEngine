@@ -65,6 +65,8 @@ export interface BSTriShapeBlock extends NiAvObject {
   readonly triangles: Uint16Array;
   /** BSDynamicTriShape: positions (xyzw) that override the vertex data (faces). */
   readonly dynamicPositions?: Float32Array;
+  /** BSSubIndexTriShape: segments of the triangle list (index = first triangle index). */
+  readonly segments?: readonly { flags: number; index: number; triangleCount: number }[];
 }
 
 /** NiTriShape/BSLODTriShape: older geometry with a separate NiTriShapeData block. */

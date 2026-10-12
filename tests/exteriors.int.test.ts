@@ -2,6 +2,7 @@
 // Skipped without game data.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { parseLodSettings, parseTreeBlock, parseTreeList } from '../src/formats/lod/lod.ts';
 import { SkyObjectType } from '../src/formats/nif/types.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
 import { buildModel } from '../src/render/model-data.ts';
@@ -9,6 +10,7 @@ import { atmosphereProfile, skyShapes } from '../src/render/sky-data.ts';
 import { buildTerrainCell } from '../src/render/terrain-data.ts';
 import { parseCell } from '../src/world/cell-records.ts';
 import { landTexture } from '../src/world/land.ts';
+import { selectLodBlocks } from '../src/world/lod.ts';
 import { RecordDatabase, type GameRecord } from '../src/world/record-db.ts';
 import { skyState } from '../src/world/sky-state.ts';
 import {
@@ -163,6 +165,32 @@ describe.skipIf(!hasGamedata())('exteriors on the local game data', () => {
     expect(water?.height).toBe(-4700);
     expect(vfs.has('textures\\water\\skyrim.esm\\flow.7.-4.dds')).toBe(true);
   }, 30_000);
+
+  it('reads distant LOD: settings, terrain with its water, objects and trees', async () => {
+    const settings = parseLodSettings(await vfs.read('lodsettings\\tamriel.lod'));
+    expect(settings).toMatchObject({ southWestX: -96, stride: 256, lowestLevel: 4 });
+    const blocks = selectLodBlocks(settings, 4.5 * 4096, -2.5 * 4096);
+    for (const block of blocks) {
+      const path = `meshes\\terrain\\tamriel\\tamriel.${String(block.level)}.${String(block.x)}.${String(block.y)}.btr`;
+      expect(vfs.has(path), path).toBe(true);
+    }
+    const terrain = buildModel(
+      parseNif(await vfs.read('meshes\\terrain\\tamriel\\tamriel.32.0.0.btr')),
+    );
+    const kinds = terrain.parts.map((part) => part.material?.kind);
+    expect(kinds).toContain('lighting');
+    expect(kinds).toContain('water');
+    const objects = buildModel(
+      parseNif(await vfs.read('meshes\\terrain\\tamriel\\objects\\tamriel.4.4.-4.bto')),
+    );
+    expect(objects.parts.length).toBeGreaterThan(0);
+    const types = parseTreeList(await vfs.read('meshes\\terrain\\tamriel\\trees\\tamriel.lst'));
+    const trees = parseTreeBlock(
+      await vfs.read('meshes\\terrain\\tamriel\\trees\\tamriel.4.4.-4.btt'),
+    );
+    expect(trees.length).toBeGreaterThan(0);
+    for (const tree of trees) expect(types.some((type) => type.index === tree.type)).toBe(true);
+  });
 
   it('uses the world default where a cell sets no water height', async () => {
     const tamriel = await Worldspace.open(db, await worldId('Tamriel'));

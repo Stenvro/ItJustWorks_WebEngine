@@ -5,6 +5,7 @@ import {
   SAMPLE_COUNT,
   SceneRenderer,
   type GpuScene,
+  type LodMask,
   type SceneLighting,
   type WaterFrame,
 } from './scene-renderer.ts';
@@ -14,6 +15,7 @@ import { HDR_FORMAT, PostProcessor } from './post.ts';
 import { SkyRenderer, type SkyFrame } from './sky.ts';
 import type { ImageSpace } from '../world/image-space.ts';
 import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
+import { TreeLodRenderer, type TreeLodFrame } from './tree-lod.ts';
 
 /** Anything that can view a scene: the orbit camera, the free-flying camera, ... */
 export interface Camera {
@@ -28,8 +30,12 @@ export interface SceneView {
   readonly scenes: () => Iterable<GpuScene>;
   /** Landscape cells to draw this frame. */
   readonly terrain?: () => Iterable<GpuTerrainCell>;
+  /** Distant trees (tree LOD billboards). */
+  readonly trees?: () => TreeLodFrame | undefined;
   /** The sky behind everything (exteriors). */
   readonly sky?: () => SkyFrame | undefined;
+  /** Loaded cells, where distant LOD gives way. */
+  readonly lodMask?: () => LodMask | undefined;
   /** Sky colours for water reflections and the weather's water tint. */
   readonly water?: () => WaterFrame | undefined;
   /** Imagespace of the frame (eye adaptation, bloom, grading); none: the image as rendered. */
@@ -64,6 +70,7 @@ export class Renderer {
   readonly scene: SceneRenderer;
   readonly terrain: TerrainRenderer;
   readonly sky: SkyRenderer;
+  readonly treeLod: TreeLodRenderer;
   readonly post: PostProcessor;
   readonly #gpu: GpuContext;
   readonly #backdrop: GPURenderPipeline;
@@ -83,6 +90,7 @@ export class Renderer {
     this.scene = new SceneRenderer(device, HDR_FORMAT);
     this.terrain = new TerrainRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.sky = new SkyRenderer(device, HDR_FORMAT, this.scene.frameLayout);
+    this.treeLod = new TreeLodRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.post = new PostProcessor(device, format);
 
     const module = device.createShaderModule({ label: 'backdrop', code: backdropShader });
@@ -157,6 +165,7 @@ export class Renderer {
         view.camera.position,
         view.lighting(view.camera),
         timeSeconds,
+        view.lodMask?.(),
       );
     }
 
@@ -194,6 +203,8 @@ export class Renderer {
       if (sky) this.sky.draw(opaque, this.scene.frameBindGroup, sky);
       const terrain = view.terrain?.();
       if (terrain) this.terrain.draw(opaque, this.scene.frameBindGroup, terrain);
+      const trees = view.trees?.();
+      if (trees) this.treeLod.draw(opaque, this.scene.frameBindGroup, trees);
       this.scene.drawOpaque(opaque, scenes);
     }
     opaque.end();
