@@ -2,7 +2,9 @@ import './style.css';
 import { GpuUnavailableError, initGpu, trackCanvasSize, type GpuContext } from './render/gpu.ts';
 import { Renderer } from './render/renderer.ts';
 import { findCustomBackdrop } from './shell/custom-backdrop.ts';
+import { GameSession } from './shell/game-session.ts';
 import { ModelViewer } from './shell/model-viewer.ts';
+import { WorldViewer } from './shell/world-viewer.ts';
 import { setupHideShortcut, setupPanels } from './shell/panels.ts';
 import { Terminal } from './shell/terminal.ts';
 import { BrowserGameFolder } from './vfs/browser/browser-game-folder.ts';
@@ -59,10 +61,18 @@ const ui = {
     },
     upgrades: byId('cell-upgrades', HTMLElement),
   },
+  world: {
+    panel: byId('world-viewer', HTMLElement),
+    search: byId('world-search', HTMLInputElement),
+    results: byId('world-results', HTMLOListElement),
+    count: byId('world-count', HTMLElement),
+    status: byId('world-status', HTMLElement),
+  },
   fatal: byId('fatal', HTMLDivElement),
 };
 
-let viewer: ModelViewer | undefined;
+/** Starts a game session for a mounted VFS (set up once the GPU is ready). */
+let connectSession: ((vfs: Vfs) => Promise<void>) | undefined;
 
 const terminal = new Terminal(ui.log);
 const numberFormat = new Intl.NumberFormat('en-US');
@@ -216,7 +226,7 @@ async function mountGame(folder: GameFolder): Promise<void> {
     'pick',
   );
   ui.pick.textContent = 'change folder';
-  await viewer?.connect(vfs);
+  await connectSession?.(vfs);
 }
 
 function run(action: () => Promise<void>): void {
@@ -308,24 +318,35 @@ async function main(): Promise<void> {
 
   trackCanvasSize(ui.canvas, gpu.device);
   const renderer = new Renderer(gpu);
-  const modelViewer = new ModelViewer(gpu.device, renderer, ui.canvas, terminal, ui.viewer);
-  viewer = modelViewer;
+  const modelViewer = new ModelViewer(renderer, ui.canvas, terminal, ui.viewer);
+  const worldViewer = new WorldViewer(renderer, ui.canvas, terminal, ui.world, () => {
+    modelViewer.deactivate();
+  });
+  modelViewer.onActivate = () => {
+    worldViewer.deactivate();
+  };
+  let session: GameSession | undefined;
+  connectSession = async (vfs: Vfs): Promise<void> => {
+    session?.dispose();
+    session = new GameSession(gpu.device, renderer, vfs, terminal);
+    await Promise.all([modelViewer.connect(session), worldViewer.connect(session)]);
+  };
   // Centre the scene in the part of the screen the shell column does not cover.
   const updateLensShift = (): void => {
     const visibleColumn =
       window.innerWidth >= 1000 &&
       document.body.classList.contains('has-scene') &&
       !ui.shell.classList.contains('shell-hidden');
-    modelViewer.lensShift = visibleColumn
-      ? ui.shell.getBoundingClientRect().width / window.innerWidth
-      : 0;
+    const shift = visibleColumn ? ui.shell.getBoundingClientRect().width / window.innerWidth : 0;
+    modelViewer.lensShift = shift;
+    worldViewer.lensShift = shift;
   };
   new ResizeObserver(updateLensShift).observe(ui.shell);
   new MutationObserver(updateLensShift).observe(document.body, { attributes: true });
   new MutationObserver(updateLensShift).observe(ui.shell, { attributes: true });
   setupPanels(document);
   setupHideShortcut(ui.shell);
-  if (import.meta.env.DEV) window.skyrimDev = { viewer: modelViewer, renderer };
+  if (import.meta.env.DEV) window.skyrimDev = { viewer: modelViewer, world: worldViewer, renderer };
   startRenderLoop(renderer);
 
   const backdrop = await findCustomBackdrop();

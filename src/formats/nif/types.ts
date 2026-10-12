@@ -148,6 +148,28 @@ export interface BSEffectShaderPropertyBlock extends NiObjectNet {
   readonly greyscaleTexture: string;
 }
 
+/** BSSkyShaderProperty object types. */
+export const SkyObjectType = {
+  texture: 0,
+  sunGlare: 1,
+  sky: 2,
+  clouds: 3,
+  stars: 5,
+  moonStarsMask: 7,
+} as const;
+
+/** BSSkyShaderProperty: sky dome, clouds, stars. */
+export interface BSSkyShaderPropertyBlock extends NiObjectNet {
+  readonly kind: 'sky-shader';
+  readonly flags1: number;
+  readonly flags2: number;
+  readonly uvOffset: readonly [number, number];
+  readonly uvScale: readonly [number, number];
+  readonly sourceTexture: string;
+  /** SkyObjectType. */
+  readonly skyObjectType: number;
+}
+
 export interface BSShaderTextureSetBlock {
   readonly kind: 'texture-set';
   readonly textures: readonly string[];
@@ -221,6 +243,7 @@ export type NifBlock =
   | NiTriShapeDataBlock
   | BSLightingShaderPropertyBlock
   | BSEffectShaderPropertyBlock
+  | BSSkyShaderPropertyBlock
   | BSShaderTextureSetBlock
   | NiAlphaPropertyBlock
   | IntegerExtraDataBlock

@@ -6,6 +6,7 @@
 import { multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import type { AlphaState, ModelData, ModelPart, VertexLayout } from './model-data.ts';
 import commonShader from './shaders/common.wgsl?raw';
+import frameShader from './shaders/frame.wgsl?raw';
 import effectShader from './shaders/effect.wgsl?raw';
 import lightingShader from './shaders/lighting.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
@@ -244,6 +245,7 @@ export class SceneRenderer {
   readonly #lightBuffer: GPUBuffer;
   readonly #lightData = new Float32Array(MAX_LIGHTS * LIGHT_FLOATS);
   readonly #frameBindGroup: GPUBindGroup;
+  readonly #frameLayout: GPUBindGroupLayout;
   readonly #drawLayout: GPUBindGroupLayout;
   readonly #materialLayout: GPUBindGroupLayout;
   readonly #pipelineLayout: GPUPipelineLayout;
@@ -256,13 +258,13 @@ export class SceneRenderer {
     this.#device = device;
     this.#colorFormat = colorFormat;
 
-    const frameLayout = device.createBindGroupLayout({
+    const frameLayout = (this.#frameLayout = device.createBindGroupLayout({
       label: 'frame',
       entries: [
         { binding: 0, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, buffer: {} },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
       ],
-    });
+    }));
     this.#drawLayout = device.createBindGroupLayout({
       label: 'draw',
       entries: [
@@ -315,9 +317,12 @@ export class SceneRenderer {
     this.#modules = {
       lighting: device.createShaderModule({
         label: 'lighting',
-        code: commonShader + lightingShader,
+        code: frameShader + commonShader + lightingShader,
       }),
-      effect: device.createShaderModule({ label: 'effect', code: commonShader + effectShader }),
+      effect: device.createShaderModule({
+        label: 'effect',
+        code: frameShader + commonShader + effectShader,
+      }),
     };
     this.#fallbackVertices = createBuffer(
       device,
@@ -428,22 +433,34 @@ export class SceneRenderer {
     }
   }
 
-  draw(pass: GPURenderPassEncoder, scene: GpuScene, cameraPosition: Vec3): void {
+  /** Frame bind group layout (group 0), shared with the terrain and other world shaders. */
+  get frameLayout(): GPUBindGroupLayout {
+    return this.#frameLayout;
+  }
+
+  get frameBindGroup(): GPUBindGroup {
+    return this.#frameBindGroup;
+  }
+
+  /** Draws scenes: opaque parts first, then blended parts of all scenes back to front. */
+  draw(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>, cameraPosition: Vec3): void {
     pass.setBindGroup(0, this.#frameBindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
-    const transparent: { draw: Draw; distance: number }[] = [];
-    for (const draw of scene.draws) {
-      if (draw.part.transparent) {
-        const dx = draw.center[0] - cameraPosition[0];
-        const dy = draw.center[1] - cameraPosition[1];
-        const dz = draw.center[2] - cameraPosition[2];
-        transparent.push({ draw, distance: dx * dx + dy * dy + dz * dz });
-      } else {
-        this.#drawPart(pass, scene, draw);
+    const transparent: { scene: GpuScene; draw: Draw; distance: number }[] = [];
+    for (const scene of scenes) {
+      for (const draw of scene.draws) {
+        if (draw.part.transparent) {
+          const dx = draw.center[0] - cameraPosition[0];
+          const dy = draw.center[1] - cameraPosition[1];
+          const dz = draw.center[2] - cameraPosition[2];
+          transparent.push({ scene, draw, distance: dx * dx + dy * dy + dz * dz });
+        } else {
+          this.#drawPart(pass, scene, draw);
+        }
       }
     }
     transparent.sort((a, b) => b.distance - a.distance);
-    for (const { draw } of transparent) this.#drawPart(pass, scene, draw);
+    for (const { scene, draw } of transparent) this.#drawPart(pass, scene, draw);
   }
 
   #drawPart(pass: GPURenderPassEncoder, scene: GpuScene, draw: Draw): void {

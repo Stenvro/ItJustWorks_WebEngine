@@ -1,29 +1,5 @@
-// Shared declarations for the object shaders (lighting and effect). Prepended to each
-// shader module in TypeScript. ASCII only.
-
-struct Frame {
-  viewProj: mat4x4f,
-  cameraPos: vec4f,
-  // Direction towards the directional light (normalized) and its colour.
-  sunDir: vec4f,
-  sunColor: vec4f,
-  // Directional ambient: light arriving from +X, -X, +Y, -Y, +Z, -Z.
-  ambient: array<vec4f, 6>,
-  fogNearColor: vec4f,
-  fogFarColor: vec4f,
-  // Fog near, far, power, max.
-  fogParams: vec4f,
-  // Point light count, fog enabled.
-  counts: vec4u,
-  _pad: vec4f,
-};
-
-struct PointLight {
-  position: vec3f,
-  radius: f32,
-  color: vec3f,
-  _pad: f32,
-};
+// Object shaders (lighting and effect): per-draw data, materials and the vertex stage.
+// Prepended to each object shader after frame.wgsl. ASCII only.
 
 struct Draw {
   world: mat4x4f,
@@ -41,8 +17,6 @@ struct Draw {
   flags: vec4u,
 };
 
-@group(0) @binding(0) var<uniform> frame: Frame;
-@group(0) @binding(1) var<storage, read> pointLights: array<PointLight>;
 @group(1) @binding(0) var<uniform> draw: Draw;
 @group(2) @binding(0) var linearSampler: sampler;
 // Lighting: diffuse. Effect: source texture.
@@ -78,11 +52,6 @@ fn worldRotation() -> mat3x3f {
   return mat3x3f(draw.world[0].xyz, draw.world[1].xyz, draw.world[2].xyz);
 }
 
-fn safeNormalize(v: vec3f) -> vec3f {
-  let len = length(v);
-  return select(vec3f(0.0, 0.0, 1.0), v / len, len > 1e-6);
-}
-
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
   let world = draw.world * vec4f(in.position, 1.0);
@@ -98,29 +67,6 @@ fn vs_main(in: VertexIn) -> VertexOut {
   );
   out.color = in.color;
   return out;
-}
-
-// Ambient light for a world-space normal, blended from the six directional ambient colours.
-fn directionalAmbient(n: vec3f) -> vec3f {
-  let w = n * n;
-  let x = select(frame.ambient[1].rgb, frame.ambient[0].rgb, n.x >= 0.0);
-  let y = select(frame.ambient[3].rgb, frame.ambient[2].rgb, n.y >= 0.0);
-  let z = select(frame.ambient[5].rgb, frame.ambient[4].rgb, n.z >= 0.0);
-  return x * w.x + y * w.y + z * w.z;
-}
-
-// Cell fog: blends from the near to the far colour with distance.
-fn applyFog(color: vec3f, worldPos: vec3f) -> vec3f {
-  if (frame.counts.y == 0u) {
-    return color;
-  }
-  let distance = length(worldPos - frame.cameraPos.xyz);
-  let near = frame.fogParams.x;
-  let far = max(frame.fogParams.y, near + 1.0);
-  let t = clamp((distance - near) / (far - near), 0.0, 1.0);
-  let amount = min(pow(t, max(frame.fogParams.z, 0.01)), select(1.0, frame.fogParams.w, frame.fogParams.w > 0.0));
-  let fogColor = mix(frame.fogNearColor.rgb, frame.fogFarColor.rgb, t);
-  return mix(color, fogColor, amount);
 }
 
 // NiAlphaProperty alpha test (bit 9 enables, bits 10-12 select the comparison).

@@ -91,6 +91,26 @@
         </p>
       </details>
 
+      <details id="world-viewer" class="panel viewer" data-panel="world-viewer" open hidden>
+        <summary class="viewer-head">
+          <span class="panel-title">// worldspaces</span>
+          <span id="world-count"></span>
+        </summary>
+        <input
+          id="world-search"
+          class="search"
+          type="search"
+          placeholder="search worldspaces, e.g. tamriel, whiterun"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <ol id="world-results" class="results"></ol>
+        <div id="world-status" class="upgrades" hidden></div>
+        <p class="hint">
+          click the scene to look around · wasd to move · shift to run · mouse wheel for speed
+        </p>
+      </details>
+
       <section id="vfs-summary" class="panels" hidden>
         <details class="panel" data-panel="load-order">
           <summary id="load-order-title">load order</summary>

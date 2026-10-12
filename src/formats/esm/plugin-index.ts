@@ -229,9 +229,10 @@ export async function forEachRecord(
   visit: (record: number, loaded: LoadedRecord) => void,
   types?: ReadonlySet<number>,
   chunkSize = DEFAULT_CHUNK,
+  range: readonly [number, number] = [0, index.recordCount],
 ): Promise<void> {
   const reader = new ChunkReader(source, chunkSize);
-  for (let record = 0; record < index.recordCount; record++) {
+  for (let record = range[0]; record < range[1]; record++) {
     if (types && !types.has(index.types[record] ?? 0)) continue;
     const offset = index.offsets[record] ?? 0;
     const size = index.dataSizes[record] ?? 0;
