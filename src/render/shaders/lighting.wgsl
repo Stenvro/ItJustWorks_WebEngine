@@ -8,8 +8,9 @@
 // snow.wgsl. Prepended with frame.wgsl, snow.wgsl and common.wgsl. ASCII only.
 // Notes: docs/rendering.md ("Lighting shader").
 //
-// Parallax (type 3): SSE's parallax pixel shader samples the height map but never offsets the
-// texture coordinates, so such shapes draw like the default shader, as in the original.
+// Parallax (type 3), as the vanilla pixel shader (aers' Skyrim SE shader decompile): the height
+// map shifts the texture coordinates by (height * 0.08 - 0.04) along the model-space view
+// direction's x and y (not the tangent-space one: a bug of the original, kept).
 
 const SLSF1_SPECULAR = 0x1u;
 const SLSF1_VERTEX_ALPHA = 0x8u;
@@ -27,6 +28,7 @@ const SLSF2_BACK_LIGHTING = 0x8000000u;
 const SLSF2_SNOW = 0x10000000u;
 const SHADER_ENVIRONMENT_MAP = 1u;
 const SHADER_GLOW = 2u;
+const SHADER_PARALLAX = 3u;
 const SHADER_SKIN_TINT = 5u;
 const SHADER_HAIR_TINT = 6u;
 const SHADER_LOD_LANDSCAPE = 9u;
@@ -198,20 +200,29 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
   let up = safeNormalize(draw.projectedDirection.xyz);
   let projectedUv = projectedCoordinates(in.worldPos);
   let noiseUv = projectedUv * draw.projected.z;
-  // Multi-pass materials put their own diffuse texture on by the projection.
-  let diffuseUv = select(in.uv, projectedUv * draw.projectedColor.y, multiPass);
+  let toCamera = safeNormalize(frame.cameraPos.xyz - in.worldPos);
 
   // Gradients and samples in uniform control flow; the rest samples with these gradients.
   let uvGradients = Gradients(dpdx(in.uv), dpdy(in.uv));
   let noiseGradients = Gradients(dpdx(noiseUv), dpdy(noiseUv));
   let faceNormalRaw = cross(dpdx(in.worldPos), dpdy(in.worldPos));
+  // Parallax: the height map (slot 3, bound in the layer map's place) shifts the texture.
+  let height = textureSample(layerMap, linearSampler, in.uv).r;
+  let modelView = safeNormalize(transpose(worldRotation()) * toCamera);
+  let surfaceUv = select(
+    in.uv,
+    in.uv + modelView.xy * (height * 0.08 - 0.04),
+    shaderType == SHADER_PARALLAX,
+  );
+  // Multi-pass materials put their own diffuse texture on by the projection.
+  let diffuseUv = select(surfaceUv, projectedUv * draw.projectedColor.y, multiPass);
   let diffuse = textureSample(diffuseMap, linearSampler, diffuseUv);
-  let normalSample = textureSample(normalMap, linearSampler, in.uv);
+  let normalSample = textureSample(normalMap, linearSampler, surfaceUv);
   // Glow map, or the rim / soft light map.
-  let slot2 = textureSample(glowMap, linearSampler, in.uv);
-  let envMaskSample = textureSample(envMask, linearSampler, in.uv);
+  let slot2 = textureSample(glowMap, linearSampler, surfaceUv);
+  let envMaskSample = textureSample(envMask, linearSampler, surfaceUv);
   // Back light map, or the specular map of model-space normal materials.
-  let slot7 = textureSample(backLightMap, linearSampler, in.uv);
+  let slot7 = textureSample(backLightMap, linearSampler, surfaceUv);
 
   if (lod && lodHidden(in.worldPos)) {
     discard;
@@ -244,7 +255,6 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
   if (!frontFacing) {
     n = -n;
   }
-  let toCamera = safeNormalize(frame.cameraPos.xyz - in.worldPos);
 
   // Specular mask: the normal map's alpha, or the specular map with model-space normals.
   var glossiness = select(normalSample.a, slot7.r, modelSpace);
