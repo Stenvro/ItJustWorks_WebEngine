@@ -4,8 +4,9 @@
 // environment map, soft / rim / back lighting, skin and hair tint, multi-layer parallax, LOD
 // landscape and its noise, directional materials (snow, ash, moss and ice laid over a
 // static) and the multi-index snow pass of multi-pass materials. Sun, directional ambient,
-// point lights, shadows and fog come from frame.wgsl. Prepended with frame.wgsl and
-// common.wgsl. ASCII only. Notes: docs/rendering.md ("Lighting shader").
+// point lights, shadows and fog come from frame.wgsl; the snow rim light and sparkles from
+// snow.wgsl. Prepended with frame.wgsl, snow.wgsl and common.wgsl. ASCII only.
+// Notes: docs/rendering.md ("Lighting shader").
 //
 // Parallax (type 3): SSE's parallax pixel shader samples the height map but never offsets the
 // texture coordinates, so such shapes draw like the default shader, as in the original.
@@ -274,6 +275,8 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
   }
   var shadingNormal = n;
   var sparkle = 0.0;
+  // The snow shader's mask (the engine's SnowParameters.y): how much of the pixel is snow.
+  var projectedMask = 0.0;
   if (multiPass) {
     // The second pass covers the triangles facing the material (the engine's alternate
     // index list) and of those the parts the noise lets through.
@@ -297,6 +300,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
     let s3 = sampleGrad(projectedNormal, in.uv * scales.z, uvGradients, scales.z).z;
     let glints = pow(max(min(vec3f(1.0), abs(vec3f(s1, s2, s3))), vec3f(1e-6)), vec3f(draw.sparkle.y));
     sparkle = glints.x + glints.y + glints.z;
+    projectedMask = 1.0;
   } else if (projected) {
     if ((drawFlags & DRAW_PROJECTED_TEXTURED) != 0u) {
       let w = saturate(5.0 * (0.1 + projectedWeight));
@@ -304,14 +308,19 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
       let projectedColor =
         sampleGrad(projectedDiffuse, noiseUv * PROJECTED_TILING, noiseGradients, PROJECTED_TILING).rgb;
       base = mix(base, projectedColor * draw.projectedColor.rgb, blend);
+      projectedMask = blend;
     } else if (projectedWeight > 0.0) {
       base = draw.projectedColor.rgb;
+      projectedMask = projectedWeight;
     }
   }
 
   // Snow (a static counted as snow, or a snow shader) leaves its highlights to the snow
   // shader's rim light.
   let snow = (drawFlags & DRAW_SNOW) != 0u || (flags2 & SLSF2_SNOW) != 0u;
+  // Snow mask: the projected material's weight, else the diffuse alpha (snow textures keep
+  // the mask there, bEnableSnowMask).
+  let snowMask = select(0.0, select(diffuse.a, projectedMask, projected || multiPass), snow);
   let hasSpecular = (flags1 & SLSF1_SPECULAR) != 0u && !lodLand;
   let anisotropic = (flags2 & SLSF2_ANISOTROPIC_LIGHTING) != 0u;
   // Sparkles light up only without the snow shader.
@@ -399,6 +408,10 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
     specular = lights.specular * glossiness;
   }
   color += specular;
+  // Snow: the rim light in place of the specular.
+  if (snowMask > 0.0) {
+    color += vec3f(snowRimSpecular(vertexNormal, shadingNormal, toCamera) * snowMask);
+  }
 
   switch (frame.counts.z) {
     case 1u: {
@@ -418,7 +431,11 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
     }
     default: {
       // Sky objects (weather sky statics) are not fogged.
-      let fogged = select(applyFog(color, in.worldPos), color, (drawFlags & DRAW_SKY) != 0u);
+      var fogged = select(applyFog(color, in.worldPos), color, (drawFlags & DRAW_SKY) != 0u);
+      // Snow sparkles come after the fog, as in the engine's composite pass.
+      if (snowMask > 0.0) {
+        fogged += snowSparkles(in.worldPos, shadow) * snowMask;
+      }
       return vec4f(fogged, alpha);
     }
   }

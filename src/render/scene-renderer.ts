@@ -23,6 +23,7 @@ import commonShader from './shaders/common.wgsl?raw';
 import frameShader from './shaders/frame.wgsl?raw';
 import effectShader from './shaders/effect.wgsl?raw';
 import lightingShader from './shaders/lighting.wgsl?raw';
+import snowShader from './shaders/snow.wgsl?raw';
 import particleShader from './shaders/particle.wgsl?raw';
 import refractionShader from './shaders/refraction.wgsl?raw';
 import shadowShader from './shaders/shadow.wgsl?raw';
@@ -1086,7 +1087,7 @@ export class SceneRenderer {
     this.#modules = {
       lighting: device.createShaderModule({
         label: 'lighting',
-        code: frameShader + commonShader + lightingShader,
+        code: frameShader + snowShader + commonShader + lightingShader,
       }),
       effect: device.createShaderModule({
         label: 'effect',
