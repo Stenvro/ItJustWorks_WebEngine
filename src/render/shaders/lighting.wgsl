@@ -59,19 +59,44 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
     n = -n;
   }
 
-  let toLight = frame.sunDir.xyz;
   let toCamera = safeNormalize(frame.cameraPos.xyz - in.worldPos);
-  let nDotL = max(dot(n, toLight), 0.0);
-  var color = base * (frame.ambient.rgb + frame.sunColor.rgb * nDotL);
+  let hasSpecular = (flags1 & SLSF1_SPECULAR) != 0u;
+  let glossiness = max(draw.params.x, 1.0);
+  // Specular mask lives in the normal map's alpha (none for MSN).
+  let specularMask =
+    select(normalSample.a, 1.0, (flags1 & SLSF1_MODEL_SPACE_NORMALS) != 0u) * draw.specular.a;
 
-  if ((flags1 & SLSF1_SPECULAR) != 0u && nDotL > 0.0) {
-    let halfway = safeNormalize(toLight + toCamera);
-    let glossiness = max(draw.params.x, 1.0);
-    // Specular mask lives in the normal map's alpha (none for MSN).
-    let mask = select(normalSample.a, 1.0, (flags1 & SLSF1_MODEL_SPACE_NORMALS) != 0u);
-    let highlight = pow(max(dot(n, halfway), 0.0), glossiness) * draw.specular.a * mask;
-    color += draw.specular.rgb * frame.sunColor.rgb * highlight;
+  // Directional light (sun, or the cell's directional light).
+  let toSun = frame.sunDir.xyz;
+  let sunNDotL = max(dot(n, toSun), 0.0);
+  var diffuseLight = directionalAmbient(n) + frame.sunColor.rgb * sunNDotL;
+  var specularLight = vec3f(0.0);
+  if (hasSpecular && sunNDotL > 0.0) {
+    let halfway = safeNormalize(toSun + toCamera);
+    specularLight += frame.sunColor.rgb * pow(max(dot(n, halfway), 0.0), glossiness);
   }
+
+  // Point lights: brightness falls off as (1 - d^2/r^2), reaching zero at the radius.
+  // TODO(M4): match the engine's per-object light limit and shadowed lights.
+  for (var i = 0u; i < frame.counts.x; i++) {
+    let light = pointLights[i];
+    let offset = light.position - in.worldPos;
+    let distanceSquared = dot(offset, offset);
+    let radiusSquared = light.radius * light.radius;
+    if (distanceSquared >= radiusSquared) {
+      continue;
+    }
+    let toLight = offset * inverseSqrt(max(distanceSquared, 1e-4));
+    let attenuation = 1.0 - distanceSquared / radiusSquared;
+    let nDotL = max(dot(n, toLight), 0.0);
+    diffuseLight += light.color * nDotL * attenuation;
+    if (hasSpecular && nDotL > 0.0) {
+      let halfway = safeNormalize(toLight + toCamera);
+      specularLight += light.color * pow(max(dot(n, halfway), 0.0), glossiness) * attenuation;
+    }
+  }
+
+  var color = base * diffuseLight + draw.specular.rgb * specularLight * specularMask;
 
   if (shaderType == SHADER_GLOW && (flags2 & SLSF2_GLOW_MAP) != 0u) {
     color += glow.rgb * draw.emissive.rgb;
@@ -87,5 +112,5 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
     color += env * envMaskSample.r * draw.params.w;
   }
 
-  return vec4f(color, alpha);
+  return vec4f(applyFog(color, in.worldPos), alpha);
 }

@@ -159,6 +159,13 @@ export interface NiAlphaPropertyBlock extends NiObjectNet {
   readonly threshold: number;
 }
 
+/** NiIntegerExtraData and BSXFlags (name + u32). */
+export interface IntegerExtraDataBlock {
+  readonly kind: 'integer-extra-data';
+  readonly name: string;
+  readonly value: number;
+}
+
 /** Block type that is not parsed (yet); skipped using the block size. */
 export interface UnknownBlock {
   readonly kind: 'unknown';
@@ -173,4 +180,5 @@ export type NifBlock =
   | BSEffectShaderPropertyBlock
   | BSShaderTextureSetBlock
   | NiAlphaPropertyBlock
+  | IntegerExtraDataBlock
   | UnknownBlock;

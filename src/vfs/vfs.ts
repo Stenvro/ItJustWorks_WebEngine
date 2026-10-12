@@ -12,6 +12,7 @@ import {
   parsePluginHeader,
   type PluginHeader,
 } from '../formats/esm/plugin-header.ts';
+import { MemoryByteSource, type ByteSource } from '../formats/byte-source.ts';
 import { parseIni } from '../formats/ini/ini.ts';
 import { normalizePath } from '../formats/paths.ts';
 import { decodeWindows1252 } from '../formats/text.ts';
@@ -226,6 +227,17 @@ export class Vfs {
     const file = this.resolve(path);
     if (!file) throw new VfsNotFoundError(path);
     return this.readFile(file);
+  }
+
+  /**
+   * Random access to a file: loose files are read on demand (plugins can be hundreds of
+   * MB); a file inside an archive is decompressed into memory first.
+   */
+  async openSource(path: string): Promise<ByteSource> {
+    const file = this.resolve(path);
+    if (!file) throw new VfsNotFoundError(path);
+    if (file.kind === 'loose') return this.#folder.openDataFile(file.relativePath);
+    return new MemoryByteSource(await this.readFile(file));
   }
 
   async readFile(file: VfsFile): Promise<Uint8Array> {
