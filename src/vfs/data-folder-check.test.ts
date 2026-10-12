@@ -18,7 +18,7 @@ const complete: FolderEntry[] = [
 ];
 
 describe('checkDataFolder', () => {
-  it('accepteert een complete Data-map', () => {
+  it('accepts a complete Data folder', () => {
     const report = checkDataFolder(complete);
     expect(report.ok).toBe(true);
     expect(report.missing).toEqual([]);
@@ -27,13 +27,13 @@ describe('checkDataFolder', () => {
     expect(report.archives).toHaveLength(REQUIRED_ARCHIVES.length + 1);
   });
 
-  it('vergelijkt hoofdletterongevoelig en behoudt de originele schrijfwijze', () => {
+  it('compares case-insensitively and keeps the original casing', () => {
     const report = checkDataFolder(complete.map((e) => ({ ...e, name: e.name.toUpperCase() })));
     expect(report.ok).toBe(true);
     expect(report.plugins).toContain('SKYRIM.ESM');
   });
 
-  it('accepteert stemmen in een andere taal', () => {
+  it('accepts voices in another language', () => {
     const report = checkDataFolder(
       complete.map((e) =>
         e.name === 'Skyrim - Voices_en0.bsa' ? file('Skyrim - Voices_de0.bsa') : e,
@@ -42,7 +42,7 @@ describe('checkDataFolder', () => {
     expect(report.ok).toBe(true);
   });
 
-  it('meldt ontbrekende bestanden', () => {
+  it('reports missing files', () => {
     const report = checkDataFolder(
       complete.filter((e) => e.name !== 'Dragonborn.esm' && !e.name.includes('Voices')),
     );
@@ -50,13 +50,13 @@ describe('checkDataFolder', () => {
     expect(report.missing).toEqual(['Dragonborn.esm', 'Skyrim - Voices_*0.bsa']);
   });
 
-  it('herkent de installatiemap in plaats van Data', () => {
+  it('recognizes the install folder instead of Data', () => {
     const report = checkDataFolder([file('SkyrimSE.exe'), dir('Data'), dir('Skyrim')]);
     expect(report.ok).toBe(false);
     expect(report.looksLikeGameRoot).toBe(true);
   });
 
-  it('herkent een gekopieerde installatiemap aan Skyrim.ccc', () => {
+  it('recognizes a copied install folder by Skyrim.ccc', () => {
     expect(checkDataFolder([file('Skyrim.ccc'), dir('Data')]).looksLikeGameRoot).toBe(true);
     expect(checkDataFolder([dir('Data')]).looksLikeGameRoot).toBe(false);
   });

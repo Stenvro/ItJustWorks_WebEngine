@@ -4,12 +4,12 @@ import type { GameFolder } from '../../src/vfs/game-folder.ts';
 const encode = (value: Uint8Array | string): Uint8Array =>
   typeof value === 'string' ? new TextEncoder().encode(value) : value;
 
-/** Installatiemap in geheugen voor tests. */
+/** In-memory installation folder for tests. */
 export class MemoryGameFolder implements GameFolder {
   readonly #data: Map<string, Uint8Array>;
   readonly #root: Map<string, Uint8Array> | undefined;
 
-  /** `root: null` simuleert dat alleen de Data-map gekozen is. */
+  /** `root: null` simulates that only the Data folder was chosen. */
   constructor(
     data: Record<string, Uint8Array | string>,
     root: Record<string, Uint8Array | string> | null = {},
@@ -27,7 +27,7 @@ export class MemoryGameFolder implements GameFolder {
 
   openDataFile(relativePath: string): Promise<ByteSource> {
     const bytes = this.#data.get(relativePath);
-    if (!bytes) return Promise.reject(new Error(`${relativePath} bestaat niet`));
+    if (!bytes) return Promise.reject(new Error(`${relativePath} does not exist`));
     return Promise.resolve(new MemoryByteSource(bytes));
   }
 
@@ -36,7 +36,7 @@ export class MemoryGameFolder implements GameFolder {
   }
 }
 
-/** Minimale TES4-header met de gegeven vlaggen. */
+/** Minimal TES4 header with the given flags. */
 export function pluginBytes(flags = 0): Uint8Array {
   const bytes = new Uint8Array(24);
   bytes.set(new TextEncoder().encode('TES4'));

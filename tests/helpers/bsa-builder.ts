@@ -1,4 +1,4 @@
-// Bouwt kleine BSA v105-archieven in geheugen voor unit tests (geen gamedata).
+// Builds small BSA v105 archives in memory for unit tests (no game data).
 
 import { bsaHash } from '../../src/formats/bsa/bsa-hash.ts';
 import { fileNameOf, folderOf, normalizePath } from '../../src/formats/paths.ts';
@@ -8,7 +8,7 @@ import { literalFrame } from './lz4-frame.ts';
 export interface BsaFile {
   readonly path: string;
   readonly data: Uint8Array;
-  /** Standaard: volgens `compressedByDefault`. */
+  /** Default: according to `compressedByDefault`. */
   readonly compress?: boolean;
 }
 
@@ -17,7 +17,7 @@ export interface BsaBuildOptions {
   readonly compressedByDefault?: boolean;
   readonly embedFileNames?: boolean;
   readonly includeNames?: boolean;
-  /** Schrijf een verkeerde hash voor het eerste bestand. */
+  /** Write a wrong hash for the first file. */
   readonly corruptFirstFileHash?: boolean;
 }
 

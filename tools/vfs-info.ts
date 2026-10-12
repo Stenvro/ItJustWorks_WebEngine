@@ -1,8 +1,8 @@
-// Bouwt de VFS op uit de lokale gamedata en toont laadvolgorde, archieven en conflicten.
+// Builds the VFS from the local game data and shows load order, archives and conflicts.
 //
-//   node tools/vfs-info.ts                       overzicht
-//   node tools/vfs-info.ts meshes\clutter\x.nif  waar komt dit bestand vandaan?
-//   node tools/vfs-info.ts --plugins <pad>       met een plugins.txt (mods)
+//   node tools/vfs-info.ts                       overview
+//   node tools/vfs-info.ts meshes\clutter\x.nif  where does this file come from?
+//   node tools/vfs-info.ts --plugins <path>      with a plugins.txt (mods)
 
 import { readFile } from 'node:fs/promises';
 import { parseArgs } from 'node:util';
@@ -23,13 +23,13 @@ const start = performance.now();
 const vfs = await Vfs.mount(openGameFolder(), { pluginsTxt });
 const elapsed = performance.now() - start;
 
-console.log(`Installatiemap: ${GAME_ROOT_DIR}`);
-console.log(`\nLaadvolgorde (${vfs.loadOrder.length}):`);
+console.log(`Installation folder: ${GAME_ROOT_DIR}`);
+console.log(`\nLoad order (${vfs.loadOrder.length}):`);
 for (const entry of vfs.loadOrder) {
   console.log(`  ${formatModIndex(entry).padEnd(6)} ${entry.name.padEnd(36)} ${entry.source}`);
 }
 
-console.log(`\nArchieven (${vfs.archives.length}, laag → hoog):`);
+console.log(`\nArchives (${vfs.archives.length}, low → high):`);
 for (const mounted of vfs.archives) {
   const files = mounted.archive.entries.length;
   const winning = mounted.archive.entries.filter((entry) => {
@@ -38,25 +38,25 @@ for (const mounted of vfs.archives) {
   }).length;
   const overridden = files - winning;
   console.log(
-    `  ${mounted.name.padEnd(34)} ${String(files).padStart(7)} bestanden` +
-      (overridden > 0 ? `  (${overridden} overschreven door later geladen bron)` : ''),
+    `  ${mounted.name.padEnd(34)} ${String(files).padStart(7)} files` +
+      (overridden > 0 ? `  (${overridden} overridden by a later-loaded source)` : ''),
   );
 }
-console.log(`\n${vfs.fileCount} unieke paden, opgebouwd in ${elapsed.toFixed(0)} ms`);
+console.log(`\n${vfs.fileCount} unique paths, built in ${elapsed.toFixed(0)} ms`);
 
 if (vfs.problems.length > 0) {
-  console.log('\nMeldingen:');
+  console.log('\nProblems:');
   for (const problem of vfs.problems) console.log(`  ${problem.source}: ${problem.message}`);
 }
 
 for (const query of positionals) {
   const file = vfs.resolve(query);
   if (!file) {
-    console.log(`\n${query}: niet gevonden`);
+    console.log(`\n${query}: not found`);
     continue;
   }
   const data = await vfs.readFile(file);
-  const origin = file.kind === 'loose' ? `los bestand (${file.relativePath})` : file.archive.name;
-  console.log(`\n${file.path}: ${data.length} bytes uit ${origin}`);
+  const origin = file.kind === 'loose' ? `loose file (${file.relativePath})` : file.archive.name;
+  console.log(`\n${file.path}: ${data.length} bytes from ${origin}`);
 }
 await vfs.close();

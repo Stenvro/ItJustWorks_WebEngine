@@ -1,5 +1,5 @@
-// Windows-1252: de codepagina van Skyrim's bestandsnamen, plugins.txt en Engelse records.
-// Mapping volgens de WHATWG Encoding-standaard (gelijk aan TextDecoder('windows-1252')).
+// Windows-1252: the code page of Skyrim's file names, plugins.txt and English records.
+// Mapping per the WHATWG Encoding Standard (same as TextDecoder('windows-1252')).
 
 const HIGH = [
   0x20ac, 0x0081, 0x201a, 0x0192, 0x201e, 0x2026, 0x2020, 0x2021, 0x02c6, 0x2030, 0x0160, 0x2039,
@@ -18,7 +18,7 @@ export function decodeWindows1252(bytes: Uint8Array, start = 0, end = bytes.leng
   return result;
 }
 
-/** Tekens die niet in Windows-1252 bestaan worden `?`, zoals bij Windows' ANSI-API's. */
+/** Characters that do not exist in Windows-1252 become `?`, as with Windows' ANSI APIs. */
 export function encodeWindows1252(text: string): Uint8Array {
   const bytes = new Uint8Array(text.length);
   for (let i = 0; i < text.length; i++) {
@@ -30,8 +30,8 @@ export function encodeWindows1252(text: string): Uint8Array {
 }
 
 /**
- * Kleine letters alleen voor A-Z, zoals de C-runtime `tolower` die de engine gebruikt.
- * (`String#toLowerCase` zou ook letters met accenten omzetten.)
+ * Lowercases only A-Z, like the C runtime `tolower` the engine uses.
+ * (`String#toLowerCase` would also convert accented letters.)
  */
 export function asciiLowerCase(text: string): string {
   return text.replace(/[A-Z]+/g, (match) => match.toLowerCase());

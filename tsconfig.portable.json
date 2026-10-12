@@ -1,6 +1,6 @@
 {
-  // Platform-onafhankelijke code (parsers en de VFS-kern): geen DOM- en geen Node-types.
-  // Gebruikt die code per ongeluk een browser- of Node-API, dan faalt `npm run typecheck`.
+  // Platform-independent code (parsers and the VFS core): no DOM and no Node types.
+  // If that code accidentally uses a browser or Node API, `npm run typecheck` fails.
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "module": "NodeNext",

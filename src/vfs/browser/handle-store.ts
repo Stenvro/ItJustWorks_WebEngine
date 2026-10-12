@@ -1,5 +1,5 @@
-// Bewaart FileSystemHandles in IndexedDB, zodat de gekozen Data-map een
-// herstart van de browser overleeft.
+// Stores FileSystemHandles in IndexedDB, so the selected Data folder survives
+// a browser restart.
 
 const DB_NAME = 'skyrim-web';
 const DB_VERSION = 1;

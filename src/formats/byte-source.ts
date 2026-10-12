@@ -1,12 +1,12 @@
 /**
- * Willekeurig toegankelijke bytes (bestand, blob of geheugen). Parsers lezen grote
- * bestanden hiermee op offset, zodat een archief nooit in zijn geheel in geheugen staat.
+ * Random-access bytes (file, blob or memory). Parsers use this to read large
+ * files at an offset, so an archive is never held in memory as a whole.
  */
 export interface ByteSource {
   readonly size: number;
-  /** Leest precies `length` bytes vanaf `offset`; gooit als dat buiten het bestand valt. */
+  /** Reads exactly `length` bytes from `offset`; throws if that falls outside the file. */
   read(offset: number, length: number): Promise<Uint8Array>;
-  /** Geeft onderliggende resources vrij (bestandshandles). */
+  /** Releases underlying resources (file handles). */
   close?(): Promise<void>;
 }
 

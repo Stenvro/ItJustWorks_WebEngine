@@ -1,4 +1,4 @@
-// File System Access API (WICG): alleen Chromium, en daarom niet in TypeScript's DOM-lib.
+// File System Access API (WICG): Chromium only, and therefore not in TypeScript's DOM lib.
 // https://wicg.github.io/file-system-access/
 
 interface FileSystemHandlePermissionDescriptor {
@@ -18,6 +18,6 @@ interface DirectoryPickerOptions {
 }
 
 interface Window {
-  /** Ontbreekt buiten Chromium; altijd eerst controleren. */
+  /** Missing outside Chromium; always check first. */
   showDirectoryPicker?(options?: DirectoryPickerOptions): Promise<FileSystemDirectoryHandle>;
 }

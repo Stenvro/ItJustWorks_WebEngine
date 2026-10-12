@@ -1,4 +1,4 @@
-// Integratietest: de VFS op de lokale gamedata. Overgeslagen zonder gamedata.
+// Integration test: the VFS on the local game data. Skipped without game data.
 
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
@@ -7,7 +7,7 @@ import { IMPLICIT_MASTERS } from '../src/vfs/load-order.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { GAME_ROOT_DIR, hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
-describe.skipIf(!hasGamedata())('VFS op de lokale gamedata', () => {
+describe.skipIf(!hasGamedata())('VFS on the local game data', () => {
   let vfs: Vfs;
 
   beforeAll(async () => {
@@ -17,12 +17,12 @@ describe.skipIf(!hasGamedata())('VFS op de lokale gamedata', () => {
     await vfs.close();
   });
 
-  it('mount zonder meldingen', () => {
+  it('mounts without problems', () => {
     expect(vfs.problems).toEqual([]);
     expect(vfs.hasCreationClubList).toBe(true);
   });
 
-  it('laadt eerst de vaste masters en daarna Creation Club in Skyrim.ccc-volgorde', () => {
+  it('loads the fixed masters first, then Creation Club in Skyrim.ccc order', () => {
     const names = vfs.loadOrder.map((e) => e.name);
     expect(names.slice(0, IMPLICIT_MASTERS.length)).toEqual([...IMPLICIT_MASTERS]);
 
@@ -32,17 +32,17 @@ describe.skipIf(!hasGamedata())('VFS op de lokale gamedata', () => {
     const cc = names.slice(IMPLICIT_MASTERS.length);
     const positions = cc.map((name) => ccc.indexOf(name.toLowerCase()));
     expect(positions.every((p) => p >= 0)).toBe(true);
-    // Alle Creation Club-plugins zijn masters (.esm/.esl), dus de volgorde is precies die van Skyrim.ccc.
+    // All Creation Club plugins are masters (.esm/.esl), so the order is exactly that of Skyrim.ccc.
     expect(positions).toEqual([...positions].sort((a, b) => a - b));
   });
 
-  it('geeft .esl-plugins een FE-index', () => {
+  it('gives .esl plugins an FE index', () => {
     for (const entry of vfs.loadOrder) {
       expect(entry.lightIndex !== undefined).toBe(entry.name.toLowerCase().endsWith('.esl'));
     }
   });
 
-  it('laadt eerst de INI-archieven en daarna de archieven van plugins', () => {
+  it('loads the INI archives first, then the plugin archives', () => {
     const names = vfs.archives.map((a) => a.name);
     expect(names[0]).toBe('Skyrim - Misc.bsa');
     expect(names).toContain('Skyrim - Textures8.bsa');
@@ -52,10 +52,10 @@ describe.skipIf(!hasGamedata())('VFS op de lokale gamedata', () => {
     expect(names).not.toContain('MarketplaceTextures.bsa');
   });
 
-  it('leest bestanden uit verschillende archieven', async () => {
+  it('reads files from different archives', async () => {
     for (const folder of ['meshes', 'textures', 'interface', 'sound', 'scripts']) {
       const first = vfs.list(folder)[0];
-      expect(first, `geen bestanden onder ${folder}`).toBeDefined();
+      expect(first, `no files under ${folder}`).toBeDefined();
       if (first !== undefined) expect((await vfs.read(first)).length).toBeGreaterThan(0);
     }
   });

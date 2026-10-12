@@ -1,6 +1,6 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion -- hot loop; grenzen worden expliciet bewaakt */
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- hot loop; bounds are checked explicitly */
 
-// xxHash32, gebruikt voor de checksums in LZ4-frames.
+// xxHash32, used for the checksums in LZ4 frames.
 // https://github.com/Cyan4973/xxHash/blob/dev/doc/xxhash_spec.md
 
 const PRIME1 = 0x9e3779b1;

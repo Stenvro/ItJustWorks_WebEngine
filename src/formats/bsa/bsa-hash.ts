@@ -1,7 +1,7 @@
 import { asciiLowerCase, encodeWindows1252 } from '../text.ts';
 
-// De 64-bit "TES-hash" waarmee BSA's mappen en bestanden indexeren (Oblivion t/m Skyrim SE).
-// Bron: UESP "Oblivion Mod:Hash Calculation", BSArch.
+// The 64-bit "TES hash" BSAs use to index folders and files (Oblivion through Skyrim SE).
+// Source: UESP "Oblivion Mod:Hash Calculation", BSArch.
 
 const EXTENSION_FLAGS: Readonly<Record<string, number>> = {
   '.kf': 0x80,
@@ -17,8 +17,8 @@ function rollingHash(bytes: Uint8Array, start: number, end: number): number {
 }
 
 /**
- * Hash van een mappad (`meshes\clutter`) of een bestandsnaam zonder map (`foo.nif`).
- * Bij bestanden telt de extensie apart mee; bij mappen niet.
+ * Hash of a folder path (`meshes\clutter`) or a file name without folder (`foo.nif`).
+ * For files the extension is hashed separately; for folders it is not.
  */
 export function bsaHash(name: string, isFolder: boolean): bigint {
   const bytes = encodeWindows1252(asciiLowerCase(name).replaceAll('/', '\\'));

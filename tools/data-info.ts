@@ -1,6 +1,6 @@
-// Controleert een Skyrim SE Data-map en toont wat erin staat.
+// Checks a Skyrim SE Data folder and shows what it contains.
 //
-//   node tools/data-info.ts [pad-naar-Data]
+//   node tools/data-info.ts [path-to-Data]
 
 import { readdirSync } from 'node:fs';
 import { checkDataFolder } from '../src/vfs/data-folder-check.ts';
@@ -13,16 +13,17 @@ const entries = readdirSync(dir, { withFileTypes: true }).map((entry) => ({
 }));
 const report = checkDataFolder(entries);
 
-console.log(`Data-map: ${dir}`);
-console.log(`\nPlugins (${report.plugins.length}, alfabetisch):`);
+console.log(`Data folder: ${dir}`);
+console.log(`\nPlugins (${report.plugins.length}, alphabetical):`);
 for (const name of report.plugins) console.log(`  ${name}`);
-console.log(`\nArchieven (${report.archives.length}):`);
+console.log(`\nArchives (${report.archives.length}):`);
 for (const name of report.archives) console.log(`  ${name}`);
 
 if (report.ok) {
-  console.log('\nOK: complete Skyrim Special Edition Data-map.');
+  console.log('\nOK: complete Skyrim Special Edition Data folder.');
 } else {
-  if (report.looksLikeGameRoot) console.error('\nDit is de installatiemap; geef de Data-map op.');
-  console.error(`\nOntbreekt: ${report.missing.join(', ')}`);
+  if (report.looksLikeGameRoot)
+    console.error('\nThis is the installation folder; specify the Data folder.');
+  console.error(`\nMissing: ${report.missing.join(', ')}`);
   process.exitCode = 1;
 }

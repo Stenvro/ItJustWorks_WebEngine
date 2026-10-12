@@ -1,5 +1,5 @@
-// Virtueel bestandssysteem: losse bestanden in Data/ gaan altijd voor; daarna wint het
-// archief dat het laatst geladen wordt. Zie docs/formats/load-order.md.
+// Virtual file system: loose files in Data/ always take precedence; after that the
+// archive loaded last wins. See docs/formats/load-order.md.
 
 import { BsaArchive, type BsaEntry } from '../formats/bsa/bsa.ts';
 import {
@@ -21,7 +21,7 @@ import {
 export interface MountedArchive {
   readonly name: string;
   readonly archive: BsaArchive;
-  /** Hoger wint bij conflicten. */
+  /** Higher wins on conflicts. */
   readonly priority: number;
 }
 
@@ -35,15 +35,15 @@ export type VfsFile =
     };
 
 export interface VfsProblem {
-  /** Bestand of onderdeel waar het om gaat. */
+  /** File or component concerned. */
   readonly source: string;
   readonly message: string;
 }
 
 export interface MountOptions {
-  /** Inhoud van plugins.txt (mods). Zonder: alleen vaste masters en Creation Club. */
+  /** Contents of plugins.txt (mods). Without it: only implicit masters and Creation Club. */
   readonly pluginsTxt?: string;
-  /** Controleer alle hashes in de archieven (langzamer; voor tools en tests). */
+  /** Verify all hashes in the archives (slower; for tools and tests). */
   readonly verifyHashes?: boolean;
 }
 
@@ -67,14 +67,14 @@ const IN_SUBFOLDER = /[\\/]/;
 
 export class Vfs {
   readonly loadOrder: readonly LoadOrderEntry[];
-  /** Laag → hoog. */
+  /** Low → high. */
   readonly archives: readonly MountedArchive[];
   readonly problems: readonly VfsProblem[];
-  /** Skyrim.ccc was bereikbaar (anders zijn Creation Club-plugins niet actief). */
+  /** Skyrim.ccc was reachable (otherwise Creation Club plugins are inactive). */
   readonly hasCreationClubList: boolean;
   readonly #folder: GameFolder;
   readonly #files: ReadonlyMap<string, VfsFile>;
-  /** Archieven zonder namen, hoog → laag; die worden op hash doorzocht. */
+  /** Archives without names, high → low; these are searched by hash. */
   readonly #hashOnly: readonly MountedArchive[];
 
   private constructor(init: {
@@ -95,8 +95,8 @@ export class Vfs {
   }
 
   /**
-   * Bouwt de VFS op: laadvolgorde, archieven openen, index samenvoegen.
-   * Corrupte of onleesbare bestanden worden overgeslagen en gemeld in `problems`.
+   * Builds the VFS: load order, open archives, merge the index.
+   * Corrupt or unreadable files are skipped and reported in `problems`.
    */
   static async mount(folder: GameFolder, options: MountOptions = {}): Promise<Vfs> {
     const problems: VfsProblem[] = [];
@@ -194,12 +194,12 @@ export class Vfs {
     });
   }
 
-  /** Aantal unieke paden (losse bestanden en archiefbestanden met naam). */
+  /** Number of unique paths (loose files and named archive files). */
   get fileCount(): number {
     return this.#files.size;
   }
 
-  /** Waar een pad vandaan komt, of `undefined` als het niet bestaat. */
+  /** Where a path comes from, or `undefined` if it does not exist. */
   resolve(path: string): VfsFile | undefined {
     const key = normalizePath(path);
     const found = this.#files.get(key);
@@ -216,7 +216,7 @@ export class Vfs {
     return this.resolve(path) !== undefined;
   }
 
-  /** Leest een bestand; gooit VfsNotFoundError als het niet bestaat. */
+  /** Reads a file; throws VfsNotFoundError if it does not exist. */
   async read(path: string): Promise<Uint8Array> {
     const file = this.resolve(path);
     if (!file) throw new VfsNotFoundError(path);
@@ -233,7 +233,7 @@ export class Vfs {
     }
   }
 
-  /** Alle paden onder een map (recursief), gesorteerd. Archieven zonder namen tellen niet mee. */
+  /** All paths under a folder (recursive), sorted. Archives without names are not included. */
   list(folder: string): string[] {
     const prefix = normalizePath(folder);
     const start = prefix === '' ? '' : `${prefix}\\`;

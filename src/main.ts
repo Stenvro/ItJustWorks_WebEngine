@@ -61,7 +61,7 @@ function showFatal(error: unknown): void {
   ui.fatal.hidden = false;
 }
 
-// --- Render-loop ----------------------------------------------------------
+// --- Render loop ----------------------------------------------------------
 
 function startRenderLoop(renderer: Renderer): void {
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -89,7 +89,7 @@ function describeGpu(gpu: GpuContext): string {
   return [vendor, architecture].filter((part) => part !== '').join(' ') || 'unknown';
 }
 
-// --- Skyrim-map kiezen en VFS opbouwen ------------------------------------
+// --- Pick the Skyrim folder and build the VFS -----------------------------
 
 type PromptAction = 'pick' | 'resume' | 'none';
 
@@ -158,8 +158,8 @@ async function useFolder(handle: FileSystemDirectoryHandle, isNewChoice: boolean
   );
 
   const start = performance.now();
-  // TODO(M2): VFS in een worker-pool draaien zodra er assets geladen worden, zodat
-  // decompressie en parsing niet op de main thread gebeuren.
+  // TODO(M2): run the VFS in a worker pool once assets are loaded, so that
+  // decompression and parsing do not happen on the main thread.
   const vfs = await Vfs.mount(new BrowserGameFolder(resolved.data, resolved.root));
   const elapsed = performance.now() - start;
   await currentVfs?.close();
@@ -250,7 +250,7 @@ async function setupGameFolder(): Promise<void> {
   }
 }
 
-// --- Opstarten ------------------------------------------------------------
+// --- Startup --------------------------------------------------------------
 
 async function main(): Promise<void> {
   terminal.log('sys', 'skyrim web engine · booting');
@@ -260,7 +260,7 @@ async function main(): Promise<void> {
   );
 
   const gpu = await initGpu(ui.canvas);
-  // TODO(M13): device opnieuw aanmaken na verlies (driver-reset) in plaats van stoppen.
+  // TODO(M13): recreate the device after loss (driver reset) instead of halting.
   gpu.device.lost
     .then((info) => {
       if (info.reason !== 'destroyed') showFatal(new Error(`GPU device lost: ${info.message}`));

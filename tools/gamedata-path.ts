@@ -3,12 +3,12 @@ import path from 'node:path';
 import { NodeGameFolder } from './node-game-folder.ts';
 
 /**
- * Lokale, alleen-lezen kopie van Skyrim SE's Data-map, buiten de repo.
- * Overschrijfbaar met de omgevingsvariabele SKYRIM_DATA.
+ * Local, read-only copy of Skyrim SE's Data folder, outside the repo.
+ * Can be overridden with the SKYRIM_DATA environment variable.
  */
 export const GAMEDATA_DIR = process.env.SKYRIM_DATA ?? 'F:\\skyrim-data\\Data';
 
-/** Installatiemap (met Skyrim.ccc en Skyrim_Default.ini): de map boven Data. */
+/** Installation folder (with Skyrim.ccc and Skyrim_Default.ini): the folder above Data. */
 export const GAME_ROOT_DIR = path.dirname(GAMEDATA_DIR);
 
 export function hasGamedata(): boolean {
@@ -19,7 +19,7 @@ export function openGameFolder(): NodeGameFolder {
   return new NodeGameFolder(GAMEDATA_DIR, GAME_ROOT_DIR);
 }
 
-/** Pad naar een archief: absoluut, of een naam in de Data-map. */
+/** Path to an archive: absolute, or a name in the Data folder. */
 export function resolveDataFile(nameOrPath: string): string {
   return path.isAbsolute(nameOrPath) ? nameOrPath : path.join(GAMEDATA_DIR, nameOrPath);
 }

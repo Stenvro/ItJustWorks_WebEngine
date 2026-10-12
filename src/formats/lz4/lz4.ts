@@ -1,7 +1,7 @@
-/* eslint-disable @typescript-eslint/no-non-null-assertion -- hot loop; grenzen worden expliciet bewaakt */
+/* eslint-disable @typescript-eslint/no-non-null-assertion -- hot loop; bounds are checked explicitly */
 
-// LZ4-decompressie (block- en frameformaat). Skyrim SE-archieven (BSA v105) slaan
-// gecomprimeerde bestanden op als één LZ4-frame.
+// LZ4 decompression (block and frame format). Skyrim SE archives (BSA v105) store
+// compressed files as a single LZ4 frame.
 // Block:  https://github.com/lz4/lz4/blob/dev/doc/lz4_Block_format.md
 // Frame:  https://github.com/lz4/lz4/blob/dev/doc/lz4_Frame_format.md
 
@@ -11,7 +11,7 @@ import { xxhash32 } from './xxhash32.ts';
 const FRAME_MAGIC = 0x184d2204;
 const SKIPPABLE_MAGIC = 0x184d2a50; // 0x184D2A50..0x184D2A5F
 const MIN_MATCH = 4;
-/** Onder deze lengte is een byte-lus sneller dan `set`/`copyWithin`. */
+/** Below this length a byte loop is faster than `set`/`copyWithin`. */
 const SHORT_COPY = 32;
 const BLOCK_MAX_SIZES = [0, 0, 0, 0, 0x1_0000, 0x4_0000, 0x10_0000, 0x40_0000] as const;
 
@@ -20,9 +20,9 @@ function corrupt(message: string, offset: number): FormatError {
 }
 
 /**
- * Decodeert één LZ4-block uit `src[srcStart..srcEnd)` naar `dst` vanaf `dstStart`.
- * Matches mogen terugverwijzen tot `windowStart` (begin van het frame bij gekoppelde blocks).
- * Geeft de nieuwe schrijfpositie in `dst` terug.
+ * Decodes one LZ4 block from `src[srcStart..srcEnd)` into `dst` starting at `dstStart`.
+ * Matches may refer back as far as `windowStart` (start of the frame for linked blocks).
+ * Returns the new write position in `dst`.
  */
 export function decodeLz4Block(
   src: Uint8Array,
@@ -64,7 +64,7 @@ export function decodeLz4Block(
       }
     }
 
-    // De laatste sequence bestaat alleen uit literals.
+    // The last sequence consists of literals only.
     if (ip >= srcEnd) break;
 
     // Match
@@ -88,7 +88,7 @@ export function decodeLz4Block(
 
     let mp = op - offset;
     if (matchLength < SHORT_COPY || offset < matchLength) {
-      // Ook overlappende matches (offset < lengte) moeten byte voor byte: ze herhalen een patroon.
+      // Overlapping matches (offset < length) must also go byte by byte: they repeat a pattern.
       for (const end = op + matchLength; op < end;) dst[op++] = dst[mp++]!;
     } else {
       dst.copyWithin(op, mp, mp + matchLength);
@@ -104,13 +104,13 @@ function readU32(src: Uint8Array, p: number): number {
 }
 
 export interface Lz4FrameOptions {
-  /** Controleer block- en content-checksums (als het frame ze heeft). De header-checksum wordt altijd gecontroleerd. */
+  /** Verify block and content checksums (if the frame has them). The header checksum is always verified. */
   readonly verifyChecksums?: boolean;
 }
 
 /**
- * Decomprimeert één of meer aaneengesloten LZ4-frames naar exact `outputSize` bytes.
- * Gooit FormatError bij corrupte invoer of een afwijkende uitvoergrootte.
+ * Decompresses one or more concatenated LZ4 frames into exactly `outputSize` bytes.
+ * Throws FormatError on corrupt input or a mismatching output size.
  */
 export function decompressLz4Frame(
   src: Uint8Array,

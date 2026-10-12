@@ -1,9 +1,9 @@
-// Toont de inhoud van een BSA en kan alle bestanden controleren.
+// Shows the contents of a BSA and can verify all files.
 //
-//   node tools/bsa-list.ts "Skyrim - Meshes0.bsa"                 header + eerste 50 bestanden
-//   node tools/bsa-list.ts "Skyrim - Meshes0.bsa" --filter clutter  alleen paden met "clutter"
-//   node tools/bsa-list.ts "Skyrim - Meshes0.bsa" --all             alle bestanden
-//   node tools/bsa-list.ts "Skyrim - Meshes0.bsa" --verify          hashes + alle bestanden uitpakken
+//   node tools/bsa-list.ts "Skyrim - Meshes0.bsa"                 header + first 50 files
+//   node tools/bsa-list.ts "Skyrim - Meshes0.bsa" --filter clutter  only paths containing "clutter"
+//   node tools/bsa-list.ts "Skyrim - Meshes0.bsa" --all             all files
+//   node tools/bsa-list.ts "Skyrim - Meshes0.bsa" --verify          hashes + extract all files
 
 import { parseArgs } from 'node:util';
 import { BsaArchive, BsaArchiveFlag } from '../src/formats/bsa/bsa.ts';
@@ -20,7 +20,7 @@ const { values, positionals } = parseArgs({
 });
 const name = positionals[0];
 if (name === undefined) {
-  console.error('Gebruik: node tools/bsa-list.ts <archief> [--filter tekst] [--all] [--verify]');
+  console.error('Usage: node tools/bsa-list.ts <archive> [--filter text] [--all] [--verify]');
   process.exit(2);
 }
 
@@ -34,10 +34,10 @@ const flagNames = Object.entries(BsaArchiveFlag)
 
 console.log(`${name}  (${mb(source.size)})`);
 console.log(
-  `  versie ${header.version}, ${header.folderCount} mappen, ${header.fileCount} bestanden`,
+  `  version ${header.version}, ${header.folderCount} folders, ${header.fileCount} files`,
 );
-console.log(`  vlaggen 0x${header.archiveFlags.toString(16)}: ${flagNames.join(', ')}`);
-console.log(`  gecomprimeerd: ${archive.entries.filter((e) => e.compressed).length} bestanden`);
+console.log(`  flags 0x${header.archiveFlags.toString(16)}: ${flagNames.join(', ')}`);
+console.log(`  compressed: ${archive.entries.filter((e) => e.compressed).length} files`);
 
 const filter = values.filter?.toLowerCase();
 const shown = archive.entries.filter(
@@ -49,10 +49,10 @@ for (const entry of shown.slice(0, limit)) {
     `  ${entry.compressed ? 'z' : ' '} ${String(entry.size).padStart(10)}  ${entry.path ?? '?'}`,
   );
 }
-if (shown.length > limit) console.log(`  … en nog ${shown.length - limit} (gebruik --all)`);
+if (shown.length > limit) console.log(`  … and ${shown.length - limit} more (use --all)`);
 
 if (values.verify) {
-  console.log('\nHashes kloppen. Alle bestanden uitpakken…');
+  console.log('\nHashes OK. Extracting all files…');
   const start = performance.now();
   let output = 0;
   let compressedOutput = 0;
@@ -65,15 +65,15 @@ if (values.verify) {
     } catch (error) {
       failures++;
       console.error(
-        `  FOUT ${entry.path ?? '?'}: ${error instanceof Error ? error.message : String(error)}`,
+        `  ERROR ${entry.path ?? '?'}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
   const seconds = (performance.now() - start) / 1000;
   console.log(
-    `${archive.entries.length - failures}/${archive.entries.length} bestanden OK, ` +
+    `${archive.entries.length - failures}/${archive.entries.length} files OK, ` +
       `${mb(output)} in ${seconds.toFixed(1)} s (${mb(output / seconds)}/s, ` +
-      `waarvan ${mb(compressedOutput)} gedecomprimeerd)`,
+      `of which ${mb(compressedOutput)} decompressed)`,
   );
   if (failures > 0) process.exitCode = 1;
 }

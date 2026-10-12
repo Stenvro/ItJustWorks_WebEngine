@@ -1,60 +1,60 @@
-# Laadvolgorde: plugins en archieven
+# Load order: plugins and archives
 
-Implementatie: `src/vfs/load-order.ts`, `src/vfs/vfs.ts`. Bronnen: UESP, libloadorder
-(LOOT), de vanilla `Skyrim.ccc` en `Skyrim_Default.ini`.
+Implementation: `src/vfs/load-order.ts`, `src/vfs/vfs.ts`. Sources: UESP, libloadorder
+(LOOT), the vanilla `Skyrim.ccc` and `Skyrim_Default.ini`.
 
-## Waar staat wat
+## What lives where
 
-| Bestand              | Locatie                                      | Inhoud                               |
-| -------------------- | -------------------------------------------- | ------------------------------------ |
-| `Skyrim.ccc`         | installatiemap (naast `Data`)                | Creation Club-plugins, op volgorde   |
-| `Skyrim_Default.ini` | installatiemap                               | o.a. `[Archive]`-lijsten             |
-| `Plugins.txt`        | `%LOCALAPPDATA%\Skyrim Special Edition\`     | mods; `*Naam.esp` = actief           |
-| `Skyrim.ini`         | `Documenten\My Games\Skyrim Special Edition` | kopie van de default-INI, aanpasbaar |
+| File                 | Location                                    | Contents                           |
+| -------------------- | ------------------------------------------- | ---------------------------------- |
+| `Skyrim.ccc`         | installation folder (next to `Data`)        | Creation Club plugins, in order    |
+| `Skyrim_Default.ini` | installation folder                         | among others the `[Archive]` lists |
+| `Plugins.txt`        | `%LOCALAPPDATA%\Skyrim Special Edition\`    | mods; `*Name.esp` = active         |
+| `Skyrim.ini`         | `Documents\My Games\Skyrim Special Edition` | copy of the default INI, editable  |
 
-In de browser is alleen bereikbaar wat de gebruiker kiest. Daarom kiest de gebruiker de
-**installatiemap** (de Data-map alleen kan ook, maar dan ontbreekt `Skyrim.ccc` en laadt
-er, net als in het origineel zonder dat bestand, geen Creation Club-content).
-`Plugins.txt` en `Skyrim.ini` vallen buiten de installatiemap.
-TODO(M12): plugins.txt en Skyrim.ini importeren of een eigen mod-manager-scherm.
+In the browser, only what the user picks is reachable. That is why the user picks the
+**installation folder** (the Data folder alone also works, but then `Skyrim.ccc` is missing and,
+just like in the original without that file, no Creation Club content is loaded).
+`Plugins.txt` and `Skyrim.ini` are outside the installation folder.
+TODO(M12): import plugins.txt and Skyrim.ini, or build a dedicated mod manager screen.
 
 ## Plugins
 
-1. Vaste masters, als ze bestaan: `Skyrim.esm`, `Update.esm`, `Dawnguard.esm`,
+1. Fixed masters, if they exist: `Skyrim.esm`, `Update.esm`, `Dawnguard.esm`,
    `HearthFires.esm`, `Dragonborn.esm`.
-2. Plugins uit `Skyrim.ccc`, in die volgorde, alleen als ze in `Data` staan. Ze zijn altijd
-   actief. (Het bestand somt ~75 plugins op; de meeste ontbreken zonder Anniversary Upgrade.)
-3. Actieve regels uit `Plugins.txt` (`*` vooraan). Al geplaatste plugins worden genegeerd.
-4. Daarna **masters vóór niet-masters**, verder stabiel. Master = extensie `.esm`/`.esl` of
-   ESM-vlag (`0x1`) in de TES4-header.
+2. Plugins from `Skyrim.ccc`, in that order, only if they are in `Data`. They are always
+   active. (The file lists ~75 plugins; most are missing without the Anniversary Upgrade.)
+3. Active lines from `Plugins.txt` (`*` prefix). Plugins already placed are ignored.
+4. Then **masters before non-masters**, otherwise stable. Master = extension `.esm`/`.esl` or
+   ESM flag (`0x1`) in the TES4 header.
 
-Indexen (bepalen de bovenste byte van FormID's):
+Indexes (determine the top byte of FormIDs):
 
-- volledige plugins: `00`-`FD` (max. 254);
-- light plugins (`.esl` of ESL-vlag `0x200`): allemaal `FE`, met een eigen index
-  `000`-`FFF` (max. 4096). Een `.esp` met ESL-vlag is light maar géén master.
+- full plugins: `00`-`FD` (max. 254);
+- light plugins (`.esl` or ESL flag `0x200`): all `FE`, with their own index
+  `000`-`FFF` (max. 4096). An `.esp` with the ESL flag is light but **not** a master.
 
-Vanilla + gratis Anniversary-content geeft: `00`-`04` vaste masters, `05` Fish,
+Vanilla + free Anniversary content gives: `00`-`04` fixed masters, `05` Fish,
 `FE:000` SurvivalMode, `FE:001` Curios, `06` AdvDSGS, `FE:002` \_ResourcePack.
 
-TODO(M12): ontbrekende masters van een plugin detecteren (vereist de MAST-records, M3).
+TODO(M12): detect a plugin's missing masters (requires the MAST records, M3).
 
-## Archieven
+## Archives
 
-Volgorde van laag naar hoog; bij hetzelfde pad wint het **later** geladen archief:
+Order from low to high; for the same path the archive loaded **later** wins:
 
-1. `sResourceArchiveList`, dan `sResourceArchiveList2` uit `[Archive]` van de INI. Niet
-   bestaande archieven worden overgeslagen (`Skyrim - Patch.bsa` staat erin maar bestaat
-   niet in SSE). Taal zit in deze lijst (`Skyrim - Voices_en0.bsa`).
-2. Per plugin in laadvolgorde: `<naam>.bsa`, dan `<naam> - Textures.bsa`.
+1. `sResourceArchiveList`, then `sResourceArchiveList2` from `[Archive]` in the INI.
+   Non-existent archives are skipped (`Skyrim - Patch.bsa` is listed but does not exist
+   in SSE). The language is part of this list (`Skyrim - Voices_en0.bsa`).
+2. Per plugin in load order: `<name>.bsa`, then `<name> - Textures.bsa`.
 
-**Losse bestanden** in `Data` gaan altijd voor alle archieven (anders dan Oblivion telt de
-bestandsdatum niet).
+**Loose files** in `Data` always take precedence over all archives (unlike Oblivion, the
+file date does not matter).
 
-`MarketplaceTextures.bsa` hoort bij geen INI-lijst of plugin en zit dus niet in de VFS.
-TODO(M9): nagaan wanneer het Creations-menu dit archief laadt.
-`sArchiveToLoadInMemoryList` (Animations) is alleen een prestatie-hint.
+`MarketplaceTextures.bsa` belongs to no INI list or plugin and is therefore not in the VFS.
+TODO(M9): find out when the Creations menu loads this archive.
+`sArchiveToLoadInMemoryList` (Animations) is only a performance hint.
 
-Vanilla-conflicten: 44 bestanden uit `Skyrim - Animations.bsa` en 3 uit
-`ccBGSSSE037-Curios.bsa` worden overschreven door later geladen archieven
+Vanilla conflicts: 44 files from `Skyrim - Animations.bsa` and 3 from
+`ccBGSSSE037-Curios.bsa` are overridden by archives loaded later
 (`node tools/vfs-info.ts`).

@@ -1,7 +1,7 @@
 /**
- * Fout in binaire data: te kort, ongeldige waarde of onbekende versie.
- * Parsers gooien alleen deze fout, zodat de engine corrupte bestanden kan
- * opvangen zonder te crashen.
+ * Error in binary data: too short, invalid value or unknown version.
+ * Parsers throw only this error, so the engine can catch corrupt files
+ * without crashing.
  */
 export class FormatError extends Error {
   override readonly name = 'FormatError';
@@ -13,7 +13,7 @@ export class FormatError extends Error {
   }
 }
 
-/** Sequentiële little-endian lezer over een Uint8Array, met grenscontrole. */
+/** Sequential little-endian reader over a Uint8Array, with bounds checking. */
 export class BinaryReader {
   readonly #bytes: Uint8Array;
   readonly #view: DataView;
@@ -77,7 +77,7 @@ export class BinaryReader {
     return this.#view.getBigUint64(this.#take(8), true);
   }
 
-  /** u64 als number; gooit als de waarde niet exact past (> 2^53 - 1). */
+  /** u64 as number; throws if the value does not fit exactly (> 2^53 - 1). */
   u64Number(): number {
     const start = this.#offset;
     const value = this.u64();
@@ -91,13 +91,13 @@ export class BinaryReader {
     return this.#view.getFloat32(this.#take(4), true);
   }
 
-  /** Volgende `count` bytes als view op dezelfde buffer (geen kopie). */
+  /** Next `count` bytes as a view on the same buffer (no copy). */
   bytes(count: number): Uint8Array {
     const start = this.#take(count);
     return this.#bytes.subarray(start, start + count);
   }
 
-  /** Vier ASCII-tekens, bijvoorbeeld een record-type (`TES4`) of magic (`BSA\0`). */
+  /** Four ASCII characters, e.g. a record type (`TES4`) or magic (`BSA\0`). */
   fourCC(): string {
     const start = this.#take(4);
     const b = this.#bytes;
@@ -109,7 +109,7 @@ export class BinaryReader {
     );
   }
 
-  /** Reserveert `count` bytes en geeft de startpositie terug. */
+  /** Reserves `count` bytes and returns the start position. */
   #take(count: number): number {
     const start = this.#offset;
     if (!Number.isInteger(count) || count < 0) {

@@ -5,14 +5,14 @@ export interface GpuContext {
   readonly format: GPUTextureFormat;
 }
 
-/** WebGPU ontbreekt of de GPU voldoet niet; de gebruiker kan hier zelf iets aan doen. */
+/** WebGPU is missing or the GPU is insufficient; the user can do something about this. */
 export class GpuUnavailableError extends Error {
   override readonly name = 'GpuUnavailableError';
 }
 
 /**
- * Skyrim-textures zijn BC1/BC3/BC5/BC7 en gaan zonder decodering naar de GPU.
- * Elke desktop-GPU ondersteunt dit.
+ * Skyrim textures are BC1/BC3/BC5/BC7 and go to the GPU without decoding.
+ * Every desktop GPU supports this.
  */
 const REQUIRED_FEATURES: readonly GPUFeatureName[] = ['texture-compression-bc'];
 
@@ -52,8 +52,8 @@ export async function initGpu(canvas: HTMLCanvasElement): Promise<GpuContext> {
 }
 
 /**
- * Houdt de canvasresolutie gelijk aan het aantal fysieke pixels.
- * Geeft een functie terug die het observeren stopt.
+ * Keeps the canvas resolution equal to the number of physical pixels.
+ * Returns a function that stops observing.
  */
 export function trackCanvasSize(canvas: HTMLCanvasElement, device: GPUDevice): () => void {
   const max = device.limits.maxTextureDimension2D;

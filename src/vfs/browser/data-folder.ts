@@ -6,13 +6,13 @@ const HANDLE_KEY = 'data-folder';
 export type StoredGameFolder =
   | { readonly status: 'none' }
   | { readonly status: 'granted'; readonly handle: FileSystemDirectoryHandle }
-  /** Handle bekend, maar de browser vraagt opnieuw toestemming (vereist een klik). */
+  /** Handle known, but the browser asks for permission again (requires a click). */
   | { readonly status: 'needs-permission'; readonly handle: FileSystemDirectoryHandle };
 
-/** De gekozen map, opgesplitst in Data-map en (indien gekozen) installatiemap. */
+/** The selected folder, split into the Data folder and (if selected) the install folder. */
 export interface ResolvedGameFolder {
   readonly data: FileSystemDirectoryHandle;
-  /** Alleen als de installatiemap gekozen is; nodig voor Skyrim.ccc en de INI. */
+  /** Only if the install folder was selected; needed for Skyrim.ccc and the INI. */
   readonly root: FileSystemDirectoryHandle | undefined;
   readonly report: DataFolderReport;
 }
@@ -30,12 +30,12 @@ export async function getStoredGameFolder(): Promise<StoredGameFolder> {
   return { status: 'none' };
 }
 
-/** Moet vanuit een klik aangeroepen worden. */
+/** Must be called from a click. */
 export async function requestFolderAccess(handle: FileSystemDirectoryHandle): Promise<boolean> {
   return (await handle.requestPermission({ mode: 'read' })) === 'granted';
 }
 
-/** Moet vanuit een klik aangeroepen worden. `undefined` als de gebruiker annuleert. */
+/** Must be called from a click. `undefined` if the user cancels. */
 export async function pickGameFolder(): Promise<FileSystemDirectoryHandle | undefined> {
   if (!window.showDirectoryPicker) {
     throw new Error('This browser does not support the File System Access API.');
@@ -62,7 +62,7 @@ async function listEntries(handle: FileSystemDirectoryHandle): Promise<FolderEnt
   return entries;
 }
 
-/** Accepteert de installatiemap (aanbevolen) of de Data-map zelf. */
+/** Accepts the install folder (recommended) or the Data folder itself. */
 export async function resolveGameFolder(
   picked: FileSystemDirectoryHandle,
 ): Promise<ResolvedGameFolder> {

@@ -1,11 +1,11 @@
-// Laadvolgorde van plugins en archieven, zoals Skyrim SE die bepaalt.
-// Uitleg en bronnen: docs/formats/load-order.md
+// Load order of plugins and archives, as Skyrim SE determines it.
+// Explanation and sources: docs/formats/load-order.md
 
 import type { PluginHeader } from '../formats/esm/plugin-header.ts';
 import { iniValue, splitIniList, type Ini } from '../formats/ini/ini.ts';
 import { asciiLowerCase } from '../formats/text.ts';
 
-/** Masters die de engine altijd als eerste laadt, in deze volgorde (als ze aanwezig zijn). */
+/** Masters the engine always loads first, in this order (if present). */
 export const IMPLICIT_MASTERS = [
   'Skyrim.esm',
   'Update.esm',
@@ -14,7 +14,7 @@ export const IMPLICIT_MASTERS = [
   'Dragonborn.esm',
 ] as const;
 
-/** `sResourceArchiveList` + `sResourceArchiveList2` uit Skyrim_Default.ini (Engels). */
+/** `sResourceArchiveList` + `sResourceArchiveList2` from Skyrim_Default.ini (English). */
 export const DEFAULT_ARCHIVE_LIST = [
   'Skyrim - Misc.bsa',
   'Skyrim - Shaders.bsa',
@@ -28,14 +28,14 @@ export const DEFAULT_ARCHIVE_LIST = [
   'Skyrim - Patch.bsa',
 ] as const;
 
-/** Volledige plugins krijgen index 0x00-0xFD; 0xFE is voor light plugins (ESL). */
+/** Full plugins get index 0x00-0xFD; 0xFE is for light plugins (ESL). */
 const MAX_FULL_PLUGINS = 0xfe;
 const MAX_LIGHT_PLUGINS = 0x1000;
 
 export interface PluginCandidate {
-  /** Bestandsnaam in Data/. */
+  /** File name in Data/. */
   readonly name: string;
-  /** `undefined` als de header niet leesbaar is; dan telt alleen de extensie. */
+  /** `undefined` if the header is unreadable; then only the extension counts. */
   readonly header: PluginHeader | undefined;
 }
 
@@ -47,7 +47,7 @@ export interface LoadOrderEntry {
   readonly isLight: boolean;
   /** 0x00-0xFD, of 0xFE voor light plugins. */
   readonly modIndex: number;
-  /** 0x000-0xFFF binnen 0xFE; alleen bij light plugins. */
+  /** 0x000-0xFFF within 0xFE; light plugins only. */
   readonly lightIndex: number | undefined;
   readonly source: PluginSource;
 }
@@ -70,9 +70,9 @@ function extensionOf(name: string): string {
 }
 
 /**
- * Bepaalt welke plugins actief zijn en in welke volgorde:
- * 1. vaste masters, 2. Creation Club-plugins uit Skyrim.ccc, 3. actieve regels (`*`) uit
- * plugins.txt. Daarna gaan masters (ESM-vlag, .esm of .esl) vóór niet-masters.
+ * Determines which plugins are active and in what order:
+ * 1. implicit masters, 2. Creation Club plugins from Skyrim.ccc, 3. active lines (`*`) from
+ * plugins.txt. Masters (ESM flag, .esm or .esl) are then placed before non-masters.
  */
 export function computeLoadOrder(input: {
   readonly plugins: readonly PluginCandidate[];
@@ -135,7 +135,7 @@ export function computeLoadOrder(input: {
   return { entries, problems };
 }
 
-/** Archieflijst uit de INI, of de standaardlijst als die ontbreekt. */
+/** Archive list from the INI, or the default list if it is missing. */
 export function archiveListFromIni(ini: Ini | undefined): readonly string[] {
   if (!ini) return DEFAULT_ARCHIVE_LIST;
   const list = [
@@ -146,9 +146,9 @@ export function archiveListFromIni(ini: Ini | undefined): readonly string[] {
 }
 
 /**
- * Archieven in laadvolgorde (laag → hoog; later wint bij conflicten):
- * eerst de INI-lijst, daarna per plugin `<naam>.bsa` en `<naam> - Textures.bsa`.
- * Niet-bestaande archieven worden overgeslagen, zoals in het origineel.
+ * Archives in load order (low → high; later wins on conflicts):
+ * first the INI list, then per plugin `<name>.bsa` and `<name> - Textures.bsa`.
+ * Non-existent archives are skipped, as in the original.
  */
 export function computeArchiveOrder(
   iniArchives: readonly string[],
@@ -175,7 +175,7 @@ export function computeArchiveOrder(
   return result;
 }
 
-/** `FE:001` voor light plugins, `05` voor volledige. */
+/** `FE:001` for light plugins, `05` for full ones. */
 export function formatModIndex(entry: LoadOrderEntry): string {
   const hex = (value: number, width: number): string =>
     value.toString(16).toUpperCase().padStart(width, '0');

@@ -13,12 +13,12 @@ describe('normalizePath', () => {
 });
 
 describe('folderOf / fileNameOf', () => {
-  it('splitst een pad', () => {
+  it('splits a path', () => {
     expect(folderOf('meshes\\clutter\\foo.nif')).toBe('meshes\\clutter');
     expect(fileNameOf('meshes\\clutter\\foo.nif')).toBe('foo.nif');
   });
 
-  it('behandelt bestanden in de wortel', () => {
+  it('handles files in the root', () => {
     expect(folderOf('skyrim.esm')).toBe('');
     expect(fileNameOf('skyrim.esm')).toBe('skyrim.esm');
   });

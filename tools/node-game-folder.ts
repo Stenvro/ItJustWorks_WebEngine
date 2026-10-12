@@ -3,7 +3,7 @@ import path from 'node:path';
 import { checkReadRange, type ByteSource } from '../src/formats/byte-source.ts';
 import type { GameFolder } from '../src/vfs/game-folder.ts';
 
-/** Leest een bestand op offset, zonder het in zijn geheel te laden. */
+/** Reads a file at an offset, without loading it in full. */
 export class NodeFileSource implements ByteSource {
   readonly size: number;
   readonly #handle: FileHandle;
@@ -29,7 +29,7 @@ export class NodeFileSource implements ByteSource {
     let done = 0;
     while (done < length) {
       const { bytesRead } = await this.#handle.read(buffer, done, length - done, offset + done);
-      if (bytesRead === 0) throw new Error(`Onverwacht einde van het bestand bij ${offset + done}`);
+      if (bytesRead === 0) throw new Error(`Unexpected end of file at ${offset + done}`);
       done += bytesRead;
     }
     return buffer;
@@ -40,7 +40,7 @@ export class NodeFileSource implements ByteSource {
   }
 }
 
-/** Shadercache van de originele exe; geen content. */
+/** Shader cache of the original exe; not content. */
 const IGNORED = /^shadercache([\\/]|$)/i;
 
 export class NodeGameFolder implements GameFolder {

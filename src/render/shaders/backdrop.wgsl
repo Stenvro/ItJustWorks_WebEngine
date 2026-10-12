@@ -1,12 +1,12 @@
-// Achtergrond van de shell: nachtelijke mist met een "regen" van runen.
-// De runen zijn procedurele klauwkrassen op een 3x3-raster (geinspireerd op het
-// drakenschrift, niet gekopieerd). Wordt in M2 aangevuld met een echte scene.
+// Shell backdrop: night fog with a "rain" of runes.
+// The runes are procedural claw scratches on a 3x3 grid (inspired by the
+// dragon script, not copied). To be complemented with a real scene in M2.
 
 struct Frame {
   time: f32,
-  // devicePixelRatio: houdt de runen even groot op elk scherm.
+  // devicePixelRatio: keeps the runes the same size on every screen.
   scale: f32,
-  // Hoogte van het canvas in CSS-pixels.
+  // Canvas height in CSS pixels.
   height: f32,
   _pad: f32,
 };
@@ -57,7 +57,7 @@ fn segment(p: vec2f, a: vec2f, b: vec2f) -> f32 {
   return length(pa - ba * h);
 }
 
-/** Afstand tot een rune in een cel van 0..1; `seed` kiest 2-3 krassen. */
+/** Distance to a rune in a 0..1 cell; `seed` picks 2-3 strokes. */
 fn rune(p: vec2f, seed: f32) -> f32 {
   var d = 1e3;
   let strokes = 2 + i32(hash11(seed) * 2.0);
@@ -78,13 +78,13 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
   let px = position.xy / frame.scale;
   let t = frame.time;
 
-  // Lucht: diep nachtblauw, onder iets lichter (horizon), met trage mist.
+  // Sky: deep night blue, slightly lighter at the bottom (horizon), with slow fog.
   let height = clamp(px.y / 900.0, 0.0, 1.0);
   var color = mix(vec3f(0.020, 0.027, 0.039), vec3f(0.060, 0.071, 0.086), height);
   let fog = fbm(px * 0.0022 + vec2f(t * 0.012, t * 0.004));
   color += vec3f(0.050, 0.058, 0.068) * smoothstep(0.35, 0.85, fog) * (0.4 + height);
 
-  // Runenregen
+  // Rune rain
   let cell = vec2f(18.0, 26.0);
   let column = floor(px.x / cell.x);
   let row = floor(px.y / cell.y);
@@ -109,6 +109,6 @@ fn fs_main(@builtin(position) position: vec4f) -> @location(0) vec4f {
     color += ink * stroke * fade * fade * 0.42;
   }
 
-  // Vignet en scanlines zitten in CSS (.crt), boven de UI-achtergrond.
+  // Vignette and scanlines live in CSS (.crt), above the UI backdrop.
   return vec4f(color, 1.0);
 }
