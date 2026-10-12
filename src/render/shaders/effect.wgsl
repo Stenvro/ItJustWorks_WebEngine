@@ -16,6 +16,8 @@ const SLSF2_EFFECT_LIGHTING = 0x40000000u;
 // NiAlphaProperty: blending on; blend factor ONE (additive when it is the destination factor).
 const ALPHA_BLEND = 0x1u;
 const BLEND_ONE = 0u;
+// Draw flag beside the alpha flags: a sky object (aurora, distant clouds), not fogged.
+const DRAW_SKY = 0x10000u;
 
 // Light reaching an effect: ambient from its side, the sun (half of it even when facing away:
 // smoke and mist scatter it) and point lights by distance.
@@ -85,7 +87,10 @@ fn effectShade(
     discard;
   }
 
-  let fog = fogAt(worldPos);
+  var fog = fogAt(worldPos);
+  if ((alphaFlags & DRAW_SKY) != 0u) {
+    fog = vec4f(0.0);
+  }
   if (blended && ((alphaFlags >> 5u) & 15u) == BLEND_ONE) {
     // Additive: fog takes the light away.
     color *= 1.0 - fog.a;

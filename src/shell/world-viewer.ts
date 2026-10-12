@@ -181,7 +181,15 @@ export class WorldViewer {
     if (!session) return;
     const world = await Worldspace.open(db, formId);
     const [sky, lod] = await Promise.all([
-      WorldSky.create(session, this.#renderer.sky, world, this.#ui, this.#terminal),
+      WorldSky.create(
+        session,
+        this.#renderer.sky,
+        this.#renderer.precipitation,
+        this.#renderer.scene,
+        world,
+        this.#ui,
+        this.#terminal,
+      ),
       WorldLod.create(session, this.#renderer, world, this.#terminal),
     ]);
     if (generation !== this.#generation) {
@@ -217,6 +225,7 @@ export class WorldViewer {
       trees: () => this.#lod?.trees(),
       grass: () => this.#readyGrass(),
       decals: () => this.#readyDecals(),
+      precipitation: () => this.#sky?.precipitation() ?? [],
       lodMask: () => this.#lodMask(),
       terrain: () => this.#readyTerrain(),
       camera: this.#camera,
@@ -486,6 +495,7 @@ export class WorldViewer {
   }
 
   *#readyScenes(): Iterable<GpuScene> {
+    if (this.#sky) yield* this.#sky.skyScenes();
     if (this.#lod) yield* this.#lod.scenes();
     for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
   }
@@ -562,7 +572,7 @@ export class WorldViewer {
       }
     }
     lights.sort((a, b) => a.distance - b.distance);
-    this.#sky?.frame(performance.now());
+    this.#sky?.frame(performance.now(), camera);
     const sky = this.#sky?.lighting() ?? NO_SKY;
     return { ...sky, lights: lights.slice(0, MAX_LIGHTS) };
   }

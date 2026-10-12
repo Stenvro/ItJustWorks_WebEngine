@@ -251,6 +251,24 @@ one_wan, new, one_wax, half_wax, three_wax; `sky\moonshadow.dds` hides the stars
 the dark part. `node tools/weather-info.ts` checks every climate and weather against the
 files they name; `node tools/weather-info.ts SkyrimClear 13` prints one weather's sky.
 
+**Precipitation** (SPGD, `src/world/precipitation.ts`; 12 records): DATA (48 bytes) gravity
+velocity, rotation velocity (degrees/s), particle size X and Y, centre offset min and max,
+initial rotation range (f32), atlas columns and rows (u32), type u32 (0 rain, 1 snow), box size
+u32, density f32; ICON the particle texture (rain: `effectsxraindrops.dds`, 4 × 2 thin
+streaks; snow: `fxsnowsoftsub.dds`, 4 × 4 soft flakes). During a change of weather the new
+weather's precipitation starts at its Precipitation Begin Fade In (share of the transition)
+and the old one's ends at its End Fade Out. How it is drawn: [../rendering.md](../rendering.md#precipitation).
+
+**Sky statics and aurora:** TNAM (87 weathers) lists STATs drawn in the sky — mostly the
+distant cloud banks `skyinv_clouddistant*.nif` (effect meshes about 11600 units across with
+scrolling cloud sheets, lit by the weather), also Sovngarde's sky; MODL (38 weathers, the
+`_A` variants among them) is the aurora, `skyskyrimaurora.nif`: three skinned effect
+shapes (rest pose) whose UV and alpha controllers make it ripple. Both follow the camera and
+fade with weather changes; the aurora also fades in from `fAuroraFadeInStart` to
+`fAutoraFadeIn` and out until `fAutoraFadeOut`, and with the flag `0x20` turns with the sun's
+heading. They are drawn without fog, scaled up (statics × 100, aurora × 3000) so they lie
+behind the landscape's LOD with the same angular size (`src/shell/sky-objects.ts`).
+
 ## Water
 
 **WATR:** ANAM opacity (0–100), FNAM flags (`0x1` causes damage, `0x8` flow map, `0x10` blend
