@@ -9,7 +9,9 @@ import commonShader from './shaders/common.wgsl?raw';
 import frameShader from './shaders/frame.wgsl?raw';
 import effectShader from './shaders/effect.wgsl?raw';
 import lightingShader from './shaders/lighting.wgsl?raw';
+import waterShader from './shaders/water.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
+import type { WaterType } from '../world/water.ts';
 
 export const SAMPLE_COUNT = 4;
 export const DEPTH_FORMAT: GPUTextureFormat = 'depth32float';
@@ -89,14 +91,57 @@ export function flatAmbient(color: Vec3): SceneLighting['ambient'] {
   return [color, color, color, color, color, color];
 }
 
+/** When a part is drawn: with the opaque scene, as water after it, or blended last. */
+type PartPass = 'opaque' | 'water' | 'transparent';
+
 interface GpuPart {
   readonly part: ModelPart;
   readonly vertexBuffer: GPUBuffer;
   readonly indexBuffer: GPUBuffer;
   readonly indexCount: number;
   readonly pipeline: GPURenderPipeline;
+  /** Material textures (unused by water, which takes its type's bind group). */
   readonly bindGroup: GPUBindGroup;
-  readonly transparent: boolean;
+  readonly pass: PartPass;
+}
+
+/** WGSL `WaterParams`: 11 vec4. */
+const WATER_PARAM_FLOATS = 44;
+
+/** A river cell's flow map (textures\water\<plugin>\flow.x.y.dds) and where it lies. */
+export interface WaterFlow {
+  readonly texture: string;
+  /** South-west corner of the cell the map covers. */
+  readonly origin: readonly [number, number];
+}
+/** WGSL `WaterFrame`: 5 vec4 + 32 profile samples. */
+const WATER_FRAME_FLOATS = 20 + 32 * 4;
+
+/** A water type (WATR) on the GPU: its parameters and noise textures. */
+export class GpuWaterType {
+  readonly type: WaterType;
+  readonly bindGroup: GPUBindGroup;
+  readonly #buffer: GPUBuffer;
+
+  constructor(type: WaterType, bindGroup: GPUBindGroup, buffer: GPUBuffer) {
+    this.type = type;
+    this.bindGroup = bindGroup;
+    this.#buffer = buffer;
+  }
+
+  destroy(): void {
+    this.#buffer.destroy();
+  }
+}
+
+/** Per-frame inputs of the water shader besides the frame uniforms. */
+export interface WaterFrame {
+  readonly horizon: Vec3;
+  readonly lower: Vec3;
+  readonly upper: Vec3;
+  readonly multiplier: Vec3;
+  /** Sky dome weights by elevation (ATMOSPHERE_SAMPLES × 4), if there is a sky. */
+  readonly profile: Float32Array | undefined;
 }
 
 /** A model on the GPU: geometry, materials and pipelines, placed by scenes. */
@@ -126,12 +171,15 @@ export class GpuModel {
 export interface ModelInstance {
   readonly model: GpuModel;
   readonly world: Mat4;
+  /** Water type of the model's water surfaces (the activator's WNAM); default otherwise. */
+  readonly water?: GpuWaterType;
 }
 
 interface Draw {
   readonly part: GpuPart;
   readonly uniformOffset: number;
   readonly center: readonly [number, number, number];
+  readonly water: GpuWaterType | undefined;
 }
 
 /** Placed model instances with their per-draw uniforms. Does not own the models. */
@@ -186,6 +234,11 @@ function createBuffer(
 function writeMaterial(floats: Float32Array, uints: Uint32Array, part: ModelPart): void {
   const material = part.material;
   const alphaThreshold = (part.alpha?.threshold ?? 128) / 255;
+  if (material?.kind === 'water') {
+    floats.set([...material.uvOffset, ...material.uvScale], 16);
+    uints.set([material.flags1, material.flags2, 0, material.waterFlags], 36);
+    return;
+  }
   if (material?.kind === 'effect') {
     floats.set([...material.uvOffset, ...material.uvScale], 16);
     floats.set(
@@ -237,6 +290,8 @@ export const DebugView = {
 export class SceneRenderer {
   /** One of DebugView; 0 shows the normal image. */
   debugView = 0;
+  /** Water type for water surfaces whose placement names none (DefaultWater). */
+  defaultWater: GpuWaterType | undefined;
   readonly #device: GPUDevice;
   readonly #colorFormat: GPUTextureFormat;
   readonly #frameBuffer: GPUBuffer;
@@ -249,7 +304,19 @@ export class SceneRenderer {
   readonly #drawLayout: GPUBindGroupLayout;
   readonly #materialLayout: GPUBindGroupLayout;
   readonly #pipelineLayout: GPUPipelineLayout;
-  readonly #modules: { readonly lighting: GPUShaderModule; readonly effect: GPUShaderModule };
+  readonly #modules: {
+    readonly lighting: GPUShaderModule;
+    readonly effect: GPUShaderModule;
+    readonly water: GPUShaderModule;
+  };
+  readonly #waterTypeLayout: GPUBindGroupLayout;
+  readonly #waterFrameLayout: GPUBindGroupLayout;
+  readonly #waterPipelineLayout: GPUPipelineLayout;
+  readonly #waterFrameBuffer: GPUBuffer;
+  readonly #waterFrameData = new Float32Array(WATER_FRAME_FLOATS);
+  readonly #screenSampler: GPUSampler;
+  /** Flow map without flow (alpha 1: strength 0). */
+  readonly #stillFlow: GPUTexture;
   readonly #pipelines = new Map<string, GPURenderPipeline>();
   readonly #fallbackVertices: GPUBuffer;
   readonly #sampler: GPUSampler;
@@ -295,6 +362,63 @@ export class SceneRenderer {
       label: 'object',
       bindGroupLayouts: [frameLayout, this.#drawLayout, this.#materialLayout],
     });
+    this.#waterTypeLayout = device.createBindGroupLayout({
+      label: 'water-type',
+      entries: [
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
+        { binding: 7, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        texture2d(8),
+        texture2d(9),
+        texture2d(10),
+        texture2d(11),
+      ],
+    });
+    this.#waterFrameLayout = device.createBindGroupLayout({
+      label: 'water-frame',
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        {
+          binding: 2,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'unfilterable-float' },
+        },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+      ],
+    });
+    this.#waterPipelineLayout = device.createPipelineLayout({
+      label: 'water',
+      bindGroupLayouts: [
+        frameLayout,
+        this.#drawLayout,
+        this.#waterTypeLayout,
+        this.#waterFrameLayout,
+      ],
+    });
+    this.#waterFrameBuffer = device.createBuffer({
+      label: 'water-frame',
+      size: WATER_FRAME_FLOATS * 4,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.#stillFlow = device.createTexture({
+      label: 'still-flow',
+      format: 'rgba8unorm',
+      size: [1, 1],
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    device.queue.writeTexture(
+      { texture: this.#stillFlow },
+      Uint8Array.from([128, 128, 255, 255]),
+      { bytesPerRow: 4 },
+      [1, 1],
+    );
+    this.#screenSampler = device.createSampler({
+      label: 'screen',
+      magFilter: 'linear',
+      minFilter: 'linear',
+      addressModeU: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge',
+    });
 
     this.#frameBuffer = device.createBuffer({
       label: 'frame',
@@ -323,6 +447,10 @@ export class SceneRenderer {
         label: 'effect',
         code: frameShader + commonShader + effectShader,
       }),
+      water: device.createShaderModule({
+        label: 'water',
+        code: frameShader + commonShader + waterShader,
+      }),
     };
     this.#fallbackVertices = createBuffer(
       device,
@@ -350,15 +478,16 @@ export class SceneRenderer {
         const vertexBuffer = createBuffer(device, part.vertices, GPUBufferUsage.VERTEX, part.name);
         const indexBuffer = createBuffer(device, part.indices, GPUBufferUsage.INDEX, part.name);
         buffers.push(vertexBuffer, indexBuffer);
-        const blend = blendState(part.alpha);
+        const water = part.material?.kind === 'water';
+        const blend = water ? undefined : blendState(part.alpha);
         return {
           part,
           vertexBuffer,
           indexBuffer,
           indexCount: part.indices.length,
-          pipeline: this.#pipeline(part, blend),
+          pipeline: water ? this.#waterPipeline(part) : this.#pipeline(part, blend),
           bindGroup: await this.#materialBindGroup(part, textures),
-          transparent: blend !== undefined,
+          pass: water ? 'water' : blend !== undefined ? 'transparent' : 'opaque',
         };
       }),
     );
@@ -383,6 +512,7 @@ export class SceneRenderer {
           part,
           uniformOffset: offset,
           center: transformPoint(instance.world, part.part.center),
+          water: part.pass === 'water' ? instance.water : undefined,
         });
       }
     }
@@ -400,7 +530,12 @@ export class SceneRenderer {
     return new GpuScene(draws, bindGroup, buffer);
   }
 
-  updateFrame(viewProjection: Mat4, cameraPosition: Vec3, lighting: SceneLighting): void {
+  updateFrame(
+    viewProjection: Mat4,
+    cameraPosition: Vec3,
+    lighting: SceneLighting,
+    timeSeconds = 0,
+  ): void {
     const data = this.#frameData;
     data.set(viewProjection, 0);
     data.set([...cameraPosition, 1], 16);
@@ -415,6 +550,7 @@ export class SceneRenderer {
     data.set([fog?.near ?? 0, fog?.far ?? 1, fog?.power ?? 1, fog?.max ?? 0], 60);
     const lightCount = Math.min(MAX_LIGHTS, lighting.lights.length);
     this.#frameUints.set([lightCount, fog ? 1 : 0, this.debugView, 0], 64);
+    data.set([timeSeconds, 0, 0, 0], 68);
     this.#device.queue.writeBuffer(this.#frameBuffer, 0, data);
 
     if (lightCount > 0) {
@@ -442,25 +578,152 @@ export class SceneRenderer {
     return this.#frameBindGroup;
   }
 
-  /** Draws scenes: opaque parts first, then blended parts of all scenes back to front. */
-  draw(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>, cameraPosition: Vec3): void {
+  /** Draws the opaque parts of scenes. */
+  drawOpaque(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): void {
+    pass.setBindGroup(0, this.#frameBindGroup);
+    pass.setVertexBuffer(1, this.#fallbackVertices);
+    for (const scene of scenes) {
+      for (const draw of scene.draws) {
+        if (draw.part.pass === 'opaque') this.#drawPart(pass, scene, draw);
+      }
+    }
+  }
+
+  /** Whether any scene has water surfaces (they need copies of the opaque scene). */
+  hasWater(scenes: Iterable<GpuScene>): boolean {
+    for (const scene of scenes) {
+      if (scene.draws.some((draw) => draw.part.pass === 'water')) return true;
+    }
+    return false;
+  }
+
+  /** Draws water surfaces; `inputs` holds the opaque scene's colour and depth. */
+  drawWater(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>, inputs: GPUBindGroup): void {
+    pass.setBindGroup(0, this.#frameBindGroup);
+    pass.setBindGroup(3, inputs);
+    pass.setVertexBuffer(1, this.#fallbackVertices);
+    for (const scene of scenes) {
+      for (const draw of scene.draws) {
+        if (draw.part.pass !== 'water') continue;
+        const type = draw.water ?? this.defaultWater;
+        if (!type) continue;
+        const { part } = draw;
+        pass.setPipeline(part.pipeline);
+        pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
+        pass.setBindGroup(2, type.bindGroup);
+        pass.setVertexBuffer(0, part.vertexBuffer);
+        pass.setIndexBuffer(part.indexBuffer, 'uint16');
+        pass.drawIndexed(part.indexCount);
+      }
+    }
+  }
+
+  /** Draws the blended parts of all scenes back to front. */
+  drawTransparent(
+    pass: GPURenderPassEncoder,
+    scenes: Iterable<GpuScene>,
+    cameraPosition: Vec3,
+  ): void {
     pass.setBindGroup(0, this.#frameBindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
     const transparent: { scene: GpuScene; draw: Draw; distance: number }[] = [];
     for (const scene of scenes) {
       for (const draw of scene.draws) {
-        if (draw.part.transparent) {
-          const dx = draw.center[0] - cameraPosition[0];
-          const dy = draw.center[1] - cameraPosition[1];
-          const dz = draw.center[2] - cameraPosition[2];
-          transparent.push({ scene, draw, distance: dx * dx + dy * dy + dz * dz });
-        } else {
-          this.#drawPart(pass, scene, draw);
-        }
+        if (draw.part.pass !== 'transparent') continue;
+        const dx = draw.center[0] - cameraPosition[0];
+        const dy = draw.center[1] - cameraPosition[1];
+        const dz = draw.center[2] - cameraPosition[2];
+        transparent.push({ scene, draw, distance: dx * dx + dy * dy + dz * dz });
       }
     }
     transparent.sort((a, b) => b.distance - a.distance);
     for (const { scene, draw } of transparent) this.#drawPart(pass, scene, draw);
+  }
+
+  /**
+   * Uploads a water type (its noise textures load first). Rivers (WaterFlag.flowmap) get the
+   * flow map of the cell they are drawn in.
+   */
+  async createWaterType(
+    type: WaterType,
+    textures: TextureCache,
+    flow?: WaterFlow,
+  ): Promise<GpuWaterType> {
+    const device = this.#device;
+    const data = new Float32Array(WATER_PARAM_FLOATS);
+    const radians = (degrees: number): number => (degrees * Math.PI) / 180;
+    data.set([...type.shallowColor, type.opacity], 0);
+    data.set([...type.deepColor, type.reflectivity], 4);
+    data.set([...type.reflectionColor, type.fresnel], 8);
+    data.set(
+      [type.refractionMagnitude, type.reflectionMagnitude, type.noiseFalloff, type.flowmapScale],
+      12,
+    );
+    data.set([type.fogNear, type.fogFar, type.fogAmount, 0], 16);
+    data.set(
+      [
+        type.sunSpecularPower,
+        type.sunSpecularMagnitude,
+        type.sunSparklePower,
+        type.sunSparkleMagnitude,
+      ],
+      20,
+    );
+    data.set([...type.windDirection.map(radians), 0], 24);
+    data.set([...type.windSpeed, 0], 28);
+    data.set([...type.uvScale, 0], 32);
+    data.set([...type.amplitude, 0], 36);
+    const flowTexture = flow ? await textures.get(flow.texture) : undefined;
+    data.set([flow?.origin[0] ?? 0, flow?.origin[1] ?? 0, flowTexture ? 1 : 0, 0], 40);
+    const buffer = createBuffer(device, data, GPUBufferUsage.UNIFORM, `water-${type.editorId}`);
+    const noise = await Promise.all(type.noiseTextures.map((path) => textures.get(path)));
+    const view = (index: number): GPUTextureView =>
+      (noise[index] ?? noise[0] ?? textures.defaults.flatNormal).createView();
+    const bindGroup = device.createBindGroup({
+      label: `water-${type.editorId}`,
+      layout: this.#waterTypeLayout,
+      entries: [
+        { binding: 6, resource: { buffer } },
+        { binding: 7, resource: this.#sampler },
+        { binding: 8, resource: view(0) },
+        { binding: 9, resource: view(1) },
+        { binding: 10, resource: view(2) },
+        { binding: 11, resource: (flowTexture ?? this.#stillFlow).createView() },
+      ],
+    });
+    return new GpuWaterType(type, bindGroup, buffer);
+  }
+
+  /** Water inputs: the opaque scene's colour and depth (single-sample copies). */
+  waterInputs(color: GPUTextureView, depth: GPUTextureView): GPUBindGroup {
+    return this.#device.createBindGroup({
+      label: 'water-frame',
+      layout: this.#waterFrameLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.#waterFrameBuffer } },
+        { binding: 1, resource: color },
+        { binding: 2, resource: depth },
+        { binding: 3, resource: this.#screenSampler },
+      ],
+    });
+  }
+
+  /** Sky colours and the screen size for this frame's water. */
+  updateWaterFrame(frame: WaterFrame | undefined, width: number, height: number): void {
+    const data = this.#waterFrameData;
+    data.fill(0);
+    data.set([...(frame?.horizon ?? [0.5, 0.6, 0.7]), 1], 0);
+    data.set([...(frame?.lower ?? [0.4, 0.5, 0.6]), 1], 4);
+    data.set([...(frame?.upper ?? [0.3, 0.4, 0.5]), 1], 8);
+    data.set([...(frame?.multiplier ?? [1, 1, 1]), 1], 12);
+    data.set([1 / Math.max(width, 1), 1 / Math.max(height, 1), frame?.profile ? 1 : 0, 0], 16);
+    if (frame?.profile) {
+      data.set(frame.profile.subarray(0, 128), 20);
+    } else {
+      // No sky (interiors): a plain gradient.
+      for (let i = 0; i < 32; i++) data.set([1 - i / 31, i / 31, 0, 1], 20 + i * 4);
+    }
+    this.#device.queue.writeBuffer(this.#waterFrameBuffer, 0, data);
   }
 
   #drawPart(pass: GPURenderPassEncoder, scene: GpuScene, draw: Draw): void {
@@ -520,6 +783,45 @@ export class SceneRenderer {
         { binding: 5, resource: (envMask ?? defaults.white).createView() },
       ],
     });
+  }
+
+  #waterPipeline(part: ModelPart): GPURenderPipeline {
+    const layout = part.layout;
+    const key = [
+      'water',
+      layout.stride,
+      layout.uv,
+      layout.normal,
+      layout.tangent,
+      layout.color,
+    ].join('|');
+    let pipeline = this.#pipelines.get(key);
+    if (!pipeline) {
+      pipeline = this.#device.createRenderPipeline({
+        label: key,
+        layout: this.#waterPipelineLayout,
+        vertex: {
+          module: this.#modules.water,
+          entryPoint: 'vs_main',
+          buffers: vertexBuffers(layout),
+        },
+        fragment: {
+          module: this.#modules.water,
+          entryPoint: 'fs_water',
+          targets: [{ format: this.#colorFormat }],
+        },
+        // Water is seen from above and, under it, from below.
+        primitive: { topology: 'triangle-list', cullMode: 'none', frontFace: 'ccw' },
+        depthStencil: {
+          format: DEPTH_FORMAT,
+          depthWriteEnabled: true,
+          depthCompare: 'greater-equal',
+        },
+        multisample: { count: SAMPLE_COUNT },
+      });
+      this.#pipelines.set(key, pipeline);
+    }
+    return pipeline;
   }
 
   #pipeline(part: ModelPart, blend: GPUBlendState | undefined): GPURenderPipeline {

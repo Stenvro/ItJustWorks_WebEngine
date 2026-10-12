@@ -230,6 +230,44 @@ one_wan, new, one_wax, half_wax, three_wax; `sky\moonshadow.dds` hides the stars
 the dark part. `node tools/weather-info.ts` checks every climate and weather against the
 files they name; `node tools/weather-info.ts SkyrimClear 13` prints one weather's sky.
 
+## Water
+
+**WATR:** ANAM opacity (0–100), FNAM flags (`0x1` causes damage, `0x8` flow map, `0x10` blend
+normals), NAM2/NAM3/NAM4 the three noise layers' normal maps (SSE; older files use three NNAM;
+vanilla names `Data\Textures\Water\DefaultWater.dds`: the path is relative to Data), INAM
+imagespace modifier, DNAM 228 bytes (232 in SSE with the flow map scale). DNAM as 4-byte
+values (UESP numbering − 1): 4 sun specular power, 5 reflectivity, 6 fresnel, 8/9 above-water
+fog near/far, 10/11/12 shallow / deep / reflection colour (RGBA u8), 18–22 displacement,
+24 noise falloff, 25–27 wind direction (degrees) and 28–30 wind speed per layer, 33 fog
+amount, 35–37 underwater fog amount/near/far, 38 refraction magnitude, 39 specular power,
+41 specular radius, 42 specular brightness, 43–45 UV scale and 46–48 amplitude per layer,
+49 reflection magnitude, 50 sun sparkle magnitude, 51 sun specular magnitude, 52–55 depth
+properties (reflections, refraction, normals, specular), 56 sun sparkle power, 57 flow map
+scale.
+
+**Where water is:**
+
+- **Cell water:** CELL DATA flag `0x2`, XCLW height (FLT_MAX: the world's DNAM default; a few
+  vanilla cells hold ±2^31 or 2^32, which mean none), XCWT type, else the world's NAM2.
+  Lakes and rivers are cell water at their own height: the White River east of Whiterun is
+  at −4700 (cells 5..9, −4) and −5050 further north-east; Tamriel's sea default is −14000.
+- **Water activators:** ACTI with WNAM (90 vanilla): `water\water1024.nif`, puddles, the
+  Whiterun and Markarth water features. Their meshes use BSWaterShaderProperty (nif.xml: shader
+  flags 1/2, UV offset/scale, water shader flags u8, water direction u8, unknown u16).
+- Other water meshes get DefaultWater (`0x18`).
+- **Flow maps:** rivers (FNAM `0x8`) move along `textures\water\<plugin>\flow.<x>.<y>.dds`,
+  64×64 BGRA8 per cell, row 0 at the north edge. R/G encode a unit direction around 128
+  (R east, G north); alpha is 1 − flow strength (255 where nothing flows).
+
+**The water shader** (`src/render/shaders/water.wgsl`) draws after the opaque scene, from
+copies of its colour and depth: three noise layers scrolled by wind (rivers: along the flow
+map, two phases half a period apart), refraction of the scene below shifted by the waves,
+depth fog over the distance the view travels through the water towards the shallow/deep
+colours (times the weather's water multiplier), screen-space reflections of the scene with
+the sky dome as fallback, fresnel, and the sun's specular and sparkle. Approximated
+(TODO(M13)): the flow speed (160 units/s at full strength), how opacity and the depth
+properties enter, the engine's planar reflection pass, displacement and rain ripples.
+
 ## Imagespaces
 
 **IMGS** (xEdit names): HNAM 9 f32: eye adapt speed, bloom blur radius, bloom threshold,

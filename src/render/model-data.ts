@@ -66,6 +66,19 @@ export interface EffectMaterial {
   readonly falloff: readonly [number, number, number, number];
 }
 
+/** BSWaterShaderProperty: the surface is drawn by the water shader with a WATR type. */
+export interface WaterMaterial {
+  readonly kind: 'water';
+  readonly flags1: number;
+  readonly flags2: number;
+  readonly uvOffset: readonly [number, number];
+  readonly uvScale: readonly [number, number];
+  /** WaterShaderFlag bits. */
+  readonly waterFlags: number;
+}
+
+export type PartMaterial = LightingMaterial | EffectMaterial | WaterMaterial;
+
 export interface AlphaState {
   readonly flags: number;
   readonly threshold: number;
@@ -79,7 +92,7 @@ export interface ModelPart {
   readonly vertices: Uint8Array;
   readonly vertexCount: number;
   readonly indices: Uint16Array;
-  readonly material: LightingMaterial | EffectMaterial | undefined;
+  readonly material: PartMaterial | undefined;
   readonly alpha: AlphaState | undefined;
   /** World-space bounding sphere. */
   readonly center: readonly [number, number, number];
@@ -159,11 +172,22 @@ function effectMaterial(shader: BSEffectShaderPropertyBlock): EffectMaterial {
   };
 }
 
-function material(file: NifFile, ref: Ref): LightingMaterial | EffectMaterial | undefined {
+function material(file: NifFile, ref: Ref): PartMaterial | undefined {
   const lighting = getBlock(file, ref, 'lighting-shader');
   if (lighting) return lightingMaterial(file, lighting);
   const effect = getBlock(file, ref, 'effect-shader');
-  return effect && effectMaterial(effect);
+  if (effect) return effectMaterial(effect);
+  const water = getBlock(file, ref, 'water-shader');
+  return (
+    water && {
+      kind: 'water',
+      flags1: water.flags1,
+      flags2: water.flags2,
+      uvOffset: water.uvOffset,
+      uvScale: water.uvScale,
+      waterFlags: water.waterFlags,
+    }
+  );
 }
 
 function alphaState(block: NiAlphaPropertyBlock | undefined): AlphaState | undefined {
@@ -416,12 +440,10 @@ export function buildModel(file: NifFile): ModelData {
       // Without a shader the engine draws nothing: helper shapes for collision, physics
       // and animation ("CurrentPlane", "NonCollidable", bone proxies).
       const shaderType = shaderRef >= 0 ? (file.blockTypes[shaderRef] ?? '') : '';
-      if (shaderType === 'BSWaterShaderProperty')
-        skipped.push(`${name || 'shape'}: water (TODO(M4))`);
-      else if (shaderType !== '') skipped.push(`${name || 'shape'}: ${shaderType} (TODO(M4))`);
+      if (shaderType !== '') skipped.push(`${name || 'shape'}: ${shaderType} (TODO(M4))`);
       return;
     }
-    if ((partMaterial.flags1 & SLSF1_ANY_REFRACTION) !== 0) {
+    if (partMaterial.kind !== 'water' && (partMaterial.flags1 & SLSF1_ANY_REFRACTION) !== 0) {
       // Heat haze and similar (lighting or effect shader): the texture is a distortion
       // map, not a colour, and needs a copy of the rendered scene.
       skipped.push(`${name || 'shape'}: refraction effect (TODO(M4))`);
