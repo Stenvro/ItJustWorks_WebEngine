@@ -134,18 +134,24 @@ Objects animate through controllers (`src/formats/nif/animation-blocks.ts`,
   other way. NiTransformData: rotation keys (quaternions; type 4: three float key
   groups for X, Y and Z instead), translations, scales.
 
-**What plays:** active controllers that no manager drives, and of a model's
-NiControllerManager the first of the sequences Idle, AutoLoop, SpecialIdle, Waiting, mLoop,
-mIdle, AnimIdle, AnimIdle01, Loop, AmIdle (AmIdle: the resting state of furniture-like objects,
-e.g. the forge's idle smoke; most other sequences are played by scripts or activation:
-doors' Open/Close, word walls, magic). Around Whiterun 173 draws animate: waterfall foam
-scrolling, embers pulsing, signs and props. Skinned meshes whose bones animate (banners)
-need skinning on the GPU: TODO(M7).
+**What plays:** active controllers that no manager drives, and the sequences of the model's
+NiControllerManager that its **behavior graph** plays when the mesh names one on its root
+(BSBehaviorGraphExtraData: name, graph file under `meshes\`, controls base skeleton u8; 1251
+vanilla meshes; [hkx.md](hkx.md), [animation.md](../animation.md)). Without a graph the
+first of the sequences Idle, AutoLoop, SpecialIdle, Waiting, mLoop, mIdle, AnimIdle,
+AnimIdle01, Loop, AmIdle plays (of the 413 graph-less meshes with a manager, the banners'
+SpecialIdle, the waterwheels' Idle and two single ones; AmIdle: the resting state of
+furniture-like objects; most other sequences are played by scripts or activation: doors'
+Open/Close). Around Whiterun 173 draws animate: waterfall foam scrolling, embers pulsing,
+signs and props. Skinned meshes whose bones animate (banners) need skinning on the GPU:
+TODO(M7).
 
 **Sequences played on demand** (`buildSequences`): the other sequences of a controller manager
-(a door's Open and Close, a toggleable fire's partA/partB) are kept by lower-case name with
-the scene graph they move. An instance carries its own playback (sequence and start time on
-the renderer's clock); clamped sequences hold their last pose (an open door stays open).
+(a door's Open and Close) are kept by lower-case name with the scene graph they move, their
+clock (start, stop, frequency, cycle type) and text keys; with a behavior graph all of them,
+also those with only text keys (the graph's events). An instance carries its own playback
+(sequence and start time on the renderer's clock) or its graph's; clamped sequences hold their
+last pose (an open door stays open).
 
 **NiBillboardNode** (billboard mode u16): the subtree turns its Z axis towards the camera; modes
 1 and 9 turn only about the node's Y axis (ALWAYS_FACE_CAMERA 0, ROTATE_ABOUT_UP 1,

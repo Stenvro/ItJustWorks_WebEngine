@@ -2,6 +2,7 @@
 // VFS, the asset workers, texture and model caches, the record database and the Papyrus
 // environment. Disposed when another folder is mounted.
 
+import { loadBehaviorGraph, type BehaviorGraph } from '../formats/hkx/behavior.ts';
 import { parseNif, type NifFile } from '../formats/nif/nif.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import { parseControlMap } from '../formats/controlmap/controlmap.ts';
@@ -97,6 +98,8 @@ export class GameSession {
   readonly #models = new Map<string, Promise<GpuModel | undefined>>();
   /** The loaded ones by the same key (memory and eviction). */
   readonly #loadedModels = new Map<string, GpuModel>();
+  /** Behavior graphs by project path (shared by all the meshes that name them). */
+  readonly #graphs = new Map<string, Promise<BehaviorGraph | undefined>>();
   #scripts: Promise<ScriptEnvironment> | undefined;
   #settings: Promise<GameSettings> | undefined;
   readonly #waterTypes = new Map<string, Promise<GpuWaterType | undefined>>();
@@ -171,6 +174,9 @@ export class GameSession {
           if (data.editorMarker || (empty && addons.length === 0)) return undefined;
           const model = await this.#renderer.scene.createModel(data, this.textures);
           model.addons = addons;
+          if (data.behaviorGraph !== undefined) {
+            model.graph = await this.behaviorGraph(data.behaviorGraph);
+          }
           this.#loadedModels.set(key, model);
           return model;
         },
@@ -180,6 +186,23 @@ export class GameSession {
         },
       );
       this.#models.set(key, entry);
+    }
+    return entry;
+  }
+
+  /**
+   * A Havok Behavior graph by its project path (a mesh's BSBehaviorGraphExtraData), read
+   * once; undefined if it is missing or broken (the mesh then plays none of its sequences,
+   * as when the game fails to load a graph).
+   */
+  behaviorGraph(project: string): Promise<BehaviorGraph | undefined> {
+    let entry = this.#graphs.get(project);
+    if (!entry) {
+      entry = loadBehaviorGraph(project, (path) => this.vfs.read(path)).catch((error: unknown) => {
+        this.#terminal.log('hkx', `${project}: ${describe(error)}`, 'warn');
+        return undefined;
+      });
+      this.#graphs.set(project, entry);
     }
     return entry;
   }

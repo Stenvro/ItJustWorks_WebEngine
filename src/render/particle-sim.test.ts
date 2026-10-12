@@ -84,6 +84,7 @@ const system = (overrides: Partial<ParticleSystemData> = {}): ParticleSystemData
       source: { constant: 20, keys: undefined },
     },
   ],
+  sequenceTracks: new Map(),
   objects: new Map([
     [0, identity()],
     [EMITTER_OBJECT, translated(0, 0, 50)],

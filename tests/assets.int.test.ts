@@ -3,7 +3,9 @@
 // `node tools/dds-stats.ts`.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ObjectGraph } from '../src/animation/object-graph.ts';
 import { parseDds } from '../src/formats/dds/dds.ts';
+import { loadBehaviorGraph } from '../src/formats/hkx/behavior.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
 import { identity } from '../src/render/math.ts';
 import { buildModel } from '../src/render/model-data.ts';
@@ -65,13 +67,19 @@ describe.skipIf(!hasGamedata())('assets in the local game data', () => {
   it('builds and runs the particle systems of fires, candles and smoke', async () => {
     const model = async (path: string): Promise<ReturnType<typeof buildModel>> =>
       buildModel(parseNif(await vfs.read(path)));
-    const runFor = (system: ParticleSystemData, seconds: number): ParticleSimulation => {
+    const runFor = (
+      system: ParticleSystemData,
+      seconds: number,
+      graph?: ObjectGraph,
+    ): ParticleSimulation => {
       const simulation = new ParticleSimulation(system, 1);
       for (let t = 0; t <= seconds; t += 1 / 30) {
+        graph?.update(t);
         simulation.update({
           seconds: t,
           dt: t === 0 ? 0 : 1 / 30,
           instanceWorld: identity(),
+          ...(graph && { sequences: graph.playing }),
           animated: undefined,
           camera: [0, -300, 100],
           wind: [0, 0, 0],
@@ -97,16 +105,26 @@ describe.skipIf(!hasGamedata())('assets in the local game data', () => {
     ]);
     for (const system of candle.particles) expect(runFor(system, 2).count).toBeGreaterThan(0);
 
-    // The forge's idle sequence (AmIdle) runs its idle smoke; the "Playing" smoke waits.
+    // The forge's behavior graph starts in its Idle state (AmIdle): the idle smoke runs, the
+    // "Playing" smoke waits for activation.
     const forge = await model(
       'meshes\\clutter\\blacksmith\\blacksmithforge01\\blacksmithforge01.nif',
     );
+    const graph = await loadBehaviorGraph(forge.behaviorGraph ?? '', (path) => vfs.read(path));
+    const start = (): ObjectGraph =>
+      new ObjectGraph(graph, forge.sequences?.byName ?? new Map(), 0);
+    expect(start().playing.map((playing) => playing.sequence)).toEqual(['amidle']);
     const smoke = (name: string): ParticleSystemData | undefined =>
       forge.particles.find((system) => system.name === name);
     const idle = smoke('smoke02Idle');
     const playing = smoke('smoke01Activate');
-    expect(idle && runFor(idle, 3).count).toBeGreaterThan(10);
-    expect(playing && runFor(playing, 3).count).toBe(0);
+    expect(idle && runFor(idle, 3, start()).count).toBeGreaterThan(10);
+    expect(playing && runFor(playing, 3, start()).count).toBe(0);
+    // Activation plays "Playing" (its smoke), and its "end" returns to the idle.
+    const activated = start();
+    activated.send('activate', 0);
+    expect(activated.playing.map((entry) => entry.sequence)).toEqual(['playing']);
+    expect(playing && runFor(playing, 3, activated).count).toBeGreaterThan(0);
   }, 120_000);
 
   it('builds the particle systems of a sample of NIFs', async () => {

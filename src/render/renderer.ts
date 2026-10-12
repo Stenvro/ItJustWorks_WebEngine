@@ -38,6 +38,7 @@ import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
 import { TreeLodRenderer, type TreeLodFrame } from './tree-lod.ts';
 import { SnowScattering } from './snow-sss.ts';
 import { Sao } from './sao.ts';
+import { REFRACTION_FORMAT, RefractionComposite } from './refraction.ts';
 import { GrassRenderer, type GpuGrassField } from './grass.ts';
 import { DecalRenderer, type GpuDecals } from './decals.ts';
 import { occlusionView, PrecipitationRenderer, type PrecipitationFrame } from './precipitation.ts';
@@ -102,6 +103,9 @@ interface RenderTargets {
   /** The opaque pass's G-buffer (gbuffer.ts), multisampled and resolved. */
   readonly gbuffer: GPUTexture;
   readonly gbufferResolved: GPUTexture;
+  /** The refraction buffer (refraction.ts), multisampled and resolved. */
+  readonly refraction: GPUTexture;
+  readonly refractionResolved: GPUTexture;
   readonly depthResolve: GPUBindGroup;
 }
 
@@ -110,7 +114,9 @@ interface RenderTargets {
  * 1. the shell backdrop or the sky, the terrain and the opaque parts of the scenes;
  * 2. (if there is water) copies of that image's colour and depth for the water shader;
  * 3. water surfaces, then the blended parts back to front;
- * 4. the imagespace's post-processing into the canvas (with its depth of field: from the copy of
+ * 4. (if refraction shapes are in view) the refraction buffer, and the image-space refraction
+ *    of everything drawn so far;
+ * 5. the imagespace's post-processing into the canvas (with its depth of field: from the copy of
  *    the opaque scene's depth).
  */
 export class Renderer {
@@ -122,6 +128,8 @@ export class Renderer {
   readonly snowScattering: SnowScattering;
   /** Ambient occlusion of the opaque scene (bSAOEnable). */
   readonly #sao: Sao;
+  /** The image-space refraction (ISRefraction). */
+  readonly #refraction: RefractionComposite;
   /** bSAOEnable (on in the launcher presets); off for comparisons. */
   ambientOcclusion = true;
   readonly grass: GrassRenderer;
@@ -156,6 +164,7 @@ export class Renderer {
     this.sky = new SkyRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.treeLod = new TreeLodRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.snowScattering = new SnowScattering(device);
+    this.#refraction = new RefractionComposite(device);
     this.#sao = new Sao(device, this.scene.frameLayout, HDR_FORMAT, SAMPLE_COUNT);
     this.grass = new GrassRenderer(device, HDR_FORMAT, this.scene);
     this.decals = new DecalRenderer(device, HDR_FORMAT, this.scene.frameLayout);
@@ -404,12 +413,18 @@ export class Renderer {
         { scene: targets.sceneColor, depth: targets.sceneDepth, gbuffer: targets.gbufferResolved },
         view.camera.near,
       );
+      // Refraction shapes are depth-tested after the blended pass: it keeps the depth then.
+      const refraction = this.scene.hasRefraction(scenes);
       const blended = encoder.beginRenderPass({
         label: 'water-and-blended',
         colorAttachments: [
           { view: colorView, resolveTarget: hdrView, loadOp: 'load', storeOp: 'discard' },
         ],
-        depthStencilAttachment: { view: depthView, depthLoadOp: 'load', depthStoreOp: 'discard' },
+        depthStencilAttachment: {
+          view: depthView,
+          depthLoadOp: 'load',
+          depthStoreOp: refraction ? 'store' : 'discard',
+        },
       });
       if (decalsInView) {
         this.decals.draw(blended, this.scene.frameBindGroup, decals, this.scene.viewPlanes);
@@ -427,6 +442,7 @@ export class Renderer {
         );
       }
       blended.end();
+      if (refraction) this.#refract(encoder, targets, scenes, depthView, hdrView, view.camera);
     }
 
     this.post.run(
@@ -439,6 +455,44 @@ export class Renderer {
       depthOfField ? { view: targets.sceneDepthView, near: view.camera.near } : undefined,
     );
     device.queue.submit([encoder.finish()]);
+  }
+
+  /**
+   * The engine's refraction: the shapes write the refraction buffer, then the image-space
+   * pass shifts the finished scene (a copy of it) by it, into the scene.
+   */
+  #refract(
+    encoder: GPUCommandEncoder,
+    targets: RenderTargets,
+    scenes: readonly GpuScene[],
+    depthView: GPUTextureView,
+    hdrView: GPUTextureView,
+    camera: Camera,
+  ): void {
+    const pass = encoder.beginRenderPass({
+      label: 'refraction-buffer',
+      colorAttachments: [
+        {
+          view: targets.refraction.createView(),
+          resolveTarget: targets.refractionResolved.createView(),
+          clearValue: { r: 0.5, g: 0.5, b: 0, a: 0 },
+          loadOp: 'clear',
+          storeOp: 'discard',
+        },
+      ],
+      depthStencilAttachment: { view: depthView, depthLoadOp: 'load', depthStoreOp: 'discard' },
+    });
+    this.scene.drawRefraction(pass, scenes, camera.position);
+    pass.end();
+    encoder.copyTextureToTexture(
+      { texture: this.post.hdrTexture(targets.width, targets.height) },
+      { texture: targets.sceneColor },
+      [targets.width, targets.height],
+    );
+    this.#refraction.run(encoder, hdrView, {
+      scene: targets.sceneColor,
+      refraction: targets.refractionResolved,
+    });
   }
 
   /** Renders shadow casters (terrain and scene parts) into a layer of the shadow map. */
@@ -485,6 +539,8 @@ export class Renderer {
       this.#targets?.sceneDepth,
       this.#targets?.gbuffer,
       this.#targets?.gbufferResolved,
+      this.#targets?.refraction,
+      this.#targets?.refractionResolved,
     ]) {
       texture?.destroy();
     }
@@ -533,6 +589,19 @@ export class Renderer {
         label: 'gbuffer',
         size: [width, height],
         format: GBUFFER_FORMAT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      }),
+      refraction: device.createTexture({
+        label: 'msaa-refraction',
+        size: [width, height],
+        format: REFRACTION_FORMAT,
+        sampleCount: SAMPLE_COUNT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      }),
+      refractionResolved: device.createTexture({
+        label: 'refraction',
+        size: [width, height],
+        format: REFRACTION_FORMAT,
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
       }),
       depthResolve: device.createBindGroup({

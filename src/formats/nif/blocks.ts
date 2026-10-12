@@ -5,6 +5,7 @@
 import { BinaryReader, FormatError } from '../binary-reader.ts';
 import { readSizedString } from './header.ts';
 import type {
+  BehaviorGraphExtraDataBlock,
   BoundBlock,
   BSEffectShaderPropertyBlock,
   BSLightingShaderPropertyBlock,
@@ -489,6 +490,16 @@ const parseIntegerExtraData: BlockParser = (reader, context): IntegerExtraDataBl
   value: reader.u32(),
 });
 
+const parseBehaviorGraphExtraData: BlockParser = (
+  reader,
+  context,
+): BehaviorGraphExtraDataBlock => ({
+  kind: 'behavior-graph-extra-data',
+  name: readStringRef(reader, context),
+  graph: readStringRef(reader, context),
+  controlsBaseSkeleton: reader.u8() !== 0,
+});
+
 const parseBound: BlockParser = (reader, context): BoundBlock => ({
   kind: 'bound',
   name: readStringRef(reader, context),
@@ -658,6 +669,7 @@ export const BLOCK_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string, B
   ['NiAlphaProperty', parseAlpha],
   ['NiIntegerExtraData', parseIntegerExtraData],
   ['BSXFlags', parseIntegerExtraData],
+  ['BSBehaviorGraphExtraData', parseBehaviorGraphExtraData],
   ['BSBound', parseBound],
   ['NiSkinInstance', parseSkinInstance],
   ['BSDismemberSkinInstance', parseSkinInstance],
