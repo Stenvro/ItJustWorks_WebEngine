@@ -20,8 +20,17 @@ export const MAX_LIGHTS = 256;
 /** Size of the WGSL `Draw` struct and the stride between draws (uniform offset alignment). */
 const DRAW_SIZE = 160;
 const DRAW_STRIDE = 256;
-/** WGSL `Frame` struct: 72 floats. */
-const FRAME_FLOATS = 72;
+/** WGSL `Frame` struct: 76 floats. */
+const FRAME_FLOATS = 76;
+
+/** Loaded cells, where distant LOD is not drawn: a 7×7 grid from its south-west cell. */
+export interface LodMask {
+  readonly originX: number;
+  readonly originY: number;
+  /** Bit (y * 7 + x) set for each loaded cell of the grid. */
+  readonly low: number;
+  readonly high: number;
+}
 /** WGSL `PointLight`: position + radius, colour + unused. */
 const LIGHT_FLOATS = 8;
 
@@ -535,6 +544,7 @@ export class SceneRenderer {
     cameraPosition: Vec3,
     lighting: SceneLighting,
     timeSeconds = 0,
+    lodMask?: LodMask,
   ): void {
     const data = this.#frameData;
     data.set(viewProjection, 0);
@@ -551,6 +561,12 @@ export class SceneRenderer {
     const lightCount = Math.min(MAX_LIGHTS, lighting.lights.length);
     this.#frameUints.set([lightCount, fog ? 1 : 0, this.debugView, 0], 64);
     data.set([timeSeconds, 0, 0, 0], 68);
+    new Int32Array(data.buffer, 72 * 4, 4).set([
+      lodMask?.originX ?? 0,
+      lodMask?.originY ?? 0,
+      lodMask?.low ?? 0,
+      lodMask?.high ?? 0,
+    ]);
     this.#device.queue.writeBuffer(this.#frameBuffer, 0, data);
 
     if (lightCount > 0) {

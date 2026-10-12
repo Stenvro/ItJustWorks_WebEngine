@@ -109,6 +109,16 @@ export interface ModelData {
   readonly editorMarker: boolean;
 }
 
+/** Material of LOD water (WaterShaderFlag lod). */
+const LOD_WATER: WaterMaterial = {
+  kind: 'water',
+  flags1: 0,
+  flags2: 0,
+  uvOffset: [0, 0],
+  uvScale: [1, 1],
+  waterFlags: 0x2,
+};
+
 /** NiAVObject flag: the object (and its subtree) is hidden. */
 const APP_CULLED = 0x1;
 /** SLSF1 Refraction and Fire_Refraction. */
@@ -310,6 +320,8 @@ function layoutOf(desc: VertexDesc): VertexLayout {
 export function buildModel(file: NifFile): ModelData {
   const parts: ModelPart[] = [];
   const skipped: string[] = [];
+  /** Names of the nodes above the block being visited. */
+  const nodeNames: string[] = [];
   let worlds: Map<Ref, Mat4> | undefined;
 
   const visit = (ref: Ref, parentWorld: Mat4, depth: number): void => {
@@ -341,7 +353,9 @@ export function buildModel(file: NifFile): ModelData {
           block.switchIndex !== undefined
             ? [block.children[block.switchIndex] ?? -1]
             : block.children;
+        nodeNames.push(block.name);
         for (const child of children) visit(child, world, depth + 1);
+        nodeNames.pop();
         return;
       }
       case 'tri-shape': {
@@ -435,7 +449,10 @@ export function buildModel(file: NifFile): ModelData {
     radius: number,
   ): void => {
     if (indices.length === 0 || vertexCount === 0) return;
-    const partMaterial = material(file, shaderRef);
+    // Terrain LOD keeps its distant water as shapes without a shader under a node named
+    // WATER: they are drawn with the world's LOD water.
+    const partMaterial =
+      shaderRef < 0 && nodeNames.at(-1) === 'WATER' ? LOD_WATER : material(file, shaderRef);
     if (!partMaterial) {
       // Without a shader the engine draws nothing: helper shapes for collision, physics
       // and animation ("CurrentPlane", "NonCollidable", bone proxies).

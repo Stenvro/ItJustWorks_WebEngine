@@ -27,6 +27,12 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
   let flags1 = draw.flags.x;
   let flags2 = draw.flags.y;
   let shaderType = draw.flags.w;
+  // LOD landscape (9), LOD objects (13, 15) and noisy LOD landscape (18) give way to the
+  // loaded cells.
+  let lod = shaderType == 9u || shaderType == 13u || shaderType == 15u || shaderType == 18u;
+  if (lod && lodHidden(in.worldPos)) {
+    discard;
+  }
 
   var base = diffuse.rgb;
   var alpha = diffuse.a * draw.params.y;

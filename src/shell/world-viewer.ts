@@ -1,7 +1,7 @@
 // Exterior worldspaces: streams the cells around the camera (landscape, objects and lights)
 // in and out, like the engine's loaded grid (uGridsToLoad 5), under the sky and weather of
 // the worldspace's climate and regions.
-// TODO(M4): distant LOD (terrain, objects, trees, LOD water).
+// Beyond the loaded cells: the worldspace's distant LOD (terrain, water, objects, trees).
 
 import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
@@ -11,6 +11,7 @@ import type {
   GpuModel,
   GpuScene,
   ModelInstance,
+  LodMask,
   SceneLighting,
   WaterFlow,
   WaterFrame,
@@ -29,6 +30,7 @@ import { CELL_SIZE, LAND_GRID, landTexture } from '../world/land.ts';
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
 import { cellKey, Worldspace } from '../world/worldspace.ts';
 import type { GameSession } from './game-session.ts';
+import { WorldLod } from './world-lod.ts';
 import { WorldSky, type SkyElements } from './world-sky.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -91,6 +93,7 @@ export class WorldViewer {
   #worlds: WorldspaceInfo[] = [];
   #world: Worldspace | undefined;
   #sky: WorldSky | undefined;
+  #lod: WorldLod | undefined;
   readonly #cells = new Map<string, LoadedCell>();
   readonly #queue: [number, number][] = [];
   #loading = 0;
@@ -164,13 +167,18 @@ export class WorldViewer {
     const session = this.#session;
     if (!session) return;
     const world = await Worldspace.open(db, formId);
-    const sky = await WorldSky.create(session, this.#renderer.sky, world, this.#ui, this.#terminal);
+    const [sky, lod] = await Promise.all([
+      WorldSky.create(session, this.#renderer.sky, world, this.#ui, this.#terminal),
+      WorldLod.create(session, this.#renderer, world, this.#terminal),
+    ]);
     if (generation !== this.#generation) {
       sky.dispose();
+      lod?.dispose();
       return;
     }
     this.#world = world;
     this.#sky = sky;
+    this.#lod = lod;
     this.#renderer.scene.defaultWater = await session.waterType(
       world.waterWorld.water ?? DEFAULT_WATER,
     );
@@ -193,6 +201,8 @@ export class WorldViewer {
     this.#detachControls = this.#camera.attach(this.#canvas);
     this.#renderer.setView({
       scenes: () => this.#readyScenes(),
+      trees: () => this.#lod?.trees(),
+      lodMask: () => this.#lodMask(),
       terrain: () => this.#readyTerrain(),
       camera: this.#camera,
       lighting: (camera) => this.#lighting(camera.position),
@@ -222,6 +232,8 @@ export class WorldViewer {
     this.#world = undefined;
     this.#sky?.dispose();
     this.#sky = undefined;
+    this.#lod?.dispose();
+    this.#lod = undefined;
   }
 
   // --- Streaming ------------------------------------------------------------------------
@@ -247,6 +259,7 @@ export class WorldViewer {
     }
     this.#queue.sort((a, b) => Math.hypot(a[0] - cx, a[1] - cy) - Math.hypot(b[0] - cx, b[1] - cy));
     this.#pump();
+    this.#lod?.update(px, py);
     this.#sky?.update(world, cx, cy).catch((error: unknown) => {
       this.#terminal.log('sky', describe(error), 'warn');
     });
@@ -383,7 +396,27 @@ export class WorldViewer {
   }
 
   *#readyScenes(): Iterable<GpuScene> {
+    if (this.#lod) yield* this.#lod.scenes();
     for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
+  }
+
+  /** Loaded cells around the camera, where distant LOD gives way to them. */
+  #lodMask(): LodMask {
+    const [px, py] = this.#camera.position;
+    const originX = Math.floor(px / CELL_SIZE) - 3;
+    const originY = Math.floor(py / CELL_SIZE) - 3;
+    let low = 0;
+    let high = 0;
+    for (const cell of this.#cells.values()) {
+      if (!cell.ready) continue;
+      const dx = cell.x - originX;
+      const dy = cell.y - originY;
+      if (dx < 0 || dy < 0 || dx >= 7 || dy >= 7) continue;
+      const bit = dy * 7 + dx;
+      if (bit < 32) low |= 1 << bit;
+      else high |= 1 << (bit - 32);
+    }
+    return { originX, originY, low, high };
   }
 
   *#readyTerrain(): Iterable<GpuTerrainCell> {
