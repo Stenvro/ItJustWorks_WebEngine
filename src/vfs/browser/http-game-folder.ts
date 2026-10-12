@@ -5,6 +5,26 @@ import { checkReadRange, type ByteSource } from '../../formats/byte-source.ts';
 import type { GameFolder } from '../game-folder.ts';
 
 const BASE = '/@gamedata/';
+/** Chrome fails requests (ERR_INSUFFICIENT_RESOURCES) when thousands are in flight. */
+const MAX_REQUESTS = 32;
+
+let active = 0;
+const waiting: (() => void)[] = [];
+
+async function limited<T>(task: () => Promise<T>): Promise<T> {
+  if (active >= MAX_REQUESTS) {
+    await new Promise<void>((resolve) => {
+      waiting.push(resolve);
+    });
+  }
+  active++;
+  try {
+    return await task();
+  } finally {
+    active--;
+    waiting.shift()?.();
+  }
+}
 
 class HttpByteSource implements ByteSource {
   readonly size: number;
@@ -18,11 +38,13 @@ class HttpByteSource implements ByteSource {
   async read(offset: number, length: number): Promise<Uint8Array> {
     checkReadRange(this.size, offset, length);
     if (length === 0) return new Uint8Array(0);
-    const response = await fetch(this.#url, {
-      headers: { Range: `bytes=${offset}-${offset + length - 1}` },
+    const bytes = await limited(async () => {
+      const response = await fetch(this.#url, {
+        headers: { Range: `bytes=${offset}-${offset + length - 1}` },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status} for ${this.#url}`);
+      return new Uint8Array(await response.arrayBuffer());
     });
-    if (!response.ok) throw new Error(`HTTP ${response.status} for ${this.#url}`);
-    const bytes = new Uint8Array(await response.arrayBuffer());
     if (bytes.length !== length) {
       throw new Error(`Expected ${length} bytes from ${this.#url}, got ${bytes.length}`);
     }

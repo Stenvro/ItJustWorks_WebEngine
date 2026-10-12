@@ -74,7 +74,9 @@ clip distance, fog power, directional ambient (6 colours for ±X/±Y/±Z, specul
 power), fog far colour, fog max, light fade begin/end, **inherit flags** u32 (which values come
 from the LTMP lighting template instead).
 
-**LGTM:** DATA uses the same layout up to offset 88; its directional ambient is in DALC.
+**LGTM:** DATA uses the same layout up to offset 88; its directional ambient is in DALC. Some
+templates have a 72-byte DATA that stops after the directional ambient (offset 40–71): no fog
+far colour (use the near one), fog max (1) or light fade distances.
 
 **REFR / ACHR:** NAME base form id, DATA position (3 f32) + rotation (3 f32, radians), XSCL
 scale, XESP enable parent (form id + flags; `0x1` = opposite state).
@@ -85,15 +87,25 @@ scale, XESP enable parent (form id + flags; `0x1` = opposite state).
   (inverted with the opposite flag). Breezehome's furniture hangs off "WhiterunPlayerHouse..."
   markers that are disabled until the upgrades are bought, so the house starts mostly empty,
   as in the game.
-- **Upgrades** (`src/world/cell-upgrades.ts`): roots of enable-parent chains are toggles. A
-  room's walls, doors and furniture follow the same marker, so they switch together. Derived
-  from the data, as the upgrade scripts behave:
-  - an upgrade replaces the `...Start` marker with the same name core (`DiningRoomStart` ↔
-    `DecorateDiningRoom`); a Start marker keeps its own initial state until then;
-  - two upgrades that place objects at exactly the same spot are alternatives for one space
-    (Breezehome's alchemy laboratory vs the HearthFires child bedroom): only one can be on,
-    and they share the replaced Start marker; "all" keeps the earliest plugin's option.
-    TODO(M8): real upgrade scripts.
+- **What switches enable-parent markers** is decided by scripts, never by names. A room's
+  walls, doors and furniture follow the same marker, so they switch together.
+  - **Player homes** (`src/world/player-home.ts`) are played in the Papyrus VM
+    (`src/scripting/`, see [pex.md](pex.md)). Purchases are dialogue responses (INFO) whose
+    fragment script names a marker of the cell, plus the gold-taking responses of the same
+    quests; one counts if playing it on a new game changes a reference of the cell. Its label
+    is the topic text (DIAL FULL) with `<Global=X>` replaced by the global's value.
+    HearthFire houses are built as a player does: `BuyProperty`, then repeatedly craft the
+    first BYOH recipe (COBJ) whose conditions hold, in `BYOHHouseBuildingMasterList` order,
+    finishing everything available before drafting another wing (drafting a layout removes
+    the other layout tokens), and furnish each finished room from its
+    `RoomMasterLists` entry. Recipes that enable nothing (`EnableList[i]` is None, the
+    "Remove Workbench" parts) are skipped. Main hall styles B and C need
+    `iHouseStyles ≥ 2/3` (it is 1), so only style A is ever built.
+  - **Quest and scene states** (`src/world/cell-upgrades.ts`): the other roots. They start as
+    placed; a `X_Disable` / `XStart` counterpart switches with `X_Enable` / `X`.
+  - `Enable`/`Disable` on a reference that has an enable parent does nothing (the parent
+    decides); HearthFire's cellar data relies on that.
+  - The player reference (0x14) is created by the engine; no plugin contains it.
 - **XRDS** on light references is an **offset** added to the LIGH radius (vanilla values
   range from −322 to +55; a negative absolute radius would be meaningless).
 
@@ -101,3 +113,31 @@ scale, XESP enable parent (form id + flags; `0x1` = opposite state).
 FOV, near clip, flicker parameters. FNAM: fade (brightness). Flag `0x20` = off by default.
 
 **World models:** MODL for most base types, MOD2 (male world model) for ARMO.
+
+## Scripts and conditions
+
+**VMAD** (scripts attached to a record): i16 version (5), i16 object format (1: form id, alias,
+unused; 2: unused, alias, form id), u16 script count; per script a wstring name, a status byte
+(version ≥ 4) and its properties (wstring name, u8 type, status byte, value). Types: 1 object,
+2 wstring, 3 int, 4 float, 5 bool, 11–15 arrays of those (u32 count). After the scripts:
+
+- INFO: u8 (2), u8 flags (0x1 begin, 0x2 end fragment), wstring fragment script, then per
+  flag u8, wstring script, wstring function.
+- QUST: u8 (2), u16 fragment count, wstring fragment script, per fragment u16 stage, i16, i32
+  log entry, u8, wstring script, wstring function; then u16 alias count, each with an object
+  value (its alias id), i16 version, i16 object format and its own scripts.
+
+The fragment script is also listed among the scripts with its property values. The index of
+which forms each INFO/QUST script names (`src/world/script-references.ts`) reads only INFO and
+QUST records: about 125 ms for all vanilla plugins.
+
+**CTDA** (conditions, 32 bytes): u8 operator (high 3 bits: `== != > >= < <=`) and flags
+(0x01 OR, 0x04 compare with a global), float comparison value (or global form id), u16
+function index, u16 padding, param 1, param 2, u32 run-on, reference, i32 param 3. A following
+CIS1/CIS2 holds a string parameter (e.g. the variable for `GetVMQuestVariable`, function 629).
+OR-flagged conditions join the next one into a group; all groups must hold. Recipes use
+`GetItemCount` (47, on the player), `GetGlobalValue` (74), `GetVMQuestVariable` (629) and
+`GetInCurrentLoc` (359).
+
+**Quest aliases:** ALST starts a reference alias, ALLS a location alias (u32 id); ALFR / ALFL
+give its forced reference / location.

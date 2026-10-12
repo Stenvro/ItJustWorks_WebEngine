@@ -1,58 +1,78 @@
-// Upgrades of a cell (e.g. a player home's rooms) and which references they show.
+// Which references of a cell are enabled, and the cell's quest and scene states.
 //
-// Upgrades are enable-parent markers: switching one on enables everything that follows it,
-// walls and doors included. Bethesda's upgrade scripts also switch the room's unfurnished
-// "...Start" marker off, and some upgrades are alternatives for the same space (Breezehome's
-// alchemy laboratory vs the HearthFires child bedroom). Both relations are derived from the
-// data here.
-// TODO(M8): replace with the real Papyrus upgrade scripts and the player's choices.
+// A cell's enable-parent markers switch everything that follows them, walls and doors
+// included. What the player does to a home (buying furnishings, building a HearthFire
+// house) is played with the game's scripts in player-home.ts; its result comes in as the
+// scripted enable states. The other markers are set by quests and scenes (a guild's status,
+// a fort's garrison): they start as the plugin places them, which is what a new game
+// shows, and can be switched here to look at the other states. A state's "...Disable" or
+// "...Start" counterpart (X_Enable ↔ X_Disable) switches with it.
+// TODO(M8): quest states follow the running quests.
 
 import type { CellData, ReferenceState } from './cell-loader.ts';
 
-export interface CellUpgrade {
+export interface CellToggle {
   /** Form id of the enable-parent marker. */
   readonly formId: number;
   readonly editorId: string;
-  /** Readable name, e.g. "Dining Room". */
+  /** Readable name, e.g. "Cicero Moves In". */
   readonly label: string;
-  /** Switched on at the start of a new game. */
+  /** On at the start of a new game. */
   readonly defaultOn: boolean;
-  /** "...Start" markers this upgrade replaces (switched off while it is on). */
+  /** Counterpart markers switched off while this one is on. */
   readonly replaces: readonly number[];
-  /** Upgrades for the same space; at most one of them can be on. */
-  readonly alternatives: readonly number[];
 }
 
-const isStart = (editorId: string): boolean => editorId.toLowerCase().endsWith('start');
+const isCounterpart = (editorId: string): boolean => /(start|disable)$/i.test(editorId);
 
-/** Name core shared by a room's Start marker and its upgrade: DiningRoomStart ↔ DecorateDiningRoom. */
+/** Name core shared by a state and its counterpart: X_Enable ↔ X_Disable, XStart ↔ X. */
 const core = (editorId: string): string =>
-  editorId
-    .toLowerCase()
-    .replace(/start$/, '')
-    .replace('decorate', '');
+  editorId.toLowerCase().replace(/(start|disable|enable)$/, '');
 
-function commonPrefix(names: readonly string[]): string {
-  if (names.length < 2) return '';
-  let prefix = names[0] ?? '';
-  for (const name of names) {
-    while (!name.startsWith(prefix)) prefix = prefix.slice(0, -1);
-  }
-  // Keep whole words: if the prefix ends inside a word ("...HouseD"), cut back to its start.
-  const endsAtWord = names.every((name) => /^[A-Z]/.test(name.slice(prefix.length)));
-  if (endsAtWord) return prefix;
-  const boundary = prefix.search(/[A-Z][a-z]*$/);
-  return boundary > 0 ? prefix.slice(0, boundary) : '';
+/** Whether a word starts at index `i` of a name (never inside a number). */
+function wordStart(name: string, i: number): boolean {
+  if (i === 0 || i === name.length) return true;
+  const previous = name.charAt(i - 1);
+  const next = name.charAt(i);
+  if (/\d/.test(previous) && /\d/.test(next)) return false;
+  return /[A-Z\d_]/.test(next) || previous === '_';
 }
 
-function label(editorId: string, prefix: string): string {
-  return (
-    editorId
-      .slice(prefix.length)
-      .replace(/^Decorate(?=[A-Z])/, '')
-      .replace(/([a-z])([A-Z])/g, '$1 $2')
-      .trim() || editorId
-  );
+/** Length of the prefix two names share, cut back to a word boundary. */
+function sharedPrefix(a: string, b: string): number {
+  let length = 0;
+  while (length < a.length && length < b.length && a[length] === b[length]) length++;
+  while (length > 0 && !(wordStart(a, length) && wordStart(b, length))) length--;
+  return length;
+}
+
+/** Per name, the prefix it shares with two others (one other in a list of two). */
+function labelPrefixes(names: readonly string[]): number[] {
+  const others = Math.min(2, names.length - 1);
+  return names.map((name, i) => {
+    if (others <= 0) return 0;
+    const lengths = names
+      .filter((_, j) => j !== i)
+      .map((other) => sharedPrefix(name, other))
+      .sort((x, y) => y - x);
+    return lengths[others - 1] ?? 0;
+  });
+}
+
+const words = (text: string): string =>
+  text
+    .replace(/([a-z])([A-Z\d])/g, '$1 $2')
+    .replace(/(\d)([A-Z][a-z])/g, '$1 $2')
+    .replace(/_/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+function label(name: string, prefix: number): string {
+  const shown = name
+    .slice(prefix)
+    .replace(/^_+/, '')
+    .replace(/_?(Enabler?|Marker|Ref|REF)+$/, '');
+  return words(shown) || words(name) || name;
 }
 
 /** The marker at the top of a reference's enable-parent chain. */
@@ -66,131 +86,71 @@ function rootOf(references: ReadonlyMap<number, ReferenceState>, formId: number)
   return current;
 }
 
-export function findUpgrades(data: CellData): CellUpgrade[] {
+/**
+ * The cell's quest and scene states: roots of enable-parent chains that something in the
+ * cell follows, except the markers the player's actions switch (`controlled`).
+ */
+export function findToggles(
+  data: CellData,
+  controlled: ReadonlySet<number> = new Set(),
+): CellToggle[] {
   const { references } = data;
-  // Roots of enable-parent chains that something in the cell follows.
   const roots = new Set<number>();
-  const childrenOf = new Map<number, number[]>();
   for (const [formId, state] of references) {
-    if (!state.parent) continue;
-    const root = rootOf(references, formId);
-    roots.add(root);
-    if (!state.parent.opposite) {
-      const list = childrenOf.get(root) ?? [];
-      list.push(formId);
-      childrenOf.set(root, list);
-    }
+    if (state.parent) roots.add(rootOf(references, formId));
   }
   const markers = [...roots]
+    .filter((formId) => !controlled.has(formId))
     .map((formId) => ({ formId, state: references.get(formId) }))
     .filter(
       (m): m is { formId: number; state: ReferenceState } =>
         m.state !== undefined && m.state.editorId !== '',
     );
-
-  const upgrades = markers.filter((m) => !isStart(m.state.editorId));
-  const starts = markers.filter((m) => isStart(m.state.editorId));
-
-  // Alternatives: two upgrades that place something at exactly the same spot.
-  const ownerAt = new Map<string, Set<number>>();
-  for (const upgrade of upgrades) {
-    for (const child of childrenOf.get(upgrade.formId) ?? []) {
-      const key = references.get(child)?.placementKey;
-      if (key === undefined) continue;
-      const owners = ownerAt.get(key) ?? new Set<number>();
-      owners.add(upgrade.formId);
-      ownerAt.set(key, owners);
-    }
+  const mains = markers.filter((m) => !isCounterpart(m.state.editorId));
+  const counterparts = new Map<number, number[]>();
+  const paired = new Set<number>();
+  for (const marker of markers) {
+    if (!isCounterpart(marker.state.editorId)) continue;
+    const partner = mains.find((main) => core(main.state.editorId) === core(marker.state.editorId));
+    if (!partner) continue;
+    counterparts.set(partner.formId, [...(counterparts.get(partner.formId) ?? []), marker.formId]);
+    paired.add(marker.formId);
   }
-  const alternatives = new Map<number, Set<number>>();
-  for (const owners of ownerAt.values()) {
-    if (owners.size < 2) continue;
-    for (const a of owners) {
-      for (const b of owners) {
-        if (a === b) continue;
-        const set = alternatives.get(a) ?? new Set<number>();
-        set.add(b);
-        alternatives.set(a, set);
-      }
-    }
-  }
-
-  // Start markers replaced by an upgrade of the same name; alternatives share them.
-  const replaces = new Map<number, Set<number>>();
-  for (const upgrade of upgrades) {
-    const matching = starts.filter(
-      (start) => core(start.state.editorId) === core(upgrade.state.editorId),
-    );
-    replaces.set(upgrade.formId, new Set(matching.map((start) => start.formId)));
-  }
-  for (const upgrade of upgrades) {
-    for (const other of alternatives.get(upgrade.formId) ?? []) {
-      for (const start of replaces.get(other) ?? []) replaces.get(upgrade.formId)?.add(start);
-    }
-  }
-  const pairedStarts = new Set([...replaces.values()].flatMap((set) => [...set]));
-
-  // Unpaired Start markers stay ordinary toggles.
-  const toggles = [...upgrades, ...starts.filter((start) => !pairedStarts.has(start.formId))];
-  const prefix = commonPrefix(toggles.map((m) => m.state.editorId));
+  const toggles = markers.filter((m) => !paired.has(m.formId));
+  const names = toggles.map((m) => m.state.editorId);
+  const prefixes = labelPrefixes(names);
   return toggles
-    .map((m) => ({
+    .map((m, i): CellToggle => ({
       formId: m.formId,
       editorId: m.state.editorId,
-      label: label(m.state.editorId, prefix),
+      label: label(names[i] ?? '', prefixes[i] ?? 0),
       defaultOn: !m.state.initiallyDisabled,
-      replaces: [...(replaces.get(m.formId) ?? [])],
-      alternatives: [...(alternatives.get(m.formId) ?? [])],
+      replaces: counterparts.get(m.formId) ?? [],
     }))
-    .sort((a, b) => a.label.localeCompare(b.label));
+    .sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
 }
 
-/** The upgrades that are on at the start of a new game. */
-export function gameStartSelection(upgrades: readonly CellUpgrade[]): Set<number> {
-  return new Set(upgrades.filter((u) => u.defaultOn).map((u) => u.formId));
+/** The states as a new game has them. */
+export function gameStartSelection(toggles: readonly CellToggle[]): Set<number> {
+  return new Set(toggles.filter((t) => t.defaultOn).map((t) => t.formId));
 }
 
-/** Every upgrade on; of alternatives, the one from the earliest plugin (lowest form id). */
-export function allUpgradesSelection(upgrades: readonly CellUpgrade[]): Set<number> {
-  const selection = new Set<number>();
-  for (const upgrade of [...upgrades].sort((a, b) => a.formId - b.formId)) {
-    if (upgrade.alternatives.some((other) => selection.has(other))) continue;
-    selection.add(upgrade.formId);
-  }
-  return selection;
-}
-
-/** Switches one upgrade on or off; switching on turns its alternatives off. */
-export function toggleUpgrade(
-  upgrades: readonly CellUpgrade[],
-  selection: ReadonlySet<number>,
-  formId: number,
-  on: boolean,
-): Set<number> {
-  const next = new Set(selection);
-  if (!on) {
-    next.delete(formId);
-    return next;
-  }
-  next.add(formId);
-  for (const other of upgrades.find((u) => u.formId === formId)?.alternatives ?? [])
-    next.delete(other);
-  return next;
-}
-
-/** Whether each reference is enabled for a selection of upgrades. */
+/**
+ * Whether each reference is enabled: references follow their enable parent; a marker's own
+ * state comes from the scripts (`scripted`), else from the selected states, else from the
+ * plugin.
+ */
 export function enabledReferences(
   data: CellData,
-  upgrades: readonly CellUpgrade[],
+  toggles: readonly CellToggle[],
   selection: ReadonlySet<number>,
+  scripted: ReadonlyMap<number, boolean> = new Map(),
 ): (formId: number) => boolean {
-  const upgradeIds = new Set(upgrades.map((u) => u.formId));
+  const toggleIds = new Set(toggles.map((t) => t.formId));
   const replacedBy = new Map<number, number[]>();
-  for (const upgrade of upgrades) {
-    for (const start of upgrade.replaces) {
-      const list = replacedBy.get(start) ?? [];
-      list.push(upgrade.formId);
-      replacedBy.set(start, list);
+  for (const toggle of toggles) {
+    for (const counterpart of toggle.replaces) {
+      replacedBy.set(counterpart, [...(replacedBy.get(counterpart) ?? []), toggle.formId]);
     }
   }
   const cache = new Map<number, boolean>();
@@ -203,13 +163,14 @@ export function enabledReferences(
     if (state?.parent && depth < 16) {
       const parentEnabled = enabled(state.parent.formId, depth + 1);
       result = state.parent.opposite ? !parentEnabled : parentEnabled;
-    } else if (upgradeIds.has(formId)) {
+    } else if (scripted.has(formId)) {
+      result = scripted.get(formId) ?? false;
+    } else if (toggleIds.has(formId)) {
       result = selection.has(formId);
     } else if (replacedBy.has(formId)) {
-      // A Start marker keeps its own initial state until one of its upgrades is bought.
       result =
         !(state?.initiallyDisabled ?? false) &&
-        !(replacedBy.get(formId) ?? []).some((upgrade) => selection.has(upgrade));
+        !(replacedBy.get(formId) ?? []).some((toggle) => selection.has(toggle));
     } else {
       result = !(state?.initiallyDisabled ?? false);
     }

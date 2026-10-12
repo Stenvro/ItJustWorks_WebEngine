@@ -1,5 +1,6 @@
 {
-  // Platform-independent code (parsers and the VFS core): no DOM and no Node types.
+  // Platform-independent code (parsers, the VFS core and the Papyrus VM): no DOM and no
+  // Node types.
   // If that code accidentally uses a browser or Node API, `npm run typecheck` fails.
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -8,6 +9,6 @@
     "lib": ["ES2024"],
     "types": []
   },
-  "include": ["src/formats", "src/vfs"],
+  "include": ["src/formats", "src/vfs", "src/scripting"],
   "exclude": ["src/**/*.test.ts", "src/vfs/browser"]
 }

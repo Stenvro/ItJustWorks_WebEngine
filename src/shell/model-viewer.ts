@@ -13,13 +13,21 @@ import type { Vfs } from '../vfs/vfs.ts';
 import { cellSceneLighting } from '../world/cell-lighting.ts';
 import { loadCellData, type CellData } from '../world/cell-loader.ts';
 import {
-  allUpgradesSelection,
   enabledReferences,
-  findUpgrades,
+  findToggles,
   gameStartSelection,
-  toggleUpgrade,
-  type CellUpgrade,
+  type CellToggle,
 } from '../world/cell-upgrades.ts';
+import {
+  findHomeActions,
+  fullyUpgraded,
+  NEW_GAME,
+  playHomeActions,
+  ScriptEnvironment,
+  type HomeActions,
+  type HomeChoices,
+  type HouseStage,
+} from '../world/player-home.ts';
 import { RecordDatabase, type InteriorCell } from '../world/record-db.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
 import type { Terminal } from './terminal.ts';
@@ -57,8 +65,13 @@ const EYE_HEIGHT = 120;
 
 interface CellView {
   readonly data: CellData;
-  readonly upgrades: readonly CellUpgrade[];
+  /** Quest and scene states, and which of them are on. */
+  readonly toggles: readonly CellToggle[];
   selection: Set<number>;
+  /** What the player can buy or build here, what they chose, and what the scripts did. */
+  readonly actions: HomeActions;
+  choices: HomeChoices;
+  scripted: ReadonlyMap<number, boolean>;
   readonly models: ReadonlyMap<string, GpuModel | undefined>;
   readonly label: string;
 }
@@ -126,6 +139,12 @@ export class ModelViewer {
   #loader: AssetLoader | undefined;
   #textures: TextureCache | undefined;
   #db: RecordDatabase | undefined;
+  #vfs: Vfs | undefined;
+  /** Papyrus VM environment, created when the first cell opens. */
+  #scripts: Promise<ScriptEnvironment> | undefined;
+  /** Guards against slow script runs finishing after newer choices. */
+  #choiceToken = 0;
+  #statesOpen = false;
   #meshes: string[] = [];
   #cells: InteriorCell[] = [];
   /** Models of cells, shared between cells and kept until the VFS changes. */
@@ -190,6 +209,8 @@ export class ModelViewer {
   /** Starts using a (new) VFS: fresh workers, caches and record database, then the logo. */
   async connect(vfs: Vfs): Promise<void> {
     this.#reset();
+    this.#vfs = vfs;
+    this.#scripts = undefined;
     const loader = new AssetLoader(vfs);
     this.#loader = loader;
     this.#textures = new TextureCache(this.#device, (path) => loader.loadTexture(path));
@@ -276,18 +297,35 @@ export class ModelViewer {
     const label = `${data.cell.editorId}${data.cell.name ? ` "${data.cell.name}"` : ''}`;
     for (const skipped of data.skipped) this.#terminal.log('cell', skipped, 'warn');
 
-    // Load every model that can appear, so switching upgrades is instant.
+    // Load every model that can appear, so switching upgrades is instant, and find what the
+    // player can buy or build here.
     const paths = [...new Set(data.objects.map((object) => object.model))];
-    const models = new Map(
-      await Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)),
-    );
+    const [models, actions] = await Promise.all([
+      Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)).then(
+        (entries) => new Map(entries),
+      ),
+      this.#homeActions(data),
+    ]);
     if (token !== this.#loadToken) return;
     for (const failure of this.#textures?.takeFailures() ?? []) {
       this.#terminal.log('dds', failure, 'warn');
     }
 
-    const upgrades = findUpgrades(data);
-    this.#cell = { data, upgrades, selection: gameStartSelection(upgrades), models, label };
+    const toggles = findToggles(data, actions.controlled);
+    // Homes open furnished; "new game" shows them as bought.
+    const choices = fullyUpgraded(actions, NEW_GAME);
+    const scripted = await this.#playActions(actions, choices);
+    if (token !== this.#loadToken) return;
+    this.#cell = {
+      data,
+      toggles,
+      selection: gameStartSelection(toggles),
+      actions,
+      choices,
+      scripted,
+      models,
+      label,
+    };
     const [x, y, z] = data.entrance;
     this.#fly.position = [x, y, z + EYE_HEIGHT];
     const centre = data.objects.reduce<[number, number, number]>(
@@ -303,10 +341,16 @@ export class ModelViewer {
 
     this.#renderUpgrades();
     const visible = this.#applyCellSelection();
+    const what = [
+      actions.purchases.length > 0 ? `${String(actions.purchases.length)} purchases` : '',
+      actions.house ? 'HearthFire house' : '',
+      toggles.length > 0 ? `${String(toggles.length)} quest states` : '',
+    ].filter(Boolean);
     this.#terminal.log(
       'cell',
       `${label} ${hex(formId)} · ${visible} of ${data.objects.length} objects shown · ` +
-        `${models.size} models · ${upgrades.length} upgrades · ${(performance.now() - start).toFixed(0)} ms`,
+        `${models.size} models${what.length > 0 ? ` · ${what.join(' · ')}` : ''} · ` +
+        `${(performance.now() - start).toFixed(0)} ms`,
       'ok',
     );
     this.#terminal.log(
@@ -315,11 +359,48 @@ export class ModelViewer {
     );
   }
 
-  /** Rebuilds the cell scene for the current upgrade selection; returns the object count. */
+  #scriptEnvironment(): Promise<ScriptEnvironment> | undefined {
+    const db = this.#db;
+    const vfs = this.#vfs;
+    if (!db || !vfs) return undefined;
+    this.#scripts ??= ScriptEnvironment.create(db, vfs);
+    return this.#scripts;
+  }
+
+  async #homeActions(data: CellData): Promise<HomeActions> {
+    const none: HomeActions = { purchases: [], house: undefined, controlled: new Set() };
+    try {
+      const env = await this.#scriptEnvironment();
+      return env ? await findHomeActions(env, data) : none;
+    } catch (error) {
+      this.#terminal.log('papyrus', `player actions not available: ${describe(error)}`, 'warn');
+      return none;
+    }
+  }
+
+  /** Plays the player's actions in the Papyrus VM; returns the scripted enable states. */
+  async #playActions(
+    actions: HomeActions,
+    choices: HomeChoices,
+  ): Promise<ReadonlyMap<number, boolean>> {
+    if (actions.purchases.length === 0 && !actions.house) return new Map();
+    const env = await this.#scriptEnvironment();
+    if (!env) return new Map();
+    const result = await playHomeActions(env, actions, choices);
+    for (const warning of result.warnings.slice(0, 3)) {
+      this.#terminal.log('papyrus', warning, 'warn');
+    }
+    if (result.warnings.length > 3) {
+      this.#terminal.log('papyrus', `… ${String(result.warnings.length - 3)} more script warnings`);
+    }
+    return result.enabled;
+  }
+
+  /** Rebuilds the cell scene for the current choices; returns the object count. */
   #applyCellSelection(): number {
     const cell = this.#cell;
     if (!cell) return 0;
-    const isEnabled = enabledReferences(cell.data, cell.upgrades, cell.selection);
+    const isEnabled = enabledReferences(cell.data, cell.toggles, cell.selection, cell.scripted);
     const instances: ModelInstance[] = [];
     for (const object of cell.data.objects) {
       if (!isEnabled(object.reference)) continue;
@@ -334,80 +415,242 @@ export class ModelViewer {
     return instances.length;
   }
 
-  /** One checkbox per upgrade, plus "game start" and "all" presets. */
+  /** Plays new choices for the cell on screen and shows the result. */
+  async #setChoices(choices: HomeChoices): Promise<void> {
+    const cell = this.#cell;
+    if (!cell) return;
+    cell.choices = choices;
+    const token = ++this.#choiceToken;
+    const scripted = await this.#playActions(cell.actions, choices);
+    if (token !== this.#choiceToken || this.#cell !== cell) return;
+    cell.scripted = scripted;
+    this.#renderUpgrades();
+    this.#applyCellSelection();
+  }
+
+  /**
+   * The cell's controls: what the player buys or builds (played with the game's scripts),
+   * presets for a new game and a fully upgraded home, and, folded away, quest states.
+   */
   #renderUpgrades(): void {
     const cell = this.#cell;
     const container = this.#ui.upgrades;
-    if (!cell || cell.upgrades.length === 0) {
+    const { actions, choices } = cell ?? {};
+    if (!cell || !actions || !choices) {
       container.hidden = true;
       container.replaceChildren();
       return;
     }
-    const preset = (text: string, selection: () => Set<number>): HTMLButtonElement => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'preset';
-      button.textContent = text;
-      button.addEventListener('click', () => {
-        this.#setSelection(selection());
-      });
-      return button;
+    const hasActions = actions.purchases.length > 0 || actions.house !== undefined;
+    if (!hasActions && cell.toggles.length === 0) {
+      container.hidden = true;
+      container.replaceChildren();
+      return;
+    }
+    const button = (text: string, onClick: () => void): HTMLButtonElement => {
+      const element = document.createElement('button');
+      element.type = 'button';
+      element.className = 'preset';
+      element.textContent = text;
+      element.addEventListener('click', onClick);
+      return element;
     };
-    const head = document.createElement('div');
-    head.className = 'upgrades-head';
-    const title = document.createElement('span');
-    title.textContent = 'upgrades';
-    head.append(
-      title,
-      preset('game start', () => gameStartSelection(cell.upgrades)),
-      preset('all', () => allUpgradesSelection(cell.upgrades)),
-    );
-
-    const list = document.createElement('ul');
-    list.className = 'upgrade-list';
-    for (const upgrade of cell.upgrades) {
+    const checkbox = (
+      text: string,
+      checked: boolean,
+      onChange: (on: boolean) => void,
+      title = '',
+    ): HTMLLIElement => {
       const item = document.createElement('li');
       const labelElement = document.createElement('label');
       labelElement.className = 'toggle';
-      labelElement.title = upgrade.editorId;
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.dataset.upgrade = String(upgrade.formId);
-      checkbox.checked = cell.selection.has(upgrade.formId);
-      checkbox.addEventListener('change', () => {
-        this.#setSelection(
-          toggleUpgrade(cell.upgrades, cell.selection, upgrade.formId, checkbox.checked),
-        );
+      labelElement.title = title;
+      const input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = checked;
+      input.addEventListener('change', () => {
+        onChange(input.checked);
       });
-      labelElement.append(checkbox, upgrade.label);
+      labelElement.append(input, text);
       item.append(labelElement);
-      list.append(item);
+      return item;
+    };
+    const select = (
+      text: string,
+      options: readonly (readonly [string, string])[],
+      value: string,
+      onChange: (value: string) => void,
+    ): HTMLLIElement => {
+      const item = document.createElement('li');
+      const labelElement = document.createElement('label');
+      labelElement.className = 'choice';
+      const element = document.createElement('select');
+      for (const [optionValue, optionText] of options) {
+        const option = document.createElement('option');
+        option.value = optionValue;
+        option.textContent = optionText;
+        element.append(option);
+      }
+      element.value = value;
+      element.addEventListener('change', () => {
+        onChange(element.value);
+      });
+      labelElement.append(text, element);
+      item.append(labelElement);
+      return item;
+    };
+    const update = (change: Partial<HomeChoices>): void => {
+      this.#run(this.#setChoices({ ...choices, ...change }));
+    };
+    const parts: HTMLElement[] = [];
+
+    if (hasActions) {
+      const head = document.createElement('div');
+      head.className = 'upgrades-head';
+      const title = document.createElement('span');
+      title.textContent = actions.house ? 'build' : 'purchases';
+      head.append(
+        title,
+        button('new game', () => {
+          this.#setCellPreset('new game');
+        }),
+        button('fully upgraded', () => {
+          this.#setCellPreset('fully upgraded');
+        }),
+      );
+      parts.push(head);
+      const list = document.createElement('ul');
+      list.className = 'upgrade-list';
+      const { house } = actions;
+      if (house) {
+        list.append(
+          select(
+            'house',
+            [
+              ['plot', 'empty plot'],
+              ['small house', 'small house'],
+              ['full', 'main hall and wings'],
+            ],
+            choices.stage,
+            (stage) => {
+              update({ stage: stage as HouseStage });
+            },
+          ),
+        );
+        for (const wing of house.wings) {
+          list.append(
+            select(
+              wing.name.toLowerCase(),
+              [['', 'none'], ...wing.rooms.map((room) => [room, room] as const)],
+              choices.wings.get(wing.name) ?? '',
+              (room) => {
+                const wings = new Map(choices.wings);
+                wings.set(wing.name, room === '' ? undefined : room);
+                update({ wings });
+              },
+            ),
+          );
+        }
+        list.append(
+          checkbox('furnish finished rooms', choices.furnished, (on) => {
+            update({ furnished: on });
+          }),
+        );
+      }
+      for (const purchase of actions.purchases) {
+        list.append(
+          checkbox(
+            purchase.label,
+            choices.purchases.has(purchase.info),
+            (on) => {
+              const purchases = new Set(choices.purchases);
+              if (on) purchases.add(purchase.info);
+              else purchases.delete(purchase.info);
+              update({ purchases });
+            },
+            `dialogue ${hex(purchase.info)}`,
+          ),
+        );
+      }
+      parts.push(list);
     }
-    container.replaceChildren(head, list);
+
+    if (cell.toggles.length > 0) {
+      const details = document.createElement('details');
+      details.className = 'cell-states';
+      details.open = this.#statesOpen;
+      details.addEventListener('toggle', () => {
+        this.#statesOpen = details.open;
+      });
+      const summary = document.createElement('summary');
+      summary.textContent = `quest & scene states (${String(cell.toggles.length)})`;
+      const note = document.createElement('p');
+      note.className = 'hint';
+      note.textContent =
+        'Set by quests and scenes, not by the player. Shown as a new game has them.';
+      const list = document.createElement('ul');
+      list.className = 'upgrade-list';
+      for (const toggle of cell.toggles) {
+        list.append(
+          checkbox(
+            toggle.label,
+            cell.selection.has(toggle.formId),
+            (on) => {
+              const selection = new Set(cell.selection);
+              if (on) selection.add(toggle.formId);
+              else selection.delete(toggle.formId);
+              cell.selection = selection;
+              this.#applyCellSelection();
+            },
+            toggle.editorId,
+          ),
+        );
+      }
+      details.append(summary, note, list);
+      parts.push(details);
+    }
+
+    container.replaceChildren(...parts);
     container.hidden = false;
   }
 
-  #setSelection(selection: Set<number>): void {
+  #setCellPreset(preset: 'new game' | 'fully upgraded'): void {
     const cell = this.#cell;
     if (!cell) return;
-    cell.selection = selection;
-    for (const checkbox of this.#ui.upgrades.querySelectorAll<HTMLInputElement>(
-      'input[data-upgrade]',
-    )) {
-      checkbox.checked = selection.has(Number(checkbox.dataset.upgrade));
-    }
-    this.#applyCellSelection();
+    cell.selection = gameStartSelection(cell.toggles);
+    this.#run(
+      this.#setChoices(
+        preset === 'new game' ? NEW_GAME : fullyUpgraded(cell.actions, cell.choices),
+      ),
+    );
   }
 
-  /** Upgrade toggles of the cell on screen (for dev checks). */
-  get cellUpgrades(): readonly CellUpgrade[] {
-    return this.#cell?.upgrades ?? [];
+  /** What the player can buy and build in the cell on screen (for dev checks). */
+  get cellActions(): HomeActions | undefined {
+    return this.#cell?.actions;
   }
 
-  /** Switches one upgrade of the cell on screen (for dev checks). */
-  setUpgrade(formId: number, on: boolean): void {
+  /** Quest states of the cell on screen (for dev checks). */
+  get cellToggles(): readonly CellToggle[] {
+    return this.#cell?.toggles ?? [];
+  }
+
+  /** Plays new choices for the cell on screen (for dev checks). */
+  setCellChoices(choices: HomeChoices): Promise<void> {
+    return this.#setChoices(choices);
+  }
+
+  /** Applies a preset to the cell on screen (for dev checks). */
+  setCellPreset(preset: 'new game' | 'fully upgraded'): void {
+    this.#setCellPreset(preset);
+  }
+
+  /** Number of objects shown in the cell on screen (for dev checks). */
+  get cellObjectsShown(): number {
     const cell = this.#cell;
-    if (cell) this.#setSelection(toggleUpgrade(cell.upgrades, cell.selection, formId, on));
+    if (!cell) return 0;
+    const isEnabled = enabledReferences(cell.data, cell.toggles, cell.selection, cell.scripted);
+    return cell.data.objects.filter((object) => isEnabled(object.reference)).length;
   }
 
   /** A cell model from the cache; undefined for editor markers and broken files. */

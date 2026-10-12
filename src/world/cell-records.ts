@@ -88,10 +88,12 @@ function lightingFrom(data: DataView, ambientColors: DirectionalAmbient): CellLi
     clipDistance: data.getFloat32(32, true),
     fogPower: data.getFloat32(36, true),
     directionalAmbient: ambientColors,
-    fogFarColor: color(data, 72),
-    fogMax: data.getFloat32(76, true),
-    lightFadeBegin: data.getFloat32(80, true),
-    lightFadeEnd: data.getFloat32(84, true),
+    // Older LGTM records (72 bytes) stop after the directional ambient: the far fog colour
+    // then equals the near one and fog is not capped.
+    fogFarColor: data.byteLength >= 76 ? color(data, 72) : color(data, 8),
+    fogMax: data.byteLength >= 80 ? data.getFloat32(76, true) : 1,
+    lightFadeBegin: data.byteLength >= 84 ? data.getFloat32(80, true) : 0,
+    lightFadeEnd: data.byteLength >= 88 ? data.getFloat32(84, true) : 0,
   };
 }
 
@@ -132,7 +134,7 @@ export function parseCell(record: GameRecord): CellRecord {
 
 /** LGTM: lighting template (DATA plus DALC directional ambient). */
 export function parseLightingTemplate(record: GameRecord): CellLighting {
-  const data = requireSize(record.fields.first('DATA') ?? new Uint8Array(), 88, 'LGTM DATA');
+  const data = requireSize(record.fields.first('DATA') ?? new Uint8Array(), 72, 'LGTM DATA');
   const dalc = record.fields.first('DALC');
   const ambient = dalc
     ? directionalAmbient(requireSize(dalc, 32, 'LGTM DALC'), 0)
