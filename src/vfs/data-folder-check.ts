@@ -13,7 +13,7 @@ export interface DataFolderReport {
   readonly plugins: readonly string[];
   /** BSA-archieven, alfabetisch. */
   readonly archives: readonly string[];
-  /** De gekozen map lijkt de installatiemap (met SkyrimSE.exe) in plaats van Data. */
+  /** De gekozen map is de installatiemap (Data plus SkyrimSE.exe of Skyrim.ccc). */
   readonly looksLikeGameRoot: boolean;
 }
 
@@ -76,6 +76,7 @@ export function checkDataFolder(entries: Iterable<FolderEntry>): DataFolderRepor
     missing,
     plugins: plugins.sort(byName),
     archives: archives.sort(byName),
-    looksLikeGameRoot: files.has('skyrimse.exe') && directories.has('data'),
+    looksLikeGameRoot:
+      directories.has('data') && (files.has('skyrimse.exe') || files.has('skyrim.ccc')),
   };
 }

@@ -1,0 +1,13 @@
+{
+  // Platform-onafhankelijke code (parsers en de VFS-kern): geen DOM- en geen Node-types.
+  // Gebruikt die code per ongeluk een browser- of Node-API, dan faalt `npm run typecheck`.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2024"],
+    "types": []
+  },
+  "include": ["src/formats", "src/vfs"],
+  "exclude": ["src/**/*.test.ts", "src/vfs/browser"]
+}
