@@ -31,7 +31,8 @@ import {
   DEFAULT_LAND_TEXTURE,
 } from '../render/terrain-data.ts';
 import { pointLights } from '../world/cell-lighting.ts';
-import { loadCellData, type CellLight } from '../world/cell-loader.ts';
+import { loadCellData, type CellLight, type CellObject } from '../world/cell-loader.ts';
+import { raycastParts } from '../render/raycast.ts';
 import { enabledReferences, findToggles, gameStartSelection } from '../world/cell-upgrades.ts';
 import { CELL_SIZE, LAND_GRID, landHeightAt, landTexture, type LandData } from '../world/land.ts';
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
@@ -68,6 +69,13 @@ interface LoadedCell {
   /** Placed decals (blood, scorch marks, puddles). */
   decals: GpuDecals | undefined;
   lights: readonly CellLight[];
+  /** The placed objects with their instances (development: what the camera looks at). */
+  placed: readonly { readonly object: CellObject; readonly instance: ModelInstance }[];
+  /**
+   * Whether the worldspace has a cell record here. Positions without one (around a city
+   * worldspace's few cells) stay empty and keep showing the distant LOD, as in the game.
+   */
+  exists: boolean;
   ready: boolean;
 }
 
@@ -149,6 +157,41 @@ export class WorldViewer {
   /** Time of day and weather of the open worldspace (dev helpers). */
   get sky(): WorldSky | undefined {
     return this.#sky;
+  }
+
+  /**
+   * Development: the placed object the camera looks at (or along `direction`), with its
+   * reference, base and model, and how far away it is.
+   */
+  pick(
+    direction: Vec3 = this.#camera.forward,
+  ):
+    | { reference: string; base: string; editorId: string; model: string; distance: number }
+    | undefined {
+    const origin: Vec3 = [...this.#camera.position];
+    let best: { object: CellObject; distance: number } | undefined;
+    for (const cell of this.#cells.values()) {
+      if (!cell.ready) continue;
+      for (const { object, instance } of cell.placed) {
+        const distance = raycastParts(
+          placedParts([instance]),
+          origin,
+          direction,
+          best?.distance ?? 100_000,
+          true,
+        );
+        if (distance !== undefined) best = { object, distance };
+      }
+    }
+    if (!best) return undefined;
+    const { object, distance } = best;
+    return {
+      reference: object.reference.toString(16).padStart(8, '0'),
+      base: object.baseType,
+      editorId: object.editorId,
+      model: object.model,
+      distance: Math.round(distance),
+    };
   }
 
   /** Cells loaded around the camera (for dev checks). */
@@ -236,7 +279,7 @@ export class WorldViewer {
       backdrop: false,
       shadows: true,
     });
-    document.body.classList.add('has-scene');
+    document.body.classList.add('has-scene', 'content-scene');
     this.#update();
     this.#timer = setInterval(() => {
       this.#update();
@@ -310,6 +353,8 @@ export class WorldViewer {
         grass: [],
         decals: undefined,
         lights: [],
+        placed: [],
+        exists: false,
         ready: false,
       };
       this.#cells.set(key, cell);
@@ -336,10 +381,11 @@ export class WorldViewer {
     const session = this.#session;
     const db = this.#db;
     if (!world || !session || !db) return;
-    const [land, cellId] = await Promise.all([
-      world.land(cell.x, cell.y),
-      world.cell(cell.x, cell.y),
-    ]);
+    const cellId = await world.cell(cell.x, cell.y);
+    // No cell record: nothing is loaded here (not even a parent world's landscape).
+    if (cellId === undefined) return;
+    cell.exists = true;
+    const land = await world.land(cell.x, cell.y);
 
     const terrain = land
       ? this.#renderer.terrain.createCell(
@@ -349,64 +395,62 @@ export class WorldViewer {
         )
       : Promise.resolve(undefined);
 
-    let scene: GpuScene | undefined;
-    let decals: GpuDecals | undefined;
-    let lights: CellLight[] = [];
-    let cellWaterHeight: number | undefined;
-    if (cellId !== undefined) {
-      const data = await loadCellData(db, cellId, world.persistentReferences(cell.x, cell.y));
-      const toggles = findToggles(data);
-      const isEnabled = enabledReferences(data, toggles, gameStartSelection(toggles));
-      const objects = data.objects.filter((object) => isEnabled(object.reference));
-      const models = await Promise.all(objects.map((object) => session.model(object.model)));
-      // Rivers move along the flow map of the cell they lie in.
-      const flow = this.#flowMap(world, cell.x, cell.y);
-      const waterTypes = await Promise.all(
-        objects.map((object) =>
-          object.water === undefined
-            ? Promise.resolve(undefined)
-            : session.waterType(object.water, flow),
-        ),
+    const data = await loadCellData(db, cellId, world.persistentReferences(cell.x, cell.y));
+    const toggles = findToggles(data);
+    const isEnabled = enabledReferences(data, toggles, gameStartSelection(toggles));
+    const objects = data.objects.filter((object) => isEnabled(object.reference));
+    const models = await Promise.all(objects.map((object) => session.model(object.model)));
+    // Rivers move along the flow map of the cell they lie in.
+    const flow = this.#flowMap(world, cell.x, cell.y);
+    const waterTypes = await Promise.all(
+      objects.map((object) =>
+        object.water === undefined
+          ? Promise.resolve(undefined)
+          : session.waterType(object.water, flow),
+      ),
+    );
+    const instances: ModelInstance[] = [];
+    const placed: { object: CellObject; instance: ModelInstance }[] = [];
+    objects.forEach((object, i) => {
+      const model = models[i];
+      const water = waterTypes[i];
+      if (!model) return;
+      const instance = { model, world: object.world, ...(water && { water }) };
+      instances.push(instance);
+      placed.push({ object, instance });
+    });
+    // The cell's water plane (lakes, rivers and the sea are cell water at a height).
+    const water = cellWater(data.cell, {
+      height: world.waterWorld.defaultWaterHeight,
+      type: world.waterWorld.water,
+    });
+    if (water) {
+      const x0 = cell.x * CELL_SIZE;
+      const y0 = cell.y * CELL_SIZE;
+      const plane = await this.#renderer.scene.createModel(
+        waterPlane(x0, y0, x0 + CELL_SIZE, y0 + CELL_SIZE, water.height),
+        session.textures,
       );
-      const instances: ModelInstance[] = [];
-      objects.forEach((object, i) => {
-        const model = models[i];
-        const water = waterTypes[i];
-        if (model) instances.push({ model, world: object.world, ...(water && { water }) });
-      });
-      // The cell's water plane (lakes, rivers and the sea are cell water at a height).
-      const water = cellWater(data.cell, {
-        height: world.waterWorld.defaultWaterHeight,
-        type: world.waterWorld.water,
-      });
-      cellWaterHeight = water?.height;
-      if (water) {
-        const x0 = cell.x * CELL_SIZE;
-        const y0 = cell.y * CELL_SIZE;
-        const plane = await this.#renderer.scene.createModel(
-          waterPlane(x0, y0, x0 + CELL_SIZE, y0 + CELL_SIZE, water.height),
-          session.textures,
-        );
-        cell.owned.push(plane);
-        const type = await session.waterType(water.type ?? DEFAULT_WATER, flow);
-        instances.push({ model: plane, world: IDENTITY, ...(type && { water: type }) });
-      }
-      scene = this.#renderer.scene.createScene(instances);
-      lights = data.lights.filter((light) => isEnabled(light.reference));
-      // Decals land on the first surface along their projection (objects or landscape).
-      const projected = projectDecals(
-        data.decals,
-        placedParts(instances),
-        land ? (x, y) => landHeightAt(land, cell.x, cell.y, x, y) : undefined,
-      );
-      decals = await this.#renderer.decals.createDecals(projected, session.textures);
-      decals?.select(isEnabled);
+      cell.owned.push(plane);
+      const type = await session.waterType(water.type ?? DEFAULT_WATER, flow);
+      instances.push({ model: plane, world: IDENTITY, ...(type && { water: type }) });
     }
+    const scene = this.#renderer.scene.createScene(instances);
+    const lights = data.lights.filter((light) => isEnabled(light.reference));
+    // Decals land on the first surface along their projection (objects or landscape).
+    const projected = projectDecals(
+      data.decals,
+      placedParts(instances),
+      land ? (x, y) => landHeightAt(land, cell.x, cell.y, x, y) : undefined,
+    );
+    const decals = await this.#renderer.decals.createDecals(projected, session.textures);
+    decals?.select(isEnabled);
     cell.terrain = await terrain;
     cell.scene = scene;
     cell.decals = decals;
     cell.lights = lights;
-    if (land) cell.grass = await this.#grass(land, cell, cellWaterHeight);
+    cell.placed = placed;
+    if (land) cell.grass = await this.#grass(land, cell, water?.height);
   }
 
   /** Grass of a cell: placed by its land textures, one instanced field per grass type. */
@@ -518,7 +562,7 @@ export class WorldViewer {
     let low = 0;
     let high = 0;
     for (const cell of this.#cells.values()) {
-      if (!cell.ready) continue;
+      if (!cell.ready || !cell.exists) continue;
       const dx = cell.x - originX;
       const dy = cell.y - originY;
       if (dx < 0 || dy < 0 || dx >= 7 || dy >= 7) continue;
@@ -562,7 +606,7 @@ export class WorldViewer {
     const seconds = performance.now() / 1000;
     for (const cell of this.#cells.values()) {
       if (!cell.ready) continue;
-      for (const light of pointLights(cell.lights, seconds)) {
+      for (const light of pointLights(cell.lights, seconds, camera)) {
         lights.push({
           ...light,
           distance: Math.hypot(

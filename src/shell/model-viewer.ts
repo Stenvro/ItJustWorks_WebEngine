@@ -200,6 +200,8 @@ export class ModelViewer {
 
   /** Called when the viewer takes the screen (another viewer then steps back). */
   onActivate: (() => void) | undefined;
+  /** Whether the renderer shows this viewer's view. */
+  #viewShown = false;
 
   /** Centres the image in the part of the screen the shell does not cover. */
   set lensShift(shift: number) {
@@ -283,6 +285,7 @@ export class ModelViewer {
     this.#orbit.fit(model.center, model.radius > 0 ? model.radius : 64);
     this.#present(this.#renderer.scene.createScene([{ model, world: identity() }]), model, {
       camera: 'orbit',
+      backdrop: view === LOGO_VIEW,
     });
   }
 
@@ -769,7 +772,11 @@ export class ModelViewer {
     scene: GpuScene,
     meshModel: GpuModel | undefined,
     view:
-      | { camera: 'orbit' }
+      | {
+          camera: 'orbit';
+          /** The start screen's logo: part of the page background (CRT overlay stays). */
+          backdrop: boolean;
+        }
       | {
           camera: 'fly';
           lighting: ReturnType<typeof cellSceneLighting>;
@@ -799,15 +806,21 @@ export class ModelViewer {
       this.#renderer.setView({
         scenes: () => [scene],
         camera: this.#fly,
-        lighting: () => ({ ...lighting, lights: pointLights(lights, performance.now() / 1000) }),
+        lighting: () => ({
+          ...lighting,
+          lights: pointLights(lights, performance.now() / 1000, this.#fly.position),
+        }),
         imageSpace: () => imageSpace,
         decals: () => (decals ? [decals] : []),
         backdrop: false,
       });
     }
+    this.#viewShown = true;
     previousScene?.destroy();
     if (previousMesh !== meshModel) previousMesh?.destroy();
     document.body.classList.add('has-scene');
+    // The CRT overlay belongs to the page background, never over a model, cell or world.
+    document.body.classList.toggle('content-scene', !(view.camera === 'orbit' && view.backdrop));
   }
 
   /** Forgets the shown cell and frees what was made for it. */
@@ -822,6 +835,7 @@ export class ModelViewer {
   #reset(): void {
     this.#loadToken++;
     this.#renderer.setView(undefined);
+    this.#viewShown = false;
     this.#scene?.destroy();
     this.#scene = undefined;
     this.#releaseCell();
@@ -835,6 +849,10 @@ export class ModelViewer {
     this.#loadToken++;
     this.#detachControls?.();
     this.#detachControls = undefined;
+    // The renderer must stop drawing the scene before it is freed (the other viewer may take
+    // a while to show its own).
+    if (this.#viewShown) this.#renderer.setView(undefined);
+    this.#viewShown = false;
     this.#scene?.destroy();
     this.#scene = undefined;
     this.#releaseCell();

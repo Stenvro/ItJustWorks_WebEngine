@@ -110,7 +110,11 @@ scale, XESP enable parent (form id + flags; `0x1` = opposite state).
   range from −322 to +55; a negative absolute radius would be meaningless).
 
 **LIGH:** DATA (48 bytes): time i32, radius u32, colour rgba u8, flags u32, falloff exponent,
-FOV, near clip, flicker parameters. FNAM: fade (brightness). Flag `0x20` = off by default.
+FOV, near clip, flicker: frequency (stored as 1 / period in seconds: 0.333 is one cycle every
+3 s), intensity amplitude (how far the light dims below its fade; it never brightens),
+movement amplitude (units). FNAM: fade (brightness). Flag `0x20` = off by default. Lights
+flicker only within fFlickeringLightDistance (1024) of the camera and fade out from
+fLightLODStartFade (3500, High preset) over fLightLODRange (500).
 
 **World models:** MODL for most base types, MOD2 (male world model) for ARMO.
 

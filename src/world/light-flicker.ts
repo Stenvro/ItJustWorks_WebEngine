@@ -6,13 +6,16 @@ import { LightFlag } from './cell-records.ts';
 
 export interface FlickerParams {
   readonly flags: number;
-  /** Seconds per flicker or pulse. */
+  /** Seconds per flicker or pulse cycle. */
   readonly period: number;
-  /** Brightness change (fraction). */
+  /** How far the light dims below its fade (fraction); it never gets brighter. */
   readonly intensityAmplitude: number;
   /** Position change (units). */
   readonly movementAmplitude: number;
 }
+
+/** Lights farther than this from the camera stay steady (fFlickeringLightDistance). */
+export const FLICKERING_LIGHT_DISTANCE = 1024;
 
 export interface Flicker {
   /** Brightness factor. */
@@ -41,7 +44,8 @@ export function lightFlicker(params: FlickerParams, seconds: number, seed: numbe
   const period = Math.max(params.period, 0.05) * (slow ? 2 : 1);
   const t = seconds / period;
   const wave = pulse ? Math.sin(t * 6.2831853 + seed) : noise(t, seed);
-  const scale = Math.max(0, 1 + wave * params.intensityAmplitude);
+  // The amplitude is how far the light dims below its fade (UESP: Intensity Amplitude).
+  const scale = Math.max(0, 1 - (0.5 + 0.5 * wave) * params.intensityAmplitude);
   if (!flicker || params.movementAmplitude <= 0) return { scale, offset: [0, 0, 0] };
   const m = params.movementAmplitude;
   return {

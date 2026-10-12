@@ -67,6 +67,13 @@ body {
     repeating-linear-gradient(to bottom, rgb(255 255 255 / 0.025) 0 1px, transparent 1px 3px);
 }
 
+/* The backdrop image and CRT overlay are the start screen's background: a model, cell or
+   world in view is shown as rendered. */
+body.content-scene .crt,
+body.content-scene .backdrop {
+  display: none;
+}
+
 /* --- HUD ----------------------------------------------------------------- */
 
 .hud {
