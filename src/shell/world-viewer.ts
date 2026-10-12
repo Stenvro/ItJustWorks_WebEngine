@@ -12,6 +12,7 @@ import {
   type GpuModel,
   type GpuScene,
   type ModelInstance,
+  type LargeRefMask,
   type LodMask,
   type PointLight,
   type SceneLighting,
@@ -37,6 +38,7 @@ import { enabledReferences, findToggles, gameStartSelection } from '../world/cel
 import { CELL_SIZE, LAND_GRID, landHeightAt, landTexture, type LandData } from '../world/land.ts';
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
 import { cellKey, Worldspace } from '../world/worldspace.ts';
+import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-references.ts';
 import type { GameSession } from './game-session.ts';
 import { WorldLod } from './world-lod.ts';
 import { WorldSky, type SkyElements } from './world-sky.ts';
@@ -47,6 +49,9 @@ const GRID_RADIUS = 2;
 /** Cells further than this are unloaded (one cell of slack against thrashing). */
 const KEEP_RADIUS = GRID_RADIUS + 1;
 const MAX_PARALLEL_LOADS = 3;
+/** Large references load this many cells around the camera (uLargeRefLODGridSize 11). */
+const LARGE_REFERENCE_RADIUS = Math.floor(LARGE_REFERENCE_GRID / 2);
+
 const MAX_LIGHTS = 256;
 const EYE_HEIGHT = 120;
 
@@ -76,6 +81,16 @@ interface LoadedCell {
    * worldspace's few cells) stay empty and keep showing the distant LOD, as in the game.
    */
   exists: boolean;
+  ready: boolean;
+}
+
+/** A cell beyond the loaded grid whose large references are shown (uLargeRefLODGridSize). */
+interface LargeReferenceCell {
+  readonly x: number;
+  readonly y: number;
+  /** The references this cell's scene was made for. */
+  readonly references: ReadonlySet<number>;
+  scene: GpuScene | undefined;
   ready: boolean;
 }
 
@@ -115,6 +130,11 @@ export class WorldViewer {
   readonly #cells = new Map<string, LoadedCell>();
   readonly #queue: [number, number][] = [];
   #loading = 0;
+  /** Whether large references stream in beyond the loaded cells (development switch). */
+  streamLargeReferences = true;
+  /** Cells beyond the loaded grid showing only their large references. */
+  readonly #largeCells = new Map<string, LargeReferenceCell>();
+  readonly #largeQueue: { x: number; y: number; references: ReadonlySet<number> }[] = [];
   #timer: ReturnType<typeof setInterval> | undefined;
   #detachControls: (() => void) | undefined;
   readonly #landTextures = new Map<number, Promise<TerrainTexturePaths>>();
@@ -270,6 +290,7 @@ export class WorldViewer {
       decals: () => this.#readyDecals(),
       precipitation: () => this.#sky?.precipitation() ?? [],
       lodMask: () => this.#lodMask(),
+      largeRefMask: () => this.#largeRefMask(),
       terrain: () => this.#readyTerrain(),
       camera: this.#camera,
       lighting: (camera) => this.#lighting(camera.position),
@@ -299,6 +320,9 @@ export class WorldViewer {
     for (const cell of this.#cells.values()) this.#free(cell);
     this.#cells.clear();
     this.#queue.length = 0;
+    for (const large of this.#largeCells.values()) large.scene?.destroy();
+    this.#largeCells.clear();
+    this.#largeQueue.length = 0;
     this.#world = undefined;
     this.#sky?.dispose();
     this.#sky = undefined;
@@ -328,6 +352,7 @@ export class WorldViewer {
       }
     }
     this.#queue.sort((a, b) => Math.hypot(a[0] - cx, a[1] - cy) - Math.hypot(b[0] - cx, b[1] - cy));
+    if (this.streamLargeReferences) this.#updateLargeReferences(world, cx, cy);
     this.#pump();
     this.#lod?.update(px, py);
     this.#sky?.update(world, cx, cy).catch((error: unknown) => {
@@ -337,7 +362,71 @@ export class WorldViewer {
     this.#ui.status.textContent = `cell ${String(cx)},${String(cy)} · ${String(this.loadedCells)} cells loaded · ${String(this.#queue.length + this.#loading)} loading`;
   }
 
+  /**
+   * Large references of the grid around the camera: the cells beyond the loaded ones get a
+   * scene of only those (the loaded cells show them anyway). A cell's scene is kept until the
+   * full cell is ready there.
+   */
+  #updateLargeReferences(world: Worldspace, cx: number, cy: number): void {
+    const wanted = largeReferencesAround(world.largeReferences, cx, cy);
+    const inGrid = (x: number, y: number): boolean =>
+      Math.max(Math.abs(x - cx), Math.abs(y - cy)) <= GRID_RADIUS;
+    const beyond = (x: number, y: number): boolean =>
+      Math.max(Math.abs(x - cx), Math.abs(y - cy)) > LARGE_REFERENCE_RADIUS + 1;
+    for (const [key, large] of this.#largeCells) {
+      const references = wanted.get(key);
+      const covered = inGrid(large.x, large.y) && this.#cells.get(key)?.ready === true;
+      // No longer listed: kept until well outside the grid (no churn at its edge).
+      const stale = references
+        ? references.size !== large.references.size ||
+          [...references].some((id) => !large.references.has(id))
+        : beyond(large.x, large.y);
+      if (covered || stale) {
+        large.scene?.destroy();
+        this.#largeCells.delete(key);
+      }
+    }
+    this.#largeQueue.length = 0;
+    for (const [key, references] of wanted) {
+      if (this.#largeCells.has(key)) continue;
+      const [x = 0, y = 0] = key.split(',').map(Number);
+      if (inGrid(x, y)) continue;
+      this.#largeQueue.push({ x, y, references });
+    }
+    this.#largeQueue.sort(
+      (a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy),
+    );
+  }
+
   #pump(): void {
+    // Large references only once the cells around the camera are on their way.
+    while (
+      this.#loading < MAX_PARALLEL_LOADS &&
+      this.#queue.length === 0 &&
+      this.#largeQueue.length > 0
+    ) {
+      const next = this.#largeQueue.shift();
+      if (!next) break;
+      const key = cellKey(next.x, next.y);
+      if (this.#largeCells.has(key)) continue;
+      const large: LargeReferenceCell = { ...next, scene: undefined, ready: false };
+      this.#largeCells.set(key, large);
+      this.#loading++;
+      const generation = this.#generation;
+      this.#loadLargeCell(large)
+        .catch((error: unknown) => {
+          this.#terminal.log('world', `large references ${key}: ${describe(error)}`, 'warn');
+        })
+        .finally(() => {
+          this.#loading--;
+          if (generation !== this.#generation || this.#largeCells.get(key) !== large) {
+            large.scene?.destroy();
+          } else {
+            large.ready = true;
+          }
+          this.#pump();
+        });
+    }
     while (this.#loading < MAX_PARALLEL_LOADS && this.#queue.length > 0) {
       const next = this.#queue.shift();
       if (!next) break;
@@ -399,26 +488,10 @@ export class WorldViewer {
     const toggles = findToggles(data);
     const isEnabled = enabledReferences(data, toggles, gameStartSelection(toggles));
     const objects = data.objects.filter((object) => isEnabled(object.reference));
-    const models = await Promise.all(objects.map((object) => session.model(object.model)));
     // Rivers move along the flow map of the cell they lie in.
     const flow = this.#flowMap(world, cell.x, cell.y);
-    const waterTypes = await Promise.all(
-      objects.map((object) =>
-        object.water === undefined
-          ? Promise.resolve(undefined)
-          : session.waterType(object.water, flow),
-      ),
-    );
-    const instances: ModelInstance[] = [];
-    const placed: { object: CellObject; instance: ModelInstance }[] = [];
-    objects.forEach((object, i) => {
-      const model = models[i];
-      const water = waterTypes[i];
-      if (!model) return;
-      const instance = { model, world: object.world, ...(water && { water }) };
-      instances.push(instance);
-      placed.push({ object, instance });
-    });
+    const placed = await this.#place(session, objects, flow);
+    const instances = placed.map(({ instance }) => instance);
     // The cell's water plane (lakes, rivers and the sea are cell water at a height).
     const water = cellWater(data.cell, {
       height: world.waterWorld.defaultWaterHeight,
@@ -451,6 +524,61 @@ export class WorldViewer {
     cell.lights = lights;
     cell.placed = placed;
     if (land) cell.grass = await this.#grass(land, cell, water?.height);
+  }
+
+  /** The models of placed objects with their instances (missing models are left out). */
+  async #place(
+    session: GameSession,
+    objects: readonly CellObject[],
+    flow: WaterFlow,
+  ): Promise<{ object: CellObject; instance: ModelInstance }[]> {
+    const models = await Promise.all(objects.map((object) => session.model(object.model)));
+    // Statics' directional materials (snow, moss, ice) as placed.
+    const directionals = await Promise.all(
+      objects.map((object) => session.directionalMaterial(object.directional)),
+    );
+    const waterTypes = await Promise.all(
+      objects.map((object) =>
+        object.water === undefined
+          ? Promise.resolve(undefined)
+          : session.waterType(object.water, flow),
+      ),
+    );
+    const placed: { object: CellObject; instance: ModelInstance }[] = [];
+    objects.forEach((object, i) => {
+      const model = models[i];
+      const water = waterTypes[i];
+      const directional = directionals[i];
+      if (!model) return;
+      placed.push({
+        object,
+        instance: {
+          model,
+          world: object.world,
+          ...(water && { water }),
+          ...(directional && { directional }),
+        },
+      });
+    });
+    return placed;
+  }
+
+  /** A cell beyond the loaded grid: a scene of just its large references. */
+  async #loadLargeCell(large: LargeReferenceCell): Promise<void> {
+    const world = this.#world;
+    const session = this.#session;
+    const db = this.#db;
+    if (!world || !session || !db) return;
+    const cellId = await world.cell(large.x, large.y);
+    if (cellId === undefined) return;
+    const data = await loadCellData(db, cellId, world.persistentReferences(large.x, large.y));
+    const toggles = findToggles(data);
+    const isEnabled = enabledReferences(data, toggles, gameStartSelection(toggles));
+    const objects = data.objects.filter(
+      (object) => large.references.has(object.reference) && isEnabled(object.reference),
+    );
+    const placed = await this.#place(session, objects, this.#flowMap(world, large.x, large.y));
+    large.scene = this.#renderer.scene.createScene(placed.map(({ instance }) => instance));
   }
 
   /** Grass of a cell: placed by its land textures, one instanced field per grass type. */
@@ -544,6 +672,10 @@ export class WorldViewer {
     if (this.#sky) yield* this.#sky.skyScenes();
     if (this.#lod) yield* this.#lod.scenes();
     for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
+    for (const [key, large] of this.#largeCells) {
+      // The full cell shows them once it is ready.
+      if (large.ready && large.scene && this.#cells.get(key)?.ready !== true) yield large.scene;
+    }
   }
 
   *#readyDecals(): Iterable<GpuDecals> {
@@ -571,6 +703,24 @@ export class WorldViewer {
       else high |= 1 << (bit - 32);
     }
     return { originX, originY, low, high };
+  }
+
+  /** Cells of the large-reference grid whose large references are shown in full detail. */
+  #largeRefMask(): LargeRefMask {
+    const [px, py] = this.#camera.position;
+    const originX = Math.floor(px / CELL_SIZE) - LARGE_REFERENCE_RADIUS;
+    const originY = Math.floor(py / CELL_SIZE) - LARGE_REFERENCE_RADIUS;
+    const bits = new Uint32Array(4);
+    const mark = (x: number, y: number): void => {
+      const dx = x - originX;
+      const dy = y - originY;
+      if (dx < 0 || dy < 0 || dx >= LARGE_REFERENCE_GRID || dy >= LARGE_REFERENCE_GRID) return;
+      const bit = dy * LARGE_REFERENCE_GRID + dx;
+      bits[bit >>> 5] = (bits[bit >>> 5] ?? 0) | (1 << (bit & 31));
+    };
+    for (const large of this.#largeCells.values()) if (large.ready) mark(large.x, large.y);
+    for (const cell of this.#cells.values()) if (cell.ready && cell.exists) mark(cell.x, cell.y);
+    return { originX, originY, bits };
   }
 
   *#readyTerrain(): Iterable<GpuTerrainCell> {

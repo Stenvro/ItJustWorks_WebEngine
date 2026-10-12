@@ -4,6 +4,7 @@
 
 import { parseReference } from './cell-records.ts';
 import { CELL_SIZE, parseLand, type LandData } from './land.ts';
+import { parseLargeReferences, type LargeReference } from './large-references.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
 
 /** WRLD PNAM: what a child worldspace takes from its parent. */
@@ -80,6 +81,8 @@ export class Worldspace {
   readonly waterWorld: WorldspaceRecord;
   readonly climateWorld: WorldspaceRecord;
   readonly lodWorld: WorldspaceRecord;
+  /** Large references by the cells they reach into ("x,y"), from every plugin's RNAM. */
+  readonly largeReferences: ReadonlyMap<string, readonly LargeReference[]>;
   /** Persistent references by cell "x,y". */
   readonly #persistent: Map<string, number[]>;
   readonly #land = new Map<string, Promise<LandData | undefined>>();
@@ -89,9 +92,11 @@ export class Worldspace {
     record: WorldspaceRecord,
     parent: WorldspaceRecord | undefined,
     persistent: Map<string, number[]>,
+    largeReferences: ReadonlyMap<string, readonly LargeReference[]>,
   ) {
     this.db = db;
     this.record = record;
+    this.largeReferences = largeReferences;
     const from = (bit: number): WorldspaceRecord =>
       parent && (record.parentUse & bit) !== 0 ? parent : record;
     this.landWorld = from(ParentUse.land);
@@ -122,7 +127,8 @@ export class Worldspace {
         persistent.set(key, list);
       }
     }
-    return new Worldspace(db, record, parent, persistent);
+    const versions = await Promise.all(db.locateAll(formId).map((location) => db.read(location)));
+    return new Worldspace(db, record, parent, persistent, parseLargeReferences(versions));
   }
 
   /** The cell record at a grid position, if the world has one. */

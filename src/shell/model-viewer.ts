@@ -14,6 +14,7 @@ import {
   type GpuScene,
   type GpuWaterType,
   type ModelInstance,
+  type PlacedDirectional,
 } from '../render/scene-renderer.ts';
 import { studioLighting } from '../render/studio-lighting.ts';
 import { cellSceneLighting, pointLights } from '../world/cell-lighting.ts';
@@ -86,6 +87,8 @@ interface CellView {
   choices: HomeChoices;
   scripted: ReadonlyMap<number, boolean>;
   readonly models: ReadonlyMap<string, GpuModel | undefined>;
+  /** Statics' directional materials (snow, moss, ice) as placed, by reference. */
+  readonly directionals: ReadonlyMap<number, PlacedDirectional>;
   readonly label: string;
   /** The cell's imagespace (XCIM, else the default interior one). */
   readonly imageSpace: ImageSpace | undefined;
@@ -314,22 +317,36 @@ export class ModelViewer {
       ),
     ];
     const water = cellWater(data.cell);
-    const [models, actions, imageSpace, waterTypes, waterPlaneType] = await Promise.all([
-      Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)).then(
-        (entries) => new Map(entries),
-      ),
-      this.#homeActions(data),
-      db
-        .get(data.cell.imageSpace ?? DEFAULT_INTERIOR_IMAGE_SPACE)
-        .then((record) => (record?.type === 'IMGS' ? parseImageSpace(record) : undefined)),
-      Promise.all(waterIds.map(async (id) => [id, await session?.waterType(id)] as const)).then(
-        (entries) => new Map(entries),
-      ),
-      water ? session?.waterType(water.type ?? DEFAULT_WATER) : undefined,
-      session?.waterType(DEFAULT_WATER).then((type) => {
-        this.#renderer.scene.defaultWater = type;
-      }),
-    ]);
+    const [models, directionals, actions, imageSpace, waterTypes, waterPlaneType] =
+      await Promise.all([
+        Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)).then(
+          (entries) => new Map(entries),
+        ),
+        Promise.all(
+          data.objects.map(
+            async (object) =>
+              [object.reference, await session?.directionalMaterial(object.directional)] as const,
+          ),
+        ).then(
+          (entries) =>
+            new Map(
+              entries.flatMap(([reference, directional]) =>
+                directional ? [[reference, directional] as const] : [],
+              ),
+            ),
+        ),
+        this.#homeActions(data),
+        db
+          .get(data.cell.imageSpace ?? DEFAULT_INTERIOR_IMAGE_SPACE)
+          .then((record) => (record?.type === 'IMGS' ? parseImageSpace(record) : undefined)),
+        Promise.all(waterIds.map(async (id) => [id, await session?.waterType(id)] as const)).then(
+          (entries) => new Map(entries),
+        ),
+        water ? session?.waterType(water.type ?? DEFAULT_WATER) : undefined,
+        session?.waterType(DEFAULT_WATER).then((type) => {
+          this.#renderer.scene.defaultWater = type;
+        }),
+      ]);
     let waterPlaneModel: GpuModel | undefined;
     if (water && session) {
       const [x, y] = data.entrance;
@@ -380,6 +397,7 @@ export class ModelViewer {
       choices,
       scripted,
       models,
+      directionals,
       label,
       imageSpace,
       waterTypes,
@@ -465,7 +483,15 @@ export class ModelViewer {
       if (this.#hidden?.test(object.model)) continue;
       const model = cell.models.get(object.model);
       const water = object.water === undefined ? undefined : cell.waterTypes.get(object.water);
-      if (model) instances.push({ model, world: object.world, ...(water && { water }) });
+      const directional = cell.directionals.get(object.reference);
+      if (model) {
+        instances.push({
+          model,
+          world: object.world,
+          ...(water && { water }),
+          ...(directional && { directional }),
+        });
+      }
     }
     if (cell.waterPlane) {
       const { model, type } = cell.waterPlane;
