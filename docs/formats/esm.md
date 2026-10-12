@@ -371,7 +371,10 @@ properties enter, the engine's planar reflection pass, displacement and rain rip
 **IMGS** (xEdit names): HNAM 9 f32: eye adapt speed, bloom blur radius, bloom threshold,
 bloom scale, receive bloom threshold, white, sunlight scale, sky scale, eye adapt strength.
 CNAM: saturation, brightness, contrast. TNAM: tint amount, red, green, blue. DNAM: depth of
-field strength, distance, range (+ optional blur radius / no-sky flags). Two vanilla records
+field strength, distance, range, and a fourth f32 packing the blur radius and a "no sky" flag
+as 2 + 8 × radius + 4 × no sky (xEdit's "Sky / Blur Radius"; vanilla values 2, 6, 22, 30, 34,
+38, 42; weather imagespaces: strength 0.4–0.9, distance 0–25000, range 2500–27500, radius
+2–5, mostly no sky). Two vanilla records
 use ENAM instead (14 f32: the HDR values without white and adapt strength, then saturation,
 brightness, contrast, 4 unused). Vanilla weather values: speed 35–45, radius 7, threshold
 0.5–0.75, scale 3–5.5, receive 0.2–0.65, white 0.875–1, sunlight scale 2–3, sky scale 0–0.1,
