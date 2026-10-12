@@ -67,6 +67,7 @@ const data: CellData = {
     water: undefined,
   })),
   lights: [],
+  decals: [],
   references,
   skipped: [],
   entrance: [0, 0, 0],

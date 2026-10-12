@@ -26,7 +26,7 @@ import {
 import { invert } from './frustum.ts';
 import { identity, multiply, transformPoint, type Mat4 } from './math.ts';
 import type { AlphaState, PartMaterial } from './model-data.ts';
-import { fromHalf, skinShape } from './skinning.ts';
+import { skinShape } from './skinning.ts';
 
 /** Emitter controller and modifier parameters that controllers animate. */
 export type ParticleParam =
@@ -417,23 +417,17 @@ function emitterMesh(
   }
   if (count === 0 || indices.length === 0 || desc.stride === 0) return undefined;
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
-  const full = (desc.attributes & VertexAttribute.fullPrecision) !== 0;
   const hasNormal = (desc.attributes & VertexAttribute.normal) !== 0;
   const positions = new Float32Array(count * 3);
   const normals = new Float32Array(count * 3);
   for (let v = 0; v < count; v++) {
     const base = v * desc.stride;
-    const local: Vec3 = full
-      ? [
-          view.getFloat32(base, true),
-          view.getFloat32(base + 4, true),
-          view.getFloat32(base + 8, true),
-        ]
-      : [
-          fromHalf(view.getUint16(base, true)),
-          fromHalf(view.getUint16(base + 2, true)),
-          fromHalf(view.getUint16(base + 4, true)),
-        ];
+    // SSE geometry always stores positions as float32 (the full-precision flag aside).
+    const local: Vec3 = [
+      view.getFloat32(base, true),
+      view.getFloat32(base + 4, true),
+      view.getFloat32(base + 8, true),
+    ];
     positions.set(transformPoint(world, local), v * 3);
     const unorm = (k: number): number =>
       (view.getUint8(base + desc.normalOffset + k) / 255) * 2 - 1;

@@ -334,6 +334,29 @@ mesh's BSValueNode named `AddOnNode<index>` with that value gets the model attac
 [nif.md](nif.md#particles)). The engine shares one master system among all nodes up to the
 cap; here every node gets its own copy of the system, which looks the same.
 
+## Decals
+
+**TXST** (`parseTextureSet` in `src/world/decal.ts`): TX00–TX07 texture paths (diffuse,
+normal/specular, ...), DNAM u16 flags (`0x1` no specular map, `0x2` facegen textures, `0x4`
+model-space normals) and, for decals, **DODT** (36 bytes): min width, max width, min height,
+max height, depth, shininess, parallax scale (f32), parallax passes u8, flags u8 (`0x1`
+parallax, `0x2` alpha blending, `0x4` alpha testing, `0x8` no subtextures; vanilla values also
+set `0x70`), 2 unknown bytes, colour RGBA u8 (multiplies the texture; scorch marks are black).
+
+**Placed decals:** 3210 vanilla REFRs have a TXST base (46 texture sets: blood, scorch marks,
+puddles, giant and riekling paint, thieves' shadow marks, snow transitions). Each projects along
+its reference's **+Y axis**; the texture spans X (width) and Z (height). Size: between min and
+max (4 in 10 placements have a range; chosen by the reference's form id here, width and height
+together), times the reference's scale. Without the no-subtextures flag the texture is a 2×2
+atlas of variants, one per placement. The references sit 40–120 units in front of the surface
+they mark (Dragonsreach basement, Bleak Falls Barrow, Embershard: floors, an altar top, a cave
+ramp), so the decal goes onto the first surface along +Y within 512 units, as a ray finds it
+against the cell's placed shapes and its landscape (`src/render/decal-projection.ts`). The
+engine builds the decal on the whole triangles touching its box, so it runs over steps; here
+the box reaches at least half the decal's size along Y. Decals follow their reference's enable
+state like other objects. Parallax (no vanilla placed decal uses it): TODO(M13), with the
+lighting shader's parallax.
+
 ## Scripts and conditions
 
 **VMAD** (scripts attached to a record): i16 version (5), i16 object format (1: form id, alias,

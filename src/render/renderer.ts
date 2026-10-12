@@ -30,6 +30,7 @@ import type { ImageSpace } from '../world/image-space.ts';
 import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
 import { TreeLodRenderer, type TreeLodFrame } from './tree-lod.ts';
 import { GrassRenderer, type GpuGrassField } from './grass.ts';
+import { DecalRenderer, type GpuDecals } from './decals.ts';
 
 /** Wind speed (world units per second) of a weather wind of 1 (WTHR wind speed 255). */
 const MAX_WIND_SPEED = 500;
@@ -60,6 +61,8 @@ export interface SceneView {
   readonly trees?: () => TreeLodFrame | undefined;
   /** Grass of the loaded cells. */
   readonly grass?: () => Iterable<GpuGrassField>;
+  /** Placed decals (blood, scorch marks, puddles) of the loaded cells. */
+  readonly decals?: () => Iterable<GpuDecals>;
   /** The sky behind everything (exteriors). */
   readonly sky?: () => SkyFrame | undefined;
   /** Loaded cells, where distant LOD gives way. */
@@ -101,6 +104,7 @@ export class Renderer {
   readonly sky: SkyRenderer;
   readonly treeLod: TreeLodRenderer;
   readonly grass: GrassRenderer;
+  readonly decals: DecalRenderer;
   readonly post: PostProcessor;
   readonly #gpu: GpuContext;
   readonly #backdrop: GPURenderPipeline;
@@ -128,6 +132,7 @@ export class Renderer {
     this.sky = new SkyRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.treeLod = new TreeLodRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.grass = new GrassRenderer(device, HDR_FORMAT, this.scene);
+    this.decals = new DecalRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.post = new PostProcessor(device, format);
 
     const module = device.createShaderModule({ label: 'backdrop', code: backdropShader });
@@ -314,7 +319,9 @@ export class Renderer {
 
     if (view) {
       const water = this.scene.hasWater(scenes);
-      if (this.scene.needsSceneCopies(scenes)) {
+      const decals = view.decals ? [...view.decals()] : [];
+      const decalsInView = this.decals.visible(decals, this.scene.viewPlanes);
+      if (this.scene.needsSceneCopies(scenes) || decalsInView) {
         encoder.copyTextureToTexture(
           { texture: this.post.hdrTexture(targets.width, targets.height) },
           { texture: targets.sceneColor },
@@ -339,6 +346,9 @@ export class Renderer {
         ],
         depthStencilAttachment: { view: depthView, depthLoadOp: 'load', depthStoreOp: 'discard' },
       });
+      if (decalsInView) {
+        this.decals.draw(blended, this.scene.frameBindGroup, decals, this.scene.viewPlanes);
+      }
       if (water) this.scene.drawWater(blended, scenes);
       this.scene.drawTransparent(blended, scenes, view.camera.position);
       blended.end();

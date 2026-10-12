@@ -77,3 +77,16 @@ the opaque scene directly (`shaders/refraction.wgsl`), blended by their mask in 
 pass; their UV controllers scroll the noise. Fire_Refraction (`0x10000`) without Refraction (about
 50 shapes) is drawn as a regular surface: what it changes in the engine is not documented
 (TODO(M13)).
+
+## Decals
+
+Placed decals (`decals.ts`, `shaders/decal.wgsl`; records in
+[formats/esm.md](formats/esm.md#decals)) are drawn first in the blended pass as screen-space
+projections: the back faces of each decal's box (unit cube times its placement: X width, Y
+projection, Z height) cover its area even with the camera inside; for every pixel the opaque
+surface behind it comes from the scene depth copy (`inverseViewProj` of the frame), and where
+that point lies inside the box the decal's texture is drawn on it, lit like the surface: its
+normal from the depth's screen derivatives, turned by the decal's normal map in the decal's
+frame, with ambient, sun, shadows and point lights, then fog. Surfaces running along the
+projection fade out (no smearing down walls). Alpha testing discards below 0.5; blending uses
+the texture's alpha. One instanced draw per texture set; decals out of view are skipped.

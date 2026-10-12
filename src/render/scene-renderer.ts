@@ -5,10 +5,11 @@
 
 import { animate, type AnimationFrame, type ModelAnimation } from './animation.ts';
 import { billboardWorld } from './billboard.ts';
-import { frustumPlanes, sphereVisible, type Plane } from './frustum.ts';
+import { frustumPlanes, invert, sphereVisible, type Plane } from './frustum.ts';
 import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import type { AlphaState, ModelData, ModelPart, PartMaterial, VertexLayout } from './model-data.ts';
 import type { ParticleSystemData } from './particle-data.ts';
+import type { PlacedPart } from './raycast.ts';
 import { PARTICLE_FLOATS, ParticleSimulation, type ParticleContext } from './particle-sim.ts';
 import commonShader from './shaders/common.wgsl?raw';
 import frameShader from './shaders/frame.wgsl?raw';
@@ -28,8 +29,8 @@ export const MAX_LIGHTS = 256;
 /** Size of the WGSL `Draw` struct and the stride between draws (uniform offset alignment). */
 const DRAW_SIZE = 160;
 const DRAW_STRIDE = 256;
-/** WGSL `Frame` struct: 160 floats. */
-const FRAME_FLOATS = 160;
+/** WGSL `Frame` struct: 176 floats. */
+const FRAME_FLOATS = 176;
 /** Sun shadow map: one layer per cascade. */
 export const SHADOW_MAP_SIZE = 2048;
 export const SHADOW_MAP_LAYERS = 4;
@@ -1001,6 +1002,7 @@ export class SceneRenderer {
     };
     data.set(axis(0), 152);
     data.set(axis(1), 156);
+    data.set(invert(viewProjection) ?? viewProjection, 160);
     this.#device.queue.writeBuffer(this.#frameBuffer, 0, data);
 
     if (lightCount > 0) {
@@ -1688,4 +1690,16 @@ export function vertexBuffers(layout: VertexLayout): GPUVertexBufferLayout[] {
     { arrayStride: layout.stride, attributes: mesh },
     { arrayStride: 0, attributes: fallback },
   ];
+}
+
+/** The parts of placed models in the world (for rays: where decals land). */
+export function placedParts(instances: readonly ModelInstance[]): PlacedPart[] {
+  return instances.flatMap((instance) =>
+    instance.model.parts.map(({ part }) => ({
+      part,
+      instanceWorld: instance.world,
+      center: transformPoint(instance.world, part.center),
+      radius: part.radius * maxScale(instance.world),
+    })),
+  );
 }

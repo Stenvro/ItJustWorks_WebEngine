@@ -155,3 +155,32 @@ export async function landTexture(
     }),
   };
 }
+
+/**
+ * Height of a cell's landscape at a world position (bilinear between its vertices), or
+ * undefined outside the cell.
+ */
+export function landHeightAt(
+  land: LandData,
+  cellX: number,
+  cellY: number,
+  x: number,
+  y: number,
+): number | undefined {
+  const localX = x - cellX * CELL_SIZE;
+  const localY = y - cellY * CELL_SIZE;
+  if (localX < 0 || localY < 0 || localX > CELL_SIZE || localY > CELL_SIZE) return undefined;
+  const gx = Math.min(LAND_GRID - 1.001, localX / LAND_SPACING);
+  const gy = Math.min(LAND_GRID - 1.001, localY / LAND_SPACING);
+  const x0 = Math.floor(gx);
+  const y0 = Math.floor(gy);
+  const tx = gx - x0;
+  const ty = gy - y0;
+  const at = (ix: number, iy: number): number => land.heights[iy * LAND_GRID + ix] ?? 0;
+  return (
+    at(x0, y0) * (1 - tx) * (1 - ty) +
+    at(x0 + 1, y0) * tx * (1 - ty) +
+    at(x0, y0 + 1) * (1 - tx) * ty +
+    at(x0 + 1, y0 + 1) * tx * ty
+  );
+}

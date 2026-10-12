@@ -26,12 +26,13 @@ struct Frame {
   shadowMatrices: array<mat4x4f, 4>,
   shadowSplits: vec4f,
   shadowParams: vec4f,
-  // 1 / width, 1 / height of the target, the camera's near plane, and whether sceneColor and
-  // sceneDepth hold this frame's opaque scene (1: in the blended pass).
+  // 1 / width, 1 / height of the target, the camera's near plane, unused.
   screen: vec4f,
   // The camera's right and up axes in world space (camera-facing quads).
   cameraRight: vec4f,
   cameraUp: vec4f,
+  // Clip space back to world space (screen-space decals).
+  inverseViewProj: mat4x4f,
 };
 
 struct PointLight {
