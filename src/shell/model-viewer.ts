@@ -3,6 +3,8 @@
 // the shell's backdrop.
 
 import { OrbitCamera, type OrbitView } from '../render/camera.ts';
+import type { Rgb } from '../world/cell-records.ts';
+import { TIMESCALE } from './world-sky.ts';
 import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
@@ -205,6 +207,8 @@ export class ModelViewer {
   onActivate: (() => void) | undefined;
   /** Whether the renderer shows this viewer's view. */
   #viewShown = false;
+  /** Real seconds of the last clock tick (cells). */
+  #lastClock: number | undefined;
 
   /** Centres the image in the part of the screen the shell does not cover. */
   set lensShift(shift: number) {
@@ -477,6 +481,7 @@ export class ModelViewer {
     const cell = this.#cell;
     if (!cell) return 0;
     const isEnabled = enabledReferences(cell.data, cell.toggles, cell.selection, cell.scripted);
+    const session = this.#session;
     const instances: ModelInstance[] = [];
     for (const object of cell.data.objects) {
       if (!isEnabled(object.reference)) continue;
@@ -491,6 +496,8 @@ export class ModelViewer {
           ...(water && { water }),
           ...(directional && { directional }),
           ...(object.leafAnimation && { leafAnimation: object.leafAnimation }),
+          ...(session &&
+            object.emittance !== undefined && { emittance: session.emittance(object.emittance) }),
         });
       }
     }
@@ -835,7 +842,9 @@ export class ModelViewer {
         camera: this.#fly,
         lighting: () => ({
           ...lighting,
-          lights: pointLights(lights, performance.now() / 1000, this.#fly.position),
+          lights: pointLights(lights, this.#tickClock(), this.#fly.position, (id) =>
+            this.#emittanceRgb(id),
+          ),
         }),
         imageSpace: () => imageSpace,
         decals: () => (decals ? [decals] : []),
@@ -848,6 +857,26 @@ export class ModelViewer {
     document.body.classList.add('has-scene');
     // The CRT overlay belongs to the page background, never over a model, cell or world.
     document.body.classList.toggle('content-scene', !(view.camera === 'orbit' && view.backdrop));
+  }
+
+  /**
+   * Advances the session's game clock at the timescale (time passes indoors too) and moves the
+   * emittance colours with it (sunlight bounce lights dark at night); returns real seconds.
+   */
+  #tickClock(): number {
+    const now = performance.now() / 1000;
+    const session = this.#session;
+    if (session) {
+      const delta = this.#lastClock === undefined ? 0 : Math.min(0.25, now - this.#lastClock);
+      session.gameHour = (session.gameHour + (delta * TIMESCALE) / 3600) % 24;
+      session.updateEmittance(session.gameHour);
+    }
+    this.#lastClock = now;
+    return now;
+  }
+
+  #emittanceRgb(formId: number): Rgb {
+    return this.#session?.emittance(formId).rgb ?? [0, 0, 0];
   }
 
   /** Forgets the shown cell and frees what was made for it. */

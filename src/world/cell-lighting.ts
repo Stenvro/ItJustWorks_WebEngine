@@ -4,6 +4,7 @@
 import type { Vec3 } from '../render/math.ts';
 import { flatAmbient, type PointLight, type SceneLighting } from '../render/scene-renderer.ts';
 import type { CellData, CellLight } from './cell-loader.ts';
+import type { Rgb } from './cell-records.ts';
 import { FLICKERING_LIGHT_DISTANCE, lightFlicker } from './light-flicker.ts';
 
 /** Point lights fade out from this distance to the camera (fLightLODStartFade, High)... */
@@ -14,12 +15,14 @@ export const LIGHT_LOD_RANGE = 500;
 /**
  * Placed lights at a moment, seen from `camera`: brightness (LIGH fade), flicker or pulse
  * (only near the camera) and the distance fade applied. Lights faded out completely are
- * left out; without a camera nothing fades or flickers.
+ * left out; without a camera nothing fades or flickers. A light with an emittance source
+ * (REFR XEMI) takes that source's colour from `emittance`.
  */
 export function pointLights(
   lights: readonly CellLight[],
   seconds: number,
   camera?: Vec3,
+  emittance?: (formId: number) => Rgb,
 ): PointLight[] {
   const result: PointLight[] = [];
   for (const light of lights) {
@@ -37,6 +40,8 @@ export function pointLights(
         ? lightFlicker(light, seconds, light.reference % 997)
         : STEADY;
     const brightness = light.fade * flicker.scale * lod;
+    const color =
+      light.emittance !== undefined && emittance ? emittance(light.emittance) : light.color;
     result.push({
       position: [
         light.position[0] + flicker.offset[0],
@@ -44,11 +49,7 @@ export function pointLights(
         light.position[2] + flicker.offset[2],
       ],
       radius: light.radius,
-      color: [
-        light.color[0] * brightness,
-        light.color[1] * brightness,
-        light.color[2] * brightness,
-      ],
+      color: [color[0] * brightness, color[1] * brightness, color[2] * brightness],
     });
   }
   return result;
