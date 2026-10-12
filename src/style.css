@@ -516,6 +516,46 @@ button:focus-visible {
   content: '− ';
 }
 
+/* Panels with a title and extra info in their header (system log, model viewer). */
+summary::-webkit-details-marker {
+  display: none;
+}
+
+.console-head {
+  cursor: pointer;
+  list-style: none;
+}
+
+.panel .viewer-head::before {
+  content: none;
+}
+
+.panel-title::before {
+  content: '− ';
+  color: var(--gold);
+}
+
+details:not([open]) > summary .panel-title::before {
+  content: '+ ';
+}
+
+details:not([open]) > .console-head,
+details:not([open]) > .viewer-head {
+  border-bottom: 0;
+}
+
+/* H hides the whole shell. */
+.shell > * {
+  transition:
+    opacity 0.2s,
+    visibility 0.2s;
+}
+
+.shell.shell-hidden > * {
+  opacity: 0;
+  visibility: hidden;
+}
+
 .table {
   max-height: 40vh;
   overflow-y: auto;

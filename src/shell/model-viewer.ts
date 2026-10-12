@@ -17,7 +17,16 @@ export interface ViewerElements {
 
 /** The main menu logo meshes (Anniversary Edition first); they face along the Y axis. */
 const LOGO_PATHS = ['meshes\\interface\\logo\\logo01ae.nif', 'meshes\\interface\\logo\\logo.nif'];
-const LOGO_VIEW: OrbitView = { up: 'z', yaw: Math.PI, pitch: 0.05, idleSway: 18 };
+// The logo is a front-facing shell (the main menu only ever shows it head-on), so keep
+// the camera in front of it.
+const LOGO_VIEW: OrbitView = {
+  up: 'z',
+  yaw: Math.PI,
+  pitch: 0.05,
+  idleSway: 6,
+  yawLimit: 20,
+  pitchLimit: 12,
+};
 const MODEL_VIEW: OrbitView = { up: 'z', yaw: 0.6, pitch: 0.3, idleSpin: 10 };
 const MAX_RESULTS = 80;
 

@@ -39,11 +39,11 @@
         <p class="subtitle"><span>Special Edition</span><span>Web Engine</span></p>
       </section>
 
-      <section class="console" aria-label="System log">
-        <div class="console-head">
-          <span>// system log</span>
+      <details class="console" data-panel="system-log" open>
+        <summary class="console-head">
+          <span class="panel-title">// system log</span>
           <span id="console-status" class="console-status">booting</span>
-        </div>
+        </summary>
         <ol id="log" class="log"></ol>
         <div class="prompt">
           <p id="prompt-message"></p>
@@ -52,13 +52,13 @@
             <button id="pick-folder" type="button" hidden>select skyrim folder</button>
           </div>
         </div>
-      </section>
+      </details>
 
-      <section id="viewer" class="panel viewer" aria-label="Model viewer" hidden>
-        <div class="viewer-head">
-          <span>// model viewer</span>
+      <details id="viewer" class="panel viewer" data-panel="model-viewer" open hidden>
+        <summary class="viewer-head">
+          <span class="panel-title">// model viewer</span>
           <span id="viewer-count"></span>
-        </div>
+        </summary>
         <input
           id="model-search"
           class="search"
@@ -68,15 +68,15 @@
           spellcheck="false"
         />
         <ol id="model-results" class="results"></ol>
-        <p class="hint">drag to orbit · right-drag to pan · wheel to zoom</p>
-      </section>
+        <p class="hint">drag to orbit · right-drag to pan · wheel to zoom · h hides the panels</p>
+      </details>
 
       <section id="vfs-summary" class="panels" hidden>
-        <details class="panel">
+        <details class="panel" data-panel="load-order">
           <summary id="load-order-title">load order</summary>
           <ol id="load-order-list" class="table"></ol>
         </details>
-        <details class="panel">
+        <details class="panel" data-panel="archives">
           <summary id="archive-title">archives</summary>
           <ol id="archive-list" class="table"></ol>
         </details>

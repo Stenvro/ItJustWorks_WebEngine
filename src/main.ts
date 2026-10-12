@@ -4,6 +4,7 @@ import { GpuUnavailableError, initGpu, trackCanvasSize, type GpuContext } from '
 import { Renderer } from './render/renderer.ts';
 import { findCustomBackdrop } from './shell/custom-backdrop.ts';
 import { ModelViewer } from './shell/model-viewer.ts';
+import { setupHideShortcut, setupPanels } from './shell/panels.ts';
 import { Terminal } from './shell/terminal.ts';
 import { BrowserGameFolder } from './vfs/browser/browser-game-folder.ts';
 import { HttpGameFolder } from './vfs/browser/http-game-folder.ts';
@@ -303,11 +304,19 @@ async function main(): Promise<void> {
   camera.attach(ui.canvas);
   // Centre the scene in the part of the screen the shell column does not cover.
   const updateLensShift = (): void => {
-    const wide = window.innerWidth >= 1000 && document.body.classList.contains('has-scene');
-    camera.lensShift = wide ? ui.shell.getBoundingClientRect().width / window.innerWidth : 0;
+    const visibleColumn =
+      window.innerWidth >= 1000 &&
+      document.body.classList.contains('has-scene') &&
+      !ui.shell.classList.contains('shell-hidden');
+    camera.lensShift = visibleColumn
+      ? ui.shell.getBoundingClientRect().width / window.innerWidth
+      : 0;
   };
   new ResizeObserver(updateLensShift).observe(ui.shell);
   new MutationObserver(updateLensShift).observe(document.body, { attributes: true });
+  new MutationObserver(updateLensShift).observe(ui.shell, { attributes: true });
+  setupPanels(document);
+  setupHideShortcut(ui.shell);
   viewer = new ModelViewer(gpu.device, renderer, camera, terminal, ui.viewer);
   if (import.meta.env.DEV) window.skyrimDev = { viewer };
   startRenderLoop(renderer);
