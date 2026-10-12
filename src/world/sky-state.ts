@@ -212,6 +212,8 @@ export interface SkyState {
   readonly fogPower: number;
   readonly fogMax: number;
   readonly waterMultiplier: Rgb;
+  /** The lightning flash this moment: its colour times its brightness (added to the sky). */
+  readonly lightning: Rgb;
   /** Wind speed 0..1. */
   readonly windSpeed: number;
   /** Wind direction in degrees (WTHR; the current weather's during a transition). */
@@ -244,6 +246,8 @@ export interface SkyInput {
   /** Real seconds (cloud scrolling). */
   readonly seconds: number;
   readonly settings?: SkySettings;
+  /** Lightning flash 0..1 this moment (see lightning.ts). */
+  readonly lightning?: number;
 }
 
 const mixRgb = (a: Rgb, b: Rgb, t: number): Rgb => [
@@ -477,12 +481,27 @@ export function skyState(input: SkyInput): SkyState {
   addImageSpaces(input.weather, transition);
   if (input.previous) addImageSpaces(input.previous, 1 - transition);
 
+  // A lightning flash lights the sky and, less, everything under it.
+  const flash = Math.max(0, Math.min(1, input.lightning ?? 0));
+  const flashColor =
+    input.weather.thunderFrequency < 255 || !input.previous
+      ? input.weather.lightningColor
+      : input.previous.lightningColor;
+  const lightning: Rgb = [flashColor[0] * flash, flashColor[1] * flash, flashColor[2] * flash];
+  const lit = (c: Rgb, share: number): Rgb => [
+    c[0] + lightning[0] * share,
+    c[1] + lightning[1] * share,
+    c[2] + lightning[2] * share,
+  ];
+  const litAmbient: DirectionalAmbient =
+    flash > 0 ? { ...ambient, colors: ambient.colors.map((c) => lit(c, 0.5)) } : ambient;
+
   return {
     hour: input.hour,
     weights,
-    skyUpper: color(WeatherColor.skyUpper),
-    skyLower: color(WeatherColor.skyLower),
-    horizon: color(WeatherColor.horizon),
+    skyUpper: lit(color(WeatherColor.skyUpper), 1),
+    skyLower: lit(color(WeatherColor.skyLower), 1),
+    horizon: lit(color(WeatherColor.horizon), 1),
     sunColor: color(WeatherColor.sun),
     sunGlareColor: color(WeatherColor.sunGlare),
     sunGlare: input.previous
@@ -494,14 +513,15 @@ export function skyState(input: SkyInput): SkyState {
     sunlight: color(WeatherColor.sunlight),
     sunDirection,
     lightDirection,
-    ambient,
-    fogNear: color(WeatherColor.fogNear),
-    fogFar: color(WeatherColor.fogFar),
+    ambient: litAmbient,
+    fogNear: lit(color(WeatherColor.fogNear), 0.5),
+    fogFar: lit(color(WeatherColor.fogFar), 0.5),
     fogNearDistance: scalar((l) => l.fogNearDistance),
     fogFarDistance: scalar((l) => l.fogFarDistance),
     fogPower: scalar((l) => l.fogPower),
     fogMax: scalar((l) => l.fogMax),
     waterMultiplier: color(WeatherColor.waterMultiplier),
+    lightning,
     windSpeed: input.previous
       ? input.previous.windSpeed + (input.weather.windSpeed - input.previous.windSpeed) * transition
       : input.weather.windSpeed,
