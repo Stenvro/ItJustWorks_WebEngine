@@ -113,6 +113,8 @@ export interface SceneLighting {
   readonly ambient: readonly [Vec3, Vec3, Vec3, Vec3, Vec3, Vec3];
   readonly fog: SceneFog | undefined;
   readonly lights: readonly PointLight[];
+  /** Wind strength 0..1 (weather), for swaying grass. */
+  readonly wind?: number;
 }
 
 /** Uniform ambient from every direction. */
@@ -645,7 +647,7 @@ export class SceneRenderer {
     data.set([fog?.near ?? 0, fog?.far ?? 1, fog?.power ?? 1, fog?.max ?? 0], 60);
     const lightCount = Math.min(MAX_LIGHTS, lighting.lights.length);
     this.#frameUints.set([lightCount, fog ? 1 : 0, this.debugView, 0], 64);
-    data.set([timeSeconds, 0, 0, 0], 68);
+    data.set([timeSeconds, lighting.wind ?? 0, 0, 0], 68);
     new Int32Array(data.buffer, 72 * 4, 4).set([
       lodMask?.originX ?? 0,
       lodMask?.originY ?? 0,
@@ -838,6 +840,16 @@ export class SceneRenderer {
       for (let i = 0; i < 32; i++) data.set([1 - i / 31, i / 31, 0, 1], 20 + i * 4);
     }
     this.#device.queue.writeBuffer(this.#waterFrameBuffer, 0, data);
+  }
+
+  /** Material bind group layout (group 2 of object shaders), shared with grass. */
+  get materialLayout(): GPUBindGroupLayout {
+    return this.#materialLayout;
+  }
+
+  /** Constant values for vertex attributes a mesh lacks (vertex buffer 1). */
+  get fallbackVertices(): GPUBuffer {
+    return this.#fallbackVertices;
   }
 
   /** Planes of the camera's frustum this frame (for culling elsewhere). */
@@ -1094,7 +1106,7 @@ export class SceneRenderer {
 }
 
 /** Mesh attributes from buffer 0; missing ones from the constant fallback buffer 1. */
-function vertexBuffers(layout: VertexLayout): GPUVertexBufferLayout[] {
+export function vertexBuffers(layout: VertexLayout): GPUVertexBufferLayout[] {
   const mesh: GPUVertexAttribute[] = [{ shaderLocation: 0, format: 'float32x3', offset: 0 }];
   const fallback: GPUVertexAttribute[] = [];
   const add = (

@@ -212,6 +212,8 @@ export interface SkyState {
   readonly fogPower: number;
   readonly fogMax: number;
   readonly waterMultiplier: Rgb;
+  /** Wind speed 0..1. */
+  readonly windSpeed: number;
   readonly clouds: readonly CloudState[];
   readonly masser: MoonState;
   readonly secunda: MoonState;
@@ -498,6 +500,9 @@ export function skyState(input: SkyInput): SkyState {
     fogPower: scalar((l) => l.fogPower),
     fogMax: scalar((l) => l.fogMax),
     waterMultiplier: color(WeatherColor.waterMultiplier),
+    windSpeed: input.previous
+      ? input.previous.windSpeed + (input.weather.windSpeed - input.previous.windSpeed) * transition
+      : input.weather.windSpeed,
     clouds: cloudStates(input.weather, input.previous, transition, weights, input.seconds),
     masser,
     secunda,
