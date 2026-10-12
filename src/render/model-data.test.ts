@@ -8,6 +8,8 @@ describe('normalizeTexturePath', () => {
     ['Textures\\Clutter\\Bucket.dds', 'textures\\clutter\\bucket.dds'],
     ['clutter/bucket.dds', 'textures\\clutter\\bucket.dds'],
     ['Data\\Textures\\Sky\\a.dds', 'textures\\sky\\a.dds'],
+    ['skyrimhd\\build\\pc\\data\\textures\\plants\\potato01.dds', 'textures\\plants\\potato01.dds'],
+    ['textures\\metadata\\x.dds', 'textures\\metadata\\x.dds'],
     ['  ', ''],
   ])('%j → %j', (input, expected) => {
     expect(normalizeTexturePath(input)).toBe(expected);

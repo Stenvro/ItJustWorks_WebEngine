@@ -99,11 +99,20 @@ const APP_CULLED = 0x1;
 /** SLSF1 Refraction and Fire_Refraction. */
 const SLSF1_ANY_REFRACTION = 0x8000 | 0x10000;
 
-/** Texture paths in NIFs are relative to Data, usually (but not always) with `textures\`. */
+/**
+ * Texture paths in NIFs are relative to Data, usually (but not always) with `textures\`.
+ * Some vanilla meshes keep an absolute build path (`skyrimhd\build\pc\data\textures\...`):
+ * like the engine, everything up to the last `data\` folder is dropped.
+ */
 export function normalizeTexturePath(path: string): string {
   if (path.trim() === '') return '';
   let normalized = normalizePath(path);
-  if (normalized.startsWith('data\\')) normalized = normalized.slice(5);
+  const dataFolder = /(?:^|\\)data\\/g;
+  let cut = -1;
+  for (let match = dataFolder.exec(normalized); match; match = dataFolder.exec(normalized)) {
+    cut = match.index + match[0].length;
+  }
+  if (cut >= 0) normalized = normalized.slice(cut);
   return normalized.startsWith('textures\\') ? normalized : `textures\\${normalized}`;
 }
 
