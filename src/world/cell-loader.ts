@@ -38,6 +38,10 @@ export interface CellLight {
   /** LIGH fade: brightness multiplier. */
   readonly fade: number;
   readonly flags: number;
+  /** Flicker and pulse (LIGH DATA). */
+  readonly period: number;
+  readonly intensityAmplitude: number;
+  readonly movementAmplitude: number;
 }
 
 /** What decides whether a reference is enabled. */
@@ -200,6 +204,9 @@ export async function loadCellData(
           color: light.color,
           fade: light.fade,
           flags: light.flags,
+          period: light.period,
+          intensityAmplitude: light.intensityAmplitude,
+          movementAmplitude: light.movementAmplitude,
         });
       }
     }

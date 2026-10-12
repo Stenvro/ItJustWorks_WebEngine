@@ -41,6 +41,9 @@ export function waterPlane(
     parts: [
       {
         name: 'water plane',
+        block: -1,
+        shader: -1,
+        alphaProperty: -1,
         world: identity(),
         layout: { stride: 12, attributes: 0x1, uv: -1, normal: -1, tangent: -1, color: -1 },
         vertices: new Uint8Array(vertices.buffer),

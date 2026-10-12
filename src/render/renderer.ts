@@ -222,6 +222,8 @@ export class Renderer {
 
     const sky = view?.sky?.();
     const scenes = view ? [...view.scenes()] : [];
+    // Controllers of the placed models (UV scrolling, turning parts, idle sequences).
+    if (view) this.scene.animate(scenes, timeSeconds, view.camera.position);
     const hdrView = this.post.hdrView(targets.width, targets.height);
     const colorView = targets.color.createView();
     const depthView = targets.depth.createView();

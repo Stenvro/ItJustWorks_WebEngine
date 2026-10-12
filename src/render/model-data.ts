@@ -12,6 +12,8 @@ import type {
   VertexDesc,
 } from '../formats/nif/types.ts';
 import { normalizePath } from '../formats/paths.ts';
+import { buildAnimation, type ModelAnimation } from './animation.ts';
+import { invert } from './frustum.ts';
 import { skinShape } from './skinning.ts';
 import {
   fromNifTransform,
@@ -86,6 +88,15 @@ export interface AlphaState {
 
 export interface ModelPart {
   readonly name: string;
+  /** The shape's block, its shader property and alpha property (animation targets). */
+  readonly block: Ref;
+  readonly shader: Ref;
+  readonly alphaProperty: Ref;
+  /**
+   * Under a NiBillboardNode: the node's model-space transform and the part relative to it;
+   * the node turns its Z axis to the camera (`mode`: nif.xml BillboardMode).
+   */
+  readonly billboard?: { readonly mode: number; readonly node: Mat4; readonly local: Mat4 };
   /** Column-major world matrix. */
   readonly world: Mat4;
   readonly layout: VertexLayout;
@@ -107,6 +118,8 @@ export interface ModelData {
   readonly skipped: readonly string[];
   /** BSXFlags editor marker: only shown in the Creation Kit, never in game. */
   readonly editorMarker: boolean;
+  /** Controllers that play on their own (UV scrolling, turning parts, idle sequence). */
+  readonly animation?: ModelAnimation;
 }
 
 /** Material of LOD water (WaterShaderFlag lod). */
@@ -322,6 +335,10 @@ export function buildModel(file: NifFile): ModelData {
   const skipped: string[] = [];
   /** Names of the nodes above the block being visited. */
   const nodeNames: string[] = [];
+  /** The shape being visited (parts remember their block for animation). */
+  let currentBlock: Ref = -1;
+  /** Billboard nodes above the block being visited. */
+  const billboards: { mode: number; world: Mat4 }[] = [];
   let worlds: Map<Ref, Mat4> | undefined;
 
   const visit = (ref: Ref, parentWorld: Mat4, depth: number): void => {
@@ -344,17 +361,20 @@ export function buildModel(file: NifFile): ModelData {
       depth === 0
         ? parentWorld
         : multiply(parentWorld, fromNifTransform(translation, rotation, scale));
+    currentBlock = ref;
 
     switch (block.kind) {
       case 'node': {
-        // TODO(M4): NiBillboardNode subtrees should turn towards the camera every frame,
-        // and controllers (UV scrolling, flicker, transforms) should animate.
         const children =
           block.switchIndex !== undefined
             ? [block.children[block.switchIndex] ?? -1]
             : block.children;
         nodeNames.push(block.name);
+        // NiBillboardNode: its subtree turns towards the camera every frame.
+        if (block.billboardMode !== undefined)
+          billboards.push({ mode: block.billboardMode, world });
         for (const child of children) visit(child, world, depth + 1);
+        if (block.billboardMode !== undefined) billboards.pop();
         nodeNames.pop();
         return;
       }
@@ -466,8 +486,21 @@ export function buildModel(file: NifFile): ModelData {
       skipped.push(`${name || 'shape'}: refraction effect (TODO(M4))`);
       return;
     }
+    const billboard = billboards.at(-1);
+    const nodeInverse = billboard && invert(billboard.world);
     parts.push({
       name,
+      ...(billboard &&
+        nodeInverse && {
+          billboard: {
+            mode: billboard.mode,
+            node: billboard.world,
+            local: multiply(nodeInverse, world),
+          },
+        }),
+      block: currentBlock,
+      shader: shaderRef,
+      alphaProperty: alphaRef,
       world,
       layout,
       vertices,
@@ -504,5 +537,13 @@ export function buildModel(file: NifFile): ModelData {
     );
   }
 
-  return { parts, center, radius, skipped, editorMarker: isEditorMarker(file) };
+  const animation = buildAnimation(file);
+  return {
+    parts,
+    center,
+    radius,
+    skipped,
+    editorMarker: isEditorMarker(file),
+    ...(animation && { animation }),
+  };
 }

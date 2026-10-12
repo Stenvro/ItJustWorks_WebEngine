@@ -12,6 +12,7 @@ import type {
   GpuScene,
   ModelInstance,
   LodMask,
+  PointLight,
   SceneLighting,
   WaterFlow,
   WaterFrame,
@@ -26,6 +27,7 @@ import {
   DEFAULT_LAND_NORMAL,
   DEFAULT_LAND_TEXTURE,
 } from '../render/terrain-data.ts';
+import { pointLights } from '../world/cell-lighting.ts';
 import { loadCellData, type CellLight } from '../world/cell-loader.ts';
 import { enabledReferences, findToggles, gameStartSelection } from '../world/cell-upgrades.ts';
 import { CELL_SIZE, LAND_GRID, landTexture, type LandData } from '../world/land.ts';
@@ -521,18 +523,13 @@ export class WorldViewer {
 
   /** The sky's light (time of day and weather) plus the nearest point lights. */
   #lighting(camera: Vec3): SceneLighting {
-    const lights: { position: Vec3; radius: number; color: Vec3; distance: number }[] = [];
+    const lights: (PointLight & { distance: number })[] = [];
+    const seconds = performance.now() / 1000;
     for (const cell of this.#cells.values()) {
       if (!cell.ready) continue;
-      for (const light of cell.lights) {
+      for (const light of pointLights(cell.lights, seconds)) {
         lights.push({
-          position: [...light.position],
-          radius: light.radius,
-          color: [
-            light.color[0] * light.fade,
-            light.color[1] * light.fade,
-            light.color[2] * light.fade,
-          ],
+          ...light,
           distance: Math.hypot(
             light.position[0] - camera[0],
             light.position[1] - camera[1],

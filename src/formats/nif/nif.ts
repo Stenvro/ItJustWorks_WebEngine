@@ -2,6 +2,7 @@
 
 import { BinaryReader, FormatError } from '../binary-reader.ts';
 import { BLOCK_PARSERS } from './blocks.ts';
+import { ANIMATION_PARSERS } from './animation-blocks.ts';
 import { parseNifHeader, type NifHeader } from './header.ts';
 import type { NifBlock, Ref } from './types.ts';
 
@@ -48,7 +49,7 @@ export function parseNif(bytes: Uint8Array): NifFile {
     if (offset + size > bytes.length) {
       throw new FormatError(`Block ${index} (${type}) runs past the end of the file`, offset);
     }
-    const parser = BLOCK_PARSERS.get(type);
+    const parser = BLOCK_PARSERS.get(type) ?? ANIMATION_PARSERS.get(type);
     let block: NifBlock = { kind: 'unknown' };
     if (parser) {
       const reader = new BinaryReader(bytes.subarray(offset, offset + size));

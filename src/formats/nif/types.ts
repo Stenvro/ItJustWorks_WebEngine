@@ -263,6 +263,169 @@ export interface UnknownBlock {
   readonly kind: 'unknown';
 }
 
+// --- Animation ------------------------------------------------------------------------------
+
+/** Quaternion as NIF stores it: w, x, y, z. */
+export type Quaternion = readonly [number, number, number, number];
+
+export interface Key<T> {
+  readonly time: number;
+  readonly value: T;
+  /** Quadratic keys: tangents. */
+  readonly forward?: T;
+  readonly backward?: T;
+  /** TBC keys: tension, bias, continuity. */
+  readonly tbc?: readonly [number, number, number];
+}
+
+export interface KeyGroup<T> {
+  /** KeyType. */
+  readonly interpolation: number;
+  readonly keys: readonly Key<T>[];
+}
+
+export interface QuatKey {
+  readonly time: number;
+  readonly value: Quaternion;
+  readonly tbc?: readonly [number, number, number];
+}
+
+export interface TimeControllerFields {
+  readonly next: Ref;
+  /** TimeControllerFlags: bits 1-2 cycle type, bit 3 active. */
+  readonly flags: number;
+  readonly frequency: number;
+  readonly phase: number;
+  readonly startTime: number;
+  readonly stopTime: number;
+  readonly target: Ref;
+}
+
+/** A time controller (shader, transform, visibility, alpha, particle and others). */
+export interface ControllerBlock extends TimeControllerFields {
+  readonly kind: 'controller';
+  /** Block type name (e.g. BSEffectShaderPropertyFloatController). */
+  readonly type: string;
+  readonly interpolator: Ref;
+  /** Shader controllers: the controlled variable or colour; -1 otherwise. */
+  readonly variable: number;
+  /** NiMultiTargetTransformController: extra targets. */
+  readonly extraTargets: readonly Ref[];
+  /** Particle controllers: modifier name; extra data controllers: extra data name. */
+  readonly name: string;
+  /** NiPSysEmitterCtlr: emitter visibility. */
+  readonly visibilityInterpolator: Ref;
+}
+
+export interface ControllerManagerBlock extends TimeControllerFields {
+  readonly kind: 'controller-manager';
+  readonly cumulative: boolean;
+  readonly sequences: readonly Ref[];
+  readonly palette: Ref;
+}
+
+export interface ControlledBlock {
+  readonly interpolator: Ref;
+  readonly controller: Ref;
+  readonly priority: number;
+  readonly nodeName: string;
+  readonly propertyType: string;
+  readonly controllerType: string;
+  readonly controllerId: string;
+  readonly interpolatorId: string;
+}
+
+export interface ControllerSequenceBlock {
+  readonly kind: 'controller-sequence';
+  readonly name: string;
+  readonly blocks: readonly ControlledBlock[];
+  readonly weight: number;
+  readonly textKeys: Ref;
+  /** CycleType. */
+  readonly cycleType: number;
+  readonly frequency: number;
+  readonly startTime: number;
+  readonly stopTime: number;
+  readonly manager: Ref;
+  readonly accumRootName: string;
+}
+
+export interface ObjectPaletteBlock {
+  readonly kind: 'object-palette';
+  readonly scene: Ref;
+  readonly objects: readonly { readonly name: string; readonly ref: Ref }[];
+}
+
+export interface TextKeysBlock {
+  readonly kind: 'text-keys';
+  readonly name: string;
+  readonly keys: readonly { readonly time: number; readonly text: string }[];
+}
+
+export interface FloatInterpolatorBlock {
+  readonly kind: 'float-interpolator';
+  readonly value: number;
+  readonly data: Ref;
+}
+
+export interface TransformInterpolatorBlock {
+  readonly kind: 'transform-interpolator';
+  readonly translation: Vec3;
+  readonly rotation: Quaternion;
+  readonly scale: number;
+  readonly data: Ref;
+}
+
+export interface Point3InterpolatorBlock {
+  readonly kind: 'point3-interpolator';
+  readonly value: Vec3;
+  readonly data: Ref;
+}
+
+export interface BoolInterpolatorBlock {
+  readonly kind: 'bool-interpolator';
+  readonly value: boolean;
+  readonly data: Ref;
+}
+
+export interface BlendInterpolatorBlock {
+  readonly kind: 'blend-interpolator';
+  readonly type: string;
+  /** Blended by the controller manager's sequences (no items of its own). */
+  readonly managerControlled: boolean;
+  readonly items: readonly {
+    readonly interpolator: Ref;
+    readonly weight: number;
+    readonly priority: number;
+  }[];
+  readonly value: number | Vec3 | undefined;
+}
+
+export interface FloatDataBlock {
+  readonly kind: 'float-data';
+  readonly keys: KeyGroup<number>;
+}
+
+export interface PosDataBlock {
+  readonly kind: 'pos-data';
+  readonly keys: KeyGroup<Vec3>;
+}
+
+export interface BoolDataBlock {
+  readonly kind: 'bool-data';
+  readonly keys: KeyGroup<number>;
+}
+
+export interface TransformDataBlock {
+  readonly kind: 'transform-data';
+  /** KeyType of the rotation keys (xyzRotation: three float key groups instead). */
+  readonly rotationType: number;
+  readonly quaternionKeys: readonly QuatKey[];
+  readonly xyzRotations: readonly KeyGroup<number>[];
+  readonly translations: KeyGroup<Vec3>;
+  readonly scales: KeyGroup<number>;
+}
+
 export type NifBlock =
   | NiNodeBlock
   | BSTriShapeBlock
@@ -278,4 +441,18 @@ export type NifBlock =
   | NiSkinInstanceBlock
   | NiSkinDataBlock
   | NiSkinPartitionBlock
+  | ControllerBlock
+  | ControllerManagerBlock
+  | ControllerSequenceBlock
+  | ObjectPaletteBlock
+  | TextKeysBlock
+  | FloatInterpolatorBlock
+  | TransformInterpolatorBlock
+  | Point3InterpolatorBlock
+  | BoolInterpolatorBlock
+  | BlendInterpolatorBlock
+  | FloatDataBlock
+  | PosDataBlock
+  | BoolDataBlock
+  | TransformDataBlock
   | UnknownBlock;

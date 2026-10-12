@@ -8,8 +8,8 @@ import { identity } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { GpuModel, GpuScene, GpuWaterType, ModelInstance } from '../render/scene-renderer.ts';
 import { studioLighting } from '../render/studio-lighting.ts';
-import { cellSceneLighting } from '../world/cell-lighting.ts';
-import { loadCellData, type CellData } from '../world/cell-loader.ts';
+import { cellSceneLighting, pointLights } from '../world/cell-lighting.ts';
+import { loadCellData, type CellData, type CellLight } from '../world/cell-loader.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
 import { waterPlane } from '../render/water-data.ts';
 import {
@@ -439,6 +439,7 @@ export class ModelViewer {
     }
     const scene = this.#renderer.scene.createScene(instances);
     const lighting = cellSceneLighting(cell.data, isEnabled);
+    const lights = cell.data.lights.filter((light) => isEnabled(light.reference));
     // The imagespace's Sunlight Scale brightens the cell's directional light (HDR).
     const scale = cell.imageSpace?.hdr.sunlightScale ?? 1;
     this.#present(scene, undefined, {
@@ -452,6 +453,7 @@ export class ModelViewer {
         ],
       },
       imageSpace: cell.imageSpace,
+      lights,
     });
     return instances.length;
   }
@@ -739,6 +741,8 @@ export class ModelViewer {
           camera: 'fly';
           lighting: ReturnType<typeof cellSceneLighting>;
           imageSpace: ImageSpace | undefined;
+          /** Placed lights, flickering and pulsing per frame. */
+          lights: readonly CellLight[];
         },
   ): void {
     this.onActivate?.();
@@ -757,11 +761,11 @@ export class ModelViewer {
       });
     } else {
       this.#detachControls = this.#fly.attach(this.#canvas);
-      const { lighting, imageSpace } = view;
+      const { lighting, imageSpace, lights } = view;
       this.#renderer.setView({
         scenes: () => [scene],
         camera: this.#fly,
-        lighting: () => lighting,
+        lighting: () => ({ ...lighting, lights: pointLights(lights, performance.now() / 1000) }),
         imageSpace: () => imageSpace,
         backdrop: false,
       });

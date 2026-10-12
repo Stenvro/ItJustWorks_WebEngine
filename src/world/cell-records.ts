@@ -291,6 +291,10 @@ export interface LightRecord {
   readonly flags: number;
   readonly falloffExponent: number;
   readonly fade: number;
+  /** Flicker and pulse: seconds per cycle, brightness and position amplitudes. */
+  readonly period: number;
+  readonly intensityAmplitude: number;
+  readonly movementAmplitude: number;
 }
 
 export const LightFlag = {
@@ -301,6 +305,7 @@ export const LightFlag = {
   offByDefault: 0x20,
   flickerSlow: 0x40,
   pulse: 0x80,
+  pulseSlow: 0x100,
   shadowSpotlight: 0x400,
   shadowHemisphere: 0x800,
   shadowOmnidirectional: 0x1000,
@@ -315,5 +320,8 @@ export function parseLight(record: GameRecord): LightRecord {
     flags: data.getUint32(12, true),
     falloffExponent: data.getFloat32(16, true),
     fade: record.fields.f32('FNAM') ?? 1,
+    period: data.byteLength >= 32 ? data.getFloat32(28, true) : 0,
+    intensityAmplitude: data.byteLength >= 36 ? data.getFloat32(32, true) : 0,
+    movementAmplitude: data.byteLength >= 40 ? data.getFloat32(36, true) : 0,
   };
 }

@@ -2,8 +2,30 @@
 // renderer uses.
 
 import type { Vec3 } from '../render/math.ts';
-import { flatAmbient, type SceneLighting } from '../render/scene-renderer.ts';
-import type { CellData } from './cell-loader.ts';
+import { flatAmbient, type PointLight, type SceneLighting } from '../render/scene-renderer.ts';
+import type { CellData, CellLight } from './cell-loader.ts';
+import { lightFlicker } from './light-flicker.ts';
+
+/** Placed lights at a moment: brightness (LIGH fade) and flicker or pulse applied. */
+export function pointLights(lights: readonly CellLight[], seconds: number): PointLight[] {
+  return lights.map((light) => {
+    const flicker = lightFlicker(light, seconds, light.reference % 997);
+    const brightness = light.fade * flicker.scale;
+    return {
+      position: [
+        light.position[0] + flicker.offset[0],
+        light.position[1] + flicker.offset[1],
+        light.position[2] + flicker.offset[2],
+      ],
+      radius: light.radius,
+      color: [
+        light.color[0] * brightness,
+        light.color[1] * brightness,
+        light.color[2] * brightness,
+      ],
+    };
+  });
+}
 
 const DEGREES = Math.PI / 180;
 
@@ -23,24 +45,17 @@ const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
 /**
  * Lighting for an interior cell. The ambient term is the cell's ambient colour plus its
  * directional ambient per axis; the directional light and fog come straight from XCLL.
- * TODO(M4): exterior cells (sun and weather), light fade distances, shadows.
+ * Lights are given at time 0; per frame, replace them with `pointLights(…, seconds)`.
  */
 export function cellSceneLighting(
   data: CellData,
   isEnabled: (reference: number) => boolean = () => true,
 ): SceneLighting {
   const lighting = data.lighting;
-  const lights = data.lights
-    .filter((light) => isEnabled(light.reference))
-    .map((light) => ({
-      position: light.position,
-      radius: light.radius,
-      color: [
-        light.color[0] * light.fade,
-        light.color[1] * light.fade,
-        light.color[2] * light.fade,
-      ] as Vec3,
-    }));
+  const lights = pointLights(
+    data.lights.filter((light) => isEnabled(light.reference)),
+    0,
+  );
   if (!lighting) {
     return {
       sunDirection: [0, 0, 1],
