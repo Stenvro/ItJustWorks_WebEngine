@@ -3,6 +3,8 @@
 // vertex layout and material state, per-draw uniforms in one buffer (dynamic offsets),
 // opaque first, then blended parts sorted back to front.
 
+import { animate, type AnimationFrame, type ModelAnimation } from './animation.ts';
+import { billboardWorld } from './billboard.ts';
 import { frustumPlanes, sphereVisible, type Plane } from './frustum.ts';
 import { maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import type { AlphaState, ModelData, ModelPart, VertexLayout } from './model-data.ts';
@@ -182,6 +184,8 @@ export class GpuModel {
   readonly center: readonly [number, number, number];
   readonly radius: number;
   readonly parts: readonly GpuPart[];
+  /** Controllers that play on their own (evaluated every frame). */
+  readonly animation: ModelAnimation | undefined;
   readonly #buffers: readonly GPUBuffer[];
 
   constructor(init: {
@@ -189,11 +193,13 @@ export class GpuModel {
     radius: number;
     parts: readonly GpuPart[];
     buffers: readonly GPUBuffer[];
+    animation: ModelAnimation | undefined;
   }) {
     this.center = init.center;
     this.radius = init.radius;
     this.parts = init.parts;
     this.#buffers = init.buffers;
+    this.animation = init.animation;
   }
 
   destroy(): void {
@@ -217,21 +223,120 @@ interface Draw {
   readonly water: GpuWaterType | undefined;
 }
 
+/** A draw that changes every frame (animated, or turning to the camera). */
+interface AnimatedDraw {
+  readonly offset: number;
+  readonly instanceWorld: Mat4;
+  readonly part: ModelPart;
+  readonly animation: ModelAnimation | undefined;
+}
+
 /** Placed model instances with their per-draw uniforms. Does not own the models. */
 export class GpuScene {
   readonly draws: readonly Draw[];
   readonly drawBindGroup: GPUBindGroup;
-  readonly #uniforms: GPUBuffer;
+  readonly uniforms: GPUBuffer;
+  /** CPU copy of the uniforms (animated draws are updated in it, then uploaded). */
+  readonly uniformData: ArrayBuffer;
+  readonly animated: readonly AnimatedDraw[];
 
-  constructor(draws: readonly Draw[], drawBindGroup: GPUBindGroup, uniforms: GPUBuffer) {
+  constructor(
+    draws: readonly Draw[],
+    drawBindGroup: GPUBindGroup,
+    uniforms: GPUBuffer,
+    uniformData: ArrayBuffer,
+    animated: readonly AnimatedDraw[],
+  ) {
     this.draws = draws;
     this.drawBindGroup = drawBindGroup;
-    this.#uniforms = uniforms;
+    this.uniforms = uniforms;
+    this.uniformData = uniformData;
+    this.animated = animated;
   }
 
   destroy(): void {
-    this.#uniforms.destroy();
+    this.uniforms.destroy();
   }
+}
+
+/** Effect shader controlled variables (EffectShaderControlledVariable). */
+const EffectVariable = {
+  emissiveMultiple: 0,
+  falloffStartAngle: 1,
+  alphaTransparency: 5,
+  uOffset: 6,
+  uScale: 7,
+  vOffset: 8,
+  vScale: 9,
+} as const;
+/** Lighting shader controlled floats (LightingShaderControlledFloat). */
+const LightingVariable = {
+  environmentMapScale: 8,
+  glossiness: 9,
+  specularStrength: 10,
+  emissiveMultiple: 11,
+  alpha: 12,
+  uOffset: 20,
+  uScale: 21,
+  vOffset: 22,
+  vScale: 23,
+} as const;
+
+/** Writes an animation frame's values over a part's material uniforms. */
+function writeAnimatedMaterial(floats: Float32Array, part: ModelPart, frame: AnimationFrame): void {
+  const material = part.material;
+  const values = frame.shaderFloats.get(part.shader);
+  const colors = frame.shaderColors.get(part.shader);
+  const alphaTest = frame.alphaTest.get(part.alphaProperty);
+  if (alphaTest !== undefined) floats[30] = alphaTest / 255;
+  if (!material || material.kind === 'water' || (!values && !colors)) return;
+  const uv = (u: number, uScale: number, v: number, vScale: number): void => {
+    const set = (variable: number, index: number): void => {
+      const value = values?.get(variable);
+      if (value !== undefined) floats[index] = value;
+    };
+    set(u, 16);
+    set(v, 17);
+    set(uScale, 18);
+    set(vScale, 19);
+  };
+  if (material.kind === 'effect') {
+    uv(
+      EffectVariable.uOffset,
+      EffectVariable.uScale,
+      EffectVariable.vOffset,
+      EffectVariable.vScale,
+    );
+    const color = colors?.get(0) ?? material.baseColor;
+    const scale = values?.get(EffectVariable.emissiveMultiple) ?? material.baseColorScale;
+    floats.set([color[0] * scale, color[1] * scale, color[2] * scale], 20);
+    const alpha = values?.get(EffectVariable.alphaTransparency);
+    if (alpha !== undefined) floats[23] = alpha;
+    for (let i = 0; i < 4; i++) {
+      const value = values?.get(EffectVariable.falloffStartAngle + i);
+      if (value !== undefined) floats[32 + i] = value;
+    }
+    return;
+  }
+  uv(
+    LightingVariable.uOffset,
+    LightingVariable.uScale,
+    LightingVariable.vOffset,
+    LightingVariable.vScale,
+  );
+  const emissive = colors?.get(1) ?? material.emissiveColor;
+  const multiple = values?.get(LightingVariable.emissiveMultiple) ?? material.emissiveMultiple;
+  floats.set([emissive[0] * multiple, emissive[1] * multiple, emissive[2] * multiple], 20);
+  const specular = colors?.get(0);
+  if (specular) floats.set(specular, 24);
+  const set = (variable: number, index: number): void => {
+    const value = values?.get(variable);
+    if (value !== undefined) floats[index] = value;
+  };
+  set(LightingVariable.specularStrength, 27);
+  set(LightingVariable.glossiness, 28);
+  set(LightingVariable.alpha, 29);
+  set(LightingVariable.environmentMapScale, 31);
 }
 
 function blendState(alpha: AlphaState | undefined): GPUBlendState | undefined {
@@ -584,7 +689,13 @@ export class SceneRenderer {
         };
       }),
     );
-    return new GpuModel({ center: data.center, radius: data.radius, parts, buffers });
+    return new GpuModel({
+      center: data.center,
+      radius: data.radius,
+      parts,
+      buffers,
+      animation: data.animation,
+    });
   }
 
   /** Places model instances; writes one uniform slot per (instance, part). */
@@ -592,10 +703,15 @@ export class SceneRenderer {
     const drawCount = instances.reduce((sum, instance) => sum + instance.model.parts.length, 0);
     const uniforms = new ArrayBuffer(Math.max(1, drawCount) * DRAW_STRIDE);
     const draws: Draw[] = [];
+    const animated: AnimatedDraw[] = [];
     const world = new Float32Array(16);
     for (const instance of instances) {
+      const animation = instance.model.animation;
       for (const part of instance.model.parts) {
         const offset = draws.length * DRAW_STRIDE;
+        if (animation || part.part.billboard) {
+          animated.push({ offset, instanceWorld: instance.world, part: part.part, animation });
+        }
         const floats = new Float32Array(uniforms, offset, DRAW_SIZE / 4);
         const uints = new Uint32Array(uniforms, offset, DRAW_SIZE / 4);
         multiply(instance.world, part.part.world, world);
@@ -613,7 +729,7 @@ export class SceneRenderer {
     const buffer = createBuffer(
       this.#device,
       new Uint8Array(uniforms),
-      GPUBufferUsage.UNIFORM,
+      GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       'draw-uniforms',
     );
     const bindGroup = this.#device.createBindGroup({
@@ -621,7 +737,7 @@ export class SceneRenderer {
       layout: this.#drawLayout,
       entries: [{ binding: 0, resource: { buffer, size: DRAW_SIZE } }],
     });
-    return new GpuScene(draws, bindGroup, buffer);
+    return new GpuScene(draws, bindGroup, buffer, uniforms, animated);
   }
 
   updateFrame(
@@ -692,6 +808,51 @@ export class SceneRenderer {
 
   get frameBindGroup(): GPUBindGroup {
     return this.#frameBindGroup;
+  }
+
+  /**
+   * Plays the models' controllers: rewrites the uniforms of animated draws for this moment
+   * (each model's animation is evaluated once per call).
+   */
+  animate(scenes: Iterable<GpuScene>, seconds: number, camera: Vec3): void {
+    const frames = new Map<ModelAnimation, AnimationFrame>();
+    const world = new Float32Array(16);
+    for (const scene of scenes) {
+      for (const draw of scene.animated) {
+        let frame: AnimationFrame | undefined;
+        if (draw.animation) {
+          frame = frames.get(draw.animation);
+          if (!frame) {
+            frame = animate(draw.animation, seconds);
+            frames.set(draw.animation, frame);
+          }
+        }
+        const floats = new Float32Array(scene.uniformData, draw.offset, DRAW_SIZE / 4);
+        const billboard = draw.part.billboard;
+        if (frame?.hidden.has(draw.part.block)) {
+          floats.fill(0, 0, 16);
+        } else if (billboard) {
+          const node = multiply(draw.instanceWorld, billboard.node);
+          multiply(billboardWorld(node, billboard.mode, camera), billboard.local, world);
+          floats.set(world, 0);
+        } else {
+          multiply(
+            draw.instanceWorld,
+            frame?.worlds.get(draw.part.block) ?? draw.part.world,
+            world,
+          );
+          floats.set(world, 0);
+        }
+        if (frame) writeAnimatedMaterial(floats, draw.part, frame);
+        this.#device.queue.writeBuffer(
+          scene.uniforms,
+          draw.offset,
+          scene.uniformData,
+          draw.offset,
+          DRAW_SIZE,
+        );
+      }
+    }
   }
 
   /** Draws the opaque parts of scenes. */

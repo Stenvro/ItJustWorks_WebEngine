@@ -54,7 +54,7 @@ export const VertexAttribute = {
 
 // --- Primitives -------------------------------------------------------------
 
-function readStringRef(reader: BinaryReader, context: BlockContext): string {
+export function readStringRef(reader: BinaryReader, context: BlockContext): string {
   const start = reader.offset;
   const index = reader.i32();
   if (index < 0) return '';
@@ -63,7 +63,7 @@ function readStringRef(reader: BinaryReader, context: BlockContext): string {
   return value;
 }
 
-function readCount(reader: BinaryReader, elementSize: number): number {
+export function readCount(reader: BinaryReader, elementSize: number): number {
   const start = reader.offset;
   const count = reader.u32();
   if (count * elementSize > reader.remaining) {
@@ -72,15 +72,15 @@ function readCount(reader: BinaryReader, elementSize: number): number {
   return count;
 }
 
-function readRefs(reader: BinaryReader): Ref[] {
+export function readRefs(reader: BinaryReader): Ref[] {
   return Array.from({ length: readCount(reader, 4) }, () => reader.i32());
 }
 
-function readVec3(reader: BinaryReader): Vec3 {
+export function readVec3(reader: BinaryReader): Vec3 {
   return [reader.f32(), reader.f32(), reader.f32()];
 }
 
-function readVec2(reader: BinaryReader): [number, number] {
+export function readVec2(reader: BinaryReader): [number, number] {
   return [reader.f32(), reader.f32()];
 }
 
@@ -93,13 +93,13 @@ function readUint16s(reader: BinaryReader, count: number): Uint16Array {
   return new Uint16Array(reader.bytes(count * 2).slice().buffer);
 }
 
-function readBool(reader: BinaryReader): boolean {
+export function readBool(reader: BinaryReader): boolean {
   return reader.u8() !== 0;
 }
 
 // --- Base classes -----------------------------------------------------------
 
-function readObjectNet(reader: BinaryReader, context: BlockContext): NiObjectNet {
+export function readObjectNet(reader: BinaryReader, context: BlockContext): NiObjectNet {
   return {
     name: readStringRef(reader, context),
     extraData: readRefs(reader),

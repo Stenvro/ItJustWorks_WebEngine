@@ -95,3 +95,50 @@ match groups.
   866 vanilla meshes have a rotated root and 96 a translated one (e.g. Raven Rock's
   `redoranhutintcap01.nif` is turned 90°; applying it leaves gaps between the hut pieces).
 - Base objects with record flag `0x800000` (is marker) are never drawn (see esm.md).
+
+## Animation
+
+Objects animate through controllers (`src/formats/nif/animation-blocks.ts`,
+`src/render/animation.ts`). Every vanilla mesh parses (`node tools/nif-stats.ts --parse`).
+
+- **NiTimeController** (base of all controllers): next controller ref, flags u16 (bits 1-2
+  cycle type: 0 loop, 1 reverse, 2 clamp; `0x8` active; `0x20` manager controlled), frequency,
+  phase, start time, stop time (f32), target ptr. Controller time = time × frequency + phase,
+  wrapped into start..stop by the cycle type.
+- Single-interpolator controllers add an interpolator ref (NiTransformController,
+  NiVisController, NiAlphaController, BSNiAlphaPropertyTestRefController, ...). The shader
+  controllers (BSEffect/BSLightingShaderPropertyFloat/ColorController) add the controlled
+  variable u32: effect floats 0 emissive multiple, 1–4 falloff start/stop angle and opacity, 5
+  alpha, 6 U offset, 7 U scale, 8 V offset, 9 V scale; lighting floats 0 refraction strength, 8
+  environment map scale, 9 glossiness, 10 specular strength, 11 emissive multiple, 12 alpha,
+  20–23 U/V offset/scale; colours: effect 0 emissive, lighting 0 specular, 1 emissive.
+  NiMultiTargetTransformController has no interpolator: u16 count + target ptrs.
+  NiPSys*Ctlr add a modifier name; NiPSysEmitterCtlr also a visibility interpolator.
+- **NiControllerManager:** cumulative u8, sequences (ref list), object palette ref.
+  **NiControllerSequence:** name, controlled blocks (u32 count, u32 array grow by; each:
+  interpolator ref, controller ref, priority u8, node name / property type / controller type /
+  controller id / interpolator id strings), weight, text keys ref, cycle type u32, frequency,
+  start, stop, manager ptr, accum root name, u16 + anim note refs.
+- **Interpolators:** float (value + NiFloatData), transform (translation, rotation quaternion
+  w x y z, scale + NiTransformData; components of ±FLT_MAX are unset), point3 (+ NiPosData),
+  bool / bool timeline (u8 + NiBoolData), blend interpolators (flags u8, array size u8, weight
+  threshold; unless manager controlled the blend items; then the value for float/bool/point3).
+- **Keys** (KeyGroup): u32 count, u32 key type if count > 0 (1 linear, 2 quadratic with forward
+  and backward tangents, 3 TBC with tension/bias/continuity, 4 XYZ rotation, 5 constant), then
+  time + value per key. NiTransformData: rotation keys (quaternions; type 4: three float key
+  groups for X, Y and Z instead), translations, scales.
+
+**What plays:** active controllers that no manager drives, and of a model's
+NiControllerManager the first of the sequences Idle, AutoLoop, SpecialIdle, Waiting, mLoop,
+mIdle, AnimIdle, AnimIdle01, Loop (most other sequences are played by scripts or activation:
+doors' Open/Close, word walls, magic). Around Whiterun 173 draws animate: waterfall foam
+scrolling, embers pulsing, signs and props. Skinned meshes whose bones animate (banners)
+need skinning on the GPU: TODO(M7).
+
+**NiBillboardNode** (billboard mode u16): the subtree turns its Z axis towards the camera; modes
+1, 5 and 9 turn only about the node's Y axis (ALWAYS_FACE_CAMERA 0, ROTATE_ABOUT_UP 1,
+RIGID_FACE_CAMERA 2, ALWAYS_FACE_CENTER 3, RIGID_FACE_CENTER 4, BSROTATE_ABOUT_UP 5).
+
+**Lights** (LIGH DATA after the near clip): period, intensity amplitude, movement amplitude
+(f32). Flags `0x8` flicker and `0x40` flicker slow vary brightness and position by smooth
+noise; `0x80` pulse and `0x100` pulse slow by a sine (the engine's exact curve: TODO(M13)).
