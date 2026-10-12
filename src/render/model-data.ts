@@ -149,6 +149,11 @@ export interface ModelData {
   readonly skipped: readonly string[];
   /** BSXFlags editor marker: only shown in the Creation Kit, never in game. */
   readonly editorMarker: boolean;
+  /**
+   * The root is a BSLeafAnimNode (or a BSTreeNode): parts with SLSF2 Tree_Anim flutter in
+   * the wind (with the TREE record's leaf amplitude and frequency).
+   */
+  readonly leafAnimation?: boolean;
   /** Controllers that play on their own (UV scrolling, turning parts, idle sequence). */
   readonly animation?: ModelAnimation;
   /** Particle systems (fire, smoke, dust, ...). */
@@ -647,6 +652,10 @@ export function buildModel(file: NifFile): ModelData {
     radius,
     skipped,
     editorMarker: isEditorMarker(file),
+    leafAnimation: file.roots.some((root) => {
+      const type = file.blockTypes[root];
+      return type === 'BSLeafAnimNode' || type === 'BSTreeNode';
+    }),
     ...(animation && { animation }),
     particles,
     addons,

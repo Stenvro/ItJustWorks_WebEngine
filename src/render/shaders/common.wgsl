@@ -77,13 +77,38 @@ fn projectedCoordinates(worldPos: vec3f) -> vec2f {
   return vec2f(dot(worldPos, across), dot(worldPos, cross(up, across)));
 }
 
+// Leaf flutter (SLSF2 Tree_Anim, the engine's GetTreeShiftVector): vertices move along their
+// normal by a pair of smoothed triangle waves of the leaf frequency, the wind and time, offset
+// by the vertex position, times the leaf amplitude and the vertex alpha. The amplitude fades
+// out between fLeafAnimDampenDistStart and -End (3600 and 4600 units from the camera).
+const DRAW_TREE_ANIM = 0x400000u;
+const LEAF_DAMPEN_START = 3600.0;
+const LEAF_DAMPEN_END = 4600.0;
+
+fn leafShift(position: vec3f, alpha: f32) -> f32 {
+  // draw.projected: leaf amplitude, leaf frequency, 1 while the leaf node's timer runs.
+  let amplitude = draw.projected.x;
+  let distance = length(frame.cameraPos.xyz - draw.world[3].xyz);
+  let limit = max((1.0 - (distance - LEAF_DAMPEN_START) / (LEAF_DAMPEN_END - LEAF_DAMPEN_START)) * amplitude, 0.0);
+  let timer = frame.time.x * 6.0 * draw.projected.z;
+  let phase = draw.projected.y * frame.time.y * timer;
+  let t = vec2f(0.1, 0.25) * phase + dot(position, vec3f(1.0));
+  let triangle = abs(-1.0 + 2.0 * fract(0.5 + t));
+  let eased = triangle * triangle * (3.0 - 2.0 * triangle);
+  return (eased.x + 0.1 * eased.y) * (min(amplitude, limit) * alpha);
+}
+
 fn worldRotation() -> mat3x3f {
   return mat3x3f(draw.world[0].xyz, draw.world[1].xyz, draw.world[2].xyz);
 }
 
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
-  let world = draw.world * vec4f(in.position, 1.0);
+  var position = in.position;
+  if ((draw.flags.z & DRAW_TREE_ANIM) != 0u) {
+    position += (in.normal.xyz * 2.0 - 1.0) * leafShift(in.position, in.color.a);
+  }
+  let world = draw.world * vec4f(position, 1.0);
   let rotation = worldRotation();
   var out: VertexOut;
   out.position = frame.viewProj * world;

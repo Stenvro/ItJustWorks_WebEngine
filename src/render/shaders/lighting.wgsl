@@ -217,7 +217,8 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
 
   var base = diffuse.rgb;
   var alpha = diffuse.a * draw.params.y;
-  if ((flags1 & SLSF1_VERTEX_ALPHA) != 0u) {
+  // Tree_Anim shapes keep their leaf weights in the vertex alpha.
+  if ((flags1 & SLSF1_VERTEX_ALPHA) != 0u && (drawFlags & DRAW_TREE_ANIM) == 0u) {
     alpha *= in.color.a;
   }
   if (!alphaTestPasses(alpha)) {
@@ -260,7 +261,8 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
   // the noise texture (ProjectedUVParams: x noise falloff, z noise scale, w threshold).
   let lodHd = (drawFlags & DRAW_LOD_HD) != 0u;
   let hasVertexColors = (flags2 & SLSF2_VERTEX_COLORS) != 0u;
-  let vertexAlpha = select(select(1.0, in.color.a, hasVertexColors), 1.0, lodHd);
+  let treeAnim = (drawFlags & DRAW_TREE_ANIM) != 0u;
+  let vertexAlpha = select(select(1.0, in.color.a, hasVertexColors), 1.0, lodHd || treeAnim);
   var projectedWeight = 0.0;
   if (projected || multiPass) {
     let noise = sampleGrad(projectedNoise, noiseUv, noiseGradients, 1.0).r;

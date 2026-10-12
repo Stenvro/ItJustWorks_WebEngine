@@ -125,4 +125,26 @@ describe.skipIf(!hasGamedata())('record database on the local game data', () => 
     expect(data.lights.length).toBeGreaterThan(0);
     expect(data.objects.every((o) => o.model.startsWith('meshes\\'))).toBe(true);
   }, 30_000);
+
+  it('gives exterior trees their leaf animation and statics their directional material', async () => {
+    let trees = 0;
+    let directional = 0;
+    // Tamriel around Riverwood and Helgen: forest with snowy rocks.
+    for (let x = 2; x <= 6 && (trees === 0 || directional === 0); x++) {
+      for (let y = -14; y <= -10; y++) {
+        const cell = await db.exteriorCell(0x3c, x, y);
+        if (cell === undefined) continue;
+        const data = await loadCellData(db, cell);
+        for (const object of data.objects) {
+          if (object.baseType === 'TREE' && object.leafAnimation) {
+            trees++;
+            expect(object.leafAnimation.frequency).toBeGreaterThanOrEqual(0);
+          }
+          if (object.directional) directional++;
+        }
+      }
+    }
+    expect(trees).toBeGreaterThan(0);
+    expect(directional).toBeGreaterThan(0);
+  }, 60_000);
 });

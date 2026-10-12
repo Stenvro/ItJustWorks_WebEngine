@@ -65,6 +65,14 @@ constants of Nukem9's decompiled `BSLightingShader`:
    subsurface scattering (ISSAOComposite, ISSnowSSS).
 8. LOD landscape noise (type 18): diffuse × 0.8333 (p (0.37 − noise) + noise) + 0.37 with
    `textures\terrain\noise.dds` at 3 × UV and p from the colour's brightness.
+9. Leaf flutter (SLSF2 Tree_Anim, `leafShift` in common.wgsl, the engine's
+   GetTreeShiftVector): a vertex moves along its normal by
+   `(e(0.1 t) + 0.1 e(0.25 t)) · amplitude · vertex alpha`, e = a smoothed triangle wave of
+   `t · frequency · wind` plus the sum of the vertex's coordinates, t = 6 × seconds. Leaf
+   amplitude and frequency come from the TREE record (1 and 1 without one; without a leaf
+   animation root the timer stands still); the amplitude fades out between 3600 and 4600 units
+   from the camera (fLeafAnimDampenDistStart / End); wind = the weather's wind speed (0..1).
+   The vertex alpha is the leaf weight, not transparency.
 
 SSE's parallax shader (type 3) samples the height map but never offsets the texture
 coordinates, so parallax shapes look like the default shader, as in the original.
