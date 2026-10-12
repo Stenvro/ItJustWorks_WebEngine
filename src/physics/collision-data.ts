@@ -1,0 +1,545 @@
+// The collision of a model, from its NIF's Havok blocks: the rigid bodies (and phantoms) on
+// its nodes with their shapes, flattened into primitives, convex hulls and triangle meshes
+// in game units. Platform-independent (runs in the asset workers and in Node).
+// Notes: docs/formats/nif.md ("Collision").
+
+import { stripsToTriangles } from '../formats/nif/blocks.ts';
+import { getBlock, type NifFile } from '../formats/nif/nif.ts';
+import type {
+  CompressedMeshDataBlock,
+  HavokQuaternion,
+  HavokShapeBlock,
+  RigidBodyBlock,
+  Ref,
+} from '../formats/nif/types.ts';
+import { fromNifTransform, identity, multiply, type Mat4, type Vec3 } from '../render/math.ts';
+
+/** Game units per Havok unit (bhkWorld's scale 0.0142875 inverted). */
+export const HAVOK_SCALE = 69.99125;
+
+/** How a body moves (from hkMotionType). */
+export type CollisionMotion = 'fixed' | 'keyframed' | 'dynamic';
+
+interface ShapeBase {
+  /** Collision layer (SkyrimLayer). */
+  readonly layer: number;
+  /** SkyrimHavokMaterial id (footstep and impact sounds, MATT). */
+  readonly material: number;
+}
+
+/** A collision shape in its body's space, game units. */
+export type CollisionShape = ShapeBase &
+  (
+    | {
+        readonly type: 'mesh';
+        /** xyz per vertex. */
+        readonly vertices: Float32Array;
+        readonly indices: Uint32Array;
+      }
+    | {
+        /** Convex hull of the points, grown by `radius` (Havok's convex shell). */
+        readonly type: 'convex';
+        readonly points: Float32Array;
+        readonly radius: number;
+      }
+    | {
+        readonly type: 'box';
+        readonly halfExtents: Vec3;
+        /** Box space → body space: rotation and translation (no scale). */
+        readonly transform: Mat4;
+        readonly radius: number;
+      }
+    | { readonly type: 'sphere'; readonly center: Vec3; readonly radius: number }
+    | { readonly type: 'capsule'; readonly a: Vec3; readonly b: Vec3; readonly radius: number }
+    | {
+        readonly type: 'cylinder';
+        readonly a: Vec3;
+        readonly b: Vec3;
+        readonly radius: number;
+        /** Convex shell around the cylinder. */
+        readonly shell: number;
+      }
+  );
+
+export interface CollisionBody {
+  /** Name of the node the body is attached to. */
+  readonly node: string;
+  /** Body space → model space: rotation and translation (game units, no scale). */
+  readonly transform: Mat4;
+  readonly motion: CollisionMotion;
+  /** A phantom (bhkSimpleShapePhantom): detects overlaps, never collides. */
+  readonly phantom: boolean;
+  /** The body's collision layer (its shapes may override it per part). */
+  readonly layer: number;
+  /** Mass in kg (0 for fixed bodies). */
+  readonly mass: number;
+  /** Principal moments of inertia (kg·m², Havok units). */
+  readonly inertia: Vec3;
+  /** Centre of mass, body space, game units. */
+  readonly centerOfMass: Vec3;
+  readonly friction: number;
+  readonly restitution: number;
+  readonly linearDamping: number;
+  readonly angularDamping: number;
+  readonly gravityFactor: number;
+  /** Havok units per second. */
+  readonly maxLinearVelocity: number;
+  /** Radians per second. */
+  readonly maxAngularVelocity: number;
+  /** hkQualityType (debris, moving, critical, bullet, ...). */
+  readonly quality: number;
+  readonly shapes: readonly CollisionShape[];
+}
+
+export interface CollisionData {
+  readonly bodies: readonly CollisionBody[];
+  /** Shapes that could not be used, with the reason. */
+  readonly skipped: readonly string[];
+}
+
+/** HavokFilter flag: the body or part does not collide. */
+export const FILTER_NO_COLLISION = 0x40;
+
+/** Rotation matrix (column-major 4×4) of a Havok quaternion (x, y, z, w). */
+export function havokRotation(q: HavokQuaternion): Mat4 {
+  const [x, y, z, w] = q;
+  const length = Math.hypot(x, y, z, w) || 1;
+  const qx = x / length;
+  const qy = y / length;
+  const qz = z / length;
+  const qw = w / length;
+  const m = identity();
+  m[0] = 1 - 2 * (qy * qy + qz * qz);
+  m[1] = 2 * (qx * qy + qz * qw);
+  m[2] = 2 * (qx * qz - qy * qw);
+  m[4] = 2 * (qx * qy - qz * qw);
+  m[5] = 1 - 2 * (qx * qx + qz * qz);
+  m[6] = 2 * (qy * qz + qx * qw);
+  m[8] = 2 * (qx * qz + qy * qw);
+  m[9] = 2 * (qy * qz - qx * qw);
+  m[10] = 1 - 2 * (qx * qx + qy * qy);
+  return m;
+}
+
+/** A Havok 4×4 (column-major) with its translation in game units. */
+function havokMatrix(m: Float32Array): Mat4 {
+  const out = new Float32Array(16);
+  out.set(m.subarray(0, 16));
+  out[3] = 0;
+  out[7] = 0;
+  out[11] = 0;
+  out[12] = (m[12] ?? 0) * HAVOK_SCALE;
+  out[13] = (m[13] ?? 0) * HAVOK_SCALE;
+  out[14] = (m[14] ?? 0) * HAVOK_SCALE;
+  out[15] = 1;
+  return out;
+}
+
+function apply(m: Mat4, x: number, y: number, z: number): [number, number, number] {
+  return [
+    (m[0] ?? 0) * x + (m[4] ?? 0) * y + (m[8] ?? 0) * z + (m[12] ?? 0),
+    (m[1] ?? 0) * x + (m[5] ?? 0) * y + (m[9] ?? 0) * z + (m[13] ?? 0),
+    (m[2] ?? 0) * x + (m[6] ?? 0) * y + (m[10] ?? 0) * z + (m[14] ?? 0),
+  ];
+}
+
+/** Uniform scale of a matrix (length of its first column). */
+function scaleOf(m: Mat4): number {
+  return Math.hypot(m[0] ?? 0, m[1] ?? 0, m[2] ?? 0);
+}
+
+/** The matrix without its scale (rotation and translation). */
+export function rigidPart(m: Mat4): Mat4 {
+  const out = new Float32Array(m);
+  for (let column = 0; column < 3; column++) {
+    const length =
+      Math.hypot(m[column * 4] ?? 0, m[column * 4 + 1] ?? 0, m[column * 4 + 2] ?? 0) || 1;
+    for (let row = 0; row < 3; row++) out[column * 4 + row] = (m[column * 4 + row] ?? 0) / length;
+  }
+  return out;
+}
+
+function transformPoints(m: Mat4, points: Float32Array, scale = 1): Float32Array {
+  const out = new Float32Array(points.length);
+  for (let i = 0; i + 2 < points.length; i += 3) {
+    out.set(
+      apply(
+        m,
+        (points[i] ?? 0) * scale,
+        (points[i + 1] ?? 0) * scale,
+        (points[i + 2] ?? 0) * scale,
+      ),
+      i,
+    );
+  }
+  return out;
+}
+
+/** Triangles of the strips at the start of `indices`, then the triangle list after them. */
+function unrollStrips(
+  indices: Uint16Array,
+  strips: Uint16Array,
+  out: number[],
+  base: number,
+): void {
+  const lists: Uint16Array[] = [];
+  let offset = 0;
+  for (const length of strips) {
+    lists.push(indices.subarray(offset, offset + length));
+    offset += length;
+  }
+  for (const index of stripsToTriangles(lists)) out.push(base + index);
+  for (let i = offset; i + 2 < indices.length; i += 3) {
+    out.push(base + (indices[i] ?? 0), base + (indices[i + 1] ?? 0), base + (indices[i + 2] ?? 0));
+  }
+}
+
+/**
+ * The triangles of a compressed mesh, grouped by collision layer and material, in Havok
+ * units: chunk vertices are quantized offsets (× error) from the chunk's translation, then
+ * placed by the chunk's transform; big triangles index the big vertices directly.
+ */
+export function compressedMeshTriangles(
+  data: CompressedMeshDataBlock,
+): Map<string, { layer: number; material: number; vertices: number[]; indices: number[] }> {
+  const groups = new Map<
+    string,
+    { layer: number; material: number; vertices: number[]; indices: number[] }
+  >();
+  const group = (
+    layer: number,
+    material: number,
+  ): { layer: number; material: number; vertices: number[]; indices: number[] } => {
+    const key = `${String(layer)}:${String(material)}`;
+    let found = groups.get(key);
+    if (!found) {
+      found = { layer, material, vertices: [], indices: [] };
+      groups.set(key, found);
+    }
+    return found;
+  };
+  data.chunks.forEach((chunk) => {
+    // A chunk may share another chunk's geometry (instancing), placed by its own transform.
+    const source =
+      chunk.reference !== 0xffff && chunk.indices.length === 0
+        ? (data.chunks[chunk.reference] ?? chunk)
+        : chunk;
+    const meshMaterial = data.materials[chunk.material];
+    const target = group(meshMaterial?.filter.layer ?? 0, meshMaterial?.material ?? 0);
+    const transform = data.transforms[chunk.transform];
+    const rotation = transform ? havokRotation(transform.rotation) : identity();
+    const [tx, ty, tz] = transform?.translation ?? [0, 0, 0];
+    const [ox, oy, oz] = source.translation;
+    const base = target.vertices.length / 3;
+    for (let i = 0; i + 2 < source.vertices.length; i += 3) {
+      const [x, y, z] = apply(
+        rotation,
+        ox + (source.vertices[i] ?? 0) * data.error,
+        oy + (source.vertices[i + 1] ?? 0) * data.error,
+        oz + (source.vertices[i + 2] ?? 0) * data.error,
+      );
+      target.vertices.push(x + tx, y + ty, z + tz);
+    }
+    unrollStrips(source.indices, source.strips, target.indices, base);
+  });
+  // Big triangles (too large for a chunk) use the shared big vertex list.
+  const bigBases = new Map<string, number>();
+  for (let t = 0; t * 3 + 2 < data.bigTriangles.length; t++) {
+    const meshMaterial = data.materials[data.bigTriangleMaterials[t] ?? 0];
+    const layer = meshMaterial?.filter.layer ?? 0;
+    const material = meshMaterial?.material ?? 0;
+    const target = group(layer, material);
+    const key = `${String(layer)}:${String(material)}`;
+    let base = bigBases.get(key);
+    if (base === undefined) {
+      base = target.vertices.length / 3;
+      for (const value of data.bigVertices) target.vertices.push(value);
+      bigBases.set(key, base);
+    }
+    target.indices.push(
+      base + (data.bigTriangles[t * 3] ?? 0),
+      base + (data.bigTriangles[t * 3 + 1] ?? 0),
+      base + (data.bigTriangles[t * 3 + 2] ?? 0),
+    );
+  }
+  return groups;
+}
+
+/** The motion of a body: fixed, keyframed (animated) or simulated. */
+function motionOf(body: RigidBodyBlock): CollisionMotion {
+  if (body.motionSystem === 7 || body.mass <= 0) return 'fixed';
+  if (body.motionSystem === 6) return 'keyframed';
+  return 'dynamic';
+}
+
+/**
+ * Principal moments of inertia: sphere inertia uses the largest moment on every axis (as
+ * hkpSphereMotion does); otherwise the diagonal of the tensor.
+ */
+function inertiaOf(body: RigidBodyBlock): Vec3 {
+  const diagonal: Vec3 = [body.inertia[0] ?? 0, body.inertia[4] ?? 0, body.inertia[8] ?? 0];
+  if (body.motionSystem === 2 || body.motionSystem === 3) {
+    const largest = Math.max(...diagonal);
+    return [largest, largest, largest];
+  }
+  return diagonal;
+}
+
+/** Reads the collision of a model. The root node's own transform is replaced by placement. */
+export function buildCollision(file: NifFile): CollisionData {
+  const bodies: CollisionBody[] = [];
+  const skipped: string[] = [];
+  // Bones of skinned geometry.
+  const bones = new Set<Ref>();
+  // Nodes that the model's sequences move (a door's leaf): their bodies follow (keyframed).
+  const animated = new Set<string>();
+  for (const block of file.blocks) {
+    if (block.kind === 'skin-instance') for (const bone of block.bones) bones.add(bone);
+    if (block.kind === 'controller-sequence') {
+      for (const controlled of block.blocks)
+        if (controlled.nodeName) animated.add(controlled.nodeName);
+    }
+  }
+
+  /** Adds the shape at `ref` (Havok units), placed by `toBody` (game units, may scale). */
+  const addShape = (
+    ref: Ref,
+    toBody: Mat4,
+    layer: number,
+    material: number,
+    shapes: CollisionShape[],
+    depth: number,
+  ): void => {
+    if (depth > 32) return;
+    const block = file.blocks[ref];
+    if (block?.kind !== 'havok-shape') {
+      if (block) skipped.push(`${file.blockTypes[ref] ?? '?'}: not a collision shape`);
+      return;
+    }
+    const shape: HavokShapeBlock = block;
+    const scale = scaleOf(toBody) * HAVOK_SCALE;
+    const point = (p: Vec3): Vec3 =>
+      apply(toBody, p[0] * HAVOK_SCALE, p[1] * HAVOK_SCALE, p[2] * HAVOK_SCALE);
+    switch (shape.shape) {
+      case 'mopp':
+        addShape(shape.child, toBody, layer, material, shapes, depth + 1);
+        return;
+      case 'transform':
+        addShape(
+          shape.child,
+          multiply(toBody, havokMatrix(shape.matrix)),
+          layer,
+          shape.material || material,
+          shapes,
+          depth + 1,
+        );
+        return;
+      case 'list':
+        shape.children.forEach((child, i) => {
+          // The filters are zero (no override) in the vanilla files.
+          const filter = shape.filters[i];
+          const childLayer = filter && filter.layer !== 0 ? filter.layer : layer;
+          addShape(child, toBody, childLayer, shape.material || material, shapes, depth + 1);
+        });
+        return;
+      case 'sphere':
+        shapes.push({
+          type: 'sphere',
+          layer,
+          material: shape.material,
+          center: point([0, 0, 0]),
+          radius: shape.radius * scale,
+        });
+        return;
+      case 'box': {
+        const unscaled = scaleOf(toBody);
+        shapes.push({
+          type: 'box',
+          layer,
+          material: shape.material,
+          halfExtents: [
+            shape.halfExtents[0] * scale,
+            shape.halfExtents[1] * scale,
+            shape.halfExtents[2] * scale,
+          ],
+          transform: rigidPart(toBody),
+          radius: shape.radius * unscaled * HAVOK_SCALE,
+        });
+        return;
+      }
+      case 'capsule':
+        shapes.push({
+          type: 'capsule',
+          layer,
+          material: shape.material,
+          a: point(shape.first),
+          b: point(shape.second),
+          radius: shape.radius * scale,
+        });
+        return;
+      case 'cylinder':
+        shapes.push({
+          type: 'cylinder',
+          layer,
+          material: shape.material,
+          a: point(shape.first),
+          b: point(shape.second),
+          radius: shape.cylinderRadius * scale,
+          shell: shape.radius * scale,
+        });
+        return;
+      case 'convex-vertices':
+        shapes.push({
+          type: 'convex',
+          layer,
+          material: shape.material,
+          points: transformPoints(toBody, shape.vertices, HAVOK_SCALE),
+          radius: shape.radius * scale,
+        });
+        return;
+      case 'compressed-mesh': {
+        const data = getBlock(file, shape.data, 'compressed-mesh-data');
+        if (!data) {
+          skipped.push('bhkCompressedMeshShape without data');
+          return;
+        }
+        for (const piece of compressedMeshTriangles(data).values()) {
+          if (piece.indices.length === 0) continue;
+          shapes.push({
+            type: 'mesh',
+            layer: piece.layer || layer,
+            material: piece.material,
+            vertices: transformPoints(toBody, Float32Array.from(piece.vertices), HAVOK_SCALE),
+            indices: Uint32Array.from(piece.indices),
+          });
+        }
+        return;
+      }
+      case 'tri-strips': {
+        // NiTriStripsData positions are in game units already, scaled by the shape's scale.
+        shape.data.forEach((dataRef, i) => {
+          const data = getBlock(file, dataRef, 'ni-tri-shape-data');
+          if (!data || data.triangles.length === 0) return;
+          const filter = shape.filters[i];
+          shapes.push({
+            type: 'mesh',
+            layer: filter && filter.layer !== 0 ? filter.layer : layer,
+            material: shape.material,
+            vertices: transformPoints(toBody, data.vertices),
+            indices: Uint32Array.from(data.triangles),
+          });
+        });
+        return;
+      }
+      case 'plane': {
+        // A bounded plane: a thin box over its AABB.
+        const [cx, cy, cz] = shape.center;
+        const [hx, hy, hz] = shape.halfExtents;
+        const place = multiply(
+          toBody,
+          fromNifTransform(
+            [cx * HAVOK_SCALE, cy * HAVOK_SCALE, cz * HAVOK_SCALE],
+            [1, 0, 0, 0, 1, 0, 0, 0, 1],
+            1,
+          ),
+        );
+        shapes.push({
+          type: 'box',
+          layer,
+          material: shape.material,
+          halfExtents: [
+            Math.max(hx, 0.01) * scale,
+            Math.max(hy, 0.01) * scale,
+            Math.max(hz, 0.01) * scale,
+          ],
+          transform: rigidPart(place),
+          radius: 0,
+        });
+        return;
+      }
+    }
+  };
+
+  const addBody = (ref: Ref, node: string, nodeWorld: Mat4, bone: boolean): void => {
+    const object = getBlock(file, ref, 'collision-object');
+    if (!object) return;
+    const rigid = getBlock(file, object.body, 'rigid-body');
+    const phantom = getBlock(file, object.body, 'phantom');
+    const filter = rigid?.filter ?? phantom?.filter;
+    const shapeRef = rigid?.shape ?? phantom?.shape;
+    if (!filter || shapeRef === undefined) {
+      skipped.push(`${node}: ${file.blockTypes[object.body] ?? 'body'} not supported`);
+      return;
+    }
+    if ((filter.flags & FILTER_NO_COLLISION) !== 0) return;
+    const own = rigid ? motionOf(rigid) : 'fixed';
+    const motion = own === 'fixed' && animated.has(node) ? 'keyframed' : own;
+    // Simulated bodies on the bones of skinned geometry form a ragdoll that moves the skin
+    // (armour on the ground keeps its wearer's bones): TODO(M7) with skinning and ragdolls.
+    // Fixed ones stay (tree trunks are skinned to the bone that carries their collision).
+    if (bone && motion === 'dynamic') {
+      skipped.push(`${node}: ragdoll bone (TODO(M7))`);
+      return;
+    }
+    // bhkRigidBodyT places the body relative to its node; plain bodies sit on the node.
+    let local = identity();
+    if (rigid?.transformed) {
+      local = havokRotation(rigid.rotation);
+      local[12] = rigid.translation[0] * HAVOK_SCALE;
+      local[13] = rigid.translation[1] * HAVOK_SCALE;
+      local[14] = rigid.translation[2] * HAVOK_SCALE;
+    } else if (phantom) {
+      local = havokMatrix(phantom.matrix);
+    }
+    const placed = multiply(nodeWorld, local);
+    const transform = rigidPart(placed);
+    // Shapes go into body space with the node's scale baked in.
+    const scale = scaleOf(placed);
+    const toBody = identity();
+    toBody[0] = toBody[5] = toBody[10] = scale;
+    const shapes: CollisionShape[] = [];
+    addShape(shapeRef, toBody, filter.layer, 0, shapes, 0);
+    if (shapes.length === 0) return;
+    const center = rigid?.center ?? [0, 0, 0];
+    bodies.push({
+      node,
+      transform,
+      motion,
+      phantom: !rigid,
+      layer: filter.layer,
+      mass: rigid && motion === 'dynamic' ? rigid.mass : 0,
+      inertia: rigid ? inertiaOf(rigid) : [0, 0, 0],
+      centerOfMass: [
+        center[0] * HAVOK_SCALE * scale,
+        center[1] * HAVOK_SCALE * scale,
+        center[2] * HAVOK_SCALE * scale,
+      ],
+      friction: rigid?.friction ?? 0.5,
+      restitution: rigid?.restitution ?? 0.4,
+      linearDamping: rigid?.linearDamping ?? 0,
+      angularDamping: rigid?.angularDamping ?? 0,
+      gravityFactor: rigid?.gravityFactor ?? 1,
+      maxLinearVelocity: rigid?.maxLinearVelocity ?? 104.4,
+      maxAngularVelocity: rigid?.maxAngularVelocity ?? 31.57,
+      quality: rigid?.qualityType ?? 1,
+      shapes,
+    });
+  };
+
+  const visit = (ref: Ref, parentWorld: Mat4, depth: number): void => {
+    if (depth > 64) return;
+    const block = file.blocks[ref];
+    if (!block || !('transform' in block)) return;
+    const { translation, rotation, scale } = block.transform;
+    const world =
+      depth === 0
+        ? parentWorld
+        : multiply(parentWorld, fromNifTransform(translation, rotation, scale));
+    if (block.collision >= 0) {
+      addBody(block.collision, block.name, world, bones.has(ref));
+    }
+    if (block.kind === 'node') for (const child of block.children) visit(child, world, depth + 1);
+  };
+  for (const root of file.roots) visit(root, identity(), 0);
+  return { bodies, skipped };
+}

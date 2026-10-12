@@ -3,7 +3,14 @@
 // vertex layout and material state, per-draw uniforms in one buffer (dynamic offsets),
 // opaque first, then blended parts sorted back to front.
 
-import { animate, type AnimationFrame, type ModelAnimation } from './animation.ts';
+import {
+  animate,
+  type AnimationFrame,
+  type ModelAnimation,
+  playSequence,
+  type ModelSequences,
+  type Playback,
+} from './animation.ts';
 import { billboardWorld } from './billboard.ts';
 import { frustumPlanes, invert, sphereVisible, type Plane } from './frustum.ts';
 import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
@@ -334,6 +341,8 @@ export class GpuModel {
   readonly parts: readonly GpuPart[];
   /** Controllers that play on their own (evaluated every frame). */
   readonly animation: ModelAnimation | undefined;
+  /** Sequences the game plays on demand (doors). */
+  readonly sequences: ModelSequences | undefined;
   readonly particles: readonly GpuParticleSystem[];
   /**
    * Models the engine attaches at AddOnNodes (ADDN: candle flames, torch fire, smoke),
@@ -357,6 +366,7 @@ export class GpuModel {
     parts: readonly GpuPart[];
     buffers: readonly GPUBuffer[];
     animation: ModelAnimation | undefined;
+    sequences?: ModelSequences | undefined;
     particles: readonly GpuParticleSystem[];
     textures: { readonly cache: TextureCache; readonly paths: readonly string[] };
     leafAnimation: boolean;
@@ -367,6 +377,7 @@ export class GpuModel {
     this.parts = init.parts;
     this.#buffers = init.buffers;
     this.animation = init.animation;
+    this.sequences = init.sequences;
     this.particles = init.particles;
     this.#textures = init.textures;
     this.bytes = init.buffers.reduce((sum, buffer) => sum + buffer.size, 0);
@@ -395,9 +406,21 @@ export class GpuModel {
   }
 }
 
+/**
+ * An instance that moves (a simulated object): its owner rewrites the instance's world matrix
+ * in place and bumps `version`; the scene then updates the instance's draws.
+ */
+export interface InstanceMotion {
+  version: number;
+}
+
 export interface ModelInstance {
   readonly model: GpuModel;
   readonly world: Mat4;
+  /** The instance moves (its world matrix changes, see InstanceMotion). */
+  readonly motion?: InstanceMotion;
+  /** The sequence the instance plays (a door opening); its model's sequences. */
+  readonly playback?: Playback;
   /** Water type of the model's water surfaces (the activator's WNAM); default otherwise. */
   readonly water?: GpuWaterType;
   /** A static's directional material (STAT DNAM). */
@@ -469,7 +492,8 @@ export interface LodSnow {
 interface Draw {
   readonly part: GpuPart;
   readonly uniformOffset: number;
-  readonly center: readonly [number, number, number];
+  /** World bounding sphere centre (follows a moving instance). */
+  center: readonly [number, number, number];
   /** Bounding sphere radius in world units (culling). */
   readonly radius: number;
   readonly water: GpuWaterType | undefined;
@@ -485,6 +509,28 @@ interface AnimatedDraw {
   readonly instanceWorld: Mat4;
   readonly part: ModelPart;
   readonly animation: ModelAnimation | undefined;
+  /** The instance's own sequence playback (doors), over the model's sequences. */
+  readonly playback?: { readonly state: Playback; readonly sequences: ModelSequences };
+}
+
+/** A draw of a moving instance: rewritten when the instance's motion version changes. */
+interface MovingDraw {
+  readonly draw: Draw;
+  readonly instanceWorld: Mat4;
+  readonly part: ModelPart;
+  /** Animated parts are rewritten every frame anyway; only their culling centre follows. */
+  readonly animated: boolean;
+  readonly motion: InstanceMotion;
+  version: number;
+}
+
+/** An add-on placed on a moving instance: its world follows the instance's. */
+interface MovingAddon {
+  readonly parent: Mat4;
+  readonly local: Mat4;
+  readonly world: Mat4;
+  readonly motion: InstanceMotion;
+  version: number;
 }
 
 /** A placed particle system: its simulation and where its particles are this frame. */
@@ -514,6 +560,9 @@ export class GpuScene {
   readonly particles: readonly ParticleDraw[];
   /** Draws whose emit follows an emittance colour (updated when the colour changes). */
   readonly emittance: readonly EmittanceDraw[];
+  /** Draws of moving instances, and add-ons placed on them. */
+  readonly moving: readonly MovingDraw[];
+  readonly movingAddons: readonly MovingAddon[];
   /** The models it draws (held while it exists). */
   readonly #models: readonly GpuModel[];
 
@@ -526,6 +575,10 @@ export class GpuScene {
     particles: readonly ParticleDraw[],
     models: readonly GpuModel[],
     emittance: readonly EmittanceDraw[] = [],
+    moving: { draws: readonly MovingDraw[]; addons: readonly MovingAddon[] } = {
+      draws: [],
+      addons: [],
+    },
   ) {
     this.draws = draws;
     this.drawBindGroup = drawBindGroup;
@@ -534,6 +587,8 @@ export class GpuScene {
     this.animated = animated;
     this.particles = particles;
     this.emittance = emittance;
+    this.moving = moving.draws;
+    this.movingAddons = moving.addons;
     this.#models = models;
     for (const model of models) model.acquire();
   }
@@ -1210,6 +1265,7 @@ export class SceneRenderer {
       parts,
       buffers,
       animation: data.animation,
+      sequences: data.sequences,
       particles,
       textures: { cache: textures, paths: [...texturePaths] },
       leafAnimation: data.leafAnimation === true,
@@ -1227,11 +1283,24 @@ export class SceneRenderer {
     const sky = options.sky === true;
     const lodSnow = options.lodSnow;
     const placed: ModelInstance[] = [];
+    const movingAddons: MovingAddon[] = [];
     const place = (instance: ModelInstance, depth: number): void => {
       placed.push(instance);
       if (depth >= 2) return;
       for (const addon of instance.model.addons) {
-        place({ model: addon.model, world: multiply(instance.world, addon.world) }, depth + 1);
+        const world = multiply(instance.world, addon.world);
+        // On a moving instance the add-on moves along.
+        const motion = instance.motion;
+        if (motion) {
+          movingAddons.push({
+            parent: instance.world,
+            local: addon.world,
+            world,
+            motion,
+            version: -1,
+          });
+        }
+        place({ model: addon.model, world, ...(motion && { motion }) }, depth + 1);
       }
     };
     for (const instance of instances) place(instance, 0);
@@ -1256,6 +1325,7 @@ export class SceneRenderer {
     const animated: AnimatedDraw[] = [];
     const particles: ParticleDraw[] = [];
     const emittance: EmittanceDraw[] = [];
+    const moving: MovingDraw[] = [];
     const world = new Float32Array(16);
     let slot = 0;
     for (const [instanceIndex, instance] of placed.entries()) {
@@ -1265,8 +1335,17 @@ export class SceneRenderer {
       for (const [partIndex, part] of instance.model.parts.entries()) {
         const offset = slot++ * DRAW_STRIDE;
         // Sky scenes follow the camera: their placement changes every frame.
-        if (animation || part.part.billboard || sky) {
-          animated.push({ offset, instanceWorld: instance.world, part: part.part, animation });
+        const sequences = instance.model.sequences;
+        const playback =
+          instance.playback && sequences ? { state: instance.playback, sequences } : undefined;
+        if (animation || part.part.billboard || sky || playback) {
+          animated.push({
+            offset,
+            instanceWorld: instance.world,
+            part: part.part,
+            animation,
+            ...(playback && { playback }),
+          });
         }
         const floats = new Float32Array(uniforms, offset, DRAW_SIZE / 4);
         const uints = new Uint32Array(uniforms, offset, DRAW_SIZE / 4);
@@ -1340,7 +1419,7 @@ export class SceneRenderer {
             uints[38] = (uints[38] ?? 0) | snow;
           }
         }
-        draws.push({
+        const draw: Draw = {
           part,
           uniformOffset: offset,
           center: transformPoint(instance.world, part.part.center),
@@ -1348,7 +1427,18 @@ export class SceneRenderer {
           water: part.pass === 'water' ? instance.water : undefined,
           sky,
           lodSegments: lodSegments(part.part, world),
-        });
+        };
+        draws.push(draw);
+        if (instance.motion) {
+          moving.push({
+            draw,
+            instanceWorld: instance.world,
+            part: part.part,
+            animated: animation !== undefined || part.part.billboard !== undefined,
+            motion: instance.motion,
+            version: instance.motion.version,
+          });
+        }
         const passPart = passes[instanceIndex]?.[partIndex];
         if (passPart && directional?.material) {
           // The material's own shader, drawn over the part along the material's projection.
@@ -1364,7 +1454,7 @@ export class SceneRenderer {
             directional.maxAngle,
             directional.snow,
           );
-          draws.push({
+          const passDraw: Draw = {
             part: passPart,
             uniformOffset: passOffset,
             center: transformPoint(instance.world, part.part.center),
@@ -1372,7 +1462,18 @@ export class SceneRenderer {
             water: undefined,
             sky,
             lodSegments: undefined,
-          });
+          };
+          draws.push(passDraw);
+          if (instance.motion) {
+            moving.push({
+              draw: passDraw,
+              instanceWorld: instance.world,
+              part: part.part,
+              animated: false,
+              motion: instance.motion,
+              version: instance.motion.version,
+            });
+          }
         }
       }
       instance.model.particles.forEach((system, index) => {
@@ -1415,7 +1516,17 @@ export class SceneRenderer {
       entries: [{ binding: 0, resource: { buffer, size: DRAW_SIZE } }],
     });
     const models = [...new Set(placed.map((instance) => instance.model))];
-    return new GpuScene(draws, bindGroup, buffer, uniforms, animated, particles, models, emittance);
+    return new GpuScene(
+      draws,
+      bindGroup,
+      buffer,
+      uniforms,
+      animated,
+      particles,
+      models,
+      emittance,
+      { draws: moving, addons: movingAddons },
+    );
   }
 
   updateFrame(
@@ -1533,9 +1644,40 @@ export class SceneRenderer {
     };
     const world = new Float32Array(16);
     const sceneList = [...scenes];
+    // Each instance's sequence is evaluated once per frame.
+    const played = new Map<Playback, AnimationFrame | undefined>();
+    const playedFrame = (playback: AnimatedDraw['playback']): AnimationFrame | undefined => {
+      if (!playback) return undefined;
+      if (!played.has(playback.state)) {
+        played.set(playback.state, playSequence(playback.sequences, playback.state, seconds));
+      }
+      return played.get(playback.state);
+    };
     for (const scene of sceneList) {
+      // Moving instances: add-ons follow, then the draws that moved get their new place.
+      for (const addon of scene.movingAddons) {
+        if (addon.version === addon.motion.version) continue;
+        addon.version = addon.motion.version;
+        multiply(addon.parent, addon.local, addon.world);
+      }
+      for (const entry of scene.moving) {
+        if (entry.version === entry.motion.version) continue;
+        entry.version = entry.motion.version;
+        entry.draw.center = transformPoint(entry.instanceWorld, entry.part.center);
+        if (entry.animated) continue;
+        const floats = new Float32Array(scene.uniformData, entry.draw.uniformOffset, 16);
+        multiply(entry.instanceWorld, entry.part.world, world);
+        floats.set(world, 0);
+        this.#device.queue.writeBuffer(
+          scene.uniforms,
+          entry.draw.uniformOffset,
+          scene.uniformData,
+          entry.draw.uniformOffset,
+          64,
+        );
+      }
       for (const draw of scene.animated) {
-        const frame = frameOf(draw.animation);
+        const frame = playedFrame(draw.playback) ?? frameOf(draw.animation);
         const floats = new Float32Array(scene.uniformData, draw.offset, DRAW_SIZE / 4);
         const billboard = draw.part.billboard;
         if (frame?.hidden.has(draw.part.block)) {

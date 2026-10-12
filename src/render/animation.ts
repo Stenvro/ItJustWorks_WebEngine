@@ -83,6 +83,35 @@ export interface ModelAnimation {
   readonly roots: readonly Ref[];
 }
 
+/** A named sequence the game plays on demand (a door's "Open" and "Close"). */
+export interface ModelSequence {
+  readonly tracks: readonly AnimationTrack[];
+  /** Seconds from start to stop. */
+  readonly duration: number;
+}
+
+/**
+ * The sequences of a model's controller manager by lower-case name, with the scene graph
+ * they move (parents, rest transforms, roots) and the objects by name.
+ */
+export interface ModelSequences {
+  readonly byName: ReadonlyMap<string, ModelSequence>;
+  readonly parents: ReadonlyMap<Ref, Ref>;
+  readonly transforms: ReadonlyMap<Ref, NifTransform>;
+  readonly roots: readonly Ref[];
+  /** Scene-graph objects by name. */
+  readonly objects: ReadonlyMap<string, Ref>;
+}
+
+/**
+ * Which sequence an instance plays, and since when (in the renderer's clock, seconds). The
+ * game sets it (a door opens); the instance holds the sequence's end once it has run.
+ */
+export interface Playback {
+  sequence: string | undefined;
+  start: number;
+}
+
 /** Everything a model's animation sets at one moment. */
 export interface AnimationFrame {
   /** World matrices (model space) of the objects that moved, or are below one that did. */
@@ -503,6 +532,94 @@ export function sequenceTiming(sequence: ControllerSequenceBlock): Timing {
   };
 }
 
+/** The scene graph of a model: each object's parent and rest transform. */
+function sceneGraph(file: NifFile): {
+  parents: Map<Ref, Ref>;
+  transforms: Map<Ref, NifTransform>;
+} {
+  const parents = new Map<Ref, Ref>();
+  const transforms = new Map<Ref, NifTransform>();
+  file.blocks.forEach((block, ref) => {
+    if (!('transform' in block)) return;
+    transforms.set(ref, block.transform);
+    if (block.kind === 'node') for (const child of block.children) parents.set(child, ref);
+  });
+  return { parents, transforms };
+}
+
+/**
+ * The named sequences of a model's controller managers (other than the idle one, which plays
+ * on its own), or undefined if it has none.
+ */
+export function buildSequences(file: NifFile): ModelSequences | undefined {
+  const byName = new Map<string, ModelSequence>();
+  for (const block of file.blocks) {
+    if (block.kind !== 'controller-manager') continue;
+    const idle = idleSequence(file, block.sequences);
+    for (const ref of block.sequences) {
+      const sequence = file.blocks[ref];
+      if (sequence?.kind !== 'controller-sequence' || sequence === idle) continue;
+      const tracks = sequenceTracks(file, sequence);
+      if (tracks.length === 0) continue;
+      byName.set(sequence.name.toLowerCase(), {
+        tracks,
+        duration: Math.max(0, (sequence.stopTime - sequence.startTime) / (sequence.frequency || 1)),
+      });
+    }
+  }
+  if (byName.size === 0) return undefined;
+  const objects = new Map<string, Ref>();
+  file.blocks.forEach((block, ref) => {
+    if ('transform' in block && 'name' in block && block.name !== '') objects.set(block.name, ref);
+  });
+  return { byName, ...sceneGraph(file), roots: file.roots, objects };
+}
+
+/** Where a sequence playback puts the model's objects at `seconds` (renderer clock). */
+export function playSequence(
+  sequences: ModelSequences,
+  playback: Playback,
+  seconds: number,
+): AnimationFrame | undefined {
+  const sequence =
+    playback.sequence === undefined ? undefined : sequences.byName.get(playback.sequence);
+  if (!sequence) return undefined;
+  return animateTracks(sequences, sequence.tracks, seconds - playback.start);
+}
+
+/**
+ * A scene-graph object's model-space matrix in a frame (moved), or at rest. Undefined for
+ * unknown objects.
+ */
+export function objectWorld(
+  graph: Pick<ModelSequences, 'parents' | 'transforms' | 'roots'>,
+  frame: AnimationFrame | undefined,
+  ref: Ref,
+): Mat4 | undefined {
+  const moved = frame?.worlds.get(ref);
+  if (moved) return moved;
+  if (!graph.transforms.has(ref)) return undefined;
+  const roots = new Set(graph.roots);
+  const chain: Ref[] = [];
+  for (let r: Ref | undefined = ref; r !== undefined; r = graph.parents.get(r)) chain.unshift(r);
+  let world = fromNifTransform([0, 0, 0], [1, 0, 0, 0, 1, 0, 0, 0, 1], 1);
+  for (const r of chain) {
+    const above = frame?.worlds.get(r);
+    if (above) {
+      world = above;
+      continue;
+    }
+    const transform = graph.transforms.get(r);
+    // As for every model, the root's own transform is not used.
+    if (!transform || (roots.has(r) && graph.parents.get(r) === undefined)) continue;
+    world = multiply(
+      world,
+      fromNifTransform(transform.translation, transform.rotation, transform.scale),
+    );
+  }
+  return world;
+}
+
 /** The animation of a model, or undefined if nothing in it moves. */
 export function buildAnimation(file: NifFile): ModelAnimation | undefined {
   const tracks: AnimationTrack[] = [];
@@ -520,14 +637,7 @@ export function buildAnimation(file: NifFile): ModelAnimation | undefined {
     if (track) tracks.push(track);
   });
   if (tracks.length === 0) return undefined;
-  const parents = new Map<Ref, Ref>();
-  const transforms = new Map<Ref, NifTransform>();
-  file.blocks.forEach((block, ref) => {
-    if (!('transform' in block)) return;
-    transforms.set(ref, block.transform);
-    if (block.kind === 'node') for (const child of block.children) parents.set(child, ref);
-  });
-  return { tracks, parents, transforms, roots: file.roots };
+  return { tracks, ...sceneGraph(file), roots: file.roots };
 }
 
 /** Quaternion (w, x, y, z) to a row-major 3×3 rotation (as NIF transforms store it). */
@@ -548,12 +658,21 @@ function quaternionRotation(q: Quaternion): number[] {
 
 /** Evaluates a model's animation at a moment (seconds since the scene started). */
 export function animate(animation: ModelAnimation, seconds: number): AnimationFrame {
+  return animateTracks(animation, animation.tracks, seconds);
+}
+
+/** Evaluates tracks over a model's scene graph at a moment. */
+function animateTracks(
+  animation: Pick<ModelAnimation, 'parents' | 'transforms' | 'roots'>,
+  tracks: readonly AnimationTrack[],
+  seconds: number,
+): AnimationFrame {
   const locals = new Map<Ref, NifTransform>();
   const hidden = new Set<Ref>();
   const shaderFloats = new Map<Ref, Map<number, number>>();
   const shaderColors = new Map<Ref, Map<number, Vec3>>();
   const alphaTest = new Map<Ref, number>();
-  for (const track of animation.tracks) {
+  for (const track of tracks) {
     const time = controllerTime(track.timing, seconds);
     switch (track.kind) {
       case 'transform': {

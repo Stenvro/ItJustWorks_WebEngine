@@ -3,6 +3,7 @@
 // lighting. Which references are enabled is decided by cell-upgrades.ts. Platform-
 // independent; models are loaded separately.
 
+import { view } from '../formats/esm/fields.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
 import { identity, multiply, type Mat4 } from '../render/math.ts';
 import {
@@ -17,7 +18,10 @@ import {
   type CellRecord,
   type PlacedReference,
   type Rgb,
+  parseTeleport,
+  type Teleport,
 } from './cell-records.ts';
+export { parseTeleport, type Teleport } from './cell-records.ts';
 import { parseTextureSet, placeDecal, type PlacedDecal, type TextureSet } from './decal.ts';
 import { parseStaticDirectional, type StaticDirectional } from './material-object.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
@@ -26,6 +30,8 @@ export interface CellObject {
   readonly reference: number;
   readonly baseType: string;
   readonly editorId: string;
+  /** The base object's name (FULL), e.g. "Door"; empty if it has none. */
+  readonly name: string;
   readonly model: string;
   readonly world: Mat4;
   /** Water activators (ACTI WNAM): the type of the model's water surfaces. */
@@ -36,6 +42,90 @@ export interface CellObject {
   readonly leafAnimation?: LeafAnimation;
   /** XEMI: the light or region whose colour drives the External_Emittance shapes. */
   readonly emittance?: number;
+  /**
+   * REFR flag "Don't Havok Settle": a simulated object stays where it was placed until
+   * something touches it, instead of settling when its cell loads.
+   */
+  readonly dontHavokSettle?: boolean;
+  /** XTEL: a load door's destination (the door it leads to and where the player arrives). */
+  readonly teleport?: Teleport;
+}
+
+/**
+ * A collision primitive (a CollisionMarker with XPRM): an invisible box or sphere on a
+ * collision layer, e.g. a wall that keeps the player out.
+ */
+export interface CellPrimitive {
+  readonly reference: number;
+  readonly shape: 'box' | 'sphere';
+  /** Box: full size along x, y, z. Sphere: radius in x. */
+  readonly bounds: readonly [number, number, number];
+  /** The reference's placement (with its scale). */
+  readonly world: Mat4;
+  /** XTRI, else the collision box layer. */
+  readonly layer: number;
+}
+
+/** REFR record flag: "Don't Havok Settle". */
+const DONT_HAVOK_SETTLE = 0x20000000;
+/** The engine's collision primitive marker (STAT). */
+const COLLISION_MARKER = 0x21;
+/** SkyrimLayer L_COLLISIONBOX: the layer of collision primitives without XTRI. */
+const COLLISION_BOX_LAYER = 35;
+
+/** Where a load door leads: the destination cell, its worldspace, and its name. */
+export interface DoorDestination {
+  readonly cell: number;
+  /** The worldspace of an exterior destination; undefined for interiors. */
+  readonly world: number | undefined;
+  /** The cell's name, else its worldspace's (exterior cells are mostly unnamed). */
+  readonly name: string;
+}
+
+export async function doorDestination(
+  db: RecordDatabase,
+  teleport: Teleport,
+): Promise<DoorDestination | undefined> {
+  const cell = db.cellOfReference(teleport.door);
+  if (cell === undefined) return undefined;
+  const world = db.worldOfCell(cell);
+  let name = (await db.get(cell))?.text('FULL') ?? '';
+  if (!name && world !== undefined) name = (await db.get(world))?.text('FULL') ?? '';
+  return { cell, world, name };
+}
+
+/**
+ * Where the player arrives in a cell through its doors: a load door in the cell leads to a
+ * door elsewhere, whose own XTEL is the arrival point in front of the first door.
+ */
+export async function cellArrival(
+  db: RecordDatabase,
+  data: CellData,
+): Promise<{ position: readonly [number, number, number]; heading: number } | undefined> {
+  for (const object of data.objects) {
+    if (!object.teleport) continue;
+    const other = await db.get(object.teleport.door);
+    const back = other && parseTeleport(other);
+    if (back) return { position: back.position, heading: back.rotation[2] };
+  }
+  return undefined;
+}
+
+/** XPRM of a collision marker: type 1 box, 2 sphere (3 portal box, 4 line are not solid). */
+function primitiveOf(record: GameRecord, world: Mat4): CellPrimitive | undefined {
+  const xprm = record.fields.first('XPRM');
+  if (!xprm || xprm.length < 32) return undefined;
+  const v = view(xprm);
+  const type = v.getUint32(28, true);
+  if (type !== 1 && type !== 2) return undefined;
+  const xtri = record.fields.first('XTRI');
+  return {
+    reference: record.formId,
+    shape: type === 1 ? 'box' : 'sphere',
+    bounds: [v.getFloat32(0, true), v.getFloat32(4, true), v.getFloat32(8, true)],
+    world,
+    layer: xtri && xtri.length >= 4 ? view(xtri).getUint32(0, true) : COLLISION_BOX_LAYER,
+  };
 }
 
 /** TREE CNAM leaf amplitude and frequency (the lighting shader's TreeParams). */
@@ -84,6 +174,8 @@ export interface CellData {
   readonly lights: readonly CellLight[];
   /** Every decal that can appear; filter with `enabledReferences`. */
   readonly decals: readonly CellDecal[];
+  /** Collision primitives; filter with `enabledReferences`. */
+  readonly primitives: readonly CellPrimitive[];
   /** The cell's references and the enable parents they follow (also outside the cell). */
   readonly references: ReadonlyMap<number, ReferenceState>;
   /** Things not shown yet, with the milestone that adds them. */
@@ -178,6 +270,7 @@ export async function loadCellData(
   const objects: CellObject[] = [];
   const lights: CellLight[] = [];
   const decals: CellDecal[] = [];
+  const primitives: CellPrimitive[] = [];
   const skipped = new Map<string, number>();
   const skip = (reason: string): void => {
     skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
@@ -246,6 +339,11 @@ export async function loadCellData(
     if (base.type === 'DOOR' && !entrance && record.fields.has('XTEL')) {
       entrance = [...ref.position];
     }
+    if (base.formId === COLLISION_MARKER) {
+      const primitive = primitiveOf(record, referenceMatrix(ref));
+      if (primitive) primitives.push(primitive);
+      continue;
+    }
     if ((base.flags & RecordFlag.isMarker) !== 0) continue;
 
     if (base.type === 'LIGH') {
@@ -290,12 +388,15 @@ export async function loadCellData(
       reference: ref.formId,
       baseType: base.type,
       editorId: base.editorId ?? '',
+      name: base.text('FULL') ?? '',
       model,
       world: referenceMatrix(ref),
       water: base.type === 'ACTI' ? nonZeroId(base.formIdField('WNAM')) : undefined,
       ...directionalOf(base),
       ...leafAnimationOf(base),
       ...emittanceOf(record),
+      ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
+      ...(base.type === 'DOOR' && { teleport: parseTeleport(record) }),
     });
   }
 
@@ -308,6 +409,7 @@ export async function loadCellData(
     objects,
     lights,
     decals,
+    primitives,
     references,
     skipped: [...skipped].map(([reason, count]) => `${count}× ${reason}`),
     entrance: entrance ?? centre,

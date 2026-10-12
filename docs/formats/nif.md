@@ -142,6 +142,11 @@ doors' Open/Close, word walls, magic). Around Whiterun 173 draws animate: waterf
 scrolling, embers pulsing, signs and props. Skinned meshes whose bones animate (banners)
 need skinning on the GPU: TODO(M7).
 
+**Sequences played on demand** (`buildSequences`): the other sequences of a controller manager
+(a door's Open and Close, a toggleable fire's partA/partB) are kept by lower-case name with
+the scene graph they move. An instance carries its own playback (sequence and start time on
+the renderer's clock); clamped sequences hold their last pose (an open door stays open).
+
 **NiBillboardNode** (billboard mode u16): the subtree turns its Z axis towards the camera; modes
 1 and 9 turn only about the node's Y axis (ALWAYS_FACE_CAMERA 0, ROTATE_ABOUT_UP 1,
 RIGID_FACE_CAMERA 2, ALWAYS_FACE_CENTER 3, RIGID_FACE_CENTER 4, BSROTATE_ABOUT_UP 5).
@@ -233,3 +238,62 @@ vertex colour (see [the rendering notes](../rendering.md#effects-and-particles))
 master particle system (`meshes\mps\*.nif`) attached at a **BSValueNode** named
 `AddOnNode<index>` (value i32 = the index, then a flags byte; 640 nodes in 242 meshes). The
 ADDN record with that index names the model (see [esm.md](esm.md#add-on-nodes)).
+
+## Collision
+
+Havok collision (`src/formats/nif/collision-blocks.ts`, flattened by
+`src/physics/collision-data.ts`): 11379 of the 22761 vanilla meshes have some, every block
+parses (`node tools/nif-stats.ts --parse`; per mesh and audit: `node tools/collision-info.ts`).
+Values are in Havok units: **1 Havok unit = 69.99125 game units** (bhkWorld's scale 0.0142875).
+
+- **bhkCollisionObject** (also bhkSPCollisionObject for phantoms, bhkBlendCollisionObject for
+  skeletons): target ptr, flags u16, body ref; blend objects add heir gain and vel gain (f32).
+  The NiAVObject's collision ref points here; the body sits on that node.
+- **bhkRigidBody / bhkRigidBodyT:** bhkWorldObject (shape ref, HavokFilter, 20 bytes of world
+  object info), bhkEntityCInfo (4 bytes), then **bhkRigidBodyCInfo2010**: 4 unused, HavokFilter,
+  8 unused, response u8, 3 bytes, translation (vec4), rotation (quaternion x y z w), linear and
+  angular velocity (vec4), inertia (3×4 floats), centre of mass (vec4), mass, linear and
+  angular damping, time factor, gravity factor, friction, rolling friction multiplier,
+  restitution, max linear and angular velocity, penetration depth (f32), motion system,
+  deactivator, solver deactivation, quality (u8), 16 bytes; then constraints (u32 + refs) and
+  body flags u16. Only bhkRigidBodyT uses its translation and rotation (the body's place
+  relative to its node); plain bodies sit on the node.
+- **HavokFilter** (4 bytes): layer u8 (SkyrimLayer, see
+  [esm.md](esm.md#collision-layers)), flags u8 (bits 0-4 biped part, `0x20` MOPP scaled, `0x40`
+  no collision, `0x80` linked group), group u16.
+- **Shapes:** bhkSphereShape (material u32, radius), bhkBoxShape (+8 bytes, half extents vec3,
+  unused f32), bhkCapsuleShape (+8, point, radius, point, radius), bhkCylinderShape (+8, two
+  vec4 points, cylinder radius, 12 bytes), bhkConvexVerticesShape (+24, vertices as vec4,
+  planes as vec4), bhkConvexTransformShape / bhkTransformShape (child, material, radius, 8,
+  4×4 column-major matrix with a Havok-unit translation), bhkListShape (children, material,
+  24 bytes, filters per child: zero in vanilla), bhkMoppBvTreeShape (child, 12, scale, MOPP
+  code: size u32, offset vec4, build type u8, bytes; not needed, the physics builds its own
+  tree), bhkNiTriStripsShape (material, radius, 20 + grow by, scale vec4, NiTriStripsData refs,
+  filters; 17 old meshes), bhkPlaneShape (1 mesh). The radius of convex shapes is a shell
+  grown around them (Havok's convex radius).
+- **bhkCompressedMeshShape** (target, user data, radius, f32, scale vec4, radius and scale
+  copies, data ref) and **bhkCompressedMeshShapeData**: bits per index and winding index and
+  their masks, error (the quantization step, 0.001), AABB, welding and material type (u8),
+  three unused material tables, materials (material id u32 + HavokFilter each), named
+  materials count, transforms (translation vec4 + quaternion x y z w), big vertices (vec4), big
+  triangles (3 × u16, material u32, welding u16), chunks, convex pieces count. A **chunk**:
+  translation vec4, material index u32, reference u16 (another chunk whose geometry it shares;
+  0xffff: none), transform index u16, vertex count ×3 (u32) + u16 xyz, indices, strip lengths,
+  welding info. A vertex is `rotate(transform, translation + u16 × error) + transform
+translation`; the indices start with the strips (alternating winding) and continue as a
+  triangle list. Each chunk's material carries its own layer: stair ramps and walls of one
+  mesh can differ.
+- **Material ids** (u32) are the CRC-32 (start 0, no final inversion) of the lower-case name of
+  a MATT record (see [esm.md](esm.md#material-types)).
+
+**Placement:** like the drawn model, the root node's own transform is replaced by the
+reference's placement. A body's shapes are scaled by its node's scale and the reference's
+(uniform) scale; its mass stays as authored. **Motion:** MO_SYS_FIXED (7) or mass 0 is fixed,
+MO_SYS_KEYFRAMED (6) keyframed, the rest simulated; bodies on nodes that the model's sequences
+move (door leaves) are keyframed and follow the playing sequence. Simulated bodies on the bones
+of skinned geometry form ragdolls (armour on the ground keeps its wearer's bones; dead animals):
+TODO(M7) with skinning and ragdolls. Constraints (hinges, ragdoll joints, chains) are not read
+yet: TODO(M7). Phantoms detect overlaps and never collide.
+
+**BSBound** (extra data): name, centre vec3, half extents vec3. A skeleton's "BBX" is the
+actor's collision bound (the human skeleton: centre 0,0,64, half extents 22,14,64).

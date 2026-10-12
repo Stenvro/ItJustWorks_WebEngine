@@ -53,13 +53,8 @@ function windVelocity(lighting: SceneLighting): Vec3 {
 }
 
 /** Anything that can view a scene: the orbit camera, the free-flying camera, ... */
-export interface Camera {
-  readonly position: Vec3;
-  /** Near plane of the projection. */
-  readonly near: number;
-  update(deltaSeconds: number): void;
-  viewProjection(aspect: number, out?: Mat4): Mat4;
-}
+export type { Camera } from './view-camera.ts';
+import type { Camera } from './view-camera.ts';
 
 /** What the renderer draws: scenes and terrain, seen by a camera, lit by a lighting source. */
 export interface SceneView {

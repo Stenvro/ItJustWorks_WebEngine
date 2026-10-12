@@ -8,6 +8,17 @@ import { TIMESCALE } from './world-sky.ts';
 import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
+import type { CollisionData } from '../physics/collision-data.ts';
+import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
+import { Player } from './player.ts';
+import {
+  collisionGroup,
+  objectActivation,
+  openable,
+  PlaySession,
+  type Activatable,
+  type CollisionGroup,
+} from './play-session.ts';
 import { projectDecals } from '../render/decal-projection.ts';
 import type { GpuDecals } from '../render/decals.ts';
 import {
@@ -20,7 +31,16 @@ import {
 } from '../render/scene-renderer.ts';
 import { studioLighting } from '../render/studio-lighting.ts';
 import { cellSceneLighting, pointLights } from '../world/cell-lighting.ts';
-import { loadCellData, type CellData, type CellLight } from '../world/cell-loader.ts';
+import {
+  cellArrival,
+  doorDestination,
+  loadCellData,
+  type CellData,
+  type CellLight,
+  type DoorDestination,
+  type Teleport,
+} from '../world/cell-loader.ts';
+import type { Arrival } from '../world/worldspace.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
 import { waterPlane } from '../render/water-data.ts';
 import {
@@ -60,6 +80,11 @@ export interface ViewerElements {
   readonly cells: SearchElements;
   /** Cells: container for the upgrade toggles of the cell on screen. */
   readonly upgrades: HTMLElement;
+  /** Cells: play controls (the free camera). */
+  readonly play: HTMLElement;
+  readonly freeCamera: HTMLInputElement;
+  /** What the crosshair rests on. */
+  readonly prompt: HTMLElement;
 }
 
 /** The main menu logo meshes (Anniversary Edition first); they face along the Y axis. */
@@ -89,6 +114,8 @@ interface CellView {
   choices: HomeChoices;
   scripted: ReadonlyMap<number, boolean>;
   readonly models: ReadonlyMap<string, GpuModel | undefined>;
+  /** The models' collision, by path. */
+  readonly collisions: ReadonlyMap<string, CollisionData | undefined>;
   /** Statics' directional materials (snow, moss, ice) as placed, by reference. */
   readonly directionals: ReadonlyMap<number, PlacedDirectional>;
   readonly label: string;
@@ -180,6 +207,10 @@ export class ModelViewer {
   #loadToken = 0;
   /** The cell on screen, with everything needed to switch upgrades instantly. */
   #cell: CellView | undefined;
+  /** The physics world and the player in the cell on screen. */
+  #play: PlaySession | undefined;
+  /** The collision of the objects shown. */
+  #collision: CollisionGroup = collisionGroup();
 
   constructor(renderer: Renderer, canvas: HTMLElement, terminal: Terminal, ui: ViewerElements) {
     this.#renderer = renderer;
@@ -201,6 +232,82 @@ export class ModelViewer {
       const first = this.#cellMatches()[0];
       if (event.key === 'Enter' && first) this.#run(this.showCell(first.formId));
     });
+    ui.freeCamera.addEventListener('change', () => {
+      this.#play?.setFreeCamera(ui.freeCamera.checked);
+    });
+  }
+
+  /** The physics world and player of the cell on screen. */
+  get play(): PlaySession | undefined {
+    return this.#play;
+  }
+
+  /** Called when the player goes through a load door (the app takes them there). */
+  onTravel: ((teleport: Teleport) => void) | undefined;
+  /** Load door destinations by destination door. */
+  readonly #destinations = new Map<number, DoorDestination | undefined>();
+
+  /** What activating a reference does: load doors take the player to their destination. */
+  #activatable(reference: number): Activatable | undefined {
+    const object = this.#cell?.data.objects.find((candidate) => candidate.reference === reference);
+    if (!object) return undefined;
+    return objectActivation(object, this.#instances.get(reference), {
+      name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
+      go: (teleport) => this.onTravel?.(teleport),
+    });
+  }
+
+  /** The drawn instances of the cell on screen, by reference. */
+  #instances = new Map<number, ModelInstance>();
+
+  /** Starts playing the cell on screen: physics, and the player standing at `feet`. */
+  async #startPlay(
+    data: CellData,
+    feet: readonly [number, number, number],
+    yaw: number,
+  ): Promise<void> {
+    const session = this.#session;
+    if (!session) return;
+    const token = this.#loadToken;
+    const [matrix, playerData] = await Promise.all([
+      session.collisionMatrix(),
+      session.playerData(),
+      initPhysics(),
+    ]);
+    if (token !== this.#loadToken) return;
+    this.#stopPlay();
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const water = cellWater(data.cell);
+    const player = new Player(
+      { ...playerData, physics, waterHeight: () => water?.height },
+      feet,
+      yaw,
+    );
+    const play = new PlaySession({
+      physics,
+      player,
+      camera: this.#fly,
+      canvas: this.#canvas,
+      groundReady: () => this.#collision.ready,
+      // Arrival points lie on the floor; search a little above it (not up to a floor above).
+      searchAbove: 64,
+      activatable: (reference) => this.#activatable(reference),
+      prompt: this.#ui.prompt,
+    });
+    play.lensShift = this.#fly.lensShift;
+    play.onFreeCamera = (free) => {
+      this.#ui.freeCamera.checked = free;
+    };
+    this.#play = play;
+    this.#ui.freeCamera.checked = false;
+    this.#ui.play.hidden = false;
+  }
+
+  #stopPlay(): void {
+    this.#play?.dispose();
+    this.#play = undefined;
+    this.#collision = collisionGroup();
+    this.#ui.play.hidden = true;
   }
 
   /** Called when the viewer takes the screen (another viewer then steps back). */
@@ -214,6 +321,7 @@ export class ModelViewer {
   set lensShift(shift: number) {
     this.#orbit.lensShift = shift;
     this.#fly.lensShift = shift;
+    if (this.#play) this.#play.lensShift = shift;
   }
 
   /** Every mesh path in the VFS (for tools and dev checks). */
@@ -301,8 +409,11 @@ export class ModelViewer {
     return this.showMesh(path, MODEL_VIEW);
   }
 
-  /** Loads an interior cell with all its objects and lights. */
-  async showCell(formId: number): Promise<void> {
+  /**
+   * Loads an interior cell with all its objects and lights. The player arrives at `arrival`
+   * (a load door's destination), else as through the cell's own door.
+   */
+  async showCell(formId: number, arrival?: Arrival): Promise<void> {
     const db = this.#db;
     if (!db) return;
     const token = ++this.#loadToken;
@@ -321,11 +432,14 @@ export class ModelViewer {
       ),
     ];
     const water = cellWater(data.cell);
-    const [models, directionals, actions, imageSpace, waterTypes, waterPlaneType] =
+    const [models, collisions, directionals, actions, imageSpace, waterTypes, waterPlaneType] =
       await Promise.all([
         Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)).then(
           (entries) => new Map(entries),
         ),
+        Promise.all(
+          paths.map(async (path) => [path, await session?.collision(path)] as const),
+        ).then((entries) => new Map(entries)),
         Promise.all(
           data.objects.map(
             async (object) =>
@@ -401,6 +515,7 @@ export class ModelViewer {
       choices,
       scripted,
       models,
+      collisions,
       directionals,
       label,
       imageSpace,
@@ -408,7 +523,16 @@ export class ModelViewer {
       waterPlane: waterPlaneModel && { model: waterPlaneModel, type: waterPlaneType },
       decals,
     };
-    const [x, y, z] = data.entrance;
+    // The player arrives as through the cell's door; without one, at its middle.
+    const comeIn = arrival ?? (await cellArrival(db, data));
+    if (token !== this.#loadToken) return;
+    // Load doors: where they lead (for the activation prompt).
+    for (const object of data.objects) {
+      if (object.teleport && !this.#destinations.has(object.teleport.door)) {
+        this.#destinations.set(object.teleport.door, await doorDestination(db, object.teleport));
+      }
+    }
+    const [x, y, z] = comeIn?.position ?? data.entrance;
     this.#fly.position = [x, y, z + EYE_HEIGHT];
     const centre = data.objects.reduce<[number, number, number]>(
       (sum, object) => [
@@ -420,6 +544,8 @@ export class ModelViewer {
     );
     const count = Math.max(1, data.objects.length);
     this.#fly.lookAtPoint([centre[0] / count, centre[1] / count, z + EYE_HEIGHT]);
+    await this.#startPlay(data, [x, y, z], comeIn ? comeIn.heading : this.#fly.yaw);
+    if (token !== this.#loadToken) return;
 
     this.#renderUpgrades();
     const visible = this.#applyCellSelection();
@@ -483,23 +609,54 @@ export class ModelViewer {
     const isEnabled = enabledReferences(cell.data, cell.toggles, cell.selection, cell.scripted);
     const session = this.#session;
     const instances: ModelInstance[] = [];
+    const placed = new Map<CellData['objects'][number], ModelInstance>();
+    const shown = new Map<number, ModelInstance>();
+    this.#instances = shown;
     for (const object of cell.data.objects) {
       if (!isEnabled(object.reference)) continue;
       if (this.#hidden?.test(object.model)) continue;
       const model = cell.models.get(object.model);
       const water = object.water === undefined ? undefined : cell.waterTypes.get(object.water);
       const directional = cell.directionals.get(object.reference);
+      // Objects with simulated collision move: they get a matrix of their own.
+      const moves =
+        cell.collisions
+          .get(object.model)
+          ?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
       if (model) {
-        instances.push({
+        const instance: ModelInstance = {
           model,
-          world: object.world,
+          world: moves ? new Float32Array(object.world) : object.world,
+          ...(moves && { motion: { version: 0 } }),
+          ...(this.#play && {
+            playback: openable(object, model.sequences?.byName.has('open') === true),
+          }),
           ...(water && { water }),
           ...(directional && { directional }),
           ...(object.leafAnimation && { leafAnimation: object.leafAnimation }),
           ...(session &&
             object.emittance !== undefined && { emittance: session.emittance(object.emittance) }),
-        });
+        };
+        instances.push(instance);
+        placed.set(object, instance);
+        shown.set(object.reference, instance);
       }
+    }
+    // The collision of what is shown (rebuilt when the selection changes).
+    const play = this.#play;
+    if (play) {
+      play.remove(this.#collision);
+      this.#collision = collisionGroup();
+      play.add(this.#collision, {
+        objects: cell.data.objects
+          .filter((object) => isEnabled(object.reference))
+          .map((object) => ({
+            object,
+            collision: cell.collisions.get(object.model),
+            instance: placed.get(object),
+          })),
+        primitives: cell.data.primitives.filter((primitive) => isEnabled(primitive.reference)),
+      });
     }
     if (cell.waterPlane) {
       const { model, type } = cell.waterPlane;
@@ -835,14 +992,24 @@ export class ModelViewer {
         backdrop: true,
       });
     } else {
-      this.#detachControls = this.#fly.attach(this.#canvas);
+      // Playing: the player's camera (or the free camera); before that the free camera.
+      const play = this.#play;
+      const camera = play?.view ?? this.#fly;
+      if (play) {
+        play.attach();
+        this.#detachControls = () => {
+          play.detach();
+        };
+      } else {
+        this.#detachControls = this.#fly.attach(this.#canvas);
+      }
       const { lighting, imageSpace, lights, decals } = view;
       this.#renderer.setView({
         scenes: () => [scene],
-        camera: this.#fly,
+        camera,
         lighting: () => ({
           ...lighting,
-          lights: pointLights(lights, this.#tickClock(), this.#fly.position, (id) =>
+          lights: pointLights(lights, this.#tickClock(), camera.position, (id) =>
             this.#emittanceRgb(id),
           ),
         }),
@@ -881,6 +1048,7 @@ export class ModelViewer {
 
   /** Forgets the shown cell and frees what was made for it. */
   #releaseCell(): void {
+    this.#stopPlay();
     const plane = this.#cell?.waterPlane?.model;
     const decals = this.#cell?.decals;
     this.#cell = undefined;

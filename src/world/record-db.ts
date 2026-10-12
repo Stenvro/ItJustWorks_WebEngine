@@ -284,6 +284,36 @@ export class RecordDatabase {
     return { type, label: childGroup ? this.toGlobal(plugin, label) : label };
   }
 
+  /** The cell a reference is placed in (global form id), from the group it sits in. */
+  cellOfReference(formId: number): number | undefined {
+    const location = this.locate(formId);
+    const group = location && this.parentGroup(location);
+    if (
+      group?.type !== GroupType.cellPersistentChildren &&
+      group?.type !== GroupType.cellTemporaryChildren &&
+      group?.type !== GroupType.cellChildren
+    ) {
+      return undefined;
+    }
+    return group.label;
+  }
+
+  /** The worldspace an exterior cell belongs to; undefined for interior cells. */
+  worldOfCell(formId: number): number | undefined {
+    const location = this.locate(formId);
+    if (!location) return undefined;
+    const { plugin, record } = location;
+    const { index } = plugin;
+    let group = (index.parentGroups[record] ?? 0) - 1;
+    for (let depth = 0; group >= 0 && depth < 16; depth++) {
+      if (index.groupTypes[group] === GroupType.worldChildren) {
+        return this.toGlobal(plugin, index.groupLabels[group] ?? 0);
+      }
+      group = (index.groupParents[group] ?? 0) - 1;
+    }
+    return undefined;
+  }
+
   /** Reads a specific version of a record. */
   async read(location: RecordLocation): Promise<GameRecord> {
     const { plugin, record } = location;

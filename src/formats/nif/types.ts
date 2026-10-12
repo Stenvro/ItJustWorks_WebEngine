@@ -217,6 +217,14 @@ export interface IntegerExtraDataBlock {
   readonly value: number;
 }
 
+/** BSBound: a box (a skeleton's "BBX": the actor's collision bound). */
+export interface BoundBlock {
+  readonly kind: 'bound';
+  readonly name: string;
+  readonly center: Vec3;
+  readonly halfExtents: Vec3;
+}
+
 /** NiSkinInstance / BSDismemberSkinInstance: binds a shape to its bones. */
 export interface NiSkinInstanceBlock {
   readonly kind: 'skin-instance';
@@ -472,7 +480,189 @@ export interface TransformDataBlock {
   readonly scales: KeyGroup<number>;
 }
 
+// --- Havok collision (bhk) -------------------------------------------------------
+
+/** HavokFilter: the collision layer (SkyrimLayer), filter flags and group. */
+export interface HavokFilter {
+  readonly layer: number;
+  /** Bits 0-4 biped part, 0x20 MOPP scaled, 0x40 no collision, 0x80 linked group. */
+  readonly flags: number;
+  readonly group: number;
+}
+
+/** Havok quaternion as stored in bhk blocks: x, y, z, w. */
+export type HavokQuaternion = readonly [number, number, number, number];
+
+/** bhkCollisionObject and its variants: the body attached to a node (NiAVObject.collision). */
+export interface CollisionObjectBlock {
+  readonly kind: 'collision-object';
+  /** Block type: bhkCollisionObject, bhkSPCollisionObject, bhkBlendCollisionObject, ... */
+  readonly type: string;
+  readonly target: Ref;
+  /** bhkCOFlags (0x1 active, 0x80 sync on update, ...). */
+  readonly flags: number;
+  readonly body: Ref;
+}
+
+/** bhkRigidBody / bhkRigidBodyT with its bhkRigidBodyCInfo2010. Havok units (≈ metres). */
+export interface RigidBodyBlock {
+  readonly kind: 'rigid-body';
+  /** bhkRigidBodyT: the translation and rotation place the body relative to its node. */
+  readonly transformed: boolean;
+  readonly shape: Ref;
+  readonly filter: HavokFilter;
+  readonly collisionResponse: number;
+  readonly translation: Vec3;
+  readonly rotation: HavokQuaternion;
+  readonly linearVelocity: Vec3;
+  readonly angularVelocity: Vec3;
+  /** 3×3 inertia tensor, row by row. */
+  readonly inertia: readonly number[];
+  readonly center: Vec3;
+  readonly mass: number;
+  readonly linearDamping: number;
+  readonly angularDamping: number;
+  readonly timeFactor: number;
+  readonly gravityFactor: number;
+  readonly friction: number;
+  readonly rollingFrictionMultiplier: number;
+  readonly restitution: number;
+  readonly maxLinearVelocity: number;
+  readonly maxAngularVelocity: number;
+  readonly penetrationDepth: number;
+  /** hkMotionType (1 dynamic … 6 keyframed, 7 fixed). */
+  readonly motionSystem: number;
+  readonly deactivatorType: number;
+  readonly solverDeactivation: number;
+  /** hkQualityType (1 fixed, 2 keyframed, 3 debris, 4 moving, 5 critical, 6 bullet). */
+  readonly qualityType: number;
+  readonly constraints: readonly Ref[];
+  /** 0x1: responds to wind. */
+  readonly bodyFlags: number;
+}
+
+/** bhkSimpleShapePhantom: a shape that detects overlaps without colliding. */
+export interface PhantomBlock {
+  readonly kind: 'phantom';
+  readonly shape: Ref;
+  readonly filter: HavokFilter;
+  /** Column-major 4×4 (Havok units). */
+  readonly matrix: Float32Array;
+}
+
+/** The bhk shapes. `material` is the SkyrimHavokMaterial id; `radius` the convex shell. */
+export type HavokShape =
+  | { readonly shape: 'sphere'; readonly material: number; readonly radius: number }
+  | {
+      readonly shape: 'box';
+      readonly material: number;
+      readonly radius: number;
+      readonly halfExtents: Vec3;
+    }
+  | {
+      readonly shape: 'capsule';
+      readonly material: number;
+      readonly radius: number;
+      readonly first: Vec3;
+      readonly second: Vec3;
+    }
+  | {
+      readonly shape: 'cylinder';
+      readonly material: number;
+      readonly radius: number;
+      readonly first: Vec3;
+      readonly second: Vec3;
+      readonly cylinderRadius: number;
+    }
+  | {
+      readonly shape: 'convex-vertices';
+      readonly material: number;
+      readonly radius: number;
+      /** xyz per vertex. */
+      readonly vertices: Float32Array;
+      /** Half spaces: xyz normal and w distance per plane. */
+      readonly planes: Float32Array;
+    }
+  | {
+      /** bhkConvexTransformShape or bhkTransformShape. */
+      readonly shape: 'transform';
+      readonly child: Ref;
+      readonly material: number;
+      readonly radius: number;
+      /** Column-major 4×4. */
+      readonly matrix: Float32Array;
+    }
+  | {
+      readonly shape: 'list';
+      readonly children: readonly Ref[];
+      readonly material: number;
+      readonly filters: readonly HavokFilter[];
+    }
+  | { readonly shape: 'mopp'; readonly child: Ref; readonly scale: number }
+  | {
+      readonly shape: 'compressed-mesh';
+      readonly data: Ref;
+      readonly radius: number;
+      readonly scale: Vec3;
+    }
+  | {
+      /** bhkNiTriStripsShape: triangles from NiTriStripsData blocks. */
+      readonly shape: 'tri-strips';
+      readonly material: number;
+      readonly radius: number;
+      readonly scale: Vec3;
+      readonly data: readonly Ref[];
+      readonly filters: readonly HavokFilter[];
+    }
+  | {
+      readonly shape: 'plane';
+      readonly material: number;
+      readonly normal: Vec3;
+      readonly constant: number;
+      readonly halfExtents: Vec3;
+      readonly center: Vec3;
+    };
+
+export type HavokShapeBlock = { readonly kind: 'havok-shape' } & HavokShape;
+
+/** One chunk of a compressed mesh: quantized vertices, strips and a triangle list. */
+export interface CompressedMeshChunk {
+  readonly translation: Vec3;
+  readonly material: number;
+  /** Index of a chunk whose geometry this one shares (0xffff: none). */
+  readonly reference: number;
+  readonly transform: number;
+  /** xyz per vertex, in units of the data's quantization error. */
+  readonly vertices: Uint16Array;
+  readonly indices: Uint16Array;
+  /** Lengths of the strips at the start of `indices`; the rest is a triangle list. */
+  readonly strips: Uint16Array;
+}
+
+/** bhkCompressedMeshShapeData: Havok's hkpCompressedMeshShape, in Havok units. */
+export interface CompressedMeshDataBlock {
+  readonly kind: 'compressed-mesh-data';
+  /** Quantization step of the chunk vertices. */
+  readonly error: number;
+  readonly materials: readonly { readonly material: number; readonly filter: HavokFilter }[];
+  readonly transforms: readonly {
+    readonly translation: Vec3;
+    readonly rotation: HavokQuaternion;
+  }[];
+  /** xyz per vertex. */
+  readonly bigVertices: Float32Array;
+  /** Three vertex indices per triangle. */
+  readonly bigTriangles: Uint16Array;
+  readonly bigTriangleMaterials: Uint32Array;
+  readonly chunks: readonly CompressedMeshChunk[];
+}
+
 export type NifBlock =
+  | CollisionObjectBlock
+  | RigidBodyBlock
+  | PhantomBlock
+  | HavokShapeBlock
+  | CompressedMeshDataBlock
   | NiNodeBlock
   | BSTriShapeBlock
   | NiTriShapeBlock
@@ -484,6 +674,7 @@ export type NifBlock =
   | BSShaderTextureSetBlock
   | NiAlphaPropertyBlock
   | IntegerExtraDataBlock
+  | BoundBlock
   | NiSkinInstanceBlock
   | NiSkinDataBlock
   | NiSkinPartitionBlock

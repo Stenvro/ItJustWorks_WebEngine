@@ -2,12 +2,14 @@
 // a pool of workers decompresses and parses them.
 
 import type { DdsTexture } from '../formats/dds/dds.ts';
+import type { CollisionData } from '../physics/collision-data.ts';
 import type { ModelData } from '../render/model-data.ts';
 import type { Vfs } from '../vfs/vfs.ts';
 import type { AssetKind, AssetRequest, AssetResponse } from './protocol.ts';
 
 export interface LoadedModel {
   readonly model: ModelData;
+  readonly collision: CollisionData;
   readonly problems: readonly string[];
   readonly workMs: number;
 }
@@ -51,7 +53,12 @@ export class AssetLoader {
   async loadModel(path: string): Promise<LoadedModel> {
     const response = await this.#request('model', path);
     if (!response.ok || response.kind !== 'model') throw new Error(describe(response));
-    return { model: response.model, problems: response.problems, workMs: response.workMs };
+    return {
+      model: response.model,
+      collision: response.collision,
+      problems: response.problems,
+      workMs: response.workMs,
+    };
   }
 
   async loadTexture(path: string): Promise<DdsTexture> {

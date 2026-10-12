@@ -34,5 +34,8 @@
     "typescript-eslint": "^8.71.1",
     "vite": "^8.3.4",
     "vitest": "^5.0.3"
+  },
+  "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.21.0"
   }
 }

@@ -3,6 +3,15 @@
 // environment. Disposed when another folder is mounted.
 
 import { parseNif, type NifFile } from '../formats/nif/nif.ts';
+import type { CollisionData } from '../physics/collision-data.ts';
+import { parseControlMap } from '../formats/controlmap/controlmap.ts';
+import { decodeWindows1252 } from '../formats/text.ts';
+import { IniSettings } from '../world/ini-settings.ts';
+import { parseMovementType, type MovementType } from '../world/movement.ts';
+import { MaterialFlag, parseMaterialType } from '../world/material-type.ts';
+import { readPlayerBody } from '../world/player-body.ts';
+import type { PlayerData } from './player.ts';
+import { CollisionMatrix, parseCollisionLayer } from '../physics/collision-layers.ts';
 import type { Renderer } from '../render/renderer.ts';
 import { propertyMaterial, type AddonNode } from '../render/model-data.ts';
 import type {
@@ -67,6 +76,8 @@ function setEmittance(color: MutableEmittance, rgb: readonly [number, number, nu
  * used ones that nothing draws are freed (and loaded again when needed).
  */
 export const MEMORY_BUDGET = 2048 * 1024 * 1024;
+/** The keyboard, mouse and gamepad bindings. */
+const CONTROL_MAP = 'interface\\controls\\pc\\controlmap.txt';
 /** Freed down to this share of the budget, so trimming does not run every frame. */
 const TRIM_TARGET = 0.85;
 /** Models and textures used in the last 10 seconds stay (cells may be about to place them). */
@@ -103,6 +114,10 @@ export class GameSession {
   /** Emittance sources (XEMI) by form id, with their current colour. */
   readonly #emittance = new Map<number, EmittanceEntry>();
   #addonPathsEntry: Promise<Map<number, string>> | undefined;
+  /** Models' collision by path, kept as long as the model (collision-only models stay). */
+  readonly #collisions = new Map<string, CollisionData>();
+  #collisionMatrix: Promise<CollisionMatrix> | undefined;
+  #playerData: Promise<PlayerData> | undefined;
 
   constructor(device: GPUDevice, renderer: Renderer, vfs: Vfs, terminal: Terminal) {
     this.vfs = vfs;
@@ -149,6 +164,8 @@ export class GameSession {
       entry = this.loader.loadModel(path).then(
         async (loaded) => {
           const data = loaded.model;
+          // Editor markers have no collision in the game either.
+          if (!data.editorMarker) this.#collisions.set(path, loaded.collision);
           const addons = withAddons ? await this.addons(data.addons) : [];
           const empty = data.parts.length === 0 && data.particles.length === 0;
           if (data.editorMarker || (empty && addons.length === 0)) return undefined;
@@ -165,6 +182,77 @@ export class GameSession {
       this.#models.set(key, entry);
     }
     return entry;
+  }
+
+  /** A model's Havok collision (also for models with nothing to draw). */
+  async collision(path: string): Promise<CollisionData | undefined> {
+    const cached = this.#collisions.get(path);
+    if (cached) return cached;
+    await this.#model(path, true);
+    return this.#collisions.get(path);
+  }
+
+  /** Which collision layers collide (COLL records), read once. */
+  collisionMatrix(): Promise<CollisionMatrix> {
+    this.#collisionMatrix ??= this.db.then(async (db) => {
+      const layers = await Promise.all(
+        db.formIdsOfType('COLL').map(async (formId) => {
+          const record = await db.get(formId);
+          return record && !record.deleted ? parseCollisionLayer(record) : undefined;
+        }),
+      );
+      return new CollisionMatrix(layers.filter((layer) => layer !== undefined));
+    });
+    return this.#collisionMatrix;
+  }
+
+  /**
+   * The player's body (race, skeleton bound, camera nodes), the INI settings, the control map
+   * and the movement types, read once.
+   */
+  playerData(): Promise<PlayerData> {
+    this.#playerData ??= this.db.then(async (db) => {
+      const [body, settings, controlText] = await Promise.all([
+        readPlayerBody(db, (path) => this.nif(path)),
+        this.settings(),
+        this.vfs.read(CONTROL_MAP),
+      ]);
+      const types = new Map<string, MovementType>();
+      for (const formId of db.formIdsOfType('MOVT')) {
+        const record = await db.get(formId);
+        if (!record || record.deleted) continue;
+        const type = parseMovementType(record);
+        types.set(type.name, type);
+      }
+      const type = (name: string): MovementType => {
+        const found = types.get(name);
+        if (!found) throw new Error(`movement type ${name} is missing`);
+        return found;
+      };
+      // Stair materials: what the character controller climbs as stairs.
+      const stairMaterials = new Set<number>();
+      for (const formId of db.formIdsOfType('MATT')) {
+        const record = await db.get(formId);
+        if (!record || record.deleted) continue;
+        const material = parseMaterialType(record);
+        if ((material.flags & MaterialFlag.stairs) !== 0) stairMaterials.add(material.id);
+      }
+      return {
+        body,
+        stairMaterials,
+        ini: new IniSettings(this.vfs.defaultIni),
+        controls: parseControlMap(decodeWindows1252(controlText)),
+        // The behavior graph's movement states (MOVT MNAM).
+        movement: {
+          normal: type('NPCDefault'),
+          sprint: type('NPCSprinting'),
+          sneak: type('NPCSneaking'),
+          swim: type('NPCSwimming'),
+        },
+        jumpHeight: settings.number('fJumpHeightMin') ?? 76,
+      };
+    });
+    return this.#playerData;
   }
 
   /** The models of a model's AddOnNodes (ADDN records by index). */
@@ -412,6 +500,7 @@ export class GameSession {
       }
       this.#loadedModels.delete(key);
       this.#models.delete(key);
+      this.#collisions.delete(key);
       model.destroy();
       memory -= model.bytes;
     }
