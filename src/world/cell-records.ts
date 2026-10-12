@@ -285,6 +285,39 @@ export function baseModelPath(record: GameRecord): string | undefined {
   return normalized.startsWith('meshes\\') ? normalized : `meshes\\${normalized}`;
 }
 
+/** ADDN: the model the engine attaches at a mesh's AddOnNode with the same index. */
+export interface AddonNodeRecord {
+  /** DATA: the node index (the BSValueNode's value, also in its "AddOnNode<index>" name). */
+  readonly index: number;
+  /** `meshes\...` path of the attached model (usually a master particle system). */
+  readonly model: string | undefined;
+  /** DNAM: most emitters sharing the master particle system (0: no limit). */
+  readonly masterParticleCap: number;
+  readonly flags: number;
+}
+
+export function parseAddonNode(record: GameRecord): AddonNodeRecord {
+  const data = record.fields.first('DATA');
+  const dnam = record.fields.first('DNAM');
+  const model = record.fields.zstring('MODL');
+  const normalized = model?.trim()
+    ? model.replaceAll('/', '\\').replace(/^\\+/, '').toLowerCase()
+    : undefined;
+  const view = (bytes: Uint8Array): DataView =>
+    new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  return {
+    index: data && data.length >= 4 ? view(data).getInt32(0, true) : -1,
+    model:
+      normalized === undefined
+        ? undefined
+        : normalized.startsWith('meshes\\')
+          ? normalized
+          : `meshes\\${normalized}`,
+    masterParticleCap: dnam && dnam.length >= 2 ? view(dnam).getUint16(0, true) : 0,
+    flags: dnam && dnam.length >= 4 ? view(dnam).getUint16(2, true) : 0,
+  };
+}
+
 export interface LightRecord {
   readonly radius: number;
   readonly color: Rgb;

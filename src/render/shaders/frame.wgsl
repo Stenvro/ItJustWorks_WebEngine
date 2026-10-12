@@ -26,6 +26,12 @@ struct Frame {
   shadowMatrices: array<mat4x4f, 4>,
   shadowSplits: vec4f,
   shadowParams: vec4f,
+  // 1 / width, 1 / height of the target, the camera's near plane, and whether sceneColor and
+  // sceneDepth hold this frame's opaque scene (1: in the blended pass).
+  screen: vec4f,
+  // The camera's right and up axes in world space (camera-facing quads).
+  cameraRight: vec4f,
+  cameraUp: vec4f,
 };
 
 struct PointLight {
@@ -39,6 +45,23 @@ struct PointLight {
 @group(0) @binding(1) var<storage, read> pointLights: array<PointLight>;
 @group(0) @binding(2) var shadowMap: texture_depth_2d_array;
 @group(0) @binding(3) var shadowSampler: sampler_comparison;
+// Copies of the opaque scene (colour and linear-ish depth) for soft effects and refraction.
+@group(0) @binding(4) var sceneColor: texture_2d<f32>;
+@group(0) @binding(5) var sceneDepth: texture_2d<f32>;
+@group(0) @binding(6) var screenSampler: sampler;
+
+// View distance of a reversed-Z depth value (infinite far plane: depth = near / distance).
+fn viewDistance(depth: f32) -> f32 {
+  return frame.screen.z / max(depth, 1e-9);
+}
+
+// Distance from a fragment to the opaque scene behind it (large where nothing is behind).
+fn depthToScene(fragCoord: vec4f) -> f32 {
+  let size = vec2i(textureDimensions(sceneDepth));
+  let pixel = clamp(vec2i(fragCoord.xy), vec2i(0), size - 1);
+  let scene = textureLoad(sceneDepth, pixel, 0).r;
+  return viewDistance(scene) - viewDistance(fragCoord.z);
+}
 
 // How much of the sun reaches a point (0 in shadow, 1 lit): the first cascade that holds
 // it, sampled 3x3 with a small offset along the normal against acne, fading out at the end
@@ -152,16 +175,21 @@ fn lightAt(
   return result;
 }
 
-// Fog: blends from the near to the far colour with distance.
-fn applyFog(color: vec3f, worldPos: vec3f) -> vec3f {
+// Fog at a point: how much of the fog colour covers it, and that colour.
+fn fogAt(worldPos: vec3f) -> vec4f {
   if (frame.counts.y == 0u) {
-    return color;
+    return vec4f(0.0);
   }
   let distance = length(worldPos - frame.cameraPos.xyz);
   let near = frame.fogParams.x;
   let far = max(frame.fogParams.y, near + 1.0);
   let t = clamp((distance - near) / (far - near), 0.0, 1.0);
   let amount = min(pow(t, max(frame.fogParams.z, 0.01)), select(1.0, frame.fogParams.w, frame.fogParams.w > 0.0));
-  let fogColor = mix(frame.fogNearColor.rgb, frame.fogFarColor.rgb, t);
-  return mix(color, fogColor, amount);
+  return vec4f(mix(frame.fogNearColor.rgb, frame.fogFarColor.rgb, t), amount);
+}
+
+// Fog: blends from the near to the far colour with distance.
+fn applyFog(color: vec3f, worldPos: vec3f) -> vec3f {
+  let fog = fogAt(worldPos);
+  return mix(color, fog.rgb, fog.a);
 }

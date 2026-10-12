@@ -31,6 +31,16 @@ import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
 import { TreeLodRenderer, type TreeLodFrame } from './tree-lod.ts';
 import { GrassRenderer, type GpuGrassField } from './grass.ts';
 
+/** Wind speed (world units per second) of a weather wind of 1 (WTHR wind speed 255). */
+const MAX_WIND_SPEED = 500;
+
+/** The weather's wind as a velocity (blowing towards its direction, clockwise from north). */
+function windVelocity(lighting: SceneLighting): Vec3 {
+  const speed = (lighting.wind ?? 0) * MAX_WIND_SPEED;
+  const direction = lighting.windDirection ?? 0;
+  return [Math.sin(direction) * speed, Math.cos(direction) * speed, 0];
+}
+
 /** Anything that can view a scene: the orbit camera, the free-flying camera, ... */
 export interface Camera {
   readonly position: Vec3;
@@ -72,11 +82,10 @@ interface RenderTargets {
   readonly height: number;
   readonly color: GPUTexture;
   readonly depth: GPUTexture;
-  /** Copies of the opaque scene for water: colour and depth (single sample). */
+  /** Copies of the opaque scene for water, soft effects and particles (single sample). */
   readonly sceneColor: GPUTexture;
   readonly sceneDepth: GPUTexture;
   readonly depthResolve: GPUBindGroup;
-  readonly waterInputs: GPUBindGroup;
 }
 
 /**
@@ -186,6 +195,7 @@ export class Renderer {
       device.queue.writeBuffer(this.#backdropBuffer, 0, this.#backdropData);
     }
     let shadows: FrameShadows | undefined;
+    let wind: Vec3 = [0, 0, 0];
     /** Cascades to render into the shadow map this frame. */
     const dueCascades: number[] = [];
     if (view) {
@@ -217,13 +227,16 @@ export class Renderer {
         timeSeconds,
         view.lodMask?.(),
         shadows,
+        { width: targets.width, height: targets.height, near: view.camera.near },
       );
+      wind = windVelocity(lighting);
     }
 
     const sky = view?.sky?.();
     const scenes = view ? [...view.scenes()] : [];
-    // Controllers of the placed models (UV scrolling, turning parts, idle sequences).
-    if (view) this.scene.animate(scenes, timeSeconds, view.camera.position);
+    // Controllers of the placed models (UV scrolling, turning parts, idle sequences) and
+    // their particle systems.
+    if (view) this.scene.animate(scenes, timeSeconds, view.camera.position, wind);
     const hdrView = this.post.hdrView(targets.width, targets.height);
     const colorView = targets.color.createView();
     const depthView = targets.depth.createView();
@@ -301,7 +314,7 @@ export class Renderer {
 
     if (view) {
       const water = this.scene.hasWater(scenes);
-      if (water) {
+      if (this.scene.needsSceneCopies(scenes)) {
         encoder.copyTextureToTexture(
           { texture: this.post.hdrTexture(targets.width, targets.height) },
           { texture: targets.sceneColor },
@@ -326,7 +339,7 @@ export class Renderer {
         ],
         depthStencilAttachment: { view: depthView, depthLoadOp: 'load', depthStoreOp: 'discard' },
       });
-      if (water) this.scene.drawWater(blended, scenes, targets.waterInputs);
+      if (water) this.scene.drawWater(blended, scenes);
       this.scene.drawTransparent(blended, scenes, view.camera.position);
       blended.end();
     }
@@ -390,8 +403,8 @@ export class Renderer {
         layout: this.#depthResolve.getBindGroupLayout(0),
         entries: [{ binding: 0, resource: depth.createView() }],
       }),
-      waterInputs: this.scene.waterInputs(sceneColor.createView(), sceneDepth.createView()),
     };
+    this.scene.setSceneCopies(sceneColor.createView(), sceneDepth.createView());
     return this.#targets;
   }
 }

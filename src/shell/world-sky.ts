@@ -279,6 +279,7 @@ export class WorldSky {
         [...(ambientNZ ?? dark)],
       ],
       wind: state.windSpeed,
+      windDirection: (state.windDirection * Math.PI) / 180,
       fog: {
         nearColor: [...state.fogNear],
         farColor: [...state.fogFar],

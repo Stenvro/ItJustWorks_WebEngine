@@ -93,7 +93,10 @@ export interface AnimationFrame {
   readonly alphaTest: ReadonlyMap<Ref, number>;
 }
 
-/** Sequences that play on their own when an object is placed (first one found). */
+/**
+ * Sequences that play on their own when an object is placed (first one found). AmIdle is the
+ * resting state of furniture-like objects (e.g. the forge's idle smoke; Playing is its use).
+ */
 const IDLE_SEQUENCES = [
   'idle',
   'autoloop',
@@ -104,6 +107,7 @@ const IDLE_SEQUENCES = [
   'animidle',
   'animidle01',
   'loop',
+  'amidle',
 ];
 
 /** NIF stores unset transform components of interpolators as ±FLT_MAX. */
@@ -291,7 +295,7 @@ function rotationAt(data: TransformDataBlock, time: number): Quaternion | undefi
 
 // --- Samplers from interpolators ------------------------------------------------------------
 
-function floatSource(file: NifFile, ref: Ref): FloatSource | undefined {
+export function floatSource(file: NifFile, ref: Ref): FloatSource | undefined {
   const interpolator = file.blocks[ref];
   if (interpolator?.kind === 'float-interpolator') {
     const data = file.blocks[interpolator.data];
@@ -302,7 +306,11 @@ function floatSource(file: NifFile, ref: Ref): FloatSource | undefined {
       ? { constant: interpolator.value, keys: undefined }
       : undefined;
   }
-  if (interpolator?.kind === 'blend-interpolator' && typeof interpolator.value === 'number') {
+  if (
+    interpolator?.kind === 'blend-interpolator' &&
+    typeof interpolator.value === 'number' &&
+    Math.abs(interpolator.value) < UNSET
+  ) {
     return { constant: interpolator.value, keys: undefined };
   }
   return undefined;
@@ -318,7 +326,7 @@ function vec3Source(file: NifFile, ref: Ref): Vec3Source | undefined {
   };
 }
 
-function boolSource(file: NifFile, ref: Ref): BoolSource | undefined {
+export function boolSource(file: NifFile, ref: Ref): BoolSource | undefined {
   const interpolator = file.blocks[ref];
   if (interpolator?.kind !== 'bool-interpolator') return undefined;
   const data = file.blocks[interpolator.data];
@@ -375,7 +383,7 @@ export function sampleTransform(source: TransformSource, time: number): Transfor
 
 // --- Building the tracks ------------------------------------------------------------------
 
-function timingOf(controller: {
+export function timingOf(controller: {
   frequency: number;
   phase: number;
   startTime: number;
@@ -450,13 +458,7 @@ function objectByName(file: NifFile, name: string): Ref {
 }
 
 function sequenceTracks(file: NifFile, sequence: ControllerSequenceBlock): AnimationTrack[] {
-  const timing: Timing = {
-    frequency: sequence.frequency,
-    phase: 0,
-    start: sequence.startTime,
-    stop: sequence.stopTime,
-    cycle: sequence.cycleType,
-  };
+  const timing = sequenceTiming(sequence);
   const tracks: AnimationTrack[] = [];
   for (const block of sequence.blocks) {
     const controller = file.blocks[block.controller];
@@ -474,17 +476,36 @@ function sequenceTracks(file: NifFile, sequence: ControllerSequenceBlock): Anima
   return tracks;
 }
 
+/** The sequence of a controller manager that plays when the object is placed. */
+export function idleSequence(
+  file: NifFile,
+  sequences: readonly Ref[],
+): ControllerSequenceBlock | undefined {
+  const blocks = sequences
+    .map((ref) => file.blocks[ref])
+    .filter((s): s is ControllerSequenceBlock => s?.kind === 'controller-sequence');
+  return IDLE_SEQUENCES.map((name) => blocks.find((s) => s.name.toLowerCase() === name)).find(
+    (s) => s !== undefined,
+  );
+}
+
+/** Timing of a sequence (its controlled blocks run on the sequence's clock). */
+export function sequenceTiming(sequence: ControllerSequenceBlock): Timing {
+  return {
+    frequency: sequence.frequency,
+    phase: 0,
+    start: sequence.startTime,
+    stop: sequence.stopTime,
+    cycle: sequence.cycleType,
+  };
+}
+
 /** The animation of a model, or undefined if nothing in it moves. */
 export function buildAnimation(file: NifFile): ModelAnimation | undefined {
   const tracks: AnimationTrack[] = [];
   file.blocks.forEach((block) => {
     if (block.kind === 'controller-manager') {
-      const sequences = block.sequences
-        .map((ref) => file.blocks[ref])
-        .filter((s): s is ControllerSequenceBlock => s?.kind === 'controller-sequence');
-      const idle = IDLE_SEQUENCES.map((name) =>
-        sequences.find((s) => s.name.toLowerCase() === name),
-      ).find((s) => s !== undefined);
+      const idle = idleSequence(file, block.sequences);
       if (idle) tracks.push(...sequenceTracks(file, idle));
       return;
     }

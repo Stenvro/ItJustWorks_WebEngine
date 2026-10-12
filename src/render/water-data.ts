@@ -60,5 +60,7 @@ export function waterPlane(
     radius,
     skipped: [],
     editorMarker: false,
+    particles: [],
+    addons: [],
   };
 }

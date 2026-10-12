@@ -214,6 +214,8 @@ export interface SkyState {
   readonly waterMultiplier: Rgb;
   /** Wind speed 0..1. */
   readonly windSpeed: number;
+  /** Wind direction in degrees (WTHR; the current weather's during a transition). */
+  readonly windDirection: number;
   readonly clouds: readonly CloudState[];
   readonly masser: MoonState;
   readonly secunda: MoonState;
@@ -503,6 +505,7 @@ export function skyState(input: SkyInput): SkyState {
     windSpeed: input.previous
       ? input.previous.windSpeed + (input.weather.windSpeed - input.previous.windSpeed) * transition
       : input.weather.windSpeed,
+    windDirection: input.weather.windDirection,
     clouds: cloudStates(input.weather, input.previous, transition, weights, input.seconds),
     masser,
     secunda,

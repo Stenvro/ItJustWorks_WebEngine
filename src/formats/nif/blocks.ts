@@ -107,7 +107,7 @@ export function readObjectNet(reader: BinaryReader, context: BlockContext): NiOb
   };
 }
 
-function readAvObject(reader: BinaryReader, context: BlockContext): NiAvObject {
+export function readAvObject(reader: BinaryReader, context: BlockContext): NiAvObject {
   const base = readObjectNet(reader, context);
   const flags = context.bsVersion > 26 ? reader.u32() : reader.u16();
   const translation = readVec3(reader);
@@ -126,6 +126,7 @@ const parseNode: BlockParser = (reader, context, type): NiNodeBlock => {
   const effects = context.bsVersion < 130 ? readRefs(reader) : [];
   let switchIndex: number | undefined;
   let billboardMode: number | undefined;
+  let value: number | undefined;
 
   switch (type) {
     case 'NiSwitchNode':
@@ -147,7 +148,7 @@ const parseNode: BlockParser = (reader, context, type): NiNodeBlock => {
       reader.skip(16 + 1); // alpha sort bound (vec4) + static bound
       break;
     case 'BSValueNode':
-      reader.i32(); // value
+      value = reader.i32();
       reader.u8(); // flags
       break;
     case 'BSRangeNode':
@@ -172,6 +173,7 @@ const parseNode: BlockParser = (reader, context, type): NiNodeBlock => {
     effects,
     ...(switchIndex !== undefined && { switchIndex }),
     ...(billboardMode !== undefined && { billboardMode }),
+    ...(value !== undefined && { value }),
   };
 };
 

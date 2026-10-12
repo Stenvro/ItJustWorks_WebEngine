@@ -6,12 +6,15 @@
 import { animate, type AnimationFrame, type ModelAnimation } from './animation.ts';
 import { billboardWorld } from './billboard.ts';
 import { frustumPlanes, sphereVisible, type Plane } from './frustum.ts';
-import { maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
-import type { AlphaState, ModelData, ModelPart, VertexLayout } from './model-data.ts';
+import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
+import type { AlphaState, ModelData, ModelPart, PartMaterial, VertexLayout } from './model-data.ts';
+import type { ParticleSystemData } from './particle-data.ts';
+import { PARTICLE_FLOATS, ParticleSimulation, type ParticleContext } from './particle-sim.ts';
 import commonShader from './shaders/common.wgsl?raw';
 import frameShader from './shaders/frame.wgsl?raw';
 import effectShader from './shaders/effect.wgsl?raw';
 import lightingShader from './shaders/lighting.wgsl?raw';
+import particleShader from './shaders/particle.wgsl?raw';
 import shadowShader from './shaders/shadow.wgsl?raw';
 import waterShader from './shaders/water.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
@@ -24,8 +27,8 @@ export const MAX_LIGHTS = 256;
 /** Size of the WGSL `Draw` struct and the stride between draws (uniform offset alignment). */
 const DRAW_SIZE = 160;
 const DRAW_STRIDE = 256;
-/** WGSL `Frame` struct: 148 floats. */
-const FRAME_FLOATS = 148;
+/** WGSL `Frame` struct: 160 floats. */
+const FRAME_FLOATS = 160;
 /** Sun shadow map: one layer per cascade. */
 export const SHADOW_MAP_SIZE = 2048;
 export const SHADOW_MAP_LAYERS = 4;
@@ -117,6 +120,8 @@ export interface SceneLighting {
   readonly lights: readonly PointLight[];
   /** Wind strength 0..1 (weather), for swaying grass. */
   readonly wind?: number;
+  /** Where the wind blows towards: radians clockwise from north (+Y). */
+  readonly windDirection?: number;
 }
 
 /** Uniform ambient from every direction. */
@@ -179,6 +184,19 @@ export interface WaterFrame {
   readonly profile: Float32Array | undefined;
 }
 
+/** A particle system of a model on the GPU: its data, pipeline and material. */
+interface GpuParticleSystem {
+  readonly data: ParticleSystemData;
+  readonly pipeline: GPURenderPipeline;
+  readonly bindGroup: GPUBindGroup;
+}
+
+/** A model attached at one of another model's AddOnNodes (model space of that model). */
+export interface ModelAddon {
+  readonly model: GpuModel;
+  readonly world: Mat4;
+}
+
 /** A model on the GPU: geometry, materials and pipelines, placed by scenes. */
 export class GpuModel {
   readonly center: readonly [number, number, number];
@@ -186,6 +204,12 @@ export class GpuModel {
   readonly parts: readonly GpuPart[];
   /** Controllers that play on their own (evaluated every frame). */
   readonly animation: ModelAnimation | undefined;
+  readonly particles: readonly GpuParticleSystem[];
+  /**
+   * Models the engine attaches at AddOnNodes (ADDN: candle flames, torch fire, smoke),
+   * resolved by the session; placed with every instance of this model.
+   */
+  addons: readonly ModelAddon[] = [];
   readonly #buffers: readonly GPUBuffer[];
 
   constructor(init: {
@@ -194,12 +218,14 @@ export class GpuModel {
     parts: readonly GpuPart[];
     buffers: readonly GPUBuffer[];
     animation: ModelAnimation | undefined;
+    particles: readonly GpuParticleSystem[];
   }) {
     this.center = init.center;
     this.radius = init.radius;
     this.parts = init.parts;
     this.#buffers = init.buffers;
     this.animation = init.animation;
+    this.particles = init.particles;
   }
 
   destroy(): void {
@@ -231,6 +257,22 @@ interface AnimatedDraw {
   readonly animation: ModelAnimation | undefined;
 }
 
+/** A placed particle system: its simulation and where its particles are this frame. */
+interface ParticleDraw {
+  readonly system: GpuParticleSystem;
+  readonly simulation: ParticleSimulation;
+  readonly instanceWorld: Mat4;
+  readonly animation: ModelAnimation | undefined;
+  readonly uniformOffset: number;
+  /** Where the system sits in the world (update distance before it has particles). */
+  readonly origin: readonly [number, number, number];
+  /** Instances in the frame's particle buffer. */
+  first: number;
+  count: number;
+  /** Seconds of the last update. */
+  updated: number | undefined;
+}
+
 /** Placed model instances with their per-draw uniforms. Does not own the models. */
 export class GpuScene {
   readonly draws: readonly Draw[];
@@ -239,6 +281,7 @@ export class GpuScene {
   /** CPU copy of the uniforms (animated draws are updated in it, then uploaded). */
   readonly uniformData: ArrayBuffer;
   readonly animated: readonly AnimatedDraw[];
+  readonly particles: readonly ParticleDraw[];
 
   constructor(
     draws: readonly Draw[],
@@ -246,18 +289,27 @@ export class GpuScene {
     uniforms: GPUBuffer,
     uniformData: ArrayBuffer,
     animated: readonly AnimatedDraw[],
+    particles: readonly ParticleDraw[],
   ) {
     this.draws = draws;
     this.drawBindGroup = drawBindGroup;
     this.uniforms = uniforms;
     this.uniformData = uniformData;
     this.animated = animated;
+    this.particles = particles;
   }
 
   destroy(): void {
     this.uniforms.destroy();
   }
 }
+
+/** Particle systems farther than this are not simulated unless they are in view. */
+const PARTICLE_UPDATE_DISTANCE = 4096;
+/** Nor farther than this at all (their LOD has faded them out long before). */
+const PARTICLE_MAX_DISTANCE = 16384;
+/** Longest step of a particle update (a long frame or a system that comes back into view). */
+const PARTICLE_MAX_STEP = 0.1;
 
 /** Effect shader controlled variables (EffectShaderControlledVariable). */
 const EffectVariable = {
@@ -282,8 +334,20 @@ const LightingVariable = {
   vScale: 23,
 } as const;
 
+/** What a part or particle system draws with: material, alpha and their animation targets. */
+interface MaterialSource {
+  readonly material: PartMaterial | undefined;
+  readonly alpha: AlphaState | undefined;
+  readonly shader: number;
+  readonly alphaProperty: number;
+}
+
 /** Writes an animation frame's values over a part's material uniforms. */
-function writeAnimatedMaterial(floats: Float32Array, part: ModelPart, frame: AnimationFrame): void {
+function writeAnimatedMaterial(
+  floats: Float32Array,
+  part: MaterialSource,
+  frame: AnimationFrame,
+): void {
   const material = part.material;
   const values = frame.shaderFloats.get(part.shader);
   const colors = frame.shaderColors.get(part.shader);
@@ -309,7 +373,8 @@ function writeAnimatedMaterial(floats: Float32Array, part: ModelPart, frame: Ani
     );
     const color = colors?.get(0) ?? material.baseColor;
     const scale = values?.get(EffectVariable.emissiveMultiple) ?? material.baseColorScale;
-    floats.set([color[0] * scale, color[1] * scale, color[2] * scale], 20);
+    floats.set(color.slice(0, 3), 20);
+    floats[31] = scale;
     const alpha = values?.get(EffectVariable.alphaTransparency);
     if (alpha !== undefined) floats[23] = alpha;
     for (let i = 0; i < 4; i++) {
@@ -371,7 +436,7 @@ function createBuffer(
 }
 
 /** Material parameters of a part (everything in `Draw` after the world matrix). */
-function writeMaterial(floats: Float32Array, uints: Uint32Array, part: ModelPart): void {
+function writeMaterial(floats: Float32Array, uints: Uint32Array, part: MaterialSource): void {
   const material = part.material;
   const alphaThreshold = (part.alpha?.threshold ?? 128) / 255;
   if (material?.kind === 'water') {
@@ -381,12 +446,11 @@ function writeMaterial(floats: Float32Array, uints: Uint32Array, part: ModelPart
   }
   if (material?.kind === 'effect') {
     floats.set([...material.uvOffset, ...material.uvScale], 16);
-    floats.set(
-      material.baseColor.map((c, i) => (i < 3 ? c * material.baseColorScale : c)),
-      20,
-    );
-    floats.set([0, 0, 0, 0], 24);
-    floats.set([1, 1, alphaThreshold, 0], 28);
+    // Base colour and its scale apart: the palette lookup uses the unscaled colour.
+    floats.set(material.baseColor, 20);
+    // Effects keep their lighting influence and soft depth in the specular slot.
+    floats.set([material.lightingInfluence, material.softFalloffDepth, 0, 0], 24);
+    floats.set([1, 1, alphaThreshold, material.baseColorScale], 28);
     floats.set(material.falloff, 32);
     uints.set([material.flags1, material.flags2, part.alpha?.flags ?? 0, 0], 36);
     return;
@@ -439,7 +503,7 @@ export class SceneRenderer {
   readonly #frameUints = new Uint32Array(this.#frameData.buffer);
   readonly #lightBuffer: GPUBuffer;
   readonly #lightData = new Float32Array(MAX_LIGHTS * LIGHT_FLOATS);
-  readonly #frameBindGroup: GPUBindGroup;
+  #frameBindGroup: GPUBindGroup;
   readonly #frameLayout: GPUBindGroupLayout;
   readonly #drawLayout: GPUBindGroupLayout;
   readonly #materialLayout: GPUBindGroupLayout;
@@ -448,23 +512,32 @@ export class SceneRenderer {
     readonly lighting: GPUShaderModule;
     readonly effect: GPUShaderModule;
     readonly water: GPUShaderModule;
+    readonly particle: GPUShaderModule;
   };
   readonly #waterTypeLayout: GPUBindGroupLayout;
-  readonly #waterFrameLayout: GPUBindGroupLayout;
   readonly #waterPipelineLayout: GPUPipelineLayout;
   readonly #waterFrameBuffer: GPUBuffer;
+  readonly #waterFrameBindGroup: GPUBindGroup;
   readonly #waterFrameData = new Float32Array(WATER_FRAME_FLOATS);
   readonly #screenSampler: GPUSampler;
+  /** Stand-ins for the opaque scene's copies until the renderer provides them. */
+  readonly #noSceneColor: GPUTexture;
+  readonly #noSceneDepth: GPUTexture;
   /** Flow map without flow (alpha 1: strength 0). */
   readonly #stillFlow: GPUTexture;
   readonly #pipelines = new Map<string, GPURenderPipeline>();
   readonly #fallbackVertices: GPUBuffer;
-  readonly #sampler: GPUSampler;
+  /** Material samplers by texture clamp mode (bit 0 wraps U, bit 1 wraps V). */
+  readonly #samplers: readonly GPUSampler[];
+  /** This frame's particle instances (CPU staging and GPU buffer). */
+  #particleData = new Float32Array(4096 * PARTICLE_FLOATS);
+  #particleBuffer: GPUBuffer;
   readonly #shadowMap: GPUTexture;
   readonly #cascadeLayout: GPUBindGroupLayout;
   readonly #cascadeBuffer: GPUBuffer;
   readonly #cascadeBindGroup: GPUBindGroup;
   readonly #shadowModule: GPUShaderModule;
+  readonly #shadowSampler: GPUSampler;
   /** Planes of the camera's frustum this frame (culling). */
   #planes: readonly Plane[] = [];
 
@@ -483,6 +556,13 @@ export class SceneRenderer {
           texture: { sampleType: 'depth', viewDimension: '2d-array' },
         },
         { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: { type: 'comparison' } },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        {
+          binding: 5,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'unfilterable-float' },
+        },
+        { binding: 6, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
       ],
     }));
     this.#shadowMap = device.createTexture({
@@ -553,32 +633,40 @@ export class SceneRenderer {
         texture2d(11),
       ],
     });
-    this.#waterFrameLayout = device.createBindGroupLayout({
+    const waterFrameLayout = device.createBindGroupLayout({
       label: 'water-frame',
-      entries: [
-        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: {} },
-        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
-        {
-          binding: 2,
-          visibility: GPUShaderStage.FRAGMENT,
-          texture: { sampleType: 'unfilterable-float' },
-        },
-        { binding: 3, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
-      ],
+      entries: [{ binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: {} }],
     });
     this.#waterPipelineLayout = device.createPipelineLayout({
       label: 'water',
-      bindGroupLayouts: [
-        frameLayout,
-        this.#drawLayout,
-        this.#waterTypeLayout,
-        this.#waterFrameLayout,
-      ],
+      bindGroupLayouts: [frameLayout, this.#drawLayout, this.#waterTypeLayout, waterFrameLayout],
     });
     this.#waterFrameBuffer = device.createBuffer({
       label: 'water-frame',
       size: WATER_FRAME_FLOATS * 4,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+    this.#waterFrameBindGroup = device.createBindGroup({
+      label: 'water-frame',
+      layout: waterFrameLayout,
+      entries: [{ binding: 0, resource: { buffer: this.#waterFrameBuffer } }],
+    });
+    this.#noSceneColor = device.createTexture({
+      label: 'no-scene-color',
+      format: 'rgba16float',
+      size: [1, 1],
+      usage: GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.#noSceneDepth = device.createTexture({
+      label: 'no-scene-depth',
+      format: 'r32float',
+      size: [1, 1],
+      usage: GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.#particleBuffer = device.createBuffer({
+      label: 'particles',
+      size: this.#particleData.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
     });
     this.#stillFlow = device.createTexture({
       label: 'still-flow',
@@ -610,24 +698,16 @@ export class SceneRenderer {
       size: this.#lightData.byteLength,
       usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
-    this.#frameBindGroup = device.createBindGroup({
-      label: 'frame',
-      layout: frameLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.#frameBuffer } },
-        { binding: 1, resource: { buffer: this.#lightBuffer } },
-        { binding: 2, resource: this.#shadowMap.createView({ dimension: '2d-array' }) },
-        {
-          binding: 3,
-          resource: device.createSampler({
-            label: 'shadow',
-            compare: 'less-equal',
-            magFilter: 'linear',
-            minFilter: 'linear',
-          }),
-        },
-      ],
+    this.#shadowSampler = device.createSampler({
+      label: 'shadow',
+      compare: 'less-equal',
+      magFilter: 'linear',
+      minFilter: 'linear',
     });
+    this.#frameBindGroup = this.#createFrameBindGroup(
+      this.#noSceneColor.createView(),
+      this.#noSceneDepth.createView(),
+    );
     this.#modules = {
       lighting: device.createShaderModule({
         label: 'lighting',
@@ -641,6 +721,10 @@ export class SceneRenderer {
         label: 'water',
         code: frameShader + commonShader + waterShader,
       }),
+      particle: device.createShaderModule({
+        label: 'particle',
+        code: frameShader + commonShader + effectShader + particleShader,
+      }),
     };
     this.#fallbackVertices = createBuffer(
       device,
@@ -648,15 +732,42 @@ export class SceneRenderer {
       GPUBufferUsage.VERTEX,
       'fallback-vertex',
     );
-    this.#sampler = device.createSampler({
-      label: 'linear-repeat',
-      magFilter: 'linear',
-      minFilter: 'linear',
-      mipmapFilter: 'linear',
-      addressModeU: 'repeat',
-      addressModeV: 'repeat',
-      maxAnisotropy: 8,
+    const address = (wrap: boolean): GPUAddressMode => (wrap ? 'repeat' : 'clamp-to-edge');
+    this.#samplers = [0, 1, 2, 3].map((mode) =>
+      device.createSampler({
+        label: `material-${String(mode)}`,
+        magFilter: 'linear',
+        minFilter: 'linear',
+        mipmapFilter: 'linear',
+        addressModeU: address((mode & 1) !== 0),
+        addressModeV: address((mode & 2) !== 0),
+        maxAnisotropy: 8,
+      }),
+    );
+  }
+
+  #createFrameBindGroup(sceneColor: GPUTextureView, sceneDepth: GPUTextureView): GPUBindGroup {
+    return this.#device.createBindGroup({
+      label: 'frame',
+      layout: this.#frameLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.#frameBuffer } },
+        { binding: 1, resource: { buffer: this.#lightBuffer } },
+        { binding: 2, resource: this.#shadowMap.createView({ dimension: '2d-array' }) },
+        { binding: 3, resource: this.#shadowSampler },
+        { binding: 4, resource: sceneColor },
+        { binding: 5, resource: sceneDepth },
+        { binding: 6, resource: this.#screenSampler },
+      ],
     });
+  }
+
+  /**
+   * The copies of the opaque scene (colour, and depth as r32float) that the blended pass
+   * reads: water, soft effects and particles. Called when the render targets change.
+   */
+  setSceneCopies(sceneColor: GPUTextureView, sceneDepth: GPUTextureView): void {
+    this.#frameBindGroup = this.#createFrameBindGroup(sceneColor, sceneDepth);
   }
 
   /** Uploads a model; resolves once all its textures are loaded (missing ones use defaults). */
@@ -676,7 +787,7 @@ export class SceneRenderer {
           indexBuffer,
           indexCount: part.indices.length,
           pipeline: water ? this.#waterPipeline(part) : this.#pipeline(part, blend),
-          bindGroup: await this.#materialBindGroup(part, textures),
+          bindGroup: await this.#materialBindGroup(part.material, part.name, textures),
           pass: water ? 'water' : blend !== undefined ? 'transparent' : 'opaque',
           shadowPipeline:
             !water &&
@@ -689,26 +800,52 @@ export class SceneRenderer {
         };
       }),
     );
+    const particles = await Promise.all(
+      data.particles.map(async (system): Promise<GpuParticleSystem> => ({
+        data: system,
+        pipeline: this.#particlePipeline(system),
+        bindGroup: await this.#materialBindGroup(system.material, system.name, textures),
+      })),
+    );
     return new GpuModel({
       center: data.center,
       radius: data.radius,
       parts,
       buffers,
       animation: data.animation,
+      particles,
     });
   }
 
-  /** Places model instances; writes one uniform slot per (instance, part). */
+  /**
+   * Places model instances (with the models attached at their AddOnNodes); writes one
+   * uniform slot per (instance, part) and per (instance, particle system).
+   */
   createScene(instances: readonly ModelInstance[]): GpuScene {
-    const drawCount = instances.reduce((sum, instance) => sum + instance.model.parts.length, 0);
+    const placed: ModelInstance[] = [];
+    const place = (instance: ModelInstance, depth: number): void => {
+      placed.push(instance);
+      if (depth >= 2) return;
+      for (const addon of instance.model.addons) {
+        place({ model: addon.model, world: multiply(instance.world, addon.world) }, depth + 1);
+      }
+    };
+    for (const instance of instances) place(instance, 0);
+
+    const drawCount = placed.reduce(
+      (sum, instance) => sum + instance.model.parts.length + instance.model.particles.length,
+      0,
+    );
     const uniforms = new ArrayBuffer(Math.max(1, drawCount) * DRAW_STRIDE);
     const draws: Draw[] = [];
     const animated: AnimatedDraw[] = [];
+    const particles: ParticleDraw[] = [];
     const world = new Float32Array(16);
-    for (const instance of instances) {
+    let slot = 0;
+    for (const instance of placed) {
       const animation = instance.model.animation;
       for (const part of instance.model.parts) {
-        const offset = draws.length * DRAW_STRIDE;
+        const offset = slot++ * DRAW_STRIDE;
         if (animation || part.part.billboard) {
           animated.push({ offset, instanceWorld: instance.world, part: part.part, animation });
         }
@@ -725,6 +862,33 @@ export class SceneRenderer {
           water: part.pass === 'water' ? instance.water : undefined,
         });
       }
+      instance.model.particles.forEach((system, index) => {
+        const offset = slot++ * DRAW_STRIDE;
+        const floats = new Float32Array(uniforms, offset, DRAW_SIZE / 4);
+        const uints = new Uint32Array(uniforms, offset, DRAW_SIZE / 4);
+        // Particles are written in world space.
+        floats.set(identity(), 0);
+        writeMaterial(floats, uints, system.data);
+        floats[28] = system.data.aspectRatio;
+        const rest = system.data.objects.get(system.data.block) ?? identity();
+        const origin = transformPoint(multiply(instance.world, rest), [0, 0, 0]);
+        // Each placement gets its own random sequence, the same every time it loads.
+        const seed = Math.imul(
+          (Math.round(origin[0]) * 73856093) ^ (Math.round(origin[1]) * 19349663),
+          (Math.round(origin[2]) * 83492791) ^ (index + 1),
+        );
+        particles.push({
+          system,
+          simulation: new ParticleSimulation(system.data, seed),
+          instanceWorld: instance.world,
+          animation,
+          uniformOffset: offset,
+          origin,
+          first: 0,
+          count: 0,
+          updated: undefined,
+        });
+      });
     }
     const buffer = createBuffer(
       this.#device,
@@ -737,7 +901,7 @@ export class SceneRenderer {
       layout: this.#drawLayout,
       entries: [{ binding: 0, resource: { buffer, size: DRAW_SIZE } }],
     });
-    return new GpuScene(draws, bindGroup, buffer, uniforms, animated);
+    return new GpuScene(draws, bindGroup, buffer, uniforms, animated, particles);
   }
 
   updateFrame(
@@ -747,6 +911,7 @@ export class SceneRenderer {
     timeSeconds = 0,
     lodMask?: LodMask,
     shadows?: FrameShadows,
+    screen?: { readonly width: number; readonly height: number; readonly near: number },
   ): void {
     this.#planes = frustumPlanes(viewProjection);
     const data = this.#frameData;
@@ -783,6 +948,28 @@ export class SceneRenderer {
       [cascades.length > 0 ? 1 : 0, SHADOW_MAP_SIZE, SHADOW_DEPTH_BIAS, SHADOW_NORMAL_OFFSET],
       144,
     );
+    data.set(
+      [
+        1 / Math.max(1, screen?.width ?? 1),
+        1 / Math.max(1, screen?.height ?? 1),
+        screen?.near ?? 1,
+        0,
+      ],
+      148,
+    );
+    // The camera's right and up axes: the first two rows of the view-projection (the
+    // projection only scales them).
+    const axis = (row: number): number[] => {
+      const v = [
+        viewProjection[row] ?? 0,
+        viewProjection[4 + row] ?? 0,
+        viewProjection[8 + row] ?? 0,
+      ];
+      const length = Math.hypot(v[0] ?? 0, v[1] ?? 0, v[2] ?? 0) || 1;
+      return [(v[0] ?? 0) / length, (v[1] ?? 0) / length, (v[2] ?? 0) / length, 0];
+    };
+    data.set(axis(0), 152);
+    data.set(axis(1), 156);
     this.#device.queue.writeBuffer(this.#frameBuffer, 0, data);
 
     if (lightCount > 0) {
@@ -812,21 +999,25 @@ export class SceneRenderer {
 
   /**
    * Plays the models' controllers: rewrites the uniforms of animated draws for this moment
-   * (each model's animation is evaluated once per call).
+   * (each model's animation is evaluated once per call), and runs the particle systems near
+   * the camera or in view (`wind`: the weather's wind in units per second).
    */
-  animate(scenes: Iterable<GpuScene>, seconds: number, camera: Vec3): void {
+  animate(scenes: Iterable<GpuScene>, seconds: number, camera: Vec3, wind: Vec3 = [0, 0, 0]): void {
     const frames = new Map<ModelAnimation, AnimationFrame>();
+    const frameOf = (animation: ModelAnimation | undefined): AnimationFrame | undefined => {
+      if (!animation) return undefined;
+      let frame = frames.get(animation);
+      if (!frame) {
+        frame = animate(animation, seconds);
+        frames.set(animation, frame);
+      }
+      return frame;
+    };
     const world = new Float32Array(16);
-    for (const scene of scenes) {
+    const sceneList = [...scenes];
+    for (const scene of sceneList) {
       for (const draw of scene.animated) {
-        let frame: AnimationFrame | undefined;
-        if (draw.animation) {
-          frame = frames.get(draw.animation);
-          if (!frame) {
-            frame = animate(draw.animation, seconds);
-            frames.set(draw.animation, frame);
-          }
-        }
+        const frame = frameOf(draw.animation);
         const floats = new Float32Array(scene.uniformData, draw.offset, DRAW_SIZE / 4);
         const billboard = draw.part.billboard;
         if (frame?.hidden.has(draw.part.block)) {
@@ -853,6 +1044,108 @@ export class SceneRenderer {
         );
       }
     }
+    this.#runParticles(sceneList, seconds, camera, wind, frameOf);
+  }
+
+  /** Updates the particle systems and gathers their instances into this frame's buffer. */
+  #runParticles(
+    scenes: readonly GpuScene[],
+    seconds: number,
+    camera: Vec3,
+    wind: Vec3,
+    frameOf: (animation: ModelAnimation | undefined) => AnimationFrame | undefined,
+  ): void {
+    let needed = 0;
+    for (const scene of scenes) {
+      for (const draw of scene.particles) needed += draw.simulation.data.maxParticles;
+    }
+    if (needed === 0) return;
+    let cursor = 0;
+    for (const scene of scenes) {
+      for (const draw of scene.particles) {
+        draw.count = 0;
+        const simulation = draw.simulation;
+        const frame = frameOf(draw.animation);
+        if (frame?.hidden.has(simulation.data.block)) continue;
+        const distance = Math.hypot(
+          draw.origin[0] - camera[0],
+          draw.origin[1] - camera[1],
+          draw.origin[2] - camera[2],
+        );
+        if (distance > PARTICLE_MAX_DISTANCE) continue;
+        const inView =
+          sphereVisible(this.#planes, draw.origin, 512) ||
+          (simulation.count > 0 &&
+            sphereVisible(this.#planes, simulation.center, simulation.radius));
+        if (distance > PARTICLE_UPDATE_DISTANCE && !inView) continue;
+        // Time since this system last ran (it may have been out of view for a while).
+        const step =
+          draw.updated === undefined
+            ? 0
+            : Math.max(0, Math.min(PARTICLE_MAX_STEP, seconds - draw.updated));
+        const context: ParticleContext = {
+          seconds,
+          dt: step,
+          instanceWorld: draw.instanceWorld,
+          animated: frame?.worlds,
+          camera,
+          wind,
+        };
+        simulation.update(context);
+        draw.updated = seconds;
+        if (simulation.count === 0 || !inView) continue;
+        const instances = simulation.instanceCount;
+        this.#ensureParticleCapacity((cursor + instances) * PARTICLE_FLOATS);
+        draw.first = cursor;
+        draw.count = simulation.write(this.#particleData, cursor * PARTICLE_FLOATS, context);
+        cursor += draw.count;
+        if (frame) {
+          const floats = new Float32Array(scene.uniformData, draw.uniformOffset, DRAW_SIZE / 4);
+          writeAnimatedMaterial(floats, simulation.data, frame);
+          this.#device.queue.writeBuffer(
+            scene.uniforms,
+            draw.uniformOffset,
+            scene.uniformData,
+            draw.uniformOffset,
+            DRAW_SIZE,
+          );
+        }
+      }
+    }
+    if (cursor === 0) return;
+    if (this.#particleBuffer.size < this.#particleData.byteLength) {
+      this.#particleBuffer.destroy();
+      this.#particleBuffer = this.#device.createBuffer({
+        label: 'particles',
+        size: this.#particleData.byteLength,
+        usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      });
+    }
+    this.#device.queue.writeBuffer(
+      this.#particleBuffer,
+      0,
+      this.#particleData,
+      0,
+      cursor * PARTICLE_FLOATS,
+    );
+  }
+
+  #ensureParticleCapacity(floats: number): void {
+    if (this.#particleData.length >= floats) return;
+    let size = this.#particleData.length;
+    while (size < floats) size *= 2;
+    const grown = new Float32Array(size);
+    grown.set(this.#particleData);
+    this.#particleData = grown;
+  }
+
+  /** Whether the blended pass reads copies of the opaque scene (water, effects, particles). */
+  needsSceneCopies(scenes: Iterable<GpuScene>): boolean {
+    for (const scene of scenes) {
+      if (scene.particles.some((draw) => draw.count > 0)) return true;
+      if (scene.draws.some((draw) => draw.part.pass !== 'opaque')) return true;
+    }
+    return false;
   }
 
   /** Draws the opaque parts of scenes. */
@@ -874,10 +1167,10 @@ export class SceneRenderer {
     return false;
   }
 
-  /** Draws water surfaces; `inputs` holds the opaque scene's colour and depth. */
-  drawWater(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>, inputs: GPUBindGroup): void {
+  /** Draws water surfaces (they read the opaque scene's copies, see setSceneCopies). */
+  drawWater(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): void {
     pass.setBindGroup(0, this.#frameBindGroup);
-    pass.setBindGroup(3, inputs);
+    pass.setBindGroup(3, this.#waterFrameBindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
     for (const scene of scenes) {
       for (const draw of scene.draws) {
@@ -895,26 +1188,47 @@ export class SceneRenderer {
     }
   }
 
-  /** Draws the blended parts of all scenes back to front. */
+  /** Draws the blended parts and particle systems of all scenes back to front. */
   drawTransparent(
     pass: GPURenderPassEncoder,
     scenes: Iterable<GpuScene>,
     cameraPosition: Vec3,
   ): void {
     pass.setBindGroup(0, this.#frameBindGroup);
-    pass.setVertexBuffer(1, this.#fallbackVertices);
-    const transparent: { scene: GpuScene; draw: Draw; distance: number }[] = [];
+    type Blended =
+      | { scene: GpuScene; draw: Draw; particles?: undefined; distance: number }
+      | { scene: GpuScene; draw?: undefined; particles: ParticleDraw; distance: number };
+    const transparent: Blended[] = [];
+    const distance = (center: readonly number[]): number => {
+      const dx = (center[0] ?? 0) - cameraPosition[0];
+      const dy = (center[1] ?? 0) - cameraPosition[1];
+      const dz = (center[2] ?? 0) - cameraPosition[2];
+      return dx * dx + dy * dy + dz * dz;
+    };
     for (const scene of scenes) {
       for (const draw of scene.draws) {
         if (draw.part.pass !== 'transparent' || !this.#visible(draw)) continue;
-        const dx = draw.center[0] - cameraPosition[0];
-        const dy = draw.center[1] - cameraPosition[1];
-        const dz = draw.center[2] - cameraPosition[2];
-        transparent.push({ scene, draw, distance: dx * dx + dy * dy + dz * dz });
+        transparent.push({ scene, draw, distance: distance(draw.center) });
+      }
+      for (const particles of scene.particles) {
+        if (particles.count === 0) continue;
+        transparent.push({ scene, particles, distance: distance(particles.simulation.center) });
       }
     }
     transparent.sort((a, b) => b.distance - a.distance);
-    for (const { scene, draw } of transparent) this.#drawPart(pass, scene, draw);
+    for (const item of transparent) {
+      if (item.draw) {
+        pass.setVertexBuffer(1, this.#fallbackVertices);
+        this.#drawPart(pass, item.scene, item.draw);
+        continue;
+      }
+      const { system, uniformOffset, first, count } = item.particles;
+      pass.setPipeline(system.pipeline);
+      pass.setBindGroup(1, item.scene.drawBindGroup, [uniformOffset]);
+      pass.setBindGroup(2, system.bindGroup);
+      pass.setVertexBuffer(0, this.#particleBuffer);
+      pass.draw(6, count, 0, first);
+    }
   }
 
   /**
@@ -961,7 +1275,7 @@ export class SceneRenderer {
       layout: this.#waterTypeLayout,
       entries: [
         { binding: 6, resource: { buffer } },
-        { binding: 7, resource: this.#sampler },
+        { binding: 7, resource: this.#repeatSampler },
         { binding: 8, resource: view(0) },
         { binding: 9, resource: view(1) },
         { binding: 10, resource: view(2) },
@@ -969,20 +1283,6 @@ export class SceneRenderer {
       ],
     });
     return new GpuWaterType(type, bindGroup, buffer);
-  }
-
-  /** Water inputs: the opaque scene's colour and depth (single-sample copies). */
-  waterInputs(color: GPUTextureView, depth: GPUTextureView): GPUBindGroup {
-    return this.#device.createBindGroup({
-      label: 'water-frame',
-      layout: this.#waterFrameLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.#waterFrameBuffer } },
-        { binding: 1, resource: color },
-        { binding: 2, resource: depth },
-        { binding: 3, resource: this.#screenSampler },
-      ],
-    });
   }
 
   /** Sky colours and the screen size for this frame's water. */
@@ -1083,9 +1383,12 @@ export class SceneRenderer {
     pass.drawIndexed(part.indexCount);
   }
 
-  async #materialBindGroup(part: ModelPart, textures: TextureCache): Promise<GPUBindGroup> {
+  async #materialBindGroup(
+    material: PartMaterial | undefined,
+    label: string,
+    textures: TextureCache,
+  ): Promise<GPUBindGroup> {
     const { defaults } = textures;
-    const material = part.material;
     const slot = (index: number): string =>
       material?.kind === 'lighting' ? (material.textures[index] ?? '') : '';
 
@@ -1113,23 +1416,84 @@ export class SceneRenderer {
     ]);
     const cube = env?.depthOrArrayLayers === 6 ? env : defaults.blackCube;
 
+    const clampMode = material?.kind === 'effect' ? material.textureClampMode & 3 : 3;
+    // A few meshes name a cube map in a 2D slot (e.g. an env mask): those slots get defaults.
+    const flat = (texture: GPUTexture | undefined): GPUTexture | undefined =>
+      texture?.depthOrArrayLayers === 1 ? texture : undefined;
     return this.#device.createBindGroup({
-      label: part.name,
+      label,
       layout: this.#materialLayout,
       entries: [
-        { binding: 0, resource: this.#sampler },
-        { binding: 1, resource: (diffuse ?? defaults.white).createView() },
-        { binding: 2, resource: (normal ?? defaults.flatNormal).createView() },
+        { binding: 0, resource: this.#samplers[clampMode] ?? this.#repeatSampler },
+        { binding: 1, resource: (flat(diffuse) ?? defaults.white).createView() },
+        { binding: 2, resource: (flat(normal) ?? defaults.flatNormal).createView() },
         {
           binding: 3,
           resource: (
-            glow ?? (material?.kind === 'effect' ? defaults.white : defaults.black)
+            flat(glow) ?? (material?.kind === 'effect' ? defaults.white : defaults.black)
           ).createView(),
         },
         { binding: 4, resource: cube.createView({ dimension: 'cube' }) },
-        { binding: 5, resource: (envMask ?? defaults.white).createView() },
+        { binding: 5, resource: (flat(envMask) ?? defaults.white).createView() },
       ],
     });
+  }
+
+  /** The sampler that wraps both U and V (the default clamp mode). */
+  get #repeatSampler(): GPUSampler {
+    const sampler = this.#samplers[3];
+    if (!sampler) throw new Error('Material samplers missing');
+    return sampler;
+  }
+
+  /** Instanced quads (or strip segments) with the effect shader and the system's blending. */
+  #particlePipeline(system: ParticleSystemData): GPURenderPipeline {
+    const material = system.material;
+    const flags1 = material?.flags1 ?? SLSF1_ZBUFFER_TEST;
+    const flags2 = material?.flags2 ?? 0;
+    const blend = blendState(system.alpha);
+    // Blended particles never write depth: their quads overlap unsorted within the system.
+    const depthWrite = blend === undefined && (flags2 & SLSF2_ZBUFFER_WRITE) !== 0;
+    const depthTest = (flags1 & SLSF1_ZBUFFER_TEST) !== 0;
+    const entryPoint = system.strip ? 'vs_strip' : 'vs_particle';
+    const key = ['particle', entryPoint, JSON.stringify(blend), depthWrite, depthTest].join('|');
+    let pipeline = this.#pipelines.get(key);
+    if (!pipeline) {
+      const attribute = (location: number): GPUVertexAttribute => ({
+        shaderLocation: location,
+        format: 'float32x4',
+        offset: location * 16,
+      });
+      pipeline = this.#device.createRenderPipeline({
+        label: key,
+        layout: this.#pipelineLayout,
+        vertex: {
+          module: this.#modules.particle,
+          entryPoint,
+          buffers: [
+            {
+              arrayStride: PARTICLE_FLOATS * 4,
+              stepMode: 'instance',
+              attributes: [attribute(0), attribute(1), attribute(2), attribute(3)],
+            },
+          ],
+        },
+        fragment: {
+          module: this.#modules.particle,
+          entryPoint: 'fs_particle',
+          targets: [{ format: this.#colorFormat, ...(blend && { blend }) }],
+        },
+        primitive: { topology: 'triangle-list', cullMode: 'none' },
+        depthStencil: {
+          format: DEPTH_FORMAT,
+          depthWriteEnabled: depthWrite,
+          depthCompare: depthTest ? 'greater-equal' : 'always',
+        },
+        multisample: { count: SAMPLE_COUNT },
+      });
+      this.#pipelines.set(key, pipeline);
+    }
+    return pipeline;
   }
 
   #shadowPipeline(part: ModelPart): GPURenderPipeline {

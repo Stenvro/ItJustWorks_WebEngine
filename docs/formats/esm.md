@@ -324,6 +324,16 @@ approximated (TODO(M13)): how eye adapt speed and strength become the two rates 
 `max(c − threshold, 0) · scale`, blurred at quarter resolution with σ = radius / 2) and what
 sky scale does (not applied).
 
+## Add-on nodes
+
+**ADDN** (92 records, `parseAddonNode` in `src/world/cell-records.ts`): MODL (the attached
+model, almost always a master particle system in `meshes\mps\`), DATA i32 (the node index,
+unique), DNAM u16 master particle system cap + u16 flags, SNAM (looping sound: TODO(M6)). A
+mesh's BSValueNode named `AddOnNode<index>` with that value gets the model attached there
+(candle flames 49, torch fire 46 and embers 7, fires 24/25, chimney smoke 56; see
+[nif.md](nif.md#particles)). The engine shares one master system among all nodes up to the
+cap; here every node gets its own copy of the system, which looks the same.
+
 ## Scripts and conditions
 
 **VMAD** (scripts attached to a record): i16 version (5), i16 object format (1: form id, alias,
