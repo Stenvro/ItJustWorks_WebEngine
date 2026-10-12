@@ -7,6 +7,7 @@ import { parseNif } from '../src/formats/nif/nif.ts';
 import { decodeWindows1252 } from '../src/formats/text.ts';
 import { CharacterBody } from '../src/physics/character.ts';
 import { buildCollision } from '../src/physics/collision-data.ts';
+import { GRAB_DEFAULTS, GrabSpring } from '../src/physics/grab.ts';
 import {
   CollisionMatrix,
   Layer,
@@ -22,6 +23,7 @@ import { IniSettings } from '../src/world/ini-settings.ts';
 import { Player } from '../src/shell/player.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Worldspace } from '../src/world/worldspace.ts';
+import { WorldBorder } from '../src/world/border.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
@@ -177,6 +179,110 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
     physics.free();
   }, 60_000);
 
+  it("stops the player at Tamriel's border regions", async () => {
+    const border = await WorldBorder.of(db, 0x3c);
+    expect(border.regions.map((region) => region.editorId).sort()).toEqual([
+      'BorderRegionSkyrim',
+      'DLC1BorderRegionSkyrim',
+    ]);
+    // Whiterun's plain and Castle Volkihar's island (Dawnguard's region) are inside.
+    expect(border.contains(10 * 4096, -2 * 4096)).toBe(true);
+    expect(border.contains(-41 * 4096, 32 * 4096)).toBe(true);
+    // Far beyond the mountains around Skyrim is not.
+    expect(border.contains(60 * 4096, -40 * 4096)).toBe(false);
+
+    // A player running east on flat ground towards an edge at x = 400.
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.addMesh(
+      Float32Array.of(-2000, -2000, 0, 2000, -2000, 0, 2000, 2000, 0, -2000, 2000, 0),
+      Uint32Array.of(0, 1, 2, 0, 2, 3),
+      Layer.ground,
+      { reference: 0, kind: 'landscape' },
+    );
+    const types = new Map<string, ReturnType<typeof parseMovementType>>();
+    for (const formId of db.formIdsOfType('MOVT')) {
+      const record = await db.get(formId);
+      if (record) types.set(parseMovementType(record).name, parseMovementType(record));
+    }
+    const type = (name: string): ReturnType<typeof parseMovementType> => {
+      const found = types.get(name);
+      if (!found) throw new Error(name);
+      return found;
+    };
+    const player = new Player(
+      {
+        body: await readPlayerBody(db, async (path) => parseNif(await vfs.read(path))),
+        ini: new IniSettings(vfs.defaultIni),
+        controls: parseControlMap(
+          decodeWindows1252(await vfs.read('interface\\controls\\pc\\controlmap.txt')),
+        ),
+        movement: {
+          normal: type('NPCDefault'),
+          sprint: type('NPCSprinting'),
+          sneak: type('NPCSneaking'),
+          swim: type('NPCSwimming'),
+        },
+        jumpHeight: 76,
+        grab: GRAB_DEFAULTS,
+        stairMaterials: new Set(),
+        physics,
+        waterHeight: () => undefined,
+      },
+      [0, 0, 10],
+      Math.PI / 2,
+    );
+    let warned = 0;
+    player.border = (x) => x < 400;
+    player.onBorder = () => {
+      warned++;
+    };
+    player.press('Forward', true);
+    for (let i = 0; i < 4 * 60; i++) player.update(1 / 60);
+    expect(player.feet[0]).toBeGreaterThan(330);
+    expect(player.feet[0]).toBeLessThan(400);
+    expect(warned).toBeGreaterThan(0);
+    physics.free();
+  }, 60_000);
+
+  it('lifts a grabbed bucket to the point held, and drops it when let go', async () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.addMesh(
+      Float32Array.of(-1000, -1000, 0, 1000, -1000, 0, 1000, 1000, 0, -1000, 1000, 0),
+      Uint32Array.of(0, 1, 2, 0, 2, 3),
+      Layer.ground,
+      { reference: 0, kind: 'landscape' },
+    );
+    const bucket = buildCollision(parseNif(await vfs.read('meshes\\clutter\\bucket01.nif')));
+    const world = new Float32Array(16);
+    world.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 20, 1]);
+    const placed = physics.addObject(bucket, world, { reference: 0x1234, kind: 'object' }, false);
+    const body = placed.bodies[0]?.body;
+    if (!body) throw new Error('no bucket body');
+    for (let i = 0; i < 120; i++) physics.step(1 / 60);
+    const resting = body.translation().z;
+    // The collider is grabbable (a placed object's simulated body).
+    const collider = placed.colliders[0];
+    if (!collider) throw new Error('no bucket collider');
+    expect(physics.grabbable(collider)).toBe(body);
+    const t = body.translation();
+    const start: [number, number, number] = [t.x * 69.99125, t.y * 69.99125, t.z * 69.99125];
+    const spring = new GrabSpring(body, start, GRAB_DEFAULTS);
+    spring.target = [start[0] + 30, start[1], start[2] + 80];
+    for (let i = 0; i < 120; i++) {
+      physics.step(1 / 60, (dt) => {
+        spring.apply(dt);
+      });
+    }
+    // Held where the spring pulls (gravity leaves it a little below).
+    const held = spring.point;
+    expect(Math.hypot(held[0] - spring.target[0], held[2] - spring.target[2])).toBeLessThan(12);
+    for (let i = 0; i < 120; i++) physics.step(1 / 60);
+    // Let go, it falls back to the floor (it may land on its side).
+    expect(body.translation().z * 69.99125).toBeLessThan(resting * 69.99125 + 20);
+    expect(Math.hypot(body.linvel().x, body.linvel().y, body.linvel().z)).toBeLessThan(0.05);
+    physics.free();
+  }, 60_000);
+
   it('floats, swims, dives and wades out of deep water', async () => {
     const physics = new PhysicsWorld(matrix, GRAVITY);
     // A lake floor at -500, a shore up to 20 at y 1000..1500, land beyond; water at 0 south of it.
@@ -235,6 +341,7 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
           swim: type('NPCSwimming'),
         },
         jumpHeight: 76,
+        grab: GRAB_DEFAULTS,
         stairMaterials: new Set(),
         physics,
         waterHeight: (_x, y) => (y < 1500 ? 0 : undefined),

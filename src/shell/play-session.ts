@@ -3,10 +3,12 @@
 // (tfc), and the simulated objects whose drawn models follow their bodies. Shared by the
 // exterior and interior viewers.
 
+import type RAPIER from '@dimforge/rapier3d-compat';
 import type { CollisionData } from '../physics/collision-data.ts';
+import { GrabSpring } from '../physics/grab.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { landscapeMesh } from '../physics/landscape.ts';
-import type { PhysicsWorld, PlacedCollision } from '../physics/physics-world.ts';
+import type { PhysicsWorld, PickHit, PlacedCollision } from '../physics/physics-world.ts';
 import { objectWorld, playSequence, type Playback } from '../render/animation.ts';
 import type { FlyCamera } from '../render/fly-camera.ts';
 import { invert } from '../render/frustum.ts';
@@ -17,6 +19,9 @@ import type { CellObject, CellPrimitive, Teleport } from '../world/cell-loader.t
 import type { LandData } from '../world/land.ts';
 import type { Player } from './player.ts';
 import { attachPlayerInput } from './player-input.ts';
+
+/** How long a notification stays (the HUD's own timing: TODO(M9)). */
+const NOTICE_MS = 3000;
 
 /** Milliseconds per frame spent placing collision of loaded cells. */
 const COLLISION_BUDGET_MS = 3;
@@ -131,8 +136,21 @@ export class PlaySession {
   onFreeCamera: ((free: boolean) => void) | undefined;
   readonly #activatable: ((reference: number) => Activatable | undefined) | undefined;
   readonly #prompt: HTMLElement | undefined;
+  readonly #notice: HTMLElement | undefined;
+  #noticeTimer: ReturnType<typeof setTimeout> | undefined;
   /** What the crosshair rests on. */
   #target: Activatable | undefined;
+  /** Activate went down on a loose object: it is grabbed if still held after fZKeyDelay. */
+  #hold:
+    | {
+        readonly since: number;
+        readonly body: RAPIER.RigidBody;
+        readonly point: Vec3;
+        readonly target: Activatable | undefined;
+      }
+    | undefined;
+  /** The object held (its spring) and how far in front of the camera. */
+  #grab: { readonly spring: GrabSpring; readonly distance: number } | undefined;
 
   /**
    * The player is put on the ground below their feet (searching from `searchAbove` higher)
@@ -149,6 +167,8 @@ export class PlaySession {
     activatable?: (reference: number) => Activatable | undefined;
     /** Where the activation prompt is shown. */
     prompt?: HTMLElement;
+    /** Where the game's notifications are shown. */
+    notice?: HTMLElement;
   }) {
     this.physics = init.physics;
     this.player = init.player;
@@ -158,6 +178,7 @@ export class PlaySession {
     this.#searchAbove = init.searchAbove;
     this.#activatable = init.activatable;
     this.#prompt = init.prompt;
+    this.#notice = init.notice;
     const active = (): Camera =>
       this.#freeCamera || this.#spawnPending ? this.camera : this.player;
     this.view = {
@@ -188,6 +209,22 @@ export class PlaySession {
     this.player.lensShift = shift;
   }
 
+  /**
+   * Shows one of the game's notifications for a few seconds (a repeat only extends it).
+   * TODO(M9): the HUD's own notifications (HUDMenu), with their timing.
+   */
+  notify(text: string): void {
+    const notice = this.#notice;
+    if (!notice || text === '') return;
+    notice.textContent = text;
+    notice.hidden = false;
+    if (this.#noticeTimer !== undefined) clearTimeout(this.#noticeTimer);
+    this.#noticeTimer = setTimeout(() => {
+      notice.hidden = true;
+      this.#noticeTimer = undefined;
+    }, NOTICE_MS);
+  }
+
   /** Puts the player somewhere new (a door's destination); they wait for its ground. */
   placePlayer(feet: Vec3, yaw: number): void {
     this.player.teleport(feet, yaw);
@@ -210,9 +247,13 @@ export class PlaySession {
       this.physics.step(deltaSeconds);
       this.#setTarget(undefined);
     } else {
+      this.player.onStep = (step) => {
+        this.#holdGrabbed(step);
+      };
       this.player.update(deltaSeconds);
-      this.#setTarget(this.#pickTarget());
-      if (this.player.takePressed('Activate')) this.#target?.activate();
+      const hit = this.#pick();
+      this.#setTarget(this.#grab ? undefined : this.#activatableAt(hit));
+      this.#activate(hit);
     }
     // Simulated objects that move take their drawn models along.
     for (const group of this.#groups) {
@@ -230,13 +271,13 @@ export class PlaySession {
    * the view for fActivatePickLength (further in third person, by the camera's distance from
    * the eyes), on the item picker layer.
    */
-  #pickTarget(): Activatable | undefined {
+  #pick(): PickHit | undefined {
     const player = this.player;
     const { ini } = player;
     const camera = player.position;
     const eye = player.eye;
     const back = Math.hypot(camera[0] - eye[0], camera[1] - eye[1], camera[2] - eye[2]);
-    const hit = this.physics.pick(
+    return this.physics.pick(
       camera,
       player.forward,
       ini.number('Interface', 'fActivatePickLength') + back,
@@ -244,8 +285,79 @@ export class PlaySession {
       Layer.itemPicker,
       player.character.collider,
     );
+  }
+
+  #activatableAt(hit: PickHit | undefined): Activatable | undefined {
     const owner = hit?.owner;
     return owner?.kind === 'object' ? this.#activatable?.(owner.reference) : undefined;
+  }
+
+  /**
+   * Activate: on a loose object it waits fZKeyDelay; let go before that it activates, held
+   * longer it takes hold of the object (grab) until it is let go. Everything else activates
+   * when pressed.
+   */
+  #activate(hit: PickHit | undefined): void {
+    const player = this.player;
+    if (player.takePressed('Activate') && !this.#grab) {
+      const body = hit && this.physics.grabbable(hit.collider);
+      if (hit && body) {
+        this.#hold = { since: clock(), body, point: hit.point, target: this.#target };
+      } else {
+        this.#target?.activate();
+      }
+    }
+    const hold = this.#hold;
+    if (hold) {
+      if (!player.isHeld('Activate')) {
+        this.#hold = undefined;
+        hold.target?.activate();
+      } else if (clock() - hold.since >= player.ini.number('Controls', 'fZKeyDelay')) {
+        this.#hold = undefined;
+        const camera = player.position;
+        this.#grab = {
+          spring: new GrabSpring(hold.body, hold.point, player.grab),
+          distance: Math.hypot(
+            hold.point[0] - camera[0],
+            hold.point[1] - camera[1],
+            hold.point[2] - camera[2],
+          ),
+        };
+      }
+    }
+    if (this.#grab && !player.isHeld('Activate')) this.#grab = undefined;
+  }
+
+  /**
+   * Every physics step while something is held: its spring pulls towards the point the
+   * camera looks at, at the distance it was taken. Dropped when it is left behind by more than
+   * fActivatePickLength (the engine's rule is not documented: TODO(M13)) or no longer exists.
+   */
+  #holdGrabbed(step: number): void {
+    const grab = this.#grab;
+    if (!grab) return;
+    if (!grab.spring.body.isValid()) {
+      this.#grab = undefined;
+      return;
+    }
+    const camera = this.player.position;
+    const forward = this.player.forward;
+    grab.spring.target = [
+      camera[0] + forward[0] * grab.distance,
+      camera[1] + forward[1] * grab.distance,
+      camera[2] + forward[2] * grab.distance,
+    ];
+    const point = grab.spring.point;
+    const gap = Math.hypot(
+      point[0] - grab.spring.target[0],
+      point[1] - grab.spring.target[1],
+      point[2] - grab.spring.target[2],
+    );
+    if (gap > this.player.ini.number('Interface', 'fActivatePickLength')) {
+      this.#grab = undefined;
+      return;
+    }
+    grab.spring.apply(step);
   }
 
   /** Shows what activating would do. TODO(M9): the HUD's own activation prompt. */

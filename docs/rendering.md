@@ -102,9 +102,11 @@ pixel turns into it by `saturate((distance − focus distance) / range) × stren
 distance from the opaque scene's depth. Where the sky is not blurred ("no sky"), a sky pixel
 is blurred only beside geometry: by the average depth 3 pixels around it and at half strength
 for the share of sky there, so mountain silhouettes soften. The engine's dynamic depth of
-field (bDynamicDOF, fDynamicDOF*: near and far blur around what the player looks at, focus
-changing after fDDOFFocusDelay over fDDOFFocusDuration) follows the player camera's focus:
-TODO(M5), with the player camera.
+field (bDynamicDOF, fDynamicDOF*: near and far blur around an automatic focus, the average
+depth at the centre, changing after fDDOFFocusDelay over fDDOFFocusDuration; ISDepthOfField's
+autofocus path) is not part of plain play: imagespace modifiers switch it on (IMAD DNAM
+"DoF - Use Target" and the flags Mode Front/Back, the near and far sides), and the game plays
+those in dialogue and menus (TODO(M9)) and for spells and other effects (TODO(M11)).
 
 ## Ambient occlusion
 
