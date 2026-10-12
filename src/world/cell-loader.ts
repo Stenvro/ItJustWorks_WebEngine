@@ -123,9 +123,10 @@ async function isEnabled(
 }
 
 /**
- * Player homes keep their unfurnished look behind "<Room>Start" markers that the upgrade
- * scripts disable once "<Room>" is bought. With every upgrade on, those Start markers must
- * be off, or old crates and hay overlap the new furniture.
+ * Player homes keep their unfurnished look behind "...Start" markers (e.g.
+ * WhiterunPlayerHouseDiningRoomStart) that the upgrade scripts disable when the matching
+ * upgrade (e.g. WhiterunPlayerHouseDecorateDiningRoom) is bought. With every upgrade on,
+ * all those Start markers are off, or old crates and walls overlap the new furniture.
  * TODO(M8): run the real Papyrus upgrade scripts instead of this naming rule.
  */
 async function replacedStartMarkers(
@@ -139,9 +140,9 @@ async function replacedStartMarkers(
     const editorId = parent?.editorId;
     if (editorId) parents.add(editorId.toLowerCase());
   }
-  return new Set(
-    [...parents].filter((name) => name.endsWith('start') && parents.has(name.slice(0, -5))),
-  );
+  // Only when the cell also has upgrade markers: then the Start ones are the "before" state.
+  const hasUpgrades = [...parents].some((name) => !name.endsWith('start'));
+  return new Set(hasUpgrades ? [...parents].filter((name) => name.endsWith('start')) : []);
 }
 
 export async function loadCellData(
