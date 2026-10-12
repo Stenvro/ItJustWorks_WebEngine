@@ -1,5 +1,6 @@
 // GPU textures from DDS files, cached per path. Missing or broken textures fall back to
-// neutral defaults so a model still renders.
+// neutral defaults so a model still renders. Models hold the textures they use (retain /
+// release); textures no model holds any more can be evicted under a memory budget.
 
 import type { DdsTexture } from '../formats/dds/dds.ts';
 
@@ -68,12 +69,28 @@ function solid(
   return texture;
 }
 
+/** GPU bytes of a DDS texture (all mips and layers as stored). */
+export function textureBytes(dds: DdsTexture): number {
+  return dds.levels.reduce((sum, level) => sum + level.size, 0);
+}
+
+interface TextureEntry {
+  readonly texture: Promise<GPUTexture | undefined>;
+  bytes: number;
+  /** Models holding it; textures never held (terrain, sky, water) are never evicted. */
+  refs: number;
+  held: boolean;
+  /** performance.now() of the last request or release. */
+  lastUsed: number;
+}
+
 export class TextureCache {
   readonly defaults: DefaultTextures;
   readonly #device: GPUDevice;
   readonly #load: TextureLoader;
-  readonly #cache = new Map<string, Promise<GPUTexture | undefined>>();
+  readonly #cache = new Map<string, TextureEntry>();
   readonly #failures: string[] = [];
+  #bytes = 0;
 
   constructor(device: GPUDevice, load: TextureLoader) {
     this.#device = device;
@@ -96,17 +113,77 @@ export class TextureCache {
     if (path === '') return Promise.resolve(undefined);
     let entry = this.#cache.get(path);
     if (!entry) {
-      entry = this.#load(path).then(
-        (dds) => createGpuTexture(this.#device, dds, path),
-        (error: unknown) => {
-          this.#failures.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
-          return undefined;
-        },
-      );
+      const created: TextureEntry = {
+        texture: this.#load(path).then(
+          (dds) => {
+            created.bytes = textureBytes(dds);
+            this.#bytes += created.bytes;
+            return createGpuTexture(this.#device, dds, path);
+          },
+          (error: unknown) => {
+            this.#failures.push(
+              `${path}: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            return undefined;
+          },
+        ),
+        bytes: 0,
+        refs: 0,
+        held: false,
+        lastUsed: performance.now(),
+      };
+      entry = created;
       this.#cache.set(path, entry);
     }
-    return entry;
+    entry.lastUsed = performance.now();
+    return entry.texture;
   }
 
-  // TODO(M4): evict textures under a memory budget once cells stream in and out.
+  /** A model holds the texture at `path` (see `release`). */
+  retain(path: string): void {
+    const entry = this.#cache.get(path);
+    if (!entry) return;
+    entry.refs++;
+    entry.held = true;
+    entry.lastUsed = performance.now();
+  }
+
+  /**
+   * A model lets go of the texture at `path` (models are destroyed when idle, so this does not
+   * count as a use).
+   */
+  release(path: string): void {
+    const entry = this.#cache.get(path);
+    if (!entry) return;
+    entry.refs = Math.max(0, entry.refs - 1);
+  }
+
+  /** GPU bytes of the loaded textures. */
+  get bytes(): number {
+    return this.#bytes;
+  }
+
+  /**
+   * Frees textures that models held but none holds any more, least recently used first,
+   * until the textures take at most `maxBytes`; skips those used in the last `graceMs`
+   * (something may be about to hold them). Returns the bytes freed.
+   */
+  evict(maxBytes: number, graceMs: number): number {
+    if (this.#bytes <= maxBytes) return 0;
+    const now = performance.now();
+    const idle = [...this.#cache.entries()]
+      .filter(([, entry]) => entry.held && entry.refs === 0 && now - entry.lastUsed > graceMs)
+      .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    let freed = 0;
+    for (const [path, entry] of idle) {
+      if (this.#bytes <= maxBytes) break;
+      this.#cache.delete(path);
+      this.#bytes -= entry.bytes;
+      freed += entry.bytes;
+      void entry.texture.then((texture) => {
+        texture?.destroy();
+      });
+    }
+    return freed;
+  }
 }

@@ -219,7 +219,14 @@ export class GpuModel {
    * resolved by the session; placed with every instance of this model.
    */
   addons: readonly ModelAddon[] = [];
+  /** GPU bytes of its own buffers (textures are counted by the texture cache). */
+  readonly bytes: number;
+  /** performance.now() when a scene last took or let go of it (eviction order). */
+  lastUsed = performance.now();
   readonly #buffers: readonly GPUBuffer[];
+  /** The textures it holds in the cache, let go when it is destroyed. */
+  readonly #textures: { readonly cache: TextureCache; readonly paths: readonly string[] };
+  #users = 0;
 
   constructor(init: {
     center: readonly [number, number, number];
@@ -228,6 +235,7 @@ export class GpuModel {
     buffers: readonly GPUBuffer[];
     animation: ModelAnimation | undefined;
     particles: readonly GpuParticleSystem[];
+    textures: { readonly cache: TextureCache; readonly paths: readonly string[] };
   }) {
     this.center = init.center;
     this.radius = init.radius;
@@ -235,10 +243,30 @@ export class GpuModel {
     this.#buffers = init.buffers;
     this.animation = init.animation;
     this.particles = init.particles;
+    this.#textures = init.textures;
+    this.bytes = init.buffers.reduce((sum, buffer) => sum + buffer.size, 0);
+    for (const path of init.textures.paths) init.textures.cache.retain(path);
+  }
+
+  /** Scenes and grass fields that draw it. */
+  get users(): number {
+    return this.#users;
+  }
+
+  /** A scene or field starts drawing it (see `release`). */
+  acquire(): void {
+    this.#users++;
+    this.lastUsed = performance.now();
+  }
+
+  release(): void {
+    this.#users = Math.max(0, this.#users - 1);
+    this.lastUsed = performance.now();
   }
 
   destroy(): void {
     for (const buffer of this.#buffers) buffer.destroy();
+    for (const path of this.#textures.paths) this.#textures.cache.release(path);
   }
 }
 
@@ -293,6 +321,8 @@ export class GpuScene {
   readonly uniformData: ArrayBuffer;
   readonly animated: readonly AnimatedDraw[];
   readonly particles: readonly ParticleDraw[];
+  /** The models it draws (held while it exists). */
+  readonly #models: readonly GpuModel[];
 
   constructor(
     draws: readonly Draw[],
@@ -301,6 +331,7 @@ export class GpuScene {
     uniformData: ArrayBuffer,
     animated: readonly AnimatedDraw[],
     particles: readonly ParticleDraw[],
+    models: readonly GpuModel[],
   ) {
     this.draws = draws;
     this.drawBindGroup = drawBindGroup;
@@ -308,10 +339,13 @@ export class GpuScene {
     this.uniformData = uniformData;
     this.animated = animated;
     this.particles = particles;
+    this.#models = models;
+    for (const model of models) model.acquire();
   }
 
   destroy(): void {
     this.uniforms.destroy();
+    for (const model of this.#models) model.release();
   }
 }
 
@@ -512,6 +546,28 @@ function writeMaterial(floats: Float32Array, uints: Uint32Array, part: MaterialS
     ],
     36,
   );
+}
+
+/**
+ * The textures a material binds: diffuse (effect: source), normal map, glow map (effect:
+ * greyscale palette), environment map and environment mask; '' where none.
+ */
+function materialTextures(
+  material: PartMaterial | undefined,
+): [string, string, string, string, string] {
+  if (material?.kind === 'effect') {
+    return [material.sourceTexture, '', material.greyscaleTexture, '', ''];
+  }
+  if (material?.kind !== 'lighting') return ['', '', '', '', ''];
+  const slot = (index: number): string => material.textures[index] ?? '';
+  const environment = (material.flags1 & SLSF1_ENVIRONMENT_MAPPING) !== 0;
+  return [
+    slot(0),
+    slot(1),
+    material.shaderType === SHADER_GLOW ? slot(2) : '',
+    environment ? slot(4) : '',
+    environment ? slot(5) : '',
+  ];
 }
 
 /** Debug views of the lighting shader (dev tools): what a pixel shows instead of its colour. */
@@ -848,6 +904,13 @@ export class SceneRenderer {
         bindGroup: await this.#materialBindGroup(system.material, system.name, textures),
       })),
     );
+    const texturePaths = new Set<string>();
+    for (const material of [
+      ...data.parts.map((part) => part.material),
+      ...data.particles.map((system) => system.material),
+    ]) {
+      for (const path of materialTextures(material)) if (path !== '') texturePaths.add(path);
+    }
     return new GpuModel({
       center: data.center,
       radius: data.radius,
@@ -855,6 +918,7 @@ export class SceneRenderer {
       buffers,
       animation: data.animation,
       particles,
+      textures: { cache: textures, paths: [...texturePaths] },
     });
   }
 
@@ -949,7 +1013,8 @@ export class SceneRenderer {
       layout: this.#drawLayout,
       entries: [{ binding: 0, resource: { buffer, size: DRAW_SIZE } }],
     });
-    return new GpuScene(draws, bindGroup, buffer, uniforms, animated, particles);
+    const models = [...new Set(placed.map((instance) => instance.model))];
+    return new GpuScene(draws, bindGroup, buffer, uniforms, animated, particles, models);
   }
 
   updateFrame(
@@ -1470,31 +1535,9 @@ export class SceneRenderer {
     textures: TextureCache,
   ): Promise<GPUBindGroup> {
     const { defaults } = textures;
-    const slot = (index: number): string =>
-      material?.kind === 'lighting' ? (material.textures[index] ?? '') : '';
-
-    let diffusePath = slot(0);
-    let glowPath = '';
-    let envPath = '';
-    let envMaskPath = '';
-    if (material?.kind === 'effect') {
-      diffusePath = material.sourceTexture;
-      glowPath = material.greyscaleTexture;
-    } else if (material?.kind === 'lighting') {
-      if (material.shaderType === SHADER_GLOW) glowPath = slot(2);
-      if ((material.flags1 & SLSF1_ENVIRONMENT_MAPPING) !== 0) {
-        envPath = slot(4);
-        envMaskPath = slot(5);
-      }
-    }
-
-    const [diffuse, normal, glow, env, envMask] = await Promise.all([
-      textures.get(diffusePath),
-      textures.get(slot(1)),
-      textures.get(glowPath),
-      textures.get(envPath),
-      textures.get(envMaskPath),
-    ]);
+    const [diffuse, normal, glow, env, envMask] = await Promise.all(
+      materialTextures(material).map((path) => textures.get(path)),
+    );
     const cube = env?.depthOrArrayLayers === 6 ? env : defaults.blackCube;
 
     const clampMode = material?.kind === 'effect' ? material.textureClampMode & 3 : 3;
