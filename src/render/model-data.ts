@@ -13,6 +13,7 @@ import type {
 } from '../formats/nif/types.ts';
 import { normalizePath } from '../formats/paths.ts';
 import { buildAnimation, type ModelAnimation } from './animation.ts';
+import { buildParticleSystem, type ParticleSystemData } from './particle-data.ts';
 import { invert } from './frustum.ts';
 import { skinShape } from './skinning.ts';
 import {
@@ -66,6 +67,12 @@ export interface EffectMaterial {
   readonly baseColor: readonly [number, number, number, number];
   readonly baseColorScale: number;
   readonly falloff: readonly [number, number, number, number];
+  /** How much scene lighting tints the effect (0..1, with SLSF2 Effect_Lighting). */
+  readonly lightingInfluence: number;
+  /** Soft_Effect: fades out over this depth in front of the scene behind it. */
+  readonly softFalloffDepth: number;
+  /** TexClampMode: bit 0 wraps S (U), bit 1 wraps T (V). */
+  readonly textureClampMode: number;
 }
 
 /** BSWaterShaderProperty: the surface is drawn by the water shader with a WATR type. */
@@ -120,6 +127,18 @@ export interface ModelData {
   readonly editorMarker: boolean;
   /** Controllers that play on their own (UV scrolling, turning parts, idle sequence). */
   readonly animation?: ModelAnimation;
+  /** Particle systems (fire, smoke, dust, ...). */
+  readonly particles: readonly ParticleSystemData[];
+  /**
+   * AddOnNodes: where the engine attaches the model of an ADDN record (candle flames, torch
+   * fire, chimney smoke), by the record's index, in model space.
+   */
+  readonly addons: readonly AddonNode[];
+}
+
+export interface AddonNode {
+  readonly index: number;
+  readonly world: Mat4;
 }
 
 /** Material of LOD water (WaterShaderFlag lod). */
@@ -192,6 +211,9 @@ function effectMaterial(shader: BSEffectShaderPropertyBlock): EffectMaterial {
       shader.falloffStartOpacity,
       shader.falloffStopOpacity,
     ],
+    lightingInfluence: shader.lightingInfluence / 255,
+    softFalloffDepth: shader.softFalloffDepth,
+    textureClampMode: shader.textureClampMode,
   };
 }
 
@@ -340,16 +362,14 @@ export function buildModel(file: NifFile): ModelData {
   /** Billboard nodes above the block being visited. */
   const billboards: { mode: number; world: Mat4 }[] = [];
   let worlds: Map<Ref, Mat4> | undefined;
+  const particleRefs: Ref[] = [];
+  const addons: AddonNode[] = [];
 
   const visit = (ref: Ref, parentWorld: Mat4, depth: number): void => {
     if (depth > 64) return; // guards against reference cycles in broken files
     const block = file.blocks[ref];
     if (!block) return;
-    if (block.kind === 'unknown') {
-      const type = file.blockTypes[ref] ?? '';
-      if (type.includes('ParticleSystem')) skipped.push(`${type}: particles (TODO(M4))`);
-      return;
-    }
+    if (block.kind === 'unknown') return;
     if (!('transform' in block) || (block.flags & APP_CULLED) !== 0) return;
     // Helper geometry only shown in the Creation Kit (e.g. activator trigger volumes).
     if (block.name.toLowerCase() === 'editormarker') return;
@@ -370,6 +390,9 @@ export function buildModel(file: NifFile): ModelData {
             ? [block.children[block.switchIndex] ?? -1]
             : block.children;
         nodeNames.push(block.name);
+        if (block.value !== undefined && block.name.startsWith('AddOnNode')) {
+          addons.push({ index: block.value, world });
+        }
         // NiBillboardNode: its subtree turns towards the camera every frame.
         if (block.billboardMode !== undefined)
           billboards.push({ mode: block.billboardMode, world });
@@ -431,6 +454,9 @@ export function buildModel(file: NifFile): ModelData {
         );
         return;
       }
+      case 'particle-system':
+        particleRefs.push(ref);
+        return;
       case 'ni-tri-shape': {
         const data = getBlock(file, block.data, 'ni-tri-shape-data');
         if (!data) return;
@@ -537,6 +563,23 @@ export function buildModel(file: NifFile): ModelData {
     );
   }
 
+  const particles: ParticleSystemData[] = [];
+  if (particleRefs.length > 0) {
+    worlds ??= nodeWorlds(file);
+    for (const ref of particleRefs) {
+      const system = getBlock(file, ref, 'particle-system');
+      if (!system) continue;
+      const built = buildParticleSystem(
+        file,
+        ref,
+        worlds,
+        material(file, system.shaderProperty),
+        alphaState(getBlock(file, system.alphaProperty, 'alpha')),
+      );
+      if (built) particles.push(built);
+    }
+  }
+
   const animation = buildAnimation(file);
   return {
     parts,
@@ -545,5 +588,7 @@ export function buildModel(file: NifFile): ModelData {
     skipped,
     editorMarker: isEditorMarker(file),
     ...(animation && { animation }),
+    particles,
+    addons,
   };
 }

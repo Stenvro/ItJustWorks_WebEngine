@@ -3,6 +3,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { loadCellData } from '../src/world/cell-loader.ts';
+import { parseAddonNode } from '../src/world/cell-records.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
@@ -20,6 +21,20 @@ describe.skipIf(!hasGamedata())('record database on the local game data', () => 
   afterAll(async () => {
     await db.close();
     await vfs.close();
+  });
+
+  it('reads the add-on nodes (ADDN) with unique indices and existing models', async () => {
+    const indices = new Set<number>();
+    for (const formId of db.formIdsOfType('ADDN')) {
+      const record = await db.get(formId);
+      if (!record) continue;
+      const addon = parseAddonNode(record);
+      expect(indices.has(addon.index), record.editorId).toBe(false);
+      indices.add(addon.index);
+      expect(addon.model && vfs.has(addon.model), record.editorId).toBe(true);
+    }
+    // Candle flames (49), torch fire (46) and chimney smoke (56) among them.
+    for (const index of [46, 49, 56]) expect(indices.has(index)).toBe(true);
   });
 
   it('opens every plugin without problems', () => {

@@ -249,6 +249,7 @@ export class ModelViewer {
 
     const loaded = await loader.loadModel(path);
     const model = await this.#renderer.scene.createModel(loaded.model, textures);
+    model.addons = (await this.#session?.addons(loaded.model.addons)) ?? [];
     if (token !== this.#loadToken) {
       model.destroy();
       return;
@@ -268,7 +269,8 @@ export class ModelViewer {
     );
 
     this.#orbit.setView(view);
-    this.#orbit.fit(model.center, model.radius);
+    // Particle-only models (master particle systems) have no shapes to measure.
+    this.#orbit.fit(model.center, model.radius > 0 ? model.radius : 64);
     this.#present(this.#renderer.scene.createScene([{ model, world: identity() }]), model, {
       camera: 'orbit',
     });

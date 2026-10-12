@@ -32,6 +32,8 @@ export interface NiNodeBlock extends NiAvObject {
   readonly switchIndex?: number;
   /** NiBillboardNode: mode (faces the camera). */
   readonly billboardMode?: number;
+  /** BSValueNode: its value (AddOnNode: the ADDN index of the model attached there). */
+  readonly value?: number;
 }
 
 /** Unpacked BSVertexDesc. Offsets and stride in bytes. */
@@ -263,6 +265,50 @@ export interface UnknownBlock {
   readonly kind: 'unknown';
 }
 
+// --- Particles ------------------------------------------------------------------------------
+
+/** NiParticleSystem / BSStripParticleSystem. */
+export interface ParticleSystemBlock extends NiAvObject {
+  readonly kind: 'particle-system';
+  readonly type: string;
+  readonly boundCenter: Vec3;
+  readonly boundRadius: number;
+  readonly shaderProperty: Ref;
+  readonly alphaProperty: Ref;
+  readonly vertexDesc: VertexDesc;
+  readonly data: Ref;
+  /** Particles live in world space (they stay where they were emitted). */
+  readonly worldSpace: boolean;
+  readonly modifiers: readonly Ref[];
+}
+
+/** NiPSysData / BSStripPSysData (SSE stores no per-particle arrays). */
+export interface ParticleDataBlock {
+  readonly kind: 'particle-data';
+  readonly maxParticles: number;
+  /** Texture atlas frames: u, v, width, height. */
+  readonly subtextureOffsets: readonly (readonly [number, number, number, number])[];
+  readonly aspectRatio: number;
+  readonly aspectFlags: number;
+  readonly strip?: {
+    readonly maxPointCount: number;
+    readonly startCapSize: number;
+    readonly endCapSize: number;
+    readonly zPrepass: boolean;
+  };
+}
+
+/** Emitters, modifiers and colliders: the base fields and the type's own values by name. */
+export interface ParticleModifierBlock {
+  readonly kind: 'particle-modifier';
+  readonly type: string;
+  readonly name: string;
+  readonly order: number;
+  readonly target: Ref;
+  readonly active: boolean;
+  readonly values: Readonly<Record<string, number | boolean | Vec3 | readonly number[]>>;
+}
+
 // --- Animation ------------------------------------------------------------------------------
 
 /** Quaternion as NIF stores it: w, x, y, z. */
@@ -441,6 +487,9 @@ export type NifBlock =
   | NiSkinInstanceBlock
   | NiSkinDataBlock
   | NiSkinPartitionBlock
+  | ParticleSystemBlock
+  | ParticleDataBlock
+  | ParticleModifierBlock
   | ControllerBlock
   | ControllerManagerBlock
   | ControllerSequenceBlock

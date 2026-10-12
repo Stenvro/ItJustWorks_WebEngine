@@ -46,10 +46,8 @@ struct WaterFrame {
   profile: array<vec4f, 32>,
 };
 
+// The opaque scene's colour and depth come from the frame group (sceneColor, sceneDepth).
 @group(3) @binding(0) var<uniform> waterFrame: WaterFrame;
-@group(3) @binding(1) var sceneColor: texture_2d<f32>;
-@group(3) @binding(2) var sceneDepth: texture_2d<f32>;
-@group(3) @binding(3) var screenSampler: sampler;
 
 fn skyColorAt(direction: vec3f) -> vec3f {
   let elevation = asin(clamp(direction.z, 0.0, 1.0));

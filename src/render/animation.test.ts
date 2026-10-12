@@ -140,6 +140,21 @@ describe('billboardWorld', () => {
     expect(world[5]).toBeCloseTo(2, 5);
     expect(world[9]).toBeCloseTo(0, 5);
   });
+
+  it('stands upright in the world for BSROTATE_ABOUT_UP, whatever its rotation', () => {
+    // Tilted 70 degrees about X, as torch fire nodes are.
+    const c = Math.cos((70 * Math.PI) / 180);
+    const s = Math.sin((70 * Math.PI) / 180);
+    const tilted = new Float32Array([1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 10, 20, 30, 1]);
+    const world = billboardWorld(tilted, 5, [10, -80, 30]);
+    // Z is world up; −Y faces the camera (south of the node).
+    expect(Array.from(world.subarray(8, 11)).map((v) => Math.round(v * 1000) / 1000)).toEqual([
+      0, 0, 1,
+    ]);
+    expect(world[5]).toBeCloseTo(1, 5);
+    expect(world[0]).toBeCloseTo(1, 5);
+    expect(Array.from(world.subarray(12, 15))).toEqual([10, 20, 30]);
+  });
 });
 
 describe('lightFlicker', () => {

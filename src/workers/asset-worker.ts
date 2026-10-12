@@ -30,6 +30,13 @@ function handle(request: AssetRequest): [AssetResponse, ArrayBuffer[]] {
       own(part.indices);
       own(part.world);
     }
+    for (const system of model.particles) {
+      for (const mesh of system.emitters.flatMap((emitter) => emitter.meshes)) {
+        own(mesh.positions);
+        own(mesh.normals);
+        own(mesh.indices);
+      }
+    }
     const response: AssetResponse = {
       id: request.id,
       ok: true,

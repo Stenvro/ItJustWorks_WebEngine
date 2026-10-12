@@ -4,9 +4,11 @@
 
 import { parseNif, type NifFile } from '../formats/nif/nif.ts';
 import type { Renderer } from '../render/renderer.ts';
-import type { GpuModel, GpuWaterType, WaterFlow } from '../render/scene-renderer.ts';
+import type { AddonNode } from '../render/model-data.ts';
+import type { GpuModel, GpuWaterType, ModelAddon, WaterFlow } from '../render/scene-renderer.ts';
 import { TextureCache } from '../render/texture-cache.ts';
 import type { Vfs } from '../vfs/vfs.ts';
+import { parseAddonNode } from '../world/cell-records.ts';
 import { GameSettings } from '../world/game-settings.ts';
 import { parseWater, WaterFlag, type WaterType } from '../world/water.ts';
 import { ScriptEnvironment } from '../world/player-home.ts';
@@ -32,6 +34,7 @@ export class GameSession {
   #settings: Promise<GameSettings> | undefined;
   readonly #waterTypes = new Map<string, Promise<GpuWaterType | undefined>>();
   readonly #waterRecords = new Map<number, Promise<WaterType | undefined>>();
+  #addonPathsEntry: Promise<Map<number, string>> | undefined;
 
   constructor(device: GPUDevice, renderer: Renderer, vfs: Vfs, terminal: Terminal) {
     this.vfs = vfs;
@@ -55,23 +58,66 @@ export class GameSession {
     });
   }
 
-  /** A model for placing in scenes; undefined for editor markers and broken files. */
+  /**
+   * A model for placing in scenes, with the models of its AddOnNodes attached; undefined
+   * for editor markers, empty and broken files.
+   */
   model(path: string): Promise<GpuModel | undefined> {
-    let entry = this.#models.get(path);
+    return this.#model(path, true);
+  }
+
+  /** Models attached at AddOnNodes get no add-ons of their own (no cycles). */
+  #model(path: string, withAddons: boolean): Promise<GpuModel | undefined> {
+    const key = withAddons ? path : `${path}|addon`;
+    let entry = this.#models.get(key);
     if (!entry) {
       entry = this.loader.loadModel(path).then(
         async (loaded) => {
-          if (loaded.model.editorMarker || loaded.model.parts.length === 0) return undefined;
-          return this.#renderer.scene.createModel(loaded.model, this.textures);
+          const data = loaded.model;
+          const addons = withAddons ? await this.addons(data.addons) : [];
+          const empty = data.parts.length === 0 && data.particles.length === 0;
+          if (data.editorMarker || (empty && addons.length === 0)) return undefined;
+          const model = await this.#renderer.scene.createModel(data, this.textures);
+          model.addons = addons;
+          return model;
         },
         (error: unknown) => {
           this.#terminal.log('nif', describe(error), 'warn');
           return undefined;
         },
       );
-      this.#models.set(path, entry);
+      this.#models.set(key, entry);
     }
     return entry;
+  }
+
+  /** The models of a model's AddOnNodes (ADDN records by index). */
+  async addons(nodes: readonly AddonNode[]): Promise<ModelAddon[]> {
+    if (nodes.length === 0) return [];
+    const paths = await this.#addonPaths();
+    const addons = await Promise.all(
+      nodes.map(async (node): Promise<ModelAddon | undefined> => {
+        const path = paths.get(node.index);
+        const model = path === undefined ? undefined : await this.#model(path, false);
+        return model && { model, world: node.world };
+      }),
+    );
+    return addons.filter((addon): addon is ModelAddon => addon !== undefined);
+  }
+
+  /** ADDN model paths by node index, read once. */
+  #addonPaths(): Promise<Map<number, string>> {
+    this.#addonPathsEntry ??= this.db.then(async (db) => {
+      const paths = new Map<number, string>();
+      for (const formId of db.formIdsOfType('ADDN')) {
+        const record = await db.get(formId);
+        if (!record) continue;
+        const addon = parseAddonNode(record);
+        if (addon.model) paths.set(addon.index, addon.model);
+      }
+      return paths;
+    });
+    return this.#addonPathsEntry;
   }
 
   /**
