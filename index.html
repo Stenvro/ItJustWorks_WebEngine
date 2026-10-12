@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="nl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Skyrim Web</title>
+  </head>
+  <body>
+    <canvas id="viewport"></canvas>
+    <div id="fps" class="hud"></div>
+
+    <main id="setup" class="panel" hidden>
+      <h1>Skyrim Web</h1>
+      <p id="setup-message"></p>
+      <div class="actions">
+        <button id="resume-folder" type="button" hidden>Toegang hervatten</button>
+        <button id="pick-folder" type="button" hidden>Kies je Skyrim Data-map</button>
+      </div>
+      <details id="folder-details" hidden>
+        <summary>Gevonden plugins</summary>
+        <ul id="plugin-list"></ul>
+      </details>
+    </main>
+
+    <div id="fatal" class="panel fatal" role="alert" hidden></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
