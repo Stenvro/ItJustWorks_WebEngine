@@ -262,6 +262,8 @@ export function buildModel(file: NifFile): ModelData {
       return;
     }
     if (!('transform' in block) || (block.flags & APP_CULLED) !== 0) return;
+    // Helper geometry only shown in the Creation Kit (e.g. activator trigger volumes).
+    if (block.name.toLowerCase() === 'editormarker') return;
     const { translation, rotation, scale } = block.transform;
     const world = multiply(parentWorld, fromNifTransform(translation, rotation, scale));
 

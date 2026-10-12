@@ -85,3 +85,10 @@ material CRC u32 (BS > 34), normals (+ tangents and bitangents if data flags & 0
 bounding sphere, vertex colors (RGBA floats), **one** UV set if data flags & 1,
 consistency flags, additional data ref, triangle count, triangle point count, triangles,
 match groups.
+
+## Hidden objects
+
+- Objects named `EditorMarker` (any block type) are helper geometry for the Creation Kit,
+  e.g. activator trigger volumes; the engine never draws them (1,012 vanilla meshes have one).
+- BSXFlags bit `0x20` on the root (editor marker) hides the whole model.
+- Base objects with record flag `0x800000` (is marker) are never drawn (see esm.md).
