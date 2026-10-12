@@ -7,7 +7,15 @@ import { animate, type AnimationFrame, type ModelAnimation } from './animation.t
 import { billboardWorld } from './billboard.ts';
 import { frustumPlanes, invert, sphereVisible, type Plane } from './frustum.ts';
 import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
-import type { AlphaState, ModelData, ModelPart, PartMaterial, VertexLayout } from './model-data.ts';
+import type {
+  AlphaState,
+  EffectMaterial,
+  LightingMaterial,
+  ModelData,
+  ModelPart,
+  PartMaterial,
+  VertexLayout,
+} from './model-data.ts';
 import type { ParticleSystemData } from './particle-data.ts';
 import type { PlacedPart } from './raycast.ts';
 import { PARTICLE_FLOATS, ParticleSimulation, type ParticleContext } from './particle-sim.ts';
@@ -20,6 +28,8 @@ import refractionShader from './shaders/refraction.wgsl?raw';
 import shadowShader from './shaders/shadow.wgsl?raw';
 import waterShader from './shaders/water.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
+import { CELL_SIZE } from '../world/land.ts';
+import { projectedUVParams, type MaterialObject } from '../world/material-object.ts';
 import type { WaterType } from '../world/water.ts';
 
 export const SAMPLE_COUNT = 4;
@@ -27,7 +37,7 @@ export const DEPTH_FORMAT: GPUTextureFormat = 'depth32float';
 export const MAX_LIGHTS = 256;
 
 /** Size of the WGSL `Draw` struct and the stride between draws (uniform offset alignment). */
-const DRAW_SIZE = 160;
+const DRAW_SIZE = 256;
 const DRAW_STRIDE = 256;
 /** WGSL `Frame` struct: 176 floats. */
 const FRAME_FLOATS = 176;
@@ -71,8 +81,110 @@ const SLSF1_ENVIRONMENT_MAPPING = 0x80;
 const SLSF1_CAST_SHADOWS = 0x200;
 /** LOD landscape and LOD object shader types: distant LOD casts no shadows. */
 const LOD_SHADER_TYPES = new Set([9, 13, 15, 18]);
+/**
+ * SLSF2 LOD_Landscape, LOD_Objects and HD_LOD_Objects: object LOD blocks (.bto) use shader
+ * type 0 with these flags.
+ */
+const SLSF2_LOD = 0x2 | 0x4 | 0x80000000;
+
+/** Distant LOD: terrain and object LOD blocks. */
+function isLod(material: PartMaterial | undefined): boolean {
+  return (
+    material?.kind === 'lighting' &&
+    (LOD_SHADER_TYPES.has(material.shaderType) || (material.flags2 & SLSF2_LOD) !== 0)
+  );
+}
+
+/** Index ranges of an object LOD part by cell: hidden while that cell is loaded. */
+interface LodSegment {
+  readonly first: number;
+  readonly count: number;
+  readonly cellX: number;
+  readonly cellY: number;
+  /** Large references (shapes "obj-LargeRef"): also hidden where those are loaded. */
+  readonly largeRef: boolean;
+}
+
+/**
+ * Cells whose large references are loaded (uLargeRefLODGridSize 11): an 11×11 grid from its
+ * south-west cell, bit (y * 11 + x) of four words.
+ */
+export interface LargeRefMask {
+  readonly originX: number;
+  readonly originY: number;
+  readonly bits: Uint32Array;
+}
+
+/** Whether a cell's large references are loaded according to a large reference mask. */
+function largeRefsLoaded(mask: LargeRefMask | undefined, x: number, y: number): boolean {
+  if (!mask) return false;
+  const gx = x - mask.originX;
+  const gy = y - mask.originY;
+  if (gx < 0 || gy < 0 || gx >= 11 || gy >= 11) return false;
+  const bit = gy * 11 + gx;
+  return (((mask.bits[bit >>> 5] ?? 0) >>> (bit & 31)) & 1) !== 0;
+}
+
+/**
+ * The per-cell segments of an object LOD part placed with `world` (its block's origin):
+ * blocks of 4 cells have one segment per cell, column by column from the south-west. Other
+ * parts (larger blocks have a single segment) are drawn whole.
+ */
+function lodSegments(part: ModelPart, world: Mat4): LodSegment[] | undefined {
+  const segments = part.segments;
+  if (!isLod(part.material) || !segments || segments.length <= 1) return undefined;
+  const originX = Math.round((world[12] ?? 0) / CELL_SIZE);
+  const originY = Math.round((world[13] ?? 0) / CELL_SIZE);
+  const largeRef = part.name.toLowerCase().includes('largeref');
+  return segments
+    .map((segment, i) => ({
+      first: segment.first,
+      count: segment.count,
+      cellX: originX + Math.floor(i / 4),
+      cellY: originY + (i % 4),
+      largeRef,
+    }))
+    .filter((segment) => segment.count > 0);
+}
+
+/** Whether a cell is loaded according to the frame's LOD mask. */
+function cellLoaded(mask: LodMask | undefined, x: number, y: number): boolean {
+  if (!mask) return false;
+  const gx = x - mask.originX;
+  const gy = y - mask.originY;
+  if (gx < 0 || gy < 0 || gx >= 7 || gy >= 7) return false;
+  const bit = gy * 7 + gx;
+  const word = bit < 32 ? mask.low : mask.high;
+  return ((word >>> (bit % 32)) & 1) !== 0;
+}
 /** Draw flag (beside the NiAlphaProperty flags): a sky object, not fogged. */
 const SKY_DRAW = 0x10000;
+/** Draw flags of directional materials (lighting.wgsl): a single-pass material... */
+const DRAW_PROJECTED = 0x20000;
+/** ...with the engine's projected textures (bEnableProjecteUVDiffuseNormals, on)... */
+const DRAW_PROJECTED_TEXTURED = 0x40000;
+/** ...the second pass of a multi-pass material... */
+const DRAW_MULTI_PASS = 0x80000;
+/** ...an object that counts as snow... */
+const DRAW_SNOW = 0x100000;
+/** ...and HD object LOD (its vertex alpha shifts the snow line). */
+const DRAW_LOD_HD = 0x200000;
+/** The engine's directional material textures (BSGraphics default textures). */
+const PROJECTED_TEXTURES = {
+  diffuse: 'textures\\effects\\projecteddiffuse.dds',
+  normal: 'textures\\effects\\projectednormal.dds',
+  noise: 'textures\\effects\\projectednoise.dds',
+} as const;
+/** The LOD landscape noise texture (type 18, LOD landscape noise). */
+const LOD_LANDSCAPE_NOISE = 'textures\\terrain\\noise.dds';
+const SHADER_LOD_LANDSCAPE_NOISE = 18;
+const SHADER_MULTI_LAYER_PARALLAX = 11;
+const SLSF1_MODEL_SPACE_NORMALS = 0x1000;
+const SLSF1_SPECULAR = 0x1;
+const SLSF2_GLOW_MAP = 0x40;
+const SLSF2_SOFT_LIGHTING = 0x2000000;
+const SLSF2_RIM_LIGHTING = 0x4000000;
+const SLSF2_BACK_LIGHTING = 0x8000000;
 /** Sort key offset that puts sky objects behind everything in the blended pass. */
 const SKY_DISTANCE = 1e30;
 /** NiAlphaProperty: alpha test on. */
@@ -275,6 +387,47 @@ export interface ModelInstance {
   readonly world: Mat4;
   /** Water type of the model's water surfaces (the activator's WNAM); default otherwise. */
   readonly water?: GpuWaterType;
+  /** A static's directional material (STAT DNAM). */
+  readonly directional?: PlacedDirectional;
+}
+
+/** A material object (MATO) ready to draw: its data and, if multi-pass, its own shader. */
+export interface GpuDirectionalMaterial {
+  readonly object: MaterialObject;
+  /** Multi-pass: the material's shader property, drawn over the static a second time. */
+  readonly pass:
+    | {
+        readonly material: LightingMaterial | EffectMaterial;
+        readonly alpha: AlphaState | undefined;
+        readonly bindGroup: GPUBindGroup;
+      }
+    | undefined;
+}
+
+/** A static's directional material as placed: the material, its max angle, snow. */
+export interface PlacedDirectional {
+  readonly material: GpuDirectionalMaterial | undefined;
+  /** Degrees from the material's direction a surface may face (STAT DNAM). */
+  readonly maxAngle: number;
+  /** The static counts as snow (STAT DNAM flag). */
+  readonly snow: boolean;
+}
+
+/** A material laid on object LOD shapes, with its max angle. */
+export interface LodMaterial {
+  readonly material: MaterialObject;
+  readonly maxAngle: number;
+}
+
+/**
+ * Snow on object LOD shapes named "objsnow" (plain and HD) and ash on "objash", see
+ * WorldLod.
+ */
+export interface LodSnow {
+  readonly normal: LodMaterial | undefined;
+  readonly hd: LodMaterial | undefined;
+  readonly ash: LodMaterial | undefined;
+  readonly ashHd: LodMaterial | undefined;
 }
 
 interface Draw {
@@ -286,6 +439,8 @@ interface Draw {
   readonly water: GpuWaterType | undefined;
   /** Part of a sky scene: never culled, drawn behind everything else. */
   readonly sky: boolean;
+  /** Object LOD by cell: segments of loaded cells are left out (the cell draws itself). */
+  readonly lodSegments: readonly LodSegment[] | undefined;
 }
 
 /** A draw that changes every frame (animated, or turning to the camera). */
@@ -546,27 +701,96 @@ function writeMaterial(floats: Float32Array, uints: Uint32Array, part: MaterialS
     ],
     36,
   );
+  // Soft light rolloff, rim light power, whether the environment map has a mask.
+  const envMask = material?.textures[5] ?? '';
+  floats.set(
+    [material?.softLightRolloff ?? 0, material?.rimLightPower ?? 0, envMask === '' ? 0 : 1, 0],
+    40,
+  );
+  floats.set(material?.multiLayer ?? [0, 0, 1, 1], 44);
+  // No directional material: nothing projected (direction up keeps the shader's maths finite).
+  floats.set([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0], 48);
+  floats.set(material?.sparkle ?? [1, 1, 1, 1], 60);
 }
 
 /**
- * The textures a material binds: diffuse (effect: source), normal map, glow map (effect:
- * greyscale palette), environment map and environment mask; '' where none.
+ * Writes a single-pass directional material (or LOD snow) over a lighting part's uniforms:
+ * the projection parameters and colour, and the draw flags.
+ */
+function writeProjected(
+  floats: Float32Array,
+  uints: Uint32Array,
+  material: MaterialObject,
+  maxAngle: number,
+  extraFlags: number,
+): void {
+  floats.set(projectedUVParams(material, maxAngle), 48);
+  floats.set([...material.singlePassColor, 0], 52);
+  floats.set([0, 0, 1, 0], 56);
+  uints[38] = (uints[38] ?? 0) | DRAW_PROJECTED | DRAW_PROJECTED_TEXTURED | extraFlags;
+}
+
+/**
+ * Writes the second pass of a multi-pass directional material: the material's own shader
+ * (written first with writeMaterial), laid on along its projection over the surfaces that
+ * face against it within the static's max angle.
+ */
+function writeMultiPass(
+  floats: Float32Array,
+  uints: Uint32Array,
+  material: MaterialObject,
+  maxAngle: number,
+  snow: boolean,
+): void {
+  floats.set(projectedUVParams(material, maxAngle), 48);
+  floats.set(
+    [
+      material.normalDampener,
+      material.materialUVScale > 0 ? 1 / material.materialUVScale : 0,
+      0,
+      0,
+    ],
+    52,
+  );
+  const [x, y, z] = material.projectionVector;
+  const length = Math.hypot(x, y, z) || 1;
+  floats.set([-x / length, -y / length, -z / length, Math.cos((maxAngle * Math.PI) / 180)], 56);
+  uints[38] = (uints[38] ?? 0) | DRAW_MULTI_PASS | (snow ? DRAW_SNOW : 0);
+}
+
+/**
+ * The textures a material binds: diffuse (effect: source), normal map, slot 2 (glow map or
+ * rim / soft light map; effect: greyscale palette), environment map and mask, slot 7 (back
+ * light map, or the specular map of model-space normals) and slot 6 (the multi-layer
+ * parallax inner layer; LOD landscape noise: the terrain noise); '' where none.
  */
 function materialTextures(
   material: PartMaterial | undefined,
-): [string, string, string, string, string] {
+): [string, string, string, string, string, string, string] {
   if (material?.kind === 'effect') {
-    return [material.sourceTexture, '', material.greyscaleTexture, '', ''];
+    return [material.sourceTexture, '', material.greyscaleTexture, '', '', '', ''];
   }
-  if (material?.kind !== 'lighting') return ['', '', '', '', ''];
+  if (material?.kind !== 'lighting') return ['', '', '', '', '', '', ''];
   const slot = (index: number): string => material.textures[index] ?? '';
-  const environment = (material.flags1 & SLSF1_ENVIRONMENT_MAPPING) !== 0;
+  const multiLayer = material.shaderType === SHADER_MULTI_LAYER_PARALLAX;
+  const environment = (material.flags1 & SLSF1_ENVIRONMENT_MAPPING) !== 0 || multiLayer;
+  const glow = material.shaderType === SHADER_GLOW && (material.flags2 & SLSF2_GLOW_MAP) !== 0;
+  const rimSoft = (material.flags2 & (SLSF2_SOFT_LIGHTING | SLSF2_RIM_LIGHTING)) !== 0;
+  const backLight = (material.flags2 & SLSF2_BACK_LIGHTING) !== 0;
+  const specularMap =
+    (material.flags1 & SLSF1_MODEL_SPACE_NORMALS) !== 0 && (material.flags1 & SLSF1_SPECULAR) !== 0;
   return [
     slot(0),
     slot(1),
-    material.shaderType === SHADER_GLOW ? slot(2) : '',
+    glow || rimSoft ? slot(2) : '',
     environment ? slot(4) : '',
     environment ? slot(5) : '',
+    backLight || specularMap ? slot(7) : '',
+    multiLayer
+      ? slot(6)
+      : material.shaderType === SHADER_LOD_LANDSCAPE_NOISE
+        ? LOD_LANDSCAPE_NOISE
+        : '',
   ];
 }
 
@@ -616,6 +840,8 @@ export class SceneRenderer {
   /** Flow map without flow (alpha 1: strength 0). */
   readonly #stillFlow: GPUTexture;
   readonly #pipelines = new Map<string, GPURenderPipeline>();
+  /** Second passes of multi-pass directional materials, per part and material. */
+  readonly #passParts = new WeakMap<GpuPart, Map<GpuDirectionalMaterial, GpuPart>>();
   readonly #fallbackVertices: GPUBuffer;
   /** Material samplers by texture clamp mode (bit 0 wraps U, bit 1 wraps V). */
   readonly #samplers: readonly GPUSampler[];
@@ -630,6 +856,10 @@ export class SceneRenderer {
   readonly #shadowSampler: GPUSampler;
   /** Planes of the camera's frustum this frame (culling). */
   #planes: readonly Plane[] = [];
+  /** Loaded cells this frame (object LOD leaves them out). */
+  #lodMask: LodMask | undefined;
+  /** Cells whose large references are loaded this frame. */
+  #largeRefMask: LargeRefMask | undefined;
 
   constructor(device: GPUDevice, colorFormat: GPUTextureFormat) {
     this.#device = device;
@@ -706,6 +936,11 @@ export class SceneRenderer {
         texture2d(3),
         { binding: 4, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: 'cube' } },
         texture2d(5),
+        texture2d(6),
+        texture2d(7),
+        texture2d(8),
+        texture2d(9),
+        texture2d(10),
       ],
     });
     this.#pipelineLayout = device.createPipelineLayout({
@@ -891,7 +1126,7 @@ export class SceneRenderer {
             blend === undefined &&
             part.material?.kind === 'lighting' &&
             (part.material.flags1 & SLSF1_CAST_SHADOWS) !== 0 &&
-            !LOD_SHADER_TYPES.has(part.material.shaderType)
+            !isLod(part.material)
               ? this.#shadowPipeline(part)
               : undefined,
         };
@@ -928,9 +1163,10 @@ export class SceneRenderer {
    */
   createScene(
     instances: readonly ModelInstance[],
-    options: { readonly sky?: boolean } = {},
+    options: { readonly sky?: boolean; readonly lodSnow?: LodSnow } = {},
   ): GpuScene {
     const sky = options.sky === true;
+    const lodSnow = options.lodSnow;
     const placed: ModelInstance[] = [];
     const place = (instance: ModelInstance, depth: number): void => {
       placed.push(instance);
@@ -941,8 +1177,19 @@ export class SceneRenderer {
     };
     for (const instance of instances) place(instance, 0);
 
+    // Multi-pass directional materials draw the static's opaque lighting parts twice.
+    const passParts = (instance: ModelInstance): readonly (GpuPart | undefined)[] => {
+      const directional = instance.directional?.material;
+      if (!directional?.pass || instance.model.animation) return [];
+      return instance.model.parts.map((part) => this.#passPart(part, directional));
+    };
+    const passes = placed.map(passParts);
     const drawCount = placed.reduce(
-      (sum, instance) => sum + instance.model.parts.length + instance.model.particles.length,
+      (sum, instance, i) =>
+        sum +
+        instance.model.parts.length +
+        instance.model.particles.length +
+        (passes[i]?.filter((part) => part !== undefined).length ?? 0),
       0,
     );
     const uniforms = new ArrayBuffer(Math.max(1, drawCount) * DRAW_STRIDE);
@@ -951,9 +1198,11 @@ export class SceneRenderer {
     const particles: ParticleDraw[] = [];
     const world = new Float32Array(16);
     let slot = 0;
-    for (const instance of placed) {
+    for (const [instanceIndex, instance] of placed.entries()) {
       const animation = instance.model.animation;
-      for (const part of instance.model.parts) {
+      const directional = instance.directional;
+      const material = directional?.material;
+      for (const [partIndex, part] of instance.model.parts.entries()) {
         const offset = slot++ * DRAW_STRIDE;
         // Sky scenes follow the camera: their placement changes every frame.
         if (animation || part.part.billboard || sky) {
@@ -965,6 +1214,38 @@ export class SceneRenderer {
         floats.set(world, 0);
         writeMaterial(floats, uints, part.part);
         if (sky) uints[38] = (uints[38] ?? 0) | SKY_DRAW;
+        const partMaterial = part.part.material;
+        if (partMaterial?.kind === 'lighting') {
+          const snow = directional?.snow === true ? DRAW_SNOW : 0;
+          if (isLod(partMaterial)) {
+            // Object LOD of snowy statics: shapes named "objsnow" (HD: "objsnowHD"); of
+            // ashen ones (Solstheim) "objash".
+            const name = part.part.name.toLowerCase();
+            const hd = name.includes('hd');
+            const snowLod = name.startsWith('objsnow')
+              ? hd
+                ? lodSnow?.hd
+                : lodSnow?.normal
+              : name.startsWith('objash')
+                ? hd
+                  ? lodSnow?.ashHd
+                  : lodSnow?.ash
+                : undefined;
+            if (snowLod) {
+              writeProjected(
+                floats,
+                uints,
+                snowLod.material,
+                snowLod.maxAngle,
+                hd ? DRAW_LOD_HD : 0,
+              );
+            }
+          } else if (material?.object.singlePass && directional) {
+            writeProjected(floats, uints, material.object, directional.maxAngle, snow);
+          } else {
+            uints[38] = (uints[38] ?? 0) | snow;
+          }
+        }
         draws.push({
           part,
           uniformOffset: offset,
@@ -972,7 +1253,33 @@ export class SceneRenderer {
           radius: part.part.radius * maxScale(instance.world),
           water: part.pass === 'water' ? instance.water : undefined,
           sky,
+          lodSegments: lodSegments(part.part, world),
         });
+        const passPart = passes[instanceIndex]?.[partIndex];
+        if (passPart && directional?.material) {
+          // The material's own shader, drawn over the part along the material's projection.
+          const passOffset = slot++ * DRAW_STRIDE;
+          const passFloats = new Float32Array(uniforms, passOffset, DRAW_SIZE / 4);
+          const passUints = new Uint32Array(uniforms, passOffset, DRAW_SIZE / 4);
+          passFloats.set(world, 0);
+          writeMaterial(passFloats, passUints, passPart.part);
+          writeMultiPass(
+            passFloats,
+            passUints,
+            directional.material.object,
+            directional.maxAngle,
+            directional.snow,
+          );
+          draws.push({
+            part: passPart,
+            uniformOffset: passOffset,
+            center: transformPoint(instance.world, part.part.center),
+            radius: part.part.radius * maxScale(instance.world),
+            water: undefined,
+            sky,
+            lodSegments: undefined,
+          });
+        }
       }
       instance.model.particles.forEach((system, index) => {
         const offset = slot++ * DRAW_STRIDE;
@@ -1025,8 +1332,11 @@ export class SceneRenderer {
     lodMask?: LodMask,
     shadows?: FrameShadows,
     screen?: { readonly width: number; readonly height: number; readonly near: number },
+    largeRefMask?: LargeRefMask,
   ): void {
     this.#planes = frustumPlanes(viewProjection);
+    this.#lodMask = lodMask;
+    this.#largeRefMask = largeRefMask;
     const data = this.#frameData;
     data.set(viewProjection, 0);
     data.set([...cameraPosition, 1], 16);
@@ -1519,6 +1829,72 @@ export class SceneRenderer {
     }
   }
 
+  /**
+   * The second pass of a multi-pass directional material over a part: the part's geometry
+   * with the material's shader (opaque lighting parts only, like the engine's
+   * BSMultiIndexTriShape); cached per part and material.
+   */
+  #passPart(base: GpuPart, directional: GpuDirectionalMaterial): GpuPart | undefined {
+    const pass = directional.pass;
+    const baseMaterial = base.part.material;
+    if (
+      !pass ||
+      base.pass !== 'opaque' ||
+      baseMaterial?.kind !== 'lighting' ||
+      isLod(baseMaterial)
+    ) {
+      return undefined;
+    }
+    let byMaterial = this.#passParts.get(base);
+    if (!byMaterial) {
+      byMaterial = new Map();
+      this.#passParts.set(base, byMaterial);
+    }
+    let part = byMaterial.get(directional);
+    if (!part) {
+      const model: ModelPart = { ...base.part, material: pass.material, alpha: pass.alpha };
+      const blend = blendState(pass.alpha);
+      part = {
+        part: model,
+        vertexBuffer: base.vertexBuffer,
+        indexBuffer: base.indexBuffer,
+        indexCount: base.indexCount,
+        pipeline: this.#pipeline(model, blend),
+        bindGroup: pass.bindGroup,
+        pass: blend === undefined ? 'opaque' : 'transparent',
+        shadowPipeline: undefined,
+      };
+      byMaterial.set(directional, part);
+    }
+    return part;
+  }
+
+  /**
+   * A material object ready to draw. `pass` is the shader of a multi-pass material (from
+   * its DNAM properties, see propertyMaterial); its textures are loaded here.
+   */
+  async createDirectionalMaterial(
+    object: MaterialObject,
+    pass: {
+      readonly material: LightingMaterial | EffectMaterial | undefined;
+      readonly alpha: AlphaState | undefined;
+    },
+    textures: TextureCache,
+  ): Promise<GpuDirectionalMaterial> {
+    const material = pass.material;
+    return {
+      object,
+      pass:
+        object.singlePass || !material
+          ? undefined
+          : {
+              material,
+              alpha: pass.alpha,
+              bindGroup: await this.#materialBindGroup(material, object.editorId, textures),
+            },
+    };
+  }
+
   #drawPart(pass: GPURenderPassEncoder, scene: GpuScene, draw: Draw): void {
     const { part } = draw;
     pass.setPipeline(part.pipeline);
@@ -1526,7 +1902,31 @@ export class SceneRenderer {
     pass.setBindGroup(2, part.bindGroup);
     pass.setVertexBuffer(0, part.vertexBuffer);
     pass.setIndexBuffer(part.indexBuffer, 'uint16');
-    pass.drawIndexed(part.indexCount);
+    const segments = draw.lodSegments;
+    if (!segments) {
+      pass.drawIndexed(part.indexCount);
+      return;
+    }
+    // Object LOD: whole objects of loaded cells are left out, like the engine's per-cell
+    // segments; neighbouring segments that stay are drawn in one call.
+    let first = -1;
+    let end = -1;
+    for (const segment of segments) {
+      if (
+        cellLoaded(this.#lodMask, segment.cellX, segment.cellY) ||
+        (segment.largeRef && largeRefsLoaded(this.#largeRefMask, segment.cellX, segment.cellY))
+      ) {
+        continue;
+      }
+      if (segment.first === end) {
+        end += segment.count;
+        continue;
+      }
+      if (first >= 0) pass.drawIndexed(end - first, 1, first);
+      first = segment.first;
+      end = segment.first + segment.count;
+    }
+    if (first >= 0) pass.drawIndexed(end - first, 1, first);
   }
 
   async #materialBindGroup(
@@ -1535,9 +1935,18 @@ export class SceneRenderer {
     textures: TextureCache,
   ): Promise<GPUBindGroup> {
     const { defaults } = textures;
-    const [diffuse, normal, glow, env, envMask] = await Promise.all(
+    const [diffuse, normal, glow, env, envMask, slot7, slot6] = await Promise.all(
       materialTextures(material).map((path) => textures.get(path)),
     );
+    // The engine's directional material textures (not held by models: never evicted).
+    const [projectedDiffuse, projectedNormal, projectedNoise] =
+      material?.kind === 'lighting' || material?.kind === 'effect'
+        ? await Promise.all([
+            textures.get(PROJECTED_TEXTURES.diffuse),
+            textures.get(PROJECTED_TEXTURES.normal),
+            textures.get(PROJECTED_TEXTURES.noise),
+          ])
+        : [undefined, undefined, undefined];
     const cube = env?.depthOrArrayLayers === 6 ? env : defaults.blackCube;
 
     const clampMode = material?.kind === 'effect' ? material.textureClampMode & 3 : 3;
@@ -1559,6 +1968,12 @@ export class SceneRenderer {
         },
         { binding: 4, resource: cube.createView({ dimension: 'cube' }) },
         { binding: 5, resource: (flat(envMask) ?? defaults.white).createView() },
+        // Missing back light, rim / soft light and layer maps are black (an empty slot).
+        { binding: 6, resource: (flat(slot7) ?? defaults.black).createView() },
+        { binding: 7, resource: (flat(slot6) ?? defaults.black).createView() },
+        { binding: 8, resource: (flat(projectedDiffuse) ?? defaults.white).createView() },
+        { binding: 9, resource: (flat(projectedNormal) ?? defaults.flatNormal).createView() },
+        { binding: 10, resource: (flat(projectedNoise) ?? defaults.black).createView() },
       ],
     });
   }

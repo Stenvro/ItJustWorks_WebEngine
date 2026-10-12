@@ -4,11 +4,27 @@
 
 import { parseNif, type NifFile } from '../formats/nif/nif.ts';
 import type { Renderer } from '../render/renderer.ts';
-import type { AddonNode } from '../render/model-data.ts';
-import type { GpuModel, GpuWaterType, ModelAddon, WaterFlow } from '../render/scene-renderer.ts';
+import { propertyMaterial, type AddonNode } from '../render/model-data.ts';
+import type {
+  GpuDirectionalMaterial,
+  GpuModel,
+  GpuWaterType,
+  LodSnow,
+  ModelAddon,
+  PlacedDirectional,
+  WaterFlow,
+} from '../render/scene-renderer.ts';
 import { TextureCache } from '../render/texture-cache.ts';
 import type { Vfs } from '../vfs/vfs.ts';
 import { parseAddonNode } from '../world/cell-records.ts';
+import {
+  HD_LOD_SNOW_THRESHOLD_ANGLE,
+  LOD_MATERIALS,
+  LOD_SNOW_THRESHOLD_ANGLE,
+  parseMaterialObject,
+  type MaterialObject,
+  type StaticDirectional,
+} from '../world/material-object.ts';
 import { GameSettings } from '../world/game-settings.ts';
 import { parseWater, WaterFlag, type WaterType } from '../world/water.ts';
 import { ScriptEnvironment } from '../world/player-home.ts';
@@ -47,6 +63,9 @@ export class GameSession {
   #settings: Promise<GameSettings> | undefined;
   readonly #waterTypes = new Map<string, Promise<GpuWaterType | undefined>>();
   readonly #waterRecords = new Map<number, Promise<WaterType | undefined>>();
+  /** Material objects (MATO) ready to draw, by form id. */
+  readonly #directionalMaterials = new Map<number, Promise<GpuDirectionalMaterial | undefined>>();
+  readonly #materialObjects = new Map<number, Promise<MaterialObject | undefined>>();
   #addonPathsEntry: Promise<Map<number, string>> | undefined;
 
   constructor(device: GPUDevice, renderer: Renderer, vfs: Vfs, terminal: Terminal) {
@@ -160,6 +179,74 @@ export class GameSession {
           return undefined;
         });
       this.#waterTypes.set(key, entry);
+    }
+    return entry;
+  }
+
+  /**
+   * A static's directional material as placed (STAT DNAM): the material object ready to draw
+   * (kept for the session), its max angle and whether the static counts as snow.
+   */
+  async directionalMaterial(
+    directional: StaticDirectional | undefined,
+  ): Promise<PlacedDirectional | undefined> {
+    if (!directional) return undefined;
+    const material =
+      directional.material === 0
+        ? undefined
+        : await this.#directionalMaterial(directional.material);
+    if (!material && !directional.consideredSnow) return undefined;
+    return { material, maxAngle: directional.maxAngle, snow: directional.consideredSnow };
+  }
+
+  /** The snow and ash laid on object LOD shapes ("objsnow", "objash"; engine materials). */
+  async lodSnow(): Promise<LodSnow> {
+    const db = await this.db;
+    const load = async (
+      entry: { readonly plugin: string; readonly id: number },
+      maxAngle: number,
+    ): Promise<{ material: MaterialObject; maxAngle: number } | undefined> => {
+      const formId = db.formIdOf(entry.plugin, entry.id);
+      const material = formId === undefined ? undefined : await this.#materialObject(formId);
+      return material && { material, maxAngle };
+    };
+    const [normal, hd, ash, ashHd] = await Promise.all([
+      load(LOD_MATERIALS.snow, LOD_SNOW_THRESHOLD_ANGLE),
+      load(LOD_MATERIALS.snowHd, HD_LOD_SNOW_THRESHOLD_ANGLE),
+      load(LOD_MATERIALS.ash, LOD_SNOW_THRESHOLD_ANGLE),
+      load(LOD_MATERIALS.ash, HD_LOD_SNOW_THRESHOLD_ANGLE),
+    ]);
+    return { normal, hd, ash, ashHd };
+  }
+
+  #directionalMaterial(formId: number): Promise<GpuDirectionalMaterial | undefined> {
+    let entry = this.#directionalMaterials.get(formId);
+    if (!entry) {
+      entry = this.#materialObject(formId)
+        .then(async (object) => {
+          if (!object) return undefined;
+          // Multi-pass materials keep their shader as embedded NIF files (DNAM).
+          const pass = object.singlePass
+            ? { material: undefined, alpha: undefined }
+            : propertyMaterial(object.properties.map((data) => parseNif(data)));
+          return this.#renderer.scene.createDirectionalMaterial(object, pass, this.textures);
+        })
+        .catch((error: unknown) => {
+          this.#terminal.log('material', `MATO ${formId.toString(16)}: ${describe(error)}`, 'warn');
+          return undefined;
+        });
+      this.#directionalMaterials.set(formId, entry);
+    }
+    return entry;
+  }
+
+  #materialObject(formId: number): Promise<MaterialObject | undefined> {
+    let entry = this.#materialObjects.get(formId);
+    if (!entry) {
+      entry = this.db
+        .then((db) => db.get(formId))
+        .then((record) => (record?.type === 'MATO' ? parseMaterialObject(record) : undefined));
+      this.#materialObjects.set(formId, entry);
     }
     return entry;
   }

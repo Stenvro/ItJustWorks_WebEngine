@@ -139,6 +139,21 @@ no landscape, `0x20` no sky, `0x40` fixed dimensions, `0x80` no grass).
   exterior cell they stand in; the loader sorts them into cells by position.
 - A cell's water height is its XCLW, else the water world's default (DNAM). Values beyond
   ±1e9 mean "no water".
+- A grid position without a CELL record holds nothing (not even the parent world's land):
+  the LOD stays visible there. Around a city world's few cells, the parent's LOD (terrain,
+  water, objects) shows what lies outside.
+
+**Large references** (SSE, `src/world/large-references.ts`): big objects (mountains, cliffs,
+city walls, forts) are loaded in full detail in a wider grid than the normal cells
+(uLargeRefLODGridSize 11 × 11 around the camera, versus uGridsToLoad 5 × 5); there their LOD
+shapes `obj-LargeRef` give way while the other LOD stays. Each plugin's version of a WRLD
+record lists in RNAM fields the large references _it_ adds (Tamriel: 160,247 entries for
+34,034 references in Skyrim.esm, a few hundred in Update.esm and the DLC), so all versions
+are merged. RNAM: i16 cell Y, i16 cell X, u32 count, then per reference its form id, i16 Y and
+i16 X of the cell it is placed in. A reference is listed under every cell its bounds reach
+into (its own cell and mostly the 8 neighbours). With the camera in a cell, the references
+listed for the cells of the 11 × 11 grid around it are shown: the cells outside the loaded
+5 × 5 get a scene of only those references (with the cell's enable state).
 
 ## Landscape
 
@@ -386,6 +401,52 @@ engine builds the decal on the whole triangles touching its box, so it runs over
 the box reaches at least half the decal's size along Y. Decals follow their reference's enable
 state like other objects. Parallax (no vanilla placed decal uses it): TODO(M13), with the
 lighting shader's parallax.
+
+## Directional materials
+
+Snow, ash, moss, ice and the Falmer glow that the engine lays over the upward-facing parts of
+statics (`src/world/material-object.ts`, `node tools/material-info.ts [editor id]`). Sources:
+CommonLibSSE-NG (`BSMaterialObject::DIRECTIONAL_DATA`, `TESObjectSTATData`), Nukem9's
+decompiled `BSLightingShader` (constant setup) and Community Shaders' near-vanilla
+Lighting.hlsl (v0.7.4, the pixel shader).
+
+**STAT DNAM** (8 or 12 bytes): f32 max angle (30–120 in the CK), MATO form id, SSE: u32 flags
+(`0x1` "considered snow": the snow shader's mask, rim light and sparkles). About 2,600 vanilla
+statics name a material (SnowMaterialObject1P 691, IceShader01 839, SnowMaterialObjectLight1P
+169, the Falmer glows 211); 69 only count as snow.
+
+**MATO DATA** (52 bytes; 48 in the DLCs, without the flags): f32 falloff scale, falloff bias,
+noise UV scale, material UV scale, projection vector (3 × f32), normal dampener, single-pass
+colour (3 × f32, 0..1), i32 single pass, u32 flags (`0x1` snow; no vanilla record sets it).
+**DNAM** (repeated): the material's properties as complete embedded NIF files (Gamebryo
+20.2.0.7, BS version 100 or 83): a BSLightingShaderProperty (with its texture set) or a
+BSEffectShaderProperty, and an NiAlphaProperty. MODL is only the editor's preview.
+
+- **Single pass** (all snow and ash `…1P`, VolcanicSulfurCrystalsLite): the static's own
+  lighting shapes blend to the material. The engine's ProjectedUVParams come from an NiColorA
+  (r, g, b, a) as x = (1 − a)·r, z = b, w = (1 − a)·g + a; here r = falloff scale, g = falloff
+  bias, b = 1 / noise UV scale and a = cos(max angle) (inferred: at 90° the material's values
+  apply unchanged, the "Light" variants use smaller angles for less cover, larger angles cover
+  more). A pixel gets the material where `dot(n, up) · vertex alpha − x · noise − w > 0`, with
+  the mapped normal `n` and `textures\effects\projectednoise.dds` at z × (world y, −world x).
+  With bEnableProjecteUVDiffuseNormals (on in the launcher presets) the colour is
+  `projecteddiffuse.dds` (at 0.2 × the noise coordinates, fProjectedUVDiffuseNormalTilingScale)
+  times the single-pass colour, blended in by smoothstep(saturate(5 · (0.1 + weight))); the
+  projected normal maps only feed the screen-space normals. The projection vector is unused.
+- **Multi-pass** (IceShader01, the glacier and ice-wall snow, the Falmer glows): the engine
+  turns the static into a BSMultiIndexTriShape whose extra index list holds the triangles
+  facing against the projection vector within the max angle, and draws them again with the
+  material's shader, always with the multi-index snow (sparkle) technique: its diffuse texture
+  at (1 / material UV scale) × the projected coordinates, its normal map at the mesh's UVs
+  flattened by the normal dampener, cut off where the weight above is negative, and sparkle
+  glints from `projectednormal.dds` (SparkleParams of a type 14 shader, else 1). An effect
+  shader as material (VolcanicSulfurCrystals, not placed) shows where
+  `dot(normal, direction) > 0.4 + 0.2 · noise`.
+- **Object LOD**: shapes named `objsnow` / `objsnowHD` get SnowLODMaterial (Skyrim.esm
+  `0x050372`, at fLODSnowThresholdAngle 100°) and SnowLODMaterialHD (`0x06ae38`, at
+  fHDLODSnowThresholdAngle 87°), `objash` / `objashHD` on Solstheim AshLODMaterialMtns1P
+  (Dragonborn.esm `0x032720`). No record refers to them. HD shapes add
+  (vertex alpha − 0.5) × 2.5 to the weight (their vertex alpha is 0.38–0.5).
 
 ## Scripts and conditions
 

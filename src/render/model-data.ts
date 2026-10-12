@@ -56,6 +56,17 @@ export interface LightingMaterial {
   readonly tintColor: readonly [number, number, number] | undefined;
   /** SLSF1 Refraction: how far the normal map shifts the scene behind (heat haze). */
   readonly refractionStrength: number;
+  /** Soft lighting: subsurface light rolloff (lighting effect 1). */
+  readonly softLightRolloff: number;
+  /** Rim lighting: rim light power (lighting effect 2). */
+  readonly rimLightPower: number;
+  /**
+   * Multi-layer parallax (type 11): inner layer thickness, refraction scale, inner layer U
+   * and V scale.
+   */
+  readonly multiLayer: readonly [number, number, number, number] | undefined;
+  /** Sparkle snow (type 14): sparkle parameters. */
+  readonly sparkle: readonly [number, number, number, number] | undefined;
 }
 
 export interface EffectMaterial {
@@ -112,11 +123,22 @@ export interface ModelPart {
   readonly vertices: Uint8Array;
   readonly vertexCount: number;
   readonly indices: Uint16Array;
+  /**
+   * BSSubIndexTriShape segments as index ranges. Object LOD blocks of 4 cells have one per
+   * cell (column by column from the south-west, see docs/formats/lod.md).
+   */
+  readonly segments?: readonly IndexRange[];
   readonly material: PartMaterial | undefined;
   readonly alpha: AlphaState | undefined;
   /** World-space bounding sphere. */
   readonly center: readonly [number, number, number];
   readonly radius: number;
+}
+
+/** A run of the index list: `count` indices from `first`. */
+export interface IndexRange {
+  readonly first: number;
+  readonly count: number;
 }
 
 export interface ModelData {
@@ -189,9 +211,18 @@ function lightingMaterial(file: NifFile, shader: BSLightingShaderPropertyBlock):
     glossiness: shader.glossiness,
     specularColor: shader.specularColor,
     specularStrength: shader.specularStrength,
-    environmentMapScale: shader.environmentMapScale ?? 0,
+    environmentMapScale:
+      shader.environmentMapScale ?? shader.multiLayer?.environmentMapStrength ?? 0,
     tintColor: shader.skinTintColor ?? shader.hairTintColor,
     refractionStrength: shader.refractionStrength,
+    softLightRolloff: shader.lightingEffect1,
+    rimLightPower: shader.lightingEffect2,
+    multiLayer: shader.multiLayer && [
+      shader.multiLayer.innerLayerThickness,
+      shader.multiLayer.refractionScale,
+      ...shader.multiLayer.innerTextureScale,
+    ],
+    sparkle: shader.sparkleParameters,
   };
 }
 
@@ -238,6 +269,28 @@ function material(file: NifFile, ref: Ref): PartMaterial | undefined {
 
 function alphaState(block: NiAlphaPropertyBlock | undefined): AlphaState | undefined {
   return block && { flags: block.flags, threshold: block.threshold };
+}
+
+/**
+ * The shader and alpha properties of NIF files that hold only properties (a material
+ * object's DNAM): the first lighting or effect shader and the first alpha property.
+ */
+export function propertyMaterial(files: readonly NifFile[]): {
+  readonly material: LightingMaterial | EffectMaterial | undefined;
+  readonly alpha: AlphaState | undefined;
+} {
+  let found: LightingMaterial | EffectMaterial | undefined;
+  let alpha: AlphaState | undefined;
+  for (const file of files) {
+    file.blocks.forEach((block, ref) => {
+      if (!found && (block.kind === 'lighting-shader' || block.kind === 'effect-shader')) {
+        const candidate = material(file, ref);
+        if (candidate?.kind === 'lighting' || candidate?.kind === 'effect') found = candidate;
+      }
+      if (!alpha && block.kind === 'alpha') alpha = alphaState(block);
+    });
+  }
+  return { material: found, alpha };
 }
 
 /** Byte value for a −1..1 component, as SSE stores normals and tangents. */
@@ -452,6 +505,10 @@ export function buildModel(file: NifFile): ModelData {
           block.alphaProperty,
           block.boundCenter,
           block.boundRadius,
+          block.segments?.map((segment) => ({
+            first: segment.index,
+            count: segment.triangleCount * 3,
+          })),
         );
         return;
       }
@@ -494,6 +551,7 @@ export function buildModel(file: NifFile): ModelData {
     alphaRef: Ref,
     center: readonly [number, number, number],
     radius: number,
+    segments?: readonly IndexRange[],
   ): void => {
     if (indices.length === 0 || vertexCount === 0) return;
     // Terrain LOD keeps its distant water as shapes without a shader under a node named
@@ -503,8 +561,14 @@ export function buildModel(file: NifFile): ModelData {
     if (!partMaterial) {
       // Without a shader the engine draws nothing: helper shapes for collision, physics
       // and animation ("CurrentPlane", "NonCollidable", bone proxies).
+      // BSSkyShaderProperty shapes (meshes\sky: atmosphere, clouds, stars, moon shadow) are
+      // drawn by the sky renderer (sky.ts), not as models.
       const shaderType = shaderRef >= 0 ? (file.blockTypes[shaderRef] ?? '') : '';
-      if (shaderType !== '') skipped.push(`${name || 'shape'}: ${shaderType} (TODO(M4))`);
+      if (shaderType === 'BSSkyShaderProperty') {
+        skipped.push(`${name || 'shape'}: sky shape (drawn by the sky renderer)`);
+      } else if (shaderType !== '') {
+        skipped.push(`${name || 'shape'}: unknown shader ${shaderType}`);
+      }
       return;
     }
     const billboard = billboards.at(-1);
@@ -527,6 +591,7 @@ export function buildModel(file: NifFile): ModelData {
       vertices,
       vertexCount,
       indices,
+      ...(segments && segments.length > 0 && { segments }),
       material: partMaterial,
       alpha: alphaState(getBlock(file, alphaRef, 'alpha')),
       center: transformPoint(world, center),

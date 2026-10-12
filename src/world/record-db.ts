@@ -199,6 +199,17 @@ export class RecordDatabase {
       : (0xfe000000 | (lightIndex << 12) | (local & 0xfff)) >>> 0;
   }
 
+  /**
+   * The global form id of a plugin's own record (`objectId`: the low 24 bits), or undefined
+   * if the plugin is not loaded. For records the engine refers to by plugin and id.
+   */
+  formIdOf(pluginName: string, objectId: number): number | undefined {
+    const name = asciiLowerCase(pluginName);
+    const plugin = this.plugins.find((p) => asciiLowerCase(p.entry.name) === name);
+    if (!plugin) return undefined;
+    return this.toGlobal(plugin, ((plugin.masterSlots.length << 24) | (objectId & 0xffffff)) >>> 0);
+  }
+
   /** Converts a global form id into the id `plugin` would store, or undefined if it cannot. */
   toLocal(plugin: Plugin, global: number): number | undefined {
     const light = global >>> 24 === 0xfe;

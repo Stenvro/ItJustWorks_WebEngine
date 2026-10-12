@@ -18,6 +18,8 @@ const ALPHA_BLEND = 0x1u;
 const BLEND_ONE = 0u;
 // Draw flag beside the alpha flags: a sky object (aurora, distant clouds), not fogged.
 const DRAW_SKY = 0x10000u;
+// ...the second pass of a multi-pass directional material (scene-renderer.ts).
+const DRAW_MULTI_PASS = 0x80000u;
 
 // Light reaching an effect: ambient from its side, the sun (half of it even when facing away:
 // smoke and mist scatter it) and point lights by distance.
@@ -102,11 +104,27 @@ fn effectShade(
 
 @fragment
 fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location(0) vec4f {
-  let source = textureSample(diffuseMap, linearSampler, in.uv);
+  // A multi-pass directional material with an effect shader (the engine's PROJECTED_UV with
+  // normals): texture coordinates from the projection, shown where the surface faces the
+  // material by more than 0.4 to 0.6 (noise), on the triangles within the max angle.
+  let multiPass = (draw.flags.z & DRAW_MULTI_PASS) != 0u;
+  let projectedUv = projectedCoordinates(in.worldPos) * draw.projectedColor.y;
+  let uv = select(in.uv, projectedUv, multiPass);
+  let source = textureSample(diffuseMap, linearSampler, uv);
+  let noise = textureSample(projectedNoise, linearSampler, 0.0033333334 * projectedUv).r * 0.2 + 0.4;
+  let faceNormalRaw = cross(dpdx(in.worldPos), dpdy(in.worldPos));
   let flags1 = draw.flags.x;
   let flags2 = draw.flags.y;
+  if (multiPass) {
+    let up = safeNormalize(draw.projectedDirection.xyz);
+    var faceNormal = safeNormalize(faceNormalRaw);
+    faceNormal = select(faceNormal, -faceNormal, dot(faceNormal, frame.cameraPos.xyz - in.worldPos) < 0.0);
+    if (dot(safeNormalize(in.normal), up) - noise < 0.0 || dot(faceNormal, up) < draw.projectedDirection.w) {
+      discard;
+    }
+  }
   var tint = vec4f(1.0);
-  if ((flags2 & SLSF2_VERTEX_COLORS) != 0u) {
+  if ((flags2 & SLSF2_VERTEX_COLORS) != 0u && !multiPass) {
     tint = in.color;
   } else if ((flags1 & SLSF1_VERTEX_ALPHA) != 0u) {
     tint.a = in.color.a;
