@@ -79,20 +79,34 @@ export function referenceMatrix(ref: PlacedReference): Mat4 {
   return m;
 }
 
-/** Initial enabled state, following enable parents (and their opposite flag). */
+/**
+ * Which references are enabled:
+ * - `game-start`: as at the start of a new game (initially-disabled flags, enable parents);
+ * - `all-enabled`: every enable parent switched on, e.g. a player home with all upgrades
+ *   bought. References that follow a parent with the "opposite" flag are then hidden.
+ */
+export type EnableState = 'game-start' | 'all-enabled';
+
+export interface LoadCellOptions {
+  readonly enableState?: EnableState;
+}
+
+/** Enabled state of a reference, following enable parents (and their opposite flag). */
 async function isEnabled(
   db: RecordDatabase,
   ref: PlacedReference,
+  state: EnableState,
   cache: Map<number, boolean>,
   depth = 0,
 ): Promise<boolean> {
   const cached = cache.get(ref.formId);
   if (cached !== undefined) return cached;
-  let enabled = !ref.initiallyDisabled;
+  let enabled = state === 'all-enabled' || !ref.initiallyDisabled;
   if (ref.enableParent && depth < 16) {
     const parentRecord = await db.get(ref.enableParent.formId);
     if (parentRecord) {
-      const parentEnabled = await isEnabled(db, parseReference(parentRecord), cache, depth + 1);
+      const parent = parseReference(parentRecord);
+      const parentEnabled = await isEnabled(db, parent, state, cache, depth + 1);
       enabled = ref.enableParent.opposite ? !parentEnabled : parentEnabled;
     }
   }
@@ -100,7 +114,12 @@ async function isEnabled(
   return enabled;
 }
 
-export async function loadCellData(db: RecordDatabase, cellFormId: number): Promise<CellData> {
+export async function loadCellData(
+  db: RecordDatabase,
+  cellFormId: number,
+  options: LoadCellOptions = {},
+): Promise<CellData> {
+  const enableState = options.enableState ?? 'game-start';
   const cell = parseCell(await db.require(cellFormId));
   const template =
     cell.lightingTemplate === undefined ? undefined : await db.get(cell.lightingTemplate);
@@ -121,7 +140,7 @@ export async function loadCellData(db: RecordDatabase, cellFormId: number): Prom
     const record = await db.get(refId);
     if (!record || record.deleted) continue;
     const ref = parseReference(record);
-    if (!(await isEnabled(db, ref, enabledCache))) continue;
+    if (!(await isEnabled(db, ref, enableState, enabledCache))) continue;
     const base = await db.get(ref.base);
     if (!base) {
       skip('reference to a missing base object');

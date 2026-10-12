@@ -57,6 +57,7 @@ const ui = {
       results: byId('cell-results', HTMLOListElement),
       count: byId('cell-count', HTMLElement),
     },
+    allUpgrades: byId('cell-all-upgrades', HTMLInputElement),
   },
   fatal: byId('fatal', HTMLDivElement),
 };

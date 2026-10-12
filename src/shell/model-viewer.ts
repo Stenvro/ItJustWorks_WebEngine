@@ -26,6 +26,8 @@ export interface SearchElements {
 export interface ViewerElements {
   readonly meshes: SearchElements;
   readonly cells: SearchElements;
+  /** Cells: show every enable parent switched on (all upgrades). */
+  readonly allUpgrades: HTMLInputElement;
 }
 
 /** The main menu logo meshes (Anniversary Edition first); they face along the Y axis. */
@@ -117,6 +119,8 @@ export class ModelViewer {
   #scene: GpuScene | undefined;
   /** Guards against a slow load finishing after a newer one. */
   #loadToken = 0;
+  /** The cell on screen (to reload it when the upgrade toggle changes). */
+  #currentCell: number | undefined;
 
   constructor(
     device: GPUDevice,
@@ -141,6 +145,9 @@ export class ModelViewer {
     ui.cells.search.addEventListener('input', () => {
       this.#showCellResults();
     });
+    ui.allUpgrades.addEventListener('change', () => {
+      if (this.#currentCell !== undefined) this.#run(this.showCell(this.#currentCell));
+    });
     ui.cells.search.addEventListener('keydown', (event) => {
       const first = this.#cellMatches()[0];
       if (event.key === 'Enter' && first) this.#run(this.showCell(first.formId));
@@ -156,6 +163,11 @@ export class ModelViewer {
   /** Every mesh path in the VFS (for tools and dev checks). */
   get meshes(): readonly string[] {
     return this.#meshes;
+  }
+
+  /** The free camera used for cells (for dev checks). */
+  get flyCamera(): FlyCamera {
+    return this.#fly;
   }
 
   get cells(): readonly InteriorCell[] {
@@ -218,6 +230,7 @@ export class ModelViewer {
     for (const problem of loaded.problems) this.#terminal.log('nif', problem, 'warn');
     for (const skipped of loaded.model.skipped) this.#terminal.log('nif', skipped, 'warn');
     for (const failure of textures.takeFailures()) this.#terminal.log('dds', failure, 'warn');
+    this.#currentCell = undefined;
     const triangles = loaded.model.parts.reduce((sum, part) => sum + part.indices.length / 3, 0);
     this.#terminal.log(
       'nif',
@@ -245,7 +258,8 @@ export class ModelViewer {
     if (!db) return;
     const token = ++this.#loadToken;
     const start = performance.now();
-    const data = await loadCellData(db, formId);
+    const enableState = this.#ui.allUpgrades.checked ? 'all-enabled' : 'game-start';
+    const data = await loadCellData(db, formId, { enableState });
     const label = `${data.cell.editorId}${data.cell.name ? ` "${data.cell.name}"` : ''}`;
     this.#terminal.log(
       'cell',
@@ -288,6 +302,7 @@ export class ModelViewer {
     const count = Math.max(1, data.objects.length);
     this.#fly.lookAtPoint([centre[0] / count, centre[1] / count, z + EYE_HEIGHT]);
     const lighting = cellSceneLighting(data);
+    this.#currentCell = formId;
     this.#present(scene, undefined, { camera: 'fly', lighting });
     this.#terminal.log(
       'cell',

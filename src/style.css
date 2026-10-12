@@ -247,6 +247,22 @@ button.result:focus-visible {
   box-shadow: none;
 }
 
+.toggle {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 0 16px 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ash);
+  cursor: pointer;
+}
+
+.toggle input {
+  margin: 2px 0 0;
+  accent-color: var(--gold);
+}
+
 .no-results {
   padding: 3px 8px;
   font-size: 12px;
