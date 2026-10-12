@@ -89,7 +89,7 @@ export function computeLoadOrder(input: {
     if (used.has(key)) return;
     const candidate = present.get(key);
     if (!candidate) {
-      if (source === 'plugins.txt') problems.push(`${name} staat in plugins.txt maar ontbreekt`);
+      if (source === 'plugins.txt') problems.push(`${name} is listed in plugins.txt but missing`);
       return;
     }
     used.add(key);
@@ -120,15 +120,13 @@ export function computeLoadOrder(input: {
   for (const plugin of sorted) {
     if (plugin.isLight) {
       if (light >= MAX_LIGHT_PLUGINS) {
-        problems.push(`${plugin.name} niet geladen: maximaal ${MAX_LIGHT_PLUGINS} light plugins`);
+        problems.push(`${plugin.name} not loaded: at most ${MAX_LIGHT_PLUGINS} light plugins`);
         continue;
       }
       entries.push({ ...plugin, modIndex: 0xfe, lightIndex: light++ });
     } else {
       if (full >= MAX_FULL_PLUGINS) {
-        problems.push(
-          `${plugin.name} niet geladen: maximaal ${MAX_FULL_PLUGINS} volledige plugins`,
-        );
+        problems.push(`${plugin.name} not loaded: at most ${MAX_FULL_PLUGINS} full plugins`);
         continue;
       }
       entries.push({ ...plugin, modIndex: full++, lightIndex: undefined });

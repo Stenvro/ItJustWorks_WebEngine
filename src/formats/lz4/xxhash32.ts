@@ -24,7 +24,7 @@ export function xxhash32(
   seed = 0,
 ): number {
   if (start < 0 || length < 0 || start + length > data.length) {
-    throw new RangeError(`xxhash32: bereik ${start}+${length} buiten ${data.length} bytes`);
+    throw new RangeError(`xxhash32: range ${start}+${length} outside ${data.length} bytes`);
   }
   const end = start + length;
   const u32 = (p: number): number =>

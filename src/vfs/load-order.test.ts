@@ -86,7 +86,7 @@ describe('computeLoadOrder', () => {
       ['Mod.esp', '06'],
       ['LightMod.esp', 'FE:000'],
     ]);
-    expect(problems).toEqual(['Gone.esp staat in plugins.txt maar ontbreekt']);
+    expect(problems).toEqual(['Gone.esp is listed in plugins.txt but missing']);
   });
 
   it('valt terug op de extensie als de header onleesbaar is', () => {

@@ -22,7 +22,7 @@ export interface PluginHeader {
 export function parsePluginHeader(bytes: Uint8Array): PluginHeader {
   const reader = new BinaryReader(bytes);
   const type = reader.fourCC();
-  if (type !== 'TES4') throw new FormatError(`Geen plugin (record ${JSON.stringify(type)})`, 0);
+  if (type !== 'TES4') throw new FormatError(`Not a plugin (record ${JSON.stringify(type)})`, 0);
   reader.u32(); // dataSize
   const flags = reader.u32();
   return {

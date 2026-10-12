@@ -53,6 +53,6 @@ describe('BinaryReader', () => {
     expect(() => {
       reader.skip(-1);
     }).toThrow(FormatError);
-    expect(() => reader.u64Number()).toThrow(/past niet/);
+    expect(() => reader.u64Number()).toThrow(/does not fit/);
   });
 });

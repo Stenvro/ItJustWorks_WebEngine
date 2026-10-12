@@ -52,7 +52,7 @@ export class VfsNotFoundError extends Error {
   readonly path: string;
 
   constructor(path: string) {
-    super(`Bestand niet gevonden: ${path}`);
+    super(`File not found: ${path}`);
     this.path = path;
   }
 }
@@ -137,11 +137,11 @@ export class Vfs {
     ]);
 
     const order = computeLoadOrder({ plugins, ccc, pluginsTxt: options.pluginsTxt });
-    problems.push(...order.problems.map((message) => ({ source: 'laadvolgorde', message })));
+    problems.push(...order.problems.map((message) => ({ source: 'load order', message })));
     if (ccc === undefined) {
       problems.push({
         source: 'Skyrim.ccc',
-        message: 'niet bereikbaar; Creation Club-plugins worden niet geladen',
+        message: 'not reachable; Creation Club plugins are not loaded',
       });
     }
 

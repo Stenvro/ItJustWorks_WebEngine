@@ -40,10 +40,7 @@ export class BinaryReader {
 
   seek(offset: number): void {
     if (!Number.isInteger(offset) || offset < 0 || offset > this.#bytes.byteLength) {
-      throw new FormatError(
-        `Ongeldige positie ${offset} in buffer van ${this.length} bytes`,
-        offset,
-      );
+      throw new FormatError(`Invalid position ${offset} in buffer of ${this.length} bytes`, offset);
     }
     this.#offset = offset;
   }
@@ -85,7 +82,7 @@ export class BinaryReader {
     const start = this.#offset;
     const value = this.u64();
     if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-      throw new FormatError(`u64 ${value} past niet in een number`, start);
+      throw new FormatError(`u64 ${value} does not fit in a number`, start);
     }
     return Number(value);
   }
@@ -116,13 +113,10 @@ export class BinaryReader {
   #take(count: number): number {
     const start = this.#offset;
     if (!Number.isInteger(count) || count < 0) {
-      throw new FormatError(`Ongeldig aantal bytes ${count}`, start);
+      throw new FormatError(`Invalid byte count ${count}`, start);
     }
     if (count > this.#bytes.byteLength - start) {
-      throw new FormatError(
-        `Onverwacht einde: ${count} bytes nodig, ${this.remaining} over`,
-        start,
-      );
+      throw new FormatError(`Unexpected end: need ${count} bytes, ${this.remaining} left`, start);
     }
     this.#offset = start + count;
     return start;
