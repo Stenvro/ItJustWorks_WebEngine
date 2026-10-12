@@ -68,6 +68,12 @@ struct TerrainOut {
   @location(4) weights1: vec4f,
 };
 
+// The colour and the G-buffer (normal and snow mask, see gbuffer.ts).
+struct TerrainPixel {
+  @location(0) color: vec4f,
+  @location(1) gbuffer: vec4f,
+};
+
 @vertex
 fn vs_main(in: TerrainIn) -> TerrainOut {
   var out: TerrainOut;
@@ -104,7 +110,7 @@ fn lodLandBlendParameter(color: vec3f) -> f32 {
 }
 
 @fragment
-fn fs_main(in: TerrainOut) -> @location(0) vec4f {
+fn fs_main(in: TerrainOut) -> TerrainPixel {
   // Image up (-v) is north (+Y), image right is east (+X).
   let uv = vec2f(in.worldPos.x, -in.worldPos.y) / TILE_SIZE;
   let largeUv = uv * SNOW_NORMAL_TILING;
@@ -199,24 +205,30 @@ fn fs_main(in: TerrainOut) -> @location(0) vec4f {
   } else {
     color += light.specular * glossiness;
   }
+  var out: TerrainPixel;
+  out.gbuffer = gbufferValue(n, snowMask);
   switch (frame.counts.z) {
     case 1u: {
-      return vec4f(albedo, 1.0);
+      out.color = vec4f(albedo, 1.0);
     }
     case 2u: {
-      return vec4f(n * 0.5 + 0.5, 1.0);
+      out.color = vec4f(n * 0.5 + 0.5, 1.0);
     }
     case 3u: {
-      return vec4f(light.diffuse, 1.0);
+      out.color = vec4f(light.diffuse, 1.0);
     }
     case 4u: {
-      return vec4f(in.color, 1.0);
+      out.color = vec4f(in.color, 1.0);
     }
     case 5u: {
-      return vec4f(geometric * 0.5 + 0.5, 1.0);
+      out.color = vec4f(geometric * 0.5 + 0.5, 1.0);
     }
     default: {
-      return vec4f(applyFog(color, in.worldPos) + snowSparkles(in.worldPos, shadow) * snowMask, 1.0);
+      out.color = vec4f(
+        applyFog(color, in.worldPos) + snowSparkles(in.worldPos, shadow) * snowMask,
+        1.0,
+      );
     }
   }
+  return out;
 }

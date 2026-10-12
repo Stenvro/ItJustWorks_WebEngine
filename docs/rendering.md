@@ -69,9 +69,16 @@ each shader adds them directly, with the game's default settings:
   `0.07 × 6 × position` (fSparklesDensity, fSparklesSize, fSparklesSpecularPower 2), × lerp(sun
   shadow, 1, 0.25) (fShadowSparkleIntensity), fading out over 1000 units (fSparklesMaxDistance),
   × the mask, added after fog.
-- TODO(M4): the subsurface scattering pass (ISSnowSSS: a depth-aware blur of the snow tinted
-  by fSnowSSSColor, fSnowSSSStrength 50, fSnowSSSDepthDiff 0.5) needs the snow mask in a
-  render target.
+- Subsurface scattering (ISSnowSSS, `snow-sss.ts`, `shaders/snow-sss.wgsl`): after the opaque
+  pass, where the G-buffer's snow mask is above zero, 11 taps along the screen at offsets ±0.08
+  to ±2 × (0.078125, 0.13889) × fSnowSSSStrength (50) / distance, with per-channel weights
+  (red spreads farthest; each channel's weights sum to 1), each tap kept at the centre colour
+  in proportion to its depth difference × 0.1 × fSnowSSSDepthDiff (0.5). With L the result's
+  luminance (0.3, 0.59, 0.11): snow = lerp(lerp(fSnowSSSColor × fSnowSSSDarkColorIntensity,
+  source, L), result, L), blended in by the mask: lit snow softens and dim snow darkens towards
+  a cool tint. It is written into the multisampled colour target, which the blended pass goes
+  on with. (iSnowSSSCurrentColor 2 picks an undocumented preset; the configured colour
+  (0, 0, 0.08) and intensity 0.1 are used.)
 
 ## Depth of field
 
@@ -118,8 +125,8 @@ constants of Nukem9's decompiled `BSLightingShader`:
    (STAT flag or SLSF2 `0x10000000`) get the improved snow of `shaders/snow.wgsl` instead of
    their specular: the rim light before fog and the sparkles after it, times the snow mask
    (the engine's SnowParameters.y): the projected material's blend weight, 1 in the
-   multi-index snow pass, else the diffuse alpha. TODO(M4): the snow subsurface scattering
-   (ISSnowSSS), which needs the mask as a screen buffer.
+   multi-index snow pass, else the diffuse alpha. The mask goes into the G-buffer for the
+   snow's subsurface scattering (see [Snow](#snow)).
 8. LOD landscape noise (type 18): diffuse × 0.8333 (p (0.37 − noise) + noise) + 0.37 with
    `textures\terrain\noise.dds` at 3 × UV and p from the colour's brightness.
 9. Leaf flutter (SLSF2 Tree_Anim, `leafShift` in common.wgsl, the engine's
