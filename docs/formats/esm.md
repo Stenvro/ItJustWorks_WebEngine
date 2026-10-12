@@ -133,6 +133,8 @@ NAM2 water, NAM3 LOD water + NAM4 its height, DNAM default land height and defau
 (f32 each), DATA flags (`0x1` small world, `0x2` can't fast travel, `0x8` no LOD water, `0x10`
 no landscape, `0x20` no sky, `0x40` fixed dimensions, `0x80` no grass).
 
+- A world with the no-sky flag (`0x20`, e.g. Blackreach) draws no sky dome, sun, moons, stars,
+  clouds or sky statics; its weather still gives the light, fog and precipitation.
 - City worlds (WhiterunWorld, SolitudeWorld, …) have PNAM `0x7f`: their landscape is
   Tamriel's LAND at the same grid position, and their own CELLs hold only the objects.
 - Persistent references (NPCs, doors, map markers) live in the persistent cell, not in the

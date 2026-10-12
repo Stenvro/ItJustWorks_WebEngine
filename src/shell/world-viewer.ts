@@ -38,7 +38,7 @@ import { raycastParts } from '../render/raycast.ts';
 import { enabledReferences, findToggles, gameStartSelection } from '../world/cell-upgrades.ts';
 import { CELL_SIZE, LAND_GRID, landHeightAt, landTexture, type LandData } from '../world/land.ts';
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
-import { cellKey, Worldspace } from '../world/worldspace.ts';
+import { cellKey, WorldFlag, Worldspace } from '../world/worldspace.ts';
 import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-references.ts';
 import type { GameSession } from './game-session.ts';
 import { WorldLod } from './world-lod.ts';
@@ -128,6 +128,11 @@ export class WorldViewer {
   #worlds: WorldspaceInfo[] = [];
   #world: Worldspace | undefined;
   #sky: WorldSky | undefined;
+
+  /** Whether the open world has no sky (WRLD DATA flag 0x20). */
+  get #noSky(): boolean {
+    return ((this.#world?.record.flags ?? 0) & WorldFlag.noSky) !== 0;
+  }
   #lod: WorldLod | undefined;
   readonly #cells = new Map<string, LoadedCell>();
   readonly #queue: [number, number][] = [];
@@ -299,7 +304,9 @@ export class WorldViewer {
       terrain: () => this.#readyTerrain(),
       camera: this.#camera,
       lighting: (camera) => this.#lighting(camera.position),
-      sky: () => this.#sky?.skyFrame(),
+      // Worlds without a sky (WRLD DATA 0x20, e.g. Blackreach) draw no dome, sun, moons,
+      // stars or clouds; their weather still lights and fogs them.
+      sky: () => (this.#noSky ? undefined : this.#sky?.skyFrame()),
       water: () => this.#waterFrame(),
       imageSpace: () => this.#sky?.imageSpace(),
       backdrop: false,
@@ -714,7 +721,7 @@ export class WorldViewer {
   }
 
   *#readyScenes(): Iterable<GpuScene> {
-    if (this.#sky) yield* this.#sky.skyScenes();
+    if (this.#sky && !this.#noSky) yield* this.#sky.skyScenes();
     if (this.#lod) yield* this.#lod.scenes();
     for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
     for (const [key, large] of this.#largeCells) {
