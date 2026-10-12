@@ -55,4 +55,9 @@ describe('checkDataFolder', () => {
     expect(report.ok).toBe(false);
     expect(report.looksLikeGameRoot).toBe(true);
   });
+
+  it('herkent een gekopieerde installatiemap aan Skyrim.ccc', () => {
+    expect(checkDataFolder([file('Skyrim.ccc'), dir('Data')]).looksLikeGameRoot).toBe(true);
+    expect(checkDataFolder([dir('Data')]).looksLikeGameRoot).toBe(false);
+  });
 });

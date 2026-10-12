@@ -1,16 +1,19 @@
 import './style.css';
 import { GpuUnavailableError, initGpu, trackCanvasSize } from './render/gpu.ts';
 import { Renderer } from './render/renderer.ts';
-import type { DataFolderReport } from './vfs/data-folder-check.ts';
+import { BrowserGameFolder } from './vfs/browser/browser-game-folder.ts';
 import {
-  forgetDataFolder,
-  getStoredDataFolder,
-  inspectDataFolder,
+  forgetGameFolder,
+  getStoredGameFolder,
   isFileSystemAccessSupported,
-  pickDataFolder,
-  rememberDataFolder,
-  requestDataFolderAccess,
-} from './vfs/data-folder.ts';
+  pickGameFolder,
+  rememberGameFolder,
+  requestFolderAccess,
+  resolveGameFolder,
+} from './vfs/browser/data-folder.ts';
+import type { DataFolderReport } from './vfs/data-folder-check.ts';
+import { formatModIndex } from './vfs/load-order.ts';
+import { Vfs } from './vfs/vfs.ts';
 
 function byId<T extends HTMLElement>(id: string, type: new () => T): T {
   const element = document.getElementById(id);
@@ -25,8 +28,12 @@ const ui = {
   message: byId('setup-message', HTMLParagraphElement),
   resume: byId('resume-folder', HTMLButtonElement),
   pick: byId('pick-folder', HTMLButtonElement),
-  details: byId('folder-details', HTMLDetailsElement),
-  plugins: byId('plugin-list', HTMLUListElement),
+  summary: byId('vfs-summary', HTMLElement),
+  problems: byId('problem-list', HTMLUListElement),
+  loadOrderTitle: byId('load-order-title', HTMLElement),
+  loadOrder: byId('load-order-list', HTMLOListElement),
+  archiveTitle: byId('archive-title', HTMLElement),
+  archives: byId('archive-list', HTMLOListElement),
   fatal: byId('fatal', HTMLDivElement),
 };
 
@@ -66,59 +73,97 @@ function startRenderLoop(renderer: Renderer): void {
   requestAnimationFrame(frame);
 }
 
-// --- Data-map kiezen ------------------------------------------------------
+// --- Skyrim-map kiezen en VFS opbouwen ------------------------------------
 
 type SetupAction = 'pick' | 'resume' | 'none';
 
-function showSetup(message: string, action: SetupAction, report?: DataFolderReport): void {
-  ui.message.textContent = message;
-  ui.pick.hidden = action === 'none';
-  ui.resume.hidden = action !== 'resume';
-  ui.plugins.replaceChildren(
-    ...(report?.plugins ?? []).map((name) => {
+let currentVfs: Vfs | undefined;
+
+function fillList(list: HTMLElement, items: readonly string[]): void {
+  list.replaceChildren(
+    ...items.map((text) => {
       const li = document.createElement('li');
-      li.textContent = name;
+      li.textContent = text;
       return li;
     }),
   );
-  ui.details.hidden = !report?.ok;
+}
+
+function showSetup(message: string, action: SetupAction, vfs?: Vfs): void {
+  ui.message.textContent = message;
+  ui.pick.hidden = action === 'none';
+  ui.resume.hidden = action !== 'resume';
+  ui.summary.hidden = vfs === undefined;
+  if (vfs) {
+    ui.loadOrderTitle.textContent = `Laadvolgorde (${vfs.loadOrder.length} plugins)`;
+    fillList(
+      ui.loadOrder,
+      vfs.loadOrder.map((entry) => `${formatModIndex(entry).padEnd(8)}${entry.name}`),
+    );
+    ui.archiveTitle.textContent = `Archieven (${vfs.archives.length}, laag → hoog)`;
+    fillList(
+      ui.archives,
+      vfs.archives.map((a) => `${a.name}  (${a.archive.entries.length.toLocaleString('nl-NL')})`),
+    );
+    fillList(
+      ui.problems,
+      vfs.problems.map((problem) => `${problem.source}: ${problem.message}`),
+    );
+  }
   ui.setup.hidden = false;
 }
 
-function reportProblem(report: DataFolderReport): string {
-  if (report.looksLikeGameRoot) {
-    return 'Dit is de installatiemap van Skyrim. Kies de map "Data" die erin staat.';
-  }
-  return `Dit is geen complete Skyrim Special Edition Data-map.\nOntbreekt: ${report.missing.join(', ')}`;
+function folderProblem(report: DataFolderReport): string {
+  return `Dit is geen Skyrim Special Edition-installatie of Data-map.\nOntbreekt: ${report.missing.join(', ')}`;
 }
 
 async function useFolder(handle: FileSystemDirectoryHandle, isNewChoice: boolean): Promise<void> {
-  const report = await inspectDataFolder(handle);
-  if (!report.ok) {
-    if (!isNewChoice) await forgetDataFolder();
-    showSetup(reportProblem(report), 'pick');
+  showSetup(`Map controleren: ${handle.name}…`, 'none');
+  const resolved = await resolveGameFolder(handle);
+  if (!resolved.report.ok) {
+    if (!isNewChoice) await forgetGameFolder();
+    showSetup(folderProblem(resolved.report), 'pick');
     return;
   }
-  if (isNewChoice) await rememberDataFolder(handle);
-  // TODO(M1): VFS opbouwen uit deze map (BSA's + loose files, laadvolgorde).
-  showSetup(
-    `Data-map gekoppeld: ${handle.name}\n${report.plugins.length} plugins, ${report.archives.length} archieven.`,
-    'pick',
-    report,
-  );
+  if (isNewChoice) await rememberGameFolder(handle);
+
+  showSetup(`Bestanden indexeren in ${handle.name}…`, 'none');
+  const start = performance.now();
+  // TODO(M2): VFS in een worker-pool draaien zodra er assets geladen worden, zodat
+  // decompressie en parsing niet op de main thread gebeuren.
+  const vfs = await Vfs.mount(new BrowserGameFolder(resolved.data, resolved.root));
+  const elapsed = performance.now() - start;
+  await currentVfs?.close();
+  currentVfs = vfs;
+
+  const lines = [
+    `Gekoppeld: ${handle.name}`,
+    `${vfs.fileCount.toLocaleString('nl-NL')} bestanden uit ${vfs.archives.length} archieven, ` +
+      `geïndexeerd in ${elapsed.toFixed(0)} ms.`,
+  ];
+  if (!vfs.hasCreationClubList) {
+    lines.push(
+      'Kies de installatiemap (de map waar Data in staat) om ook Creation Club-content te laden.',
+    );
+  }
+  showSetup(lines.join('\n'), 'pick', vfs);
   ui.pick.textContent = 'Andere map kiezen';
+}
+
+function run(action: () => Promise<void>): void {
+  action().catch((error: unknown) => {
+    console.error(error);
+    showSetup(`Fout: ${describeError(error)}`, 'pick');
+  });
 }
 
 function onClick(button: HTMLButtonElement, action: () => Promise<void>): void {
   button.addEventListener('click', () => {
-    action().catch((error: unknown) => {
-      console.error(error);
-      showSetup(`Fout: ${describeError(error)}`, 'pick');
-    });
+    run(action);
   });
 }
 
-async function setupDataFolder(): Promise<void> {
+async function setupGameFolder(): Promise<void> {
   if (!isFileSystemAccessSupported()) {
     showSetup(
       'Deze browser ondersteunt de File System Access API niet.\nGebruik Chrome of Edge.',
@@ -128,29 +173,30 @@ async function setupDataFolder(): Promise<void> {
   }
 
   onClick(ui.pick, async () => {
-    const handle = await pickDataFolder();
+    const handle = await pickGameFolder();
     if (handle) await useFolder(handle, true);
   });
 
-  const stored = await getStoredDataFolder();
+  const stored = await getStoredGameFolder();
   switch (stored.status) {
     case 'granted':
-      await useFolder(stored.handle, false);
+      run(() => useFolder(stored.handle, false));
       break;
     case 'needs-permission':
       onClick(ui.resume, async () => {
-        if (await requestDataFolderAccess(stored.handle)) {
+        if (await requestFolderAccess(stored.handle)) {
           await useFolder(stored.handle, false);
         } else {
-          showSetup('Geen toegang gekregen. Kies de Data-map opnieuw.', 'pick');
+          showSetup('Geen toegang gekregen. Kies de map opnieuw.', 'pick');
         }
       });
       ui.resume.textContent = `Toegang tot "${stored.handle.name}" hervatten`;
-      showSetup('De browser vraagt opnieuw toestemming om je Data-map te lezen.', 'resume');
+      showSetup('De browser vraagt opnieuw toestemming om je Skyrim-map te lezen.', 'resume');
       break;
     case 'none':
       showSetup(
-        'Kies de map "Data" van je Skyrim Special Edition-installatie.\nDe bestanden blijven op je eigen computer.',
+        'Kies je Skyrim Special Edition-installatiemap (de map waar "Data" in staat).\n' +
+          'De bestanden blijven op je eigen computer.',
         'pick',
       );
       break;
@@ -170,7 +216,7 @@ async function main(): Promise<void> {
 
   trackCanvasSize(ui.canvas, gpu.device);
   startRenderLoop(new Renderer(gpu));
-  await setupDataFolder();
+  await setupGameFolder();
 }
 
 main().catch(showFatal);

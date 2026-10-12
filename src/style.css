@@ -89,16 +89,35 @@ button:hover {
 }
 
 details {
-  margin-top: 16px;
+  margin-top: 12px;
   color: var(--muted);
 }
 
-details ul {
+summary {
+  cursor: pointer;
+}
+
+.mono-list {
   margin: 8px 0 0;
-  padding-left: 20px;
+  padding: 0;
+  list-style: none;
   font:
     13px/1.5 ui-monospace,
     monospace;
+}
+
+.mono-list li {
+  white-space: pre;
+}
+
+.problems {
+  margin: 16px 0 0;
+  padding-left: 20px;
+  color: var(--danger);
+}
+
+.problems:empty {
+  display: none;
 }
 
 .fatal {

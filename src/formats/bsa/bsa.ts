@@ -1,0 +1,264 @@
+// BSA v105 (Skyrim Special Edition). Formaat: docs/formats/bsa.md
+
+import { BinaryReader, FormatError } from '../binary-reader.ts';
+import type { ByteSource } from '../byte-source.ts';
+import { decompressLz4Frame } from '../lz4/lz4.ts';
+import { fileNameOf, folderOf, normalizePath } from '../paths.ts';
+import { decodeWindows1252 } from '../text.ts';
+import { bsaHash } from './bsa-hash.ts';
+
+export const BSA_VERSION_SSE = 105;
+
+const HEADER_SIZE = 36;
+const FOLDER_RECORD_SIZE = 24;
+const FILE_RECORD_SIZE = 16;
+const SIZE_MASK = 0x3fffffff;
+const COMPRESSION_TOGGLE = 0x40000000;
+
+export const BsaArchiveFlag = {
+  includeDirectoryNames: 0x1,
+  includeFileNames: 0x2,
+  compressed: 0x4,
+  retainDirectoryNames: 0x8,
+  retainFileNames: 0x10,
+  retainFileNameOffsets: 0x20,
+  xbox360: 0x40,
+  retainStringsDuringStartup: 0x80,
+  embedFileNames: 0x100,
+  xmemCodec: 0x200,
+} as const;
+
+export interface BsaHeader {
+  readonly version: number;
+  readonly archiveFlags: number;
+  readonly folderCount: number;
+  readonly fileCount: number;
+  readonly totalFolderNameLength: number;
+  readonly totalFileNameLength: number;
+  /** Soorten inhoud (meshes, textures, ...); alleen informatief. */
+  readonly fileFlags: number;
+}
+
+export interface BsaEntry {
+  /** Genormaliseerd pad, of `undefined` als het archief geen namen bevat. */
+  readonly path: string | undefined;
+  readonly offset: number;
+  /** Opgeslagen grootte, inclusief eventuele ingebedde naam en grootte-prefix. */
+  readonly size: number;
+  readonly compressed: boolean;
+}
+
+export interface BsaOpenOptions {
+  /** Controleer elke map- en bestandsnaam tegen de opgeslagen hash (voor tools en tests). */
+  readonly verifyHashes?: boolean;
+}
+
+function readHash(reader: BinaryReader): bigint {
+  const low = reader.u32();
+  const high = reader.u32();
+  return (BigInt(high) << 32n) | BigInt(low);
+}
+
+function hashKey(folderHash: bigint, fileHash: bigint): string {
+  return `${folderHash.toString(16)}:${fileHash.toString(16)}`;
+}
+
+function parseHeader(bytes: Uint8Array): BsaHeader & { readonly folderRecordOffset: number } {
+  const reader = new BinaryReader(bytes);
+  const magic = reader.fourCC();
+  if (magic !== 'BSA\0')
+    throw new FormatError(`Geen BSA-archief (magic ${JSON.stringify(magic)})`, 0);
+  const version = reader.u32();
+  if (version !== BSA_VERSION_SSE) {
+    throw new FormatError(
+      `BSA-versie ${version} wordt niet ondersteund; Skyrim SE gebruikt versie ${BSA_VERSION_SSE}`,
+      4,
+    );
+  }
+  const header = {
+    version,
+    folderRecordOffset: reader.u32(),
+    archiveFlags: reader.u32(),
+    folderCount: reader.u32(),
+    fileCount: reader.u32(),
+    totalFolderNameLength: reader.u32(),
+    totalFileNameLength: reader.u32(),
+    fileFlags: reader.u16(),
+  };
+  if (header.archiveFlags & BsaArchiveFlag.xbox360) {
+    throw new FormatError('Xbox 360-archieven (big-endian) worden niet ondersteund', 12);
+  }
+  if (header.folderRecordOffset < HEADER_SIZE) {
+    throw new FormatError(`Ongeldige header-grootte ${header.folderRecordOffset}`, 8);
+  }
+  return header;
+}
+
+/** Leest een nul-afgesloten string; geeft tekst en positie na de nul terug. */
+function readZString(bytes: Uint8Array, start: number): [string, number] {
+  const end = bytes.indexOf(0, start);
+  if (end < 0) throw new FormatError('Bestandsnaam zonder afsluitende nul', start);
+  return [decodeWindows1252(bytes, start, end), end + 1];
+}
+
+export class BsaArchive {
+  readonly header: BsaHeader;
+  readonly entries: readonly BsaEntry[];
+  readonly #source: ByteSource;
+  /** Op pad (als het archief namen bevat), anders op hash. */
+  readonly #index: Map<string, BsaEntry>;
+
+  private constructor(
+    source: ByteSource,
+    header: BsaHeader,
+    entries: BsaEntry[],
+    index: Map<string, BsaEntry>,
+  ) {
+    this.#source = source;
+    this.header = header;
+    this.entries = entries;
+    this.#index = index;
+  }
+
+  static async open(source: ByteSource, options: BsaOpenOptions = {}): Promise<BsaArchive> {
+    if (source.size < HEADER_SIZE) {
+      throw new FormatError(`Bestand te klein voor een BSA-header (${source.size} bytes)`, 0);
+    }
+    const header = parseHeader(await source.read(0, HEADER_SIZE));
+    const flags = header.archiveFlags;
+    const hasFolderNames = (flags & BsaArchiveFlag.includeDirectoryNames) !== 0;
+    const hasFileNames = (flags & BsaArchiveFlag.includeFileNames) !== 0;
+    const hasNames = hasFolderNames && hasFileNames;
+    const compressedByDefault = (flags & BsaArchiveFlag.compressed) !== 0;
+
+    // Map-records, bestandsrecord-blocks en namenblok staan aaneengesloten na de header.
+    const fileNamesStart =
+      header.folderRecordOffset +
+      header.folderCount * FOLDER_RECORD_SIZE +
+      (hasFolderNames ? header.folderCount + header.totalFolderNameLength : 0) +
+      header.fileCount * FILE_RECORD_SIZE;
+    const directoryEnd = fileNamesStart + (hasFileNames ? header.totalFileNameLength : 0);
+    if (directoryEnd > source.size) {
+      throw new FormatError(`Index (${directoryEnd} bytes) groter dan het archief`, 0);
+    }
+    const directory = await source.read(0, directoryEnd);
+    const reader = new BinaryReader(directory, header.folderRecordOffset);
+
+    interface FolderRecord {
+      readonly hash: bigint;
+      readonly fileCount: number;
+      readonly blockOffset: number;
+    }
+    const folders: FolderRecord[] = [];
+    for (let i = 0; i < header.folderCount; i++) {
+      const hash = readHash(reader);
+      const fileCount = reader.u32();
+      reader.skip(4); // padding
+      // Offset wijst naar het bestandsrecord-block, vermeerderd met totalFileNameLength.
+      const blockOffset = reader.u64Number() - header.totalFileNameLength;
+      folders.push({ hash, fileCount, blockOffset });
+    }
+
+    const entries: BsaEntry[] = [];
+    const index = new Map<string, BsaEntry>();
+    let namePosition = fileNamesStart;
+    let fileTotal = 0;
+
+    for (const folder of folders) {
+      fileTotal += folder.fileCount;
+      if (fileTotal > header.fileCount) {
+        throw new FormatError('Mappen bevatten meer bestanden dan de header noemt', 0);
+      }
+      reader.seek(folder.blockOffset);
+      let folderName = '';
+      if (hasFolderNames) {
+        const length = reader.u8();
+        const raw = reader.bytes(length);
+        const nul = raw.indexOf(0); // naam is inclusief afsluitende nul
+        folderName = decodeWindows1252(raw, 0, nul === -1 ? length : nul);
+        if (options.verifyHashes && bsaHash(folderName, true) !== folder.hash) {
+          throw new FormatError(`Hash van map "${folderName}" klopt niet`, folder.blockOffset);
+        }
+      }
+
+      for (let i = 0; i < folder.fileCount; i++) {
+        const fileHash = readHash(reader);
+        const rawSize = reader.u32();
+        const offset = reader.u32();
+
+        let path: string | undefined;
+        if (hasNames) {
+          let fileName: string;
+          [fileName, namePosition] = readZString(directory, namePosition);
+          if (options.verifyHashes && bsaHash(fileName, false) !== fileHash) {
+            throw new FormatError(`Hash van "${folderName}\\${fileName}" klopt niet`, namePosition);
+          }
+          path = normalizePath(folderName === '.' ? fileName : `${folderName}\\${fileName}`);
+        }
+
+        const entry: BsaEntry = {
+          path,
+          offset,
+          size: rawSize & SIZE_MASK,
+          compressed: compressedByDefault !== ((rawSize & COMPRESSION_TOGGLE) !== 0),
+        };
+        entries.push(entry);
+        const key = path ?? hashKey(folder.hash, fileHash);
+        if (!index.has(key)) index.set(key, entry);
+      }
+    }
+    if (fileTotal !== header.fileCount) {
+      throw new FormatError(`Header noemt ${header.fileCount} bestanden, gevonden ${fileTotal}`, 0);
+    }
+
+    return new BsaArchive(source, header, entries, index);
+  }
+
+  /** Bevat het archief map- en bestandsnamen? Zonder namen kan alleen op hash worden gezocht. */
+  get hasNames(): boolean {
+    const flags = this.header.archiveFlags;
+    return (
+      (flags & BsaArchiveFlag.includeDirectoryNames) !== 0 &&
+      (flags & BsaArchiveFlag.includeFileNames) !== 0
+    );
+  }
+
+  get(path: string): BsaEntry | undefined {
+    const normalized = normalizePath(path);
+    if (this.hasNames) return this.#index.get(normalized);
+    const key = hashKey(
+      bsaHash(folderOf(normalized), true),
+      bsaHash(fileNameOf(normalized), false),
+    );
+    return this.#index.get(key);
+  }
+
+  /** Leest en decomprimeert een bestand. */
+  async read(entry: BsaEntry): Promise<Uint8Array> {
+    if (entry.offset + entry.size > this.#source.size) {
+      throw new FormatError(
+        `"${entry.path ?? '?'}" loopt voorbij het einde van het archief`,
+        entry.offset,
+      );
+    }
+    const raw = await this.#source.read(entry.offset, entry.size);
+    let start = 0;
+    if (this.header.archiveFlags & BsaArchiveFlag.embedFileNames) {
+      start = 1 + (raw[0] ?? 0); // bstring met het volledige pad
+    }
+    if (!entry.compressed) return raw.subarray(start);
+
+    if (raw.length < start + 4) {
+      throw new FormatError(
+        `"${entry.path ?? '?'}" is te kort voor gecomprimeerde data`,
+        entry.offset,
+      );
+    }
+    const originalSize = new DataView(raw.buffer, raw.byteOffset + start, 4).getUint32(0, true);
+    return decompressLz4Frame(raw.subarray(start + 4), originalSize);
+  }
+
+  async close(): Promise<void> {
+    await this.#source.close?.();
+  }
+}

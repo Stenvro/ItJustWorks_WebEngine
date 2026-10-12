@@ -4,6 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Skyrim Web</title>
+    <link rel="icon" href="data:," />
   </head>
   <body>
     <canvas id="viewport"></canvas>
@@ -14,12 +15,19 @@
       <p id="setup-message"></p>
       <div class="actions">
         <button id="resume-folder" type="button" hidden>Toegang hervatten</button>
-        <button id="pick-folder" type="button" hidden>Kies je Skyrim Data-map</button>
+        <button id="pick-folder" type="button" hidden>Kies je Skyrim-map</button>
       </div>
-      <details id="folder-details" hidden>
-        <summary>Gevonden plugins</summary>
-        <ul id="plugin-list"></ul>
-      </details>
+      <section id="vfs-summary" hidden>
+        <ul id="problem-list" class="problems"></ul>
+        <details>
+          <summary id="load-order-title">Laadvolgorde</summary>
+          <ol id="load-order-list" class="mono-list"></ol>
+        </details>
+        <details>
+          <summary id="archive-title">Archieven</summary>
+          <ol id="archive-list" class="mono-list"></ol>
+        </details>
+      </section>
     </main>
 
     <div id="fatal" class="panel fatal" role="alert" hidden></div>
