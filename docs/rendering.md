@@ -13,16 +13,26 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
    cascade are left out. Receivers (`Receive_Shadows`, SLSF1 `0x100`, and terrain) take 3×3
    PCF with a normal offset of 1.5 texels; the last cascade fades out over its last tenth.
 2. **Opaque pass:** the shell backdrop or the sky, terrain, tree LOD billboards and the opaque
-   parts of all scenes (LOD and cells). Parts and terrain quadrants outside the view frustum
-   are skipped (bounding spheres).
-3. **Copies of the opaque scene:** when water, blended parts or particles are in view, the
-   resolved colour is copied and the multisampled depth resolved (sample 0) into an
-   `r32float` texture. Both are bound in the frame group (`sceneColor`, `sceneDepth`).
+   parts of all scenes (LOD and cells), into the colour and a G-buffer (`gbuffer.ts`: normal,
+   snow mask). Parts and terrain quadrants outside the view frustum are skipped (bounding
+   spheres).
+3. **Screen-space passes and copies of the opaque scene:** the multisampled depth resolved
+   (sample 0) into an `r32float` texture, the ambient occlusion (below) applied to the
+   colour, the resolved colour copied, then the snow's subsurface scattering. The copies are
+   bound in the frame group (`sceneColor`, `sceneDepth`).
 4. **Water and blended pass:** water surfaces, then blended parts and particle systems of all
    scenes back to front (by bounding sphere centre).
 5. **Post-processing** (`post.ts`): the imagespace's eye adaptation, bloom, tone curve and
    grading into the canvas (see [formats/esm.md](formats/esm.md#imagespaces)), then its depth
    of field (below).
+
+**Not yet:** the engine's volumetric lighting (bVolumetricLightingEnable: per-weather VOLI
+records, froxel shaders ISVolumetricLighting*), its image-based lens flare (bIBLFEnable,
+ISIBLensFlare) and the LENS sprite flares of the sun and lights: TODO(M13). Their shaders are
+known (Community Shaders), but the values the engine feeds them (the froxel depth
+distribution and its range factor, intensity and colour, wind) are computed in the executable
+and documented nowhere; they need reverse engineering, not guesses. Anti-aliasing is 4×
+MSAA instead of the engine's TAA (bUseTAA).
 
 **Frame uniforms** (`shaders/frame.wgsl`, group 0 of every world shader): camera, sun
 direction and colour (times the imagespace's sunlight scale), directional ambient, fog,
