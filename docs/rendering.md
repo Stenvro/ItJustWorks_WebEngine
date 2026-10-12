@@ -106,8 +106,10 @@ and half the sunlight, faded where it nears the opaque scene, fogged.
 **Occlusion** (no rain under roofs): the scene's shadow casters and the terrain rendered from
 straight above around the camera (orthographic, ±8192 units in height) into layer 4 of the
 shadow map — redrawn when the camera moves a quarter of the map or every 120 frames. A
-particle below anything in that map is hidden. Particle sizes are scaled (rain × 50, snow
-× 16) to match the textures' content: TODO(M13) calibrate against the original.
+particle below anything in that map is hidden. Snow quads reach the SPGD size in world units
+from their centre (the engine offsets the corners in clip space by size × the projection
+scale, CS Particle.hlsl ENVCUBE); rain drops are scaled × 50 to match the texture's thin line:
+TODO(M13) calibrate rain against the original.
 
 ## Memory
 

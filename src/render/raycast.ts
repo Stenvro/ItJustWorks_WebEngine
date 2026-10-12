@@ -90,19 +90,22 @@ function rayPart(part: ModelPart, origin: Vec3, direction: Vec3, maxDistance: nu
 
 /**
  * Distance along a world ray (unit direction) to the first opaque surface of the placed
- * parts within `maxDistance`, or undefined if there is none.
+ * parts within `maxDistance`, or undefined if there is none. With `anySurface`, water,
+ * effect and blended surfaces count too (development picking).
  */
 export function raycastParts(
   parts: Iterable<PlacedPart>,
   origin: Vec3,
   direction: Vec3,
   maxDistance: number,
+  anySurface = false,
 ): number | undefined {
   let nearest = maxDistance;
   for (const placed of parts) {
     const material = placed.part.material;
     // Only surfaces that decals can lie on: no water, effects or blended layers.
-    if (material?.kind !== 'lighting' || ((placed.part.alpha?.flags ?? 0) & 1) !== 0) continue;
+    const solid = material?.kind === 'lighting' && ((placed.part.alpha?.flags ?? 0) & 1) === 0;
+    if (!solid && !anySurface) continue;
     const entry = raySphere(origin, direction, placed.center, placed.radius);
     if (entry >= nearest) continue;
     const world = multiply(placed.instanceWorld, placed.part.world);

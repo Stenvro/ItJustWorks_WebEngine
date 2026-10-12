@@ -344,6 +344,8 @@ export const LightFlag = {
   shadowOmnidirectional: 0x1000,
 } as const;
 
+const periodOf = (frequency: number): number => (frequency > 0 ? 1 / frequency : 0);
+
 /** LIGH DATA (48 bytes in Skyrim SE) and FNAM fade. */
 export function parseLight(record: GameRecord): LightRecord {
   const data = requireSize(record.fields.first('DATA') ?? new Uint8Array(), 24, 'LIGH DATA');
@@ -353,7 +355,8 @@ export function parseLight(record: GameRecord): LightRecord {
     flags: data.getUint32(12, true),
     falloffExponent: data.getFloat32(16, true),
     fade: record.fields.f32('FNAM') ?? 1,
-    period: data.byteLength >= 32 ? data.getFloat32(28, true) : 0,
+    // DATA stores the frequency: 1 / period (UESP).
+    period: data.byteLength >= 32 ? periodOf(data.getFloat32(28, true)) : 0,
     intensityAmplitude: data.byteLength >= 36 ? data.getFloat32(32, true) : 0,
     movementAmplitude: data.byteLength >= 40 ? data.getFloat32(36, true) : 0,
   };

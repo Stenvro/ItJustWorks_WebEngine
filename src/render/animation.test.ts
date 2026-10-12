@@ -172,11 +172,11 @@ describe('lightFlicker', () => {
     });
   });
 
-  it('varies brightness within the amplitude and moves within range', () => {
+  it('dims within the amplitude (never brighter) and moves within range', () => {
     for (let t = 0; t < 3; t += 0.05) {
       const f = lightFlicker(params, t, 5);
       expect(f.scale).toBeGreaterThanOrEqual(0.6 - 1e-6);
-      expect(f.scale).toBeLessThanOrEqual(1.4 + 1e-6);
+      expect(f.scale).toBeLessThanOrEqual(1 + 1e-6);
       for (const o of f.offset) expect(Math.abs(o)).toBeLessThanOrEqual(16 + 1e-6);
     }
   });

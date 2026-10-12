@@ -12,13 +12,14 @@ import precipitationShader from './shaders/precipitation.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
 
 /**
- * SPGD particle sizes are small numbers (rain 0.35 × 2, snow about 1.5): world units are this
- * many times larger (the engine scales snow quads by a technique constant of their own). The
- * rain texture's drop is a line 1/8 of its frame wide, so drops are about 2 units thick and
- * 100 long; the snow atlas's flakes fill about half their frame, 10–13 units across.
- * TODO(M13): calibrate both against the original renderer.
+ * Quad size per unit of SPGD particle size. Snow: the engine's particle shader offsets each
+ * corner in clip space by the size times the projection scale (ScaleAdjust), which is a
+ * camera-facing quad reaching `size` world units from its centre (flakes 2-3.3 units, a few
+ * centimetres, across). Rain: the drop texture is a line 1/8 of its frame wide, so drops are
+ * about 2 units thick and 100 long. TODO(M13): calibrate rain against the original renderer
+ * (the engine offsets rain corners in clip space without the projection scale).
  */
-export const PRECIPITATION_SIZE_SCALE = { rain: 50, snow: 16 } as const;
+export const PRECIPITATION_SIZE_SCALE = { rain: 50, snow: 2 } as const;
 /** Particles per unit of SPGD density. */
 const PARTICLES_PER_DENSITY = 1024;
 const MAX_PARTICLES = 65536;

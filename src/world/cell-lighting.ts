@@ -4,14 +4,40 @@
 import type { Vec3 } from '../render/math.ts';
 import { flatAmbient, type PointLight, type SceneLighting } from '../render/scene-renderer.ts';
 import type { CellData, CellLight } from './cell-loader.ts';
-import { lightFlicker } from './light-flicker.ts';
+import { FLICKERING_LIGHT_DISTANCE, lightFlicker } from './light-flicker.ts';
 
-/** Placed lights at a moment: brightness (LIGH fade) and flicker or pulse applied. */
-export function pointLights(lights: readonly CellLight[], seconds: number): PointLight[] {
-  return lights.map((light) => {
-    const flicker = lightFlicker(light, seconds, light.reference % 997);
-    const brightness = light.fade * flicker.scale;
-    return {
+/** Point lights fade out from this distance to the camera (fLightLODStartFade, High)... */
+export const LIGHT_LOD_START_FADE = 3500;
+/** ...over this range (fLightLODRange). */
+export const LIGHT_LOD_RANGE = 500;
+
+/**
+ * Placed lights at a moment, seen from `camera`: brightness (LIGH fade), flicker or pulse
+ * (only near the camera) and the distance fade applied. Lights faded out completely are
+ * left out; without a camera nothing fades or flickers.
+ */
+export function pointLights(
+  lights: readonly CellLight[],
+  seconds: number,
+  camera?: Vec3,
+): PointLight[] {
+  const result: PointLight[] = [];
+  for (const light of lights) {
+    const distance = camera
+      ? Math.hypot(
+          light.position[0] - camera[0],
+          light.position[1] - camera[1],
+          light.position[2] - camera[2],
+        )
+      : 0;
+    const lod = 1 - Math.min(1, Math.max(0, (distance - LIGHT_LOD_START_FADE) / LIGHT_LOD_RANGE));
+    if (lod <= 0) continue;
+    const flicker =
+      camera && distance <= FLICKERING_LIGHT_DISTANCE
+        ? lightFlicker(light, seconds, light.reference % 997)
+        : STEADY;
+    const brightness = light.fade * flicker.scale * lod;
+    result.push({
       position: [
         light.position[0] + flicker.offset[0],
         light.position[1] + flicker.offset[1],
@@ -23,9 +49,12 @@ export function pointLights(lights: readonly CellLight[], seconds: number): Poin
         light.color[1] * brightness,
         light.color[2] * brightness,
       ],
-    };
-  });
+    });
+  }
+  return result;
 }
+
+const STEADY = { scale: 1, offset: [0, 0, 0] } as const;
 
 const DEGREES = Math.PI / 180;
 
