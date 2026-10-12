@@ -1,5 +1,5 @@
 {
-  // Node-kant: CLI's in tools/, tests en configbestanden.
+  // Node side: CLIs in tools/, tests and config files.
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "module": "NodeNext",

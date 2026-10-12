@@ -1,7 +1,7 @@
 import { checkReadRange, type ByteSource } from '../../formats/byte-source.ts';
 import type { GameFolder } from '../game-folder.ts';
 
-/** Leest uit een Blob/File op offset; de browser laadt alleen het gevraagde stuk. */
+/** Reads from a Blob/File at an offset; the browser only loads the requested range. */
 export class BlobByteSource implements ByteSource {
   readonly #blob: Blob;
 
@@ -19,7 +19,7 @@ export class BlobByteSource implements ByteSource {
   }
 }
 
-/** Shadercache van de originele exe; geen content. */
+/** Shader cache of the original exe; not content. */
 const IGNORED_ROOT_DIRECTORIES = new Set(['shadercache']);
 
 async function findFile(
@@ -38,7 +38,7 @@ export class BrowserGameFolder implements GameFolder {
   readonly #root: FileSystemDirectoryHandle | undefined;
   readonly #files = new Map<string, FileSystemFileHandle>();
 
-  /** `root` is de installatiemap; zonder root zijn Skyrim.ccc en de INI niet bereikbaar. */
+  /** `root` is the install folder; without root, Skyrim.ccc and the INI are not reachable. */
   constructor(data: FileSystemDirectoryHandle, root?: FileSystemDirectoryHandle) {
     this.#data = data;
     this.#root = root;

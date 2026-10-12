@@ -1,7 +1,7 @@
 import { BinaryReader, FormatError } from '../binary-reader.ts';
 
-// Alleen de vlaggen uit het TES4-record bovenaan een plugin: genoeg voor de laadvolgorde.
-// Het volledige ESM-formaat volgt in M3.
+// Only the flags from the TES4 record at the top of a plugin: enough for the load order.
+// The full ESM format follows in M3.
 
 export const PluginFlag = {
   master: 0x1,
@@ -9,7 +9,7 @@ export const PluginFlag = {
   light: 0x200,
 } as const;
 
-/** Aantal bytes dat nodig is om de header te lezen. */
+/** Number of bytes needed to read the header. */
 export const PLUGIN_HEADER_SIZE = 12;
 
 export interface PluginHeader {

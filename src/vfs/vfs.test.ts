@@ -37,7 +37,7 @@ function installation(
 const root = { 'Skyrim.ccc': 'ccFish.esm\r\n', 'Skyrim_Default.ini': iniText };
 
 describe('Vfs', () => {
-  it('bepaalt laadvolgorde en archiefvolgorde zoals het origineel', async () => {
+  it('determines load order and archive order like the original', async () => {
     const vfs = await Vfs.mount(new MemoryGameFolder(installation(), root));
     expect(vfs.loadOrder.map((e) => e.name)).toEqual(['Skyrim.esm', 'Update.esm', 'ccFish.esm']);
     expect(vfs.archives.map((a) => a.name)).toEqual([
@@ -49,7 +49,7 @@ describe('Vfs', () => {
     expect(vfs.hasCreationClubList).toBe(true);
   });
 
-  it('laat later geladen archieven winnen en losse bestanden altijd', async () => {
+  it('lets later-loaded archives win, and loose files always', async () => {
     const vfs = await Vfs.mount(
       new MemoryGameFolder(installation({ 'Meshes/C.nif': 'loose-c' }), root),
     );
@@ -63,15 +63,15 @@ describe('Vfs', () => {
     expect(vfs.resolve('meshes\\c.nif')?.kind).toBe('loose');
   });
 
-  it('meldt ontbrekende bestanden', async () => {
+  it('reports missing files', async () => {
     const vfs = await Vfs.mount(new MemoryGameFolder(installation(), root));
     expect(vfs.has('meshes\\none.nif')).toBe(false);
     await expect(vfs.read('meshes\\none.nif')).rejects.toBeInstanceOf(VfsNotFoundError);
   });
 
-  it('slaat een corrupt archief over en meldt het', async () => {
+  it('skips a corrupt archive and reports it', async () => {
     const vfs = await Vfs.mount(
-      new MemoryGameFolder(installation({ 'ccFish.bsa': 'kapot' }), root),
+      new MemoryGameFolder(installation({ 'ccFish.bsa': 'broken' }), root),
     );
     expect(vfs.archives.map((a) => a.name)).not.toContain('ccFish.bsa');
     expect(vfs.problems).toEqual([
@@ -80,14 +80,14 @@ describe('Vfs', () => {
     expect(text(await vfs.read('meshes\\c.nif'))).toBe('misc-c');
   });
 
-  it('laadt geen Creation Club-plugins zonder Skyrim.ccc', async () => {
+  it('loads no Creation Club plugins without Skyrim.ccc', async () => {
     const vfs = await Vfs.mount(new MemoryGameFolder(installation(), null));
     expect(vfs.loadOrder.map((e) => e.name)).toEqual(['Skyrim.esm', 'Update.esm']);
     expect(vfs.hasCreationClubList).toBe(false);
     expect(vfs.problems.map((p) => p.source)).toEqual(['Skyrim.ccc']);
   });
 
-  it('zoekt op hash in archieven zonder namen, met de juiste prioriteit', async () => {
+  it('looks up by hash in archives without names, with the correct priority', async () => {
     const vfs = await Vfs.mount(
       new MemoryGameFolder(
         installation({ 'ccFish.bsa': bsa({ 'meshes\\a.nif': 'fish-a' }, { includeNames: false }) }),
@@ -98,7 +98,7 @@ describe('Vfs', () => {
     expect(text(await vfs.read('meshes\\b.nif'))).toBe('tex-b');
   });
 
-  it('somt paden onder een map op', async () => {
+  it('lists paths under a folder', async () => {
     const vfs = await Vfs.mount(new MemoryGameFolder(installation(), root));
     expect(vfs.list('Meshes')).toEqual(['meshes\\a.nif', 'meshes\\b.nif', 'meshes\\c.nif']);
   });

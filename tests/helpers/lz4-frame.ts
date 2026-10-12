@@ -1,11 +1,11 @@
-// Bouwt LZ4-frames voor tests. Geen echte compressor: blocks worden aangeleverd
-// (handgemaakt) of als literal-only block gecodeerd.
+// Builds LZ4 frames for tests. Not a real compressor: blocks are supplied
+// (handcrafted) or encoded as a literal-only block.
 
 import { xxhash32 } from '../../src/formats/lz4/xxhash32.ts';
 
 export interface FrameBlock {
   readonly data: Uint8Array;
-  /** Ongecomprimeerd opgeslagen (hoogste bit van de blockgrootte). */
+  /** Stored uncompressed (highest bit of the block size). */
   readonly stored?: boolean;
 }
 
@@ -13,7 +13,7 @@ export interface FrameOptions {
   readonly independentBlocks?: boolean;
   readonly blockChecksum?: boolean;
   readonly contentSize?: number;
-  /** Ongecomprimeerde inhoud; zet de content-checksum. */
+  /** Uncompressed content; sets the content checksum. */
   readonly contentChecksumOf?: Uint8Array;
 }
 
@@ -42,7 +42,7 @@ export function buildFrame(blocks: readonly FrameBlock[], options: FrameOptions 
   return Uint8Array.from(out);
 }
 
-/** Codeert data als één LZ4-block met alleen literals (geldig, maar zonder compressie). */
+/** Encodes data as a single LZ4 block with only literals (valid, but without compression). */
 export function literalBlock(data: Uint8Array): Uint8Array {
   const out: number[] = [];
   if (data.length < 15) {
@@ -61,8 +61,8 @@ export function literalBlock(data: Uint8Array): Uint8Array {
 }
 
 /**
- * Literal-only frame. Blocks van 60 KiB, zodat een gecodeerd block (data plus lengtebytes)
- * onder de maximale blockgrootte van 64 KiB blijft.
+ * Literal-only frame. Blocks of 60 KiB, so that an encoded block (data plus length bytes)
+ * stays below the maximum block size of 64 KiB.
  */
 export function literalFrame(data: Uint8Array): Uint8Array {
   const chunk = 0xf000;

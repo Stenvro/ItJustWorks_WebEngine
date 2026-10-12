@@ -1,7 +1,7 @@
-// Harde regel 1: nooit gamebestanden in de repo.
+// Hard rule 1: never game files in the repo.
 //
-//   node tools/check-no-gamefiles.ts         gestagede bestanden (pre-commit-hook)
-//   node tools/check-no-gamefiles.ts --all   alle bestanden in de index
+//   node tools/check-no-gamefiles.ts         staged files (pre-commit hook)
+//   node tools/check-no-gamefiles.ts --all   all files in the index
 
 import { spawnSync } from 'node:child_process';
 import { detectGameFile, MAX_FILE_BYTES } from './gamefile-detect.ts';
@@ -10,7 +10,7 @@ function git(args: readonly string[]): Buffer {
   const result = spawnSync('git', args, { maxBuffer: MAX_FILE_BYTES + 1024 * 1024 });
   if (result.error) throw result.error;
   if (result.status !== 0) {
-    throw new Error(`git ${args.join(' ')} faalde: ${result.stderr.toString().trim()}`);
+    throw new Error(`git ${args.join(' ')} failed: ${result.stderr.toString().trim()}`);
   }
   return result.stdout;
 }
@@ -26,7 +26,7 @@ const paths = listing
 
 const violations: string[] = [];
 for (const path of paths) {
-  // Lees de versie in de index (wat er gecommit wordt), niet de werkmap.
+  // Read the version in the index (what gets committed), not the working tree.
   const size = Number(
     git(['cat-file', '-s', `:${path}`])
       .toString()
@@ -41,9 +41,9 @@ for (const path of paths) {
 }
 
 if (violations.length > 0) {
-  console.error('Gamebestanden gevonden — deze mogen nooit in de repo (CLAUDE.md, harde regel 1):');
+  console.error('Game files found — these must never be in the repo (CLAUDE.md, hard rule 1):');
   console.error(violations.join('\n'));
-  console.error('\nHaal ze uit de index met: git rm --cached <pad>');
+  console.error('\nRemove them from the index with: git rm --cached <path>');
   process.exit(1);
 }
-console.log(`Geen gamebestanden gevonden (${paths.length} bestanden gecontroleerd).`);
+console.log(`No game files found (${paths.length} files checked).`);

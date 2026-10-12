@@ -33,7 +33,7 @@ const vanilla = [
 ];
 
 describe('computeLoadOrder', () => {
-  it('zet vaste masters vooraan, ongeacht de volgorde op schijf', () => {
+  it('puts implicit masters first, regardless of order on disk', () => {
     const { entries } = computeLoadOrder({ plugins: [...vanilla].reverse() });
     expect(entries.map((e) => e.name)).toEqual([
       'Skyrim.esm',
@@ -45,7 +45,7 @@ describe('computeLoadOrder', () => {
     expect(entries.map((e) => e.modIndex)).toEqual([0, 1, 2, 3, 4]);
   });
 
-  it('laadt Creation Club-plugins in de volgorde van Skyrim.ccc, alleen als ze bestaan', () => {
+  it('loads Creation Club plugins in Skyrim.ccc order, only if they exist', () => {
     const { entries } = computeLoadOrder({
       plugins: [
         ...vanilla,
@@ -62,7 +62,7 @@ describe('computeLoadOrder', () => {
     ]);
   });
 
-  it('leest actieve regels uit plugins.txt en zet masters vóór gewone plugins', () => {
+  it('reads active lines from plugins.txt and puts masters before regular plugins', () => {
     const { entries, problems } = computeLoadOrder({
       plugins: [
         ...vanilla,
@@ -72,7 +72,7 @@ describe('computeLoadOrder', () => {
         plugin('LightMod.esp', { light: true }),
       ],
       pluginsTxt: [
-        '# commentaar',
+        '# comment',
         '*Mod.esp',
         'Inactive.esp',
         '*LightMod.esp',
@@ -89,7 +89,7 @@ describe('computeLoadOrder', () => {
     expect(problems).toEqual(['Gone.esp is listed in plugins.txt but missing']);
   });
 
-  it('valt terug op de extensie als de header onleesbaar is', () => {
+  it('falls back to the extension if the header is unreadable', () => {
     const { entries } = computeLoadOrder({
       plugins: [...vanilla, { name: 'X.esl', header: undefined }],
       pluginsTxt: '*X.esl',
@@ -97,7 +97,7 @@ describe('computeLoadOrder', () => {
     expect(entries.at(-1)).toMatchObject({ name: 'X.esl', isMaster: true, isLight: true });
   });
 
-  it('meldt plugins boven de limiet van 254 volledige plugins', () => {
+  it('reports plugins beyond the limit of 254 full plugins', () => {
     const many = Array.from({ length: 260 }, (_, i) => plugin(`Mod${i}.esp`));
     const { entries, problems } = computeLoadOrder({
       plugins: many,
@@ -109,8 +109,8 @@ describe('computeLoadOrder', () => {
   });
 });
 
-describe('archieven', () => {
-  it('leest de archieflijst uit de INI, met standaardlijst als terugval', () => {
+describe('archives', () => {
+  it('reads the archive list from the INI, with the default list as fallback', () => {
     const ini = parseIni(
       '[Archive]\nsResourceArchiveList=A.bsa, B.bsa\nsResourceArchiveList2=C.bsa',
     );
@@ -119,7 +119,7 @@ describe('archieven', () => {
     expect(archiveListFromIni(parseIni('[General]'))).toBe(DEFAULT_ARCHIVE_LIST);
   });
 
-  it('zet INI-archieven voor plugin-archieven en slaat ontbrekende over', () => {
+  it('puts INI archives before plugin archives and skips missing ones', () => {
     const { entries } = computeLoadOrder({
       plugins: [...vanilla, plugin('Mod.esp')],
       pluginsTxt: '*Mod.esp',

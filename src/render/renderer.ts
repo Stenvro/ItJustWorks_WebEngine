@@ -1,12 +1,12 @@
 import type { GpuContext } from './gpu.ts';
 import backdropShader from './shaders/backdrop.wgsl?raw';
 
-/** Rendert één frame per aanroep. Nu alleen de shell-achtergrond. */
+/** Renders one frame per call. Currently only the shell backdrop. */
 export class Renderer {
   readonly #gpu: GpuContext;
   readonly #pipeline: GPURenderPipeline;
   readonly #frameBuffer: GPUBuffer;
-  /** time, scale, hoogte in CSS-pixels, padding */
+  /** time, scale, height in CSS pixels, padding */
   readonly #frameData = new Float32Array(4);
   readonly #bindGroup: GPUBindGroup;
 
@@ -35,7 +35,7 @@ export class Renderer {
     });
   }
 
-  /** `timeSeconds` stuurt de animatie; `pixelScale` is de devicePixelRatio. */
+  /** `timeSeconds` drives the animation; `pixelScale` is the devicePixelRatio. */
   render(timeSeconds: number, pixelScale: number): void {
     const { device, context } = this.#gpu;
     this.#frameData[0] = timeSeconds;

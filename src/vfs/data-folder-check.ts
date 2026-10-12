@@ -1,23 +1,23 @@
-/** Een item in een gekozen map (bestand of submap). */
+/** An item in a selected folder (file or subfolder). */
 export interface FolderEntry {
   readonly name: string;
   readonly kind: 'file' | 'directory';
 }
 
 export interface DataFolderReport {
-  /** Alle verplichte bestanden zijn aanwezig. */
+  /** All required files are present. */
   readonly ok: boolean;
-  /** Ontbrekende verplichte bestanden. */
+  /** Missing required files. */
   readonly missing: readonly string[];
-  /** Plugins (.esm/.esp/.esl), alfabetisch; dit is níet de laadvolgorde. */
+  /** Plugins (.esm/.esp/.esl), alphabetical; this is *not* the load order. */
   readonly plugins: readonly string[];
-  /** BSA-archieven, alfabetisch. */
+  /** BSA archives, alphabetical. */
   readonly archives: readonly string[];
-  /** De gekozen map is de installatiemap (Data plus SkyrimSE.exe of Skyrim.ccc). */
+  /** The selected folder is the install folder (Data plus SkyrimSE.exe or Skyrim.ccc). */
   readonly looksLikeGameRoot: boolean;
 }
 
-/** Masters die in elke Skyrim Special Edition-installatie zitten. */
+/** Masters present in every Skyrim Special Edition installation. */
 export const REQUIRED_MASTERS = [
   'Skyrim.esm',
   'Update.esm',
@@ -26,7 +26,7 @@ export const REQUIRED_MASTERS = [
   'Dragonborn.esm',
 ] as const;
 
-/** Basisarchieven van Skyrim SE (taalonafhankelijk). */
+/** Base archives of Skyrim SE (language-independent). */
 export const REQUIRED_ARCHIVES = [
   'Skyrim - Animations.bsa',
   'Skyrim - Interface.bsa',
@@ -38,7 +38,7 @@ export const REQUIRED_ARCHIVES = [
   ...Array.from({ length: 9 }, (_, i) => `Skyrim - Textures${i}.bsa`),
 ] as const;
 
-/** Stemmen zijn taalafhankelijk: `Skyrim - Voices_en0.bsa`, `Skyrim - Voices_de0.bsa`, ... */
+/** Voices are language-dependent: `Skyrim - Voices_en0.bsa`, `Skyrim - Voices_de0.bsa`, ... */
 const VOICES_ARCHIVE = /^skyrim - voices_[a-z]+0\.bsa$/;
 const PLUGIN = /\.(esm|esp|esl)$/;
 
@@ -49,8 +49,8 @@ function byName(a: string, b: string): number {
 }
 
 /**
- * Controleert of een map een bruikbare Skyrim SE Data-map is.
- * Bestandsnamen worden hoofdletterongevoelig vergeleken, zoals op Windows.
+ * Checks whether a folder is a usable Skyrim SE Data folder.
+ * File names are compared case-insensitively, as on Windows.
  */
 export function checkDataFolder(entries: Iterable<FolderEntry>): DataFolderReport {
   const files = new Map<string, string>();

@@ -1,20 +1,20 @@
-# --- Dependencies & build-output ---
+# --- Dependencies & build output ---
 node_modules/
 dist/
 coverage/
 *.tsbuildinfo
 .vite/
 
-# --- Lokaal ---
+# --- Local ---
 .env
 .env.*
 *.log
 .DS_Store
 Thumbs.db
 
-# --- Harde regel 1: nooit gamebestanden in de repo ---
-# Gamedata staat buiten de repo (zie CLAUDE.md). Deze lijst is een vangnet;
-# tools/check-no-gamefiles.ts (pre-commit-hook) controleert ook op inhoud.
+# --- Hard rule 1: never game files in the repo ---
+# Game data lives outside the repo (see CLAUDE.md). This list is a safety net;
+# tools/check-no-gamefiles.ts (pre-commit hook) also checks file contents.
 /skyrim-data/
 /Data/
 /Saves/
@@ -48,5 +48,5 @@ ShaderCache/
 *.bto
 *.lod
 
-# Eigen achtergrond (zie src/shell/custom-backdrop.ts)
+# Custom backdrop (see src/shell/custom-backdrop.ts)
 /public/custom/

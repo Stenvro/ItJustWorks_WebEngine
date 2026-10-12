@@ -1,8 +1,8 @@
-// Systeemlog van de shell: regels met tijdstempel die snel "uitgetypt" worden.
+// Shell system log: timestamped lines that are quickly "typed out".
 
 export type LogTone = 'info' | 'ok' | 'warn' | 'error';
 
-/** Tekens per frame tijdens het uittypen; hoog genoeg om nooit te remmen. */
+/** Characters per frame while typing out; high enough to never slow things down. */
 const CHARS_PER_FRAME = 7;
 const MAX_LINES = 400;
 

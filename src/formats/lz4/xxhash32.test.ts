@@ -4,7 +4,7 @@ import { xxhash32 } from './xxhash32.ts';
 const ascii = (text: string): Uint8Array => new TextEncoder().encode(text);
 
 describe('xxhash32', () => {
-  // Referentiewaarden van de officiële implementatie (seed 0).
+  // Reference values from the official implementation (seed 0).
   it.each([
     ['', 0x02cc5d05],
     ['a', 0x550d7456],
@@ -14,12 +14,12 @@ describe('xxhash32', () => {
     expect(xxhash32(ascii(input))).toBe(expected);
   });
 
-  it('hasht een deelbereik gelijk aan een losse kopie', () => {
+  it('hashes a subrange the same as a separate copy', () => {
     const data = ascii('xxNobody inspects the spammish repetitionyy');
     expect(xxhash32(data, 2, data.length - 4)).toBe(0xe2293b2f);
   });
 
-  it('gooit bij een bereik buiten de buffer', () => {
+  it('throws on a range outside the buffer', () => {
     expect(() => xxhash32(ascii('abc'), 2, 5)).toThrow(RangeError);
   });
 });

@@ -7,7 +7,7 @@ import tseslint from 'typescript-eslint';
 
 const nodeApis = {
   group: ['node:*', 'fs', 'fs/*', 'path', 'buffer'],
-  message: 'Platform-onafhankelijke code mag geen Node-API’s gebruiken.',
+  message: 'Platform-independent code must not use Node APIs.',
 };
 
 export default defineConfig(
@@ -28,8 +28,8 @@ export default defineConfig(
     },
   },
   {
-    // Parsers blijven platform-onafhankelijk (zie tsconfig.portable.json) en kennen
-    // de engine-lagen niet.
+    // Parsers stay platform-independent (see tsconfig.portable.json) and do not know
+    // about the engine layers.
     files: ['src/formats/**/*.ts'],
     ignores: ['**/*.test.ts'],
     rules: {
@@ -40,7 +40,7 @@ export default defineConfig(
             nodeApis,
             {
               regex: String.raw`^(\.\./)+(vfs|render|world|physics|animation|audio|scripting|ai|gameplay|ui|save)(/|$)`,
-              message: 'src/formats mag niet afhangen van engine-lagen.',
+              message: 'src/formats must not depend on engine layers.',
             },
           ],
         },
@@ -48,7 +48,7 @@ export default defineConfig(
     },
   },
   {
-    // De VFS-kern draait ook in Node; alleen src/vfs/browser mag browser-API's gebruiken.
+    // The VFS core also runs in Node; only src/vfs/browser may use browser APIs.
     files: ['src/vfs/**/*.ts'],
     ignores: ['**/*.test.ts', 'src/vfs/browser/**'],
     rules: {

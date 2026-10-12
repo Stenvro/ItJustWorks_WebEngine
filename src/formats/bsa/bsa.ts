@@ -1,4 +1,4 @@
-// BSA v105 (Skyrim Special Edition). Formaat: docs/formats/bsa.md
+// BSA v105 (Skyrim Special Edition). Format: docs/formats/bsa.md
 
 import { BinaryReader, FormatError } from '../binary-reader.ts';
 import type { ByteSource } from '../byte-source.ts';
@@ -35,21 +35,21 @@ export interface BsaHeader {
   readonly fileCount: number;
   readonly totalFolderNameLength: number;
   readonly totalFileNameLength: number;
-  /** Soorten inhoud (meshes, textures, ...); alleen informatief. */
+  /** Kinds of content (meshes, textures, ...); informational only. */
   readonly fileFlags: number;
 }
 
 export interface BsaEntry {
-  /** Genormaliseerd pad, of `undefined` als het archief geen namen bevat. */
+  /** Normalized path, or `undefined` if the archive contains no names. */
   readonly path: string | undefined;
   readonly offset: number;
-  /** Opgeslagen grootte, inclusief eventuele ingebedde naam en grootte-prefix. */
+  /** Stored size, including any embedded name and size prefix. */
   readonly size: number;
   readonly compressed: boolean;
 }
 
 export interface BsaOpenOptions {
-  /** Controleer elke map- en bestandsnaam tegen de opgeslagen hash (voor tools en tests). */
+  /** Verify every folder and file name against the stored hash (for tools and tests). */
   readonly verifyHashes?: boolean;
 }
 
@@ -94,7 +94,7 @@ function parseHeader(bytes: Uint8Array): BsaHeader & { readonly folderRecordOffs
   return header;
 }
 
-/** Leest een nul-afgesloten string; geeft tekst en positie na de nul terug. */
+/** Reads a null-terminated string; returns the text and the position after the null. */
 function readZString(bytes: Uint8Array, start: number): [string, number] {
   const end = bytes.indexOf(0, start);
   if (end < 0) throw new FormatError('File name without terminating null', start);
@@ -105,7 +105,7 @@ export class BsaArchive {
   readonly header: BsaHeader;
   readonly entries: readonly BsaEntry[];
   readonly #source: ByteSource;
-  /** Op pad (als het archief namen bevat), anders op hash. */
+  /** Keyed by path (if the archive contains names), otherwise by hash. */
   readonly #index: Map<string, BsaEntry>;
 
   private constructor(
@@ -131,7 +131,7 @@ export class BsaArchive {
     const hasNames = hasFolderNames && hasFileNames;
     const compressedByDefault = (flags & BsaArchiveFlag.compressed) !== 0;
 
-    // Map-records, bestandsrecord-blocks en namenblok staan aaneengesloten na de header.
+    // Folder records, file record blocks and the name block follow the header contiguously.
     const fileNamesStart =
       header.folderRecordOffset +
       header.folderCount * FOLDER_RECORD_SIZE +
@@ -154,7 +154,7 @@ export class BsaArchive {
       const hash = readHash(reader);
       const fileCount = reader.u32();
       reader.skip(4); // padding
-      // Offset wijst naar het bestandsrecord-block, vermeerderd met totalFileNameLength.
+      // Offset points to the file record block, plus totalFileNameLength.
       const blockOffset = reader.u64Number() - header.totalFileNameLength;
       folders.push({ hash, fileCount, blockOffset });
     }
@@ -174,7 +174,7 @@ export class BsaArchive {
       if (hasFolderNames) {
         const length = reader.u8();
         const raw = reader.bytes(length);
-        const nul = raw.indexOf(0); // naam is inclusief afsluitende nul
+        const nul = raw.indexOf(0); // name includes the terminating null
         folderName = decodeWindows1252(raw, 0, nul === -1 ? length : nul);
         if (options.verifyHashes && bsaHash(folderName, true) !== folder.hash) {
           throw new FormatError(`Hash mismatch for folder "${folderName}"`, folder.blockOffset);
@@ -214,7 +214,7 @@ export class BsaArchive {
     return new BsaArchive(source, header, entries, index);
   }
 
-  /** Bevat het archief map- en bestandsnamen? Zonder namen kan alleen op hash worden gezocht. */
+  /** Does the archive contain folder and file names? Without names, lookup is by hash only. */
   get hasNames(): boolean {
     const flags = this.header.archiveFlags;
     return (
@@ -233,7 +233,7 @@ export class BsaArchive {
     return this.#index.get(key);
   }
 
-  /** Leest en decomprimeert een bestand. */
+  /** Reads and decompresses a file. */
   async read(entry: BsaEntry): Promise<Uint8Array> {
     if (entry.offset + entry.size > this.#source.size) {
       throw new FormatError(
@@ -244,7 +244,7 @@ export class BsaArchive {
     const raw = await this.#source.read(entry.offset, entry.size);
     let start = 0;
     if (this.header.archiveFlags & BsaArchiveFlag.embedFileNames) {
-      start = 1 + (raw[0] ?? 0); // bstring met het volledige pad
+      start = 1 + (raw[0] ?? 0); // bstring with the full path
     }
     if (!entry.compressed) return raw.subarray(start);
 

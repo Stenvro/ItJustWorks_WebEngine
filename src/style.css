@@ -39,7 +39,7 @@ body {
   display: none !important;
 }
 
-/* --- Lagen: canvas → eigen achtergrond → CRT → UI ------------------------ */
+/* --- Layers: canvas → custom backdrop → CRT → UI ------------------------- */
 
 #viewport {
   position: fixed;
@@ -146,7 +146,7 @@ body {
   font-size: clamp(3rem, 9vw, 7rem);
   line-height: 1;
   letter-spacing: 0.32em;
-  margin-right: -0.32em; /* compenseert de letterafstand na de laatste letter */
+  margin-right: -0.32em; /* compensates for the letter spacing after the last letter */
   text-transform: uppercase;
   color: var(--bone);
   text-shadow:
@@ -167,7 +167,7 @@ body {
   color: var(--gold);
 }
 
-/* Dunne lijn met ruit in het midden, zoals de menu's van Skyrim. */
+/* Thin line with a diamond in the middle, like Skyrim's menus. */
 .subtitle::before,
 .subtitle::after {
   content: '';
@@ -202,7 +202,7 @@ body {
   position: relative;
 }
 
-/* Hoekmarkeringen */
+/* Corner markers */
 .console::before,
 .console::after {
   content: '';
@@ -363,7 +363,7 @@ button:focus-visible {
   outline: none;
 }
 
-/* --- Panelen ------------------------------------------------------------- */
+/* --- Panels -------------------------------------------------------------- */
 
 .panels {
   display: flex;
@@ -426,7 +426,7 @@ button:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-/* --- Fatale fout --------------------------------------------------------- */
+/* --- Fatal error --------------------------------------------------------- */
 
 .fatal {
   position: fixed;

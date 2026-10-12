@@ -1,4 +1,4 @@
-// Bethesda-INI: [Sectie], sleutel=waarde, commentaar met ; of #. Hoofdletterongevoelig.
+// Bethesda INI: [Section], key=value, comments with ; or #. Case-insensitive.
 
 export type Ini = ReadonlyMap<string, ReadonlyMap<string, string>>;
 
@@ -28,7 +28,7 @@ export function iniValue(ini: Ini, section: string, key: string): string | undef
   return ini.get(section.toLowerCase())?.get(key.toLowerCase());
 }
 
-/** Komma-gescheiden lijst, zoals `sResourceArchiveList`. */
+/** Comma-separated list, such as `sResourceArchiveList`. */
 export function splitIniList(value: string | undefined): string[] {
   return (value ?? '')
     .split(',')

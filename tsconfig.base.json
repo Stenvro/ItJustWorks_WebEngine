@@ -1,6 +1,6 @@
 {
-  // Gedeelde compiler-instellingen. Relatieve imports altijd mét `.ts`-extensie,
-  // zodat dezelfde bestanden in Vite, Vitest én rechtstreeks in Node draaien.
+  // Shared compiler settings. Relative imports always include the `.ts` extension,
+  // so the same files run in Vite, Vitest and directly in Node.
   "compilerOptions": {
     "target": "ES2024",
     "module": "ESNext",

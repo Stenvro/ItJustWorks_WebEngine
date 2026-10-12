@@ -1,4 +1,4 @@
-// Integratietest: elk BSA-archief in de lokale gamedata. Overgeslagen zonder gamedata.
+// Integration test: every BSA archive in the local game data. Skipped without game data.
 
 import { readdirSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -16,7 +16,7 @@ const startsWith = (data: Uint8Array, offset: number, magic: readonly number[] |
     : magic
   ).every((byte, i) => data[offset + i] === byte);
 
-/** Controleert de inhoud aan de hand van de extensie (bekende magic bytes). */
+/** Checks the content based on the extension (known magic bytes). */
 function checkContent(path: string, data: Uint8Array): void {
   const extension = path.slice(path.lastIndexOf('.'));
   const ok = ((): boolean => {
@@ -41,10 +41,10 @@ function checkContent(path: string, data: Uint8Array): void {
         return true;
     }
   })();
-  expect(ok, `inhoud van ${path} past niet bij ${extension}`).toBe(true);
+  expect(ok, `content of ${path} does not match ${extension}`).toBe(true);
 }
 
-/** Begin, eind en een gelijkmatige steekproef. */
+/** Start, end and an evenly spaced sample. */
 function sample(entries: readonly BsaEntry[], count = 24): BsaEntry[] {
   const step = Math.max(1, Math.floor(entries.length / count));
   const picked = new Set<BsaEntry>(entries.slice(0, 3).concat(entries.slice(-3)));
@@ -55,8 +55,8 @@ function sample(entries: readonly BsaEntry[], count = 24): BsaEntry[] {
   return [...picked];
 }
 
-describe.skipIf(archives.length === 0)('BSA-archieven in de lokale gamedata', () => {
-  it.each(archives)('%s: index, hashes en steekproef van bestanden', async (name) => {
+describe.skipIf(archives.length === 0)('BSA archives in the local game data', () => {
+  it.each(archives)('%s: index, hashes and a sample of files', async (name) => {
     const archive = await BsaArchive.open(await NodeFileSource.open(resolveDataFile(name)), {
       verifyHashes: true,
     });
