@@ -325,7 +325,7 @@ async function main(): Promise<void> {
   new MutationObserver(updateLensShift).observe(ui.shell, { attributes: true });
   setupPanels(document);
   setupHideShortcut(ui.shell);
-  if (import.meta.env.DEV) window.skyrimDev = { viewer: modelViewer };
+  if (import.meta.env.DEV) window.skyrimDev = { viewer: modelViewer, renderer };
   startRenderLoop(renderer);
 
   const backdrop = await findCustomBackdrop();

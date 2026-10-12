@@ -1,0 +1,211 @@
+import { describe, expect, it } from 'vitest';
+import { decodeVertexDesc, VertexAttribute } from '../formats/nif/blocks.ts';
+import type { NifHeader } from '../formats/nif/header.ts';
+import type { NifFile } from '../formats/nif/nif.ts';
+import type {
+  BSLightingShaderPropertyBlock,
+  BSTriShapeBlock,
+  NifBlock,
+  NifTransform,
+  NiNodeBlock,
+} from '../formats/nif/types.ts';
+import { buildModel } from './model-data.ts';
+import { toHalf, transformPoint } from './math.ts';
+
+const IDENTITY: NifTransform = {
+  translation: [0, 0, 0],
+  rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+  scale: 1,
+};
+/** 90° about Z (row-major, v' = R·v): x → y. */
+const TURN: NifTransform = {
+  translation: [100, 0, 0],
+  rotation: [0, -1, 0, 1, 0, 0, 0, 0, 1],
+  scale: 2,
+};
+
+function node(children: number[], transform = IDENTITY, name = 'Node'): NiNodeBlock {
+  return {
+    kind: 'node',
+    name,
+    extraData: [],
+    controller: -1,
+    flags: 0,
+    transform,
+    collision: -1,
+    children,
+    effects: [],
+  };
+}
+
+const shader: BSLightingShaderPropertyBlock = {
+  kind: 'lighting-shader',
+  name: '',
+  extraData: [],
+  controller: -1,
+  shaderType: 0,
+  flags1: 0x80000000,
+  flags2: 0x1,
+  uvOffset: [0, 0],
+  uvScale: [1, 1],
+  textureSet: -1,
+  emissiveColor: [0, 0, 0],
+  emissiveMultiple: 1,
+  textureClampMode: 3,
+  alpha: 1,
+  refractionStrength: 0,
+  glossiness: 1,
+  specularColor: [1, 1, 1],
+  specularStrength: 1,
+  lightingEffect1: 0,
+  lightingEffect2: 0,
+};
+
+/** Positions-only vertex data (stride 16: xyz + bitangent X). */
+function positions(points: readonly [number, number, number][]): Uint8Array {
+  const bytes = new Uint8Array(points.length * 16);
+  const view = new DataView(bytes.buffer);
+  points.forEach(([x, y, z], i) => {
+    view.setFloat32(i * 16, x, true);
+    view.setFloat32(i * 16 + 4, y, true);
+    view.setFloat32(i * 16 + 8, z, true);
+  });
+  return bytes;
+}
+
+const VERTEX_ONLY = decodeVertexDesc(
+  4,
+  (VertexAttribute.vertex | VertexAttribute.fullPrecision) << 12,
+);
+
+function shape(
+  name: string,
+  shaderProperty: number,
+  vertexData: Uint8Array,
+  vertexCount: number,
+  skin = -1,
+): BSTriShapeBlock {
+  return {
+    kind: 'tri-shape',
+    name,
+    extraData: [],
+    controller: -1,
+    flags: 0,
+    transform: IDENTITY,
+    collision: -1,
+    boundCenter: [0, 0, 0],
+    boundRadius: 1,
+    skin,
+    shaderProperty,
+    alphaProperty: -1,
+    vertexDesc: VERTEX_ONLY,
+    vertexCount,
+    triangleCount: 1,
+    vertexData,
+    triangles: Uint16Array.of(0, 1, 2),
+  };
+}
+
+function file(blocks: NifBlock[]): NifFile {
+  return {
+    header: {} as NifHeader,
+    blocks,
+    blockTypes: blocks.map((b) => b.kind),
+    roots: [0],
+    problems: [],
+  };
+}
+
+const TRIANGLE: [number, number, number][] = [
+  [0, 0, 0],
+  [10, 0, 0],
+  [0, 10, 0],
+];
+
+describe('buildModel', () => {
+  it("ignores the root node's own transform, like the engine", () => {
+    const model = buildModel(
+      file([
+        node([1], TURN, 'Root'),
+        node([2], TURN, 'Child'),
+        shape('Shape', 3, positions(TRIANGLE), 3),
+        shader,
+      ]),
+    );
+    const [part] = model.parts;
+    // Only the child's transform applies: (10, 0, 0) → 2·(0, 10, 0) + (100, 0, 0).
+    expect(part && transformPoint(part.world, [10, 0, 0]).map(Math.round)).toEqual([100, 20, 0]);
+  });
+
+  it('draws nothing for shapes without a shader', () => {
+    const model = buildModel(
+      file([
+        node([1, 2]),
+        shape('CurrentPlane:0', -1, positions(TRIANGLE), 3),
+        shape('Visible', 3, positions(TRIANGLE), 3),
+        shader,
+      ]),
+    );
+    expect(model.parts.map((p) => p.name)).toEqual(['Visible']);
+  });
+
+  it('skins shapes into their rest pose with the bones of the file', () => {
+    // Vertex: position (16 bytes) + skinning (4 half weights, 4 bone indices) = 28 bytes.
+    const desc = decodeVertexDesc(
+      7 | (4 << 28),
+      (VertexAttribute.vertex | VertexAttribute.fullPrecision | VertexAttribute.skinned) << 12,
+    );
+    const data = new Uint8Array(3 * 28);
+    const view = new DataView(data.buffer);
+    TRIANGLE.forEach(([x, y, z], i) => {
+      view.setFloat32(i * 28, x, true);
+      view.setFloat32(i * 28 + 4, y, true);
+      view.setFloat32(i * 28 + 8, z, true);
+      // Vertex 0 follows bone 1 only; the others half bone 0, half bone 1.
+      const weights = i === 0 ? [0, 1] : [0.5, 0.5];
+      view.setUint16(i * 28 + 16, toHalf(weights[0] ?? 0), true);
+      view.setUint16(i * 28 + 18, toHalf(weights[1] ?? 0), true);
+      view.setUint8(i * 28 + 24, 0);
+      view.setUint8(i * 28 + 25, 1);
+    });
+    const boneAt = (x: number): NifTransform => ({ ...IDENTITY, translation: [x, 0, 0] });
+    const blocks: NifBlock[] = [
+      node([1, 2, 3], IDENTITY, 'Root'),
+      node([], boneAt(50), 'Bone0'),
+      node([], boneAt(70), 'Bone1'),
+      { ...shape('Skinned', 4, new Uint8Array(0), 0, 5), vertexDesc: desc },
+      shader,
+      { kind: 'skin-instance', data: 6, partition: 7, skeletonRoot: 0, bones: [1, 2] },
+      {
+        kind: 'skin-data',
+        skinTransform: IDENTITY,
+        // Bind pose: skin space → bone space undoes the bones' placement.
+        bones: [
+          { transform: boneAt(-50), boundCenter: [0, 0, 0], boundRadius: 1 },
+          { transform: boneAt(-60), boundCenter: [0, 0, 0], boundRadius: 1 },
+        ],
+      },
+      {
+        kind: 'skin-partition',
+        vertexDesc: desc,
+        vertexCount: 3,
+        vertexData: data,
+        partitions: [
+          {
+            vertexCount: 3,
+            bones: Uint16Array.of(0, 1),
+            vertexMap: undefined,
+            triangles: Uint16Array.of(0, 1, 2),
+          },
+        ],
+      },
+    ];
+    const [part] = buildModel(file(blocks)).parts;
+    if (!part) throw new Error('no skinned part');
+    const out = new DataView(part.vertices.buffer, part.vertices.byteOffset);
+    const x = (i: number): number => out.getFloat32(i * 28, true);
+    // Bone 1 is 10 units past its bind position; bone 0 is at it.
+    expect([x(0), x(1), x(2)]).toEqual([10, 15, 5]);
+    expect(Array.from(part.indices)).toEqual([0, 1, 2]);
+  });
+});

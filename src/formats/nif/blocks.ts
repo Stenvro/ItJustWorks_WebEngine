@@ -17,7 +17,13 @@ import type {
   NiObjectNet,
   NiTriShapeBlock,
   NiTriShapeDataBlock,
+  NifTransform,
+  NiSkinDataBlock,
+  NiSkinInstanceBlock,
+  NiSkinPartitionBlock,
   Ref,
+  SkinBone,
+  SkinPartition,
   Vec3,
   VertexDesc,
 } from './types.ts';
@@ -447,6 +453,115 @@ export const BsxFlag = {
   externalEmit: 0x200,
 } as const;
 
+// --- Skinning ---------------------------------------------------------------
+
+/** NiTransform as stored in skin data: rotation, then translation, then scale. */
+function readNiTransform(reader: BinaryReader): NifTransform {
+  const rotation = Array.from({ length: 9 }, () => reader.f32());
+  const translation = readVec3(reader);
+  return { rotation, translation, scale: reader.f32() };
+}
+
+const parseSkinInstance: BlockParser = (reader, _context, type): NiSkinInstanceBlock => {
+  const data = reader.i32();
+  const partition = reader.i32();
+  const skeletonRoot = reader.i32();
+  const bones = readRefs(reader);
+  if (type === 'BSDismemberSkinInstance') {
+    const count = readCount(reader, 4);
+    reader.skip(count * 4); // body part flag + body part per partition
+  }
+  return { kind: 'skin-instance', data, partition, skeletonRoot, bones };
+};
+
+const parseSkinData: BlockParser = (reader): NiSkinDataBlock => {
+  const skinTransform = readNiTransform(reader);
+  const boneCount = readCount(reader, 4);
+  const hasWeights = readBool(reader);
+  const bones: SkinBone[] = [];
+  for (let i = 0; i < boneCount; i++) {
+    const transform = readNiTransform(reader);
+    const boundCenter = readVec3(reader);
+    const boundRadius = reader.f32();
+    const vertexCount = reader.u16();
+    // Per-bone vertex weights (index u16 + weight f32); SSE keeps them in the vertices.
+    if (hasWeights) reader.skip(vertexCount * 6);
+    bones.push({ transform, boundCenter, boundRadius });
+  }
+  return { kind: 'skin-data', skinTransform, bones };
+};
+
+/** Triangle strips to a triangle list (alternating winding, degenerate ones dropped). */
+export function stripsToTriangles(strips: readonly Uint16Array[]): Uint16Array {
+  const out: number[] = [];
+  for (const strip of strips) {
+    for (let i = 2; i < strip.length; i++) {
+      const a = strip[i - 2] ?? 0;
+      const b = strip[i - 1] ?? 0;
+      const c = strip[i] ?? 0;
+      if (a === b || b === c || a === c) continue;
+      if (i % 2 === 0) out.push(a, b, c);
+      else out.push(a, c, b);
+    }
+  }
+  return Uint16Array.from(out);
+}
+
+const parseSkinPartition: BlockParser = (reader, context): NiSkinPartitionBlock => {
+  const partitionCount = readCount(reader, 10);
+  const sse = context.bsVersion === 100;
+  let vertexDesc: VertexDesc | undefined;
+  let vertexData = new Uint8Array(0);
+  let vertexCount = 0;
+  if (sse) {
+    const dataSize = reader.u32();
+    const vertexSize = reader.u32();
+    vertexDesc = decodeVertexDesc(reader.u32(), reader.u32());
+    if (dataSize > 0) {
+      if (vertexSize === 0 || dataSize % vertexSize !== 0 || vertexSize !== vertexDesc.stride) {
+        throw new FormatError(
+          `NiSkinPartition: data size ${dataSize} with vertex size ${vertexSize}`,
+          reader.offset,
+        );
+      }
+      vertexData = reader.bytes(dataSize).slice();
+      vertexCount = dataSize / vertexSize;
+    }
+  }
+  const partitions: SkinPartition[] = [];
+  for (let p = 0; p < partitionCount; p++) {
+    const count = reader.u16();
+    const triangleCount = reader.u16();
+    const boneCount = reader.u16();
+    const stripCount = reader.u16();
+    const weightsPerVertex = reader.u16();
+    const bones = readUint16s(reader, boneCount);
+    const vertexMap = readBool(reader) ? readUint16s(reader, count) : undefined;
+    if (readBool(reader)) reader.skip(count * weightsPerVertex * 4); // weights
+    const stripLengths = readUint16s(reader, stripCount);
+    let local: Uint16Array = new Uint16Array(0);
+    if (readBool(reader)) {
+      local =
+        stripCount > 0
+          ? stripsToTriangles(Array.from(stripLengths, (length) => readUint16s(reader, length)))
+          : readUint16s(reader, triangleCount * 3);
+    }
+    if (readBool(reader)) reader.skip(count * weightsPerVertex); // bone indices
+    let triangles: Uint16Array;
+    if (sse) {
+      reader.u8(); // LOD level
+      reader.u8(); // global vertex buffer
+      reader.skip(8); // vertex desc
+      // A copy of the triangles that indexes the shared vertex data directly.
+      triangles = readUint16s(reader, triangleCount * 3);
+    } else {
+      triangles = vertexMap ? local.map((i) => vertexMap[i] ?? 0) : local;
+    }
+    partitions.push({ vertexCount: count, bones, vertexMap, triangles });
+  }
+  return { kind: 'skin-partition', vertexDesc, vertexCount, vertexData, partitions };
+};
+
 // --- Registry ---------------------------------------------------------------
 
 const NODE_TYPES = [
@@ -481,4 +596,8 @@ export const BLOCK_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string, B
   ['NiAlphaProperty', parseAlpha],
   ['NiIntegerExtraData', parseIntegerExtraData],
   ['BSXFlags', parseIntegerExtraData],
+  ['NiSkinInstance', parseSkinInstance],
+  ['BSDismemberSkinInstance', parseSkinInstance],
+  ['NiSkinData', parseSkinData],
+  ['NiSkinPartition', parseSkinPartition],
 ]);

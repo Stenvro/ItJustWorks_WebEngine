@@ -166,6 +166,49 @@ export interface IntegerExtraDataBlock {
   readonly value: number;
 }
 
+/** NiSkinInstance / BSDismemberSkinInstance: binds a shape to its bones. */
+export interface NiSkinInstanceBlock {
+  readonly kind: 'skin-instance';
+  readonly data: Ref;
+  readonly partition: Ref;
+  readonly skeletonRoot: Ref;
+  /** Bone nodes; vertex bone indices refer to this list. */
+  readonly bones: readonly Ref[];
+}
+
+export interface SkinBone {
+  /** Bind pose: skin space to bone space. */
+  readonly transform: NifTransform;
+  readonly boundCenter: Vec3;
+  readonly boundRadius: number;
+}
+
+export interface NiSkinDataBlock {
+  readonly kind: 'skin-data';
+  readonly skinTransform: NifTransform;
+  readonly bones: readonly SkinBone[];
+}
+
+export interface SkinPartition {
+  readonly vertexCount: number;
+  /** Bones used by this partition (indices into the skin instance's bone list). */
+  readonly bones: Uint16Array;
+  /** Partition vertex → shape vertex; undefined if the identity. */
+  readonly vertexMap: Uint16Array | undefined;
+  /** Triangles as indices into the shape's vertices. */
+  readonly triangles: Uint16Array;
+}
+
+/** NiSkinPartition (SSE): the skinned shape's vertices and its partitions. */
+export interface NiSkinPartitionBlock {
+  readonly kind: 'skin-partition';
+  /** SSE: the shape's vertex format and data (BSTriShape keeps none of its own). */
+  readonly vertexDesc: VertexDesc | undefined;
+  readonly vertexCount: number;
+  readonly vertexData: Uint8Array;
+  readonly partitions: readonly SkinPartition[];
+}
+
 /** Block type that is not parsed (yet); skipped using the block size. */
 export interface UnknownBlock {
   readonly kind: 'unknown';
@@ -181,4 +224,7 @@ export type NifBlock =
   | BSShaderTextureSetBlock
   | NiAlphaPropertyBlock
   | IntegerExtraDataBlock
+  | NiSkinInstanceBlock
+  | NiSkinDataBlock
+  | NiSkinPartitionBlock
   | UnknownBlock;

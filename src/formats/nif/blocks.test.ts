@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodeVertexDesc, VertexAttribute } from './blocks.ts';
+import { decodeVertexDesc, stripsToTriangles, VertexAttribute } from './blocks.ts';
 
 describe('decodeVertexDesc', () => {
   it('unpacks stride, offsets and attribute flags', () => {
@@ -24,5 +24,15 @@ describe('decodeVertexDesc', () => {
       eyeOffset: 0,
       attributes,
     });
+  });
+});
+
+describe('stripsToTriangles', () => {
+  it('alternates the winding and drops degenerate triangles', () => {
+    const triangles = stripsToTriangles([
+      Uint16Array.of(0, 1, 2, 3, 3, 4),
+      Uint16Array.of(5, 6, 7),
+    ]);
+    expect(Array.from(triangles)).toEqual([0, 1, 2, 1, 3, 2, 5, 6, 7]);
   });
 });

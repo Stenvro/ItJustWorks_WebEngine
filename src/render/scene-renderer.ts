@@ -223,7 +223,19 @@ function writeMaterial(floats: Float32Array, uints: Uint32Array, part: ModelPart
   );
 }
 
+/** Debug views of the lighting shader (dev tools): what a pixel shows instead of its colour. */
+export const DebugView = {
+  lit: 0,
+  albedo: 1,
+  normals: 2,
+  lightOnly: 3,
+  vertexColors: 4,
+  geometryNormals: 5,
+} as const;
+
 export class SceneRenderer {
+  /** One of DebugView; 0 shows the normal image. */
+  debugView = 0;
   readonly #device: GPUDevice;
   readonly #colorFormat: GPUTextureFormat;
   readonly #frameBuffer: GPUBuffer;
@@ -397,7 +409,7 @@ export class SceneRenderer {
     data.set([...(fog?.farColor ?? [0, 0, 0]), 1], 56);
     data.set([fog?.near ?? 0, fog?.far ?? 1, fog?.power ?? 1, fog?.max ?? 0], 60);
     const lightCount = Math.min(MAX_LIGHTS, lighting.lights.length);
-    this.#frameUints.set([lightCount, fog ? 1 : 0, 0, 0], 64);
+    this.#frameUints.set([lightCount, fog ? 1 : 0, this.debugView, 0], 64);
     this.#device.queue.writeBuffer(this.#frameBuffer, 0, data);
 
     if (lightCount > 0) {

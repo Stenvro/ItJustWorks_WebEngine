@@ -100,6 +100,9 @@ function referenceState(ref: PlacedReference): ReferenceState {
   };
 }
 
+/** Cell children that are not placed objects. */
+const NOT_PLACED = new Set(['NAVM', 'LAND', 'PGRD']);
+
 export async function loadCellData(db: RecordDatabase, cellFormId: number): Promise<CellData> {
   const cell = parseCell(await db.require(cellFormId));
   const objects: CellObject[] = [];
@@ -124,20 +127,31 @@ export async function loadCellData(db: RecordDatabase, cellFormId: number): Prom
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
 
+  // A cell's children also hold its navigation mesh (NAVM) and, outside, its landscape;
+  // only placed references are objects.
   const records = (await Promise.all(db.cellReferences(cellFormId).map((id) => db.get(id)))).filter(
-    (record): record is GameRecord => record !== undefined && !record.deleted,
+    (record): record is GameRecord =>
+      record !== undefined && !record.deleted && !NOT_PLACED.has(record.type),
   );
   const placed = records.map((record) => ({ record, ref: parseReference(record) }));
 
   // Enable structure, including parents placed in other cells.
   const references = new Map<number, ReferenceState>();
   for (const { ref } of placed) references.set(ref.formId, referenceState(ref));
-  const pending = placed.flatMap(({ ref }) => (ref.enableParent ? [ref.enableParent.formId] : []));
-  for (let guard = 0; pending.length > 0 && guard < 1000; guard++) {
+  // Every parent is looked at once (cells like Lakeview Manor have thousands of children).
+  const pending = [
+    ...new Set(placed.flatMap(({ ref }) => (ref.enableParent ? [ref.enableParent.formId] : []))),
+  ];
+  const looked = new Set<number>();
+  while (pending.length > 0) {
     const formId = pending.pop() ?? 0;
-    if (references.has(formId)) continue;
+    if (references.has(formId) || looked.has(formId)) continue;
+    looked.add(formId);
     const record = await db.get(formId);
-    if (!record) continue;
+    if (!record) {
+      skip('enable parent that does not exist');
+      continue;
+    }
     const ref = parseReference(record);
     references.set(formId, referenceState(ref));
     if (ref.enableParent) pending.push(ref.enableParent.formId);

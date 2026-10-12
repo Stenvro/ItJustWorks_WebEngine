@@ -145,6 +145,8 @@ export class ModelViewer {
   /** Guards against slow script runs finishing after newer choices. */
   #choiceToken = 0;
   #statesOpen = false;
+  /** Dev checks: models not drawn. */
+  #hidden: RegExp | undefined;
   #meshes: string[] = [];
   #cells: InteriorCell[] = [];
   /** Models of cells, shared between cells and kept until the VFS changes. */
@@ -404,6 +406,7 @@ export class ModelViewer {
     const instances: ModelInstance[] = [];
     for (const object of cell.data.objects) {
       if (!isEnabled(object.reference)) continue;
+      if (this.#hidden?.test(object.model)) continue;
       const model = cell.models.get(object.model);
       if (model) instances.push({ model, world: object.world });
     }
@@ -643,6 +646,37 @@ export class ModelViewer {
   /** Applies a preset to the cell on screen (for dev checks). */
   setCellPreset(preset: 'new game' | 'fully upgraded'): void {
     this.#setCellPreset(preset);
+  }
+
+  /** Objects of the cell on screen near a point, with their state (for dev checks). */
+  cellObjectsNear(
+    point: readonly [number, number, number],
+    distance: number,
+  ): { reference: string; model: string; enabled: boolean; loaded: boolean }[] {
+    const cell = this.#cell;
+    if (!cell) return [];
+    const isEnabled = enabledReferences(cell.data, cell.toggles, cell.selection, cell.scripted);
+    return cell.data.objects
+      .filter(
+        (o) =>
+          Math.hypot(
+            (o.world[12] ?? 0) - point[0],
+            (o.world[13] ?? 0) - point[1],
+            (o.world[14] ?? 0) - point[2],
+          ) <= distance,
+      )
+      .map((o) => ({
+        reference: hex(o.reference),
+        model: o.model,
+        enabled: isEnabled(o.reference),
+        loaded: cell.models.get(o.model) !== undefined,
+      }));
+  }
+
+  /** Hides objects whose model path matches (for dev checks); undefined shows all. */
+  hideModels(pattern: RegExp | undefined): void {
+    this.#hidden = pattern;
+    this.#applyCellSelection();
   }
 
   /** Number of objects shown in the cell on screen (for dev checks). */

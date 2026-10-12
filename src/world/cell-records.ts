@@ -69,8 +69,9 @@ function directionalAmbient(data: DataView, offset: number): DirectionalAmbient 
     yNegative: color(data, offset + 12),
     zPositive: color(data, offset + 16),
     zNegative: color(data, offset + 20),
-    specular: color(data, offset + 24),
-    fresnelPower: data.getFloat32(offset + 28, true),
+    // Older records stop after the six colours (24 bytes): no specular, fresnel power 1.
+    specular: data.byteLength >= offset + 28 ? color(data, offset + 24) : [0, 0, 0],
+    fresnelPower: data.byteLength >= offset + 32 ? data.getFloat32(offset + 28, true) : 1,
   };
 }
 
@@ -134,10 +135,12 @@ export function parseCell(record: GameRecord): CellRecord {
 
 /** LGTM: lighting template (DATA plus DALC directional ambient). */
 export function parseLightingTemplate(record: GameRecord): CellLighting {
-  const data = requireSize(record.fields.first('DATA') ?? new Uint8Array(), 72, 'LGTM DATA');
+  // DATA comes in 92-, 88-, 72- and 64-byte versions (the shorter ones stop after the
+  // directional ambient, which may lack specular and fresnel); DALC in 32 and 24 bytes.
+  const data = requireSize(record.fields.first('DATA') ?? new Uint8Array(), 64, 'LGTM DATA');
   const dalc = record.fields.first('DALC');
   const ambient = dalc
-    ? directionalAmbient(requireSize(dalc, 32, 'LGTM DALC'), 0)
+    ? directionalAmbient(requireSize(dalc, 24, 'LGTM DALC'), 0)
     : directionalAmbient(data, 40);
   return lightingFrom(data, ambient);
 }
