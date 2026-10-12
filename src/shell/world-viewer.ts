@@ -43,6 +43,7 @@ import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-refe
 import type { GameSession } from './game-session.ts';
 import { WorldLod } from './world-lod.ts';
 import { WorldSky, type SkyElements } from './world-sky.ts';
+import type { Rgb } from '../world/cell-records.ts';
 import type { Terminal } from './terminal.ts';
 
 /** Cells loaded around the camera's cell in each direction (uGridsToLoad 5 → 2). */
@@ -563,6 +564,9 @@ export class WorldViewer {
           ...(water && { water }),
           ...(directional && { directional }),
           ...(object.leafAnimation && { leafAnimation: object.leafAnimation }),
+          ...(object.emittance !== undefined && {
+            emittance: session.emittance(object.emittance),
+          }),
         },
       });
     });
@@ -791,13 +795,17 @@ export class WorldViewer {
     };
   }
 
+  /** The current colour of an emittance source (lights with REFR XEMI). */
+  readonly #emittanceRgb = (formId: number): Rgb =>
+    this.#session?.emittance(formId).rgb ?? [0, 0, 0];
+
   /** The sky's light (time of day and weather) plus the nearest point lights. */
   #lighting(camera: Vec3): SceneLighting {
     const lights: (PointLight & { distance: number })[] = [];
     const seconds = performance.now() / 1000;
     for (const cell of this.#cells.values()) {
       if (!cell.ready) continue;
-      for (const light of pointLights(cell.lights, seconds, camera)) {
+      for (const light of pointLights(cell.lights, seconds, camera, this.#emittanceRgb)) {
         lights.push({
           ...light,
           distance: Math.hypot(

@@ -93,6 +93,13 @@ export class GameSession {
   /** Material objects (MATO) ready to draw, by form id. */
   readonly #directionalMaterials = new Map<number, Promise<GpuDirectionalMaterial | undefined>>();
   readonly #materialObjects = new Map<number, Promise<MaterialObject | undefined>>();
+  /**
+   * The game's time of day in hours, shared by the viewers: the world's sky advances it and
+   * sets it from its time slider, interiors advance it at the timescale too.
+   */
+  gameHour = 10;
+  /** The hour and climate the emittance colours were last moved to. */
+  #emittanceAt: { hour: number; climate: ClimateRecord | undefined } | undefined;
   /** Emittance sources (XEMI) by form id, with their current colour. */
   readonly #emittance = new Map<number, EmittanceEntry>();
   #addonPathsEntry: Promise<Map<number, string>> | undefined;
@@ -295,6 +302,14 @@ export class GameSession {
         created.loaded = loaded;
         // A light's colour does not change: set it at once.
         if (loaded?.source.kind === 'light') setEmittance(created.color, loaded.source.color);
+        // A region's colour: at the clock's hour right away (later moves follow the clock).
+        const at = this.#emittanceAt;
+        if (loaded?.source.kind === 'region') {
+          setEmittance(
+            created.color,
+            emittanceColor(loaded.source, loaded.weather, at?.climate, at?.hour ?? this.gameHour),
+          );
+        }
       });
     }
     return entry.color;
@@ -305,6 +320,10 @@ export class GameSession {
    * windows lit at night, sunbeams by day). `climate` gives the times of sunrise and sunset.
    */
   updateEmittance(hour: number, climate?: ClimateRecord): void {
+    // Every game minute is enough (the colours move slowly).
+    const last = this.#emittanceAt;
+    if (last && last.climate === climate && Math.abs(last.hour - hour) < 1 / 60) return;
+    this.#emittanceAt = { hour, climate };
     for (const entry of this.#emittance.values()) {
       const loaded = entry.loaded;
       if (loaded?.source.kind !== 'region') continue;

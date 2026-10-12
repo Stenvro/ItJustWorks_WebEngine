@@ -40,7 +40,7 @@ import { SkyObjects } from './sky-objects.ts';
 import type { Terminal } from './terminal.ts';
 
 /** Game seconds per real second (GLOB TimeScale default). */
-const TIMESCALE = 20;
+export const TIMESCALE = 20;
 const DEFAULT_SKY_MODEL = 'meshes\\sky\\stars.nif';
 const DEFAULT_SUN = 'textures\\sky\\sun.dds';
 const DEFAULT_SUN_GLARE = 'textures\\sky\\sunglare.dds';
@@ -82,6 +82,7 @@ export class WorldSky {
   /** Weather picked by hand (UI): kept while the camera moves. */
   #pinned = false;
   #hour = 10;
+  readonly #session: GameSession;
   #days = 0;
   #seconds = 0;
   #lastFrame: number | undefined;
@@ -98,6 +99,7 @@ export class WorldSky {
   #flashStart = -Infinity;
 
   private constructor(
+    session: GameSession,
     db: RecordDatabase,
     ui: SkyElements,
     terminal: Terminal,
@@ -108,6 +110,8 @@ export class WorldSky {
     textures: TextureCache,
     objects: SkyObjects,
   ) {
+    this.#session = session;
+    this.#hour = session.gameHour;
     this.#objects = objects;
     this.#precipitationRenderer = precipitation;
     this.#textures = textures;
@@ -184,6 +188,7 @@ export class WorldSky {
       session.textures,
     );
     return new WorldSky(
+      session,
       db,
       ui,
       terminal,
@@ -258,6 +263,10 @@ export class WorldSky {
         this.#ui.timeLabel.value = formatHour(this.#hour);
       }
     }
+    // The session's clock follows the sky's (the slider sets it), and with it the colours of
+    // the references' emittance (window glow by night, sunbeams by day).
+    this.#session.gameHour = this.#hour;
+    this.#session.updateEmittance(this.#hour, this.#climate);
     const weather = this.#weather;
     if (!weather) return undefined;
     if (this.#previous) {
