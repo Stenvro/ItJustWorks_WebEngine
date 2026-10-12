@@ -127,6 +127,8 @@ export interface LandTexture {
   readonly normal: string;
   /** Specular exponent (LTEX SNAM). */
   readonly specularExponent: number;
+  /** LTEX INAM 0x1: a snow texture (its diffuse alpha is the snow mask). */
+  readonly snow: boolean;
   /** Grass that grows on this texture (GRAS form ids, LTEX GNAM). */
   readonly grass: readonly number[];
 }
@@ -149,6 +151,8 @@ export async function landTexture(
     diffuse: path('TX00'),
     normal: path('TX01'),
     specularExponent: record.fields.first('SNAM')?.[0] ?? 30,
+    // INAM (SSE) flags: 0x1 is snow.
+    snow: ((record.fields.first('INAM')?.[0] ?? 0) & 0x1) !== 0,
     grass: record.fields.all('GNAM').flatMap((data) => {
       const id = data.length >= 4 ? record.formIdAt(data) : 0;
       return id === 0 ? [] : [id];

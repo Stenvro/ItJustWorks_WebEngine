@@ -21,15 +21,68 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
 4. **Water and blended pass:** water surfaces, then blended parts and particle systems of all
    scenes back to front (by bounding sphere centre).
 5. **Post-processing** (`post.ts`): the imagespace's eye adaptation, bloom, tone curve and
-   grading into the canvas (see [formats/esm.md](formats/esm.md#imagespaces)).
+   grading into the canvas (see [formats/esm.md](formats/esm.md#imagespaces)), then its depth
+   of field (below).
 
 **Frame uniforms** (`shaders/frame.wgsl`, group 0 of every world shader): camera, sun
 direction and colour (times the imagespace's sunlight scale), directional ambient, fog,
 point lights (storage buffer), time, the LOD mask of loaded cells (7×7 bits, see
 [formats/lod.md](formats/lod.md)), the shadow cascades, the screen size and near plane, the
 camera's right and up axes, the shadow map and its comparison sampler, the scene copies and a
-clamping sampler. The terrain shader samples 17 textures (8 diffuse, 8 normal maps, the shadow
-map), more than WebGPU's default of 16, so the device asks for the adapter's limit (up to 32).
+clamping sampler. The terrain shader samples 21 textures (8 diffuse, 8 normal maps, the LOD
+block texture and noise, the shadow map and the scene copies), more than WebGPU's default of
+16, so the device asks for the adapter's limit (up to 32).
+
+## Landscape
+
+`shaders/terrain.wgsl`, as the vanilla landscape shader (Community Shaders' Lighting.hlsl,
+LANDSCAPE and LOD_LAND_BLEND) does it:
+
+1. Up to 8 textures blended by the vertex weights, × the vertex colour; their normal maps
+   blended the same way. Gloss: the normal maps' alpha (mean 0.12 over the vanilla landscape
+   maps), exponent: the blend of the land textures' SNAM.
+2. Snow: a quadrant with a snow texture (LTEX INAM `0x1`) adds to every layer whose diffuse
+   alpha is above zero its normal map sampled 4 times larger (1 / iLandscapeMultiNormalTilingFactor),
+   combined by reoriented normal mapping. Snow mask = Σ snow flag × weight × diffuse alpha
+   (bEnableSnowMask). Where the mask is above zero the specular gives way to the snow rim
+   light and sparkles (below).
+3. LOD blend: `1 − saturate(0.000375601 × (9625.6 − distance))` from the centre of the camera's
+   cell (no blend within 6963 units, full at 9626: the outer ring of the 5 × 5 loaded cells)
+   turns the land into the level-4 LOD terrain block's texture (`textures\terrain\<world>\
+<world>.4.x.y.dds`, mapped by world position) × `0.8333 (p (0.37 − noise) + noise) + 0.37`
+   (`textures\terrain\noise.dds` at 3 × the block UV, p from the LOD colour's brightness),
+   flattens the normal and drops the gloss, so the loaded land meets the distant LOD without a
+   seam. (The engine's UV factor 1/96 for the blend texture is applied to land UVs whose range
+   is not documented; the level-4 block by world position is used here.)
+4. The vanilla landscape shader has no parallax.
+
+## Snow
+
+The engine's "improved snow" (bEnableImprovedSnow, `shaders/snow.wgsl`): snow surfaces write
+a rim highlight and a mask into a snow buffer that its ambient-occlusion composite adds. Here
+each shader adds them directly, with the game's default settings:
+
+- Rim: `0.3 · (1 − saturate(geometry normal · v))³ · (1 − saturate(n · v))²`
+  (fSnowRimLightIntensity, fSnowGeometrySpecPower, fSnowNormalSpecPower) × the mask, added to
+  the lit colour before fog.
+- Sparkles: fixed bright points in world space, `step(0.85, noise²)` of 3D simplex noise at
+  `0.07 × 6 × position` (fSparklesDensity, fSparklesSize, fSparklesSpecularPower 2), × lerp(sun
+  shadow, 1, 0.25) (fShadowSparkleIntensity), fading out over 1000 units (fSparklesMaxDistance),
+  × the mask, added after fog.
+- TODO(M4): the subsurface scattering pass (ISSnowSSS: a depth-aware blur of the snow tinted
+  by fSnowSSSColor, fSnowSSSStrength 50, fSnowSSSDepthDiff 0.5) needs the snow mask in a
+  render target.
+
+## Depth of field
+
+The imagespace's depth of field (IMGS DNAM), as the engine's ISDepthOfField shader does it for
+weathers ("distant" blur, `shaders/dof.wgsl`), on the graded image: a copy at half the size is
+blurred (Gaussian, 1 + blur radius pixels; TODO(M13): the engine's taps per radius), then each
+pixel turns into it by `saturate((distance − focus distance) / range) × strength`, the
+distance from the opaque scene's depth. Where the sky is not blurred ("no sky"), a sky pixel
+is blurred only beside geometry: by the average depth 3 pixels around it and at half strength
+for the share of sky there, so mountain silhouettes soften. The engine's dynamic depth of
+field (bDynamicDOF: focus on what the camera looks at) is TODO(M4).
 
 ## Lighting shader
 

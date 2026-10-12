@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
-import { blendImageSpaces, NEUTRAL_IMAGE_SPACE, parseImageSpace } from './image-space.ts';
+import {
+  blendImageSpaces,
+  depthOfFieldBlur,
+  NEUTRAL_IMAGE_SPACE,
+  parseImageSpace,
+} from './image-space.ts';
 
 function floats(values: number[]): Uint8Array {
   const data = new Uint8Array(values.length * 4);
@@ -12,6 +17,16 @@ function floats(values: number[]): Uint8Array {
 
 const record = (fields: [string, Uint8Array][]) => ({
   fields: new Fields(fields.map(([type, data]) => ({ type, data }))),
+});
+
+describe('depthOfFieldBlur', () => {
+  it('unpacks the blur radius and the no-sky flag', () => {
+    expect(depthOfFieldBlur(2)).toEqual({ blurRadius: 0, sky: true });
+    expect(depthOfFieldBlur(6)).toEqual({ blurRadius: 0, sky: false });
+    expect(depthOfFieldBlur(34)).toEqual({ blurRadius: 4, sky: true });
+    expect(depthOfFieldBlur(42)).toEqual({ blurRadius: 5, sky: true });
+    expect(depthOfFieldBlur(undefined)).toEqual({ blurRadius: 0, sky: true });
+  });
 });
 
 describe('parseImageSpace', () => {
@@ -35,6 +50,9 @@ describe('parseImageSpace', () => {
     expect(space.tintAmount).toBe(0.5);
     expect(space.tintColor[0]).toBeCloseTo(0.9, 5);
     expect(space.depthOfField.distance).toBe(25000);
+    // 30 = 2 + 8 × 3 + 4: blur radius 3, the sky stays sharp.
+    expect(space.depthOfField.blurRadius).toBe(3);
+    expect(space.depthOfField.sky).toBe(false);
   });
 
   it('reads the packed ENAM form', () => {

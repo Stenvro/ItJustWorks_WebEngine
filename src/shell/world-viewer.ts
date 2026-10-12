@@ -25,7 +25,8 @@ import type { GpuGrassField } from '../render/grass.ts';
 import { waterPlane } from '../render/water-data.ts';
 import { parseGrass, placeGrass, type GrassType } from '../world/grass.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
-import type { GpuTerrainCell, TerrainTexturePaths } from '../render/terrain.ts';
+import type { GpuTerrainCell, TerrainLodBlock, TerrainTexturePaths } from '../render/terrain.ts';
+import { parseLodSettings, type LodSettings } from '../formats/lod/lod.ts';
 import {
   buildTerrainCell,
   DEFAULT_LAND_NORMAL,
@@ -138,6 +139,8 @@ export class WorldViewer {
   #timer: ReturnType<typeof setInterval> | undefined;
   #detachControls: (() => void) | undefined;
   readonly #landTextures = new Map<number, Promise<TerrainTexturePaths>>();
+  /** The LOD world's settings (LOD terrain blocks), if it has terrain LOD. */
+  #lodSettings: { readonly name: string; readonly settings: LodSettings } | undefined;
   /** Grass types by LTEX (GNAM), and GRAS records by form id. */
   readonly #landGrass = new Map<number, Promise<readonly GrassType[]>>();
   readonly #grassTypes = new Map<number, Promise<GrassType | undefined>>();
@@ -263,6 +266,7 @@ export class WorldViewer {
     this.#world = world;
     this.#sky = sky;
     this.#lod = lod;
+    this.#lodSettings = await this.#readLodSettings(world, session);
     this.#renderer.scene.defaultWater = await session.waterType(
       world.waterWorld.water ?? DEFAULT_WATER,
     );
@@ -481,6 +485,7 @@ export class WorldViewer {
           buildTerrainCell(land, cell.x, cell.y),
           (ltex) => this.#landTexture(ltex),
           session.textures,
+          this.#lodBlock(cell.x, cell.y, session),
         )
       : Promise.resolve(undefined);
 
@@ -557,6 +562,7 @@ export class WorldViewer {
           world: object.world,
           ...(water && { water }),
           ...(directional && { directional }),
+          ...(object.leafAnimation && { leafAnimation: object.leafAnimation }),
         },
       });
     });
@@ -641,6 +647,8 @@ export class WorldViewer {
     const fallback: TerrainTexturePaths = {
       diffuse: DEFAULT_LAND_TEXTURE,
       normal: DEFAULT_LAND_NORMAL,
+      specularPower: 30,
+      snow: false,
     };
     const db = this.#db;
     if (ltex === undefined || !db) return Promise.resolve(fallback);
@@ -648,12 +656,45 @@ export class WorldViewer {
     if (!pending) {
       pending = landTexture((id) => db.get(id), ltex).then((texture) =>
         texture
-          ? { diffuse: texture.diffuse || DEFAULT_LAND_TEXTURE, normal: texture.normal }
+          ? {
+              diffuse: texture.diffuse || DEFAULT_LAND_TEXTURE,
+              normal: texture.normal,
+              specularPower: texture.specularExponent,
+              snow: texture.snow,
+            }
           : fallback,
       );
       this.#landTextures.set(ltex, pending);
     }
     return pending;
+  }
+
+  async #readLodSettings(
+    world: Worldspace,
+    session: GameSession,
+  ): Promise<{ name: string; settings: LodSettings } | undefined> {
+    const name = world.lodWorld.editorId.toLowerCase();
+    const path = `lodsettings\\${name}.lod`;
+    if (!session.vfs.has(path)) return undefined;
+    try {
+      return { name, settings: parseLodSettings(await session.vfs.read(path)) };
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** The smallest LOD terrain block a cell lies in, whose texture its land blends into. */
+  #lodBlock(x: number, y: number, session: GameSession): TerrainLodBlock | undefined {
+    const lod = this.#lodSettings;
+    if (!lod) return undefined;
+    const { southWestX, southWestY, lowestLevel } = lod.settings;
+    const level = Math.max(1, lowestLevel);
+    const bx = southWestX + Math.floor((x - southWestX) / level) * level;
+    const by = southWestY + Math.floor((y - southWestY) / level) * level;
+    const block = `${lod.name}.${String(level)}.${String(bx)}.${String(by)}`;
+    const texture = `textures\\terrain\\${lod.name}\\${block}.dds`;
+    if (!session.vfs.has(texture)) return undefined;
+    return { texture, x: bx * CELL_SIZE, y: by * CELL_SIZE, size: level * CELL_SIZE };
   }
 
   #free(cell: LoadedCell): void {
