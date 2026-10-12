@@ -171,6 +171,19 @@ export class Worldspace {
     return undefined;
   }
 
+  /** Regions (REGN form ids) a cell belongs to (XCLR). */
+  async regions(x: number, y: number): Promise<number[]> {
+    const id = await this.cell(x, y);
+    const record = id === undefined ? undefined : await this.db.get(id);
+    const xclr = record?.fields.first('XCLR');
+    const regions: number[] = [];
+    if (!record || !xclr) return regions;
+    for (let offset = 0; offset + 4 <= xclr.length; offset += 4) {
+      regions.push(record.formIdAt(xclr, offset));
+    }
+    return regions;
+  }
+
   /** Water height of a cell: its XCLW, else the world's default. */
   async waterHeight(x: number, y: number): Promise<number | undefined> {
     const id = await this.cell(x, y);

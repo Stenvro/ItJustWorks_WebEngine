@@ -8,6 +8,7 @@ import {
   type SceneLighting,
 } from './scene-renderer.ts';
 import backdropShader from './shaders/backdrop.wgsl?raw';
+import { SkyRenderer, type SkyFrame } from './sky.ts';
 import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
 
 /** Anything that can view a scene: the orbit camera, the free-flying camera, ... */
@@ -23,6 +24,8 @@ export interface SceneView {
   readonly scenes: () => Iterable<GpuScene>;
   /** Landscape cells to draw this frame. */
   readonly terrain?: () => Iterable<GpuTerrainCell>;
+  /** The sky behind everything (exteriors). */
+  readonly sky?: () => SkyFrame | undefined;
   readonly camera: Camera;
   /** Called every frame (lighting may depend on the camera, e.g. a studio light). */
   readonly lighting: (camera: Camera) => SceneLighting;
@@ -44,6 +47,7 @@ interface RenderTargets {
 export class Renderer {
   readonly scene: SceneRenderer;
   readonly terrain: TerrainRenderer;
+  readonly sky: SkyRenderer;
   readonly #gpu: GpuContext;
   readonly #backdrop: GPURenderPipeline;
   readonly #backdropBuffer: GPUBuffer;
@@ -60,6 +64,7 @@ export class Renderer {
     const { device, format } = gpu;
     this.scene = new SceneRenderer(device, format);
     this.terrain = new TerrainRenderer(device, format, this.scene.frameLayout);
+    this.sky = new SkyRenderer(device, format, this.scene.frameLayout);
 
     const module = device.createShaderModule({ label: 'backdrop', code: backdropShader });
     this.#backdrop = device.createRenderPipeline({
@@ -118,6 +123,7 @@ export class Renderer {
       );
     }
 
+    const sky = view?.sky?.();
     const encoder = device.createCommandEncoder({ label: 'frame' });
     const pass = encoder.beginRenderPass({
       label: 'main',
@@ -125,7 +131,7 @@ export class Renderer {
         {
           view: targets.color.createView(),
           resolveTarget: canvasTexture.createView(),
-          clearValue: { r: 0, g: 0, b: 0, a: 1 },
+          clearValue: sky ? SkyRenderer.clearColor(sky.state) : { r: 0, g: 0, b: 0, a: 1 },
           loadOp: 'clear',
           storeOp: 'discard',
         },
@@ -143,6 +149,7 @@ export class Renderer {
       pass.draw(3);
     }
     if (view) {
+      if (sky) this.sky.draw(pass, this.scene.frameBindGroup, sky);
       const terrain = view.terrain?.();
       if (terrain) this.terrain.draw(pass, this.scene.frameBindGroup, terrain);
       this.scene.draw(pass, view.scenes(), view.camera.position);

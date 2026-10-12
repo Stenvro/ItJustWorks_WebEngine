@@ -106,6 +106,21 @@
         />
         <ol id="world-results" class="results"></ol>
         <div id="world-status" class="upgrades" hidden></div>
+        <div id="world-sky" class="upgrades sky-controls" hidden>
+          <label class="choice">
+            <span>time</span>
+            <input id="world-time" type="range" min="0" max="24" step="0.05" value="10" />
+            <output id="world-time-label">10:00</output>
+          </label>
+          <label class="choice">
+            <input id="world-time-flows" type="checkbox" checked />
+            <span>time passes (timescale 20)</span>
+          </label>
+          <label class="choice">
+            <span>weather</span>
+            <select id="world-weather"></select>
+          </label>
+        </div>
         <p class="hint">
           click the scene to look around · wasd to move · shift to run · mouse wheel for speed
         </p>

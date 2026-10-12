@@ -160,6 +160,76 @@ no landscape, `0x20` no sky, `0x40` fixed dimensions, `0x80` no grass).
 `node tools/land-audit.ts` checks every LAND record: heights, layer counts, and that each land
 texture resolves to files that exist and parse.
 
+## Climate and weather
+
+**CLMT:** WLST weather list (12-byte entries: WTHR, chance u32 %, GLOB), FNAM sun texture,
+GNAM sun glare texture, MODL night sky model (`sky\stars.nif`), TNAM 6 bytes: sunrise begin,
+sunrise end, sunset begin, sunset end (u8 each, in 10-minute units: 33 = 5:30), volatility,
+moons (bits 0–5 days per phase, `0x40` Masser, `0x80` Secunda). Vanilla: 5:30–10:00 and
+16:00–20:30 everywhere except Blackreach and Apocrypha.
+
+**WTHR:**
+
+- Cloud layers: texture fields `00TX`, `10TX`, … `90TX`, `:0TX`, … (the first character is
+  `'0' + layer`), RNAM / QNAM one byte per layer: Y / X scroll speed, `(b − 127) / 1270`
+  (−0.1..0.1), PNAM 32 × 4 times × RGBA u8 colours, JNAM 32 × 4 times × f32 alpha, NAM1
+  disabled-layer bits, LNAM layer count (4 or 29). Many disabled or transparent layers name
+  textures that do not ship; only TESTCloudyRain shows a missing one.
+- NAM0: 17 colours × 4 times (sunrise, day, sunset, night) × RGBA u8: 0 sky upper, 1 fog
+  near, 2 unused, 3 ambient, 4 sunlight, 5 sun, 6 stars, 7 sky lower, 8 horizon, 9 effect
+  lighting, 10/11 cloud LOD diffuse/ambient, 12 fog far, 13 sky statics, 14 water multiplier,
+  15 sun glare, 16 moon glare. Shorter tables (13/14 entries) default the rest (fog far and
+  sky statics black, the others white).
+- FNAM fog (8 f32): day near, day far, night near, night far, day power, night power, day
+  max, night max.
+- DATA (19 bytes, xEdit): wind speed, 2 unused, trans delta (`/1020`: 0..0.25), sun glare,
+  sun damage, precipitation fade in/out, thunder fade in/out, thunder frequency, flags
+  (`0x01` pleasant, `0x02` cloudy, `0x04` rainy, `0x08` snow, `0x10`/`0x20` aurora always
+  visible / follows the sun), lightning RGB, visual effect begin/end, wind direction (0..360),
+  wind range (0..180). Unit values are `/255`.
+- IMSP 4 × IMGS (per time of day), DALC × 4 (32 bytes each: six RGBA colours for +X, −X, +Y,
+  −Y, +Z, −Z, specular RGBA, fresnel f32), MNAM precipitation (SPGD), NNAM visual effect,
+  SNAM sounds (SNDR + type), TNAM sky statics, MODL aurora model.
+
+**REGN:** RDAT (type u32: 2 objects, 3 weather, 4 map, 5 land, 6 grass, 7 sound; override u8;
+priority u8; 2 unused) heads each tab's data; the weather tab is followed by RDWT (12-byte
+entries like WLST). A cell's regions are its XCLR form ids.
+
+**Which weather:** the highest-priority weather region of the camera's cell, else the
+climate's list (Tamriel's SkyrimClimate has a single weather: its cells all have weather
+regions, e.g. WeatherTundra around Whiterun, WeatherWhiterun inside the city world). A weather
+is picked by chance; it changes, with a transition, when the camera enters a cell whose list
+does not have it.
+
+**Time of day** (`src/world/sky-state.ts`): sunrise colours peak halfway through the climate's
+sunrise, sunset colours halfway through its sunset. From sunrise begin, night fades into
+sunrise; from the middle, sunrise into day (complete at sunrise end); the evening runs the
+same way backwards. Fog distances exist for day and night only and follow the night weight.
+Stars fade in with the night weight (NAM0 stars is only their tint: most weathers keep it
+white all day); the moons show outside full day and fade out between `fMasserAngleFadeStart`
+and `End` degrees above the horizon.
+
+**Sun path:** the sun is on the horizon in the east a quarter hour before the middle of
+sunrise and in the west a quarter hour after the middle of sunset (Community Shaders' sky
+sync, which reproduces vanilla), on an arc tilted 95° from the horizon (just north of the
+zenith). At night the directional light comes from the mirrored direction above the horizon
+with the night sunlight colour.
+
+**Game settings** used: `fSunXExtreme` (400, sun distance in sky units), `iMasserSize` 90,
+`iSecundaSize` 40, `fMasser/SecundaAngleFadeStart/End` 35/20, `fStarsRotateDays` 1.0027 and
+axis `fStarsRotateX/Y/ZAxis` (−0.09, 0.35, 1), `fAuroraFadeInStart` 19, `fAutoraFadeIn` 20,
+`fAutoraFadeOut` 6 (sic), `fWeatherTransAccel` 16. INI defaults: `fSunBaseSize` 425,
+`fSunGlareSize` 600.
+
+**Sky meshes:** `sky\atmosphere.nif` (dome, radius 500, horizon ring at z 0): vertex colour
+red weights the horizon colour, green the lower sky, blue the upper sky; alpha fades the
+bottom 18 units. `sky\clouds.nif`: 29 shapes, the root's children in layer order. Stars:
+the climate's MODL (constellations, galaxy, stars; radius 16). Moon textures:
+`sky\masser_<phase>.dds`, `secunda_<phase>.dds` with phases full, three_wan, half_wan,
+one_wan, new, one_wax, half_wax, three_wax; `sky\moonshadow.dds` hides the stars behind
+the dark part. `node tools/weather-info.ts` checks every climate and weather against the
+files they name; `node tools/weather-info.ts SkyrimClear 13` prints one weather's sky.
+
 ## Scripts and conditions
 
 **VMAD** (scripts attached to a record): i16 version (5), i16 object format (1: form id, alias,

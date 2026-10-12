@@ -2,10 +2,12 @@
 // VFS, the asset workers, texture and model caches, the record database and the Papyrus
 // environment. Disposed when another folder is mounted.
 
+import { parseNif, type NifFile } from '../formats/nif/nif.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { GpuModel } from '../render/scene-renderer.ts';
 import { TextureCache } from '../render/texture-cache.ts';
 import type { Vfs } from '../vfs/vfs.ts';
+import { GameSettings } from '../world/game-settings.ts';
 import { ScriptEnvironment } from '../world/player-home.ts';
 import { RecordDatabase } from '../world/record-db.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
@@ -26,6 +28,7 @@ export class GameSession {
   /** Models by path, shared by every cell and kept for the session. */
   readonly #models = new Map<string, Promise<GpuModel | undefined>>();
   #scripts: Promise<ScriptEnvironment> | undefined;
+  #settings: Promise<GameSettings> | undefined;
 
   constructor(device: GPUDevice, renderer: Renderer, vfs: Vfs, terminal: Terminal) {
     this.vfs = vfs;
@@ -66,6 +69,17 @@ export class GameSession {
       this.#models.set(path, entry);
     }
     return entry;
+  }
+
+  /** Game settings (GMST), read on first use. */
+  settings(): Promise<GameSettings> {
+    this.#settings ??= this.db.then((db) => GameSettings.read(db));
+    return this.#settings;
+  }
+
+  /** A NIF parsed on the main thread (small files such as the sky meshes). */
+  async nif(path: string): Promise<NifFile> {
+    return parseNif(await this.vfs.read(path));
   }
 
   /** The Papyrus environment, created on first use. */
