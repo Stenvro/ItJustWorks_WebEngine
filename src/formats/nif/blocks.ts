@@ -9,6 +9,7 @@ import type {
   BSLightingShaderPropertyBlock,
   BSShaderTextureSetBlock,
   BSTriShapeBlock,
+  IntegerExtraDataBlock,
   NiAlphaPropertyBlock,
   NiAvObject,
   NifBlock,
@@ -425,6 +426,27 @@ const parseAlpha: BlockParser = (reader, context): NiAlphaPropertyBlock => ({
   threshold: reader.u8(),
 });
 
+const parseIntegerExtraData: BlockParser = (reader, context): IntegerExtraDataBlock => ({
+  kind: 'integer-extra-data',
+  name: readStringRef(reader, context),
+  value: reader.u32(),
+});
+
+/** BSXFlags bits (on the root node's "BSX" extra data). */
+export const BsxFlag = {
+  animated: 0x1,
+  havok: 0x2,
+  ragdoll: 0x4,
+  complex: 0x8,
+  addon: 0x10,
+  /** Only visible in the Creation Kit, never in game. */
+  editorMarker: 0x20,
+  dynamic: 0x40,
+  articulated: 0x80,
+  needsTransformUpdates: 0x100,
+  externalEmit: 0x200,
+} as const;
+
 // --- Registry ---------------------------------------------------------------
 
 const NODE_TYPES = [
@@ -457,4 +479,6 @@ export const BLOCK_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string, B
   ['BSEffectShaderProperty', parseEffectShader],
   ['BSShaderTextureSet', parseTextureSet],
   ['NiAlphaProperty', parseAlpha],
+  ['NiIntegerExtraData', parseIntegerExtraData],
+  ['BSXFlags', parseIntegerExtraData],
 ]);

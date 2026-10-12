@@ -1,7 +1,7 @@
 // Turns a parsed NIF into draw-ready parts: world matrix, GPU-ready vertex buffer and
 // material. Platform-independent, so it runs in the asset workers and in Node tests.
 
-import { VertexAttribute } from '../formats/nif/blocks.ts';
+import { BsxFlag, VertexAttribute } from '../formats/nif/blocks.ts';
 import { getBlock, type NifFile } from '../formats/nif/nif.ts';
 import type {
   BSEffectShaderPropertyBlock,
@@ -90,6 +90,8 @@ export interface ModelData {
   readonly radius: number;
   /** Shapes not drawn yet, with the milestone that adds them. */
   readonly skipped: readonly string[];
+  /** BSXFlags editor marker: only shown in the Creation Kit, never in game. */
+  readonly editorMarker: boolean;
 }
 
 /** NiAVObject flag: the object (and its subtree) is hidden. */
@@ -223,6 +225,17 @@ export function packTriShapeData(data: NiTriShapeDataBlock): {
     vertices,
     vertexCount: count,
   };
+}
+
+function isEditorMarker(file: NifFile): boolean {
+  return file.roots.some((root) => {
+    const node = file.blocks[root];
+    if (!node || !('extraData' in node)) return false;
+    return node.extraData.some((ref) => {
+      const extra = getBlock(file, ref, 'integer-extra-data');
+      return extra?.name === 'BSX' && (extra.value & BsxFlag.editorMarker) !== 0;
+    });
+  });
 }
 
 /** Walks the scene graph from the roots and collects every drawable shape. */
@@ -370,5 +383,5 @@ export function buildModel(file: NifFile): ModelData {
     );
   }
 
-  return { parts, center, radius, skipped };
+  return { parts, center, radius, skipped, editorMarker: isEditorMarker(file) };
 }

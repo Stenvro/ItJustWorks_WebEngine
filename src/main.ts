@@ -1,5 +1,4 @@
 import './style.css';
-import { OrbitCamera } from './render/camera.ts';
 import { GpuUnavailableError, initGpu, trackCanvasSize, type GpuContext } from './render/gpu.ts';
 import { Renderer } from './render/renderer.ts';
 import { findCustomBackdrop } from './shell/custom-backdrop.ts';
@@ -46,10 +45,18 @@ const ui = {
   archives: byId('archive-list', HTMLOListElement),
   shell: byId('shell', HTMLElement),
   viewer: {
-    panel: byId('viewer', HTMLElement),
-    search: byId('model-search', HTMLInputElement),
-    results: byId('model-results', HTMLOListElement),
-    count: byId('viewer-count', HTMLElement),
+    meshes: {
+      panel: byId('viewer', HTMLElement),
+      search: byId('model-search', HTMLInputElement),
+      results: byId('model-results', HTMLOListElement),
+      count: byId('viewer-count', HTMLElement),
+    },
+    cells: {
+      panel: byId('cell-viewer', HTMLElement),
+      search: byId('cell-search', HTMLInputElement),
+      results: byId('cell-results', HTMLOListElement),
+      count: byId('cell-count', HTMLElement),
+    },
   },
   fatal: byId('fatal', HTMLDivElement),
 };
@@ -300,15 +307,15 @@ async function main(): Promise<void> {
 
   trackCanvasSize(ui.canvas, gpu.device);
   const renderer = new Renderer(gpu);
-  const camera = new OrbitCamera();
-  camera.attach(ui.canvas);
+  const modelViewer = new ModelViewer(gpu.device, renderer, ui.canvas, terminal, ui.viewer);
+  viewer = modelViewer;
   // Centre the scene in the part of the screen the shell column does not cover.
   const updateLensShift = (): void => {
     const visibleColumn =
       window.innerWidth >= 1000 &&
       document.body.classList.contains('has-scene') &&
       !ui.shell.classList.contains('shell-hidden');
-    camera.lensShift = visibleColumn
+    modelViewer.lensShift = visibleColumn
       ? ui.shell.getBoundingClientRect().width / window.innerWidth
       : 0;
   };
@@ -317,8 +324,7 @@ async function main(): Promise<void> {
   new MutationObserver(updateLensShift).observe(ui.shell, { attributes: true });
   setupPanels(document);
   setupHideShortcut(ui.shell);
-  viewer = new ModelViewer(gpu.device, renderer, camera, terminal, ui.viewer);
-  if (import.meta.env.DEV) window.skyrimDev = { viewer };
+  if (import.meta.env.DEV) window.skyrimDev = { viewer: modelViewer };
   startRenderLoop(renderer);
 
   const backdrop = await findCustomBackdrop();

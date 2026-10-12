@@ -71,6 +71,25 @@
         <p class="hint">drag to orbit · right-drag to pan · wheel to zoom · h hides the panels</p>
       </details>
 
+      <details id="cell-viewer" class="panel viewer" data-panel="cell-viewer" open hidden>
+        <summary class="viewer-head">
+          <span class="panel-title">// interior cells</span>
+          <span id="cell-count"></span>
+        </summary>
+        <input
+          id="cell-search"
+          class="search"
+          type="search"
+          placeholder="search interior cells, e.g. breezehome, dragonsreach"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <ol id="cell-results" class="results"></ol>
+        <p class="hint">
+          click the scene to look around · wasd to move · shift to run · esc to release
+        </p>
+      </details>
+
       <section id="vfs-summary" class="panels" hidden>
         <details class="panel" data-panel="load-order">
           <summary id="load-order-title">load order</summary>

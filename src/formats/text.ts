@@ -30,6 +30,56 @@ export function encodeWindows1252(text: string): Uint8Array {
 }
 
 /**
+ * Strict UTF-8 decoding; `undefined` if the bytes are not valid UTF-8 (overlong forms,
+ * surrogates and truncated sequences are rejected).
+ */
+export function decodeUtf8(bytes: Uint8Array, start = 0, end = bytes.length): string | undefined {
+  const codeUnits: number[] = [];
+  let i = start;
+  while (i < end) {
+    const b0 = bytes[i] ?? 0;
+    if (b0 < 0x80) {
+      codeUnits.push(b0);
+      i++;
+      continue;
+    }
+    const length = b0 >= 0xf0 ? 4 : b0 >= 0xe0 ? 3 : b0 >= 0xc2 ? 2 : 0;
+    if (length === 0 || b0 > 0xf4 || i + length > end) return undefined;
+    let codePoint = b0 & (0xff >> (length + 1));
+    for (let k = 1; k < length; k++) {
+      const byte = bytes[i + k] ?? 0;
+      if ((byte & 0xc0) !== 0x80) return undefined;
+      codePoint = (codePoint << 6) | (byte & 0x3f);
+    }
+    const minimum = length === 2 ? 0x80 : length === 3 ? 0x800 : 0x10000;
+    if (
+      codePoint < minimum ||
+      codePoint > 0x10ffff ||
+      (codePoint >= 0xd800 && codePoint <= 0xdfff)
+    ) {
+      return undefined;
+    }
+    if (codePoint >= 0x10000) {
+      codePoint -= 0x10000;
+      codeUnits.push(0xd800 + (codePoint >> 10), 0xdc00 + (codePoint & 0x3ff));
+    } else {
+      codeUnits.push(codePoint);
+    }
+    i += length;
+  }
+  let result = '';
+  for (let k = 0; k < codeUnits.length; k += 8192) {
+    result += String.fromCharCode(...codeUnits.slice(k, k + 8192));
+  }
+  return result;
+}
+
+/** UTF-8 where valid, otherwise Windows-1252 (Skyrim SE string tables mix both). */
+export function decodeGameText(bytes: Uint8Array, start = 0, end = bytes.length): string {
+  return decodeUtf8(bytes, start, end) ?? decodeWindows1252(bytes, start, end);
+}
+
+/**
  * Lowercases only A-Z, like the C runtime `tolower` the engine uses.
  * (`String#toLowerCase` would also convert accented letters.)
  */

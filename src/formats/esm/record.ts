@@ -17,6 +17,8 @@ export const RecordFlag = {
   initiallyDisabled: 0x800,
   ignored: 0x1000,
   visibleWhenDistant: 0x8000,
+  /** Base objects (STAT, FURN, ...): an editor marker, never drawn in game. */
+  isMarker: 0x800000,
   compressed: 0x40000,
 } as const;
 

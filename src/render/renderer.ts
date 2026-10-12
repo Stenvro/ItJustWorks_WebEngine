@@ -1,38 +1,29 @@
-import type { OrbitCamera } from './camera.ts';
 import type { GpuContext } from './gpu.ts';
+import type { Mat4, Vec3 } from './math.ts';
 import {
   DEPTH_FORMAT,
   SAMPLE_COUNT,
   SceneRenderer,
-  type GpuModel,
+  type GpuScene,
   type SceneLighting,
 } from './scene-renderer.ts';
 import backdropShader from './shaders/backdrop.wgsl?raw';
 
-/**
- * Studio light for the model viewer: a warm key light from the camera's upper left plus
- * cool ambient, so a model is always lit from the side you look at.
- * TODO(M4): replace with cell/weather lighting once models sit in a world.
- */
-function viewerLighting(camera: OrbitCamera): SceneLighting {
-  const eye = camera.position;
-  const toCamera = normalize([
-    eye[0] - camera.target[0],
-    eye[1] - camera.target[1],
-    eye[2] - camera.target[2],
-  ]);
-  const up = camera.upVector;
-  const right = normalize([
-    up[1] * toCamera[2] - up[2] * toCamera[1],
-    up[2] * toCamera[0] - up[0] * toCamera[2],
-    up[0] * toCamera[1] - up[1] * toCamera[0],
-  ]);
-  const key = (k: 0 | 1 | 2): number => -0.5 * right[k] + 0.55 * up[k] + 0.65 * toCamera[k];
-  return {
-    sunDirection: normalize([key(0), key(1), key(2)]),
-    sunColor: [1.05, 0.98, 0.88],
-    ambient: [0.3, 0.33, 0.38],
-  };
+/** Anything that can view a scene: the orbit camera, the free-flying camera, ... */
+export interface Camera {
+  readonly position: Vec3;
+  update(deltaSeconds: number): void;
+  viewProjection(aspect: number, out?: Mat4): Mat4;
+}
+
+/** What the renderer draws: a scene, seen by a camera, lit by a lighting source. */
+export interface SceneView {
+  readonly scene: GpuScene;
+  readonly camera: Camera;
+  /** Called every frame (lighting may depend on the camera, e.g. a studio light). */
+  readonly lighting: (camera: Camera) => SceneLighting;
+  /** Draw the shell backdrop behind the scene (model viewer) or not (cells). */
+  readonly backdrop: boolean;
 }
 
 interface RenderTargets {
@@ -40,11 +31,6 @@ interface RenderTargets {
   readonly height: number;
   readonly color: GPUTexture;
   readonly depth: GPUTexture;
-}
-
-function normalize(v: [number, number, number]): [number, number, number] {
-  const length = Math.hypot(...v) || 1;
-  return [v[0] / length, v[1] / length, v[2] / length];
 }
 
 /**
@@ -61,8 +47,7 @@ export class Renderer {
   readonly #backdropBindGroup: GPUBindGroup;
   readonly #viewProjection = new Float32Array(16);
   #targets: RenderTargets | undefined;
-  #models: GpuModel[] = [];
-  #camera: OrbitCamera | undefined;
+  #view: SceneView | undefined;
   #lastTime: number | undefined;
 
   constructor(gpu: GpuContext) {
@@ -92,13 +77,13 @@ export class Renderer {
     });
   }
 
-  /** Replaces the models in the scene; the previous ones are destroyed. */
-  setScene(models: GpuModel[], camera: OrbitCamera | undefined): void {
-    for (const model of this.#models) {
-      if (!models.includes(model)) model.destroy();
-    }
-    this.#models = models;
-    this.#camera = camera;
+  /** Shows a scene (or only the backdrop). The caller owns the scene and its models. */
+  setView(view: SceneView | undefined): void {
+    this.#view = view;
+  }
+
+  get view(): SceneView | undefined {
+    return this.#view;
   }
 
   /** `timeSeconds` drives animation; `pixelScale` is the devicePixelRatio. */
@@ -109,16 +94,22 @@ export class Renderer {
     const delta = this.#lastTime === undefined ? 0 : Math.min(0.1, timeSeconds - this.#lastTime);
     this.#lastTime = timeSeconds;
 
-    this.#backdropData[0] = timeSeconds;
-    this.#backdropData[1] = pixelScale;
-    this.#backdropData[2] = canvasTexture.height / pixelScale;
-    device.queue.writeBuffer(this.#backdropBuffer, 0, this.#backdropData);
-
-    const camera = this.#camera;
-    if (camera) {
-      camera.update(delta);
-      camera.viewProjection(targets.width / targets.height, this.#viewProjection);
-      this.scene.updateFrame(this.#viewProjection, camera.position, viewerLighting(camera));
+    const view = this.#view;
+    const showBackdrop = view?.backdrop ?? true;
+    if (showBackdrop) {
+      this.#backdropData[0] = timeSeconds;
+      this.#backdropData[1] = pixelScale;
+      this.#backdropData[2] = canvasTexture.height / pixelScale;
+      device.queue.writeBuffer(this.#backdropBuffer, 0, this.#backdropData);
+    }
+    if (view) {
+      view.camera.update(delta);
+      view.camera.viewProjection(targets.width / targets.height, this.#viewProjection);
+      this.scene.updateFrame(
+        this.#viewProjection,
+        view.camera.position,
+        view.lighting(view.camera),
+      );
     }
 
     const encoder = device.createCommandEncoder({ label: 'frame' });
@@ -140,10 +131,12 @@ export class Renderer {
         depthStoreOp: 'discard',
       },
     });
-    pass.setPipeline(this.#backdrop);
-    pass.setBindGroup(0, this.#backdropBindGroup);
-    pass.draw(3);
-    if (camera && this.#models.length > 0) this.scene.draw(pass, this.#models, camera.position);
+    if (showBackdrop) {
+      pass.setPipeline(this.#backdrop);
+      pass.setBindGroup(0, this.#backdropBindGroup);
+      pass.draw(3);
+    }
+    if (view) this.scene.draw(pass, view.scene, view.camera.position);
     pass.end();
     device.queue.submit([encoder.finish()]);
   }
