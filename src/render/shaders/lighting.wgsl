@@ -113,7 +113,9 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
       return vec4f(safeNormalize(in.normal) * 0.5 + 0.5, alpha);
     }
     default: {
-      return vec4f(applyFog(color, in.worldPos), alpha);
+      // Sky objects (weather sky statics) are not fogged.
+      let fogged = select(applyFog(color, in.worldPos), color, (draw.flags.z & 0x10000u) != 0u);
+      return vec4f(fogged, alpha);
     }
   }
 }

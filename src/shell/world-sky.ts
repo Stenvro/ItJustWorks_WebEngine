@@ -3,7 +3,15 @@
 // climate) and changes with a transition when the camera enters a region whose list does
 // not have the current weather. Drives the sky, the directional light, ambient and fog.
 
-import type { SceneLighting } from '../render/scene-renderer.ts';
+import type {
+  GpuPrecipitation,
+  PrecipitationFrame,
+  PrecipitationRenderer,
+} from '../render/precipitation.ts';
+import type { Vec3 } from '../render/math.ts';
+import type { GpuScene, SceneLighting, SceneRenderer } from '../render/scene-renderer.ts';
+import type { TextureCache } from '../render/texture-cache.ts';
+import { parsePrecipitation, precipitationAmounts } from '../world/precipitation.ts';
 import type { GpuSky, SkyFrame, SkyRenderer } from '../render/sky.ts';
 import { skyShapes } from '../render/sky-data.ts';
 import { blendImageSpaces, parseImageSpace, type ImageSpace } from '../world/image-space.ts';
@@ -22,6 +30,7 @@ import {
 } from '../world/weather.ts';
 import type { Worldspace } from '../world/worldspace.ts';
 import type { GameSession } from './game-session.ts';
+import { SkyObjects } from './sky-objects.ts';
 import type { Terminal } from './terminal.ts';
 
 /** Game seconds per real second (GLOB TimeScale default). */
@@ -72,6 +81,12 @@ export class WorldSky {
   #lastFrame: number | undefined;
   #state: SkyState | undefined;
   #cell: string | undefined;
+  readonly #precipitationRenderer: PrecipitationRenderer;
+  readonly #objects: SkyObjects;
+  readonly #textures: TextureCache;
+  /** Precipitation types on the GPU by SPGD form id (undefined while loading or if broken). */
+  readonly #precipitation = new Map<number, GpuPrecipitation | undefined>();
+  #falling: PrecipitationFrame[] = [];
 
   private constructor(
     db: RecordDatabase,
@@ -80,7 +95,13 @@ export class WorldSky {
     settings: SkySettings,
     climate: ClimateRecord | undefined,
     gpu: GpuSky,
+    precipitation: PrecipitationRenderer,
+    textures: TextureCache,
+    objects: SkyObjects,
   ) {
+    this.#objects = objects;
+    this.#precipitationRenderer = precipitation;
+    this.#textures = textures;
     this.#db = db;
     this.#ui = ui;
     this.#terminal = terminal;
@@ -115,6 +136,8 @@ export class WorldSky {
   static async create(
     session: GameSession,
     sky: SkyRenderer,
+    precipitation: PrecipitationRenderer,
+    scene: SceneRenderer,
     world: Worldspace,
     ui: SkyElements,
     terminal: Terminal,
@@ -151,7 +174,17 @@ export class WorldSky {
       { atmosphere: atmosphere ?? [], clouds: clouds ?? [], stars: stars ?? [] },
       session.textures,
     );
-    return new WorldSky(db, ui, terminal, settings, climate, gpu);
+    return new WorldSky(
+      db,
+      ui,
+      terminal,
+      settings,
+      climate,
+      gpu,
+      precipitation,
+      session.textures,
+      new SkyObjects(session, db, scene),
+    );
   }
 
   get hour(): number {
@@ -196,8 +229,11 @@ export class WorldSky {
     if (pick !== undefined) await this.#changeWeather(pick, current !== undefined);
   }
 
-  /** Advances the clock and the weather transition; call once per frame. */
-  frame(now: number): SkyState | undefined {
+  /**
+   * Advances the clock and the weather transition, and places the sky objects around the
+   * camera; call once per frame.
+   */
+  frame(now: number, camera: Vec3): SkyState | undefined {
     const delta =
       this.#lastFrame === undefined ? 0 : Math.min(0.25, (now - this.#lastFrame) / 1000);
     this.#lastFrame = now;
@@ -237,6 +273,16 @@ export class WorldSky {
       if (space) spaces.push({ space, weight });
     }
     this.#imageSpace = spaces.length > 0 ? blendImageSpaces(spaces) : undefined;
+    this.#falling = [];
+    for (const { formId, amount } of precipitationAmounts(
+      weather,
+      this.#previous,
+      this.#transition,
+    )) {
+      const system = this.#loadPrecipitation(formId);
+      if (system) this.#falling.push({ system, amount });
+    }
+    this.#objects.update(weather, this.#previous, this.#transition, this.#state, camera);
     return this.#state;
   }
 
@@ -250,6 +296,16 @@ export class WorldSky {
       sunTexture: orDefault(this.#climate?.sunTexture, DEFAULT_SUN),
       sunGlareTexture: orDefault(this.#climate?.sunGlareTexture, DEFAULT_SUN_GLARE),
     };
+  }
+
+  /** The sky statics and aurora of the last frame. */
+  skyScenes(): readonly GpuScene[] {
+    return this.#objects.scenes();
+  }
+
+  /** The rain and snow of the last frame. */
+  precipitation(): readonly PrecipitationFrame[] {
+    return this.#falling;
   }
 
   /** The weather's imagespace of the last frame (blended by time of day). */
@@ -295,6 +351,9 @@ export class WorldSky {
     this.#detach();
     this.#ui.sky.hidden = true;
     this.#gpu.destroy();
+    for (const system of this.#precipitation.values()) system?.destroy();
+    this.#objects.dispose();
+    this.#precipitation.clear();
   }
 
   async #changeWeather(formId: number, transition: boolean): Promise<void> {
@@ -315,6 +374,23 @@ export class WorldSky {
     if (this.#ui.weather.value !== String(formId) && this.#pinned)
       this.#ui.weather.value = String(formId);
     this.#terminal.log('sky', `weather ${weather.editorId}${transition ? ' (changing)' : ''}`);
+  }
+
+  #loadPrecipitation(formId: number): GpuPrecipitation | undefined {
+    if (!this.#precipitation.has(formId)) {
+      this.#precipitation.set(formId, undefined);
+      void this.#db
+        .get(formId)
+        .then((record) =>
+          record?.type === 'SPGD'
+            ? this.#precipitationRenderer.create(parsePrecipitation(record), this.#textures)
+            : undefined,
+        )
+        .then((system) => {
+          this.#precipitation.set(formId, system);
+        });
+    }
+    return this.#precipitation.get(formId);
   }
 
   #loadImageSpace(formId: number): ImageSpace | undefined {

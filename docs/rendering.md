@@ -90,3 +90,21 @@ normal from the depth's screen derivatives, turned by the decal's normal map in 
 frame, with ambient, sun, shadows and point lights, then fog. Surfaces running along the
 projection fade out (no smearing down walls). Alpha testing discards below 0.5; blending uses
 the texture's alpha. One instanced draw per texture set; decals out of view are skipped.
+
+## Precipitation
+
+Rain and snow (`precipitation.ts`, `shaders/precipitation.wgsl`), as the engine's particle
+shader does it: a box of the SPGD's size around the camera holds density × 1024 particles
+(at most 65536). Each particle has a fixed place in an endless lattice that falls with the
+gravity velocity and drifts with the weather's wind (rain 15%, snow 50% of it); the copy
+inside the box around the camera is drawn, fading near the box's faces where particles wrap.
+Rain is a streak along the fall (as long as its size plus a frame's fall at 30 fps), snow a
+camera-facing quad that turns and circles its fall line (centre offset min..max). Each
+particle shows one random frame of the texture's atlas, lit by the ambient light from above
+and half the sunlight, faded where it nears the opaque scene, fogged.
+
+**Occlusion** (no rain under roofs): the scene's shadow casters and the terrain rendered from
+straight above around the camera (orthographic, ±8192 units in height) into layer 4 of the
+shadow map — redrawn when the camera moves a quarter of the map or every 120 frames. A
+particle below anything in that map is hidden. Particle sizes are scaled (rain × 50, snow
+× 16) to match the textures' content: TODO(M13) calibrate against the original.

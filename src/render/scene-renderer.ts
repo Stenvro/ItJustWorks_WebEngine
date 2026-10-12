@@ -34,6 +34,9 @@ const FRAME_FLOATS = 176;
 /** Sun shadow map: one layer per cascade. */
 export const SHADOW_MAP_SIZE = 2048;
 export const SHADOW_MAP_LAYERS = 4;
+/** An extra layer of the shadow map: the scene from straight above, for precipitation. */
+export const PRECIPITATION_OCCLUSION_LAYER = 4;
+const SHADOW_TEXTURE_LAYERS = SHADOW_MAP_LAYERS + 1;
 /** Shadow cascade uniforms: one view-projection per 256-byte slot. */
 const CASCADE_STRIDE = 256;
 /** Receiver offsets against shadow acne: depth (0..1 units) and along the normal (texels). */
@@ -68,6 +71,10 @@ const SLSF1_ENVIRONMENT_MAPPING = 0x80;
 const SLSF1_CAST_SHADOWS = 0x200;
 /** LOD landscape and LOD object shader types: distant LOD casts no shadows. */
 const LOD_SHADER_TYPES = new Set([9, 13, 15, 18]);
+/** Draw flag (beside the NiAlphaProperty flags): a sky object, not fogged. */
+const SKY_DRAW = 0x10000;
+/** Sort key offset that puts sky objects behind everything in the blended pass. */
+const SKY_DISTANCE = 1e30;
 /** NiAlphaProperty: alpha test on. */
 const ALPHA_TEST = 0x200;
 const SHADER_GLOW = 2;
@@ -249,6 +256,8 @@ interface Draw {
   /** Bounding sphere radius in world units (culling). */
   readonly radius: number;
   readonly water: GpuWaterType | undefined;
+  /** Part of a sky scene: never culled, drawn behind everything else. */
+  readonly sky: boolean;
 }
 
 /** A draw that changes every frame (animated, or turning to the camera). */
@@ -592,7 +601,7 @@ export class SceneRenderer {
     }));
     this.#shadowMap = device.createTexture({
       label: 'sun-shadow-map',
-      size: [SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, SHADOW_MAP_LAYERS],
+      size: [SHADOW_MAP_SIZE, SHADOW_MAP_SIZE, SHADOW_TEXTURE_LAYERS],
       format: DEPTH_FORMAT,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
     });
@@ -608,7 +617,7 @@ export class SceneRenderer {
     });
     this.#cascadeBuffer = device.createBuffer({
       label: 'shadow-cascades',
-      size: CASCADE_STRIDE * SHADOW_MAP_LAYERS,
+      size: CASCADE_STRIDE * SHADOW_TEXTURE_LAYERS,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.#cascadeBindGroup = device.createBindGroup({
@@ -853,7 +862,11 @@ export class SceneRenderer {
    * Places model instances (with the models attached at their AddOnNodes); writes one
    * uniform slot per (instance, part) and per (instance, particle system).
    */
-  createScene(instances: readonly ModelInstance[]): GpuScene {
+  createScene(
+    instances: readonly ModelInstance[],
+    options: { readonly sky?: boolean } = {},
+  ): GpuScene {
+    const sky = options.sky === true;
     const placed: ModelInstance[] = [];
     const place = (instance: ModelInstance, depth: number): void => {
       placed.push(instance);
@@ -878,7 +891,8 @@ export class SceneRenderer {
       const animation = instance.model.animation;
       for (const part of instance.model.parts) {
         const offset = slot++ * DRAW_STRIDE;
-        if (animation || part.part.billboard) {
+        // Sky scenes follow the camera: their placement changes every frame.
+        if (animation || part.part.billboard || sky) {
           animated.push({ offset, instanceWorld: instance.world, part: part.part, animation });
         }
         const floats = new Float32Array(uniforms, offset, DRAW_SIZE / 4);
@@ -886,12 +900,14 @@ export class SceneRenderer {
         multiply(instance.world, part.part.world, world);
         floats.set(world, 0);
         writeMaterial(floats, uints, part.part);
+        if (sky) uints[38] = (uints[38] ?? 0) | SKY_DRAW;
         draws.push({
           part,
           uniformOffset: offset,
           center: transformPoint(instance.world, part.part.center),
           radius: part.part.radius * maxScale(instance.world),
           water: part.pass === 'water' ? instance.water : undefined,
+          sky,
         });
       }
       instance.model.particles.forEach((system, index) => {
@@ -1241,7 +1257,9 @@ export class SceneRenderer {
     for (const scene of scenes) {
       for (const draw of scene.draws) {
         if (draw.part.pass !== 'transparent' || !this.#visible(draw)) continue;
-        transparent.push({ scene, draw, distance: distance(draw.center) });
+        // Sky objects behind everything, the largest (farthest) first.
+        const behind = draw.sky ? SKY_DISTANCE + draw.radius : distance(draw.center);
+        transparent.push({ scene, draw, distance: behind });
       }
       for (const particles of scene.particles) {
         if (particles.count === 0) continue;
@@ -1365,6 +1383,15 @@ export class SceneRenderer {
     return this.#cascadeBindGroup;
   }
 
+  /** Sets the view the precipitation occlusion layer is rendered with (see drawShadows). */
+  setOcclusionView(viewProj: Mat4): void {
+    this.#device.queue.writeBuffer(
+      this.#cascadeBuffer,
+      PRECIPITATION_OCCLUSION_LAYER * CASCADE_STRIDE,
+      viewProj,
+    );
+  }
+
   /** Dynamic offset of a cascade's uniforms. */
   cascadeOffset(cascade: number): number {
     return cascade * CASCADE_STRIDE;
@@ -1403,7 +1430,28 @@ export class SceneRenderer {
   }
 
   #visible(draw: Draw): boolean {
-    return sphereVisible(this.#planes, draw.center, draw.radius);
+    return draw.sky || sphereVisible(this.#planes, draw.center, draw.radius);
+  }
+
+  /**
+   * Fades a scene's parts (sky objects during weather changes): their material alpha times
+   * `fade`.
+   */
+  fadeScene(scene: GpuScene, fade: number): void {
+    for (const draw of scene.draws) {
+      const material = draw.part.part.material;
+      const base = material?.kind === 'lighting' ? material.alpha : 1;
+      const floats = new Float32Array(scene.uniformData, draw.uniformOffset, DRAW_SIZE / 4);
+      if (floats[29] === base * fade) continue;
+      floats[29] = base * fade;
+      this.#device.queue.writeBuffer(
+        scene.uniforms,
+        draw.uniformOffset,
+        scene.uniformData,
+        draw.uniformOffset,
+        DRAW_SIZE,
+      );
+    }
   }
 
   #drawPart(pass: GPURenderPassEncoder, scene: GpuScene, draw: Draw): void {

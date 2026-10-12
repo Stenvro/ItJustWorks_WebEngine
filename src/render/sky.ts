@@ -1,7 +1,8 @@
 // Draws the sky of a SkyState with the game's sky meshes and textures: atmosphere dome,
 // stars, the moons (with the masks that hide stars behind them), the sun, the weather's cloud
 // layers and the sun glare, in that order, behind everything else.
-// TODO(M4): aurora (animated effect meshes), sky statics (WTHR TNAM), precipitation.
+// The aurora and sky statics are model scenes (src/shell/sky-objects.ts); rain and snow are
+// drawn by precipitation.ts.
 
 import { ATMOSPHERE_SAMPLES, atmosphereProfile, SKY_STRIDE, type SkyShape } from './sky-data.ts';
 import { DEPTH_FORMAT, SAMPLE_COUNT } from './scene-renderer.ts';

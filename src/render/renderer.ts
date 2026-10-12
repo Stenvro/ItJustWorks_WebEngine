@@ -9,6 +9,10 @@ import { fitCascades, type Cascade } from './shadow-cascades.ts';
 const CASCADE_PERIODS: readonly number[] = [1, 1, 2, 4];
 /** Casters smaller than this many shadow-map texels are left out of a cascade. */
 const MIN_CASTER_TEXELS = 3;
+/** The precipitation occlusion map reaches this far above and below the camera. */
+const OCCLUSION_DEPTH = 8192;
+/** And is redrawn at least this often (frames), as cells stream in. */
+const OCCLUSION_REFRESH_FRAMES = 120;
 import type { Mat4, Vec3 } from './math.ts';
 import {
   DEPTH_FORMAT,
@@ -16,6 +20,7 @@ import {
   SceneRenderer,
   type GpuScene,
   SHADOW_MAP_LAYERS,
+  PRECIPITATION_OCCLUSION_LAYER,
   SHADOW_MAP_SIZE,
   type FrameShadows,
   type LodMask,
@@ -31,6 +36,7 @@ import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
 import { TreeLodRenderer, type TreeLodFrame } from './tree-lod.ts';
 import { GrassRenderer, type GpuGrassField } from './grass.ts';
 import { DecalRenderer, type GpuDecals } from './decals.ts';
+import { occlusionView, PrecipitationRenderer, type PrecipitationFrame } from './precipitation.ts';
 
 /** Wind speed (world units per second) of a weather wind of 1 (WTHR wind speed 255). */
 const MAX_WIND_SPEED = 500;
@@ -63,6 +69,8 @@ export interface SceneView {
   readonly grass?: () => Iterable<GpuGrassField>;
   /** Placed decals (blood, scorch marks, puddles) of the loaded cells. */
   readonly decals?: () => Iterable<GpuDecals>;
+  /** Rain and snow of the weather, with how much of each falls. */
+  readonly precipitation?: () => readonly PrecipitationFrame[];
   /** The sky behind everything (exteriors). */
   readonly sky?: () => SkyFrame | undefined;
   /** Loaded cells, where distant LOD gives way. */
@@ -105,6 +113,7 @@ export class Renderer {
   readonly treeLod: TreeLodRenderer;
   readonly grass: GrassRenderer;
   readonly decals: DecalRenderer;
+  readonly precipitation: PrecipitationRenderer;
   readonly post: PostProcessor;
   readonly #gpu: GpuContext;
   readonly #backdrop: GPURenderPipeline;
@@ -119,6 +128,8 @@ export class Renderer {
   /** The cascades as last rendered into the shadow map, and a frame counter for updates. */
   readonly #cascades: Cascade[] = [];
   #shadowFrame = 0;
+  /** The precipitation occlusion map: its view, where it was centred and when. */
+  #occlusion: { viewProj: Mat4; center: Vec3; frame: number } | undefined;
   #lastTime: number | undefined;
 
   constructor(gpu: GpuContext) {
@@ -133,6 +144,7 @@ export class Renderer {
     this.treeLod = new TreeLodRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.grass = new GrassRenderer(device, HDR_FORMAT, this.scene);
     this.decals = new DecalRenderer(device, HDR_FORMAT, this.scene.frameLayout);
+    this.precipitation = new PrecipitationRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.post = new PostProcessor(device, format);
 
     const module = device.createShaderModule({ label: 'backdrop', code: backdropShader });
@@ -248,35 +260,38 @@ export class Renderer {
     const encoder = device.createCommandEncoder({ label: 'frame' });
 
     // The sun's shadow map: casters of the loaded cells, one pass per cascade.
+    const terrainCells = view?.terrain ? [...view.terrain()] : [];
     if (view && shadows) {
-      const terrain = view.terrain ? [...view.terrain()] : [];
       for (const i of dueCascades) {
         const cascade = this.#cascades[i];
         if (!cascade || i >= SHADOW_MAP_LAYERS) continue;
-        const planes = frustumPlanes(cascade.viewProj);
-        const pass = encoder.beginRenderPass({
-          label: `shadow-${String(i)}`,
-          colorAttachments: [],
-          depthStencilAttachment: {
-            view: this.scene.shadowMap.createView({
-              dimension: '2d',
-              baseArrayLayer: i,
-              arrayLayerCount: 1,
-            }),
-            depthClearValue: 1,
-            depthLoadOp: 'clear',
-            depthStoreOp: 'store',
-          },
-        });
-        this.terrain.drawShadows(
-          pass,
-          this.scene.cascadeBindGroup,
-          this.scene.cascadeOffset(i),
-          terrain,
-          planes,
+        this.#shadowPass(encoder, i, cascade.viewProj, terrainCells, scenes, cascade.texelSize);
+      }
+    }
+    // Precipitation: the casters seen from above (where it rains), redrawn as the camera moves.
+    const precipitation = view?.precipitation?.().filter((entry) => entry.amount > 0) ?? [];
+    if (view && precipitation.length > 0) {
+      const box = Math.max(...precipitation.map((entry) => entry.system.precipitation.boxSize));
+      const extent = box * 0.75 + 256;
+      const camera = view.camera.position;
+      const last = this.#occlusion;
+      const moved =
+        !last ||
+        Math.hypot(camera[0] - last.center[0], camera[1] - last.center[1]) > extent / 4 ||
+        Math.abs(camera[2] - last.center[2]) > OCCLUSION_DEPTH / 4 ||
+        this.#shadowFrame - last.frame > OCCLUSION_REFRESH_FRAMES;
+      if (moved) {
+        const viewProj = occlusionView(camera, extent, OCCLUSION_DEPTH);
+        this.#occlusion = { viewProj, center: [...camera], frame: this.#shadowFrame };
+        this.scene.setOcclusionView(viewProj);
+        this.#shadowPass(
+          encoder,
+          PRECIPITATION_OCCLUSION_LAYER,
+          viewProj,
+          terrainCells,
+          scenes,
+          (2 * extent) / SHADOW_MAP_SIZE,
         );
-        this.scene.drawShadows(pass, scenes, i, planes, cascade.texelSize * MIN_CASTER_TEXELS);
-        pass.end();
       }
     }
 
@@ -321,7 +336,7 @@ export class Renderer {
       const water = this.scene.hasWater(scenes);
       const decals = view.decals ? [...view.decals()] : [];
       const decalsInView = this.decals.visible(decals, this.scene.viewPlanes);
-      if (this.scene.needsSceneCopies(scenes) || decalsInView) {
+      if (this.scene.needsSceneCopies(scenes) || decalsInView || precipitation.length > 0) {
         encoder.copyTextureToTexture(
           { texture: this.post.hdrTexture(targets.width, targets.height) },
           { texture: targets.sceneColor },
@@ -351,6 +366,16 @@ export class Renderer {
       }
       if (water) this.scene.drawWater(blended, scenes);
       this.scene.drawTransparent(blended, scenes, view.camera.position);
+      if (precipitation.length > 0 && this.#occlusion) {
+        this.precipitation.draw(
+          blended,
+          this.scene.frameBindGroup,
+          precipitation,
+          timeSeconds,
+          wind,
+          this.#occlusion.viewProj,
+        );
+      }
       blended.end();
     }
 
@@ -363,6 +388,41 @@ export class Renderer {
       delta,
     );
     device.queue.submit([encoder.finish()]);
+  }
+
+  /** Renders shadow casters (terrain and scene parts) into a layer of the shadow map. */
+  #shadowPass(
+    encoder: GPUCommandEncoder,
+    layer: number,
+    viewProj: Mat4,
+    terrain: readonly GpuTerrainCell[],
+    scenes: readonly GpuScene[],
+    texelSize: number,
+  ): void {
+    const planes = frustumPlanes(viewProj);
+    const pass = encoder.beginRenderPass({
+      label: `shadow-${String(layer)}`,
+      colorAttachments: [],
+      depthStencilAttachment: {
+        view: this.scene.shadowMap.createView({
+          dimension: '2d',
+          baseArrayLayer: layer,
+          arrayLayerCount: 1,
+        }),
+        depthClearValue: 1,
+        depthLoadOp: 'clear',
+        depthStoreOp: 'store',
+      },
+    });
+    this.terrain.drawShadows(
+      pass,
+      this.scene.cascadeBindGroup,
+      this.scene.cascadeOffset(layer),
+      terrain,
+      planes,
+    );
+    this.scene.drawShadows(pass, scenes, layer, planes, texelSize * MIN_CASTER_TEXELS);
+    pass.end();
   }
 
   #ensureTargets(width: number, height: number): RenderTargets {
