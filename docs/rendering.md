@@ -82,7 +82,9 @@ pixel turns into it by `saturate((distance − focus distance) / range) × stren
 distance from the opaque scene's depth. Where the sky is not blurred ("no sky"), a sky pixel
 is blurred only beside geometry: by the average depth 3 pixels around it and at half strength
 for the share of sky there, so mountain silhouettes soften. The engine's dynamic depth of
-field (bDynamicDOF: focus on what the camera looks at) is TODO(M4).
+field (bDynamicDOF, fDynamicDOF*: near and far blur around what the player looks at, focus
+changing after fDDOFFocusDelay over fDDOFFocusDuration) follows the player camera's focus:
+TODO(M5), with the player camera.
 
 ## Lighting shader
 
