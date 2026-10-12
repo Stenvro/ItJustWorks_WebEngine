@@ -33,7 +33,7 @@
       </dl>
     </header>
 
-    <main class="shell">
+    <main id="shell" class="shell">
       <section class="title" aria-label="Skyrim Web">
         <h1>Skyrim</h1>
         <p class="subtitle"><span>Special Edition</span><span>Web Engine</span></p>
@@ -52,6 +52,23 @@
             <button id="pick-folder" type="button" hidden>select skyrim folder</button>
           </div>
         </div>
+      </section>
+
+      <section id="viewer" class="panel viewer" aria-label="Model viewer" hidden>
+        <div class="viewer-head">
+          <span>// model viewer</span>
+          <span id="viewer-count"></span>
+        </div>
+        <input
+          id="model-search"
+          class="search"
+          type="search"
+          placeholder="search meshes, e.g. dragon, whiterun, sword"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <ol id="model-results" class="results"></ol>
+        <p class="hint">drag to orbit · right-drag to pan · wheel to zoom</p>
       </section>
 
       <section id="vfs-summary" class="panels" hidden>

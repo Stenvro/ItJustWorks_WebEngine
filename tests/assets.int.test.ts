@@ -5,6 +5,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parseDds } from '../src/formats/dds/dds.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
+import { buildModel } from '../src/render/model-data.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
@@ -37,6 +38,25 @@ describe.skipIf(!hasGamedata())('assets in the local game data', () => {
         }
       }
     }
+  }, 120_000);
+
+  it('builds draw-ready models from a sample of NIFs', async () => {
+    const paths = every(
+      vfs.list('meshes').filter((p) => p.endsWith('.nif')),
+      25,
+    );
+    let parts = 0;
+    for (const path of paths) {
+      const model = buildModel(parseNif(await vfs.read(path)));
+      for (const part of model.parts) {
+        parts++;
+        expect(part.vertices.length, path).toBe(part.vertexCount * part.layout.stride);
+        expect(Math.max(...part.indices), path).toBeLessThan(part.vertexCount);
+        expect([...part.world].every(Number.isFinite), path).toBe(true);
+        expect(Number.isFinite(part.radius), path).toBe(true);
+      }
+    }
+    expect(parts).toBeGreaterThan(500);
   }, 120_000);
 
   it('parses a sample of DDS textures', async () => {

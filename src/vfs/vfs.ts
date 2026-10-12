@@ -1,7 +1,12 @@
 // Virtual file system: loose files in Data/ always take precedence; after that the
 // archive loaded last wins. See docs/formats/load-order.md.
 
-import { BsaArchive, type BsaEntry } from '../formats/bsa/bsa.ts';
+import {
+  BsaArchive,
+  decodeBsaPayload,
+  type BsaEntry,
+  type BsaPayload,
+} from '../formats/bsa/bsa.ts';
 import {
   PLUGIN_HEADER_SIZE,
   parsePluginHeader,
@@ -224,10 +229,25 @@ export class Vfs {
   }
 
   async readFile(file: VfsFile): Promise<Uint8Array> {
-    if (file.kind === 'archive') return file.archive.archive.read(file.entry);
+    return decodeBsaPayload(await this.readFilePayload(file));
+  }
+
+  /**
+   * Reads a file's stored bytes without decompressing them (see `decodeBsaPayload`), so a
+   * worker can do the decompression. Throws VfsNotFoundError if the path does not exist.
+   */
+  async readPayload(path: string): Promise<BsaPayload> {
+    const file = this.resolve(path);
+    if (!file) throw new VfsNotFoundError(path);
+    return this.readFilePayload(file);
+  }
+
+  async readFilePayload(file: VfsFile): Promise<BsaPayload> {
+    if (file.kind === 'archive') return file.archive.archive.readPayload(file.entry);
     const source = await this.#folder.openDataFile(file.relativePath);
     try {
-      return await source.read(0, source.size);
+      const bytes = await source.read(0, source.size);
+      return { bytes, compressed: false, originalSize: bytes.length };
     } finally {
       await source.close?.();
     }

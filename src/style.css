@@ -133,6 +133,131 @@ body {
   align-items: center;
   gap: 28px;
   padding: clamp(64px, 12vh, 140px) 20px 48px;
+  /* The canvas behind the shell receives drags and wheel input wherever no panel is. */
+  pointer-events: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ash-dim) transparent;
+}
+
+.shell > :not(.title) {
+  pointer-events: auto;
+}
+
+/* With a 3D scene, the shell becomes a column on the left and the scene takes the rest. */
+body.has-scene .shell {
+  width: min(32rem, 100%);
+  align-items: stretch;
+  gap: 14px;
+  padding: 56px 20px 24px;
+}
+
+body.has-scene .title {
+  text-align: left;
+}
+
+body.has-scene .title h1 {
+  font-size: 2.4rem;
+  letter-spacing: 0.28em;
+}
+
+body.has-scene .subtitle {
+  justify-content: flex-start;
+  margin-top: 8px;
+  font-size: 0.7rem;
+}
+
+body.has-scene .subtitle::before {
+  display: none;
+}
+
+body.has-scene .log {
+  height: clamp(120px, 22vh, 220px);
+}
+
+body.has-scene .console,
+body.has-scene .panel,
+body.has-scene .panels {
+  width: 100%;
+}
+
+/* --- Model viewer -------------------------------------------------------- */
+
+.viewer-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ash);
+}
+
+.search {
+  display: block;
+  width: calc(100% - 32px);
+  margin: 12px 16px 8px;
+  padding: 8px 10px;
+  font: 13px var(--mono);
+  color: var(--bone);
+  background: rgb(0 0 0 / 0.35);
+  border: 1px solid var(--line);
+  outline: none;
+}
+
+.search:focus {
+  border-color: var(--line-strong);
+}
+
+.results {
+  max-height: 26vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: 0 8px;
+  list-style: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ash-dim) transparent;
+}
+
+button.result {
+  display: block;
+  width: 100%;
+  padding: 3px 8px;
+  text-align: left;
+  font: 12px/1.5 var(--mono);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ash);
+  background: none;
+  border: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+button.result::before,
+button.result::after {
+  content: none;
+}
+
+button.result:hover,
+button.result:focus-visible {
+  color: var(--bone);
+  background: rgb(205 174 110 / 0.1);
+  box-shadow: none;
+}
+
+.no-results {
+  padding: 3px 8px;
+  font-size: 12px;
+  color: var(--ash-dim);
+}
+
+.hint {
+  margin: 0;
+  padding: 8px 16px 12px;
+  font-size: 11px;
+  color: var(--ash-dim);
 }
 
 .title {

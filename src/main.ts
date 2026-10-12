@@ -1,9 +1,13 @@
 import './style.css';
+import { OrbitCamera } from './render/camera.ts';
 import { GpuUnavailableError, initGpu, trackCanvasSize, type GpuContext } from './render/gpu.ts';
 import { Renderer } from './render/renderer.ts';
 import { findCustomBackdrop } from './shell/custom-backdrop.ts';
+import { ModelViewer } from './shell/model-viewer.ts';
 import { Terminal } from './shell/terminal.ts';
 import { BrowserGameFolder } from './vfs/browser/browser-game-folder.ts';
+import { HttpGameFolder } from './vfs/browser/http-game-folder.ts';
+import type { GameFolder } from './vfs/game-folder.ts';
 import {
   forgetGameFolder,
   getStoredGameFolder,
@@ -39,8 +43,17 @@ const ui = {
   loadOrder: byId('load-order-list', HTMLOListElement),
   archiveTitle: byId('archive-title', HTMLElement),
   archives: byId('archive-list', HTMLOListElement),
+  shell: byId('shell', HTMLElement),
+  viewer: {
+    panel: byId('viewer', HTMLElement),
+    search: byId('model-search', HTMLInputElement),
+    results: byId('model-results', HTMLOListElement),
+    count: byId('viewer-count', HTMLElement),
+  },
   fatal: byId('fatal', HTMLDivElement),
 };
+
+let viewer: ModelViewer | undefined;
 
 const terminal = new Terminal(ui.log);
 const numberFormat = new Intl.NumberFormat('en-US');
@@ -156,11 +169,14 @@ async function useFolder(handle: FileSystemDirectoryHandle, isNewChoice: boolean
       ? `install folder ${handle.name} · data folder found`
       : `data folder ${handle.name} (without install folder)`,
   );
+  await mountGame(new BrowserGameFolder(resolved.data, resolved.root));
+}
 
+/** Builds the VFS from a game folder, reports it and hands it to the model viewer. */
+async function mountGame(folder: GameFolder): Promise<void> {
+  ui.status.textContent = 'mounting';
   const start = performance.now();
-  // TODO(M2): run the VFS in a worker pool once assets are loaded, so that
-  // decompression and parsing do not happen on the main thread.
-  const vfs = await Vfs.mount(new BrowserGameFolder(resolved.data, resolved.root));
+  const vfs = await Vfs.mount(folder);
   const elapsed = performance.now() - start;
   await currentVfs?.close();
   currentVfs = vfs;
@@ -186,11 +202,12 @@ async function useFolder(handle: FileSystemDirectoryHandle, isNewChoice: boolean
   showSummary(vfs);
   prompt(
     vfs.hasCreationClubList
-      ? 'Ready. Next milestone: rendering models and textures (M2).'
+      ? 'Ready. Search the model viewer for any mesh in the game.'
       : 'Select the install folder (the one containing Data) to load Creation Club content as well.',
     'pick',
   );
   ui.pick.textContent = 'change folder';
+  await viewer?.connect(vfs);
 }
 
 function run(action: () => Promise<void>): void {
@@ -219,6 +236,17 @@ async function setupGameFolder(): Promise<void> {
     const handle = await pickGameFolder();
     if (handle) await useFolder(handle, true);
   });
+
+  // Development: `?devdata` mounts the game data served by the Vite dev server.
+  if (
+    import.meta.env.DEV &&
+    new URLSearchParams(location.search).has('devdata') &&
+    (await HttpGameFolder.available())
+  ) {
+    terminal.log('vfs', 'dev game data from the Vite dev server');
+    run(() => mountGame(new HttpGameFolder()));
+    return;
+  }
 
   const stored = await getStoredGameFolder();
   switch (stored.status) {
@@ -270,7 +298,19 @@ async function main(): Promise<void> {
   terminal.log('gpu', `webgpu · ${describeGpu(gpu)} · ${gpu.format} · bc-textures ok`, 'ok');
 
   trackCanvasSize(ui.canvas, gpu.device);
-  startRenderLoop(new Renderer(gpu));
+  const renderer = new Renderer(gpu);
+  const camera = new OrbitCamera();
+  camera.attach(ui.canvas);
+  // Centre the scene in the part of the screen the shell column does not cover.
+  const updateLensShift = (): void => {
+    const wide = window.innerWidth >= 1000 && document.body.classList.contains('has-scene');
+    camera.lensShift = wide ? ui.shell.getBoundingClientRect().width / window.innerWidth : 0;
+  };
+  new ResizeObserver(updateLensShift).observe(ui.shell);
+  new MutationObserver(updateLensShift).observe(document.body, { attributes: true });
+  viewer = new ModelViewer(gpu.device, renderer, camera, terminal, ui.viewer);
+  if (import.meta.env.DEV) window.skyrimDev = { viewer };
+  startRenderLoop(renderer);
 
   const backdrop = await findCustomBackdrop();
   if (backdrop) {
