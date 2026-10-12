@@ -4,10 +4,11 @@
 
 import { parseNif, type NifFile } from '../formats/nif/nif.ts';
 import type { Renderer } from '../render/renderer.ts';
-import type { GpuModel } from '../render/scene-renderer.ts';
+import type { GpuModel, GpuWaterType, WaterFlow } from '../render/scene-renderer.ts';
 import { TextureCache } from '../render/texture-cache.ts';
 import type { Vfs } from '../vfs/vfs.ts';
 import { GameSettings } from '../world/game-settings.ts';
+import { parseWater, WaterFlag, type WaterType } from '../world/water.ts';
 import { ScriptEnvironment } from '../world/player-home.ts';
 import { RecordDatabase } from '../world/record-db.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
@@ -29,6 +30,8 @@ export class GameSession {
   readonly #models = new Map<string, Promise<GpuModel | undefined>>();
   #scripts: Promise<ScriptEnvironment> | undefined;
   #settings: Promise<GameSettings> | undefined;
+  readonly #waterTypes = new Map<string, Promise<GpuWaterType | undefined>>();
+  readonly #waterRecords = new Map<number, Promise<WaterType | undefined>>();
 
   constructor(device: GPUDevice, renderer: Renderer, vfs: Vfs, terminal: Terminal) {
     this.vfs = vfs;
@@ -71,6 +74,40 @@ export class GameSession {
     return entry;
   }
 
+  /**
+   * A water type (WATR) on the GPU, kept for the session. Rivers (WaterFlag.flowmap) drawn in
+   * a cell with a flow map get a version with that map; other water shares one.
+   */
+  async waterType(formId: number, flow?: WaterFlow): Promise<GpuWaterType | undefined> {
+    const type = await this.#waterRecord(formId);
+    if (!type) return undefined;
+    const flowing =
+      flow !== undefined && (type.flags & WaterFlag.flowmap) !== 0 && this.vfs.has(flow.texture);
+    const key = flowing ? `${String(formId)}@${flow.texture}` : String(formId);
+    let entry = this.#waterTypes.get(key);
+    if (!entry) {
+      entry = this.#renderer.scene
+        .createWaterType(type, this.textures, flowing ? flow : undefined)
+        .catch((error: unknown) => {
+          this.#terminal.log('water', describe(error), 'warn');
+          return undefined;
+        });
+      this.#waterTypes.set(key, entry);
+    }
+    return entry;
+  }
+
+  #waterRecord(formId: number): Promise<WaterType | undefined> {
+    let entry = this.#waterRecords.get(formId);
+    if (!entry) {
+      entry = this.db
+        .then((db) => db.get(formId))
+        .then((record) => (record?.type === 'WATR' ? parseWater(record) : undefined));
+      this.#waterRecords.set(formId, entry);
+    }
+    return entry;
+  }
+
   /** Game settings (GMST), read on first use. */
   settings(): Promise<GameSettings> {
     this.#settings ??= this.db.then((db) => GameSettings.read(db));
@@ -91,6 +128,8 @@ export class GameSession {
   dispose(): void {
     for (const entry of this.#models.values()) void entry.then((model) => model?.destroy());
     this.#models.clear();
+    for (const entry of this.#waterTypes.values()) void entry.then((type) => type?.destroy());
+    this.#waterTypes.clear();
     this.loader.dispose();
     void this.db.then((db) => db.close());
   }

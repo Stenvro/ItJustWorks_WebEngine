@@ -6,8 +6,10 @@ import {
   SceneRenderer,
   type GpuScene,
   type SceneLighting,
+  type WaterFrame,
 } from './scene-renderer.ts';
 import backdropShader from './shaders/backdrop.wgsl?raw';
+import depthResolveShader from './shaders/depth-resolve.wgsl?raw';
 import { HDR_FORMAT, PostProcessor } from './post.ts';
 import { SkyRenderer, type SkyFrame } from './sky.ts';
 import type { ImageSpace } from '../world/image-space.ts';
@@ -28,6 +30,8 @@ export interface SceneView {
   readonly terrain?: () => Iterable<GpuTerrainCell>;
   /** The sky behind everything (exteriors). */
   readonly sky?: () => SkyFrame | undefined;
+  /** Sky colours for water reflections and the weather's water tint. */
+  readonly water?: () => WaterFrame | undefined;
   /** Imagespace of the frame (eye adaptation, bloom, grading); none: the image as rendered. */
   readonly imageSpace?: () => ImageSpace | undefined;
   readonly camera: Camera;
@@ -42,12 +46,19 @@ interface RenderTargets {
   readonly height: number;
   readonly color: GPUTexture;
   readonly depth: GPUTexture;
+  /** Copies of the opaque scene for water: colour and depth (single sample). */
+  readonly sceneColor: GPUTexture;
+  readonly sceneDepth: GPUTexture;
+  readonly depthResolve: GPUBindGroup;
+  readonly waterInputs: GPUBindGroup;
 }
 
 /**
- * Renders one frame per call: the shell backdrop or the sky, then the terrain and scenes, in
- * one multisampled HDR pass with reversed-Z depth; then the imagespace's post-processing
- * into the canvas.
+ * Renders one frame per call, in HDR with 4× multisampling and reversed-Z depth:
+ * 1. the shell backdrop or the sky, the terrain and the opaque parts of the scenes;
+ * 2. (if there is water) copies of that image's colour and depth for the water shader;
+ * 3. water surfaces, then the blended parts back to front;
+ * 4. the imagespace's post-processing into the canvas.
  */
 export class Renderer {
   readonly scene: SceneRenderer;
@@ -60,6 +71,7 @@ export class Renderer {
   /** time, scale, height in CSS pixels, padding */
   readonly #backdropData = new Float32Array(4);
   readonly #backdropBindGroup: GPUBindGroup;
+  readonly #depthResolve: GPURenderPipeline;
   readonly #viewProjection = new Float32Array(16);
   #targets: RenderTargets | undefined;
   #view: SceneView | undefined;
@@ -92,6 +104,21 @@ export class Renderer {
       label: 'backdrop',
       layout: this.#backdrop.getBindGroupLayout(0),
       entries: [{ binding: 0, resource: { buffer: this.#backdropBuffer } }],
+    });
+    const resolveModule = device.createShaderModule({
+      label: 'depth-resolve',
+      code: depthResolveShader,
+    });
+    this.#depthResolve = device.createRenderPipeline({
+      label: 'depth-resolve',
+      layout: 'auto',
+      vertex: { module: resolveModule, entryPoint: 'vs_fullscreen' },
+      fragment: {
+        module: resolveModule,
+        entryPoint: 'fs_resolve',
+        targets: [{ format: 'r32float' }],
+      },
+      primitive: { topology: 'triangle-list' },
     });
   }
 
@@ -129,41 +156,80 @@ export class Renderer {
         this.#viewProjection,
         view.camera.position,
         view.lighting(view.camera),
+        timeSeconds,
       );
     }
 
     const sky = view?.sky?.();
+    const scenes = view ? [...view.scenes()] : [];
+    const hdrView = this.post.hdrView(targets.width, targets.height);
+    const colorView = targets.color.createView();
+    const depthView = targets.depth.createView();
     const encoder = device.createCommandEncoder({ label: 'frame' });
-    const pass = encoder.beginRenderPass({
-      label: 'main',
+
+    const opaque = encoder.beginRenderPass({
+      label: 'opaque',
       colorAttachments: [
         {
-          view: targets.color.createView(),
-          resolveTarget: this.post.hdrView(targets.width, targets.height),
+          view: colorView,
+          resolveTarget: hdrView,
           clearValue: sky ? SkyRenderer.clearColor(sky.state) : { r: 0, g: 0, b: 0, a: 1 },
           loadOp: 'clear',
-          storeOp: 'discard',
+          storeOp: view ? 'store' : 'discard',
         },
       ],
       depthStencilAttachment: {
-        view: targets.depth.createView(),
+        view: depthView,
         depthClearValue: 0, // reversed Z: far = 0
         depthLoadOp: 'clear',
-        depthStoreOp: 'discard',
+        depthStoreOp: view ? 'store' : 'discard',
       },
     });
     if (showBackdrop) {
-      pass.setPipeline(this.#backdrop);
-      pass.setBindGroup(0, this.#backdropBindGroup);
-      pass.draw(3);
+      opaque.setPipeline(this.#backdrop);
+      opaque.setBindGroup(0, this.#backdropBindGroup);
+      opaque.draw(3);
     }
     if (view) {
-      if (sky) this.sky.draw(pass, this.scene.frameBindGroup, sky);
+      if (sky) this.sky.draw(opaque, this.scene.frameBindGroup, sky);
       const terrain = view.terrain?.();
-      if (terrain) this.terrain.draw(pass, this.scene.frameBindGroup, terrain);
-      this.scene.draw(pass, view.scenes(), view.camera.position);
+      if (terrain) this.terrain.draw(opaque, this.scene.frameBindGroup, terrain);
+      this.scene.drawOpaque(opaque, scenes);
     }
-    pass.end();
+    opaque.end();
+
+    if (view) {
+      const water = this.scene.hasWater(scenes);
+      if (water) {
+        encoder.copyTextureToTexture(
+          { texture: this.post.hdrTexture(targets.width, targets.height) },
+          { texture: targets.sceneColor },
+          [targets.width, targets.height],
+        );
+        const resolve = encoder.beginRenderPass({
+          label: 'depth-resolve',
+          colorAttachments: [
+            { view: targets.sceneDepth.createView(), loadOp: 'clear', storeOp: 'store' },
+          ],
+        });
+        resolve.setPipeline(this.#depthResolve);
+        resolve.setBindGroup(0, targets.depthResolve);
+        resolve.draw(3);
+        resolve.end();
+        this.scene.updateWaterFrame(view.water?.(), targets.width, targets.height);
+      }
+      const blended = encoder.beginRenderPass({
+        label: 'water-and-blended',
+        colorAttachments: [
+          { view: colorView, resolveTarget: hdrView, loadOp: 'load', storeOp: 'discard' },
+        ],
+        depthStencilAttachment: { view: depthView, depthLoadOp: 'load', depthStoreOp: 'discard' },
+      });
+      if (water) this.scene.drawWater(blended, scenes, targets.waterInputs);
+      this.scene.drawTransparent(blended, scenes, view.camera.position);
+      blended.end();
+    }
+
     this.post.run(
       encoder,
       canvasTexture.createView(),
@@ -177,10 +243,34 @@ export class Renderer {
 
   #ensureTargets(width: number, height: number): RenderTargets {
     if (this.#targets?.width === width && this.#targets.height === height) return this.#targets;
-    this.#targets?.color.destroy();
-    this.#targets?.depth.destroy();
+    for (const texture of [
+      this.#targets?.color,
+      this.#targets?.depth,
+      this.#targets?.sceneColor,
+      this.#targets?.sceneDepth,
+    ]) {
+      texture?.destroy();
+    }
     const { device } = this.#gpu;
-    const usage = GPUTextureUsage.RENDER_ATTACHMENT;
+    const depth = device.createTexture({
+      label: 'depth',
+      size: [width, height],
+      format: DEPTH_FORMAT,
+      sampleCount: SAMPLE_COUNT,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    const sceneColor = device.createTexture({
+      label: 'scene-color',
+      size: [width, height],
+      format: HDR_FORMAT,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    const sceneDepth = device.createTexture({
+      label: 'scene-depth',
+      size: [width, height],
+      format: 'r32float',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
     this.#targets = {
       width,
       height,
@@ -189,15 +279,17 @@ export class Renderer {
         size: [width, height],
         format: HDR_FORMAT,
         sampleCount: SAMPLE_COUNT,
-        usage,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
       }),
-      depth: device.createTexture({
-        label: 'depth',
-        size: [width, height],
-        format: DEPTH_FORMAT,
-        sampleCount: SAMPLE_COUNT,
-        usage,
+      depth,
+      sceneColor,
+      sceneDepth,
+      depthResolve: device.createBindGroup({
+        label: 'depth-resolve',
+        layout: this.#depthResolve.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: depth.createView() }],
       }),
+      waterInputs: this.scene.waterInputs(sceneColor.createView(), sceneDepth.createView()),
     };
     return this.#targets;
   }

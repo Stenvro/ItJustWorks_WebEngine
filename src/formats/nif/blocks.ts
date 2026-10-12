@@ -8,6 +8,7 @@ import type {
   BSEffectShaderPropertyBlock,
   BSLightingShaderPropertyBlock,
   BSSkyShaderPropertyBlock,
+  BSWaterShaderPropertyBlock,
   BSShaderTextureSetBlock,
   BSTriShapeBlock,
   IntegerExtraDataBlock,
@@ -427,6 +428,18 @@ const parseSkyShader: BlockParser = (reader, context): BSSkyShaderPropertyBlock 
   skyObjectType: reader.u32(),
 });
 
+const parseWaterShader: BlockParser = (reader, context): BSWaterShaderPropertyBlock => ({
+  ...readObjectNet(reader, context),
+  kind: 'water-shader',
+  flags1: reader.u32(),
+  flags2: reader.u32(),
+  uvOffset: readVec2(reader),
+  uvScale: readVec2(reader),
+  waterFlags: reader.u8(),
+  waterDirection: reader.u8(),
+  unknown: reader.u16(),
+});
+
 const parseTextureSet: BlockParser = (reader): BSShaderTextureSetBlock => {
   const start = reader.offset;
   const count = reader.i32();
@@ -605,6 +618,7 @@ export const BLOCK_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string, B
   ['BSLightingShaderProperty', parseLightingShader],
   ['BSEffectShaderProperty', parseEffectShader],
   ['BSSkyShaderProperty', parseSkyShader],
+  ['BSWaterShaderProperty', parseWaterShader],
   ['BSShaderTextureSet', parseTextureSet],
   ['NiAlphaProperty', parseAlpha],
   ['NiIntegerExtraData', parseIntegerExtraData],

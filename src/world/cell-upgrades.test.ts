@@ -53,6 +53,9 @@ const data: CellData = {
     inheritFlags: 0,
     lightingTemplate: undefined,
     imageSpace: undefined,
+    hasWater: false,
+    waterHeight: undefined,
+    waterType: undefined,
   },
   lighting: undefined,
   objects: [...references.keys()].map((reference) => ({
@@ -61,6 +64,7 @@ const data: CellData = {
     editorId: '',
     model: 'x.nif',
     world: identity(),
+    water: undefined,
   })),
   lights: [],
   references,

@@ -26,6 +26,8 @@ export interface CellObject {
   readonly editorId: string;
   readonly model: string;
   readonly world: Mat4;
+  /** Water activators (ACTI WNAM): the type of the model's water surfaces. */
+  readonly water: number | undefined;
 }
 
 export interface CellLight {
@@ -65,6 +67,8 @@ export interface CellData {
  * are clockwise (compass heading for Z), composed X·Y·Z like Gamebryo's
  * NiMatrix3::FromEulerAnglesXYZ.
  */
+const nonZeroId = (id: number | undefined): number | undefined => (id === 0 ? undefined : id);
+
 export function referenceMatrix(ref: PlacedReference): Mat4 {
   const [rx, ry, rz] = ref.rotation;
   const axis = (cos: number, sin: number, a: number, b: number): Mat4 => {
@@ -211,6 +215,7 @@ export async function loadCellData(
       editorId: base.editorId ?? '',
       model,
       world: referenceMatrix(ref),
+      water: base.type === 'ACTI' ? nonZeroId(base.formIdField('WNAM')) : undefined,
     });
   }
 

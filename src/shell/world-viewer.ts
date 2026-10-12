@@ -1,12 +1,22 @@
 // Exterior worldspaces: streams the cells around the camera (landscape, objects and lights)
 // in and out, like the engine's loaded grid (uGridsToLoad 5), under the sky and weather of
 // the worldspace's climate and regions.
-// TODO(M4): distant LOD, water.
+// TODO(M4): distant LOD (terrain, objects, trees, LOD water).
 
 import { FlyCamera } from '../render/fly-camera.ts';
+import { identity } from '../render/math.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
-import type { GpuScene, ModelInstance, SceneLighting } from '../render/scene-renderer.ts';
+import type {
+  GpuModel,
+  GpuScene,
+  ModelInstance,
+  SceneLighting,
+  WaterFlow,
+  WaterFrame,
+} from '../render/scene-renderer.ts';
+import { waterPlane } from '../render/water-data.ts';
+import { cellWater, DEFAULT_WATER } from '../world/water.ts';
 import type { GpuTerrainCell, TerrainTexturePaths } from '../render/terrain.ts';
 import {
   buildTerrainCell,
@@ -43,6 +53,8 @@ interface LoadedCell {
   readonly y: number;
   terrain: GpuTerrainCell | undefined;
   scene: GpuScene | undefined;
+  /** Models made for this cell only (its water plane). */
+  owned: GpuModel[];
   lights: readonly CellLight[];
   ready: boolean;
 }
@@ -61,6 +73,8 @@ const NO_SKY: Omit<SceneLighting, 'lights'> = {
   ],
   fog: { nearColor: [0, 0, 0], farColor: [0, 0, 0], near: 0, far: 1e9, power: 1, max: 0 },
 };
+
+const IDENTITY = identity();
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -157,6 +171,9 @@ export class WorldViewer {
     }
     this.#world = world;
     this.#sky = sky;
+    this.#renderer.scene.defaultWater = await session.waterType(
+      world.waterWorld.water ?? DEFAULT_WATER,
+    );
     const [x, y] = cell ?? world.busiestCell() ?? [0, 0];
     const land = await world.land(x, y);
     const ground = land?.heights[Math.floor(LAND_GRID / 2) * LAND_GRID + Math.floor(LAND_GRID / 2)];
@@ -180,6 +197,7 @@ export class WorldViewer {
       camera: this.#camera,
       lighting: (camera) => this.#lighting(camera.position),
       sky: () => this.#sky?.skyFrame(),
+      water: () => this.#waterFrame(),
       imageSpace: () => this.#sky?.imageSpace(),
       backdrop: false,
     });
@@ -248,6 +266,7 @@ export class WorldViewer {
         y,
         terrain: undefined,
         scene: undefined,
+        owned: [],
         lights: [],
         ready: false,
       };
@@ -296,11 +315,37 @@ export class WorldViewer {
       const isEnabled = enabledReferences(data, toggles, gameStartSelection(toggles));
       const objects = data.objects.filter((object) => isEnabled(object.reference));
       const models = await Promise.all(objects.map((object) => session.model(object.model)));
+      // Rivers move along the flow map of the cell they lie in.
+      const flow = this.#flowMap(world, cell.x, cell.y);
+      const waterTypes = await Promise.all(
+        objects.map((object) =>
+          object.water === undefined
+            ? Promise.resolve(undefined)
+            : session.waterType(object.water, flow),
+        ),
+      );
       const instances: ModelInstance[] = [];
       objects.forEach((object, i) => {
         const model = models[i];
-        if (model) instances.push({ model, world: object.world });
+        const water = waterTypes[i];
+        if (model) instances.push({ model, world: object.world, ...(water && { water }) });
       });
+      // The cell's water plane (lakes, rivers and the sea are cell water at a height).
+      const water = cellWater(data.cell, {
+        height: world.waterWorld.defaultWaterHeight,
+        type: world.waterWorld.water,
+      });
+      if (water) {
+        const x0 = cell.x * CELL_SIZE;
+        const y0 = cell.y * CELL_SIZE;
+        const plane = await this.#renderer.scene.createModel(
+          waterPlane(x0, y0, x0 + CELL_SIZE, y0 + CELL_SIZE, water.height),
+          session.textures,
+        );
+        cell.owned.push(plane);
+        const type = await session.waterType(water.type ?? DEFAULT_WATER, flow);
+        instances.push({ model: plane, world: IDENTITY, ...(type && { water: type }) });
+      }
       scene = this.#renderer.scene.createScene(instances);
       lights = data.lights.filter((light) => isEnabled(light.reference));
     }
@@ -331,6 +376,7 @@ export class WorldViewer {
   #free(cell: LoadedCell): void {
     cell.terrain?.destroy();
     cell.scene?.destroy();
+    for (const model of cell.owned.splice(0)) model.destroy();
     cell.terrain = undefined;
     cell.scene = undefined;
     cell.ready = false;
@@ -342,6 +388,29 @@ export class WorldViewer {
 
   *#readyTerrain(): Iterable<GpuTerrainCell> {
     for (const cell of this.#cells.values()) if (cell.ready && cell.terrain) yield cell.terrain;
+  }
+
+  /** The flow map of a cell (textures\water\<the world's plugin>\flow.x.y.dds). */
+  #flowMap(world: Worldspace, x: number, y: number): WaterFlow {
+    const plugin = world.db.locateAll(world.waterWorld.formId)[0]?.plugin.entry.name ?? '';
+    return {
+      texture: `textures\\water\\${plugin.toLowerCase()}\\flow.${String(x)}.${String(y)}.dds`,
+      origin: [x * CELL_SIZE, y * CELL_SIZE],
+    };
+  }
+
+  /** Sky colours and the weather's water tint for the water shader. */
+  #waterFrame(): WaterFrame | undefined {
+    const frame = this.#sky?.skyFrame();
+    if (!frame) return undefined;
+    const { state } = frame;
+    return {
+      horizon: state.horizon,
+      lower: state.skyLower,
+      upper: state.skyUpper,
+      multiplier: state.waterMultiplier,
+      profile: frame.sky.profile,
+    };
   }
 
   /** The sky's light (time of day and weather) plus the nearest point lights. */

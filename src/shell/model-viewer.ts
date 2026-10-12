@@ -6,10 +6,12 @@ import { OrbitCamera, type OrbitView } from '../render/camera.ts';
 import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
-import type { GpuModel, GpuScene, ModelInstance } from '../render/scene-renderer.ts';
+import type { GpuModel, GpuScene, GpuWaterType, ModelInstance } from '../render/scene-renderer.ts';
 import { studioLighting } from '../render/studio-lighting.ts';
 import { cellSceneLighting } from '../world/cell-lighting.ts';
 import { loadCellData, type CellData } from '../world/cell-loader.ts';
+import { cellWater, DEFAULT_WATER } from '../world/water.ts';
+import { waterPlane } from '../render/water-data.ts';
 import {
   DEFAULT_INTERIOR_IMAGE_SPACE,
   parseImageSpace,
@@ -79,7 +81,14 @@ interface CellView {
   readonly label: string;
   /** The cell's imagespace (XCIM, else the default interior one). */
   readonly imageSpace: ImageSpace | undefined;
+  /** Water types of water activators, by WATR form id. */
+  readonly waterTypes: ReadonlyMap<number, GpuWaterType | undefined>;
+  /** The cell's water level (XCLW), drawn as a plane under everything, with its type. */
+  readonly waterPlane: { model: GpuModel; type: GpuWaterType | undefined } | undefined;
 }
+
+/** Half the width of an interior's water plane: it lies under the whole cell. */
+const INTERIOR_WATER_EXTENT = 50_000;
 
 const numberFormat = new Intl.NumberFormat('en-US');
 const hex = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
@@ -247,7 +256,7 @@ export class ModelViewer {
     for (const problem of loaded.problems) this.#terminal.log('nif', problem, 'warn');
     for (const skipped of loaded.model.skipped) this.#terminal.log('nif', skipped, 'warn');
     for (const failure of textures.takeFailures()) this.#terminal.log('dds', failure, 'warn');
-    this.#cell = undefined;
+    this.#releaseCell();
     this.#renderUpgrades();
     const triangles = loaded.model.parts.reduce((sum, part) => sum + part.indices.length / 3, 0);
     this.#terminal.log(
@@ -283,7 +292,14 @@ export class ModelViewer {
     // Load every model that can appear, so switching upgrades is instant, and find what the
     // player can buy or build here.
     const paths = [...new Set(data.objects.map((object) => object.model))];
-    const [models, actions, imageSpace] = await Promise.all([
+    const session = this.#session;
+    const waterIds = [
+      ...new Set(
+        data.objects.flatMap((object) => (object.water === undefined ? [] : [object.water])),
+      ),
+    ];
+    const water = cellWater(data.cell);
+    const [models, actions, imageSpace, waterTypes, waterPlaneType] = await Promise.all([
       Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)).then(
         (entries) => new Map(entries),
       ),
@@ -291,7 +307,28 @@ export class ModelViewer {
       db
         .get(data.cell.imageSpace ?? DEFAULT_INTERIOR_IMAGE_SPACE)
         .then((record) => (record?.type === 'IMGS' ? parseImageSpace(record) : undefined)),
+      Promise.all(waterIds.map(async (id) => [id, await session?.waterType(id)] as const)).then(
+        (entries) => new Map(entries),
+      ),
+      water ? session?.waterType(water.type ?? DEFAULT_WATER) : undefined,
+      session?.waterType(DEFAULT_WATER).then((type) => {
+        this.#renderer.scene.defaultWater = type;
+      }),
     ]);
+    let waterPlaneModel: GpuModel | undefined;
+    if (water && session) {
+      const [x, y] = data.entrance;
+      waterPlaneModel = await this.#renderer.scene.createModel(
+        waterPlane(
+          x - INTERIOR_WATER_EXTENT,
+          y - INTERIOR_WATER_EXTENT,
+          x + INTERIOR_WATER_EXTENT,
+          y + INTERIOR_WATER_EXTENT,
+          water.height,
+        ),
+        session.textures,
+      );
+    }
     if (token !== this.#loadToken) return;
     for (const failure of this.#session?.textures.takeFailures() ?? []) {
       this.#terminal.log('dds', failure, 'warn');
@@ -302,6 +339,7 @@ export class ModelViewer {
     const choices = fullyUpgraded(actions, NEW_GAME);
     const scripted = await this.#playActions(actions, choices);
     if (token !== this.#loadToken) return;
+    const previousWater = this.#cell?.waterPlane?.model;
     this.#cell = {
       data,
       toggles,
@@ -312,6 +350,8 @@ export class ModelViewer {
       models,
       label,
       imageSpace,
+      waterTypes,
+      waterPlane: waterPlaneModel && { model: waterPlaneModel, type: waterPlaneType },
     };
     const [x, y, z] = data.entrance;
     this.#fly.position = [x, y, z + EYE_HEIGHT];
@@ -328,6 +368,7 @@ export class ModelViewer {
 
     this.#renderUpgrades();
     const visible = this.#applyCellSelection();
+    previousWater?.destroy();
     const what = [
       actions.purchases.length > 0 ? `${String(actions.purchases.length)} purchases` : '',
       actions.house ? 'HearthFire house' : '',
@@ -389,7 +430,12 @@ export class ModelViewer {
       if (!isEnabled(object.reference)) continue;
       if (this.#hidden?.test(object.model)) continue;
       const model = cell.models.get(object.model);
-      if (model) instances.push({ model, world: object.world });
+      const water = object.water === undefined ? undefined : cell.waterTypes.get(object.water);
+      if (model) instances.push({ model, world: object.world, ...(water && { water }) });
+    }
+    if (cell.waterPlane) {
+      const { model, type } = cell.waterPlane;
+      instances.push({ model, world: identity(), ...(type && { water: type }) });
     }
     const scene = this.#renderer.scene.createScene(instances);
     const lighting = cellSceneLighting(cell.data, isEnabled);
@@ -725,12 +771,19 @@ export class ModelViewer {
     document.body.classList.add('has-scene');
   }
 
+  /** Forgets the shown cell and frees what was made for it. */
+  #releaseCell(): void {
+    const plane = this.#cell?.waterPlane?.model;
+    this.#cell = undefined;
+    plane?.destroy();
+  }
+
   #reset(): void {
     this.#loadToken++;
     this.#renderer.setView(undefined);
     this.#scene?.destroy();
     this.#scene = undefined;
-    this.#cell = undefined;
+    this.#releaseCell();
     this.#meshModel?.destroy();
     this.#meshModel = undefined;
     this.#db = undefined;
@@ -743,7 +796,7 @@ export class ModelViewer {
     this.#detachControls = undefined;
     this.#scene?.destroy();
     this.#scene = undefined;
-    this.#cell = undefined;
+    this.#releaseCell();
     this.#meshModel?.destroy();
     this.#meshModel = undefined;
     this.#ui.upgrades.hidden = true;

@@ -111,11 +111,18 @@ export interface CellRecord {
   readonly lightingTemplate: number | undefined;
   /** XCIM: the interior's imagespace (IMGS). */
   readonly imageSpace: number | undefined;
+  /** DATA flag 0x2: the cell has a water plane. */
+  readonly hasWater: boolean;
+  /** XCLW as stored (FLT_MAX: the worldspace's default). */
+  readonly waterHeight: number | undefined;
+  /** XCWT: the cell's water type (WATR). */
+  readonly waterType: number | undefined;
 }
 
+const nonZero = (id: number | undefined): number | undefined => (id === 0 ? undefined : id);
+
 function cellImageSpace(record: GameRecord): number | undefined {
-  const id = record.formIdField('XCIM');
-  return id === 0 ? undefined : id;
+  return nonZero(record.formIdField('XCIM'));
 }
 
 export function parseCell(record: GameRecord): CellRecord {
@@ -138,6 +145,9 @@ export function parseCell(record: GameRecord): CellRecord {
     inheritFlags,
     lightingTemplate: ltmp === 0 ? undefined : ltmp,
     imageSpace: cellImageSpace(record),
+    hasWater: ((data?.[0] ?? 0) & 0x2) !== 0,
+    waterHeight: record.fields.f32('XCLW'),
+    waterType: nonZero(record.formIdField('XCWT')),
   };
 }
 

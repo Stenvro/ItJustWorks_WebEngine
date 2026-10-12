@@ -130,6 +130,11 @@ export class PostProcessor {
     return this.#ensureTargets(width, height).hdr.createView();
   }
 
+  /** The resolved scene texture (copied for the water shader). */
+  hdrTexture(width: number, height: number): GPUTexture {
+    return this.#ensureTargets(width, height).hdr;
+  }
+
   /** Starts eye adaptation over (a new scene). */
   resetAdaptation(): void {
     this.#reset = true;
@@ -227,7 +232,10 @@ export class PostProcessor {
         label,
         size: [Math.max(1, w), Math.max(1, h)],
         format: HDR_FORMAT,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        usage:
+          GPUTextureUsage.RENDER_ATTACHMENT |
+          GPUTextureUsage.TEXTURE_BINDING |
+          GPUTextureUsage.COPY_SRC,
       });
     const hdr = texture('hdr', width, height);
     const bloomA = texture(

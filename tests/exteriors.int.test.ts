@@ -4,8 +4,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { SkyObjectType } from '../src/formats/nif/types.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
+import { buildModel } from '../src/render/model-data.ts';
 import { atmosphereProfile, skyShapes } from '../src/render/sky-data.ts';
 import { buildTerrainCell } from '../src/render/terrain-data.ts';
+import { parseCell } from '../src/world/cell-records.ts';
 import { landTexture } from '../src/world/land.ts';
 import { RecordDatabase, type GameRecord } from '../src/world/record-db.ts';
 import { skyState } from '../src/world/sky-state.ts';
@@ -15,6 +17,7 @@ import {
   parseRegionWeather,
   parseWeather,
 } from '../src/world/weather.ts';
+import { cellWater, parseWater } from '../src/world/water.ts';
 import { ParentUse, Worldspace } from '../src/world/worldspace.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
@@ -129,6 +132,37 @@ describe.skipIf(!hasGamedata())('exteriors on the local game data', () => {
     expect(profile[0]).toBeGreaterThan(0.9);
     expect(profile[profile.length - 2]).toBeGreaterThan(0.9);
   });
+
+  it('reads every water type with its noise textures', async () => {
+    for (const id of db.formIdsOfType('WATR')) {
+      const record = await db.get(id);
+      if (!record || record.deleted) continue;
+      const type = parseWater(record);
+      expect(Number.isFinite(type.fogFar), type.editorId).toBe(true);
+      for (const texture of type.noiseTextures) {
+        if (texture !== '') expect(vfs.has(texture), `${type.editorId}: ${texture}`).toBe(true);
+      }
+    }
+  });
+
+  it('draws water meshes with the water shader', async () => {
+    const model = buildModel(parseNif(await vfs.read('meshes\\water\\water1024.nif')));
+    expect(model.parts.map((part) => part.material?.kind)).toEqual(['water']);
+    expect(model.skipped).toEqual([]);
+  });
+
+  it('finds the White River as cell water east of Whiterun', async () => {
+    const tamriel = await Worldspace.open(db, await worldId('Tamriel'));
+    const id = await tamriel.cell(7, -4);
+    const record = id === undefined ? undefined : await db.get(id);
+    if (!record) throw new Error('no cell 7,-4');
+    const water = cellWater(parseCell(record), {
+      height: tamriel.waterWorld.defaultWaterHeight,
+      type: tamriel.waterWorld.water,
+    });
+    expect(water?.height).toBe(-4700);
+    expect(vfs.has('textures\\water\\skyrim.esm\\flow.7.-4.dds')).toBe(true);
+  }, 30_000);
 
   it('uses the world default where a cell sets no water height', async () => {
     const tamriel = await Worldspace.open(db, await worldId('Tamriel'));

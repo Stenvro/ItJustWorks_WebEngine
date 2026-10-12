@@ -128,7 +128,9 @@ for (const cell of cells) {
       const paths =
         material.kind === 'lighting'
           ? material.textures
-          : [material.sourceTexture, material.greyscaleTexture];
+          : material.kind === 'effect'
+            ? [material.sourceTexture, material.greyscaleTexture]
+            : []; // water takes its textures from its WATR type
       for (const texture of paths) {
         if (texture === '') continue;
         const problem = await checkTexture(texture);

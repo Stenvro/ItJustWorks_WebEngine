@@ -170,6 +170,31 @@ export interface BSSkyShaderPropertyBlock extends NiObjectNet {
   readonly skyObjectType: number;
 }
 
+/** WaterShaderPropertyFlags (nif.xml). */
+export const WaterShaderFlag = {
+  displacement: 0x1,
+  lod: 0x2,
+  depth: 0x4,
+  actorInWater: 0x8,
+  actorInWaterIsMoving: 0x10,
+  underwater: 0x20,
+  reflections: 0x40,
+  refractions: 0x80,
+} as const;
+
+/** BSWaterShaderProperty: water surfaces placed as meshes (ponds, rivers, troughs). */
+export interface BSWaterShaderPropertyBlock extends NiObjectNet {
+  readonly kind: 'water-shader';
+  readonly flags1: number;
+  readonly flags2: number;
+  readonly uvOffset: readonly [number, number];
+  readonly uvScale: readonly [number, number];
+  /** WaterShaderFlag bits. */
+  readonly waterFlags: number;
+  readonly waterDirection: number;
+  readonly unknown: number;
+}
+
 export interface BSShaderTextureSetBlock {
   readonly kind: 'texture-set';
   readonly textures: readonly string[];
@@ -244,6 +269,7 @@ export type NifBlock =
   | BSLightingShaderPropertyBlock
   | BSEffectShaderPropertyBlock
   | BSSkyShaderPropertyBlock
+  | BSWaterShaderPropertyBlock
   | BSShaderTextureSetBlock
   | NiAlphaPropertyBlock
   | IntegerExtraDataBlock
