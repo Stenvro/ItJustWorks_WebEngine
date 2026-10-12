@@ -11,7 +11,15 @@ import { studioLighting } from '../render/studio-lighting.ts';
 import { TextureCache } from '../render/texture-cache.ts';
 import type { Vfs } from '../vfs/vfs.ts';
 import { cellSceneLighting } from '../world/cell-lighting.ts';
-import { loadCellData } from '../world/cell-loader.ts';
+import { loadCellData, type CellData } from '../world/cell-loader.ts';
+import {
+  allUpgradesSelection,
+  enabledReferences,
+  findUpgrades,
+  gameStartSelection,
+  toggleUpgrade,
+  type CellUpgrade,
+} from '../world/cell-upgrades.ts';
 import { RecordDatabase, type InteriorCell } from '../world/record-db.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
 import type { Terminal } from './terminal.ts';
@@ -26,8 +34,8 @@ export interface SearchElements {
 export interface ViewerElements {
   readonly meshes: SearchElements;
   readonly cells: SearchElements;
-  /** Cells: show every enable parent switched on (all upgrades). */
-  readonly allUpgrades: HTMLInputElement;
+  /** Cells: container for the upgrade toggles of the cell on screen. */
+  readonly upgrades: HTMLElement;
 }
 
 /** The main menu logo meshes (Anniversary Edition first); they face along the Y axis. */
@@ -46,6 +54,14 @@ const MODEL_VIEW: OrbitView = { up: 'z', yaw: 0.6, pitch: 0.3, idleSpin: 10 };
 const MAX_RESULTS = 80;
 /** Camera height above the floor when entering a cell (≈ 1.7 m). */
 const EYE_HEIGHT = 120;
+
+interface CellView {
+  readonly data: CellData;
+  readonly upgrades: readonly CellUpgrade[];
+  selection: Set<number>;
+  readonly models: ReadonlyMap<string, GpuModel | undefined>;
+  readonly label: string;
+}
 
 const numberFormat = new Intl.NumberFormat('en-US');
 const hex = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
@@ -119,8 +135,8 @@ export class ModelViewer {
   #scene: GpuScene | undefined;
   /** Guards against a slow load finishing after a newer one. */
   #loadToken = 0;
-  /** The cell on screen (to reload it when the upgrade toggle changes). */
-  #currentCell: number | undefined;
+  /** The cell on screen, with everything needed to switch upgrades instantly. */
+  #cell: CellView | undefined;
 
   constructor(
     device: GPUDevice,
@@ -144,9 +160,6 @@ export class ModelViewer {
     });
     ui.cells.search.addEventListener('input', () => {
       this.#showCellResults();
-    });
-    ui.allUpgrades.addEventListener('change', () => {
-      if (this.#currentCell !== undefined) this.#run(this.showCell(this.#currentCell));
     });
     ui.cells.search.addEventListener('keydown', (event) => {
       const first = this.#cellMatches()[0];
@@ -230,7 +243,8 @@ export class ModelViewer {
     for (const problem of loaded.problems) this.#terminal.log('nif', problem, 'warn');
     for (const skipped of loaded.model.skipped) this.#terminal.log('nif', skipped, 'warn');
     for (const failure of textures.takeFailures()) this.#terminal.log('dds', failure, 'warn');
-    this.#currentCell = undefined;
+    this.#cell = undefined;
+    this.#renderUpgrades();
     const triangles = loaded.model.parts.reduce((sum, part) => sum + part.indices.length / 3, 0);
     this.#terminal.log(
       'nif',
@@ -258,37 +272,22 @@ export class ModelViewer {
     if (!db) return;
     const token = ++this.#loadToken;
     const start = performance.now();
-    const enableState = this.#ui.allUpgrades.checked ? 'all-enabled' : 'game-start';
-    const data = await loadCellData(db, formId, { enableState });
+    const data = await loadCellData(db, formId);
     const label = `${data.cell.editorId}${data.cell.name ? ` "${data.cell.name}"` : ''}`;
-    this.#terminal.log(
-      'cell',
-      `${label} ${hex(formId)} · ${data.objects.length} objects · ${data.lights.length} lights`,
-    );
     for (const skipped of data.skipped) this.#terminal.log('cell', skipped, 'warn');
 
+    // Load every model that can appear, so switching upgrades is instant.
     const paths = [...new Set(data.objects.map((object) => object.model))];
     const models = new Map(
       await Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)),
     );
     if (token !== this.#loadToken) return;
-    for (const failure of this.#textures?.takeFailures() ?? [])
+    for (const failure of this.#textures?.takeFailures() ?? []) {
       this.#terminal.log('dds', failure, 'warn');
-
-    const instances: ModelInstance[] = [];
-    for (const object of data.objects) {
-      const model = models.get(object.model);
-      if (model) instances.push({ model, world: object.world });
     }
-    const scene = this.#renderer.scene.createScene(instances);
-    const draws = scene.draws.length;
-    this.#terminal.log(
-      'cell',
-      `${label} · ${instances.length} instances of ${models.size} models · ${numberFormat.format(draws)} draws · ` +
-        `${(performance.now() - start).toFixed(0)} ms`,
-      'ok',
-    );
 
+    const upgrades = findUpgrades(data);
+    this.#cell = { data, upgrades, selection: gameStartSelection(upgrades), models, label };
     const [x, y, z] = data.entrance;
     this.#fly.position = [x, y, z + EYE_HEIGHT];
     const centre = data.objects.reduce<[number, number, number]>(
@@ -301,13 +300,114 @@ export class ModelViewer {
     );
     const count = Math.max(1, data.objects.length);
     this.#fly.lookAtPoint([centre[0] / count, centre[1] / count, z + EYE_HEIGHT]);
-    const lighting = cellSceneLighting(data);
-    this.#currentCell = formId;
-    this.#present(scene, undefined, { camera: 'fly', lighting });
+
+    this.#renderUpgrades();
+    const visible = this.#applyCellSelection();
+    this.#terminal.log(
+      'cell',
+      `${label} ${hex(formId)} · ${visible} of ${data.objects.length} objects shown · ` +
+        `${models.size} models · ${upgrades.length} upgrades · ${(performance.now() - start).toFixed(0)} ms`,
+      'ok',
+    );
     this.#terminal.log(
       'cell',
       'click the scene to look around · WASD to move · shift to run · esc to release',
     );
+  }
+
+  /** Rebuilds the cell scene for the current upgrade selection; returns the object count. */
+  #applyCellSelection(): number {
+    const cell = this.#cell;
+    if (!cell) return 0;
+    const isEnabled = enabledReferences(cell.data, cell.upgrades, cell.selection);
+    const instances: ModelInstance[] = [];
+    for (const object of cell.data.objects) {
+      if (!isEnabled(object.reference)) continue;
+      const model = cell.models.get(object.model);
+      if (model) instances.push({ model, world: object.world });
+    }
+    const scene = this.#renderer.scene.createScene(instances);
+    this.#present(scene, undefined, {
+      camera: 'fly',
+      lighting: cellSceneLighting(cell.data, isEnabled),
+    });
+    return instances.length;
+  }
+
+  /** One checkbox per upgrade, plus "game start" and "all" presets. */
+  #renderUpgrades(): void {
+    const cell = this.#cell;
+    const container = this.#ui.upgrades;
+    if (!cell || cell.upgrades.length === 0) {
+      container.hidden = true;
+      container.replaceChildren();
+      return;
+    }
+    const preset = (text: string, selection: () => Set<number>): HTMLButtonElement => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'preset';
+      button.textContent = text;
+      button.addEventListener('click', () => {
+        this.#setSelection(selection());
+      });
+      return button;
+    };
+    const head = document.createElement('div');
+    head.className = 'upgrades-head';
+    const title = document.createElement('span');
+    title.textContent = 'upgrades';
+    head.append(
+      title,
+      preset('game start', () => gameStartSelection(cell.upgrades)),
+      preset('all', () => allUpgradesSelection(cell.upgrades)),
+    );
+
+    const list = document.createElement('ul');
+    list.className = 'upgrade-list';
+    for (const upgrade of cell.upgrades) {
+      const item = document.createElement('li');
+      const labelElement = document.createElement('label');
+      labelElement.className = 'toggle';
+      labelElement.title = upgrade.editorId;
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.dataset.upgrade = String(upgrade.formId);
+      checkbox.checked = cell.selection.has(upgrade.formId);
+      checkbox.addEventListener('change', () => {
+        this.#setSelection(
+          toggleUpgrade(cell.upgrades, cell.selection, upgrade.formId, checkbox.checked),
+        );
+      });
+      labelElement.append(checkbox, upgrade.label);
+      item.append(labelElement);
+      list.append(item);
+    }
+    container.replaceChildren(head, list);
+    container.hidden = false;
+  }
+
+  #setSelection(selection: Set<number>): void {
+    const cell = this.#cell;
+    if (!cell) return;
+    cell.selection = selection;
+    for (const checkbox of this.#ui.upgrades.querySelectorAll<HTMLInputElement>(
+      'input[data-upgrade]',
+    )) {
+      checkbox.checked = selection.has(Number(checkbox.dataset.upgrade));
+    }
+    this.#applyCellSelection();
+  }
+
+  /** Upgrade toggles of the cell on screen (for dev checks). */
+  get cellUpgrades(): readonly CellUpgrade[] {
+    return this.#cell?.upgrades ?? [];
+  }
+
+  /** Switches one upgrade of the cell on screen (for dev checks). */
+  setUpgrade(formId: number, on: boolean): void {
+    const cell = this.#cell;
+    if (cell) this.#setSelection(toggleUpgrade(cell.upgrades, cell.selection, formId, on));
   }
 
   /** A cell model from the cache; undefined for editor markers and broken files. */
@@ -370,6 +470,7 @@ export class ModelViewer {
     this.#renderer.setView(undefined);
     this.#scene?.destroy();
     this.#scene = undefined;
+    this.#cell = undefined;
     this.#meshModel?.destroy();
     this.#meshModel = undefined;
     for (const entry of this.#cellModels.values()) {

@@ -25,17 +25,22 @@ const add = (a: Vec3, b: Vec3): Vec3 => [a[0] + b[0], a[1] + b[1], a[2] + b[2]];
  * directional ambient per axis; the directional light and fog come straight from XCLL.
  * TODO(M4): exterior cells (sun and weather), light fade distances, shadows.
  */
-export function cellSceneLighting(data: CellData): SceneLighting {
+export function cellSceneLighting(
+  data: CellData,
+  isEnabled: (reference: number) => boolean = () => true,
+): SceneLighting {
   const lighting = data.lighting;
-  const lights = data.lights.map((light) => ({
-    position: light.position,
-    radius: light.radius,
-    color: [
-      light.color[0] * light.fade,
-      light.color[1] * light.fade,
-      light.color[2] * light.fade,
-    ] as Vec3,
-  }));
+  const lights = data.lights
+    .filter((light) => isEnabled(light.reference))
+    .map((light) => ({
+      position: light.position,
+      radius: light.radius,
+      color: [
+        light.color[0] * light.fade,
+        light.color[1] * light.fade,
+        light.color[2] * light.fade,
+      ] as Vec3,
+    }));
   if (!lighting) {
     return {
       sunDirection: [0, 0, 1],

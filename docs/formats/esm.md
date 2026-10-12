@@ -85,10 +85,15 @@ scale, XESP enable parent (form id + flags; `0x1` = opposite state).
   (inverted with the opposite flag). Breezehome's furniture hangs off "WhiterunPlayerHouse..."
   markers that are disabled until the upgrades are bought, so the house starts mostly empty,
   as in the game.
-- `all upgrades` view: every enable parent on, except the unfurnished `...Start` markers and,
-  for upgrades that are alternatives for the same space (Breezehome's alchemy laboratory vs
-  the HearthFires child bedroom), the one from the later plugin. Alternatives are detected as
-  two upgrade markers placing objects at exactly the same spot. TODO(M8): real scripts.
+- **Upgrades** (`src/world/cell-upgrades.ts`): roots of enable-parent chains are toggles. A
+  room's walls, doors and furniture follow the same marker, so they switch together. Derived
+  from the data, as the upgrade scripts behave:
+  - an upgrade replaces the `...Start` marker with the same name core (`DiningRoomStart` ↔
+    `DecorateDiningRoom`); a Start marker keeps its own initial state until then;
+  - two upgrades that place objects at exactly the same spot are alternatives for one space
+    (Breezehome's alchemy laboratory vs the HearthFires child bedroom): only one can be on,
+    and they share the replaced Start marker; "all" keeps the earliest plugin's option.
+    TODO(M8): real upgrade scripts.
 - **XRDS** on light references is an **offset** added to the LIGH radius (vanilla values
   range from −322 to +55; a negative absolute radius would be meaningless).
 

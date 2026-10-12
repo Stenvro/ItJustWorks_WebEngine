@@ -1,5 +1,7 @@
-// Gathers everything needed to show a cell: the placed objects with their world transforms,
-// the lights and the cell's lighting. Platform-independent; models are loaded separately.
+// Gathers everything needed to show a cell: every placed object that can appear (enabled or
+// not) with its world transform, the lights, the enable-parent structure and the cell's
+// lighting. Which references are enabled is decided by cell-upgrades.ts. Platform-
+// independent; models are loaded separately.
 
 import { RecordFlag } from '../formats/esm/record.ts';
 import { identity, multiply, type Mat4 } from '../render/math.ts';
@@ -36,11 +38,24 @@ export interface CellLight {
   readonly flags: number;
 }
 
+/** What decides whether a reference is enabled. */
+export interface ReferenceState {
+  readonly editorId: string;
+  readonly initiallyDisabled: boolean;
+  readonly parent: { readonly formId: number; readonly opposite: boolean } | undefined;
+  /** Position and rotation, rounded: references with the same key sit at the same spot. */
+  readonly placementKey: string;
+}
+
 export interface CellData {
   readonly cell: CellRecord;
   readonly lighting: CellLighting | undefined;
+  /** Every object that can appear in the cell; filter with `enabledReferences`. */
   readonly objects: readonly CellObject[];
+  /** Every light that can be on; filter with `enabledReferences`. */
   readonly lights: readonly CellLight[];
+  /** The cell's references and the enable parents they follow (also outside the cell). */
+  readonly references: ReadonlyMap<number, ReferenceState>;
   /** Things not shown yet, with the milestone that adds them. */
   readonly skipped: readonly string[];
   /** Where to start the camera: a door into the cell, or its centre. */
@@ -79,113 +94,19 @@ export function referenceMatrix(ref: PlacedReference): Mat4 {
   return m;
 }
 
-/**
- * Which references are enabled:
- * - `game-start`: as at the start of a new game (initially-disabled flags, enable parents);
- * - `all-enabled`: every enable parent switched on, e.g. a player home with all upgrades
- *   bought. References that follow a parent with the "opposite" flag are then hidden.
- */
-export type EnableState = 'game-start' | 'all-enabled';
-
-export interface LoadCellOptions {
-  readonly enableState?: EnableState;
-}
-
-interface EnableContext {
-  readonly db: RecordDatabase;
-  readonly state: EnableState;
-  readonly cache: Map<number, boolean>;
-  /** All-enabled: "...Start" markers whose upgraded counterpart exists (lowercase). */
-  readonly replaced: ReadonlySet<string>;
-}
-
-/** Enabled state of a reference, following enable parents (and their opposite flag). */
-async function isEnabled(
-  context: EnableContext,
-  ref: PlacedReference,
-  depth = 0,
-): Promise<boolean> {
-  const cached = context.cache.get(ref.formId);
-  if (cached !== undefined) return cached;
-  let enabled =
-    context.state === 'all-enabled'
-      ? !context.replaced.has(ref.editorId.toLowerCase())
-      : !ref.initiallyDisabled;
-  if (ref.enableParent && depth < 16) {
-    const parentRecord = await context.db.get(ref.enableParent.formId);
-    if (parentRecord) {
-      const parentEnabled = await isEnabled(context, parseReference(parentRecord), depth + 1);
-      enabled = ref.enableParent.opposite ? !parentEnabled : parentEnabled;
-    }
-  }
-  context.cache.set(ref.formId, enabled);
-  return enabled;
-}
-
-/**
- * Player homes keep their unfurnished look behind "...Start" markers (e.g.
- * WhiterunPlayerHouseDiningRoomStart) that the upgrade scripts disable when the matching
- * upgrade (e.g. WhiterunPlayerHouseDecorateDiningRoom) is bought. With every upgrade on,
- * all those Start markers are off, or old crates and walls overlap the new furniture.
- * TODO(M8): run the real Papyrus upgrade scripts instead of this naming rule.
- */
-async function replacedStartMarkers(
-  db: RecordDatabase,
-  refs: readonly PlacedReference[],
-): Promise<Set<string>> {
-  const parents = new Set<string>();
-  for (const ref of refs) {
-    if (!ref.enableParent) continue;
-    const parent = await db.get(ref.enableParent.formId);
-    const editorId = parent?.editorId;
-    if (editorId) parents.add(editorId.toLowerCase());
-  }
-  // Only when the cell also has upgrade markers: then the Start ones are the "before" state.
-  const hasUpgrades = [...parents].some((name) => !name.endsWith('start'));
-  return new Set(hasUpgrades ? [...parents].filter((name) => name.endsWith('start')) : []);
-}
-
-/**
- * Some upgrades are alternatives for the same space: Breezehome's room behind the stairs
- * becomes either an alchemy laboratory (Skyrim.esm) or a child's bedroom (HearthFires.esm).
- * Two upgrade markers that place objects at exactly the same spot are such alternatives.
- * With every upgrade on, the one from the earlier plugin (lower form id) is kept, as in a
- * game where the later option was not chosen.
- * TODO(M8): follow the real upgrade scripts and the player's choices.
- */
-async function alternativeUpgradeMarkers(
-  context: EnableContext,
-  refs: readonly PlacedReference[],
-): Promise<Set<string>> {
-  const markersAt = new Map<string, Map<number, string>>();
-  for (const ref of refs) {
-    if (!ref.enableParent || ref.enableParent.opposite) continue;
-    if (!(await isEnabled(context, ref))) continue;
-    const marker = await context.db.get(ref.enableParent.formId);
-    if (!marker?.editorId) continue;
-    const key = [
+function referenceState(ref: PlacedReference): ReferenceState {
+  return {
+    editorId: ref.editorId,
+    initiallyDisabled: ref.initiallyDisabled,
+    parent: ref.enableParent,
+    placementKey: [
       ...ref.position.map((v) => Math.round(v)),
       ...ref.rotation.map((v) => Math.round(v * 100)),
-    ].join(',');
-    const markers = markersAt.get(key) ?? new Map<number, string>();
-    markers.set(marker.formId, marker.editorId.toLowerCase());
-    markersAt.set(key, markers);
-  }
-  const losers = new Set<string>();
-  for (const markers of markersAt.values()) {
-    if (markers.size < 2) continue;
-    const [, ...later] = [...markers].sort((a, b) => a[0] - b[0]);
-    for (const [, editorId] of later) losers.add(editorId);
-  }
-  return losers;
+    ].join(','),
+  };
 }
 
-export async function loadCellData(
-  db: RecordDatabase,
-  cellFormId: number,
-  options: LoadCellOptions = {},
-): Promise<CellData> {
-  const enableState = options.enableState ?? 'game-start';
+export async function loadCellData(db: RecordDatabase, cellFormId: number): Promise<CellData> {
   const cell = parseCell(await db.require(cellFormId));
   const template =
     cell.lightingTemplate === undefined ? undefined : await db.get(cell.lightingTemplate);
@@ -204,34 +125,23 @@ export async function loadCellData(
   const records = (await Promise.all(db.cellReferences(cellFormId).map((id) => db.get(id)))).filter(
     (record): record is GameRecord => record !== undefined && !record.deleted,
   );
-  const references = records.map((record) => ({ record, ref: parseReference(record) }));
-  let context: EnableContext = {
-    db,
-    state: enableState,
-    cache: new Map(),
-    replaced:
-      enableState === 'all-enabled'
-        ? await replacedStartMarkers(
-            db,
-            references.map((entry) => entry.ref),
-          )
-        : new Set(),
-  };
-  if (enableState === 'all-enabled') {
-    const alternatives = await alternativeUpgradeMarkers(
-      context,
-      references.map((entry) => entry.ref),
-    );
-    context = {
-      ...context,
-      cache: new Map(),
-      replaced: new Set([...context.replaced, ...alternatives]),
-    };
+  const placed = records.map((record) => ({ record, ref: parseReference(record) }));
+
+  // Enable structure, including parents placed in other cells.
+  const references = new Map<number, ReferenceState>();
+  for (const { ref } of placed) references.set(ref.formId, referenceState(ref));
+  const pending = placed.flatMap(({ ref }) => (ref.enableParent ? [ref.enableParent.formId] : []));
+  for (let guard = 0; pending.length > 0 && guard < 1000; guard++) {
+    const formId = pending.pop() ?? 0;
+    if (references.has(formId)) continue;
+    const record = await db.get(formId);
+    if (!record) continue;
+    const ref = parseReference(record);
+    references.set(formId, referenceState(ref));
+    if (ref.enableParent) pending.push(ref.enableParent.formId);
   }
 
-  for (const { record, ref } of references) {
-    const refId = ref.formId;
-    if (!(await isEnabled(context, ref))) continue;
+  for (const { record, ref } of placed) {
     const base = await db.get(ref.base);
     if (!base) {
       skip('reference to a missing base object');
@@ -245,15 +155,16 @@ export async function loadCellData(
       skip('actors (TODO(M7))');
       continue;
     }
-    if (base.type === 'DOOR' && !entrance && record.fields.has('XTEL'))
+    if (base.type === 'DOOR' && !entrance && record.fields.has('XTEL')) {
       entrance = [...ref.position];
+    }
     if ((base.flags & RecordFlag.isMarker) !== 0) continue;
 
     if (base.type === 'LIGH') {
       const light = parseLight(base);
       if ((light.flags & LightFlag.offByDefault) === 0) {
         lights.push({
-          reference: refId,
+          reference: ref.formId,
           position: ref.position,
           radius: Math.max(0, light.radius + ref.radiusOffset),
           color: light.color,
@@ -269,7 +180,7 @@ export async function loadCellData(
       continue;
     }
     objects.push({
-      reference: refId,
+      reference: ref.formId,
       baseType: base.type,
       editorId: base.editorId ?? '',
       model,
@@ -285,6 +196,7 @@ export async function loadCellData(
     lighting,
     objects,
     lights,
+    references,
     skipped: [...skipped].map(([reason, count]) => `${count}× ${reason}`),
     entrance: entrance ?? centre,
   };
