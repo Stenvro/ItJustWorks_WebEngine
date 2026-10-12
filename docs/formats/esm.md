@@ -513,6 +513,15 @@ OR-flagged conditions join the next one into a group; all groups must hold. Reci
 **Quest aliases:** ALST starts a reference alias, ALLS a location alias (u32 id); ALFR / ALFL
 give its forced reference / location.
 
+**Scripts of placed references:** a reference runs the scripts of its own VMAD and of its base
+(TrapOilPool on a toggleable fire beside the base's DLC1VCEmberToggleScript). 827 scripts on
+placeable bases handle OnCellLoad, OnLoad, OnCellAttach or OnInit, e.g.
+RemovableTorchSconce01SCRIPT, which on cell load puts a torch in its sconce (PlaceAtMe of
+RemovableTorch01) and enables its linked chain (the torch's light), or DLC1VCEmberToggleScript,
+which disables a toggleable fire's light. Running them when cells load, with the natives they
+call (PlaceAtMe, EnableLinkChain, PlayAnimation into the object's behavior graph, ...):
+TODO(M8). Until then sconces stay empty and lights stay as the plugins place them.
+
 ## Collision layers
 
 COLL records (`src/physics/collision-layers.ts`): EDID, DESC, BNAM index u32 (the SkyrimLayer a
@@ -562,6 +571,18 @@ the speeds of its quadrant.
   L_COLLISIONBOX. RoomMarker, PortalMarker and PlaneMarker primitives are rooms, portals and
   occlusion planes (no collision); activators' primitives are triggers (TODO(M8)).
 
+## Border regions
+
+A region (REGN) with record flag `0x40` (Border Region, xEdit) bounds its worldspace (WNAM)
+where the player cannot go (`src/world/border.ts`): one or more areas, each an **RPLI** (u32
+edge fall-off, world units) followed by an **RPLD** (points: x, y f32 each). A point inside any
+polygon of any of the worldspace's border regions is inside. Vanilla: Tamriel's
+BorderRegionSkyrim (173 points) and Dawnguard's DLC1BorderRegionSkyrim (the north-west, Castle
+Volkihar's coast; fall-off 1024), the Forgotten Vale (three areas), Solstheim and Apocrypha;
+city worldspaces have none. What the fall-off does for a border is not documented (it is
+ignored here). With `[General] bBorderRegionsEnabled` the player stops at the edge and the
+game shows GMST sPlayerLeavingBorderRegion ("You cannot go that way.").
+
 ## INI settings
 
 The engine reads `Skyrim_Default.ini` over defaults compiled into the executable
@@ -569,7 +590,8 @@ The engine reads `Skyrim_Default.ini` over defaults compiled into the executable
 `[Camera]` fOverShoulderPosX 30, fOverShoulderPosZ −10, fVanityModeMinDist 155,
 fVanityModeMaxDist 600, fMinCurrentZoom −0.2, fMouseWheelZoomIncrement 0.075,
 fMouseWheelZoomSpeed 0.8, fCameraCasterSize 15; `[Controls]` bAlwaysRunByDefault 1,
-fMouseHeadingSensitivity 0.0125, fMouseHeadingXScale 0.02, fMouseHeadingYScale 0.85;
+fMouseHeadingSensitivity 0.0125, fMouseHeadingXScale 0.02, fMouseHeadingYScale 0.85, fZKeyDelay 0.2;
+`[General]` bBorderRegionsEnabled 1;
 `[Display]` fDefaultWorldFOV 80, fNearDistance 15; `[HAVOK]` fInAirFallingCharGravityMult 1.35,
 fUnsupportedGravMult 4, fMaxTime 0.0167; `[Interface]` fActivatePickLength 180,
 fActivatePickRadius 16.

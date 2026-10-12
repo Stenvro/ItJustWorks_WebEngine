@@ -74,3 +74,27 @@ L_ITEMPICKER. Load doors take the player to their XTEL (inside or out, see
 [esm.md](formats/esm.md#doors-arrivals-and-collision-primitives)); other doors play their
 Open and Close sequences. The prompt is the shell's until the game's HUD: TODO(M9), as are
 loading screens.
+
+**Grabbing:** Activate on a loose (simulated) object waits `[Controls] fZKeyDelay` (0.2 s): let
+go before that, it activates; held longer, the player takes hold of the object where the
+crosshair's sphere touched it, until Activate is let go (`src/physics/grab.ts`). Never actors
+(bAllowHavokGrabTheLiving 0). The engine hangs the object on Havok's mouse spring
+(hkpMouseSpringAction): every step an impulse at the held point, through the body's effective
+mass there (m⁻¹·1 − [r]× I⁻¹ [r]×), removes fZKeySpringElasticity (0.2) of the distance to the
+point the camera looks at (at the distance it was taken) and fZKeySpringDamping (0.5) of the
+point's velocity; the impulse is limited to mass × step × the maximum relative force; then
+both velocities are scaled by fZKeyObjectDamping (0.75). The maximum force is fZKeyMaxForce
+(100) × a scale from fZKeyMaxForceScaleLow (0.2) at fZKeyMaxForceWeightLow (0) to
+fZKeyMaxForceScaleHigh (1) at fZKeyMaxForceWeightHigh (150); the weight here is the Havok mass
+(the engine's is not documented). The plugins set only fZKeyMaxForce and
+fZKeyMaxForceWeightHigh; the other values are the executable's defaults, from a dump of every
+game setting (they agree with the plugins on those two). When the held object is left behind
+by more than fActivatePickLength it is dropped (the engine's rule is not documented). Not yet:
+fZKeyHeavyWeight (75) and the complex helper (fZKeyComplexHelper*, for ragdolls: TODO(M7)),
+fZKeyMaxContactDistance and fZKeyMaxContactMassRatio (TODO(M13)).
+
+**Border regions:** in a worldspace with border regions (see
+[esm.md](formats/esm.md#border-regions)) movement that would leave them stops at the edge, and
+a player pushed or fallen across goes back to the last place inside; the game's notification
+"You cannot go that way." (sPlayerLeavingBorderRegion) shows in the shell until the HUD's own
+(TODO(M9)).

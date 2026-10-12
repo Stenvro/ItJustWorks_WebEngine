@@ -76,6 +76,7 @@ const ui = {
     play: byId('world-play', HTMLElement),
     freeCamera: byId('world-free-camera', HTMLInputElement),
     prompt: byId('activate-prompt', HTMLDivElement),
+    notice: byId('hud-notice', HTMLDivElement),
     sky: byId('world-sky', HTMLElement),
     time: byId('world-time', HTMLInputElement),
     timeLabel: byId('world-time-label', HTMLOutputElement),

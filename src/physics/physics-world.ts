@@ -100,6 +100,16 @@ export class PlacedCollision {
   }
 }
 
+/** What a sphere cast touched: where the sphere's centre was then, and the collider. */
+export interface PickHit {
+  readonly distance: number;
+  readonly owner: PhysicsOwner | undefined;
+  readonly layer: number;
+  readonly collider: RAPIER.Collider;
+  /** The sphere's centre when it touched (game units). */
+  readonly point: Vec3;
+}
+
 export interface RayHit {
   /** Distance along the ray (game units). */
   readonly distance: number;
@@ -594,7 +604,7 @@ export class PhysicsWorld {
     radius: number,
     layer: number,
     exclude?: RAPIER.Collider,
-  ): { distance: number; owner: PhysicsOwner | undefined; layer: number } | undefined {
+  ): PickHit | undefined {
     const length = Math.hypot(...direction) || 1;
     const hit = this.world.castShape(
       { x: toHavok(origin[0]), y: toHavok(origin[1]), z: toHavok(origin[2]) },
@@ -611,11 +621,28 @@ export class PhysicsWorld {
       this.filterFor(layer),
     );
     if (!hit) return undefined;
+    const along = Math.min(distance, hit.time_of_impact * HAVOK_SCALE);
     return {
-      distance: Math.min(distance, hit.time_of_impact * HAVOK_SCALE),
+      distance: along,
       owner: this.ownerOf(hit.collider),
       layer: this.layerOf(hit.collider),
+      collider: hit.collider,
+      point: [
+        origin[0] + (direction[0] / length) * along,
+        origin[1] + (direction[1] / length) * along,
+        origin[2] + (direction[2] / length) * along,
+      ],
     };
+  }
+
+  /**
+   * The simulated body of a placed object's collider, which the player can take hold of
+   * (bAllowHavokGrabTheLiving is 0: never an actor's).
+   */
+  grabbable(collider: RAPIER.Collider): RAPIER.RigidBody | undefined {
+    if (this.ownerOf(collider)?.kind !== 'object') return undefined;
+    const body = collider.parent();
+    return body?.isDynamic() ? body : undefined;
   }
 
   free(): void {

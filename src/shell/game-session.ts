@@ -12,6 +12,7 @@ import { parseMovementType, type MovementType } from '../world/movement.ts';
 import { MaterialFlag, parseMaterialType } from '../world/material-type.ts';
 import { readPlayerBody } from '../world/player-body.ts';
 import type { PlayerData } from './player.ts';
+import { GRAB_DEFAULTS, type GrabSettings } from '../physics/grab.ts';
 import { CollisionMatrix, parseCollisionLayer } from '../physics/collision-layers.ts';
 import type { Renderer } from '../render/renderer.ts';
 import { propertyMaterial, type AddonNode } from '../render/model-data.ts';
@@ -38,6 +39,7 @@ import {
   type StaticDirectional,
 } from '../world/material-object.ts';
 import { GameSettings } from '../world/game-settings.ts';
+import { WorldBorder } from '../world/border.ts';
 import { parseWater, WaterFlag, type WaterType } from '../world/water.ts';
 import {
   parseRegionWeather,
@@ -98,6 +100,7 @@ export class GameSession {
   readonly #models = new Map<string, Promise<GpuModel | undefined>>();
   /** The loaded ones by the same key (memory and eviction). */
   readonly #loadedModels = new Map<string, GpuModel>();
+  readonly #borders = new Map<number, Promise<WorldBorder>>();
   /** Behavior graphs by project path (shared by all the meshes that name them). */
   readonly #graphs = new Map<string, Promise<BehaviorGraph | undefined>>();
   #scripts: Promise<ScriptEnvironment> | undefined;
@@ -207,6 +210,16 @@ export class GameSession {
     return entry;
   }
 
+  /** A worldspace's border regions (where the player may go), read once per worldspace. */
+  worldBorder(world: number): Promise<WorldBorder> {
+    let entry = this.#borders.get(world);
+    if (!entry) {
+      entry = this.db.then((db) => WorldBorder.of(db, world));
+      this.#borders.set(world, entry);
+    }
+    return entry;
+  }
+
   /** A model's Havok collision (also for models with nothing to draw). */
   async collision(path: string): Promise<CollisionData | undefined> {
     const cached = this.#collisions.get(path);
@@ -273,6 +286,7 @@ export class GameSession {
           swim: type('NPCSwimming'),
         },
         jumpHeight: settings.number('fJumpHeightMin') ?? 76,
+        grab: grabSettings(settings),
       };
     });
     return this.#playerData;
@@ -547,4 +561,19 @@ export class GameSession {
     this.loader.dispose();
     void this.db.then((db) => db.close());
   }
+}
+
+/** The grab spring's settings: GMSTs where the plugins set them, else the defaults. */
+function grabSettings(settings: GameSettings): GrabSettings {
+  return {
+    springDamping: settings.number('fZKeySpringDamping') ?? GRAB_DEFAULTS.springDamping,
+    springElasticity: settings.number('fZKeySpringElasticity') ?? GRAB_DEFAULTS.springElasticity,
+    objectDamping: settings.number('fZKeyObjectDamping') ?? GRAB_DEFAULTS.objectDamping,
+    maxForce: settings.number('fZKeyMaxForce') ?? GRAB_DEFAULTS.maxForce,
+    maxForceScaleLow: settings.number('fZKeyMaxForceScaleLow') ?? GRAB_DEFAULTS.maxForceScaleLow,
+    maxForceScaleHigh: settings.number('fZKeyMaxForceScaleHigh') ?? GRAB_DEFAULTS.maxForceScaleHigh,
+    maxForceWeightLow: settings.number('fZKeyMaxForceWeightLow') ?? GRAB_DEFAULTS.maxForceWeightLow,
+    maxForceWeightHigh:
+      settings.number('fZKeyMaxForceWeightHigh') ?? GRAB_DEFAULTS.maxForceWeightHigh,
+  };
 }

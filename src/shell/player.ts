@@ -9,6 +9,7 @@ import { SCAN_CODES, type ControlMap } from '../formats/controlmap/controlmap.ts
 import { CharacterBody } from '../physics/character.ts';
 import { HAVOK_SCALE } from '../physics/collision-data.ts';
 import { Layer } from '../physics/collision-layers.ts';
+import type { GrabSettings } from '../physics/grab.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 import { directionalSpeed, type MovementType } from '../world/movement.ts';
@@ -30,6 +31,8 @@ export interface PlayerData {
   readonly movement: PlayerMovement;
   /** GMST fJumpHeightMin: how high a jump goes (game units). */
   readonly jumpHeight: number;
+  /** GMST fZKey*: the spring that holds grabbed objects. */
+  readonly grab: GrabSettings;
   /** Material ids of stairs (MATT with the stairs flag). */
   readonly stairMaterials: ReadonlySet<number>;
 }
@@ -87,6 +90,17 @@ export class Player implements Camera {
   position: [number, number, number] = [0, 0, 0];
   readonly near: number;
   lensShift = 0;
+  /** Called on every physics step after the player moved (a held object's spring). */
+  onStep: ((step: number) => void) | undefined;
+  /**
+   * Where the player may stand (the worldspace's border regions); undefined: anywhere.
+   * Movement across the border stops at it and calls onBorder.
+   */
+  border: ((x: number, y: number) => boolean) | undefined;
+  /** The player tried to leave the border regions ("You cannot go that way."). */
+  onBorder: (() => void) | undefined;
+  /** The last place inside the border. */
+  #inside: Vec3 | undefined;
   readonly #fovY: number;
 
   constructor(setup: PlayerSetup, feet: Vec3, yaw: number) {
@@ -139,6 +153,11 @@ export class Player implements Camera {
     return this.#setup.ini;
   }
 
+  /** The spring that holds grabbed objects (GMST fZKey*). */
+  get grab(): GrabSettings {
+    return this.#setup.grab;
+  }
+
   /** Where the eyes are (the first-person camera), interpolated like the camera. */
   get eye(): Vec3 {
     const feet = this.character.feetAt(this.#setup.physics.alpha);
@@ -176,6 +195,11 @@ export class Player implements Camera {
     return undefined;
   }
 
+  /** Whether a user event is held down. */
+  isHeld(name: string): boolean {
+    return this.#held.has(name);
+  }
+
   /** Whether a user event was pressed since it was last taken (then forgets the press). */
   takePressed(name: string): boolean {
     return this.#take(name);
@@ -197,6 +221,7 @@ export class Player implements Camera {
     if (this.#take('Jump')) this.#jumpRequested = true;
     physics.step(deltaSeconds, (step) => {
       this.#move(step);
+      this.onStep?.(step);
     });
     // Third-person zoom eases towards its target (fMouseWheelZoomSpeed).
     const speed = ini.number('Camera', 'fMouseWheelZoomSpeed');
@@ -264,7 +289,25 @@ export class Player implements Camera {
       const g = -this.#setup.physics.world.gravity.z * HAVOK_SCALE;
       character.jump(Math.sqrt(2 * g * this.#setup.jumpHeight));
     }
+    // The border regions: moving out stops at the edge.
+    const border = this.border;
+    if (border) {
+      const [vx0, vy0] = character.velocity;
+      if (!border(fx + vx0 * seconds, fy + vy0 * seconds)) {
+        character.velocity = [0, 0];
+        this.onBorder?.();
+      }
+    }
     character.step(seconds);
+    if (border) {
+      const [nx, ny, nz] = character.feet;
+      if (border(nx, ny)) this.#inside = [nx, ny, nz];
+      else if (this.#inside) {
+        // Pushed or fallen across: back to the last place inside.
+        character.teleport([this.#inside[0], this.#inside[1], Math.max(nz, this.#inside[2])]);
+        this.onBorder?.();
+      }
+    }
   }
 
   #setPov(pov: Pov): void {

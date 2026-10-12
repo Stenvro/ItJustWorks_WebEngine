@@ -27,6 +27,7 @@ export const INI_DEFAULTS = {
     fMouseHeadingSensitivity: 0.0125,
     fMouseHeadingXScale: 0.02,
     fMouseHeadingYScale: 0.85,
+    fZKeyDelay: 0.2,
   },
   Display: {
     fDefault1stPersonFOV: 80,

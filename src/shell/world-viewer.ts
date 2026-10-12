@@ -86,6 +86,8 @@ export interface WorldElements extends SkyElements {
   readonly freeCamera: HTMLInputElement;
   /** What the crosshair rests on. */
   readonly prompt: HTMLElement;
+  /** The game's notifications. */
+  readonly notice: HTMLElement;
 }
 
 interface LoadedCell {
@@ -414,7 +416,20 @@ export class WorldViewer {
       searchAbove: comeIn ? 64 : 8192,
       activatable: (reference) => this.#activatable(reference),
       prompt: this.#ui.prompt,
+      notice: this.#ui.notice,
     });
+    // bBorderRegionsEnabled: the worldspace's border regions stop the player.
+    if (playerData.ini.number('General', 'bBorderRegionsEnabled') !== 0) {
+      const [border, settings] = await Promise.all([
+        session.worldBorder(world.record.formId),
+        session.settings(),
+      ]);
+      const message = settings.string('sPlayerLeavingBorderRegion') ?? '';
+      player.border = (px, py) => border.contains(px, py);
+      player.onBorder = () => {
+        play.notify(message);
+      };
+    }
     play.lensShift = this.#camera.lensShift;
     play.onFreeCamera = (free) => {
       this.#ui.freeCamera.checked = free;
