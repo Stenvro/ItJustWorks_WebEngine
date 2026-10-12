@@ -2,7 +2,7 @@ import './style.css';
 import { GpuUnavailableError, initGpu, trackCanvasSize, type GpuContext } from './render/gpu.ts';
 import { Renderer } from './render/renderer.ts';
 import { findCustomBackdrop } from './shell/custom-backdrop.ts';
-import { GameSession } from './shell/game-session.ts';
+import { GameSession, MEMORY_BUDGET } from './shell/game-session.ts';
 import { ModelViewer } from './shell/model-viewer.ts';
 import { WorldViewer } from './shell/world-viewer.ts';
 import { setupHideShortcut, setupPanels } from './shell/panels.ts';
@@ -34,6 +34,7 @@ const ui = {
   statFps: byId('stat-fps', HTMLElement),
   statFrame: byId('stat-frame', HTMLElement),
   statGpu: byId('stat-gpu', HTMLElement),
+  statMemory: byId('stat-memory', HTMLElement),
   statVfs: byId('stat-vfs', HTMLElement),
   status: byId('console-status', HTMLElement),
   log: byId('log', HTMLOListElement),
@@ -100,7 +101,8 @@ function showFatal(error: unknown): void {
 
 // --- Render loop ----------------------------------------------------------
 
-function startRenderLoop(renderer: Renderer): void {
+/** `memory`: GPU bytes of the session's models and textures (none without a session). */
+function startRenderLoop(renderer: Renderer, memory: () => number | undefined): void {
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let frames = 0;
   let windowStart = performance.now();
@@ -113,6 +115,11 @@ function startRenderLoop(renderer: Renderer): void {
     if (elapsed >= 500) {
       ui.statFps.textContent = ((frames * 1000) / elapsed).toFixed(0);
       ui.statFrame.textContent = `${(elapsed / frames).toFixed(2)} ms`;
+      const used = memory();
+      ui.statMemory.textContent =
+        used === undefined
+          ? '—'
+          : `${(used / 1048576).toFixed(0)} / ${(MEMORY_BUDGET / 1048576).toFixed(0)} MB`;
       frames = 0;
       windowStart = now;
     }
@@ -360,7 +367,7 @@ async function main(): Promise<void> {
       session: () => session,
     };
   }
-  startRenderLoop(renderer);
+  startRenderLoop(renderer, () => session?.memory);
 
   const backdrop = await findCustomBackdrop();
   if (backdrop) {

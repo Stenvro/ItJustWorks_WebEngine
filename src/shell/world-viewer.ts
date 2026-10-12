@@ -240,6 +240,8 @@ export class WorldViewer {
     this.#update();
     this.#timer = setInterval(() => {
       this.#update();
+      // Cells come and go: keep the session's models and textures under budget.
+      session.trim();
     }, 250);
   }
 

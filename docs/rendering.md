@@ -108,3 +108,16 @@ straight above around the camera (orthographic, ±8192 units in height) into lay
 shadow map — redrawn when the camera moves a quarter of the map or every 120 frames. A
 particle below anything in that map is hidden. Particle sizes are scaled (rain × 50, snow
 × 16) to match the textures' content: TODO(M13) calibrate against the original.
+
+## Memory
+
+The session keeps the models and textures it loads (`game-session.ts`, `texture-cache.ts`)
+and counts their GPU bytes (vertex and index buffers; all mips of every texture); the status
+bar shows the total against the budget (`MEMORY_BUDGET`, 2 GiB). Scenes and grass fields hold
+the models they draw, models hold the textures they bind. While cells stream in and out the
+world viewer trims the session four times a second: over budget, the least recently used
+models that nothing draws are freed (they let go of their textures), then the textures no
+model holds, down to 85% of the budget. Anything used in the last 10 seconds stays (a cell
+may be about to place it), as do models attached to others as add-ons and textures never
+held by a model (terrain, sky, water, decals, precipitation: few and shared). Freed models and
+textures load again when a cell needs them.

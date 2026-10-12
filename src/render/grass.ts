@@ -46,11 +46,14 @@ export class GpuGrassField {
     this.#uniforms = init.uniforms;
     this.center = init.center;
     this.radius = init.radius;
+    // The field draws the model while it exists.
+    this.model.acquire();
   }
 
   destroy(): void {
     this.instances.destroy();
     for (const buffer of this.#uniforms) buffer.destroy();
+    this.model.release();
   }
 }
 

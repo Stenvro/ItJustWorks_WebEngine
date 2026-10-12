@@ -18,6 +18,16 @@ import { PluginIndexer } from '../workers/plugin-indexer.ts';
 import type { Terminal } from './terminal.ts';
 
 const numberFormat = new Intl.NumberFormat('en-US');
+
+/**
+ * GPU memory for models and textures loaded for the session: past it, the least recently
+ * used ones that nothing draws are freed (and loaded again when needed).
+ */
+export const MEMORY_BUDGET = 2048 * 1024 * 1024;
+/** Freed down to this share of the budget, so trimming does not run every frame. */
+const TRIM_TARGET = 0.85;
+/** Models and textures used in the last 10 seconds stay (cells may be about to place them). */
+const EVICTION_GRACE_MS = 10_000;
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -31,6 +41,8 @@ export class GameSession {
   readonly #terminal: Terminal;
   /** Models by path, shared by every cell and kept for the session. */
   readonly #models = new Map<string, Promise<GpuModel | undefined>>();
+  /** The loaded ones by the same key (memory and eviction). */
+  readonly #loadedModels = new Map<string, GpuModel>();
   #scripts: Promise<ScriptEnvironment> | undefined;
   #settings: Promise<GameSettings> | undefined;
   readonly #waterTypes = new Map<string, Promise<GpuWaterType | undefined>>();
@@ -76,6 +88,8 @@ export class GameSession {
   #model(path: string, withAddons: boolean): Promise<GpuModel | undefined> {
     const key = withAddons ? path : `${path}|addon`;
     let entry = this.#models.get(key);
+    const loaded = this.#loadedModels.get(key);
+    if (loaded) loaded.lastUsed = performance.now();
     if (!entry) {
       entry = this.loader.loadModel(path).then(
         async (loaded) => {
@@ -85,6 +99,7 @@ export class GameSession {
           if (data.editorMarker || (empty && addons.length === 0)) return undefined;
           const model = await this.#renderer.scene.createModel(data, this.textures);
           model.addons = addons;
+          this.#loadedModels.set(key, model);
           return model;
         },
         (error: unknown) => {
@@ -177,9 +192,57 @@ export class GameSession {
     return this.#scripts;
   }
 
+  /** GPU bytes of the session's models and textures. */
+  get memory(): number {
+    let models = 0;
+    for (const model of this.#loadedModels.values()) models += model.bytes;
+    return models + this.textures.bytes;
+  }
+
+  /**
+   * Keeps the session under MEMORY_BUDGET: frees the least recently used models that no
+   * scene draws (they let go of their textures), then textures no model holds. Returns the
+   * bytes freed.
+   */
+  trim(budget = MEMORY_BUDGET): number {
+    const before = this.memory;
+    if (before <= budget) return 0;
+    const target = budget * TRIM_TARGET;
+    const now = performance.now();
+    const idle = [...this.#loadedModels.entries()]
+      .filter(([, model]) => model.users === 0 && now - model.lastUsed > EVICTION_GRACE_MS)
+      .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    let memory = before;
+    for (const [key, model] of idle) {
+      if (memory <= target) break;
+      // Models holding this one as an add-on keep it.
+      if (
+        [...this.#loadedModels.values()].some((other) =>
+          other.addons.some((a) => a.model === model),
+        )
+      ) {
+        continue;
+      }
+      this.#loadedModels.delete(key);
+      this.#models.delete(key);
+      model.destroy();
+      memory -= model.bytes;
+    }
+    this.textures.evict(Math.max(0, target - (memory - this.textures.bytes)), EVICTION_GRACE_MS);
+    const freed = before - this.memory;
+    if (freed > 0) {
+      this.#terminal.log(
+        'memory',
+        `freed ${(freed / 1048576).toFixed(0)} MB (${(this.memory / 1048576).toFixed(0)} MB in use)`,
+      );
+    }
+    return freed;
+  }
+
   dispose(): void {
     for (const entry of this.#models.values()) void entry.then((model) => model?.destroy());
     this.#models.clear();
+    this.#loadedModels.clear();
     for (const entry of this.#waterTypes.values()) void entry.then((type) => type?.destroy());
     this.#waterTypes.clear();
     this.loader.dispose();
