@@ -8,29 +8,65 @@
   </head>
   <body>
     <canvas id="viewport"></canvas>
-    <div id="fps" class="hud"></div>
+    <div id="backdrop" class="backdrop" hidden></div>
+    <div class="crt" aria-hidden="true"></div>
 
-    <main id="setup" class="panel" hidden>
-      <h1>Skyrim Web</h1>
-      <p id="setup-message"></p>
-      <div class="actions">
-        <button id="resume-folder" type="button" hidden>Toegang hervatten</button>
-        <button id="pick-folder" type="button" hidden>Kies je Skyrim-map</button>
-      </div>
-      <section id="vfs-summary" hidden>
-        <ul id="problem-list" class="problems"></ul>
-        <details>
-          <summary id="load-order-title">Laadvolgorde</summary>
-          <ol id="load-order-list" class="mono-list"></ol>
+    <header class="hud">
+      <div class="hud-brand">SKYRIM<span>//</span>WEB <small>engine</small></div>
+      <dl class="hud-stats">
+        <div>
+          <dt>fps</dt>
+          <dd id="stat-fps">—</dd>
+        </div>
+        <div>
+          <dt>frame</dt>
+          <dd id="stat-frame">—</dd>
+        </div>
+        <div>
+          <dt>gpu</dt>
+          <dd id="stat-gpu">—</dd>
+        </div>
+        <div>
+          <dt>vfs</dt>
+          <dd id="stat-vfs">—</dd>
+        </div>
+      </dl>
+    </header>
+
+    <main class="shell">
+      <section class="title" aria-label="Skyrim Web">
+        <h1>Skyrim</h1>
+        <p class="subtitle"><span>Special Edition</span><span>Web Engine</span></p>
+      </section>
+
+      <section class="console" aria-label="Systeemlog">
+        <div class="console-head">
+          <span>// systeemlog</span>
+          <span id="console-status" class="console-status">opstarten</span>
+        </div>
+        <ol id="log" class="log"></ol>
+        <div class="prompt">
+          <p id="prompt-message"></p>
+          <div class="actions">
+            <button id="resume-folder" type="button" hidden>toegang hervatten</button>
+            <button id="pick-folder" type="button" hidden>kies skyrim-map</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="vfs-summary" class="panels" hidden>
+        <details class="panel">
+          <summary id="load-order-title">laadvolgorde</summary>
+          <ol id="load-order-list" class="table"></ol>
         </details>
-        <details>
-          <summary id="archive-title">Archieven</summary>
-          <ol id="archive-list" class="mono-list"></ol>
+        <details class="panel">
+          <summary id="archive-title">archieven</summary>
+          <ol id="archive-list" class="table"></ol>
         </details>
       </section>
     </main>
 
-    <div id="fatal" class="panel fatal" role="alert" hidden></div>
+    <div id="fatal" class="fatal" role="alert" hidden></div>
 
     <script type="module" src="/src/main.ts"></script>
   </body>

@@ -1,12 +1,29 @@
+@import '@fontsource/cinzel/400.css';
+@import '@fontsource/cinzel/600.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
+
 :root {
   color-scheme: dark;
-  --panel-bg: rgb(16 18 22 / 0.88);
-  --panel-border: rgb(255 255 255 / 0.12);
-  --text: #e6e2d8;
-  --muted: #a39f94;
-  --accent: #c9b37e;
-  --danger: #e07a6a;
-  font-family: system-ui, sans-serif;
+  --bg: #050709;
+  --bone: #e9e3d2;
+  --ash: #8f8b80;
+  --ash-dim: #5d5a53;
+  --gold: #cdae6e;
+  --gold-dim: #8a7446;
+  --line: rgb(233 227 210 / 0.13);
+  --line-strong: rgb(205 174 110 / 0.45);
+  --panel: rgb(6 8 11 / 0.72);
+  --warn: #d9a54c;
+  --danger: #dc6a55;
+  --ok: #b8c79a;
+  --mono: 'JetBrains Mono', ui-monospace, monospace;
+  --serif: 'Cinzel', 'Trajan Pro', serif;
+  font-family: var(--mono);
+}
+
+* {
+  box-sizing: border-box;
 }
 
 html,
@@ -14,113 +31,425 @@ body {
   margin: 0;
   height: 100%;
   overflow: hidden;
-  background: #000;
-  color: var(--text);
+  background: var(--bg);
+  color: var(--bone);
 }
 
+[hidden] {
+  display: none !important;
+}
+
+/* --- Lagen: canvas → eigen achtergrond → CRT → UI ------------------------ */
+
 #viewport {
+  position: fixed;
+  inset: 0;
   display: block;
   width: 100%;
   height: 100%;
 }
 
-.hud {
+.backdrop {
   position: fixed;
-  top: 8px;
-  left: 8px;
-  font:
-    12px/1.2 ui-monospace,
-    monospace;
-  color: var(--muted);
+  inset: 0;
+  background: center / cover no-repeat;
+  opacity: 0.35;
+  mix-blend-mode: luminosity;
   pointer-events: none;
 }
 
-.panel {
+.crt {
   position: fixed;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: min(32rem, calc(100% - 32px));
-  max-height: calc(100% - 32px);
-  overflow: auto;
-  box-sizing: border-box;
-  padding: 24px;
-  background: var(--panel-bg);
-  border: 1px solid var(--panel-border);
-  border-radius: 8px;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse at center, transparent 45%, rgb(0 0 0 / 0.75) 100%),
+    repeating-linear-gradient(to bottom, rgb(255 255 255 / 0.025) 0 1px, transparent 1px 3px);
 }
 
-.panel[hidden] {
-  display: none;
+/* --- HUD ----------------------------------------------------------------- */
+
+.hud {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 14px 20px;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ash);
+  pointer-events: none;
 }
 
-.panel h1 {
+.hud-brand {
+  color: var(--bone);
+  font-weight: 500;
+}
+
+.hud-brand span {
+  color: var(--gold);
+}
+
+.hud-brand small {
+  margin-left: 6px;
+  color: var(--ash-dim);
+  font-size: inherit;
+}
+
+.hud-stats {
+  display: flex;
+  gap: 22px;
+  margin: 0;
+}
+
+.hud-stats div {
+  display: flex;
+  gap: 8px;
+}
+
+.hud-stats dt {
+  color: var(--ash-dim);
+}
+
+.hud-stats dd {
+  margin: 0;
+  color: var(--bone);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Shell --------------------------------------------------------------- */
+
+.shell {
+  position: relative;
+  height: 100%;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 28px;
+  padding: clamp(64px, 12vh, 140px) 20px 48px;
+}
+
+.title {
+  text-align: center;
+}
+
+.title h1 {
+  margin: 0;
+  font-family: var(--serif);
+  font-weight: 400;
+  font-size: clamp(3rem, 9vw, 7rem);
+  line-height: 1;
+  letter-spacing: 0.32em;
+  margin-right: -0.32em; /* compenseert de letterafstand na de laatste letter */
+  text-transform: uppercase;
+  color: var(--bone);
+  text-shadow:
+    0 0 24px rgb(233 227 210 / 0.25),
+    0 0 2px rgb(233 227 210 / 0.6);
+}
+
+.subtitle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  margin: 14px 0 0;
+  font-family: var(--serif);
+  font-size: 0.85rem;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  color: var(--gold);
+}
+
+/* Dunne lijn met ruit in het midden, zoals de menu's van Skyrim. */
+.subtitle::before,
+.subtitle::after {
+  content: '';
+  width: clamp(40px, 10vw, 120px);
+  height: 1px;
+  background: linear-gradient(to right, transparent, var(--gold-dim));
+}
+
+.subtitle::after {
+  background: linear-gradient(to left, transparent, var(--gold-dim));
+}
+
+.subtitle span + span::before {
+  content: '◆';
+  margin-right: 18px;
+  font-size: 0.55em;
+  vertical-align: middle;
+  color: var(--gold-dim);
+}
+
+/* --- Console ------------------------------------------------------------- */
+
+.console,
+.panel {
+  width: min(56rem, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  backdrop-filter: blur(6px);
+}
+
+.console {
+  position: relative;
+}
+
+/* Hoekmarkeringen */
+.console::before,
+.console::after {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--gold);
+  pointer-events: none;
+}
+
+.console::before {
+  top: -1px;
+  left: -1px;
+  border-right: 0;
+  border-bottom: 0;
+}
+
+.console::after {
+  bottom: -1px;
+  right: -1px;
+  border-left: 0;
+  border-top: 0;
+}
+
+.console-head {
+  display: flex;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ash);
+}
+
+.console-status {
+  color: var(--gold);
+}
+
+.console-status::before {
+  content: '';
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px currentColor;
+  vertical-align: 1px;
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.log {
+  height: clamp(160px, 28vh, 320px);
+  overflow-y: auto;
+  margin: 0;
+  padding: 12px 16px;
+  list-style: none;
+  font-size: 12.5px;
+  line-height: 1.65;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ash-dim) transparent;
+}
+
+.log-line {
+  display: flex;
+  gap: 12px;
+  white-space: pre-wrap;
+}
+
+.log-time {
+  color: var(--ash-dim);
+  flex: none;
+}
+
+.log-tag {
+  flex: none;
+  width: 4.5ch;
+  color: var(--gold-dim);
+  text-transform: uppercase;
+}
+
+.tone-ok .log-text {
+  color: var(--ok);
+}
+
+.tone-warn .log-text {
+  color: var(--warn);
+}
+
+.tone-error .log-text {
+  color: var(--danger);
+}
+
+.prompt {
+  padding: 14px 16px 16px;
+  border-top: 1px solid var(--line);
+}
+
+.prompt p {
   margin: 0 0 12px;
-  font-size: 1.5rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  color: var(--accent);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-line;
 }
 
-.panel p {
-  margin: 0 0 16px;
-  line-height: 1.5;
-  white-space: pre-line;
+.prompt p::before {
+  content: '> ';
+  color: var(--gold);
 }
 
 .actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
-button {
-  font: inherit;
-  padding: 8px 14px;
-  color: #15130f;
-  background: var(--accent);
-  border: 0;
-  border-radius: 4px;
-  cursor: pointer;
-}
-
-button:hover {
-  filter: brightness(1.1);
-}
-
-details {
-  margin-top: 12px;
-  color: var(--muted);
-}
-
-summary {
-  cursor: pointer;
-}
-
-.mono-list {
-  margin: 8px 0 0;
-  padding: 0;
-  list-style: none;
-  font:
-    13px/1.5 ui-monospace,
-    monospace;
-}
-
-.mono-list li {
-  white-space: pre;
-}
-
-.problems {
-  margin: 16px 0 0;
-  padding-left: 20px;
-  color: var(--danger);
-}
-
-.problems:empty {
+.actions:not(:has(button:not([hidden]))) {
   display: none;
 }
 
+button {
+  font: 500 12px var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  padding: 9px 16px;
+  color: var(--gold);
+  background: rgb(205 174 110 / 0.06);
+  border: 1px solid var(--line-strong);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    box-shadow 0.15s,
+    color 0.15s;
+}
+
+button::before {
+  content: '[ ';
+  color: var(--gold-dim);
+}
+
+button::after {
+  content: ' ]';
+  color: var(--gold-dim);
+}
+
+button:hover,
+button:focus-visible {
+  color: var(--bone);
+  background: rgb(205 174 110 / 0.14);
+  box-shadow: 0 0 18px rgb(205 174 110 / 0.18);
+  outline: none;
+}
+
+/* --- Panelen ------------------------------------------------------------- */
+
+.panels {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: min(56rem, 100%);
+}
+
+.panel summary {
+  padding: 10px 16px;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ash);
+  cursor: pointer;
+  list-style: none;
+}
+
+.panel summary::before {
+  content: '+ ';
+  color: var(--gold);
+}
+
+.panel[open] summary::before {
+  content: '− ';
+}
+
+.table {
+  max-height: 40vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px 16px 14px;
+  list-style: none;
+  font-size: 12px;
+  line-height: 1.7;
+  scrollbar-width: thin;
+  scrollbar-color: var(--ash-dim) transparent;
+}
+
+.table li {
+  display: flex;
+  gap: 16px;
+  white-space: pre;
+}
+
+.table .key {
+  flex: none;
+  width: 7ch;
+  color: var(--gold-dim);
+}
+
+.table .value {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.table .meta {
+  color: var(--ash-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Fatale fout --------------------------------------------------------- */
+
 .fatal {
-  border-color: var(--danger);
+  position: fixed;
+  inset: auto 20px 20px;
+  max-width: 56rem;
+  margin: 0 auto;
+  padding: 16px;
+  border: 1px solid var(--danger);
+  background: rgb(30 8 6 / 0.85);
+  color: var(--bone);
+  font-size: 13px;
+  line-height: 1.6;
   white-space: pre-line;
+}
+
+@media (max-width: 640px) {
+  .hud-stats {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .console-status::before {
+    animation: none;
+  }
 }
