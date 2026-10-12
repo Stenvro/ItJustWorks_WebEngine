@@ -30,6 +30,7 @@ import shadowShader from './shaders/shadow.wgsl?raw';
 import waterShader from './shaders/water.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
 import { CELL_SIZE } from '../world/land.ts';
+import { gbufferTarget } from './gbuffer.ts';
 import { projectedUVParams, type MaterialObject } from '../world/material-object.ts';
 import type { WaterType } from '../world/water.ts';
 
@@ -2257,7 +2258,12 @@ export class SceneRenderer {
         fragment: {
           module: this.#modules[shader],
           entryPoint: refraction ? 'fs_refraction' : 'fs_main',
-          targets: [{ format: this.#colorFormat, ...(blend && { blend }) }],
+          // Opaque parts are drawn in the opaque pass, which also has the G-buffer (written
+          // by the lighting shader); blended ones in the blended pass, which has not.
+          targets: [
+            { format: this.#colorFormat, ...(blend && { blend }) },
+            ...(blend === undefined ? [gbufferTarget(shader === 'lighting')] : []),
+          ],
         },
         primitive: { topology: 'triangle-list', cullMode, frontFace: 'ccw' },
         depthStencil: {

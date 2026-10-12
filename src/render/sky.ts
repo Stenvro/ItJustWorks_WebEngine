@@ -4,6 +4,7 @@
 // The aurora and sky statics are model scenes (src/shell/sky-objects.ts); rain and snow are
 // drawn by precipitation.ts.
 
+import { gbufferTarget } from './gbuffer.ts';
 import { ATMOSPHERE_SAMPLES, atmosphereProfile, SKY_STRIDE, type SkyShape } from './sky-data.ts';
 import { DEPTH_FORMAT, SAMPLE_COUNT } from './scene-renderer.ts';
 import frameShader from './shaders/frame.wgsl?raw';
@@ -233,7 +234,12 @@ export class SkyRenderer {
           entryPoint: vertex,
           buffers: vertex === 'vs_mesh' ? meshBuffers : [],
         },
-        fragment: { module, entryPoint: fragment, targets: [{ format: colorFormat, blend }] },
+        fragment: {
+          module,
+          entryPoint: fragment,
+          // The opaque pass's G-buffer stays clear under the sky.
+          targets: [{ format: colorFormat, blend }, gbufferTarget(false)],
+        },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'always' },
         multisample: { count: SAMPLE_COUNT },

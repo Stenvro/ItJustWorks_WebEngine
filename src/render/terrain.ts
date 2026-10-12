@@ -2,6 +2,7 @@
 // textures and normal maps, the land textures' specular exponents and snow flags, and the LOD
 // terrain texture its cell blends into near the edge of the loaded cells.
 
+import { gbufferTarget } from './gbuffer.ts';
 import { sphereVisible, type Plane } from './frustum.ts';
 import { DEPTH_FORMAT, SAMPLE_COUNT } from './scene-renderer.ts';
 import frameShader from './shaders/frame.wgsl?raw';
@@ -148,7 +149,12 @@ export class TerrainRenderer {
           },
         ],
       },
-      fragment: { module, entryPoint: 'fs_main', targets: [{ format: colorFormat }] },
+      fragment: {
+        module,
+        entryPoint: 'fs_main',
+        // TODO(M4): the landscape's normal and snow mask into the G-buffer (terrain.wgsl).
+        targets: [{ format: colorFormat }, gbufferTarget(false)],
+      },
       primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: 'ccw' },
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'greater' },
       multisample: { count: SAMPLE_COUNT },

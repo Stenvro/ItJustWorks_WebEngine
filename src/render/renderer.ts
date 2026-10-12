@@ -1,3 +1,4 @@
+import { GBUFFER_FORMAT, gbufferTarget } from './gbuffer.ts';
 import { frustumPlanes, invert } from './frustum.ts';
 import type { GpuContext } from './gpu.ts';
 import { fitCascades, type Cascade } from './shadow-cascades.ts';
@@ -101,6 +102,9 @@ interface RenderTargets {
   readonly sceneDepth: GPUTexture;
   /** A view of sceneDepth (the depth of field's bind group is made for it once). */
   readonly sceneDepthView: GPUTextureView;
+  /** The opaque pass's G-buffer (gbuffer.ts), multisampled and resolved. */
+  readonly gbuffer: GPUTexture;
+  readonly gbufferResolved: GPUTexture;
   readonly depthResolve: GPUBindGroup;
 }
 
@@ -158,7 +162,11 @@ export class Renderer {
       label: 'backdrop',
       layout: 'auto',
       vertex: { module, entryPoint: 'vs_main' },
-      fragment: { module, entryPoint: 'fs_main', targets: [{ format: HDR_FORMAT }] },
+      fragment: {
+        module,
+        entryPoint: 'fs_main',
+        targets: [{ format: HDR_FORMAT }, gbufferTarget(false)],
+      },
       primitive: { topology: 'triangle-list' },
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: false, depthCompare: 'always' },
       multisample: { count: SAMPLE_COUNT },
@@ -312,6 +320,13 @@ export class Renderer {
           loadOp: 'clear',
           storeOp: view ? 'store' : 'discard',
         },
+        {
+          view: targets.gbuffer.createView(),
+          resolveTarget: targets.gbufferResolved.createView(),
+          clearValue: { r: 0, g: 0, b: 0, a: 0 },
+          loadOp: 'clear',
+          storeOp: 'discard',
+        },
       ],
       depthStencilAttachment: {
         view: depthView,
@@ -448,6 +463,8 @@ export class Renderer {
       this.#targets?.depth,
       this.#targets?.sceneColor,
       this.#targets?.sceneDepth,
+      this.#targets?.gbuffer,
+      this.#targets?.gbufferResolved,
     ]) {
       texture?.destroy();
     }
@@ -485,6 +502,19 @@ export class Renderer {
       sceneColor,
       sceneDepth,
       sceneDepthView: sceneDepth.createView(),
+      gbuffer: device.createTexture({
+        label: 'msaa-gbuffer',
+        size: [width, height],
+        format: GBUFFER_FORMAT,
+        sampleCount: SAMPLE_COUNT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+      }),
+      gbufferResolved: device.createTexture({
+        label: 'gbuffer',
+        size: [width, height],
+        format: GBUFFER_FORMAT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+      }),
       depthResolve: device.createBindGroup({
         label: 'depth-resolve',
         layout: this.#depthResolve.getBindGroupLayout(0),

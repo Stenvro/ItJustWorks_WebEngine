@@ -182,8 +182,15 @@ fn lodLandNoise(color: vec3f, noise: f32) -> f32 {
   return 0.8333333 * (p * (0.37 - noise) + noise) + 0.37;
 }
 
+// The lit colour and the G-buffer (written by opaque parts; blended parts' pipelines have no
+// second target).
+struct LightingOut {
+  @location(0) color: vec4f,
+  @location(1) gbuffer: vec4f,
+};
+
 @fragment
-fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location(0) vec4f {
+fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingOut {
   let flags1 = draw.flags.x;
   let flags2 = draw.flags.y;
   let drawFlags = draw.flags.z;
@@ -423,21 +430,22 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
     color += vec3f(snowRimSpecular(vertexNormal, shadingNormal, toCamera) * snowMask);
   }
 
+  let gbuffer = gbufferValue(shadingNormal, snowMask);
   switch (frame.counts.z) {
     case 1u: {
-      return vec4f(base, alpha);
+      return LightingOut(vec4f(base, alpha), gbuffer);
     }
     case 2u: {
-      return vec4f(shadingNormal * 0.5 + 0.5, alpha);
+      return LightingOut(vec4f(shadingNormal * 0.5 + 0.5, alpha), gbuffer);
     }
     case 3u: {
-      return vec4f(diffuseLight, alpha);
+      return LightingOut(vec4f(diffuseLight, alpha), gbuffer);
     }
     case 4u: {
-      return vec4f(in.color.rgb, alpha);
+      return LightingOut(vec4f(in.color.rgb, alpha), gbuffer);
     }
     case 5u: {
-      return vec4f(vertexNormal * 0.5 + 0.5, alpha);
+      return LightingOut(vec4f(vertexNormal * 0.5 + 0.5, alpha), gbuffer);
     }
     default: {
       // Sky objects (weather sky statics) are not fogged.
@@ -446,7 +454,7 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
       if (snowMask > 0.0) {
         fogged += snowSparkles(in.worldPos, shadow) * snowMask;
       }
-      return vec4f(fogged, alpha);
+      return LightingOut(vec4f(fogged, alpha), gbuffer);
     }
   }
 }

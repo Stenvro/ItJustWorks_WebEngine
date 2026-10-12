@@ -194,3 +194,12 @@ fn applyFog(color: vec3f, worldPos: vec3f) -> vec3f {
   let fog = fogAt(worldPos);
   return mix(color, fog.rgb, fog.a);
 }
+
+// The G-buffer (gbuffer.ts) of the opaque pass: the world-space normal in octahedral encoding
+// (rg), the snow mask (b) and 1 (a: something opaque wrote here).
+fn gbufferValue(n: vec3f, snowMask: f32) -> vec4f {
+  let p = n.xy / max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6);
+  let signs = select(vec2f(-1.0), vec2f(1.0), p >= vec2f(0.0));
+  let folded = select(p, (1.0 - abs(p.yx)) * signs, n.z < 0.0);
+  return vec4f(folded, snowMask, 1.0);
+}

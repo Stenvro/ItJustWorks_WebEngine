@@ -1,6 +1,7 @@
 // Draws distant trees (tree LOD): billboards from a worldspace's tree atlas, one instance per
 // tree of the loaded tree blocks.
 
+import { gbufferTarget } from './gbuffer.ts';
 import type { TreeLodInstance, TreeLodType } from '../formats/lod/lod.ts';
 import { DEPTH_FORMAT, SAMPLE_COUNT } from './scene-renderer.ts';
 import frameShader from './shaders/frame.wgsl?raw';
@@ -85,7 +86,11 @@ export class TreeLodRenderer {
           },
         ],
       },
-      fragment: { module, entryPoint: 'fs_tree', targets: [{ format: colorFormat }] },
+      fragment: {
+        module,
+        entryPoint: 'fs_tree',
+        targets: [{ format: colorFormat }, gbufferTarget(false)],
+      },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'greater' },
       multisample: { count: SAMPLE_COUNT, alphaToCoverageEnabled: false },
