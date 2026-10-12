@@ -125,7 +125,13 @@ Objects animate through controllers (`src/formats/nif/animation-blocks.ts`,
   threshold; unless manager controlled the blend items; then the value for float/bool/point3).
 - **Keys** (KeyGroup): u32 count, u32 key type if count > 0 (1 linear, 2 quadratic with forward
   and backward tangents, 3 TBC with tension/bias/continuity, 4 XYZ rotation, 5 constant), then
-  time + value per key. NiTransformData: rotation keys (quaternions; type 4: three float key
+  time + value per key. **Quadratic:** a segment leaves its first key along that key's
+  _backward_ tangent and arrives at the next key along its _forward_ one (as NifSkope reads
+  them, despite the names). The data agrees: of the 64957 quadratic key groups in the vanilla
+  meshes, 6113 first keys set only the backward tangent (189 only the forward one) and 4166
+  last keys only the forward one (466 only the backward one). The UV scrolls of waterfalls,
+  fire and lava are 0 → −1 with tangents −1: a steady scroll this way, a stop-and-go ease the
+  other way. NiTransformData: rotation keys (quaternions; type 4: three float key
   groups for X, Y and Z instead), translations, scales.
 
 **What plays:** active controllers that no manager drives, and of a model's

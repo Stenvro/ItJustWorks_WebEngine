@@ -207,7 +207,10 @@ export function sampleKeys<T>(group: KeyGroup<T>, time: number, ops: ValueOps<T>
     case KeyType.constant:
       return a.value;
     case KeyType.quadratic:
-      return ops.hermite(a.value, a.forward ?? a.value, b.value, b.backward ?? b.value, s);
+      // A segment leaves its first key along that key's "backward" tangent and arrives at
+      // the next along its "forward" one (nif.xml's names; NifSkope reads them so). The
+      // vanilla UV scrolls rely on it: 0 to -1 with tangents -1 is a steady scroll.
+      return ops.hermite(a.value, a.backward ?? a.value, b.value, b.forward ?? b.value, s);
     case KeyType.tbc: {
       // Kochanek-Bartels tangents from the neighbouring keys.
       const prev = keys[i - 1] ?? a;

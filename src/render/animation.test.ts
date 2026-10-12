@@ -74,6 +74,18 @@ describe('sampleKeys', () => {
     // Flat tangents: an ease in and out, symmetric around the middle.
     expect(sampleKeys(quadratic, 0.5, ops)).toBeCloseTo(0.5, 6);
     expect(sampleKeys(quadratic, 0.25, ops)).toBeLessThan(0.25);
+    // A segment uses its first key's backward and its last key's forward tangent: the vanilla
+    // waterfalls scroll 0 to -1 with exactly these tangents, steadily.
+    const scroll: KeyGroup<number> = {
+      interpolation: KeyType.quadratic,
+      keys: [
+        { time: 0, value: 0, forward: 0, backward: -1 },
+        { time: 2, value: -1, forward: -1, backward: 0 },
+      ],
+    };
+    for (const time of [0.25, 0.5, 1, 1.5]) {
+      expect(sampleKeys(scroll, time, ops)).toBeCloseTo(-time / 2, 6);
+    }
   });
 
   it('samples sources with and without keys', () => {
