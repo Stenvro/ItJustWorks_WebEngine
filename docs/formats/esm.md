@@ -259,6 +259,14 @@ streaks; snow: `fxsnowsoftsub.dds`, 4 × 4 soft flakes). During a change of weat
 weather's precipitation starts at its Precipitation Begin Fade In (share of the transition)
 and the old one's ends at its End Fade Out. How it is drawn: [../rendering.md](../rendering.md#precipitation).
 
+**Lightning** (`src/world/lightning.ts`): thunder frequency 255 (all calm weathers) has
+none; storms use 246 (rain), 203 (snow), the Storm Call shout 15, so lower values flash more
+often: read as a mean of value/255 × 30 seconds between flashes, at random (exponential
+waits). A flash (a strike, a re-strike after 0.28 s, 0.6 s in all) adds the lightning colour
+to the sky colours and half of it to ambient and fog; thunder fades in and out with weather
+changes like precipitation (Thunder Begin Fade In, End Fade Out). The interval's scale is
+inferred: TODO(M13) compare with the original; thunder sounds: TODO(M6).
+
 **Sky statics and aurora:** TNAM (87 weathers) lists STATs drawn in the sky — mostly the
 distant cloud banks `skyinv_clouddistant*.nif` (effect meshes about 11600 units across with
 scrolling cloud sheets, lit by the weather), also Sovngarde's sky; MODL (38 weathers, the

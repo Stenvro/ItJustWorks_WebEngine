@@ -11,6 +11,12 @@ import type {
 import type { Vec3 } from '../render/math.ts';
 import type { GpuScene, SceneLighting, SceneRenderer } from '../render/scene-renderer.ts';
 import type { TextureCache } from '../render/texture-cache.ts';
+import {
+  flashIntensity,
+  FLASH_SECONDS,
+  lightningInterval,
+  thunderAmount,
+} from '../world/lightning.ts';
 import { parsePrecipitation, precipitationAmounts } from '../world/precipitation.ts';
 import type { GpuSky, SkyFrame, SkyRenderer } from '../render/sky.ts';
 import { skyShapes } from '../render/sky-data.ts';
@@ -87,6 +93,9 @@ export class WorldSky {
   /** Precipitation types on the GPU by SPGD form id (undefined while loading or if broken). */
   readonly #precipitation = new Map<number, GpuPrecipitation | undefined>();
   #falling: PrecipitationFrame[] = [];
+  /** Lightning: when the next flash comes and when the last one began (seconds). */
+  #nextFlash: number | undefined;
+  #flashStart = -Infinity;
 
   private constructor(
     db: RecordDatabase,
@@ -259,6 +268,7 @@ export class WorldSky {
       if (this.#transition >= 1) this.#previous = undefined;
     }
     this.#state = skyState({
+      lightning: this.#lightning(weather),
       weather,
       ...(this.#previous && { previous: this.#previous, transition: this.#transition }),
       climate: this.#climate,
@@ -374,6 +384,30 @@ export class WorldSky {
     if (this.#ui.weather.value !== String(formId) && this.#pinned)
       this.#ui.weather.value = String(formId);
     this.#terminal.log('sky', `weather ${weather.editorId}${transition ? ' (changing)' : ''}`);
+  }
+
+  /** The lightning flash this frame: storms flash at random, about their weather's interval. */
+  #lightning(weather: WeatherRecord): number {
+    const amount = thunderAmount(weather, this.#previous, this.#transition);
+    const stormy =
+      amount > 0
+        ? this.#previous && weather.thunderFrequency >= 255
+          ? this.#previous
+          : weather
+        : undefined;
+    const interval = stormy && lightningInterval(stormy.thunderFrequency);
+    if (interval === undefined) {
+      this.#nextFlash = undefined;
+      return 0;
+    }
+    // Exponentially distributed waits: flashes come at random, `interval` apart on average.
+    const wait = (): number => -Math.log(1 - Math.random()) * interval;
+    this.#nextFlash ??= this.#seconds + wait();
+    if (this.#seconds >= this.#nextFlash) {
+      this.#flashStart = this.#seconds;
+      this.#nextFlash = this.#seconds + FLASH_SECONDS + wait();
+    }
+    return flashIntensity(this.#seconds - this.#flashStart) * amount;
   }
 
   #loadPrecipitation(formId: number): GpuPrecipitation | undefined {
