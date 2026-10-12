@@ -29,6 +29,7 @@ import { SkyRenderer, type SkyFrame } from './sky.ts';
 import type { ImageSpace } from '../world/image-space.ts';
 import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
 import { TreeLodRenderer, type TreeLodFrame } from './tree-lod.ts';
+import { GrassRenderer, type GpuGrassField } from './grass.ts';
 
 /** Anything that can view a scene: the orbit camera, the free-flying camera, ... */
 export interface Camera {
@@ -47,6 +48,8 @@ export interface SceneView {
   readonly terrain?: () => Iterable<GpuTerrainCell>;
   /** Distant trees (tree LOD billboards). */
   readonly trees?: () => TreeLodFrame | undefined;
+  /** Grass of the loaded cells. */
+  readonly grass?: () => Iterable<GpuGrassField>;
   /** The sky behind everything (exteriors). */
   readonly sky?: () => SkyFrame | undefined;
   /** Loaded cells, where distant LOD gives way. */
@@ -88,6 +91,7 @@ export class Renderer {
   readonly terrain: TerrainRenderer;
   readonly sky: SkyRenderer;
   readonly treeLod: TreeLodRenderer;
+  readonly grass: GrassRenderer;
   readonly post: PostProcessor;
   readonly #gpu: GpuContext;
   readonly #backdrop: GPURenderPipeline;
@@ -114,6 +118,7 @@ export class Renderer {
     });
     this.sky = new SkyRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.treeLod = new TreeLodRenderer(device, HDR_FORMAT, this.scene.frameLayout);
+    this.grass = new GrassRenderer(device, HDR_FORMAT, this.scene);
     this.post = new PostProcessor(device, format);
 
     const module = device.createShaderModule({ label: 'backdrop', code: backdropShader });
@@ -286,6 +291,8 @@ export class Renderer {
       }
       const trees = view.trees?.();
       if (trees) this.treeLod.draw(opaque, this.scene.frameBindGroup, trees);
+      const grass = view.grass?.();
+      if (grass) this.grass.draw(opaque, grass, this.scene.viewPlanes, view.camera.position);
       this.scene.drawOpaque(opaque, scenes);
     }
     opaque.end();

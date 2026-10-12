@@ -160,6 +160,27 @@ no landscape, `0x20` no sky, `0x40` fixed dimensions, `0x80` no grass).
 `node tools/land-audit.ts` checks every LAND record: heights, layer counts, and that each land
 texture resolves to files that exist and parse.
 
+## Grass
+
+**LTEX GNAM** (repeated): the GRAS that grow on a land texture (29 vanilla textures).
+**GRAS:** MODL mesh, DATA 32 bytes: density u8 (percent), min slope u8, max slope u8 (degrees),
+unused u8, units from water u16, unused u16, water rule u32 (1 above at least, 2 above at most,
+3 below at least, 4 below at most, 5 either at least, 6 either at most, 7 either at most above,
+8 either at most below), position range f32, height range f32, color range f32, wave period
+f32, flags u8 (`0x1` vertex lighting, `0x2` uniform scaling, `0x4` fit to slope), 3 unused.
+
+**Placement** (`src/world/grass.ts`; the engine's algorithm is not documented, so this follows
+the data's meaning): each grass type of a cell's land textures has its own grid of candidate
+points every iMinGrassSize (20) units, offset randomly by the position range. A point gets a
+plant with probability density × how much the type's textures cover it there (base and
+layers, as the terrain blends them), if the ground's slope is within range and the water rule
+holds against the cell's water height. Size varies by ±height range (only up without uniform
+scaling), brightness by −color range, rotation freely; fit to slope tilts the plant to the
+ground normal. The random numbers hash the grid point and the type, so a cell always grows
+the same grass. Plants shrink away from fGrassStartFadeDistance (7000, Ultra) over 1000 units
+and sway with the weather's wind (wave period: seconds per sway at 60 Hz scale,
+approximated).
+
 ## Climate and weather
 
 **CLMT:** WLST weather list (12-byte entries: WTHR, chance u32 %, GLOB), FNAM sun texture,

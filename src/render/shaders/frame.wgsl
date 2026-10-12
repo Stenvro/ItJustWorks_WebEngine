@@ -16,7 +16,7 @@ struct Frame {
   fogParams: vec4f,
   // Point light count, fog enabled, debug view, unused.
   counts: vec4u,
-  // Time in seconds, unused.
+  // Time in seconds, wind strength (0..1), unused.
   time: vec4f,
   // Distant LOD is hidden in loaded cells: south-west cell of a 7x7 grid (xy) and one bit per
   // cell, row by row from the south-west (zw: bits 0-31, 32-48).

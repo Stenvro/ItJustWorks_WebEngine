@@ -16,7 +16,9 @@ import type {
   WaterFlow,
   WaterFrame,
 } from '../render/scene-renderer.ts';
+import type { GpuGrassField } from '../render/grass.ts';
 import { waterPlane } from '../render/water-data.ts';
+import { parseGrass, placeGrass, type GrassType } from '../world/grass.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
 import type { GpuTerrainCell, TerrainTexturePaths } from '../render/terrain.ts';
 import {
@@ -26,7 +28,7 @@ import {
 } from '../render/terrain-data.ts';
 import { loadCellData, type CellLight } from '../world/cell-loader.ts';
 import { enabledReferences, findToggles, gameStartSelection } from '../world/cell-upgrades.ts';
-import { CELL_SIZE, LAND_GRID, landTexture } from '../world/land.ts';
+import { CELL_SIZE, LAND_GRID, landTexture, type LandData } from '../world/land.ts';
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
 import { cellKey, Worldspace } from '../world/worldspace.ts';
 import type { GameSession } from './game-session.ts';
@@ -57,6 +59,7 @@ interface LoadedCell {
   scene: GpuScene | undefined;
   /** Models made for this cell only (its water plane). */
   owned: GpuModel[];
+  grass: GpuGrassField[];
   lights: readonly CellLight[];
   ready: boolean;
 }
@@ -100,6 +103,9 @@ export class WorldViewer {
   #timer: ReturnType<typeof setInterval> | undefined;
   #detachControls: (() => void) | undefined;
   readonly #landTextures = new Map<number, Promise<TerrainTexturePaths>>();
+  /** Grass types by LTEX (GNAM), and GRAS records by form id. */
+  readonly #landGrass = new Map<number, Promise<readonly GrassType[]>>();
+  readonly #grassTypes = new Map<number, Promise<GrassType | undefined>>();
   /** Bumped when the world changes; loads of an older world are dropped. */
   #generation = 0;
 
@@ -202,6 +208,7 @@ export class WorldViewer {
     this.#renderer.setView({
       scenes: () => this.#readyScenes(),
       trees: () => this.#lod?.trees(),
+      grass: () => this.#readyGrass(),
       lodMask: () => this.#lodMask(),
       terrain: () => this.#readyTerrain(),
       camera: this.#camera,
@@ -281,6 +288,7 @@ export class WorldViewer {
         terrain: undefined,
         scene: undefined,
         owned: [],
+        grass: [],
         lights: [],
         ready: false,
       };
@@ -323,6 +331,7 @@ export class WorldViewer {
 
     let scene: GpuScene | undefined;
     let lights: CellLight[] = [];
+    let cellWaterHeight: number | undefined;
     if (cellId !== undefined) {
       const data = await loadCellData(db, cellId, world.persistentReferences(cell.x, cell.y));
       const toggles = findToggles(data);
@@ -349,6 +358,7 @@ export class WorldViewer {
         height: world.waterWorld.defaultWaterHeight,
         type: world.waterWorld.water,
       });
+      cellWaterHeight = water?.height;
       if (water) {
         const x0 = cell.x * CELL_SIZE;
         const y0 = cell.y * CELL_SIZE;
@@ -366,6 +376,63 @@ export class WorldViewer {
     cell.terrain = await terrain;
     cell.scene = scene;
     cell.lights = lights;
+    if (land) cell.grass = await this.#grass(land, cell, cellWaterHeight);
+  }
+
+  /** Grass of a cell: placed by its land textures, one instanced field per grass type. */
+  async #grass(
+    land: LandData,
+    cell: LoadedCell,
+    waterHeight: number | undefined,
+  ): Promise<GpuGrassField[]> {
+    const session = this.#session;
+    if (!session) return [];
+    const textures = new Set<number | undefined>();
+    for (const quadrant of land.quadrants) {
+      textures.add(quadrant.base);
+      for (const layer of quadrant.layers) textures.add(layer.texture);
+    }
+    const lists = new Map<number | undefined, readonly GrassType[]>();
+    await Promise.all(
+      [...textures].map(async (ltex) => {
+        lists.set(ltex, ltex === undefined ? [] : await this.#grassOf(ltex));
+      }),
+    );
+    const placed = placeGrass(land, cell.x, cell.y, (ltex) => lists.get(ltex) ?? [], waterHeight);
+    const fields: GpuGrassField[] = [];
+    for (const [type, plants] of placed) {
+      const model = await session.model(type.model);
+      const field = model && this.#renderer.grass.createField(model, type, plants);
+      if (field) fields.push(field);
+    }
+    return fields;
+  }
+
+  #grassOf(ltex: number): Promise<readonly GrassType[]> {
+    const db = this.#db;
+    if (!db) return Promise.resolve([]);
+    let pending = this.#landGrass.get(ltex);
+    if (!pending) {
+      pending = landTexture((id) => db.get(id), ltex).then(async (texture) => {
+        const types = await Promise.all((texture?.grass ?? []).map((id) => this.#grassType(id)));
+        return types.filter((type): type is GrassType => type !== undefined);
+      });
+      this.#landGrass.set(ltex, pending);
+    }
+    return pending;
+  }
+
+  #grassType(formId: number): Promise<GrassType | undefined> {
+    const db = this.#db;
+    if (!db) return Promise.resolve(undefined);
+    let pending = this.#grassTypes.get(formId);
+    if (!pending) {
+      pending = db
+        .get(formId)
+        .then((record) => (record?.type === 'GRAS' ? parseGrass(record) : undefined));
+      this.#grassTypes.set(formId, pending);
+    }
+    return pending;
   }
 
   #landTexture(ltex: number | undefined): Promise<TerrainTexturePaths> {
@@ -391,6 +458,7 @@ export class WorldViewer {
     cell.terrain?.destroy();
     cell.scene?.destroy();
     for (const model of cell.owned.splice(0)) model.destroy();
+    for (const field of cell.grass.splice(0)) field.destroy();
     cell.terrain = undefined;
     cell.scene = undefined;
     cell.ready = false;
@@ -399,6 +467,10 @@ export class WorldViewer {
   *#readyScenes(): Iterable<GpuScene> {
     if (this.#lod) yield* this.#lod.scenes();
     for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
+  }
+
+  *#readyGrass(): Iterable<GpuGrassField> {
+    for (const cell of this.#cells.values()) if (cell.ready) yield* cell.grass;
   }
 
   /** Loaded cells around the camera, where distant LOD gives way to them. */

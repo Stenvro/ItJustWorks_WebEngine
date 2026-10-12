@@ -127,6 +127,8 @@ export interface LandTexture {
   readonly normal: string;
   /** Specular exponent (LTEX SNAM). */
   readonly specularExponent: number;
+  /** Grass that grows on this texture (GRAS form ids, LTEX GNAM). */
+  readonly grass: readonly number[];
 }
 
 /** LTEX → its texture set's diffuse and normal maps. */
@@ -147,5 +149,9 @@ export async function landTexture(
     diffuse: path('TX00'),
     normal: path('TX01'),
     specularExponent: record.fields.first('SNAM')?.[0] ?? 30,
+    grass: record.fields.all('GNAM').flatMap((data) => {
+      const id = data.length >= 4 ? record.formIdAt(data) : 0;
+      return id === 0 ? [] : [id];
+    }),
   };
 }
