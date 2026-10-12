@@ -29,6 +29,10 @@ export interface ImageSpace {
     readonly strength: number;
     readonly distance: number;
     readonly range: number;
+    /** Blur radius 0..7. */
+    readonly blurRadius: number;
+    /** Whether the sky is blurred too (else only beside geometry). */
+    readonly sky: boolean;
   };
 }
 
@@ -53,8 +57,20 @@ export const NEUTRAL_IMAGE_SPACE: ImageSpace = {
   contrast: 1,
   tintAmount: 0,
   tintColor: [1, 1, 1],
-  depthOfField: { strength: 0, distance: 0, range: 0 },
+  depthOfField: { strength: 0, distance: 0, range: 0, blurRadius: 0, sky: true },
 };
+
+/**
+ * DNAM's fourth value (f32) packs the blur radius and the "no sky" flag:
+ * 2 + 8 × radius + 4 × no sky (vanilla values 2, 6, 22, 30, 34, 38, 42).
+ */
+export function depthOfFieldBlur(value: number | undefined): { blurRadius: number; sky: boolean } {
+  if (value === undefined || !Number.isFinite(value) || value < 2) {
+    return { blurRadius: 0, sky: true };
+  }
+  const code = Math.round((value - 2) / 4);
+  return { blurRadius: Math.min(7, code >> 1), sky: (code & 1) === 0 };
+}
 
 export function parseImageSpace(record: Pick<GameRecord, 'fields'>): ImageSpace {
   const floats = (type: string): number[] => {
@@ -110,6 +126,7 @@ export function parseImageSpace(record: Pick<GameRecord, 'fields'>): ImageSpace 
       strength: at(dnam, 0, 0),
       distance: at(dnam, 1, 0),
       range: at(dnam, 2, 0),
+      ...depthOfFieldBlur(dnam[3]),
     },
   };
 }
@@ -144,6 +161,8 @@ export function blendImageSpaces(
       strength: mix((s) => s.depthOfField.strength),
       distance: mix((s) => s.depthOfField.distance),
       range: mix((s) => s.depthOfField.range),
+      blurRadius: Math.round(mix((s) => s.depthOfField.blurRadius)),
+      sky: mix((s) => (s.depthOfField.sky ? 1 : 0)) >= 0.5,
     },
   };
 }

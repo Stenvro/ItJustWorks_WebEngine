@@ -490,6 +490,7 @@ export class ModelViewer {
           world: object.world,
           ...(water && { water }),
           ...(directional && { directional }),
+          ...(object.leafAnimation && { leafAnimation: object.leafAnimation }),
         });
       }
     }

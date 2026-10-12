@@ -99,6 +99,8 @@ interface RenderTargets {
   /** Copies of the opaque scene for water, soft effects and particles (single sample). */
   readonly sceneColor: GPUTexture;
   readonly sceneDepth: GPUTexture;
+  /** A view of sceneDepth (the depth of field's bind group is made for it once). */
+  readonly sceneDepthView: GPUTextureView;
   readonly depthResolve: GPUBindGroup;
 }
 
@@ -107,7 +109,8 @@ interface RenderTargets {
  * 1. the shell backdrop or the sky, the terrain and the opaque parts of the scenes;
  * 2. (if there is water) copies of that image's colour and depth for the water shader;
  * 3. water surfaces, then the blended parts back to front;
- * 4. the imagespace's post-processing into the canvas.
+ * 4. the imagespace's post-processing into the canvas (with its depth of field: from the copy of
+ *    the opaque scene's depth).
  */
 export class Renderer {
   readonly scene: SceneRenderer;
@@ -336,11 +339,19 @@ export class Renderer {
     }
     opaque.end();
 
+    const imageSpace = view?.imageSpace?.();
+    // The imagespace's depth of field reads the opaque scene's depth.
+    const depthOfField = view !== undefined && (imageSpace?.depthOfField.strength ?? 0) > 0;
     if (view) {
       const water = this.scene.hasWater(scenes);
       const decals = view.decals ? [...view.decals()] : [];
       const decalsInView = this.decals.visible(decals, this.scene.viewPlanes);
-      if (this.scene.needsSceneCopies(scenes) || decalsInView || precipitation.length > 0) {
+      if (
+        this.scene.needsSceneCopies(scenes) ||
+        decalsInView ||
+        precipitation.length > 0 ||
+        depthOfField
+      ) {
         encoder.copyTextureToTexture(
           { texture: this.post.hdrTexture(targets.width, targets.height) },
           { texture: targets.sceneColor },
@@ -388,8 +399,9 @@ export class Renderer {
       canvasTexture.createView(),
       targets.width,
       targets.height,
-      view?.imageSpace?.(),
+      imageSpace,
       delta,
+      depthOfField ? { view: targets.sceneDepthView, near: view.camera.near } : undefined,
     );
     device.queue.submit([encoder.finish()]);
   }
@@ -472,6 +484,7 @@ export class Renderer {
       depth,
       sceneColor,
       sceneDepth,
+      sceneDepthView: sceneDepth.createView(),
       depthResolve: device.createBindGroup({
         label: 'depth-resolve',
         layout: this.#depthResolve.getBindGroupLayout(0),

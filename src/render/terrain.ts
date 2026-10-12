@@ -1,9 +1,11 @@
 // Draws landscape cells built by terrain-data.ts: one draw per quadrant with its 8 blended
-// textures and normal maps.
+// textures and normal maps, the land textures' specular exponents and snow flags, and the LOD
+// terrain texture its cell blends into near the edge of the loaded cells.
 
 import { sphereVisible, type Plane } from './frustum.ts';
 import { DEPTH_FORMAT, SAMPLE_COUNT } from './scene-renderer.ts';
 import frameShader from './shaders/frame.wgsl?raw';
+import snowShader from './shaders/snow.wgsl?raw';
 import terrainShader from './shaders/terrain.wgsl?raw';
 import {
   quadrantIndices,
@@ -13,14 +15,33 @@ import {
 } from './terrain-data.ts';
 import type { TextureCache } from './texture-cache.ts';
 
-/** Diffuse and normal map of each texture slot of a quadrant. */
+/** Diffuse and normal map of each texture slot of a quadrant, with the land texture's data. */
 export interface TerrainTexturePaths {
   readonly diffuse: string;
   readonly normal: string;
+  /** LTEX SNAM: specular exponent (30 by default). */
+  readonly specularPower: number;
+  /** LTEX INAM 0x1: the texture is snow. */
+  readonly snow: boolean;
 }
+
+/** The level-4 LOD terrain block a cell lies in (its texture is blended in near the edge). */
+export interface TerrainLodBlock {
+  readonly texture: string;
+  /** South-west corner (world units) and size of the block. */
+  readonly x: number;
+  readonly y: number;
+  readonly size: number;
+}
+
+/** The engine's terrain noise (LOD blend mask). */
+const TERRAIN_NOISE = 'textures\\terrain\\noise.dds';
+/** Floats of a quadrant's material uniforms (TerrainMaterial in terrain.wgsl). */
+const MATERIAL_FLOATS = 24;
 
 interface GpuQuadrant {
   readonly vertices: GPUBuffer;
+  readonly uniforms: GPUBuffer;
   readonly bindGroup: GPUBindGroup;
   readonly center: readonly [number, number, number];
   readonly radius: number;
@@ -35,7 +56,10 @@ export class GpuTerrainCell {
   }
 
   destroy(): void {
-    for (const quadrant of this.quadrants) quadrant.vertices.destroy();
+    for (const quadrant of this.quadrants) {
+      quadrant.vertices.destroy();
+      quadrant.uniforms.destroy();
+    }
   }
 }
 
@@ -89,11 +113,18 @@ export class TerrainRenderer {
           visibility: GPUShaderStage.FRAGMENT,
           texture: {},
         })),
+        {
+          binding: TERRAIN_TEXTURES * 2 + 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          buffer: { type: 'uniform' },
+        },
+        { binding: TERRAIN_TEXTURES * 2 + 2, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: TERRAIN_TEXTURES * 2 + 3, visibility: GPUShaderStage.FRAGMENT, texture: {} },
       ],
     });
     const module = device.createShaderModule({
       label: 'terrain',
-      code: frameShader + terrainShader,
+      code: frameShader + snowShader + terrainShader,
     });
     this.#pipeline = device.createRenderPipeline({
       label: 'terrain',
@@ -143,13 +174,21 @@ export class TerrainRenderer {
     });
   }
 
-  /** Uploads a cell; resolves when its textures are loaded (missing ones use defaults). */
+  /**
+   * Uploads a cell; resolves when its textures are loaded (missing ones use defaults). `lod`:
+   * the LOD terrain block it lies in, if the world has terrain LOD.
+   */
   async createCell(
     quadrants: readonly TerrainQuadrantData[],
     texturePaths: (slot: number | undefined) => Promise<TerrainTexturePaths>,
     textures: TextureCache,
+    lod?: TerrainLodBlock,
   ): Promise<GpuTerrainCell> {
     const device = this.#device;
+    const [lodTexture, noise] = await Promise.all([
+      lod ? textures.get(lod.texture) : Promise.resolve(undefined),
+      textures.get(TERRAIN_NOISE),
+    ]);
     const gpuQuadrants = await Promise.all(
       quadrants.map(async (quadrant, q): Promise<GpuQuadrant> => {
         const vertices = device.createBuffer({
@@ -168,10 +207,26 @@ export class TerrainRenderer {
               textures.get(paths.diffuse),
               textures.get(paths.normal),
             ]);
-            return { diffuse, normal };
+            return { diffuse, normal, paths };
           }),
         );
         const { defaults } = textures;
+        const material = new Float32Array(MATERIAL_FLOATS);
+        slots.forEach((slot, i) => {
+          material[i] = slot?.paths.specularPower ?? 30;
+          material[8 + i] = slot?.paths.snow ? 1 : 0;
+        });
+        const lodShown = lod !== undefined && lodTexture !== undefined;
+        material.set([lod?.x ?? 0, lod?.y ?? 0, lod?.size ?? 1, lodShown ? 1 : 0], 16);
+        material[20] = slots.some((slot) => slot?.paths.snow) ? 1 : 0;
+        const uniforms = device.createBuffer({
+          label: `terrain-q${String(q)}-material`,
+          size: material.byteLength,
+          usage: GPUBufferUsage.UNIFORM,
+          mappedAtCreation: true,
+        });
+        new Float32Array(uniforms.getMappedRange()).set(material);
+        uniforms.unmap();
         const bindGroup = device.createBindGroup({
           label: `terrain-q${String(q)}`,
           layout: this.#materialLayout,
@@ -185,9 +240,24 @@ export class TerrainRenderer {
               binding: 1 + TERRAIN_TEXTURES + i,
               resource: (slot?.normal ?? defaults.flatNormal).createView(),
             })),
+            { binding: 1 + TERRAIN_TEXTURES * 2, resource: { buffer: uniforms } },
+            {
+              binding: 2 + TERRAIN_TEXTURES * 2,
+              resource: (lodTexture ?? defaults.white).createView(),
+            },
+            {
+              binding: 3 + TERRAIN_TEXTURES * 2,
+              resource: (noise ?? defaults.black).createView(),
+            },
           ],
         });
-        return { vertices, bindGroup, center: quadrant.center, radius: quadrant.radius };
+        return {
+          vertices,
+          uniforms,
+          bindGroup,
+          center: quadrant.center,
+          radius: quadrant.radius,
+        };
       }),
     );
     return new GpuTerrainCell(gpuQuadrants);
