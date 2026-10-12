@@ -247,6 +247,44 @@ button.result:focus-visible {
   box-shadow: none;
 }
 
+.upgrades {
+  margin: 8px 16px 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.upgrades-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ash);
+}
+
+.upgrades-head span {
+  flex: 1;
+}
+
+button.preset {
+  padding: 3px 8px;
+  font-size: 10px;
+}
+
+.upgrade-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.upgrade-list .toggle {
+  margin: 0 0 4px;
+  font-size: 12px;
+  color: var(--bone);
+}
+
 .toggle {
   display: flex;
   gap: 8px;
