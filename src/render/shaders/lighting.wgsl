@@ -112,5 +112,24 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
     color += env * envMaskSample.r * draw.params.w;
   }
 
-  return vec4f(applyFog(color, in.worldPos), alpha);
+  switch (frame.counts.z) {
+    case 1u: {
+      return vec4f(base, alpha);
+    }
+    case 2u: {
+      return vec4f(n * 0.5 + 0.5, alpha);
+    }
+    case 3u: {
+      return vec4f(diffuseLight, alpha);
+    }
+    case 4u: {
+      return vec4f(in.color.rgb, alpha);
+    }
+    case 5u: {
+      return vec4f(safeNormalize(in.normal) * 0.5 + 0.5, alpha);
+    }
+    default: {
+      return vec4f(applyFog(color, in.worldPos), alpha);
+    }
+  }
 }

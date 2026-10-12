@@ -9,8 +9,10 @@ import type {
   NiAlphaPropertyBlock,
   NiTriShapeDataBlock,
   Ref,
+  VertexDesc,
 } from '../formats/nif/types.ts';
 import { normalizePath } from '../formats/paths.ts';
+import { skinShape } from './skinning.ts';
 import {
   fromNifTransform,
   identity,
@@ -247,10 +249,44 @@ function isEditorMarker(file: NifFile): boolean {
   });
 }
 
+/**
+ * World matrix of every node and shape, as the scene graph places them (the roots' own
+ * transforms are ignored, see buildModel). Skinning needs the bones' matrices up front.
+ */
+function nodeWorlds(file: NifFile): Map<Ref, Mat4> {
+  const worlds = new Map<Ref, Mat4>();
+  const visit = (ref: Ref, parentWorld: Mat4, depth: number): void => {
+    const block = file.blocks[ref];
+    if (depth > 64 || !block || !('transform' in block) || worlds.has(ref)) return;
+    const { translation, rotation, scale } = block.transform;
+    const world =
+      depth === 0
+        ? parentWorld
+        : multiply(parentWorld, fromNifTransform(translation, rotation, scale));
+    worlds.set(ref, world);
+    if (block.kind === 'node') for (const child of block.children) visit(child, world, depth + 1);
+  };
+  for (const root of file.roots) visit(root, identity(), 0);
+  return worlds;
+}
+
+function layoutOf(desc: VertexDesc): VertexLayout {
+  const has = (flag: number): boolean => (desc.attributes & flag) !== 0;
+  return {
+    stride: desc.stride,
+    attributes: desc.attributes,
+    uv: has(VertexAttribute.uv) ? desc.uvOffset : -1,
+    normal: has(VertexAttribute.normal) ? desc.normalOffset : -1,
+    tangent: has(VertexAttribute.tangent) ? desc.tangentOffset : -1,
+    color: has(VertexAttribute.colors) ? desc.colorOffset : -1,
+  };
+}
+
 /** Walks the scene graph from the roots and collects every drawable shape. */
 export function buildModel(file: NifFile): ModelData {
   const parts: ModelPart[] = [];
   const skipped: string[] = [];
+  let worlds: Map<Ref, Mat4> | undefined;
 
   const visit = (ref: Ref, parentWorld: Mat4, depth: number): void => {
     if (depth > 64) return; // guards against reference cycles in broken files
@@ -264,8 +300,14 @@ export function buildModel(file: NifFile): ModelData {
     if (!('transform' in block) || (block.flags & APP_CULLED) !== 0) return;
     // Helper geometry only shown in the Creation Kit (e.g. activator trigger volumes).
     if (block.name.toLowerCase() === 'editormarker') return;
+    // The engine replaces a root node's own transform with the placement of the object
+    // (reference, inventory, ...), so it is ignored here: 866 vanilla meshes have a rotated
+    // root (e.g. Raven Rock's hut pieces, turned 90°) and 96 a moved one.
     const { translation, rotation, scale } = block.transform;
-    const world = multiply(parentWorld, fromNifTransform(translation, rotation, scale));
+    const world =
+      depth === 0
+        ? parentWorld
+        : multiply(parentWorld, fromNifTransform(translation, rotation, scale));
 
     switch (block.kind) {
       case 'node': {
@@ -280,7 +322,27 @@ export function buildModel(file: NifFile): ModelData {
       }
       case 'tri-shape': {
         if (block.vertexData.length === 0) {
-          skipped.push(`${block.name || 'shape'}: skinned geometry (TODO(M7))`);
+          // Skinned: drawn in the rest pose given by the file's bones.
+          worlds ??= nodeWorlds(file);
+          const skinned = block.skin >= 0 ? skinShape(file, block, worlds) : undefined;
+          if (!skinned) {
+            skipped.push(
+              `${block.name || 'shape'}: skinned geometry without usable skin (TODO(M7))`,
+            );
+            return;
+          }
+          addPart(
+            block.name,
+            identity(),
+            layoutOf(skinned.desc),
+            skinned.vertices,
+            skinned.vertexCount,
+            skinned.indices,
+            block.shaderProperty,
+            block.alphaProperty,
+            skinned.center,
+            skinned.radius,
+          );
           return;
         }
         if (block.dynamicPositions) {
@@ -350,7 +412,16 @@ export function buildModel(file: NifFile): ModelData {
   ): void => {
     if (indices.length === 0 || vertexCount === 0) return;
     const partMaterial = material(file, shaderRef);
-    if (partMaterial && (partMaterial.flags1 & SLSF1_ANY_REFRACTION) !== 0) {
+    if (!partMaterial) {
+      // Without a shader the engine draws nothing: helper shapes for collision, physics
+      // and animation ("CurrentPlane", "NonCollidable", bone proxies).
+      const shaderType = shaderRef >= 0 ? (file.blockTypes[shaderRef] ?? '') : '';
+      if (shaderType === 'BSWaterShaderProperty')
+        skipped.push(`${name || 'shape'}: water (TODO(M4))`);
+      else if (shaderType !== '') skipped.push(`${name || 'shape'}: ${shaderType} (TODO(M4))`);
+      return;
+    }
+    if ((partMaterial.flags1 & SLSF1_ANY_REFRACTION) !== 0) {
       // Heat haze and similar (lighting or effect shader): the texture is a distortion
       // map, not a colour, and needs a copy of the rendered scene.
       skipped.push(`${name || 'shape'}: refraction effect (TODO(M4))`);

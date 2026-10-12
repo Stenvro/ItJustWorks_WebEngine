@@ -91,4 +91,7 @@ match groups.
 - Objects named `EditorMarker` (any block type) are helper geometry for the Creation Kit,
   e.g. activator trigger volumes; the engine never draws them (1,012 vanilla meshes have one).
 - BSXFlags bit `0x20` on the root (editor marker) hides the whole model.
+- The **root node's own transform is ignored** by the engine: placing the object replaces it.
+  866 vanilla meshes have a rotated root and 96 a translated one (e.g. Raven Rock's
+  `redoranhutintcap01.nif` is turned 90°; applying it leaves gaps between the hut pieces).
 - Base objects with record flag `0x800000` (is marker) are never drawn (see esm.md).
