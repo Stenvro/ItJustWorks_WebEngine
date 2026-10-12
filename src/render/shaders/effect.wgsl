@@ -75,9 +75,11 @@ fn effectShade(
   }
   alpha *= draw.params.y;
 
-  // The palette: clamped (its rows must not wrap), sampled in uniform control flow.
-  let paletteA = textureSample(glowMap, screenSampler, vec2f(source.a, alpha)).a;
-  let paletteRgb = textureSample(glowMap, screenSampler, vec2f(source.g, colorMul.r)).rgb;
+  // The palette is a lookup table: clamped (its rows must not wrap) and read at its full
+  // size. Its smaller mips would blend in the opaque rows, so an effect faded to alpha 0 (an
+  // unlit fire's flames: their palette's first rows are clear) would never quite vanish.
+  let paletteA = textureSampleLevel(glowMap, screenSampler, vec2f(source.a, alpha), 0.0).a;
+  let paletteRgb = textureSampleLevel(glowMap, screenSampler, vec2f(source.g, colorMul.r), 0.0).rgb;
   if (paletteAlpha) {
     alpha = paletteA;
   }

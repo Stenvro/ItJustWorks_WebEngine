@@ -199,7 +199,9 @@ Community Shaders sources):
    alpha, alpha so far); colour = palette at (texture green, base × vertex red). Fire uses
    both: the particle colour fading from grey to black walks down the flame palette (white
    hot → orange → transparent red) while the alpha fade shrinks the flame. Palettes are
-   sampled clamped (their rows must not wrap).
+   lookup tables: sampled clamped (their rows must not wrap) and at their full size, as their
+   smaller mips blend the opaque rows into the clear first ones (GradFlame01: rows 0–1 are
+   clear), so an effect faded to alpha 0, like an unlit fire's flames, vanishes.
 6. Colour × base colour scale; Effect_Lighting (SLSF2 `0x40000000`): blended towards colour
    × scene light (directional ambient, the sun at half strength even from behind — smoke
    scatters it — and point lights) by the lighting influence.
