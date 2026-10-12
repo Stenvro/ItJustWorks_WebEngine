@@ -32,6 +32,14 @@ export interface CellObject {
   readonly water: number | undefined;
   /** Statics (STAT DNAM): the snow, ash, moss or ice laid over its upward-facing parts. */
   readonly directional?: StaticDirectional;
+  /** Trees (TREE CNAM): how their leaves flutter in the wind. */
+  readonly leafAnimation?: LeafAnimation;
+}
+
+/** TREE CNAM leaf amplitude and frequency (the lighting shader's TreeParams). */
+export interface LeafAnimation {
+  readonly amplitude: number;
+  readonly frequency: number;
 }
 
 /** A decal reference: a texture set (TXST with decal data) projected inside a box. */
@@ -78,6 +86,20 @@ export interface CellData {
   readonly skipped: readonly string[];
   /** Where to start the camera: a door into the cell, or its centre. */
   readonly entrance: readonly [number, number, number];
+}
+
+/**
+ * A tree's leaf animation, as a spreadable field. TREE CNAM (12 f32): trunk flexibility,
+ * branch flexibility, trunk amplitude, front / back / side amplitude, front / back / side
+ * frequency, leaf flexibility, leaf amplitude, leaf frequency.
+ */
+function leafAnimationOf(base: GameRecord): { leafAnimation?: LeafAnimation } {
+  const data = base.type === 'TREE' ? base.fields.first('CNAM') : undefined;
+  if (!data || data.length < 48) return {};
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  return {
+    leafAnimation: { amplitude: view.getFloat32(40, true), frequency: view.getFloat32(44, true) },
+  };
 }
 
 /** A static's directional material, as a spreadable field. */
@@ -261,6 +283,7 @@ export async function loadCellData(
       world: referenceMatrix(ref),
       water: base.type === 'ACTI' ? nonZeroId(base.formIdField('WNAM')) : undefined,
       ...directionalOf(base),
+      ...leafAnimationOf(base),
     });
   }
 

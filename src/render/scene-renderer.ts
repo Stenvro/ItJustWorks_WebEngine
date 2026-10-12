@@ -169,6 +169,9 @@ const DRAW_MULTI_PASS = 0x80000;
 const DRAW_SNOW = 0x100000;
 /** ...and HD object LOD (its vertex alpha shifts the snow line). */
 const DRAW_LOD_HD = 0x200000;
+/** Draw flag (common.wgsl): leaves flutter in the wind (SLSF2 Tree_Anim). */
+const DRAW_TREE_ANIM = 0x400000;
+const SLSF2_TREE_ANIM = 0x20000000;
 /** The engine's directional material textures (BSGraphics default textures). */
 const PROJECTED_TEXTURES = {
   diffuse: 'textures\\effects\\projecteddiffuse.dds',
@@ -333,6 +336,8 @@ export class GpuModel {
   addons: readonly ModelAddon[] = [];
   /** GPU bytes of its own buffers (textures are counted by the texture cache). */
   readonly bytes: number;
+  /** The root is a leaf animation node: Tree_Anim parts flutter (ModelData.leafAnimation). */
+  readonly leafAnimation: boolean;
   /** performance.now() when a scene last took or let go of it (eviction order). */
   lastUsed = performance.now();
   readonly #buffers: readonly GPUBuffer[];
@@ -348,7 +353,9 @@ export class GpuModel {
     animation: ModelAnimation | undefined;
     particles: readonly GpuParticleSystem[];
     textures: { readonly cache: TextureCache; readonly paths: readonly string[] };
+    leafAnimation: boolean;
   }) {
+    this.leafAnimation = init.leafAnimation;
     this.center = init.center;
     this.radius = init.radius;
     this.parts = init.parts;
@@ -389,6 +396,8 @@ export interface ModelInstance {
   readonly water?: GpuWaterType;
   /** A static's directional material (STAT DNAM). */
   readonly directional?: PlacedDirectional;
+  /** A tree's leaf amplitude and frequency (TREE CNAM). */
+  readonly leafAnimation?: { readonly amplitude: number; readonly frequency: number };
 }
 
 /** A material object (MATO) ready to draw: its data and, if multi-pass, its own shader. */
@@ -1154,6 +1163,7 @@ export class SceneRenderer {
       animation: data.animation,
       particles,
       textures: { cache: textures, paths: [...texturePaths] },
+      leafAnimation: data.leafAnimation === true,
     });
   }
 
@@ -1215,7 +1225,22 @@ export class SceneRenderer {
         writeMaterial(floats, uints, part.part);
         if (sky) uints[38] = (uints[38] ?? 0) | SKY_DRAW;
         const partMaterial = part.part.material;
-        if (partMaterial?.kind === 'lighting') {
+        if (partMaterial?.kind === 'lighting' && (partMaterial.flags2 & SLSF2_TREE_ANIM) !== 0) {
+          // Trees have no directional material: the projection slot holds the leaf amplitude,
+          // the leaf frequency and whether the leaf animation node runs its timer (without
+          // one the engine uses amplitude and frequency 1 and a stopped timer).
+          const leaves = instance.leafAnimation;
+          floats.set(
+            [
+              leaves?.amplitude ?? 1,
+              leaves?.frequency ?? 1,
+              instance.model.leafAnimation ? 1 : 0,
+              0,
+            ],
+            48,
+          );
+          uints[38] = (uints[38] ?? 0) | DRAW_TREE_ANIM;
+        } else if (partMaterial?.kind === 'lighting') {
           const snow = directional?.snow === true ? DRAW_SNOW : 0;
           if (isLod(partMaterial)) {
             // Object LOD of snowy statics: shapes named "objsnow" (HD: "objsnowHD"); of

@@ -179,6 +179,18 @@ listed for the cells of the 11 × 11 grid around it are shown: the cells outside
 `node tools/land-audit.ts` checks every LAND record: heights, layer counts, and that each land
 texture resolves to files that exist and parse.
 
+## Trees
+
+**TREE CNAM** (48 bytes, 12 × f32): trunk flexibility, branch flexibility, trunk amplitude,
+front / back / side amplitude, front / back / side frequency, leaf flexibility, leaf amplitude,
+leaf frequency (e.g. ReachTree01: leaves 2 and 1; pines: 2 and 1.5). Tree models have a
+BSLeafAnimNode root (172 vanilla trees: leaves only) or a BSTreeNode (71, the pines: the
+shapes are skinned to a trunk bone and branch bones, its two bone lists). Shapes with SLSF2
+Tree_Anim flutter in the wind (lighting shader TreeParams, see
+[rendering.md](../rendering.md#lighting-shader)). The trunk and branch values move the
+BSTreeNode bones; how is not documented (TODO(M7): with the skinning of actors, which the
+bones need).
+
 ## Grass
 
 **LTEX GNAM** (repeated): the GRAS that grow on a land texture (29 vanilla textures).
