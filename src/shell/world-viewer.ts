@@ -1,6 +1,7 @@
 // Exterior worldspaces: streams the cells around the camera (landscape, objects and lights)
-// in and out, like the engine's loaded grid (uGridsToLoad 5).
-// TODO(M4): distant LOD, sky, weather and time of day, water.
+// in and out, like the engine's loaded grid (uGridsToLoad 5), under the sky and weather of
+// the worldspace's climate and regions.
+// TODO(M4): distant LOD, water.
 
 import { FlyCamera } from '../render/fly-camera.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -18,6 +19,7 @@ import { CELL_SIZE, LAND_GRID, landTexture } from '../world/land.ts';
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
 import { cellKey, Worldspace } from '../world/worldspace.ts';
 import type { GameSession } from './game-session.ts';
+import { WorldSky, type SkyElements } from './world-sky.ts';
 import type { Terminal } from './terminal.ts';
 
 /** Cells loaded around the camera's cell in each direction (uGridsToLoad 5 → 2). */
@@ -28,7 +30,7 @@ const MAX_PARALLEL_LOADS = 3;
 const MAX_LIGHTS = 256;
 const EYE_HEIGHT = 120;
 
-export interface WorldElements {
+export interface WorldElements extends SkyElements {
   readonly panel: HTMLElement;
   readonly search: HTMLInputElement;
   readonly results: HTMLOListElement;
@@ -45,6 +47,21 @@ interface LoadedCell {
   ready: boolean;
 }
 
+/** Neutral light until the weather has loaded. */
+const NO_SKY: Omit<SceneLighting, 'lights'> = {
+  sunDirection: [0, 0, 1],
+  sunColor: [0, 0, 0],
+  ambient: [
+    [0.3, 0.3, 0.3],
+    [0.3, 0.3, 0.3],
+    [0.3, 0.3, 0.3],
+    [0.3, 0.3, 0.3],
+    [0.3, 0.3, 0.3],
+    [0.3, 0.3, 0.3],
+  ],
+  fog: { nearColor: [0, 0, 0], farColor: [0, 0, 0], near: 0, far: 1e9, power: 1, max: 0 },
+};
+
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -59,6 +76,7 @@ export class WorldViewer {
   #db: RecordDatabase | undefined;
   #worlds: WorldspaceInfo[] = [];
   #world: Worldspace | undefined;
+  #sky: WorldSky | undefined;
   readonly #cells = new Map<string, LoadedCell>();
   readonly #queue: [number, number][] = [];
   #loading = 0;
@@ -98,6 +116,11 @@ export class WorldViewer {
     return this.#worlds;
   }
 
+  /** Time of day and weather of the open worldspace (dev helpers). */
+  get sky(): WorldSky | undefined {
+    return this.#sky;
+  }
+
   /** Cells loaded around the camera (for dev checks). */
   get loadedCells(): number {
     return [...this.#cells.values()].filter((cell) => cell.ready).length;
@@ -124,9 +147,16 @@ export class WorldViewer {
     this.deactivate();
     const generation = ++this.#generation;
     const start = performance.now();
+    const session = this.#session;
+    if (!session) return;
     const world = await Worldspace.open(db, formId);
-    if (generation !== this.#generation) return;
+    const sky = await WorldSky.create(session, this.#renderer.sky, world, this.#ui, this.#terminal);
+    if (generation !== this.#generation) {
+      sky.dispose();
+      return;
+    }
     this.#world = world;
+    this.#sky = sky;
     const [x, y] = cell ?? world.busiestCell() ?? [0, 0];
     const land = await world.land(x, y);
     const ground = land?.heights[Math.floor(LAND_GRID / 2) * LAND_GRID + Math.floor(LAND_GRID / 2)];
@@ -149,6 +179,7 @@ export class WorldViewer {
       terrain: () => this.#readyTerrain(),
       camera: this.#camera,
       lighting: (camera) => this.#lighting(camera.position),
+      sky: () => this.#sky?.skyFrame(),
       backdrop: false,
     });
     document.body.classList.add('has-scene');
@@ -170,6 +201,8 @@ export class WorldViewer {
     this.#cells.clear();
     this.#queue.length = 0;
     this.#world = undefined;
+    this.#sky?.dispose();
+    this.#sky = undefined;
   }
 
   // --- Streaming ------------------------------------------------------------------------
@@ -195,6 +228,9 @@ export class WorldViewer {
     }
     this.#queue.sort((a, b) => Math.hypot(a[0] - cx, a[1] - cy) - Math.hypot(b[0] - cx, b[1] - cy));
     this.#pump();
+    this.#sky?.update(world, cx, cy).catch((error: unknown) => {
+      this.#terminal.log('sky', describe(error), 'warn');
+    });
     this.#ui.status.hidden = false;
     this.#ui.status.textContent = `cell ${String(cx)},${String(cy)} · ${String(this.loadedCells)} cells loaded · ${String(this.#queue.length + this.#loading)} loading`;
   }
@@ -307,7 +343,7 @@ export class WorldViewer {
     for (const cell of this.#cells.values()) if (cell.ready && cell.terrain) yield cell.terrain;
   }
 
-  /** Daylight for now, plus the nearest point lights. TODO(M4): climate, weather, time of day. */
+  /** The sky's light (time of day and weather) plus the nearest point lights. */
   #lighting(camera: Vec3): SceneLighting {
     const lights: { position: Vec3; radius: number; color: Vec3; distance: number }[] = [];
     for (const cell of this.#cells.values()) {
@@ -330,29 +366,9 @@ export class WorldViewer {
       }
     }
     lights.sort((a, b) => a.distance - b.distance);
-    const sun: Vec3 = [0.4, -0.5, 0.77];
-    const length = Math.hypot(...sun);
-    return {
-      sunDirection: [sun[0] / length, sun[1] / length, sun[2] / length],
-      sunColor: [1.0, 0.92, 0.8],
-      ambient: [
-        [0.32, 0.34, 0.38],
-        [0.3, 0.32, 0.36],
-        [0.32, 0.34, 0.38],
-        [0.3, 0.32, 0.36],
-        [0.42, 0.45, 0.5],
-        [0.18, 0.18, 0.18],
-      ],
-      fog: {
-        nearColor: [0.62, 0.68, 0.75],
-        farColor: [0.62, 0.68, 0.75],
-        near: 4000,
-        far: 60000,
-        power: 1,
-        max: 1,
-      },
-      lights: lights.slice(0, MAX_LIGHTS),
-    };
+    this.#sky?.frame(performance.now());
+    const sky = this.#sky?.lighting() ?? NO_SKY;
+    return { ...sky, lights: lights.slice(0, MAX_LIGHTS) };
   }
 
   // --- UI -------------------------------------------------------------------------------

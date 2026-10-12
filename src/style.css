@@ -326,6 +326,52 @@ button.preset {
   border: 1px solid var(--line);
 }
 
+.sky-controls .choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ash);
+}
+
+.sky-controls .choice > span:first-child {
+  flex: 0 0 56px;
+}
+
+.sky-controls input[type='range'] {
+  flex: 1;
+  min-width: 0;
+  accent-color: var(--gold);
+}
+
+.sky-controls input[type='checkbox'] {
+  margin: 0;
+  accent-color: var(--gold);
+}
+
+.sky-controls output {
+  flex: 0 0 40px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--bone);
+}
+
+.sky-controls select {
+  flex: 1;
+  min-width: 0;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--bone);
+  background: rgb(0 0 0 / 0.45);
+  border: 1px solid var(--line);
+}
+
 .cell-states {
   margin-top: 10px;
   padding-top: 8px;
@@ -652,6 +698,11 @@ details:not([open]) > .viewer-head {
 .shell.shell-hidden > * {
   opacity: 0;
   visibility: hidden;
+}
+
+/* No scrollbar line over the scene either. */
+.shell.shell-hidden {
+  overflow: hidden;
 }
 
 .table {

@@ -67,6 +67,11 @@ const ui = {
     results: byId('world-results', HTMLOListElement),
     count: byId('world-count', HTMLElement),
     status: byId('world-status', HTMLElement),
+    sky: byId('world-sky', HTMLElement),
+    time: byId('world-time', HTMLInputElement),
+    timeLabel: byId('world-time-label', HTMLOutputElement),
+    timeFlows: byId('world-time-flows', HTMLInputElement),
+    weather: byId('world-weather', HTMLSelectElement),
   },
   fatal: byId('fatal', HTMLDivElement),
 };
