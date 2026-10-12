@@ -54,6 +54,8 @@ export interface LightingMaterial {
   readonly specularStrength: number;
   readonly environmentMapScale: number;
   readonly tintColor: readonly [number, number, number] | undefined;
+  /** SLSF1 Refraction: how far the normal map shifts the scene behind (heat haze). */
+  readonly refractionStrength: number;
 }
 
 export interface EffectMaterial {
@@ -153,8 +155,6 @@ const LOD_WATER: WaterMaterial = {
 
 /** NiAVObject flag: the object (and its subtree) is hidden. */
 const APP_CULLED = 0x1;
-/** SLSF1 Refraction and Fire_Refraction. */
-const SLSF1_ANY_REFRACTION = 0x8000 | 0x10000;
 
 /**
  * Texture paths in NIFs are relative to Data, usually (but not always) with `textures\`.
@@ -191,6 +191,7 @@ function lightingMaterial(file: NifFile, shader: BSLightingShaderPropertyBlock):
     specularStrength: shader.specularStrength,
     environmentMapScale: shader.environmentMapScale ?? 0,
     tintColor: shader.skinTintColor ?? shader.hairTintColor,
+    refractionStrength: shader.refractionStrength,
   };
 }
 
@@ -504,12 +505,6 @@ export function buildModel(file: NifFile): ModelData {
       // and animation ("CurrentPlane", "NonCollidable", bone proxies).
       const shaderType = shaderRef >= 0 ? (file.blockTypes[shaderRef] ?? '') : '';
       if (shaderType !== '') skipped.push(`${name || 'shape'}: ${shaderType} (TODO(M4))`);
-      return;
-    }
-    if (partMaterial.kind !== 'water' && (partMaterial.flags1 & SLSF1_ANY_REFRACTION) !== 0) {
-      // Heat haze and similar (lighting or effect shader): the texture is a distortion
-      // map, not a colour, and needs a copy of the rendered scene.
-      skipped.push(`${name || 'shape'}: refraction effect (TODO(M4))`);
       return;
     }
     const billboard = billboards.at(-1);

@@ -15,6 +15,7 @@ import frameShader from './shaders/frame.wgsl?raw';
 import effectShader from './shaders/effect.wgsl?raw';
 import lightingShader from './shaders/lighting.wgsl?raw';
 import particleShader from './shaders/particle.wgsl?raw';
+import refractionShader from './shaders/refraction.wgsl?raw';
 import shadowShader from './shaders/shadow.wgsl?raw';
 import waterShader from './shaders/water.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
@@ -323,6 +324,7 @@ const EffectVariable = {
 } as const;
 /** Lighting shader controlled floats (LightingShaderControlledFloat). */
 const LightingVariable = {
+  refractionStrength: 0,
   environmentMapScale: 8,
   glossiness: 9,
   specularStrength: 10,
@@ -402,6 +404,18 @@ function writeAnimatedMaterial(
   set(LightingVariable.glossiness, 28);
   set(LightingVariable.alpha, 29);
   set(LightingVariable.environmentMapScale, 31);
+  set(LightingVariable.refractionStrength, 23);
+}
+
+/** SLSF1 Refraction on the lighting shader (no vanilla effect shader uses it). */
+const SLSF1_REFRACTION = 0x8000;
+const REFRACTION_BLEND: GPUBlendState = {
+  color: { srcFactor: 'src-alpha', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+  alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+};
+
+function isRefraction(material: PartMaterial | undefined): boolean {
+  return material?.kind === 'lighting' && (material.flags1 & SLSF1_REFRACTION) !== 0;
 }
 
 function blendState(alpha: AlphaState | undefined): GPUBlendState | undefined {
@@ -458,7 +472,16 @@ function writeMaterial(floats: Float32Array, uints: Uint32Array, part: MaterialS
   floats.set([...(material?.uvOffset ?? [0, 0]), ...(material?.uvScale ?? [1, 1])], 16);
   const emissive = material?.emissiveColor ?? [0, 0, 0];
   const multiple = material?.emissiveMultiple ?? 0;
-  floats.set([emissive[0] * multiple, emissive[1] * multiple, emissive[2] * multiple, 1], 20);
+  // The emissive slot's alpha holds the refraction strength (unused otherwise).
+  floats.set(
+    [
+      emissive[0] * multiple,
+      emissive[1] * multiple,
+      emissive[2] * multiple,
+      material?.refractionStrength ?? 0,
+    ],
+    20,
+  );
   floats.set([...(material?.specularColor ?? [1, 1, 1]), material?.specularStrength ?? 0], 24);
   floats.set(
     [
@@ -513,6 +536,7 @@ export class SceneRenderer {
     readonly effect: GPUShaderModule;
     readonly water: GPUShaderModule;
     readonly particle: GPUShaderModule;
+    readonly refraction: GPUShaderModule;
   };
   readonly #waterTypeLayout: GPUBindGroupLayout;
   readonly #waterPipelineLayout: GPUPipelineLayout;
@@ -721,6 +745,10 @@ export class SceneRenderer {
         label: 'water',
         code: frameShader + commonShader + waterShader,
       }),
+      refraction: device.createShaderModule({
+        label: 'refraction',
+        code: frameShader + commonShader + refractionShader,
+      }),
       particle: device.createShaderModule({
         label: 'particle',
         code: frameShader + commonShader + effectShader + particleShader,
@@ -780,7 +808,9 @@ export class SceneRenderer {
         const indexBuffer = createBuffer(device, part.indices, GPUBufferUsage.INDEX, part.name);
         buffers.push(vertexBuffer, indexBuffer);
         const water = part.material?.kind === 'water';
-        const blend = water ? undefined : blendState(part.alpha);
+        // Refraction shapes blend the shifted scene over it by their mask.
+        const refraction = isRefraction(part.material);
+        const blend = water ? undefined : refraction ? REFRACTION_BLEND : blendState(part.alpha);
         return {
           part,
           vertexBuffer,
@@ -791,6 +821,7 @@ export class SceneRenderer {
           pass: water ? 'water' : blend !== undefined ? 'transparent' : 'opaque',
           shadowPipeline:
             !water &&
+            !refraction &&
             blend === undefined &&
             part.material?.kind === 'lighting' &&
             (part.material.flags1 & SLSF1_CAST_SHADOWS) !== 0 &&
@@ -1576,11 +1607,12 @@ export class SceneRenderer {
 
   #pipeline(part: ModelPart, blend: GPUBlendState | undefined): GPURenderPipeline {
     const material = part.material;
-    const shader = material?.kind === 'effect' ? 'effect' : 'lighting';
+    const refraction = isRefraction(material);
+    const shader = refraction ? 'refraction' : material?.kind === 'effect' ? 'effect' : 'lighting';
     const flags1 = material?.flags1 ?? SLSF1_ZBUFFER_TEST;
     const flags2 = material?.flags2 ?? SLSF2_ZBUFFER_WRITE;
     const cullMode: GPUCullMode = (flags2 & SLSF2_DOUBLE_SIDED) !== 0 ? 'none' : 'back';
-    const depthWrite = blend === undefined || (flags2 & SLSF2_ZBUFFER_WRITE) !== 0;
+    const depthWrite = !refraction && (blend === undefined || (flags2 & SLSF2_ZBUFFER_WRITE) !== 0);
     const depthTest = (flags1 & SLSF1_ZBUFFER_TEST) !== 0 || material === undefined;
     // Decals (dirt and trim layers lying on other surfaces) are pulled towards the camera so
     // they never fight with the surface below. Reversed Z: a positive bias means closer.
@@ -1612,7 +1644,7 @@ export class SceneRenderer {
         },
         fragment: {
           module: this.#modules[shader],
-          entryPoint: 'fs_main',
+          entryPoint: refraction ? 'fs_refraction' : 'fs_main',
           targets: [{ format: this.#colorFormat, ...(blend && { blend }) }],
         },
         primitive: { topology: 'triangle-list', cullMode, frontFace: 'ccw' },

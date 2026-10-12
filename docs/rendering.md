@@ -67,3 +67,13 @@ quad facing the camera (the frame's camera axes, turned by the particle's rotati
 along the velocity (aspect flag `0x1`, height scaled by the aspect ratio), or a ribbon segment
 facing the camera for strip particles. Blended particles test but never write depth (their
 quads overlap unsorted within a system).
+
+**Refraction** (SLSF1 `0x8000` on the lighting shader: heat haze over fires and torches,
+magic barriers, mist; about 360 vanilla shapes, strength 0.05–1): the engine draws these shapes only
+into a refraction buffer (normal map direction, strength, alpha as mask) and an image-space pass
+shifts the scene by normal.xy × 0.05 × strength (x mirrored), blended by the mask
+(`ISRefraction` in the Community Shaders sources). Here the shapes draw that shifted copy of
+the opaque scene directly (`shaders/refraction.wgsl`), blended by their mask in the blended
+pass; their UV controllers scroll the noise. Fire_Refraction (`0x10000`) without Refraction (about
+50 shapes) is drawn as a regular surface: what it changes in the engine is not documented
+(TODO(M13)).
