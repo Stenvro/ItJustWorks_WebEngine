@@ -152,8 +152,8 @@ export class TerrainRenderer {
       fragment: {
         module,
         entryPoint: 'fs_main',
-        // TODO(M4): the landscape's normal and snow mask into the G-buffer (terrain.wgsl).
-        targets: [{ format: colorFormat }, gbufferTarget(false)],
+        // The landscape's normal and snow mask go into the G-buffer (SAO, snow scattering).
+        targets: [{ format: colorFormat }, gbufferTarget(true)],
       },
       primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: 'ccw' },
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'greater' },
