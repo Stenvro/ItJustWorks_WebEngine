@@ -20,6 +20,8 @@ import {
   resolveGameFolder,
 } from './vfs/browser/data-folder.ts';
 import { formatModIndex } from './vfs/load-order.ts';
+import { doorDestination, type Teleport } from './world/cell-loader.ts';
+import { CELL_SIZE } from './world/land.ts';
 import { Vfs } from './vfs/vfs.ts';
 
 function byId<T extends HTMLElement>(id: string, type: new () => T): T {
@@ -61,6 +63,9 @@ const ui = {
       count: byId('cell-count', HTMLElement),
     },
     upgrades: byId('cell-upgrades', HTMLElement),
+    play: byId('cell-play', HTMLElement),
+    freeCamera: byId('cell-free-camera', HTMLInputElement),
+    prompt: byId('activate-prompt', HTMLDivElement),
   },
   world: {
     panel: byId('world-viewer', HTMLElement),
@@ -68,6 +73,9 @@ const ui = {
     results: byId('world-results', HTMLOListElement),
     count: byId('world-count', HTMLElement),
     status: byId('world-status', HTMLElement),
+    play: byId('world-play', HTMLElement),
+    freeCamera: byId('world-free-camera', HTMLInputElement),
+    prompt: byId('activate-prompt', HTMLDivElement),
     sky: byId('world-sky', HTMLElement),
     time: byId('world-time', HTMLInputElement),
     timeLabel: byId('world-time-label', HTMLOutputElement),
@@ -81,6 +89,7 @@ const ui = {
 let connectSession: ((vfs: Vfs) => Promise<void>) | undefined;
 
 const terminal = new Terminal(ui.log);
+const hexId = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
 const numberFormat = new Intl.NumberFormat('en-US');
 
 function describeError(error: unknown): string {
@@ -338,6 +347,35 @@ async function main(): Promise<void> {
     worldViewer.deactivate();
   };
   let session: GameSession | undefined;
+  // Load doors: the player goes to the door on the other side, inside or out.
+  // TODO(M9): the loading screen while the destination loads.
+  const travel = async (teleport: Teleport): Promise<void> => {
+    const db = await session?.db;
+    if (!db) return;
+    const destination = await doorDestination(db, teleport);
+    if (!destination) {
+      terminal.log('door', 'the door leads nowhere', 'warn');
+      return;
+    }
+    const arrival = { position: teleport.position, heading: teleport.rotation[2] };
+    terminal.log('door', `to ${destination.name || hexId(destination.cell)}`);
+    if (destination.world === undefined) {
+      await modelViewer.showCell(destination.cell, arrival);
+    } else {
+      const cell: [number, number] = [
+        Math.floor(teleport.position[0] / CELL_SIZE),
+        Math.floor(teleport.position[1] / CELL_SIZE),
+      ];
+      await worldViewer.open(destination.world, cell, arrival);
+    }
+  };
+  const onTravel = (teleport: Teleport): void => {
+    travel(teleport).catch((error: unknown) => {
+      terminal.log('door', describeError(error), 'error');
+    });
+  };
+  modelViewer.onTravel = onTravel;
+  worldViewer.onTravel = onTravel;
   connectSession = async (vfs: Vfs): Promise<void> => {
     session?.dispose();
     session = new GameSession(gpu.device, renderer, vfs, terminal);

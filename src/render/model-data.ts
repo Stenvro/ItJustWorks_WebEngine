@@ -12,7 +12,12 @@ import type {
   VertexDesc,
 } from '../formats/nif/types.ts';
 import { normalizePath } from '../formats/paths.ts';
-import { buildAnimation, type ModelAnimation } from './animation.ts';
+import {
+  buildAnimation,
+  type ModelAnimation,
+  buildSequences,
+  type ModelSequences,
+} from './animation.ts';
 import { buildParticleSystem, type ParticleSystemData } from './particle-data.ts';
 import { invert } from './frustum.ts';
 import { skinShape } from './skinning.ts';
@@ -156,6 +161,8 @@ export interface ModelData {
   readonly leafAnimation?: boolean;
   /** Controllers that play on their own (UV scrolling, turning parts, idle sequence). */
   readonly animation?: ModelAnimation;
+  /** Sequences the game plays on demand (a door's "Open" and "Close"). */
+  readonly sequences?: ModelSequences;
   /** Particle systems (fire, smoke, dust, ...). */
   readonly particles: readonly ParticleSystemData[];
   /**
@@ -381,7 +388,7 @@ function isEditorMarker(file: NifFile): boolean {
  * World matrix of every node and shape, as the scene graph places them (the roots' own
  * transforms are ignored, see buildModel). Skinning needs the bones' matrices up front.
  */
-function nodeWorlds(file: NifFile): Map<Ref, Mat4> {
+export function nodeWorlds(file: NifFile): Map<Ref, Mat4> {
   const worlds = new Map<Ref, Mat4>();
   const visit = (ref: Ref, parentWorld: Mat4, depth: number): void => {
     const block = file.blocks[ref];
@@ -646,6 +653,7 @@ export function buildModel(file: NifFile): ModelData {
   }
 
   const animation = buildAnimation(file);
+  const sequences = buildSequences(file);
   return {
     parts,
     center,
@@ -657,6 +665,7 @@ export function buildModel(file: NifFile): ModelData {
       return type === 'BSLeafAnimNode' || type === 'BSTreeNode';
     }),
     ...(animation && { animation }),
+    ...(sequences && { sequences }),
     particles,
     addons,
   };

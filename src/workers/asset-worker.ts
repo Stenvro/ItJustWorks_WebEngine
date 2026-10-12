@@ -4,6 +4,7 @@
 import { decodeBsaPayload } from '../formats/bsa/bsa.ts';
 import { parseDds } from '../formats/dds/dds.ts';
 import { parseNif } from '../formats/nif/nif.ts';
+import { buildCollision } from '../physics/collision-data.ts';
 import { buildModel } from '../render/model-data.ts';
 import type { AssetRequest, AssetResponse } from './protocol.ts';
 
@@ -25,6 +26,17 @@ function handle(request: AssetRequest): [AssetResponse, ArrayBuffer[]] {
   if (request.kind === 'model') {
     const nif = parseNif(bytes);
     const model = buildModel(nif);
+    const collision = buildCollision(nif);
+    for (const body of collision.bodies) {
+      for (const shape of body.shapes) {
+        if (shape.type === 'mesh') {
+          own(shape.vertices);
+          own(shape.indices);
+        } else if (shape.type === 'convex') {
+          own(shape.points);
+        }
+      }
+    }
     for (const part of model.parts) {
       own(part.vertices);
       own(part.indices);
@@ -42,6 +54,7 @@ function handle(request: AssetRequest): [AssetResponse, ArrayBuffer[]] {
       ok: true,
       kind: 'model',
       model,
+      collision,
       problems: nif.problems,
       workMs: performance.now() - start,
     };

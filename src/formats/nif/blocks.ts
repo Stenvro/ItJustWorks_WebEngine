@@ -5,6 +5,7 @@
 import { BinaryReader, FormatError } from '../binary-reader.ts';
 import { readSizedString } from './header.ts';
 import type {
+  BoundBlock,
   BSEffectShaderPropertyBlock,
   BSLightingShaderPropertyBlock,
   BSSkyShaderPropertyBlock,
@@ -85,11 +86,11 @@ export function readVec2(reader: BinaryReader): [number, number] {
 }
 
 /** Copies `count` floats into an aligned Float32Array. */
-function readFloats(reader: BinaryReader, count: number): Float32Array {
+export function readFloats(reader: BinaryReader, count: number): Float32Array {
   return new Float32Array(reader.bytes(count * 4).slice().buffer);
 }
 
-function readUint16s(reader: BinaryReader, count: number): Uint16Array {
+export function readUint16s(reader: BinaryReader, count: number): Uint16Array {
   return new Uint16Array(reader.bytes(count * 2).slice().buffer);
 }
 
@@ -277,7 +278,7 @@ const parseNiTriShape: BlockParser = (reader, context, type): NiTriShapeBlock =>
   return { ...base, kind: 'ni-tri-shape', data, skin, shaderProperty, alphaProperty };
 };
 
-const parseNiTriShapeData: BlockParser = (reader, context): NiTriShapeDataBlock => {
+const parseNiTriShapeData: BlockParser = (reader, context, type): NiTriShapeDataBlock => {
   reader.i32(); // group id
   const vertexCount = reader.u16();
   reader.u8(); // keep flags
@@ -303,10 +304,20 @@ const parseNiTriShapeData: BlockParser = (reader, context): NiTriShapeDataBlock 
   reader.u16(); // consistency flags
   reader.i32(); // additional data
   const triangleCount = reader.u16();
-  reader.u32(); // triangle point count
-  const triangles = readBool(reader) ? readUint16s(reader, triangleCount * 3) : new Uint16Array(0);
-  const matchGroups = reader.u16();
-  for (let i = 0; i < matchGroups; i++) reader.skip(reader.u16() * 2);
+  let triangles: Uint16Array;
+  if (type === 'NiTriStripsData') {
+    // Strips of points, unrolled into a triangle list.
+    const lengths = readUint16s(reader, reader.u16());
+    const hasPoints = readBool(reader);
+    triangles = stripsToTriangles(
+      hasPoints ? Array.from(lengths, (length) => readUint16s(reader, length)) : [],
+    );
+  } else {
+    reader.u32(); // triangle point count
+    triangles = readBool(reader) ? readUint16s(reader, triangleCount * 3) : new Uint16Array(0);
+    const matchGroups = reader.u16();
+    for (let i = 0; i < matchGroups; i++) reader.skip(reader.u16() * 2);
+  }
   return {
     kind: 'ni-tri-shape-data',
     vertices,
@@ -478,6 +489,13 @@ const parseIntegerExtraData: BlockParser = (reader, context): IntegerExtraDataBl
   value: reader.u32(),
 });
 
+const parseBound: BlockParser = (reader, context): BoundBlock => ({
+  kind: 'bound',
+  name: readStringRef(reader, context),
+  center: readVec3(reader),
+  halfExtents: readVec3(reader),
+});
+
 /** BSXFlags bits (on the root node's "BSX" extra data). */
 export const BsxFlag = {
   animated: 0x1,
@@ -631,6 +649,7 @@ export const BLOCK_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string, B
   ['NiTriShape', parseNiTriShape],
   ['BSLODTriShape', parseNiTriShape],
   ['NiTriShapeData', parseNiTriShapeData],
+  ['NiTriStripsData', parseNiTriShapeData],
   ['BSLightingShaderProperty', parseLightingShader],
   ['BSEffectShaderProperty', parseEffectShader],
   ['BSSkyShaderProperty', parseSkyShader],
@@ -639,6 +658,7 @@ export const BLOCK_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string, B
   ['NiAlphaProperty', parseAlpha],
   ['NiIntegerExtraData', parseIntegerExtraData],
   ['BSXFlags', parseIntegerExtraData],
+  ['BSBound', parseBound],
   ['NiSkinInstance', parseSkinInstance],
   ['BSDismemberSkinInstance', parseSkinInstance],
   ['NiSkinData', parseSkinData],

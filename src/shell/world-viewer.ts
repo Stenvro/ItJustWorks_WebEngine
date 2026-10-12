@@ -6,7 +6,8 @@
 import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Vec3 } from '../render/math.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { Camera, Renderer } from '../render/renderer.ts';
+import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
 import {
   placedParts,
   type GpuModel,
@@ -33,18 +34,34 @@ import {
   DEFAULT_LAND_TEXTURE,
 } from '../render/terrain-data.ts';
 import { pointLights } from '../world/cell-lighting.ts';
-import { loadCellData, type CellLight, type CellObject } from '../world/cell-loader.ts';
+import {
+  doorDestination,
+  loadCellData,
+  type CellLight,
+  type CellObject,
+  type DoorDestination,
+  type Teleport,
+} from '../world/cell-loader.ts';
 import { raycastParts } from '../render/raycast.ts';
 import { enabledReferences, findToggles, gameStartSelection } from '../world/cell-upgrades.ts';
 import { CELL_SIZE, LAND_GRID, landHeightAt, landTexture, type LandData } from '../world/land.ts';
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
-import { cellKey, WorldFlag, Worldspace } from '../world/worldspace.ts';
+import { cellKey, WorldFlag, Worldspace, type Arrival } from '../world/worldspace.ts';
 import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-references.ts';
 import type { GameSession } from './game-session.ts';
 import { WorldLod } from './world-lod.ts';
 import { WorldSky, type SkyElements } from './world-sky.ts';
 import type { Rgb } from '../world/cell-records.ts';
 import type { Terminal } from './terminal.ts';
+import { Player } from './player.ts';
+import {
+  collisionGroup,
+  objectActivation,
+  openable,
+  PlaySession,
+  type Activatable,
+  type CollisionGroup,
+} from './play-session.ts';
 
 /** Cells loaded around the camera's cell in each direction (uGridsToLoad 5 → 2). */
 const GRID_RADIUS = 2;
@@ -63,6 +80,11 @@ export interface WorldElements extends SkyElements {
   readonly results: HTMLOListElement;
   readonly count: HTMLElement;
   readonly status: HTMLElement;
+  /** Play controls (the free camera). */
+  readonly play: HTMLElement;
+  readonly freeCamera: HTMLInputElement;
+  /** What the crosshair rests on. */
+  readonly prompt: HTMLElement;
 }
 
 interface LoadedCell {
@@ -76,6 +98,12 @@ interface LoadedCell {
   /** Placed decals (blood, scorch marks, puddles). */
   decals: GpuDecals | undefined;
   lights: readonly CellLight[];
+  /** Collision of its landscape and objects in the physics world. */
+  readonly collision: CollisionGroup;
+  /** Its enabled objects by reference (what the crosshair can rest on). */
+  objects: ReadonlyMap<number, CellObject>;
+  /** The cell's water surface, if it has water. */
+  waterHeight: number | undefined;
   /** The placed objects with their instances (development: what the camera looks at). */
   placed: readonly { readonly object: CellObject; readonly instance: ModelInstance }[];
   /**
@@ -122,7 +150,10 @@ export class WorldViewer {
   readonly #terminal: Terminal;
   readonly #ui: WorldElements;
   readonly #onActivate: () => void;
+  /** The free camera (tfc), also used while the player waits for the ground to load. */
   readonly #camera = new FlyCamera();
+  /** The physics world and the player while a world is open. */
+  #play: PlaySession | undefined;
   #session: GameSession | undefined;
   #db: RecordDatabase | undefined;
   #worlds: WorldspaceInfo[] = [];
@@ -143,7 +174,6 @@ export class WorldViewer {
   readonly #largeCells = new Map<string, LargeReferenceCell>();
   readonly #largeQueue: { x: number; y: number; references: ReadonlySet<number> }[] = [];
   #timer: ReturnType<typeof setInterval> | undefined;
-  #detachControls: (() => void) | undefined;
   readonly #landTextures = new Map<number, Promise<TerrainTexturePaths>>();
   /** The LOD world's settings (LOD terrain blocks), if it has terrain LOD. */
   #lodSettings: { readonly name: string; readonly settings: LodSettings } | undefined;
@@ -169,10 +199,63 @@ export class WorldViewer {
     ui.search.addEventListener('input', () => {
       this.#showResults();
     });
+    ui.freeCamera.addEventListener('change', () => {
+      this.#play?.setFreeCamera(ui.freeCamera.checked);
+    });
+  }
+
+  /** What the renderer looks through: the player's camera, or the free camera. */
+  get #view(): Camera {
+    return this.#play?.view ?? this.#camera;
+  }
+
+  /** The player (while playing a world). */
+  get player(): Player | undefined {
+    return this.#play?.player;
+  }
+
+  /** The physics world and player of the open world. */
+  get play(): PlaySession | undefined {
+    return this.#play;
+  }
+
+  /** Called when the player goes through a load door (the app takes them there). */
+  onTravel: ((teleport: Teleport) => void) | undefined;
+  /** Load door destinations by destination door. */
+  readonly #destinations = new Map<number, DoorDestination | undefined>();
+
+  async #destination(teleport: Teleport): Promise<DoorDestination | undefined> {
+    if (!this.#destinations.has(teleport.door) && this.#db) {
+      this.#destinations.set(teleport.door, await doorDestination(this.#db, teleport));
+    }
+    return this.#destinations.get(teleport.door);
+  }
+
+  /** What activating a reference does: load doors take the player to their destination. */
+  #activatable(reference: number): Activatable | undefined {
+    for (const cell of this.#cells.values()) {
+      const object = cell.objects.get(reference);
+      if (!object) continue;
+      const instance = cell.placed.find((placed) => placed.object === object)?.instance;
+      return objectActivation(object, instance, {
+        name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
+        go: (teleport) => this.onTravel?.(teleport),
+      });
+    }
+    return undefined;
+  }
+
+  /** Whether the collision under a point is in place (the player can stand there). */
+  #groundReady(feet: Vec3): boolean {
+    const cell = this.#cells.get(
+      cellKey(Math.floor(feet[0] / CELL_SIZE), Math.floor(feet[1] / CELL_SIZE)),
+    );
+    return cell?.ready === true && (!cell.exists || cell.collision.ready);
   }
 
   set lensShift(shift: number) {
     this.#camera.lensShift = shift;
+    if (this.#play) this.#play.lensShift = shift;
   }
 
   get camera(): FlyCamera {
@@ -193,11 +276,11 @@ export class WorldViewer {
    * reference, base and model, and how far away it is.
    */
   pick(
-    direction: Vec3 = this.#camera.forward,
+    direction: Vec3 = this.#play?.forward ?? this.#camera.forward,
   ):
     | { reference: string; base: string; editorId: string; model: string; distance: number }
     | undefined {
-    const origin: Vec3 = [...this.#camera.position];
+    const origin: Vec3 = [...this.#view.position];
     let best: { object: CellObject; distance: number } | undefined;
     for (const cell of this.#cells.values()) {
       if (!cell.ready) continue;
@@ -242,7 +325,12 @@ export class WorldViewer {
   }
 
   /** Opens a worldspace at a cell (default: its busiest cell). */
-  async open(formId: number, cell?: readonly [number, number]): Promise<void> {
+  /**
+   * Opens a worldspace. The player arrives at `arrival` (a load door's destination), or as
+   * the game would bring them in near `cell` (default: the busiest cell): in front of the
+   * nearest load door, else at the nearest map marker.
+   */
+  async open(formId: number, cell?: readonly [number, number], arrival?: Arrival): Promise<void> {
     const db = this.#db;
     if (!db) return;
     this.#onActivate();
@@ -276,23 +364,70 @@ export class WorldViewer {
     this.#renderer.scene.defaultWater = await session.waterType(
       world.waterWorld.water ?? DEFAULT_WATER,
     );
-    const [x, y] = cell ?? world.busiestCell() ?? [0, 0];
-    const land = await world.land(x, y);
+    const [targetX, targetY] = cell ?? world.busiestCell() ?? [0, 0];
+    const comeIn =
+      arrival ??
+      (await world.arrivalNear((targetX + 0.5) * CELL_SIZE, (targetY + 0.5) * CELL_SIZE));
+    // Without a door or map marker: the middle of the cell, on whatever is below.
+    const land = comeIn ? undefined : await world.land(targetX, targetY);
     const ground = land?.heights[Math.floor(LAND_GRID / 2) * LAND_GRID + Math.floor(LAND_GRID / 2)];
-    this.#camera.position = [
-      (x + 0.5) * CELL_SIZE,
-      (y + 0.5) * CELL_SIZE,
-      (ground ?? world.landWorld.defaultLandHeight) + EYE_HEIGHT * 4,
-    ];
-    this.#camera.yaw = 0;
-    this.#camera.pitch = -0.1;
+    const feet: [number, number, number] = comeIn
+      ? [...comeIn.position]
+      : [
+          (targetX + 0.5) * CELL_SIZE,
+          (targetY + 0.5) * CELL_SIZE,
+          ground ?? world.landWorld.defaultLandHeight,
+        ];
+    const x = Math.floor(feet[0] / CELL_SIZE);
+    const y = Math.floor(feet[1] / CELL_SIZE);
+    this.#camera.position = [feet[0], feet[1], feet[2] + EYE_HEIGHT];
+    this.#camera.yaw = comeIn?.heading ?? 0;
+    this.#camera.pitch = 0;
+    // The physics world and the player, standing on the ground of the starting cell.
+    const [matrix, playerData] = await Promise.all([
+      session.collisionMatrix(),
+      session.playerData(),
+      initPhysics(),
+    ]);
+    if (generation !== this.#generation) return;
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const player = new Player(
+      {
+        ...playerData,
+        physics,
+        waterHeight: (px, py) =>
+          this.#cells.get(cellKey(Math.floor(px / CELL_SIZE), Math.floor(py / CELL_SIZE)))
+            ?.waterHeight,
+      },
+      feet,
+      comeIn?.heading ?? 0,
+    );
+    const play = new PlaySession({
+      physics,
+      player,
+      camera: this.#camera,
+      canvas: this.#canvas,
+      groundReady: (at) => this.#groundReady(at),
+      // Arrival points stand on the ground; without one the landscape may be anywhere below
+      // or above the guess.
+      searchAbove: comeIn ? 64 : 8192,
+      activatable: (reference) => this.#activatable(reference),
+      prompt: this.#ui.prompt,
+    });
+    play.lensShift = this.#camera.lensShift;
+    play.onFreeCamera = (free) => {
+      this.#ui.freeCamera.checked = free;
+    };
+    this.#play = play;
+    this.#ui.freeCamera.checked = false;
+    this.#ui.play.hidden = false;
     this.#terminal.log(
       'world',
       `${world.record.editorId}${world.record.name ? ` "${world.record.name}"` : ''} · cell ${String(x)},${String(y)} · ` +
         `land from ${world.landWorld.editorId} · ${(performance.now() - start).toFixed(0)} ms`,
       'ok',
     );
-    this.#detachControls = this.#camera.attach(this.#canvas);
+    play.attach();
     this.#renderer.setView({
       scenes: () => this.#readyScenes(),
       trees: () => this.#lod?.trees(),
@@ -302,7 +437,7 @@ export class WorldViewer {
       lodMask: () => this.#lodMask(),
       largeRefMask: () => this.#largeRefMask(),
       terrain: () => this.#readyTerrain(),
-      camera: this.#camera,
+      camera: this.#view,
       lighting: (camera) => this.#lighting(camera.position),
       // Worlds without a sky (WRLD DATA 0x20, e.g. Blackreach) draw no dome, sun, moons,
       // stars or clouds; their weather still lights and fogs them.
@@ -326,8 +461,6 @@ export class WorldViewer {
     this.#generation++;
     if (this.#timer !== undefined) clearInterval(this.#timer);
     this.#timer = undefined;
-    this.#detachControls?.();
-    this.#detachControls = undefined;
     if (this.#world) this.#renderer.setView(undefined);
     for (const cell of this.#cells.values()) this.#free(cell);
     this.#cells.clear();
@@ -340,6 +473,9 @@ export class WorldViewer {
     this.#sky = undefined;
     this.#lod?.dispose();
     this.#lod = undefined;
+    this.#play?.dispose();
+    this.#play = undefined;
+    this.#ui.play.hidden = true;
   }
 
   // --- Streaming ------------------------------------------------------------------------
@@ -348,7 +484,7 @@ export class WorldViewer {
   #update(): void {
     const world = this.#world;
     if (!world) return;
-    const [px, py] = this.#camera.position;
+    const [px, py] = this.#view.position;
     const cx = Math.floor(px / CELL_SIZE);
     const cy = Math.floor(py / CELL_SIZE);
     for (const [key, cell] of this.#cells) {
@@ -454,6 +590,9 @@ export class WorldViewer {
         grass: [],
         decals: undefined,
         lights: [],
+        collision: collisionGroup(),
+        objects: new Map(),
+        waterHeight: undefined,
         placed: [],
         exists: false,
         ready: false,
@@ -503,7 +642,7 @@ export class WorldViewer {
     const objects = data.objects.filter((object) => isEnabled(object.reference));
     // Rivers move along the flow map of the cell they lie in.
     const flow = this.#flowMap(world, cell.x, cell.y);
-    const placed = await this.#place(session, objects, flow);
+    const placed = await this.#place(session, objects, flow, true);
     const instances = placed.map(({ instance }) => instance);
     // The cell's water plane (lakes, rivers and the sea are cell water at a height).
     const water = cellWater(data.cell, {
@@ -536,6 +675,33 @@ export class WorldViewer {
     cell.decals = decals;
     cell.lights = lights;
     cell.placed = placed;
+    cell.waterHeight = water?.height;
+    cell.objects = new Map(objects.map((object) => [object.reference, object]));
+    // Load doors: where they lead (for the activation prompt).
+    await Promise.all(
+      objects.map(async (object) => {
+        if (object.teleport) await this.#destination(object.teleport);
+      }),
+    );
+    const play = this.#play;
+    if (play) {
+      // Collision: the landscape, the enabled objects (also those with nothing to draw) and
+      // collision primitives.
+      const collisions = await Promise.all(
+        objects.map((object) => session.collision(object.model)),
+      );
+      if (play !== this.#play) return;
+      const instances = new Map(placed.map(({ object, instance }) => [object, instance]));
+      play.add(cell.collision, {
+        ...(land && { land: { data: land, x: cell.x, y: cell.y } }),
+        objects: objects.map((object, i) => ({
+          object,
+          collision: collisions[i],
+          instance: instances.get(object),
+        })),
+        primitives: data.primitives.filter((primitive) => isEnabled(primitive.reference)),
+      });
+    }
     if (land) cell.grass = await this.#grass(land, cell, water?.height);
   }
 
@@ -544,8 +710,13 @@ export class WorldViewer {
     session: GameSession,
     objects: readonly CellObject[],
     flow: WaterFlow,
+    simulated = false,
   ): Promise<{ object: CellObject; instance: ModelInstance }[]> {
     const models = await Promise.all(objects.map((object) => session.model(object.model)));
+    // In loaded cells, objects with simulated collision move: they get a matrix of their own.
+    const collisions = simulated
+      ? await Promise.all(objects.map((object) => session.collision(object.model)))
+      : [];
     // Statics' directional materials (snow, moss, ice) as placed.
     const directionals = await Promise.all(
       objects.map((object) => session.directionalMaterial(object.directional)),
@@ -563,11 +734,17 @@ export class WorldViewer {
       const water = waterTypes[i];
       const directional = directionals[i];
       if (!model) return;
+      const moves =
+        collisions[i]?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
       placed.push({
         object,
         instance: {
           model,
-          world: object.world,
+          world: moves ? new Float32Array(object.world) : object.world,
+          ...(moves && { motion: { version: 0 } }),
+          ...(simulated && {
+            playback: openable(object, model.sequences?.byName.has('open') === true),
+          }),
           ...(water && { water }),
           ...(directional && { directional }),
           ...(object.leafAnimation && { leafAnimation: object.leafAnimation }),
@@ -709,6 +886,7 @@ export class WorldViewer {
   }
 
   #free(cell: LoadedCell): void {
+    this.#play?.remove(cell.collision);
     cell.terrain?.destroy();
     cell.scene?.destroy();
     cell.decals?.destroy();
@@ -740,7 +918,7 @@ export class WorldViewer {
 
   /** Loaded cells around the camera, where distant LOD gives way to them. */
   #lodMask(): LodMask {
-    const [px, py] = this.#camera.position;
+    const [px, py] = this.#view.position;
     const originX = Math.floor(px / CELL_SIZE) - 3;
     const originY = Math.floor(py / CELL_SIZE) - 3;
     let low = 0;
@@ -759,7 +937,7 @@ export class WorldViewer {
 
   /** Cells of the large-reference grid whose large references are shown in full detail. */
   #largeRefMask(): LargeRefMask {
-    const [px, py] = this.#camera.position;
+    const [px, py] = this.#view.position;
     const originX = Math.floor(px / CELL_SIZE) - LARGE_REFERENCE_RADIUS;
     const originY = Math.floor(py / CELL_SIZE) - LARGE_REFERENCE_RADIUS;
     const bits = new Uint32Array(4);

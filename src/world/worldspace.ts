@@ -2,7 +2,7 @@
 // and LOD (child worlds such as WhiterunWorld borrow them from Tamriel), and where the
 // persistent references are. Layout: docs/formats/esm.md ("Worldspaces").
 
-import { parseReference } from './cell-records.ts';
+import { parseReference, parseTeleport } from './cell-records.ts';
 import { CELL_SIZE, parseLand, type LandData } from './land.ts';
 import { parseLargeReferences, type LargeReference } from './large-references.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
@@ -72,6 +72,15 @@ export function parseWorldspace(record: GameRecord): WorldspaceRecord {
   };
 }
 
+/** Where to put the player: a position (feet) and a heading (radians, clockwise from north). */
+export interface Arrival {
+  readonly position: readonly [number, number, number];
+  readonly heading: number;
+}
+
+/** The engine's map marker (STAT): fast travel arrives at these. */
+const MAP_MARKER = 0x10;
+
 /** A worldspace with the indexes needed to load its exterior cells. */
 export class Worldspace {
   readonly db: RecordDatabase;
@@ -85,6 +94,10 @@ export class Worldspace {
   readonly largeReferences: ReadonlyMap<string, readonly LargeReference[]>;
   /** Persistent references by cell "x,y". */
   readonly #persistent: Map<string, number[]>;
+  /** Load doors in the world (persistent references with XTEL) and where they stand. */
+  readonly #doors: readonly { readonly door: number; readonly x: number; readonly y: number }[];
+  /** Map markers: where fast travel puts the player. */
+  readonly #mapMarkers: readonly Arrival[];
   readonly #land = new Map<string, Promise<LandData | undefined>>();
 
   private constructor(
@@ -93,6 +106,8 @@ export class Worldspace {
     parent: WorldspaceRecord | undefined,
     persistent: Map<string, number[]>,
     largeReferences: ReadonlyMap<string, readonly LargeReference[]>,
+    doors: readonly { readonly door: number; readonly x: number; readonly y: number }[],
+    mapMarkers: readonly Arrival[],
   ) {
     this.db = db;
     this.record = record;
@@ -104,6 +119,8 @@ export class Worldspace {
     this.climateWorld = from(ParentUse.climate);
     this.lodWorld = from(ParentUse.lod);
     this.#persistent = persistent;
+    this.#doors = doors;
+    this.#mapMarkers = mapMarkers;
   }
 
   /** Reads the worldspace and sorts its persistent references into cells by position. */
@@ -112,12 +129,20 @@ export class Worldspace {
     const parentRecord = record.parent === undefined ? undefined : await db.get(record.parent);
     const parent = parentRecord ? parseWorldspace(parentRecord) : undefined;
     const persistent = new Map<string, number[]>();
+    const doors: { door: number; x: number; y: number }[] = [];
+    const mapMarkers: Arrival[] = [];
     const persistentCell = db.persistentCell(formId);
     if (persistentCell !== undefined) {
       for (const id of db.cellReferences(persistentCell)) {
         const ref = await db.get(id);
         if (!ref || ref.deleted || (ref.type !== 'REFR' && ref.type !== 'ACHR')) continue;
-        const { position } = parseReference(ref);
+        const placed = parseReference(ref);
+        const { position } = placed;
+        // Load doors and map markers are persistent: where the player comes into the world.
+        if (ref.fields.has('XTEL')) doors.push({ door: id, x: position[0], y: position[1] });
+        if (placed.base === MAP_MARKER) {
+          mapMarkers.push({ position, heading: placed.rotation[2] });
+        }
         const key = cellKey(
           Math.floor(position[0] / CELL_SIZE),
           Math.floor(position[1] / CELL_SIZE),
@@ -128,7 +153,45 @@ export class Worldspace {
       }
     }
     const versions = await Promise.all(db.locateAll(formId).map((location) => db.read(location)));
-    return new Worldspace(db, record, parent, persistent, parseLargeReferences(versions));
+    return new Worldspace(
+      db,
+      record,
+      parent,
+      persistent,
+      parseLargeReferences(versions),
+      doors,
+      mapMarkers,
+    );
+  }
+
+  /**
+   * Where the player comes into the world near a point, as the game brings them in: in front
+   * of the nearest load door (the arrival point of the door on its other side, XTEL), else at
+   * the nearest map marker (where fast travel arrives). Undefined if the world has neither.
+   */
+  async arrivalNear(x: number, y: number): Promise<Arrival | undefined> {
+    const distance = (px: number, py: number): number => Math.hypot(px - x, py - y);
+    const doors = [...this.#doors].sort((a, b) => distance(a.x, a.y) - distance(b.x, b.y));
+    let best: (Arrival & { readonly distance: number }) | undefined;
+    for (const { door } of doors.slice(0, 8)) {
+      const own = await this.db.get(door);
+      const destination = own && parseTeleport(own);
+      const other = destination && (await this.db.get(destination.door));
+      const back = other && parseTeleport(other);
+      // The door on the other side leads back here; its XTEL is where one arrives.
+      if (back?.door !== door) continue;
+      const d = distance(back.position[0], back.position[1]);
+      if (!best || d < best.distance) {
+        best = { position: back.position, heading: back.rotation[2], distance: d };
+      }
+    }
+    if (!best) {
+      for (const marker of this.#mapMarkers) {
+        const d = distance(marker.position[0], marker.position[1]);
+        if (!best || d < best.distance) best = { ...marker, distance: d };
+      }
+    }
+    return best && { position: best.position, heading: best.heading };
   }
 
   /** The cell record at a grid position, if the world has one. */

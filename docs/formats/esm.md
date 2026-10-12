@@ -512,3 +512,64 @@ OR-flagged conditions join the next one into a group; all groups must hold. Reci
 
 **Quest aliases:** ALST starts a reference alias, ALLS a location alias (u32 id); ALFR / ALFL
 give its forced reference / location.
+
+## Collision layers
+
+COLL records (`src/physics/collision-layers.ts`): EDID, DESC, BNAM index u32 (the SkyrimLayer a
+HavokFilter names), FNAM debug colour, GNAM flags u32 (`0x1` trigger volume, `0x2` sensor, `0x4`
+navmesh obstacle), MNAM name, INTV interactables count, CNAM the layers it collides with (form
+ids). SSE has 55 (indices 0–54); the lists are symmetric. A pair collides if either lists the
+other. The character controller is L_CHARCONTROLLER (30); it collides with static, anim
+static, clutter, trees, props, terrain, ground, invisible walls, collision boxes and the stair
+helpers (31, which collide with nothing else). Ray and shape queries take the layer of what
+asks: the camera L_CAMERA (39), the crosshair L_ITEMPICKER (40).
+
+## Material types
+
+MATT (`src/world/material-type.ts`): EDID, PNAM parent, MNAM name ("StairsStone"), CNAM Havok
+display colour, BNAM buoyancy f32, FNAM flags u32 (`0x1` stairs, `0x2` arrows stick), HNAM
+impact data set. Collision shapes name their material by an id: the CRC-32 (table 0xEDB88320,
+start 0, **no final inversion**) of the lower-case MNAM, e.g. "stairsstone" → 899511101. On
+surfaces of a material with the stairs flag the character controller climbs whole steps (the
+vanilla stair meshes have risers of 16 and 24 units).
+
+## Movement types
+
+MOVT (`src/world/movement.ts`): EDID, MNAM name (what the behavior graph asks for:
+"NPCDefault", "NPCSprinting", "NPCSneaking", "NPCSwimming"), SPED 11 f32 (10 in older
+records): left walk, left run, right walk, right run, forward walk, forward run, back walk, back
+run (units per second), rotate in place walk, rotate in place run, rotate while moving run
+(radians per second); INAM directional, movement speed and rotation speed thresholds. The
+player's speeds (NPC_Default_MT): walk 80.1 forward, run 370; back 71.9 / 205.3; sprint 500;
+sneak 47.2 / 222. A direction between the four axes moves at the point of the ellipse through
+the speeds of its quadrant.
+
+## Doors, arrivals and collision primitives
+
+- **XTEL** (REFR, 32 bytes): destination door, position vec3, rotation vec3 (radians), no alarm
+  u32. A load door takes the player to the position and heading in its XTEL; the destination
+  door's cell (and that cell's worldspace) is where they arrive. The door's own XTEL is "in front
+  of the other door". Opening a worldspace without a destination arrives as the game would
+  bring the player in: in front of the load door nearest to the starting cell (the XTEL of the
+  door on the other side), else at the nearest map marker (STAT 0x10, where fast travel
+  arrives). Interiors arrive in front of their own door.
+- **REFR record flag `0x20000000` "Don't Havok Settle":** a simulated object stays where it was
+  placed (even floating) until something touches it; others settle under gravity once their
+  cell's collision is complete (the engine's warm start, `[HAVOK] fWarmStartMaxTime`).
+- **XPRM** (32 bytes): bounds vec3 (full size; a sphere's radius in x), colour RGB + f32, type
+  u32 (1 box, 2 sphere, 3 portal box, 4 line). References to the engine's **CollisionMarker**
+  (STAT 0x21) are invisible collision: boxes and spheres on the layer in **XTRI** (u32), else
+  L_COLLISIONBOX. RoomMarker, PortalMarker and PlaneMarker primitives are rooms, portals and
+  occlusion planes (no collision); activators' primitives are triggers (TODO(M8)).
+
+## INI settings
+
+The engine reads `Skyrim_Default.ini` over defaults compiled into the executable
+(`src/world/ini-settings.ts`; the defaults as SSE's `saveini` writes them). Those used now:
+`[Camera]` fOverShoulderPosX 30, fOverShoulderPosZ −10, fVanityModeMinDist 155,
+fVanityModeMaxDist 600, fMinCurrentZoom −0.2, fMouseWheelZoomIncrement 0.075,
+fMouseWheelZoomSpeed 0.8, fCameraCasterSize 15; `[Controls]` bAlwaysRunByDefault 1,
+fMouseHeadingSensitivity 0.0125, fMouseHeadingXScale 0.02, fMouseHeadingYScale 0.85;
+`[Display]` fDefaultWorldFOV 80, fNearDistance 15; `[HAVOK]` fInAirFallingCharGravityMult 1.35,
+fUnsupportedGravMult 4, fMaxTime 0.0167; `[Interface]` fActivatePickLength 180,
+fActivatePickRadius 16.

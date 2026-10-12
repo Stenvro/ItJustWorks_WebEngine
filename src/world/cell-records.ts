@@ -213,6 +213,24 @@ export interface PlacedReference {
   readonly radiusOffset: number;
 }
 
+/** XTEL: the destination door, and the position and rotation (radians) to arrive at. */
+export interface Teleport {
+  readonly door: number;
+  readonly position: readonly [number, number, number];
+  readonly rotation: readonly [number, number, number];
+}
+
+export function parseTeleport(record: GameRecord): Teleport | undefined {
+  const xtel = record.fields.first('XTEL');
+  if (!xtel || xtel.length < 28) return undefined;
+  const v = view(xtel);
+  return {
+    door: record.formIdAt(xtel, 0),
+    position: [v.getFloat32(4, true), v.getFloat32(8, true), v.getFloat32(12, true)],
+    rotation: [v.getFloat32(16, true), v.getFloat32(20, true), v.getFloat32(24, true)],
+  };
+}
+
 export function parseReference(record: GameRecord): PlacedReference {
   const data = record.fields.first('DATA');
   const placement = data && data.length >= 24 ? view(data) : undefined;

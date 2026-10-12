@@ -10,6 +10,7 @@
     <canvas id="viewport"></canvas>
     <div id="backdrop" class="backdrop" hidden></div>
     <div class="crt" aria-hidden="true"></div>
+    <div id="activate-prompt" class="activate-prompt" hidden></div>
 
     <header class="hud">
       <div class="hud-brand">SKYRIM<span>//</span>WEB <small>engine</small></div>
@@ -89,9 +90,16 @@
           spellcheck="false"
         />
         <ol id="cell-results" class="results"></ol>
+        <div id="cell-play" class="upgrades" hidden>
+          <label class="choice">
+            <input id="cell-free-camera" type="checkbox" />
+            <span>free camera (tfc)</span>
+          </label>
+        </div>
         <div id="cell-upgrades" class="upgrades" hidden></div>
         <p class="hint">
-          click the scene to look around · wasd to move · shift to run · esc to release
+          click the scene to play · wasd to move · space to jump · alt to sprint · ctrl to sneak ·
+          shift to walk · f for the camera · esc to release
         </p>
       </details>
 
@@ -110,6 +118,12 @@
         />
         <ol id="world-results" class="results"></ol>
         <div id="world-status" class="upgrades" hidden></div>
+        <div id="world-play" class="upgrades" hidden>
+          <label class="choice">
+            <input id="world-free-camera" type="checkbox" />
+            <span>free camera (tfc)</span>
+          </label>
+        </div>
         <div id="world-sky" class="upgrades sky-controls" hidden>
           <label class="choice">
             <span>time</span>
@@ -126,7 +140,8 @@
           </label>
         </div>
         <p class="hint">
-          click the scene to look around · wasd to move · shift to run · mouse wheel for speed
+          click the scene to play · wasd to move · space to jump · alt to sprint · ctrl to sneak ·
+          shift to walk · f for the camera · free camera: wasd, q/e, shift, mouse wheel for speed
         </p>
       </details>
 

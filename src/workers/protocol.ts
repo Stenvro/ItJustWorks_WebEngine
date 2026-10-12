@@ -2,6 +2,7 @@
 
 import type { BsaPayload } from '../formats/bsa/bsa.ts';
 import type { DdsTexture } from '../formats/dds/dds.ts';
+import type { CollisionData } from '../physics/collision-data.ts';
 import type { ModelData } from '../render/model-data.ts';
 
 export type AssetKind = 'model' | 'texture';
@@ -20,6 +21,8 @@ export type AssetResponse =
       readonly ok: true;
       readonly kind: 'model';
       readonly model: ModelData;
+      /** The model's Havok collision. */
+      readonly collision: CollisionData;
       /** NIF blocks that could not be parsed. */
       readonly problems: readonly string[];
       /** Milliseconds spent in the worker (decompress + parse + build). */

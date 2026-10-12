@@ -13,7 +13,7 @@ import {
   type PluginHeader,
 } from '../formats/esm/plugin-header.ts';
 import { MemoryByteSource, type ByteSource } from '../formats/byte-source.ts';
-import { parseIni } from '../formats/ini/ini.ts';
+import { parseIni, type Ini } from '../formats/ini/ini.ts';
 import { normalizePath } from '../formats/paths.ts';
 import { decodeWindows1252 } from '../formats/text.ts';
 import type { GameFolder } from './game-folder.ts';
@@ -78,6 +78,8 @@ export class Vfs {
   readonly problems: readonly VfsProblem[];
   /** Skyrim.ccc was reachable (otherwise Creation Club plugins are inactive). */
   readonly hasCreationClubList: boolean;
+  /** Skyrim_Default.ini of the installation, if it was readable. */
+  readonly defaultIni: Ini | undefined;
   readonly #folder: GameFolder;
   readonly #files: ReadonlyMap<string, VfsFile>;
   /** Archives without names, high → low; these are searched by hash. */
@@ -89,6 +91,7 @@ export class Vfs {
     archives: readonly MountedArchive[];
     problems: readonly VfsProblem[];
     hasCreationClubList: boolean;
+    defaultIni: Ini | undefined;
     files: ReadonlyMap<string, VfsFile>;
   }) {
     this.#folder = init.folder;
@@ -96,6 +99,7 @@ export class Vfs {
     this.archives = init.archives;
     this.problems = init.problems;
     this.hasCreationClubList = init.hasCreationClubList;
+    this.defaultIni = init.defaultIni;
     this.#files = init.files;
     this.#hashOnly = init.archives.filter((a) => !a.archive.hasNames).reverse();
   }
@@ -151,8 +155,9 @@ export class Vfs {
       });
     }
 
+    const defaultIni = iniText === undefined ? undefined : parseIni(iniText);
     const archiveNames = computeArchiveOrder(
-      archiveListFromIni(iniText === undefined ? undefined : parseIni(iniText)),
+      archiveListFromIni(defaultIni),
       order.entries,
       rootFiles.filter((name) => ARCHIVE_FILE.test(name)),
     );
@@ -196,6 +201,7 @@ export class Vfs {
       archives,
       problems,
       hasCreationClubList: ccc !== undefined,
+      defaultIni,
       files,
     });
   }
