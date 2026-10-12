@@ -113,9 +113,11 @@ constants of Nukem9's decompiled `BSLightingShader`:
 6. Specular: lights × specular mask × specular colour × strength.
 7. Directional materials (snow, ash, ice on statics and object LOD) and their multi-index snow
    pass: see [formats/esm.md](formats/esm.md#directional-materials). Objects counted as snow
-   (STAT flag or SLSF2 `0x10000000`) lose their specular, as the engine's snow shader replaces
-   it with its own rim light. TODO(M4): the snow shader's mask buffer, rim light, sparkles and
-   subsurface scattering (ISSAOComposite, ISSnowSSS).
+   (STAT flag or SLSF2 `0x10000000`) get the improved snow of `shaders/snow.wgsl` instead of
+   their specular: the rim light before fog and the sparkles after it, times the snow mask
+   (the engine's SnowParameters.y): the projected material's blend weight, 1 in the
+   multi-index snow pass, else the diffuse alpha. TODO(M4): the snow subsurface scattering
+   (ISSnowSSS), which needs the mask as a screen buffer.
 8. LOD landscape noise (type 18): diffuse × 0.8333 (p (0.37 − noise) + noise) + 0.37 with
    `textures\terrain\noise.dds` at 3 × UV and p from the colour's brightness.
 9. Leaf flutter (SLSF2 Tree_Anim, `leafShift` in common.wgsl, the engine's
