@@ -301,6 +301,50 @@ button.preset {
   accent-color: var(--gold);
 }
 
+.upgrade-list .choice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ash);
+}
+
+.upgrade-list select {
+  flex: 0 1 60%;
+  min-width: 0;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 12px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--bone);
+  background: rgb(0 0 0 / 0.45);
+  border: 1px solid var(--line);
+}
+
+.cell-states {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.cell-states summary {
+  margin-bottom: 6px;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ash);
+  cursor: pointer;
+}
+
+.cell-states .hint {
+  padding: 0 0 8px;
+}
+
 .no-results {
   padding: 3px 8px;
   font-size: 12px;

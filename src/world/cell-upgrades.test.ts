@@ -1,56 +1,46 @@
 import { describe, expect, it } from 'vitest';
 import { identity } from '../render/math.ts';
 import type { CellData, ReferenceState } from './cell-loader.ts';
-import {
-  allUpgradesSelection,
-  enabledReferences,
-  findUpgrades,
-  gameStartSelection,
-  toggleUpgrade,
-} from './cell-upgrades.ts';
+import { enabledReferences, findToggles, gameStartSelection } from './cell-upgrades.ts';
 
-/** A small player home: dining room, kitchen, and two alternatives for one room. */
 const MARKERS = {
-  diningStart: 0x10,
-  dining: 0x11,
-  lab: 0x12,
-  bedroom: 0x13, // from a later plugin
-  labStart: 0x14,
-  kitchen: 0x15,
+  guildStageTwo: 0x10,
+  ciceroEnable: 0x11,
+  ciceroDisable: 0x12, // counterpart of ciceroEnable
+  garrison: 0x13, // on in a new game
+  kitchen: 0x14, // switched by a purchase script
+  kitchenStart: 0x15,
 };
-
-let nextSpot = 0;
 
 function ref(
   editorId: string,
   parent?: number,
-  options: { opposite?: boolean; disabled?: boolean; spot?: string } = {},
+  options: { opposite?: boolean; disabled?: boolean } = {},
 ): ReferenceState {
   return {
     editorId,
     initiallyDisabled: options.disabled ?? false,
     parent:
       parent === undefined ? undefined : { formId: parent, opposite: options.opposite ?? false },
-    placementKey: options.spot ?? `spot-${nextSpot++}`,
   };
 }
 
 const references = new Map<number, ReferenceState>([
-  [MARKERS.diningStart, ref('PlayerHouseDiningRoomStart')],
-  [MARKERS.dining, ref('PlayerHouseDecorateDiningRoom', undefined, { disabled: true })],
-  [MARKERS.lab, ref('PlayerHouseAlchemyLaboratory', undefined, { disabled: true })],
-  [MARKERS.bedroom, ref('PlayerHouseChildBedroom', undefined, { disabled: true })],
-  [MARKERS.labStart, ref('PlayerHouseAlchemyLaboratoryStart')],
+  [MARKERS.guildStageTwo, ref('GuildStatusStageTwo', undefined, { disabled: true })],
+  [MARKERS.ciceroEnable, ref('GuildCiceroMovesIn_Enable', undefined, { disabled: true })],
+  [MARKERS.ciceroDisable, ref('GuildCiceroMovesIn_Disable')],
+  [MARKERS.garrison, ref('GarrisonImperialEnableMarker')],
   [MARKERS.kitchen, ref('PlayerHouseDecorateKitchen', undefined, { disabled: true })],
-  [0x100, ref('', MARKERS.diningStart)], // crate
-  [0x101, ref('', MARKERS.dining)], // table
-  [0x102, ref('', MARKERS.dining)], // wall that belongs to the dining room
-  [0x103, ref('', MARKERS.lab, { spot: 'room-wall' })],
-  [0x104, ref('', MARKERS.bedroom, { spot: 'room-wall' })],
-  [0x105, ref('', MARKERS.labStart)], // hay
-  [0x106, ref('', MARKERS.kitchen)],
-  [0x107, ref('', MARKERS.kitchen, { opposite: true })], // only without the kitchen upgrade
-  [0x108, ref('')], // always there
+  [MARKERS.kitchenStart, ref('PlayerHouseKitchenStart')],
+  [0x100, ref('', MARKERS.guildStageTwo)],
+  [0x101, ref('', MARKERS.ciceroEnable)],
+  [0x102, ref('', MARKERS.ciceroDisable)],
+  [0x103, ref('', MARKERS.garrison)],
+  [0x104, ref('', MARKERS.garrison, { opposite: true })], // only without the garrison
+  [0x105, ref('', MARKERS.kitchen)],
+  [0x106, ref('', MARKERS.kitchenStart)],
+  [0x107, ref('')], // always there
+  [0x108, ref('', 0x105)], // follows the kitchen through a chain
 ]);
 
 const data: CellData = {
@@ -77,70 +67,49 @@ const data: CellData = {
   entrance: [0, 0, 0],
 };
 
-const visible = (selection: ReadonlySet<number>): number[] => {
-  const upgrades = findUpgrades(data);
-  const on = enabledReferences(data, upgrades, selection);
+/** Markers the player's actions switch; they are not quest states. */
+const controlled = new Set([MARKERS.kitchen, MARKERS.kitchenStart]);
+
+const visible = (
+  selection: ReadonlySet<number>,
+  scripted: ReadonlyMap<number, boolean> = new Map(),
+): number[] => {
+  const toggles = findToggles(data, controlled);
+  const on = enabledReferences(data, toggles, selection, scripted);
   return [...references.keys()].filter((id) => id >= 0x100 && on(id));
 };
 
-describe('cell upgrades', () => {
-  const upgrades = findUpgrades(data);
-  const byLabel = (label: string): number => {
-    const upgrade = upgrades.find((u) => u.label === label);
-    if (!upgrade) throw new Error(`no upgrade ${label}`);
-    return upgrade.formId;
-  };
+describe('cell states', () => {
+  const toggles = findToggles(data, controlled);
 
-  it('finds the upgrades with readable labels and their relations', () => {
-    expect(upgrades.map((u) => u.label)).toEqual([
-      'Alchemy Laboratory',
-      'Child Bedroom',
-      'Dining Room',
-      'Kitchen',
+  it('lists quest states with readable labels, without the player-controlled markers', () => {
+    expect(toggles.map((t) => [t.label, t.defaultOn])).toEqual([
+      ['Garrison Imperial', true],
+      ['Guild Cicero Moves In', false],
+      ['Guild Status Stage Two', false],
     ]);
-    const lab = upgrades.find((u) => u.label === 'Alchemy Laboratory');
-    expect(lab?.alternatives).toEqual([MARKERS.bedroom]);
-    expect(lab?.replaces).toEqual([MARKERS.labStart]);
-    // The alternative shares the room's Start marker.
-    expect(upgrades.find((u) => u.label === 'Child Bedroom')?.replaces).toEqual([MARKERS.labStart]);
-    expect(upgrades.find((u) => u.label === 'Dining Room')?.replaces).toEqual([
-      MARKERS.diningStart,
+    // X_Disable switches with X_Enable.
+    expect(toggles.find((t) => t.formId === MARKERS.ciceroEnable)?.replaces).toEqual([
+      MARKERS.ciceroDisable,
     ]);
   });
 
-  it('shows the unfurnished home at game start', () => {
-    expect(visible(gameStartSelection(upgrades))).toEqual([0x100, 0x105, 0x107, 0x108]);
+  it('shows a new game as the plugins place it', () => {
+    expect(visible(gameStartSelection(toggles))).toEqual([0x102, 0x103, 0x106, 0x107]);
   });
 
-  it('switches a room with its walls and replaces only its own Start state', () => {
-    const selection = toggleUpgrade(
-      upgrades,
-      gameStartSelection(upgrades),
-      byLabel('Dining Room'),
-      true,
-    );
-    expect(visible(selection)).toEqual([0x101, 0x102, 0x105, 0x107, 0x108]);
+  it('switches a state with its counterpart and opposite-flagged references', () => {
+    const selection = new Set([MARKERS.ciceroEnable]);
+    expect(visible(selection)).toEqual([0x101, 0x104, 0x106, 0x107]);
   });
 
-  it('keeps alternatives exclusive', () => {
-    let selection = toggleUpgrade(upgrades, new Set(), byLabel('Alchemy Laboratory'), true);
-    selection = toggleUpgrade(upgrades, selection, byLabel('Child Bedroom'), true);
-    expect([...selection]).toEqual([MARKERS.bedroom]);
-    expect(visible(selection)).toContain(0x104);
-    expect(visible(selection)).not.toContain(0x103);
-    expect(visible(selection)).not.toContain(0x105);
-  });
-
-  it('turns opposite-flagged references off with their parent on', () => {
-    const selection = toggleUpgrade(upgrades, new Set(), byLabel('Kitchen'), true);
-    expect(visible(selection)).toContain(0x106);
-    expect(visible(selection)).not.toContain(0x107);
-  });
-
-  it('selects every upgrade, keeping the earliest of alternatives', () => {
-    const all = allUpgradesSelection(upgrades);
-    expect(all.has(MARKERS.lab)).toBe(true);
-    expect(all.has(MARKERS.bedroom)).toBe(false);
-    expect(visible(all)).toEqual([0x101, 0x102, 0x103, 0x106, 0x108]);
+  it('takes what the scripts enabled and disabled, also through enable-parent chains', () => {
+    const scripted = new Map([
+      [MARKERS.kitchen, true],
+      [MARKERS.kitchenStart, false],
+    ]);
+    expect(visible(gameStartSelection(toggles), scripted)).toEqual([
+      0x102, 0x103, 0x105, 0x107, 0x108,
+    ]);
   });
 });

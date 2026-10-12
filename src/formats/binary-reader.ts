@@ -13,14 +13,19 @@ export class FormatError extends Error {
   }
 }
 
-/** Sequential little-endian reader over a Uint8Array, with bounds checking. */
+/**
+ * Sequential reader over a Uint8Array, with bounds checking. Little-endian unless told
+ * otherwise (Skyrim's compiled Papyrus scripts are big-endian).
+ */
 export class BinaryReader {
   readonly #bytes: Uint8Array;
   readonly #view: DataView;
+  readonly #littleEndian: boolean;
   #offset: number;
 
-  constructor(bytes: Uint8Array, offset = 0) {
+  constructor(bytes: Uint8Array, offset = 0, littleEndian = true) {
     this.#bytes = bytes;
+    this.#littleEndian = littleEndian;
     this.#view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     this.#offset = 0;
     this.seek(offset);
@@ -58,23 +63,23 @@ export class BinaryReader {
   }
 
   u16(): number {
-    return this.#view.getUint16(this.#take(2), true);
+    return this.#view.getUint16(this.#take(2), this.#littleEndian);
   }
 
   i16(): number {
-    return this.#view.getInt16(this.#take(2), true);
+    return this.#view.getInt16(this.#take(2), this.#littleEndian);
   }
 
   u32(): number {
-    return this.#view.getUint32(this.#take(4), true);
+    return this.#view.getUint32(this.#take(4), this.#littleEndian);
   }
 
   i32(): number {
-    return this.#view.getInt32(this.#take(4), true);
+    return this.#view.getInt32(this.#take(4), this.#littleEndian);
   }
 
   u64(): bigint {
-    return this.#view.getBigUint64(this.#take(8), true);
+    return this.#view.getBigUint64(this.#take(8), this.#littleEndian);
   }
 
   /** u64 as number; throws if the value does not fit exactly (> 2^53 - 1). */
@@ -88,7 +93,7 @@ export class BinaryReader {
   }
 
   f32(): number {
-    return this.#view.getFloat32(this.#take(4), true);
+    return this.#view.getFloat32(this.#take(4), this.#littleEndian);
   }
 
   /** Next `count` bytes as a view on the same buffer (no copy). */

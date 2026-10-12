@@ -222,6 +222,39 @@ export class RecordDatabase {
     return undefined;
   }
 
+  /** Global form ids of every record of a type (e.g. "COBJ") in any plugin, in load order. */
+  formIdsOfType(type: string): number[] {
+    const code = fourCCToInt(type);
+    const ids = new Set<number>();
+    for (const plugin of this.plugins) {
+      const { index } = plugin;
+      for (let record = 0; record < index.recordCount; record++) {
+        if (index.types[record] === code)
+          ids.add(this.toGlobal(plugin, index.formIds[record] ?? 0));
+      }
+    }
+    return [...ids];
+  }
+
+  /**
+   * The group a record version sits in: its type and label (for cell and topic children
+   * groups the label is the parent record, returned as a global form id).
+   */
+  parentGroup(location: RecordLocation): { type: number; label: number } | undefined {
+    const { plugin, record } = location;
+    const group = (plugin.index.parentGroups[record] ?? 0) - 1;
+    if (group < 0) return undefined;
+    const type = plugin.index.groupTypes[group] ?? 0;
+    const label = plugin.index.groupLabels[group] ?? 0;
+    const childGroup =
+      type === GroupType.topicChildren ||
+      type === GroupType.cellChildren ||
+      type === GroupType.cellPersistentChildren ||
+      type === GroupType.cellTemporaryChildren ||
+      type === GroupType.worldChildren;
+    return { type, label: childGroup ? this.toGlobal(plugin, label) : label };
+  }
+
   /** Reads a specific version of a record. */
   async read(location: RecordLocation): Promise<GameRecord> {
     const { plugin, record } = location;

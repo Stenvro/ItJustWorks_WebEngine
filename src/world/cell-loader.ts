@@ -43,8 +43,6 @@ export interface ReferenceState {
   readonly editorId: string;
   readonly initiallyDisabled: boolean;
   readonly parent: { readonly formId: number; readonly opposite: boolean } | undefined;
-  /** Position and rotation, rounded: references with the same key sit at the same spot. */
-  readonly placementKey: string;
 }
 
 export interface CellData {
@@ -99,25 +97,29 @@ function referenceState(ref: PlacedReference): ReferenceState {
     editorId: ref.editorId,
     initiallyDisabled: ref.initiallyDisabled,
     parent: ref.enableParent,
-    placementKey: [
-      ...ref.position.map((v) => Math.round(v)),
-      ...ref.rotation.map((v) => Math.round(v * 100)),
-    ].join(','),
   };
 }
 
 export async function loadCellData(db: RecordDatabase, cellFormId: number): Promise<CellData> {
   const cell = parseCell(await db.require(cellFormId));
-  const template =
-    cell.lightingTemplate === undefined ? undefined : await db.get(cell.lightingTemplate);
-  const lighting = resolveCellLighting(cell, template && parseLightingTemplate(template));
-
   const objects: CellObject[] = [];
   const lights: CellLight[] = [];
   const skipped = new Map<string, number>();
   const skip = (reason: string): void => {
     skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
   };
+
+  const template =
+    cell.lightingTemplate === undefined ? undefined : await db.get(cell.lightingTemplate);
+  let templateLighting: CellLighting | undefined;
+  try {
+    templateLighting = template && parseLightingTemplate(template);
+  } catch (error) {
+    skip(
+      `unreadable lighting template (${error instanceof Error ? error.message : String(error)})`,
+    );
+  }
+  const lighting = resolveCellLighting(cell, templateLighting);
   let entrance: [number, number, number] | undefined;
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
