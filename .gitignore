@@ -1,0 +1,49 @@
+# --- Dependencies & build-output ---
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+.vite/
+
+# --- Lokaal ---
+.env
+.env.*
+*.log
+.DS_Store
+Thumbs.db
+
+# --- Harde regel 1: nooit gamebestanden in de repo ---
+# Gamedata staat buiten de repo (zie CLAUDE.md). Deze lijst is een vangnet;
+# tools/check-no-gamefiles.ts (pre-commit-hook) controleert ook op inhoud.
+/skyrim-data/
+/Data/
+/Saves/
+ShaderCache/
+*.bsa
+*.ba2
+*.esm
+*.esp
+*.esl
+*.nif
+*.kf
+*.dds
+*.hkx
+*.pex
+*.psc
+*.tri
+*.lip
+*.fuz
+*.xwm
+*.wav
+*.swf
+*.gfx
+*.bik
+*.ess
+*.skse
+*.strings
+*.dlstrings
+*.ilstrings
+*.seq
+*.btr
+*.bto
+*.lod

@@ -1,0 +1,11 @@
+{
+  // Node-kant: CLI's in tools/, tests en configbestanden.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2024"],
+    "types": ["node"]
+  },
+  "include": ["tools", "tests", "src/**/*.test.ts", "vite.config.ts"]
+}

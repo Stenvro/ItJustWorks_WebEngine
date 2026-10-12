@@ -1,0 +1,13 @@
+{
+  // src/formats moet platform-onafhankelijk blijven: geen DOM- en geen Node-types.
+  // Gebruikt een browser- of Node-API daar per ongeluk, dan faalt `npm run typecheck`.
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "lib": ["ES2024"],
+    "types": []
+  },
+  "include": ["src/formats"],
+  "exclude": ["src/**/*.test.ts"]
+}
