@@ -48,6 +48,21 @@ export interface BsaEntry {
   readonly compressed: boolean;
 }
 
+/** A file's stored bytes: either the data itself or one LZ4 frame. */
+export interface BsaPayload {
+  readonly bytes: Uint8Array;
+  readonly compressed: boolean;
+  /** Size after decompression. */
+  readonly originalSize: number;
+}
+
+/** Turns a payload into the file's contents (decompressing if needed). */
+export function decodeBsaPayload(payload: BsaPayload): Uint8Array {
+  return payload.compressed
+    ? decompressLz4Frame(payload.bytes, payload.originalSize)
+    : payload.bytes;
+}
+
 export interface BsaOpenOptions {
   /** Verify every folder and file name against the stored hash (for tools and tests). */
   readonly verifyHashes?: boolean;
@@ -235,6 +250,14 @@ export class BsaArchive {
 
   /** Reads and decompresses a file. */
   async read(entry: BsaEntry): Promise<Uint8Array> {
+    return decodeBsaPayload(await this.readPayload(entry));
+  }
+
+  /**
+   * Reads a file's stored bytes without decompressing them. Lets the I/O happen on one
+   * thread and the (CPU-heavy) decompression in a worker via `decodeBsaPayload`.
+   */
+  async readPayload(entry: BsaEntry): Promise<BsaPayload> {
     if (entry.offset + entry.size > this.#source.size) {
       throw new FormatError(
         `"${entry.path ?? '?'}" runs past the end of the archive`,
@@ -246,7 +269,10 @@ export class BsaArchive {
     if (this.header.archiveFlags & BsaArchiveFlag.embedFileNames) {
       start = 1 + (raw[0] ?? 0); // bstring with the full path
     }
-    if (!entry.compressed) return raw.subarray(start);
+    if (!entry.compressed) {
+      const bytes = raw.subarray(start);
+      return { bytes, compressed: false, originalSize: bytes.length };
+    }
 
     if (raw.length < start + 4) {
       throw new FormatError(
@@ -255,7 +281,7 @@ export class BsaArchive {
       );
     }
     const originalSize = new DataView(raw.buffer, raw.byteOffset + start, 4).getUint32(0, true);
-    return decompressLz4Frame(raw.subarray(start + 4), originalSize);
+    return { bytes: raw.subarray(start + 4), compressed: true, originalSize };
   }
 
   async close(): Promise<void> {
