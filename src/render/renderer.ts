@@ -8,6 +8,7 @@ import {
   type SceneLighting,
 } from './scene-renderer.ts';
 import backdropShader from './shaders/backdrop.wgsl?raw';
+import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
 
 /** Anything that can view a scene: the orbit camera, the free-flying camera, ... */
 export interface Camera {
@@ -16,9 +17,12 @@ export interface Camera {
   viewProjection(aspect: number, out?: Mat4): Mat4;
 }
 
-/** What the renderer draws: a scene, seen by a camera, lit by a lighting source. */
+/** What the renderer draws: scenes and terrain, seen by a camera, lit by a lighting source. */
 export interface SceneView {
-  readonly scene: GpuScene;
+  /** The scenes to draw this frame (several while cells stream in and out). */
+  readonly scenes: () => Iterable<GpuScene>;
+  /** Landscape cells to draw this frame. */
+  readonly terrain?: () => Iterable<GpuTerrainCell>;
   readonly camera: Camera;
   /** Called every frame (lighting may depend on the camera, e.g. a studio light). */
   readonly lighting: (camera: Camera) => SceneLighting;
@@ -39,6 +43,7 @@ interface RenderTargets {
  */
 export class Renderer {
   readonly scene: SceneRenderer;
+  readonly terrain: TerrainRenderer;
   readonly #gpu: GpuContext;
   readonly #backdrop: GPURenderPipeline;
   readonly #backdropBuffer: GPUBuffer;
@@ -54,6 +59,7 @@ export class Renderer {
     this.#gpu = gpu;
     const { device, format } = gpu;
     this.scene = new SceneRenderer(device, format);
+    this.terrain = new TerrainRenderer(device, format, this.scene.frameLayout);
 
     const module = device.createShaderModule({ label: 'backdrop', code: backdropShader });
     this.#backdrop = device.createRenderPipeline({
@@ -136,7 +142,11 @@ export class Renderer {
       pass.setBindGroup(0, this.#backdropBindGroup);
       pass.draw(3);
     }
-    if (view) this.scene.draw(pass, view.scene, view.camera.position);
+    if (view) {
+      const terrain = view.terrain?.();
+      if (terrain) this.terrain.draw(pass, this.scene.frameBindGroup, terrain);
+      this.scene.draw(pass, view.scenes(), view.camera.position);
+    }
     pass.end();
     device.queue.submit([encoder.finish()]);
   }

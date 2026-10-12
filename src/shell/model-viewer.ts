@@ -8,8 +8,6 @@ import { identity } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { GpuModel, GpuScene, ModelInstance } from '../render/scene-renderer.ts';
 import { studioLighting } from '../render/studio-lighting.ts';
-import { TextureCache } from '../render/texture-cache.ts';
-import type { Vfs } from '../vfs/vfs.ts';
 import { cellSceneLighting } from '../world/cell-lighting.ts';
 import { loadCellData, type CellData } from '../world/cell-loader.ts';
 import {
@@ -28,8 +26,8 @@ import {
   type HomeChoices,
   type HouseStage,
 } from '../world/player-home.ts';
-import { RecordDatabase, type InteriorCell } from '../world/record-db.ts';
-import { AssetLoader } from '../workers/asset-loader.ts';
+import type { InteriorCell, RecordDatabase } from '../world/record-db.ts';
+import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 
 export interface SearchElements {
@@ -128,7 +126,6 @@ function renderResults<T>(
 }
 
 export class ModelViewer {
-  readonly #device: GPUDevice;
   readonly #renderer: Renderer;
   readonly #canvas: HTMLElement;
   readonly #terminal: Terminal;
@@ -136,12 +133,8 @@ export class ModelViewer {
   readonly #orbit = new OrbitCamera();
   readonly #fly = new FlyCamera();
   #detachControls: (() => void) | undefined;
-  #loader: AssetLoader | undefined;
-  #textures: TextureCache | undefined;
+  #session: GameSession | undefined;
   #db: RecordDatabase | undefined;
-  #vfs: Vfs | undefined;
-  /** Papyrus VM environment, created when the first cell opens. */
-  #scripts: Promise<ScriptEnvironment> | undefined;
   /** Guards against slow script runs finishing after newer choices. */
   #choiceToken = 0;
   #statesOpen = false;
@@ -149,8 +142,6 @@ export class ModelViewer {
   #hidden: RegExp | undefined;
   #meshes: string[] = [];
   #cells: InteriorCell[] = [];
-  /** Models of cells, shared between cells and kept until the VFS changes. */
-  readonly #cellModels = new Map<string, Promise<GpuModel | undefined>>();
   /** The single mesh shown in mesh mode (not cached). */
   #meshModel: GpuModel | undefined;
   #scene: GpuScene | undefined;
@@ -159,14 +150,7 @@ export class ModelViewer {
   /** The cell on screen, with everything needed to switch upgrades instantly. */
   #cell: CellView | undefined;
 
-  constructor(
-    device: GPUDevice,
-    renderer: Renderer,
-    canvas: HTMLElement,
-    terminal: Terminal,
-    ui: ViewerElements,
-  ) {
-    this.#device = device;
+  constructor(renderer: Renderer, canvas: HTMLElement, terminal: Terminal, ui: ViewerElements) {
     this.#renderer = renderer;
     this.#canvas = canvas;
     this.#terminal = terminal;
@@ -188,6 +172,9 @@ export class ModelViewer {
     });
   }
 
+  /** Called when the viewer takes the screen (another viewer then steps back). */
+  onActivate: (() => void) | undefined;
+
   /** Centres the image in the part of the screen the shell does not cover. */
   set lensShift(shift: number) {
     this.#orbit.lensShift = shift;
@@ -208,14 +195,11 @@ export class ModelViewer {
     return this.#cells;
   }
 
-  /** Starts using a (new) VFS: fresh workers, caches and record database, then the logo. */
-  async connect(vfs: Vfs): Promise<void> {
+  /** Starts using a (new) game session: lists its meshes and cells, then shows the logo. */
+  async connect(session: GameSession): Promise<void> {
     this.#reset();
-    this.#vfs = vfs;
-    this.#scripts = undefined;
-    const loader = new AssetLoader(vfs);
-    this.#loader = loader;
-    this.#textures = new TextureCache(this.#device, (path) => loader.loadTexture(path));
+    this.#session = session;
+    const { vfs, loader } = session;
     this.#meshes = vfs.list('meshes').filter((path) => path.endsWith('.nif'));
     this.#terminal.log(
       'sys',
@@ -228,18 +212,8 @@ export class ModelViewer {
     const logo = LOGO_PATHS.find((path) => vfs.has(path));
     const logoShown = logo ? this.showMesh(logo, LOGO_VIEW) : Promise.resolve();
 
-    // TODO(M4): index plugins in a worker; the main thread only does async I/O here, but
-    // splitting ~1.2 million record headers still takes a moment.
-    const start = performance.now();
-    const db = await RecordDatabase.open(vfs);
+    const db = await session.db;
     this.#db = db;
-    for (const problem of db.problems) this.#terminal.log('esm', problem, 'warn');
-    const records = db.plugins.reduce((sum, plugin) => sum + plugin.index.recordCount, 0);
-    this.#terminal.log(
-      'esm',
-      `${numberFormat.format(records)} records indexed in ${(performance.now() - start).toFixed(0)} ms`,
-      'ok',
-    );
     this.#cells = await db.interiorCells();
     this.#terminal.log('esm', `${numberFormat.format(this.#cells.length)} interior cells`);
     this.#ui.cells.panel.hidden = false;
@@ -250,8 +224,8 @@ export class ModelViewer {
 
   /** Loads a mesh and shows it on its own. */
   async showMesh(path: string, view: OrbitView): Promise<void> {
-    const loader = this.#loader;
-    const textures = this.#textures;
+    const loader = this.#session?.loader;
+    const textures = this.#session?.textures;
     if (!loader || !textures) return;
     const token = ++this.#loadToken;
     const start = performance.now();
@@ -309,7 +283,7 @@ export class ModelViewer {
       this.#homeActions(data),
     ]);
     if (token !== this.#loadToken) return;
-    for (const failure of this.#textures?.takeFailures() ?? []) {
+    for (const failure of this.#session?.textures.takeFailures() ?? []) {
       this.#terminal.log('dds', failure, 'warn');
     }
 
@@ -362,11 +336,7 @@ export class ModelViewer {
   }
 
   #scriptEnvironment(): Promise<ScriptEnvironment> | undefined {
-    const db = this.#db;
-    const vfs = this.#vfs;
-    if (!db || !vfs) return undefined;
-    this.#scripts ??= ScriptEnvironment.create(db, vfs);
-    return this.#scripts;
+    return this.#session?.scripts();
   }
 
   async #homeActions(data: CellData): Promise<HomeActions> {
@@ -687,26 +657,9 @@ export class ModelViewer {
     return cell.data.objects.filter((object) => isEnabled(object.reference)).length;
   }
 
-  /** A cell model from the cache; undefined for editor markers and broken files. */
+  /** A cell model from the session's cache; undefined for editor markers and broken files. */
   #cellModel(path: string): Promise<GpuModel | undefined> {
-    let entry = this.#cellModels.get(path);
-    if (!entry) {
-      const loader = this.#loader;
-      const textures = this.#textures;
-      if (!loader || !textures) return Promise.resolve(undefined);
-      entry = loader.loadModel(path).then(
-        async (loaded) => {
-          if (loaded.model.editorMarker || loaded.model.parts.length === 0) return undefined;
-          return this.#renderer.scene.createModel(loaded.model, textures);
-        },
-        (error: unknown) => {
-          this.#terminal.log('nif', describe(error), 'warn');
-          return undefined;
-        },
-      );
-      this.#cellModels.set(path, entry);
-    }
-    return entry;
+    return this.#session?.model(path) ?? Promise.resolve(undefined);
   }
 
   #present(
@@ -714,6 +667,7 @@ export class ModelViewer {
     meshModel: GpuModel | undefined,
     view: { camera: 'orbit' } | { camera: 'fly'; lighting: ReturnType<typeof cellSceneLighting> },
   ): void {
+    this.onActivate?.();
     const previousScene = this.#scene;
     const previousMesh = this.#meshModel;
     this.#scene = scene;
@@ -722,7 +676,7 @@ export class ModelViewer {
     if (view.camera === 'orbit') {
       this.#detachControls = this.#orbit.attach(this.#canvas);
       this.#renderer.setView({
-        scene,
+        scenes: () => [scene],
         camera: this.#orbit,
         lighting: () => studioLighting(this.#orbit),
         backdrop: true,
@@ -731,7 +685,7 @@ export class ModelViewer {
       this.#detachControls = this.#fly.attach(this.#canvas);
       const { lighting } = view;
       this.#renderer.setView({
-        scene,
+        scenes: () => [scene],
         camera: this.#fly,
         lighting: () => lighting,
         backdrop: false,
@@ -750,13 +704,20 @@ export class ModelViewer {
     this.#cell = undefined;
     this.#meshModel?.destroy();
     this.#meshModel = undefined;
-    for (const entry of this.#cellModels.values()) {
-      void entry.then((model) => model?.destroy());
-    }
-    this.#cellModels.clear();
-    this.#loader?.dispose();
-    void this.#db?.close();
     this.#db = undefined;
+  }
+
+  /** Stops showing anything (another viewer takes the screen); the session stays. */
+  deactivate(): void {
+    this.#loadToken++;
+    this.#detachControls?.();
+    this.#detachControls = undefined;
+    this.#scene?.destroy();
+    this.#scene = undefined;
+    this.#cell = undefined;
+    this.#meshModel?.destroy();
+    this.#meshModel = undefined;
+    this.#ui.upgrades.hidden = true;
   }
 
   #run(task: Promise<void>): void {

@@ -7,6 +7,7 @@ import { readSizedString } from './header.ts';
 import type {
   BSEffectShaderPropertyBlock,
   BSLightingShaderPropertyBlock,
+  BSSkyShaderPropertyBlock,
   BSShaderTextureSetBlock,
   BSTriShapeBlock,
   IntegerExtraDataBlock,
@@ -415,6 +416,17 @@ const parseEffectShader: BlockParser = (reader, context): BSEffectShaderProperty
   greyscaleTexture: readSizedString(reader),
 });
 
+const parseSkyShader: BlockParser = (reader, context): BSSkyShaderPropertyBlock => ({
+  ...readObjectNet(reader, context),
+  kind: 'sky-shader',
+  flags1: reader.u32(),
+  flags2: reader.u32(),
+  uvOffset: readVec2(reader),
+  uvScale: readVec2(reader),
+  sourceTexture: readSizedString(reader),
+  skyObjectType: reader.u32(),
+});
+
 const parseTextureSet: BlockParser = (reader): BSShaderTextureSetBlock => {
   const start = reader.offset;
   const count = reader.i32();
@@ -592,6 +604,7 @@ export const BLOCK_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string, B
   ['NiTriShapeData', parseNiTriShapeData],
   ['BSLightingShaderProperty', parseLightingShader],
   ['BSEffectShaderProperty', parseEffectShader],
+  ['BSSkyShaderProperty', parseSkyShader],
   ['BSShaderTextureSet', parseTextureSet],
   ['NiAlphaProperty', parseAlpha],
   ['NiIntegerExtraData', parseIntegerExtraData],

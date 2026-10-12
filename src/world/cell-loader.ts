@@ -103,7 +103,16 @@ function referenceState(ref: PlacedReference): ReferenceState {
 /** Cell children that are not placed objects. */
 const NOT_PLACED = new Set(['NAVM', 'LAND', 'PGRD']);
 
-export async function loadCellData(db: RecordDatabase, cellFormId: number): Promise<CellData> {
+/**
+ * Loads a cell's objects, lights and enable structure. `extraReferences` adds references
+ * stored elsewhere (an exterior cell's persistent references live in the world's
+ * persistent cell).
+ */
+export async function loadCellData(
+  db: RecordDatabase,
+  cellFormId: number,
+  extraReferences: readonly number[] = [],
+): Promise<CellData> {
   const cell = parseCell(await db.require(cellFormId));
   const objects: CellObject[] = [];
   const lights: CellLight[] = [];
@@ -129,7 +138,8 @@ export async function loadCellData(db: RecordDatabase, cellFormId: number): Prom
 
   // A cell's children also hold its navigation mesh (NAVM) and, outside, its landscape;
   // only placed references are objects.
-  const records = (await Promise.all(db.cellReferences(cellFormId).map((id) => db.get(id)))).filter(
+  const ids = [...db.cellReferences(cellFormId), ...extraReferences];
+  const records = (await Promise.all(ids.map((id) => db.get(id)))).filter(
     (record): record is GameRecord =>
       record !== undefined && !record.deleted && !NOT_PLACED.has(record.type),
   );

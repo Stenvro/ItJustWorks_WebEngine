@@ -114,6 +114,52 @@ FOV, near clip, flicker parameters. FNAM: fade (brightness). Flag `0x20` = off b
 
 **World models:** MODL for most base types, MOD2 (male world model) for ARMO.
 
+## Worldspaces
+
+**Group layout:** a WRLD record is followed by its children group (type 1, label = WRLD id).
+That holds the **persistent cell** (a CELL record directly in the group, with its persistent
+children) and exterior **blocks** (type 4, label: y in the low and x in the high i16, 32×32
+cells), which hold **sub-blocks** (type 5, same label layout, 8×8 cells), which hold the CELL
+records. A cell's grid position is in XCLC (x, y i32); `floor(cell / 8)` is its sub-block.
+`RecordDatabase.exteriorCell` reads only the one sub-block it needs.
+
+**WRLD:** WNAM parent world, PNAM (u16) what the child takes from its parent (`0x1` land,
+`0x2` LOD, `0x4` map, `0x8` water, `0x10` climate, `0x20` imagespace, `0x40` sky), CNAM climate,
+NAM2 water, NAM3 LOD water + NAM4 its height, DNAM default land height and default water height
+(f32 each), DATA flags (`0x1` small world, `0x2` can't fast travel, `0x8` no LOD water, `0x10`
+no landscape, `0x20` no sky, `0x40` fixed dimensions, `0x80` no grass).
+
+- City worlds (WhiterunWorld, SolitudeWorld, …) have PNAM `0x7f`: their landscape is
+  Tamriel's LAND at the same grid position, and their own CELLs hold only the objects.
+- Persistent references (NPCs, doors, map markers) live in the persistent cell, not in the
+  exterior cell they stand in; the loader sorts them into cells by position.
+- A cell's water height is its XCLW, else the water world's default (DNAM). Values beyond
+  ±1e9 mean "no water".
+
+## Landscape
+
+**LAND** (one per exterior cell, a child of its CELL): a 33×33 grid of points 128 units apart
+(the outer rows are shared with the neighbours), stored row by row from the south-west corner.
+
+- **VHGT:** f32 offset, then 33×33 i8 deltas and 3 unused bytes. The first delta of a row adds
+  to the first point of the previous row; the others add to the point before them in the row.
+  Height = value × 8.
+- **VNML:** 33×33 × 3 i8 normal (signed; verified on all vanilla records). **VCLR:** 33×33 RGB
+  u8 vertex colours (most records have none: white).
+- **Textures** are per quadrant (0 south-west, 1 south-east, 2 north-west, 3 north-east; 17×17
+  points each, sharing the middle row and column). **BTXT**: base LTEX, quadrant u8, 3 unused.
+  **ATXT**: LTEX, quadrant u8, unused u8, layer u16; followed by **VTXT**: entries of position
+  u16 (0..288 in the quadrant's 17×17 grid), 2 unused bytes, opacity f32. Layers are stacked in
+  layer order, each covering what is below by its opacity.
+- **Defaults:** a quadrant without BTXT, a BTXT/ATXT naming LTEX 0 (13,000 vanilla layers) or an
+  LTEX that does not exist (0x844 in Skyrim.esm) is drawn with `landscape\dirt02.dds`.
+- Vanilla quadrants have at most 6 layers (7 textures); the shader blends 8.
+- **LTEX:** TNAM texture set (TXST: TX00 diffuse, TX01 normal), SNAM specular exponent.
+  Textures repeat 6 times per cell (`fLandTextureTilingMult` 3 per half cell).
+
+`node tools/land-audit.ts` checks every LAND record: heights, layer counts, and that each land
+texture resolves to files that exist and parse.
+
 ## Scripts and conditions
 
 **VMAD** (scripts attached to a record): i16 version (5), i16 object format (1: form id, alias,

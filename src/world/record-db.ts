@@ -97,6 +97,13 @@ export interface InteriorCell {
   readonly name: string;
 }
 
+export interface WorldspaceInfo {
+  readonly formId: number;
+  readonly editorId: string;
+  /** Display name (FULL); empty if none. */
+  readonly name: string;
+}
+
 export interface RecordLocation {
   readonly plugin: Plugin;
   readonly record: number;
@@ -113,6 +120,11 @@ export class RecordDatabase {
   readonly #fullSlots = new Map<number, number>();
   readonly #lightSlots = new Map<number, number>();
   #cellChildren: Map<number, number>[] | undefined;
+  readonly #worldGroupCache = new Map<
+    Plugin,
+    Map<number, { subBlocks: Map<string, number>; persistent: number[] }>
+  >();
+  readonly #subBlockCache = new Map<string, Promise<Map<string, number>>>();
 
   private constructor(plugins: Plugin[], problems: string[]) {
     this.plugins = plugins;
@@ -279,6 +291,127 @@ export class RecordDatabase {
     const record = await this.get(formId);
     if (!record) throw new Error(`Record ${hex(formId)} not found`);
     return record;
+  }
+
+  // --- Worldspaces ---------------------------------------------------------------
+
+  /** Every worldspace (WRLD), in its winning version, sorted by editor id. */
+  async worldspaces(): Promise<WorldspaceInfo[]> {
+    const worlds = new Map<number, WorldspaceInfo>();
+    const worldType = fourCCToInt('WRLD');
+    for (const plugin of this.plugins) {
+      const { index } = plugin;
+      for (let group = 0; group < index.groupCount; group++) {
+        if (index.groupTypes[group] !== GroupType.top || index.groupLabels[group] !== worldType)
+          continue;
+        const end = index.groupEndRecord[group] ?? 0;
+        for (let record = index.groupFirstRecord[group] ?? 0; record < end; record++) {
+          if (index.types[record] !== worldType) continue;
+          const world = await this.read({ plugin, record });
+          if (world.deleted) {
+            worlds.delete(world.formId);
+            continue;
+          }
+          worlds.set(world.formId, {
+            formId: world.formId,
+            editorId: world.editorId ?? '',
+            name: world.text('FULL') ?? '',
+          });
+        }
+      }
+    }
+    return [...worlds.values()].sort((a, b) => (a.editorId < b.editorId ? -1 : 1));
+  }
+
+  /**
+   * Per plugin: the world children group of each worldspace, its exterior sub-block groups
+   * by "x,y" (8×8 cells each) and its persistent cell record.
+   */
+  #worldGroups(
+    plugin: Plugin,
+  ): Map<number, { subBlocks: Map<string, number>; persistent: number[] }> {
+    let groups = this.#worldGroupCache.get(plugin);
+    if (groups) return groups;
+    groups = new Map();
+    const { index } = plugin;
+    const cellType = fourCCToInt('CELL');
+    const owners = new Map<number, number>(); // world children group → world (global)
+    for (let group = 0; group < index.groupCount; group++) {
+      const type = index.groupTypes[group];
+      if (type === GroupType.worldChildren) {
+        const world = this.toGlobal(plugin, index.groupLabels[group] ?? 0);
+        owners.set(group, world);
+        const entry = { subBlocks: new Map<string, number>(), persistent: [] as number[] };
+        groups.set(world, entry);
+        // The persistent cell sits directly in the world children group.
+        const end = index.groupEndRecord[group] ?? 0;
+        for (let record = index.groupFirstRecord[group] ?? 0; record < end; record++) {
+          if (index.types[record] === cellType && (index.parentGroups[record] ?? 0) - 1 === group) {
+            entry.persistent.push(record);
+          }
+        }
+      } else if (type === GroupType.exteriorCellSubBlock) {
+        let parent = (index.groupParents[group] ?? 0) - 1;
+        while (parent >= 0 && !owners.has(parent)) parent = (index.groupParents[parent] ?? 0) - 1;
+        const world = owners.get(parent);
+        if (world === undefined) continue;
+        const label = index.groupLabels[group] ?? 0;
+        const y = (label << 16) >> 16;
+        const x = label >> 16;
+        groups.get(world)?.subBlocks.set(`${String(x)},${String(y)}`, group);
+      }
+    }
+    this.#worldGroupCache.set(plugin, groups);
+    return groups;
+  }
+
+  /** The exterior cell at grid position (x, y) of a worldspace (winning version), if any. */
+  async exteriorCell(world: number, x: number, y: number): Promise<number | undefined> {
+    const subX = Math.floor(x / 8);
+    const subY = Math.floor(y / 8);
+    const key = `${String(world)}:${String(subX)},${String(subY)}`;
+    let pending = this.#subBlockCache.get(key);
+    if (!pending) {
+      pending = this.#readSubBlock(world, subX, subY);
+      this.#subBlockCache.set(key, pending);
+    }
+    return (await pending).get(`${String(x)},${String(y)}`);
+  }
+
+  async #readSubBlock(world: number, subX: number, subY: number): Promise<Map<string, number>> {
+    const cells = new Map<string, number>();
+    const cellType = fourCCToInt('CELL');
+    for (const plugin of this.plugins) {
+      const group = this.#worldGroups(plugin)
+        .get(world)
+        ?.subBlocks.get(`${String(subX)},${String(subY)}`);
+      if (group === undefined) continue;
+      const { index } = plugin;
+      const end = index.groupEndRecord[group] ?? 0;
+      for (let record = index.groupFirstRecord[group] ?? 0; record < end; record++) {
+        if (index.types[record] !== cellType || (index.parentGroups[record] ?? 0) - 1 !== group)
+          continue;
+        const cell = await this.read({ plugin, record });
+        const xclc = cell.fields.first('XCLC');
+        if (!xclc || xclc.length < 8) continue;
+        const data = view(xclc);
+        const key = `${String(data.getInt32(0, true))},${String(data.getInt32(4, true))}`;
+        if (cell.deleted) cells.delete(key);
+        else cells.set(key, cell.formId);
+      }
+    }
+    return cells;
+  }
+
+  /** The worldspace's persistent cell: references that stay loaded, placed anywhere. */
+  persistentCell(world: number): number | undefined {
+    let found: number | undefined;
+    for (const plugin of this.plugins) {
+      for (const record of this.#worldGroups(plugin).get(world)?.persistent ?? []) {
+        found = this.toGlobal(plugin, plugin.index.formIds[record] ?? 0);
+      }
+    }
+    return found;
   }
 
   // --- Cells --------------------------------------------------------------------
