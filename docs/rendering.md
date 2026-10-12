@@ -27,11 +27,12 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
    of field (below).
 
 **Not yet:** the engine's volumetric lighting (bVolumetricLightingEnable: per-weather VOLI
-records, froxel shaders ISVolumetricLighting*), its image-based lens flare (bIBLFEnable,
-ISIBLensFlare) and the LENS sprite flares of the sun and lights: TODO(M13). Their shaders are
-known (Community Shaders), but the values the engine feeds them (the froxel depth
-distribution and its range factor, intensity and colour, wind) are computed in the executable
-and documented nowhere; they need reverse engineering, not guesses. Anti-aliasing is 4×
+records, froxel shaders ISVolumetricLighting*) and its image-based lens flare of the sun and
+bright lights (bIBLFEnable, ISIBLensFlare; vanilla SSE has no LENS records, so this is its
+only lens flare): TODO(M13). Their shaders are known (Community Shaders), but the values the
+engine feeds them (the froxel depth distribution and its range factor, intensity and colour,
+wind, the flare's ghosts and halo) are computed in the executable and documented nowhere;
+they need reverse engineering, not guesses. Anti-aliasing is 4×
 MSAA instead of the engine's TAA (bUseTAA).
 
 **Frame uniforms** (`shaders/frame.wgsl`, group 0 of every world shader): camera, sun
