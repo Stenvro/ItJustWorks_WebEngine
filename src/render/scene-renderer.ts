@@ -23,6 +23,11 @@ const FRAME_FLOATS = 72;
 const LIGHT_FLOATS = 8;
 
 const SLSF1_ZBUFFER_TEST = 0x80000000;
+const SLSF1_DECAL = 0x4000000;
+const SLSF1_DYNAMIC_DECAL = 0x8000000;
+/** Depth bias for decals: constant part (in depth units) and slope-scaled part. */
+const DECAL_DEPTH_BIAS = 16;
+const DECAL_SLOPE_BIAS = 1.5;
 const SLSF2_ZBUFFER_WRITE = 0x1;
 const SLSF2_DOUBLE_SIDED = 0x10;
 const SLSF1_ENVIRONMENT_MAPPING = 0x80;
@@ -496,6 +501,9 @@ export class SceneRenderer {
     const cullMode: GPUCullMode = (flags2 & SLSF2_DOUBLE_SIDED) !== 0 ? 'none' : 'back';
     const depthWrite = blend === undefined || (flags2 & SLSF2_ZBUFFER_WRITE) !== 0;
     const depthTest = (flags1 & SLSF1_ZBUFFER_TEST) !== 0 || material === undefined;
+    // Decals (dirt and trim layers lying on other surfaces) are pulled towards the camera so
+    // they never fight with the surface below. Reversed Z: a positive bias means closer.
+    const decal = (flags1 & (SLSF1_DECAL | SLSF1_DYNAMIC_DECAL)) !== 0;
     const layout = part.layout;
     const key = [
       shader,
@@ -508,6 +516,7 @@ export class SceneRenderer {
       cullMode,
       depthWrite,
       depthTest,
+      decal,
     ].join('|');
 
     let pipeline = this.#pipelines.get(key);
@@ -530,6 +539,7 @@ export class SceneRenderer {
           format: DEPTH_FORMAT,
           depthWriteEnabled: depthWrite,
           depthCompare: depthTest ? 'greater-equal' : 'always',
+          ...(decal && { depthBias: DECAL_DEPTH_BIAS, depthBiasSlopeScale: DECAL_SLOPE_BIAS }),
         },
         multisample: { count: SAMPLE_COUNT },
       });
