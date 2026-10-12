@@ -858,6 +858,8 @@ export const DebugView = {
   lightOnly: 3,
   vertexColors: 4,
   geometryNormals: 5,
+  /** The ambient occlusion (sao.wgsl) alone. */
+  ambientOcclusion: 6,
 } as const;
 
 export class SceneRenderer {
