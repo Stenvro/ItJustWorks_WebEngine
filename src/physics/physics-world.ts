@@ -237,6 +237,24 @@ function alignY(direction: Vec3): Quaternion {
 
 const toHavok = (v: number): number => v / HAVOK_SCALE;
 
+/** A collision hard enough to be heard (src/audio/impacts.ts). */
+export interface PhysicsImpact {
+  /** Where: the simulated body's position, game units. */
+  readonly position: Vec3;
+  /**
+   * How hard the sides met: the speed the contact took out of their approach, game units per
+   * second (the contact's impulse over the bodies' masses).
+   */
+  readonly speed: number;
+  /** The simulated side's material and the material it hit (MATT ids; 0: unknown). */
+  readonly material: number;
+  readonly against: number;
+  /** What it hit. */
+  readonly againstKind: PhysicsOwner['kind'] | undefined;
+  /** The simulated body (impacts are spaced out per body). */
+  readonly body: number;
+}
+
 // --- World --------------------------------------------------------------------------------
 
 export class PhysicsWorld {
@@ -248,7 +266,25 @@ export class PhysicsWorld {
   /** Material id (MATT) per collider handle. */
   readonly #materials = new Map<number, number>();
   readonly #hooks: RAPIER.PhysicsHooks;
+  readonly #events = new RAPIER.EventQueue(true);
+  #impacts: PhysicsImpact[] = [];
+  /** Simulated bodies' velocities before the step (Havok units per second). */
+  readonly #velocities = new Map<number, RAPIER.Vector>();
+  /** Bodies settling after being placed: silent until they first sleep (or this time). */
+  readonly #settling = new Map<number, number>();
+  /** Simulated seconds. */
+  #time = 0;
   #accumulator = 0;
+  /**
+   * Contacts below this speed (game units per second) make no sound and are not reported
+   * (`[Audio] fMinSoundVel`); set before placing objects.
+   */
+  impactSpeed = 60;
+  /**
+   * How long bodies placed to settle (the engine's warm start, `[HAVOK] fWarmStartMaxTime`)
+   * stay silent at most, if they do not fall asleep before.
+   */
+  settleSeconds = 4;
 
   /** `gravity`: Havok units per second² (downwards). Call initPhysics() first. */
   constructor(matrix: CollisionMatrix, gravity: number) {
@@ -409,6 +445,7 @@ export class PhysicsWorld {
           : RAPIER.RigidBodyDesc.fixed();
       desc.setTranslation(translation.x, translation.y, translation.z).setRotation(rotation);
       const body = this.world.createRigidBody(desc);
+      if (dynamic && settle) this.#settling.set(body.handle, this.#time + this.settleSeconds);
       for (const shape of data.shapes) {
         const colliderDesc = this.#colliderDesc(shape, scale, dynamic);
         if (!colliderDesc) continue;
@@ -421,7 +458,13 @@ export class PhysicsWorld {
           .setRestitutionCombineRule(RAPIER.CoefficientCombineRule.Multiply)
           .setDensity(0)
           .setSensor(data.phantom);
-        if (dynamic) colliderDesc.setActiveHooks(RAPIER.ActiveHooks.FILTER_CONTACT_PAIRS);
+        if (dynamic) {
+          colliderDesc.setActiveHooks(RAPIER.ActiveHooks.FILTER_CONTACT_PAIRS);
+          // Report contacts that take at least impactSpeed out of the body in one step.
+          colliderDesc
+            .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
+            .setContactForceEventThreshold((data.mass * toHavok(this.impactSpeed)) / PHYSICS_STEP);
+        }
         if (data.phantom) colliderDesc.setActiveHooks(RAPIER.ActiveHooks.FILTER_INTERSECTION_PAIRS);
         const collider = this.world.createCollider(colliderDesc, body);
         this.register(collider, shape.layer, owner, shape.material);
@@ -531,11 +574,90 @@ export class PhysicsWorld {
     let steps = 0;
     while (this.#accumulator >= PHYSICS_STEP) {
       beforeStep?.(PHYSICS_STEP);
-      this.world.step(undefined, this.#hooks);
+      this.#recordVelocities();
+      this.world.step(this.#events, this.#hooks);
+      this.#time += PHYSICS_STEP;
+      this.#collectImpacts();
       this.#accumulator -= PHYSICS_STEP;
       steps++;
     }
     return steps;
+  }
+
+  /**
+   * Lets a placed object's simulated bodies settle (the warm start): they wake, and make no
+   * impact sounds until they first sleep (at most settleSeconds).
+   */
+  settle(placed: PlacedCollision): void {
+    for (const { body, data } of placed.bodies) {
+      if (data.motion !== 'dynamic' || data.phantom) continue;
+      body.wakeUp();
+      this.#settling.set(body.handle, this.#time + this.settleSeconds);
+    }
+  }
+
+  /** The impacts since the last call. */
+  drainImpacts(): PhysicsImpact[] {
+    const impacts = this.#impacts;
+    this.#impacts = [];
+    return impacts;
+  }
+
+  /** Turns the step's contact force events into impacts of the simulated side. */
+  #recordVelocities(): void {
+    this.#velocities.clear();
+    this.world.bodies.forEach((body) => {
+      if (!body.isDynamic() || body.isSleeping()) return;
+      this.#velocities.set(body.handle, body.linvel());
+    });
+    // A settling body is placed for good once it first sleeps.
+    for (const [handle, until] of this.#settling) {
+      const body = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
+      if (!body || body.isSleeping() || this.#time >= until) this.#settling.delete(handle);
+    }
+  }
+
+  /**
+   * Turns the step's contact force events into impacts: the force (above each body's
+   * threshold) only says something touched hard; how hard they met is the speed at which they
+   * approached along the contact before the step (resting and pushing contacts approach at
+   * about nothing, however hard they press).
+   */
+  #collectImpacts(): void {
+    this.#events.drainContactForceEvents((event) => {
+      const a = this.world.getCollider(event.collider1());
+      const b = this.world.getCollider(event.collider2());
+      const bodyA = a.parent();
+      const bodyB = b.parent();
+      const velocity = (body: RAPIER.RigidBody | null): RAPIER.Vector =>
+        !body
+          ? { x: 0, y: 0, z: 0 }
+          : body.isDynamic()
+            ? (this.#velocities.get(body.handle) ?? { x: 0, y: 0, z: 0 })
+            : body.linvel();
+      const n = event.maxForceDirection();
+      const va = velocity(bodyA);
+      const vb = velocity(bodyB);
+      const speed =
+        Math.abs((va.x - vb.x) * n.x + (va.y - vb.y) * n.y + (va.z - vb.z) * n.z) * HAVOK_SCALE;
+      if (speed < this.impactSpeed) return;
+      // The simulated side hits the other (of two simulated bodies, the faster one).
+      const speedOf = (v: RAPIER.Vector): number => Math.hypot(v.x, v.y, v.z);
+      const aMoves =
+        bodyA?.isDynamic() === true && (!bodyB?.isDynamic() || speedOf(va) >= speedOf(vb));
+      const [mover, other] = aMoves ? [a, b] : [b, a];
+      const body = mover.parent();
+      if (!body?.isDynamic() || this.#settling.has(body.handle)) return;
+      const at = body.translation();
+      this.#impacts.push({
+        position: [at.x * HAVOK_SCALE, at.y * HAVOK_SCALE, at.z * HAVOK_SCALE],
+        speed,
+        material: this.materialOf(mover),
+        against: this.materialOf(other),
+        againstKind: this.ownerOf(other)?.kind,
+        body: body.handle,
+      });
+    });
   }
 
   /** How far into the next step the clock is (0..1), for drawing between steps. */

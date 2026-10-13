@@ -26,6 +26,7 @@ import type { GpuGrassField } from '../render/grass.ts';
 import { waterPlane } from '../render/water-data.ts';
 import { parseGrass, placeGrass, type GrassType } from '../world/grass.ts';
 import type { AmbientState } from '../audio/ambience.ts';
+import { waterAreaHeight } from '../audio/water-audio.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
 import type { GpuTerrainCell, TerrainLodBlock, TerrainTexturePaths } from '../render/terrain.ts';
 import { parseLodSettings, type LodSettings } from '../formats/lod/lod.ts';
@@ -44,6 +45,7 @@ import {
   type CellSoundEmitter,
   type DoorDestination,
   type Teleport,
+  type CellWaterArea,
 } from '../world/cell-loader.ts';
 import { raycastParts } from '../render/raycast.ts';
 import { enabledReferences, findToggles, gameStartSelection } from '../world/cell-upgrades.ts';
@@ -108,8 +110,12 @@ interface LoadedCell {
   readonly collision: CollisionGroup;
   /** Its enabled objects by reference (what the crosshair can rest on). */
   objects: ReadonlyMap<number, CellObject>;
-  /** The cell's water surface, if it has water. */
+  /** The cell's water surface, if it has water, and its type (WATR). */
   waterHeight: number | undefined;
+  waterType: number | undefined;
+  /** Its landscape (where the water lies above it) and water activators' surfaces. */
+  land: LandData | undefined;
+  waterAreas: readonly CellWaterArea[];
   /** The placed objects with their instances (development: what the camera looks at). */
   placed: readonly { readonly object: CellObject; readonly instance: ModelInstance }[];
   /** Its enabled looping sounds and acoustic spaces. */
@@ -409,6 +415,8 @@ export class WorldViewer {
     ]);
     if (generation !== this.#generation) return;
     const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.impactSpeed = playerData.ini.number('Audio', 'fMinSoundVel');
+    physics.settleSeconds = playerData.ini.number('HAVOK', 'fWarmStartMaxTime');
     const player = new Player(
       {
         ...playerData,
@@ -432,6 +440,9 @@ export class WorldViewer {
       activatable: (reference) => this.#activatable(reference),
       prompt: this.#ui.prompt,
       notice: this.#ui.notice,
+      onImpact: (impact) => {
+        this.#session?.soundSystem?.impact(impact);
+      },
     });
     // bBorderRegionsEnabled: the worldspace's border regions stop the player.
     if (playerData.ini.number('General', 'bBorderRegionsEnabled') !== 0) {
@@ -626,6 +637,9 @@ export class WorldViewer {
         collision: collisionGroup(),
         objects: new Map(),
         waterHeight: undefined,
+        waterType: undefined,
+        land: undefined,
+        waterAreas: [],
         placed: [],
         emitters: [],
         acousticAreas: [],
@@ -711,6 +725,9 @@ export class WorldViewer {
     cell.lights = lights;
     cell.placed = placed;
     cell.waterHeight = water?.height;
+    cell.waterType = water ? (water.type ?? DEFAULT_WATER) : undefined;
+    cell.land = land;
+    cell.waterAreas = data.waterAreas.filter((area) => isEnabled(area.reference));
     cell.objects = new Map(objects.map((object) => [object.reference, object]));
     cell.emitters = data.emitters.filter((emitter) => isEnabled(emitter.reference));
     cell.acousticAreas = data.acousticAreas.filter((area) => isEnabled(area.reference));
@@ -925,9 +942,28 @@ export class WorldViewer {
     return { texture, x: bx * CELL_SIZE, y: by * CELL_SIZE, size: level * CELL_SIZE };
   }
 
+  /**
+   * Water at a point of the loaded cells: a water activator's surface, else the cell's water
+   * where it lies above the landscape.
+   */
+  readonly #waterAt = (x: number, y: number): { height: number; type: number } | undefined => {
+    const cell = this.#cells.get(cellKey(Math.floor(x / CELL_SIZE), Math.floor(y / CELL_SIZE)));
+    if (!cell?.ready) return undefined;
+    for (const area of cell.waterAreas) {
+      const height = waterAreaHeight(area, x, y);
+      if (height !== undefined) return { height, type: area.type };
+    }
+    if (cell.waterHeight === undefined || cell.waterType === undefined) return undefined;
+    const ground = cell.land ? landHeightAt(cell.land, cell.x, cell.y, x, y) : undefined;
+    if (ground !== undefined && ground >= cell.waterHeight) return undefined;
+    return { height: cell.waterHeight, type: cell.waterType };
+  };
+
   /** The surroundings for region and weather sounds. */
   #ambientState(sky: WorldSky): AmbientState {
     const flash = sky.flashStart;
+    const camera = this.camera.position;
+    const water = this.#waterAt(camera[0], camera[1]);
     return {
       regions: sky.regions,
       weather: sky.weather,
@@ -939,6 +975,8 @@ export class WorldViewer {
       flash: Number.isFinite(flash) ? flash : undefined,
       cellMusic: sky.cellMusic,
       worldMusic: this.#world?.record.music,
+      waterAt: this.#waterAt,
+      underwater: water !== undefined && camera[2] < water.height,
     };
   }
 

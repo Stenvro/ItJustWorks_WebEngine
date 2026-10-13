@@ -8,7 +8,12 @@ import type { CollisionData } from '../physics/collision-data.ts';
 import { GrabSpring } from '../physics/grab.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { landscapeMesh } from '../physics/landscape.ts';
-import type { PhysicsWorld, PickHit, PlacedCollision } from '../physics/physics-world.ts';
+import type {
+  PhysicsImpact,
+  PhysicsWorld,
+  PickHit,
+  PlacedCollision,
+} from '../physics/physics-world.ts';
 import { objectWorld, playSequence, type Playback } from '../render/animation.ts';
 import type { FlyCamera } from '../render/fly-camera.ts';
 import { invert } from '../render/frustum.ts';
@@ -145,6 +150,7 @@ export class PlaySession {
   readonly #activatable: ((reference: number) => Activatable | undefined) | undefined;
   readonly #prompt: HTMLElement | undefined;
   readonly #notice: HTMLElement | undefined;
+  readonly #onImpact: ((impact: PhysicsImpact) => void) | undefined;
   #noticeTimer: ReturnType<typeof setTimeout> | undefined;
   /** What the crosshair rests on. */
   #target: Activatable | undefined;
@@ -177,6 +183,8 @@ export class PlaySession {
     prompt?: HTMLElement;
     /** Where the game's notifications are shown. */
     notice?: HTMLElement;
+    /** Collisions hard enough to be heard (the sound system's impact sounds). */
+    onImpact?: (impact: PhysicsImpact) => void;
   }) {
     this.physics = init.physics;
     this.player = init.player;
@@ -187,6 +195,7 @@ export class PlaySession {
     this.#activatable = init.activatable;
     this.#prompt = init.prompt;
     this.#notice = init.notice;
+    this.#onImpact = init.onImpact;
     const active = (): Camera =>
       this.#freeCamera || this.#spawnPending ? this.camera : this.player;
     this.view = {
@@ -266,6 +275,7 @@ export class PlaySession {
       this.#setTarget(this.#grab ? undefined : this.#activatableAt(hit));
       this.#activate(hit);
     }
+    for (const impact of this.physics.drainImpacts()) this.#onImpact?.(impact);
     // Simulated objects that move take their drawn models along.
     for (const group of this.#groups) {
       for (const link of group.moving) {
@@ -415,9 +425,7 @@ export class PlaySession {
   /** A cell's collision is complete: the warm start lets its loose objects settle. */
   #complete(group: CollisionGroup): void {
     group.ready = true;
-    for (const placed of group.settle.splice(0)) {
-      for (const { body, data } of placed.bodies) if (data.motion === 'dynamic') body.wakeUp();
-    }
+    for (const placed of group.settle.splice(0)) this.physics.settle(placed);
   }
 
   #trySpawn(): void {

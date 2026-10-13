@@ -29,6 +29,15 @@ import { parseRegionAudio, type RegionAudio } from '../world/sound-records.ts';
 import { DefaultObjects, DefaultObjectUse } from '../world/default-objects.ts';
 import { Ambience, ambientConditions, type AmbientState } from './ambience.ts';
 import { Music } from './music.ts';
+import { WaterAudio } from './water-audio.ts';
+import { ImpactSounds, type ImpactHit } from './impacts.ts';
+import {
+  parseImpact,
+  parseImpactDataSet,
+  type Impact,
+  type ImpactDataSet,
+} from '../world/impact-records.ts';
+import { parseMaterialType, type MaterialType } from '../world/material-type.ts';
 import { WebMusicOutput } from './music-output.ts';
 import type { AudioLoader } from './audio-loader.ts';
 import { AudioEngine } from './audio-engine.ts';
@@ -93,6 +102,16 @@ export class SoundSystem {
   readonly #musicTracks = new Map<number, Promise<MusicTrack | undefined>>();
   /** DFMS: the music where nothing names any. */
   readonly #defaultMusic: number | undefined;
+  readonly #impacts: ImpactSounds;
+  readonly #water: WaterAudio;
+  readonly #waterSounds = new Map<number, Promise<number | undefined>>();
+  /** UWLS: the loop under water, and the one playing. */
+  readonly #underwaterSound: number | undefined;
+  #underwater: { loop: SoundInstance | undefined; dropped: boolean } | undefined;
+  #materials:
+    Promise<{ byId: Map<number, MaterialType>; byForm: Map<number, MaterialType> }> | undefined;
+  readonly #impactSets = new Map<number, Promise<ImpactDataSet | undefined>>();
+  readonly #impactRecords = new Map<number, Promise<Impact | undefined>>();
   /** What the viewers last said about the surroundings (regions, weather, time). */
   #ambient: AmbientState | undefined;
   /** An interior's sound region (its acoustic space's RDAT). */
@@ -121,6 +140,28 @@ export class SoundSystem {
     this.#loader = loader;
     this.#ini = ini;
     this.#defaultMusic = defaults.get(DefaultObjectUse.defaultMusic);
+    this.#underwaterSound = defaults.get(DefaultObjectUse.underwaterLoop);
+    this.#water = new WaterAudio(
+      {
+        waterSound: (type) => this.#waterSound(type),
+        play: (sound, place, fadeIn) => this.play(sound, place, fadeIn),
+      },
+      ini,
+    );
+    this.#impacts = new ImpactSounds(
+      {
+        materialById: async (id) => (await this.#materialTypes()).byId.get(id),
+        material: async (formId) => (await this.#materialTypes()).byForm.get(formId),
+        impactDataSet: (formId) => this.#impactDataSet(formId),
+        impact: (formId) => this.#impact(formId),
+        landMaterial: defaults.get(DefaultObjectUse.landMaterial),
+      },
+      {
+        heavySpeed: ini.number('Audio', 'fCollisionSoundHeavyThreshold'),
+        interval: ini.number('Audio', 'iCollisionSoundTimeDelta') / 1000,
+      },
+      (sound, position) => void this.play(sound, position),
+    );
     this.#musicOutput = new WebMusicOutput(
       engine,
       loader,
@@ -184,6 +225,9 @@ export class SoundSystem {
     music: Music['state'];
     /** Music files kept ready (WAV bytes). */
     musicBytes: number;
+    /** Water loops playing (SNDR form ids). */
+    water: number[];
+    underwater: boolean;
   } {
     return {
       playing: this.#playing.size,
@@ -194,6 +238,8 @@ export class SoundSystem {
       ambience: this.#ambience.loops,
       music: this.music.state,
       musicBytes: this.#musicOutput.bytes,
+      water: this.#water.playing,
+      underwater: this.#underwater !== undefined,
     };
   }
 
@@ -212,12 +258,107 @@ export class SoundSystem {
     return this.#start(descriptor, model, place, fadeIn);
   }
 
+  /**
+   * Under water: the categories that mute under water fall silent and the underwater loop
+   * (default object UWLS) plays.
+   */
+  #setUnderwater(underwater: boolean): void {
+    if (underwater === (this.#underwater !== undefined)) return;
+    this.engine.setSubmerged(underwater);
+    if (!underwater) {
+      const state = this.#underwater;
+      this.#underwater = undefined;
+      if (state) {
+        state.dropped = true;
+        state.loop?.stop();
+      }
+      return;
+    }
+    const state: { loop: SoundInstance | undefined; dropped: boolean } = {
+      loop: undefined,
+      dropped: false,
+    };
+    this.#underwater = state;
+    if (this.#underwaterSound === undefined) return;
+    void this.play(this.#underwaterSound).then((loop) => {
+      if (state.dropped) loop?.stop(true);
+      else state.loop = loop;
+    });
+  }
+
+  /** A water type's open sound (WATR SNAM). */
+  #waterSound(type: number): Promise<number | undefined> {
+    let entry = this.#waterSounds.get(type);
+    if (!entry) {
+      entry = this.#db.get(type).then((record) => {
+        if (record?.type !== 'WATR' || record.deleted) return undefined;
+        const formId = record.formIdField('SNAM');
+        return formId === 0 ? undefined : formId;
+      });
+      this.#waterSounds.set(type, entry);
+    }
+    return entry;
+  }
+
+  /** A physics collision: the impact sound of the materials that met. */
+  impact(hit: ImpactHit): void {
+    void this.#impacts.hit(hit, performance.now() / 1000);
+  }
+
+  /** The material types (MATT) by collision id and by form id, read once. */
+  #materialTypes(): Promise<{
+    byId: Map<number, MaterialType>;
+    byForm: Map<number, MaterialType>;
+  }> {
+    this.#materials ??= (async () => {
+      const byId = new Map<number, MaterialType>();
+      const byForm = new Map<number, MaterialType>();
+      for (const formId of this.#db.formIdsOfType('MATT')) {
+        const record = await this.#db.get(formId);
+        if (!record || record.deleted) continue;
+        const material = parseMaterialType(record);
+        byId.set(material.id, material);
+        byForm.set(material.formId, material);
+      }
+      return { byId, byForm };
+    })();
+    return this.#materials;
+  }
+
+  #impactDataSet(formId: number): Promise<ImpactDataSet | undefined> {
+    let entry = this.#impactSets.get(formId);
+    if (!entry) {
+      entry = this.#db
+        .get(formId)
+        .then((record) =>
+          record?.type === 'IPDS' && !record.deleted ? parseImpactDataSet(record) : undefined,
+        );
+      this.#impactSets.set(formId, entry);
+    }
+    return entry;
+  }
+
+  #impact(formId: number): Promise<Impact | undefined> {
+    let entry = this.#impactRecords.get(formId);
+    if (!entry) {
+      entry = this.#db
+        .get(formId)
+        .then((record) =>
+          record?.type === 'IPCT' && !record.deleted ? parseImpact(record) : undefined,
+        );
+      this.#impactRecords.set(formId, entry);
+    }
+    return entry;
+  }
+
   /** The surroundings for ambience: regions, weather, time of day (every frame). */
   setAmbience(state: AmbientState | undefined): void {
     if (!state && this.#ambient) {
       this.#ambience.stop();
       this.music.stop();
       this.#musicOutput.stop();
+      this.#water.stop();
+      this.#setUnderwater(false);
     }
     this.#ambient = state;
   }
@@ -298,6 +439,8 @@ export class SoundSystem {
         ambient.interior && this.#spaceRegion !== undefined ? [this.#spaceRegion] : ambient.regions;
       this.#ambience.update({ ...ambient, regions }, this.#listener, performance.now() / 1000);
     }
+    this.#water.update(this.#listener, ambient?.waterAt, performance.now() / 1000);
+    this.#setUnderwater(ambient?.underwater ?? false);
     // Music runs on the audio clock, and only while audio plays (it would skip through its
     // tracks before the first user gesture otherwise).
     if (ambient && this.engine.context.state === 'running') {
@@ -496,6 +639,8 @@ export class SoundSystem {
     this.#ambient = undefined;
     this.music.stop();
     this.#musicOutput.stop();
+    this.#water.stop();
+    this.#setUnderwater(false);
   }
 
   /** Frees the music kept ready (the session ends). */

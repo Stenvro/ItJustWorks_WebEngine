@@ -21,6 +21,8 @@ export class AudioEngine {
   /** The user's volume per category (settings sliders), 0–1. */
   readonly #userVolumes = new Map<number, number>();
   #reverb: Reverb | undefined;
+  /** The listener is under water: categories flagged so (SNCT FNAM 0x1) are muted. */
+  #submerged = false;
 
   constructor() {
     this.context = new AudioContext({ latencyHint: 'interactive' });
@@ -75,8 +77,25 @@ export class AudioEngine {
   setUserVolume(category: number, volume: number): void {
     this.#userVolumes.set(category, volume);
     const node = this.#categories.get(category);
-    const data = this.#categoryData.get(category);
-    if (node && data) node.gain.value = data.volume * volume;
+    if (node) node.gain.value = this.#gainOf(category);
+  }
+
+  /** The listener goes under water or comes up (muting the categories that mute). */
+  setSubmerged(submerged: boolean): void {
+    if (submerged === this.#submerged) return;
+    this.#submerged = submerged;
+    for (const [formId, node] of this.#categories) {
+      if (!this.#categoryData.get(formId)?.muteWhenSubmerged) continue;
+      node.gain.setTargetAtTime(this.#gainOf(formId), this.context.currentTime, 0.05);
+    }
+  }
+
+  /** A category's own gain: its volume × the user's, muted under water if it mutes. */
+  #gainOf(formId: number): number {
+    const data = this.#categoryData.get(formId);
+    if (data?.muteWhenSubmerged && this.#submerged) return 0;
+    const user = this.#userVolumes.get(formId) ?? (data?.onMenu ? data.menuVolume : 1);
+    return (data?.volume ?? 1) * user;
   }
 
   /** The categories with a settings slider. */
@@ -131,8 +150,7 @@ export class AudioEngine {
     const node = this.context.createGain();
     this.#categories.set(formId, node);
     const data = this.#categoryData.get(formId);
-    const user = this.#userVolumes.get(formId) ?? (data?.onMenu ? data.menuVolume : 1);
-    node.gain.value = (data?.volume ?? 1) * user;
+    node.gain.value = this.#gainOf(formId);
     const parent = data?.parent;
     node.connect(
       parent !== undefined && this.#categoryData.has(parent) ? this.#node(parent) : this.master,

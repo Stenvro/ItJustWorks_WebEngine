@@ -19,6 +19,7 @@ import {
   type SoundDescriptor,
 } from '../world/sound-records.ts';
 import { soundConditionsHold, type SoundConditionContext } from './sound-conditions.ts';
+import type { WaterAt } from './water-audio.ts';
 
 /** The weather as ambience needs it (WeatherRecord). */
 export interface AmbientWeather {
@@ -49,6 +50,9 @@ export interface AmbientState {
   /** The music the cell names (XCMO) and the worldspace's (ZNAM). */
   readonly cellMusic: number | undefined;
   readonly worldMusic: number | undefined;
+  /** Water around the listener (src/audio/water-audio.ts), and whether it is under water. */
+  readonly waterAt: WaterAt | undefined;
+  readonly underwater: boolean;
 }
 
 /** The conditions of ambient sounds and music in these surroundings. */

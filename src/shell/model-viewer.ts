@@ -42,6 +42,7 @@ import {
 } from '../world/cell-loader.ts';
 import type { Arrival } from '../world/worldspace.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
+import { waterAreaHeight } from '../audio/water-audio.ts';
 import { waterPlane } from '../render/water-data.ts';
 import {
   DEFAULT_INTERIOR_IMAGE_SPACE,
@@ -283,6 +284,8 @@ export class ModelViewer {
     if (token !== this.#loadToken) return;
     this.#stopPlay();
     const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.impactSpeed = playerData.ini.number('Audio', 'fMinSoundVel');
+    physics.settleSeconds = playerData.ini.number('HAVOK', 'fWarmStartMaxTime');
     const water = cellWater(data.cell);
     const player = new Player(
       { ...playerData, physics, waterHeight: () => water?.height },
@@ -299,6 +302,9 @@ export class ModelViewer {
       searchAbove: 64,
       activatable: (reference) => this.#activatable(reference),
       prompt: this.#ui.prompt,
+      onImpact: (impact) => {
+        this.#session?.soundSystem?.impact(impact);
+      },
     });
     play.lensShift = this.#fly.lensShift;
     play.onFreeCamera = (free) => {
@@ -1050,6 +1056,26 @@ export class ModelViewer {
     document.body.classList.toggle('content-scene', !(view.camera === 'orbit' && view.backdrop));
   }
 
+  /** Water in the shown interior: a water activator's surface, else the cell's water. */
+  readonly #waterAt = (x: number, y: number): { height: number; type: number } | undefined => {
+    const data = this.#cell?.data;
+    if (!data) return undefined;
+    for (const area of data.waterAreas) {
+      const height = waterAreaHeight(area, x, y);
+      if (height !== undefined) return { height, type: area.type };
+    }
+    const water = cellWater(data.cell);
+    return water && { height: water.height, type: water.type ?? DEFAULT_WATER };
+  };
+
+  /** Whether the camera is under the interior's water. */
+  #underwater(): boolean {
+    const camera = this.#renderer.view?.camera.position;
+    if (!camera) return false;
+    const water = this.#waterAt(camera[0], camera[1]);
+    return water !== undefined && camera[2] < water.height;
+  }
+
   /**
    * Advances the session's game clock at the timescale (time passes indoors too) and moves the
    * emittance colours with it (sunlight bounce lights dark at night); returns real seconds.
@@ -1074,6 +1100,8 @@ export class ModelViewer {
           flash: undefined,
           cellMusic: this.#cell.data.cell.musicType,
           worldMusic: undefined,
+          waterAt: this.#waterAt,
+          underwater: this.#underwater(),
         },
       );
     }

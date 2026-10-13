@@ -1,6 +1,7 @@
 // Material types (MATT): what surfaces are made of. Collision shapes name their material by
 // an id, the CRC-32 of the material's lower-case name (MNAM) without the final inversion;
-// the record adds its buoyancy and flags (stairs, arrows stick). Platform-independent.
+// the record adds its buoyancy, flags (stairs, arrows stick) and the impacts it makes.
+// Platform-independent.
 // Notes: docs/formats/esm.md ("Material types").
 
 /** The record fields a material type is read from. */
@@ -28,6 +29,8 @@ export interface MaterialType {
   readonly parent: number | undefined;
   readonly buoyancy: number;
   readonly flags: number;
+  /** HNAM: the impacts of this material hitting others (IPDS; impact-records.ts). */
+  readonly impactDataSet: number | undefined;
 }
 
 const CRC_TABLE = (() => {
@@ -61,6 +64,8 @@ export function parseMaterialType(record: RecordSource): MaterialType {
   if (mnam) for (const byte of mnam) if (byte !== 0) name += String.fromCharCode(byte);
   const bnam = record.fields.first('BNAM');
   const pnam = record.fields.first('PNAM');
+  const hnam = record.fields.first('HNAM');
+  const impactDataSet = hnam && hnam.length >= 4 ? record.formIdAt(hnam) : 0;
   return {
     formId: record.formId,
     editorId: record.editorId ?? '',
@@ -72,5 +77,6 @@ export function parseMaterialType(record: RecordSource): MaterialType {
         ? new DataView(bnam.buffer, bnam.byteOffset, bnam.byteLength).getFloat32(0, true)
         : 0,
     flags: u32('FNAM') ?? 0,
+    impactDataSet: impactDataSet === 0 ? undefined : impactDataSet,
   };
 }

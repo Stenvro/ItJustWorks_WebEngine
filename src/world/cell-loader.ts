@@ -72,6 +72,16 @@ export interface CellSoundEmitter {
 }
 
 /** A placed acoustic space (ASPC reference): inside its box its ambience and reverb apply. */
+/** A water activator's surface: its box (OBND) placed in the world, and its water type. */
+export interface CellWaterArea {
+  readonly reference: number;
+  /** WATR. */
+  readonly type: number;
+  readonly world: Mat4;
+  readonly min: readonly [number, number, number];
+  readonly max: readonly [number, number, number];
+}
+
 export interface CellAcousticArea {
   readonly reference: number;
   readonly space: number;
@@ -211,6 +221,8 @@ export interface CellData {
   readonly emitters: readonly CellSoundEmitter[];
   /** Placed acoustic spaces; filter with `enabledReferences`. */
   readonly acousticAreas: readonly CellAcousticArea[];
+  /** Water activators' surfaces (ACTI WNAM; their bounds), for the sound of water. */
+  readonly waterAreas: readonly CellWaterArea[];
   /** The cell's references and the enable parents they follow (also outside the cell). */
   readonly references: ReadonlyMap<number, ReferenceState>;
   /** Things not shown yet, with the milestone that adds them. */
@@ -353,6 +365,7 @@ export async function loadCellData(
   const primitives: CellPrimitive[] = [];
   const emitters: CellSoundEmitter[] = [];
   const acousticAreas: CellAcousticArea[] = [];
+  const waterAreas: CellWaterArea[] = [];
   const skipped = new Map<string, number>();
   const skip = (reason: string): void => {
     skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
@@ -431,6 +444,16 @@ export async function loadCellData(
     const loopingSound = loopingSoundOf(base);
     if (loopingSound !== undefined) {
       emitters.push({ reference: ref.formId, position: ref.position, descriptor: loopingSound });
+    }
+    const waterType = base.type === 'ACTI' ? nonZeroId(base.formIdField('WNAM')) : undefined;
+    const waterBounds = waterType === undefined ? undefined : objectBounds(base);
+    if (waterType !== undefined && waterBounds) {
+      waterAreas.push({
+        reference: ref.formId,
+        type: waterType,
+        world: referenceMatrix(ref),
+        ...waterBounds,
+      });
     }
     if (base.type === 'ASPC') {
       const bounds = objectBounds(base);
@@ -512,6 +535,7 @@ export async function loadCellData(
     primitives,
     emitters,
     acousticAreas,
+    waterAreas,
     references,
     skipped: [...skipped].map(([reason, count]) => `${count}× ${reason}`),
     entrance: entrance ?? centre,

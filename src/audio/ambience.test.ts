@@ -133,6 +133,8 @@ const state = (overrides: Partial<AmbientState> = {}): AmbientState => ({
   flash: undefined,
   cellMusic: undefined,
   worldMusic: undefined,
+  waterAt: undefined,
+  underwater: false,
   ...overrides,
 });
 

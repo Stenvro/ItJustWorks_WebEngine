@@ -119,7 +119,41 @@ Riverwood's pine forest plays MUSExploreForestPine.
   Single tracks loop between LNAM's points as often as it says (the Sovngarde chant).
 - **Playing:** each type has a bus (a gain ducking turns down) into the music category
   (default object MDSC: AudioCategoryMUS, 0.7 × the master). Files stream through `<audio>`
-  elements ([formats/audio.md](formats/audio.md#xwma)); the next file of each sequence is
+  elements ([formats/audio.md](formats/audio.md#xwma)), as the engine streams files above
+  `[Audio]` uStreamingThreshold (4 MB); the next file of each sequence is
   decoded while the current one plays, and decoded files are kept up to 192 MB, the least
   recently used ones that are not playing going first. Music follows the audio clock and
   waits while audio is suspended (before the first click).
+
+## Impacts
+
+Simulated objects that hit something sound (`impacts.ts`): the physics reports contacts from
+each body's contact force events, keeping those where the two sides approached at
+`[Audio]` fMinSoundVel (60 units per second) or faster along the contact, measured before the
+step — resting and pushing contacts press hard but approach at nearly nothing. The moving
+object's material (MATT) names an impact data set (HNAM → IPDS; else its nearest parent's),
+which names an impact (IPCT) for the material hit (else for that material's nearest parent);
+it plays the impact's light sound (SNAM), or from fCollisionSoundHeavyThreshold (160) its
+heavy one (NAM1, else the light one), at the body. One body sounds at most every
+iCollisionSoundTimeDelta (150 ms). The landscape counts as the default object DLMT
+(MaterialDirt) until land textures give their own materials (LTEX MNAM, with footsteps:
+TODO(M7)). Objects settling as their cell loads (the warm start, `[HAVOK]` fWarmStartMaxTime)
+make no sound until they first come to rest. A plate dropped in Breezehome plays
+PHYMaterialCeramicLSD, a basket PHYBasketL/H, a sword PHYMaterialBlade2HandH.
+
+## Water
+
+Each water type's open sound (WATR SNAM: AMBWaterRiverLPSD for rivers and lakes, 2D loops for
+cave pools and Blackreach, Apocrypha's sea) loops while such water is near (`water-audio.ts`).
+Following the `[Audio]` settings, a grid of uWaterAudioAxisSamplePoints² (8 × 8) points
+around the listener, reaching uWaterAudioAmbientAttenuation (2200) units each way, is checked
+for water four times a second: a water activator's surface (ACTI WNAM, its bounds), else the
+cell's water where it lies above the landscape (indoors: everywhere in the cell). The
+uWaterAudioSamplePointsToUse (8) nearest water points place each type's loop: towards their
+centre (weighted by nearness) at the nearest one's distance, so it follows the shore without
+jumping; it fades in over fWaterAudioFadeInSeconds (3 s) and out over fWaterAudioFadeOutSeconds
+(5 s). How the engine combines the points is not documented: TODO(M13).
+
+**Under water** (the camera below the water's surface): the categories that mute when
+submerged (SNCT FNAM 0x1) fall silent and the default object UWLS (AMBUnderwater2DLPM)
+loops.
