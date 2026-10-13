@@ -84,3 +84,81 @@ Examples:
   `end` text key); StopEffect → AutoFadeOut.
 - `GenericBehaviors\IdleTransIdleBackML` (Eye of Magnus barriers): ShaderLoopIdle and
   AnimIdle01 together.
+
+## Animations
+
+Character, creature and object clips are packfiles whose root holds an
+`hkaAnimationContainer`: skeletons (`skeleton.hkx`), or one animation with its binding (every
+clip). Reader: `src/formats/hkx/animation.ts`; check against every clip of the load order:
+`node tools/hkx-anim.ts --verify` (6126 clips, 295 over several blocks, none failing).
+
+| Class                            | Members (64-bit offsets)                                                                                                                                                                                                                                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| hkaAnimationContainer            | skeletons 16, animations 32, bindings 48 (arrays of pointers)                                                                                                                                                                                                                                                      |
+| hkaSkeleton                      | name 16, parentIndices 24 (i16), bones 40 (16 bytes: name 0, lockTranslation 8), referencePose 56, referenceFloats 72, floatSlots 88                                                                                                                                                                               |
+| hkQsTransform                    | 48 bytes: translation 0, rotation 16 (x y z w), scale 32                                                                                                                                                                                                                                                           |
+| hkaSplineCompressedAnimation     | type 16 (5), duration 20, numberOfTransformTracks 24, numberOfFloatTracks 28, extractedMotion 32, annotationTracks 40, numFrames 56, numBlocks 60, maxFramesPerBlock 64, maskAndQuantizationSize 68, blockDuration 72, blockInverseDuration 76, frameDuration 80, blockOffsets 88, floatBlockOffsets 104, data 152 |
+| hkaAnnotationTrack               | 24 bytes: trackName 0, annotations 8 (16 bytes: time 0, text 8)                                                                                                                                                                                                                                                    |
+| hkaDefaultAnimatedReferenceFrame | up 16, forward 32, duration 48, referenceFrameSamples 56 (xyz + turn)                                                                                                                                                                                                                                              |
+| hkaAnimationBinding              | originalSkeletonName 16, animation 24, transformTrackToBoneIndices 32 (empty: track i is bone i), floatTrackToFloatSlotIndices 48, blendHint 64 (1 additive)                                                                                                                                                       |
+
+Vanilla clips carry no extracted motion: root motion comes from the behavior project's
+animation data (`meshes\animationdata`), read with the behavior runtime (M7).
+
+The float slots of the human skeleton are `hkFade:AnimObjectA/B/L/R` (an anim object's fade)
+and `hkVis:Shield`, `hkVis:… MagicNode`, `hkVis:Weapon` (whether the object in that node is
+drawn); a book clip fades its page in through one.
+
+### Spline compression
+
+The data is cut into blocks of up to `maxFramesPerBlock` frames; block `b` starts at
+`blockOffsets[b]`, and a time `t` falls in block `floor(t · blockInverseDuration)` at frame
+`(t − b · blockDuration) / frameDuration`. Every block holds its own curves, so the pose of
+two blocks agrees at their seam only up to the compression's error (the check allows 0.1 rad
+and one unit): a decoding error shows there first.
+
+A block starts with a TransformMask per transform track (4 bytes) and one mask byte per float
+track, then aligns to 4:
+
+- TransformMask byte 0: quantizations: position bits 0–1, rotation bits 2–5, scale bits 6–7.
+- Bytes 1 and 3 (position, scale): static x/y/z 0x01/0x02/0x04, curve x/y/z 0x10/0x20/0x40;
+  static wins when both are set. A component with neither is 0 (position) or 1 (scale).
+- Byte 2 (rotation): 0xF0 a curve, 0x0F static, else the identity.
+
+Then per track: position, rotation, align 4, scale. A **vector channel** with a curve: u16
+`count`, u8 `degree`, `count + degree + 2` u8 knots (frames), align 4; per component two f32
+(min, max) for a curve or one f32 for a static value; `count + 1` control points of one u8
+(quantization 0) or u16 (1) per curve component, as a fraction of min..max; align 4. Without a
+curve: one f32 per static component. A **rotation**: the same curve header, align to the
+quantization (4, 1, 2, 1, 2, 4), then `count + 1` quaternions (or one when static):
+
+| Rotation quantization | Size | Layout                                                                                                    |
+| --------------------- | ---- | --------------------------------------------------------------------------------------------------------- |
+| 0 POLAR32             | 4    | phiTheta bits 0–17, r bits 18–27 (w = 1 − (r/1023)²), signs of x y z w in bits 28–31                      |
+| 1 THREECOMP40         | 5    | three 12-bit components ((v − 2047) · √½/2047), index of the largest bits 36–37, its sign bit 38          |
+| 2 THREECOMP48         | 6    | three u16 (15 bits: (v − 16383) · √½/16383); index = top bit of y · 2 + top bit of x, sign = top bit of z |
+| 5 UNCOMPRESSED        | 16   | four f32                                                                                                  |
+
+The largest component follows from unit length; the three stored ones fill the other indices
+in order. THREECOMP24 (3) and STRAIGHT16 (4) occur in no vanilla clip and are refused.
+
+Curves are B-splines of the given degree over the knots (The NURBS Book, A2.1 and A2.2);
+rotations are blended component-wise and normalised.
+
+**Float tracks** start at `blockOffsets[b] + floatBlockOffsets[b]`. Their mask: 0x01 static
+(one f32), 0x10 a curve laid out like one vector component (header, align 4, min and max,
+control points, align 4). Every vanilla float mask also has 0x02 and every vanilla float curve
+has u16 control points, so 0x02 is read as the 16-bit quantization (TODO(M13): confirm against
+a clip with 8-bit float curves, if one exists outside the vanilla data).
+
+**Corrupt data in vanilla clips:** 59 clips carry NaN (or values beyond 10⁷) in some track,
+always an unused bone (AnimObjectR in `dialogueangryhips.hkx`). Such a track is not written
+for that block, so the bone keeps the pose below it (the reference pose).
+
+**Fast turns are data:** about a third of the clips turn a track faster than 0.6 rad between
+two frames at 30 fps: sword swings, fingers that clench, weapon bones that snap into the hand.
+The decoding was checked where it could go wrong: consecutive control points whose largest
+component changes stay close (mean 0.06–0.2 rad over 600 000 pairs), and every seam agrees.
+
+The layout and the quaternion encodings were worked out with PredatorCZ's HavokLib
+(spline decompressor) as documentation; float tracks from the vanilla data.

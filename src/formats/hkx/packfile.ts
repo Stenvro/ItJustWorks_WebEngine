@@ -193,6 +193,12 @@ export class Packfile {
     return this.u8(offset) !== 0;
   }
 
+  /** Raw bytes of the data section (array contents: an animation's compressed data). */
+  bytes(offset: number, length: number): Uint8Array {
+    const start = this.#at(offset, length);
+    return this.#bytes.subarray(start, start + length);
+  }
+
   /** The object a pointer member points to (undefined for null). */
   object(offset: number): HkxObject | undefined {
     const target = this.#objectPointers.get(offset);
