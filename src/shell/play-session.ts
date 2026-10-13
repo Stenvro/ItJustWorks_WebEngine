@@ -5,6 +5,7 @@
 
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { ActorPose } from '../animation/skeleton.ts';
+import { Articulation } from '../physics/articulation.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import { GrabSpring } from '../physics/grab.ts';
 import { Layer } from '../physics/collision-layers.ts';
@@ -120,6 +121,8 @@ export interface CollisionGroup {
   readonly animated: { readonly placed: PlacedCollision; readonly instance: ModelInstance }[];
   /** Objects whose behavior graph moves their nodes: those nodes' bodies follow the pose. */
   readonly posed: PosedCollision[];
+  /** Objects whose bodies move their nodes one by one (ragdolls, hinged signs, chains). */
+  readonly articulated: Articulation[];
 }
 
 /** A placed object's bodies on nodes its skeleton moves. */
@@ -151,7 +154,15 @@ function posedNodes(instance: ModelInstance | undefined): Map<string, number> | 
 }
 
 export function collisionGroup(): CollisionGroup {
-  return { collision: [], ready: false, settle: [], moving: [], animated: [], posed: [] };
+  return {
+    collision: [],
+    ready: false,
+    settle: [],
+    moving: [],
+    animated: [],
+    posed: [],
+    articulated: [],
+  };
 }
 
 /** What a cell contributes to the physics world. */
@@ -163,6 +174,8 @@ export interface CellCollision {
     readonly object: CellObject;
     readonly collision: CollisionData | undefined;
     readonly instance: ModelInstance | undefined;
+    /** Its pose, where its bodies move its nodes one by one (src/physics/articulation.ts). */
+    readonly articulated?: ActorPose;
   }[];
   /** Enabled collision primitives. */
   readonly primitives: readonly CellPrimitive[];
@@ -357,6 +370,8 @@ export class PlaySession {
       this.#activate(hit);
     }
     for (const impact of this.physics.drainImpacts()) this.#onImpact?.(impact);
+    // Ragdolls and hinged objects: their nodes go where their bodies went.
+    for (const group of this.#groups) for (const entry of group.articulated) entry.update();
     // Simulated objects that move take their drawn models along.
     for (const group of this.#groups) {
       for (const link of group.moving) {
@@ -574,7 +589,7 @@ export class PlaySession {
         );
       });
     }
-    for (const { object, collision, instance } of cell.objects) {
+    for (const { object, collision, instance, articulated } of cell.objects) {
       if (!collision || collision.bodies.length === 0) continue;
       tasks.push(() => {
         // Asleep until the cell's collision is complete (nothing to rest on before that).
@@ -589,6 +604,9 @@ export class PlaySession {
         group.collision.push(placed);
         if (object.dontHavokSettle !== true && placed.dynamic) group.settle.push(placed);
         if (instance?.motion) group.moving.push({ placed, instance, motion: instance.motion });
+        if (articulated && instance) {
+          group.articulated.push(new Articulation(placed, articulated, instance.world));
+        }
         if (instance?.playback && placed.bodies.some(({ data }) => data.motion === 'keyframed')) {
           group.animated.push({ placed, instance });
         }
@@ -636,6 +654,7 @@ export class PlaySession {
     group.moving.length = 0;
     group.animated.length = 0;
     group.posed.length = 0;
+    group.articulated.length = 0;
     group.settle.length = 0;
     group.ready = false;
     this.#groups.delete(group);

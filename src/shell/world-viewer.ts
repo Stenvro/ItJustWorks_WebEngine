@@ -7,6 +7,8 @@ import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { Camera, Renderer } from '../render/renderer.ts';
+import type { ActorPose } from '../animation/skeleton.ts';
+import { articulatedPose } from '../physics/articulation.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
 import {
   placedParts,
@@ -827,14 +829,18 @@ export class WorldViewer {
         objects.map((object) => session.collision(object.model)),
       );
       if (play !== this.#play) return;
-      const instances = new Map(placed.map(({ object, instance }) => [object, instance]));
+      const entries = new Map(placed.map((entry) => [entry.object, entry]));
       play.add(cell.collision, {
         ...(land && { land: { data: land, x: cell.x, y: cell.y } }),
-        objects: objects.map((object, i) => ({
-          object,
-          collision: collisions[i],
-          instance: instances.get(object),
-        })),
+        objects: objects.map((object, i) => {
+          const entry = entries.get(object);
+          return {
+            object,
+            collision: collisions[i],
+            instance: entry?.instance,
+            ...(entry?.articulated && { articulated: entry.articulated }),
+          };
+        }),
         primitives: data.primitives.filter((primitive) => isEnabled(primitive.reference)),
       });
     }
@@ -847,7 +853,14 @@ export class WorldViewer {
     objects: readonly CellObject[],
     flow: WaterFlow,
     simulated = false,
-  ): Promise<{ object: CellObject; instance: ModelInstance; skeleton?: AnimatedSkeleton }[]> {
+  ): Promise<
+    {
+      object: CellObject;
+      instance: ModelInstance;
+      skeleton?: AnimatedSkeleton;
+      articulated?: ActorPose;
+    }[]
+  > {
     const models = await Promise.all(objects.map((object) => session.model(object.model)));
     // In loaded cells, objects with simulated collision move: they get a matrix of their own.
     const collisions = simulated
@@ -864,26 +877,38 @@ export class WorldViewer {
           : session.waterType(object.water, flow),
       ),
     );
-    const placed: { object: CellObject; instance: ModelInstance; skeleton?: AnimatedSkeleton }[] =
-      [];
+    const placed: {
+      object: CellObject;
+      instance: ModelInstance;
+      skeleton?: AnimatedSkeleton;
+      articulated?: ActorPose;
+    }[] = [];
     objects.forEach((object, i) => {
       const model = models[i];
       const water = waterTypes[i];
       const directional = directionals[i];
       if (!model) return;
-      const moves =
-        collisions[i]?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
       const graph = startObjectGraph(model, object.reference);
       const skeletal = startPlacedSkeleton(model, object.reference);
+      // Bodies that move nodes one by one pose the model (ragdolls, hinged signs); objects
+      // simulated as one body get a matrix of their own.
+      const articulated = skeletal ? undefined : articulatedPose(model.nodes, collisions[i]);
+      const moves =
+        !articulated &&
+        collisions[i]?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
+      const posed = skeletal
+        ? { pose: skeletal.skeleton.pose, poseNodes: skeletal.poseNodes }
+        : articulated;
       placed.push({
         object,
         ...(skeletal && { skeleton: skeletal.skeleton }),
+        ...(articulated && { articulated: articulated.pose }),
         instance: {
           model,
           world: moves ? new Float32Array(object.world) : object.world,
           ...(moves && { motion: { version: 0 } }),
           ...(graph && { graph }),
-          ...(skeletal && { pose: skeletal.skeleton.pose, poseNodes: skeletal.poseNodes }),
+          ...(posed && { pose: posed.pose, poseNodes: posed.poseNodes }),
           ...(simulated && {
             playback: openable(object, model.sequences?.byName.has('open') === true),
           }),

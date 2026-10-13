@@ -8,6 +8,8 @@ import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
+import type { ActorPose } from '../animation/skeleton.ts';
+import { articulatedPose } from '../physics/articulation.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
 import { Player } from './player.ts';
 import {
@@ -651,6 +653,7 @@ export class ModelViewer {
     const session = this.#session;
     const instances: ModelInstance[] = [];
     const placed = new Map<CellData['objects'][number], ModelInstance>();
+    const articulatedPoses = new Map<CellData['objects'][number], ActorPose>();
     const shown = new Map<number, ModelInstance>();
     this.#instances = shown;
     const skeletons: AnimatedSkeleton[] = [];
@@ -660,21 +663,27 @@ export class ModelViewer {
       const model = cell.models.get(object.model);
       const water = object.water === undefined ? undefined : cell.waterTypes.get(object.water);
       const directional = cell.directionals.get(object.reference);
-      // Objects with simulated collision move: they get a matrix of their own.
-      const moves =
-        cell.collisions
-          .get(object.model)
-          ?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
+      const collision = cell.collisions.get(object.model);
       if (model) {
         const graph = startObjectGraph(model, object.reference);
         const skeletal = startPlacedSkeleton(model, object.reference);
         if (skeletal) skeletons.push(skeletal.skeleton);
+        // Bodies that move nodes one by one pose the model (ragdolls, hinged signs); objects
+        // simulated as one body get a matrix of their own.
+        const articulated = skeletal ? undefined : articulatedPose(model.nodes, collision);
+        const moves =
+          !articulated &&
+          collision?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
+        const posed = skeletal
+          ? { pose: skeletal.skeleton.pose, poseNodes: skeletal.poseNodes }
+          : articulated;
+        if (articulated) articulatedPoses.set(object, articulated.pose);
         const instance: ModelInstance = {
           model,
           world: moves ? new Float32Array(object.world) : object.world,
           ...(moves && { motion: { version: 0 } }),
           ...(graph && { graph }),
-          ...(skeletal && { pose: skeletal.skeleton.pose, poseNodes: skeletal.poseNodes }),
+          ...(posed && { pose: posed.pose, poseNodes: posed.poseNodes }),
           ...(this.#play && {
             playback: openable(object, model.sequences?.byName.has('open') === true),
           }),
@@ -703,11 +712,15 @@ export class ModelViewer {
       play.add(this.#collision, {
         objects: cell.data.objects
           .filter((object) => isEnabled(object.reference))
-          .map((object) => ({
-            object,
-            collision: cell.collisions.get(object.model),
-            instance: placed.get(object),
-          })),
+          .map((object) => {
+            const articulated = articulatedPoses.get(object);
+            return {
+              object,
+              collision: cell.collisions.get(object.model),
+              instance: placed.get(object),
+              ...(articulated && { articulated }),
+            };
+          }),
         primitives: cell.data.primitives.filter((primitive) => isEnabled(primitive.reference)),
       });
     }

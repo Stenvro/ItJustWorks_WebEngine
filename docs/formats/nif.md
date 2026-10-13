@@ -305,9 +305,34 @@ reference's placement. A body's shapes are scaled by its node's scale and the re
 (uniform) scale; its mass stays as authored. **Motion:** MO_SYS_FIXED (7) or mass 0 is fixed,
 MO_SYS_KEYFRAMED (6) keyframed, the rest simulated; bodies on nodes that the model's sequences
 move (door leaves) are keyframed and follow the playing sequence. Simulated bodies on the bones
-of skinned geometry form ragdolls (armour on the ground keeps its wearer's bones; dead animals):
-TODO(M7) with skinning and ragdolls. Constraints (hinges, ragdoll joints, chains) are not read
-yet: TODO(M7). Phantoms detect overlaps and never collide.
+of skinned geometry form ragdolls (armour on the ground keeps its wearer's bones; a book's covers
+and pages; dead animals). Phantoms detect overlaps and never collide.
+
+**Constraints** (`collision-blocks.ts`; a rigid body lists the constraints it is part of) all
+start with bhkConstraintCInfo: u32 entity count (2), entity A and B (pointers to the rigid
+bodies), u32 priority; then their CInfo (since 20.2.0.7, Vector4 = 4 × f32 with w unused):
+
+| Block                        | Data                                                                                                                                           |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| bhkBallAndSocketConstraint   | pivot A, pivot B                                                                                                                               |
+| bhkStiffSpringConstraint     | pivot A, pivot B, length f32                                                                                                                   |
+| bhkHingeConstraint           | per body: axis, perpendicular 1, perpendicular 2, pivot                                                                                        |
+| bhkLimitedHingeConstraint    | as hinge, then min / max angle, max friction, motor                                                                                            |
+| bhkPrismaticConstraint       | per body: sliding axis, rotation, plane, pivot; min / max distance, friction, motor                                                            |
+| bhkRagdollConstraint         | per body: twist, plane, motor axis, pivot; cone max angle, plane min / max, twist min / max, max friction, motor                               |
+| bhkMalleableConstraint       | u32 type, its own CInfo, that type's data, strength f32                                                                                        |
+| bhkBreakableConstraint       | u32 type, its own CInfo, that type's data, threshold f32, remove when broken u8                                                                |
+| bhkBallSocketConstraintChain | u32 pivot count, pivots by pairs (Vector4), tau, damping, CFM, max error distance, the chained bodies (count + pointers), a bhkConstraintCInfo |
+
+The motor (bhkConstraintMotorCInfo) is a u8 type (0 none, 1 position: 6 f32 + bool, 2 velocity:
+4 f32 + 2 bools, 3 spring damper: 4 f32 + bool). hkConstraintType: 0 ball and socket, 1 hinge,
+2 limited hinge, 6 prismatic, 7 ragdoll, 8 stiff spring, 13 malleable. Pivots and axes are in
+the body's own space (Havok units); where the two bodies' frames coincide the constraint is at its
+zero. Vanilla (all 1632 parse to the block's size): 823 limited hinges (shop signs, ragdoll
+books, hanging game), 752 ragdoll joints (armour and clothes on the ground), 35 balls and sockets
+(5 breakable: the breakable boards, the mace trap's pin), 8 hinges (cart wheels, tongs, lily
+pads), 8 stiff springs (3 breakable: beehives), 6 chains (bone alarms, the mace trap's chain); no
+prismatic or malleable ones. Two in an actor's hair name entity −1 (the wearer's body).
 
 **BSBound** (extra data): name, centre vec3, half extents vec3. A skeleton's "BBX" is the
 actor's collision bound (the human skeleton: centre 0,0,64, half extents 22,14,64).

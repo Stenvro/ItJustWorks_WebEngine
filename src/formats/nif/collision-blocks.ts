@@ -2,8 +2,8 @@
 // phantoms, shapes and compressed mesh data. Field order follows nif.xml for 20.2.0.7 /
 // BS version 100 (bhkRigidBodyCInfo2010). Values are in Havok units. Notes:
 // docs/formats/nif.md ("Collision").
-// Constraints (bhk*Constraint) are not parsed yet: they hold ragdolls and hinged parts
-// together, TODO(M7) with ragdolls.
+// Constraints (bhk*Constraint, bhkBallSocketConstraintChain) hold ragdolls, hinged signs and
+// chains together.
 
 import { FormatError, type BinaryReader } from '../binary-reader.ts';
 import {
@@ -16,6 +16,11 @@ import {
 } from './blocks.ts';
 import type {
   CollisionObjectBlock,
+  ConstraintBlock,
+  ConstraintChainBlock,
+  ConstraintData,
+  ConstraintFrame,
+  ConstraintMotor,
   CompressedMeshChunk,
   CompressedMeshDataBlock,
   HavokFilter,
@@ -113,6 +118,203 @@ const parseRigidBody: BlockParser = (reader, _context, type): RigidBodyBlock => 
     ...body,
     constraints,
     bodyFlags,
+  };
+};
+
+// --- Constraints ----------------------------------------------------------------------
+
+/** bhkConstraintCInfo: entity count (2), entity A and B (pointers), priority. */
+function readConstraintInfo(reader: BinaryReader): { a: number; b: number; priority: number } {
+  reader.u32();
+  const a = reader.i32();
+  const b = reader.i32();
+  return { a, b, priority: reader.u32() };
+}
+
+/** A frame stored as three axes and a pivot (Vector4 each), in the order given. */
+function readFrame(reader: BinaryReader, pivotFirst: boolean): ConstraintFrame {
+  const pivot = pivotFirst ? readVec4AsVec3(reader) : undefined;
+  const axes: [Vec3, Vec3, Vec3] = [
+    readVec4AsVec3(reader),
+    readVec4AsVec3(reader),
+    readVec4AsVec3(reader),
+  ];
+  return { pivot: pivot ?? readVec4AsVec3(reader), axes };
+}
+
+/** bhkConstraintMotorCInfo. */
+function readMotor(reader: BinaryReader): ConstraintMotor {
+  const type = reader.u8();
+  switch (type) {
+    case 1:
+      return {
+        type: 'position',
+        minForce: reader.f32(),
+        maxForce: reader.f32(),
+        tau: reader.f32(),
+        damping: reader.f32(),
+        proportionalRecoveryVelocity: reader.f32(),
+        constantRecoveryVelocity: reader.f32(),
+        enabled: reader.u8() !== 0,
+      };
+    case 2:
+      return {
+        type: 'velocity',
+        minForce: reader.f32(),
+        maxForce: reader.f32(),
+        tau: reader.f32(),
+        targetVelocity: reader.f32(),
+        useVelocityTarget: reader.u8() !== 0,
+        enabled: reader.u8() !== 0,
+      };
+    case 3:
+      return {
+        type: 'spring',
+        minForce: reader.f32(),
+        maxForce: reader.f32(),
+        springConstant: reader.f32(),
+        springDamping: reader.f32(),
+        enabled: reader.u8() !== 0,
+      };
+    default:
+      return { type: 'none' };
+  }
+}
+
+/** hkConstraintType of the wrapping structs (malleable, breakable). */
+const CONSTRAINT_TYPES: Readonly<Record<number, ConstraintData['type']>> = {
+  0: 'ball-and-socket',
+  1: 'hinge',
+  2: 'limited-hinge',
+  6: 'prismatic',
+  7: 'ragdoll',
+  8: 'stiff-spring',
+  13: 'malleable',
+};
+
+/** The CInfo struct of a constraint type (since 20.2.0.7, nif.xml). */
+function readConstraintData(reader: BinaryReader, type: ConstraintData['type']): ConstraintData {
+  switch (type) {
+    case 'ball-and-socket':
+      return {
+        type,
+        pivotA: readVec4AsVec3(reader),
+        pivotB: readVec4AsVec3(reader),
+      };
+    case 'stiff-spring':
+      return {
+        type,
+        pivotA: readVec4AsVec3(reader),
+        pivotB: readVec4AsVec3(reader),
+        length: reader.f32(),
+      };
+    case 'hinge':
+      return { type, a: readFrame(reader, false), b: readFrame(reader, false) };
+    case 'limited-hinge':
+      return {
+        type,
+        a: readFrame(reader, false),
+        b: readFrame(reader, false),
+        minAngle: reader.f32(),
+        maxAngle: reader.f32(),
+        maxFriction: reader.f32(),
+        motor: readMotor(reader),
+      };
+    case 'prismatic':
+      return {
+        type,
+        a: readFrame(reader, false),
+        b: readFrame(reader, false),
+        minDistance: reader.f32(),
+        maxDistance: reader.f32(),
+        friction: reader.f32(),
+        motor: readMotor(reader),
+      };
+    case 'ragdoll':
+      return {
+        type,
+        a: readFrame(reader, false),
+        b: readFrame(reader, false),
+        coneMaxAngle: reader.f32(),
+        planeMinAngle: reader.f32(),
+        planeMaxAngle: reader.f32(),
+        twistMinAngle: reader.f32(),
+        twistMaxAngle: reader.f32(),
+        maxFriction: reader.f32(),
+        motor: readMotor(reader),
+      };
+    case 'malleable':
+      return readMalleable(reader);
+  }
+}
+
+/** bhkMalleableConstraintCInfo: the type, its own entities, the inner data, the strength. */
+function readMalleable(reader: BinaryReader): ConstraintData {
+  const code = reader.u32();
+  const type = CONSTRAINT_TYPES[code];
+  readConstraintInfo(reader);
+  if (!type || type === 'malleable') {
+    throw new FormatError(`malleable constraint of type ${String(code)}`, reader.offset);
+  }
+  const inner = readConstraintData(reader, type);
+  return { type: 'malleable', inner, strength: reader.f32() };
+}
+
+const constraintParser =
+  (type: ConstraintData['type']): BlockParser =>
+  (reader): ConstraintBlock => {
+    const info = readConstraintInfo(reader);
+    return {
+      kind: 'constraint',
+      entityA: info.a,
+      entityB: info.b,
+      priority: info.priority,
+      data: readConstraintData(reader, type),
+    };
+  };
+
+/** bhkBreakableConstraint: bhkWrappedConstraintData, threshold, remove when broken. */
+const parseBreakableConstraint: BlockParser = (reader): ConstraintBlock => {
+  const info = readConstraintInfo(reader);
+  const code = reader.u32();
+  const type = CONSTRAINT_TYPES[code];
+  if (!type) throw new FormatError(`breakable constraint of type ${String(code)}`, reader.offset);
+  readConstraintInfo(reader);
+  const data = readConstraintData(reader, type);
+  const threshold = reader.f32();
+  const removeWhenBroken = reader.u8() !== 0;
+  return {
+    kind: 'constraint',
+    entityA: info.a,
+    entityB: info.b,
+    priority: info.priority,
+    data,
+    breakable: { threshold, removeWhenBroken },
+  };
+};
+
+/** bhkBallSocketConstraintChain: pivots by pairs, solver values, the chained bodies. */
+const parseConstraintChain: BlockParser = (reader): ConstraintChainBlock => {
+  const pivotCount = reader.u32();
+  const links: { pivotA: Vec3; pivotB: Vec3 }[] = [];
+  for (let i = 0; i + 1 < pivotCount; i += 2) {
+    links.push({ pivotA: readVec4AsVec3(reader), pivotB: readVec4AsVec3(reader) });
+  }
+  if (pivotCount % 2 === 1) readVec4AsVec3(reader);
+  const tau = reader.f32();
+  const damping = reader.f32();
+  const constraintForceMixing = reader.f32();
+  const maxErrorDistance = reader.f32();
+  const entities = readRefs(reader);
+  readConstraintInfo(reader);
+  return {
+    kind: 'constraint-chain',
+    entities,
+    links,
+    tau,
+    damping,
+    constraintForceMixing,
+    maxErrorDistance,
   };
 };
 
@@ -329,6 +531,27 @@ export const COLLISION_PARSERS: ReadonlyMap<string, BlockParser> = new Map<strin
   ['bhkRigidBody', parseRigidBody],
   ['bhkRigidBodyT', parseRigidBody],
   ['bhkSimpleShapePhantom', parsePhantom],
+  ['bhkBallAndSocketConstraint', constraintParser('ball-and-socket')],
+  ['bhkHingeConstraint', constraintParser('hinge')],
+  ['bhkLimitedHingeConstraint', constraintParser('limited-hinge')],
+  ['bhkPrismaticConstraint', constraintParser('prismatic')],
+  ['bhkRagdollConstraint', constraintParser('ragdoll')],
+  ['bhkStiffSpringConstraint', constraintParser('stiff-spring')],
+  [
+    'bhkMalleableConstraint',
+    (reader) => {
+      const info = readConstraintInfo(reader);
+      return {
+        kind: 'constraint',
+        entityA: info.a,
+        entityB: info.b,
+        priority: info.priority,
+        data: readMalleable(reader),
+      };
+    },
+  ],
+  ['bhkBreakableConstraint', parseBreakableConstraint],
+  ['bhkBallSocketConstraintChain', parseConstraintChain],
   ['bhkSphereShape', parseSphere],
   ['bhkBoxShape', parseBox],
   ['bhkCapsuleShape', parseCapsule],

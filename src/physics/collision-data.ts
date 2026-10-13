@@ -7,6 +7,8 @@ import { stripsToTriangles } from '../formats/nif/blocks.ts';
 import { getBlock, type NifFile } from '../formats/nif/nif.ts';
 import type {
   CompressedMeshDataBlock,
+  ConstraintData,
+  ConstraintFrame,
   HavokQuaternion,
   HavokShapeBlock,
   RigidBodyBlock,
@@ -91,10 +93,68 @@ export interface CollisionBody {
   readonly shapes: readonly CollisionShape[];
 }
 
+/**
+ * A constraint between two of a model's bodies (indices into CollisionData.bodies): pivots and
+ * lengths in game units in each body's space (its node's scale applied), axes unit vectors.
+ */
+export interface CollisionConstraint {
+  readonly bodyA: number;
+  readonly bodyB: number;
+  readonly data: ConstraintData;
+  /** It breaks when the force on it exceeds the threshold (bhkBreakableConstraint). */
+  readonly breakable?: { readonly threshold: number; readonly removeWhenBroken: boolean };
+}
+
 export interface CollisionData {
   readonly bodies: readonly CollisionBody[];
+  /** What holds bodies together: ragdolls, hinged signs, wheels, chains. */
+  readonly constraints?: readonly CollisionConstraint[];
   /** Shapes that could not be used, with the reason. */
   readonly skipped: readonly string[];
+}
+
+/**
+ * Whether a model's bodies move one another (constraints, or several simulated bodies): its
+ * nodes then follow their bodies one by one rather than the whole model following one.
+ */
+export function isArticulated(collision: CollisionData | undefined): boolean {
+  if (!collision) return false;
+  if ((collision.constraints?.length ?? 0) > 0) return true;
+  return collision.bodies.filter((body) => body.motion !== 'fixed' && !body.phantom).length > 1;
+}
+
+/** A constraint's data with its pivots and lengths times `scaleA` / `scaleB` (per body). */
+function scaleConstraint(data: ConstraintData, scaleA: number, scaleB: number): ConstraintData {
+  const point = (v: Vec3, scale: number): Vec3 => [v[0] * scale, v[1] * scale, v[2] * scale];
+  const frame = (f: ConstraintFrame, scale: number): ConstraintFrame => ({
+    pivot: point(f.pivot, scale),
+    axes: f.axes,
+  });
+  switch (data.type) {
+    case 'ball-and-socket':
+      return { ...data, pivotA: point(data.pivotA, scaleA), pivotB: point(data.pivotB, scaleB) };
+    case 'stiff-spring':
+      return {
+        ...data,
+        pivotA: point(data.pivotA, scaleA),
+        pivotB: point(data.pivotB, scaleB),
+        length: data.length * (scaleA + scaleB) * 0.5,
+      };
+    case 'prismatic':
+      return {
+        ...data,
+        a: frame(data.a, scaleA),
+        b: frame(data.b, scaleB),
+        minDistance: data.minDistance * scaleA,
+        maxDistance: data.maxDistance * scaleA,
+      };
+    case 'hinge':
+    case 'limited-hinge':
+    case 'ragdoll':
+      return { ...data, a: frame(data.a, scaleA), b: frame(data.b, scaleB) };
+    case 'malleable':
+      return { ...data, inner: scaleConstraint(data.inner, scaleA, scaleB) };
+  }
 }
 
 /** HavokFilter flag: the body or part does not collide. */
@@ -289,12 +349,12 @@ function inertiaOf(body: RigidBodyBlock): Vec3 {
 export function buildCollision(file: NifFile): CollisionData {
   const bodies: CollisionBody[] = [];
   const skipped: string[] = [];
-  // Bones of skinned geometry.
-  const bones = new Set<Ref>();
+  /** Rigid body blocks: their body's index and its scale (Havok units to game units). */
+  const bodyOfBlock = new Map<Ref, { index: number; scale: number }>();
+  const constraintRefs = new Set<Ref>();
   // Nodes that the model's sequences move (a door's leaf): their bodies follow (keyframed).
   const animated = new Set<string>();
   for (const block of file.blocks) {
-    if (block.kind === 'skin-instance') for (const bone of block.bones) bones.add(bone);
     if (block.kind === 'controller-sequence') {
       for (const controlled of block.blocks)
         if (controlled.nodeName) animated.add(controlled.nodeName);
@@ -460,7 +520,7 @@ export function buildCollision(file: NifFile): CollisionData {
     }
   };
 
-  const addBody = (ref: Ref, node: string, nodeWorld: Mat4, bone: boolean): void => {
+  const addBody = (ref: Ref, node: string, nodeWorld: Mat4): void => {
     const object = getBlock(file, ref, 'collision-object');
     if (!object) return;
     const rigid = getBlock(file, object.body, 'rigid-body');
@@ -475,12 +535,9 @@ export function buildCollision(file: NifFile): CollisionData {
     const own = rigid ? motionOf(rigid) : 'fixed';
     const motion = own === 'fixed' && animated.has(node) ? 'keyframed' : own;
     // Simulated bodies on the bones of skinned geometry form a ragdoll that moves the skin
-    // (armour on the ground keeps its wearer's bones): TODO(M7) with skinning and ragdolls.
-    // Fixed ones stay (tree trunks are skinned to the bone that carries their collision).
-    if (bone && motion === 'dynamic') {
-      skipped.push(`${node}: ragdoll bone (TODO(M7))`);
-      return;
-    }
+    // (armour on the ground keeps its wearer's bones, a book's covers and pages; see
+    // isArticulated); fixed ones stay (tree trunks are skinned to the bone that carries their
+    // collision).
     // bhkRigidBodyT places the body relative to its node; plain bodies sit on the node.
     let local = identity();
     if (rigid?.transformed) {
@@ -501,6 +558,10 @@ export function buildCollision(file: NifFile): CollisionData {
     addShape(shapeRef, toBody, filter.layer, 0, shapes, 0);
     if (shapes.length === 0) return;
     const center = rigid?.center ?? [0, 0, 0];
+    if (rigid) {
+      bodyOfBlock.set(object.body, { index: bodies.length, scale: scale * HAVOK_SCALE });
+      for (const constraint of rigid.constraints) constraintRefs.add(constraint);
+    }
     bodies.push({
       node,
       transform,
@@ -536,10 +597,47 @@ export function buildCollision(file: NifFile): CollisionData {
         ? parentWorld
         : multiply(parentWorld, fromNifTransform(translation, rotation, scale));
     if (block.collision >= 0) {
-      addBody(block.collision, block.name, world, bones.has(ref));
+      addBody(block.collision, block.name, world);
     }
     if (block.kind === 'node') for (const child of block.children) visit(child, world, depth + 1);
   };
   for (const root of file.roots) visit(root, identity(), 0);
-  return { bodies, skipped };
+
+  // The constraints the bodies name, between bodies of this model (a chain as its links).
+  const constraints: CollisionConstraint[] = [];
+  const link = (
+    a: Ref,
+    b: Ref,
+    data: ConstraintData,
+    breakable?: CollisionConstraint['breakable'],
+  ): void => {
+    const bodyA = bodyOfBlock.get(a);
+    const bodyB = bodyOfBlock.get(b);
+    if (!bodyA || !bodyB) {
+      skipped.push(`${data.type} constraint to a body outside the model`);
+      return;
+    }
+    constraints.push({
+      bodyA: bodyA.index,
+      bodyB: bodyB.index,
+      data: scaleConstraint(data, bodyA.scale, bodyB.scale),
+      ...(breakable && { breakable }),
+    });
+  };
+  for (const ref of constraintRefs) {
+    const block = file.blocks[ref];
+    if (block?.kind === 'constraint') {
+      link(block.entityA, block.entityB, block.data, block.breakable);
+    } else if (block?.kind === 'constraint-chain') {
+      // TODO(M13): the chain's tau and damping (its softness); Rapier's joints are stiff.
+      block.links.forEach(({ pivotA, pivotB }, i) => {
+        const a = block.entities[i];
+        const b = block.entities[i + 1];
+        if (a !== undefined && b !== undefined) {
+          link(a, b, { type: 'ball-and-socket', pivotA, pivotB });
+        }
+      });
+    }
+  }
+  return { bodies, ...(constraints.length > 0 && { constraints }), skipped };
 }

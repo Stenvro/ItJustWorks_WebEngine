@@ -210,3 +210,96 @@ describe('the character controller', () => {
     expect(climb(() => true)).toBeGreaterThan(19);
   });
 });
+
+describe('physics constraints', () => {
+  /** A bracket at the origin and a 10 kg box hung 60 units below it, joined at the origin. */
+  function hanging(
+    data: NonNullable<CollisionData['constraints']>[number]['data'],
+    breakable?: { threshold: number; removeWhenBroken: boolean },
+  ): CollisionData {
+    const bracket = body(box([-5, -5, -5], [5, 5, 5]));
+    const at = new Float32Array(IDENTITY);
+    at[14] = -60;
+    const weight: CollisionBody = {
+      ...body(box([-10, -10, -10], [10, 10, 10])),
+      node: 'Weight',
+      transform: at,
+      motion: 'dynamic',
+      layer: Layer.clutter,
+      mass: 10,
+      inertia: [1, 1, 1],
+    };
+    return {
+      bodies: [bracket, weight],
+      constraints: [{ bodyA: 1, bodyB: 0, data, ...(breakable && { breakable }) }],
+      skipped: [],
+    };
+  }
+  const frame = (pivot: [number, number, number]) => ({
+    pivot,
+    axes: [
+      [1, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1],
+    ] as [[number, number, number], [number, number, number], [number, number, number]],
+  });
+  const heightAfter = (data: CollisionData, seconds: number, push?: number): number => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const placed = physics.addObject(data, IDENTITY, { reference: 1, kind: 'object' });
+    const weight = placed.bodies[1]?.body;
+    if (push !== undefined) weight?.applyImpulse({ x: push, y: 0, z: 0 }, true);
+    for (let t = 0; t < seconds; t += 1 / 60) physics.step(1 / 60);
+    const z = (weight?.translation().z ?? 0) * 69.99125;
+    physics.free();
+    return z;
+  };
+
+  it('hold a body to another at their pivots', () => {
+    const ball = hanging({ type: 'ball-and-socket', pivotA: [0, 0, 60], pivotB: [0, 0, 0] });
+    // Pushed sideways it swings about the pivot, 60 units away, and does not fall.
+    expect(heightAfter(ball, 1, 5)).toBeGreaterThan(-61);
+    const free: CollisionData = { ...ball, constraints: [] };
+    expect(heightAfter(free, 1)).toBeLessThan(-200);
+  });
+
+  it('keep a limited hinge within its angles', () => {
+    // A hinge about x, at most 0.3 rad either way: pushed hard along y it stops there.
+    const hinge = hanging({
+      type: 'limited-hinge',
+      a: frame([0, 0, 60]),
+      b: frame([0, 0, 0]),
+      minAngle: -0.3,
+      maxAngle: 0.3,
+      maxFriction: 0,
+      motor: { type: 'none' },
+    });
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const placed = physics.addObject(hinge, IDENTITY, { reference: 1, kind: 'object' });
+    const weight = placed.bodies[1]?.body;
+    weight?.applyImpulse({ x: 0, y: 40, z: 0 }, true);
+    let highest = -60;
+    for (let i = 0; i < 60; i++) {
+      physics.step(1 / 60);
+      highest = Math.max(highest, (weight?.translation().z ?? 0) * 69.99125);
+    }
+    // cos(0.3) · 60 below the pivot at the most (a little give).
+    expect(highest).toBeLessThan(-Math.cos(0.3) * 60 + 2);
+    physics.free();
+  });
+
+  it('break when a step pulls on them harder than their threshold', () => {
+    const rope = {
+      type: 'stiff-spring' as const,
+      pivotA: [0, 0, 60] as [number, number, number],
+      pivotB: [0, 0, 0] as [number, number, number],
+      length: 0,
+    };
+    // Holding 10 kg takes 10 × 9.8 / 60 ≈ 1.6 per step: 20 holds, 1 breaks.
+    expect(
+      heightAfter(hanging(rope, { threshold: 20, removeWhenBroken: false }), 1),
+    ).toBeGreaterThan(-70);
+    expect(heightAfter(hanging(rope, { threshold: 1, removeWhenBroken: false }), 1)).toBeLessThan(
+      -200,
+    );
+  });
+});
