@@ -80,7 +80,7 @@ function setEmittance(color: MutableEmittance, rgb: readonly [number, number, nu
  * GPU memory for models and textures loaded for the session: past it, the least recently
  * used ones that nothing draws are freed (and loaded again when needed).
  */
-export const MEMORY_BUDGET = 2048 * 1024 * 1024;
+export const MEMORY_BUDGET = 4096 * 1024 * 1024;
 /** The keyboard, mouse and gamepad bindings. */
 const CONTROL_MAP = 'interface\\controls\\pc\\controlmap.txt';
 /** Freed down to this share of the budget, so trimming does not run every frame. */

@@ -98,7 +98,28 @@ body.content-scene .backdrop {
   color: var(--bone);
   font-weight: 500;
   font-size: 12px;
+  letter-spacing: 0.14em;
   text-shadow: 0 1px 4px rgb(0 0 0 / 0.8);
+  background: none;
+  border: 0;
+  box-shadow: none;
+  pointer-events: auto;
+}
+
+.hud-brand::before,
+.hud-brand::after {
+  content: none;
+}
+
+.hud-brand:hover,
+.hud-brand:focus-visible {
+  color: var(--gold);
+  background: none;
+  box-shadow: none;
+}
+
+body:not([data-screen='sandbox']) .hud-brand {
+  cursor: default;
 }
 
 .hud-brand span {
@@ -335,25 +356,6 @@ body[data-screen='menu'] .log {
   width: min(56rem, 100%);
 }
 
-.sandbox-head {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 6px 6px 6px 16px;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  backdrop-filter: blur(6px);
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-  color: var(--ash);
-}
-
-.sandbox-head button {
-  padding: 6px 12px;
-  font-size: 11px;
-}
-
 /* The sandbox: the log folded away at the top left, the three finders side by side along the
    bottom (left of the development panel), the scene in between. */
 body[data-screen='sandbox'] .shell {
@@ -388,8 +390,10 @@ body[data-screen='sandbox'] .sandbox {
   align-items: end;
 }
 
+/* Eight rows high, however many are found (a row: 12px × 1.5 + 6px padding). */
 body[data-screen='sandbox'] .sandbox .results {
-  max-height: 24vh;
+  height: calc(8 * 24px);
+  max-height: none;
 }
 
 @media (max-width: 1100px) {
@@ -402,8 +406,75 @@ body[data-screen='sandbox'] .sandbox .results {
   }
 
   body[data-screen='sandbox'] .sandbox .results {
-    max-height: 14vh;
+    height: calc(4 * 24px);
   }
+}
+
+/* --- Loading screen: the home page's title while a scene loads ------------ */
+
+.loading-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 36px;
+  background: radial-gradient(ellipse at 50% 45%, #0c1015 0%, var(--bg) 70%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.45s ease,
+    visibility 0.45s;
+}
+
+.loading-screen.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+}
+
+.loading-title {
+  text-align: center;
+}
+
+.loading-name {
+  margin: 0 -0.2em 0 0;
+  font-family: var(--serif);
+  font-size: clamp(2.2rem, 6.4vw, 5.2rem);
+  line-height: 1;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--bone);
+  text-shadow:
+    0 0 24px rgb(233 227 210 / 0.25),
+    0 0 2px rgb(233 227 210 / 0.6);
+}
+
+.loading-status {
+  margin: 0;
+  font-size: 12px;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--ash);
+  animation: loading-pulse 1.6s ease-in-out infinite;
+}
+
+.loading-status span {
+  color: var(--gold);
+}
+
+@keyframes loading-pulse {
+  50% {
+    opacity: 0.45;
+  }
+}
+
+/* The stats stay readable above it. */
+.hud {
+  z-index: 6;
 }
 
 /* --- Development settings: the scene's own panel on the right ------------- */

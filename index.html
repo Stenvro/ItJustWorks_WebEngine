@@ -14,7 +14,9 @@
     <div id="hud-notice" class="hud-notice" hidden></div>
 
     <header class="hud">
-      <div class="hud-brand">ITJUSTWORKS<span>//</span>WEBENGINE</div>
+      <button id="brand" class="hud-brand" type="button" title="main menu">
+        ITJUSTWORKS<span>//</span>WEBENGINE
+      </button>
       <dl class="hud-stats">
         <div>
           <dt>fps</dt>
@@ -86,13 +88,8 @@
 
       <!-- The sandbox: load any model, interior cell or worldspace. -->
       <section id="sandbox" class="sandbox" aria-label="sandbox" hidden>
-        <div class="sandbox-head">
-          <span class="panel-title">// sandbox</span>
-          <button id="sandbox-back" type="button">main menu</button>
-        </div>
-
         <div class="sandbox-finders">
-          <details id="viewer" class="panel viewer" data-panel="model-viewer" open hidden>
+          <details id="viewer" class="panel viewer" data-panel="model-viewer" hidden>
             <summary class="viewer-head">
               <span class="panel-title">// models</span>
               <span id="viewer-count"></span>
@@ -108,7 +105,7 @@
             <ol id="model-results" class="results"></ol>
           </details>
 
-          <details id="cell-viewer" class="panel viewer" data-panel="cell-viewer" open hidden>
+          <details id="cell-viewer" class="panel viewer" data-panel="cell-viewer" hidden>
             <summary class="viewer-head">
               <span class="panel-title">// interior cells</span>
               <span id="cell-count"></span>
@@ -124,7 +121,7 @@
             <ol id="cell-results" class="results"></ol>
           </details>
 
-          <details id="world-viewer" class="panel viewer" data-panel="world-viewer" open hidden>
+          <details id="world-viewer" class="panel viewer" data-panel="world-viewer" hidden>
             <summary class="viewer-head">
               <span class="panel-title">// worldspaces</span>
               <span id="world-count"></span>
@@ -145,7 +142,7 @@
 
     <!-- Development settings of the scene on screen, apart from what to load. -->
     <aside id="dev-panel" class="dev-panel" aria-label="development settings">
-      <details class="panel" data-panel="dev" open>
+      <details id="dev-settings" class="panel" data-panel="dev" open>
         <summary class="viewer-head"><span class="panel-title">// dev</span></summary>
         <div id="world-status" class="upgrades" hidden></div>
         <div id="cell-play" class="upgrades" hidden>
@@ -183,6 +180,15 @@
         </p>
       </details>
     </aside>
+
+    <!-- While a cell or worldspace loads, until the player stands in it. -->
+    <div id="loading-screen" class="loading-screen" aria-live="polite">
+      <div class="loading-title">
+        <p class="loading-name">ItJustWorks</p>
+        <p class="subtitle"><span>Web Engine</span><span>for TES V</span></p>
+      </div>
+      <p class="loading-status">loading <span id="loading-what"></span></p>
+    </div>
 
     <div id="fatal" class="fatal" role="alert" hidden></div>
 

@@ -231,6 +231,11 @@ export class PlaySession {
     };
   }
 
+  /** The player has been placed on the ground (the loading screen can go). */
+  get spawned(): boolean {
+    return !this.#spawnPending;
+  }
+
   get freeCamera(): boolean {
     return this.#freeCamera;
   }
