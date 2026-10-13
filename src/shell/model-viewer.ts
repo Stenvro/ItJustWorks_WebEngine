@@ -65,9 +65,10 @@ import {
   type HouseStage,
 } from '../world/player-home.ts';
 import type { InteriorCell, RecordDatabase } from '../world/record-db.ts';
-import { animateActors, type PlacedActor } from './actors.ts';
+import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
+import { talkTargets, type PlacedActor } from './actors.ts';
 import type { GameSession } from './game-session.ts';
-import { startObjectGraph } from './object-graphs.ts';
+import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
 
 export interface SearchElements {
@@ -264,6 +265,8 @@ export class ModelViewer {
   #instances = new Map<number, ModelInstance>();
   /** The actors of the cell on screen (they animate every frame). */
   #actorsShown: readonly PlacedActor[] = [];
+  /** Shown objects whose behavior graph moves their skeleton. */
+  #objectSkeletons: readonly AnimatedSkeleton[] = [];
 
   /** Starts playing the cell on screen: physics, and the player standing at `feet`. */
   async #startPlay(
@@ -302,6 +305,11 @@ export class ModelViewer {
       searchAbove: 64,
       arrivesOnFloor: onFloor,
       activatable: (reference) => this.#activatable(reference),
+      actorAt: talkTargets(
+        () => this.#actorsShown,
+        () => this.#session,
+        this.#terminal,
+      ),
       prompt: this.#ui.prompt,
       onImpact: (impact) => {
         this.#session?.soundSystem?.impact(impact);
@@ -410,7 +418,14 @@ export class ModelViewer {
     // Particle-only models (master particle systems) have no shapes to measure.
     this.#orbit.fit(model.center, model.radius > 0 ? model.radius : 64);
     const graph = startObjectGraph(model, 0);
-    const instance = { model, world: identity(), ...(graph && { graph }) };
+    const skeletal = startPlacedSkeleton(model, 0);
+    const instance: ModelInstance = {
+      model,
+      world: identity(),
+      ...(graph && { graph }),
+      ...(skeletal && { pose: skeletal.skeleton.pose, poseNodes: skeletal.poseNodes }),
+    };
+    this.#objectSkeletons = skeletal ? [skeletal.skeleton] : [];
     this.#present(this.#renderer.scene.createScene([instance]), model, { camera: 'orbit' });
   }
 
@@ -638,6 +653,7 @@ export class ModelViewer {
     const placed = new Map<CellData['objects'][number], ModelInstance>();
     const shown = new Map<number, ModelInstance>();
     this.#instances = shown;
+    const skeletons: AnimatedSkeleton[] = [];
     for (const object of cell.data.objects) {
       if (!isEnabled(object.reference)) continue;
       if (this.#hidden?.test(object.model)) continue;
@@ -651,11 +667,14 @@ export class ModelViewer {
           ?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
       if (model) {
         const graph = startObjectGraph(model, object.reference);
+        const skeletal = startPlacedSkeleton(model, object.reference);
+        if (skeletal) skeletons.push(skeletal.skeleton);
         const instance: ModelInstance = {
           model,
           world: moves ? new Float32Array(object.world) : object.world,
           ...(moves && { motion: { version: 0 } }),
           ...(graph && { graph }),
+          ...(skeletal && { pose: skeletal.skeleton.pose, poseNodes: skeletal.poseNodes }),
           ...(this.#play && {
             playback: openable(object, model.sequences?.byName.has('open') === true),
           }),
@@ -675,6 +694,7 @@ export class ModelViewer {
     const actors = cell.actors.filter((actor) => isEnabled(actor.actor.reference));
     for (const actor of actors) instances.push(...actor.instances);
     this.#actorsShown = actors;
+    this.#objectSkeletons = skeletons;
     // The collision of what is shown (rebuilt when the selection changes).
     const play = this.#play;
     if (play) {
@@ -987,6 +1007,11 @@ export class ModelViewer {
     this.#applyCellSelection();
   }
 
+  /** The actors shown in the cell on screen. */
+  get actorsShown(): readonly PlacedActor[] {
+    return this.#actorsShown;
+  }
+
   /** Number of objects shown in the cell on screen (for dev checks). */
   get cellObjectsShown(): number {
     const cell = this.#cell;
@@ -1027,6 +1052,9 @@ export class ModelViewer {
         camera: this.#orbit,
         lighting: () => studioLighting(this.#orbit),
         backdrop: true,
+        update: (seconds) => {
+          animateSkeletons(this.#objectSkeletons, seconds);
+        },
       });
     } else {
       // Playing: the player's camera (or the free camera); before that the free camera.
@@ -1054,7 +1082,8 @@ export class ModelViewer {
         decals: () => (decals ? [decals] : []),
         backdrop: false,
         update: (seconds) => {
-          animateActors(this.#actorsShown, seconds);
+          animateSkeletons(this.#actorsShown, seconds);
+          animateSkeletons(this.#objectSkeletons, seconds);
         },
       });
     }

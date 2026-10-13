@@ -4,6 +4,7 @@
 // exterior and interior viewers.
 
 import type RAPIER from '@dimforge/rapier3d-compat';
+import { ActorPose } from '../animation/skeleton.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import { GrabSpring } from '../physics/grab.ts';
 import { Layer } from '../physics/collision-layers.ts';
@@ -12,12 +13,13 @@ import type {
   PhysicsImpact,
   PhysicsWorld,
   PickHit,
+  PlacedBody,
   PlacedCollision,
 } from '../physics/physics-world.ts';
 import { objectWorld, playSequence, type Playback } from '../render/animation.ts';
 import type { FlyCamera } from '../render/fly-camera.ts';
 import { invert } from '../render/frustum.ts';
-import { multiply, type Vec3 } from '../render/math.ts';
+import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
 import type { Camera } from '../render/view-camera.ts';
 import type { InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
 import type { CellObject, CellPrimitive, Teleport } from '../world/cell-loader.ts';
@@ -116,10 +118,40 @@ export interface CollisionGroup {
   }[];
   /** Objects playing sequences (doors): their keyframed bodies follow the animation. */
   readonly animated: { readonly placed: PlacedCollision; readonly instance: ModelInstance }[];
+  /** Objects whose behavior graph moves their nodes: those nodes' bodies follow the pose. */
+  readonly posed: PosedCollision[];
+}
+
+/** A placed object's bodies on nodes its skeleton moves. */
+interface PosedCollision {
+  readonly placed: PlacedCollision;
+  readonly instance: ModelInstance;
+  readonly pose: ActorPose;
+  /** Each body with its pose node and its place relative to that node (model space). */
+  readonly bodies: readonly {
+    readonly body: PlacedBody;
+    readonly node: number;
+    readonly offset: Mat4;
+  }[];
+  /** The pose version the bodies were last moved to. */
+  version: number;
+}
+
+/** The lower-case names of an instance's nodes that its skeleton moves, by pose node. */
+function posedNodes(instance: ModelInstance | undefined): Map<string, number> | undefined {
+  const nodes = instance?.model.nodes;
+  const poseNodes = instance?.poseNodes;
+  if (!instance?.pose || !nodes || !poseNodes) return undefined;
+  const moved = new Map<string, number>();
+  nodes.forEach((node, i) => {
+    const poseNode = poseNodes[i] ?? -1;
+    if (poseNode >= 0) moved.set(node.name.toLowerCase(), poseNode);
+  });
+  return moved.size > 0 ? moved : undefined;
 }
 
 export function collisionGroup(): CollisionGroup {
-  return { collision: [], ready: false, settle: [], moving: [], animated: [] };
+  return { collision: [], ready: false, settle: [], moving: [], animated: [], posed: [] };
 }
 
 /** What a cell contributes to the physics world. */
@@ -158,6 +190,14 @@ export class PlaySession {
   /** Called when the free camera is switched on or off (to update a checkbox). */
   onFreeCamera: ((free: boolean) => void) | undefined;
   readonly #activatable: ((reference: number) => Activatable | undefined) | undefined;
+  readonly #actorAt:
+    | ((
+        origin: Vec3,
+        direction: Vec3,
+        length: number,
+        radius: number,
+      ) => { readonly distance: number; readonly target: Activatable } | undefined)
+    | undefined;
   readonly #prompt: HTMLElement | undefined;
   readonly #notice: HTMLElement | undefined;
   readonly #onImpact: ((impact: PhysicsImpact) => void) | undefined;
@@ -191,6 +231,16 @@ export class PlaySession {
     arrivesOnFloor?: boolean;
     /** What a placed reference does when activated (undefined: nothing). */
     activatable?: (reference: number) => Activatable | undefined;
+    /**
+     * The actor the crosshair rests on (a ray: origin, unit direction, length, radius), how far
+     * along the ray, and what activating it does.
+     */
+    actorAt?: (
+      origin: Vec3,
+      direction: Vec3,
+      length: number,
+      radius: number,
+    ) => { readonly distance: number; readonly target: Activatable } | undefined;
     /** Where the activation prompt is shown. */
     prompt?: HTMLElement;
     /** Where the game's notifications are shown. */
@@ -206,6 +256,7 @@ export class PlaySession {
     this.#searchAbove = init.searchAbove;
     this.#arrivesOnFloor = init.arrivesOnFloor ?? false;
     this.#activatable = init.activatable;
+    this.#actorAt = init.actorAt;
     this.#prompt = init.prompt;
     this.#notice = init.notice;
     this.#onImpact = init.onImpact;
@@ -294,8 +345,15 @@ export class PlaySession {
       // Where the ground has not loaded yet (streaming ahead of a fast player), the player
       // waits instead of falling through.
       this.player.update(deltaSeconds, !this.#groundReady(this.player.feet));
-      const hit = this.#pick();
-      this.#setTarget(this.#grab ? undefined : this.#activatableAt(hit));
+      // An actor nearer than what the physics pick found is the target.
+      const picked = this.#pick();
+      const ray = this.#pickRay();
+      const actor = this.#actorAt?.(ray.origin, ray.direction, ray.length, ray.radius);
+      const actorFirst = actor !== undefined && (!picked || actor.distance < picked.distance);
+      const hit = actorFirst ? undefined : picked;
+      this.#setTarget(
+        this.#grab ? undefined : actorFirst ? actor.target : this.#activatableAt(hit),
+      );
       this.#activate(hit);
     }
     for (const impact of this.physics.drainImpacts()) this.#onImpact?.(impact);
@@ -316,19 +374,30 @@ export class PlaySession {
    * the eyes), on the item picker layer.
    */
   #pick(): PickHit | undefined {
+    const ray = this.#pickRay();
+    return this.physics.pick(
+      ray.origin,
+      ray.direction,
+      ray.length,
+      ray.radius,
+      Layer.itemPicker,
+      this.player.character.collider,
+    );
+  }
+
+  /** The activation pick's ray: from the camera along the view (see #pick). */
+  #pickRay(): { origin: Vec3; direction: Vec3; length: number; radius: number } {
     const player = this.player;
     const { ini } = player;
     const camera = player.position;
     const eye = player.eye;
     const back = Math.hypot(camera[0] - eye[0], camera[1] - eye[1], camera[2] - eye[2]);
-    return this.physics.pick(
-      camera,
-      player.forward,
-      ini.number('Interface', 'fActivatePickLength') + back,
-      ini.number('Interface', 'fActivatePickRadius'),
-      Layer.itemPicker,
-      player.character.collider,
-    );
+    return {
+      origin: camera,
+      direction: player.forward,
+      length: ini.number('Interface', 'fActivatePickLength') + back,
+      radius: ini.number('Interface', 'fActivatePickRadius'),
+    };
   }
 
   #activatableAt(hit: PickHit | undefined): Activatable | undefined {
@@ -418,10 +487,22 @@ export class PlaySession {
     prompt.textContent = target ? `${key}  ${target.verb}  ${target.name}` : '';
   }
 
-  /** Keyframed bodies of objects playing a sequence go where the sequence puts their nodes. */
+  /**
+   * Keyframed bodies of objects playing a sequence go where the sequence puts their nodes, and
+   * those on nodes a behavior graph moves where its pose puts them.
+   */
   #moveKeyframed(): void {
     const now = clock();
     for (const group of this.#groups) {
+      for (const entry of group.posed) {
+        const { pose, placed, instance } = entry;
+        if (entry.version === pose.version) continue;
+        entry.version = pose.version;
+        for (const { body, node, offset } of entry.bodies) {
+          const world = pose.worlds.subarray(node * 16, node * 16 + 16);
+          this.physics.moveBody(placed, body, multiply(world, offset), instance.world);
+        }
+      }
       for (const { placed, instance } of group.animated) {
         const playback = instance.playback;
         const sequences = instance.model.sequences;
@@ -497,17 +578,32 @@ export class PlaySession {
       if (!collision || collision.bodies.length === 0) continue;
       tasks.push(() => {
         // Asleep until the cell's collision is complete (nothing to rest on before that).
+        const moved = posedNodes(instance);
         const placed = physics.addObject(
           collision,
           object.world,
           { reference: object.reference, kind: 'object' },
           false,
+          moved && new Set(moved.keys()),
         );
         group.collision.push(placed);
         if (object.dontHavokSettle !== true && placed.dynamic) group.settle.push(placed);
         if (instance?.motion) group.moving.push({ placed, instance, motion: instance.motion });
         if (instance?.playback && placed.bodies.some(({ data }) => data.motion === 'keyframed')) {
           group.animated.push({ placed, instance });
+        }
+        const pose = instance?.pose;
+        if (instance && pose && moved) {
+          // Bodies keep their place relative to their node: rest pose to the node's pose.
+          const rest = new ActorPose(pose.skeleton).worlds;
+          const bodies = placed.bodies.flatMap((body) => {
+            const node = moved.get(body.data.node.toLowerCase());
+            const restInverse =
+              node === undefined ? undefined : invert(rest.subarray(node * 16, node * 16 + 16));
+            if (node === undefined || !restInverse || !body.body.isKinematic()) return [];
+            return [{ body, node, offset: multiply(restInverse, body.data.transform) }];
+          });
+          if (bodies.length > 0) group.posed.push({ placed, instance, pose, bodies, version: -1 });
         }
       });
     }
@@ -539,6 +635,7 @@ export class PlaySession {
     for (const placed of group.collision.splice(0)) this.physics.remove(placed);
     group.moving.length = 0;
     group.animated.length = 0;
+    group.posed.length = 0;
     group.settle.length = 0;
     group.ready = false;
     this.#groups.delete(group);

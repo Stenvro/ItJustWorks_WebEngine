@@ -314,7 +314,7 @@ files they name; `node tools/weather-info.ts SkyrimClear 13` prints one weather'
 **Precipitation** (SPGD, `src/world/precipitation.ts`; 12 records): DATA (48 bytes) gravity
 velocity, rotation velocity (degrees/s), particle size X and Y, centre offset min and max,
 initial rotation range (f32), atlas columns and rows (u32), type u32 (0 rain, 1 snow), box size
-u32, density f32; ICON the particle texture (rain: `effectsxraindrops.dds`, 4 × 2 thin
+u32, density f32; ICON the particle texture (rain: `effects\fxraindrops.dds`, 4 × 2 thin
 streaks; snow: `fxsnowsoftsub.dds`, 4 × 4 soft flakes). During a change of weather the new
 weather's precipitation starts at its Precipitation Begin Fade In (share of the transition)
 and the old one's ends at its End Fade Out. How it is drawn: [../rendering.md](../rendering.md#precipitation).
@@ -699,8 +699,8 @@ count), tint layers TINI / TINC / TINV / TIAS.
 **RACE:** DATA (128 or 164 bytes): 7 skill / bonus pairs, height male / female (f32 at 16, 20),
 weight (24, 28), flags u32 at 32 (0x1 playable, 0x2 FaceGen head, 0x4 child, ...). WNAM skin.
 Zero-length MNAM / FNAM mark the male and female half of what follows: at the top **ANAM**
-the skeleton (`ActorsCharacterCharacter Assetsskeleton.nif`); after NAM1 the body egt
-models; after **NAM3** MODL the behavior project (`ActorsCharacterDefaultMale.hkx`); after
+the skeleton (`Actors\Character\Character Assets\skeleton.nif`); after NAM1 the body egt
+models; after **NAM3** MODL the behavior project (`Actors\Character\DefaultMale.hkx`); after
 NAM0 the head data (HEAD default head parts, DFTM / DFTF default face texture, presets, hair
 colours, tints). HCLF default hair colour (2 form ids), RNAM armor race, NAM8 morph race.
 
@@ -716,7 +716,11 @@ form ids (ARMO or LVLI). **LVLN / LVLI:** LVLD chance none u8, LVLF flags u8 (0x
 up to the actor's, 0x2 each item of the count, LVLI 0x4 use all), LVLG chance global, LVLO
 12 bytes (level u16, unused u16, form id, count u16, unused u16). **CLFM** CNAM RGBA bytes.
 **HDPT:** PNAM type (0 misc, 1 face, 2 eyes, 3 hair, 4 facial hair, 5 scar, 6 eyebrows), HNAM
-extra parts, NAM0 / NAM1 morph parts, MODL, TNAM texture set, CNAM colour, RNAM valid races.
+extra parts, NAM0 / NAM1 pairs: a u32 file type (0 race morph, 1 Tri: the expressions; 2
+chargen morph) and its TRI file (under meshes\), MODL, TNAM texture set, CNAM colour, RNAM
+valid races. NPC\_ **VTCK** names the voice type (VTYP): its editor id is the folder of the
+actor's spoken lines, `sound\voice\<plugin>\<voice type>\`; FULL the name (of the
+NPC\_ its base data comes from, template flag 0x80).
 
 **Resolving a look:** a leveled base picks one entry: of those up to the actor's level, the
 highest level's (or any, with flag 0x1), at random (seeded by the reference, so a reference
@@ -732,10 +736,16 @@ belongs to another piece: a cuirass's forearms under long gauntlets, the head's 
 height × NAM6, times the reference's scale.
 
 **FaceGen:** races with the FaceGen head flag show a prebuilt head per actor base (of the
-traits NPC_): `meshesactorscharacteracegendataacegeom<plugin><id>.nif` and the tint
-`textures...acetint<plugin><id>.dds`, the plugin that defines the form and its id
+traits NPC_): `meshes\actors\character\facegendata\facegeom\<plugin>\<id>.nif` and the tint
+`textures\...\facetint\<plugin>\<id>.dds`, the plugin that defines the form and its id
 without the mod index (8 hex digits). The head NIF holds every head part as a skinned
-BSDynamicTriShape under BSFaceGenNiNodeSkinned.
+BSDynamicTriShape under BSFaceGenNiNodeSkinned, named after the head part's editor id; its
+expression TRI (the Tri file of that HDPT, found among the NPC's PNAM parts, its race's default
+head parts and the parts they bring along) has the same vertices in the same order. The head
+is baked with the actor's weight: its neck seam meets the body blended at that weight
+closer than with the TRI's SkinnyMorph applied again (measured on light NPCs: 1.9 against 2.1
+units, 2.3 for the heaviest body), so SkinnyMorph is left to heads made at run time (the
+player's).
 
 ## Default objects
 

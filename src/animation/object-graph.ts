@@ -201,7 +201,8 @@ export class ObjectGraph {
         this.#leaves.set(node, { start: time, sent: Number.NEGATIVE_INFINITY });
         return;
       default:
-        // TODO(M7): skeletal clips (hkbClipGenerator) animate the mesh's bones.
+        // Skeletal clips (hkbClipGenerator) run in the full runtime beside this one
+        // (src/animation/animated-skeleton.ts); TODO(M8): one runtime for both.
         return;
     }
   }

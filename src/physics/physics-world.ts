@@ -449,13 +449,15 @@ export class PhysicsWorld {
    * Places a model's collision at `world` (game units; rotation, translation and uniform
    * scale). Simulated bodies settle under gravity as their cell loads (the engine's warm
    * start), or with `settle` false stay asleep where they were placed until something
-   * touches them (REFR "Don't Havok Settle").
+   * touches them (REFR "Don't Havok Settle"). Fixed bodies on `animatedNodes` (lower-case
+   * node names a behavior graph moves) are keyframed instead: they follow the pose (moveBody).
    */
   addObject(
     collision: CollisionData,
     world: Mat4,
     owner: PhysicsOwner,
     settle = true,
+    animatedNodes?: ReadonlySet<string>,
   ): PlacedCollision {
     const scale = Math.hypot(world[0] ?? 0, world[1] ?? 0, world[2] ?? 0) || 1;
     const rigid = rigidPart(world);
@@ -476,6 +478,9 @@ export class PhysicsWorld {
         z: toHavok(pose[14] ?? 0),
       };
       const dynamic = data.motion === 'dynamic' && !data.phantom;
+      const keyframed =
+        data.motion === 'keyframed' ||
+        (data.motion === 'fixed' && animatedNodes?.has(data.node.toLowerCase()) === true);
       const desc = dynamic
         ? RAPIER.RigidBodyDesc.dynamic()
             .setLinearDamping(data.linearDamping)
@@ -483,7 +488,7 @@ export class PhysicsWorld {
             .setGravityScale(data.gravityFactor)
             .setSleeping(!settle)
             .setCcdEnabled(data.quality >= 5)
-        : data.motion === 'keyframed'
+        : keyframed
           ? RAPIER.RigidBodyDesc.kinematicPositionBased()
           : RAPIER.RigidBodyDesc.fixed();
       desc.setTranslation(translation.x, translation.y, translation.z).setRotation(rotation);

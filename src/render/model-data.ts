@@ -195,7 +195,8 @@ export interface ModelData {
   readonly particles: readonly ParticleSystemData[];
   /**
    * Models that can be worn on a skeleton (skinned parts, or a "Prn" extra data): the node
-   * tree, merged by name into an actor's skeleton.
+   * tree, merged by name into an actor's skeleton. Models with a behavior graph keep it too
+   * (a graph that plays skeletal clips moves their nodes).
    */
   readonly nodes?: readonly ModelNode[];
   /** NiStringExtraData "Prn" on the root: the skeleton node it hangs on (shields: SHIELD). */
@@ -725,12 +726,13 @@ export function buildModel(file: NifFile): ModelData {
 
   const animation = buildAnimation(file, graphDriven);
   const sequences = buildSequences(file, graphDriven);
-  // Models worn on a skeleton keep their node tree.
+  // Models worn on a skeleton keep their node tree, as do models whose behavior graph may
+  // move their nodes as a skeleton (src/shell/animation-assets.ts).
   const attachTo = attachmentNode(file);
-  const worn = attachTo !== undefined || parts.some((part) => part.skin);
+  const skeletal = attachTo !== undefined || graphDriven || parts.some((part) => part.skin);
   return {
     parts,
-    ...(worn && { nodes }),
+    ...(skeletal && { nodes }),
     ...(attachTo !== undefined && { attachTo }),
     center,
     radius,

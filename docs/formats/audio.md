@@ -57,5 +57,40 @@ turns it back up), which the browser's media player plays. A 3:35 exploration tr
 ## FUZ
 
 `"FUZE"`, u32 version (1), u32 size of the lip data, the lip data (a `.lip` file: the face
-animation of the line; 0 bytes for lines without it, such as shouts), then the audio (RIFF
-`XWMA`). Reading the lip data for faces: TODO(M7).
+animation of the line, see LIP; 0 bytes for lines without it, such as shouts), then the audio
+(RIFF `XWMA`).
+
+## LIP
+
+The face animation of a spoken line (`src/formats/audio/lip.ts`), as the Creation Kit
+generates it with FaceFX; inside `.fuz` files, or beside a `.wav`/`.xwm` voice file. There is
+no published specification: the layout below was worked out from the vanilla files and holds
+for every one of them (74,070 lines in the SSE load order: `node tools/lip-info.ts --all`).
+A community decoder (realfakenerd/wah-krah-jol, 2026) reads the same curves by searching for
+the start of the data; reading the header as below needs no search.
+
+| Offset | Type | Meaning                                                                     |
+| -----: | ---- | --------------------------------------------------------------------------- |
+|      0 | u32  | version: 1                                                                  |
+|      4 | u32  | size of the expanded block, plus 16                                         |
+|      8 | u32  | 13 for humanoid lines, 9 for creature lines (meaning unknown)               |
+|     12 | …    | the block, byte-run compressed: a 0 byte is followed by a u16 count of zero |
+|        |      | bytes; any other byte stands for itself                                     |
+
+The expanded block: i32 frame count, i32 first frame (≤ 0: the frames before the audio
+starts), i32 phoneme curve count (16, creatures 8), then frame by frame one f32 per curve.
+Frames are 1/30 s apart: frame `f` is at `(f + first) / 30` seconds into the audio (the
+last spoken phoneme lies a median 0.1 s before the audio ends, 80 % of lines within
+−0.27…+0.14 s).
+
+Humanoid lines (73,118) have 33 curves per frame: the 16 FaceGen phonemes (Aah, BigAah, BMP,
+ChJSh, DST, Eee, Eh, FV, I, K, N, Oh, OohQ, R, Th, W), the 14 modifiers (BlinkLeft,
+BlinkRight, BrowDownLeft, BrowDownRight, BrowInLeft, BrowInRight, BrowUpLeft, BrowUpRight,
+LookDown, LookLeft, LookRight, LookUp, SquintLeft, SquintRight) and the head's pitch, roll
+and yaw. The phoneme order holds against the lines' text: of 418 lines starting with th, w,
+b/m/p, f/v or r, the first strong phoneme is Th 97/97, W 117/122, BMP 108/111, FV 39/40, R
+25/26. The order of the modifiers follows from the data: curves 16/17 and 22/23 are always
+equal (left and right blinks and brow raises), 18–21 and 28–29 are never used (the CK
+generates no brow-down, brow-in or squint), 24–27 stay small (eye looks, ≤ 0.16), and only
+the last three go negative (head rotation, −0.07…+0.16 radians). Creature lines (952:
+dragons, rieklings, hagravens) have 8 curves: TODO(M10) with creatures' speech.

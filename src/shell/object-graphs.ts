@@ -1,6 +1,9 @@
 // Every placed object whose mesh has a behavior graph runs its own copy of it, started when
-// the object is placed (its 3D loads), on the renderer's clock.
+// the object is placed (its 3D loads), on the renderer's clock: the sequences it plays
+// (ObjectGraph), and where it plays skeletal clips, the pose of the model's nodes
+// (BehaviorRuntime, moved with the actors by animateSkeletons).
 
+import { startObjectSkeleton, type ObjectSkeleton } from '../animation/animated-skeleton.ts';
 import { ObjectGraph } from '../animation/object-graph.ts';
 import type { GpuModel } from '../render/scene-renderer.ts';
 
@@ -14,6 +17,15 @@ const clock = (): number => performance.now() / 1000;
 export function startObjectGraph(model: GpuModel, seed: number): ObjectGraph | undefined {
   if (!model.graph || !model.sequences) return undefined;
   return new ObjectGraph(model.graph, model.sequences.byName, clock(), seededRandom(seed));
+}
+
+/**
+ * A placed object's skeleton, moved by its own run of its model's graph where that plays
+ * skeletal clips; undefined for other models. `seed` as for startObjectGraph.
+ */
+export function startPlacedSkeleton(model: GpuModel, seed: number): ObjectSkeleton | undefined {
+  if (!model.skeletal || !model.nodes) return undefined;
+  return startObjectSkeleton(model.nodes, model.skeletal, seededRandom(seed));
 }
 
 /** Mulberry32: a small deterministic generator in [0, 1). */

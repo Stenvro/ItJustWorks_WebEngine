@@ -39,6 +39,17 @@ export interface BehaviorHost {
   behavior(name: string): BehaviorGraph | undefined;
 }
 
+/**
+ * A behavior project that plays skeletal clips, ready to run on a model: its root file, the
+ * Havok skeleton its clips move and the host its clips load through (objects: traps, bows,
+ * mechanisms; every placed instance runs its own graph).
+ */
+export interface SkeletalGraph {
+  readonly root: BehaviorGraph;
+  readonly havok: HkxSkeleton;
+  readonly host: BehaviorHost;
+}
+
 /** ClipFlags (hkbClipGenerator.m_flags). */
 const CLIP_FLAGS = { dontConvertAnnotationsToTriggers: 0x10 } as const;
 

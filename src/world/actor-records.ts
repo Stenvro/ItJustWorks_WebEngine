@@ -98,6 +98,8 @@ export interface NpcRecord {
   readonly sleepOutfit: number | undefined;
   /** PNAM: head parts (HDPT). */
   readonly headParts: readonly number[];
+  /** VTCK: voice type (VTYP; its editor id names the folder of its spoken lines). */
+  readonly voiceType: number | undefined;
   /** HCLF: hair colour (CLFM). */
   readonly hairColor: number | undefined;
   /** FTST: head texture set (TXST). */
@@ -218,6 +220,14 @@ export const HeadPartType = {
   eyebrows: 6,
 } as const;
 
+/** HDPT NAM0: what a head part's NAM1 file is. */
+export const HeadPartFile = {
+  raceMorph: 0,
+  /** Expressions: phonemes, blinks, looks, moods (src/formats/nif/tri.ts). */
+  tri: 1,
+  chargenMorph: 2,
+} as const;
+
 export interface HeadPartRecord {
   readonly formId: number;
   readonly editorId: string;
@@ -225,6 +235,8 @@ export interface HeadPartRecord {
   /** HNAM: parts that come with it. */
   readonly extraParts: readonly number[];
   readonly model: string | undefined;
+  /** NAM0 + NAM1: its morph files (HeadPartFile), paths under meshes. */
+  readonly files: readonly { readonly type: number; readonly path: string }[];
   /** TNAM: texture set; CNAM: colour (CLFM). */
   readonly textureSet: number | undefined;
   readonly color: number | undefined;
@@ -278,6 +290,7 @@ export function parseNpc(record: RecordSource): NpcRecord {
       .all('PNAM')
       .map((data) => formOf(record, data))
       .filter((formId): formId is number => formId !== undefined),
+    voiceType: field(record, 'VTCK'),
     hairColor: field(record, 'HCLF'),
     faceTexture: field(record, 'FTST'),
     skinTone:
@@ -470,6 +483,22 @@ export function parseColor(record: RecordSource): [number, number, number] {
   return [(data?.[0] ?? 255) / 255, (data?.[1] ?? 255) / 255, (data?.[2] ?? 255) / 255];
 }
 
+/** NAM0 (the type) followed by NAM1 (the file), in order. */
+function headPartFiles(record: RecordSource): { type: number; path: string }[] {
+  const files: { type: number; path: string }[] = [];
+  let type: number | undefined;
+  for (const field of record.fields.list) {
+    if (field.type === 'NAM0') {
+      type = field.data.length >= 4 ? view(field.data).getUint32(0, true) : undefined;
+    } else if (field.type === 'NAM1' && type !== undefined) {
+      const path = zstring(field.data);
+      if (path !== '') files.push({ type, path });
+      type = undefined;
+    }
+  }
+  return files;
+}
+
 export function parseHeadPart(record: RecordSource): HeadPartRecord {
   return {
     formId: record.formId,
@@ -480,6 +509,7 @@ export function parseHeadPart(record: RecordSource): HeadPartRecord {
       .map((data) => formOf(record, data))
       .filter((formId): formId is number => formId !== undefined),
     model: nonEmpty(record.fields.zstring('MODL')),
+    files: headPartFiles(record),
     textureSet: field(record, 'TNAM'),
     color: field(record, 'CNAM'),
   };

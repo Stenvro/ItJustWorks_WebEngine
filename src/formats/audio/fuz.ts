@@ -7,7 +7,7 @@ import { FormatError } from '../binary-reader.ts';
 
 export interface FuzFile {
   readonly version: number;
-  /** The .lip data (empty without lip-sync). TODO(M7): parsed for the faces' lip-sync. */
+  /** The .lip data (empty without lip-sync; src/formats/audio/lip.ts). */
   readonly lip: Uint8Array;
   /** The audio (RIFF "XWMA"). */
   readonly audio: Uint8Array;

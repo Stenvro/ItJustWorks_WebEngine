@@ -4,9 +4,11 @@
 import { decodeBsaPayload } from '../formats/bsa/bsa.ts';
 import { parseDds } from '../formats/dds/dds.ts';
 import { parseNif } from '../formats/nif/nif.ts';
+import { parseTri } from '../formats/nif/tri.ts';
 import { buildCollision } from '../physics/collision-data.ts';
 import { buildRig } from '../animation/skeleton.ts';
 import { blendWeight, swapTextures } from '../render/actor-model.ts';
+import { packMorphs } from '../render/face-morphs.ts';
 import { buildModel, type ModelData } from '../render/model-data.ts';
 import type { AssetRequest, AssetResponse } from './protocol.ts';
 
@@ -50,6 +52,19 @@ function handle(request: AssetRequest): [AssetResponse, ArrayBuffer[]] {
       kind: 'actor-part',
       model,
       problems,
+      workMs: performance.now() - start,
+    };
+    return [response, [...buffers]];
+  }
+
+  if (request.kind === 'expressions') {
+    const morphs = packMorphs(parseTri(bytes));
+    own(morphs.deltas);
+    const response: AssetResponse = {
+      id: request.id,
+      ok: true,
+      kind: 'expressions',
+      morphs,
       workMs: performance.now() - start,
     };
     return [response, [...buffers]];

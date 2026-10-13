@@ -31,7 +31,7 @@ export type AudioResponse =
       readonly channels: Float32Array[];
       /** The WAV sampler loop, in frames (end exclusive). */
       readonly loop?: { readonly start: number; readonly end: number };
-      /** A FUZ file's lip-sync data (TODO(M7): faces). */
+      /** A FUZ file's lip-sync data (src/formats/audio/lip.ts). */
       readonly lip?: Uint8Array;
       /** Milliseconds spent decoding in the worker. */
       readonly workMs: number;

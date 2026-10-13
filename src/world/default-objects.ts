@@ -24,6 +24,11 @@ export const DefaultObjectUse = {
   landMaterial: 'DLMT',
   /** SNDR looping while the camera is under water. */
   underwaterLoop: 'UWLS',
+  /** SNCT spoken lines play in (AudioCategoryVOC). */
+  dialogueCategory: 'DDSC',
+  /** SOPM of spoken lines in the world (SOMDialogue3DDefault) and at the listener (2D). */
+  dialogueOutput3d: 'DOP2',
+  dialogueOutput2d: 'DOP3',
 } as const;
 
 /** Entries of DOBJ DNAM: u32 use code (four characters), form id. */
