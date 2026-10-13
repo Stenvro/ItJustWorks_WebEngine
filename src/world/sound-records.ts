@@ -117,8 +117,11 @@ export interface MusicTrack {
   /** FNAM: where the track may be left (seconds). */
   readonly cuePoints: readonly number[];
   readonly conditions: readonly Condition[];
-  /** SNAM: a palette's tracks. */
-  readonly tracks: readonly number[];
+  /**
+   * SNAM: a palette's layers, which play at the same time, each its tracks (single and silent
+   * ones) one after another at random; a NULL entry separates two layers.
+   */
+  readonly layers: readonly (readonly number[])[];
 }
 
 export interface AcousticSpace {
@@ -174,6 +177,19 @@ function text(data: Uint8Array | undefined): string | undefined {
     out += String.fromCharCode(byte);
   }
   return out;
+}
+
+/** MUST SNAM: the tracks of each layer; NULL entries separate the layers. */
+function paletteLayers(record: GameRecord): number[][] {
+  const data = record.fields.first('SNAM');
+  if (!data) return [];
+  const layers: number[][] = [[]];
+  for (let offset = 0; offset + 4 <= data.byteLength; offset += 4) {
+    const formId = record.formIdAt(data, offset);
+    if (formId === 0) layers.push([]);
+    else layers[layers.length - 1]?.push(formId);
+  }
+  return layers.filter((layer) => layer.length > 0);
 }
 
 function formIds(record: GameRecord, type: string): number[] {
@@ -332,7 +348,7 @@ export function parseMusicTrack(record: GameRecord): MusicTrack {
         )
       : [],
     conditions: parseConditions(record),
-    tracks: formIds(record, 'SNAM'),
+    layers: paletteLayers(record),
   };
 }
 
@@ -379,6 +395,9 @@ export interface RegionSound {
 
 /** The sounds and music of a region (its RDAT type 7 entries: RDSA, RDMO). */
 export interface RegionAudio {
+  /** The sound tab's priority and override flag (RDAT): see regionsInEffect. */
+  readonly priority: number;
+  readonly override: boolean;
   readonly sounds: readonly RegionSound[];
   /** RDMO: the region's music type (MUSC). */
   readonly music: number | undefined;
@@ -391,9 +410,15 @@ export function parseRegionAudio(record: GameRecord): RegionAudio {
   const sounds: RegionSound[] = [];
   let music: number | undefined;
   let type = -1;
+  let priority = 0;
+  let override = false;
   for (const field of record.fields.list) {
     if (field.type === 'RDAT' && field.data.byteLength >= 4) {
       type = viewOf(field.data).getUint32(0, true);
+      if (type === REGION_SOUND) {
+        override = ((field.data[4] ?? 0) & 1) !== 0;
+        priority = field.data[5] ?? 0;
+      }
       continue;
     }
     if (type !== REGION_SOUND) continue;
@@ -413,5 +438,21 @@ export function parseRegionAudio(record: GameRecord): RegionAudio {
       }
     }
   }
-  return { sounds, music };
+  return { priority, override, sounds, music };
+}
+
+/**
+ * The regions whose sound data applies where several hold (a cell's XCLR): from the highest
+ * priority down, up to and including the first that overrides lower ones (the Creation Kit's
+ * region "Override" flag); the others add theirs. Equal priorities keep their order.
+ */
+export function regionsInEffect(regions: readonly RegionAudio[]): RegionAudio[] {
+  const sorted = [...regions].sort((a, b) => b.priority - a.priority);
+  const cut = sorted.findIndex((region) => region.override);
+  return cut < 0 ? sorted : sorted.slice(0, cut + 1);
+}
+
+/** The music type of the regions in effect: the first (highest-priority) that names one. */
+export function regionMusic(regions: readonly RegionAudio[]): number | undefined {
+  return regionsInEffect(regions).find((region) => region.music !== undefined)?.music;
 }

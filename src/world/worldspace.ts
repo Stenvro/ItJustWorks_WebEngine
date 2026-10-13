@@ -46,6 +46,8 @@ export interface WorldspaceRecord {
   readonly lodWaterHeight: number;
   /** CLMT form id. */
   readonly climate: number | undefined;
+  /** ZNAM: the music type (MUSC) where no region names one. */
+  readonly music: number | undefined;
 }
 
 export function parseWorldspace(record: GameRecord): WorldspaceRecord {
@@ -69,6 +71,7 @@ export function parseWorldspace(record: GameRecord): WorldspaceRecord {
     lodWater: record.formIdField('NAM3'),
     lodWaterHeight: f32('NAM4') ?? 0,
     climate: record.formIdField('CNAM'),
+    music: record.formIdField('ZNAM'),
   };
 }
 
@@ -251,6 +254,13 @@ export class Worldspace {
       regions.push(record.formIdAt(xclr, offset));
     }
     return regions;
+  }
+
+  /** The music type a cell names (XCMO), if any. */
+  async cellMusic(x: number, y: number): Promise<number | undefined> {
+    const id = await this.cell(x, y);
+    const record = id === undefined ? undefined : await this.db.get(id);
+    return record?.formIdField('XCMO');
   }
 
   /** Water height of a cell: its XCLW, else the world's default. */

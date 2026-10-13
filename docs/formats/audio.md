@@ -49,6 +49,11 @@ served from `node_modules` (no CDN); in Node `tools/ffmpeg-node.ts` loads it for
 Decoding the 3:55 main theme takes about 0.9 s, a voice line 0.1 s. ffmpeg's decoder can
 overshoot ±1 slightly (peaks of 1.16 in the main theme), as the original's does.
 
+Music is streamed rather than decoded into memory: the worker writes it as a 16-bit PCM WAV
+file (`decodeXwmaToWav`) at half its level (6 dB of headroom for those overshoots; the player
+turns it back up), which the browser's media player plays. A 3:35 exploration track takes
+38 MB that way instead of 76 MB of floats.
+
 ## FUZ
 
 `"FUZE"`, u32 version (1), u32 size of the lip data, the lip data (a `.lip` file: the face

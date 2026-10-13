@@ -2,7 +2,7 @@
 // ffmpeg.wasm). Skipped without game data. Full coverage: `node tools/audio-info.ts --audit`.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { decodeXwma } from '../src/audio/xwma-decoder.ts';
+import { decodeXwma, decodeXwmaToWav, STREAM_HEADROOM } from '../src/audio/xwma-decoder.ts';
 import { parseFuz } from '../src/formats/audio/fuz.ts';
 import { decodeWav, parseWav } from '../src/formats/audio/wav.ts';
 import { parseXwma } from '../src/formats/audio/xwma.ts';
@@ -48,6 +48,13 @@ describe.skipIf(!hasGamedata())('sound files in the local game data', () => {
     expect(music.channels).toHaveLength(2);
     expect(music.channels[0]?.length).toBe(header.frames);
     expect(peak(music.channels[1])).toBeGreaterThan(0.5);
+    // Streamed music: the same samples as a 16-bit WAV file, with headroom (no clipping).
+    const wav = parseWav(decodeXwmaToWav(core, theme));
+    expect(wav.format.bitsPerSample).toBe(16);
+    expect(wav.format.sampleRate).toBe(48000);
+    expect(wav.frames).toBe(header.frames);
+    const streamed = decodeWav(wav);
+    expect(peak(streamed.channels[1]) * STREAM_HEADROOM).toBeCloseTo(peak(music.channels[1]), 3);
 
     const voice = parseFuz(
       await vfs.read(

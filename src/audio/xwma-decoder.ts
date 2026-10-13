@@ -4,7 +4,7 @@
 // rate. The core is loaded by the platform (a worker in the browser, tools/ffmpeg-node.ts in
 // Node) and handed in. Platform-independent. Notes: docs/formats/audio.md.
 
-import type { PcmAudio } from '../formats/audio/wav.ts';
+import { encodeWav16, type PcmAudio } from '../formats/audio/wav.ts';
 import { parseXwma } from '../formats/audio/xwma.ts';
 
 /** The parts of an ffmpeg.wasm core (createFFmpegCore) used here. */
@@ -25,6 +25,38 @@ let sequence = 0;
 /** Decodes an xWMA file to floats per channel. */
 export function decodeXwma(core: FfmpegCore, bytes: Uint8Array): PcmAudio {
   const { format, frames } = parseXwma(bytes);
+  const raw = runFfmpeg(core, bytes, 'f32le');
+  return deinterleave(raw, format.channels, format.sampleRate, frames);
+}
+
+/**
+ * How much quieter streamed music is stored (its player turns it back up): WMA decodes to
+ * floats that overshoot full scale (the main theme peaks at 1.16), which 16 bits would clip;
+ * half the level leaves 6 dB of headroom.
+ */
+export const STREAM_HEADROOM = 2;
+
+/**
+ * Decodes an xWMA file to a 16-bit PCM WAV file (music, which the browser streams) at
+ * 1 / STREAM_HEADROOM of its level, cut to the file's own frame count like decodeXwma.
+ */
+export function decodeXwmaToWav(core: FfmpegCore, bytes: Uint8Array): Uint8Array {
+  const { format, frames } = parseXwma(bytes);
+  const raw = runFfmpeg(core, bytes, 'f32le');
+  const channels = Math.max(1, format.channels);
+  const available = Math.floor(raw.byteLength / 4 / channels);
+  const length = frames > 0 ? Math.min(frames, available) : available;
+  const samples = new Int16Array(length * channels);
+  const view = new DataView(raw.buffer, raw.byteOffset, raw.byteLength);
+  for (let i = 0; i < samples.length; i++) {
+    const value = view.getFloat32(i * 4, true) / STREAM_HEADROOM;
+    samples[i] = Math.round(Math.max(-1, Math.min(1, value)) * 32767);
+  }
+  return encodeWav16(format.sampleRate, channels, samples);
+}
+
+/** Runs ffmpeg on an xWMA file: raw interleaved samples, little-endian. */
+function runFfmpeg(core: FfmpegCore, bytes: Uint8Array, sampleFormat: 'f32le'): Uint8Array {
   const id = String(sequence++);
   const input = `in${id}.xwm`;
   const output = `out${id}.raw`;
@@ -41,9 +73,9 @@ export function decodeXwma(core: FfmpegCore, bytes: Uint8Array): PcmAudio {
       '-i',
       input,
       '-f',
-      'f32le',
+      sampleFormat,
       '-c:a',
-      'pcm_f32le',
+      `pcm_${sampleFormat}`,
       output,
     );
     const result = core.ret;
@@ -55,7 +87,7 @@ export function decodeXwma(core: FfmpegCore, bytes: Uint8Array): PcmAudio {
     }
     const raw = core.FS.readFile(output);
     core.FS.unlink(output);
-    return deinterleave(raw, format.channels, format.sampleRate, frames);
+    return raw;
   } finally {
     core.FS.unlink(input);
   }

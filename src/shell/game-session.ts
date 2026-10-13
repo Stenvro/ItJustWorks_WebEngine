@@ -574,7 +574,7 @@ export class GameSession {
   }
 
   dispose(): void {
-    this.soundSystem?.stopAll();
+    this.soundSystem?.dispose();
     void this.soundSystem?.engine.context.close();
     this.#audioLoader?.dispose();
     for (const entry of this.#models.values()) void entry.then((model) => model?.destroy());

@@ -47,6 +47,8 @@ const regions = new Map<number, RegionAudio>([
   [
     FOREST,
     {
+      priority: 50,
+      override: false,
       sounds: [
         { sound: WIND, flags: 0xf, chance: 1 },
         { sound: SNOW_WIND, flags: 0x8, chance: 1 },
@@ -129,6 +131,8 @@ const state = (overrides: Partial<AmbientState> = {}): AmbientState => ({
   interior: false,
   swimming: false,
   flash: undefined,
+  cellMusic: undefined,
+  worldMusic: undefined,
   ...overrides,
 });
 

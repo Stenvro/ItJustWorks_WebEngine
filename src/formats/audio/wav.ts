@@ -92,3 +92,35 @@ export function decodeWav(wav: WavFile): PcmAudio {
     ...(wav.loop && { loop: wav.loop }),
   };
 }
+
+/** RIFF header + "fmt " chunk (PCM, 16 bytes) + "data" header. */
+const PCM16_HEADER = 44;
+
+/**
+ * A 16-bit PCM WAV file of interleaved samples (music streamed by the browser's media player:
+ * half the memory of floats, and 16 bits is the resolution music is decoded to).
+ */
+export function encodeWav16(sampleRate: number, channels: number, samples: Int16Array): Uint8Array {
+  const dataBytes = samples.length * 2;
+  const bytes = new Uint8Array(PCM16_HEADER + dataBytes);
+  const view = new DataView(bytes.buffer);
+  const tag = (offset: number, text: string): void => {
+    for (let i = 0; i < 4; i++) bytes[offset + i] = text.charCodeAt(i);
+  };
+  tag(0, 'RIFF');
+  view.setUint32(4, PCM16_HEADER - 8 + dataBytes, true);
+  tag(8, 'WAVE');
+  tag(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, WAVE_FORMAT.pcm, true);
+  view.setUint16(22, channels, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * channels * 2, true);
+  view.setUint16(32, channels * 2, true);
+  view.setUint16(34, 16, true);
+  tag(36, 'data');
+  view.setUint32(40, dataBytes, true);
+  for (let i = 0; i < samples.length; i++)
+    view.setInt16(PCM16_HEADER + i * 2, samples[i] ?? 0, true);
+  return bytes;
+}
