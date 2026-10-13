@@ -34,12 +34,18 @@ Formats: [nif.md](formats/nif.md#animation) (controllers, sequences, keys),
   once), by name, case-insensitively, at the moment they pass, not at the frame that notices:
   AutoPlay's `end` starts AutoLoop exactly when the intro ends. An event takes the first usable
   transition of the current state, then the state machine's wildcards (outermost machine
-  first; disabled ones and those with a condition are skipped).
-- Not yet in `ObjectGraph`: the blend of a transition effect between the two states (switched
-  at once), conditions (hkbExpressionCondition), variables changed by modifiers, weighted
-  blending of sequences below 1. Graphs that need them play skeletal clips and run in the
-  full runtime below; unifying the two (sequences as leaves of the full runtime): TODO(M8),
-  with events from scripts (ObjectReference.PlayAnimation, SetAnimationVariable*).
+  first; disabled ones and those whose condition does not hold are skipped).
+- **Blends**: a transition with a blending effect fades the state left out and the state
+  entered in over its duration on its blend curve (the old sequences stop sending text keys
+  and stop at its end). Sequences blend as Gamebryo's blend interpolators do: where several
+  animate the same value, the weighted mean of their values (weights normalised; a value one
+  sequence alone animates is that sequence's whatever its weight; rotations as a normalised sum
+  of aligned quaternions; a visibility the heaviest one's), over the model's free controllers.
+- **Conditions** (hkbExpressionCondition) are evaluated over the graph's variables, as in the
+  full runtime. Variables changed by modifiers are not (ObjectGraph runs no modifiers); graphs
+  that need them play skeletal clips and run in the full runtime below. Unifying the two
+  (sequences as leaves of the full runtime) and the events and variables scripts send
+  (ObjectReference.PlayAnimation, SetAnimationVariable*): TODO(M8).
 - Particles follow: the manager-controlled controllers of a particle system (birth rate,
   emitter active) take their values from the sequences the graph plays.
 

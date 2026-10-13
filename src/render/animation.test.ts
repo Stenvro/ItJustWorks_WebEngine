@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest';
 import { CycleType, KeyType } from '../formats/nif/animation-blocks.ts';
 import type { KeyGroup } from '../formats/nif/types.ts';
 import {
+  animateLayers,
   controllerTime,
   sampleBool,
   sampleFloat,
   sampleKeys,
   sampleTransform,
+  type AnimationTrack,
   type Timing,
 } from './animation.ts';
 import { billboardWorld } from './billboard.ts';
@@ -191,5 +193,48 @@ describe('lightFlicker', () => {
       expect(f.scale).toBeLessThanOrEqual(1 + 1e-6);
       for (const o of f.offset) expect(Math.abs(o)).toBeLessThanOrEqual(16 + 1e-6);
     }
+  });
+});
+
+describe('animateLayers', () => {
+  const rest = {
+    translation: [0, 0, 0] as [number, number, number],
+    rotation: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+    scale: 1,
+  };
+  const scene = {
+    parents: new Map([[1, 0]]),
+    transforms: new Map([
+      [0, rest],
+      [1, rest],
+    ]),
+    roots: [0],
+  };
+  const move = (x: number): AnimationTrack => ({
+    kind: 'transform',
+    block: 1,
+    timing: timing(0),
+    source: { translation: [x, 0, 0], rotation: undefined, scale: undefined, data: undefined },
+  });
+
+  it('blends sequences on the same node by their normalised weights', () => {
+    const frame = animateLayers(scene, [
+      { tracks: [move(10)], seconds: 0, weight: 0.25 },
+      { tracks: [move(30)], seconds: 0, weight: 0.75 },
+    ]);
+    expect(frame.worlds.get(1)?.[12]).toBeCloseTo(25);
+  });
+
+  it('plays a sequence alone in full whatever its weight; outright layers lie below', () => {
+    const alone = animateLayers(scene, [{ tracks: [move(10)], seconds: 0, weight: 0.2 }]);
+    expect(alone.worlds.get(1)?.[12]).toBeCloseTo(10);
+    const over = animateLayers(scene, [
+      { tracks: [move(5)], seconds: 0 },
+      { tracks: [move(10)], seconds: 0, weight: 0.5 },
+    ]);
+    expect(over.worlds.get(1)?.[12]).toBeCloseTo(10);
+    expect(animateLayers(scene, [{ tracks: [move(10)], seconds: 0, weight: 0 }]).worlds.size).toBe(
+      0,
+    );
   });
 });

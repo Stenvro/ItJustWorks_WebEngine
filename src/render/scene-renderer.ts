@@ -5,7 +5,7 @@
 
 import type { SkeletalGraph } from '../animation/behavior-runtime.ts';
 import type { FaceWeights } from '../animation/face.ts';
-import type { ObjectGraph } from '../animation/object-graph.ts';
+import { sequenceWeight, type ObjectGraph } from '../animation/object-graph.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
 import type { BehaviorGraph } from '../formats/hkx/behavior.ts';
 import {
@@ -2093,7 +2093,13 @@ export class SceneRenderer {
         if (graph.animation) layers.push({ tracks: graph.animation.tracks, seconds });
         for (const playing of graph.player.playing) {
           const sequence = graph.sequences.byName.get(playing.sequence);
-          if (sequence) layers.push({ tracks: sequence.tracks, seconds: seconds - playing.start });
+          if (sequence) {
+            layers.push({
+              tracks: sequence.tracks,
+              seconds: seconds - playing.start,
+              weight: sequenceWeight(playing, seconds),
+            });
+          }
         }
         frame = animateLayers(graph.sequences, layers);
         graphFrames.set(graph.player, frame);

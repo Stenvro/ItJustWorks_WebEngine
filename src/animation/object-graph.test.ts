@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BehaviorGenerator, BehaviorGraph, StateTransition } from '../formats/hkx/behavior.ts';
-import { nextTextKey, ObjectGraph, type SequenceClock } from './object-graph.ts';
+import { nextTextKey, ObjectGraph, sequenceWeight, type SequenceClock } from './object-graph.ts';
 
 const leaf = (sequence: string): BehaviorGenerator => ({
   kind: 'gamebryo-sequence',
@@ -112,6 +112,57 @@ describe('object behavior graphs', () => {
     expect(graph.send('stopeffect', 0.25)).toBe(true);
     expect(graph.playing).toEqual([{ sequence: 'autofadeout', start: 0.25, weight: 1 }]);
     expect(graph.send('NoSuchEvent', 1)).toBe(false);
+  });
+
+  it('fades the state left out and the state entered in over a blending transition', () => {
+    const blended: BehaviorGraph = {
+      ...autoplay,
+      root: {
+        ...(autoplay.root as Extract<BehaviorGenerator, { kind: 'state-machine' }>),
+        wildcardTransitions: [
+          {
+            ...on(1, 2, 0x900),
+            effect: {
+              duration: 1,
+              toGeneratorStartTimeFraction: 0,
+              flags: 0,
+              endMode: 0,
+              blendCurve: 1,
+              selfTransitionMode: 0,
+              eventMode: 0,
+            },
+          },
+        ],
+      },
+    };
+    const graph = new ObjectGraph(blended, sequences, 0);
+    graph.send('StopEffect', 0.5);
+    const [out, into] = graph.playing;
+    expect(out?.sequence).toBe('autoplay');
+    expect(into?.sequence).toBe('autofadeout');
+    if (!out || !into) return;
+    // Linear: a quarter of the way at 0.75 s.
+    expect(sequenceWeight(out, 0.75)).toBeCloseTo(0.75);
+    expect(sequenceWeight(into, 0.75)).toBeCloseTo(0.25);
+    graph.update(1.6);
+    expect(graph.playing).toEqual([{ sequence: 'autofadeout', start: 0.5, weight: 1 }]);
+  });
+
+  it('takes conditional transitions only when their condition holds', () => {
+    const conditional = (initial: number): BehaviorGraph => ({
+      ...autoplay,
+      variables: [{ name: 'bLit', type: 0, initial }],
+      root: {
+        ...(autoplay.root as Extract<BehaviorGenerator, { kind: 'state-machine' }>),
+        wildcardTransitions: [{ ...on(1, 2, 0x800), conditional: true, condition: 'bLit == 1' }],
+      },
+    });
+    const unlit = new ObjectGraph(conditional(0), sequences, 0);
+    unlit.send('StopEffect', 0.1);
+    expect(unlit.playing[0]?.sequence).toBe('autoplay');
+    const lit = new ObjectGraph(conditional(1), sequences, 0);
+    lit.send('StopEffect', 0.1);
+    expect(lit.playing[0]?.sequence).toBe('autofadeout');
   });
 
   it('plays nothing for sequences the mesh does not have', () => {

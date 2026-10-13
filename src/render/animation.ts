@@ -127,6 +127,11 @@ export interface AnimationLayer {
   readonly tracks: readonly AnimationTrack[];
   /** Seconds into the layer. */
   readonly seconds: number;
+  /**
+   * A sequence's blend weight (the sequences a behavior graph plays); layers without one
+   * (free controllers) set their values outright.
+   */
+  readonly weight?: number;
 }
 
 /** Everything a model's animation sets at one moment. */
@@ -714,8 +719,12 @@ export function animate(animation: ModelAnimation, seconds: number): AnimationFr
 
 /**
  * Evaluates layers of tracks over a model's scene graph (the model's own controllers and the
- * sequences its behavior graph plays, each at its own moment). Later layers win where they
- * set the same value. TODO(M7): weighted blending of sequences with weights below 1.
+ * sequences its behavior graph plays, each at its own moment). Layers without a weight set
+ * their values outright, later ones winning. Weighted layers blend as Gamebryo's blend
+ * interpolators do: where several animate the same value, their weighted mean (weights
+ * normalised; a value one sequence alone animates is that sequence's, whatever its weight),
+ * rotations as a normalised weighted sum of aligned quaternions, a visibility the heaviest
+ * one's; they override the unweighted layers.
  */
 export function animateLayers(
   animation: Pick<ModelAnimation, 'parents' | 'transforms' | 'roots'>,
@@ -723,8 +732,50 @@ export function animateLayers(
 ): AnimationFrame {
   return evaluate(
     animation,
-    layers.flatMap((layer) => layer.tracks.map((track) => ({ track, seconds: layer.seconds }))),
+    layers.flatMap((layer) =>
+      layer.tracks.map((track) => ({
+        track,
+        seconds: layer.seconds,
+        ...(layer.weight !== undefined && { weight: layer.weight }),
+      })),
+    ),
   );
+}
+
+/** Weighted values of one target, normalised when read. */
+class WeightedSum {
+  readonly sum: number[];
+  total = 0;
+  constructor(size: number) {
+    this.sum = new Array<number>(size).fill(0);
+  }
+  add(values: readonly number[], weight: number): void {
+    for (let i = 0; i < this.sum.length; i++) {
+      this.sum[i] = (this.sum[i] ?? 0) + (values[i] ?? 0) * weight;
+    }
+    this.total += weight;
+  }
+  mean(): number[] {
+    return this.sum.map((value) => value / (this.total || 1));
+  }
+}
+
+/** Weighted rotations (w, x, y, z), each aligned with the first so opposite signs add up. */
+class WeightedRotation {
+  readonly #sum = [0, 0, 0, 0];
+  #first: readonly number[] | undefined;
+  add(q: readonly number[], weight: number): void {
+    this.#first ??= q;
+    const first = this.#first;
+    const dot = q.reduce((sum, value, i) => sum + value * (first[i] ?? 0), 0);
+    const sign = dot < 0 ? -weight : weight;
+    for (let i = 0; i < 4; i++) this.#sum[i] = (this.#sum[i] ?? 0) + (q[i] ?? 0) * sign;
+  }
+  mean(): Quaternion {
+    const [w, x, y, z] = this.#sum;
+    const length = Math.hypot(w ?? 0, x ?? 0, y ?? 0, z ?? 0) || 1;
+    return [(w ?? 1) / length, (x ?? 0) / length, (y ?? 0) / length, (z ?? 0) / length];
+  }
 }
 
 /** Evaluates tracks over a model's scene graph at a moment. */
@@ -741,15 +792,71 @@ function animateTracks(
 
 function evaluate(
   animation: Pick<ModelAnimation, 'parents' | 'transforms' | 'roots'>,
-  timed: readonly { readonly track: AnimationTrack; readonly seconds: number }[],
+  timed: readonly {
+    readonly track: AnimationTrack;
+    readonly seconds: number;
+    readonly weight?: number;
+  }[],
 ): AnimationFrame {
   const locals = new Map<Ref, NifTransform>();
   const hidden = new Set<Ref>();
   const shaderFloats = new Map<Ref, Map<number, number>>();
   const shaderColors = new Map<Ref, Map<number, Vec3>>();
   const alphaTest = new Map<Ref, number>();
-  for (const { track, seconds } of timed) {
+  // Weighted layers: per target, blended after the outright ones.
+  const blended = new Map<string, WeightedSum>();
+  const rotations = new Map<Ref, WeightedRotation>();
+  const visibility = new Map<Ref, { weight: number; visible: boolean }>();
+  const weighted = (key: string, size: number): WeightedSum => {
+    let entry = blended.get(key);
+    if (!entry) blended.set(key, (entry = new WeightedSum(size)));
+    return entry;
+  };
+  for (const { track, seconds, weight } of timed) {
     const time = controllerTime(track.timing, seconds);
+    if (weight !== undefined) {
+      if (!(weight > 0)) continue;
+      switch (track.kind) {
+        case 'transform': {
+          const sample = sampleTransform(track.source, time);
+          if (sample.translation) {
+            weighted(`t${String(track.block)}`, 3).add(sample.translation, weight);
+          }
+          if (sample.rotation) {
+            let rotation = rotations.get(track.block);
+            if (!rotation) rotations.set(track.block, (rotation = new WeightedRotation()));
+            rotation.add(sample.rotation, weight);
+          }
+          if (sample.scale !== undefined) {
+            weighted(`s${String(track.block)}`, 1).add([sample.scale], weight);
+          }
+          break;
+        }
+        case 'visibility': {
+          const before = visibility.get(track.block);
+          if (!before || weight > before.weight) {
+            visibility.set(track.block, { weight, visible: sampleBool(track.source, time) });
+          }
+          break;
+        }
+        case 'shader-float':
+          weighted(`f${String(track.shader)}:${String(track.variable)}`, 1).add(
+            [sampleFloat(track.source, time)],
+            weight,
+          );
+          break;
+        case 'shader-color':
+          weighted(`c${String(track.shader)}:${String(track.variable)}`, 3).add(
+            sampleVec3(track.source, time),
+            weight,
+          );
+          break;
+        case 'alpha-test':
+          weighted(`a${String(track.alpha)}`, 1).add([sampleFloat(track.source, time)], weight);
+          break;
+      }
+      continue;
+    }
     switch (track.kind) {
       case 'transform': {
         const rest = animation.transforms.get(track.block);
@@ -781,6 +888,47 @@ function evaluate(
       case 'alpha-test':
         alphaTest.set(track.alpha, sampleFloat(track.source, time));
         break;
+    }
+  }
+  // The weighted layers' means.
+  const transformBlocks = new Set<Ref>(rotations.keys());
+  for (const key of blended.keys()) {
+    if (key.startsWith('t') || key.startsWith('s')) transformBlocks.add(Number(key.slice(1)));
+  }
+  for (const block of transformBlocks) {
+    const rest = locals.get(block) ?? animation.transforms.get(block);
+    if (!rest) continue;
+    const translation = blended.get(`t${String(block)}`)?.mean();
+    const scale = blended.get(`s${String(block)}`)?.mean()[0];
+    const rotation = rotations.get(block)?.mean();
+    locals.set(block, {
+      translation: translation
+        ? [translation[0] ?? 0, translation[1] ?? 0, translation[2] ?? 0]
+        : rest.translation,
+      rotation: rotation ? quaternionRotation(rotation) : rest.rotation,
+      scale: scale ?? rest.scale,
+    });
+  }
+  for (const [block, { visible }] of visibility) {
+    if (visible) hidden.delete(block);
+    else hidden.add(block);
+  }
+  for (const [key, entry] of blended) {
+    const mean = entry.mean();
+    if (key.startsWith('f') || key.startsWith('c')) {
+      const [shader, variable] = key.slice(1).split(':').map(Number);
+      if (shader === undefined || variable === undefined) continue;
+      if (key.startsWith('f')) {
+        const values = shaderFloats.get(shader) ?? new Map<number, number>();
+        values.set(variable, mean[0] ?? 0);
+        shaderFloats.set(shader, values);
+      } else {
+        const values = shaderColors.get(shader) ?? new Map<number, Vec3>();
+        values.set(variable, [mean[0] ?? 0, mean[1] ?? 0, mean[2] ?? 0]);
+        shaderColors.set(shader, values);
+      }
+    } else if (key.startsWith('a')) {
+      alphaTest.set(Number(key.slice(1)), mean[0] ?? 0);
     }
   }
   // World matrices of the moved objects and everything below them.

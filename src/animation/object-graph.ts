@@ -7,6 +7,8 @@
 // state machine transitions: AutoPlay's "end" moves to AutoLoop. Scripts send events too
 // (ObjectReference.PlayAnimation: TODO(M8)). Notes: docs/animation.md.
 
+import { blendCurve } from './behavior-runtime.ts';
+import { evaluateNode, parseExpression, type Expression } from './behavior-expression.ts';
 import {
   BLENDER_FLAGS,
   TRANSITION_FLAGS,
@@ -35,6 +37,24 @@ export interface PlayingSequence {
   readonly sequence: string;
   readonly start: number;
   readonly weight: number;
+  /** A transition fading it in or out (its blend curve over the duration from `at`). */
+  readonly fade?: Fade;
+}
+
+/** A transition's blend, from `at` on the caller's clock. */
+export interface Fade {
+  readonly at: number;
+  readonly duration: number;
+  readonly curve: number;
+  readonly out: boolean;
+}
+
+/** A playing sequence's weight at `now` (its fade applied). */
+export function sequenceWeight(playing: PlayingSequence, now: number): number {
+  const fade = playing.fade;
+  if (!fade) return playing.weight;
+  const t = blendCurve(fade.curve, fade.duration > 0 ? (now - fade.at) / fade.duration : 1);
+  return playing.weight * (fade.out ? 1 - t : t);
 }
 
 type StateMachine = Extract<BehaviorGenerator, { kind: 'state-machine' }>;
@@ -56,7 +76,10 @@ export class ObjectGraph {
   /** Current state id of each active state machine. */
   readonly #states = new Map<StateMachine, number>();
   /** Active sequence leaves: when they started and up to when their text keys were sent. */
-  readonly #leaves = new Map<SequenceLeaf, { start: number; sent: number }>();
+  readonly #leaves = new Map<SequenceLeaf, { start: number; sent: number; fade?: Fade }>();
+  /** Leaves of states left with a blend, fading out (their keys are no longer sent). */
+  readonly #fading = new Map<SequenceLeaf, { start: number; fade: Fade }>();
+  readonly #expressions = new Map<string, Expression | null>();
   #playing: PlayingSequence[] = [];
 
   /**
@@ -83,6 +106,21 @@ export class ObjectGraph {
 
   /** Advances to `now`: sends the text keys passed since the last update as events. */
   update(now: number): void {
+    // Blends that ran their course: the old sequences stop, the new ones play in full.
+    let ended = false;
+    for (const [leaf, { fade }] of this.#fading) {
+      if (now >= fade.at + fade.duration) {
+        this.#fading.delete(leaf);
+        ended = true;
+      }
+    }
+    for (const state of this.#leaves.values()) {
+      if (state.fade && now >= state.fade.at + state.fade.duration) {
+        delete state.fade;
+        ended = true;
+      }
+    }
+    if (ended) this.#refresh();
     for (let handled = 0; handled < MAX_EVENTS_PER_UPDATE; handled++) {
       const next = this.#nextKey(now);
       if (!next) break;
@@ -130,10 +168,29 @@ export class ObjectGraph {
         const transition = current && this.#transitionFor(node, current, event);
         const target = transition && node.states.find((state) => state.id === transition.toStateId);
         if (current && target) {
-          // TODO(M7): the transition effect's blend (duration) between the two states.
+          // A blending effect fades the state left out and the state entered in.
+          const effect = transition.effect;
+          const blend =
+            effect && effect.duration > 0 && current !== target
+              ? { at: time, duration: effect.duration, curve: effect.blendCurve }
+              : undefined;
+          const before = new Map(this.#leaves);
           this.#deactivate(current.generator);
+          if (blend) {
+            for (const [leaf, state] of before) {
+              if (!this.#leaves.has(leaf)) {
+                this.#fading.set(leaf, { start: state.start, fade: { ...blend, out: true } });
+              }
+            }
+          }
           this.#states.set(node, target.id);
+          const entered = new Set(this.#leaves.keys());
           this.#activate(target.generator, time);
+          if (blend) {
+            for (const [leaf, state] of this.#leaves) {
+              if (!entered.has(leaf)) state.fade = { ...blend, out: false };
+            }
+          }
           return;
         }
         this.#deliver(current?.generator, event, time);
@@ -159,8 +216,11 @@ export class ObjectGraph {
     const usable = (transition: StateTransition, wildcard: boolean): boolean => {
       if (transition.eventId !== event) return false;
       if ((transition.flags & TRANSITION_FLAGS.disabled) !== 0) return false;
-      // TODO(M7): conditions (hkbExpressionCondition) need the expression evaluator.
-      if (transition.conditional && (transition.flags & TRANSITION_FLAGS.disableCondition) === 0) {
+      if (
+        transition.conditional &&
+        (transition.flags & TRANSITION_FLAGS.disableCondition) === 0 &&
+        !this.#condition(transition.condition)
+      ) {
         return false;
       }
       const self = transition.toStateId === current.id;
@@ -269,24 +329,50 @@ export class ObjectGraph {
       .flatMap((entry) => (entry.child.generator ? [entry.child.generator] : []));
   }
 
+  /** An hkbExpressionCondition over the graph's variables (a malformed one never holds). */
+  #condition(text: string | undefined): boolean {
+    if (text === undefined) return false;
+    let expression = this.#expressions.get(text);
+    if (expression === undefined) {
+      try {
+        expression = parseExpression(text);
+      } catch {
+        expression = null;
+      }
+      this.#expressions.set(text, expression);
+    }
+    if (!expression) return false;
+    return evaluateNode(expression.value, (name) => this.#variable(name)) !== 0;
+  }
+
+  /** A variable's value by name (TODO(M8): as scripts set them; their initial values). */
+  #variable(name: string): number {
+    const lower = name.toLowerCase();
+    return (
+      this.#graph.variables.find((variable) => variable.name.toLowerCase() === lower)?.initial ?? 0
+    );
+  }
+
   #resolve(bindable: Bindable): number {
     if (bindable.variable === undefined) return bindable.value;
     // TODO(M8): variables that scripts and modifiers change (SetAnimationVariableFloat).
     return this.#graph.variables[bindable.variable]?.initial ?? bindable.value;
   }
 
-  /** Rebuilds the playing list from the active leaves. */
+  /** Rebuilds the playing list from the active leaves (and those fading out). */
   #refresh(): void {
     const playing: PlayingSequence[] = [];
-    for (const [leaf, state] of this.#leaves) {
+    const add = (leaf: SequenceLeaf, start: number, fade: Fade | undefined): void => {
       const sequence = leaf.sequence.toLowerCase();
-      if (!this.#sequences.has(sequence)) continue;
+      if (!this.#sequences.has(sequence)) return;
       const percent = this.#resolve(leaf.percent);
       // BlendModeFunction: 1 percent, 2 one minus percent, otherwise full weight.
       const weight = leaf.blendMode === 1 ? percent : leaf.blendMode === 2 ? 1 - percent : 1;
-      if (weight <= 0) continue;
-      playing.push({ sequence, start: state.start, weight: Math.min(1, weight) });
-    }
+      if (weight <= 0) return;
+      playing.push({ sequence, start, weight: Math.min(1, weight), ...(fade && { fade }) });
+    };
+    for (const [leaf, { start, fade }] of this.#fading) add(leaf, start, fade);
+    for (const [leaf, state] of this.#leaves) add(leaf, state.start, state.fade);
     const same =
       playing.length === this.#playing.length &&
       playing.every((entry, i) => {
@@ -294,7 +380,8 @@ export class ObjectGraph {
         return (
           before?.sequence === entry.sequence &&
           before.start === entry.start &&
-          before.weight === entry.weight
+          before.weight === entry.weight &&
+          before.fade === entry.fade
         );
       });
     if (same) return;
