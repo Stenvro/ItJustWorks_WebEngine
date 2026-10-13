@@ -10,6 +10,9 @@ export const INI_DEFAULTS = {
   Audio: {
     fASFadeInTime: 3,
     fASFadeOutTime: 8,
+    fCollisionSoundHeavyThreshold: 160,
+    fMinSoundVel: 60,
+    iCollisionSoundTimeDelta: 150,
     fMusicDuckingSeconds: 1,
     fMusicFinaleCrossFadeTimeIn: 3,
     fMusicFinaleCrossFadeTimeOut: 6,
@@ -20,7 +23,12 @@ export const INI_DEFAULTS = {
     fRegionSoundPlacementRandomOffset: 650,
     fRegionSoundPlacementZOffset: 256,
     fReverbTransitionTime: 0.5,
+    fWaterAudioFadeInSeconds: 3,
+    fWaterAudioFadeOutSeconds: 5,
     uRegionSoundsAllowedPerUpdate: 1,
+    uWaterAudioAmbientAttenuation: 2200,
+    uWaterAudioAxisSamplePoints: 8,
+    uWaterAudioSamplePointsToUse: 8,
   },
   Camera: {
     f1st3rdSwitchDelay: 0.25,

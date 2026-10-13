@@ -336,7 +336,7 @@ behind the landscape's LOD with the same angular size (`src/shell/sky-objects.ts
 
 ## Water
 
-**WATR:** ANAM opacity (0–100), FNAM flags (`0x1` causes damage, `0x8` flow map, `0x10` blend
+**WATR:** SNAM open sound (the water's ambient loop: 26 vanilla types), ANAM opacity (0–100), FNAM flags (`0x1` causes damage, `0x8` flow map, `0x10` blend
 normals), NAM2/NAM3/NAM4 the three noise layers' normal maps (SSE; older files use three NNAM;
 vanilla names `Data\Textures\Water\DefaultWater.dds`: the path is relative to Data), INAM
 imagespace modifier, DNAM 228 bytes (232 in SSE with the flow map scale). DNAM as 4-byte
@@ -547,6 +547,19 @@ start 0, **no final inversion**) of the lower-case MNAM, e.g. "stairsstone" → 
 surfaces of a material with the stairs flag the character controller climbs whole steps (the
 vanilla stair meshes have risers of 16 and 24 units).
 
+## Impacts
+
+**IPDS** (impact data set, 313; `src/world/impact-records.ts`): PNAM entries of 8 bytes,
+a material (MATT) and the impact (IPCT) for hitting it. Named by MATT HNAM (50 of 80
+materials; physics impacts) and by weapons and projectiles (TODO(M11)).
+**IPCT** (impact, 663): DATA (24 bytes) f32 effect duration, u32 orientation (0 surface
+normal, 1 projectile vector, 2 projectile reflection), f32 angle threshold (degrees), f32
+placement radius, u32 sound level (0 loud, 1 normal, 2 silent, 3 very loud), u32 flags (0x1 no
+decal data); DODT decal data, DNAM / ENAM texture sets, SNAM sound (the light impact's), NAM1
+sound 2 (the heavy impact's), NAM2 hazard, MODL effect model. PHYGenericMetalLightImpactSet
+(MaterialMetalLight) gives PHYGenericMetalSmallImpact for stone: PHYGenericMetalLightLSD /
+PHYGenericMetalLightHSD.
+
 ## Movement types
 
 MOVT (`src/world/movement.ts`): EDID, MNAM name (what the behavior graph asks for:
@@ -649,7 +662,9 @@ versions are merged use by use in load order. Audio: MDSC the music category
 (AudioCategoryMUS), DFMS default music (MUSExploreTestb), BTMS combat music (MUSCombat), DTMS
 death, SCMS success, LUMS level up (both MUSSpecialSuccess), DCMS dungeon cleared, SSSC
 (`_NONE`), DDSC / NDSC / SFDC / PDMC / PIMC / PDLC / SMSC / TSSC categories, DOP2 / DOP3 /
-POPM / P3OM / IOPM output models, RVBT the default reverb.
+POPM / P3OM / IOPM output models, RVBT the default reverb, UWLS the loop under water, DLMT the
+landscape's material; PUSG / PDSG (and per item kind) the sounds of picking up and putting
+down (TODO(M9)).
 
 ## Border regions
 
@@ -676,7 +691,10 @@ fASFadeOutTime 8, fRegionLoopFadeInTime 6, fRegionLoopFadeOutTime 8,
 fRegionRandomSoundPlacementBase 100, fRegionSoundPlacementRandomOffset 650,
 fRegionSoundPlacementZOffset 256, uRegionSoundsAllowedPerUpdate 1, fMusicDuckingSeconds 6 and
 fMusicUnDuckingSeconds 8 (Skyrim_Default.ini; 1 and 4 compiled in),
-fMusicFinaleCrossFadeTimeIn 3, fMusicFinaleCrossFadeTimeOut 6;
+fMusicFinaleCrossFadeTimeIn 3, fMusicFinaleCrossFadeTimeOut 6, fMinSoundVel 60,
+fCollisionSoundHeavyThreshold 160, iCollisionSoundTimeDelta 150, fWaterAudioFadeInSeconds 3,
+fWaterAudioFadeOutSeconds 5, uWaterAudioAmbientAttenuation 2200, uWaterAudioAxisSamplePoints 8,
+uWaterAudioSamplePointsToUse 8 (the compiled defaults as Step's INI guide lists them);
 `[Display]` fDefaultWorldFOV 80, fNearDistance 15; `[HAVOK]` fInAirFallingCharGravityMult 1.35,
 fUnsupportedGravMult 4, fMaxTime 0.0167; `[Interface]` fActivatePickLength 180,
 fActivatePickRadius 16.

@@ -74,6 +74,7 @@ const data: CellData = {
   primitives: [],
   emitters: [],
   acousticAreas: [],
+  waterAreas: [],
   references,
   skipped: [],
   entrance: [0, 0, 0],

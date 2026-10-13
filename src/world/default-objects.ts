@@ -20,6 +20,10 @@ export const DefaultObjectUse = {
   dungeonClearedMusic: 'DCMS',
   /** SNCT music plays in. */
   musicCategory: 'MDSC',
+  /** MATT of the landscape (where a land texture names none). */
+  landMaterial: 'DLMT',
+  /** SNDR looping while the camera is under water. */
+  underwaterLoop: 'UWLS',
 } as const;
 
 /** Entries of DOBJ DNAM: u32 use code (four characters), form id. */

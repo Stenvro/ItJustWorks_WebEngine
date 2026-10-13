@@ -19,6 +19,8 @@ import {
 } from '../src/world/sound-records.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { DefaultObjects, DefaultObjectUse } from '../src/world/default-objects.ts';
+import { parseImpact, parseImpactDataSet } from '../src/world/impact-records.ts';
+import { parseMaterialType } from '../src/world/material-type.ts';
 import { parseWorldspace } from '../src/world/worldspace.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
@@ -197,5 +199,25 @@ describe.skipIf(!hasGamedata())('sound records in the local game data', () => {
     expect(await music('WhiterunWorld')).toBe('MUSTownTest');
     const breezehome = await loadCellData(db, 0x000165a8);
     expect((await db.require(breezehome.cell.musicType ?? 0)).editorId).toBe('MUSTownTest');
+  });
+  it('reads the impacts of materials: light and heavy sounds per material hit', async () => {
+    const metal = parseMaterialType(await byEditorId('MATT', 'MaterialMetalLight'));
+    const set = parseImpactDataSet(await db.require(metal.impactDataSet ?? 0));
+    expect(set.editorId).toBe('PHYGenericMetalLightImpactSet');
+    const stone = parseMaterialType(await byEditorId('MATT', 'MaterialStone'));
+    const impact = parseImpact(await db.require(set.impacts.get(stone.formId) ?? 0));
+    expect(impact.editorId).toBe('PHYGenericMetalSmallImpact');
+    expect((await db.require(impact.sound ?? 0)).editorId).toBe('PHYGenericMetalLightLSD');
+    expect((await db.require(impact.heavySound ?? 0)).editorId).toBe('PHYGenericMetalLightHSD');
+    expect(impact.duration).toBeCloseTo(0.25);
+    expect(impact.angleThreshold).toBe(15);
+    // Data-wide: every impact data set names impacts, every impact a sound or none.
+    let sets = 0;
+    for (const formId of db.formIdsOfType('IPDS')) {
+      const data = parseImpactDataSet(await db.require(formId));
+      if (data.impacts.size > 0) sets++;
+      for (const ipct of data.impacts.values()) expect((await db.require(ipct)).type).toBe('IPCT');
+    }
+    expect(sets).toBeGreaterThan(300);
   });
 });
