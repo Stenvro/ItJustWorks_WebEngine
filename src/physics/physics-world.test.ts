@@ -171,4 +171,42 @@ describe('the character controller', () => {
     character.free();
     physics.free();
   });
+
+  it('steps off the stairs only onto ground actors walk', () => {
+    const climb = (
+      walkable: ((x: number, y: number, z: number) => boolean) | undefined,
+    ): number => {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      // A floor and a raised floor piece 20 high, of a plain material.
+      physics.addObject(
+        collision(
+          body(box([-200, -300, -20], [200, 0, 0])),
+          body(box([-200, 0, 0], [200, 300, 20])),
+        ),
+        IDENTITY,
+        { reference: 1, kind: 'object' },
+      );
+      physics.step(1 / 60);
+      const character = new CharacterBody(
+        physics,
+        { radius: 14.42, height: 131.84 },
+        settings(new Set([STAIRS])),
+        [0, -100, 0],
+        { reference: 0x14, kind: 'actor' },
+      );
+      character.walkable = walkable;
+      for (let i = 0; i < 60; i++) {
+        character.velocity = [0, 300];
+        character.step(1 / 60);
+        physics.step(1 / 60);
+      }
+      const z = character.feet[2];
+      character.free();
+      physics.free();
+      return z;
+    };
+    expect(climb(undefined)).toBeLessThan(5);
+    expect(climb(() => false)).toBeLessThan(5);
+    expect(climb(() => true)).toBeGreaterThan(19);
+  });
 });

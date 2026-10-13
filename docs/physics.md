@@ -40,14 +40,35 @@ are climbed: the treads of the 330 vanilla stair collision meshes rise mostly 24
 also 25–28 (Castle Volkihar's courtyard stairs: 24.4) and up to 32. The steepest walkable slope is kept in
 hkpCharacterProxy::maxSlopeCosine without an INI setting or GMST: 60° here, TODO(M13):
 calibrate both against the game. A step is climbed when the controller's own movement on a
-staircase gets less than 60 % of the way: the shape rises by up to the stair height (as far as
-there is room), moves on, and comes down onto the step if that is walkable ground higher than
-where it stood (`CharacterBody` step-up: shape casts that ignore what the shape already
-touches). Rapier's own autostep stopped at random treads of the Volkihar courtyard's stairs
-(24 units, like those climbed before them) whatever its minimum step width, and climbed at
-about 40 % of walking speed (its controller moves along the edge's slope at cos² of its angle);
-stairs are now climbed at about walking speed (the courtyard's 244-unit stairs in 0.8 s).
-TODO(M13): compare with how the engine uses the stairs material.
+staircase gets less than 60 % of the way it was to go, measured along that way (sliding along a
+riser walked into at an angle is no way up): the shape rises by up to the stair height (as far
+as there is room), moves on — the way it was to go, else along what blocks it (a wall beside
+the stairs) — and comes down onto the step if that is walkable ground higher than where it
+stood (`CharacterBody` step-up: shape casts that ignore what the shape already touches; a
+steep wall touching the shape's side as it comes down is stepped away from first, it is met
+before the step). Rapier's own autostep stopped at random treads of the Volkihar courtyard's
+stairs (24 units, like those climbed before them) whatever its minimum step width, and climbed
+at about 40 % of walking speed (its controller moves along the edge's slope at cos² of its
+angle); stairs are now climbed at about walking speed (the courtyard's 244-unit stairs in
+0.8 s). TODO(M13): compare with how the engine uses the stairs material.
+
+Off the stairs the same step is tried — the engine's controller has a TryStep (CommonLibSSE:
+`bhkCharacterController` flags kTryStep beside kOnStairs) — but only onto ground actors walk:
+the cells' navigation meshes (`NavmeshSurface`, within 24 units of the mesh). Rubble piles,
+cave rocks and raised floor pieces lie on the navmesh with bumps of 17–32 units; benches
+(30–32 high) and chests are left out of it, so the player walks over the one and not onto the
+other. How far the engine's own TryStep goes is not documented: TODO(M13).
+
+`node tools/stairs-audit.ts` walks the player up and down every staircase and ramp of the
+interiors as actors walk them: the slopes of the navigation meshes (see
+[esm.md](formats/esm.md#navigation-meshes)). Neighbouring navmesh triangles sloping the same way
+make a flight; where it meets flat navmesh at its foot and top are its landings. The player
+walks from a landing below to the one above and back, through the middles of the edges the
+flight's triangles share, steering as a player would. Of 14,367 walks over 6,767 flights, 854
+do not arrive (1,138 with steps on stairs only): closed doors, gates and portcullises, magic
+barriers, spider webs and cocoons to cut through, moving bridges and platforms (game states:
+TODO(M7), TODO(M8), TODO(M11)); walks that hug an obstacle beside the way (the audit steers
+through the edges' middles, a player walks around it); and a few steps higher than 32 units.
 
 - **On the ground** it only moves along the ground; snapping to the ground (as far as the
   shape's radius) keeps it on slopes and down steps. Pressing down every step as well makes

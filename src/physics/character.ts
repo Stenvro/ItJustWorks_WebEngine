@@ -68,10 +68,33 @@ const SKIN = 0.01;
 const RECOVERY_ROUNDS = 4;
 /**
  * On stairs, a step is climbed when the controller's own movement got less than this share of
- * the way it was to go.
+ * the way it was to go (measured along that way).
  */
 const STEP_BLOCKED = 0.6;
 const NO_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
+/** A step-up slides along what blocks it when that leaves this share of the way. */
+const SLIDE_MIN = 0.2;
+/** Coming down onto a step, away from a wall at the shape's side by this much (Havok units). */
+const STEP_AWAY = 0.03;
+const STEP_AWAY_TRIES = 3;
+
+/** The way along a surface (its normal) that is left of a horizontal direction, if enough. */
+function along(
+  direction: RAPIER.Vector,
+  normal: RAPIER.Vector,
+): { direction: RAPIER.Vector; share: number } | undefined {
+  const n = Math.hypot(normal.x, normal.y);
+  if (n < 1e-6) return undefined;
+  const nx = normal.x / n;
+  const ny = normal.y / n;
+  const into = direction.x * nx + direction.y * ny;
+  const sx = direction.x - into * nx;
+  const sy = direction.y - into * ny;
+  const share = Math.hypot(sx, sy);
+  return share > SLIDE_MIN
+    ? { direction: { x: sx / share, y: sy / share, z: 0 }, share }
+    : undefined;
+}
 
 const toHavok = (v: number): number => v / HAVOK_SCALE;
 
@@ -99,6 +122,12 @@ export class CharacterBody {
    * diving and rising).
    */
   swimming = false;
+  /**
+   * Whether actors walk at a point (game units: the feet), for steps off the stairs: the
+   * navigation meshes' surface. Undefined: steps are climbed on stairs only.
+   * TODO(M13): how far the engine's TryStep goes off the stairs is not documented.
+   */
+  walkable: ((x: number, y: number, z: number) => boolean) | undefined;
   /** Standing on something too steep to walk on (sliding off). */
   #unsupported = false;
   /** Something below the shape touched it in the last step (ground, a slope, a step). */
@@ -247,8 +276,10 @@ export class CharacterBody {
 
   /**
    * Climbs a step of a staircase that the controller's own movement stopped at: the shape
-   * rises by up to the stair height (as far as there is room above it), moves on, and comes
-   * down onto the step, if that is walkable ground higher than where it stood. Returns the
+   * rises by up to the stair height (as far as there is room above it), moves on (the way it
+   * was to go, else along what blocks it: a wall beside the stairs), and comes down onto the
+   * step, if that is walkable ground higher than where it stood. Coming down, a wall the shape
+   * touches at its side is stepped away from first (it is met before the step). Returns the
    * movement (Havok units), or undefined if no step is climbed. Rapier's own autostep, tried
    * first, stopped on the Volkihar courtyard's stairs at random treads (24 units high, like the
    * ones climbed before them) whatever its minimum step width.
@@ -281,15 +312,34 @@ export class CharacterBody {
     const rise = toHavok(this.settings.stairHeight);
     const up = cast(at, { x: 0, y: 0, z: 1 }, rise)?.time_of_impact ?? rise;
     if (up <= SKIN) return undefined;
-    const direction = { x: desired.x / length, y: desired.y / length, z: 0 };
     const raised = { x: at.x, y: at.y, z: at.z + up };
-    const on = cast(raised, direction, length)?.time_of_impact ?? length;
+    let direction = { x: desired.x / length, y: desired.y / length, z: 0 };
+    const ahead = cast(raised, direction, length);
+    let on = ahead?.time_of_impact ?? length;
+    const slide = ahead && on < length / 2 ? along(direction, ahead.normal1) : undefined;
+    if (slide) {
+      const room = length * slide.share;
+      const slid = cast(raised, slide.direction, room)?.time_of_impact ?? room;
+      if (slid > on) {
+        direction = slide.direction;
+        on = slid;
+      }
+    }
     if (on <= SKIN) return undefined;
     const over = { x: raised.x + direction.x * on, y: raised.y + direction.y * on, z: raised.z };
-    const down = cast(over, { x: 0, y: 0, z: -1 }, up + toHavok(this.shape.radius));
+    const walkable = Math.cos((this.settings.maxSlope * Math.PI) / 180);
+    const reach = up + toHavok(this.shape.radius);
+    let down = cast(over, { x: 0, y: 0, z: -1 }, reach);
+    for (let away = 0; away < STEP_AWAY_TRIES && down && down.normal1.z < walkable; away++) {
+      // A steep wall met first, touching the shape's side: a little away from it, and again.
+      const n = Math.hypot(down.normal1.x, down.normal1.y);
+      if (n < 1e-6 || down.time_of_impact > SKIN * 2) break;
+      over.x += (down.normal1.x / n) * STEP_AWAY;
+      over.y += (down.normal1.y / n) * STEP_AWAY;
+      down = cast(over, { x: 0, y: 0, z: -1 }, reach);
+    }
     // Nothing below: a drop, not a step. Too steep: not ground.
-    if (!down) return undefined;
-    if (down.normal1.z < Math.cos((this.settings.maxSlope * Math.PI) / 180)) return undefined;
+    if (!down || down.normal1.z < walkable) return undefined;
     const landed = over.z - down.time_of_impact;
     if (landed <= at.z + SKIN) return undefined;
     return { x: over.x - at.x, y: over.y - at.y, z: landed - at.z };
@@ -354,16 +404,30 @@ export class CharacterBody {
     let moved: RAPIER.Vector = this.#controller.computedMovement();
     const rising = this.verticalSpeed > 0;
     this.#grounded = !this.swimming && !rising && this.#controller.computedGrounded();
-    const wanted = Math.hypot(desired.x, desired.y);
+    // How far it got the way it was to go (sliding along a riser is no way up the stairs).
+    const wanted = desired.x * desired.x + desired.y * desired.y;
+    const made = moved.x * desired.x + moved.y * desired.y;
+    // Off the stairs a step is tried too (the engine's controller has a TryStep), but only onto
+    // ground actors walk (`walkable`): rubble, rocks, raised floor pieces, not benches.
+    const walkable = this.walkable;
     if (
-      stairs &&
+      (stairs || walkable) &&
       wasGrounded &&
       !rising &&
       !this.swimming &&
-      Math.hypot(moved.x, moved.y) < wanted * STEP_BLOCKED
+      made < wanted * STEP_BLOCKED
     ) {
       const step = this.#stepUp(desired, predicate);
-      if (step) {
+      const at = this.#body.translation();
+      if (
+        step &&
+        (stairs ||
+          walkable?.(
+            (at.x + step.x) * HAVOK_SCALE,
+            (at.y + step.y) * HAVOK_SCALE,
+            (at.z + step.z) * HAVOK_SCALE - this.shape.height / 2,
+          ))
+      ) {
         moved = step;
         this.#grounded = true;
       }

@@ -600,6 +600,22 @@ the speeds of its quadrant.
   L_COLLISIONBOX. RoomMarker, PortalMarker and PlaneMarker primitives are rooms, portals and
   occlusion planes (no collision); activators' primitives are triggers (TODO(M8)).
 
+## Navigation meshes
+
+**NAVM** (`src/world/navmesh.ts`): where actors walk, a child record of a cell (19,201 in the
+vanilla load order). Its **NVNM** field (UESP "NVNM Field"; OpenMW's ESM4 loader): version u32
+(12); a u32 not documented (a checksum or flags); the worldspace (form id, 0 for interiors), then
+for Tamriel its grid (y i16, x i16), else the cell (form id); vertices (count u32, then x y z f32
+each, in world coordinates); triangles (count u32, then 16 bytes each: three vertex indices u16,
+the triangle across each edge 0–1, 1–2, 2–0 as i16, −1 for none, flags u16, cover u16); links
+into other meshes (count u32, then type u32, NAVM form id, triangle u16); door triangles (count
+u32, then triangle u16, type u32, door reference form id); cover triangles (count u32, then u16
+each); the search grid: divisor u32, cell size x y f32, bounds min and max (x y z f32 each), then
+divisor² cells, each a count u32 and its triangles (u16). Every vanilla NVNM is read to its last
+byte (`node tools/navmesh-info.ts --verify`). Triangle flags (xEdit): `0x1`–`0x4` edge links,
+`0x8` deleted, `0x10` no large creatures, `0x20` overlapping, `0x40` preferred, `0x200` water,
+`0x400` door, `0x800` found.
+
 ## Sounds
 
 Records behind every sound (`src/world/sound-records.ts`; files: [audio.md](audio.md)):

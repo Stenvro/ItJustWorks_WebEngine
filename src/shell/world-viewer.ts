@@ -49,6 +49,7 @@ import {
 } from '../world/cell-loader.ts';
 import { raycastParts } from '../render/raycast.ts';
 import { enabledReferences, findToggles, gameStartSelection } from '../world/cell-upgrades.ts';
+import { cellNavmeshes, NAVMESH_TOLERANCE, NavmeshSurface } from '../world/navmesh.ts';
 import { CELL_SIZE, LAND_GRID, landHeightAt, landTexture, type LandData } from '../world/land.ts';
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
 import { cellKey, WorldFlag, Worldspace, type Arrival } from '../world/worldspace.ts';
@@ -121,6 +122,8 @@ interface LoadedCell {
   /** Its enabled looping sounds and acoustic spaces. */
   emitters: readonly CellSoundEmitter[];
   acousticAreas: readonly CellAcousticArea[];
+  /** Where actors walk (its navigation meshes): the player steps onto it off the stairs too. */
+  navmesh: NavmeshSurface | undefined;
   /**
    * Whether the worldspace has a cell record here. Positions without one (around a city
    * worldspace's few cells) stay empty and keep showing the distant LOD, as in the game.
@@ -468,6 +471,10 @@ export class WorldViewer {
       feet,
       comeIn?.heading ?? 0,
     );
+    player.character.walkable = (px, py, pz) =>
+      this.#cells
+        .get(cellKey(Math.floor(px / CELL_SIZE), Math.floor(py / CELL_SIZE)))
+        ?.navmesh?.heightNear(px, py, pz, NAVMESH_TOLERANCE) !== undefined;
     const play = new PlaySession({
       physics,
       player,
@@ -685,6 +692,7 @@ export class WorldViewer {
         placed: [],
         emitters: [],
         acousticAreas: [],
+        navmesh: undefined,
         exists: false,
         ready: false,
       };
@@ -773,6 +781,7 @@ export class WorldViewer {
     cell.objects = new Map(objects.map((object) => [object.reference, object]));
     cell.emitters = data.emitters.filter((emitter) => isEnabled(emitter.reference));
     cell.acousticAreas = data.acousticAreas.filter((area) => isEnabled(area.reference));
+    cell.navmesh = new NavmeshSurface(await cellNavmeshes(db, cellId));
     this.#refreshSounds();
     // Load doors: where they lead (for the activation prompt).
     await Promise.all(
