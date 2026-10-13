@@ -49,8 +49,39 @@ open sound as the player goes through.
 
 Interiors have one (cell XCAS); in exteriors placed acoustic spaces (ASPC references) take
 effect inside their box. The space in effect gives the reverb (REVB) and its ambience loop
-(SNDR, 2D); switching spaces stops the old loop the way it loops and starts the new one. The
+(SNDR, 2D); switching spaces fades the old loop out and the new one in (`[Audio]`
+fASFadeOutTime 8 s, fASFadeInTime 3 s). In interiors the space's region (RDAT) gives the
+region sounds (below); the Creation Kit offers that field for interiors only. The
 reverb is a convolver with an impulse response built from the I3DL2 parameters (decay, HF
 decay ratio at the HF reference, room and room HF level, reflections and reverb level and
 delay; `reverb.ts`): XAudio2's own algorithm is not documented, so this is an approximation
 (TODO(M13): compare with the game). Spaces without reverb (DefaultReverb, −100 dB) have none.
+
+## Ambience
+
+`ambience.ts`, updated every frame with the surroundings the viewers give
+(`SoundSystem.setAmbience`): the regions of the camera's cell (XCLR; indoors the acoustic
+space's region), the weather and the one being left during a change, the game hour, indoors
+or not, and the last lightning flash.
+
+- **Region sounds** (REGN RDAT type 7, RDSA): each entry names the weather classifications it
+  plays in (WTHR DATA flags pleasant, cloudy, rainy, snow; indoors all). Looping entries
+  (vanilla: all chance 1) play 2D while the region holds and their conditions hold, fading in
+  over `[Audio] fRegionLoopFadeInTime` (6 s) and out over fRegionLoopFadeOutTime (8 s). The
+  others (vanilla: chance 0.01–0.1) get their chance once a second, at most
+  uRegionSoundsAllowedPerUpdate (1) starting per check, placed in a random direction
+  fRegionRandomSoundPlacementBase (100) + up to fRegionSoundPlacementRandomOffset (650) units
+  away and fRegionSoundPlacementZOffset (256) up. The engine's audio thread runs every 33 ms
+  (uAudioThreadSleepTimeGameMode); chances that small cannot be per update, so the once-a-second
+  check is inferred (TODO(M13): compare with the game). A pine forest gives a wind bed,
+  cicadas in the morning and a bird call or gust every few seconds; a fort interior creaks.
+- **Weather sounds** (WTHR SNAM): looping ones (rain, wind) play 2D at the weather's share of
+  a change (the old weather's at the rest), so rain fades in as the clouds come. Thunder
+  (type 3) follows each lightning flash after 0.5–3 s (inferred: TODO(M13)); a weather's other
+  single sounds (gusts in a snowstorm, distant thunder in overcast rain, which has no
+  lightning) come at random with a 4 % chance a second (WTHR has no chance of its own; the
+  median of the region one-shots'; TODO(M13)).
+- **Conditions** (`sound-conditions.ts`) of ambient sounds use GetCurrentTime (308 uses),
+  GetIsCurrentWeather (96), IsInInterior (38), IsRaining and GetGlobalValue (one each: the
+  distant catapults of SkyrimOvercastWar while CWDistantCatapultsAMB is 1). Globals have their
+  starting value (FLTV) until scripts run: TODO(M8).

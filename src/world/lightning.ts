@@ -1,6 +1,6 @@
 // Lightning in thunderstorms (WTHR DATA thunder frequency, fade points and lightning colour):
-// when flashes come and how one looks over time. Platform-independent.
-// TODO(M6): the thunder sounds that follow each flash.
+// when flashes come and how one looks over time. The thunder that follows a flash is played by
+// src/audio/ambience.ts. Platform-independent.
 // Notes: docs/formats/esm.md ("Climate and weather").
 
 /**

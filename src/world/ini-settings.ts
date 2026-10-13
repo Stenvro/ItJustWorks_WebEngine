@@ -7,6 +7,21 @@
 import { iniValue, type Ini } from '../formats/ini/ini.ts';
 
 export const INI_DEFAULTS = {
+  Audio: {
+    fASFadeInTime: 3,
+    fASFadeOutTime: 8,
+    fMusicDuckingSeconds: 1,
+    fMusicFinaleCrossFadeTimeIn: 3,
+    fMusicFinaleCrossFadeTimeOut: 6,
+    fMusicUnDuckingSeconds: 4,
+    fRegionLoopFadeInTime: 6,
+    fRegionLoopFadeOutTime: 8,
+    fRegionRandomSoundPlacementBase: 100,
+    fRegionSoundPlacementRandomOffset: 650,
+    fRegionSoundPlacementZOffset: 256,
+    fReverbTransitionTime: 0.5,
+    uRegionSoundsAllowedPerUpdate: 1,
+  },
   Camera: {
     f1st3rdSwitchDelay: 0.25,
     fCameraCasterSize: 15,

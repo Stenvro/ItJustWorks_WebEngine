@@ -12,10 +12,15 @@ import type { GameHost } from './world-host.ts';
 
 /** Condition function indices (xEdit's table). */
 export const ConditionFunction = {
+  getCurrentTime: 18,
   getItemCount: 47,
   getStage: 58,
   getStageDone: 59,
+  isRaining: 62,
   getGlobalValue: 74,
+  getIsCurrentWeather: 149,
+  isSwimming: 185,
+  isInInterior: 300,
   getVmQuestVariable: 629,
 } as const;
 
@@ -126,6 +131,46 @@ export async function evaluateConditions(
                 'GetValue',
               ),
             );
+      holds =
+        [
+          value === comparand,
+          value !== comparand,
+          value > comparand,
+          value >= comparand,
+          value < comparand,
+          value <= comparand,
+        ][condition.operator] ?? false;
+    }
+    if (condition.or) {
+      group = (group ?? false) || holds;
+    } else {
+      result = result && (group === undefined ? holds : group || holds);
+      group = undefined;
+    }
+  }
+  return group === undefined ? result : result && group;
+}
+
+/**
+ * Evaluates conditions synchronously with a function that values them (undefined: not
+ * evaluated, the condition counts as true), grouped as the engine does (see
+ * evaluateConditions). `global` gives a global variable's value for comparisons with one.
+ */
+export function evaluateConditionsWith(
+  conditions: readonly Condition[],
+  valueOf: (condition: Condition) => number | undefined,
+  global: (formId: number) => number = () => 0,
+): boolean {
+  let result = true;
+  let group: boolean | undefined;
+  for (const condition of conditions) {
+    const value = valueOf(condition);
+    let holds = true;
+    if (value !== undefined) {
+      const comparand =
+        typeof condition.comparand === 'number'
+          ? condition.comparand
+          : global(condition.comparand.global);
       holds =
         [
           value === comparand,

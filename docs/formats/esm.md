@@ -267,7 +267,10 @@ moons (bits 0–5 days per phase, `0x40` Masser, `0x80` Secunda). Vanilla: 5:30�
 
 **REGN:** RDAT (type u32: 2 objects, 3 weather, 4 map, 5 land, 6 grass, 7 sound; override u8;
 priority u8; 2 unused) heads each tab's data; the weather tab is followed by RDWT (12-byte
-entries like WLST). A cell's regions are its XCLR form ids.
+entries like WLST). The sound tab is followed by RDMO (the region's music type, MUSC) and RDSA
+(12-byte entries: SNDR, u32 weather classifications it plays in — 0x1 pleasant, 0x2 cloudy,
+0x4 rainy, 0x8 snowy — and f32 chance: 1 for every looping sound, 0.01–0.1 for the others).
+A cell's regions are its XCLR form ids.
 
 **Which weather:** the highest-priority weather region of the camera's cell, else the
 climate's list (Tamriel's SkyrimClimate has a single weather: its cells all have weather
@@ -318,7 +321,8 @@ often: read as a mean of value/255 × 30 seconds between flashes, at random (exp
 waits). A flash (a strike, a re-strike after 0.28 s, 0.6 s in all) adds the lightning colour
 to the sky colours and half of it to ambient and fog; thunder fades in and out with weather
 changes like precipitation (Thunder Begin Fade In, End Fade Out). The interval's scale is
-inferred: TODO(M13) compare with the original; thunder sounds: TODO(M6).
+inferred: TODO(M13) compare with the original. Thunder sounds follow the flashes
+([audio.md](../audio.md#ambience)).
 
 **Sky statics and aurora:** TNAM (87 weathers) lists STATs drawn in the sky — mostly the
 distant cloud banks `skyinv_clouddistant*.nif` (effect meshes about 11600 units across with
@@ -410,7 +414,8 @@ sky scale does (not applied).
 
 **ADDN** (92 records, `parseAddonNode` in `src/world/cell-records.ts`): MODL (the attached
 model, almost always a master particle system in `meshes\mps\`), DATA i32 (the node index,
-unique), DNAM u16 master particle system cap + u16 flags, SNAM (looping sound: TODO(M6)). A
+unique), DNAM u16 master particle system cap + u16 flags, SNAM (a looping sound; no vanilla
+add-on node has one, so playing it is mod support: TODO(M12)). A
 mesh's BSValueNode named `AddOnNode<index>` with that value gets the model attached there
 (candle flames 49, torch fire 46 and embers 7, fires 24/25, chimney smoke 56; see
 [nif.md](nif.md#particles)). The engine shares one master system among all nodes up to the

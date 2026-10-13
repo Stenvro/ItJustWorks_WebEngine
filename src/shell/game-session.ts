@@ -563,7 +563,7 @@ export class GameSession {
     this.#sounds ??= this.db.then(async (db) => {
       const loader = new AudioLoader(this.vfs);
       this.#audioLoader = loader;
-      const sounds = await SoundSystem.create(db, loader);
+      const sounds = await SoundSystem.create(db, loader, new IniSettings(this.vfs.defaultIni));
       sounds.onWarning = (message) => {
         this.#terminal.log('audio', message, 'warn');
       };

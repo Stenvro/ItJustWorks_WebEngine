@@ -1061,6 +1061,19 @@ export class ModelViewer {
       const delta = this.#lastClock === undefined ? 0 : Math.min(0.25, now - this.#lastClock);
       session.gameHour = (session.gameHour + (delta * TIMESCALE) / 3600) % 24;
       session.updateEmittance(session.gameHour);
+      // Indoors the sound system plays the region of the cell's acoustic space.
+      session.soundSystem?.setAmbience(
+        this.#cell && {
+          regions: [],
+          weather: undefined,
+          previousWeather: undefined,
+          transition: 1,
+          hour: session.gameHour,
+          interior: true,
+          swimming: this.#play?.player.swimming ?? false,
+          flash: undefined,
+        },
+      );
     }
     this.#lastClock = now;
     return now;

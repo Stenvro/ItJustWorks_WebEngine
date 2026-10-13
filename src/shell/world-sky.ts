@@ -88,6 +88,8 @@ export class WorldSky {
   #lastFrame: number | undefined;
   #state: SkyState | undefined;
   #cell: string | undefined;
+  /** The regions of the camera's cell (XCLR). */
+  #regionIds: readonly number[] = [];
   readonly #precipitationRenderer: PrecipitationRenderer;
   readonly #objects: SkyObjects;
   readonly #textures: TextureCache;
@@ -96,6 +98,8 @@ export class WorldSky {
   #falling: PrecipitationFrame[] = [];
   /** Lightning: when the next flash comes and when the last one began (seconds). */
   #nextFlash: number | undefined;
+  /** The mean interval the next flash was drawn with. */
+  #flashInterval: number | undefined;
   #flashStart = -Infinity;
 
   private constructor(
@@ -213,6 +217,26 @@ export class WorldSky {
     return this.#weather;
   }
 
+  /** The weather being left during a change of weather (undefined once it is done). */
+  get previousWeather(): WeatherRecord | undefined {
+    return this.#previous;
+  }
+
+  /** How far a change of weather is (0–1). */
+  get transition(): number {
+    return this.#transition;
+  }
+
+  /** When the last lightning flash began (sky seconds; -Infinity before the first). */
+  get flashStart(): number {
+    return this.#flashStart;
+  }
+
+  /** The regions of the camera's cell (their sounds play: src/audio/ambience.ts). */
+  get regions(): readonly number[] {
+    return this.#regionIds;
+  }
+
   /** The weathers that can occur in the current cell. */
   get weatherList(): readonly WeatherChance[] {
     return this.#list;
@@ -229,7 +253,10 @@ export class WorldSky {
     const key = `${String(x)},${String(y)}`;
     if (key === this.#cell) return;
     this.#cell = key;
-    const regions = await Promise.all((await world.regions(x, y)).map((id) => this.#region(id)));
+    const ids = await world.regions(x, y);
+    if (key !== this.#cell) return;
+    this.#regionIds = ids;
+    const regions = await Promise.all(ids.map((id) => this.#region(id)));
     const list = cellWeathers(regions, this.#climate);
     const changed =
       list.length !== this.#list.length ||
@@ -410,7 +437,12 @@ export class WorldSky {
       return 0;
     }
     // Exponentially distributed waits: flashes come at random, `interval` apart on average.
+    // They have no memory, so a storm of another frequency simply draws its next flash anew.
     const wait = (): number => -Math.log(1 - Math.random()) * interval;
+    if (interval !== this.#flashInterval) {
+      this.#flashInterval = interval;
+      this.#nextFlash = undefined;
+    }
     this.#nextFlash ??= this.#seconds + wait();
     if (this.#seconds >= this.#nextFlash) {
       this.#flashStart = this.#seconds;

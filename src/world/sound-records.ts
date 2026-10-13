@@ -366,3 +366,52 @@ export function parseReverb(record: GameRecord): Reverb | undefined {
     density: view.getUint8(12),
   };
 }
+
+/** REGN RDSA: a sound of a region, for the weathers its flags name. */
+export interface RegionSound {
+  /** SNDR. */
+  readonly sound: number;
+  /** Weather classifications it plays in: 0x1 pleasant, 0x2 cloudy, 0x4 rainy, 0x8 snowy. */
+  readonly flags: number;
+  /** Looping sounds: 1. Others: the chance of starting at each check. */
+  readonly chance: number;
+}
+
+/** The sounds and music of a region (its RDAT type 7 entries: RDSA, RDMO). */
+export interface RegionAudio {
+  readonly sounds: readonly RegionSound[];
+  /** RDMO: the region's music type (MUSC). */
+  readonly music: number | undefined;
+}
+
+/** RDAT type of a region's sound data. */
+const REGION_SOUND = 7;
+
+export function parseRegionAudio(record: GameRecord): RegionAudio {
+  const sounds: RegionSound[] = [];
+  let music: number | undefined;
+  let type = -1;
+  for (const field of record.fields.list) {
+    if (field.type === 'RDAT' && field.data.byteLength >= 4) {
+      type = viewOf(field.data).getUint32(0, true);
+      continue;
+    }
+    if (type !== REGION_SOUND) continue;
+    if (field.type === 'RDMO' && field.data.byteLength >= 4) {
+      const formId = record.formIdAt(field.data, 0);
+      if (formId !== 0) music = formId;
+    } else if (field.type === 'RDSA') {
+      const view = viewOf(field.data);
+      for (let offset = 0; offset + 12 <= field.data.byteLength; offset += 12) {
+        const sound = record.formIdAt(field.data, offset);
+        if (sound === 0) continue;
+        sounds.push({
+          sound,
+          flags: view.getUint32(offset + 4, true),
+          chance: view.getFloat32(offset + 8, true),
+        });
+      }
+    }
+  }
+  return { sounds, music };
+}
