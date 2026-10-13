@@ -36,6 +36,7 @@
     "vitest": "^5.0.3"
   },
   "dependencies": {
-    "@dimforge/rapier3d-compat": "^0.21.0"
+    "@dimforge/rapier3d-compat": "^0.21.0",
+    "@ffmpeg/core": "0.12.10"
   }
 }

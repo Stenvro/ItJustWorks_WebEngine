@@ -1,0 +1,119 @@
+// Integration test: the sound and music records of the local game data. Skipped without game
+// data.
+
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { RecordDatabase } from '../src/world/record-db.ts';
+import {
+  MusicTypeFlag,
+  parseAcousticSpace,
+  parseMusicTrack,
+  parseMusicType,
+  parseReverb,
+  parseSoundCategory,
+  parseSoundDescriptor,
+  parseSoundOutputModel,
+  soundFileCandidates,
+  type SoundCategory,
+} from '../src/world/sound-records.ts';
+import { Vfs } from '../src/vfs/vfs.ts';
+import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
+
+describe.skipIf(!hasGamedata())('sound records in the local game data', () => {
+  let vfs: Vfs;
+  let db: RecordDatabase;
+  const byEditorId = async (type: string, editorId: string) => {
+    for (const formId of db.formIdsOfType(type)) {
+      const record = await db.get(formId);
+      if (record?.editorId === editorId) return record;
+    }
+    throw new Error(`${type} ${editorId} not found`);
+  };
+
+  beforeAll(async () => {
+    vfs = await Vfs.mount(openGameFolder());
+    db = await RecordDatabase.open(vfs);
+  }, 60_000);
+  afterAll(async () => {
+    await db.close();
+    await vfs.close();
+  });
+
+  it('finds the files of nearly every sound descriptor, as the engine does', async () => {
+    let files = 0;
+    let found = 0;
+    for (const formId of db.formIdsOfType('SNDR')) {
+      const record = await db.get(formId);
+      if (!record) continue;
+      for (const path of parseSoundDescriptor(record).files) {
+        files++;
+        if (soundFileCandidates(path).some((candidate) => vfs.has(candidate))) found++;
+      }
+    }
+    expect(files).toBeGreaterThan(6000);
+    // 50 vanilla names point at files that were never shipped.
+    expect(files - found).toBeLessThanOrEqual(50);
+  }, 60_000);
+
+  it('reads a looping descriptor with its category and output model', async () => {
+    const loop = parseSoundDescriptor(await byEditorId('SNDR', 'AMBDungeonDwemerFlameLPSD'));
+    expect(loop.looping).toBe('loop');
+    expect(loop.files.every((path) => path.startsWith('sound\\fx\\'))).toBe(true);
+    expect(loop.category).toBeDefined();
+    const model = parseSoundOutputModel(await byEditorId('SOPM', 'SOMMono01400_verb'));
+    expect(model.uses3d).toBe(true);
+    expect(model.reverbSend).toBeCloseTo(1);
+    expect(model.attenuation).toEqual({
+      minDistance: 150,
+      maxDistance: 1400,
+      curve: [100, 50, 20, 5, 0],
+    });
+  });
+
+  it('builds the category tree under the master category', async () => {
+    const categories = new Map<number, SoundCategory>();
+    for (const formId of db.formIdsOfType('SNCT')) {
+      const record = await db.get(formId);
+      if (record) categories.set(formId, parseSoundCategory(record));
+    }
+    const master = [...categories.values()].find((c) => c.editorId === '_AudioCategoryMaster');
+    expect(master?.parent).toBeUndefined();
+    for (const category of categories.values()) {
+      // Every category leads up to the master.
+      let at: SoundCategory | undefined = category;
+      for (let guard = 0; at?.parent !== undefined && guard < 16; guard++) {
+        at = categories.get(at.parent);
+      }
+      expect(at?.editorId, category.editorId).toBe('_AudioCategoryMaster');
+    }
+    const music = [...categories.values()].find((c) => c.editorId === 'AudioCategoryMUS');
+    expect(music?.volume).toBeCloseTo(0.7, 2);
+    expect(music?.onMenu).toBe(true);
+  });
+
+  it('reads music types and tracks, files under music\\ with cue points and finales', async () => {
+    const reward = parseMusicType(await byEditorId('MUSC', 'MUSDungeonCleared'));
+    expect(reward.flags & MusicTypeFlag.playsOneSelection).not.toBe(0);
+    expect(reward.tracks).toHaveLength(4);
+    const combat = parseMusicTrack(await byEditorId('MUST', 'MUSCombat06'));
+    expect(combat.type).toBe('single');
+    expect(combat.file).toBe('music\\combat\\mus_combat_06.wav');
+    expect(soundFileCandidates(combat.file ?? '').some((path) => vfs.has(path))).toBe(true);
+    expect(combat.finale).toBe('music\\combat\\mus_combat_06_finale.wav');
+    expect(combat.cuePoints[0]).toBeCloseTo(8.23, 2);
+    const chant = parseMusicTrack(await byEditorId('MUST', 'MUSSovngardeChantLP'));
+    expect(chant.loop?.end).toBeCloseTo(209.24, 2);
+    const spacer = parseMusicTrack(await byEditorId('MUST', '_MUSExploreSILENT15TypeSpacerNIGHT'));
+    expect(spacer.type).toBe('silent');
+    expect(spacer.duration).toBe(15);
+    expect(spacer.conditions.length).toBeGreaterThan(0);
+  });
+
+  it('reads acoustic spaces and their reverb', async () => {
+    const space = parseAcousticSpace(await byEditorId('ASPC', 'IntDungeonBlackreachAcousticSpace'));
+    expect(space.ambient).toBeDefined();
+    const reverb = parseReverb(await db.require(space.reverb ?? 0));
+    expect(reverb?.editorId).toBe('IntRoomStoneLargeReverb');
+    expect(reverb?.decayTime).toBe(2877);
+    expect(reverb?.room).toBe(-3);
+  });
+});

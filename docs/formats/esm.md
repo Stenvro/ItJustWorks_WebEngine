@@ -571,6 +571,61 @@ the speeds of its quadrant.
   L_COLLISIONBOX. RoomMarker, PortalMarker and PlaneMarker primitives are rooms, portals and
   occlusion planes (no collision); activators' primitives are triggers (TODO(M8)).
 
+## Sounds
+
+Records behind every sound (`src/world/sound-records.ts`; files: [audio.md](audio.md)):
+
+- **SNDR** (sound descriptor, 3186): CNAM type (always 0x1EEF540A, standard), GNAM category
+  (SNCT), SNAM the descriptor it replaces when its conditions hold, **ANAM** file names (one per
+  file; one is picked at random), ONAM output model (SOPM), CTDA conditions, **LNAM** (u8, u8
+  looping: 0 none, 8 loop, 16 envelope fast, 32 envelope slow; u8, u8 rumble), **BNAM** (s8
+  frequency shift %, s8 frequency variance %, u8 priority, u8 dB variance, u16 static
+  attenuation in dB × 100). Older records (63) have FNAM flags instead (bit 4: loop). Looping
+  plays the file's loop region (`smpl`, else the whole file) until stopped; with an envelope
+  the part before the loop is the attack and the part after it the release: stopping an
+  envelope-fast sound jumps to the release, an envelope-slow one finishes its pass through the
+  loop and plays on into the release (Creation Kit wiki).
+- **File names** are stored as the editor saw them: `Data\Sound\FX\...\x.wav` (4917),
+  `fx\...` (1138), `\Data\...`, even `c:\...\data\sound\...`: the path is what follows
+  `data\`, under `sound\` (`music\` for music tracks). The engine also takes the other
+  extension: music tracks name `.wav`, the files are `.xwm`. 6322 of the 6372 vanilla names
+  resolve; 50 point at files never shipped (they play nothing).
+- **SOPM** (output model): NAM1 (u8 flags: 0x1 attenuates with distance, 0x2 rumble; u8, u8; u8
+  reverb send %), MNAM (u32: 0 3D with HRTF, 1 fixed speaker levels), ONAM (speaker levels
+  0–100 for mono, stereo-left and stereo-right input: L R C LFE RL RR BL BR), **ANAM** (4
+  unused bytes, f32 min distance, f32 max distance, 5 × u8 curve, 3 bytes). The curve is the
+  volume in percent at five points from the minimum to the maximum distance (`100,50,20,5,0`
+  for most sounds, `0,50,100,50,0` for distant layers that are quiet close by); beyond the
+  maximum a sound is inaudible (CommonLibSSE: DoGetAudibility). How the engine spaces the five
+  points is not documented: here evenly, interpolated linearly (TODO(M13): compare with the
+  game).
+- **SNCT** (category): FULL, FNAM (0x1 mute when submerged, 0x2 has a settings slider), PNAM
+  parent, VNAM volume (u16 / 65535), UNAM the slider's default. Vanilla's tree:
+  `_AudioCategoryMaster` (0.9) → PausedDuringMenuLoad → SFX (0.9) → SFXFadeDuringDialogue →
+  FST, FSTnpc (0.7), AMB, NPCKillMove, PausedDuringMenuFade → MAG, AMBr, MuteSubmerged;
+  master → PausedDuringMenu → VOCGeneral (0.9) → VOC, NonVOC; master → MUS (0.7); SFX → UI.
+- **SOUN** (sound marker): SDSC, the descriptor a placed marker plays.
+- **ASPC** (acoustic space): object bounds, SNAM ambient loop (SNDR), RDAT region whose sounds
+  play (interiors), BNAM reverb (REVB). Cells name theirs in XCAS; exterior areas are placed
+  ASPC references (their bounds).
+- **REVB** (reverb): DATA (14 bytes) = XAudio2's I3DL2 parameters: u16 decay time ms, u16 HF
+  reference Hz, s8 room dB, s8 room HF dB, s8 reflections dB, s8 reverb dB, u8 decay HF ratio
+  × 100, u8 reflections delay ("scaled"), u8 reverb delay ms, u8 diffusion %, u8 density %, u8.
+  DefaultReverb has everything at −100 dB (none).
+
+## Music
+
+- **MUSC** (music type, 64): FNAM flags (0x01 plays one selection, 0x02 abrupt transition,
+  0x04 cycle tracks, 0x08 maintain track order, 0x20 ducks the current track, 0x40 does not
+  queue), PNAM (u16 priority, u16 ducking dB × 100), WNAM f32 fade duration, TNAM tracks
+  (MUST).
+- **MUST** (music track, 309): CNAM type (0x6ED7E048 single track 283, 0x23F678C3 palette 21,
+  0xA1A9C4D5 silent track 5), FLTV duration (silent tracks), DNAM fade-out, ANAM the file, BNAM
+  the finale (what combat music ends with), LNAM loop (f32 start, f32 end, u32 count), FNAM cue
+  points (f32 seconds: where a track may be left), CITC + CTDA conditions (day, night, ...),
+  SNAM a palette's tracks.
+- Where music comes from: cells (XCMO), worldspaces (ZNAM), regions (RDMO under a sound RDAT).
+
 ## Border regions
 
 A region (REGN) with record flag `0x40` (Border Region, xEdit) bounds its worldspace (WNAM)

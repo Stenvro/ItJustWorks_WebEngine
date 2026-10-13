@@ -15,7 +15,8 @@
     "src/scripting",
     "src/physics/collision-data.ts",
     "src/physics/collision-layers.ts",
-    "src/animation"
+    "src/animation",
+    "src/audio/xwma-decoder.ts"
   ],
   "exclude": ["src/**/*.test.ts", "src/vfs/browser"]
 }
