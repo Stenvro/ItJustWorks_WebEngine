@@ -129,8 +129,8 @@ records. A cell's grid position is in XCLC (x, y i32); `floor(cell / 8)` is its 
 
 **WRLD:** WNAM parent world, PNAM (u16) what the child takes from its parent (`0x1` land,
 `0x2` LOD, `0x4` map, `0x8` water, `0x10` climate, `0x20` imagespace, `0x40` sky), CNAM climate,
-NAM2 water, NAM3 LOD water + NAM4 its height, DNAM default land height and default water height
-(f32 each), DATA flags (`0x1` small world, `0x2` can't fast travel, `0x8` no LOD water, `0x10`
+NAM2 water, NAM3 LOD water + NAM4 its height, ZNAM music type, DNAM default land height and
+default water height (f32 each), DATA flags (`0x1` small world, `0x2` can't fast travel, `0x8` no LOD water, `0x10`
 no landscape, `0x20` no sky, `0x40` fixed dimensions, `0x80` no grass).
 
 - A world with the no-sky flag (`0x20`, e.g. Blackreach) draws no sky dome, sun, moons, stars,
@@ -628,8 +628,28 @@ Records behind every sound (`src/world/sound-records.ts`; files: [audio.md](audi
   0xA1A9C4D5 silent track 5), FLTV duration (silent tracks), DNAM fade-out, ANAM the file, BNAM
   the finale (what combat music ends with), LNAM loop (f32 start, f32 end, u32 count), FNAM cue
   points (f32 seconds: where a track may be left), CITC + CTDA conditions (day, night, ...),
-  SNAM a palette's tracks.
-- Where music comes from: cells (XCMO), worldspaces (ZNAM), regions (RDMO under a sound RDAT).
+  SNAM a palette's tracks: its layers, separated by NULL entries (the exploration palettes have
+  two, A and B, each single pieces and `_MUSExploreSILENT10/15` silences; duration 120 s,
+  fade-out 15 s).
+- Priority: the lower the number, the more important (combat 2, discoveries 3, exploration 49,
+  dungeons 50, taverns 55). Conditions use GetCurrentTime (86), GetIsCurrentWeather (48) and
+  GetCombatTargetHasKeyword (707, combat against dragons: TODO(M10)).
+- Where music comes from: cells (XCMO; 667 of 761 interiors, Breezehome MUSTownTest),
+  regions (RDMO under a sound RDAT), worldspaces (ZNAM: Tamriel `_NONE`, the city worlds
+  MUSTownTest, Blackreach MUSDungeonIce), else the default object DFMS (MUSExploreTestb).
+  `tools/music-info.ts` lists them.
+
+## Default objects
+
+**DOBJ** (one record, `src/world/default-objects.ts`): DNAM entries of 8 bytes, a four-letter
+use code (u32, its characters in file order) and a form id: the forms the engine itself uses.
+Skyrim.esm lists 303 (36 of them none); every later plugin's version lists only the uses it
+sets (Update.esm 12 of 366 entries, the rest zero; the Survival Mode creation 7), so the
+versions are merged use by use in load order. Audio: MDSC the music category
+(AudioCategoryMUS), DFMS default music (MUSExploreTestb), BTMS combat music (MUSCombat), DTMS
+death, SCMS success, LUMS level up (both MUSSpecialSuccess), DCMS dungeon cleared, SSSC
+(`_NONE`), DDSC / NDSC / SFDC / PDMC / PIMC / PDLC / SMSC / TSSC categories, DOP2 / DOP3 /
+POPM / P3OM / IOPM output models, RVBT the default reverb.
 
 ## Border regions
 
@@ -651,7 +671,12 @@ The engine reads `Skyrim_Default.ini` over defaults compiled into the executable
 fVanityModeMaxDist 600, fMinCurrentZoom −0.2, fMouseWheelZoomIncrement 0.075,
 fMouseWheelZoomSpeed 0.8, fCameraCasterSize 15; `[Controls]` bAlwaysRunByDefault 1,
 fMouseHeadingSensitivity 0.0125, fMouseHeadingXScale 0.02, fMouseHeadingYScale 0.85, fZKeyDelay 0.2;
-`[General]` bBorderRegionsEnabled 1;
+`[General]` bBorderRegionsEnabled 1; `[Audio]` ([audio.md](../audio.md)) fASFadeInTime 3,
+fASFadeOutTime 8, fRegionLoopFadeInTime 6, fRegionLoopFadeOutTime 8,
+fRegionRandomSoundPlacementBase 100, fRegionSoundPlacementRandomOffset 650,
+fRegionSoundPlacementZOffset 256, uRegionSoundsAllowedPerUpdate 1, fMusicDuckingSeconds 6 and
+fMusicUnDuckingSeconds 8 (Skyrim_Default.ini; 1 and 4 compiled in),
+fMusicFinaleCrossFadeTimeIn 3, fMusicFinaleCrossFadeTimeOut 6;
 `[Display]` fDefaultWorldFOV 80, fNearDistance 15; `[HAVOK]` fInAirFallingCharGravityMult 1.35,
 fUnsupportedGravMult 4, fMaxTime 0.0167; `[Interface]` fActivatePickLength 180,
 fActivatePickRadius 16.

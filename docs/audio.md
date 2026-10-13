@@ -1,7 +1,8 @@
 # Audio
 
 How the game's sounds play in the browser (`src/audio/`). Files: [formats/audio.md](formats/audio.md);
-records: [formats/esm.md](formats/esm.md#sounds).
+records: [formats/esm.md](formats/esm.md#sounds), [music](formats/esm.md#music) and
+[default objects](formats/esm.md#default-objects).
 
 ## Loading
 
@@ -85,3 +86,40 @@ or not, and the last lightning flash.
   GetIsCurrentWeather (96), IsInInterior (38), IsRaining and GetGlobalValue (one each: the
   distant catapults of SkyrimOvercastWar while CWDistantCatapultsAMB is 1). Globals have their
   starting value (FLTV) until scripts run: TODO(M8).
+
+## Music
+
+`music.ts` decides what plays, `music-output.ts` plays it. Music types are in play: the
+location's and those game events add (combat: BTMS, TODO(M10); discoveries, quest moments
+and the rest through Papyrus MusicType.Add / Remove, TODO(M8)). The location's is the cell's
+XCMO; indoors else the default object DFMS; outdoors else the music of the camera cell's
+regions in effect (RDMO; the same priority and override rule as region sounds), the
+worldspace's ZNAM, then DFMS. Tamriel's ZNAM is `_NONE`, so the regions give its music:
+Riverwood's pine forest plays MUSExploreForestPine.
+
+- **Which type plays:** the most important in play (lowest priority number; the latest added
+  of equals). One flagged Doesn't Queue is dropped when it cannot play at once.
+- **Ducking:** a more important type flagged Ducks Current Track (combat, discoveries) plays
+  over the current one, which goes on at its Ducking dB lower (combat 100 dB: silent;
+  MUSDiscoveryGeneric 3 dB) and comes back up once the ducking music has ended — combat after
+  its finale. The fade takes the ducking type's Fade Duration (combat 9 s), else `[Audio]`
+  fMusicDuckingSeconds / fMusicUnDuckingSeconds (6 and 8 s in Skyrim_Default.ini).
+- **Other changes:** the current music leaves first, then the new type starts. A track with
+  cue points (combat) plays on to its next one and crossfades into its finale
+  (fMusicFinaleCrossFadeTimeIn 3 s, fMusicFinaleCrossFadeTimeOut 6 s); else it fades out over
+  the arriving type's Fade Duration (the Creation Kit: how long another type fades for it),
+  else the leaving one's. An abrupt transition starts the new type at once while the old one
+  fades. Which fade applies where is inferred from the Creation Kit's descriptions:
+  TODO(M13): compare with the game.
+- **Tracks:** in order (Maintain Track Order) or shuffled per pass; those whose conditions do
+  not hold are skipped (day and night pieces, weathers); after the list a type plays on only
+  if it cycles, and Plays One Selection ends it after one track. Silent tracks are pauses
+  (the exploration types alternate music and 10–30 s silences). A palette plays its layers at
+  once, each layer's pieces one after another at random, for its duration, then fades out.
+  Single tracks loop between LNAM's points as often as it says (the Sovngarde chant).
+- **Playing:** each type has a bus (a gain ducking turns down) into the music category
+  (default object MDSC: AudioCategoryMUS, 0.7 × the master). Files stream through `<audio>`
+  elements ([formats/audio.md](formats/audio.md#xwma)); the next file of each sequence is
+  decoded while the current one plays, and decoded files are kept up to 192 MB, the least
+  recently used ones that are not playing going first. Music follows the audio clock and
+  waits while audio is suspended (before the first click).

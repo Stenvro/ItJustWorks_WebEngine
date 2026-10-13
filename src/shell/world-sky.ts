@@ -88,8 +88,10 @@ export class WorldSky {
   #lastFrame: number | undefined;
   #state: SkyState | undefined;
   #cell: string | undefined;
-  /** The regions of the camera's cell (XCLR). */
+  /** The regions of the camera's cell (XCLR) and the music it names (XCMO). */
   #regionIds: readonly number[] = [];
+  #cellMusic: number | undefined;
+  #located = false;
   readonly #precipitationRenderer: PrecipitationRenderer;
   readonly #objects: SkyObjects;
   readonly #textures: TextureCache;
@@ -237,6 +239,16 @@ export class WorldSky {
     return this.#regionIds;
   }
 
+  /** Whether the camera's cell has been looked up (its regions and music are known). */
+  get located(): boolean {
+    return this.#located;
+  }
+
+  /** The music type the camera's cell names (XCMO). */
+  get cellMusic(): number | undefined {
+    return this.#cellMusic;
+  }
+
   /** The weathers that can occur in the current cell. */
   get weatherList(): readonly WeatherChance[] {
     return this.#list;
@@ -253,9 +265,11 @@ export class WorldSky {
     const key = `${String(x)},${String(y)}`;
     if (key === this.#cell) return;
     this.#cell = key;
-    const ids = await world.regions(x, y);
+    const [ids, music] = await Promise.all([world.regions(x, y), world.cellMusic(x, y)]);
     if (key !== this.#cell) return;
     this.#regionIds = ids;
+    this.#cellMusic = music;
+    this.#located = true;
     const regions = await Promise.all(ids.map((id) => this.#region(id)));
     const list = cellWeathers(regions, this.#climate);
     const changed =

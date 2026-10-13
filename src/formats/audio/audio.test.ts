@@ -10,7 +10,7 @@ import {
 import { FormatError } from '../binary-reader.ts';
 import { parseFuz } from './fuz.ts';
 import { parseRiff } from './riff.ts';
-import { decodeWav, parseWav } from './wav.ts';
+import { decodeWav, encodeWav16, parseWav } from './wav.ts';
 import { parseXwma, riffForm } from './xwma.ts';
 
 describe('RIFF', () => {
@@ -76,6 +76,21 @@ describe('WAV', () => {
       ]),
     );
     expect(() => decodeWav(adpcm)).toThrow(/Unsupported/);
+  });
+});
+
+describe('WAV encoding', () => {
+  it('writes 16-bit PCM that reads back the same (music for the media player)', () => {
+    const samples = new Int16Array([0, 1000, -1000, 32767, -32768, 5]);
+    const wav = parseWav(encodeWav16(22050, 2, samples));
+    expect(wav.format.channels).toBe(2);
+    expect(wav.format.sampleRate).toBe(22050);
+    expect(wav.format.bitsPerSample).toBe(16);
+    expect(wav.frames).toBe(3);
+    const pcm = decodeWav(wav);
+    expect(pcm.channels[0]?.[1]).toBeCloseTo(-1000 / 32768, 5);
+    expect(pcm.channels[1]?.[1]).toBeCloseTo(32767 / 32768, 5);
+    expect(pcm.channels[1]?.[2]).toBeCloseTo(5 / 32768, 5);
   });
 });
 

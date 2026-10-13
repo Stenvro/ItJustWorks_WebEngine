@@ -937,6 +937,8 @@ export class WorldViewer {
       interior: false,
       swimming: this.#play?.player.swimming ?? false,
       flash: Number.isFinite(flash) ? flash : undefined,
+      cellMusic: sky.cellMusic,
+      worldMusic: this.#world?.record.music,
     };
   }
 
@@ -1068,7 +1070,9 @@ export class WorldViewer {
     }
     lights.sort((a, b) => a.distance - b.distance);
     this.#sky?.frame(performance.now(), camera);
-    this.#session?.soundSystem?.setAmbience(this.#sky && this.#ambientState(this.#sky));
+    // The surroundings once the camera's cell is known (else the world's music would start).
+    const world = this.#sky;
+    if (world?.located) this.#session?.soundSystem?.setAmbience(this.#ambientState(world));
     const sky = this.#sky?.lighting() ?? NO_SKY;
     return { ...sky, lights: lights.slice(0, MAX_LIGHTS) };
   }

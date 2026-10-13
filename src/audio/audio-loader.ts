@@ -53,15 +53,9 @@ export class AudioLoader {
   async load(path: string): Promise<DecodedSound | undefined> {
     const found = this.find(path);
     if (found === undefined) return undefined;
-    const payload = await this.#vfs.readPayload(found);
-    const id = this.#nextId++;
-    const request: AudioRequest = { id, path: found, payload };
-    const response = await new Promise<AudioResponse>((resolve, reject) => {
-      this.#pending.set(id, { resolve, reject });
-      const buffer = payload.bytes.buffer;
-      this.#worker.postMessage(request, buffer instanceof ArrayBuffer ? [buffer] : []);
-    });
+    const response = await this.#request(found, false);
     if (!response.ok) throw new Error(response.error);
+    if (response.kind !== 'samples') throw new Error(`${found}: expected samples`);
     return {
       path: found,
       sampleRate: response.sampleRate,
@@ -69,6 +63,29 @@ export class AudioLoader {
       ...(response.loop && { loop: response.loop }),
       ...(response.lip && { lip: response.lip }),
     };
+  }
+
+  /** A music file as a WAV file for the media player; undefined if it does not exist. */
+  async loadStream(
+    path: string,
+  ): Promise<{ path: string; file: Uint8Array; gain: number } | undefined> {
+    const found = this.find(path);
+    if (found === undefined) return undefined;
+    const response = await this.#request(found, true);
+    if (!response.ok) throw new Error(response.error);
+    if (response.kind !== 'stream') throw new Error(`${found}: expected a stream`);
+    return { path: found, file: response.file, gain: response.gain };
+  }
+
+  async #request(path: string, stream: boolean): Promise<AudioResponse> {
+    const payload = await this.#vfs.readPayload(path);
+    const id = this.#nextId++;
+    const request: AudioRequest = { id, path, payload, ...(stream && { stream }) };
+    return new Promise<AudioResponse>((resolve, reject) => {
+      this.#pending.set(id, { resolve, reject });
+      const buffer = payload.bytes.buffer;
+      this.#worker.postMessage(request, buffer instanceof ArrayBuffer ? [buffer] : []);
+    });
   }
 
   dispose(): void {

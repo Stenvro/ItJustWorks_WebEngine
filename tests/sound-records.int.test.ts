@@ -18,6 +18,8 @@ import {
   type SoundCategory,
 } from '../src/world/sound-records.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
+import { DefaultObjects, DefaultObjectUse } from '../src/world/default-objects.ts';
+import { parseWorldspace } from '../src/world/worldspace.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
 describe.skipIf(!hasGamedata())('sound records in the local game data', () => {
@@ -160,5 +162,40 @@ describe.skipIf(!hasGamedata())('sound records in the local game data', () => {
     // Interiors take their region sounds from their acoustic space.
     const fort = parseAcousticSpace(await byEditorId('ASPC', 'IntDungeonFortAcousticSpace'));
     expect((await db.require(fort.region ?? 0)).editorId).toBe('AudioIntDungeonFort01');
+    expect(forest.priority).toBe(50);
+  });
+
+  it('reads the palettes of exploration music as layers', async () => {
+    const palette = parseMusicTrack(await byEditorId('MUST', 'MUSExploreForestPineDayPalette'));
+    expect(palette.type).toBe('palette');
+    expect(palette.duration).toBe(120);
+    expect(palette.fadeOut).toBe(15);
+    expect(palette.layers).toHaveLength(2);
+    const first = await db.require(palette.layers[0]?.[0] ?? 0);
+    expect(first.editorId).toBe('MUSExploreForestPineDayPaletteA01');
+    const second = await db.require(palette.layers[1]?.[0] ?? 0);
+    expect(second.editorId).toBe('MUSExploreForestPineDayPaletteB01');
+  });
+
+  it('reads the default objects: the music category, default and combat music', async () => {
+    const objects = await DefaultObjects.read(db);
+    const name = async (use: string) => (await db.require(objects.get(use) ?? 0)).editorId;
+    expect(await name(DefaultObjectUse.musicCategory)).toBe('AudioCategoryMUS');
+    expect(await name(DefaultObjectUse.defaultMusic)).toBe('MUSExploreTestb');
+    expect(await name(DefaultObjectUse.battleMusic)).toBe('MUSCombat');
+    expect(await name(DefaultObjectUse.dungeonClearedMusic)).toBe('MUSDungeonCleared');
+    // Later plugins add their own uses (HearthFires, Dragonborn: KWSP).
+    expect(objects.get('KWSP')).toBe(0x3c);
+  });
+
+  it('names the music of worldspaces and cells', async () => {
+    const music = async (editorId: string) => {
+      const world = parseWorldspace(await byEditorId('WRLD', editorId));
+      return (await db.require(world.music ?? 0)).editorId;
+    };
+    expect(await music('Tamriel')).toBe('_NONE');
+    expect(await music('WhiterunWorld')).toBe('MUSTownTest');
+    const breezehome = await loadCellData(db, 0x000165a8);
+    expect((await db.require(breezehome.cell.musicType ?? 0)).editorId).toBe('MUSTownTest');
   });
 });

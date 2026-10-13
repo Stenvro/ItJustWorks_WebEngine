@@ -12,7 +12,12 @@
 import type { Vec3 } from '../render/math.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 import { lightningInterval } from '../world/lightning.ts';
-import type { RegionAudio, SoundDescriptor } from '../world/sound-records.ts';
+import {
+  regionMusic,
+  regionsInEffect,
+  type RegionAudio,
+  type SoundDescriptor,
+} from '../world/sound-records.ts';
 import { soundConditionsHold, type SoundConditionContext } from './sound-conditions.ts';
 
 /** The weather as ambience needs it (WeatherRecord). */
@@ -41,6 +46,24 @@ export interface AmbientState {
   readonly swimming: boolean;
   /** When the last lightning flash began (any clock; a new value means a new flash). */
   readonly flash: number | undefined;
+  /** The music the cell names (XCMO) and the worldspace's (ZNAM). */
+  readonly cellMusic: number | undefined;
+  readonly worldMusic: number | undefined;
+}
+
+/** The conditions of ambient sounds and music in these surroundings. */
+export function ambientConditions(
+  state: AmbientState,
+  global: (formId: number) => number,
+): SoundConditionContext {
+  return {
+    hour: state.hour,
+    weather: state.weather?.formId,
+    raining: ((state.weather?.flags ?? 0) & 0x4) !== 0,
+    interior: state.interior,
+    swimming: state.swimming,
+    global,
+  };
 }
 
 /** A playing sound as ambience controls it (SoundInstance). */
@@ -97,6 +120,12 @@ export class Ambience {
   readonly #ini: IniSettings;
   readonly #descriptors = new Map<number, SoundDescriptor | undefined>();
   readonly #regions = new Map<number, RegionAudio | undefined>();
+  /** Regions whose record has been read (with or without sound data). */
+  readonly #regionsRead = new Set<number>();
+  #regionMusic: { readonly ready: boolean; readonly music: number | undefined } = {
+    ready: false,
+    music: undefined,
+  };
   readonly #regionLoops = new Map<number, LoopState>();
   readonly #weatherLoops = new Map<number, LoopState>();
   #lastCheck = 0;
@@ -118,20 +147,26 @@ export class Ambience {
     };
   }
 
+  /**
+   * The music type of the regions in effect (RDMO), once every region has been read (`ready`):
+   * until then the location's music is not known yet.
+   */
+  get regionMusic(): { readonly ready: boolean; readonly music: number | undefined } {
+    return this.#regionMusic;
+  }
+
   /** Every frame (`now`: seconds). */
   update(state: AmbientState, listener: Vec3, now: number): void {
-    const context: SoundConditionContext = {
-      hour: state.hour,
-      weather: state.weather?.formId,
-      raining: ((state.weather?.flags ?? 0) & 0x4) !== 0,
-      interior: state.interior,
-      swimming: state.swimming,
-      global: (formId) => this.#player.global(formId),
-    };
-    const regions = state.regions.flatMap((formId) => {
-      const audio = this.#regionAudio(formId);
-      return audio ? [audio] : [];
+    const context = ambientConditions(state, (formId) => this.#player.global(formId));
+    const audio = state.regions.flatMap((formId) => {
+      const region = this.#regionAudio(formId);
+      return region ? [region] : [];
     });
+    this.#regionMusic = {
+      ready: state.regions.every((formId) => this.#regionsRead.has(formId)),
+      music: regionMusic(audio),
+    };
+    const regions = regionsInEffect(audio);
     const classification = (state.weather?.flags ?? 0) & 0x0f;
     const fits = (flags: number): boolean =>
       state.interior || classification === 0 || (flags & classification) !== 0;
@@ -297,6 +332,7 @@ export class Ambience {
       this.#regions.set(formId, undefined);
       void this.#player.regionAudio(formId).then((audio) => {
         this.#regions.set(formId, audio);
+        this.#regionsRead.add(formId);
         for (const entry of audio?.sounds ?? []) this.#descriptor(entry.sound);
       });
     }

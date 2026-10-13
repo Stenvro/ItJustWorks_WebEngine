@@ -1072,6 +1072,8 @@ export class ModelViewer {
           interior: true,
           swimming: this.#play?.player.swimming ?? false,
           flash: undefined,
+          cellMusic: this.#cell.data.cell.musicType,
+          worldMusic: undefined,
         },
       );
     }

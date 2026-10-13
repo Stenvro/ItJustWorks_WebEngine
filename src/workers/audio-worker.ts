@@ -1,10 +1,16 @@
 // Audio worker: decodes sound files off the main thread: WAV (PCM) directly, xWMA (music, and
-// voice inside FUZ files) with ffmpeg.wasm, which loads on the first xWMA file. The core and
-// its WebAssembly binary are served from node_modules (no CDN).
+// voice inside FUZ files) with ffmpeg.wasm, which loads on the first xWMA file. Music is
+// streamed by the browser's media player instead: it gets a 16-bit WAV file. The core and its
+// WebAssembly binary are served from node_modules (no CDN).
 
 import coreUrl from '@ffmpeg/core?url';
 import wasmUrl from '@ffmpeg/core/wasm?url';
-import { decodeXwma, type FfmpegCore } from '../audio/xwma-decoder.ts';
+import {
+  decodeXwma,
+  decodeXwmaToWav,
+  STREAM_HEADROOM,
+  type FfmpegCore,
+} from '../audio/xwma-decoder.ts';
 import { decodeBsaPayload } from '../formats/bsa/bsa.ts';
 import { parseFuz } from '../formats/audio/fuz.ts';
 import { decodeWav, parseWav, type PcmAudio } from '../formats/audio/wav.ts';
@@ -47,9 +53,52 @@ async function decode(request: AudioRequest): Promise<{ pcm: PcmAudio; lip?: Uin
   throw new Error(`not a sound file (${form ?? 'no RIFF header'})`);
 }
 
+/** Music for the media player: xWMA as a 16-bit WAV file, a WAV file as it is. */
+async function stream(request: AudioRequest): Promise<{ file: Uint8Array; gain: number }> {
+  const bytes = decodeBsaPayload(request.payload);
+  const form = riffForm(bytes);
+  if (form === 'XWMA') {
+    return { file: decodeXwmaToWav(await ffmpeg(), bytes), gain: STREAM_HEADROOM };
+  }
+  if (form === 'WAVE') return { file: bytes.slice(), gain: 1 };
+  throw new Error(`not a music file (${form ?? 'no RIFF header'})`);
+}
+
+function fail(request: AudioRequest, error: unknown): void {
+  scope.postMessage(
+    {
+      id: request.id,
+      ok: false,
+      error: `${request.path}: ${error instanceof Error ? error.message : String(error)}`,
+    },
+    [],
+  );
+}
+
 scope.addEventListener('message', (event) => {
   const request = event.data;
   const start = performance.now();
+  if (request.stream) {
+    stream(request).then(
+      ({ file, gain }) => {
+        scope.postMessage(
+          {
+            id: request.id,
+            ok: true,
+            kind: 'stream',
+            file,
+            gain,
+            workMs: performance.now() - start,
+          },
+          [file.buffer as ArrayBuffer],
+        );
+      },
+      (error: unknown) => {
+        fail(request, error);
+      },
+    );
+    return;
+  }
   decode(request).then(
     ({ pcm, lip }) => {
       const channels = [...pcm.channels];
@@ -59,6 +108,7 @@ scope.addEventListener('message', (event) => {
         {
           id: request.id,
           ok: true,
+          kind: 'samples',
           sampleRate: pcm.sampleRate,
           channels,
           ...(pcm.loop && { loop: pcm.loop }),
@@ -69,14 +119,7 @@ scope.addEventListener('message', (event) => {
       );
     },
     (error: unknown) => {
-      scope.postMessage(
-        {
-          id: request.id,
-          ok: false,
-          error: `${request.path}: ${error instanceof Error ? error.message : String(error)}`,
-        },
-        [],
-      );
+      fail(request, error);
     },
   );
 });

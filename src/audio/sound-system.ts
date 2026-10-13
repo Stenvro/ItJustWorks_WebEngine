@@ -1,8 +1,8 @@
 // The game's sounds: descriptors, output models and categories read from the plugins once,
 // decoded files kept within a memory budget, one-shot sounds (a door opening) and the looping
 // sounds of placed things (sound markers, torches, water wheels), which play while the
-// listener is within their output model's range. Updated every frame with the camera.
-// Notes: docs/audio.md.
+// listener is within their output model's range; the ambience of regions and weather; and the
+// music. Updated every frame with the camera. Notes: docs/audio.md.
 
 import { invert } from '../render/frustum.ts';
 import { transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
@@ -10,19 +10,26 @@ import type { Camera } from '../render/view-camera.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import {
   parseAcousticSpace,
+  parseMusicTrack,
+  parseMusicType,
   parseReverb,
   parseSoundCategory,
   parseSoundDescriptor,
   parseSoundOutputModel,
   type AcousticSpace,
+  type MusicTrack,
+  type MusicType,
   type Reverb,
   type SoundDescriptor,
   type SoundOutputModel,
 } from '../world/sound-records.ts';
-import { ConditionFunction } from '../scripting/conditions.ts';
+import { ConditionFunction, type Condition } from '../scripting/conditions.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 import { parseRegionAudio, type RegionAudio } from '../world/sound-records.ts';
-import { Ambience, type AmbientState } from './ambience.ts';
+import { DefaultObjects, DefaultObjectUse } from '../world/default-objects.ts';
+import { Ambience, ambientConditions, type AmbientState } from './ambience.ts';
+import { Music } from './music.ts';
+import { WebMusicOutput } from './music-output.ts';
 import type { AudioLoader } from './audio-loader.ts';
 import { AudioEngine } from './audio-engine.ts';
 import { SoundInstance, type SoundBuffer, type SoundPlace } from './sound-instance.ts';
@@ -79,6 +86,13 @@ export class SoundSystem {
   readonly #globalValues = new Map<number, number>();
   readonly #ini: IniSettings;
   readonly #ambience: Ambience;
+  /** The music (development tools add and remove music types through it). */
+  readonly music: Music;
+  readonly #musicOutput: WebMusicOutput;
+  readonly #musicTypes = new Map<number, Promise<MusicType | undefined>>();
+  readonly #musicTracks = new Map<number, Promise<MusicTrack | undefined>>();
+  /** DFMS: the music where nothing names any. */
+  readonly #defaultMusic: number | undefined;
   /** What the viewers last said about the surroundings (regions, weather, time). */
   #ambient: AmbientState | undefined;
   /** An interior's sound region (its acoustic space's RDAT). */
@@ -100,11 +114,35 @@ export class SoundSystem {
     db: RecordDatabase,
     loader: AudioLoader,
     ini: IniSettings,
+    defaults: DefaultObjects,
   ) {
     this.engine = engine;
     this.#db = db;
     this.#loader = loader;
     this.#ini = ini;
+    this.#defaultMusic = defaults.get(DefaultObjectUse.defaultMusic);
+    this.#musicOutput = new WebMusicOutput(
+      engine,
+      loader,
+      {
+        musicType: (formId) => this.musicType(formId),
+        musicTrack: (formId) => this.musicTrack(formId),
+      },
+      defaults.get(DefaultObjectUse.musicCategory),
+      (message) => {
+        this.#warn(message);
+      },
+    );
+    this.music = new Music(
+      this.#musicOutput,
+      {
+        duckingSeconds: ini.number('Audio', 'fMusicDuckingSeconds'),
+        unDuckingSeconds: ini.number('Audio', 'fMusicUnDuckingSeconds'),
+        finaleFadeIn: ini.number('Audio', 'fMusicFinaleCrossFadeTimeIn'),
+        finaleFadeOut: ini.number('Audio', 'fMusicFinaleCrossFadeTimeOut'),
+      },
+      () => this.#next(),
+    );
     this.#ambience = new Ambience(
       {
         descriptor: (formId) => this.descriptor(formId),
@@ -131,7 +169,7 @@ export class SoundSystem {
       }),
     );
     engine.setCategories(categories.filter((category) => category !== undefined));
-    return new SoundSystem(engine, db, loader, ini);
+    return new SoundSystem(engine, db, loader, ini, await DefaultObjects.read(db));
   }
 
   /** What is going on (the shell and development tools show it). */
@@ -143,6 +181,9 @@ export class SoundSystem {
     space: number | undefined;
     /** Region and weather loops playing (SNDR form ids). */
     ambience: { regionLoops: number[]; weatherLoops: number[] };
+    music: Music['state'];
+    /** Music files kept ready (WAV bytes). */
+    musicBytes: number;
   } {
     return {
       playing: this.#playing.size,
@@ -151,6 +192,8 @@ export class SoundSystem {
       bufferBytes: this.#bufferBytes,
       space: this.#space,
       ambience: this.#ambience.loops,
+      music: this.music.state,
+      musicBytes: this.#musicOutput.bytes,
     };
   }
 
@@ -171,7 +214,11 @@ export class SoundSystem {
 
   /** The surroundings for ambience: regions, weather, time of day (every frame). */
   setAmbience(state: AmbientState | undefined): void {
-    if (!state && this.#ambient) this.#ambience.stop();
+    if (!state && this.#ambient) {
+      this.#ambience.stop();
+      this.music.stop();
+      this.#musicOutput.stop();
+    }
     this.#ambient = state;
   }
 
@@ -251,6 +298,57 @@ export class SoundSystem {
         ambient.interior && this.#spaceRegion !== undefined ? [this.#spaceRegion] : ambient.regions;
       this.#ambience.update({ ...ambient, regions }, this.#listener, performance.now() / 1000);
     }
+    // Music runs on the audio clock, and only while audio plays (it would skip through its
+    // tracks before the first user gesture otherwise).
+    if (ambient && this.engine.context.state === 'running') {
+      const location = this.#locationMusic(ambient);
+      if (location !== null) this.music.setLocation(location);
+      this.#musicOutput.update();
+      this.music.update(
+        this.engine.context.currentTime,
+        ambientConditions(ambient, (formId) => this.#globalValues.get(formId) ?? 0),
+      );
+    }
+  }
+
+  musicType(formId: number): Promise<MusicType | undefined> {
+    let entry = this.#musicTypes.get(formId);
+    if (!entry) {
+      entry = this.#db
+        .get(formId)
+        .then((record) =>
+          record?.type === 'MUSC' && !record.deleted ? parseMusicType(record) : undefined,
+        );
+      this.#musicTypes.set(formId, entry);
+    }
+    return entry;
+  }
+
+  musicTrack(formId: number): Promise<MusicTrack | undefined> {
+    let entry = this.#musicTracks.get(formId);
+    if (!entry) {
+      entry = this.#db.get(formId).then(async (record) => {
+        if (record?.type !== 'MUST' || record.deleted) return undefined;
+        const track = parseMusicTrack(record);
+        await this.#conditionGlobals(track.conditions);
+        return track;
+      });
+      this.#musicTracks.set(formId, entry);
+    }
+    return entry;
+  }
+
+  /**
+   * The location's music: the cell's (XCMO); indoors else the default (DFMS); outdoors else
+   * its regions' (RDMO), the worldspace's (ZNAM), the default. null: the regions are still
+   * being read.
+   */
+  #locationMusic(ambient: AmbientState): number | undefined | null {
+    if (ambient.cellMusic !== undefined) return ambient.cellMusic;
+    if (ambient.interior) return this.#defaultMusic;
+    const region = this.#ambience.regionMusic;
+    if (!region.ready) return null;
+    return region.music ?? ambient.worldMusic ?? this.#defaultMusic;
   }
 
   acousticSpace(formId: number): Promise<AcousticSpace | undefined> {
@@ -272,22 +370,26 @@ export class SoundSystem {
       entry = this.#db.get(formId).then(async (record) => {
         if (record?.type !== 'SNDR' || record.deleted) return undefined;
         const descriptor = parseSoundDescriptor(record);
-        // The globals its conditions read load with it: conditions are checked synchronously.
-        await Promise.all(
-          descriptor.conditions.flatMap((condition) => [
-            ...(condition.function === ConditionFunction.getGlobalValue
-              ? [this.#global(condition.form)]
-              : []),
-            ...(typeof condition.comparand === 'number'
-              ? []
-              : [this.#global(condition.comparand.global)]),
-          ]),
-        );
+        await this.#conditionGlobals(descriptor.conditions);
         return descriptor;
       });
       this.#descriptors.set(formId, entry);
     }
     return entry;
+  }
+
+  /** The globals conditions read load with them: conditions are checked synchronously. */
+  async #conditionGlobals(conditions: readonly Condition[]): Promise<void> {
+    await Promise.all(
+      conditions.flatMap((condition) => [
+        ...(condition.function === ConditionFunction.getGlobalValue
+          ? [this.#global(condition.form)]
+          : []),
+        ...(typeof condition.comparand === 'number'
+          ? []
+          : [this.#global(condition.comparand.global)]),
+      ]),
+    );
   }
 
   /**
@@ -392,6 +494,14 @@ export class SoundSystem {
     this.#applySpace(undefined);
     this.#ambience.stop();
     this.#ambient = undefined;
+    this.music.stop();
+    this.#musicOutput.stop();
+  }
+
+  /** Frees the music kept ready (the session ends). */
+  dispose(): void {
+    this.stopAll();
+    this.#musicOutput.dispose();
   }
 
   /** Called with problems worth logging (once per message). */
