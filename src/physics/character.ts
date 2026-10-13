@@ -26,14 +26,15 @@ export interface CharacterShape {
 export const CONTROLLER_SHELL = 0.05 * HAVOK_SCALE;
 
 /**
- * The 18 points of the controller shape (game units, centred on the shape's middle): rings at
- * a radius's height above the bottom and below the top. The points are inset by the shell, so
- * that the shape with its shell is the bound's size (as Havok shapes are built: the convex
- * radius shrinks the vertices), in width as in height.
+ * The 18 points of the controller shape (game units, centred on the shape's middle): rings of
+ * the bound's radius at a radius's height above the bottom and below the top, the end points
+ * inset by the shell. The shell widens it by its 3.5 units: the first-person camera, in the
+ * shape's middle, then stays beyond the near plane ([Display] fNearDistance 15) from a wall it
+ * walks into; with the shell inside the ring (29 units across) it looked through walls.
  */
 export function controllerPoints(shape: CharacterShape): Float32Array {
   const half = shape.height / 2 - CONTROLLER_SHELL;
-  const radius = Math.max(0, shape.radius - CONTROLLER_SHELL);
+  const radius = shape.radius;
   const ring = Math.max(0, Math.min(half, half - shape.radius));
   const points: number[] = [0, 0, -half, 0, 0, half];
   for (const z of [-ring, ring]) {

@@ -30,9 +30,11 @@ The engine's controller shape (hkCharControllerShape) is a convex hull of two ri
 points with one point below and one above (PLANCK and Dynamic Collision Adjustment read and
 rebuild it at runtime), made from the skeleton's collision bound "BBX" scaled by the race's
 height. Its exact ring radius and heights are not documented. Here: the bound's narrow half
-extent (14 × 1.03 for a Nord) as its radius and the full bound height, with Havok's default
-convex shell of 0.05 inside both (the points are inset by it, as Havok builds shapes: the
-shape with its shell is the bound, 29 units across), rings one radius from the ends. The cone between end point and ring rides over small
+extent (14 × 1.03 for a Nord) as the rings' radius and the full bound height, with Havok's
+default convex shell of 0.05 (3.5 units) around it: 36 units across. The first-person camera
+stands in the shape's middle, so a wall the player walks into stays beyond the near plane
+(`[Display]` fNearDistance 15); with the shell inside the rings (29 across) the camera looked
+through walls. Rings one radius from the ends. The cone between end point and ring rides over small
 steps (about 14 units); on stair materials (MATT stairs flag) whole stairs up to 24 units
 are climbed (the risers of the vanilla stair meshes). The steepest walkable slope is kept in
 hkpCharacterProxy::maxSlopeCosine without an INI setting or GMST: 60° here, TODO(M13):
