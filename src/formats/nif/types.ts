@@ -245,6 +245,18 @@ export interface NiSkinInstanceBlock {
   readonly skeletonRoot: Ref;
   /** Bone nodes; vertex bone indices refer to this list. */
   readonly bones: readonly Ref[];
+  /**
+   * BSDismemberSkinInstance: the body part of each partition (in NiSkinPartition order): a
+   * biped slot (30-61, e.g. 32 body, 31 hair), its decapitation piece (130-161, 230-261) or
+   * another part type (nif.xml BSDismemberBodyPartType).
+   */
+  readonly bodyParts?: readonly DismemberPartition[];
+}
+
+export interface DismemberPartition {
+  /** BSPartFlag: 0x1 editor visible, 0x100 start of a new partition set. */
+  readonly flags: number;
+  readonly part: number;
 }
 
 export interface SkinBone {

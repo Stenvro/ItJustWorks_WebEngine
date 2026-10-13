@@ -229,6 +229,20 @@ export class RecordDatabase {
     return ((high << 24) | (global & (light ? 0xfff : 0xffffff))) >>> 0;
   }
 
+  /**
+   * The plugin that defines a form (its master: where the id's mod index points) and the id
+   * within it (24 bits, 12 for light plugins), as FaceGen file names use them.
+   */
+  origin(global: number): { readonly plugin: Plugin; readonly objectId: number } | undefined {
+    const light = global >>> 24 === 0xfe;
+    const slot = light
+      ? this.#lightSlots.get((global >>> 12) & 0xfff)
+      : this.#fullSlots.get(global >>> 24);
+    const plugin = slot === undefined ? undefined : this.plugins[slot];
+    if (!plugin) return undefined;
+    return { plugin, objectId: global & (light ? 0xfff : 0xffffff) };
+  }
+
   // --- Records ----------------------------------------------------------------
 
   /** Every version of a record, in load order (the last one wins). */

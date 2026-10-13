@@ -22,6 +22,7 @@ import type {
   NiTriShapeBlock,
   NiTriShapeDataBlock,
   NifTransform,
+  DismemberPartition,
   NiSkinDataBlock,
   NiSkinInstanceBlock,
   NiSkinPartitionBlock,
@@ -537,8 +538,11 @@ const parseSkinInstance: BlockParser = (reader, _context, type): NiSkinInstanceB
   const skeletonRoot = reader.i32();
   const bones = readRefs(reader);
   if (type === 'BSDismemberSkinInstance') {
+    // Per partition: part flags (u16), body part (u16, BSDismemberBodyPartType).
     const count = readCount(reader, 4);
-    reader.skip(count * 4); // body part flag + body part per partition
+    const bodyParts: DismemberPartition[] = [];
+    for (let i = 0; i < count; i++) bodyParts.push({ flags: reader.u16(), part: reader.u16() });
+    return { kind: 'skin-instance', data, partition, skeletonRoot, bones, bodyParts };
   }
   return { kind: 'skin-instance', data, partition, skeletonRoot, bones };
 };

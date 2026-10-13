@@ -679,6 +679,64 @@ Records behind every sound (`src/world/sound-records.ts`; files: [audio.md](audi
   MUSTownTest, Blackreach MUSDungeonIce), else the default object DFMS (MUSExploreTestb).
   `tools/music-info.ts` lists them.
 
+## Actors
+
+What a placed actor (ACHR) looks like (`src/world/actor-records.ts`, `actors.ts`; check:
+`node tools/actor-info.ts --audit`: all 12945 vanilla placements resolve, three name FaceGen
+files the data lacks).
+
+**NPC\_:** ACBS 24 bytes: flags u32 (0x1 female, 0x2 essential, 0x20 unique, 0x80 PC level
+multiplier, ...), magicka and stamina offsets i16, level u16 (×1000 multiplier with 0x80), calc
+min / max level, speed multiplier, disposition, **template flags** u16 at 18 (0x1 traits, 0x2
+stats, 0x4 factions, 0x8 spells, 0x10 AI data, 0x20 AI packages, 0x80 base data, 0x100
+inventory, 0x200 script, 0x400 default package list, 0x800 attack data, 0x1000 keywords),
+health offset, bleedout override. TPLT template (NPC_ or LVLN), RNAM race, WNAM own skin
+(ARMO), DOFT / SOFT default and sleep outfit, PNAM head parts (HDPT, repeated), HCLF hair colour
+(CLFM), FTST head texture set, QNAM skin tone (3 × f32, 0..1), NAM6 height multiplier, NAM7
+weight (0..100), NAM9 face morphs (18 f32 + 4 bytes), NAMA face parts, CNTO inventory (form id,
+count), tint layers TINI / TINC / TINV / TIAS.
+
+**RACE:** DATA (128 or 164 bytes): 7 skill / bonus pairs, height male / female (f32 at 16, 20),
+weight (24, 28), flags u32 at 32 (0x1 playable, 0x2 FaceGen head, 0x4 child, ...). WNAM skin.
+Zero-length MNAM / FNAM mark the male and female half of what follows: at the top **ANAM**
+the skeleton (`ActorsCharacterCharacter Assetsskeleton.nif`); after NAM1 the body egt
+models; after **NAM3** MODL the behavior project (`ActorsCharacterDefaultMale.hkx`); after
+NAM0 the head data (HEAD default head parts, DFTM / DFTF default face texture, presets, hair
+colours, tints). HCLF default hair colour (2 form ids), RNAM armor race, NAM8 morph race.
+
+**ARMO:** BOD2 (slots u32, armor type u32) or the older BODT (slots u32, flags u8 + 3 unused,
+armor type u32), MODL armor addons (ARMA, repeated), TNAM template armor. **ARMA:** BODT /
+BOD2, RNAM primary race, MODL further races (repeated), DNAM 12 bytes: priority male u8,
+female u8, weight slider male u8, female u8 (0x2: `_0` and `_1` models blended by weight),
+2 unknown, detection sound value u8, unknown u8, weapon adjust f32; MOD2 / MOD3 world model
+male / female (MOD2 for both without MOD3), MOD4 / MOD5 first person; MO2S..MO5S texture swaps
+(count u32, then per swap the shape name as u32 length + text, the TXST and the shape index
+u32); NAM0..NAM3 skin texture sets (male, female, first person male, female). **OTFT** INAM:
+form ids (ARMO or LVLI). **LVLN / LVLI:** LVLD chance none u8, LVLF flags u8 (0x1 all levels
+up to the actor's, 0x2 each item of the count, LVLI 0x4 use all), LVLG chance global, LVLO
+12 bytes (level u16, unused u16, form id, count u16, unused u16). **CLFM** CNAM RGBA bytes.
+**HDPT:** PNAM type (0 misc, 1 face, 2 eyes, 3 hair, 4 facial hair, 5 scar, 6 eyebrows), HNAM
+extra parts, NAM0 / NAM1 morph parts, MODL, TNAM texture set, CNAM colour, RNAM valid races.
+
+**Resolving a look:** a leveled base picks one entry: of those up to the actor's level, the
+highest level's (or any, with flag 0x1), at random (seeded by the reference, so a reference
+always looks the same; TODO(M11): the level from encounter zones and the player). Traits
+(race, sex, head, skin, colours, size) come from the end of the template chain while the
+traits flag is set, the outfit while the inventory flag is. An armor wears the addons that fit
+the race (RNAM or MODL), else those of the race's armor race; one without addons takes its
+template's. Each biped slot belongs to one armor addon (the higher priority, then the later
+piece); a piece shows when it owns its first slot (TODO(M13): the engine's assignment is not
+documented), the skin (the actor's WNAM, else the race's) where armor leaves its first slot
+free. Within every shown model, a BSDismemberSkinInstance partition is hidden when its slot
+belongs to another piece: a cuirass's forearms under long gauntlets, the head's hair (131, 141) under a helmet on slot 31, the whole head (130, 230) under one on slot 30. Size: race
+height × NAM6, times the reference's scale.
+
+**FaceGen:** races with the FaceGen head flag show a prebuilt head per actor base (of the
+traits NPC_): `meshesactorscharacteracegendataacegeom<plugin><id>.nif` and the tint
+`textures...acetint<plugin><id>.dds`, the plugin that defines the form and its id
+without the mod index (8 hex digits). The head NIF holds every head part as a skinned
+BSDynamicTriShape under BSFaceGenNiNodeSkinned.
+
 ## Default objects
 
 **DOBJ** (one record, `src/world/default-objects.ts`): DNAM entries of 8 bytes, a four-letter

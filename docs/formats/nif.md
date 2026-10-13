@@ -74,7 +74,10 @@ Normals and tangents map 0..255 to −1..1. The raw buffer goes to the GPU uncha
 
 Skinned shapes have data size 0: their vertices live in NiSkinPartition (one shared vertex
 buffer, the partitions' triangles index it directly). The bone indices of a vertex index the
-NiSkinInstance's bone list (not the partition's); a bone's matrix is its node's model-space
+NiSkinInstance's bone list (not the partition's). BSDismemberSkinInstance adds per partition
+its part flags (u16: 0x1 editor visible, 0x100 starts a set) and body part (u16: a biped slot
+30-61, or 130-161 / 230-261 for the same slots on head parts): equipment hides the partitions
+of slots another piece owns (esm.md, Actors); a bone's matrix is its node's model-space
 matrix times the NiSkinData bind transform of that bone (skin space → bone space). The
 vertices go to the GPU as stored and are skinned there (rendering.md, Skinning).
 BSDynamicTriShape (faces) appends a u32 byte size and xyzw float positions.
