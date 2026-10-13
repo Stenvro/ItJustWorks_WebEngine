@@ -139,8 +139,12 @@ no landscape, `0x20` no sky, `0x40` fixed dimensions, `0x80` no grass).
   Tamriel's LAND at the same grid position, and their own CELLs hold only the objects.
 - Persistent references (NPCs, doors, map markers) live in the persistent cell, not in the
   exterior cell they stand in; the loader sorts them into cells by position.
-- A cell's water height is its XCLW, else the water world's default (DNAM). Values beyond
-  ±1e9 mean "no water".
+- A cell's water height is its XCLW, else the world's default (DNAM). Values beyond ±1e9
+  mean "no water". DNAM is the land data (xEdit: "Land Data"): every world that uses its
+  parent's land (PNAM 0x1: the city worlds, WindhelmPitWorldspace, KatariahWorld) has none,
+  and every world with one uses its own land, so the default heights come from the land world,
+  also where the water type does not (KatariahWorld: its own DefaultWaterKatariahWorld at
+  Tamriel's −14000; read as 0 its ship stood under water).
 - A grid position without a CELL record holds nothing (not even the parent world's land):
   the LOD stays visible there. Around a city world's few cells, the parent's LOD (terrain,
   water, objects) shows what lies outside.

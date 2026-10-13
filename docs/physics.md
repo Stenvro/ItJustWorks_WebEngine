@@ -35,8 +35,9 @@ default convex shell of 0.05 (3.5 units) around it: 36 units across. The first-p
 stands in the shape's middle, so a wall the player walks into stays beyond the near plane
 (`[Display]` fNearDistance 15); with the shell inside the rings (29 across) the camera looked
 through walls. Rings one radius from the ends. The cone between end point and ring rides over small
-steps (about 14 units); on stair materials (MATT stairs flag) whole stairs up to 24 units
-are climbed (the risers of the vanilla stair meshes). The steepest walkable slope is kept in
+steps (about 14 units); on stair materials (MATT stairs flag) whole stairs up to 32 units
+are climbed: the treads of the 330 vanilla stair collision meshes rise mostly 24 or 16, but
+also 25–28 (Castle Volkihar's courtyard stairs: 24.4) and up to 32. The steepest walkable slope is kept in
 hkpCharacterProxy::maxSlopeCosine without an INI setting or GMST: 60° here, TODO(M13):
 calibrate both against the game. Walking up stairs is slow: before a step is climbed, the
 lower cone rides up its edge as up a slope of about 52°, and Rapier's controller moves along a

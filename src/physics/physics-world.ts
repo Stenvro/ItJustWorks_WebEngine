@@ -265,6 +265,8 @@ export class PhysicsWorld {
   readonly #owners = new Map<number, PhysicsOwner>();
   /** Material id (MATT) per collider handle. */
   readonly #materials = new Map<number, number>();
+  /** The materials of all of an object's shapes, per collider of the object. */
+  readonly #objectMaterials = new Map<number, ReadonlySet<number>>();
   readonly #hooks: RAPIER.PhysicsHooks;
   readonly #events = new RAPIER.EventQueue(true);
   #impacts: PhysicsImpact[] = [];
@@ -326,11 +328,20 @@ export class PhysicsWorld {
     this.#layers.delete(collider.handle);
     this.#owners.delete(collider.handle);
     this.#materials.delete(collider.handle);
+    this.#objectMaterials.delete(collider.handle);
   }
 
   /** The material id (MATT) of a collider's surface; 0 if unknown. */
   materialOf(collider: RAPIER.Collider): number {
     return this.#materials.get(collider.handle) ?? 0;
+  }
+
+  /**
+   * The materials of every shape of the object a collider belongs to (a staircase's steps and
+   * its plain stone sides and risers are separate shapes).
+   */
+  objectMaterialsOf(collider: RAPIER.Collider): ReadonlySet<number> {
+    return this.#objectMaterials.get(collider.handle) ?? new Set([this.materialOf(collider)]);
   }
 
   /** Builds the collider of one shape (body space, game units × `scale`). */
@@ -489,6 +500,8 @@ export class PhysicsWorld {
       }
       bodies.push({ body, data, bodyToModel: invertRigid(local) });
     }
+    const materials = new Set(colliders.map((collider) => this.materialOf(collider)));
+    for (const collider of colliders) this.#objectMaterials.set(collider.handle, materials);
     return new PlacedCollision(owner, bodies, colliders, scale);
   }
 

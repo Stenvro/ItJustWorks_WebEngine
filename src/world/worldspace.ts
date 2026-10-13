@@ -269,7 +269,16 @@ export class Worldspace {
     const record = id === undefined ? undefined : await this.db.get(id);
     const xclw = record?.fields.f32('XCLW');
     if (xclw !== undefined && xclw > -1e9 && xclw < 1e9) return xclw;
-    return this.waterWorld.defaultWaterHeight;
+    return this.defaultWaterHeight;
+  }
+
+  /**
+   * The default water height of its cells: part of the land data (DNAM, "Land Data" in xEdit),
+   * so a world that uses its parent's land has none of its own and takes the parent's
+   * (KatariahWorld: Tamriel's −14000, not 0), whichever world its water type comes from.
+   */
+  get defaultWaterHeight(): number {
+    return this.landWorld.defaultWaterHeight;
   }
 }
 
