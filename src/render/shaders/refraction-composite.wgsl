@@ -1,3 +1,4 @@
+// Adapted from Community Shaders (GPL-3.0); see THIRD_PARTY_NOTICES.md.
 // The engine's image-space refraction (ISRefraction, as Community Shaders' ISRefraction.hlsl
 // reproduces it): after everything is drawn, the scene is shifted where refraction shapes
 // wrote into the refraction buffer (rg: normal map xy, b: strength, a: mask). The offset is

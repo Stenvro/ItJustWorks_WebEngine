@@ -5,7 +5,7 @@ import { findCustomBackdrop } from './shell/custom-backdrop.ts';
 import { GameSession, MEMORY_BUDGET } from './shell/game-session.ts';
 import { ModelViewer } from './shell/model-viewer.ts';
 import { WorldViewer } from './shell/world-viewer.ts';
-import { setupHideShortcut, setupPanels } from './shell/panels.ts';
+import { forgetPanels, setupHideShortcut, setupPanels } from './shell/panels.ts';
 import { Terminal } from './shell/terminal.ts';
 import { BrowserGameFolder } from './vfs/browser/browser-game-folder.ts';
 import { HttpGameFolder } from './vfs/browser/http-game-folder.ts';
@@ -49,6 +49,11 @@ const ui = {
   archiveTitle: byId('archive-title', HTMLElement),
   archives: byId('archive-list', HTMLOListElement),
   shell: byId('shell', HTMLElement),
+  menu: byId('main-menu', HTMLElement),
+  menuSandbox: byId('menu-sandbox', HTMLButtonElement),
+  sandbox: byId('sandbox', HTMLElement),
+  sandboxBack: byId('sandbox-back', HTMLButtonElement),
+  devPanel: byId('dev-panel', HTMLElement),
   viewer: {
     meshes: {
       panel: byId('viewer', HTMLElement),
@@ -148,7 +153,23 @@ function describeGpu(gpu: GpuContext): string {
   return [vendor, architecture].filter((part) => part !== '').join(' ') || 'unknown';
 }
 
-// --- Pick the Skyrim folder and build the VFS -----------------------------
+// --- Screens ---------------------------------------------------------------
+
+/**
+ * What the shell shows: the start (choosing the game folder), the main menu (the log, the load
+ * order and what to load) or the sandbox (loading any model, interior cell or worldspace).
+ * TODO(M8): missions, one quest at a time. TODO(M9): playing the game from its own main menu.
+ */
+type Screen = 'start' | 'menu' | 'sandbox';
+
+function showScreen(screen: Screen): void {
+  document.body.dataset.screen = screen;
+  ui.menu.hidden = screen !== 'menu';
+  ui.summary.hidden = screen !== 'menu' || currentVfs === undefined;
+  ui.sandbox.hidden = screen !== 'sandbox';
+}
+
+// --- Pick the game folder and build the VFS --------------------------------
 
 type PromptAction = 'pick' | 'resume' | 'none';
 
@@ -194,7 +215,6 @@ function showSummary(vfs: Vfs): void {
       numberFormat.format(mounted.archive.entries.length),
     ]),
   );
-  ui.summary.hidden = false;
 }
 
 async function useFolder(handle: FileSystemDirectoryHandle, isNewChoice: boolean): Promise<void> {
@@ -248,11 +268,12 @@ async function mountGame(folder: GameFolder): Promise<void> {
   showSummary(vfs);
   prompt(
     vfs.hasCreationClubList
-      ? 'Ready. Search the model viewer for any mesh in the game.'
+      ? 'Ready. Choose what to load.'
       : 'Select the install folder (the one containing Data) to load Creation Club content as well.',
     'pick',
   );
   ui.pick.textContent = 'change folder';
+  showScreen('menu');
   await connectSession?.(vfs);
 }
 
@@ -282,6 +303,17 @@ async function setupGameFolder(): Promise<void> {
     const handle = await pickGameFolder();
     if (handle) await useFolder(handle, true);
   });
+
+  // `?reset`: a first visit again (the stored folder and the panels' layout are forgotten).
+  const params = new URLSearchParams(location.search);
+  if (params.has('reset')) {
+    await forgetGameFolder();
+    forgetPanels();
+    params.delete('reset');
+    const query = params.toString();
+    history.replaceState(null, '', `${location.pathname}${query ? `?${query}` : ''}`);
+    terminal.log('sys', 'reset: the stored folder and the panel layout are forgotten');
+  }
 
   // Development: `?devdata` mounts the game data served by the Vite dev server.
   if (
@@ -327,7 +359,7 @@ async function setupGameFolder(): Promise<void> {
 // --- Startup --------------------------------------------------------------
 
 async function main(): Promise<void> {
-  terminal.log('sys', 'skyrim web engine · booting');
+  terminal.log('sys', 'itjustworks webengine · booting');
   terminal.log(
     'sys',
     `${crossOriginIsolated ? 'cross-origin isolated' : 'not isolated'} · ${navigator.hardwareConcurrency} threads`,
@@ -401,9 +433,16 @@ async function main(): Promise<void> {
   new MutationObserver(updateLensShift).observe(document.body, { attributes: true });
   new MutationObserver(updateLensShift).observe(ui.shell, { attributes: true });
   setupPanels(document);
-  setupHideShortcut(ui.shell);
+  setupHideShortcut([ui.shell, ui.devPanel]);
+  showScreen('start');
+  ui.menuSandbox.addEventListener('click', () => {
+    showScreen('sandbox');
+  });
+  ui.sandboxBack.addEventListener('click', () => {
+    showScreen('menu');
+  });
   if (import.meta.env.DEV) {
-    window.skyrimDev = {
+    window.engineDev = {
       viewer: modelViewer,
       world: worldViewer,
       renderer,

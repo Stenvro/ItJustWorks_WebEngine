@@ -1,6 +1,7 @@
+// Adapted from Community Shaders (GPL-3.0); see THIRD_PARTY_NOTICES.md.
 // The improved snow's subsurface scattering (the engine's ISSnowSSS pass, as Community
 // Shaders' ISSnowSSS.hlsl reproduces it): snow pixels are blurred along the screen with a
-// wide kernel whose red reaches farthest, stopping at depth edges, and darkened towards a cool
+// wide kernel whose blue reaches farthest, stopping at depth edges, and darkened towards a cool
 // tint where the result is dark. Runs on the opaque scene, written into the multisampled
 // colour target before the blended pass. ASCII only.
 
@@ -33,7 +34,9 @@ fn vs_fullscreen(@builtin(vertex_index) index: u32) -> FullscreenOut {
   return out;
 }
 
-// Per tap: the weight of each colour channel (red spreads farthest) and the offset.
+// Per tap: the weight of each colour channel (blue spreads farthest) and the offset. The
+// kernel is Separable SSS's 11-tap one (Jimenez and Gutierrez; BSD licence, see
+// THIRD_PARTY_NOTICES.md) with its channels in reverse order.
 const SSS_TAPS = array<vec4f, 11>(
   vec4f(0.784728, 0.669086, 0.560479, 0.0),
   vec4f(0.000051, 0.000185, 0.004717, -2.0),

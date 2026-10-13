@@ -8,6 +8,8 @@ coverage/
 # --- Local ---
 .env
 .env.*
+# Where the local game data is (tools/gamedata-path.ts)
+.gamedata
 *.log
 .DS_Store
 Thumbs.db

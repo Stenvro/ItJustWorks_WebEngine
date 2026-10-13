@@ -1,3 +1,4 @@
+// Adapted from Community Shaders (GPL-3.0); see THIRD_PARTY_NOTICES.md.
 // Eye adaptation: the scene's average luminance (64x64 samples) and two running averages
 // of it, x following quickly and y slowly, as the game's HDR downsample keeps them. Each
 // frame moves an average towards the measured value by its rate, at least 1/256 and never

@@ -1,7 +1,7 @@
 // Stores FileSystemHandles in IndexedDB, so the selected Data folder survives
 // a browser restart.
 
-const DB_NAME = 'skyrim-web';
+const DB_NAME = 'itjustworks-webengine';
 const DB_VERSION = 1;
 const STORE = 'handles';
 

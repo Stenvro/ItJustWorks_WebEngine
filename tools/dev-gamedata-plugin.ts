@@ -90,7 +90,7 @@ async function handle(request: IncomingMessage, response: ServerResponse): Promi
 
 export function devGamedata(): Plugin {
   return {
-    name: 'skyrim-web:dev-gamedata',
+    name: 'itjustworks:dev-gamedata',
     apply: 'serve',
     configureServer(server) {
       if (!hasGamedata()) return;

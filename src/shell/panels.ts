@@ -1,7 +1,7 @@
 // Collapsible shell panels: remembers which panels are open (per browser) and lets the
 // H key hide the whole shell for an unobstructed view of the scene.
 
-const STORAGE_KEY = 'skyrim-web.panels';
+const STORAGE_KEY = 'itjustworks.panels';
 
 function loadState(): Record<string, boolean> {
   try {
@@ -34,12 +34,21 @@ export function setupPanels(root: ParentNode): void {
   }
 }
 
-/** H toggles the whole shell (not while typing in a field). */
-export function setupHideShortcut(shell: HTMLElement): void {
+/** Forgets which panels were open (a first visit again). */
+export function forgetPanels(): void {
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Nothing stored then.
+  }
+}
+
+/** H toggles the shell's panels (not while typing in a field). */
+export function setupHideShortcut(panels: readonly HTMLElement[]): void {
   window.addEventListener('keydown', (event) => {
     if (event.key.toLowerCase() !== 'h' || event.ctrlKey || event.metaKey || event.altKey) return;
     const target = event.target;
     if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement) return;
-    shell.classList.toggle('shell-hidden');
+    for (const panel of panels) panel.classList.toggle('shell-hidden');
   });
 }

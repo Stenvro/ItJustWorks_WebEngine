@@ -15,7 +15,7 @@ function noise(length: number, seed = 1): Uint8Array {
 }
 
 const text = new TextEncoder().encode(
-  'Let me guess... someone stole your sweetroll. '.repeat(400) + 'Fus Ro Dah!',
+  'It just works: a compressed record, inflated again. '.repeat(400) + 'The end.',
 );
 
 const compress = (data: Uint8Array, options: Parameters<typeof deflateSync>[1] = {}): Uint8Array =>

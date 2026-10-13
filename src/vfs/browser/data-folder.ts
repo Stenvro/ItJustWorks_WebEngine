@@ -41,7 +41,7 @@ export async function pickGameFolder(): Promise<FileSystemDirectoryHandle | unde
     throw new Error('This browser does not support the File System Access API.');
   }
   try {
-    return await window.showDirectoryPicker({ id: 'skyrim-data', mode: 'read' });
+    return await window.showDirectoryPicker({ id: 'game-folder', mode: 'read' });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') return undefined;
     throw error;
