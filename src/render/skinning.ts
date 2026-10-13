@@ -4,6 +4,7 @@
 // the same file for objects, an actor's skeleton for bodies and armour. Particle emitter
 // meshes are skinned once on the CPU instead (skinShape).
 
+import { VertexAttribute } from '../formats/nif/blocks.ts';
 import { getBlock, type NifFile } from '../formats/nif/nif.ts';
 import type {
   BSTriShapeBlock,
@@ -35,6 +36,17 @@ export interface PartSkin {
   readonly bind: Float32Array;
   /** Per bone, its model-space matrix in the file (the rest pose): 16 floats each. */
   readonly rest: Float32Array;
+  /**
+   * BSDismemberSkinInstance: the index range of each partition with its body part, in the
+   * order of the part's indices (equipment hides some, see actors.ts partitionVisible).
+   */
+  readonly partitions?: readonly SkinPartitionRange[];
+}
+
+export interface SkinPartitionRange {
+  readonly first: number;
+  readonly count: number;
+  readonly bodyPart: number;
 }
 
 /** A skinned shape as the GPU draws it: the partition's vertices as stored, and its bones. */
@@ -68,6 +80,8 @@ interface SkinBlocks {
   readonly data: NiSkinDataBlock;
   readonly partition: NiSkinPartitionBlock;
   readonly desc: VertexDesc;
+  /** The vertices (with the dynamic positions of a BSDynamicTriShape put in). */
+  readonly vertices: Uint8Array;
 }
 
 /** The shape's skin blocks, if it is skinned with its vertices in the partition. */
@@ -77,9 +91,16 @@ function skinBlocks(file: NifFile, shape: BSTriShapeBlock): SkinBlocks | undefin
   const partition = skin && getBlock(file, skin.partition, 'skin-partition');
   const desc = partition?.vertexDesc;
   if (!skin || !data || !partition || !desc || partition.vertexCount === 0) return undefined;
-  if (desc.stride < 16 || desc.skinningOffset === 0) return undefined;
   if (data.bones.length < skin.bones.length) return undefined;
-  return { skin, data, partition, desc };
+  const dynamic = shape.dynamicPositions;
+  if (dynamic && dynamic.length >= partition.vertexCount * 4) {
+    const built = withDynamicPositions(desc, partition.vertexData, partition.vertexCount, dynamic);
+    if (built.desc.skinningOffset === 0) return undefined;
+    return { skin, data, partition, desc: built.desc, vertices: built.data };
+  }
+  if (desc.stride < 16 || desc.skinningOffset === 0) return undefined;
+  if ((desc.attributes & VertexAttribute.vertex) === 0) return undefined;
+  return { skin, data, partition, desc, vertices: partition.vertexData };
 }
 
 /** The bind transform of every bone (skin space → bone space). */
@@ -118,6 +139,43 @@ function blend(
     for (let i = 0; i < 12; i++) m[i] = (m[i] ?? 0) / total;
   }
   return true;
+}
+
+/**
+ * BSDynamicTriShape keeps its positions apart (xyzw, w the bitangent's x; FaceGen heads, whose
+ * vertex data has none): they go in front of each vertex, as other shapes store them.
+ */
+export function withDynamicPositions(
+  desc: VertexDesc,
+  data: Uint8Array,
+  count: number,
+  positions: Float32Array,
+): { desc: VertexDesc; data: Uint8Array } {
+  const stored = (desc.attributes & VertexAttribute.vertex) !== 0;
+  const shift = stored ? 0 : 16;
+  const stride = desc.stride + shift;
+  const out = new Uint8Array(count * stride);
+  const view = new DataView(out.buffer);
+  for (let v = 0; v < count; v++) {
+    out.set(data.subarray(v * desc.stride, (v + 1) * desc.stride), v * stride + shift);
+    for (let k = 0; k < (stored ? 3 : 4); k++) {
+      view.setFloat32(v * stride + k * 4, positions[v * 4 + k] ?? 0, true);
+    }
+  }
+  const move = (offset: number): number => offset + shift;
+  return {
+    desc: {
+      stride,
+      uvOffset: move(desc.uvOffset),
+      normalOffset: move(desc.normalOffset),
+      tangentOffset: move(desc.tangentOffset),
+      colorOffset: move(desc.colorOffset),
+      skinningOffset: move(desc.skinningOffset),
+      eyeOffset: move(desc.eyeOffset),
+      attributes: desc.attributes | VertexAttribute.vertex | VertexAttribute.fullPrecision,
+    },
+    data: out,
+  };
 }
 
 /** The partitions' triangles as one index list (in SSE they index the shared vertices). */
@@ -161,7 +219,7 @@ export function skinnedGeometry(
 ): GpuSkinnedGeometry | undefined {
   const blocks = skinBlocks(file, shape);
   if (!blocks) return undefined;
-  const { skin, partition, desc } = blocks;
+  const { skin, partition, desc, vertices } = blocks;
   const binds = bindMatrices(blocks);
   const bind = new Float32Array(skin.bones.length * 16);
   const rest = new Float32Array(skin.bones.length * 16);
@@ -179,11 +237,7 @@ export function skinnedGeometry(
     names.push(node.name);
   }
 
-  const read = new DataView(
-    partition.vertexData.buffer,
-    partition.vertexData.byteOffset,
-    partition.vertexData.byteLength,
-  );
+  const read = new DataView(vertices.buffer, vertices.byteOffset, vertices.byteLength);
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
   const m = new Float64Array(12);
@@ -200,12 +254,21 @@ export function skinnedGeometry(
       max[k] = Math.max(max[k] ?? 0, p);
     }
   }
+  const bodyParts = skin.bodyParts;
+  let first = 0;
+  const partitions = bodyParts
+    ? partition.partitions.map((p, i): SkinPartitionRange => {
+        const range = { first, count: p.triangles.length, bodyPart: bodyParts[i]?.part ?? 0 };
+        first += p.triangles.length;
+        return range;
+      })
+    : undefined;
   return {
     desc,
-    vertices: partition.vertexData,
+    vertices,
     vertexCount: partition.vertexCount,
     indices: partitionIndices(partition),
-    skin: { bones: skin.bones, names, bind, rest },
+    skin: { bones: skin.bones, names, bind, rest, ...(partitions && { partitions }) },
     ...sphere(min, max),
   };
 }
@@ -236,7 +299,7 @@ export function skinShape(
 
   const count = partition.vertexCount;
   const stride = desc.stride;
-  const source = partition.vertexData;
+  const source = blocks.vertices;
   const out = source.slice();
   const read = new DataView(source.buffer, source.byteOffset, source.byteLength);
   const write = new DataView(out.buffer);

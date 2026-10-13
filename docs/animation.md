@@ -45,3 +45,29 @@ Formats: [nif.md](formats/nif.md#animation) (controllers, sequences, keys),
   rest pose until those play (TODO(M7)), and so does their collision: the Volkihar courtyard's
   secret stair (CasSecEntrance01, Valerica's dial puzzle) shows neither closed nor open, its
   spiral half under the platforms; opening it is the puzzle's script (TODO(M8)).
+
+## Actors
+
+How placed actors (ACHR) appear and move (`src/shell/actors.ts`, `src/animation/skeleton.ts`;
+their look: [formats/esm.md](formats/esm.md#actors)).
+
+- **Skeleton:** the race's skeleton model (RACE ANAM, e.g. `character assets\skeleton.nif`)
+  gives the node tree (`buildRig`, read in an asset worker; the root's own transform is
+  ignored, as for models). The race's behavior project (RACE NAM3, `DefaultMale.hkx`) names its
+  character (`loadCharacterInfo`: hkbCharacterStringData, name 160, rigName 168, ragdollName
+  176, behaviorFilename 184, animationNames 48, all relative to the project's folder): the
+  Havok skeleton (`character assets\skeleton.hkx`) whose bones are matched to the nodes by
+  name (96 of the 99 human bones).
+- **Pose** (`ActorPose`): every node's model-space matrix: animated nodes from the bones'
+  local hkQsTransforms (translation, quaternion, scale), the others under their parent as the
+  skeleton model places them. The Havok reference pose is the skeleton model's rest exactly
+  (checked to 0.001 units); a body skinned with it is its own rest pose.
+- **Models:** each worn addon's model (its `_0` and `_1` blended by weight in the worker) and
+  the FaceGen head are skinned to the pose: their bones are found by name in the skeleton
+  (`ModelInstance.pose`), and their palettes are rewritten whenever the pose changes. One
+  instance per model, all at the reference: upright (only the turn about z), at the race's
+  height times the actor's and the reference's scale.
+- **What plays:** each actor loops its character's MT_Idle (the female clip for women where
+  one exists), from a start in the clip its reference picks. TODO(M7): the behavior graph
+  (`0_Master.hkx`) chooses the clips, blends them and sends their events; until then idles
+  loop and actors stand where they were placed (their AI packages: M10).

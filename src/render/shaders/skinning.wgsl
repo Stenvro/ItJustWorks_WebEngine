@@ -47,5 +47,13 @@ fn skinMatrix(skin: SkinIn) -> mat4x4f {
 fn vs_skinned(in: VertexIn, skin: SkinIn) -> VertexOut {
   let model = skinMatrix(skin);
   let rotation = worldRotation() * mat3x3f(model[0].xyz, model[1].xyz, model[2].xyz);
-  return objectVertex(in, draw.world * (model * vec4f(in.position, 1.0)), rotation);
+  var out = objectVertex(in, draw.world * (model * vec4f(in.position, 1.0)), rotation);
+  // Model-space normal maps (FaceGen heads) are in skin space: the fragment turns them with
+  // the vertex's bones, passed as its frame.
+  if ((draw.flags.x & 0x1000u) != 0u) {
+    out.tangent = rotation[0];
+    out.bitangent = rotation[1];
+    out.normal = rotation[2];
+  }
+  return out;
 }

@@ -69,6 +69,7 @@ const data: CellData = {
     world: identity(),
     water: undefined,
   })),
+  actors: [],
   lights: [],
   decals: [],
   primitives: [],

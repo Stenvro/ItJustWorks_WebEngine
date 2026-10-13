@@ -54,6 +54,19 @@ export interface CellObject {
   readonly sounds?: ObjectSounds;
 }
 
+/** A placed actor (ACHR): its base and placement; its look is resolved when it is shown. */
+export interface CellActor {
+  readonly reference: number;
+  readonly editorId: string;
+  /** The actor base (NPC_, or a leveled list LVLN). */
+  readonly base: number;
+  readonly position: readonly [number, number, number];
+  /** Radians (actors stand upright: only the turn about z counts). */
+  readonly rotation: readonly [number, number, number];
+  /** The reference's own scale (XSCL). */
+  readonly scale: number;
+}
+
 /** The sounds an object makes when used (SNDR form ids). */
 export interface ObjectSounds {
   readonly open?: number;
@@ -222,6 +235,8 @@ export interface CellData {
   readonly lighting: CellLighting | undefined;
   /** Every object that can appear in the cell; filter with `enabledReferences`. */
   readonly objects: readonly CellObject[];
+  /** Every actor that can appear in the cell; filter with `enabledReferences`. */
+  readonly actors: readonly CellActor[];
   /** Every light that can be on; filter with `enabledReferences`. */
   readonly lights: readonly CellLight[];
   /** Every decal that can appear; filter with `enabledReferences`. */
@@ -321,7 +336,9 @@ function directionalOf(base: GameRecord): { directional?: StaticDirectional } {
  */
 const nonZeroId = (id: number | undefined): number | undefined => (id === 0 ? undefined : id);
 
-export function referenceMatrix(ref: PlacedReference): Mat4 {
+export function referenceMatrix(
+  ref: Pick<PlacedReference, 'position' | 'rotation' | 'scale'>,
+): Mat4 {
   const [rx, ry, rz] = ref.rotation;
   const axis = (cos: number, sin: number, a: number, b: number): Mat4 => {
     // Rotation by −angle in the (a, b) plane: [cos sin; −sin cos].
@@ -371,6 +388,7 @@ export async function loadCellData(
 ): Promise<CellData> {
   const cell = parseCell(await db.require(cellFormId));
   const objects: CellObject[] = [];
+  const actors: CellActor[] = [];
   const lights: CellLight[] = [];
   const decals: CellDecal[] = [];
   const primitives: CellPrimitive[] = [];
@@ -439,7 +457,14 @@ export async function loadCellData(
       max[k] = Math.max(max[k] ?? 0, ref.position[k] ?? 0);
     }
     if (record.type === 'ACHR') {
-      skip('actors (TODO(M7))');
+      actors.push({
+        reference: ref.formId,
+        editorId: ref.editorId,
+        base: ref.base,
+        position: ref.position,
+        rotation: ref.rotation,
+        scale: ref.scale,
+      });
       continue;
     }
     if (base.type === 'DOOR' && !entrance && record.fields.has('XTEL')) {
@@ -541,6 +566,7 @@ export async function loadCellData(
     cell,
     lighting,
     objects,
+    actors,
     lights,
     decals,
     primitives,

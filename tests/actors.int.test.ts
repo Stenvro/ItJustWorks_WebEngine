@@ -1,6 +1,11 @@
 // Integration test: actor looks resolved from the local game data. Skipped without game data.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { ActorPose, ActorSkeleton, buildRig } from '../src/animation/skeleton.ts';
+import { readAnimationContainer } from '../src/formats/hkx/animation.ts';
+import { Packfile } from '../src/formats/hkx/packfile.ts';
+import { parseNif } from '../src/formats/nif/nif.ts';
+import { buildModel } from '../src/render/model-data.ts';
 import { ActorResolver, meshPath } from '../src/world/actors.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -57,5 +62,41 @@ describe.skipIf(!hasGamedata())('actor looks on the local game data', () => {
       ['FarmerBoots04AA', false],
       ['NakedHands', true],
     ]);
+  });
+
+  it("poses the human skeleton: the Havok reference pose is the skeleton model's rest", async () => {
+    const assets = 'meshes\\actors\\character\\character assets\\';
+    const rig = buildRig(parseNif(await vfs.read(`${assets}skeleton.nif`)));
+    const havok = readAnimationContainer(Packfile.parse(await vfs.read(`${assets}skeleton.hkx`)))
+      .skeletons[0];
+    const skeleton = new ActorSkeleton(rig, havok);
+    const rest = new ActorPose(skeleton);
+    const reference = new ActorPose(skeleton);
+    reference.update(skeleton.referenceLocals());
+    for (let i = 0; i < rest.worlds.length; i++) {
+      expect(Math.abs((rest.worlds[i] ?? 0) - (reference.worlds[i] ?? 0))).toBeLessThan(1e-3);
+    }
+    expect(reference.world('NPC Pelvis [Pelv]')?.[14]).toBeCloseTo(68.91, 1);
+  });
+
+  it('builds a FaceGen head: positions from the dynamic data, hair partitions', async () => {
+    const head = buildModel(
+      parseNif(
+        await vfs.read(
+          'meshes\\actors\\character\\facegendata\\facegeom\\skyrim.esm\\000a2c90.nif',
+        ),
+      ),
+    );
+    const names = head.parts.map((part) => part.name);
+    expect(names).toContain('MaleHeadNord');
+    expect(head.skipped).toEqual([]);
+    for (const part of head.parts) {
+      expect(part.skin?.names).toContain('NPC Head [Head]');
+      expect(part.layout.skinning).toBeGreaterThan(0);
+      // The rest pose puts the head at the top of a standing body.
+      expect(part.center[2]).toBeGreaterThan(100);
+    }
+    const hair = head.parts.find((part) => part.name === 'HairMaleNord05');
+    expect(hair?.skin?.partitions?.map((p) => p.bodyPart)).toEqual([131, 141]);
   });
 });

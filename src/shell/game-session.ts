@@ -10,6 +10,7 @@ import type { CollisionData } from '../physics/collision-data.ts';
 import { IniSettings } from '../world/ini-settings.ts';
 import { readPlayerData, type PlayerData } from './player.ts';
 import { readCollisionMatrix, type CollisionMatrix } from '../physics/collision-layers.ts';
+import type { ModelTextureSwaps } from '../render/actor-model.ts';
 import type { Renderer } from '../render/renderer.ts';
 import { propertyMaterial, type AddonNode } from '../render/model-data.ts';
 import type {
@@ -47,6 +48,7 @@ import { ScriptEnvironment } from '../world/player-home.ts';
 import { RecordDatabase } from '../world/record-db.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
 import { PluginIndexer } from '../workers/plugin-indexer.ts';
+import { ActorPlacer } from './actors.ts';
 import type { Terminal } from './terminal.ts';
 
 const numberFormat = new Intl.NumberFormat('en-US');
@@ -122,6 +124,7 @@ export class GameSession {
   #audioLoader: AudioLoader | undefined;
   /** The sound system once it exists (the render loop updates it every frame). */
   soundSystem: SoundSystem | undefined;
+  #actors: Promise<ActorPlacer> | undefined;
 
   constructor(device: GPUDevice, renderer: Renderer, vfs: Vfs, terminal: Terminal) {
     this.vfs = vfs;
@@ -178,6 +181,39 @@ export class GameSession {
           if (data.behaviorGraph !== undefined) {
             model.graph = await this.behaviorGraph(data.behaviorGraph);
           }
+          this.#loadedModels.set(key, model);
+          return model;
+        },
+        (error: unknown) => {
+          this.#terminal.log('nif', describe(error), 'warn');
+          return undefined;
+        },
+      );
+      this.#models.set(key, entry);
+    }
+    return entry;
+  }
+
+  /**
+   * A model an actor wears: blended with its thin (_0) model by `weight` and with texture
+   * sets swapped in; equal ones are shared (and evicted like other models).
+   */
+  actorModel(
+    path: string,
+    thin: string | undefined,
+    weight: number,
+    swaps: ModelTextureSwaps,
+  ): Promise<GpuModel | undefined> {
+    const key = `actor|${path}|${thin ?? ''}|${String(weight)}|${JSON.stringify(swaps)}`;
+    let entry = this.#models.get(key);
+    const loaded = this.#loadedModels.get(key);
+    if (loaded) loaded.lastUsed = performance.now();
+    if (!entry) {
+      entry = this.loader.loadActorPart(path, thin, weight, swaps).then(
+        async ({ model: data, problems }) => {
+          for (const problem of problems) this.#terminal.log('nif', `${path}: ${problem}`, 'warn');
+          if (data.parts.length === 0) return undefined;
+          const model = await this.#renderer.scene.createModel(data, this.textures);
           this.#loadedModels.set(key, model);
           return model;
         },
@@ -447,6 +483,12 @@ export class GameSession {
   /** A NIF parsed on the main thread (small files such as the sky meshes). */
   async nif(path: string): Promise<NifFile> {
     return parseNif(await this.vfs.read(path));
+  }
+
+  /** What places actors in cells (their looks, skeletons and clips are shared). */
+  actors(): Promise<ActorPlacer> {
+    this.#actors ??= this.db.then((db) => new ActorPlacer(this, db, this.#terminal));
+    return this.#actors;
   }
 
   /** The Papyrus environment, created on first use. */

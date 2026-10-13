@@ -88,6 +88,8 @@ export interface SceneView {
   readonly backdrop: boolean;
   /** The directional light casts cascaded shadows (exteriors). */
   readonly shadows?: boolean;
+  /** Called once a frame before the scenes animate (actors take their poses). */
+  readonly update?: (timeSeconds: number) => void;
 }
 
 interface RenderTargets {
@@ -279,6 +281,7 @@ export class Renderer {
     }
 
     const sky = view?.sky?.();
+    view?.update?.(timeSeconds);
     const scenes = view ? [...view.scenes()] : [];
     // Controllers of the placed models (UV scrolling, turning parts, idle sequences) and
     // their particle systems.

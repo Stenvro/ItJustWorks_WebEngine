@@ -1,11 +1,14 @@
 // Loads models and textures: the VFS reads stored bytes on the main thread (async I/O),
 // a pool of workers decompresses and parses them.
 
+import type { RigData } from '../animation/skeleton.ts';
+import type { BsaPayload } from '../formats/bsa/bsa.ts';
 import type { DdsTexture } from '../formats/dds/dds.ts';
+import type { ModelTextureSwaps } from '../render/actor-model.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import type { ModelData } from '../render/model-data.ts';
 import type { Vfs } from '../vfs/vfs.ts';
-import type { AssetKind, AssetRequest, AssetResponse } from './protocol.ts';
+import type { AssetRequest, AssetResponse } from './protocol.ts';
 
 export interface LoadedModel {
   readonly model: ModelData;
@@ -61,6 +64,35 @@ export class AssetLoader {
     };
   }
 
+  /**
+   * A model an actor wears: `path`, blended with `thin` (the _0 model of a weighted addon)
+   * by `weight` (0..100), with texture sets swapped in.
+   */
+  async loadActorPart(
+    path: string,
+    thin: string | undefined,
+    weight: number,
+    swaps: ModelTextureSwaps,
+  ): Promise<{ readonly model: ModelData; readonly problems: readonly string[] }> {
+    const [payload, thinPayload] = await Promise.all([
+      this.#vfs.readPayload(path),
+      thin === undefined ? undefined : this.#vfs.readPayload(thin),
+    ]);
+    const response = await this.#send(
+      { id: 0, kind: 'actor-part', path, payload, thin: thinPayload, weight, swaps },
+      [payload, thinPayload],
+    );
+    if (!response.ok || response.kind !== 'actor-part') throw new Error(describe(response));
+    return { model: response.model, problems: response.problems };
+  }
+
+  /** A skeleton model's node tree. */
+  async loadRig(path: string): Promise<RigData> {
+    const response = await this.#request('rig', path);
+    if (!response.ok || response.kind !== 'rig') throw new Error(describe(response));
+    return response.rig;
+  }
+
   async loadTexture(path: string): Promise<DdsTexture> {
     const response = await this.#request('texture', path);
     if (!response.ok || response.kind !== 'texture') throw new Error(describe(response));
@@ -74,16 +106,24 @@ export class AssetLoader {
     this.#pending.clear();
   }
 
-  async #request(kind: AssetKind, path: string): Promise<AssetResponse> {
+  async #request(kind: 'model' | 'texture' | 'rig', path: string): Promise<AssetResponse> {
     const payload = await this.#vfs.readPayload(path);
+    return this.#send({ id: 0, kind, path, payload }, [payload]);
+  }
+
+  /** Sends a request (its id assigned here) to the least busy worker, moving the payloads. */
+  #send(request: AssetRequest, payloads: (BsaPayload | undefined)[]): Promise<AssetResponse> {
     const worker = this.#leastBusy();
     const id = this.#nextId++;
-    const request: AssetRequest = { id, kind, path, payload };
     return new Promise<AssetResponse>((resolve, reject) => {
       this.#pending.set(id, { worker, resolve, reject });
       this.#load.set(worker, (this.#load.get(worker) ?? 0) + 1);
-      const buffer = payload.bytes.buffer;
-      worker.postMessage(request, buffer instanceof ArrayBuffer ? [buffer] : []);
+      const transfer = new Set<ArrayBuffer>();
+      for (const payload of payloads) {
+        const buffer = payload?.bytes.buffer;
+        if (buffer instanceof ArrayBuffer) transfer.add(buffer);
+      }
+      worker.postMessage({ ...request, id }, [...transfer]);
     });
   }
 
