@@ -268,4 +268,170 @@ describe('the behavior runtime', () => {
     runtime.update(0);
     expect(runtime.pose[0]).toBeCloseTo(10);
   });
+
+  it('freezes a cyclic blend on its event and cross-blends to the live parameter on the next', () => {
+    const blender: BehaviorGenerator = {
+      kind: 'blender',
+      name: 'Direction',
+      flags: 0x10,
+      blendParameter: { value: 0, variable: 0 },
+      children: [
+        { weight: { value: 0 }, generator: clip('walk') },
+        { weight: { value: 1 }, generator: clip('run') },
+      ],
+    };
+    const cyclic: BehaviorGenerator = {
+      kind: 'cyclic-blend',
+      name: 'Cyclic',
+      generator: blender,
+      freezeEvent: { id: 0 },
+      crossBlendEvent: { id: 1 },
+      blendParameter: { value: 0, variable: 0 },
+      transitionDuration: 1,
+      blendCurve: 1,
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(
+        cyclic,
+        ['CyclicFreeze', 'CyclicCrossBlend'],
+        [{ name: 'Direction', initial: 0.25 }],
+      ),
+      host: host({ walk: animation(0, 10), run: animation(40, 10) }),
+      skeleton,
+    });
+    runtime.update(0);
+    expect(runtime.pose[0]).toBeCloseTo(10);
+    // Events are handled at the next update, before the variable changes.
+    runtime.sendEvent('CyclicFreeze');
+    runtime.update(0);
+    runtime.setVariable('Direction', 1);
+    runtime.update(0);
+    expect(runtime.pose[0]).toBeCloseTo(10);
+    runtime.sendEvent('CyclicCrossBlend');
+    runtime.update(0.5);
+    // Half way (linear) from the frozen 0.25 (10.5 after 0.5 s) to the live 1 (40.5).
+    expect(runtime.pose[0]).toBeCloseTo(25.5);
+    runtime.update(0.6);
+    expect(runtime.pose[0]).toBeCloseTo(41.1);
+  });
+
+  it('lays an offset clip on, sampled where its variable says', () => {
+    const offset: AnimationBinding = {
+      ...animation(0, 2),
+      additive: true,
+      animation: {
+        duration: 2,
+        trackCount: 1,
+        floatTrackCount: 0,
+        annotations: [],
+        motion: undefined,
+        sample: (time, out) => {
+          out.set([time * 10, 0, 0, 0, 0, 0, 1, 1, 1, 1]);
+        },
+      },
+    };
+    const root: BehaviorGenerator = {
+      kind: 'offset-animation',
+      name: 'WeaponAdjustment',
+      generator: clip('idle'),
+      offsetGenerator: clip('adjust'),
+      offsetVariable: { value: 0, variable: 0 },
+      rangeStart: 0,
+      rangeEnd: 1,
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(root, [], [{ name: 'weapAdj', initial: 0.5 }]),
+      host: host({ idle: animation(3), adjust: offset }),
+      skeleton,
+    });
+    runtime.update(0);
+    // The idle at 3, plus the offset clip at half its 2 s (10).
+    expect(runtime.pose[0]).toBeCloseTo(13);
+  });
+
+  it('delays a transition to its initiate interval and limits one to its trigger interval', () => {
+    const interval = (enter: number, exit: number) => ({
+      enterEventId: enter,
+      exitEventId: exit,
+      enterTime: 0,
+      exitTime: 0,
+    });
+    const machine: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Machine',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'Sit',
+          probability: 1,
+          enable: true,
+          generator: clip('sit'),
+          transitions: [
+            // Getting up waits for InitiateStart (events 1 and 2).
+            transition(0, 1, { flags: 0x2, initiateInterval: interval(1, 2) }),
+            // An attack only between R1_Start and R1_Stop (events 4 and 5).
+            transition(3, 2, { flags: 0x1, triggerInterval: interval(4, 5) }),
+          ],
+        },
+        {
+          id: 1,
+          name: 'Stand',
+          probability: 1,
+          enable: true,
+          generator: clip('a'),
+          transitions: [],
+        },
+        {
+          id: 2,
+          name: 'Attack',
+          probability: 1,
+          enable: true,
+          generator: clip('a'),
+          transitions: [],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const make = () =>
+      new BehaviorRuntime({
+        root: graph(machine, [
+          'getUp',
+          'InitiateStart',
+          'InitiateEnd',
+          'attack',
+          'R1_Start',
+          'R1_Stop',
+        ]),
+        host: host({ sit: animation(0), a: animation(1) }),
+        skeleton,
+      });
+    const sit = make();
+    sit.update(0);
+    sit.sendEvent('getUp');
+    sit.update(0.1);
+    expect(sit.states()[0]?.state).toBe('Sit');
+    sit.sendEvent('InitiateStart');
+    sit.update(0.1);
+    expect(sit.states()[0]?.state).toBe('Stand');
+
+    const attack = make();
+    attack.update(0);
+    attack.sendEvent('attack');
+    attack.update(0.1);
+    expect(attack.states()[0]?.state).toBe('Sit');
+    attack.sendEvent('R1_Start');
+    attack.update(0.1);
+    attack.sendEvent('R1_Stop');
+    attack.update(0.1);
+    attack.sendEvent('attack');
+    attack.update(0.1);
+    expect(attack.states()[0]?.state).toBe('Sit');
+    attack.sendEvent('R1_Start');
+    attack.update(0.1);
+    attack.sendEvent('attack');
+    attack.update(0.1);
+    expect(attack.states()[0]?.state).toBe('Attack');
+  });
 });

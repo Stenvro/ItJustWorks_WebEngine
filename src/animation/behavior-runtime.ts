@@ -56,6 +56,15 @@ const CLIP_FLAGS = { dontConvertAnnotationsToTriggers: 0x10 } as const;
 type StateMachine = Extract<BehaviorGenerator, { kind: 'state-machine' }>;
 type Clip = Extract<BehaviorGenerator, { kind: 'clip' }>;
 type Blender = Extract<BehaviorGenerator, { kind: 'blender' }>;
+type CyclicBlend = Extract<BehaviorGenerator, { kind: 'cyclic-blend' }>;
+type OffsetAnimation = Extract<BehaviorGenerator, { kind: 'offset-animation' }>;
+
+/** A cyclic blend holding its blender's parameter, or fading from it to the live one. */
+interface CyclicState {
+  readonly mode: 'frozen' | 'cross';
+  readonly frozen: number;
+  elapsed: number;
+}
 
 /** A graph file's names: its local variable, event and property indices → the character's. */
 interface Scope {
@@ -89,6 +98,10 @@ interface MachineState {
   transition: Transition | undefined;
   /** A transition into this machine named the state to start in. */
   startOverride: number | undefined;
+  /** Events received in the current state (global id → the time in the state then). */
+  readonly received: Map<number, number>;
+  /** A transition triggered before its initiate interval: taken when the interval begins. */
+  pending: { transition: StateTransition; to: StateMachineState } | undefined;
 }
 
 interface ModifierState {
@@ -148,6 +161,15 @@ export class BehaviorRuntime {
   #raised: string[] = [];
   readonly #machines = new WeakMap<object, MachineState>();
   readonly #clips = new WeakMap<object, ClipState>();
+  /**
+   * BSCyclicBlendTransitionGenerators frozen (CyclicFreeze: their blender keeps the parameter
+   * it had) or cross-blending (CyclicCrossBlend: from that pose to the live one).
+   */
+  readonly #cyclic = new WeakMap<object, CyclicState>();
+  /** Blend parameters held by a frozen cyclic blend, by blender. */
+  readonly #heldParameters = new WeakMap<object, number>();
+  /** Blenders a cyclic blend fades from (their frozen parameter): its children play on. */
+  readonly #fadingParameters = new WeakMap<object, number>();
   readonly #modifiers = new WeakMap<object, ModifierState>();
   readonly #expressions = new Map<string, Expression | null>();
   #active = new Set<object>();
@@ -362,9 +384,50 @@ export class BehaviorRuntime {
       case 'clip':
         this.#clips.delete(generator);
         return;
+      case 'cyclic-blend':
+        this.#cyclic.delete(generator);
+        if (generator.generator) {
+          this.#heldParameters.delete(generator.generator);
+          this.#fadingParameters.delete(generator.generator);
+        }
+        return;
       default:
         return;
     }
+  }
+
+  /**
+   * BSCyclicBlendTransitionGenerator (directional blends of creatures; the engine sends the
+   * events when a direction wraps around): its freeze event holds the blender's parameter where
+   * it is, its cross-blend event fades from the pose at that parameter to the live one over
+   * the transition duration on the blend curve.
+   */
+  #cyclicEvent(node: CyclicBlend, event: number): void {
+    const blender = node.generator?.kind === 'blender' ? node.generator : undefined;
+    if (!blender) return;
+    const scope = this.#scopeOf(blender);
+    if (event === node.freezeEvent.id) {
+      const frozen = this.#heldParameters.get(blender) ?? this.#read(blender.blendParameter, scope);
+      this.#heldParameters.set(blender, frozen);
+      this.#cyclic.set(node, { mode: 'frozen', frozen, elapsed: 0 });
+    } else if (event === node.crossBlendEvent.id) {
+      const state = this.#cyclic.get(node);
+      if (state?.mode !== 'frozen') return;
+      this.#heldParameters.delete(blender);
+      if (node.transitionDuration <= 0) {
+        this.#cyclic.delete(node);
+      } else {
+        this.#cyclic.set(node, { mode: 'cross', frozen: state.frozen, elapsed: 0 });
+        this.#fadingParameters.set(blender, state.frozen);
+      }
+    }
+  }
+
+  /** A blender's bindings, with its parameter held while a cyclic blend freezes it. */
+  #blenderRead(node: Blender, scope: Scope): (bindable: Bindable) => number {
+    const held = this.#heldParameters.get(node);
+    return (bindable) =>
+      held !== undefined && bindable === node.blendParameter ? held : this.#read(bindable, scope);
   }
 
   // --- Events --------------------------------------------------------------------------------
@@ -383,9 +446,7 @@ export class BehaviorRuntime {
     }
     if (node.kind === 'modifier-generator' && node.modifier)
       this.#modifierEvent(node.modifier, event);
-    if (node.kind === 'cyclic-blend') {
-      // TODO(M7): freezing and cross-blending the blend parameter on these events.
-    }
+    if (node.kind === 'cyclic-blend') this.#cyclicEvent(node, event);
     for (const child of this.#activeChildren(node)) this.#handle(child, event, seen);
   }
 
@@ -400,6 +461,8 @@ export class BehaviorRuntime {
         timeInState: 0,
         transition: undefined,
         startOverride: undefined,
+        received: new Map(),
+        pending: undefined,
       };
       this.#machines.set(node, state);
     }
@@ -442,6 +505,8 @@ export class BehaviorRuntime {
     const start = enabled.find((state) => state.id === id) ?? enabled[0];
     machine.current = start;
     machine.timeInState = 0;
+    machine.received.clear();
+    machine.pending = undefined;
     if (start) for (const event of start.enterNotifyEvents ?? []) this.#raise(event, scope);
   }
 
@@ -449,6 +514,8 @@ export class BehaviorRuntime {
     const scope = this.#scopeOf(node);
     const current = machine.current;
     if (!current) return;
+    // Trigger and initiate intervals bounded by events (attack windows, InitiateStart..End).
+    machine.received.set(event, machine.timeInState);
     if (machine.transition && this.#uninterruptible(machine.transition)) return;
     const local = (id: number | undefined): number =>
       id === undefined ? -1 : this.#globalEvent(id, scope);
@@ -480,7 +547,32 @@ export class BehaviorRuntime {
       machine,
       (transition) => this.#globalEvent(transition.eventId, scope) === event,
     );
-    if (chosen) this.#change(node, machine, chosen.to, chosen.transition);
+    if (chosen) this.#initiate(node, machine, chosen);
+  }
+
+  /**
+   * Takes a chosen transition, or with an initiate interval that has not begun, keeps it
+   * until it begins (unless one kept already may not be replaced: uninterruptible while
+   * delayed). Havok: a transition triggered outside its initiate interval is delayed to it.
+   */
+  #initiate(
+    node: StateMachine,
+    machine: MachineState,
+    chosen: { transition: StateTransition; to: StateMachineState },
+  ): void {
+    const flags = chosen.transition.flags;
+    const scope = this.#scopeOf(node);
+    if (
+      (flags & TRANSITION_FLAGS.useInitiateInterval) !== 0 &&
+      !this.#inInterval(machine, chosen.transition.initiateInterval, scope)
+    ) {
+      const kept = machine.pending;
+      if (!kept || (kept.transition.flags & TRANSITION_FLAGS.uninterruptibleWhileDelayed) === 0) {
+        machine.pending = chosen;
+      }
+      return;
+    }
+    this.#change(node, machine, chosen.to, chosen.transition);
   }
 
   /** The transition to take among those `matches` accepts: the highest priority, then the first. */
@@ -512,7 +604,7 @@ export class BehaviorRuntime {
       }
       if (
         (transition.flags & TRANSITION_FLAGS.useTriggerInterval) !== 0 &&
-        !this.#inInterval(machine, transition.triggerInterval)
+        !this.#inInterval(machine, transition.triggerInterval, this.#scopeOf(node))
       ) {
         return;
       }
@@ -545,14 +637,30 @@ export class BehaviorRuntime {
     return false;
   }
 
-  /** Whether the time in the state is within an interval given by time (events: TODO(M13)). */
-  #inInterval(machine: MachineState, interval: StateTransition['triggerInterval']): boolean {
+  /**
+   * Whether the current state is within an interval: each end is an event (since it was
+   * received in this state) or else a time in the state (an exit time of 0 never ends).
+   */
+  #inInterval(
+    machine: MachineState,
+    interval: StateTransition['triggerInterval'],
+    scope: Scope,
+  ): boolean {
     if (!interval) return true;
-    if (interval.enterEventId >= 0 || interval.exitEventId >= 0) return true;
-    return (
-      machine.timeInState >= interval.enterTime &&
-      (interval.exitTime <= 0 || machine.timeInState <= interval.exitTime)
-    );
+    const time = machine.timeInState;
+    let begun: number | undefined;
+    if (interval.enterEventId >= 0) {
+      begun = machine.received.get(this.#globalEvent(interval.enterEventId, scope));
+      if (begun === undefined) return false;
+    } else {
+      if (time < interval.enterTime) return false;
+      begun = interval.enterTime;
+    }
+    if (interval.exitEventId >= 0) {
+      const ended = machine.received.get(this.#globalEvent(interval.exitEventId, scope));
+      return ended === undefined || ended < begun;
+    }
+    return interval.exitTime <= 0 || time <= interval.exitTime;
   }
 
   #uninterruptible(transition: Transition): boolean {
@@ -602,6 +710,8 @@ export class BehaviorRuntime {
     }
     machine.current = to;
     machine.timeInState = 0;
+    machine.received.clear();
+    machine.pending = undefined;
     if ((transition?.flags ?? 0) & TRANSITION_FLAGS.toNestedStateIdIsValid) {
       this.#setNestedStart(to.generator, transition?.toNestedStateId ?? -1);
     }
@@ -624,6 +734,8 @@ export class BehaviorRuntime {
         if (machine && state) {
           machine.current = state;
           machine.timeInState = 0;
+          machine.received.clear();
+          machine.pending = undefined;
         } else {
           this.#machines.set(node, {
             current: undefined,
@@ -631,6 +743,8 @@ export class BehaviorRuntime {
             timeInState: 0,
             transition: undefined,
             startOverride: id,
+            received: new Map(),
+            pending: undefined,
           });
         }
         return;
@@ -677,16 +791,25 @@ export class BehaviorRuntime {
           ? [machine.transition.from.generator, machine.current?.generator]
           : [machine.current?.generator];
       }
-      case 'blender':
-        return activeChildren(node, (bindable) => this.#read(bindable, scope)).map(
+      case 'blender': {
+        const live = activeChildren(node, this.#blenderRead(node, scope)).map(
           ([child]) => child.generator,
         );
+        // Fading out of a frozen parameter: the children at both parameters play.
+        const fading = this.#fadingParameters.get(node);
+        if (fading === undefined) return live;
+        const read = (bindable: Bindable): number =>
+          bindable === node.blendParameter ? fading : this.#read(bindable, scope);
+        const frozen = activeChildren(node, read).map(([child]) => child.generator);
+        return [...new Set([...live, ...frozen])];
+      }
       case 'manual-selector':
         return [node.generators[this.#read(node.selectedGeneratorIndex, scope)]];
       case 'bone-switch':
         return [node.generator, ...node.children.map((child) => child.generator)];
       case 'offset-animation':
-        return [node.generator, node.offsetGenerator];
+        // The offset clip is sampled where its variable says, never played.
+        return [node.generator];
       case 'behavior-reference':
         return [this.#reference(node)];
       case 'modifier-generator':
@@ -724,8 +847,16 @@ export class BehaviorRuntime {
             machine,
             (transition) => transition.eventId < 0 && transition.condition !== undefined,
           );
-          if (chosen && chosen.to !== machine.current)
-            this.#change(node, machine, chosen.to, chosen.transition);
+          if (chosen && chosen.to !== machine.current) this.#initiate(node, machine, chosen);
+        }
+        // A delayed transition goes once its initiate interval begins.
+        const pending = machine.pending;
+        if (
+          pending &&
+          !machine.transition &&
+          this.#inInterval(machine, pending.transition.initiateInterval, scope)
+        ) {
+          this.#change(node, machine, pending.to, pending.transition);
         }
         const transition = machine.transition;
         if (transition) {
@@ -737,6 +868,17 @@ export class BehaviorRuntime {
       case 'clip':
         this.#advanceClip(node, dt, scope);
         break;
+      case 'cyclic-blend': {
+        const state = this.#cyclic.get(node);
+        if (state?.mode === 'cross') {
+          state.elapsed += dt;
+          if (state.elapsed >= node.transitionDuration) {
+            this.#cyclic.delete(node);
+            if (node.generator) this.#fadingParameters.delete(node.generator);
+          }
+        }
+        break;
+      }
       case 'modifier-generator':
         if (node.modifier) this.#updateModifier(node.modifier, dt, active);
         break;
@@ -754,7 +896,7 @@ export class BehaviorRuntime {
    * the weighted duration of its children.
    */
   #sync(node: Blender, dt: number, scope: Scope): void {
-    const weighted = activeChildren(node, (bindable) => this.#read(bindable, scope));
+    const weighted = activeChildren(node, this.#blenderRead(node, scope));
     const clips: [Clip, number][] = [];
     for (const [child, weight] of weighted) {
       const clip = leafClip(child.generator);
@@ -1142,11 +1284,11 @@ export class BehaviorRuntime {
       case 'behavior-reference':
         return this.#pass(this.#reference(node), depth);
       case 'offset-animation':
-        // TODO(M7): the offset clip laid on by its variable (two vanilla uses).
-        return this.#pass(node.generator, depth);
+        return this.#generateOffset(node, depth, scope);
+      case 'cyclic-blend':
+        return this.#generateCyclic(node, depth);
       case 'modifier-generator':
       case 'state-tagging':
-      case 'cyclic-blend':
       case 'synchronized-clip':
         return this.#pass(node.generator, depth);
       case 'gamebryo-sequence':
@@ -1179,9 +1321,55 @@ export class BehaviorRuntime {
   #generateClip(node: Clip, depth: number): Generated | undefined {
     const binding = this.#host.clip(node.animation);
     if (!binding) return undefined;
-    const out = this.#buffer(depth);
     const state = this.#clips.get(node);
-    const time = (state?.time ?? 0) + (node.cropStart ?? 0);
+    return this.#sample(binding, (state?.time ?? 0) + (node.cropStart ?? 0), depth);
+  }
+
+  /**
+   * BSOffsetAnimationGenerator: its generator's pose with the offset clip laid on, sampled at
+   * the time its variable picks (rangeStart..rangeEnd over the clip). The vanilla use is the
+   * characters' weapon adjustment: the variable weapAdj (the worn cuirass's weapon adjust)
+   * picks how far an additive clip pushes the sheathed weapons out.
+   */
+  #generateOffset(node: OffsetAnimation, depth: number, scope: Scope): Generated | undefined {
+    const base = this.#generate(node.generator, depth + 1);
+    const clip = node.offsetGenerator?.kind === 'clip' ? node.offsetGenerator : undefined;
+    const binding = clip && this.#host.clip(clip.animation);
+    if (!binding) return base && this.#own(base, depth);
+    const out = this.#buffer(depth);
+    out.set(base ? this.#solid(base, depth + 1) : this.skeleton.referencePose);
+    const span = node.rangeEnd - node.rangeStart;
+    const value = this.#read(node.offsetVariable, scope);
+    const fraction = span !== 0 ? Math.min(1, Math.max(0, (value - node.rangeStart) / span)) : 0;
+    const offset = this.#sample(binding, fraction * binding.animation.duration, depth + 2);
+    if (offset.additive) addPose(out, offset.pose, 1);
+    else blendPoses(out, offset.pose, 1, out);
+    return { pose: out, additive: false };
+  }
+
+  /** A cyclic blend: its blender, or the fade from its frozen pose to the live one. */
+  #generateCyclic(node: CyclicBlend, depth: number): Generated | undefined {
+    const blender = node.generator?.kind === 'blender' ? node.generator : undefined;
+    const state = this.#cyclic.get(node);
+    if (!blender || state?.mode !== 'cross') return this.#pass(node.generator, depth);
+    const live = this.#generate(blender, depth + 1);
+    const to = live && this.#own(live, depth + 1);
+    this.#heldParameters.set(blender, state.frozen);
+    const held = this.#generate(blender, depth + 2);
+    this.#heldParameters.delete(blender);
+    if (!to || !held) {
+      const either = to ?? held;
+      return either && this.#own(either, depth);
+    }
+    const t = blendCurve(node.blendCurve, state.elapsed / Math.max(node.transitionDuration, 1e-6));
+    const out = this.#buffer(depth);
+    blendPoses(this.#solid(held, depth + 3), this.#solid(to, depth + 4), t, out);
+    return { pose: out, additive: false };
+  }
+
+  /** A clip's pose at a time (an additive clip holds the difference to the pose below). */
+  #sample(binding: AnimationBinding, time: number, depth: number): Generated {
+    const out = this.#buffer(depth);
     const reference = this.skeleton.referencePose;
     const animation = binding.animation;
     const trackToBone = binding.trackToBone;
@@ -1220,7 +1408,7 @@ export class BehaviorRuntime {
   }
 
   #generateBlender(node: Blender, depth: number, scope: Scope): Generated | undefined {
-    const weighted = activeChildren(node, (bindable) => this.#read(bindable, scope));
+    const weighted = activeChildren(node, this.#blenderRead(node, scope));
     const accumulator = new PoseAccumulator(this.#boneCount);
     const additive: [Generated, number, Float32Array | undefined][] = [];
     let total = 0;

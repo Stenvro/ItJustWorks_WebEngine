@@ -173,6 +173,25 @@ blended by speed in step, raising FootLeft / FootRight. All 53 skeletons of the 
 start their graph and play idles (`tools/actor-info.ts --audit --deep`); some creatures start
 in a combat idle (dragons, rieklings) or a transform (vampire lords, werewolves) until the
 engine sets the variables of their state (TODO(M10)). Not yet: procedural modifiers (look-at,
-foot IK, twists, keyframed bones, ragdoll controls: TODO(M10)), BSCyclicBlendTransition's
-freezing and cross-blending, BSOffsetAnimationGenerator's offset clip (TODO(M7)), the events
-of a trigger interval, the engine's events and variables of movement and combat (M10, M11).
+foot IK, twists, keyframed bones, ragdoll controls: TODO(M10)), the engine's events and
+variables of movement and combat (M10, M11).
+
+**Intervals:** a transition with a trigger interval (flag 0x1) is taken only within it, one
+with an initiate interval (0x2) is kept until it begins when triggered before (unless one kept
+already is uninterruptible while delayed, 0x8). Each end of an interval is an event received
+in the state (an attack window between R1_Start and R1_Stop, raised by the clip's annotations)
+or else a time in the state (an exit time of 0 never ends). Vanilla: 30 trigger intervals and
+466 initiate intervals (InitiateStart..InitiateEnd: getting up from a seat, out of an idle),
+all bounded by events.
+
+**BSCyclicBlendTransitionGenerator** (directional blends of werewolves, vampire lords, wisps):
+its CyclicFreeze event holds its blender's parameter where it is; CyclicCrossBlend fades from
+the pose at that parameter to the live one over its transition duration on its blend curve,
+the children at both parameters playing on meanwhile (the engine sends the events when a
+direction wraps around: TODO(M10) with movement). **BSOffsetAnimationGenerator** lays a clip
+on its generator's pose, sampled at the time its variable picks (rangeStart..rangeEnd over the
+clip), additively for additive clips. Its vanilla use is the characters' weapon adjustment:
+weapAdj picks how far `weaponAdjustment.hkx` pushes the sheathed weapons out; the engine sets
+it from the armour (ARMA DNAM weapon adjust, f32 at 8): only body pieces vary it in the data
+(0.1–0.65; helmets and the rest are 0 or 1), so it is the cuirass's (slot 32; TODO(M13): not
+documented).

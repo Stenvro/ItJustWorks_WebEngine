@@ -37,7 +37,7 @@ export interface BehaviorEvent {
   readonly payload?: string;
 }
 
-/** hkbStateMachineTimeInterval: by events (when both are set) or by time in the state. */
+/** hkbStateMachineTimeInterval: each end an event (id ≥ 0) or else a time in the state. */
 export interface TimeInterval {
   readonly enterEventId: number;
   readonly exitEventId: number;
