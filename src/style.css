@@ -232,18 +232,60 @@ body.has-scene .log {
 body.has-scene .console,
 body.has-scene .panel,
 body.has-scene .panels,
-body.has-scene .main-menu,
 body.has-scene .sandbox {
   width: 100%;
 }
 
 /* --- Main menu and sandbox ----------------------------------------------- */
 
+/* The main menu's choices side by side along the bottom of the screen. */
 .main-menu {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: min(32rem, 100%);
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  width: min(64rem, calc(100% - 40px));
+  /* Above the shell's scrolling panels. */
+  z-index: 3;
+}
+
+/* Room for it below the log and the load order. */
+body[data-screen='menu'] .shell {
+  padding-bottom: 150px;
+}
+
+/* On the main menu the load order and the archives sit side by side below the log. */
+body[data-screen='menu'] .panels {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+}
+
+body[data-screen='menu'] .panels .table {
+  max-height: 20vh;
+}
+
+/* Compact enough that the log and both lists fit above the menu on a common screen. */
+body[data-screen='menu']:not(.has-scene) .shell {
+  padding-top: clamp(48px, 7vh, 96px);
+  gap: 18px;
+}
+
+body[data-screen='menu'] .title h1 {
+  font-size: clamp(2rem, 5vw, 4.2rem);
+}
+
+body[data-screen='menu'] .log {
+  height: clamp(140px, 22vh, 260px);
+}
+
+@media (max-width: 800px) {
+  body[data-screen='menu'] .panels {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .menu-item {
@@ -253,7 +295,7 @@ body.has-scene .sandbox {
   gap: 4px;
   padding: 14px 18px;
   text-align: left;
-  background: var(--panel);
+  background: rgb(6 8 11 / 0.94);
   backdrop-filter: blur(6px);
 }
 
@@ -310,6 +352,58 @@ body.has-scene .sandbox {
 .sandbox-head button {
   padding: 6px 12px;
   font-size: 11px;
+}
+
+/* The sandbox: the log folded away at the top left, the three finders side by side along the
+   bottom (left of the development panel), the scene in between. */
+body[data-screen='sandbox'] .shell {
+  padding: 0;
+}
+
+body[data-screen='sandbox'] .title {
+  display: none;
+}
+
+body[data-screen='sandbox'] #system-log {
+  position: fixed;
+  top: 52px;
+  left: 20px;
+  width: min(30rem, calc(100% - 40px));
+  z-index: 2;
+}
+
+body[data-screen='sandbox'] .sandbox {
+  position: fixed;
+  left: 20px;
+  right: calc(min(22rem, 100% - 40px) + 40px);
+  bottom: 20px;
+  width: auto;
+  z-index: 2;
+}
+
+.sandbox-finders {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  align-items: end;
+}
+
+body[data-screen='sandbox'] .sandbox .results {
+  max-height: 24vh;
+}
+
+@media (max-width: 1100px) {
+  body[data-screen='sandbox'] .sandbox {
+    right: 20px;
+  }
+
+  .sandbox-finders {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  body[data-screen='sandbox'] .sandbox .results {
+    max-height: 14vh;
+  }
 }
 
 /* --- Development settings: the scene's own panel on the right ------------- */

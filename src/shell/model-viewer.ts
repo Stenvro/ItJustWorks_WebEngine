@@ -1,6 +1,5 @@
 // Viewer for the game's content: single meshes (orbit camera, studio light) and complete
-// interior cells (free camera, the cell's own lighting). Also shows the main menu logo as
-// the shell's backdrop.
+// interior cells (free camera, the cell's own lighting).
 
 import { OrbitCamera, type OrbitView } from '../render/camera.ts';
 import type { Rgb } from '../world/cell-records.ts';
@@ -89,18 +88,6 @@ export interface ViewerElements {
   readonly prompt: HTMLElement;
 }
 
-/** The main menu logo meshes (Anniversary Edition first); they face along the Y axis. */
-const LOGO_PATHS = ['meshes\\interface\\logo\\logo01ae.nif', 'meshes\\interface\\logo\\logo.nif'];
-// The logo is a front-facing shell (the main menu only ever shows it head-on), so keep
-// the camera in front of it.
-const LOGO_VIEW: OrbitView = {
-  up: 'z',
-  yaw: Math.PI,
-  pitch: 0.05,
-  idleSway: 6,
-  yawLimit: 20,
-  pitchLimit: 12,
-};
 const MODEL_VIEW: OrbitView = { up: 'z', yaw: 0.6, pitch: 0.3, idleSpin: 10 };
 const MAX_RESULTS = 80;
 /** Camera height above the floor when entering a cell (≈ 1.7 m). */
@@ -353,7 +340,7 @@ export class ModelViewer {
     return this.#cells;
   }
 
-  /** Starts using a (new) game session: lists its meshes and cells, then shows the logo. */
+  /** Starts using a (new) game session: lists its meshes and cells. */
   async connect(session: GameSession): Promise<void> {
     this.#reset();
     this.#session = session;
@@ -367,9 +354,6 @@ export class ModelViewer {
     this.#ui.meshes.count.textContent = `${numberFormat.format(this.#meshes.length)} meshes`;
     this.#showMeshResults();
 
-    const logo = LOGO_PATHS.find((path) => vfs.has(path));
-    const logoShown = logo ? this.showMesh(logo, LOGO_VIEW) : Promise.resolve();
-
     const db = await session.db;
     this.#db = db;
     this.#cells = await db.interiorCells();
@@ -377,7 +361,6 @@ export class ModelViewer {
     this.#ui.cells.panel.hidden = false;
     this.#ui.cells.count.textContent = `${numberFormat.format(this.#cells.length)} cells`;
     this.#showCellResults();
-    await logoShown;
   }
 
   /** Loads a mesh and shows it on its own. */
@@ -417,10 +400,7 @@ export class ModelViewer {
     this.#orbit.fit(model.center, model.radius > 0 ? model.radius : 64);
     const graph = startObjectGraph(model, 0);
     const instance = { model, world: identity(), ...(graph && { graph }) };
-    this.#present(this.#renderer.scene.createScene([instance]), model, {
-      camera: 'orbit',
-      backdrop: view === LOGO_VIEW,
-    });
+    this.#present(this.#renderer.scene.createScene([instance]), model, { camera: 'orbit' });
   }
 
   /** Opens a mesh with the regular model view. */
@@ -1001,11 +981,7 @@ export class ModelViewer {
     scene: GpuScene,
     meshModel: GpuModel | undefined,
     view:
-      | {
-          camera: 'orbit';
-          /** The start screen's logo: part of the page background (CRT overlay stays). */
-          backdrop: boolean;
-        }
+      | { camera: 'orbit' }
       | {
           camera: 'fly';
           lighting: ReturnType<typeof cellSceneLighting>;
@@ -1061,7 +1037,7 @@ export class ModelViewer {
     if (previousMesh !== meshModel) previousMesh?.destroy();
     document.body.classList.add('has-scene');
     // The CRT overlay belongs to the page background, never over a model, cell or world.
-    document.body.classList.toggle('content-scene', !(view.camera === 'orbit' && view.backdrop));
+    document.body.classList.add('content-scene');
   }
 
   /** Water in the shown interior: a water activator's surface, else the cell's water. */
