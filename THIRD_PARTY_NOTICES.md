@@ -176,7 +176,9 @@ these projects read and write (their layouts, names and constants), not by copyi
 [xEdit](https://github.com/TES5Edit/TES5Edit) record definitions,
 [CommonLibSSE-NG](https://github.com/CharmedBaryon/CommonLibSSE-NG) (engine structures),
 [OpenMW](https://openmw.org)'s ESM4 loader (the NVNM navigation mesh layout), Champollion
-(Papyrus bytecode), hkxcmd / HKX2 / serde-hkx (Havok packfiles), BSArch, Nukem9's decompiled
+(Papyrus bytecode), hkxcmd / HKX2 / serde-hkx (Havok packfiles),
+[HavokLib](https://github.com/PredatorCZ/HavokLib) (GPL-3.0; the spline-compressed animation
+layout and quaternion encodings, written anew here), BSArch, Nukem9's decompiled
 BSLightingShader and aers' Skyrim-SE-Shader-Tools (shader constants), the Creation Kit wiki,
 and the [Step](https://stepmodifications.org) INI guides and default value lists. LZ4,
 xxHash32 and zlib (inflate) are implemented here from their specifications.
