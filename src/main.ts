@@ -54,6 +54,9 @@ const ui = {
   sandbox: byId('sandbox', HTMLElement),
   sandboxBack: byId('sandbox-back', HTMLButtonElement),
   devPanel: byId('dev-panel', HTMLElement),
+  systemLog: byId('system-log', HTMLDetailsElement),
+  loadOrderPanel: byId('load-order', HTMLDetailsElement),
+  archivesPanel: byId('archives', HTMLDetailsElement),
   viewer: {
     meshes: {
       panel: byId('viewer', HTMLElement),
@@ -167,6 +170,15 @@ function showScreen(screen: Screen): void {
   ui.menu.hidden = screen !== 'menu';
   ui.summary.hidden = screen !== 'menu' || currentVfs === undefined;
   ui.sandbox.hidden = screen !== 'sandbox';
+  // The main menu shows what was loaded (log, load order, archives); the sandbox keeps the
+  // log folded away above its finders.
+  if (screen === 'menu') {
+    ui.systemLog.open = true;
+    ui.loadOrderPanel.open = true;
+    ui.archivesPanel.open = true;
+  } else if (screen === 'sandbox') {
+    ui.systemLog.open = false;
+  }
 }
 
 // --- Pick the game folder and build the VFS --------------------------------
@@ -224,7 +236,7 @@ async function useFolder(handle: FileSystemDirectoryHandle, isNewChoice: boolean
   if (!resolved.report.ok) {
     if (!isNewChoice) await forgetGameFolder();
     terminal.log('vfs', `${handle.name}: missing ${resolved.report.missing.join(', ')}`, 'error');
-    prompt('This is not a Skyrim Special Edition installation or Data folder.', 'pick');
+    prompt("This is not the game's installation folder or its Data folder.", 'pick');
     ui.status.textContent = 'awaiting folder';
     return;
   }
@@ -343,12 +355,12 @@ async function setupGameFolder(): Promise<void> {
       });
       ui.resume.textContent = `resume ${stored.handle.name}`;
       ui.status.textContent = 'awaiting permission';
-      prompt('The browser needs permission again to read your Skyrim folder.', 'resume');
+      prompt('The browser needs permission again to read your game folder.', 'resume');
       break;
     case 'none':
       ui.status.textContent = 'awaiting folder';
       prompt(
-        'Select your Skyrim Special Edition install folder (the one containing "Data").\n' +
+        'Select the install folder of your own copy of TES V, Special Edition (the one containing "Data").\n' +
           'Everything stays on your own computer.',
         'pick',
       );
@@ -423,6 +435,7 @@ async function main(): Promise<void> {
   const updateLensShift = (): void => {
     const visibleColumn =
       window.innerWidth >= 1000 &&
+      document.body.dataset.screen !== 'sandbox' &&
       document.body.classList.contains('has-scene') &&
       !ui.shell.classList.contains('shell-hidden');
     const shift = visibleColumn ? ui.shell.getBoundingClientRect().width / window.innerWidth : 0;
@@ -439,6 +452,10 @@ async function main(): Promise<void> {
     showScreen('sandbox');
   });
   ui.sandboxBack.addEventListener('click', () => {
+    // Back on the main menu, nothing stays loaded.
+    modelViewer.deactivate();
+    worldViewer.deactivate();
+    document.body.classList.remove('has-scene', 'content-scene');
     showScreen('menu');
   });
   if (import.meta.env.DEV) {
