@@ -11,6 +11,8 @@ export interface ModelTextureSwaps {
   readonly skin?: readonly string[];
   /** By lower-case shape name (ARMA MO2S..MO5S). */
   readonly shapes?: readonly { readonly shape: string; readonly textures: readonly string[] }[];
+  /** For every shape (a head part's texture set, HDPT TNAM). */
+  readonly all?: readonly string[];
 }
 
 /** BSLightingShaderProperty type of exposed skin (FaceGen RGB tint). */
@@ -78,13 +80,14 @@ export function blendWeight(thin: ModelData, heavy: ModelData, weight: number): 
 /** Puts texture sets into an actor model's shapes (slots the set leaves empty are kept). */
 export function swapTextures(model: ModelData, swaps: ModelTextureSwaps): ModelData {
   const byShape = new Map(swaps.shapes?.map((swap) => [swap.shape.toLowerCase(), swap.textures]));
-  if (!swaps.skin && byShape.size === 0) return model;
+  if (!swaps.skin && !swaps.all && byShape.size === 0) return model;
   const parts = model.parts.map((part): ModelPart => {
     const material = part.material;
     if (material?.kind !== 'lighting') return part;
     const set =
       byShape.get(part.name.toLowerCase()) ??
-      (material.shaderType === SHADER_SKIN_TINT ? swaps.skin : undefined);
+      (material.shaderType === SHADER_SKIN_TINT ? swaps.skin : undefined) ??
+      swaps.all;
     if (!set) return part;
     const textures = material.textures.map((path, slot) => {
       const swapped = set[slot] ?? '';

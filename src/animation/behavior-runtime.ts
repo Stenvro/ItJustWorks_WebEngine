@@ -166,6 +166,8 @@ export class BehaviorRuntime {
    * it had) or cross-blending (CyclicCrossBlend: from that pose to the live one).
    */
   readonly #cyclic = new WeakMap<object, CyclicState>();
+  /** Blenders a cyclic blend drives: its fBlendParameter is theirs. */
+  readonly #drivenBy = new WeakMap<object, CyclicBlend>();
   /** Blend parameters held by a frozen cyclic blend, by blender. */
   readonly #heldParameters = new WeakMap<object, number>();
   /** Blenders a cyclic blend fades from (their frozen parameter): its children play on. */
@@ -405,12 +407,13 @@ export class BehaviorRuntime {
   #cyclicEvent(node: CyclicBlend, event: number): void {
     const blender = node.generator?.kind === 'blender' ? node.generator : undefined;
     if (!blender) return;
-    const scope = this.#scopeOf(blender);
-    if (event === node.freezeEvent.id) {
-      const frozen = this.#heldParameters.get(blender) ?? this.#read(blender.blendParameter, scope);
+    this.#drivenBy.set(blender, node);
+    const scope = this.#scopeOf(node);
+    if (event === this.#globalEvent(node.freezeEvent.id, scope)) {
+      const frozen = this.#blenderRead(blender, this.#scopeOf(blender))(blender.blendParameter);
       this.#heldParameters.set(blender, frozen);
       this.#cyclic.set(node, { mode: 'frozen', frozen, elapsed: 0 });
-    } else if (event === node.crossBlendEvent.id) {
+    } else if (event === this.#globalEvent(node.crossBlendEvent.id, scope)) {
       const state = this.#cyclic.get(node);
       if (state?.mode !== 'frozen') return;
       this.#heldParameters.delete(blender);
@@ -423,11 +426,21 @@ export class BehaviorRuntime {
     }
   }
 
-  /** A blender's bindings, with its parameter held while a cyclic blend freezes it. */
+  /**
+   * A blender's bindings: its parameter is the cyclic blend's that drives it (its
+   * fBlendParameter, bound to Direction in the vanilla graphs where the blender's own is not),
+   * held while the cyclic blend freezes it.
+   */
   #blenderRead(node: Blender, scope: Scope): (bindable: Bindable) => number {
     const held = this.#heldParameters.get(node);
-    return (bindable) =>
-      held !== undefined && bindable === node.blendParameter ? held : this.#read(bindable, scope);
+    const cyclic = this.#drivenBy.get(node);
+    return (bindable) => {
+      if (bindable !== node.blendParameter) return this.#read(bindable, scope);
+      if (held !== undefined) return held;
+      return cyclic
+        ? this.#read(cyclic.blendParameter, this.#scopeOf(cyclic))
+        : this.#read(bindable, scope);
+    };
   }
 
   // --- Events --------------------------------------------------------------------------------
@@ -812,9 +825,11 @@ export class BehaviorRuntime {
         return [node.generator];
       case 'behavior-reference':
         return [this.#reference(node)];
+      case 'cyclic-blend':
+        if (node.generator?.kind === 'blender') this.#drivenBy.set(node.generator, node);
+        return [node.generator];
       case 'modifier-generator':
       case 'state-tagging':
-      case 'cyclic-blend':
       case 'synchronized-clip':
         return [node.generator];
       default:

@@ -105,6 +105,39 @@ their look: [formats/esm.md](formats/esm.md#actors)).
   female clip for women where one exists). Actors stand where they were placed until their
   AI packages move them (M10).
 
+## The player
+
+The player's body (`player-avatar.ts`) is the Player actor (NPC_ 0x7, reference 0x14) placed like
+any actor: its race's skeleton, its outfit (the iron set) and its head. No FaceGen head is baked
+for the player (the engine makes it at run time), so its head is put together from its head parts
+(`ActorLook.headParts`: the race's defaults, those of a type it has its own of replaced, and the
+parts they bring along: head, mouth, eyes, hair, hairline for the vanilla Nord), the face part
+with the NPC's face texture set (FTST) or the race's default (DFTM / DFTF), each part with its
+expression TRI. TODO(M9): the RaceSex menu's sliders (NAM9 / NAMA through the race's and the
+chargen TRIs) and tint layers (TINI..TINV). It is drawn in third person and from the free
+camera; in first person nothing of it is drawn (TODO(M11): the first-person arms once weapons
+or spells are drawn; TODO(M13): the third-person body's shadow, which the game casts in first
+person too).
+
+Two graphs run: the race's (`defaultmale.hkx`) on the body and the first-person one
+(`_1stperson\firstperson.hkx`) on the first-person skeleton (`_1stperson\skeleton.nif` with
+`skeletonfirst.hkx`, 99 bones), whose **Camera1st [Cam1]** bone is the first-person camera:
+120.5 units up at rest, 86.4 in SneakMTIdle (times the race's height). The player's movement
+drives both, as the engine drives them: Speed (the controller's horizontal speed, game units per
+second), Direction (the movement against the facing: 0 ahead, 0.25 right, 0.5 behind, 0.75 left),
+IsSprinting, IsSneaking; moveStart / moveStop when it starts and stops moving (over 5 units per
+second), SprintStart / SprintStop, SneakStart / SneakStop, SwimStart / SwimStop. A jump sends
+JumpStandingStart or JumpDirectionalStart; the jump clip's **JumpUp** annotation pushes off (the
+controller's take-off speed from fJumpHeightMin), JumpFall goes out once it comes down and
+JumpLand (JumpLandDirectional when moving) when it stands again. In third person the body turns
+to the way it moves (weapons sheathed) at the movement type's rotate-while-moving rate
+(NPCDefault); in first person it faces where the camera looks.
+
+**Bone weights** shorter than the skeleton count 1 for the bones they lack: the first-person
+graph's BodyWeightBlend gives its main branch 97 weights, from before the camera bones (97, 98)
+were added to the skeleton; counted as 0, the camera would never leave its rest (the game lowers
+it when sneaking).
+
 ## Faces
 
 An actor's face (`FaceAnimation`, `src/animation/face.ts`) sets the weights of its head

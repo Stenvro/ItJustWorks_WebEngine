@@ -38,6 +38,16 @@ describe('poses', () => {
     expect(out[0]).toBe(-1);
   });
 
+  it('counts bones a bone weight array lacks as weight 1', () => {
+    // Two bones, weights only for the first (an array older than the skeleton's last bones).
+    const acc = new PoseAccumulator(2);
+    acc.add(Float32Array.from([...bone(4, IDENTITY), ...bone(8, IDENTITY)]), 1, Float32Array.of(0));
+    const out = new Float32Array(20);
+    acc.finish(out, Float32Array.from([...bone(-1, IDENTITY), ...bone(-1, IDENTITY)]));
+    expect(out[0]).toBe(-1);
+    expect(out[10]).toBe(8);
+  });
+
   it('blends two poses by a fraction', () => {
     const out = new Float32Array(10);
     blendPoses(

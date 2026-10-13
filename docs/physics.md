@@ -86,8 +86,9 @@ through the edges' middles, a player walks around it); and a few steps higher th
   with its shoulders at the surface; looking down while swimming forward dives. The engine's
   float height (swimFloatHeight) is not documented; 0.69 is the in-game measurement of the
   author of "Wade In Water".
-- **TODO(M7):** the player's body (third person shows no one yet), the camera on the animated
-  Camera1st node (sneaking lowers it). **TODO(M11):** fall damage (fJumpFallHeight*), stamina for
+- **The body and its camera** are the player's avatar (animation.md, The player): the
+  first-person camera rides the animated Camera1st node (sneaking lowers it), a jump pushes off
+  when its animation raises JumpUp. **TODO(M11):** fall damage (fJumpFallHeight*), stamina for
   sprinting.
 
 ## Cameras and input

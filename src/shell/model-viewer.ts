@@ -69,6 +69,7 @@ import {
 import type { InteriorCell, RecordDatabase } from '../world/record-db.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { talkTargets, type PlacedActor } from './actors.ts';
+import { PlayerAvatar } from './player-avatar.ts';
 import type { GameSession } from './game-session.ts';
 import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
@@ -267,6 +268,8 @@ export class ModelViewer {
   #instances = new Map<number, ModelInstance>();
   /** The actors of the cell on screen (they animate every frame). */
   #actorsShown: readonly PlacedActor[] = [];
+  /** The player's body while playing. */
+  #avatar: PlayerAvatar | undefined;
   /** Shown objects whose behavior graph moves their skeleton. */
   #objectSkeletons: readonly AnimatedSkeleton[] = [];
 
@@ -324,9 +327,21 @@ export class ModelViewer {
     this.#play = play;
     this.#ui.freeCamera.checked = false;
     this.#ui.play.hidden = false;
+    // The player's body (third person) and first-person camera animation.
+    PlayerAvatar.create(session, this.#renderer, player).then(
+      (avatar) => {
+        if (this.#play === play) this.#avatar = avatar;
+        else avatar?.destroy();
+      },
+      (error: unknown) => {
+        this.#terminal.log('actor', `player: ${describe(error)}`, 'warn');
+      },
+    );
   }
 
   #stopPlay(): void {
+    this.#avatar?.destroy();
+    this.#avatar = undefined;
     this.#play?.dispose();
     this.#play = undefined;
     this.#collision = collisionGroup();
@@ -1020,6 +1035,19 @@ export class ModelViewer {
     this.#applyCellSelection();
   }
 
+  /** The player's body while playing. */
+  get avatar(): PlayerAvatar | undefined {
+    return this.#avatar;
+  }
+
+  /** The player's body, in third person or seen from the free camera. */
+  #avatarScenes(): GpuScene[] {
+    const play = this.#play;
+    const avatar = this.#avatar;
+    if (!play || !avatar) return [];
+    return play.freeCamera || play.player.pov === 'third' ? [avatar.scene] : [];
+  }
+
   /** The actors shown in the cell on screen. */
   get actorsShown(): readonly PlacedActor[] {
     return this.#actorsShown;
@@ -1083,7 +1111,7 @@ export class ModelViewer {
       }
       const { lighting, imageSpace, lights, decals } = view;
       this.#renderer.setView({
-        scenes: () => [scene],
+        scenes: () => [scene, ...this.#avatarScenes()],
         camera,
         lighting: () => ({
           ...lighting,
@@ -1095,6 +1123,7 @@ export class ModelViewer {
         decals: () => (decals ? [decals] : []),
         backdrop: false,
         update: (seconds) => {
+          this.#avatar?.update(seconds);
           animateSkeletons(this.#actorsShown, seconds);
           animateSkeletons(this.#objectSkeletons, seconds);
         },

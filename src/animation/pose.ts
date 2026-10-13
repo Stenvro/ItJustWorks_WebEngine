@@ -28,7 +28,7 @@ export class PoseAccumulator {
     if (!(weight > 0)) return;
     const sum = this.#sum;
     for (let bone = 0; bone < this.boneCount; bone++) {
-      const w = weight * (boneWeights ? (boneWeights[bone] ?? 0) : 1);
+      const w = weight * (boneWeights ? (boneWeights[bone] ?? 1) : 1);
       if (!(w > 0)) continue;
       const o = bone * TRANSFORM_FLOATS;
       // A quaternion and its negation are the same turn: add on the side of what is there.
@@ -80,7 +80,7 @@ export function blendPoses(
   const bones = Math.floor(Math.min(a.length, b.length, out.length) / TRANSFORM_FLOATS);
   for (let bone = 0; bone < bones; bone++) {
     const o = bone * TRANSFORM_FLOATS;
-    const w = t * (boneWeights ? (boneWeights[bone] ?? 0) : 1);
+    const w = t * (boneWeights ? (boneWeights[bone] ?? 1) : 1);
     for (let k = 0; k < 3; k++) out[o + k] = (a[o + k] ?? 0) * (1 - w) + (b[o + k] ?? 0) * w;
     for (let k = 7; k < 10; k++) out[o + k] = (a[o + k] ?? 0) * (1 - w) + (b[o + k] ?? 0) * w;
     let dot = 0;
@@ -110,7 +110,7 @@ export function addPose(
   const bones = Math.floor(Math.min(base.length, additive.length) / TRANSFORM_FLOATS);
   for (let bone = 0; bone < bones; bone++) {
     const o = bone * TRANSFORM_FLOATS;
-    const w = weight * (boneWeights ? (boneWeights[bone] ?? 0) : 1);
+    const w = weight * (boneWeights ? (boneWeights[bone] ?? 1) : 1);
     if (!(w > 0)) continue;
     for (let k = 0; k < 3; k++) base[o + k] = (base[o + k] ?? 0) + (additive[o + k] ?? 0) * w;
     for (let k = 7; k < 10; k++) {
