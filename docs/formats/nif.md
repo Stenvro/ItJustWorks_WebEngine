@@ -311,3 +311,24 @@ yet: TODO(M7). Phantoms detect overlaps and never collide.
 
 **BSBound** (extra data): name, centre vec3, half extents vec3. A skeleton's "BBX" is the
 actor's collision bound (the human skeleton: centre 0,0,64, half extents 22,14,64).
+
+## TRI (FaceGen morphs)
+
+A head part (HDPT) names its morph files by part type (NAM0 then NAM1 path): 0 race morphs,
+1 **Tri** (the expressions the game plays), 2 chargen morphs. The FaceGen head NIF already
+has the race and chargen morphs applied; the Tri file's morphs move it at run time
+(`src/formats/nif/tri.ts`, check: `node tools/tri-info.ts --all`, 569 vanilla files).
+
+Layout (pyffi `tri.xml`): `FRTRI003`, then 14 i32: vertex count, triangle count, quad count,
+2 unknown, UV count, has UVs, morph count, modifier count, modifier vertex count, 4 unknown;
+the vertices (f32 × 3), the modifier vertices (f32 × 3), triangles (i32 × 3), quads (i32 × 4),
+UVs (f32 × 2) and, with UVs, UV triangles and quads; per morph a name (u32 length with the
+trailing zero, then the text), a scale (f32) and per vertex three i16 offsets (times the
+scale); per modifier a name, a count and that many vertex indices (their positions are the
+modifier vertices, in order). The vertices are those of the head part's shape in the FaceGen
+head, in the same order (MaleHead.tri: 898, as MaleHeadNord).
+
+Morphs of the human heads: 16 phonemes (Aah, BigAah, BMP, ChJSh, DST, Eee, Eh, FV, I, K, N,
+Oh, OohQ, R, Th, W), modifiers (BlinkLeft / Right, BrowDown / In / Up Left / Right, LookDown,
+SquintLeft / Right), moods and dialogue expressions (MoodAnger … MoodSurprise, DialogueAnger
+… DialogueSurprise, CombatAnger, CombatShout) and SkinnyMorph.
