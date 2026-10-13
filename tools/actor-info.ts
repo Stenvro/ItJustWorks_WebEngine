@@ -8,9 +8,19 @@
 //   node tools/actor-info.ts --audit [--deep]           every placed actor (--deep: skeletons,
 //                                                       Havok skeletons, idles, model bones)
 
+import { BehaviorRuntime, type BehaviorHost } from '../src/animation/behavior-runtime.ts';
 import { ActorSkeleton, buildRig, wearOnRig, type RigData } from '../src/animation/skeleton.ts';
-import { readAnimationContainer } from '../src/formats/hkx/animation.ts';
-import { loadCharacterInfo, type CharacterInfo } from '../src/formats/hkx/behavior.ts';
+import {
+  readAnimationContainer,
+  type AnimationBinding,
+  type HkxSkeleton,
+} from '../src/formats/hkx/animation.ts';
+import {
+  loadBehaviorFiles,
+  loadCharacterInfo,
+  projectRelative,
+  type CharacterInfo,
+} from '../src/formats/hkx/behavior.ts';
 import { Packfile } from '../src/formats/hkx/packfile.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
 import { buildModel, type ModelData } from '../src/render/model-data.ts';
@@ -42,6 +52,56 @@ function missingFiles(look: ActorLook): string[] {
     if (worn.weighted) need(path.replace(/_1\.nif$/, '_0.nif'));
   }
   return missing;
+}
+
+/**
+ * Runs a race's behavior graph for two seconds as a standing NPC: what it plays (problems
+ * into `lines`).
+ */
+async function runGraph(
+  project: string,
+  behavior: string,
+  skeleton: HkxSkeleton,
+  lines: string[],
+): Promise<string> {
+  const read = (path: string): Promise<Uint8Array> => vfs.read(path);
+  const { root, files } = await loadBehaviorFiles(project, behavior, read);
+  const clips = new Map<string, AnimationBinding | undefined>();
+  const pending: Promise<void>[] = [];
+  const host: BehaviorHost = {
+    clip: (animation) => {
+      const path = projectRelative(project, animation);
+      if (!clips.has(path)) {
+        clips.set(path, undefined);
+        pending.push(
+          read(path)
+            .then((bytes) => {
+              clips.set(path, readAnimationContainer(Packfile.parse(bytes)).bindings[0]);
+            })
+            .catch(() => {
+              lines.push(`clip ${path} does not load`);
+            }),
+        );
+      }
+      return clips.get(path);
+    },
+    behavior: (name) => files.get(projectRelative(project, name)),
+  };
+  const runtime = new BehaviorRuntime({ root, host, skeleton, random: () => 0.5 });
+  runtime.setVariable('IsNPC', 1);
+  for (let frame = 0; frame < 60; frame++) {
+    runtime.update(1 / 30);
+    await Promise.all(pending.splice(0));
+  }
+  const playing = runtime.playing().map((clip) => clip.animation.replace(/^.*\\/, ''));
+  if (playing.length === 0) lines.push('its behavior graph plays no clip');
+  for (const value of runtime.pose) {
+    if (!Number.isFinite(value)) {
+      lines.push('its pose is not finite');
+      break;
+    }
+  }
+  return `${String(files.size)} behavior files, plays ${playing.slice(0, 3).join(', ')}`;
 }
 
 /**
@@ -94,10 +154,12 @@ async function auditRigs(): Promise<void> {
         const bones = [...skeleton.boneOfNode].filter((bone) => bone >= 0).length;
         matched = `${String(bones)} of ${String(havok?.bones.length ?? 0)} bones on ${String(rig.names.length)} nodes`;
         if (bones === 0) lines.push('no Havok bone matches a node');
+        if (havok && character.behavior) {
+          matched += `, ${await runGraph(behavior, character.behavior, havok, lines)}`;
+        }
       } catch (error) {
         lines.push(`Havok skeleton ${character.rig} does not load: ${String(error)}`);
       }
-      if (!character.animations.some((path) => /idle\.hkx$/i.test(path))) lines.push('no idle');
     }
     const missingBones = new Map<string, Set<string>>();
     const rigid = new Set<string>();

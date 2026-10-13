@@ -1,19 +1,33 @@
 // Actors in cells: a placed actor (ACHR) becomes its look (src/world/actors.ts) on its race's
 // skeleton: the skeleton model and Havok skeleton give a pose, the models it wears and its
-// FaceGen head are skinned to it, and an animation moves it every frame.
+// FaceGen head are skinned to it, and its race's behavior graph moves it every frame
+// (src/animation/behavior-runtime.ts).
 
+import { BehaviorRuntime, type BehaviorHost } from '../animation/behavior-runtime.ts';
 import { ActorPose, ActorSkeleton, wearOnRig, type RigData } from '../animation/skeleton.ts';
 import {
   readAnimationContainer,
-  TRANSFORM_FLOATS,
   type AnimationBinding,
   type HkxSkeleton,
 } from '../formats/hkx/animation.ts';
-import { loadCharacterInfo, type CharacterInfo } from '../formats/hkx/behavior.ts';
+import {
+  loadBehaviorFiles,
+  loadCharacterInfo,
+  projectRelative,
+  type BehaviorGraph,
+  type CharacterInfo,
+} from '../formats/hkx/behavior.ts';
 import { Packfile } from '../formats/hkx/packfile.ts';
+import { normalizePath } from '../formats/paths.ts';
 import { thinModelPath, type ModelTextureSwaps } from '../render/actor-model.ts';
 import type { GpuModel, ModelInstance } from '../render/scene-renderer.ts';
-import { ActorResolver, meshPath, partitionVisible, type ActorLook } from '../world/actors.ts';
+import {
+  ActorResolver,
+  meshPath,
+  partitionVisible,
+  seededRandom,
+  type ActorLook,
+} from '../world/actors.ts';
 import { referenceMatrix, type CellActor } from '../world/cell-loader.ts';
 import { parseTextureSet } from '../world/decal.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
@@ -26,55 +40,83 @@ export interface PlacedActor {
   readonly look: ActorLook;
   readonly pose: ActorPose;
   readonly instances: readonly ModelInstance[];
-  /** What it plays (TODO(M7): its behavior graph chooses; until then its idle loops). */
-  readonly clip: ActorClip | undefined;
+  /** Its behavior graph, running (undefined: it stands in its skeleton's rest pose). */
+  readonly behavior: BehaviorRuntime | undefined;
+  /** The renderer's clock at its last update. */
+  time: number | undefined;
 }
 
-/** An animation looping on an actor's Havok skeleton. */
-export interface ActorClip {
-  readonly binding: AnimationBinding;
-  readonly skeleton: HkxSkeleton;
-  /** Seconds into the clip at time 0 (actors do not all breathe together). */
-  readonly offset: number;
-  /** Bone-local transforms (TRANSFORM_FLOATS per bone) and the sampled tracks. */
-  readonly bones: Float32Array;
-  readonly tracks: Float32Array;
-}
+/** A frame longer than this (a hitch, a hidden tab) advances the graphs by this much. */
+const MAX_STEP = 0.1;
 
-/** Moves every actor to its clip's pose at `seconds`. */
+/** Moves every actor: its graph runs to `seconds` on the renderer's clock. */
 export function animateActors(actors: Iterable<PlacedActor>, seconds: number): void {
   for (const placed of actors) {
-    const clip = placed.clip;
-    if (!clip) continue;
-    const { binding, skeleton, bones, tracks } = clip;
-    const animation = binding.animation;
-    const time = (seconds + clip.offset) % Math.max(animation.duration, 1e-3);
-    bones.set(skeleton.referencePose);
-    const trackToBone = binding.trackToBone;
-    if (!trackToBone) {
-      animation.sample(time, bones);
-    } else {
-      // Tracks a clip leaves unusable keep the reference pose of their bone.
-      for (let t = 0; t < animation.trackCount; t++) {
-        const bone = trackToBone[t] ?? -1;
-        if (bone >= 0) {
-          tracks.set(
-            skeleton.referencePose.subarray(bone * TRANSFORM_FLOATS, (bone + 1) * TRANSFORM_FLOATS),
-            t * TRANSFORM_FLOATS,
-          );
-        }
-      }
-      animation.sample(time, tracks);
-      for (let t = 0; t < animation.trackCount; t++) {
-        const bone = trackToBone[t] ?? -1;
-        if (bone < 0) continue;
-        bones.set(
-          tracks.subarray(t * TRANSFORM_FLOATS, (t + 1) * TRANSFORM_FLOATS),
-          bone * TRANSFORM_FLOATS,
-        );
-      }
-    }
-    placed.pose.update(bones);
+    const behavior = placed.behavior;
+    if (!behavior) continue;
+    const dt =
+      placed.time === undefined ? 0 : Math.min(MAX_STEP, Math.max(0, seconds - placed.time));
+    placed.time = seconds;
+    behavior.update(dt);
+    // TODO(M10): footsteps and the other sounds its animations raise.
+    behavior.takeRaised();
+    placed.pose.update(behavior.pose);
+  }
+}
+
+/** A race's behavior project, read once: its character and every behavior file. */
+interface Behaviors {
+  readonly project: string;
+  readonly character: CharacterInfo;
+  readonly root: BehaviorGraph;
+  readonly files: ReadonlyMap<string, BehaviorGraph>;
+}
+
+/**
+ * The clips of a project for one sex, shared by its actors: loaded when a graph first asks
+ * for one (the female clip where a female one exists).
+ */
+class ClipHost implements BehaviorHost {
+  readonly #behaviors: Behaviors;
+  readonly #female: boolean;
+  readonly #load: (path: string) => Promise<AnimationBinding | undefined>;
+  readonly #has: (path: string) => boolean;
+  readonly #clips = new Map<string, AnimationBinding | undefined>();
+  readonly #pending = new Set<Promise<unknown>>();
+
+  constructor(
+    behaviors: Behaviors,
+    female: boolean,
+    has: (path: string) => boolean,
+    load: (path: string) => Promise<AnimationBinding | undefined>,
+  ) {
+    this.#behaviors = behaviors;
+    this.#female = female;
+    this.#has = has;
+    this.#load = load;
+  }
+
+  clip(animation: string): AnimationBinding | undefined {
+    const key = animation.toLowerCase();
+    if (this.#clips.has(key)) return this.#clips.get(key);
+    this.#clips.set(key, undefined);
+    const path = projectRelative(this.#behaviors.project, animation);
+    const own = this.#female ? path.replace(/\\male\\/, '\\female\\') : path;
+    const loading = this.#load(this.#has(own) ? own : path).then((binding) => {
+      this.#clips.set(key, binding);
+    });
+    this.#pending.add(loading);
+    void loading.finally(() => this.#pending.delete(loading));
+    return undefined;
+  }
+
+  behavior(name: string): BehaviorGraph | undefined {
+    return this.#behaviors.files.get(projectRelative(this.#behaviors.project, name));
+  }
+
+  /** Waits for the clips asked for so far. */
+  async loaded(): Promise<void> {
+    while (this.#pending.size > 0) await Promise.all([...this.#pending]);
   }
 }
 
@@ -88,9 +130,10 @@ export class ActorPlacer {
   readonly #terminal: Terminal;
   readonly #resolver: ActorResolver;
   readonly #rigs = new Map<string, Promise<RigData | undefined>>();
-  readonly #characters = new Map<string, Promise<CharacterInfo | undefined>>();
   readonly #skeletons = new Map<string, Promise<HkxSkeleton | undefined>>();
   readonly #clips = new Map<string, Promise<AnimationBinding | undefined>>();
+  readonly #behaviors = new Map<string, Promise<Behaviors | undefined>>();
+  readonly #hosts = new Map<string, ClipHost>();
   readonly #textureSets = new Map<number, Promise<readonly string[] | undefined>>();
 
   constructor(session: GameSession, db: RecordDatabase, terminal: Terminal) {
@@ -120,12 +163,6 @@ export class ActorPlacer {
     return this.#cached(this.#rigs, path, () => this.#session.loader.loadRig(path));
   }
 
-  #character(project: string): Promise<CharacterInfo | undefined> {
-    return this.#cached(this.#characters, project, () =>
-      loadCharacterInfo(project, (path) => this.#session.vfs.read(path)),
-    );
-  }
-
   #havokSkeleton(path: string): Promise<HkxSkeleton | undefined> {
     return this.#cached(this.#skeletons, path, async () => {
       const container = readAnimationContainer(Packfile.parse(await this.#session.vfs.read(path)));
@@ -153,17 +190,31 @@ export class ActorPlacer {
     });
   }
 
-  /**
-   * The idle an actor loops: the character's MT_Idle (the female one for women when there
-   * is one), else its first idle. TODO(M7): the behavior graph decides what plays.
-   */
-  async #idle(character: CharacterInfo, female: boolean): Promise<AnimationBinding | undefined> {
-    const vfs = this.#session.vfs;
-    const named = character.animations.find((path) => /\\mt_idle\.hkx$/i.test(path));
-    const idle = named ?? character.animations.find((path) => /idle\.hkx$/i.test(path));
-    if (!idle) return undefined;
-    const own = female ? idle.replace(/\\male\\/i, '\\female\\') : idle;
-    return this.#clip(vfs.has(own) ? own : idle);
+  /** A race's behavior project: its character and every behavior file it plays. */
+  #behaviorsOf(project: string): Promise<Behaviors | undefined> {
+    return this.#cached(this.#behaviors, project, async () => {
+      const read = (path: string): Promise<Uint8Array> => this.#session.vfs.read(path);
+      const character = await loadCharacterInfo(project, read);
+      if (!character.behavior) throw new Error('character without a behavior file');
+      const { root, files } = await loadBehaviorFiles(project, character.behavior, read);
+      return { project: normalizePath(project), character, root, files };
+    });
+  }
+
+  /** The clips of a project for one sex. */
+  #host(behaviors: Behaviors, female: boolean): ClipHost {
+    const key = `${behaviors.project}|${female ? 'f' : 'm'}`;
+    let host = this.#hosts.get(key);
+    if (!host) {
+      host = new ClipHost(
+        behaviors,
+        female,
+        (path) => this.#session.vfs.has(path),
+        (path) => this.#clip(path),
+      );
+      this.#hosts.set(key, host);
+    }
+    return host;
   }
 
   /** An actor ready to draw, or undefined if its look or skeleton cannot be made. */
@@ -171,7 +222,8 @@ export class ActorPlacer {
     const look = await this.#resolver.resolve(actor.base, actor.reference);
     if (!look?.skeleton) return undefined;
     const session = this.#session;
-    const character = look.behavior ? await this.#character(look.behavior) : undefined;
+    const behaviors = look.behavior ? await this.#behaviorsOf(look.behavior) : undefined;
+    const character = behaviors?.character;
     const [rig, havok] = await Promise.all([
       this.#rig(look.skeleton),
       character?.rig ? this.#havokSkeleton(character.rig) : undefined,
@@ -241,20 +293,29 @@ export class ActorPlacer {
       partitionVisible: (bodyPart) => partitionVisible(bodyPart, look.owners, addon),
     }));
 
-    const binding = character && havok ? await this.#idle(character, look.female) : undefined;
-    const clip: ActorClip | undefined =
-      binding && havok
-        ? {
-            binding,
-            skeleton: havok,
-            offset:
-              (((actor.reference * 2654435761) >>> 0) / 4294967296) * binding.animation.duration,
-            bones: havok.referencePose.slice(),
-            tracks: new Float32Array(binding.animation.trackCount * TRANSFORM_FLOATS),
-          }
-        : undefined;
-    const placed: PlacedActor = { actor, look, pose, instances, clip };
-    animateActors([placed], 0);
+    // Its behavior graph: started, its first clips loaded, then run on by a moment of its
+    // own (actors placed together do not all breathe together).
+    let behavior: BehaviorRuntime | undefined;
+    if (behaviors && havok) {
+      const host = this.#host(behaviors, look.female);
+      const random = seededRandom(actor.reference);
+      behavior = new BehaviorRuntime({
+        root: behaviors.root,
+        host,
+        skeleton: havok,
+        random,
+        properties: { IsFemale: look.female ? 1 : 0, IsMale: look.female ? 0 : 1, IsNPC: 1 },
+      });
+      behavior.setVariable('IsNPC', 1);
+      behavior.update(0);
+      await host.loaded();
+      behavior.update(random() * 4);
+      await host.loaded();
+      behavior.update(0);
+      behavior.takeRaised();
+      pose.update(behavior.pose);
+    }
+    const placed: PlacedActor = { actor, look, pose, instances, behavior, time: undefined };
     return placed;
   }
 }
