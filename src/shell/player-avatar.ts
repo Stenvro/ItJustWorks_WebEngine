@@ -14,6 +14,7 @@ import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-re
 import { seededRandom } from '../world/actors.ts';
 import { FIRST_PERSON_SKELETON, PLAYER_ACTOR } from '../world/player-body.ts';
 import type { PlacedActor } from './actors.ts';
+import { actorSounds, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
 import type { Player } from './player.ts';
 
@@ -65,6 +66,7 @@ export class PlayerAvatar {
     scene: GpuScene,
     placement: { world: Float32Array; motion: InstanceMotion },
     firstPerson: AnimatedSkeleton | undefined,
+    soundWorld: SoundingWorld,
   ) {
     this.#player = player;
     this.body = body;
@@ -78,8 +80,27 @@ export class PlayerAvatar {
       this.#send(moving ? 'JumpDirectionalStart' : 'JumpStandingStart');
     };
     player.cameraOffset = () => this.#cameraOffset();
-    // The jump's animation pushes off.
+    // Its footsteps and the sounds its animations play, by its gait.
+    const sound = actorSounds(
+      {
+        look: body.look,
+        feet: () => player.feet,
+        gait: () =>
+          player.sneaking
+            ? 'sneak'
+            : player.motion.sprinting
+              ? 'sprint'
+              : player.motion.running
+                ? 'run'
+                : 'walk',
+        player: true,
+        collider: player.character.collider,
+      },
+      soundWorld,
+    );
     body.onEvents = (events) => {
+      sound(events);
+      // The jump's animation pushes off.
       if (this.#jumping && events.some((event) => event.toLowerCase() === 'jumpup')) {
         this.#jumping = false;
         player.launchJump();
@@ -92,6 +113,7 @@ export class PlayerAvatar {
     session: GameSession,
     renderer: Renderer,
     player: Player,
+    soundWorld: SoundingWorld,
   ): Promise<PlayerAvatar | undefined> {
     const placer = await session.actors();
     const feet = player.feet;
@@ -114,7 +136,7 @@ export class PlayerAvatar {
     }));
     const scene = renderer.scene.createScene(instances);
     const firstPerson = await PlayerAvatar.#firstPersonSkeleton(session, body.look.female);
-    return new PlayerAvatar(player, body, scene, { world, motion }, firstPerson);
+    return new PlayerAvatar(player, body, scene, { world, motion }, firstPerson, soundWorld);
   }
 
   /** The first-person skeleton running the first-person graph (nothing of it is drawn yet). */

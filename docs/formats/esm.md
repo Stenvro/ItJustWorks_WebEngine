@@ -569,6 +569,18 @@ sound 2 (the heavy impact's), NAM2 hazard, MODL effect model. PHYGenericMetalLig
 (MaterialMetalLight) gives PHYGenericMetalSmallImpact for stone: PHYGenericMetalLightLSD /
 PHYGenericMetalLightHSD.
 
+## Footsteps
+
+**FSTS** (footstep set, 52; `src/world/footstep-records.ts`): XCNT five u32 counts, DATA the
+footsteps (FSTP form ids) of the five sections in order. Their content says what the sections
+are: in every human set (DefaultFootstepSet, FSTArmorLight / Heavy, FSTBarefoot) the impact
+sets of the first are named Sneak, of the second Sprint (FootSprintLeft / Right), of the third
+Run and of the fourth Walk; the fifth is empty for humans and holds creatures' noises (not the
+walk / run forward and alternate names the counts are documented with). **FSTP** (footstep,
+191): DATA the impact data set (IPDS), ANAM the animation event it answers. Named by ARMA
+**SNDD** (FSTArmorLight 37 addons, DefaultFootstepSet 34, FSTArmorHeavy 15, FSTBarefoot 14,
+creatures' own). **LTEX MNAM**: the land texture's material (MATT).
+
 ## Movement types
 
 MOVT (`src/world/movement.ts`): EDID, MNAM name (what the behavior graph asks for:

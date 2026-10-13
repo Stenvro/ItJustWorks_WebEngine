@@ -32,8 +32,10 @@ export interface ImpactRecords {
   material(formId: number): Promise<MaterialType | undefined>;
   impactDataSet(formId: number): Promise<ImpactDataSet | undefined>;
   impact(formId: number): Promise<Impact | undefined>;
-  /** DLMT: the material of the landscape (TODO(M7): each land texture's LTEX MNAM). */
+  /** DLMT: the material of the landscape where its land texture names none. */
   readonly landMaterial: number | undefined;
+  /** The material (MATT form id) of the land texture at a point (LTEX MNAM). */
+  landMaterialAt(position: Vec3): number | undefined;
 }
 
 export interface ImpactSettings {
@@ -45,6 +47,30 @@ export interface ImpactSettings {
 
 /** Parent chains are short; this bounds a broken (cyclic) one. */
 const MAX_PARENTS = 8;
+
+/** The material of the landscape at a point: its land texture's, else the default (DLMT). */
+export async function landMaterial(
+  records: ImpactRecords,
+  position: Vec3,
+): Promise<MaterialType | undefined> {
+  const formId = records.landMaterialAt(position) ?? records.landMaterial;
+  return formId === undefined ? undefined : records.material(formId);
+}
+
+/** An impact data set's impact for a material, or for its nearest parent with one. */
+export async function impactAgainst(
+  records: ImpactRecords,
+  set: ImpactDataSet,
+  material: MaterialType | undefined,
+): Promise<Impact | undefined> {
+  let against = material;
+  for (let i = 0; against && i < MAX_PARENTS; i++) {
+    const entry = set.impacts.get(against.formId);
+    if (entry !== undefined) return records.impact(entry);
+    against = against.parent === undefined ? undefined : await records.material(against.parent);
+  }
+  return undefined;
+}
 
 export class ImpactSounds {
   readonly #records: ImpactRecords;
@@ -89,19 +115,13 @@ export class ImpactSounds {
         ? undefined
         : await records.impactDataSet(material.impactDataSet);
     if (!set) return undefined;
-    // The entry for what it hit, or for its nearest parent.
-    let against =
+    const against =
       hit.against !== 0
         ? await records.materialById(hit.against)
-        : hit.againstKind === 'landscape' && records.landMaterial !== undefined
-          ? await records.material(records.landMaterial)
+        : hit.againstKind === 'landscape'
+          ? await landMaterial(records, hit.position)
           : undefined;
-    for (let i = 0; against && i < MAX_PARENTS; i++) {
-      const entry = set.impacts.get(against.formId);
-      if (entry !== undefined) return records.impact(entry);
-      against = against.parent === undefined ? undefined : await records.material(against.parent);
-    }
-    return undefined;
+    return impactAgainst(records, set, against);
   }
 
   /** Drops bodies that have been quiet for a while. */

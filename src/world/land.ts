@@ -131,7 +131,13 @@ export interface LandTexture {
   readonly snow: boolean;
   /** Grass that grows on this texture (GRAS form ids, LTEX GNAM). */
   readonly grass: readonly number[];
+  /** MNAM: its material (MATT): what feet and falling objects sound like on it. */
+  readonly material: number | undefined;
 }
+
+/** A form id field, undefined for none or 0. */
+const nonZero = (formId: number | undefined): number | undefined =>
+  formId === 0 ? undefined : formId;
 
 /** LTEX → its texture set's diffuse and normal maps. */
 export async function landTexture(
@@ -157,7 +163,39 @@ export async function landTexture(
       const id = data.length >= 4 ? record.formIdAt(data) : 0;
       return id === 0 ? [] : [id];
     }),
+    material: nonZero(record.formIdField('MNAM')),
   };
+}
+
+/**
+ * The land texture showing most at a point of a cell (x, y in game units from the cell's
+ * south-west corner): of the quadrant's base and its layers at the nearest point, the one
+ * whose share of the blend is largest (each layer covers the ones below by its opacity).
+ * Undefined: the base is the engine's default.
+ */
+export function landTextureAt(land: LandData, x: number, y: number): number | undefined {
+  const half = CELL_SIZE / 2;
+  const qx = x >= half ? 1 : 0;
+  const qy = y >= half ? 1 : 0;
+  const quadrant = land.quadrants[qy * 2 + qx];
+  if (!quadrant) return undefined;
+  const step = half / (QUADRANT_GRID - 1);
+  const px = Math.min(QUADRANT_GRID - 1, Math.max(0, Math.round((x - qx * half) / step)));
+  const py = Math.min(QUADRANT_GRID - 1, Math.max(0, Math.round((y - qy * half) / step)));
+  const point = py * QUADRANT_GRID + px;
+  // From the top layer down: each one's share is its opacity times what the ones above leave.
+  let left = 1;
+  let best: { texture: number | undefined; share: number } = { texture: undefined, share: -1 };
+  for (let i = quadrant.layers.length - 1; i >= 0; i--) {
+    const layer = quadrant.layers[i];
+    if (!layer) continue;
+    const alpha = Math.min(1, Math.max(0, layer.alpha[point] ?? 0));
+    const share = alpha * left;
+    if (share > best.share) best = { texture: layer.texture, share };
+    left *= 1 - alpha;
+  }
+  if (left > best.share) best = { texture: quadrant.base, share: left };
+  return best.texture;
 }
 
 /**
