@@ -55,9 +55,10 @@ import { CELL_SIZE, LAND_GRID, landHeightAt, landTexture, type LandData } from '
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
 import { cellKey, WorldFlag, Worldspace, type Arrival } from '../world/worldspace.ts';
 import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-references.ts';
-import { animateActors, type PlacedActor } from './actors.ts';
+import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
+import { talkTargets, type PlacedActor } from './actors.ts';
 import type { GameSession } from './game-session.ts';
-import { startObjectGraph } from './object-graphs.ts';
+import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import { WorldLod } from './world-lod.ts';
 import { WorldSky, type SkyElements } from './world-sky.ts';
 import type { Rgb } from '../world/cell-records.ts';
@@ -126,8 +127,10 @@ interface LoadedCell {
   acousticAreas: readonly CellAcousticArea[];
   /** Where actors walk (its navigation meshes): the player steps onto it off the stairs too. */
   navmesh: NavmeshSurface | undefined;
-  /** Its enabled actors (they animate every frame). */
+  /** Its enabled actors. */
   actors: readonly PlacedActor[];
+  /** What animates every frame: its actors and the objects whose graph moves their nodes. */
+  skeletons: readonly AnimatedSkeleton[];
   /**
    * Whether the worldspace has a cell record here. Positions without one (around a city
    * worldspace's few cells) stay empty and keep showing the distant LOD, as in the game.
@@ -263,6 +266,11 @@ export class WorldViewer {
   }
 
   /** What activating a reference does: load doors take the player to their destination. */
+  /** The actors of the loaded cells. */
+  *#readyActors(): Iterable<PlacedActor> {
+    for (const cell of this.#cells.values()) if (cell.ready) yield* cell.actors;
+  }
+
   #activatable(reference: number): Activatable | undefined {
     for (const cell of this.#cells.values()) {
       const object = cell.objects.get(reference);
@@ -490,6 +498,11 @@ export class WorldViewer {
       searchAbove: comeIn ? 64 : 8192,
       arrivesOnFloor: comeIn !== undefined,
       activatable: (reference) => this.#activatable(reference),
+      actorAt: talkTargets(
+        () => this.#readyActors(),
+        () => this.#session,
+        this.#terminal,
+      ),
       prompt: this.#ui.prompt,
       notice: this.#ui.notice,
       onImpact: (impact) => {
@@ -542,7 +555,7 @@ export class WorldViewer {
       shadows: true,
       update: (seconds) => {
         for (const cell of this.#cells.values())
-          if (cell.ready) animateActors(cell.actors, seconds);
+          if (cell.ready) animateSkeletons(cell.skeletons, seconds);
       },
     });
     document.body.classList.add('has-scene', 'content-scene');
@@ -702,6 +715,7 @@ export class WorldViewer {
         acousticAreas: [],
         navmesh: undefined,
         actors: [],
+        skeletons: [],
         exists: false,
         ready: false,
       };
@@ -789,6 +803,7 @@ export class WorldViewer {
     cell.lights = lights;
     cell.placed = placed;
     cell.actors = actors;
+    cell.skeletons = [...actors, ...placed.flatMap(({ skeleton }) => (skeleton ? [skeleton] : []))];
     cell.waterHeight = water?.height;
     cell.waterType = water ? (water.type ?? DEFAULT_WATER) : undefined;
     cell.land = land;
@@ -832,7 +847,7 @@ export class WorldViewer {
     objects: readonly CellObject[],
     flow: WaterFlow,
     simulated = false,
-  ): Promise<{ object: CellObject; instance: ModelInstance }[]> {
+  ): Promise<{ object: CellObject; instance: ModelInstance; skeleton?: AnimatedSkeleton }[]> {
     const models = await Promise.all(objects.map((object) => session.model(object.model)));
     // In loaded cells, objects with simulated collision move: they get a matrix of their own.
     const collisions = simulated
@@ -849,7 +864,8 @@ export class WorldViewer {
           : session.waterType(object.water, flow),
       ),
     );
-    const placed: { object: CellObject; instance: ModelInstance }[] = [];
+    const placed: { object: CellObject; instance: ModelInstance; skeleton?: AnimatedSkeleton }[] =
+      [];
     objects.forEach((object, i) => {
       const model = models[i];
       const water = waterTypes[i];
@@ -858,13 +874,16 @@ export class WorldViewer {
       const moves =
         collisions[i]?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
       const graph = startObjectGraph(model, object.reference);
+      const skeletal = startPlacedSkeleton(model, object.reference);
       placed.push({
         object,
+        ...(skeletal && { skeleton: skeletal.skeleton }),
         instance: {
           model,
           world: moves ? new Float32Array(object.world) : object.world,
           ...(moves && { motion: { version: 0 } }),
           ...(graph && { graph }),
+          ...(skeletal && { pose: skeletal.skeleton.pose, poseNodes: skeletal.poseNodes }),
           ...(simulated && {
             playback: openable(object, model.sequences?.byName.has('open') === true),
           }),

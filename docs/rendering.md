@@ -72,6 +72,18 @@ head: `tint = 2·t·b − 2·t·b²`, `(b² + tint) · detail` with `detail = 3.
 1/255))` from the detail map (slot 3, a 64 grey default leaves the face as it is), the
 engine's FACEGEN formula (Community Shaders' reconstruction of the SSE shader).
 
+**Face morphs** (`face-morphs.ts`, `ModelInstance.face`): a head part's expression TRI
+(phonemes, blinks, looks, moods; 44 morphs of ~1000 vertices for a head) is packed once per
+TRI file into a storage buffer of half-float offsets (two u32 per morph and vertex: x|y, z),
+shared by every head that uses it (the FaceGen shapes keep the TRI's vertex order). A head
+part's draw gets a 256-byte region in its scene's bone buffer: count and vertex count, then
+up to 30 (morph index, weight) pairs, rewritten when the face's weights change. Group 3 binds
+the palette (binding 0), the region (binding 1, a second dynamic offset; other draws bind an
+empty one) and the TRI's offsets (binding 2); `vs_skinned` adds the weighted offsets to the
+position (by `vertex_index`) before skinning, in the shadow pass too. The game morphs each
+actor's BSDynamicTriShape positions on the CPU instead; on the GPU the head stays one shared
+model.
+
 ## Landscape
 
 `shaders/terrain.wgsl`, as the vanilla landscape shader (Community Shaders' Lighting.hlsl,

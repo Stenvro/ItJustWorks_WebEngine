@@ -12,6 +12,8 @@ import type { AudioEngine } from './audio-engine.ts';
 export interface SoundBuffer {
   readonly buffer: AudioBuffer;
   readonly loop?: { readonly start: number; readonly end: number };
+  /** A voice file's lip-sync data (.fuz, or the .lip beside it). */
+  readonly lip?: Uint8Array;
 }
 
 /** Where a sound is: a fixed point, a moving one, or nowhere (2D, at the listener). */

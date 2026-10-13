@@ -2,6 +2,7 @@
 // a pool of workers decompresses and parses them.
 
 import type { RigData } from '../animation/skeleton.ts';
+import type { MorphData } from '../render/face-morphs.ts';
 import type { BsaPayload } from '../formats/bsa/bsa.ts';
 import type { DdsTexture } from '../formats/dds/dds.ts';
 import type { ModelTextureSwaps } from '../render/actor-model.ts';
@@ -93,6 +94,13 @@ export class AssetLoader {
     return response.rig;
   }
 
+  /** A head part's expression morphs (TRI), packed for the GPU. */
+  async loadExpressions(path: string): Promise<MorphData> {
+    const response = await this.#request('expressions', path);
+    if (!response.ok || response.kind !== 'expressions') throw new Error(describe(response));
+    return response.morphs;
+  }
+
   async loadTexture(path: string): Promise<DdsTexture> {
     const response = await this.#request('texture', path);
     if (!response.ok || response.kind !== 'texture') throw new Error(describe(response));
@@ -106,7 +114,10 @@ export class AssetLoader {
     this.#pending.clear();
   }
 
-  async #request(kind: 'model' | 'texture' | 'rig', path: string): Promise<AssetResponse> {
+  async #request(
+    kind: 'model' | 'texture' | 'rig' | 'expressions',
+    path: string,
+  ): Promise<AssetResponse> {
     const payload = await this.#vfs.readPayload(path);
     return this.#send({ id: 0, kind, path, payload }, [payload]);
   }

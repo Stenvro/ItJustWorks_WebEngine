@@ -42,6 +42,29 @@ fn vs_object_uv(@location(0) position: vec3f, @location(2) uv: vec2f) -> ShadowO
 // Skinned casters: the bone palette of the draw (skinning.wgsl).
 @group(3) @binding(0) var<storage, read> bones: array<vec4f>;
 
+// FaceGen head parts: the draw's active expression morphs (face-morphs.ts): a header
+// (count, vertex count), then (morph index, weight) pairs; the offsets are half floats, two
+// u32 per morph and vertex (x|y, z). Draws without morphs bind an empty region.
+@group(3) @binding(1) var<storage, read> morphSlots: array<vec4f>;
+@group(3) @binding(2) var<storage, read> morphOffsets: array<u32>;
+
+// The vertex moved by the draw's active morphs (before skinning, in skin space).
+fn morphed(position: vec3f, vertex: u32) -> vec3f {
+  let header = morphSlots[0];
+  let count = min(u32(header.x), 30u);
+  let vertexCount = u32(header.y);
+  var p = position;
+  for (var k = 0u; k < count; k++) {
+    let slots = morphSlots[1u + k / 2u];
+    let pair = select(slots.xy, slots.zw, (k & 1u) == 1u);
+    let at = (u32(pair.x) * vertexCount + vertex) * 2u;
+    let xy = unpack2x16float(morphOffsets[at]);
+    let z = unpack2x16float(morphOffsets[at + 1u]).x;
+    p += vec3f(xy, z) * pair.y;
+  }
+  return p;
+}
+
 fn skinned(position: vec3f, weights: vec4f, indices: vec4u) -> vec3f {
   let p = vec4f(position, 1.0);
   var sum = vec3f(0.0);
@@ -65,8 +88,10 @@ fn vs_skinned(
   @location(0) position: vec3f,
   @location(6) weights: vec4f,
   @location(7) indices: vec4u,
+  @builtin(vertex_index) vertex: u32,
 ) -> @builtin(position) vec4f {
-  return cascade.viewProj * (draw.world * vec4f(skinned(position, weights, indices), 1.0));
+  let moved = morphed(position, vertex);
+  return cascade.viewProj * (draw.world * vec4f(skinned(moved, weights, indices), 1.0));
 }
 
 @vertex
@@ -75,9 +100,11 @@ fn vs_skinned_uv(
   @location(2) uv: vec2f,
   @location(6) weights: vec4f,
   @location(7) indices: vec4u,
+  @builtin(vertex_index) vertex: u32,
 ) -> ShadowOut {
   var out: ShadowOut;
-  out.position = cascade.viewProj * (draw.world * vec4f(skinned(position, weights, indices), 1.0));
+  let moved = morphed(position, vertex);
+  out.position = cascade.viewProj * (draw.world * vec4f(skinned(moved, weights, indices), 1.0));
   out.uv = uv * draw.uvTransform.zw + draw.uvTransform.xy;
   return out;
 }

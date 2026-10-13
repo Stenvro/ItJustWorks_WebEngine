@@ -1,9 +1,33 @@
 // The skinned vertex stage of object shaders: every vertex blends up to four bone matrices
 // of its draw's bone palette (bone-palette.ts: three rows of an affine matrix per bone, skin
 // space to model space) by its weights, then goes on like any other vertex (common.wgsl).
-// Appended after common.wgsl. ASCII only.
+// FaceGen head parts first move by their expression morphs. Appended after common.wgsl.
+// ASCII only.
 
 @group(3) @binding(0) var<storage, read> bones: array<vec4f>;
+
+// FaceGen head parts: the draw's active expression morphs (face-morphs.ts): a header
+// (count, vertex count), then (morph index, weight) pairs; the offsets are half floats, two
+// u32 per morph and vertex (x|y, z). Draws without morphs bind an empty region.
+@group(3) @binding(1) var<storage, read> morphSlots: array<vec4f>;
+@group(3) @binding(2) var<storage, read> morphOffsets: array<u32>;
+
+// The vertex moved by the draw's active morphs (before skinning, in skin space).
+fn morphed(position: vec3f, vertex: u32) -> vec3f {
+  let header = morphSlots[0];
+  let count = min(u32(header.x), 30u);
+  let vertexCount = u32(header.y);
+  var p = position;
+  for (var k = 0u; k < count; k++) {
+    let slots = morphSlots[1u + k / 2u];
+    let pair = select(slots.xy, slots.zw, (k & 1u) == 1u);
+    let at = (u32(pair.x) * vertexCount + vertex) * 2u;
+    let xy = unpack2x16float(morphOffsets[at]);
+    let z = unpack2x16float(morphOffsets[at + 1u]).x;
+    p += vec3f(xy, z) * pair.y;
+  }
+  return p;
+}
 
 struct SkinIn {
   @location(6) weights: vec4f,
@@ -44,10 +68,11 @@ fn skinMatrix(skin: SkinIn) -> mat4x4f {
 }
 
 @vertex
-fn vs_skinned(in: VertexIn, skin: SkinIn) -> VertexOut {
+fn vs_skinned(in: VertexIn, skin: SkinIn, @builtin(vertex_index) vertex: u32) -> VertexOut {
   let model = skinMatrix(skin);
   let rotation = worldRotation() * mat3x3f(model[0].xyz, model[1].xyz, model[2].xyz);
-  var out = objectVertex(in, draw.world * (model * vec4f(in.position, 1.0)), rotation);
+  let position = morphed(in.position, vertex);
+  var out = objectVertex(in, draw.world * (model * vec4f(position, 1.0)), rotation);
   // Model-space normal maps (FaceGen heads) are in skin space: the fragment turns them with
   // the vertex's bones, passed as its frame.
   if ((draw.flags.x & 0x1000u) != 0u) {

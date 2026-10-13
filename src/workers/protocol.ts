@@ -5,14 +5,15 @@ import type { BsaPayload } from '../formats/bsa/bsa.ts';
 import type { DdsTexture } from '../formats/dds/dds.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import type { ModelTextureSwaps } from '../render/actor-model.ts';
+import type { MorphData } from '../render/face-morphs.ts';
 import type { ModelData } from '../render/model-data.ts';
 
-export type AssetKind = 'model' | 'texture' | 'actor-part' | 'rig';
+export type AssetKind = 'model' | 'texture' | 'actor-part' | 'rig' | 'expressions';
 
 export type AssetRequest =
   | {
       readonly id: number;
-      readonly kind: 'model' | 'texture' | 'rig';
+      readonly kind: 'model' | 'texture' | 'rig' | 'expressions';
       /** For error messages only. */
       readonly path: string;
       readonly payload: BsaPayload;
@@ -57,6 +58,14 @@ export type AssetResponse =
       readonly ok: true;
       readonly kind: 'rig';
       readonly rig: RigData;
+      readonly workMs: number;
+    }
+  | {
+      readonly id: number;
+      readonly ok: true;
+      /** A head part's expression TRI file, packed for the GPU. */
+      readonly kind: 'expressions';
+      readonly morphs: MorphData;
       readonly workMs: number;
     }
   | {

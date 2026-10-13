@@ -74,6 +74,15 @@ interface EmitterState {
   starting: boolean;
 }
 
+/** A spoken line, loaded (SoundSystem.voiceLine). */
+export interface VoiceLine {
+  /** Seconds of audio. */
+  readonly duration: number;
+  /** Its lip-sync data (src/formats/audio/lip.ts), if it has any. */
+  readonly lip?: Uint8Array;
+  play(place: SoundPlace): Promise<SoundInstance | undefined>;
+}
+
 export class SoundSystem {
   readonly engine: AudioEngine;
   readonly #db: RecordDatabase;
@@ -107,6 +116,9 @@ export class SoundSystem {
   readonly #waterSounds = new Map<number, Promise<number | undefined>>();
   /** UWLS: the loop under water, and the one playing. */
   readonly #underwaterSound: number | undefined;
+  /** DDSC and DOP2: the category and 3D output model of spoken lines. */
+  readonly #dialogueCategory: number | undefined;
+  readonly #dialogueOutput: number | undefined;
   #underwater: { loop: SoundInstance | undefined; dropped: boolean } | undefined;
   #materials:
     Promise<{ byId: Map<number, MaterialType>; byForm: Map<number, MaterialType> }> | undefined;
@@ -141,6 +153,8 @@ export class SoundSystem {
     this.#ini = ini;
     this.#defaultMusic = defaults.get(DefaultObjectUse.defaultMusic);
     this.#underwaterSound = defaults.get(DefaultObjectUse.underwaterLoop);
+    this.#dialogueCategory = defaults.get(DefaultObjectUse.dialogueCategory);
+    this.#dialogueOutput = defaults.get(DefaultObjectUse.dialogueOutput3d);
     this.#water = new WaterAudio(
       {
         waterSound: (type) => this.#waterSound(type),
@@ -256,6 +270,38 @@ export class SoundSystem {
         ? undefined
         : await this.outputModel(descriptor.outputModel);
     return this.#start(descriptor, model, place, fadeIn);
+  }
+
+  /**
+   * A spoken line (a voice file: .fuz, or .xwm/.wav with a .lip), loaded: its lip-sync data,
+   * and `play` starting it at a place as dialogue plays (the dialogue category, through the
+   * 3D dialogue output model). Undefined if the file cannot be read.
+   */
+  async voiceLine(path: string): Promise<VoiceLine | undefined> {
+    const sound = await this.buffer(path);
+    if (!sound) return undefined;
+    const outputModel = this.#dialogueOutput;
+    const model = outputModel === undefined ? undefined : await this.outputModel(outputModel);
+    const descriptor: SoundDescriptor = {
+      formId: 0,
+      editorId: path,
+      category: this.#dialogueCategory,
+      alternateFor: undefined,
+      files: [path],
+      outputModel,
+      looping: 'none',
+      frequencyShift: 0,
+      frequencyVariance: 0,
+      priority: 0,
+      dbVariance: 0,
+      staticAttenuation: 0,
+      conditions: [],
+    };
+    return {
+      duration: sound.buffer.duration,
+      ...(sound.lip && { lip: sound.lip }),
+      play: (place) => this.#start(descriptor, model, place),
+    };
   }
 
   /**
@@ -609,6 +655,7 @@ export class SoundSystem {
           this.#evict();
           return {
             buffer,
+            ...(decoded.lip && { lip: decoded.lip }),
             ...(decoded.loop && {
               loop: {
                 start: decoded.loop.start / decoded.sampleRate,

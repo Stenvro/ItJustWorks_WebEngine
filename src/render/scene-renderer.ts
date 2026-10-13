@@ -3,6 +3,8 @@
 // vertex layout and material state, per-draw uniforms in one buffer (dynamic offsets),
 // opaque first, then blended parts sorted back to front.
 
+import type { SkeletalGraph } from '../animation/behavior-runtime.ts';
+import type { FaceWeights } from '../animation/face.ts';
 import type { ObjectGraph } from '../animation/object-graph.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
 import type { BehaviorGraph } from '../formats/hkx/behavior.ts';
@@ -17,6 +19,12 @@ import {
   type Playback,
 } from './animation.ts';
 import { billboardWorld } from './billboard.ts';
+import {
+  faceMorphIndices,
+  MORPH_REGION_BYTES,
+  writeMorphSlots,
+  type MorphData,
+} from './face-morphs.ts';
 import {
   MAX_PALETTE_BONES,
   PALETTE_BONE_FLOATS,
@@ -374,6 +382,11 @@ export class GpuModel {
    * by the session; every placed instance runs its own (ModelInstance.graph).
    */
   graph: BehaviorGraph | undefined = undefined;
+  /**
+   * The graph again, where it plays skeletal clips on the model's nodes (resolved by the
+   * session); every placed instance runs its own on a pose (ModelInstance.pose).
+   */
+  skeletal: SkeletalGraph | undefined = undefined;
   readonly particles: readonly GpuParticleSystem[];
   /**
    * Models the engine attaches at AddOnNodes (ADDN: candle flames, torch fire, smoke),
@@ -469,7 +482,10 @@ export interface ModelInstance {
   readonly leafAnimation?: { readonly amplitude: number; readonly frequency: number };
   /** XEMI: the colour that drives the model's External_Emittance shapes. */
   readonly emittance?: EmittanceColor;
-  /** An actor's skeleton: the model's skinned parts follow its nodes (by bone name). */
+  /**
+   * A skeleton (an actor's, or an object's moved by its graph): the model's skinned parts
+   * follow its nodes (by bone name).
+   */
   readonly pose?: ActorPose;
   /** With a pose: the pose node of each of the model's nodes (rigid parts follow theirs). */
   readonly poseNodes?: Int16Array;
@@ -477,6 +493,26 @@ export interface ModelInstance {
   readonly tints?: ActorTints;
   /** An actor's equipment: whether a body part's partitions of the model are drawn. */
   readonly partitionVisible?: (bodyPart: number) => boolean;
+  /**
+   * An actor's face: its morph weights and the expression morphs of the model's skinned
+   * shapes by lower-case name (FaceGen head parts).
+   */
+  readonly face?: InstanceFace;
+}
+
+/** A head part's expression morphs on the GPU (shared by every head that uses its TRI file). */
+export interface GpuMorphs {
+  readonly buffer: GPUBuffer;
+  readonly vertexCount: number;
+  /** Per face morph (FACE_MORPHS), its index in the TRI file (−1: the part lacks it). */
+  readonly indices: Int16Array;
+  readonly bytes: number;
+}
+
+/** What animates an instance's face (ModelInstance.face). */
+export interface InstanceFace {
+  readonly weights: FaceWeights;
+  readonly morphs: ReadonlyMap<string, GpuMorphs>;
 }
 
 export interface ActorTints {
@@ -562,6 +598,8 @@ interface Draw {
   readonly bones: number | undefined;
   /** An actor's part with hidden partitions: the index ranges that are drawn. */
   readonly ranges?: readonly IndexRange[];
+  /** A FaceGen head part: its morphs and the byte offset of its active morphs. */
+  readonly face?: { readonly morphs: GpuMorphs; readonly offset: number };
 }
 
 /** A draw that changes every frame (animated, or turning to the camera). */
@@ -578,8 +616,20 @@ interface AnimatedDraw {
   readonly bones?: number;
   /** An actor's part: the pose its palette follows. */
   readonly posed?: PosedDraw;
-  /** An actor's rigid part: the pose node it hangs on. */
+  /** A rigid part on a skeleton: the pose node it hangs on. */
   readonly hung?: { readonly pose: ActorPose; readonly node: number };
+  /** A FaceGen head part: the face's weights written to its active morphs. */
+  readonly face?: FaceDraw;
+}
+
+/** A head part's active morphs, rewritten when its face changes. */
+interface FaceDraw {
+  readonly weights: FaceWeights;
+  readonly morphs: GpuMorphs;
+  /** Byte offset of its morph region in the scene's bone buffer. */
+  readonly offset: number;
+  /** The face version the region shows. */
+  version: number;
 }
 
 /** A skinned part on an actor's skeleton: the pose node of each of its bones. */
@@ -589,6 +639,18 @@ interface PosedDraw {
   readonly nodes: Int16Array;
   /** The pose version its palette shows. */
   version: number;
+}
+
+/** Writes a head part's active morphs from its face's weights. */
+function writeFaceMorphs(face: FaceDraw, out: Float32Array): void {
+  face.version = face.weights.version;
+  writeMorphSlots(
+    face.weights.weights,
+    face.morphs.indices,
+    face.morphs.vertexCount,
+    out,
+    face.offset / 4,
+  );
 }
 
 /** Writes a skinned part's palette from an actor pose. */
@@ -681,7 +743,12 @@ interface ParticleDraw {
 /** The bone palettes of a scene's skinned draws. */
 interface SceneBones {
   readonly buffer: GPUBuffer;
+  /** Palettes without morphs (an empty morph region, no morph offsets). */
   readonly bindGroup: GPUBindGroup;
+  /** Palettes of head parts, with the TRI file's offsets. */
+  readonly faces: ReadonlyMap<GpuMorphs, GPUBindGroup>;
+  /** Byte offset of the empty morph region. */
+  readonly noMorphs: number;
   readonly data: Float32Array;
 }
 
@@ -1109,6 +1176,8 @@ export class SceneRenderer {
   /** Second passes of multi-pass directional materials, per part and material. */
   readonly #passParts = new WeakMap<GpuPart, Map<GpuDirectionalMaterial, GpuPart>>();
   readonly #fallbackVertices: GPUBuffer;
+  /** Bound as the morph offsets of draws without morphs. */
+  readonly #noMorphOffsets: GPUBuffer;
   /** Material samplers by texture clamp mode (bit 0 wraps U, bit 1 wraps V). */
   readonly #samplers: readonly GPUSampler[];
   /** This frame's particle instances (CPU staging and GPU buffer). */
@@ -1222,6 +1291,16 @@ export class SceneRenderer {
           visibility: GPUShaderStage.VERTEX,
           buffer: { type: 'read-only-storage', hasDynamicOffset: true, minBindingSize: 48 },
         },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.VERTEX,
+          buffer: {
+            type: 'read-only-storage',
+            hasDynamicOffset: true,
+            minBindingSize: MORPH_REGION_BYTES,
+          },
+        },
+        { binding: 2, visibility: GPUShaderStage.VERTEX, buffer: { type: 'read-only-storage' } },
       ],
     });
     this.#skinnedPipelineLayout = device.createPipelineLayout({
@@ -1355,6 +1434,12 @@ export class SceneRenderer {
       GPUBufferUsage.VERTEX,
       'fallback-vertex',
     );
+    this.#noMorphOffsets = createBuffer(
+      device,
+      new Uint8Array(16),
+      GPUBufferUsage.STORAGE,
+      'no-morph-offsets',
+    );
     const address = (wrap: boolean): GPUAddressMode => (wrap ? 'repeat' : 'clamp-to-edge');
     this.#samplers = [0, 1, 2, 3].map((mode) =>
       device.createSampler({
@@ -1394,6 +1479,27 @@ export class SceneRenderer {
   }
 
   /** Uploads a model; resolves once all its textures are loaded (missing ones use defaults). */
+  /** A head part's expression morphs on the GPU (destroy the buffer when done). */
+  createMorphs(data: MorphData): GpuMorphs {
+    const bytes = new Uint8Array(
+      data.deltas.buffer,
+      data.deltas.byteOffset,
+      data.deltas.byteLength,
+    );
+    const buffer = createBuffer(
+      this.#device,
+      bytes.byteLength > 0 ? bytes : new Uint8Array(16),
+      GPUBufferUsage.STORAGE,
+      'face-morphs',
+    );
+    return {
+      buffer,
+      vertexCount: data.vertexCount,
+      indices: faceMorphIndices(data.names),
+      bytes: buffer.size,
+    };
+  }
+
   async createModel(data: ModelData, textures: TextureCache): Promise<GpuModel> {
     const device = this.#device;
     const buffers: GPUBuffer[] = [];
@@ -1520,13 +1626,26 @@ export class SceneRenderer {
           part.skin.bones.length * PALETTE_BONE_FLOATS * 4;
       }
     }
+    // Head parts' active morphs after them: an empty region first (draws without morphs).
+    const faceMorphs = (instance: ModelInstance, part: ModelPart): GpuMorphs | undefined => {
+      if (!part.skin) return undefined;
+      const morphs = instance.face?.morphs.get(part.name.toLowerCase());
+      return morphs?.vertexCount === part.vertexCount ? morphs : undefined;
+    };
+    const faceParts = placed.reduce(
+      (sum, instance) =>
+        sum + instance.model.parts.filter(({ part }) => faceMorphs(instance, part)).length,
+      0,
+    );
+    const morphBase = Math.ceil(paletteEnd / PALETTE_ALIGNMENT) * PALETTE_ALIGNMENT;
     const boneData =
       paletteEnd > 0
         ? new Float32Array(
-            (Math.ceil(paletteEnd / PALETTE_ALIGNMENT) * PALETTE_ALIGNMENT + PALETTE_BYTES) / 4,
+            (morphBase + Math.max(PALETTE_BYTES, (1 + faceParts) * MORPH_REGION_BYTES)) / 4,
           )
         : undefined;
     let paletteCursor = 0;
+    let morphCursor = morphBase + MORPH_REGION_BYTES;
     const draws: Draw[] = [];
     const animated: AnimatedDraw[] = [];
     const particles: ParticleDraw[] = [];
@@ -1563,14 +1682,22 @@ export class SceneRenderer {
             writeRestPalette(skin, boneData, bones / 4);
           }
         }
-        // A rigid part of an actor's model hangs on its node of the actor's skeleton.
+        // A FaceGen head part: its active morphs follow the face.
+        const morphs = boneData && faceMorphs(instance, part.part);
+        let face: FaceDraw | undefined;
+        if (morphs && instance.face) {
+          face = { weights: instance.face.weights, morphs, offset: morphCursor, version: -1 };
+          morphCursor += MORPH_REGION_BYTES;
+          writeFaceMorphs(face, boneData);
+        }
+        // A rigid part on a skeleton hangs on its pose node (−1: placed as the model places it).
         const poseNode =
           !skin && instance.pose && part.part.node !== undefined
             ? (instance.poseNodes?.[part.part.node] ?? -1)
             : -1;
         const hung =
           instance.pose && poseNode >= 0 ? { pose: instance.pose, node: poseNode } : undefined;
-        if (animation || part.part.billboard || sky || playback || graph || posed || hung) {
+        if (animation || part.part.billboard || sky || playback || graph || posed || hung || face) {
           animated.push({
             offset,
             instanceWorld: instance.world,
@@ -1581,6 +1708,7 @@ export class SceneRenderer {
             ...(bones !== undefined && { bones }),
             ...(posed && { posed }),
             ...(hung && { hung }),
+            ...(face && { face }),
           });
         }
         const floats = new Float32Array(uniforms, offset, DRAW_SIZE / 4);
@@ -1678,6 +1806,7 @@ export class SceneRenderer {
           lodSegments: lodSegments(part.part, world),
           bones,
           ...(ranges && { ranges }),
+          ...(face && { face: { morphs: face.morphs, offset: face.offset } }),
         };
         draws.push(draw);
         if (instance.motion) {
@@ -1781,24 +1910,52 @@ export class SceneRenderer {
       models,
       emittance,
       { draws: moving, addons: movingAddons },
-      boneData && this.#sceneBones(boneData),
+      boneData &&
+        this.#sceneBones(
+          boneData,
+          morphBase,
+          draws.flatMap((draw) => (draw.face ? [draw.face.morphs] : [])),
+        ),
     );
   }
 
-  /** Uploads a scene's bone palettes; every draw binds its own at a dynamic offset. */
-  #sceneBones(data: Float32Array): SceneBones {
+  /**
+   * Uploads a scene's bone palettes and head parts' active morphs; every draw binds its own
+   * at dynamic offsets (`noMorphs`: the empty morph region).
+   */
+  #sceneBones(data: Float32Array, noMorphs: number, morphs: readonly GpuMorphs[]): SceneBones {
     const buffer = createBuffer(
       this.#device,
       new Uint8Array(data.buffer),
       GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       'bone-palettes',
     );
-    const bindGroup = this.#device.createBindGroup({
-      label: 'bones',
-      layout: this.#boneLayout,
-      entries: [{ binding: 0, resource: { buffer, size: PALETTE_BYTES } }],
-    });
-    return { buffer, bindGroup, data };
+    const group = (offsets: GPUBuffer): GPUBindGroup =>
+      this.#device.createBindGroup({
+        label: 'bones',
+        layout: this.#boneLayout,
+        entries: [
+          { binding: 0, resource: { buffer, size: PALETTE_BYTES } },
+          { binding: 1, resource: { buffer, size: MORPH_REGION_BYTES } },
+          { binding: 2, resource: { buffer: offsets } },
+        ],
+      });
+    const faces = new Map<GpuMorphs, GPUBindGroup>();
+    for (const entry of morphs) if (!faces.has(entry)) faces.set(entry, group(entry.buffer));
+    return { buffer, bindGroup: group(this.#noMorphOffsets), faces, noMorphs, data };
+  }
+
+  /** Binds a skinned draw's palette and morphs. */
+  #bindBones(pass: GPURenderPassEncoder, scene: GpuScene, draw: Draw): void {
+    const bones = scene.bones;
+    if (draw.bones === undefined || !bones) return;
+    const face = draw.face;
+    const group = face ? bones.faces.get(face.morphs) : undefined;
+    if (face && group) {
+      pass.setBindGroup(3, group, [draw.bones, face.offset]);
+    } else {
+      pass.setBindGroup(3, bones.bindGroup, [draw.bones, bones.noMorphs]);
+    }
   }
 
   updateFrame(
@@ -1978,7 +2135,7 @@ export class SceneRenderer {
           multiply(billboardWorld(node, billboard.mode, camera), billboard.local, world);
           floats.set(world, 0);
         } else if (draw.hung) {
-          // On an actor's skeleton: the node's pose, then the part under it.
+          // On a skeleton: the node's pose, then the part under it.
           const { pose, node } = draw.hung;
           multiply(
             pose.worlds.subarray(node * 16, node * 16 + 16),
@@ -1998,6 +2155,17 @@ export class SceneRenderer {
         if (frame) writeAnimatedMaterial(floats, draw.part, frame);
         const skin = draw.part.skin;
         const bones = scene.bones;
+        const face = draw.face;
+        if (face && bones && face.version !== face.weights.version) {
+          writeFaceMorphs(face, bones.data);
+          this.#device.queue.writeBuffer(
+            bones.buffer,
+            face.offset,
+            bones.data,
+            face.offset / 4,
+            MORPH_REGION_BYTES / 4,
+          );
+        }
         const posed = draw.posed;
         if (posed && skin && bones && draw.bones !== undefined) {
           if (posed.version !== posed.pose.version) {
@@ -2415,9 +2583,7 @@ export class SceneRenderer {
         pass.setPipeline(part.shadowPipeline);
         pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
         pass.setBindGroup(2, part.bindGroup);
-        if (draw.bones !== undefined && scene.bones) {
-          pass.setBindGroup(3, scene.bones.bindGroup, [draw.bones]);
-        }
+        this.#bindBones(pass, scene, draw);
         pass.setVertexBuffer(0, part.vertexBuffer);
         pass.setIndexBuffer(part.indexBuffer, 'uint16');
         if (draw.ranges) {
@@ -2525,9 +2691,7 @@ export class SceneRenderer {
     pass.setPipeline(part.pipeline);
     pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
     pass.setBindGroup(2, part.bindGroup);
-    if (draw.bones !== undefined && scene.bones) {
-      pass.setBindGroup(3, scene.bones.bindGroup, [draw.bones]);
-    }
+    this.#bindBones(pass, scene, draw);
     pass.setVertexBuffer(0, part.vertexBuffer);
     pass.setIndexBuffer(part.indexBuffer, 'uint16');
     if (draw.ranges) {

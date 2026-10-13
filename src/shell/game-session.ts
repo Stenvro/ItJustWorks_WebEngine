@@ -17,6 +17,7 @@ import type {
   EmittanceColor,
   GpuDirectionalMaterial,
   GpuModel,
+  GpuMorphs,
   GpuWaterType,
   LodSnow,
   ModelAddon,
@@ -49,6 +50,7 @@ import { RecordDatabase } from '../world/record-db.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
 import { PluginIndexer } from '../workers/plugin-indexer.ts';
 import { ActorPlacer } from './actors.ts';
+import { AnimationAssets } from './animation-assets.ts';
 import type { Terminal } from './terminal.ts';
 
 const numberFormat = new Intl.NumberFormat('en-US');
@@ -88,6 +90,8 @@ export class GameSession {
   readonly vfs: Vfs;
   readonly loader: AssetLoader;
   readonly textures: TextureCache;
+  /** Behavior projects, Havok skeletons and clips (actors and animated objects). */
+  readonly animation: AnimationAssets;
   /** Indexed once per session (all plugins of the load order). */
   readonly db: Promise<RecordDatabase>;
   readonly #renderer: Renderer;
@@ -125,6 +129,9 @@ export class GameSession {
   /** The sound system once it exists (the render loop updates it every frame). */
   soundSystem: SoundSystem | undefined;
   #actors: Promise<ActorPlacer> | undefined;
+  /** Head parts' expression morphs by TRI path (kept for the session: a few dozen files). */
+  readonly #morphs = new Map<string, Promise<GpuMorphs | undefined>>();
+  #morphBytes = 0;
 
   constructor(device: GPUDevice, renderer: Renderer, vfs: Vfs, terminal: Terminal) {
     this.vfs = vfs;
@@ -133,6 +140,7 @@ export class GameSession {
     const loader = new AssetLoader(vfs);
     this.loader = loader;
     this.textures = new TextureCache(device, (path) => loader.loadTexture(path));
+    this.animation = new AnimationAssets(vfs, terminal);
     // The plugins' record headers (~1.2 million) are read in workers.
     const start = performance.now();
     const indexer = new PluginIndexer();
@@ -180,6 +188,9 @@ export class GameSession {
           model.addons = addons;
           if (data.behaviorGraph !== undefined) {
             model.graph = await this.behaviorGraph(data.behaviorGraph);
+            // Where it plays skeletal clips, its nodes move too (a missing graph moves nothing).
+            if (model.graph)
+              model.skeletal = await this.animation.skeletalGraph(data.behaviorGraph);
           }
           this.#loadedModels.set(key, model);
           return model;
@@ -223,6 +234,26 @@ export class GameSession {
         },
       );
       this.#models.set(key, entry);
+    }
+    return entry;
+  }
+
+  /** A head part's expression morphs (its TRI file) on the GPU, read once. */
+  expressions(path: string): Promise<GpuMorphs | undefined> {
+    let entry = this.#morphs.get(path);
+    if (!entry) {
+      entry = this.loader.loadExpressions(path).then(
+        (data) => {
+          const morphs = this.#renderer.scene.createMorphs(data);
+          this.#morphBytes += morphs.bytes;
+          return morphs;
+        },
+        (error: unknown) => {
+          this.#terminal.log('tri', `${path}: ${describe(error)}`, 'warn');
+          return undefined;
+        },
+      );
+      this.#morphs.set(path, entry);
     }
     return entry;
   }
@@ -501,7 +532,7 @@ export class GameSession {
   get memory(): number {
     let models = 0;
     for (const model of this.#loadedModels.values()) models += model.bytes;
-    return models + this.textures.bytes;
+    return models + this.#morphBytes + this.textures.bytes;
   }
 
   /**
@@ -569,6 +600,12 @@ export class GameSession {
     this.#loadedModels.clear();
     for (const entry of this.#waterTypes.values()) void entry.then((type) => type?.destroy());
     this.#waterTypes.clear();
+    for (const entry of this.#morphs.values()) {
+      void entry.then((morphs) => {
+        morphs?.buffer.destroy();
+      });
+    }
+    this.#morphs.clear();
     this.loader.dispose();
     void this.db.then((db) => db.close());
   }

@@ -35,16 +35,42 @@ Formats: [nif.md](formats/nif.md#animation) (controllers, sequences, keys),
   AutoPlay's `end` starts AutoLoop exactly when the intro ends. An event takes the first usable
   transition of the current state, then the state machine's wildcards (outermost machine
   first; disabled ones and those with a condition are skipped).
-- Not yet: the blend of a transition effect between the two states (switched at once),
-  conditions (hkbExpressionCondition), variables changed by modifiers and scripts, weighted
-  blending of sequences below 1, skeletal clips (hkbClipGenerator): TODO(M7). Events from
-  scripts (ObjectReference.PlayAnimation, SetAnimationVariable*): TODO(M8).
+- Not yet in `ObjectGraph`: the blend of a transition effect between the two states (switched
+  at once), conditions (hkbExpressionCondition), variables changed by modifiers, weighted
+  blending of sequences below 1. Graphs that need them play skeletal clips and run in the
+  full runtime below; unifying the two (sequences as leaves of the full runtime): TODO(M8),
+  with events from scripts (ObjectReference.PlayAnimation, SetAnimationVariable*).
 - Particles follow: the manager-controlled controllers of a particle system (birth rate,
   emitter active) take their values from the sequences the graph plays.
-- Meshes whose graph plays Havok animations (hkbClipGenerator clips, .hkx files) stand in their
-  rest pose until those play (TODO(M7)), and so does their collision: the Volkihar courtyard's
-  secret stair (CasSecEntrance01, Valerica's dial puzzle) shows neither closed nor open, its
-  spiral half under the platforms; opening it is the puzzle's script (TODO(M8)).
+
+## Skeletal objects
+
+343 object projects play Havok clips (hkbClipGenerator, .hkx animations) on the model's own
+nodes: traps (swinging blades, falling logs, spike walls), the skinned bows (string and
+limbs), Dwemer and Apocrypha mechanisms, the Eye of Magnus, Blackreach's glowing worms. The
+session reads such a project once (`AnimationAssets.skeletalGraph`, src/shell/animation-assets.ts):
+its character's Havok skeleton, every behavior file, and the clips its start states play.
+
+- **Skeleton**: the model's node tree (ModelData.nodes, kept for every model with a graph) is
+  the rig; Havok bones are matched to nodes by name, as for actors (ActorSkeleton). Nodes
+  under no matched bone stay where the model, and its NIF sequences, put them; 5 meshes
+  (e.g. WhiterunDragonTrap01's x_SingleBone, the `_hkp` bow proxy) have no matching node
+  and do not move, as in the game.
+- **Running**: every placed instance runs its own BehaviorRuntime (seeded by the reference),
+  started in its graph's start pose and moved every frame with the actors
+  (`animateSkeletons`, src/animation/animated-skeleton.ts). Rigid parts hang on their pose
+  node, skinned parts (bows) follow their bones' palette.
+- **Collision**: bodies on moved nodes are fixed in the NIF (482 of 487); the game moves them
+  with the node, so they are keyframed and follow the pose (`PlaySession`, moved by the
+  rest-to-pose change of their node).
+- **Start pose**: most wait in a looping state for an event (traps' TrapStart, bows' Idle);
+  their rest pose is that state's first frame. CasSecEntrance01 (the Volkihar courtyard's
+  secret stair, Valerica's dial puzzle) stands closed in ClosedLoop, which is its rest
+  pose; its `Open` clip lowers and turns the platforms and stair by 24 units. The events
+  come from scripts and activation (traps' trigger volumes, the dials): TODO(M8).
+- Graphs that play both clips and NIF sequences (WhiterunDragonTrap01, TrapBladeSwinging01,
+  the bound bow) run both: the sequences through `ObjectGraph`, the clips through the
+  runtime (TODO(M8): one runtime, so an event reaches both).
 
 ## Actors
 
@@ -72,6 +98,34 @@ their look: [formats/esm.md](formats/esm.md#actors)).
   placed together do not breathe together); clips load as the graph first asks for them (the
   female clip for women where one exists). Actors stand where they were placed until their
   AI packages move them (M10).
+
+## Faces
+
+An actor's face (`FaceAnimation`, `src/animation/face.ts`) sets the weights of its head
+parts' expression morphs every frame (the TRI morph names: 17 expressions, 14 modifiers, 16
+phonemes, in the order the game's `mfg` console commands number them); the renderer adds
+the morphs to the FaceGen head's shapes (rendering.md, Skinning).
+
+- **Blinking:** after a delay between fBlinkDelayMin and fBlinkDelayMax (0.5–2.5 s), both
+  lids close over fBlinkDownTime (0.04 s) and open over fBlinkUpTime (0.14 s); each face has
+  its own random sequence (seeded by the reference).
+- **Expression:** one of the 17 (MoodHappy, DialogueAnger, CombatShout, ...) held at a
+  strength. TODO(M10): moods from AI and combat, dialogue emotions from the responses (INFO
+  TRDT emotion type and value).
+- **Speech:** a line's lip-sync curves (formats/audio.md, LIP) drive the phonemes and the
+  modifiers (blinks join the face's own, the strongest wins; brows, eye looks). The curves
+  start with their lead-in frames, the audio after them, at the head through the 3D dialogue
+  output model (DOBJ DOP2) in the dialogue category (DDSC). The lines' head pitch, roll and
+  yaw are kept for head tracking (TODO(M10), which moves the same bone); creature lines
+  (8 curves) move jaws (TODO(M10)).
+- **Testing until dialogue (M9):** in the sandbox, the crosshair finds an actor along the
+  activation ray (within fActivatePickRadius of the line from its feet to its head; TODO(M10):
+  actors' own collision) and "Talk" makes it say a random line of its voice type (NPC VTCK,
+  `sound\voice\<plugin>\<voice type>\`).
+- Not applied: the TRI's SkinnyMorph (FaceGen heads are baked with the actor's weight:
+  formats/esm.md, Actors) and the Races / CharGen morphs (baked by the Creation Kit). Idle eye
+  movement by emotion (fEyeHeading/PitchMin/MaxOffsetEmotion*) and looking at things: TODO(M10)
+  with head tracking.
 
 ## Behavior runtime
 

@@ -3,24 +3,14 @@
 // FaceGen head are skinned to it, and its race's behavior graph moves it every frame
 // (src/animation/behavior-runtime.ts).
 
-import { BehaviorRuntime, type BehaviorHost } from '../animation/behavior-runtime.ts';
+import type { AnimatedSkeleton } from '../animation/animated-skeleton.ts';
+import { BehaviorRuntime } from '../animation/behavior-runtime.ts';
+import { FaceAnimation, lipLeadIn, VANILLA_BLINK, type BlinkSettings } from '../animation/face.ts';
 import { ActorPose, ActorSkeleton, wearOnRig, type RigData } from '../animation/skeleton.ts';
-import {
-  readAnimationContainer,
-  type AnimationBinding,
-  type HkxSkeleton,
-} from '../formats/hkx/animation.ts';
-import {
-  loadBehaviorFiles,
-  loadCharacterInfo,
-  projectRelative,
-  type BehaviorGraph,
-  type CharacterInfo,
-} from '../formats/hkx/behavior.ts';
-import { Packfile } from '../formats/hkx/packfile.ts';
-import { normalizePath } from '../formats/paths.ts';
+import { parseLip, type LipFile } from '../formats/audio/lip.ts';
 import { thinModelPath, type ModelTextureSwaps } from '../render/actor-model.ts';
-import type { GpuModel, ModelInstance } from '../render/scene-renderer.ts';
+import { transformPoint, type Vec3 } from '../render/math.ts';
+import type { GpuModel, GpuMorphs, ModelInstance } from '../render/scene-renderer.ts';
 import {
   ActorResolver,
   meshPath,
@@ -32,109 +22,151 @@ import { referenceMatrix, type CellActor } from '../world/cell-loader.ts';
 import { parseTextureSet } from '../world/decal.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import type { GameSession } from './game-session.ts';
+import type { Activatable } from './play-session.ts';
 import type { Terminal } from './terminal.ts';
 
 /** An actor placed in a scene: its look, its pose and the instances that draw it. */
-export interface PlacedActor {
+export interface PlacedActor extends AnimatedSkeleton {
   readonly actor: CellActor;
   readonly look: ActorLook;
-  readonly pose: ActorPose;
   readonly instances: readonly ModelInstance[];
   /** Its behavior graph, running (undefined: it stands in its skeleton's rest pose). */
   readonly behavior: BehaviorRuntime | undefined;
-  /** The renderer's clock at its last update. */
-  time: number | undefined;
-}
-
-/** A frame longer than this (a hitch, a hidden tab) advances the graphs by this much. */
-const MAX_STEP = 0.1;
-
-/** Moves every actor: its graph runs to `seconds` on the renderer's clock. */
-export function animateActors(actors: Iterable<PlacedActor>, seconds: number): void {
-  for (const placed of actors) {
-    const behavior = placed.behavior;
-    if (!behavior) continue;
-    const dt =
-      placed.time === undefined ? 0 : Math.min(MAX_STEP, Math.max(0, seconds - placed.time));
-    placed.time = seconds;
-    behavior.update(dt);
-    // TODO(M10): footsteps and the other sounds its animations raise.
-    behavior.takeRaised();
-    placed.pose.update(behavior.pose);
-  }
-}
-
-/** A race's behavior project, read once: its character and every behavior file. */
-interface Behaviors {
-  readonly project: string;
-  readonly character: CharacterInfo;
-  readonly root: BehaviorGraph;
-  readonly files: ReadonlyMap<string, BehaviorGraph>;
-}
-
-/**
- * The clips of a project for one sex, shared by its actors: loaded when a graph first asks
- * for one (the female clip where a female one exists).
- */
-class ClipHost implements BehaviorHost {
-  readonly #behaviors: Behaviors;
-  readonly #female: boolean;
-  readonly #load: (path: string) => Promise<AnimationBinding | undefined>;
-  readonly #has: (path: string) => boolean;
-  readonly #clips = new Map<string, AnimationBinding | undefined>();
-  readonly #pending = new Set<Promise<unknown>>();
-
-  constructor(
-    behaviors: Behaviors,
-    female: boolean,
-    has: (path: string) => boolean,
-    load: (path: string) => Promise<AnimationBinding | undefined>,
-  ) {
-    this.#behaviors = behaviors;
-    this.#female = female;
-    this.#has = has;
-    this.#load = load;
-  }
-
-  clip(animation: string): AnimationBinding | undefined {
-    const key = animation.toLowerCase();
-    if (this.#clips.has(key)) return this.#clips.get(key);
-    this.#clips.set(key, undefined);
-    const path = projectRelative(this.#behaviors.project, animation);
-    const own = this.#female ? path.replace(/\\male\\/, '\\female\\') : path;
-    const loading = this.#load(this.#has(own) ? own : path).then((binding) => {
-      this.#clips.set(key, binding);
-    });
-    this.#pending.add(loading);
-    void loading.finally(() => this.#pending.delete(loading));
-    return undefined;
-  }
-
-  behavior(name: string): BehaviorGraph | undefined {
-    return this.#behaviors.files.get(projectRelative(this.#behaviors.project, name));
-  }
-
-  /** Waits for the clips asked for so far. */
-  async loaded(): Promise<void> {
-    while (this.#pending.size > 0) await Promise.all([...this.#pending]);
-  }
 }
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
-/** Loads what actors need, shared between them: skeletons, characters, clips, texture sets. */
+/** Where an actor's head is, in the world (TODO(M10): creatures' heads by their race). */
+export function headPosition(placed: PlacedActor): Vec3 {
+  const world = placed.instances[0]?.world;
+  const head = placed.pose.world('NPC Head [Head]') ?? placed.pose.world('Head');
+  const local: Vec3 = head ? [head[12] ?? 0, head[13] ?? 0, head[14] ?? 0] : [0, 0, 120];
+  return world ? transformPoint(world, local) : placed.actor.position;
+}
+
+/**
+ * The actor a ray from `origin` along `direction` (unit) passes within `radius` of (its body,
+ * feet to head) within `length`, the nearest along the ray. TODO(M10): actors' own collision
+ * (their character controllers and bodies) is what the crosshair rests on in the game.
+ */
+export function actorOnRay(
+  actors: Iterable<PlacedActor>,
+  origin: Vec3,
+  direction: Vec3,
+  length: number,
+  radius: number,
+): { readonly actor: PlacedActor; readonly distance: number } | undefined {
+  let best: { actor: PlacedActor; distance: number } | undefined;
+  for (const placed of actors) {
+    const feet = placed.actor.position;
+    const head = headPosition(placed);
+    const along = closestOnRay(origin, direction, length, feet, head, radius + BODY_RADIUS);
+    if (along !== undefined && (!best || along < best.distance)) {
+      best = { actor: placed, distance: along };
+    }
+  }
+  return best;
+}
+
+/**
+ * What the crosshair finds among the actors shown (PlaySession's actorAt): activating one
+ * talks to it (it says a line, ActorPlacer.speak).
+ */
+export function talkTargets(
+  actors: () => Iterable<PlacedActor>,
+  session: () => GameSession | undefined,
+  terminal: Terminal,
+): (
+  origin: Vec3,
+  direction: Vec3,
+  length: number,
+  radius: number,
+) => { readonly distance: number; readonly target: Activatable } | undefined {
+  return (origin, direction, length, radius) => {
+    const hit = actorOnRay(actors(), origin, direction, length, radius);
+    if (!hit) return undefined;
+    const placed = hit.actor;
+    const look = placed.look;
+    return {
+      distance: hit.distance,
+      target: {
+        verb: 'Talk',
+        name: look.name !== '' ? look.name : look.editorId,
+        activate: () => {
+          void session()
+            ?.actors()
+            .then((placer) => placer.speak(placed))
+            .then((line) => {
+              terminal.log('voice', `${look.editorId}: ${line ?? 'no lines for its voice'}`);
+            });
+        },
+      },
+    };
+  };
+}
+
+/** A body's half width around the line from its feet to its head (game units). */
+const BODY_RADIUS = 18;
+
+/**
+ * Where along a ray (0..length) it passes within `reach` of the segment a→b, or undefined:
+ * the closest points of the two segments.
+ */
+function closestOnRay(
+  origin: Vec3,
+  direction: Vec3,
+  length: number,
+  a: Vec3,
+  b: Vec3,
+  reach: number,
+): number | undefined {
+  const segment: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+  const offset: Vec3 = [origin[0] - a[0], origin[1] - a[1], origin[2] - a[2]];
+  const dot = (x: Vec3, y: Vec3): number => x[0] * y[0] + x[1] * y[1] + x[2] * y[2];
+  const ss = dot(segment, segment);
+  const ds = dot(direction, segment);
+  const dOff = dot(direction, offset);
+  const sOff = dot(segment, offset);
+  const denominator = ss - ds * ds;
+  // t along the ray, u along the segment (0..1).
+  let t = denominator > 1e-6 ? (ds * sOff - ss * dOff) / denominator : -dOff;
+  t = Math.min(length, Math.max(0, t));
+  let u = ss > 1e-6 ? (ds * t + sOff) / ss : 0;
+  u = Math.min(1, Math.max(0, u));
+  t = Math.min(
+    length,
+    Math.max(
+      0,
+      dot(direction, [
+        a[0] + segment[0] * u - origin[0],
+        a[1] + segment[1] * u - origin[1],
+        a[2] + segment[2] * u - origin[2],
+      ]),
+    ),
+  );
+  const gap = Math.hypot(
+    origin[0] + direction[0] * t - (a[0] + segment[0] * u),
+    origin[1] + direction[1] * t - (a[1] + segment[1] * u),
+    origin[2] + direction[2] * t - (a[2] + segment[2] * u),
+  );
+  return gap <= reach ? t : undefined;
+}
+
+/**
+ * Loads what actors need, shared between them: skeleton models and texture sets (behavior
+ * projects, Havok skeletons and clips come from the session's AnimationAssets).
+ */
 export class ActorPlacer {
   readonly #session: GameSession;
   readonly #db: RecordDatabase;
   readonly #terminal: Terminal;
   readonly #resolver: ActorResolver;
   readonly #rigs = new Map<string, Promise<RigData | undefined>>();
-  readonly #skeletons = new Map<string, Promise<HkxSkeleton | undefined>>();
-  readonly #clips = new Map<string, Promise<AnimationBinding | undefined>>();
-  readonly #behaviors = new Map<string, Promise<Behaviors | undefined>>();
-  readonly #hosts = new Map<string, ClipHost>();
   readonly #textureSets = new Map<number, Promise<readonly string[] | undefined>>();
+  #blink: Promise<BlinkSettings> | undefined;
+  /** Spoken lines by lower-case voice type (sound\voice\<plugin>\<voice type>\). */
+  #voices: Map<string, string[]> | undefined;
 
   constructor(session: GameSession, db: RecordDatabase, terminal: Terminal) {
     this.#session = session;
@@ -163,22 +195,84 @@ export class ActorPlacer {
     return this.#cached(this.#rigs, path, () => this.#session.loader.loadRig(path));
   }
 
-  #havokSkeleton(path: string): Promise<HkxSkeleton | undefined> {
-    return this.#cached(this.#skeletons, path, async () => {
-      const container = readAnimationContainer(Packfile.parse(await this.#session.vfs.read(path)));
-      const skeleton = container.skeletons[0];
-      if (!skeleton) throw new Error('no skeleton');
-      return skeleton;
-    });
+  /** The voice files of a voice type, found once for all. */
+  #voiceLines(voiceType: string): readonly string[] {
+    if (!this.#voices) {
+      const voices = new Map<string, string[]>();
+      for (const path of this.#session.vfs.list('sound\\voice')) {
+        if (!path.endsWith('.fuz')) continue;
+        const folder = path.split('\\')[3];
+        if (folder === undefined) continue;
+        let lines = voices.get(folder);
+        if (!lines) voices.set(folder, (lines = []));
+        lines.push(path);
+      }
+      this.#voices = voices;
+    }
+    return this.#voices.get(voiceType.toLowerCase()) ?? [];
   }
 
-  #clip(path: string): Promise<AnimationBinding | undefined> {
-    return this.#cached(this.#clips, path, async () => {
-      const container = readAnimationContainer(Packfile.parse(await this.#session.vfs.read(path)));
-      const binding = container.bindings[0];
-      if (!binding) throw new Error('no animation');
-      return binding;
-    });
+  /**
+   * The actor says one of its voice type's lines at its head, its face lip-syncing (lines
+   * with lip-sync data start their curves first, by their lead-in). TODO(M9): the dialogue
+   * menu and its topics choose the line; until then it is a random one of its voice.
+   * Returns the line's file, or undefined if it has none.
+   */
+  async speak(placed: PlacedActor): Promise<string | undefined> {
+    const voiceType = placed.look.voiceType;
+    const lines = voiceType === undefined ? [] : this.#voiceLines(voiceType);
+    const path = lines[Math.floor(Math.random() * lines.length)];
+    if (path === undefined) return undefined;
+    const sounds = await this.#session.sounds();
+    const line = await sounds.voiceLine(path);
+    if (!line) return undefined;
+    let lip: LipFile | undefined;
+    try {
+      lip = line.lip && parseLip(line.lip);
+    } catch (error) {
+      this.#terminal.log('lip', `${path}: ${describe(error)}`, 'warn');
+    }
+    const face = placed.face;
+    if (lip && face) face.speak(lip);
+    const start = (): void => {
+      void line.play(() => headPosition(placed));
+    };
+    const lead = lip ? lipLeadIn(lip) : 0;
+    if (lead > 0) setTimeout(start, lead * 1000);
+    else start();
+    return path;
+  }
+
+  /** Blink timing from the game settings, read once. */
+  #blinkSettings(): Promise<BlinkSettings> {
+    this.#blink ??= this.#session.settings().then((settings) => ({
+      fBlinkDelayMin: settings.number('fBlinkDelayMin') ?? VANILLA_BLINK.fBlinkDelayMin,
+      fBlinkDelayMax: settings.number('fBlinkDelayMax') ?? VANILLA_BLINK.fBlinkDelayMax,
+      fBlinkDownTime: settings.number('fBlinkDownTime') ?? VANILLA_BLINK.fBlinkDownTime,
+      fBlinkUpTime: settings.number('fBlinkUpTime') ?? VANILLA_BLINK.fBlinkUpTime,
+    }));
+    return this.#blink;
+  }
+
+  /** An actor's animated face over its head parts' expression morphs (by shape name). */
+  async #face(
+    expressions: ReadonlyMap<string, string>,
+    actor: CellActor,
+  ): Promise<{ weights: FaceAnimation; morphs: Map<string, GpuMorphs> }> {
+    const entries = await Promise.all(
+      [...expressions].map(async ([shape, path]) => {
+        const morphs = this.#session.vfs.has(path)
+          ? await this.#session.expressions(path)
+          : undefined;
+        return morphs ? [[shape, morphs] as const] : [];
+      }),
+    );
+    // Seeded apart from the behavior graph: placed together, faces blink at their own times.
+    const weights = new FaceAnimation(
+      seededRandom(actor.reference ^ 0x5bd1e995),
+      await this.#blinkSettings(),
+    );
+    return { weights, morphs: new Map(entries.flat()) };
   }
 
   /** A texture set's textures (TX00..TX07), or undefined. */
@@ -190,43 +284,17 @@ export class ActorPlacer {
     });
   }
 
-  /** A race's behavior project: its character and every behavior file it plays. */
-  #behaviorsOf(project: string): Promise<Behaviors | undefined> {
-    return this.#cached(this.#behaviors, project, async () => {
-      const read = (path: string): Promise<Uint8Array> => this.#session.vfs.read(path);
-      const character = await loadCharacterInfo(project, read);
-      if (!character.behavior) throw new Error('character without a behavior file');
-      const { root, files } = await loadBehaviorFiles(project, character.behavior, read);
-      return { project: normalizePath(project), character, root, files };
-    });
-  }
-
-  /** The clips of a project for one sex. */
-  #host(behaviors: Behaviors, female: boolean): ClipHost {
-    const key = `${behaviors.project}|${female ? 'f' : 'm'}`;
-    let host = this.#hosts.get(key);
-    if (!host) {
-      host = new ClipHost(
-        behaviors,
-        female,
-        (path) => this.#session.vfs.has(path),
-        (path) => this.#clip(path),
-      );
-      this.#hosts.set(key, host);
-    }
-    return host;
-  }
-
   /** An actor ready to draw, or undefined if its look or skeleton cannot be made. */
   async place(actor: CellActor): Promise<PlacedActor | undefined> {
     const look = await this.#resolver.resolve(actor.base, actor.reference);
     if (!look?.skeleton) return undefined;
     const session = this.#session;
-    const behaviors = look.behavior ? await this.#behaviorsOf(look.behavior) : undefined;
+    const animation = session.animation;
+    const behaviors = look.behavior ? await animation.behaviors(look.behavior) : undefined;
     const character = behaviors?.character;
     const [rig, havok] = await Promise.all([
       this.#rig(look.skeleton),
-      character?.rig ? this.#havokSkeleton(character.rig) : undefined,
+      character?.rig ? animation.havokSkeleton(character.rig) : undefined,
     ]);
     if (!rig) return undefined;
 
@@ -261,6 +329,9 @@ export class ActorPlacer {
       look.faceGen && session.vfs.has(look.faceGen.geometry)
         ? await session.actorModel(look.faceGen.geometry, undefined, 100, {})
         : undefined;
+    // Its face: the head parts' expression morphs, moved by blinks, moods and speech.
+    const face =
+      head && look.faceGen ? await this.#face(look.faceGen.expressions, actor) : undefined;
 
     // The models go on the skeleton: their nodes are its nodes (the ones it lacks added).
     const models: { model: GpuModel; addon: number | undefined }[] = [
@@ -291,13 +362,14 @@ export class ActorPlacer {
       ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),
       tints,
       partitionVisible: (bodyPart) => partitionVisible(bodyPart, look.owners, addon),
+      ...(face && model === head && { face }),
     }));
 
     // Its behavior graph: started, its first clips loaded, then run on by a moment of its
     // own (actors placed together do not all breathe together).
     let behavior: BehaviorRuntime | undefined;
     if (behaviors && havok) {
-      const host = this.#host(behaviors, look.female);
+      const host = animation.host(behaviors, look.female);
       const random = seededRandom(actor.reference);
       behavior = new BehaviorRuntime({
         root: behaviors.root,
@@ -315,7 +387,15 @@ export class ActorPlacer {
       behavior.takeRaised();
       pose.update(behavior.pose);
     }
-    const placed: PlacedActor = { actor, look, pose, instances, behavior, time: undefined };
+    const placed: PlacedActor = {
+      actor,
+      look,
+      pose,
+      instances,
+      behavior,
+      ...(face && { face: face.weights }),
+      time: undefined,
+    };
     return placed;
   }
 }

@@ -7,6 +7,8 @@ import { normalizePath } from '../formats/paths.ts';
 import {
   type AddonModel,
   type ArmorAddonRecord,
+  HeadPartFile,
+  type HeadPartRecord,
   LeveledFlag,
   type LeveledList,
   NpcFlag,
@@ -15,6 +17,7 @@ import {
   parseColor,
   parseLeveledList,
   parseNpc,
+  parseHeadPart,
   parseOutfit,
   parseRace,
   type NpcRecord,
@@ -48,6 +51,10 @@ export interface ActorLook {
   /** The NPC_ whose traits it shows (after templates and leveled lists). */
   readonly npc: number;
   readonly editorId: string;
+  /** Its name (FULL of the NPC_ its base data comes from). */
+  readonly name: string;
+  /** Its voice type's editor id (the folder of its lines under sound\voice\<plugin>\). */
+  readonly voiceType: string | undefined;
   readonly female: boolean;
   readonly race: number;
   readonly raceEditorId: string;
@@ -60,8 +67,18 @@ export interface ActorLook {
   readonly weight: number;
   readonly skinTone: readonly [number, number, number] | undefined;
   readonly hairColor: readonly [number, number, number] | undefined;
-  /** The FaceGen head (meshes\ and textures\ paths), for races with one. */
-  readonly faceGen: { readonly geometry: string; readonly tint: string } | undefined;
+  /**
+   * The FaceGen head (meshes\ and textures\ paths), for races with one; `expressions`: the
+   * expression TRI file of each head part by its shape's lower-case name (the head part's
+   * editor id), for phonemes, blinks and moods.
+   */
+  readonly faceGen:
+    | {
+        readonly geometry: string;
+        readonly tint: string;
+        readonly expressions: ReadonlyMap<string, string>;
+      }
+    | undefined;
   /** What it wears, armor first, then the skin under it. */
   readonly worn: readonly WornAddon[];
   /** The biped slots armor owns: slot → the addon that owns it. */
@@ -170,6 +187,7 @@ export class ActorResolver {
   readonly #db: RecordDatabase;
   readonly #races = new Map<number, RaceRecord | undefined>();
   readonly #addons = new Map<number, ArmorAddonRecord | undefined>();
+  readonly #headParts = new Map<number, HeadPartRecord | undefined>();
 
   constructor(db: RecordDatabase) {
     this.#db = db;
@@ -189,6 +207,34 @@ export class ActorResolver {
       this.#addons.set(formId, record?.type === 'ARMA' ? parseArmorAddon(record) : undefined);
     }
     return this.#addons.get(formId);
+  }
+
+  async #headPart(formId: number): Promise<HeadPartRecord | undefined> {
+    if (!this.#headParts.has(formId)) {
+      const record = await this.#db.get(formId);
+      this.#headParts.set(formId, record?.type === 'HDPT' ? parseHeadPart(record) : undefined);
+    }
+    return this.#headParts.get(formId);
+  }
+
+  /**
+   * The expression TRI files of an NPC's head parts (its own, its race's and the parts they
+   * bring along) by lower-case editor id: the FaceGen head's shapes are named after them.
+   */
+  async #expressions(parts: readonly number[]): Promise<Map<string, string>> {
+    const files = new Map<string, string>();
+    const queue = [...parts];
+    const seen = new Set<number>();
+    for (let formId = queue.shift(); formId !== undefined; formId = queue.shift()) {
+      if (seen.has(formId)) continue;
+      seen.add(formId);
+      const part = await this.#headPart(formId);
+      if (!part) continue;
+      queue.push(...part.extraParts);
+      const tri = part.files.find((file) => file.type === HeadPartFile.tri);
+      if (tri) files.set(part.editorId.toLowerCase(), meshPath(tri.path));
+    }
+    return files;
   }
 
   /** An NPC_ (or a leveled list of them) down to one NPC_. */
@@ -331,15 +377,21 @@ export class ActorResolver {
         faceGen = {
           geometry: `meshes\\actors\\character\\facegendata\\facegeom\\${file}.nif`,
           tint: `textures\\actors\\character\\facegendata\\facetint\\${file}.dds`,
+          expressions: await this.#expressions([...traits.headParts, ...race.headParts[sex]]),
         };
       }
     }
     const skeleton = race.skeleton[sex];
     const behavior = race.behavior[sex];
+    const named = await this.#templated(placed, TemplateFlag.baseData, level, random);
+    const name = (await this.#db.get(named.formId))?.text('FULL') ?? '';
+    const voice = traits.voiceType === undefined ? undefined : await this.#db.get(traits.voiceType);
     return {
       base,
       npc: traits.formId,
       editorId: placed.editorId,
+      name,
+      voiceType: voice?.type === 'VTYP' ? voice.editorId : undefined,
       female,
       race: race.formId,
       raceEditorId: race.editorId,
