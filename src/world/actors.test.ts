@@ -254,6 +254,7 @@ describe('actor looks', () => {
     models: [undefined, undefined],
     firstPerson: [undefined, undefined],
     skinTexture: [undefined, undefined],
+    weaponAdjust: 0,
   });
 
   it("chooses the addons that fit the race, else the race's armor race", () => {
@@ -274,6 +275,7 @@ describe('actor looks', () => {
     priority,
     skinTexture: undefined,
     skin,
+    weaponAdjust: 0,
   });
 
   it('gives each slot to one armor piece and hides the partitions others own', () => {

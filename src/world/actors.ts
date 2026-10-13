@@ -7,6 +7,7 @@ import { normalizePath } from '../formats/paths.ts';
 import {
   type AddonModel,
   type ArmorAddonRecord,
+  BipedSlot,
   HeadPartFile,
   type HeadPartRecord,
   LeveledFlag,
@@ -43,6 +44,8 @@ export interface WornAddon {
   readonly skinTexture: number | undefined;
   /** Part of the actor's skin (the body under its armor). */
   readonly skin: boolean;
+  /** ARMA DNAM: how far it pushes sheathed weapons out. */
+  readonly weaponAdjust: number;
 }
 
 export interface ActorLook {
@@ -83,6 +86,12 @@ export interface ActorLook {
   readonly worn: readonly WornAddon[];
   /** The biped slots armor owns: slot → the addon that owns it. */
   readonly owners: ReadonlyMap<number, number>;
+  /**
+   * The behavior variable weapAdj: the weapon adjust of what covers its body (slot 32). Only
+   * body pieces vary it in the data (0.1 to 0.65; helmets and the rest are 0 or 1), so the
+   * engine is taken to read the cuirass's (TODO(M13): not documented).
+   */
+  readonly weaponAdjust: number;
 }
 
 /** Templates and leveled lists nest; vanilla chains are a few levels deep. */
@@ -332,6 +341,7 @@ export class ActorResolver {
           priority: addon.priority[sex],
           skinTexture: addon.skinTexture[sex],
           skin,
+          weaponAdjust: addon.weaponAdjust,
         },
       ];
     });
@@ -404,6 +414,9 @@ export class ActorResolver {
       faceGen,
       worn: [...shown, ...bare],
       owners,
+      weaponAdjust:
+        [...shown, ...bare].find((addon) => firstSlot(addon.slots) === BipedSlot.body)
+          ?.weaponAdjust ?? 0,
     };
   }
 }

@@ -182,6 +182,8 @@ export interface ArmorAddonRecord {
   readonly firstPerson: readonly [AddonModel | undefined, AddonModel | undefined];
   /** NAM0 / NAM1: the skin texture set of [male, female] (TXST). */
   readonly skinTexture: readonly [number | undefined, number | undefined];
+  /** DNAM f32 at 8: how far the armour pushes sheathed weapons out (0..1). */
+  readonly weaponAdjust: number;
 }
 
 export interface LeveledEntry {
@@ -438,6 +440,7 @@ export function parseArmorAddon(record: RecordSource): ArmorAddonRecord {
     models: [male, model('MOD3', 'MO3S') ?? male],
     firstPerson: [maleFirst, model('MOD5', 'MO5S') ?? maleFirst],
     skinTexture: [field(record, 'NAM0'), field(record, 'NAM1')],
+    weaponAdjust: dnam && dnam.length >= 12 ? view(dnam).getFloat32(8, true) : 0,
   };
 }
 

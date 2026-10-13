@@ -379,6 +379,8 @@ export class ActorPlacer {
         properties: { IsFemale: look.female ? 1 : 0, IsMale: look.female ? 0 : 1, IsNPC: 1 },
       });
       behavior.setVariable('IsNPC', 1);
+      // Its cuirass pushes its sheathed weapons out (BSOffsetAnimationGenerator).
+      behavior.setVariable('weapAdj', look.weaponAdjust);
       behavior.update(0);
       await host.loaded();
       behavior.update(random() * 4);
