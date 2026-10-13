@@ -27,16 +27,19 @@ export const CONTROLLER_SHELL = 0.05 * HAVOK_SCALE;
 
 /**
  * The 18 points of the controller shape (game units, centred on the shape's middle): rings at
- * a radius's height above the bottom and below the top, the end points inset by the shell.
+ * a radius's height above the bottom and below the top. The points are inset by the shell, so
+ * that the shape with its shell is the bound's size (as Havok shapes are built: the convex
+ * radius shrinks the vertices), in width as in height.
  */
 export function controllerPoints(shape: CharacterShape): Float32Array {
   const half = shape.height / 2 - CONTROLLER_SHELL;
+  const radius = Math.max(0, shape.radius - CONTROLLER_SHELL);
   const ring = Math.max(0, Math.min(half, half - shape.radius));
   const points: number[] = [0, 0, -half, 0, 0, half];
   for (const z of [-ring, ring]) {
     for (let i = 0; i < 8; i++) {
       const angle = (i * Math.PI) / 4;
-      points.push(Math.cos(angle) * shape.radius, Math.sin(angle) * shape.radius, z);
+      points.push(Math.cos(angle) * radius, Math.sin(angle) * radius, z);
     }
   }
   return Float32Array.from(points);
@@ -193,8 +196,11 @@ export class CharacterBody {
       this.#jumpSpeed = 0;
       this.#grounded = false;
     } else if (this.#grounded) {
-      // On the ground: gravity's pull keeps it pressed to slopes and steps.
-      this.verticalSpeed = -gravity * seconds;
+      // On the ground it only moves along; snapping to the ground keeps it on slopes and down
+      // steps. Pressing down as well makes Rapier's controller hit the floor at the start of
+      // the step, and now and then it drops the rest of the step's movement there: the
+      // character stutters and sticks on flat floors.
+      this.verticalSpeed = 0;
     } else {
       const multiplier = this.#unsupported
         ? this.settings.unsupportedGravity

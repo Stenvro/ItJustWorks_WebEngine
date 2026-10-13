@@ -56,4 +56,27 @@ describe('reverb impulse', () => {
     expect(20 * Math.log10(end / start)).toBeLessThan(-45);
     expect(20 * Math.log10(end / start)).toBeGreaterThan(-75);
   });
+
+  it('gives the tail and the reflections the energy their levels name, however long', () => {
+    const energy = (channel: Float32Array, from = 0): number => {
+      let sum = 0;
+      for (let i = from; i < channel.length; i++) sum += (channel[i] ?? 0) ** 2;
+      return sum;
+    };
+    const rate = 16000;
+    for (const decayTime of [500, 2877, 6000]) {
+      // Room −3 dB, reverb 0 dB, no HF cut: the tail's energy is (10^(−3/20))², about 0.5.
+      const impulse = reverbImpulse(
+        reverb({ decayTime, roomHf: 0, reflections: -100 }),
+        rate,
+        random,
+      );
+      if (!impulse) throw new Error('no impulse');
+      expect(energy(impulse[0])).toBeCloseTo(10 ** (-3 / 10), 2);
+    }
+    // Only reflections (−7 dB under room −3 dB): 10 dB under the direct sound.
+    const reflections = reverbImpulse(reverb({ reverb: -100, reflections: -7 }), rate, random);
+    if (!reflections) throw new Error('no impulse');
+    expect(10 * Math.log10(energy(reflections[1]))).toBeCloseTo(-10, 0);
+  });
 });
