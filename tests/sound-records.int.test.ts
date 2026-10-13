@@ -2,6 +2,7 @@
 // data.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { loadCellData } from '../src/world/cell-loader.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import {
   MusicTypeFlag,
@@ -106,6 +107,23 @@ describe.skipIf(!hasGamedata())('sound records in the local game data', () => {
     expect(spacer.type).toBe('silent');
     expect(spacer.duration).toBe(15);
     expect(spacer.conditions.length).toBeGreaterThan(0);
+  });
+
+  it("lists Breezehome's sounds: its loops, door sounds and acoustic space", async () => {
+    const data = await loadCellData(db, 0x000165a8);
+    expect(data.emitters.length).toBeGreaterThan(0);
+    for (const emitter of data.emitters) {
+      const record = await db.require(emitter.descriptor);
+      expect(record.type).toBe('SNDR');
+      const descriptor = parseSoundDescriptor(record);
+      expect(descriptor.files.length, descriptor.editorId).toBeGreaterThan(0);
+    }
+    const door = data.objects.find((object) => object.teleport);
+    expect(door?.sounds?.open).toBeDefined();
+    expect(door?.sounds?.close).toBeDefined();
+    const space = data.cell.acousticSpace;
+    expect(space).toBeDefined();
+    expect((await db.require(space ?? 0)).editorId).toBe('IntRoomWoodMediumAcousticSpace');
   });
 
   it('reads acoustic spaces and their reverb', async () => {

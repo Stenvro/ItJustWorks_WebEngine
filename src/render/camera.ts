@@ -93,6 +93,14 @@ export class OrbitCamera {
     return this.#up === 'z' ? [0, 0, 1] : [0, 1, 0];
   }
 
+  /** The direction from the eye to the target. */
+  get forward(): Vec3 {
+    const eye = this.position;
+    const d = [this.target[0] - eye[0], this.target[1] - eye[1], this.target[2] - eye[2]];
+    const length = Math.hypot(d[0] ?? 0, d[1] ?? 0, d[2] ?? 0) || 1;
+    return [(d[0] ?? 0) / length, (d[1] ?? 0) / length, (d[2] ?? 0) / length];
+  }
+
   get position(): Vec3 {
     const c = Math.cos(this.pitch);
     const [x, y, z] = this.target;

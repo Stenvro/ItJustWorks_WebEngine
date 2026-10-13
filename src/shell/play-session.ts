@@ -47,13 +47,20 @@ export function objectActivation(
     readonly name: (teleport: Teleport) => string;
     readonly go: (teleport: Teleport) => void;
   },
+  /** Plays a sound (SNDR) at the object. */
+  sound?: (descriptor: number, at: Vec3) => void,
 ): Activatable | undefined {
+  const at: Vec3 = [object.world[12] ?? 0, object.world[13] ?? 0, object.world[14] ?? 0];
+  const play = (descriptor: number | undefined): void => {
+    if (descriptor !== undefined) sound?.(descriptor, at);
+  };
   const teleport = object.teleport;
   if (teleport) {
     return {
       verb: 'Open',
       name: travel.name(teleport),
       activate: () => {
+        play(object.sounds?.open);
         travel.go(teleport);
       },
     };
@@ -65,6 +72,7 @@ export function objectActivation(
       verb: open ? 'Close' : 'Open',
       name: object.name,
       activate: () => {
+        play(open ? object.sounds?.close : object.sounds?.open);
         playback.sequence = open ? 'close' : 'open';
         playback.start = clock();
       },
@@ -187,6 +195,9 @@ export class PlaySession {
       },
       get near() {
         return active().near;
+      },
+      get forward() {
+        return active().forward;
       },
       update: (deltaSeconds) => {
         this.#frame(deltaSeconds);

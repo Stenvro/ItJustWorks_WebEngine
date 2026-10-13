@@ -49,6 +49,37 @@ export interface CellObject {
   readonly dontHavokSettle?: boolean;
   /** XTEL: a load door's destination (the door it leads to and where the player arrives). */
   readonly teleport?: Teleport;
+  /** Sounds of using it (SNDR): doors and containers opening and closing, activators. */
+  readonly sounds?: ObjectSounds;
+}
+
+/** The sounds an object makes when used (SNDR form ids). */
+export interface ObjectSounds {
+  readonly open?: number;
+  readonly close?: number;
+  readonly activate?: number;
+}
+
+/**
+ * Something placed that keeps sounding while the player is near: a sound marker (SOUN), an
+ * activator's, moveable static's or talking activator's looping sound, a light's, a door's
+ * loop (SNDR form id).
+ */
+export interface CellSoundEmitter {
+  readonly reference: number;
+  readonly position: readonly [number, number, number];
+  readonly descriptor: number;
+}
+
+/** A placed acoustic space (ASPC reference): inside its box its ambience and reverb apply. */
+export interface CellAcousticArea {
+  readonly reference: number;
+  readonly space: number;
+  /** The reference's placement (with its scale). */
+  readonly world: Mat4;
+  /** The base's object bounds (OBND), in its own frame. */
+  readonly min: readonly [number, number, number];
+  readonly max: readonly [number, number, number];
 }
 
 /**
@@ -176,12 +207,61 @@ export interface CellData {
   readonly decals: readonly CellDecal[];
   /** Collision primitives; filter with `enabledReferences`. */
   readonly primitives: readonly CellPrimitive[];
+  /** Looping sound sources; filter with `enabledReferences`. */
+  readonly emitters: readonly CellSoundEmitter[];
+  /** Placed acoustic spaces; filter with `enabledReferences`. */
+  readonly acousticAreas: readonly CellAcousticArea[];
   /** The cell's references and the enable parents they follow (also outside the cell). */
   readonly references: ReadonlyMap<number, ReferenceState>;
   /** Things not shown yet, with the milestone that adds them. */
   readonly skipped: readonly string[];
   /** Where to start the camera: a door into the cell, or its centre. */
   readonly entrance: readonly [number, number, number];
+}
+
+/** The looping sound a base object makes where it is placed (SNDR), if any. */
+function loopingSoundOf(base: GameRecord): number | undefined {
+  const field =
+    base.type === 'SOUN'
+      ? 'SDSC'
+      : base.type === 'DOOR'
+        ? 'BNAM'
+        : ['ACTI', 'MSTT', 'TACT', 'LIGH'].includes(base.type)
+          ? 'SNAM'
+          : undefined;
+  return field === undefined ? undefined : nonZeroId(base.formIdField(field));
+}
+
+/** Sounds of using a door, container or activator, as a spreadable field. */
+function objectSoundsOf(base: GameRecord): { sounds?: ObjectSounds } {
+  const id = (type: string): number | undefined => nonZeroId(base.formIdField(type));
+  const sounds: { open?: number; close?: number; activate?: number } = {};
+  const set = (key: keyof ObjectSounds, value: number | undefined): void => {
+    if (value !== undefined) sounds[key] = value;
+  };
+  if (base.type === 'DOOR') {
+    set('open', id('SNAM'));
+    set('close', id('ANAM'));
+  } else if (base.type === 'CONT') {
+    set('open', id('SNAM'));
+    set('close', id('QNAM'));
+  } else if (base.type === 'ACTI') {
+    set('activate', id('VNAM'));
+  }
+  return Object.keys(sounds).length > 0 ? { sounds } : {};
+}
+
+/** OBND: six s16, the corners of the object's box. */
+function objectBounds(
+  base: GameRecord,
+): { min: [number, number, number]; max: [number, number, number] } | undefined {
+  const data = base.fields.first('OBND');
+  if (!data || data.length < 12) return undefined;
+  const v = view(data);
+  return {
+    min: [v.getInt16(0, true), v.getInt16(2, true), v.getInt16(4, true)],
+    max: [v.getInt16(6, true), v.getInt16(8, true), v.getInt16(10, true)],
+  };
 }
 
 /**
@@ -271,6 +351,8 @@ export async function loadCellData(
   const lights: CellLight[] = [];
   const decals: CellDecal[] = [];
   const primitives: CellPrimitive[] = [];
+  const emitters: CellSoundEmitter[] = [];
+  const acousticAreas: CellAcousticArea[] = [];
   const skipped = new Map<string, number>();
   const skip = (reason: string): void => {
     skipped.set(reason, (skipped.get(reason) ?? 0) + 1);
@@ -346,6 +428,23 @@ export async function loadCellData(
     }
     if ((base.flags & RecordFlag.isMarker) !== 0) continue;
 
+    const loopingSound = loopingSoundOf(base);
+    if (loopingSound !== undefined) {
+      emitters.push({ reference: ref.formId, position: ref.position, descriptor: loopingSound });
+    }
+    if (base.type === 'ASPC') {
+      const bounds = objectBounds(base);
+      if (bounds) {
+        acousticAreas.push({
+          reference: ref.formId,
+          space: base.formId,
+          world: referenceMatrix(ref),
+          ...bounds,
+        });
+      }
+      continue;
+    }
+
     if (base.type === 'LIGH') {
       const light = parseLight(base);
       if ((light.flags & LightFlag.offByDefault) === 0) {
@@ -397,6 +496,7 @@ export async function loadCellData(
       ...emittanceOf(record),
       ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
       ...(base.type === 'DOOR' && { teleport: parseTeleport(record) }),
+      ...objectSoundsOf(base),
     });
   }
 
@@ -410,6 +510,8 @@ export async function loadCellData(
     lights,
     decals,
     primitives,
+    emitters,
+    acousticAreas,
     references,
     skipped: [...skipped].map(([reason, count]) => `${count}× ${reason}`),
     entrance: entrance ?? centre,

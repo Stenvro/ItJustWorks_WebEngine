@@ -38,7 +38,9 @@ import {
   doorDestination,
   loadCellData,
   type CellLight,
+  type CellAcousticArea,
   type CellObject,
+  type CellSoundEmitter,
   type DoorDestination,
   type Teleport,
 } from '../world/cell-loader.ts';
@@ -109,6 +111,9 @@ interface LoadedCell {
   waterHeight: number | undefined;
   /** The placed objects with their instances (development: what the camera looks at). */
   placed: readonly { readonly object: CellObject; readonly instance: ModelInstance }[];
+  /** Its enabled looping sounds and acoustic spaces. */
+  emitters: readonly CellSoundEmitter[];
+  acousticAreas: readonly CellAcousticArea[];
   /**
    * Whether the worldspace has a cell record here. Positions without one (around a city
    * worldspace's few cells) stay empty and keep showing the distant LOD, as in the game.
@@ -240,10 +245,15 @@ export class WorldViewer {
       const object = cell.objects.get(reference);
       if (!object) continue;
       const instance = cell.placed.find((placed) => placed.object === object)?.instance;
-      return objectActivation(object, instance, {
-        name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
-        go: (teleport) => this.onTravel?.(teleport),
-      });
+      return objectActivation(
+        object,
+        instance,
+        {
+          name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
+          go: (teleport) => this.onTravel?.(teleport),
+        },
+        (descriptor, at) => void this.#session?.soundSystem?.play(descriptor, at),
+      );
     }
     return undefined;
   }
@@ -342,6 +352,10 @@ export class WorldViewer {
     const start = performance.now();
     const session = this.#session;
     if (!session) return;
+    // The sound system (made once) takes the loaded cells' sounds as they come.
+    void session.sounds().then(() => {
+      if (generation === this.#generation) this.#refreshSounds();
+    });
     const world = await Worldspace.open(db, formId);
     const [sky, lod] = await Promise.all([
       WorldSky.create(
@@ -475,6 +489,7 @@ export class WorldViewer {
   /** Stops showing the world and frees its cells (another viewer takes the screen). */
   deactivate(): void {
     this.#generation++;
+    if (this.#world) this.#session?.soundSystem?.stopAll();
     if (this.#timer !== undefined) clearInterval(this.#timer);
     this.#timer = undefined;
     if (this.#world) this.#renderer.setView(undefined);
@@ -507,6 +522,7 @@ export class WorldViewer {
       if (Math.max(Math.abs(cell.x - cx), Math.abs(cell.y - cy)) > KEEP_RADIUS) {
         this.#free(cell);
         this.#cells.delete(key);
+        this.#refreshSounds();
       }
     }
     this.#queue.length = 0;
@@ -610,6 +626,8 @@ export class WorldViewer {
         objects: new Map(),
         waterHeight: undefined,
         placed: [],
+        emitters: [],
+        acousticAreas: [],
         exists: false,
         ready: false,
       };
@@ -693,6 +711,9 @@ export class WorldViewer {
     cell.placed = placed;
     cell.waterHeight = water?.height;
     cell.objects = new Map(objects.map((object) => [object.reference, object]));
+    cell.emitters = data.emitters.filter((emitter) => isEnabled(emitter.reference));
+    cell.acousticAreas = data.acousticAreas.filter((area) => isEnabled(area.reference));
+    this.#refreshSounds();
     // Load doors: where they lead (for the activation prompt).
     await Promise.all(
       objects.map(async (object) => {
@@ -901,6 +922,16 @@ export class WorldViewer {
     const texture = `textures\\terrain\\${lod.name}\\${block}.dds`;
     if (!session.vfs.has(texture)) return undefined;
     return { texture, x: bx * CELL_SIZE, y: by * CELL_SIZE, size: level * CELL_SIZE };
+  }
+
+  /** The looping sounds and acoustic spaces of the loaded cells, for the sound system. */
+  #refreshSounds(): void {
+    const sounds = this.#session?.soundSystem;
+    if (!sounds || !this.#world) return;
+    const cells = [...this.#cells.values()];
+    sounds.setEmitters(cells.flatMap((cell) => cell.emitters));
+    sounds.setAcousticAreas(cells.flatMap((cell) => cell.acousticAreas));
+    sounds.setCellAcousticSpace(undefined);
   }
 
   #free(cell: LoadedCell): void {
