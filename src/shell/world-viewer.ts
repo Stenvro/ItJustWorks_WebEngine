@@ -25,6 +25,7 @@ import type { GpuDecals } from '../render/decals.ts';
 import type { GpuGrassField } from '../render/grass.ts';
 import { waterPlane } from '../render/water-data.ts';
 import { parseGrass, placeGrass, type GrassType } from '../world/grass.ts';
+import type { AmbientState } from '../audio/ambience.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
 import type { GpuTerrainCell, TerrainLodBlock, TerrainTexturePaths } from '../render/terrain.ts';
 import { parseLodSettings, type LodSettings } from '../formats/lod/lod.ts';
@@ -924,6 +925,21 @@ export class WorldViewer {
     return { texture, x: bx * CELL_SIZE, y: by * CELL_SIZE, size: level * CELL_SIZE };
   }
 
+  /** The surroundings for region and weather sounds. */
+  #ambientState(sky: WorldSky): AmbientState {
+    const flash = sky.flashStart;
+    return {
+      regions: sky.regions,
+      weather: sky.weather,
+      previousWeather: sky.previousWeather,
+      transition: sky.transition,
+      hour: sky.hour,
+      interior: false,
+      swimming: this.#play?.player.swimming ?? false,
+      flash: Number.isFinite(flash) ? flash : undefined,
+    };
+  }
+
   /** The looping sounds and acoustic spaces of the loaded cells, for the sound system. */
   #refreshSounds(): void {
     const sounds = this.#session?.soundSystem;
@@ -1052,6 +1068,7 @@ export class WorldViewer {
     }
     lights.sort((a, b) => a.distance - b.distance);
     this.#sky?.frame(performance.now(), camera);
+    this.#session?.soundSystem?.setAmbience(this.#sky && this.#ambientState(this.#sky));
     const sky = this.#sky?.lighting() ?? NO_SKY;
     return { ...sky, lights: lights.slice(0, MAX_LIGHTS) };
   }

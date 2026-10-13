@@ -9,6 +9,7 @@ import {
   parseAcousticSpace,
   parseMusicTrack,
   parseMusicType,
+  parseRegionAudio,
   parseReverb,
   parseSoundCategory,
   parseSoundDescriptor,
@@ -133,5 +134,31 @@ describe.skipIf(!hasGamedata())('sound records in the local game data', () => {
     expect(reverb?.editorId).toBe('IntRoomStoneLargeReverb');
     expect(reverb?.decayTime).toBe(2877);
     expect(reverb?.room).toBe(-3);
+  });
+
+  it('reads the sounds and music of regions (REGN RDAT type 7)', async () => {
+    const forest = parseRegionAudio(await byEditorId('REGN', 'WeatherPineForest'));
+    expect(forest.sounds).toHaveLength(60);
+    expect((await db.require(forest.music ?? 0)).editorId).toBe('MUSExploreForestPine');
+    const town = parseRegionAudio(await byEditorId('REGN', 'AudioExtForestPineTownRegion'));
+    const crickets = town.sounds[0];
+    expect((await db.require(crickets?.sound ?? 0)).editorId).toBe('AMBrCricketsIndividual01SD');
+    expect(crickets?.flags).toBe(0xb);
+    expect(crickets?.chance).toBeCloseTo(0.02);
+    // Data-wide: loops always play (chance 1), single sounds get a small chance per check.
+    for (const formId of db.formIdsOfType('REGN')) {
+      const region = await db.require(formId);
+      for (const entry of parseRegionAudio(region).sounds) {
+        const record = await db.require(entry.sound);
+        expect(record.type, region.editorId).toBe('SNDR');
+        const looping = parseSoundDescriptor(record).looping !== 'none';
+        if (looping) expect(entry.chance, record.editorId).toBe(1);
+        else expect(entry.chance, record.editorId).toBeLessThan(0.11);
+        expect(entry.flags & ~0xf, record.editorId).toBe(0);
+      }
+    }
+    // Interiors take their region sounds from their acoustic space.
+    const fort = parseAcousticSpace(await byEditorId('ASPC', 'IntDungeonFortAcousticSpace'));
+    expect((await db.require(fort.region ?? 0)).editorId).toBe('AudioIntDungeonFort01');
   });
 });

@@ -19,6 +19,10 @@ import {
   type SoundDescriptor,
   type SoundOutputModel,
 } from '../world/sound-records.ts';
+import { ConditionFunction } from '../scripting/conditions.ts';
+import type { IniSettings } from '../world/ini-settings.ts';
+import { parseRegionAudio, type RegionAudio } from '../world/sound-records.ts';
+import { Ambience, type AmbientState } from './ambience.ts';
 import type { AudioLoader } from './audio-loader.ts';
 import { AudioEngine } from './audio-engine.ts';
 import { SoundInstance, type SoundBuffer, type SoundPlace } from './sound-instance.ts';
@@ -69,26 +73,56 @@ export class SoundSystem {
   readonly #emitters = new Map<number, EmitterState>();
   readonly #warned = new Set<string>();
   readonly #spaces = new Map<number, Promise<AcousticSpace | undefined>>();
+  readonly #regionAudio = new Map<number, Promise<RegionAudio | undefined>>();
+  /** Global variables that sound conditions read (GLOB FLTV). */
+  readonly #globals = new Map<number, Promise<number>>();
+  readonly #globalValues = new Map<number, number>();
+  readonly #ini: IniSettings;
+  readonly #ambience: Ambience;
+  /** What the viewers last said about the surroundings (regions, weather, time). */
+  #ambient: AmbientState | undefined;
+  /** An interior's sound region (its acoustic space's RDAT). */
+  #spaceRegion: number | undefined;
   /** Exterior acoustic areas with their inverse placement. */
   #areas: { readonly area: AcousticArea; readonly toLocal: Mat4 }[] = [];
   /** The interior's acoustic space (cell XCAS), used when no area holds the listener. */
   #cellSpace: number | undefined;
   /** The acoustic space in effect, its ambience loop, and a counter against stale loads. */
   #space: number | undefined;
-  #ambient: SoundInstance | undefined;
+  #ambientLoop: SoundInstance | undefined;
   #spaceVersion = 0;
   #listener: Vec3 = [0, 0, 0];
   #bufferBytes = 0;
   #random = 0x9e3779b9;
 
-  private constructor(engine: AudioEngine, db: RecordDatabase, loader: AudioLoader) {
+  private constructor(
+    engine: AudioEngine,
+    db: RecordDatabase,
+    loader: AudioLoader,
+    ini: IniSettings,
+  ) {
     this.engine = engine;
     this.#db = db;
     this.#loader = loader;
+    this.#ini = ini;
+    this.#ambience = new Ambience(
+      {
+        descriptor: (formId) => this.descriptor(formId),
+        regionAudio: (formId) => this.regionAudio(formId),
+        global: (formId) => this.#globalValues.get(formId) ?? 0,
+        play: (descriptor, place, fadeIn) => this.play(descriptor, place, fadeIn),
+      },
+      ini,
+      () => this.#next(),
+    );
   }
 
   /** Reads the categories and starts the engine (silent until a user gesture resumes it). */
-  static async create(db: RecordDatabase, loader: AudioLoader): Promise<SoundSystem> {
+  static async create(
+    db: RecordDatabase,
+    loader: AudioLoader,
+    ini: IniSettings,
+  ): Promise<SoundSystem> {
     const engine = new AudioEngine();
     const categories = await Promise.all(
       db.formIdsOfType('SNCT').map(async (formId) => {
@@ -97,7 +131,7 @@ export class SoundSystem {
       }),
     );
     engine.setCategories(categories.filter((category) => category !== undefined));
-    return new SoundSystem(engine, db, loader);
+    return new SoundSystem(engine, db, loader, ini);
   }
 
   /** What is going on (the shell and development tools show it). */
@@ -107,6 +141,8 @@ export class SoundSystem {
     sounding: number;
     bufferBytes: number;
     space: number | undefined;
+    /** Region and weather loops playing (SNDR form ids). */
+    ambience: { regionLoops: number[]; weatherLoops: number[] };
   } {
     return {
       playing: this.#playing.size,
@@ -114,18 +150,42 @@ export class SoundSystem {
       sounding: [...this.#emitters.values()].filter((state) => state.instance).length,
       bufferBytes: this.#bufferBytes,
       space: this.#space,
+      ambience: this.#ambience.loops,
     };
   }
 
   /** Plays a descriptor once (or until stopped, if it loops); undefined if it cannot. */
-  async play(descriptorId: number, place?: SoundPlace): Promise<SoundInstance | undefined> {
+  async play(
+    descriptorId: number,
+    place?: SoundPlace,
+    fadeIn = 0,
+  ): Promise<SoundInstance | undefined> {
     const descriptor = await this.descriptor(descriptorId);
     if (!descriptor) return undefined;
     const model =
       descriptor.outputModel === undefined
         ? undefined
         : await this.outputModel(descriptor.outputModel);
-    return this.#start(descriptor, model, place);
+    return this.#start(descriptor, model, place, fadeIn);
+  }
+
+  /** The surroundings for ambience: regions, weather, time of day (every frame). */
+  setAmbience(state: AmbientState | undefined): void {
+    if (!state && this.#ambient) this.#ambience.stop();
+    this.#ambient = state;
+  }
+
+  regionAudio(formId: number): Promise<RegionAudio | undefined> {
+    let entry = this.#regionAudio.get(formId);
+    if (!entry) {
+      entry = this.#db
+        .get(formId)
+        .then((record) =>
+          record?.type === 'REGN' && !record.deleted ? parseRegionAudio(record) : undefined,
+        );
+      this.#regionAudio.set(formId, entry);
+    }
+    return entry;
   }
 
   /** The placed loops of the loaded cells (enabled ones); others stop. */
@@ -185,6 +245,12 @@ export class SoundSystem {
     }
     for (const state of this.#emitters.values()) this.#updateEmitter(state);
     this.#updateSpace();
+    const ambient = this.#ambient;
+    if (ambient) {
+      const regions =
+        ambient.interior && this.#spaceRegion !== undefined ? [this.#spaceRegion] : ambient.regions;
+      this.#ambience.update({ ...ambient, regions }, this.#listener, performance.now() / 1000);
+    }
   }
 
   acousticSpace(formId: number): Promise<AcousticSpace | undefined> {
@@ -203,12 +269,41 @@ export class SoundSystem {
   descriptor(formId: number): Promise<SoundDescriptor | undefined> {
     let entry = this.#descriptors.get(formId);
     if (!entry) {
-      entry = this.#db
-        .get(formId)
-        .then((record) =>
-          record?.type === 'SNDR' && !record.deleted ? parseSoundDescriptor(record) : undefined,
+      entry = this.#db.get(formId).then(async (record) => {
+        if (record?.type !== 'SNDR' || record.deleted) return undefined;
+        const descriptor = parseSoundDescriptor(record);
+        // The globals its conditions read load with it: conditions are checked synchronously.
+        await Promise.all(
+          descriptor.conditions.flatMap((condition) => [
+            ...(condition.function === ConditionFunction.getGlobalValue
+              ? [this.#global(condition.form)]
+              : []),
+            ...(typeof condition.comparand === 'number'
+              ? []
+              : [this.#global(condition.comparand.global)]),
+          ]),
         );
+        return descriptor;
+      });
       this.#descriptors.set(formId, entry);
+    }
+    return entry;
+  }
+
+  /**
+   * Loads a global variable: its starting value. TODO(M8): the running game's values (scripts
+   * set them, e.g. CWDistantCatapultsAMB during a civil war battle).
+   */
+  #global(formId: number): Promise<number> {
+    let entry = this.#globals.get(formId);
+    if (!entry) {
+      entry = this.#db.get(formId).then((record) => {
+        const value =
+          record?.type === 'GLOB' && !record.deleted ? (record.fields.f32('FLTV') ?? 0) : 0;
+        this.#globalValues.set(formId, value);
+        return value;
+      });
+      this.#globals.set(formId, entry);
     }
     return entry;
   }
@@ -295,6 +390,8 @@ export class SoundSystem {
     this.#areas = [];
     this.#cellSpace = undefined;
     this.#applySpace(undefined);
+    this.#ambience.stop();
+    this.#ambient = undefined;
   }
 
   /** Called with problems worth logging (once per message). */
@@ -304,14 +401,21 @@ export class SoundSystem {
     descriptor: SoundDescriptor,
     model: SoundOutputModel | undefined,
     place: SoundPlace,
+    fadeIn = 0,
   ): Promise<SoundInstance | undefined> {
     const files = descriptor.files;
     if (files.length === 0) return undefined;
     const path = files[Math.floor(this.#next() * files.length)] ?? files[0] ?? '';
     const sound = await this.buffer(path);
     if (!sound) return undefined;
-    const instance = new SoundInstance(this.engine, sound, descriptor, model, place, () =>
-      this.#next(),
+    const instance = new SoundInstance(
+      this.engine,
+      sound,
+      descriptor,
+      model,
+      place,
+      () => this.#next(),
+      fadeIn,
     );
     instance.update(this.#listener);
     this.#playing.add(instance);
@@ -342,24 +446,31 @@ export class SoundSystem {
   #applySpace(space: number | undefined): void {
     this.#space = space;
     const version = ++this.#spaceVersion;
-    this.#ambient?.stop();
-    this.#ambient = undefined;
+    // [Audio] fASFadeInTime and fASFadeOutTime: a space's ambience fades in and out.
+    this.#ambientLoop?.fadeOut(this.#ini.number('Audio', 'fASFadeOutTime'));
+    this.#ambientLoop = undefined;
     if (space === undefined) {
+      this.#spaceRegion = undefined;
       this.engine.setReverb(undefined);
       return;
     }
     void this.acousticSpace(space).then(async (data) => {
       if (version !== this.#spaceVersion) return;
+      this.#spaceRegion = data?.region;
       const reverb = data?.reverb === undefined ? undefined : await this.reverb(data.reverb);
       if (version !== this.#spaceVersion) return;
       this.engine.setReverb(reverb);
       if (data?.ambient === undefined) return;
-      const ambient = await this.play(data.ambient);
+      const loop = await this.play(
+        data.ambient,
+        undefined,
+        this.#ini.number('Audio', 'fASFadeInTime'),
+      );
       if (version !== this.#spaceVersion) {
-        ambient?.stop(true);
+        loop?.stop(true);
         return;
       }
-      this.#ambient = ambient;
+      this.#ambientLoop = loop;
     });
   }
 

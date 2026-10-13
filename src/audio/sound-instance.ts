@@ -30,10 +30,13 @@ export class SoundInstance {
   readonly #place: SoundPlace;
   readonly #rate: number;
   readonly #volume: GainNode;
+  /** Fades (region and acoustic space loops fade in and out). */
+  readonly #fade: GainNode;
   readonly #distance: GainNode;
   readonly #panner: PannerNode | undefined;
   #source: AudioBufferSourceNode;
   #stopping = false;
+  #level = 1;
 
   constructor(
     engine: AudioEngine,
@@ -42,6 +45,8 @@ export class SoundInstance {
     model: SoundOutputModel | undefined,
     place: SoundPlace,
     random: () => number,
+    /** Seconds to fade in from silence (0: at once). */
+    fadeIn = 0,
   ) {
     const context = engine.context;
     this.#engine = engine;
@@ -52,8 +57,14 @@ export class SoundInstance {
     this.#rate = instancePitch(descriptor, random());
     this.#volume = context.createGain();
     this.#volume.gain.value = instanceGain(descriptor, random());
+    this.#fade = context.createGain();
+    if (fadeIn > 0) {
+      this.#fade.gain.setValueAtTime(0, context.currentTime);
+      this.#fade.gain.linearRampToValueAtTime(1, context.currentTime + fadeIn);
+    }
     this.#distance = context.createGain();
-    this.#volume.connect(this.#distance);
+    this.#volume.connect(this.#fade);
+    this.#fade.connect(this.#distance);
     const output = engine.categoryNode(descriptor.category);
     if (model?.uses3d !== false && place !== undefined) {
       // HRTF panning only; the distance curve is the output model's, not the panner's.
@@ -114,18 +125,17 @@ export class SoundInstance {
   stop(immediately = false): void {
     if (this.#stopping || this.ended) return;
     this.#stopping = true;
+    if (immediately) {
+      this.#source.stop();
+      return;
+    }
     const loop = this.#sound.loop;
     const looping = this.descriptor.looping;
-    if (!immediately && loop && looping === 'envelope-slow') {
+    if (loop && looping === 'envelope-slow') {
       this.#source.loop = false;
       return;
     }
-    if (
-      !immediately &&
-      loop &&
-      looping === 'envelope-fast' &&
-      loop.end < this.#sound.buffer.duration
-    ) {
+    if (loop && looping === 'envelope-fast' && loop.end < this.#sound.buffer.duration) {
       const old = this.#source;
       old.onended = null;
       old.stop();
@@ -133,6 +143,34 @@ export class SoundInstance {
       return;
     }
     this.#source.stop();
+  }
+
+  /** Sets its level (0–1) smoothly: weather loops follow a change of weather. */
+  setLevel(level: number): void {
+    if (this.#stopping || Math.abs(level - this.#level) < 0.01) return;
+    this.#level = level;
+    // Replaces a fade-in still under way, which would otherwise end at full level.
+    const time = this.#engine.context.currentTime;
+    const gain = this.#fade.gain;
+    gain.cancelScheduledValues(time);
+    gain.setValueAtTime(gain.value, time);
+    gain.setTargetAtTime(level, time, 0.5);
+  }
+
+  /** Fades out over `seconds`, then stops (region and acoustic space loops). */
+  fadeOut(seconds: number): void {
+    if (this.#stopping || this.ended) return;
+    if (seconds <= 0) {
+      this.stop();
+      return;
+    }
+    this.#stopping = true;
+    const time = this.#engine.context.currentTime;
+    const gain = this.#fade.gain;
+    gain.cancelScheduledValues(time);
+    gain.setValueAtTime(gain.value, time);
+    gain.linearRampToValueAtTime(0, time + seconds);
+    this.#source.stop(time + seconds);
   }
 
   #start(offset: number, loop: boolean): AudioBufferSourceNode {
