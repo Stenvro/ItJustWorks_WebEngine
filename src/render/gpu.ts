@@ -49,7 +49,7 @@ export async function initGpu(canvas: HTMLCanvasElement): Promise<GpuContext> {
     );
   }
   const device = await adapter.requestDevice({
-    label: 'skyrim-web',
+    label: 'itjustworks-webengine',
     requiredFeatures: [...REQUIRED_FEATURES],
     requiredLimits: { maxSampledTexturesPerShaderStage: Math.min(sampledTextures, 32) },
   });

@@ -1,3 +1,4 @@
+// Adapted from Community Shaders (GPL-3.0); see THIRD_PARTY_NOTICES.md.
 // Precipitation (rain and snow, SPGD): instanced particles that fill a box around the camera.
 // Every particle has a fixed place in an endless lattice that falls with the velocity (and
 // drifts with the wind); the copy inside the box around the camera is drawn, fading near the

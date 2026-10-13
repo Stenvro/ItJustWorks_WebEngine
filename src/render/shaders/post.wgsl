@@ -1,3 +1,4 @@
+// Adapted from Community Shaders (GPL-3.0); see THIRD_PARTY_NOTICES.md.
 // Image post-processing as the game's HDR imagespace shader does it: eye adaptation from
 // two running averages of the scene luminance, a Reinhard tone curve, bloom added where the
 // image is dark enough to receive it, then saturation, tint, brightness and contrast.

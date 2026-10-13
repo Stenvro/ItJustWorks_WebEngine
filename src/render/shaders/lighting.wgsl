@@ -1,3 +1,4 @@
+// Adapted from Community Shaders (GPL-3.0); see THIRD_PARTY_NOTICES.md.
 // BSLightingShaderProperty: Skyrim's object shader, following the engine's lighting pixel
 // shader as Community Shaders' near-vanilla Lighting.hlsl (v0.7.4) reproduces it: diffuse,
 // normal map (tangent or model space), specular (anisotropic for hair), glow, own emit,

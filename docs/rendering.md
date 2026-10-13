@@ -85,7 +85,7 @@ each shader adds them directly, with the game's default settings:
 - Subsurface scattering (ISSnowSSS, `snow-sss.ts`, `shaders/snow-sss.wgsl`): after the opaque
   pass, where the G-buffer's snow mask is above zero, 11 taps along the screen at offsets ±0.08
   to ±2 × (0.078125, 0.13889) × fSnowSSSStrength (50) / distance, with per-channel weights
-  (red spreads farthest; each channel's weights sum to 1), each tap kept at the centre colour
+  (blue spreads farthest; each channel's weights sum to 1), each tap kept at the centre colour
   in proportion to its depth difference × 0.1 × fSnowSSSDepthDiff (0.5). With L the result's
   luminance (0.3, 0.59, 0.11): snow = lerp(lerp(fSnowSSSColor × fSnowSSSDarkColorIntensity,
   source, L), result, L), blended in by the mask: lit snow softens and dim snow darkens towards

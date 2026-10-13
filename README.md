@@ -1,26 +1,49 @@
-# Skyrim Web
+# ItJustWorks-Webengine
 
-A new engine for Skyrim Special Edition in the browser (WebGPU). All content comes from
-your own local installation; this repo contains no game files. See `CLAUDE.md` for the
-goal, rules and milestones, and `docs/formats/` for format details.
+A new engine for The Elder Scrolls V: Skyrim Special Edition that runs in the browser
+(TypeScript and WebGPU). It contains no game content: everything it shows and plays (models,
+textures, sounds, music, records, scripts) is read from your own installation of the game,
+on your own machine. Like [OpenMW](https://openmw.org) for Morrowind, it is a reimplementation
+of the engine only, and needs a legitimately owned copy of Skyrim Special Edition.
+
+What it does so far is listed under "Milestones" in [`CLAUDE.md`](CLAUDE.md); the formats and
+the engine's behaviour are written down in [`docs/`](docs).
 
 ## Requirements
 
 - Node 24 or newer
-- Chrome or Edge (WebGPU + File System Access API)
-- Skyrim Special Edition; a copy of the installation folder in `F:\skyrim-data`
-  (at least `Data\`, `Skyrim.ccc` and `Skyrim_Default.ini`). Different path: set the
-  `SKYRIM_DATA` environment variable to point to the `Data` folder.
+- Chrome or Edge (WebGPU and the File System Access API)
+- Skyrim Special Edition, installed (the folder with `Data\`, `Skyrim.ccc` and
+  `Skyrim_Default.ini`)
 
-In the browser, choose the installation folder (`F:\skyrim-data`). Choosing the Data folder
-itself also works, but then no Creation Club content is loaded.
+## Running it
 
-During development, http://localhost:5173/?devdata skips the folder picker: the Vite dev
-server serves the local game data read-only on `/@gamedata/` (localhost only, never in a
-build). This is also what automated browser checks use.
+```bash
+npm install
+npm run dev
+```
 
-Once a folder is mounted, the model viewer can show any of the game's meshes; the main menu
-logo is shown as the backdrop.
+Open http://localhost:5173 and choose the game's installation folder (choosing its `Data`
+folder also works, without Creation Club content). The browser keeps access to the folder for
+the next visit; nothing is uploaded anywhere — the engine runs on `localhost` only.
+
+To start over from the folder picker (a first run), clear the site's data: in Chrome or Edge,
+open the developer tools (F12) → Application → Storage → **Clear site data**, then reload.
+`http://localhost:5173/?reset` does the same.
+
+### Development with local game data
+
+The tools and integration tests read a copy of the game's `Data` folder outside the repository.
+Point them at it with the `SKYRIM_DATA` environment variable, or put the path on one line in a
+file `.gamedata` in the repository root (ignored by git):
+
+```text
+D:\Games\Skyrim Special Edition\Data
+```
+
+Without it the integration tests are skipped. With it, http://localhost:5173/?devdata skips the
+folder picker: the dev server serves that folder read-only on `/@gamedata/` (dev server only,
+never in a build).
 
 ## Commands
 
@@ -34,7 +57,20 @@ logo is shown as the backdrop.
 | `node tools/vfs-info.ts [path]`         | Load order, archives, and where a file comes from           |
 | `node tools/bsa-list.ts <bsa> --verify` | Contents of an archive; verifies and extracts everything    |
 | `node tools/nif-stats.ts --parse`       | Block types of all meshes; parses every block               |
-| `node tools/dds-stats.ts`               | Formats and edge cases of all textures                      |
+| `node tools/music-info.ts [type]`       | Music types and tracks of the load order                    |
 
-A pre-commit hook (`.githooks/pre-commit`) rejects commits containing game files, even if
-they have been renamed.
+## No game files in the repository
+
+Game files never go into this repository, not even renamed or converted. A pre-commit hook
+(`.githooks/pre-commit`, enabled by `npm install`) and `npm run check:gamefiles` reject them by
+extension and by content.
+
+## Licence and credits
+
+Code adapted from other projects (Community Shaders, webgl-noise, Separable SSS, the SAO
+reference implementation) and the dependencies with their licences are listed in
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), with the documentation the engine was
+written from.
+
+The Elder Scrolls, Skyrim and Bethesda are trademarks of ZeniMax Media Inc. This project is
+not affiliated with or endorsed by ZeniMax Media, Bethesda Softworks or Microsoft.
