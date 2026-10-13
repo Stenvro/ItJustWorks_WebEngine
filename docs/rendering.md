@@ -46,6 +46,21 @@ clamping sampler. The terrain shader samples 21 textures (8 diffuse, 8 normal ma
 block texture and noise, the shadow map and the scene copies), more than WebGPU's default of
 16, so the device asks for the adapter's limit (up to 32).
 
+## Skinning
+
+Skinned parts (`ModelPart.skin`, `skinning.ts`) keep their vertices as stored, with four
+half-float weights and four bone indices each, and are drawn by the `vs_skinned` vertex
+stage (`shaders/skinning.wgsl`; shadows: `shadow.wgsl`). Each placed skinned part has a bone
+palette in its scene's storage buffer (`bone-palette.ts`): per bone the three rows of
+`bone world × bind`, 256-byte aligned, bound as group 3 at a dynamic offset (the binding
+covers 256 bones, as many as a byte can name). A vertex blends the rows by its weights
+(normalised; a vertex without weights follows bone 0) and then goes on like any other
+vertex, placed by its instance. Palettes start in the rest pose (the file's own bones) and
+follow the bones' animated matrices every frame for models whose controllers move them; an
+actor's skeleton poses them (TODO(M7)). Rays (decal placement) skin the vertices on the CPU
+in the rest pose. 3056 vanilla meshes outside actors have skinned parts (books, banners,
+flags, clothes, sacks, some plants).
+
 ## Landscape
 
 `shaders/terrain.wgsl`, as the vanilla landscape shader (Community Shaders' Lighting.hlsl,

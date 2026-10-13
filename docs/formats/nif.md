@@ -72,7 +72,11 @@ Per-vertex layout (SSE): position f32×3, bitangent X f32, UV f16×2, normal u8�
 Y, tangent u8×3 + bitangent Z, color u8×4, skin weights f16×4 + indices u8×4, eye data f32.
 Normals and tangents map 0..255 to −1..1. The raw buffer goes to the GPU unchanged.
 
-Skinned shapes have data size 0: their vertices live in NiSkinPartition (TODO(M7)).
+Skinned shapes have data size 0: their vertices live in NiSkinPartition (one shared vertex
+buffer, the partitions' triangles index it directly). The bone indices of a vertex index the
+NiSkinInstance's bone list (not the partition's); a bone's matrix is its node's model-space
+matrix times the NiSkinData bind transform of that bone (skin space → bone space). The
+vertices go to the GPU as stored and are skinned there (rendering.md, Skinning).
 BSDynamicTriShape (faces) appends a u32 byte size and xyzw float positions.
 
 ## NiTriShape / NiTriShapeData (older geometry, 246 vanilla blocks)
@@ -143,8 +147,9 @@ AnimIdle01, Loop, AmIdle plays (of the 413 graph-less meshes with a manager, the
 SpecialIdle, the waterwheels' Idle and two single ones; AmIdle: the resting state of
 furniture-like objects; most other sequences are played by scripts or activation: doors'
 Open/Close). Around Whiterun 173 draws animate: waterfall foam scrolling, embers pulsing,
-signs and props. Skinned meshes whose bones animate (banners) need skinning on the GPU:
-TODO(M7).
+signs and props. Skinned meshes whose bones these controllers move (245 outside actors:
+banners, flags, Sovngarde's drapery, Blackreach's giant mushrooms) wave with them through
+GPU skinning.
 
 **Sequences played on demand** (`buildSequences`): the other sequences of a controller manager
 (a door's Open and Close) are kept by lower-case name with the scene graph they move, their

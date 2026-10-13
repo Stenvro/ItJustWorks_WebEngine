@@ -1,6 +1,7 @@
 // Rays against placed model geometry (CPU): where a placed decal's projection meets the first
 // surface, as the engine finds it when it builds the decal. Platform-independent.
 
+import { PALETTE_BONE_FLOATS, skinPositions, writeRestPalette } from './bone-palette.ts';
 import { invert } from './frustum.ts';
 import { multiply, type Mat4, type Vec3 } from './math.ts';
 import type { ModelPart } from './model-data.ts';
@@ -61,12 +62,39 @@ export function rayTriangle(origin: Vec3, direction: Vec3, a: Vec3, b: Vec3, c: 
   return t >= 0 ? t : Infinity;
 }
 
+/** Skinned parts' vertices placed by their bones at rest (decals land on the rest pose). */
+const restPositions = new WeakMap<ModelPart, Float32Array>();
+
+function skinnedRest(part: ModelPart): Float32Array | undefined {
+  const skin = part.skin;
+  const skinning = part.layout.skinning;
+  if (!skin || skinning === undefined) return undefined;
+  let positions = restPositions.get(part);
+  if (!positions) {
+    const palette = new Float32Array(skin.bones.length * PALETTE_BONE_FLOATS);
+    writeRestPalette(skin, palette);
+    positions = skinPositions(
+      part.vertices,
+      part.layout.stride,
+      skinning,
+      part.vertexCount,
+      palette,
+    );
+    restPositions.set(part, positions);
+  }
+  return positions;
+}
+
 /** Distance along a ray (model space of the part) to its nearest triangle. */
 function rayPart(part: ModelPart, origin: Vec3, direction: Vec3, maxDistance: number): number {
   const { layout, vertices, indices } = part;
   const view = new DataView(vertices.buffer, vertices.byteOffset, vertices.byteLength);
+  const skinned = skinnedRest(part);
   // SSE geometry always stores positions as float32 (the full-precision flag aside).
   const position = (index: number): Vec3 => {
+    if (skinned) {
+      return [skinned[index * 3] ?? 0, skinned[index * 3 + 1] ?? 0, skinned[index * 3 + 2] ?? 0];
+    }
     const base = index * layout.stride;
     return [
       view.getFloat32(base, true),

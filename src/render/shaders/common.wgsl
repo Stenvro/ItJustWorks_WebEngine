@@ -108,8 +108,11 @@ fn vs_main(in: VertexIn) -> VertexOut {
   if ((draw.flags.z & DRAW_TREE_ANIM) != 0u) {
     position += (in.normal.xyz * 2.0 - 1.0) * leafShift(in.position, in.color.a);
   }
-  let world = draw.world * vec4f(position, 1.0);
-  let rotation = worldRotation();
+  return objectVertex(in, draw.world * vec4f(position, 1.0), worldRotation());
+}
+
+// A vertex at its world position, its normal frame turned by `rotation` (model to world).
+fn objectVertex(in: VertexIn, world: vec4f, rotation: mat3x3f) -> VertexOut {
   var out: VertexOut;
   out.position = frame.viewProj * world;
   out.worldPos = world.xyz;

@@ -21,7 +21,7 @@ import {
 } from './animation.ts';
 import { buildParticleSystem, type ParticleSystemData } from './particle-data.ts';
 import { invert } from './frustum.ts';
-import { skinShape } from './skinning.ts';
+import { skinnedGeometry, type PartSkin } from './skinning.ts';
 import {
   fromNifTransform,
   identity,
@@ -41,6 +41,8 @@ export interface VertexLayout {
   readonly normal: number;
   readonly tangent: number;
   readonly color: number;
+  /** Skinned parts: four bone weights (f16) and four bone indices (u8) at this offset. */
+  readonly skinning?: number;
 }
 
 export interface LightingMaterial {
@@ -139,6 +141,11 @@ export interface ModelPart {
   /** World-space bounding sphere. */
   readonly center: readonly [number, number, number];
   readonly radius: number;
+  /**
+   * Skinned: the bones its vertices follow (their pose replaces `world`, which is the
+   * identity), drawn with GPU skinning.
+   */
+  readonly skin?: PartSkin;
 }
 
 /** A run of the index list: `count` indices from `first`. */
@@ -475,9 +482,9 @@ export function buildModel(file: NifFile): ModelData {
       }
       case 'tri-shape': {
         if (block.vertexData.length === 0) {
-          // Skinned: drawn in the rest pose given by the file's bones.
+          // Skinned: the bones' pose places the vertices (the file's own bones at rest).
           worlds ??= nodeWorlds(file);
-          const skinned = block.skin >= 0 ? skinShape(file, block, worlds) : undefined;
+          const skinned = block.skin >= 0 ? skinnedGeometry(file, block, worlds) : undefined;
           if (!skinned) {
             skipped.push(
               `${block.name || 'shape'}: skinned geometry without usable skin (TODO(M7))`,
@@ -487,7 +494,7 @@ export function buildModel(file: NifFile): ModelData {
           addPart(
             block.name,
             identity(),
-            layoutOf(skinned.desc),
+            { ...layoutOf(skinned.desc), skinning: skinned.desc.skinningOffset },
             skinned.vertices,
             skinned.vertexCount,
             skinned.indices,
@@ -495,6 +502,8 @@ export function buildModel(file: NifFile): ModelData {
             block.alphaProperty,
             skinned.center,
             skinned.radius,
+            undefined,
+            skinned.skin,
           );
           return;
         }
@@ -570,6 +579,7 @@ export function buildModel(file: NifFile): ModelData {
     center: readonly [number, number, number],
     radius: number,
     segments?: readonly IndexRange[],
+    skin?: PartSkin,
   ): void => {
     if (indices.length === 0 || vertexCount === 0) return;
     // Terrain LOD keeps its distant water as shapes without a shader under a node named
@@ -614,6 +624,7 @@ export function buildModel(file: NifFile): ModelData {
       alpha: alphaState(getBlock(file, alphaRef, 'alpha')),
       center: transformPoint(world, center),
       radius: radius * maxScale(world),
+      ...(skin && { skin }),
     });
   };
 

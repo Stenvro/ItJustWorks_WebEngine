@@ -1,11 +1,18 @@
-// Skinned shapes drawn in their rest pose: the vertices (kept in NiSkinPartition in SSE)
-// are skinned once on the CPU with the bone nodes of the same file, as the engine shows an
-// object that is not animated (books, banners, chains, ...). The result uses the regular
-// vertex layout, so it draws like any other shape.
-// TODO(M7): animated skinning on the GPU for actors and animated objects.
+// Skinned shapes. In SSE their vertices live in the NiSkinPartition, with four bone weights
+// (half floats) and four bone indices per vertex. Models keep them as they are and the GPU
+// blends the bone matrices every frame (bone-palette.ts, the skinned vertex stage): bones of
+// the same file for objects, an actor's skeleton for bodies and armour. Particle emitter
+// meshes are skinned once on the CPU instead (skinShape).
 
 import { getBlock, type NifFile } from '../formats/nif/nif.ts';
-import type { BSTriShapeBlock, Ref, VertexDesc } from '../formats/nif/types.ts';
+import type {
+  BSTriShapeBlock,
+  NiSkinDataBlock,
+  NiSkinInstanceBlock,
+  NiSkinPartitionBlock,
+  Ref,
+  VertexDesc,
+} from '../formats/nif/types.ts';
 import { fromNifTransform, multiply, type Mat4 } from './math.ts';
 
 export interface SkinnedGeometry {
@@ -16,6 +23,23 @@ export interface SkinnedGeometry {
   /** Bounding sphere of the skinned vertices. */
   readonly center: readonly [number, number, number];
   readonly radius: number;
+}
+
+/** A skinned part's bones: its vertices are blended from them every frame. */
+export interface PartSkin {
+  /** The bone nodes in the model's file (animation targets), by vertex bone index. */
+  readonly bones: readonly Ref[];
+  /** Their names: an actor's skeleton provides bones by name. */
+  readonly names: readonly string[];
+  /** Per bone, skin space → bone space in the bind pose (NiSkinData): 16 floats each. */
+  readonly bind: Float32Array;
+  /** Per bone, its model-space matrix in the file (the rest pose): 16 floats each. */
+  readonly rest: Float32Array;
+}
+
+/** A skinned shape as the GPU draws it: the partition's vertices as stored, and its bones. */
+export interface GpuSkinnedGeometry extends SkinnedGeometry {
+  readonly skin: PartSkin;
 }
 
 /** IEEE half float to number. */
@@ -39,31 +63,175 @@ const unorm = (byte: number): number => (byte / 255) * 2 - 1;
 const toUnorm = (value: number): number =>
   Math.max(0, Math.min(255, Math.round((value * 0.5 + 0.5) * 255)));
 
-/**
- * Skins a BSTriShape whose vertices live in its NiSkinPartition. `nodeWorld` gives the
- * world matrix of every node of the file (in the same space as the shape's parts).
- * Returns undefined if the shape is not skinned that way or its skin is incomplete.
- */
-export function skinShape(
-  file: NifFile,
-  shape: BSTriShapeBlock,
-  nodeWorld: ReadonlyMap<Ref, Mat4>,
-): SkinnedGeometry | undefined {
+interface SkinBlocks {
+  readonly skin: NiSkinInstanceBlock;
+  readonly data: NiSkinDataBlock;
+  readonly partition: NiSkinPartitionBlock;
+  readonly desc: VertexDesc;
+}
+
+/** The shape's skin blocks, if it is skinned with its vertices in the partition. */
+function skinBlocks(file: NifFile, shape: BSTriShapeBlock): SkinBlocks | undefined {
   const skin = getBlock(file, shape.skin, 'skin-instance');
   const data = skin && getBlock(file, skin.data, 'skin-data');
   const partition = skin && getBlock(file, skin.partition, 'skin-partition');
   const desc = partition?.vertexDesc;
   if (!skin || !data || !partition || !desc || partition.vertexCount === 0) return undefined;
   if (desc.stride < 16 || desc.skinningOffset === 0) return undefined;
+  if (data.bones.length < skin.bones.length) return undefined;
+  return { skin, data, partition, desc };
+}
+
+/** The bind transform of every bone (skin space → bone space). */
+function bindMatrices(blocks: SkinBlocks): Mat4[] {
+  return blocks.skin.bones.map((_, i) => {
+    const bind = blocks.data.bones[i];
+    if (!bind) return fromNifTransform([0, 0, 0], [1, 0, 0, 0, 1, 0, 0, 0, 1], 1);
+    const { translation, rotation, scale } = bind.transform;
+    return fromNifTransform(translation, rotation, scale);
+  });
+}
+
+/** Blends the bone matrices of vertex `v` by its weights into `m`; false if it has none. */
+function blend(
+  read: DataView,
+  base: number,
+  desc: VertexDesc,
+  bones: readonly Affine[],
+  m: Float64Array,
+): boolean {
+  m.fill(0);
+  let total = 0;
+  for (let k = 0; k < 4; k++) {
+    const weight = fromHalf(read.getUint16(base + desc.skinningOffset + k * 2, true));
+    if (!(weight > 0) || !Number.isFinite(weight)) continue;
+    const bone = bones[read.getUint8(base + desc.skinningOffset + 8 + k)];
+    if (!bone) continue;
+    for (let i = 0; i < 12; i++) m[i] = (m[i] ?? 0) + (bone[i] ?? 0) * weight;
+    total += weight;
+  }
+  if (total <= 0) {
+    const first = bones[0];
+    if (!first) return false;
+    m.set(first);
+  } else if (Math.abs(total - 1) > 1e-3) {
+    for (let i = 0; i < 12; i++) m[i] = (m[i] ?? 0) / total;
+  }
+  return true;
+}
+
+/** The partitions' triangles as one index list (in SSE they index the shared vertices). */
+function partitionIndices(partition: NiSkinPartitionBlock): Uint16Array {
+  const triangles = partition.partitions.reduce((sum, p) => sum + p.triangles.length, 0);
+  const indices = new Uint16Array(triangles);
+  let at = 0;
+  for (const p of partition.partitions) {
+    indices.set(p.triangles, at);
+    at += p.triangles.length;
+  }
+  return indices;
+}
+
+/** Bounds of a set of points (min and max per axis) as a sphere. */
+function sphere(
+  min: readonly number[],
+  max: readonly number[],
+): { center: [number, number, number]; radius: number } {
+  const center: [number, number, number] = [0, 1, 2].map(
+    (k) => ((min[k] ?? 0) + (max[k] ?? 0)) / 2,
+  ) as [number, number, number];
+  const radius = Math.hypot(
+    (max[0] ?? 0) - center[0],
+    (max[1] ?? 0) - center[1],
+    (max[2] ?? 0) - center[2],
+  );
+  return { center, radius };
+}
+
+/**
+ * A skinned BSTriShape as the GPU draws it: the vertices as stored (weights and bone indices
+ * included), the bones with their bind and rest matrices, and the bounds of the rest pose.
+ * `nodeWorld` gives the model-space matrix of every node of the file. Undefined if the shape
+ * is not skinned that way, its skin is incomplete or its weights are broken.
+ */
+export function skinnedGeometry(
+  file: NifFile,
+  shape: BSTriShapeBlock,
+  nodeWorld: ReadonlyMap<Ref, Mat4>,
+): GpuSkinnedGeometry | undefined {
+  const blocks = skinBlocks(file, shape);
+  if (!blocks) return undefined;
+  const { skin, partition, desc } = blocks;
+  const binds = bindMatrices(blocks);
+  const bind = new Float32Array(skin.bones.length * 16);
+  const rest = new Float32Array(skin.bones.length * 16);
+  const palette: Affine[] = [];
+  const names: string[] = [];
+  for (let i = 0; i < skin.bones.length; i++) {
+    const ref = skin.bones[i] ?? -1;
+    const world = nodeWorld.get(ref);
+    const boneBind = binds[i];
+    const node = file.blocks[ref];
+    if (!world || !boneBind || !node || !('name' in node)) return undefined;
+    bind.set(boneBind, i * 16);
+    rest.set(world, i * 16);
+    palette.push(affine(multiply(world, boneBind)));
+    names.push(node.name);
+  }
+
+  const read = new DataView(
+    partition.vertexData.buffer,
+    partition.vertexData.byteOffset,
+    partition.vertexData.byteLength,
+  );
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  const m = new Float64Array(12);
+  for (let v = 0; v < partition.vertexCount; v++) {
+    const base = v * desc.stride;
+    if (!blend(read, base, desc, palette, m)) return undefined;
+    const x = read.getFloat32(base, true);
+    const y = read.getFloat32(base + 4, true);
+    const z = read.getFloat32(base + 8, true);
+    for (let k = 0; k < 3; k++) {
+      const p = (m[k] ?? 0) * x + (m[3 + k] ?? 0) * y + (m[6 + k] ?? 0) * z + (m[9 + k] ?? 0);
+      if (!Number.isFinite(p)) return undefined; // broken weights or bones
+      min[k] = Math.min(min[k] ?? 0, p);
+      max[k] = Math.max(max[k] ?? 0, p);
+    }
+  }
+  return {
+    desc,
+    vertices: partition.vertexData,
+    vertexCount: partition.vertexCount,
+    indices: partitionIndices(partition),
+    skin: { bones: skin.bones, names, bind, rest },
+    ...sphere(min, max),
+  };
+}
+
+/**
+ * Skins a BSTriShape whose vertices live in its NiSkinPartition once, on the CPU, in the
+ * pose `nodeWorld` gives (the model-space matrix of every node of the file). Returns
+ * undefined if the shape is not skinned that way or its skin is incomplete.
+ */
+export function skinShape(
+  file: NifFile,
+  shape: BSTriShapeBlock,
+  nodeWorld: ReadonlyMap<Ref, Mat4>,
+): SkinnedGeometry | undefined {
+  const blocks = skinBlocks(file, shape);
+  if (!blocks) return undefined;
+  const { skin, partition, desc } = blocks;
+  const binds = bindMatrices(blocks);
 
   // Bone matrices: skin space → bone space (bind pose) → world, as 3x4 affine numbers.
   const bones: Affine[] = [];
   for (let i = 0; i < skin.bones.length; i++) {
     const world = nodeWorld.get(skin.bones[i] ?? -1);
-    const bind = data.bones[i];
+    const bind = binds[i];
     if (!world || !bind) return undefined;
-    const { translation, rotation, scale } = bind.transform;
-    bones.push(affine(multiply(world, fromNifTransform(translation, rotation, scale))));
+    bones.push(affine(multiply(world, bind)));
   }
 
   const count = partition.vertexCount;
@@ -81,27 +249,7 @@ export function skinShape(
   for (let v = 0; v < count; v++) {
     const base = v * stride;
     // Blend the bone matrices by weight (4 half floats, then 4 bone indices).
-    m.fill(0);
-    let total = 0;
-    for (let k = 0; k < 4; k++) {
-      const weight = fromHalf(read.getUint16(base + desc.skinningOffset + k * 2, true));
-      if (!(weight > 0) || !Number.isFinite(weight)) continue;
-      const bone = bones[read.getUint8(base + desc.skinningOffset + 8 + k)];
-      if (!bone) continue;
-      bone.forEach((value, i) => {
-        m[i] = (m[i] ?? 0) + value * weight;
-      });
-      total += weight;
-    }
-    if (total <= 0) {
-      const first = bones[0];
-      if (!first) return undefined;
-      m.set(first);
-    } else if (Math.abs(total - 1) > 1e-3) {
-      m.forEach((value, i) => {
-        m[i] = value / total;
-      });
-    }
+    if (!blend(read, base, desc, bones, m)) return undefined;
     const [
       m0 = 0,
       m1 = 0,
@@ -168,20 +316,11 @@ export function skinShape(
     }
   }
 
-  const triangles = partition.partitions.reduce((sum, p) => sum + p.triangles.length, 0);
-  const indices = new Uint16Array(triangles);
-  let at = 0;
-  for (const p of partition.partitions) {
-    indices.set(p.triangles, at);
-    at += p.triangles.length;
-  }
-  const center: [number, number, number] = [0, 1, 2].map(
-    (k) => ((min[k] ?? 0) + (max[k] ?? 0)) / 2,
-  ) as [number, number, number];
-  const radius = Math.hypot(
-    (max[0] ?? 0) - center[0],
-    (max[1] ?? 0) - center[1],
-    (max[2] ?? 0) - center[2],
-  );
-  return { desc, vertices: out, vertexCount: count, indices, center, radius };
+  return {
+    desc,
+    vertices: out,
+    vertexCount: count,
+    indices: partitionIndices(partition),
+    ...sphere(min, max),
+  };
 }
