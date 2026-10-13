@@ -47,6 +47,8 @@ export interface WornAddon {
   readonly skin: boolean;
   /** ARMA DNAM: how far it pushes sheathed weapons out. */
   readonly weaponAdjust: number;
+  /** ARMA SNDD: the footstep set (FSTS) of what it covers. */
+  readonly footstepSet: number | undefined;
 }
 
 /** A head part an actor's head is made of (where no FaceGen head was baked for it). */
@@ -112,6 +114,21 @@ export interface ActorLook {
    * engine is taken to read the cuirass's (TODO(M13): not documented).
    */
   readonly weaponAdjust: number;
+  /**
+   * Its footsteps (FSTS): those of what it wears on its feet (slot 37), else of any piece it
+   * wears with a footstep set (creatures' skins cover their whole body). TODO(M13): the
+   * engine's choice is not documented.
+   */
+  readonly footstepSet: number | undefined;
+}
+
+/** The footstep set of what an actor wears: on its feet first, else any with one. */
+function footstepSetOf(worn: readonly WornAddon[]): number | undefined {
+  const feet = 2 ** (BipedSlot.feet - 30);
+  return (
+    worn.find((addon) => (addon.slots & feet) !== 0 && addon.footstepSet !== undefined)
+      ?.footstepSet ?? worn.find((addon) => addon.footstepSet !== undefined)?.footstepSet
+  );
 }
 
 /** Templates and leveled lists nest; vanilla chains are a few levels deep. */
@@ -398,6 +415,7 @@ export class ActorResolver {
           skinTexture: addon.skinTexture[sex],
           skin,
           weaponAdjust: addon.weaponAdjust,
+          footstepSet: addon.footstepSet,
         },
       ];
     });
@@ -478,6 +496,7 @@ export class ActorResolver {
       weaponAdjust:
         [...shown, ...bare].find((addon) => firstSlot(addon.slots) === BipedSlot.body)
           ?.weaponAdjust ?? 0,
+      footstepSet: footstepSetOf([...shown, ...bare]),
     };
   }
 }

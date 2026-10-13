@@ -139,11 +139,27 @@ object's material (MATT) names an impact data set (HNAM → IPDS; else its neare
 which names an impact (IPCT) for the material hit (else for that material's nearest parent);
 it plays the impact's light sound (SNAM), or from fCollisionSoundHeavyThreshold (160) its
 heavy one (NAM1, else the light one), at the body. One body sounds at most every
-iCollisionSoundTimeDelta (150 ms). The landscape counts as the default object DLMT
-(MaterialDirt) until land textures give their own materials (LTEX MNAM, with footsteps:
-TODO(M7)). Objects settling as their cell loads (the warm start, `[HAVOK]` fWarmStartMaxTime)
+iCollisionSoundTimeDelta (150 ms). The landscape's material is that of the land texture
+showing most where it was hit (LTEX MNAM; of the quadrant's base and layers at the nearest
+point, the largest share of the blend), else the default object DLMT (MaterialDirt). Objects
+settling as their cell loads (the warm start, `[HAVOK]` fWarmStartMaxTime)
 make no sound until they first come to rest. A plate dropped in Breezehome plays
 PHYMaterialCeramicLSD, a basket PHYBasketL/H, a sword PHYMaterialBlade2HandH.
+
+## Footsteps
+
+Actors' animations raise events their footsteps answer (`actor-sounds.ts`): the footstep
+set of what an actor wears on its feet (ARMA SNDD; else of any piece it wears with one:
+creatures' skins) lists footsteps by gait, each with a tag (FootLeft, FootRight, FootScuffLeft,
+FootSprintRight, FootFront, JumpUp, JumpDown, a wolf's NPCWolfHowl) and an impact data set. An
+event the set has a footstep for in the actor's gait (else in the walking one) plays that set's
+impact for the ground under the actor's feet (a ray down from 32 units above them, leaving out
+the player's own capsule: the shape's material, or the land texture's) at the feet. The player's
+gait: sneaking, sprinting, running or walking; placed NPCs walk (TODO(M10) with their
+movement). The player in iron boots running across the Abandoned Shack's floor plays
+FSTWoodRunArmorHeavyLSD / RSD. Animations' **SoundPlay.`<descriptor>`** events play that sound
+descriptor (by editor id) at the actor; **NPCSoundPlay.`<descriptor>`** only for actors other
+than the player.
 
 ## Water
 

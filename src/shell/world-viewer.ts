@@ -53,13 +53,21 @@ import {
 import { raycastParts } from '../render/raycast.ts';
 import { enabledReferences, findToggles, gameStartSelection } from '../world/cell-upgrades.ts';
 import { cellNavmeshes, NAVMESH_TOLERANCE, NavmeshSurface } from '../world/navmesh.ts';
-import { CELL_SIZE, LAND_GRID, landHeightAt, landTexture, type LandData } from '../world/land.ts';
+import {
+  CELL_SIZE,
+  LAND_GRID,
+  landHeightAt,
+  landTexture,
+  landTextureAt,
+  type LandData,
+} from '../world/land.ts';
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
 import { cellKey, WorldFlag, Worldspace, type Arrival } from '../world/worldspace.ts';
 import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-references.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { talkTargets, type PlacedActor } from './actors.ts';
 import { PlayerAvatar } from './player-avatar.ts';
+import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
 import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import { WorldLod } from './world-lod.ts';
@@ -182,6 +190,8 @@ export class WorldViewer {
   readonly #camera = new FlyCamera();
   /** The physics world and the player while a world is open. */
   #play: PlaySession | undefined;
+  /** Land textures' materials (LTEX MNAM) by LTEX, as cells load. */
+  readonly #landMaterials = new Map<number, number | undefined>();
   /** The player's body while playing. */
   #avatar: PlayerAvatar | undefined;
   #session: GameSession | undefined;
@@ -533,8 +543,12 @@ export class WorldViewer {
     this.#play = play;
     this.#ui.freeCamera.checked = false;
     this.#ui.play.hidden = false;
+    // Impacts and footsteps on the landscape sound by its land textures.
+    void session.sounds().then((sounds) => {
+      sounds.landMaterialAt = (position) => this.#landMaterialAt(position);
+    });
     // The player's body (third person) and first-person camera animation.
-    PlayerAvatar.create(session, this.#renderer, player).then(
+    PlayerAvatar.create(session, this.#renderer, player, this.#soundingWorld).then(
       (avatar) => {
         if (this.#play === play) this.#avatar = avatar;
         else avatar?.destroy();
@@ -606,6 +620,7 @@ export class WorldViewer {
     this.#avatar = undefined;
     this.#play?.dispose();
     this.#play = undefined;
+    if (this.#session?.soundSystem) this.#session.soundSystem.landMaterialAt = undefined;
     this.#ui.play.hidden = true;
   }
 
@@ -825,6 +840,7 @@ export class WorldViewer {
     cell.waterHeight = water?.height;
     cell.waterType = water ? (water.type ?? DEFAULT_WATER) : undefined;
     cell.land = land;
+    if (land) this.#learnLandMaterials(land);
     cell.waterAreas = data.waterAreas.filter((area) => isEnabled(area.reference));
     cell.objects = new Map(objects.map((object) => [object.reference, object]));
     cell.emitters = data.emitters.filter((emitter) => isEnabled(emitter.reference));
@@ -956,7 +972,43 @@ export class WorldViewer {
         }),
       ),
     );
-    return placed.filter((actor): actor is PlacedActor => actor !== undefined);
+    const placedActors = placed.filter((actor): actor is PlacedActor => actor !== undefined);
+    soundPlacedActors(placedActors, this.#soundingWorld);
+    return placedActors;
+  }
+
+  /** What actors' animations sound with: the session's sounds, the play's collision. */
+  readonly #soundingWorld: SoundingWorld = {
+    sounds: () => this.#session?.soundSystem,
+    ground: (at, exclude) => groundUnder(this.#play?.physics, at, exclude),
+  };
+
+  /**
+   * The material (MATT form id) of the land texture showing most at a point of the loaded
+   * landscape (LTEX MNAM); undefined: the default land material.
+   */
+  #landMaterialAt(position: Vec3): number | undefined {
+    const x = Math.floor(position[0] / CELL_SIZE);
+    const y = Math.floor(position[1] / CELL_SIZE);
+    const land = this.#cells.get(cellKey(x, y))?.land;
+    if (!land) return undefined;
+    const ltex = landTextureAt(land, position[0] - x * CELL_SIZE, position[1] - y * CELL_SIZE);
+    return ltex === undefined ? undefined : this.#landMaterials.get(ltex);
+  }
+
+  /** Land textures' materials, read as cells with them load. */
+  #learnLandMaterials(land: LandData): void {
+    const db = this.#db;
+    if (!db) return;
+    for (const quadrant of land.quadrants) {
+      for (const ltex of [quadrant.base, ...quadrant.layers.map((layer) => layer.texture)]) {
+        if (ltex === undefined || this.#landMaterials.has(ltex)) continue;
+        this.#landMaterials.set(ltex, undefined);
+        void landTexture((id) => db.get(id), ltex).then((texture) => {
+          this.#landMaterials.set(ltex, texture?.material);
+        });
+      }
+    }
   }
 
   /** A cell beyond the loaded grid: a scene of just its large references. */

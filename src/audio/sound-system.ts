@@ -30,7 +30,20 @@ import { DefaultObjects, DefaultObjectUse } from '../world/default-objects.ts';
 import { Ambience, ambientConditions, type AmbientState } from './ambience.ts';
 import { Music } from './music.ts';
 import { WaterAudio } from './water-audio.ts';
-import { ImpactSounds, type ImpactHit } from './impacts.ts';
+import {
+  impactAgainst,
+  ImpactSounds,
+  landMaterial,
+  type ImpactHit,
+  type ImpactRecords,
+} from './impacts.ts';
+import {
+  parseFootstep,
+  parseFootstepSet,
+  type Footstep,
+  type FootstepGait,
+  type FootstepSet,
+} from '../world/footstep-records.ts';
 import {
   parseImpact,
   parseImpactDataSet,
@@ -124,6 +137,11 @@ export class SoundSystem {
     Promise<{ byId: Map<number, MaterialType>; byForm: Map<number, MaterialType> }> | undefined;
   readonly #impactSets = new Map<number, Promise<ImpactDataSet | undefined>>();
   readonly #impactRecords = new Map<number, Promise<Impact | undefined>>();
+  readonly #footstepSets = new Map<number, Promise<FootstepSet | undefined>>();
+  readonly #footsteps = new Map<number, Promise<Footstep | undefined>>();
+  #namedDescriptors: Promise<Map<string, number>> | undefined;
+  /** The records impacts and footsteps resolve through. */
+  readonly #impactSources: ImpactRecords;
   /** What the viewers last said about the surroundings (regions, weather, time). */
   #ambient: AmbientState | undefined;
   /** An interior's sound region (its acoustic space's RDAT). */
@@ -162,14 +180,16 @@ export class SoundSystem {
       },
       ini,
     );
+    this.#impactSources = {
+      materialById: async (id) => (await this.#materialTypes()).byId.get(id),
+      material: async (formId) => (await this.#materialTypes()).byForm.get(formId),
+      impactDataSet: (formId) => this.#impactDataSet(formId),
+      impact: (formId) => this.#impact(formId),
+      landMaterial: defaults.get(DefaultObjectUse.landMaterial),
+      landMaterialAt: (position) => this.landMaterialAt?.(position),
+    };
     this.#impacts = new ImpactSounds(
-      {
-        materialById: async (id) => (await this.#materialTypes()).byId.get(id),
-        material: async (formId) => (await this.#materialTypes()).byForm.get(formId),
-        impactDataSet: (formId) => this.#impactDataSet(formId),
-        impact: (formId) => this.#impact(formId),
-        landMaterial: defaults.get(DefaultObjectUse.landMaterial),
-      },
+      this.#impactSources,
       {
         heavySpeed: ini.number('Audio', 'fCollisionSoundHeavyThreshold'),
         interval: ini.number('Audio', 'iCollisionSoundTimeDelta') / 1000,
@@ -342,6 +362,97 @@ export class SoundSystem {
         return formId === 0 ? undefined : formId;
       });
       this.#waterSounds.set(type, entry);
+    }
+    return entry;
+  }
+
+  /**
+   * The material (MATT form id) of the land texture at a point, set by the viewers (they know
+   * the loaded landscape); undefined: the default land material.
+   */
+  landMaterialAt: ((position: Vec3) => number | undefined) | undefined;
+
+  /**
+   * An actor's footstep: the footstep of its set answering an animation event (`tag`) in its
+   * gait (else in the walking one), sounding the impact of its impact data set for the ground
+   * at `position` (a material id, or the landscape's by its land texture). False if the set
+   * answers nothing to the event.
+   */
+  async footstep(
+    set: number,
+    tag: string,
+    gait: FootstepGait,
+    position: Vec3,
+    ground: { readonly material: number; readonly landscape: boolean },
+  ): Promise<boolean> {
+    const footsteps = await this.#footstepSet(set);
+    if (!footsteps) return false;
+    const lower = tag.toLowerCase();
+    const find = async (ids: readonly number[] | undefined): Promise<Footstep | undefined> => {
+      for (const id of ids ?? []) {
+        const footstep = await this.#footstep(id);
+        if (footstep?.tag.toLowerCase() === lower) return footstep;
+      }
+      return undefined;
+    };
+    const footstep =
+      (await find(footsteps.gaits.get(gait))) ?? (await find(footsteps.gaits.get('walk')));
+    if (footstep?.impactDataSet === undefined) return false;
+    const impactSet = await this.#impactDataSet(footstep.impactDataSet);
+    if (!impactSet) return true;
+    const records = this.#impactSources;
+    const material =
+      ground.material !== 0
+        ? await records.materialById(ground.material)
+        : ground.landscape
+          ? await landMaterial(records, position)
+          : undefined;
+    const impact = await impactAgainst(records, impactSet, material);
+    if (impact?.sound !== undefined) void this.play(impact.sound, position);
+    return true;
+  }
+
+  /** Plays a sound descriptor by editor id at a place (animations' SoundPlay events). */
+  async playNamed(editorId: string, place: SoundPlace): Promise<SoundInstance | undefined> {
+    const byName = await this.#descriptorNames();
+    const formId = byName.get(editorId.toLowerCase());
+    return formId === undefined ? undefined : this.play(formId, place);
+  }
+
+  #descriptorNames(): Promise<Map<string, number>> {
+    this.#namedDescriptors ??= (async () => {
+      const names = new Map<string, number>();
+      for (const formId of this.#db.formIdsOfType('SNDR')) {
+        const record = await this.#db.get(formId);
+        if (record?.editorId && !record.deleted) names.set(record.editorId.toLowerCase(), formId);
+      }
+      return names;
+    })();
+    return this.#namedDescriptors;
+  }
+
+  #footstepSet(formId: number): Promise<FootstepSet | undefined> {
+    let entry = this.#footstepSets.get(formId);
+    if (!entry) {
+      entry = this.#db
+        .get(formId)
+        .then((record) =>
+          record?.type === 'FSTS' && !record.deleted ? parseFootstepSet(record) : undefined,
+        );
+      this.#footstepSets.set(formId, entry);
+    }
+    return entry;
+  }
+
+  #footstep(formId: number): Promise<Footstep | undefined> {
+    let entry = this.#footsteps.get(formId);
+    if (!entry) {
+      entry = this.#db
+        .get(formId)
+        .then((record) =>
+          record?.type === 'FSTP' && !record.deleted ? parseFootstep(record) : undefined,
+        );
+      this.#footsteps.set(formId, entry);
     }
     return entry;
   }

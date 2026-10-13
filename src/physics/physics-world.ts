@@ -131,6 +131,8 @@ export interface RayHit {
   readonly normal: Vec3;
   readonly layer: number;
   readonly owner: PhysicsOwner | undefined;
+  /** The material id (MATT) of the shape hit (0: the landscape, by its land texture). */
+  readonly material: number;
 }
 
 // --- Small math helpers -------------------------------------------------------------------
@@ -945,6 +947,7 @@ export class PhysicsWorld {
       normal: [hit.normal.x, hit.normal.y, hit.normal.z],
       layer: this.layerOf(hit.collider),
       owner: this.ownerOf(hit.collider),
+      material: this.materialOf(hit.collider),
     };
   }
 

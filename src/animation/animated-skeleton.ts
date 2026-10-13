@@ -31,7 +31,8 @@ export function animateSkeletons(skeletons: Iterable<AnimatedSkeleton>, seconds:
     const behavior = animated.behavior;
     if (!behavior) continue;
     behavior.update(dt);
-    // TODO(M10): footsteps and the other sounds animations raise.
+    // Footsteps and SoundPlay events sound through onEvents (src/shell/actor-sounds.ts);
+    // TODO(M10): the events AI reacts to (attacks, weapon draws, dialogue).
     const raised = behavior.takeRaised();
     if (raised.length > 0) animated.onEvents?.(raised);
     animated.pose.update(behavior.pose);

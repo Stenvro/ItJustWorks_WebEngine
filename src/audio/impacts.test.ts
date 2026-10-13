@@ -68,6 +68,7 @@ const records: ImpactRecords = {
   impactDataSet: (formId) => Promise.resolve(sets.get(formId)),
   impact: (formId) => Promise.resolve(impacts.get(formId)),
   landMaterial: 0x50,
+  landMaterialAt: () => undefined,
 };
 
 const hit = (overrides: Partial<ImpactHit>): ImpactHit => ({

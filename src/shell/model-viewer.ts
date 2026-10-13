@@ -70,6 +70,7 @@ import type { InteriorCell, RecordDatabase } from '../world/record-db.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { talkTargets, type PlacedActor } from './actors.ts';
 import { PlayerAvatar } from './player-avatar.ts';
+import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
 import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
@@ -328,7 +329,7 @@ export class ModelViewer {
     this.#ui.freeCamera.checked = false;
     this.#ui.play.hidden = false;
     // The player's body (third person) and first-person camera animation.
-    PlayerAvatar.create(session, this.#renderer, player).then(
+    PlayerAvatar.create(session, this.#renderer, player, this.#soundingWorld).then(
       (avatar) => {
         if (this.#play === play) this.#avatar = avatar;
         else avatar?.destroy();
@@ -624,8 +625,16 @@ export class ModelViewer {
         }),
       ),
     );
-    return placed.filter((actor): actor is PlacedActor => actor !== undefined);
+    const actors = placed.filter((actor): actor is PlacedActor => actor !== undefined);
+    soundPlacedActors(actors, this.#soundingWorld);
+    return actors;
   }
+
+  /** What actors' animations sound with: the session's sounds, the play's collision. */
+  readonly #soundingWorld: SoundingWorld = {
+    sounds: () => this.#session?.soundSystem,
+    ground: (at, exclude) => groundUnder(this.#play?.physics, at, exclude),
+  };
 
   #scriptEnvironment(): Promise<ScriptEnvironment> | undefined {
     return this.#session?.scripts();
