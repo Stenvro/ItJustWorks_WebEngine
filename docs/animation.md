@@ -67,7 +67,58 @@ their look: [formats/esm.md](formats/esm.md#actors)).
   (`ModelInstance.pose`), and their palettes are rewritten whenever the pose changes. One
   instance per model, all at the reference: upright (only the turn about z), at the race's
   height times the actor's and the reference's scale.
-- **What plays:** each actor loops its character's MT_Idle (the female clip for women where
-  one exists), from a start in the clip its reference picks. TODO(M7): the behavior graph
-  (`0_Master.hkx`) chooses the clips, blends them and sends their events; until then idles
-  loop and actors stand where they were placed (their AI packages: M10).
+- **What plays:** the race's behavior graph (below), started when the actor is placed with
+  the clips its start states play loaded, then run on by a moment its reference picks (actors
+  placed together do not breathe together); clips load as the graph first asks for them (the
+  female clip for women where one exists). Actors stand where they were placed until their
+  AI packages move them (M10).
+
+## Behavior runtime
+
+Actors run their race's behavior project (`src/animation/behavior-runtime.ts`; offline:
+`node tools/behavior-run.ts <project> --set Speed=150 --event moveStart`): the root behavior
+file and every file it references (`loadBehaviorFiles`: 17 for humans, `0_Master.hkx` →
+`MT_Behavior.hkx`, …). Variables and events are the character's: each file's are joined to
+them by name (a variable keeps the first file's initial value). Each frame:
+
+1. **Events** sent to it (and those raised while handling them, a few rounds) go to every
+   active node. A **state machine** takes the transition of its current state or its
+   wildcards whose event it is (not disabled; its condition holding, see the expressions
+   below; from the nested state it names; within its trigger interval by time), the highest
+   priority first (TODO(M13): Havok does not document which way priorities go; the few
+   vanilla ones read as higher wins), then in order. Its own events return to the previous
+   state, take a random state or the next higher / lower state id. Leaving a state raises its
+   exit events, entering one its enter events and the machine's change event; a transition
+   with a blending effect (duration, curve) plays both states and blends them, an instant one
+   switches; a self transition starts the state over (unless its effect continues); a
+   transition into a nested state sets that machine's start.
+2. **Update** of the active nodes: transitions without an event whose condition holds are
+   taken; clips advance by their playback speed (looping, single play, ping-pong, user
+   controlled; an enforced duration plays the clip in that time) and raise their triggers
+   and the animation's annotations as they pass them (unless the clip's flag 0x10 says not
+   to); a syncing blender (flag 0x1) plays its clips at one phase, advanced by the time over
+   their weighted duration; modifiers run: expressions assign variables or raise events
+   (once, on true, false to true, every frame once true), BSIsActiveModifier sets its bound
+   flags while active, timers, event-driven modifiers, events every N events, damping (PID),
+   value interpolation, events from ranges, modify-once modifiers.
+3. **Pose:** clips are sampled (additive clips hold differences, laid on what is below);
+   blenders sum their children's poses by normalised weights (parametric ones by their
+   blend parameter, cyclic ones wrapping), per bone where bone weights limit a child; bone
+   switches take the bones of their children over the default's; transitions blend their two
+   states by the curve. Nodes that stop being active are deactivated (exit events, modifier
+   resets, BSEventOnDeactivateModifier's event).
+
+**Expressions** (`behavior-expression.ts`): conditions, assignments (`var = expr`) and raised
+events (`event if (expr)`) over the character's variables, with C's operators and the
+functions the vanilla graphs use (cond, fabs, clamp, min, max, sind, cos, …); 352 of the 353
+vanilla expressions parse, the last is malformed in the data and never holds.
+
+A standing NPC (variable IsNPC 1) reaches `MT_Standing_State` and plays `MT_Idle` with
+`MT_Idle_Skinny`; `moveStart` with a Speed brings it to `Default_Locomotion_State`, walk and run
+blended by speed in step, raising FootLeft / FootRight. All 53 skeletons of the placed actors
+start their graph and play idles (`tools/actor-info.ts --audit --deep`); some creatures start
+in a combat idle (dragons, rieklings) or a transform (vampire lords, werewolves) until the
+engine sets the variables of their state (TODO(M10)). Not yet: procedural modifiers (look-at,
+foot IK, twists, keyframed bones, ragdoll controls: TODO(M10)), BSCyclicBlendTransition's
+freezing and cross-blending, BSOffsetAnimationGenerator's offset clip (TODO(M7)), the events
+of a trigger interval, the engine's events and variables of movement and combat (M10, M11).

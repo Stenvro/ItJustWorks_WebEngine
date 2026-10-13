@@ -150,7 +150,7 @@ describe('behavior graphs', () => {
       [0, 'Play', true],
       [1, 'Toggle', true],
     ]);
-    expect(root.states[0]?.transitions).toEqual([
+    expect(root.states[0]?.transitions).toMatchObject([
       { eventId: 0, toStateId: 1, priority: 0, flags: 0x100, conditional: false, duration: 0 },
     ]);
     expect(root.wildcardTransitions[0]).toMatchObject({ eventId: 1, toStateId: 0 });
