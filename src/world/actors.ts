@@ -10,6 +10,7 @@ import {
   BipedSlot,
   HeadPartFile,
   type HeadPartRecord,
+  HeadPartType,
   LeveledFlag,
   type LeveledList,
   NpcFlag,
@@ -48,6 +49,19 @@ export interface WornAddon {
   readonly weaponAdjust: number;
 }
 
+/** A head part an actor's head is made of (where no FaceGen head was baked for it). */
+export interface HeadPartLook {
+  readonly editorId: string;
+  /** HDPT PNAM (HeadPartType). */
+  readonly type: number;
+  /** Its model (meshes\ path). */
+  readonly model: string;
+  /** The texture set on its shapes (the face's: the NPC's FTST, else the race's default). */
+  readonly textureSet: number | undefined;
+  /** Its expression TRI (meshes\ path). */
+  readonly expressions: string | undefined;
+}
+
 export interface ActorLook {
   /** The NPC_ placed (the reference's base). */
   readonly base: number;
@@ -82,6 +96,12 @@ export interface ActorLook {
         readonly expressions: ReadonlyMap<string, string>;
       }
     | undefined;
+  /**
+   * The head parts its head is made of: race defaults, replaced by its own of the same type,
+   * and the parts they bring along. The engine builds the head from them where no FaceGen
+   * head was baked (the player's, made at run time).
+   */
+  readonly headParts: readonly HeadPartLook[];
   /** What it wears, armor first, then the skin under it. */
   readonly worn: readonly WornAddon[];
   /** The biped slots armor owns: slot → the addon that owns it. */
@@ -244,6 +264,42 @@ export class ActorResolver {
       if (tri) files.set(part.editorId.toLowerCase(), meshPath(tri.path));
     }
     return files;
+  }
+
+  /**
+   * The head parts of an NPC: its race's defaults with those of a type it has its own of
+   * replaced, then the extra parts each brings (HNAM), each once.
+   */
+  async #headPartLooks(
+    own: readonly number[],
+    defaults: readonly number[],
+    faceTexture: number | undefined,
+  ): Promise<HeadPartLook[]> {
+    const parts = (ids: readonly number[]) => Promise.all(ids.map((id) => this.#headPart(id)));
+    const mine = (await parts(own)).filter((part) => part !== undefined);
+    const types = new Set(mine.map((part) => part.type));
+    const base = (await parts(defaults)).filter(
+      (part) => part !== undefined && !types.has(part.type),
+    );
+    const looks: HeadPartLook[] = [];
+    const seen = new Set<number>();
+    const queue = [...base, ...mine].filter((part) => part !== undefined);
+    for (let part = queue.shift(); part; part = queue.shift()) {
+      if (seen.has(part.formId)) continue;
+      seen.add(part.formId);
+      for (const extra of await parts(part.extraParts)) if (extra) queue.push(extra);
+      if (!part.model) continue;
+      const tri = part.files.find((file) => file.type === HeadPartFile.tri);
+      looks.push({
+        editorId: part.editorId,
+        type: part.type,
+        model: meshPath(part.model),
+        textureSet:
+          part.type === HeadPartType.face ? (faceTexture ?? part.textureSet) : part.textureSet,
+        expressions: tri ? meshPath(tri.path) : undefined,
+      });
+    }
+    return looks;
   }
 
   /** An NPC_ (or a leveled list of them) down to one NPC_. */
@@ -412,6 +468,11 @@ export class ActorResolver {
       skinTone: traits.skinTone,
       hairColor: hairRecord?.type === 'CLFM' ? parseColor(hairRecord) : undefined,
       faceGen,
+      headParts: await this.#headPartLooks(
+        traits.headParts,
+        race.headParts[sex],
+        traits.faceTexture ?? race.faceTexture[sex],
+      ),
       worn: [...shown, ...bare],
       owners,
       weaponAdjust:

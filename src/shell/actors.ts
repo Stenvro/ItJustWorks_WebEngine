@@ -325,18 +325,47 @@ export class ActorPlacer {
         return model ? { model, addon: addon.addon } : undefined;
       }),
     );
-    const head =
+    // Its head: the FaceGen head baked for it, else its head parts put together (the
+    // player's: the engine makes it at run time).
+    const baked =
       look.faceGen && session.vfs.has(look.faceGen.geometry)
         ? await session.actorModel(look.faceGen.geometry, undefined, 100, {})
         : undefined;
+    const heads: GpuModel[] = [];
+    const expressions = new Map<string, string>();
+    if (baked && look.faceGen) {
+      heads.push(baked);
+      for (const [shape, path] of look.faceGen.expressions) expressions.set(shape, path);
+    } else if (look.faceGen) {
+      // Races with FaceGen heads only; the others (creatures) have no head parts.
+      // TODO(M9): the RaceSex menu's sliders (NAM9 and NAMA through the race's and the
+      // chargen TRIs) and tint layers (TINI..TINV) that shape and paint a made head.
+      const parts = await Promise.all(
+        look.headParts.map(async (part) => {
+          if (!session.vfs.has(part.model)) return undefined;
+          const textures =
+            part.textureSet === undefined ? undefined : await this.#textureSet(part.textureSet);
+          const model = await session.actorModel(part.model, undefined, 100, {
+            ...(textures && { all: textures }),
+          });
+          return model && { model, part };
+        }),
+      );
+      for (const entry of parts) {
+        if (!entry) continue;
+        heads.push(entry.model);
+        const tri = entry.part.expressions;
+        if (tri)
+          for (const { part } of entry.model.parts) expressions.set(part.name.toLowerCase(), tri);
+      }
+    }
     // Its face: the head parts' expression morphs, moved by blinks, moods and speech.
-    const face =
-      head && look.faceGen ? await this.#face(look.faceGen.expressions, actor) : undefined;
+    const face = heads.length > 0 ? await this.#face(expressions, actor) : undefined;
 
     // The models go on the skeleton: their nodes are its nodes (the ones it lacks added).
     const models: { model: GpuModel; addon: number | undefined }[] = [
       ...worn.flatMap((entry) => (entry ? [entry] : [])),
-      ...(head ? [{ model: head, addon: undefined }] : []),
+      ...heads.map((model) => ({ model, addon: undefined })),
     ];
     const dressed = wearOnRig(
       rig,
@@ -362,7 +391,7 @@ export class ActorPlacer {
       ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),
       tints,
       partitionVisible: (bodyPart) => partitionVisible(bodyPart, look.owners, addon),
-      ...(face && model === head && { face }),
+      ...(face && heads.includes(model) && { face }),
     }));
 
     // Its behavior graph: started, its first clips loaded, then run on by a moment of its

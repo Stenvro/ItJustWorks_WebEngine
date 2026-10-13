@@ -59,6 +59,7 @@ import { cellKey, WorldFlag, Worldspace, type Arrival } from '../world/worldspac
 import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-references.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { talkTargets, type PlacedActor } from './actors.ts';
+import { PlayerAvatar } from './player-avatar.ts';
 import type { GameSession } from './game-session.ts';
 import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import { WorldLod } from './world-lod.ts';
@@ -181,6 +182,8 @@ export class WorldViewer {
   readonly #camera = new FlyCamera();
   /** The physics world and the player while a world is open. */
   #play: PlaySession | undefined;
+  /** The player's body while playing. */
+  #avatar: PlayerAvatar | undefined;
   #session: GameSession | undefined;
   #db: RecordDatabase | undefined;
   #worlds: WorldspaceInfo[] = [];
@@ -530,6 +533,16 @@ export class WorldViewer {
     this.#play = play;
     this.#ui.freeCamera.checked = false;
     this.#ui.play.hidden = false;
+    // The player's body (third person) and first-person camera animation.
+    PlayerAvatar.create(session, this.#renderer, player).then(
+      (avatar) => {
+        if (this.#play === play) this.#avatar = avatar;
+        else avatar?.destroy();
+      },
+      (error: unknown) => {
+        this.#terminal.log('actor', `player: ${describe(error)}`, 'warn');
+      },
+    );
     this.#terminal.log(
       'world',
       `${world.record.editorId}${world.record.name ? ` "${world.record.name}"` : ''} · cell ${String(x)},${String(y)} · ` +
@@ -556,6 +569,7 @@ export class WorldViewer {
       backdrop: false,
       shadows: true,
       update: (seconds) => {
+        this.#avatar?.update(seconds);
         for (const cell of this.#cells.values())
           if (cell.ready) animateSkeletons(cell.skeletons, seconds);
       },
@@ -588,6 +602,8 @@ export class WorldViewer {
     this.#sky = undefined;
     this.#lod?.dispose();
     this.#lod = undefined;
+    this.#avatar?.destroy();
+    this.#avatar = undefined;
     this.#play?.dispose();
     this.#play = undefined;
     this.#ui.play.hidden = true;
@@ -1134,6 +1150,10 @@ export class WorldViewer {
 
   *#readyScenes(): Iterable<GpuScene> {
     if (this.#sky && !this.#noSky) yield* this.#sky.skyScenes();
+    // The player's body, in third person or seen from the free camera.
+    const play = this.#play;
+    const avatar = this.#avatar;
+    if (play && avatar && (play.freeCamera || play.player.pov === 'third')) yield avatar.scene;
     if (this.#lod) yield* this.#lod.scenes();
     for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
     for (const [key, large] of this.#largeCells) {

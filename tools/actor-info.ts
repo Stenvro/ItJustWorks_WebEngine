@@ -216,6 +216,10 @@ function print(look: ActorLook): void {
   console.log(`  skeleton ${look.skeleton ?? '-'}`);
   console.log(`  behavior ${look.behavior ?? '-'}`);
   if (look.faceGen) console.log(`  head ${look.faceGen.geometry}\n       ${look.faceGen.tint}`);
+  for (const part of look.headParts) {
+    const tri = part.expressions ? ` · ${part.expressions}` : '';
+    console.log(`  head part ${part.editorId} (type ${String(part.type)}) ${part.model}${tri}`);
+  }
   if (look.skinTone) console.log(`  skin tone ${look.skinTone.map((v) => v.toFixed(2)).join(' ')}`);
   if (look.hairColor)
     console.log(`  hair colour ${look.hairColor.map((v) => v.toFixed(2)).join(' ')}`);

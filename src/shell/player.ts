@@ -1,7 +1,8 @@
 // The player: input through the game's control map, movement at the speeds of the movement
 // types (MOVT) on the character controller, jumping, swimming, and the first- and
-// third-person cameras with the engine's INI settings. Drawn as a camera (the body is drawn
-// with the actors, TODO(M7)).
+// third-person cameras with the engine's INI settings. Its body and its animations (the
+// first-person camera rides the animated Camera1st node) are the player's avatar
+// (player-avatar.ts), which hooks in here.
 
 import type { Camera } from '../render/view-camera.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
@@ -144,6 +145,16 @@ const DIVE_PITCH = (-30 * Math.PI) / 180;
 
 type Pov = 'first' | 'third';
 
+/** How the player moves this step (for its behavior graphs). */
+export interface PlayerMotion {
+  /** The input direction in the player's frame: x right, y forward (0, 0: standing). */
+  readonly inputX: number;
+  readonly inputY: number;
+  readonly moving: boolean;
+  readonly running: boolean;
+  readonly sprinting: boolean;
+}
+
 export class Player implements Camera {
   readonly character: CharacterBody;
   readonly #setup: PlayerSetup;
@@ -169,6 +180,18 @@ export class Player implements Camera {
   lensShift = 0;
   /** Called on every physics step after the player moved (a held object's spring). */
   onStep: ((step: number) => void) | undefined;
+  /** How the player moved in the last step. */
+  motion: PlayerMotion = { inputX: 0, inputY: 0, moving: false, running: false, sprinting: false };
+  /**
+   * Starts a jump's animation instead of jumping at once (the avatar: the graph's JumpUp
+   * then calls launchJump); `moving`: a directional jump.
+   */
+  jumpTrigger: ((moving: boolean) => void) | undefined;
+  /**
+   * The first-person camera above the feet in the player's frame (x right, y forward, z
+   * up), as the animated Camera1st node has it; undefined: the skeleton's rest height.
+   */
+  cameraOffset: (() => Vec3 | undefined) | undefined;
   /**
    * Where the player may stand (the worldspace's border regions); undefined: anywhere.
    * Movement across the border stops at it and calls onBorder.
@@ -238,7 +261,33 @@ export class Player implements Camera {
   /** Where the eyes are (the first-person camera), interpolated like the camera. */
   get eye(): Vec3 {
     const feet = this.character.feetAt(this.#setup.physics.alpha);
-    return [feet[0], feet[1], feet[2] + this.#setup.body.eyeHeight];
+    const [x, y, z] = this.#eyeOffset();
+    const sin = Math.sin(this.yaw);
+    const cos = Math.cos(this.yaw);
+    return [feet[0] + x * cos + y * sin, feet[1] - x * sin + y * cos, feet[2] + z];
+  }
+
+  /** The first-person camera in the player's frame (the animated node, else the rest one). */
+  #eyeOffset(): Vec3 {
+    return this.cameraOffset?.() ?? [0, 0, this.#setup.body.eyeHeight];
+  }
+
+  /** The race's height (the body and its camera nodes are scaled by it). */
+  get height(): number {
+    return this.#setup.body.height;
+  }
+
+  /** The movement types the player moves with. */
+  get movement(): PlayerMovement {
+    return this.#setup.movement;
+  }
+
+  /** Jumps now, if on the ground (the avatar's jump animation pushes off). */
+  launchJump(): void {
+    if (!this.character.grounded || this.character.swimming) return;
+    // fJumpHeightMin: the height of the jump; with constant gravity v = √(2 g h).
+    const g = -this.#setup.physics.world.gravity.z * HAVOK_SCALE;
+    this.character.jump(Math.sqrt(2 * g * this.#setup.jumpHeight));
   }
 
   get forward(): Vec3 {
@@ -380,6 +429,7 @@ export class Player implements Camera {
           ? movement.sneak
           : movement.normal;
     const speed = moving ? directionalSpeed(running ? type.run : type.walk, x, y) : 0;
+    this.motion = { inputX: x, inputY: y, moving, running, sprinting };
     const length = Math.hypot(x, y) || 1;
     const sin = Math.sin(this.yaw);
     const cos = Math.cos(this.yaw);
@@ -400,10 +450,9 @@ export class Player implements Camera {
       // pull it back down.
       const floatSpeed = fz > surface && character.supported ? 0 : float;
       character.verticalSpeed = diving ? Math.min(vertical, floatSpeed) : floatSpeed;
-    } else if (jump && !sprinting) {
-      // fJumpHeightMin: the height of the jump; with constant gravity v = √(2 g h).
-      const g = -this.#setup.physics.world.gravity.z * HAVOK_SCALE;
-      character.jump(Math.sqrt(2 * g * this.#setup.jumpHeight));
+    } else if (jump && !sprinting && character.grounded) {
+      if (this.jumpTrigger) this.jumpTrigger(moving);
+      else this.launchJump();
     }
     // The border regions: moving out stops at the edge.
     const border = this.border;
@@ -436,8 +485,11 @@ export class Player implements Camera {
     const { body, ini, physics } = this.#setup;
     const feet = this.character.feetAt(alpha);
     if (this.pov === 'first') {
-      // TODO(M7): the camera follows the animated Camera1st node (sneaking, swimming).
-      this.position = [feet[0], feet[1], feet[2] + body.eyeHeight];
+      // The camera rides the first-person skeleton's Camera1st node (sneaking lowers it).
+      const [x, y, z] = this.#eyeOffset();
+      const sin = Math.sin(this.yaw);
+      const cos = Math.cos(this.yaw);
+      this.position = [feet[0] + x * cos + y * sin, feet[1] - x * sin + y * cos, feet[2] + z];
       return;
     }
     const target: Vec3 = [

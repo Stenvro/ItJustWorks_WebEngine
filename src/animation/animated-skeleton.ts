@@ -14,6 +14,8 @@ export interface AnimatedSkeleton {
   readonly face?: FaceAnimation;
   /** The renderer's clock at its last update. */
   time: number | undefined;
+  /** The events its graph raised in an update (the player's avatar listens for JumpUp). */
+  onEvents?: (events: readonly string[]) => void;
 }
 
 /** A frame longer than this (a hitch, a hidden tab) advances the graphs by this much. */
@@ -30,7 +32,8 @@ export function animateSkeletons(skeletons: Iterable<AnimatedSkeleton>, seconds:
     if (!behavior) continue;
     behavior.update(dt);
     // TODO(M10): footsteps and the other sounds animations raise.
-    behavior.takeRaised();
+    const raised = behavior.takeRaised();
+    if (raised.length > 0) animated.onEvents?.(raised);
     animated.pose.update(behavior.pose);
   }
 }
