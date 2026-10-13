@@ -1,4 +1,5 @@
-// Adapted from Community Shaders (GPL-3.0); see THIRD_PARTY_NOTICES.md.
+// Adapted from Community Shaders' shaders (MIT, Copyright (c) 2022 Ilya Perapechka); see
+// THIRD_PARTY_NOTICES.md.
 // BSEffectShaderProperty: unlit effects (glows, magic, fire cards, decals) and, through
 // effectShade, particles. Follows the engine's effect pixel shader: base texture times base
 // colour and vertex (or particle) colour, falloff, soft depth fade, material alpha, then the

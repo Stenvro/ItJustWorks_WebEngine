@@ -1,19 +1,28 @@
-# Typecheck, lint, formatting, unit tests and the game-file check on every push and pull
-# request. Integration tests need local game data and are skipped here.
+# Typecheck, lint, formatting, unit tests, the game-file check (also over the whole history)
+# and a build, on every push and pull request. Integration tests need local game data and are
+# skipped here.
 name: check
 
 on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The game-file check reads every commit.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 26
           cache: npm
       - run: npm ci
       - run: npm run check
+      - run: npm run check:history
+      - run: npx vite build

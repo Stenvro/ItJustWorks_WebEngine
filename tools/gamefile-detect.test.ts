@@ -28,6 +28,16 @@ describe('detectGameFile', () => {
     expect(detectGameFile('blob.bin', MAX_FILE_BYTES + 1, new Uint8Array())).toMatch(/larger/);
   });
 
+  it("blocks the game's plain-text files by name", () => {
+    expect(detectGameFile('Skyrim_Default.ini', 10, text('[General]'))).toMatch(/Skyrim_Default/);
+    expect(detectGameFile('a/SkyrimPrefs.ini', 10, text('[Display]'))).toMatch(/SkyrimPrefs/);
+    expect(detectGameFile('Skyrim.ccc', 10, text('ccBGSSSE001'))).toMatch(/\.ccc/);
+    expect(detectGameFile('x/translate_english.txt', 10, text('$X'))).toMatch(/translate/);
+    expect(detectGameFile('controlmap.txt', 10, text('Forward'))).toMatch(/controlmap/);
+    expect(detectGameFile('plugins.txt', 10, text('*Skyrim.esm'))).toMatch(/plugins/);
+    expect(detectGameFile('docs/notes.txt', 10, text('hi'))).toBeUndefined();
+  });
+
   it('does not treat a dot in a folder name as an extension', () => {
     expect(detectGameFile('foo.esm/readme', 1, text('hi'))).toBeUndefined();
   });

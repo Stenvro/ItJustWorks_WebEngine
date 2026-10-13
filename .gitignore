@@ -13,6 +13,15 @@ coverage/
 *.log
 .DS_Store
 Thumbs.db
+desktop.ini
+
+# --- Editors and tools ---
+.vscode/
+.idea/
+*.swp
+.eslintcache
+# Claude Code: the shared launch configuration is kept, local settings are not
+.claude/settings.local.json
 
 # --- Hard rule 1: never game files in the repo ---
 # Game data lives outside the repo (see CLAUDE.md). This list is a safety net;
@@ -49,6 +58,16 @@ ShaderCache/
 *.btr
 *.bto
 *.lod
+*.ccc
+*.gid
+*.cgid
+# Plain-text game files
+Skyrim*.ini
+translate_*.txt
+controlmap*.txt
+fontconfig*.txt
+plugins.txt
+loadorder.txt
 
 # Custom backdrop (see src/shell/custom-backdrop.ts)
 /public/custom/

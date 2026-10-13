@@ -1,4 +1,5 @@
-// Adapted from Community Shaders (GPL-3.0); see THIRD_PARTY_NOTICES.md.
+// Adapted from Community Shaders' shaders (MIT, Copyright (c) 2022 Ilya Perapechka); see
+// THIRD_PARTY_NOTICES.md.
 // The engine's "improved snow" (bEnableImprovedSnow): surfaces that are snow (landscape textures
 // flagged as snow, statics considered snow, projected snow) get a rim highlight instead of
 // their specular, and static sparkles. The engine writes both into a snow buffer and adds
@@ -40,7 +41,7 @@ fn snowPermute(x: vec4f) -> vec4f {
 
 // 3D simplex noise in -1..1 (Ashima Arts / Gustavson, as the engine's composite shader uses).
 // webgl-noise: Copyright (C) 2011 Ashima Arts, Copyright (C) 2011-2016 Stefan Gustavson; MIT
-// licence, its notice in THIRD_PARTY_NOTICES.md..
+// licence, its notice in THIRD_PARTY_NOTICES.md.
 fn snowSimplexNoise(v: vec3f) -> f32 {
   var i = floor(v + dot(v, vec3f(1.0 / 3.0)));
   let x0 = v - i + dot(i, vec3f(1.0 / 6.0));

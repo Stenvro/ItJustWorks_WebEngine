@@ -1,4 +1,5 @@
-// Adapted from Community Shaders (GPL-3.0); see THIRD_PARTY_NOTICES.md.
+// Adapted from Community Shaders' shaders (MIT, Copyright (c) 2022 Ilya Perapechka); see
+// THIRD_PARTY_NOTICES.md.
 // Depth of field of the imagespace (IMGS DNAM), as the engine's ISDepthOfField shader does it
 // for weathers ("distant" blur, Community Shaders ISDepthOfField.hlsl, DISTANT): beyond the
 // focus distance the image turns into its blurred copy over the range, up to the strength.

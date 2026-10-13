@@ -1,4 +1,5 @@
-// Adapted from Community Shaders (GPL-3.0); see THIRD_PARTY_NOTICES.md.
+// Adapted from Community Shaders' shaders (MIT, Copyright (c) 2022 Ilya Perapechka); see
+// THIRD_PARTY_NOTICES.md.
 // Landscape: up to 8 textures blended by per-vertex weights (the base texture and the
 // layers painted over it), with their normal maps, times the vertex colour, lit like
 // objects, as the engine's landscape shader does it (Community Shaders' replica of the vanilla

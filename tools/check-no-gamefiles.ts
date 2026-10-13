@@ -1,7 +1,10 @@
 // Hard rule 1: never game files in the repo.
 //
-//   node tools/check-no-gamefiles.ts         staged files (pre-commit hook)
-//   node tools/check-no-gamefiles.ts --all   all files in the index
+//   node tools/check-no-gamefiles.ts             staged files (pre-commit hook)
+//   node tools/check-no-gamefiles.ts --all       all files in the index
+//   node tools/check-no-gamefiles.ts --history   every file in every commit of every branch
+//                                                (CI: a game file committed and removed again
+//                                                is still in the history)
 
 import { spawnSync } from 'node:child_process';
 import { detectGameFile, MAX_FILE_BYTES } from './gamefile-detect.ts';
@@ -13,6 +16,11 @@ function git(args: readonly string[]): Buffer {
     throw new Error(`git ${args.join(' ')} failed: ${result.stderr.toString().trim()}`);
   }
   return result.stdout;
+}
+
+if (process.argv.includes('--history')) {
+  checkHistory();
+  process.exit(0);
 }
 
 const all = process.argv.includes('--all');
@@ -47,3 +55,48 @@ if (violations.length > 0) {
   process.exit(1);
 }
 console.log(`No game files found (${paths.length} files checked).`);
+
+/** Every blob reachable from any ref, with a path it was committed under. */
+function checkHistory(): void {
+  const objects = new Map<string, string>();
+  for (const line of git(['rev-list', '--objects', '--all']).toString('utf8').split('\n')) {
+    const space = line.indexOf(' ');
+    if (space > 0 && !objects.has(line.slice(0, space))) {
+      objects.set(line.slice(0, space), line.slice(space + 1));
+    }
+  }
+  // One `git cat-file --batch` for all of them: "<sha> <type> <size>\n<content>\n" each.
+  const result = spawnSync('git', ['cat-file', '--batch'], {
+    input: [...objects.keys()].join('\n') + '\n',
+    maxBuffer: 1024 * 1024 * 1024,
+  });
+  if (result.error) throw result.error;
+  const output = result.stdout;
+  const found: string[] = [];
+  let blobs = 0;
+  let offset = 0;
+  while (offset < output.length) {
+    const end = output.indexOf(10, offset);
+    if (end < 0) break;
+    const [sha = '', type = '', sizeText = '0'] = output
+      .subarray(offset, end)
+      .toString()
+      .split(' ');
+    const size = Number(sizeText);
+    const content = output.subarray(end + 1, end + 1 + size);
+    offset = end + 1 + size + 1;
+    if (type !== 'blob') continue;
+    blobs++;
+    const path = objects.get(sha) ?? sha;
+    const reason = detectGameFile(path, size, content.subarray(0, 64));
+    if (reason) found.push(`  ${path} (${sha.slice(0, 10)}: ${reason})`);
+  }
+  if (found.length > 0) {
+    console.error(
+      'Game files in the history — they must never be in the repo (CLAUDE.md, hard rule 1):',
+    );
+    console.error(found.join('\n'));
+    process.exit(1);
+  }
+  console.log(`No game files in the history (${String(blobs)} files checked).`);
+}

@@ -7,9 +7,11 @@ Game content is never part of this repository: the engine reads the user's own i
 
 ## Code adapted into this repository
 
-### Community Shaders
+### Community Shaders (its shaders)
 
-<https://github.com/doodlum/skyrim-community-shaders> — GNU General Public License v3.0.
+<https://github.com/doodlum/skyrim-community-shaders> — the shaders in `package/Shaders` are
+under the MIT License (that folder's own `LICENSE`, below); the rest of Community Shaders is
+under the GNU General Public License v3.0 or later.
 
 Community Shaders reproduces the vanilla Skyrim Special Edition shaders in HLSL. The following
 WGSL shaders follow those reproductions (structure, formulas and constants), translated to
@@ -18,7 +20,33 @@ LANDSCAPE), `snow.wgsl` (ISSAOComposite.hlsl, Lighting.hlsl), `snow-sss.wgsl`
 (ISSnowSSS.hlsl), `refraction-composite.wgsl` (ISRefraction.hlsl), `dof.wgsl`
 (ISDepthOfField.hlsl), `sao.wgsl` (ISSAOCameraZ, ISSAOMinify, ISSAOBlur, ISSAOComposite),
 `post.wgsl` and `luminance.wgsl` (ISHDR.hlsl), `effect.wgsl` and `precipitation.wgsl` (Effect
-and Particle shaders), and the sky and sun path in `src/world/sky-state.ts`.
+and Particle shaders). The sun's path in `src/world/sky-state.ts` follows how Community
+Shaders reproduces the vanilla sun (a rule written down in `docs/formats/esm.md`; no code of
+it is used).
+
+```
+MIT License
+
+Copyright (c) 2022 Ilya Perapechka
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
 
 ### webgl-noise (simplex noise)
 
@@ -130,19 +158,28 @@ Installed from npm, not part of this repository; a built copy of the engine incl
 | [@dimforge/rapier3d-compat](https://rapier.rs)                                                                                       | Apache-2.0                | physics             |
 | [@fontsource/cinzel](https://fontsource.org/fonts/cinzel), [@fontsource/jetbrains-mono](https://fontsource.org/fonts/jetbrains-mono) | SIL Open Font License 1.1 | the shell's fonts   |
 
+The fonts: Cinzel, Copyright 2020 The Cinzel Project Authors
+(<https://github.com/NDISCOVER/Cinzel>); JetBrains Mono, Copyright 2020 The JetBrains Mono
+Project Authors (<https://github.com/JetBrains/JetBrainsMono>); both under the SIL Open Font
+License, Version 1.1, which their packages include.
+
 Development tools (TypeScript, Vite, Vitest, ESLint, Prettier and their dependencies) are
-under MIT, Apache-2.0, BSD, ISC and MPL-2.0 licences and are not part of a build.
+under MIT, Apache-2.0, BSD, ISC, BlueOak-1.0.0 and MPL-2.0 licences and are not part of a
+build.
 
 ## Documentation the engine was written from
 
-File formats and engine behaviour were worked out from public documentation and tools, not
-from their code: [UESP](https://en.uesp.net/wiki/Skyrim_Mod:Mod_File_Format) (CC BY-SA 2.5),
+File formats and engine behaviour were worked out from public documentation and from what
+these projects read and write (their layouts, names and constants), not by copying their code:
+[UESP](https://en.uesp.net/wiki/Skyrim_Mod:Mod_File_Format) (CC BY-SA 2.5),
 [nif.xml](https://github.com/niftools/nifxml) and NifSkope,
 [xEdit](https://github.com/TES5Edit/TES5Edit) record definitions,
-[CommonLibSSE-NG](https://github.com/CharmedBaryon/CommonLibSSE-NG), Champollion (Papyrus
-bytecode), hkxcmd / HKX2 / serde-hkx (Havok packfiles), BSArch, the Creation Kit wiki, and
-the [Step](https://stepmodifications.org) INI guides and default value lists. LZ4, xxHash32
-and zlib (inflate) are implemented here from their specifications.
+[CommonLibSSE-NG](https://github.com/CharmedBaryon/CommonLibSSE-NG) (engine structures),
+[OpenMW](https://openmw.org)'s ESM4 loader (the NVNM navigation mesh layout), Champollion
+(Papyrus bytecode), hkxcmd / HKX2 / serde-hkx (Havok packfiles), BSArch, Nukem9's decompiled
+BSLightingShader and aers' Skyrim-SE-Shader-Tools (shader constants), the Creation Kit wiki,
+and the [Step](https://stepmodifications.org) INI guides and default value lists. LZ4,
+xxHash32 and zlib (inflate) are implemented here from their specifications.
 
 ## Trademarks
 
