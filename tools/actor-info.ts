@@ -5,12 +5,18 @@
 //
 //   node tools/actor-info.ts HousecarlWhiterun          one actor base by editor id
 //   node tools/actor-info.ts 000A2C94                   or by form id (hex)
-//   node tools/actor-info.ts --audit                    every placed actor
+//   node tools/actor-info.ts --audit [--deep]           every placed actor (--deep: skeletons,
+//                                                       Havok skeletons, idles, model bones)
 
-import { ActorResolver, type ActorLook } from '../src/world/actors.ts';
+import { ActorSkeleton, buildRig, wearOnRig, type RigData } from '../src/animation/skeleton.ts';
+import { readAnimationContainer } from '../src/formats/hkx/animation.ts';
+import { loadCharacterInfo, type CharacterInfo } from '../src/formats/hkx/behavior.ts';
+import { Packfile } from '../src/formats/hkx/packfile.ts';
+import { parseNif } from '../src/formats/nif/nif.ts';
+import { buildModel, type ModelData } from '../src/render/model-data.ts';
+import { ActorResolver, meshPath, type ActorLook } from '../src/world/actors.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
-import { meshPath } from '../src/world/actors.ts';
 import { openGameFolder } from './gamedata-path.ts';
 
 const args = process.argv.slice(2);
@@ -36,6 +42,108 @@ function missingFiles(look: ActorLook): string[] {
     if (worn.weighted) need(path.replace(/_1\.nif$/, '_0.nif'));
   }
   return missing;
+}
+
+/**
+ * Every skeleton of the placed actors with what goes on it: its Havok skeleton and idle (from
+ * the race's behavior project) and the bones of every model worn on it, which must all be
+ * nodes of the skeleton for the model to follow it.
+ */
+async function auditRigs(): Promise<void> {
+  const looks = new Map<string, ActorLook[]>();
+  for (const formId of db.formIdsOfType('ACHR')) {
+    const record = await db.get(formId);
+    const base = record?.formIdField('NAME');
+    if (!record || base === undefined || record.deleted) continue;
+    const look = await resolver.resolve(base, formId);
+    if (!look?.skeleton) continue;
+    const key = `${look.skeleton}|${look.behavior ?? ''}`;
+    looks.set(key, [...(looks.get(key) ?? []), look]);
+  }
+  const models = new Map<string, ModelData | undefined>();
+  const modelOf = async (path: string): Promise<ModelData | undefined> => {
+    if (!models.has(path)) {
+      models.set(path, vfs.has(path) ? buildModel(parseNif(await vfs.read(path))) : undefined);
+    }
+    return models.get(path);
+  };
+  let failures = 0;
+  for (const [key, group] of looks) {
+    const [skeletonPath = '', behavior = ''] = key.split('|');
+    const lines: string[] = [];
+    let rig: RigData | undefined;
+    try {
+      rig = buildRig(parseNif(await vfs.read(skeletonPath)));
+    } catch (error) {
+      lines.push(`skeleton does not load: ${String(error)}`);
+    }
+    let character: CharacterInfo | undefined;
+    try {
+      character = behavior
+        ? await loadCharacterInfo(behavior, (path) => vfs.read(path))
+        : undefined;
+    } catch (error) {
+      lines.push(`behavior project does not load: ${String(error)}`);
+    }
+    let matched = '';
+    if (rig && character?.rig) {
+      try {
+        const havok = readAnimationContainer(Packfile.parse(await vfs.read(character.rig)))
+          .skeletons[0];
+        const skeleton = new ActorSkeleton(rig, havok);
+        const bones = [...skeleton.boneOfNode].filter((bone) => bone >= 0).length;
+        matched = `${String(bones)} of ${String(havok?.bones.length ?? 0)} bones on ${String(rig.names.length)} nodes`;
+        if (bones === 0) lines.push('no Havok bone matches a node');
+      } catch (error) {
+        lines.push(`Havok skeleton ${character.rig} does not load: ${String(error)}`);
+      }
+      if (!character.animations.some((path) => /idle\.hkx$/i.test(path))) lines.push('no idle');
+    }
+    const missingBones = new Map<string, Set<string>>();
+    const rigid = new Set<string>();
+    const added = new Set<string>();
+    const paths = new Set(
+      group.flatMap((look) => [
+        ...look.worn.map((worn) => meshPath(worn.model.path)),
+        ...(look.faceGen ? [look.faceGen.geometry] : []),
+      ]),
+    );
+    for (const path of paths) {
+      const model = await modelOf(path);
+      if (!model || !rig) continue;
+      // Worn on the skeleton: the nodes it lacks are added from the model.
+      const dressed = wearOnRig(rig, [{ nodes: model.nodes ?? [], attachTo: model.attachTo }]);
+      for (const name of dressed.rig.names.slice(rig.names.length)) added.add(name);
+      const nodes = new Set(dressed.rig.names.map((name) => name.toLowerCase()));
+      for (const part of model.parts) {
+        if (!part.skin) {
+          rigid.add(path);
+          if (part.node === undefined)
+            lines.push(`${path}: rigid part ${part.name} hangs on no node`);
+          continue;
+        }
+        for (const name of part.skin.names) {
+          if (nodes.has(name.toLowerCase())) continue;
+          const set = missingBones.get(path) ?? new Set<string>();
+          set.add(name);
+          missingBones.set(path, set);
+        }
+      }
+    }
+    for (const [path, names] of missingBones) {
+      lines.push(`${path}: bones not in the skeleton: ${[...names].slice(0, 6).join(', ')}`);
+    }
+    if (lines.length > 0) failures++;
+    console.log(
+      `${skeletonPath} (${group[0]?.raceEditorId ?? ''}, ${String(group.length)} actors, ${String(paths.size)} models${matched ? `, ${matched}` : ''})` +
+        (rigid.size > 0 ? ` · ${String(rigid.size)} models with rigid parts` : '') +
+        (added.size > 0
+          ? ` · adds ${[...added].slice(0, 5).join(', ')}${added.size > 5 ? ', ...' : ''}`
+          : ''),
+    );
+    for (const line of lines.slice(0, 8)) console.log(`  ${line}`);
+  }
+  console.log(`${String(looks.size)} skeletons, ${String(failures)} with problems`);
 }
 
 function print(look: ActorLook): void {
@@ -99,6 +207,7 @@ if (args.includes('--audit')) {
     console.log(`  ${String(count)}× ${kind}`);
   }
   for (const line of examples) console.log(`  ${line}`);
+  if (args.includes('--deep')) await auditRigs();
 } else {
   const query = args[0] ?? '';
   let base = /^[0-9a-f]{8}$/i.test(query) ? parseInt(query, 16) : undefined;

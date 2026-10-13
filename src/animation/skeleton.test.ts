@@ -3,7 +3,7 @@ import type { HkxSkeleton } from '../formats/hkx/animation.ts';
 import type { NifHeader } from '../formats/nif/header.ts';
 import type { NifFile } from '../formats/nif/nif.ts';
 import type { NiNodeBlock, NifBlock, NifTransform } from '../formats/nif/types.ts';
-import { ActorPose, ActorSkeleton, buildRig, qsMatrix } from './skeleton.ts';
+import { ActorPose, ActorSkeleton, buildRig, qsMatrix, wearOnRig } from './skeleton.ts';
 
 const at = (x: number, y: number, z: number): NifTransform => ({
   translation: [x, y, z],
@@ -88,5 +88,34 @@ describe('actor skeletons', () => {
     expect(Array.from(out, (v) => Math.round(v * 1000) / 1000)).toEqual([
       0, 2, 0, 0, -2, 0, 0, 0, 0, 0, 2, 0, 1, 2, 3, 1,
     ]);
+  });
+});
+
+describe('worn models on a skeleton', () => {
+  const rig = buildRig(nif);
+  const node = (name: string, parent: number, x = 0) => ({
+    name,
+    parent,
+    local: Float32Array.from([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1]),
+  });
+
+  it("matches a model's nodes by name and adds the ones the skeleton lacks", () => {
+    // A cuirass: its root, the spine (the skeleton's), a skirt bone under it (new).
+    const { rig: dressed, nodeMaps } = wearOnRig(rig, [
+      {
+        nodes: [node('Cuirass.nif', -1), node('NPC SPINE [Spn0]', 0), node('SkirtBone', 1, 7)],
+        attachTo: undefined,
+      },
+      // A shield hangs on the weapon node ("Prn").
+      { nodes: [node('Shield', -1), node('ShieldMesh', 0)], attachTo: 'weapon' },
+    ]);
+    expect(dressed.names.slice(rig.names.length)).toEqual(['SkirtBone', 'ShieldMesh']);
+    expect(Array.from(nodeMaps[0] ?? [])).toEqual([0, 2, 4]);
+    expect(Array.from(nodeMaps[1] ?? [])).toEqual([3, 5]);
+    expect(dressed.parents[4]).toBe(2);
+    // The added skirt bone follows the spine.
+    const pose = new ActorPose(new ActorSkeleton(dressed, havok));
+    expect(position(pose, 'SkirtBone')).toEqual([7, 0, 60]);
+    expect(wearOnRig(rig, []).rig).toBe(rig);
   });
 });

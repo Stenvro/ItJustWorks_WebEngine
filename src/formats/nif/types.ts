@@ -217,6 +217,13 @@ export interface IntegerExtraDataBlock {
   readonly value: number;
 }
 
+/** NiStringExtraData: a named text (e.g. "Prn": the skeleton node a weapon or shield hangs on). */
+export interface StringExtraDataBlock {
+  readonly kind: 'string-extra-data';
+  readonly name: string;
+  readonly text: string;
+}
+
 /**
  * BSBehaviorGraphExtraData (on the root node): the Havok Behavior project that animates the
  * mesh, relative to meshes\.
@@ -698,6 +705,7 @@ export type NifBlock =
   | BSShaderTextureSetBlock
   | NiAlphaPropertyBlock
   | IntegerExtraDataBlock
+  | StringExtraDataBlock
   | BehaviorGraphExtraDataBlock
   | BoundBlock
   | NiSkinInstanceBlock
