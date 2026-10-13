@@ -30,6 +30,15 @@ const NOTICE_MS = 3000;
 
 /** Milliseconds per frame spent placing collision of loaded cells. */
 const COLLISION_BUDGET_MS = 3;
+/**
+ * A door's arrival point stands on its floor: the player waits until the floor is found
+ * between this much above it (searching from there, below porch roofs and door frames) and
+ * this far below, as the floor may belong to a cell or a large object still loading.
+ */
+const ARRIVAL_FLOOR_ABOVE = 16;
+const ARRIVAL_FLOOR_BELOW = 96;
+/** After this long without its floor, the player is placed on whatever is below (seconds). */
+const ARRIVAL_WAIT_SECONDS = 10;
 
 /** Seconds on the renderer's clock (sequences and their collision run on it). */
 const clock = (): number => performance.now() / 1000;
@@ -143,6 +152,10 @@ export class PlaySession {
   readonly #queue: { readonly group: CollisionGroup; readonly run: () => void }[] = [];
   readonly #groups = new Set<CollisionGroup>();
   #spawnPending = true;
+  /** When the player started waiting for the ground (seconds). */
+  #spawnSince: number | undefined;
+  /** The player arrives through a door: on the floor at its feet. */
+  readonly #arrivesOnFloor: boolean;
   #freeCamera = false;
   #detach: (() => void) | undefined;
   /** Called when the free camera is switched on or off (to update a checkbox). */
@@ -177,6 +190,8 @@ export class PlaySession {
     canvas: HTMLElement;
     groundReady: (feet: Vec3) => boolean;
     searchAbove: number;
+    /** The player arrives through a door, standing on the floor (which it waits for). */
+    arrivesOnFloor?: boolean;
     /** What a placed reference does when activated (undefined: nothing). */
     activatable?: (reference: number) => Activatable | undefined;
     /** Where the activation prompt is shown. */
@@ -192,6 +207,7 @@ export class PlaySession {
     this.#canvas = init.canvas;
     this.#groundReady = init.groundReady;
     this.#searchAbove = init.searchAbove;
+    this.#arrivesOnFloor = init.arrivesOnFloor ?? false;
     this.#activatable = init.activatable;
     this.#prompt = init.prompt;
     this.#notice = init.notice;
@@ -249,6 +265,7 @@ export class PlaySession {
   placePlayer(feet: Vec3, yaw: number): void {
     this.player.teleport(feet, yaw);
     this.#spawnPending = true;
+    this.#spawnSince = undefined;
   }
 
   /** Every frame: place pending collision, then move the player (or the free camera). */
@@ -270,7 +287,9 @@ export class PlaySession {
       this.player.onStep = (step) => {
         this.#holdGrabbed(step);
       };
-      this.player.update(deltaSeconds);
+      // Where the ground has not loaded yet (streaming ahead of a fast player), the player
+      // waits instead of falling through.
+      this.player.update(deltaSeconds, !this.#groundReady(this.player.feet));
       const hit = this.#pick();
       this.#setTarget(this.#grab ? undefined : this.#activatableAt(hit));
       this.#activate(hit);
@@ -430,15 +449,38 @@ export class PlaySession {
 
   #trySpawn(): void {
     const [x, y, z] = this.player.feet;
-    if (!this.#groundReady([x, y, z])) return;
-    const hit = this.physics.raycast(
-      [x, y, z + this.#searchAbove],
-      [0, 0, -1],
-      this.#searchAbove + 65536,
-      Layer.charController,
-    );
-    this.player.teleport([x, y, hit ? hit.point[2] : z]);
+    const now = performance.now() / 1000;
+    this.#spawnSince ??= now;
+    const waited = now - this.#spawnSince;
+    const late = waited >= ARRIVAL_WAIT_SECONDS;
+    // The rays start inside the player (standing at the arrival point): not their own shape.
+    const own = this.player.character.collider;
+    if (!this.#groundReady([x, y, z]) && !late) return;
+    if (this.#arrivesOnFloor) {
+      // Through a door: onto its floor, which must be there (not the landscape far below a
+      // city's street, nor a porch roof above the door); without it in time, at the door's
+      // own height.
+      const floor = this.physics.raycast(
+        [x, y, z + ARRIVAL_FLOOR_ABOVE],
+        [0, 0, -1],
+        ARRIVAL_FLOOR_ABOVE + ARRIVAL_FLOOR_BELOW,
+        Layer.charController,
+        own,
+      );
+      if (!floor && !late) return;
+      this.player.teleport([x, y, floor ? floor.point[2] : z]);
+    } else {
+      const hit = this.physics.raycast(
+        [x, y, z + this.#searchAbove],
+        [0, 0, -1],
+        this.#searchAbove + 65536,
+        Layer.charController,
+        own,
+      );
+      this.player.teleport([x, y, hit ? hit.point[2] : z]);
+    }
     this.#spawnPending = false;
+    this.#spawnSince = undefined;
   }
 
   /** Queues a cell's collision (placed a few per frame, in the order cells are added). */

@@ -272,6 +272,8 @@ export class ModelViewer {
     data: CellData,
     feet: readonly [number, number, number],
     yaw: number,
+    /** The player arrives through a door: on the floor at its feet. */
+    onFloor: boolean,
   ): Promise<void> {
     const session = this.#session;
     if (!session) return;
@@ -300,6 +302,7 @@ export class ModelViewer {
       groundReady: () => this.#collision.ready,
       // Arrival points lie on the floor; search a little above it (not up to a floor above).
       searchAbove: 64,
+      arrivesOnFloor: onFloor,
       activatable: (reference) => this.#activatable(reference),
       prompt: this.#ui.prompt,
       onImpact: (impact) => {
@@ -560,7 +563,12 @@ export class ModelViewer {
     );
     const count = Math.max(1, data.objects.length);
     this.#fly.lookAtPoint([centre[0] / count, centre[1] / count, z + EYE_HEIGHT]);
-    await this.#startPlay(data, [x, y, z], comeIn ? comeIn.heading : this.#fly.yaw);
+    await this.#startPlay(
+      data,
+      [x, y, z],
+      comeIn ? comeIn.heading : this.#fly.yaw,
+      comeIn !== undefined,
+    );
     if (token !== this.#loadToken) return;
 
     this.#renderUpgrades();

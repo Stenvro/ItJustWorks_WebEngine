@@ -36,7 +36,13 @@ shape with its shell is the bound, 29 units across), rings one radius from the e
 steps (about 14 units); on stair materials (MATT stairs flag) whole stairs up to 24 units
 are climbed (the risers of the vanilla stair meshes). The steepest walkable slope is kept in
 hkpCharacterProxy::maxSlopeCosine without an INI setting or GMST: 60° here, TODO(M13):
-calibrate both against the game.
+calibrate both against the game. Walking up stairs is slow: before a step is climbed, the
+lower cone rides up its edge as up a slope of about 52°, and Rapier's controller moves along a
+slope at cos² of its angle (about 40 % of walking speed on Breezehome's stairs; running
+climbs them at full height). Havok keeps the speed along the surface; moving the wanted
+movement onto the surface here, or treating stair edges as steps, made the controller stick
+on the edges instead. TODO(M13): stairs at walking speed (how the engine uses the stairs
+material).
 
 - **On the ground** it only moves along the ground; snapping to the ground (as far as the
   shape's radius) keeps it on slopes and down steps. Pressing down every step as well makes
@@ -80,6 +86,16 @@ L_ITEMPICKER. Load doors take the player to their XTEL (inside or out, see
 [esm.md](formats/esm.md#doors-arrivals-and-collision-primitives)); other doors play their
 Open and Close sequences. The prompt is the shell's until the game's HUD: TODO(M9), as are
 loading screens.
+
+**Arriving** through a door, the player waits (in place, the camera free to look) until the
+collision of the cell and the eight around it is in place — a street, bridge or porch may
+belong to a neighbour — and then until its floor is found between 16 units above the arrival
+point (below porch roofs and door frames) and 96 below; after 10 s it is placed at the door's
+own height. The rays leave out the player's own shape (it stands at the arrival point already)
+and phantoms (trigger volumes), as the character controller does. While walking, a player
+whose cell's collision has not loaded yet waits instead of falling through. Of 15 sampled
+doors into Tamriel and the cities, 14 now land on the floor and stay; the trapdoor of
+Lakeview Manor's unbuilt tower has no floor until it is built (TODO(M8): building states).
 
 **Grabbing:** Activate on a loose (simulated) object waits `[Controls] fZKeyDelay` (0.2 s): let
 go before that, it activates; held longer, the player takes hold of the object where the
