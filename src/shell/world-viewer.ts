@@ -172,6 +172,8 @@ export class WorldViewer {
   #session: GameSession | undefined;
   #db: RecordDatabase | undefined;
   #worlds: WorldspaceInfo[] = [];
+  /** The name of the worldspace being opened, until the player stands in it. */
+  #opening: string | undefined;
   #world: Worldspace | undefined;
   #sky: WorldSky | undefined;
 
@@ -232,6 +234,13 @@ export class WorldViewer {
   /** The physics world and player of the open world. */
   get play(): PlaySession | undefined {
     return this.#play;
+  }
+
+  /** What is being opened until the player stands in it (the loading screen's line). */
+  get loading(): string | undefined {
+    if (this.#opening === undefined) return undefined;
+    if (this.#play?.spawned === true) this.#opening = undefined;
+    return this.#opening;
   }
 
   /** Called when the player goes through a load door (the app takes them there). */
@@ -365,10 +374,27 @@ export class WorldViewer {
    * nearest load door, else at the nearest map marker.
    */
   async open(formId: number, cell?: readonly [number, number], arrival?: Arrival): Promise<void> {
+    const info = this.#worlds.find((world) => world.formId === formId);
+    try {
+      const name = info ? (info.name !== '' ? info.name : info.editorId) : 'worldspace';
+      await this.#open(formId, cell, arrival, name);
+    } catch (error) {
+      this.#opening = undefined;
+      throw error;
+    }
+  }
+
+  async #open(
+    formId: number,
+    cell: readonly [number, number] | undefined,
+    arrival: Arrival | undefined,
+    name: string,
+  ): Promise<void> {
     const db = this.#db;
     if (!db) return;
     this.#onActivate();
     this.deactivate();
+    this.#opening = name;
     const generation = ++this.#generation;
     const start = performance.now();
     const session = this.#session;
@@ -516,6 +542,7 @@ export class WorldViewer {
   /** Stops showing the world and frees its cells (another viewer takes the screen). */
   deactivate(): void {
     this.#generation++;
+    this.#opening = undefined;
     if (this.#world) this.#session?.soundSystem?.stopAll();
     if (this.#timer !== undefined) clearInterval(this.#timer);
     this.#timer = undefined;

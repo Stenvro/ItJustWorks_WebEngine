@@ -196,6 +196,8 @@ export class ModelViewer {
   #loadToken = 0;
   /** The cell on screen, with everything needed to switch upgrades instantly. */
   #cell: CellView | undefined;
+  /** The name of the interior cell being loaded, until the player stands in it. */
+  #loading: string | undefined;
   /** The physics world and the player in the cell on screen. */
   #play: PlaySession | undefined;
   /** The collision of the objects shown. */
@@ -229,6 +231,13 @@ export class ModelViewer {
   /** The physics world and player of the cell on screen. */
   get play(): PlaySession | undefined {
     return this.#play;
+  }
+
+  /** The interior cell being loaded until the player stands in it (the loading screen). */
+  get loading(): string | undefined {
+    if (this.#loading === undefined) return undefined;
+    if (this.#play?.spawned === true) this.#loading = undefined;
+    return this.#loading;
   }
 
   /** Called when the player goes through a load door (the app takes them there). */
@@ -413,6 +422,17 @@ export class ModelViewer {
    * (a load door's destination), else as through the cell's own door.
    */
   async showCell(formId: number, arrival?: Arrival): Promise<void> {
+    const info = this.#cells.find((cell) => cell.formId === formId);
+    this.#loading = info ? (info.name !== '' ? info.name : info.editorId) : 'interior';
+    try {
+      await this.#showCell(formId, arrival);
+    } catch (error) {
+      this.#loading = undefined;
+      throw error;
+    }
+  }
+
+  async #showCell(formId: number, arrival: Arrival | undefined): Promise<void> {
     const db = this.#db;
     if (!db) return;
     const token = ++this.#loadToken;
@@ -1122,6 +1142,7 @@ export class ModelViewer {
   /** Stops showing anything (another viewer takes the screen); the session stays. */
   deactivate(): void {
     this.#loadToken++;
+    this.#loading = undefined;
     this.#session?.soundSystem?.stopAll();
     this.#detachControls?.();
     this.#detachControls = undefined;

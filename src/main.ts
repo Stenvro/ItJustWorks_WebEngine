@@ -52,7 +52,15 @@ const ui = {
   menu: byId('main-menu', HTMLElement),
   menuSandbox: byId('menu-sandbox', HTMLButtonElement),
   sandbox: byId('sandbox', HTMLElement),
-  sandboxBack: byId('sandbox-back', HTMLButtonElement),
+  brand: byId('brand', HTMLButtonElement),
+  finders: [
+    byId('viewer', HTMLDetailsElement),
+    byId('cell-viewer', HTMLDetailsElement),
+    byId('world-viewer', HTMLDetailsElement),
+  ],
+  devSettings: byId('dev-settings', HTMLDetailsElement),
+  loadingScreen: byId('loading-screen', HTMLElement),
+  loadingWhat: byId('loading-what', HTMLElement),
   devPanel: byId('dev-panel', HTMLElement),
   systemLog: byId('system-log', HTMLDetailsElement),
   loadOrderPanel: byId('load-order', HTMLDetailsElement),
@@ -177,7 +185,10 @@ function showScreen(screen: Screen): void {
     ui.loadOrderPanel.open = true;
     ui.archivesPanel.open = true;
   } else if (screen === 'sandbox') {
+    // The finders start folded, the development settings open.
     ui.systemLog.open = false;
+    for (const finder of ui.finders) finder.open = false;
+    ui.devSettings.open = true;
   }
 }
 
@@ -451,7 +462,9 @@ async function main(): Promise<void> {
   ui.menuSandbox.addEventListener('click', () => {
     showScreen('sandbox');
   });
-  ui.sandboxBack.addEventListener('click', () => {
+  // The brand in the corner leads back to the main menu (from the sandbox).
+  ui.brand.addEventListener('click', () => {
+    if (document.body.dataset.screen !== 'sandbox') return;
     // Back on the main menu, nothing stays loaded.
     modelViewer.deactivate();
     worldViewer.deactivate();
@@ -473,6 +486,10 @@ async function main(): Promise<void> {
     () => session?.memory,
     () => {
       session?.soundSystem?.update(renderer.view?.camera);
+      // The loading screen while a cell or worldspace loads, until the player stands in it.
+      const loading = worldViewer.loading ?? modelViewer.loading;
+      ui.loadingScreen.classList.toggle('visible', loading !== undefined);
+      if (loading !== undefined) ui.loadingWhat.textContent = loading;
     },
   );
   const resumeAudio = (): void => {
