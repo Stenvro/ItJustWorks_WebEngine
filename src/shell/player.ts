@@ -56,10 +56,11 @@ export interface PlayerSetup extends PlayerData {
 const SWIM_SUBMERSION = 0.69;
 /**
  * The highest stair stepped up on stair materials. How the engine climbs them is not
- * documented; the risers of the vanilla stair meshes are at most 24 units (16 and 24 are the
- * common ones).
+ * documented. The treads of the 330 vanilla stair collision meshes rise mostly 24 or 16 units,
+ * but also 25–28 (about a hundred, e.g. Castle Volkihar's courtyard stairs at 24.4) and up to
+ * 32 (about forty): stairs the game lets one climb.
  */
-const STAIR_HEIGHT = 24;
+const STAIR_HEIGHT = 32;
 /** Pitch limit of the cameras (radians). */
 const MAX_PITCH = (85 * Math.PI) / 180;
 /** Looking further down than this while swimming forward dives. */

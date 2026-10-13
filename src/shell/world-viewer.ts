@@ -710,7 +710,7 @@ export class WorldViewer {
     const instances = placed.map(({ instance }) => instance);
     // The cell's water plane (lakes, rivers and the sea are cell water at a height).
     const water = cellWater(data.cell, {
-      height: world.waterWorld.defaultWaterHeight,
+      height: world.defaultWaterHeight,
       type: world.waterWorld.water,
     });
     if (water) {

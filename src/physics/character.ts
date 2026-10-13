@@ -217,8 +217,12 @@ export class CharacterBody {
     };
     // On stairs (surfaces of a stair material) whole steps are climbed; elsewhere only what
     // the shape's lower cone rides over.
+    // A staircase is a staircase from any of its shapes: its steps have a stair material, its
+    // risers and sides often plain stone, and walking into a riser must climb it too.
     const stairs = this.touched.some((collider) =>
-      this.settings.stairMaterials.has(this.physics.materialOf(collider)),
+      [...this.physics.objectMaterialsOf(collider)].some((material) =>
+        this.settings.stairMaterials.has(material),
+      ),
     );
     if (stairs) {
       this.#controller.enableAutostep(
