@@ -236,6 +236,28 @@ export class ActorPose {
     this.version++;
   }
 
+  /**
+   * Places every node: those in `driven` at the model-space matrix given (bodies of a ragdoll
+   * or a hinged sign), the others under their parent as the skeleton model places them.
+   */
+  place(driven: ReadonlyMap<number, Float32Array>): void {
+    const { rig } = this.skeleton;
+    for (let node = 0; node < rig.names.length; node++) {
+      const world = driven.get(node);
+      if (world) {
+        this.worlds.set(world.subarray(0, 16), node * 16);
+        continue;
+      }
+      const parent = rig.parents[node] ?? -1;
+      if (parent < 0) {
+        this.worlds.set(rig.local.subarray(node * 16, node * 16 + 16), node * 16);
+      } else {
+        multiplyAt(this.worlds, parent * 16, rig.local, node * 16, this.worlds, node * 16);
+      }
+    }
+    this.version++;
+  }
+
   /** A node's model-space matrix by name, or undefined. */
   world(name: string): Float32Array | undefined {
     const node = this.skeleton.nodeByName.get(name.toLowerCase());

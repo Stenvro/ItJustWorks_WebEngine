@@ -727,9 +727,14 @@ export function buildModel(file: NifFile): ModelData {
   const animation = buildAnimation(file, graphDriven);
   const sequences = buildSequences(file, graphDriven);
   // Models worn on a skeleton keep their node tree, as do models whose behavior graph may
-  // move their nodes as a skeleton (src/shell/animation-assets.ts).
+  // move their nodes as a skeleton (src/shell/animation-assets.ts) and models whose bodies
+  // move their nodes one by one (constraints, several bodies: src/shell/articulated.ts).
   const attachTo = attachmentNode(file);
-  const skeletal = attachTo !== undefined || graphDriven || parts.some((part) => part.skin);
+  const articulated =
+    file.blocks.some((block) => block.kind === 'constraint' || block.kind === 'constraint-chain') ||
+    file.blocks.filter((block) => block.kind === 'collision-object').length > 1;
+  const skeletal =
+    attachTo !== undefined || graphDriven || articulated || parts.some((part) => part.skin);
   return {
     parts,
     ...(skeletal && { nodes }),

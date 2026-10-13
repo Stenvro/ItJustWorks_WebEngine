@@ -116,6 +116,91 @@ describe('collision blocks', () => {
     expect(block.restitution).toBeCloseTo(0.4);
   });
 
+  it('reads a limited hinge: frames as axle, perpendiculars, pivot; limits and motor', () => {
+    const vec4 = (bytes: Bytes, x: number, y: number, z: number): Bytes => bytes.f32(x, y, z, 0);
+    const bytes = new Bytes().u32(2).i32(3).i32(7).u32(1);
+    vec4(bytes, 1, 0, 0); // axis A
+    vec4(bytes, 0, 1, 0);
+    vec4(bytes, 0, 0, 1);
+    vec4(bytes, 0.5, 0, 0); // pivot A
+    vec4(bytes, 0, 0, 1); // axis B
+    vec4(bytes, 1, 0, 0);
+    vec4(bytes, 0, 1, 0);
+    vec4(bytes, 0, 0, -0.25); // pivot B
+    bytes.f32(-0.5, 1.5, 0.1).u8(3).f32(0, 10, 2, 0.5).u8(1);
+    const block = parse('bhkLimitedHingeConstraint', bytes.done());
+    expect(block).toMatchObject({
+      kind: 'constraint',
+      entityA: 3,
+      entityB: 7,
+      priority: 1,
+      data: {
+        type: 'limited-hinge',
+        a: {
+          pivot: [0.5, 0, 0],
+          axes: [
+            [1, 0, 0],
+            [0, 1, 0],
+            [0, 0, 1],
+          ],
+        },
+        b: {
+          pivot: [0, 0, -0.25],
+          axes: [
+            [0, 0, 1],
+            [1, 0, 0],
+            [0, 1, 0],
+          ],
+        },
+        minAngle: -0.5,
+        maxAngle: 1.5,
+        motor: { type: 'spring', springConstant: 2, enabled: true },
+      },
+    });
+  });
+
+  it('reads breakable constraints and ball-and-socket chains', () => {
+    const breakable = new Bytes()
+      .u32(2)
+      .i32(1)
+      .i32(2)
+      .u32(1)
+      .u32(8) // stiff spring
+      .u32(2)
+      .i32(1)
+      .i32(2)
+      .u32(1)
+      .f32(0, 0, 1, 0, 0, 0, -1, 0, 3)
+      .f32(20)
+      .u8(0);
+    expect(parse('bhkBreakableConstraint', breakable.done())).toMatchObject({
+      data: { type: 'stiff-spring', pivotA: [0, 0, 1], pivotB: [0, 0, -1], length: 3 },
+      breakable: { threshold: 20, removeWhenBroken: false },
+    });
+    const chain = new Bytes()
+      .u32(4)
+      .f32(0, 0, 1, 0, 0, 0, -1, 0, 0, 0, 2, 0, 0, 0, -2, 0)
+      .f32(0.5, 1, 0, 0.25)
+      .u32(3)
+      .i32(4)
+      .i32(5)
+      .i32(6)
+      .u32(2)
+      .i32(4)
+      .i32(6)
+      .u32(1);
+    expect(parse('bhkBallSocketConstraintChain', chain.done())).toMatchObject({
+      kind: 'constraint-chain',
+      entities: [4, 5, 6],
+      links: [
+        { pivotA: [0, 0, 1], pivotB: [0, 0, -1] },
+        { pivotA: [0, 0, 2], pivotB: [0, 0, -2] },
+      ],
+      tau: 0.5,
+      damping: 1,
+    });
+  });
+
   it('reads primitive shapes', () => {
     expect(
       parse('bhkBoxShape', new Bytes().u32(7).f32(0.05).zeros(8).f32(1, 2, 3, 0).done()),

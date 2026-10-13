@@ -4,11 +4,13 @@
 // Platform-independent (Rapier's WebAssembly runs in browsers and in Node).
 
 import RAPIER from '@dimforge/rapier3d-compat';
-import type { Mat4, Vec3 } from '../render/math.ts';
+import type { ConstraintData } from '../formats/nif/types.ts';
+import { identity, type Mat4, type Vec3 } from '../render/math.ts';
 import {
   HAVOK_SCALE,
   rigidPart,
   type CollisionBody,
+  type CollisionConstraint,
   type CollisionData,
   type CollisionShape,
 } from './collision-data.ts';
@@ -53,6 +55,14 @@ export interface PlacedBody {
   readonly bodyToModel: Mat4;
 }
 
+/** A model's constraint in the world: the joint, while it holds. */
+export interface PlacedJoint {
+  joint: RAPIER.ImpulseJoint | undefined;
+  readonly a: PlacedBody;
+  readonly b: PlacedBody;
+  readonly constraint: CollisionConstraint;
+}
+
 /** The collision of one placed model (or landscape cell). */
 export class PlacedCollision {
   readonly owner: PhysicsOwner;
@@ -62,6 +72,8 @@ export class PlacedCollision {
   readonly scale: number;
   /** Bodies without model data (the one a landscape mesh hangs on). */
   readonly fixedBodies: readonly RAPIER.RigidBody[];
+  /** The model's constraints between its bodies (removed with them). */
+  readonly joints: readonly PlacedJoint[];
 
   constructor(
     owner: PhysicsOwner,
@@ -69,12 +81,14 @@ export class PlacedCollision {
     colliders: readonly RAPIER.Collider[],
     scale: number,
     fixedBodies: readonly RAPIER.RigidBody[] = [],
+    joints: readonly PlacedJoint[] = [],
   ) {
     this.owner = owner;
     this.bodies = bodies;
     this.colliders = colliders;
     this.scale = scale;
     this.fixedBodies = fixedBodies;
+    this.joints = joints;
   }
 
   /** Whether a body of this placement is simulated (the model moves with it). */
@@ -237,6 +251,18 @@ function alignY(direction: Vec3): Quaternion {
 
 const toHavok = (v: number): number => v / HAVOK_SCALE;
 
+/** Rapier's raw joint set, which takes limits on any axis of any joint. */
+interface RawJointLimits {
+  readonly rawSet: {
+    jointSetLimits(handle: number, axis: number, min: number, max: number): void;
+  };
+  readonly handle: number;
+}
+
+function cross(a: Vec3, b: Vec3): Vec3 {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+
 /** A collision hard enough to be heard (src/audio/impacts.ts). */
 export interface PhysicsImpact {
   /** Where: the simulated body's position, game units. */
@@ -308,6 +334,8 @@ export class PhysicsWorld {
   #impacts: PhysicsImpact[] = [];
   /** Simulated bodies' velocities before the step (Havok units per second). */
   readonly #velocities = new Map<number, RAPIER.Vector>();
+  /** Joints that break under too much force, while they hold. */
+  readonly #breakable = new Set<PlacedJoint>();
   /** Bodies settling after being placed: silent until they first sleep (or this time). */
   readonly #settling = new Map<number, number>();
   /** Simulated seconds. */
@@ -539,8 +567,158 @@ export class PhysicsWorld {
     }
     const materials = new Set(colliders.map((collider) => this.materialOf(collider)));
     for (const collider of colliders) this.#objectMaterials.set(collider.handle, materials);
+    const joints: PlacedJoint[] = [];
+    for (const constraint of collision.constraints ?? []) {
+      const a = bodies[constraint.bodyA];
+      const b = bodies[constraint.bodyB];
+      if (!a || !b || a.body === b.body) continue;
+      const joint = this.#createJoint(constraint.data, a.body, b.body, scale / HAVOK_SCALE);
+      const placed: PlacedJoint = { joint, a, b, constraint };
+      joints.push(placed);
+      if (constraint.breakable) this.#breakable.add(placed);
+    }
     this.#changed = true;
-    return new PlacedCollision(owner, bodies, colliders, scale);
+    return new PlacedCollision(owner, bodies, colliders, scale, [], joints);
+  }
+
+  /**
+   * A Havok constraint as a Rapier joint (`toLocal`: game units of the body's space to Havok
+   * units, the placement's scale applied). The frames carry over as they are: where the two
+   * coincide the constraint is at its zero. Bodies held together do not collide with each
+   * other. TODO(M13): Havok's ragdoll limits are a cone (twist axis within coneMaxAngle) and
+   * two planes; here they are three angle ranges (twist, and the two swings each within the
+   * cone, the one towards the plane axis also within the plane limits). Motors, friction and
+   * malleable strength (softness) are not applied: Rapier's joints are stiff.
+   */
+  #createJoint(
+    data: ConstraintData,
+    bodyA: RAPIER.RigidBody,
+    bodyB: RAPIER.RigidBody,
+    toLocal: number,
+  ): RAPIER.ImpulseJoint | undefined {
+    const point = (v: Vec3): RAPIER.Vector => ({
+      x: v[0] * toLocal,
+      y: v[1] * toLocal,
+      z: v[2] * toLocal,
+    });
+    const frame = (axes: readonly [Vec3, Vec3, Vec3]): RAPIER.Rotation => {
+      const m = identity();
+      const [x, y] = axes;
+      // Orthonormal and right-handed (the files' axes are, to float precision).
+      const z = cross(x, y);
+      m.set([x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0], 0);
+      return matrixQuaternion(m);
+    };
+    const create = (joint: RAPIER.JointData): RAPIER.ImpulseJoint => {
+      const made = this.world.createImpulseJoint(joint, bodyA, bodyB, false);
+      made.setContactsEnabled(false);
+      return made;
+    };
+    const limit = (
+      joint: RAPIER.ImpulseJoint,
+      axis: RAPIER.JointAxis,
+      min: number,
+      max: number,
+    ) => {
+      // Rapier keeps per-axis limits on every joint; the typed API exposes them only on
+      // one-axis joints.
+      const raw = joint as unknown as RawJointLimits;
+      raw.rawSet.jointSetLimits(raw.handle, axis, Math.min(min, max), Math.max(min, max));
+    };
+    switch (data.type) {
+      case 'ball-and-socket':
+        return create(RAPIER.JointData.spherical(point(data.pivotA), point(data.pivotB)));
+      case 'stiff-spring':
+        // TODO(M13): a stiff spring also pushes apart below its length; a rope only holds.
+        return create(
+          RAPIER.JointData.rope(data.length * toLocal, point(data.pivotA), point(data.pivotB)),
+        );
+      case 'hinge':
+      case 'limited-hinge': {
+        const joint = create(
+          RAPIER.JointData.revolute(point(data.a.pivot), point(data.b.pivot), {
+            x: 1,
+            y: 0,
+            z: 0,
+          }),
+        );
+        joint.setLocalFrame1(point(data.a.pivot), frame(data.a.axes));
+        joint.setLocalFrame2(point(data.b.pivot), frame(data.b.axes));
+        if (data.type === 'limited-hinge') {
+          limit(joint, RAPIER.JointAxis.AngX, data.minAngle, data.maxAngle);
+        }
+        return joint;
+      }
+      case 'prismatic': {
+        const joint = create(
+          RAPIER.JointData.prismatic(point(data.a.pivot), point(data.b.pivot), {
+            x: 1,
+            y: 0,
+            z: 0,
+          }),
+        );
+        joint.setLocalFrame1(point(data.a.pivot), frame(data.a.axes));
+        joint.setLocalFrame2(point(data.b.pivot), frame(data.b.axes));
+        limit(joint, RAPIER.JointAxis.LinX, data.minDistance * toLocal, data.maxDistance * toLocal);
+        return joint;
+      }
+      case 'ragdoll': {
+        const joint = create(RAPIER.JointData.spherical(point(data.a.pivot), point(data.b.pivot)));
+        joint.setLocalFrame1(point(data.a.pivot), frame(data.a.axes));
+        joint.setLocalFrame2(point(data.b.pivot), frame(data.b.axes));
+        const cone = Math.abs(data.coneMaxAngle);
+        limit(joint, RAPIER.JointAxis.AngX, data.twistMinAngle, data.twistMaxAngle);
+        limit(joint, RAPIER.JointAxis.AngY, -cone, cone);
+        limit(
+          joint,
+          RAPIER.JointAxis.AngZ,
+          Math.max(-cone, data.planeMinAngle),
+          Math.min(cone, data.planeMaxAngle),
+        );
+        return joint;
+      }
+      case 'malleable':
+        return this.#createJoint(data.inner, bodyA, bodyB, toLocal);
+    }
+  }
+
+  /**
+   * Breakable constraints break when the impulse on them in a step exceeds their threshold
+   * (Havok's units: kg·m/s, the beehive's 20 holding its 10 kg, a step taking 1.6). The joint's
+   * impulse is not exposed: it is the change of momentum of its simulated body that gravity
+   * does not explain (TODO(M13): contacts on the body count as well).
+   */
+  #breakJoints(): void {
+    const gravity = this.world.gravity;
+    for (const placed of this.#breakable) {
+      const joint = placed.joint;
+      const threshold = placed.constraint.breakable?.threshold ?? Infinity;
+      if (!joint?.isValid()) {
+        this.#breakable.delete(placed);
+        continue;
+      }
+      let impulse = 0;
+      for (const { body, data } of [placed.a, placed.b]) {
+        const before = this.#velocities.get(body.handle);
+        if (!before || !body.isDynamic()) continue;
+        const after = body.linvel();
+        const g = data.gravityFactor * PHYSICS_STEP;
+        impulse = Math.max(
+          impulse,
+          body.mass() *
+            Math.hypot(
+              after.x - before.x - gravity.x * g,
+              after.y - before.y - gravity.y * g,
+              after.z - before.z - gravity.z * g,
+            ),
+        );
+      }
+      if (impulse > threshold) {
+        this.world.removeImpulseJoint(joint, true);
+        placed.joint = undefined;
+        this.#breakable.delete(placed);
+      }
+    }
   }
 
   /**
@@ -612,6 +790,8 @@ export class PhysicsWorld {
   }
 
   remove(placed: PlacedCollision): void {
+    // Removing a body removes its joints.
+    for (const joint of placed.joints) this.#breakable.delete(joint);
     for (const collider of placed.colliders) this.unregister(collider);
     // Removing a body removes its colliders.
     for (const { body } of placed.bodies) this.world.removeRigidBody(body);
@@ -632,6 +812,7 @@ export class PhysicsWorld {
       this.world.step(this.#events, this.#hooks);
       this.#changed = false;
       this.#time += PHYSICS_STEP;
+      if (this.#breakable.size > 0) this.#breakJoints();
       this.#collectImpacts();
       this.#accumulator -= PHYSICS_STEP;
       steps++;

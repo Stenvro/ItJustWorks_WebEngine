@@ -87,8 +87,8 @@ through the edges' middles, a player walks around it); and a few steps higher th
   float height (swimFloatHeight) is not documented; 0.69 is the in-game measurement of the
   author of "Wade In Water".
 - **TODO(M7):** the player's body (third person shows no one yet), the camera on the animated
-  Camera1st node (sneaking lowers it), ragdolls and constraints. **TODO(M11):** fall damage
-  (fJumpFallHeight*), stamina for sprinting.
+  Camera1st node (sneaking lowers it). **TODO(M11):** fall damage (fJumpFallHeight*), stamina for
+  sprinting.
 
 ## Cameras and input
 
@@ -170,8 +170,36 @@ fZKeyMaxForceScaleHigh (1) at fZKeyMaxForceWeightHigh (150); the weight here is 
 fZKeyMaxForceWeightHigh; the other values are the executable's defaults, from a dump of every
 game setting (they agree with the plugins on those two). When the held object is left behind
 by more than fActivatePickLength it is dropped (the engine's rule is not documented). Not yet:
-fZKeyHeavyWeight (75) and the complex helper (fZKeyComplexHelper*, for ragdolls: TODO(M7)),
-fZKeyMaxContactDistance and fZKeyMaxContactMassRatio (TODO(M13)).
+fZKeyHeavyWeight (75) and the complex helper (fZKeyComplexHelper*: dragging corpses, with the
+actors' ragdolls, TODO(M11); their defaults live only in the executable and are not
+documented; a held object ragdoll hangs on the spring at the body taken hold of, its joints
+bring the rest), fZKeyMaxContactDistance and fZKeyMaxContactMassRatio (TODO(M13)).
+
+**Constraints and ragdolls** (`physics-world.ts`, `articulation.ts`; the blocks:
+formats/nif.md, Collision): a model's constraints become Rapier impulse joints between its
+bodies, the two Havok frames as the joint's local frames (axis, perpendiculars, pivot; the
+placement's scale on the pivots), and bodies held together do not collide with each other.
+Ball and socket → spherical; hinge → revolute; limited hinge → revolute limited to its angles;
+prismatic → prismatic limited to its distances; ragdoll → spherical with three angle ranges:
+the twist, the swing towards the motor axis within the cone, the swing towards the plane axis
+within the cone and the plane limits (TODO(M13): Havok's limit is a cone and two planes); stiff
+spring → rope (TODO(M13): a stiff spring also pushes); a chain → a ball and socket per link.
+Motors, friction, malleable strength and a chain's tau and damping are not applied (Rapier's
+joints are stiff). **Breakable** constraints break when the impulse on them in a step exceeds
+their threshold: the beehive's 20 holds its 10 kg (1.6 per step at 60 Hz), the mace trap's pin
+(30) its 108 kg of chain and mace (17.6); the joint's impulse is not exposed, so it is the
+change of momentum of its simulated body that gravity does not explain (TODO(M13): contacts on
+the body count too).
+
+Models whose bodies move their nodes one by one (`isArticulated`: constraints, or several
+simulated bodies) are drawn on a pose of their own nodes rather than moved as one: every
+simulated body places its node (the placement inverted × the body's pose × its rest pose
+inverted × the placement × the node's rest), the nodes under it follow; skinned parts take
+their bones from the pose, rigid parts hang on their node. Outside actors, 103 vanilla meshes
+have simulated bodies on bones (books, amulets, hanging pheasants and rabbits, salmon, pelts,
+bows, dead creatures) and 130 have limited hinges (shop signs swing when pushed, the books'
+covers, hanging game). Placed objects stay asleep in their placed pose until touched (or settle
+as their cell loads, as other loose objects).
 
 **Border regions:** in a worldspace with border regions (see
 [esm.md](formats/esm.md#border-regions)) movement that would leave them stops at the edge, and

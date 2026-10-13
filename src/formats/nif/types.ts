@@ -572,6 +572,119 @@ export interface RigidBodyBlock {
   readonly bodyFlags: number;
 }
 
+/**
+ * A constraint's frame on one of its bodies (Havok units, in the body's space): the pivot and
+ * three axes, the first the constraint's own (a hinge's axle, a ragdoll joint's twist axis, a
+ * prismatic's sliding axis). Where the two frames coincide the constraint is at its zero.
+ */
+export interface ConstraintFrame {
+  readonly pivot: Vec3;
+  readonly axes: readonly [Vec3, Vec3, Vec3];
+}
+
+/** bhkConstraintMotorCInfo (hkMotorType 1 position, 2 velocity, 3 spring damper). */
+export type ConstraintMotor =
+  | { readonly type: 'none' }
+  | {
+      readonly type: 'position';
+      readonly minForce: number;
+      readonly maxForce: number;
+      readonly tau: number;
+      readonly damping: number;
+      readonly proportionalRecoveryVelocity: number;
+      readonly constantRecoveryVelocity: number;
+      readonly enabled: boolean;
+    }
+  | {
+      readonly type: 'velocity';
+      readonly minForce: number;
+      readonly maxForce: number;
+      readonly tau: number;
+      readonly targetVelocity: number;
+      readonly useVelocityTarget: boolean;
+      readonly enabled: boolean;
+    }
+  | {
+      readonly type: 'spring';
+      readonly minForce: number;
+      readonly maxForce: number;
+      readonly springConstant: number;
+      readonly springDamping: number;
+      readonly enabled: boolean;
+    };
+
+/** What a constraint keeps between its two bodies (hkConstraintType). */
+export type ConstraintData =
+  | { readonly type: 'ball-and-socket'; readonly pivotA: Vec3; readonly pivotB: Vec3 }
+  | { readonly type: 'hinge'; readonly a: ConstraintFrame; readonly b: ConstraintFrame }
+  | {
+      readonly type: 'limited-hinge';
+      readonly a: ConstraintFrame;
+      readonly b: ConstraintFrame;
+      /** Radians about the axle, from the frames' zero. */
+      readonly minAngle: number;
+      readonly maxAngle: number;
+      readonly maxFriction: number;
+      readonly motor: ConstraintMotor;
+    }
+  | {
+      readonly type: 'prismatic';
+      readonly a: ConstraintFrame;
+      readonly b: ConstraintFrame;
+      readonly minDistance: number;
+      readonly maxDistance: number;
+      readonly friction: number;
+      readonly motor: ConstraintMotor;
+    }
+  | {
+      readonly type: 'ragdoll';
+      /** Axes: twist, plane, motor. */
+      readonly a: ConstraintFrame;
+      readonly b: ConstraintFrame;
+      readonly coneMaxAngle: number;
+      readonly planeMinAngle: number;
+      readonly planeMaxAngle: number;
+      readonly twistMinAngle: number;
+      readonly twistMaxAngle: number;
+      readonly maxFriction: number;
+      readonly motor: ConstraintMotor;
+    }
+  | {
+      readonly type: 'stiff-spring';
+      readonly pivotA: Vec3;
+      readonly pivotB: Vec3;
+      readonly length: number;
+    }
+  | {
+      /** bhkMalleableConstraint: another constraint, softened (strength 0..1). */
+      readonly type: 'malleable';
+      readonly inner: ConstraintData;
+      readonly strength: number;
+    };
+
+/** bhk*Constraint: two bodies (bhkRigidBody, by block) and what keeps them together. */
+export interface ConstraintBlock {
+  readonly kind: 'constraint';
+  readonly entityA: Ref;
+  readonly entityB: Ref;
+  readonly priority: number;
+  readonly data: ConstraintData;
+  /** bhkBreakableConstraint: it breaks when the force on it exceeds the threshold. */
+  readonly breakable?: { readonly threshold: number; readonly removeWhenBroken: boolean };
+}
+
+/** bhkBallSocketConstraintChain: a chain of bodies, each held to the next at its pivots. */
+export interface ConstraintChainBlock {
+  readonly kind: 'constraint-chain';
+  readonly entities: readonly Ref[];
+  /** Per link: the pivot on the body before it and on the body after it. */
+  readonly links: readonly { readonly pivotA: Vec3; readonly pivotB: Vec3 }[];
+  readonly tau: number;
+  readonly damping: number;
+  readonly constraintForceMixing: number;
+  readonly maxErrorDistance: number;
+}
+
 /** bhkSimpleShapePhantom: a shape that detects overlaps without colliding. */
 export interface PhantomBlock {
   readonly kind: 'phantom';
@@ -691,6 +804,8 @@ export interface CompressedMeshDataBlock {
 export type NifBlock =
   | CollisionObjectBlock
   | RigidBodyBlock
+  | ConstraintBlock
+  | ConstraintChainBlock
   | PhantomBlock
   | HavokShapeBlock
   | CompressedMeshDataBlock
