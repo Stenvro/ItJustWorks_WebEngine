@@ -112,13 +112,18 @@ function showFatal(error: unknown): void {
 // --- Render loop ----------------------------------------------------------
 
 /** `memory`: GPU bytes of the session's models and textures (none without a session). */
-function startRenderLoop(renderer: Renderer, memory: () => number | undefined): void {
+function startRenderLoop(
+  renderer: Renderer,
+  memory: () => number | undefined,
+  everyFrame: () => void,
+): void {
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let frames = 0;
   let windowStart = performance.now();
 
   const frame = (now: number): void => {
     renderer.render(reducedMotion ? 30 : now / 1000, devicePixelRatio);
+    everyFrame();
 
     frames++;
     const elapsed = now - windowStart;
@@ -406,7 +411,19 @@ async function main(): Promise<void> {
       session: () => session,
     };
   }
-  startRenderLoop(renderer, () => session?.memory);
+  // Sounds follow the camera; browsers start audio only after a user gesture.
+  startRenderLoop(
+    renderer,
+    () => session?.memory,
+    () => {
+      session?.soundSystem?.update(renderer.view?.camera);
+    },
+  );
+  const resumeAudio = (): void => {
+    void session?.sounds().then((sounds) => sounds.engine.resume());
+  };
+  window.addEventListener('pointerdown', resumeAudio);
+  window.addEventListener('keydown', resumeAudio);
 
   const backdrop = await findCustomBackdrop();
   if (backdrop) {

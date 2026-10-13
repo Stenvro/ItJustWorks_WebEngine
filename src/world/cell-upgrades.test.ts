@@ -56,6 +56,8 @@ const data: CellData = {
     hasWater: false,
     waterHeight: undefined,
     waterType: undefined,
+    acousticSpace: undefined,
+    musicType: undefined,
   },
   lighting: undefined,
   objects: [...references.keys()].map((reference) => ({
@@ -70,6 +72,8 @@ const data: CellData = {
   lights: [],
   decals: [],
   primitives: [],
+  emitters: [],
+  acousticAreas: [],
   references,
   skipped: [],
   entrance: [0, 0, 0],

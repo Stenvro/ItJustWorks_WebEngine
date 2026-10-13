@@ -2,6 +2,8 @@
 // VFS, the asset workers, texture and model caches, the record database and the Papyrus
 // environment. Disposed when another folder is mounted.
 
+import { AudioLoader } from '../audio/audio-loader.ts';
+import { SoundSystem } from '../audio/sound-system.ts';
 import { loadBehaviorGraph, type BehaviorGraph } from '../formats/hkx/behavior.ts';
 import { parseNif, type NifFile } from '../formats/nif/nif.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
@@ -124,6 +126,10 @@ export class GameSession {
   readonly #collisions = new Map<string, CollisionData>();
   #collisionMatrix: Promise<CollisionMatrix> | undefined;
   #playerData: Promise<PlayerData> | undefined;
+  #sounds: Promise<SoundSystem> | undefined;
+  #audioLoader: AudioLoader | undefined;
+  /** The sound system once it exists (the render loop updates it every frame). */
+  soundSystem: SoundSystem | undefined;
 
   constructor(device: GPUDevice, renderer: Renderer, vfs: Vfs, terminal: Terminal) {
     this.vfs = vfs;
@@ -552,7 +558,25 @@ export class GameSession {
     return freed;
   }
 
+  /** The game's sounds, made once (silent until a user gesture resumes the audio). */
+  sounds(): Promise<SoundSystem> {
+    this.#sounds ??= this.db.then(async (db) => {
+      const loader = new AudioLoader(this.vfs);
+      this.#audioLoader = loader;
+      const sounds = await SoundSystem.create(db, loader);
+      sounds.onWarning = (message) => {
+        this.#terminal.log('audio', message, 'warn');
+      };
+      this.soundSystem = sounds;
+      return sounds;
+    });
+    return this.#sounds;
+  }
+
   dispose(): void {
+    this.soundSystem?.stopAll();
+    void this.soundSystem?.engine.context.close();
+    this.#audioLoader?.dispose();
     for (const entry of this.#models.values()) void entry.then((model) => model?.destroy());
     this.#models.clear();
     this.#loadedModels.clear();

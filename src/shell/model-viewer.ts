@@ -252,10 +252,15 @@ export class ModelViewer {
   #activatable(reference: number): Activatable | undefined {
     const object = this.#cell?.data.objects.find((candidate) => candidate.reference === reference);
     if (!object) return undefined;
-    return objectActivation(object, this.#instances.get(reference), {
-      name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
-      go: (teleport) => this.onTravel?.(teleport),
-    });
+    return objectActivation(
+      object,
+      this.#instances.get(reference),
+      {
+        name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
+        go: (teleport) => this.onTravel?.(teleport),
+      },
+      (descriptor, at) => void this.#session?.soundSystem?.play(descriptor, at),
+    );
   }
 
   /** The drawn instances of the cell on screen, by reference. */
@@ -371,6 +376,8 @@ export class ModelViewer {
     const loader = this.#session?.loader;
     const textures = this.#session?.textures;
     if (!loader || !textures) return;
+    // A single model has no sounds of its own (a cell shown before had).
+    this.#session?.soundSystem?.stopAll();
     const token = ++this.#loadToken;
     const start = performance.now();
     this.#terminal.log('nif', `loading ${path}`);
@@ -666,6 +673,18 @@ export class ModelViewer {
     if (cell.waterPlane) {
       const { model, type } = cell.waterPlane;
       instances.push({ model, world: identity(), ...(type && { water: type }) });
+    }
+    // The cell's sounds: its enabled loops, acoustic spaces and its own acoustic space.
+    if (session) {
+      const emitters = cell.data.emitters.filter((emitter) => isEnabled(emitter.reference));
+      const areas = cell.data.acousticAreas.filter((area) => isEnabled(area.reference));
+      const space = cell.data.cell.acousticSpace;
+      void session.sounds().then((sounds) => {
+        if (this.#cell !== cell) return;
+        sounds.setEmitters(emitters);
+        sounds.setAcousticAreas(areas);
+        sounds.setCellAcousticSpace(space);
+      });
     }
     const scene = this.#renderer.scene.createScene(instances);
     cell.decals?.select(isEnabled);
@@ -1076,6 +1095,7 @@ export class ModelViewer {
   /** Stops showing anything (another viewer takes the screen); the session stays. */
   deactivate(): void {
     this.#loadToken++;
+    this.#session?.soundSystem?.stopAll();
     this.#detachControls?.();
     this.#detachControls = undefined;
     // The renderer must stop drawing the scene before it is freed (the other viewer may take

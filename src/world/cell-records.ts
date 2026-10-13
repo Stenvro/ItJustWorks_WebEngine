@@ -117,6 +117,10 @@ export interface CellRecord {
   readonly waterHeight: number | undefined;
   /** XCWT: the cell's water type (WATR). */
   readonly waterType: number | undefined;
+  /** XCAS: the cell's acoustic space (ASPC: ambience, region sounds, reverb). */
+  readonly acousticSpace: number | undefined;
+  /** XCMO: the cell's music type (MUSC). */
+  readonly musicType: number | undefined;
 }
 
 const nonZero = (id: number | undefined): number | undefined => (id === 0 ? undefined : id);
@@ -148,6 +152,8 @@ export function parseCell(record: GameRecord): CellRecord {
     hasWater: ((data?.[0] ?? 0) & 0x2) !== 0,
     waterHeight: record.fields.f32('XCLW'),
     waterType: nonZero(record.formIdField('XCWT')),
+    acousticSpace: nonZero(record.formIdField('XCAS')),
+    musicType: nonZero(record.formIdField('XCMO')),
   };
 }
 
