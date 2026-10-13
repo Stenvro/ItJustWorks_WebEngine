@@ -1,5 +1,6 @@
 // The sky at a moment: time-of-day blending of a weather's colours, the sun's path, moon
-// phases and the transition between two weathers. Platform-independent.
+// phases and the transition between two weathers. The sun's path follows how Community Shaders
+// reproduces the vanilla sun (THIRD_PARTY_NOTICES.md). Platform-independent.
 // Rules and sources: docs/formats/esm.md ("Climate and weather").
 
 import {

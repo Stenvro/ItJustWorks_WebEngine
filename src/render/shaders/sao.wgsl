@@ -1,6 +1,6 @@
-// Adapted from Community Shaders (GPL-3.0) and the Scalable Ambient Obscurance reference code
-// (McGuire, Mara and Luebke; Copyright (c) 2011-2012, NVIDIA, BSD licence); notices in
-// THIRD_PARTY_NOTICES.md.
+// Adapted from Community Shaders' shaders (MIT, Copyright (c) 2022 Ilya Perapechka) and the
+// Scalable Ambient Obscurance reference code (McGuire, Mara and Luebke; Copyright (c)
+// 2011-2012, NVIDIA, BSD licence); notices in THIRD_PARTY_NOTICES.md.
 // Ambient occlusion as the engine does it (bSAOEnable): Scalable Ambient Obscurance (McGuire,
 // Mara and Luebke, HPG 2012). The engine's passes around the raw AO match the paper's
 // reference code (Community Shaders' ISSAOCameraZ, ISSAOMinify, ISSAOBlur, ISSAOComposite):

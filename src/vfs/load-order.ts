@@ -45,7 +45,7 @@ export interface LoadOrderEntry {
   readonly name: string;
   readonly isMaster: boolean;
   readonly isLight: boolean;
-  /** 0x00-0xFD, of 0xFE voor light plugins. */
+  /** 0x00-0xFD, or 0xFE for light plugins. */
   readonly modIndex: number;
   /** 0x000-0xFFF within 0xFE; light plugins only. */
   readonly lightIndex: number | undefined;

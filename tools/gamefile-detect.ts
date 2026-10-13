@@ -6,8 +6,21 @@ export const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const BLOCKED_EXTENSIONS = new Set([
   '.bsa', '.ba2', '.esm', '.esp', '.esl', '.nif', '.kf', '.dds', '.hkx', '.pex', '.psc',
   '.tri', '.lip', '.fuz', '.xwm', '.wav', '.swf', '.gfx', '.bik', '.ess', '.skse',
-  '.strings', '.dlstrings', '.ilstrings', '.seq', '.btr', '.bto', '.lod',
+  '.strings', '.dlstrings', '.ilstrings', '.seq', '.btr', '.bto', '.lod', '.ccc', '.gid',
+  '.cgid',
 ]); // prettier-ignore
+
+/**
+ * Plain-text game files, by name (they have no magic bytes): the INI files, the Creation Club
+ * list, the interface's translations, control map and font configuration, load orders.
+ */
+const BLOCKED_NAMES: readonly RegExp[] = [
+  /^skyrim.*\.ini$/i,
+  /^translate_.*\.txt$/i,
+  /^controlmap.*\.txt$/i,
+  /^fontconfig.*\.txt$/i,
+  /^(plugins|loadorder)\.txt$/i,
+];
 
 interface Signature {
   readonly label: string;
@@ -52,6 +65,8 @@ export function detectGameFile(path: string, size: number, head: Uint8Array): st
   const dot = path.lastIndexOf('.');
   const extension = dot > path.lastIndexOf('/') ? path.slice(dot).toLowerCase() : '';
   if (BLOCKED_EXTENSIONS.has(extension)) return `extension ${extension}`;
+  const name = path.slice(path.lastIndexOf('/') + 1);
+  if (BLOCKED_NAMES.some((pattern) => pattern.test(name))) return `game file ${name}`;
 
   const signature = SIGNATURES.find((s) => matches(head, s));
   if (signature) return `content matches ${signature.label}`;

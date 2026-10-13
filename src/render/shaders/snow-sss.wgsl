@@ -1,4 +1,5 @@
-// Adapted from Community Shaders (GPL-3.0); see THIRD_PARTY_NOTICES.md.
+// Adapted from Community Shaders' shaders (MIT, Copyright (c) 2022 Ilya Perapechka); see
+// THIRD_PARTY_NOTICES.md.
 // The improved snow's subsurface scattering (the engine's ISSnowSSS pass, as Community
 // Shaders' ISSnowSSS.hlsl reproduces it): snow pixels are blurred along the screen with a
 // wide kernel whose blue reaches farthest, stopping at depth edges, and darkened towards a cool
