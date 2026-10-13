@@ -255,6 +255,42 @@ export interface PhysicsImpact {
   readonly body: number;
 }
 
+/** How thick a flat hull is made (Havok units): a sliver, its convex radius does the rest. */
+const FLAT_HULL_THICKNESS = 0.001;
+
+/** Whether Rapier can make the shape (it builds hulls only then, and fails on flat ones). */
+function buildable(desc: RAPIER.ColliderDesc): boolean {
+  // Typed as always made; undefined where Rapier could not make it.
+  const raw = desc.shape.intoRaw() as ReturnType<RAPIER.Shape['intoRaw']> | undefined;
+  if (!raw) return false;
+  raw.free();
+  return true;
+}
+
+/**
+ * The convex hull of points (Havok units), grown by `radius`. Havok takes points that lie in
+ * one plane (the Dragon Priest dagger's two shapes), its convex radius giving them thickness;
+ * Rapier needs volume, so such points get a sliver of it along each axis.
+ */
+function hull(points: Float32Array, radius: number): RAPIER.ColliderDesc | undefined {
+  const make = (from: Float32Array): RAPIER.ColliderDesc | null =>
+    radius > 0
+      ? RAPIER.ColliderDesc.roundConvexHull(from, radius)
+      : RAPIER.ColliderDesc.convexHull(from);
+  const desc = make(points);
+  if (desc && buildable(desc)) return desc;
+  const padded = new Float32Array(points.length * 4);
+  padded.set(points);
+  for (let axis = 0; axis < 3; axis++) {
+    const offset = points.length * (axis + 1);
+    for (let i = 0; i < points.length; i++) {
+      padded[offset + i] = (points[i] ?? 0) + (i % 3 === axis ? FLAT_HULL_THICKNESS : 0);
+    }
+  }
+  const thick = make(padded);
+  return thick && buildable(thick) ? thick : undefined;
+}
+
 // --- World --------------------------------------------------------------------------------
 
 export class PhysicsWorld {
@@ -276,6 +312,8 @@ export class PhysicsWorld {
   readonly #settling = new Map<number, number>();
   /** Simulated seconds. */
   #time = 0;
+  /** Collision was placed or removed since the last step (queries do not see it yet). */
+  #changed = false;
   #accumulator = 0;
   /**
    * Contacts below this speed (game units per second) make no sound and are not reported
@@ -360,18 +398,12 @@ export class PhysicsWorld {
     switch (shape.type) {
       case 'mesh': {
         // Simulated bodies get the hull of the mesh (Rapier does not collide two meshes).
-        if (dynamic) return RAPIER.ColliderDesc.convexHull(scaled(shape.vertices)) ?? undefined;
+        if (dynamic) return hull(scaled(shape.vertices), 0);
         if (shape.indices.length < 3) return undefined;
         return RAPIER.ColliderDesc.trimesh(scaled(shape.vertices), shape.indices);
       }
-      case 'convex': {
-        const points = scaled(shape.points);
-        const desc =
-          shape.radius > 0
-            ? RAPIER.ColliderDesc.roundConvexHull(points, shape.radius * s)
-            : RAPIER.ColliderDesc.convexHull(points);
-        return desc ?? undefined;
-      }
+      case 'convex':
+        return hull(scaled(shape.points), shape.radius * s);
       case 'box': {
         const [hx, hy, hz] = shape.halfExtents;
         const r = shape.radius * s;
@@ -502,6 +534,7 @@ export class PhysicsWorld {
     }
     const materials = new Set(colliders.map((collider) => this.materialOf(collider)));
     for (const collider of colliders) this.#objectMaterials.set(collider.handle, materials);
+    this.#changed = true;
     return new PlacedCollision(owner, bodies, colliders, scale);
   }
 
@@ -529,6 +562,7 @@ export class PhysicsWorld {
         : RAPIER.ColliderDesc.ball(bounds[0] * s);
     const collider = this.world.createCollider(desc, body);
     this.register(collider, layer, owner);
+    this.#changed = true;
     return new PlacedCollision(owner, [], [collider], scale, [body]);
   }
 
@@ -568,6 +602,7 @@ export class PhysicsWorld {
       body,
     );
     this.register(collider, layer, owner);
+    this.#changed = true;
     return new PlacedCollision(owner, [], [collider], 1, [body]);
   }
 
@@ -576,6 +611,7 @@ export class PhysicsWorld {
     // Removing a body removes its colliders.
     for (const { body } of placed.bodies) this.world.removeRigidBody(body);
     for (const body of placed.fixedBodies) this.world.removeRigidBody(body);
+    this.#changed = true;
   }
 
   /**
@@ -589,6 +625,7 @@ export class PhysicsWorld {
       beforeStep?.(PHYSICS_STEP);
       this.#recordVelocities();
       this.world.step(this.#events, this.#hooks);
+      this.#changed = false;
       this.#time += PHYSICS_STEP;
       this.#collectImpacts();
       this.#accumulator -= PHYSICS_STEP;
@@ -671,6 +708,14 @@ export class PhysicsWorld {
         body: body.handle,
       });
     });
+  }
+
+  /**
+   * Whether ray and shape casts see all placed collision: Rapier updates what queries search
+   * (its broad phase) in a step, so what was placed or removed since is not there yet.
+   */
+  get queriesCurrent(): boolean {
+    return !this.#changed;
   }
 
   /** How far into the next step the clock is (0..1), for drawing between steps. */

@@ -5,15 +5,21 @@
 
 import type { Camera } from '../render/view-camera.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
-import { SCAN_CODES, type ControlMap } from '../formats/controlmap/controlmap.ts';
+import { parseControlMap, SCAN_CODES, type ControlMap } from '../formats/controlmap/controlmap.ts';
+import type { NifFile } from '../formats/nif/nif.ts';
+import { decodeWindows1252 } from '../formats/text.ts';
 import { CharacterBody } from '../physics/character.ts';
 import { HAVOK_SCALE } from '../physics/collision-data.ts';
 import { Layer } from '../physics/collision-layers.ts';
-import type { GrabSettings } from '../physics/grab.ts';
+import { GRAB_DEFAULTS, type GrabSettings } from '../physics/grab.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
-import type { IniSettings } from '../world/ini-settings.ts';
-import { directionalSpeed, type MovementType } from '../world/movement.ts';
-import type { PlayerBody } from '../world/player-body.ts';
+import type { Vfs } from '../vfs/vfs.ts';
+import type { GameSettings } from '../world/game-settings.ts';
+import { IniSettings } from '../world/ini-settings.ts';
+import { MaterialFlag, parseMaterialType } from '../world/material-type.ts';
+import { directionalSpeed, parseMovementType, type MovementType } from '../world/movement.ts';
+import { readPlayerBody, type PlayerBody } from '../world/player-body.ts';
+import type { RecordDatabase } from '../world/record-db.ts';
 
 /** The movement types the player moves with (the behavior graph's states). */
 export interface PlayerMovement {
@@ -35,6 +41,72 @@ export interface PlayerData {
   readonly grab: GrabSettings;
   /** Material ids of stairs (MATT with the stairs flag). */
   readonly stairMaterials: ReadonlySet<number>;
+}
+
+/** The keyboard, mouse and gamepad bindings. */
+const CONTROL_MAP = 'interface\\controls\\pc\\controlmap.txt';
+
+/**
+ * Reads what the player is made of: the race's body, the INI settings, the control map, the
+ * movement types and the stair materials (in the browser's session and in the Node tools).
+ */
+export async function readPlayerData(
+  db: RecordDatabase,
+  vfs: Vfs,
+  settings: GameSettings,
+  nif: (path: string) => Promise<NifFile>,
+): Promise<PlayerData> {
+  const [body, controlText] = await Promise.all([readPlayerBody(db, nif), vfs.read(CONTROL_MAP)]);
+  const types = new Map<string, MovementType>();
+  for (const formId of db.formIdsOfType('MOVT')) {
+    const record = await db.get(formId);
+    if (!record || record.deleted) continue;
+    const type = parseMovementType(record);
+    types.set(type.name, type);
+  }
+  const type = (name: string): MovementType => {
+    const found = types.get(name);
+    if (!found) throw new Error(`movement type ${name} is missing`);
+    return found;
+  };
+  // Stair materials: what the character controller climbs as stairs.
+  const stairMaterials = new Set<number>();
+  for (const formId of db.formIdsOfType('MATT')) {
+    const record = await db.get(formId);
+    if (!record || record.deleted) continue;
+    const material = parseMaterialType(record);
+    if ((material.flags & MaterialFlag.stairs) !== 0) stairMaterials.add(material.id);
+  }
+  return {
+    body,
+    stairMaterials,
+    ini: new IniSettings(vfs.defaultIni),
+    controls: parseControlMap(decodeWindows1252(controlText)),
+    // The behavior graph's movement states (MOVT MNAM).
+    movement: {
+      normal: type('NPCDefault'),
+      sprint: type('NPCSprinting'),
+      sneak: type('NPCSneaking'),
+      swim: type('NPCSwimming'),
+    },
+    jumpHeight: settings.number('fJumpHeightMin') ?? 76,
+    grab: grabSettings(settings),
+  };
+}
+
+/** The grab spring's settings: GMSTs where the plugins set them, else the defaults. */
+function grabSettings(settings: GameSettings): GrabSettings {
+  return {
+    springDamping: settings.number('fZKeySpringDamping') ?? GRAB_DEFAULTS.springDamping,
+    springElasticity: settings.number('fZKeySpringElasticity') ?? GRAB_DEFAULTS.springElasticity,
+    objectDamping: settings.number('fZKeyObjectDamping') ?? GRAB_DEFAULTS.objectDamping,
+    maxForce: settings.number('fZKeyMaxForce') ?? GRAB_DEFAULTS.maxForce,
+    maxForceScaleLow: settings.number('fZKeyMaxForceScaleLow') ?? GRAB_DEFAULTS.maxForceScaleLow,
+    maxForceScaleHigh: settings.number('fZKeyMaxForceScaleHigh') ?? GRAB_DEFAULTS.maxForceScaleHigh,
+    maxForceWeightLow: settings.number('fZKeyMaxForceWeightLow') ?? GRAB_DEFAULTS.maxForceWeightLow,
+    maxForceWeightHigh:
+      settings.number('fZKeyMaxForceWeightHigh') ?? GRAB_DEFAULTS.maxForceWeightHigh,
+  };
 }
 
 /**
@@ -61,6 +133,10 @@ const SWIM_SUBMERSION = 0.69;
  * 32 (about forty): stairs the game lets one climb.
  */
 const STAIR_HEIGHT = 32;
+/** A door's arrival point may lie this far above its floor (game units). */
+const ARRIVAL_FLOOR_BELOW = 96;
+/** Rays around the edge of the controller's footprint, for a floor below it. */
+const FOOTPRINT_RAYS = 8;
 /** Pitch limit of the cameras (radians). */
 const MAX_PITCH = (85 * Math.PI) / 180;
 /** Looking further down than this while swimming forward dives. */
@@ -177,6 +253,44 @@ export class Player implements Camera {
 
   get swimming(): boolean {
     return this.character.swimming;
+  }
+
+  /**
+   * The floor a player arriving through a door at `feet` stands on: the first surface below
+   * half the body's height above the arrival point, down to ARRIVAL_FLOOR_BELOW below it. Above
+   * stay porch roofs and door frames; below the middle of the body, the character controller
+   * is pushed up out of what it stands in (Havok's character proxy recovers from penetration
+   * along the contact normal: up, below its middle). Arrival points lie up to 37 units under
+   * their floor (the doors of Halted Stream Camp, Chillfurrow Farm and Fenn's Gulch Mine).
+   * Where the ray down the middle finds nothing (a seam between floor pieces: Bryling's House,
+   * where the entrance's alcove has no floor of its own), the shape rests on the highest floor
+   * under the edge of its footprint. The rays leave out the player's own shape (standing there
+   * already) and phantoms.
+   */
+  arrivalFloor(feet: Vec3): { readonly height: number; readonly owner: number } | undefined {
+    const above = this.character.shape.height / 2;
+    const floorAt = (x: number, y: number) =>
+      this.#setup.physics.raycast(
+        [x, y, feet[2] + above],
+        [0, 0, -1],
+        above + ARRIVAL_FLOOR_BELOW,
+        Layer.charController,
+        this.character.collider,
+      );
+    let hit = floorAt(feet[0], feet[1]);
+    if (!hit) {
+      // The middle misses: the highest floor under the footprint's edge.
+      const radius = this.character.shape.radius;
+      for (let i = 0; i < FOOTPRINT_RAYS; i++) {
+        const angle = (i * 2 * Math.PI) / FOOTPRINT_RAYS;
+        const edge = floorAt(
+          feet[0] + Math.cos(angle) * radius,
+          feet[1] + Math.sin(angle) * radius,
+        );
+        if (edge && (!hit || edge.point[2] > hit.point[2])) hit = edge;
+      }
+    }
+    return hit && { height: hit.point[2], owner: hit.owner?.reference ?? 0 };
   }
 
   teleport(feet: Vec3, yaw?: number): void {

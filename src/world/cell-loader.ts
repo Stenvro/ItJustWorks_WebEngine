@@ -8,6 +8,7 @@ import { RecordFlag } from '../formats/esm/record.ts';
 import { identity, multiply, type Mat4 } from '../render/math.ts';
 import {
   baseModelPath,
+  enabledAtGameStart,
   LightFlag,
   parseCell,
   parseLight,
@@ -137,19 +138,29 @@ export async function doorDestination(
 
 /**
  * Where the player arrives in a cell through its doors: a load door in the cell leads to a
- * door elsewhere, whose own XTEL is the arrival point in front of the first door.
+ * door elsewhere, whose own XTEL is the arrival point in front of the first door (of those
+ * there at the start of a new game, on both sides; else of any).
  */
 export async function cellArrival(
   db: RecordDatabase,
   data: CellData,
 ): Promise<{ position: readonly [number, number, number]; heading: number } | undefined> {
+  let fallback: { position: readonly [number, number, number]; heading: number } | undefined;
   for (const object of data.objects) {
     if (!object.teleport) continue;
     const other = await db.get(object.teleport.door);
     const back = other && parseTeleport(other);
-    if (back) return { position: back.position, heading: back.rotation[2] };
+    if (!back) continue;
+    const arrival = { position: back.position, heading: back.rotation[2] };
+    if (
+      (await enabledAtGameStart(db, object.reference)) &&
+      (await enabledAtGameStart(db, object.teleport.door))
+    ) {
+      return arrival;
+    }
+    fallback ??= arrival;
   }
-  return undefined;
+  return fallback;
 }
 
 /** XPRM of a collision marker: type 1 box, 2 sphere (3 portal box, 4 line are not solid). */

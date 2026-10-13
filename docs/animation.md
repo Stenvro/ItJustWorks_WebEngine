@@ -41,3 +41,7 @@ Formats: [nif.md](formats/nif.md#animation) (controllers, sequences, keys),
   scripts (ObjectReference.PlayAnimation, SetAnimationVariable*): TODO(M8).
 - Particles follow: the manager-controlled controllers of a particle system (birth rate,
   emitter active) take their values from the sequences the graph plays.
+- Meshes whose graph plays Havok animations (hkbClipGenerator clips, .hkx files) stand in their
+  rest pose until those play (TODO(M7)), and so does their collision: the Volkihar courtyard's
+  secret stair (CasSecEntrance01, Valerica's dial puzzle) shows neither closed nor open, its
+  spiral half under the platforms; opening it is the puzzle's script (TODO(M8)).

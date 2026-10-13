@@ -67,19 +67,32 @@ describe('cellWater', () => {
   const world = { height: -14000, type: 0x18 };
 
   it('has no water without the cell flag', () => {
-    expect(cellWater({ hasWater: false, waterHeight: 0, waterType: undefined }, world)).toBe(
-      undefined,
-    );
+    expect(
+      cellWater({ interior: false, hasWater: false, waterHeight: 0, waterType: undefined }, world),
+    ).toBe(undefined);
+  });
+
+  it('has no water in interior cells (their water is placed)', () => {
+    expect(
+      cellWater({ interior: true, hasWater: true, waterHeight: 0, waterType: 0x99 }, world),
+    ).toBe(undefined);
   });
 
   it('uses XCLW, or the world default for FLT_MAX', () => {
-    expect(cellWater({ hasWater: true, waterHeight: -4700, waterType: 0x99 }, world)).toEqual({
+    expect(
+      cellWater({ interior: false, hasWater: true, waterHeight: -4700, waterType: 0x99 }, world),
+    ).toEqual({
       height: -4700,
       type: 0x99,
     });
     expect(
       cellWater(
-        { hasWater: true, waterHeight: 3.4028234663852886e38, waterType: undefined },
+        {
+          interior: false,
+          hasWater: true,
+          waterHeight: 3.4028234663852886e38,
+          waterType: undefined,
+        },
         world,
       ),
     ).toEqual({ height: -14000, type: 0x18 });
@@ -87,10 +100,16 @@ describe('cellWater', () => {
 
   it('treats absurd heights as no water', () => {
     expect(
-      cellWater({ hasWater: true, waterHeight: -2147483648, waterType: undefined }, world),
+      cellWater(
+        { interior: false, hasWater: true, waterHeight: -2147483648, waterType: undefined },
+        world,
+      ),
     ).toBeUndefined();
     expect(
-      cellWater({ hasWater: true, waterHeight: 4294953216, waterType: undefined }, world),
+      cellWater(
+        { interior: false, hasWater: true, waterHeight: 4294953216, waterType: undefined },
+        world,
+      ),
     ).toBeUndefined();
   });
 });

@@ -83,6 +83,20 @@ export interface CollisionLayer {
   readonly collidesWith: readonly number[];
 }
 
+/** The collision layers of the load order (every COLL record, the winning versions). */
+export async function readCollisionMatrix(db: {
+  formIdsOfType(type: string): number[];
+  get(formId: number): Promise<(RecordSource & { readonly deleted: boolean }) | undefined>;
+}): Promise<CollisionMatrix> {
+  const layers = await Promise.all(
+    db.formIdsOfType('COLL').map(async (formId) => {
+      const record = await db.get(formId);
+      return record && !record.deleted ? parseCollisionLayer(record) : undefined;
+    }),
+  );
+  return new CollisionMatrix(layers.filter((layer) => layer !== undefined));
+}
+
 export function parseCollisionLayer(record: RecordSource): CollisionLayer {
   const u32 = (type: string): number => {
     const data = record.fields.first(type);

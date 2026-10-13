@@ -58,6 +58,7 @@ never in a build).
 | `node tools/bsa-list.ts <bsa> --verify` | Contents of an archive; verifies and extracts everything    |
 | `node tools/nif-stats.ts --parse`       | Block types of all meshes; parses every block               |
 | `node tools/music-info.ts [type]`       | Music types and tracks of the load order                    |
+| `node tools/spawn-audit.ts [filter]`    | Arrives through every load door; walks through doors        |
 
 ## No game files in the repository
 

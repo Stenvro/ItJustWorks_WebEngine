@@ -7,15 +7,9 @@ import { SoundSystem } from '../audio/sound-system.ts';
 import { loadBehaviorGraph, type BehaviorGraph } from '../formats/hkx/behavior.ts';
 import { parseNif, type NifFile } from '../formats/nif/nif.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
-import { parseControlMap } from '../formats/controlmap/controlmap.ts';
-import { decodeWindows1252 } from '../formats/text.ts';
 import { IniSettings } from '../world/ini-settings.ts';
-import { parseMovementType, type MovementType } from '../world/movement.ts';
-import { MaterialFlag, parseMaterialType } from '../world/material-type.ts';
-import { readPlayerBody } from '../world/player-body.ts';
-import type { PlayerData } from './player.ts';
-import { GRAB_DEFAULTS, type GrabSettings } from '../physics/grab.ts';
-import { CollisionMatrix, parseCollisionLayer } from '../physics/collision-layers.ts';
+import { readPlayerData, type PlayerData } from './player.ts';
+import { readCollisionMatrix, type CollisionMatrix } from '../physics/collision-layers.ts';
 import type { Renderer } from '../render/renderer.ts';
 import { propertyMaterial, type AddonNode } from '../render/model-data.ts';
 import type {
@@ -81,8 +75,6 @@ function setEmittance(color: MutableEmittance, rgb: readonly [number, number, nu
  * used ones that nothing draws are freed (and loaded again when needed).
  */
 export const MEMORY_BUDGET = 4096 * 1024 * 1024;
-/** The keyboard, mouse and gamepad bindings. */
-const CONTROL_MAP = 'interface\\controls\\pc\\controlmap.txt';
 /** Freed down to this share of the budget, so trimming does not run every frame. */
 const TRIM_TARGET = 0.85;
 /** Models and textures used in the last 10 seconds stay (cells may be about to place them). */
@@ -236,15 +228,7 @@ export class GameSession {
 
   /** Which collision layers collide (COLL records), read once. */
   collisionMatrix(): Promise<CollisionMatrix> {
-    this.#collisionMatrix ??= this.db.then(async (db) => {
-      const layers = await Promise.all(
-        db.formIdsOfType('COLL').map(async (formId) => {
-          const record = await db.get(formId);
-          return record && !record.deleted ? parseCollisionLayer(record) : undefined;
-        }),
-      );
-      return new CollisionMatrix(layers.filter((layer) => layer !== undefined));
-    });
+    this.#collisionMatrix ??= this.db.then((db) => readCollisionMatrix(db));
     return this.#collisionMatrix;
   }
 
@@ -253,48 +237,9 @@ export class GameSession {
    * and the movement types, read once.
    */
   playerData(): Promise<PlayerData> {
-    this.#playerData ??= this.db.then(async (db) => {
-      const [body, settings, controlText] = await Promise.all([
-        readPlayerBody(db, (path) => this.nif(path)),
-        this.settings(),
-        this.vfs.read(CONTROL_MAP),
-      ]);
-      const types = new Map<string, MovementType>();
-      for (const formId of db.formIdsOfType('MOVT')) {
-        const record = await db.get(formId);
-        if (!record || record.deleted) continue;
-        const type = parseMovementType(record);
-        types.set(type.name, type);
-      }
-      const type = (name: string): MovementType => {
-        const found = types.get(name);
-        if (!found) throw new Error(`movement type ${name} is missing`);
-        return found;
-      };
-      // Stair materials: what the character controller climbs as stairs.
-      const stairMaterials = new Set<number>();
-      for (const formId of db.formIdsOfType('MATT')) {
-        const record = await db.get(formId);
-        if (!record || record.deleted) continue;
-        const material = parseMaterialType(record);
-        if ((material.flags & MaterialFlag.stairs) !== 0) stairMaterials.add(material.id);
-      }
-      return {
-        body,
-        stairMaterials,
-        ini: new IniSettings(this.vfs.defaultIni),
-        controls: parseControlMap(decodeWindows1252(controlText)),
-        // The behavior graph's movement states (MOVT MNAM).
-        movement: {
-          normal: type('NPCDefault'),
-          sprint: type('NPCSprinting'),
-          sneak: type('NPCSneaking'),
-          swim: type('NPCSwimming'),
-        },
-        jumpHeight: settings.number('fJumpHeightMin') ?? 76,
-        grab: grabSettings(settings),
-      };
-    });
+    this.#playerData ??= this.db.then(async (db) =>
+      readPlayerData(db, this.vfs, await this.settings(), (path) => this.nif(path)),
+    );
     return this.#playerData;
   }
 
@@ -585,19 +530,4 @@ export class GameSession {
     this.loader.dispose();
     void this.db.then((db) => db.close());
   }
-}
-
-/** The grab spring's settings: GMSTs where the plugins set them, else the defaults. */
-function grabSettings(settings: GameSettings): GrabSettings {
-  return {
-    springDamping: settings.number('fZKeySpringDamping') ?? GRAB_DEFAULTS.springDamping,
-    springElasticity: settings.number('fZKeySpringElasticity') ?? GRAB_DEFAULTS.springElasticity,
-    objectDamping: settings.number('fZKeyObjectDamping') ?? GRAB_DEFAULTS.objectDamping,
-    maxForce: settings.number('fZKeyMaxForce') ?? GRAB_DEFAULTS.maxForce,
-    maxForceScaleLow: settings.number('fZKeyMaxForceScaleLow') ?? GRAB_DEFAULTS.maxForceScaleLow,
-    maxForceScaleHigh: settings.number('fZKeyMaxForceScaleHigh') ?? GRAB_DEFAULTS.maxForceScaleHigh,
-    maxForceWeightLow: settings.number('fZKeyMaxForceWeightLow') ?? GRAB_DEFAULTS.maxForceWeightLow,
-    maxForceWeightHigh:
-      settings.number('fZKeyMaxForceWeightHigh') ?? GRAB_DEFAULTS.maxForceWeightHigh,
-  };
 }

@@ -39,13 +39,15 @@ steps (about 14 units); on stair materials (MATT stairs flag) whole stairs up to
 are climbed: the treads of the 330 vanilla stair collision meshes rise mostly 24 or 16, but
 also 25–28 (Castle Volkihar's courtyard stairs: 24.4) and up to 32. The steepest walkable slope is kept in
 hkpCharacterProxy::maxSlopeCosine without an INI setting or GMST: 60° here, TODO(M13):
-calibrate both against the game. Walking up stairs is slow: before a step is climbed, the
-lower cone rides up its edge as up a slope of about 52°, and Rapier's controller moves along a
-slope at cos² of its angle (about 40 % of walking speed on Breezehome's stairs; running
-climbs them at full height). Havok keeps the speed along the surface; moving the wanted
-movement onto the surface here, or treating stair edges as steps, made the controller stick
-on the edges instead. TODO(M13): stairs at walking speed (how the engine uses the stairs
-material).
+calibrate both against the game. A step is climbed when the controller's own movement on a
+staircase gets less than 60 % of the way: the shape rises by up to the stair height (as far as
+there is room), moves on, and comes down onto the step if that is walkable ground higher than
+where it stood (`CharacterBody` step-up: shape casts that ignore what the shape already
+touches). Rapier's own autostep stopped at random treads of the Volkihar courtyard's stairs
+(24 units, like those climbed before them) whatever its minimum step width, and climbed at
+about 40 % of walking speed (its controller moves along the edge's slope at cos² of its angle);
+stairs are now climbed at about walking speed (the courtyard's 244-unit stairs in 0.8 s).
+TODO(M13): compare with how the engine uses the stairs material.
 
 - **On the ground** it only moves along the ground; snapping to the ground (as far as the
   shape's radius) keeps it on slopes and down steps. Pressing down every step as well makes
@@ -90,15 +92,47 @@ L_ITEMPICKER. Load doors take the player to their XTEL (inside or out, see
 Open and Close sequences. The prompt is the shell's until the game's HUD: TODO(M9), as are
 loading screens.
 
-**Arriving** through a door, the player waits (in place, the camera free to look) until the
+**Arriving** through a door, the player waits (in place, behind the loading screen) until the
 collision of the cell and the eight around it is in place — a street, bridge or porch may
-belong to a neighbour — and then until its floor is found between 16 units above the arrival
-point (below porch roofs and door frames) and 96 below; after 10 s it is placed at the door's
-own height. The rays leave out the player's own shape (it stands at the arrival point already)
-and phantoms (trigger volumes), as the character controller does. While walking, a player
-whose cell's collision has not loaded yet waits instead of falling through. Of 15 sampled
-doors into Tamriel and the cities, 14 now land on the floor and stay; the trapdoor of
-Lakeview Manor's unbuilt tower has no floor until it is built (TODO(M8): building states).
+belong to a neighbour — and ray casts see it: Rapier updates what queries search (its broad
+phase) in a physics step, so collision placed since the last step is not there for them yet
+(`PhysicsWorld.queriesCurrent`); the player is placed at the start of a frame, before that
+frame's collision. Then the player stands on the floor: the first surface below half the
+body's height above the arrival point, down to 96 below it (`Player.arrivalFloor`). Porch
+roofs and door frames stay above; below the middle of the body, Havok's character proxy is
+pushed up out of what it stands in (it recovers from penetration along the contact normal).
+Arrival points lie up to 37 units under their floor (Halted Stream Camp, Chillfurrow Farm,
+Fenn's Gulch Mine). Without a floor there (an underwater passage's auto-load door) the player
+stays at the door's height. Then the character controller recovers from penetration
+(`CharacterBody.recover`): pushed along each overlapping contact's normal by its depth, a few
+rounds, as Havok's proxy does — arrival points may lie in their door (KatariahWorld's balcony
+door: 25 units in front of it, where the shape reaches 32). The rays leave out the player's
+own shape and phantoms (trigger volumes), as the character controller does. Waiting has no
+time limit but a 60 s safety net: a 10 s limit placed players under their floor where a heavy
+cell's collision took longer (frames are slow in a hidden tab). While walking, a player whose
+cell's collision has not loaded yet waits instead of falling through.
+
+The viewers start where a door would bring the player in: an interior at the first of its load
+doors (both sides there at the start of a new game), a worldspace at the door nearest its
+busiest cell (the East Empire Company Warehouse's door to Brinewater Grotto is disabled and
+boxes stand before it; it starts at the Solitude docks' door); without doors, a worldspace at
+its busiest cell's middle on whatever is below (The Pit: on its arena), an interior at its
+middle.
+
+`node tools/spawn-audit.ts` walks every load door: the arrival as above with the collision of
+where it leads (interiors with player homes built, as the viewer opens them; exteriors with the
+3×3 cells and their landscape), a second standing, then walking off in eight directions; it
+lists arrivals without a floor, falling, standing in something, without headroom, stuck or
+under water, and the viewers' starts. `--passages` opens every door of the interiors whose
+leaf stands taller than the player and walks through it both ways. Of 2,092 arrivals (217
+doors disabled at the start left out), the ones left with a problem are test and placeholder
+cells (CTest, the Creation Club placeholders, MainMenuCell, the voice cells), states that quests
+change (Sky Haven Temple's exterior lies in a collision box until MQ203 disables it; Highpoint
+Tower is buried in ash), and drops by design (the Ratway's sewer outlet into Lake Honrich, the
+prison release markers). Of 1,492 doors, 104 stay shut to the walk: deadbolted ones (opened
+from the other side), spider webs to cut through, Nchardak's seals, rubble behind false doors,
+and load doors used as plain doors (their Open only cracks them, as the game plays it): the
+deadbolts, seals and secret doors are scripts (TODO(M8)), cutting webs is combat (TODO(M11)).
 
 **Grabbing:** Activate on a loose (simulated) object waits `[Controls] fZKeyDelay` (0.2 s): let
 go before that, it activates; held longer, the player takes hold of the object where the

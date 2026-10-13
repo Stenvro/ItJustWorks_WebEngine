@@ -40,9 +40,8 @@ import {
   type Teleport,
 } from '../world/cell-loader.ts';
 import type { Arrival } from '../world/worldspace.ts';
-import { cellWater, DEFAULT_WATER } from '../world/water.ts';
+import { DEFAULT_WATER } from '../world/water.ts';
 import { waterAreaHeight } from '../audio/water-audio.ts';
-import { waterPlane } from '../render/water-data.ts';
 import {
   DEFAULT_INTERIOR_IMAGE_SPACE,
   parseImageSpace,
@@ -112,14 +111,9 @@ interface CellView {
   readonly imageSpace: ImageSpace | undefined;
   /** Water types of water activators, by WATR form id. */
   readonly waterTypes: ReadonlyMap<number, GpuWaterType | undefined>;
-  /** The cell's water level (XCLW), drawn as a plane under everything, with its type. */
-  readonly waterPlane: { model: GpuModel; type: GpuWaterType | undefined } | undefined;
   /** Placed decals (blood, scorch marks, puddles), shown by the selection. */
   readonly decals: GpuDecals | undefined;
 }
-
-/** Half the width of an interior's water plane: it lies under the whole cell. */
-const INTERIOR_WATER_EXTENT = 50_000;
 
 const numberFormat = new Intl.NumberFormat('en-US');
 const hex = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
@@ -265,7 +259,6 @@ export class ModelViewer {
 
   /** Starts playing the cell on screen: physics, and the player standing at `feet`. */
   async #startPlay(
-    data: CellData,
     feet: readonly [number, number, number],
     yaw: number,
     /** The player arrives through a door: on the floor at its feet. */
@@ -284,9 +277,8 @@ export class ModelViewer {
     const physics = new PhysicsWorld(matrix, GRAVITY);
     physics.impactSpeed = playerData.ini.number('Audio', 'fMinSoundVel');
     physics.settleSeconds = playerData.ini.number('HAVOK', 'fWarmStartMaxTime');
-    const water = cellWater(data.cell);
     const player = new Player(
-      { ...playerData, physics, waterHeight: () => water?.height },
+      { ...playerData, physics, waterHeight: (x, y) => this.#waterAt(x, y)?.height },
       feet,
       yaw,
     );
@@ -450,54 +442,37 @@ export class ModelViewer {
         data.objects.flatMap((object) => (object.water === undefined ? [] : [object.water])),
       ),
     ];
-    const water = cellWater(data.cell);
-    const [models, collisions, directionals, actions, imageSpace, waterTypes, waterPlaneType] =
-      await Promise.all([
-        Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)).then(
-          (entries) => new Map(entries),
+    const [models, collisions, directionals, actions, imageSpace, waterTypes] = await Promise.all([
+      Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)).then(
+        (entries) => new Map(entries),
+      ),
+      Promise.all(paths.map(async (path) => [path, await session?.collision(path)] as const)).then(
+        (entries) => new Map(entries),
+      ),
+      Promise.all(
+        data.objects.map(
+          async (object) =>
+            [object.reference, await session?.directionalMaterial(object.directional)] as const,
         ),
-        Promise.all(
-          paths.map(async (path) => [path, await session?.collision(path)] as const),
-        ).then((entries) => new Map(entries)),
-        Promise.all(
-          data.objects.map(
-            async (object) =>
-              [object.reference, await session?.directionalMaterial(object.directional)] as const,
-          ),
-        ).then(
-          (entries) =>
-            new Map(
-              entries.flatMap(([reference, directional]) =>
-                directional ? [[reference, directional] as const] : [],
-              ),
+      ).then(
+        (entries) =>
+          new Map(
+            entries.flatMap(([reference, directional]) =>
+              directional ? [[reference, directional] as const] : [],
             ),
-        ),
-        this.#homeActions(data),
-        db
-          .get(data.cell.imageSpace ?? DEFAULT_INTERIOR_IMAGE_SPACE)
-          .then((record) => (record?.type === 'IMGS' ? parseImageSpace(record) : undefined)),
-        Promise.all(waterIds.map(async (id) => [id, await session?.waterType(id)] as const)).then(
-          (entries) => new Map(entries),
-        ),
-        water ? session?.waterType(water.type ?? DEFAULT_WATER) : undefined,
-        session?.waterType(DEFAULT_WATER).then((type) => {
-          this.#renderer.scene.defaultWater = type;
-        }),
-      ]);
-    let waterPlaneModel: GpuModel | undefined;
-    if (water && session) {
-      const [x, y] = data.entrance;
-      waterPlaneModel = await this.#renderer.scene.createModel(
-        waterPlane(
-          x - INTERIOR_WATER_EXTENT,
-          y - INTERIOR_WATER_EXTENT,
-          x + INTERIOR_WATER_EXTENT,
-          y + INTERIOR_WATER_EXTENT,
-          water.height,
-        ),
-        session.textures,
-      );
-    }
+          ),
+      ),
+      this.#homeActions(data),
+      db
+        .get(data.cell.imageSpace ?? DEFAULT_INTERIOR_IMAGE_SPACE)
+        .then((record) => (record?.type === 'IMGS' ? parseImageSpace(record) : undefined)),
+      Promise.all(waterIds.map(async (id) => [id, await session?.waterType(id)] as const)).then(
+        (entries) => new Map(entries),
+      ),
+      session?.waterType(DEFAULT_WATER).then((type) => {
+        this.#renderer.scene.defaultWater = type;
+      }),
+    ]);
     const toggles = findToggles(data, actions.controlled);
     // Homes open furnished; "new game" shows them as bought.
     const choices = fullyUpgraded(actions, NEW_GAME);
@@ -524,7 +499,6 @@ export class ModelViewer {
     for (const failure of this.#session?.textures.takeFailures() ?? []) {
       this.#terminal.log('dds', failure, 'warn');
     }
-    const previousWater = this.#cell?.waterPlane?.model;
     const previousDecals = this.#cell?.decals;
     this.#cell = {
       data,
@@ -539,7 +513,6 @@ export class ModelViewer {
       label,
       imageSpace,
       waterTypes,
-      waterPlane: waterPlaneModel && { model: waterPlaneModel, type: waterPlaneType },
       decals,
     };
     // The player arrives as through the cell's door; without one, at its middle.
@@ -563,17 +536,11 @@ export class ModelViewer {
     );
     const count = Math.max(1, data.objects.length);
     this.#fly.lookAtPoint([centre[0] / count, centre[1] / count, z + EYE_HEIGHT]);
-    await this.#startPlay(
-      data,
-      [x, y, z],
-      comeIn ? comeIn.heading : this.#fly.yaw,
-      comeIn !== undefined,
-    );
+    await this.#startPlay([x, y, z], comeIn ? comeIn.heading : this.#fly.yaw, comeIn !== undefined);
     if (token !== this.#loadToken) return;
 
     this.#renderUpgrades();
     const visible = this.#applyCellSelection();
-    previousWater?.destroy();
     if (previousDecals !== decals) previousDecals?.destroy();
     const what = [
       actions.purchases.length > 0 ? `${String(actions.purchases.length)} purchases` : '',
@@ -683,10 +650,6 @@ export class ModelViewer {
           })),
         primitives: cell.data.primitives.filter((primitive) => isEnabled(primitive.reference)),
       });
-    }
-    if (cell.waterPlane) {
-      const { model, type } = cell.waterPlane;
-      instances.push({ model, world: identity(), ...(type && { water: type }) });
     }
     // The cell's sounds: its enabled loops, acoustic spaces and its own acoustic space.
     if (session) {
@@ -1060,7 +1023,7 @@ export class ModelViewer {
     document.body.classList.add('content-scene');
   }
 
-  /** Water in the shown interior: a water activator's surface, else the cell's water. */
+  /** Water in the shown interior: the surface of a water activator (interiors' water). */
   readonly #waterAt = (x: number, y: number): { height: number; type: number } | undefined => {
     const data = this.#cell?.data;
     if (!data) return undefined;
@@ -1068,8 +1031,7 @@ export class ModelViewer {
       const height = waterAreaHeight(area, x, y);
       if (height !== undefined) return { height, type: area.type };
     }
-    const water = cellWater(data.cell);
-    return water && { height: water.height, type: water.type ?? DEFAULT_WATER };
+    return undefined;
   };
 
   /** Whether the camera is under the interior's water. */
@@ -1120,10 +1082,8 @@ export class ModelViewer {
   /** Forgets the shown cell and frees what was made for it. */
   #releaseCell(): void {
     this.#stopPlay();
-    const plane = this.#cell?.waterPlane?.model;
     const decals = this.#cell?.decals;
     this.#cell = undefined;
-    plane?.destroy();
     decals?.destroy();
   }
 

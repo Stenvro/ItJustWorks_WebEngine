@@ -2,7 +2,7 @@
 // and LOD (child worlds such as WhiterunWorld borrow them from Tamriel), and where the
 // persistent references are. Layout: docs/formats/esm.md ("Worldspaces").
 
-import { parseReference, parseTeleport } from './cell-records.ts';
+import { enabledAtGameStart, parseReference, parseTeleport } from './cell-records.ts';
 import { CELL_SIZE, parseLand, type LandData } from './land.ts';
 import { parseLargeReferences, type LargeReference } from './large-references.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
@@ -171,6 +171,8 @@ export class Worldspace {
    * Where the player comes into the world near a point, as the game brings them in: in front
    * of the nearest load door (the arrival point of the door on its other side, XTEL), else at
    * the nearest map marker (where fast travel arrives). Undefined if the world has neither.
+   * Only doors there at the start of a new game count, on both sides (the East Empire Company
+   * Warehouse's way to Brinewater Grotto is disabled, and boxes stand in front of it).
    */
   async arrivalNear(x: number, y: number): Promise<Arrival | undefined> {
     const distance = (px: number, py: number): number => Math.hypot(px - x, py - y);
@@ -182,7 +184,9 @@ export class Worldspace {
       const other = destination && (await this.db.get(destination.door));
       const back = other && parseTeleport(other);
       // The door on the other side leads back here; its XTEL is where one arrives.
-      if (back?.door !== door) continue;
+      if (!destination || back?.door !== door) continue;
+      if (!(await enabledAtGameStart(this.db, door))) continue;
+      if (!(await enabledAtGameStart(this.db, destination.door))) continue;
       const d = distance(back.position[0], back.position[1]);
       if (!best || d < best.distance) {
         best = { position: back.position, heading: back.rotation[2], distance: d };
