@@ -16,6 +16,12 @@ import {
   type Playback,
 } from './animation.ts';
 import { billboardWorld } from './billboard.ts';
+import {
+  MAX_PALETTE_BONES,
+  PALETTE_BONE_FLOATS,
+  writePosedPalette,
+  writeRestPalette,
+} from './bone-palette.ts';
 import { frustumPlanes, invert, sphereVisible, type Plane } from './frustum.ts';
 import { identity, maxScale, multiply, transformPoint, type Mat4, type Vec3 } from './math.ts';
 import type {
@@ -37,6 +43,7 @@ import effectShader from './shaders/effect.wgsl?raw';
 import lightingShader from './shaders/lighting.wgsl?raw';
 import snowShader from './shaders/snow.wgsl?raw';
 import particleShader from './shaders/particle.wgsl?raw';
+import skinningShader from './shaders/skinning.wgsl?raw';
 import refractionShader from './shaders/refraction.wgsl?raw';
 import shadowShader from './shaders/shadow.wgsl?raw';
 import waterShader from './shaders/water.wgsl?raw';
@@ -53,6 +60,10 @@ export const MAX_LIGHTS = 256;
 /** Size of the WGSL `Draw` struct and the stride between draws (uniform offset alignment). */
 const DRAW_SIZE = 256;
 const DRAW_STRIDE = 256;
+/** A draw's bone palette: as many bones as a vertex can name, three vec4 rows each. */
+const PALETTE_BYTES = MAX_PALETTE_BONES * PALETTE_BONE_FLOATS * 4;
+/** Palettes start at storage buffer offset alignment. */
+const PALETTE_ALIGNMENT = 256;
 /** WGSL `Frame` struct: 176 floats. */
 const FRAME_FLOATS = 176;
 /** Sun shadow map: one layer per cascade. */
@@ -514,6 +525,8 @@ interface Draw {
   readonly sky: boolean;
   /** Object LOD by cell: segments of loaded cells are left out (the cell draws itself). */
   readonly lodSegments: readonly LodSegment[] | undefined;
+  /** Skinned: byte offset of its bone palette in the scene's bone buffer. */
+  readonly bones: number | undefined;
 }
 
 /** A draw that changes every frame (animated, or turning to the camera). */
@@ -526,6 +539,8 @@ interface AnimatedDraw {
   readonly playback?: { readonly state: Playback; readonly sequences: ModelSequences };
   /** The instance's behavior graph and the model's sequences it plays. */
   readonly graph?: GraphDraw;
+  /** Skinned: byte offset of its bone palette (posed from the frame's bone matrices). */
+  readonly bones?: number;
 }
 
 /** An instance's running behavior graph with what it plays from. */
@@ -573,6 +588,13 @@ interface ParticleDraw {
   updated: number | undefined;
 }
 
+/** The bone palettes of a scene's skinned draws. */
+interface SceneBones {
+  readonly buffer: GPUBuffer;
+  readonly bindGroup: GPUBindGroup;
+  readonly data: Float32Array;
+}
+
 /** Placed model instances with their per-draw uniforms. Does not own the models. */
 export class GpuScene {
   readonly draws: readonly Draw[];
@@ -587,6 +609,8 @@ export class GpuScene {
   /** Draws of moving instances, and add-ons placed on them. */
   readonly moving: readonly MovingDraw[];
   readonly movingAddons: readonly MovingAddon[];
+  /** Bone palettes of skinned draws (GPU buffer, its bind group and CPU copy). */
+  readonly bones: SceneBones | undefined;
   /** The models it draws (held while it exists). */
   readonly #models: readonly GpuModel[];
 
@@ -603,6 +627,7 @@ export class GpuScene {
       draws: [],
       addons: [],
     },
+    bones?: SceneBones,
   ) {
     this.draws = draws;
     this.drawBindGroup = drawBindGroup;
@@ -613,12 +638,14 @@ export class GpuScene {
     this.emittance = emittance;
     this.moving = moving.draws;
     this.movingAddons = moving.addons;
+    this.bones = bones;
     this.#models = models;
     for (const model of models) model.acquire();
   }
 
   destroy(): void {
     this.uniforms.destroy();
+    this.bones?.buffer.destroy();
     for (const model of this.#models) model.release();
   }
 }
@@ -962,6 +989,11 @@ export class SceneRenderer {
   readonly #drawLayout: GPUBindGroupLayout;
   readonly #materialLayout: GPUBindGroupLayout;
   readonly #pipelineLayout: GPUPipelineLayout;
+  /** Skinned parts: a fourth group with the draw's bone palette. */
+  readonly #boneLayout: GPUBindGroupLayout;
+  readonly #skinnedPipelineLayout: GPUPipelineLayout;
+  readonly #skinnedShadowLayout: GPUPipelineLayout;
+  readonly #shadowLayout: GPUPipelineLayout;
   readonly #modules: {
     readonly lighting: GPUShaderModule;
     readonly effect: GPUShaderModule;
@@ -1088,6 +1120,33 @@ export class SceneRenderer {
       label: 'object',
       bindGroupLayouts: [frameLayout, this.#drawLayout, this.#materialLayout],
     });
+    this.#boneLayout = device.createBindGroupLayout({
+      label: 'bones',
+      entries: [
+        {
+          binding: 0,
+          visibility: GPUShaderStage.VERTEX,
+          buffer: { type: 'read-only-storage', hasDynamicOffset: true, minBindingSize: 48 },
+        },
+      ],
+    });
+    this.#skinnedPipelineLayout = device.createPipelineLayout({
+      label: 'object-skinned',
+      bindGroupLayouts: [frameLayout, this.#drawLayout, this.#materialLayout, this.#boneLayout],
+    });
+    this.#shadowLayout = device.createPipelineLayout({
+      label: 'shadow',
+      bindGroupLayouts: [this.#cascadeLayout, this.#drawLayout, this.#materialLayout],
+    });
+    this.#skinnedShadowLayout = device.createPipelineLayout({
+      label: 'shadow-skinned',
+      bindGroupLayouts: [
+        this.#cascadeLayout,
+        this.#drawLayout,
+        this.#materialLayout,
+        this.#boneLayout,
+      ],
+    });
     this.#waterTypeLayout = device.createBindGroupLayout({
       label: 'water-type',
       entries: [
@@ -1177,11 +1236,11 @@ export class SceneRenderer {
     this.#modules = {
       lighting: device.createShaderModule({
         label: 'lighting',
-        code: frameShader + snowShader + commonShader + lightingShader,
+        code: frameShader + snowShader + commonShader + skinningShader + lightingShader,
       }),
       effect: device.createShaderModule({
         label: 'effect',
-        code: frameShader + commonShader + effectShader,
+        code: frameShader + commonShader + skinningShader + effectShader,
       }),
       water: device.createShaderModule({
         label: 'water',
@@ -1189,7 +1248,7 @@ export class SceneRenderer {
       }),
       refraction: device.createShaderModule({
         label: 'refraction',
-        code: frameShader + commonShader + refractionShader,
+        code: frameShader + commonShader + skinningShader + refractionShader,
       }),
       particle: device.createShaderModule({
         label: 'particle',
@@ -1355,6 +1414,23 @@ export class SceneRenderer {
       0,
     );
     const uniforms = new ArrayBuffer(Math.max(1, drawCount) * DRAW_STRIDE);
+    // Bone palettes of skinned parts, each at an aligned offset, in their rest pose.
+    let paletteEnd = 0;
+    for (const instance of placed) {
+      for (const { part } of instance.model.parts) {
+        if (!part.skin) continue;
+        paletteEnd =
+          Math.ceil(paletteEnd / PALETTE_ALIGNMENT) * PALETTE_ALIGNMENT +
+          part.skin.bones.length * PALETTE_BONE_FLOATS * 4;
+      }
+    }
+    const boneData =
+      paletteEnd > 0
+        ? new Float32Array(
+            (Math.ceil(paletteEnd / PALETTE_ALIGNMENT) * PALETTE_ALIGNMENT + PALETTE_BYTES) / 4,
+          )
+        : undefined;
+    let paletteCursor = 0;
     const draws: Draw[] = [];
     const animated: AnimatedDraw[] = [];
     const particles: ParticleDraw[] = [];
@@ -1373,6 +1449,13 @@ export class SceneRenderer {
         const playback =
           instance.playback && sequences ? { state: instance.playback, sequences } : undefined;
         const graph = graphDraw(instance);
+        const skin = part.part.skin;
+        let bones: number | undefined;
+        if (skin && boneData) {
+          bones = Math.ceil(paletteCursor / PALETTE_ALIGNMENT) * PALETTE_ALIGNMENT;
+          paletteCursor = bones + skin.bones.length * PALETTE_BONE_FLOATS * 4;
+          writeRestPalette(skin, boneData, bones / 4);
+        }
         if (animation || part.part.billboard || sky || playback || graph) {
           animated.push({
             offset,
@@ -1381,6 +1464,7 @@ export class SceneRenderer {
             animation,
             ...(playback && { playback }),
             ...(graph && { graph }),
+            ...(bones !== undefined && { bones }),
           });
         }
         const floats = new Float32Array(uniforms, offset, DRAW_SIZE / 4);
@@ -1463,6 +1547,7 @@ export class SceneRenderer {
           water: part.pass === 'water' ? instance.water : undefined,
           sky,
           lodSegments: lodSegments(part.part, world),
+          bones,
         };
         draws.push(draw);
         if (instance.motion) {
@@ -1498,6 +1583,7 @@ export class SceneRenderer {
             water: undefined,
             sky,
             lodSegments: undefined,
+            bones,
           };
           draws.push(passDraw);
           if (instance.motion) {
@@ -1564,7 +1650,24 @@ export class SceneRenderer {
       models,
       emittance,
       { draws: moving, addons: movingAddons },
+      boneData && this.#sceneBones(boneData),
     );
+  }
+
+  /** Uploads a scene's bone palettes; every draw binds its own at a dynamic offset. */
+  #sceneBones(data: Float32Array): SceneBones {
+    const buffer = createBuffer(
+      this.#device,
+      new Uint8Array(data.buffer),
+      GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      'bone-palettes',
+    );
+    const bindGroup = this.#device.createBindGroup({
+      label: 'bones',
+      layout: this.#boneLayout,
+      entries: [{ binding: 0, resource: { buffer, size: PALETTE_BYTES } }],
+    });
+    return { buffer, bindGroup, data };
   }
 
   updateFrame(
@@ -1744,14 +1847,31 @@ export class SceneRenderer {
           multiply(billboardWorld(node, billboard.mode, camera), billboard.local, world);
           floats.set(world, 0);
         } else {
-          multiply(
-            draw.instanceWorld,
-            frame?.worlds.get(draw.part.block) ?? draw.part.world,
-            world,
-          );
+          // A skinned shape is placed by its bones, never by its own node.
+          const local = draw.part.skin
+            ? draw.part.world
+            : (frame?.worlds.get(draw.part.block) ?? draw.part.world);
+          multiply(draw.instanceWorld, local, world);
           floats.set(world, 0);
         }
         if (frame) writeAnimatedMaterial(floats, draw.part, frame);
+        const skin = draw.part.skin;
+        const bones = scene.bones;
+        if (frame && skin && bones && draw.bones !== undefined) {
+          writePosedPalette(
+            skin,
+            (i) => frame.worlds.get(skin.bones[i] ?? -1),
+            bones.data,
+            draw.bones / 4,
+          );
+          this.#device.queue.writeBuffer(
+            bones.buffer,
+            draw.bones,
+            bones.data,
+            draw.bones / 4,
+            skin.bones.length * PALETTE_BONE_FLOATS,
+          );
+        }
         this.#device.queue.writeBuffer(
           scene.uniforms,
           draw.offset,
@@ -2141,6 +2261,9 @@ export class SceneRenderer {
         pass.setPipeline(part.shadowPipeline);
         pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
         pass.setBindGroup(2, part.bindGroup);
+        if (draw.bones !== undefined && scene.bones) {
+          pass.setBindGroup(3, scene.bones.bindGroup, [draw.bones]);
+        }
         pass.setVertexBuffer(0, part.vertexBuffer);
         pass.setIndexBuffer(part.indexBuffer, 'uint16');
         pass.drawIndexed(part.indexCount);
@@ -2244,6 +2367,9 @@ export class SceneRenderer {
     pass.setPipeline(part.pipeline);
     pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
     pass.setBindGroup(2, part.bindGroup);
+    if (draw.bones !== undefined && scene.bones) {
+      pass.setBindGroup(3, scene.bones.bindGroup, [draw.bones]);
+    }
     pass.setVertexBuffer(0, part.vertexBuffer);
     pass.setIndexBuffer(part.indexBuffer, 'uint16');
     const segments = draw.lodSegments;
@@ -2384,22 +2510,22 @@ export class SceneRenderer {
     const alphaTest = (part.alpha?.flags ?? 0) & ALPHA_TEST;
     const doubleSided = ((part.material?.flags2 ?? 0) & SLSF2_DOUBLE_SIDED) !== 0;
     const withUv = alphaTest !== 0 && layout.uv >= 0;
-    const key = ['shadow', layout.stride, withUv ? layout.uv : -1, doubleSided].join('|');
+    const skinning = part.skin ? (layout.skinning ?? -1) : -1;
+    const key = ['shadow', layout.stride, withUv ? layout.uv : -1, doubleSided, skinning].join('|');
     let pipeline = this.#pipelines.get(key);
     if (!pipeline) {
       const attributes: GPUVertexAttribute[] = [
         { shaderLocation: 0, format: 'float32x3', offset: 0 },
       ];
       if (withUv) attributes.push({ shaderLocation: 2, format: 'float16x2', offset: layout.uv });
+      if (skinning >= 0) attributes.push(...skinAttributes(skinning));
+      const entry = skinning >= 0 ? 'vs_skinned' : 'vs_object';
       pipeline = this.#device.createRenderPipeline({
         label: key,
-        layout: this.#device.createPipelineLayout({
-          label: 'shadow',
-          bindGroupLayouts: [this.#cascadeLayout, this.#drawLayout, this.#materialLayout],
-        }),
+        layout: skinning >= 0 ? this.#skinnedShadowLayout : this.#shadowLayout,
         vertex: {
           module: this.#shadowModule,
-          entryPoint: withUv ? 'vs_object_uv' : 'vs_object',
+          entryPoint: withUv ? `${entry}_uv` : entry,
           buffers: [{ arrayStride: layout.stride, attributes }],
         },
         ...(withUv && {
@@ -2470,6 +2596,7 @@ export class SceneRenderer {
     // they never fight with the surface below. Reversed Z: a positive bias means closer.
     const decal = (flags1 & (SLSF1_DECAL | SLSF1_DYNAMIC_DECAL)) !== 0;
     const layout = part.layout;
+    const skinned = part.skin !== undefined && (layout.skinning ?? -1) >= 0;
     const key = [
       shader,
       layout.stride,
@@ -2477,6 +2604,7 @@ export class SceneRenderer {
       layout.normal,
       layout.tangent,
       layout.color,
+      skinned ? layout.skinning : -1,
       JSON.stringify(blend),
       cullMode,
       depthWrite,
@@ -2488,11 +2616,11 @@ export class SceneRenderer {
     if (!pipeline) {
       pipeline = this.#device.createRenderPipeline({
         label: `${shader} ${key}`,
-        layout: this.#pipelineLayout,
+        layout: skinned ? this.#skinnedPipelineLayout : this.#pipelineLayout,
         vertex: {
           module: this.#modules[shader],
-          entryPoint: 'vs_main',
-          buffers: vertexBuffers(layout),
+          entryPoint: skinned ? 'vs_skinned' : 'vs_main',
+          buffers: vertexBuffers(layout, skinned),
         },
         fragment: {
           module: this.#modules[shader],
@@ -2522,8 +2650,19 @@ export class SceneRenderer {
   }
 }
 
-/** Mesh attributes from buffer 0; missing ones from the constant fallback buffer 1. */
-export function vertexBuffers(layout: VertexLayout): GPUVertexBufferLayout[] {
+/** Bone weights (4 half floats) and bone indices (4 bytes) of skinned vertices. */
+function skinAttributes(offset: number): GPUVertexAttribute[] {
+  return [
+    { shaderLocation: 6, format: 'float16x4', offset },
+    { shaderLocation: 7, format: 'uint8x4', offset: offset + 8 },
+  ];
+}
+
+/**
+ * Mesh attributes from buffer 0; missing ones from the constant fallback buffer 1. Skinned
+ * pipelines also read the bone weights and indices.
+ */
+export function vertexBuffers(layout: VertexLayout, skinned = false): GPUVertexBufferLayout[] {
   const mesh: GPUVertexAttribute[] = [{ shaderLocation: 0, format: 'float32x3', offset: 0 }];
   const fallback: GPUVertexAttribute[] = [];
   const add = (
@@ -2544,6 +2683,7 @@ export function vertexBuffers(layout: VertexLayout): GPUVertexBufferLayout[] {
   add(layout.normal >= 0, 3, 'unorm8x4', layout.normal, FALLBACK_OFFSETS.normal);
   add(layout.tangent >= 0, 4, 'unorm8x4', layout.tangent, FALLBACK_OFFSETS.tangent);
   add(layout.color >= 0, 5, 'unorm8x4', layout.color, FALLBACK_OFFSETS.color);
+  if (skinned) mesh.push(...skinAttributes(layout.skinning ?? 0));
   return [
     { arrayStride: layout.stride, attributes: mesh },
     { arrayStride: 0, attributes: fallback },

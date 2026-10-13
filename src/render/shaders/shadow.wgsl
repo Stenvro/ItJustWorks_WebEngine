@@ -39,6 +39,49 @@ fn vs_object_uv(@location(0) position: vec3f, @location(2) uv: vec2f) -> ShadowO
   return out;
 }
 
+// Skinned casters: the bone palette of the draw (skinning.wgsl).
+@group(3) @binding(0) var<storage, read> bones: array<vec4f>;
+
+fn skinned(position: vec3f, weights: vec4f, indices: vec4u) -> vec3f {
+  let p = vec4f(position, 1.0);
+  var sum = vec3f(0.0);
+  var total = 0.0;
+  for (var k = 0u; k < 4u; k++) {
+    let weight = weights[k];
+    if (weight > 0.0) {
+      let bone = indices[k] * 3u;
+      sum += vec3f(dot(bones[bone], p), dot(bones[bone + 1u], p), dot(bones[bone + 2u], p)) * weight;
+      total += weight;
+    }
+  }
+  if (total <= 0.0) {
+    return vec3f(dot(bones[0], p), dot(bones[1], p), dot(bones[2], p));
+  }
+  return sum / total;
+}
+
+@vertex
+fn vs_skinned(
+  @location(0) position: vec3f,
+  @location(6) weights: vec4f,
+  @location(7) indices: vec4u,
+) -> @builtin(position) vec4f {
+  return cascade.viewProj * (draw.world * vec4f(skinned(position, weights, indices), 1.0));
+}
+
+@vertex
+fn vs_skinned_uv(
+  @location(0) position: vec3f,
+  @location(2) uv: vec2f,
+  @location(6) weights: vec4f,
+  @location(7) indices: vec4u,
+) -> ShadowOut {
+  var out: ShadowOut;
+  out.position = cascade.viewProj * (draw.world * vec4f(skinned(position, weights, indices), 1.0));
+  out.uv = uv * draw.uvTransform.zw + draw.uvTransform.xy;
+  return out;
+}
+
 // NiAlphaProperty alpha test, as in common.wgsl.
 @fragment
 fn fs_alpha_test(input: ShadowOut) {

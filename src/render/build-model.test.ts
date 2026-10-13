@@ -9,8 +9,14 @@ import type {
   NifTransform,
   NiNodeBlock,
 } from '../formats/nif/types.ts';
+import {
+  PALETTE_BONE_FLOATS,
+  skinPositions,
+  writePosedPalette,
+  writeRestPalette,
+} from './bone-palette.ts';
 import { buildModel } from './model-data.ts';
-import { toHalf, transformPoint } from './math.ts';
+import { identity, toHalf, transformPoint } from './math.ts';
 
 const IDENTITY: NifTransform = {
   translation: [0, 0, 0],
@@ -149,7 +155,7 @@ describe('buildModel', () => {
     expect(model.parts.map((p) => p.name)).toEqual(['Visible']);
   });
 
-  it('skins shapes into their rest pose with the bones of the file', () => {
+  it('keeps skinned shapes with their bones; the rest palette places them', () => {
     // Vertex: position (16 bytes) + skinning (4 half weights, 4 bone indices) = 28 bytes.
     const desc = decodeVertexDesc(
       7 | (4 << 28),
@@ -201,11 +207,27 @@ describe('buildModel', () => {
       },
     ];
     const [part] = buildModel(file(blocks)).parts;
-    if (!part) throw new Error('no skinned part');
-    const out = new DataView(part.vertices.buffer, part.vertices.byteOffset);
-    const x = (i: number): number => out.getFloat32(i * 28, true);
+    const skin = part?.skin;
+    if (!part || !skin) throw new Error('no skinned part');
+    // The vertices stay as stored (the GPU skins them), the part sits at the instance.
+    expect(part.vertices).toBe(data);
+    expect(part.layout.skinning).toBe(16);
+    expect(Array.from(part.world)).toEqual(Array.from(identity()));
+    expect(skin.names).toEqual(['Bone0', 'Bone1']);
+    expect(Array.from(skin.bones)).toEqual([1, 2]);
+    const palette = new Float32Array(2 * PALETTE_BONE_FLOATS);
+    writeRestPalette(skin, palette);
+    const positions = skinPositions(part.vertices, 28, 16, 3, palette);
     // Bone 1 is 10 units past its bind position; bone 0 is at it.
-    expect([x(0), x(1), x(2)]).toEqual([10, 15, 5]);
+    expect([positions[0], positions[3], positions[6]]).toEqual([10, 15, 5]);
     expect(Array.from(part.indices)).toEqual([0, 1, 2]);
+    // Bounds of the rest pose.
+    expect(part.center[0]).toBeCloseTo(10);
+    // A pose: bone 1 moved 20 more units.
+    const moved = Float32Array.from(identity());
+    moved[12] = 90;
+    writePosedPalette(skin, (i) => (i === 1 ? moved : undefined), palette);
+    const posed = skinPositions(part.vertices, 28, 16, 3, palette);
+    expect([posed[0], posed[3], posed[6]]).toEqual([30, 25, 15]);
   });
 });
