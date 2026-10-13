@@ -67,6 +67,10 @@ extension and by content.
 
 ## Licence and credits
 
+ItJustWorks-Webengine is free software: you can redistribute it and/or modify it under the
+terms of the GNU General Public License as published by the Free Software Foundation, either
+version 3 of the License, or (at your option) any later version ([`LICENSE`](LICENSE)).
+
 Code adapted from other projects (Community Shaders, webgl-noise, Separable SSS, the SAO
 reference implementation) and the dependencies with their licences are listed in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md), with the documentation the engine was

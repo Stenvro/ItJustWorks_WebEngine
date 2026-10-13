@@ -1,6 +1,7 @@
 # Third-party notices
 
-ItJustWorks-Webengine contains code adapted from the projects below, and uses the packages
+ItJustWorks-Webengine is licensed under the GNU General Public License v3.0 or later
+([`LICENSE`](LICENSE)). It contains code adapted from the projects below, and uses the packages
 listed under "Dependencies" at run time. Their copyright notices and licence terms follow.
 Game content is never part of this repository: the engine reads the user's own installation.
 
