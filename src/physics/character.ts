@@ -64,6 +64,14 @@ export interface CharacterSettings {
 
 /** Gap the controller keeps to surfaces (Havok units). */
 const SKIN = 0.01;
+/** Rounds of penetration recovery (each pushes out of everything the shape overlaps). */
+const RECOVERY_ROUNDS = 4;
+/**
+ * On stairs, a step is climbed when the controller's own movement got less than this share of
+ * the way it was to go.
+ */
+const STEP_BLOCKED = 0.6;
+const NO_ROTATION = { x: 0, y: 0, z: 0, w: 1 };
 
 const toHavok = (v: number): number => v / HAVOK_SCALE;
 
@@ -180,6 +188,113 @@ export class CharacterBody {
     this.#body.setNextKinematicTranslation(this.#center(feet));
   }
 
+  /**
+   * Moves the character out of what its shape overlaps, as Havok's character proxy recovers
+   * from penetration: along each contact's normal by its depth, for a few rounds. A door's
+   * arrival point may lie in the door (KatariahWorld's balcony door: 25 units in front of it,
+   * where the shape reaches 32). Ray and shape casts must see the world (after a step).
+   */
+  recover(): void {
+    const own = this.#collider;
+    const filter = this.physics.filterFor(Layer.charController);
+    const rotation = { x: 0, y: 0, z: 0, w: 1 };
+    for (let round = 0; round < RECOVERY_ROUNDS; round++) {
+      const at = this.#body.translation();
+      const push = { x: 0, y: 0, z: 0 };
+      let contacts = 0;
+      this.physics.world.intersectionsWithShape(
+        at,
+        rotation,
+        own.shape,
+        (other) => {
+          const contact = own.shape.contactShape(
+            at,
+            rotation,
+            other.shape,
+            other.translation(),
+            other.rotation(),
+            0,
+          );
+          if (contact && contact.distance < -SKIN) {
+            // normal2 points out of the other shape: the way out.
+            const depth = -contact.distance + SKIN;
+            push.x += contact.normal2.x * depth;
+            push.y += contact.normal2.y * depth;
+            push.z += contact.normal2.z * depth;
+            contacts++;
+          }
+          return true;
+        },
+        RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+        undefined,
+        own,
+        undefined,
+        (collider) => filter(collider),
+      );
+      if (contacts === 0) return;
+      const next = { x: at.x + push.x, y: at.y + push.y, z: at.z + push.z };
+      this.#body.setTranslation(next, true);
+      this.#body.setNextKinematicTranslation(next);
+      this.#feet = [
+        next.x * HAVOK_SCALE,
+        next.y * HAVOK_SCALE,
+        next.z * HAVOK_SCALE - this.shape.height / 2,
+      ];
+      this.#previous = this.#feet;
+    }
+    this.physics.world.propagateModifiedBodyPositionsToColliders();
+  }
+
+  /**
+   * Climbs a step of a staircase that the controller's own movement stopped at: the shape
+   * rises by up to the stair height (as far as there is room above it), moves on, and comes
+   * down onto the step, if that is walkable ground higher than where it stood. Returns the
+   * movement (Havok units), or undefined if no step is climbed. Rapier's own autostep, tried
+   * first, stopped on the Volkihar courtyard's stairs at random treads (24 units high, like the
+   * ones climbed before them) whatever its minimum step width.
+   */
+  #stepUp(
+    desired: RAPIER.Vector,
+    predicate: (collider: RAPIER.Collider) => boolean,
+  ): RAPIER.Vector | undefined {
+    const world = this.physics.world;
+    const shape = this.#collider.shape;
+    const cast = (from: RAPIER.Vector, direction: RAPIER.Vector, distance: number) =>
+      world.castShape(
+        from,
+        NO_ROTATION,
+        direction,
+        shape,
+        SKIN,
+        distance,
+        // What the shape touches already (the step it stands on) is no hit moving away from it.
+        false,
+        RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+        undefined,
+        this.#collider,
+        undefined,
+        predicate,
+      );
+    const at = this.#body.translation();
+    const length = Math.hypot(desired.x, desired.y);
+    if (length < 1e-6) return undefined;
+    const rise = toHavok(this.settings.stairHeight);
+    const up = cast(at, { x: 0, y: 0, z: 1 }, rise)?.time_of_impact ?? rise;
+    if (up <= SKIN) return undefined;
+    const direction = { x: desired.x / length, y: desired.y / length, z: 0 };
+    const raised = { x: at.x, y: at.y, z: at.z + up };
+    const on = cast(raised, direction, length)?.time_of_impact ?? length;
+    if (on <= SKIN) return undefined;
+    const over = { x: raised.x + direction.x * on, y: raised.y + direction.y * on, z: raised.z };
+    const down = cast(over, { x: 0, y: 0, z: -1 }, up + toHavok(this.shape.radius));
+    // Nothing below: a drop, not a step. Too steep: not ground.
+    if (!down) return undefined;
+    if (down.normal1.z < Math.cos((this.settings.maxSlope * Math.PI) / 180)) return undefined;
+    const landed = over.z - down.time_of_impact;
+    if (landed <= at.z + SKIN) return undefined;
+    return { x: over.x - at.x, y: over.y - at.y, z: landed - at.z };
+  }
+
   /** Jumps with this upward speed (game units per second) at the next step, if grounded. */
   jump(speed: number): boolean {
     if (!this.#grounded) return false;
@@ -224,27 +339,35 @@ export class CharacterBody {
         this.settings.stairMaterials.has(material),
       ),
     );
-    if (stairs) {
-      this.#controller.enableAutostep(
-        toHavok(this.settings.stairHeight),
-        toHavok(this.shape.radius / 2),
-        false,
-      );
-    } else {
-      this.#controller.disableAutostep();
-    }
     const own = this.#collider;
     const filter = this.physics.filterFor(Layer.charController);
+    const predicate = (collider: RAPIER.Collider): boolean =>
+      collider.handle !== own.handle && filter(collider);
+    const wasGrounded = this.#grounded;
     this.#controller.computeColliderMovement(
       own,
       desired,
       RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
       undefined,
-      (collider) => collider.handle !== own.handle && filter(collider),
+      predicate,
     );
-    const moved = this.#controller.computedMovement();
+    let moved: RAPIER.Vector = this.#controller.computedMovement();
     const rising = this.verticalSpeed > 0;
     this.#grounded = !this.swimming && !rising && this.#controller.computedGrounded();
+    const wanted = Math.hypot(desired.x, desired.y);
+    if (
+      stairs &&
+      wasGrounded &&
+      !rising &&
+      !this.swimming &&
+      Math.hypot(moved.x, moved.y) < wanted * STEP_BLOCKED
+    ) {
+      const step = this.#stepUp(desired, predicate);
+      if (step) {
+        moved = step;
+        this.#grounded = true;
+      }
+    }
     // Touching something below that is not walkable ground: sliding off it.
     this.touched.length = 0;
     let below = false;

@@ -355,6 +355,11 @@ scale.
 
 **Where water is:**
 
+- **Interior cells have no water plane:** 138 vanilla interiors set the flag, all with XCLW 0;
+  59 of them lie mostly below it (the Dark Brotherhood Sanctuary, the Ragged Flagon, Ysgramor's
+  Tomb), and none is flooded in the game (CommonLibSSE: TESObjectCELL::GetExteriorWaterHeight is
+  minus infinity indoors). Indoors, water is placed: water activators (the player swims in
+  their bounds) and water meshes.
 - **Cell water:** CELL DATA flag `0x2`, XCLW height (FLT_MAX: the world's DNAM default; a few
   vanilla cells hold ±2^31 or 2^32, which mean none), XCWT type, else the world's NAM2.
   Lakes and rivers are cell water at their own height: the White River east of Whiterun is
@@ -583,7 +588,9 @@ the speeds of its quadrant.
   of the other door". Opening a worldspace without a destination arrives as the game would
   bring the player in: in front of the load door nearest to the starting cell (the XTEL of the
   door on the other side), else at the nearest map marker (STAT 0x10, where fast travel
-  arrives). Interiors arrive in front of their own door.
+  arrives). Interiors arrive in front of their own door. Only doors there at the start of a
+  new game count, on both sides: a reference is there if its enable parent is (inverted by the
+  XESP flag; along the chain), else unless flagged initially disabled (`enabledAtGameStart`).
 - **REFR record flag `0x20000000` "Don't Havok Settle":** a simulated object stays where it was
   placed (even floating) until something touches it; others settle under gravity once their
   cell's collision is complete (the engine's warm start, `[HAVOK] fWarmStartMaxTime`).

@@ -219,6 +219,31 @@ export interface PlacedReference {
   readonly radiusOffset: number;
 }
 
+/**
+ * Whether a reference is enabled at the start of a new game as the plugins place it: its enable
+ * parent's state (inverted if so flagged), else its own "initially disabled" flag, as
+ * enabledReferences decides it in a loaded cell. Deleted or missing references are not there.
+ */
+export async function enabledAtGameStart(
+  db: { get(formId: number): Promise<GameRecord | undefined> },
+  formId: number,
+): Promise<boolean> {
+  let inverted = false;
+  let id = formId;
+  // Enable parents chain at most a few deep (cyclic chains end here).
+  for (let depth = 0; depth < 16; depth++) {
+    const record = await db.get(id);
+    if (!record) return false;
+    const placed = parseReference(record);
+    if (placed.deleted) return false;
+    const parent = placed.enableParent;
+    if (!parent) return placed.initiallyDisabled === inverted;
+    if (parent.opposite) inverted = !inverted;
+    id = parent.formId;
+  }
+  return !inverted;
+}
+
 /** XTEL: the destination door, and the position and rotation (radians) to arrive at. */
 export interface Teleport {
   readonly door: number;

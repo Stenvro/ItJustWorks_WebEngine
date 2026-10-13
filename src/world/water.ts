@@ -140,10 +140,14 @@ export interface CellWater {
 /**
  * A cell's water plane, if it has one: DATA flag 0x2 with XCLW (FLT_MAX or none: the
  * world's default height). Other absurd heights (±2^31, 2^32 in a few vanilla cells) mean
- * none.
+ * none. Interior cells have none: their water is placed (water activators and meshes), and the
+ * flag's height (0 in all 138 vanilla interiors that set it) would flood 59 of them, the Dark
+ * Brotherhood Sanctuary and the Ragged Flagon among them (CommonLibSSE's
+ * TESObjectCELL::GetExteriorWaterHeight is minus infinity indoors).
  */
 export function cellWater(
   cell: {
+    readonly interior: boolean;
     readonly hasWater: boolean;
     readonly waterHeight: number | undefined;
     readonly waterType: number | undefined;
@@ -153,7 +157,7 @@ export function cellWater(
     type: undefined,
   },
 ): CellWater | undefined {
-  if (!cell.hasWater) return undefined;
+  if (cell.interior || !cell.hasWater) return undefined;
   const xclw = cell.waterHeight;
   let height: number | undefined;
   if (xclw === undefined || xclw >= DEFAULT_HEIGHT) height = world.height;
