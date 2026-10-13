@@ -2,8 +2,9 @@
 // the other side) gets the collision of where it leads, placed as the viewers place it: the
 // interior cell (player homes bought and built, as the viewer opens them), or the 3×3
 // exterior cells around it with their landscape. The player arrives as through the door (onto
-// its floor, Player.arrivalFloor), stands for a second, then walks off in eight directions. Lists the arrivals without a floor, where the player
-// falls, stands inside something, finds no headroom, cannot move, or is under water. Also
+// its floor, Player.arrivalFloor), stands for a second, then walks off in eight directions.
+// Lists the arrivals without a floor, where the player falls, stands inside something, finds
+// no headroom, cannot move, or is under water. Also
 // where the finders start the player: the first door's arrival of an interior (its middle
 // without a door), and a worldspace's door nearest its busiest cell (that cell's middle,
 // on whatever is below, without doors and map markers).
@@ -17,44 +18,22 @@
 //                                              player through it both ways
 
 import RAPIER from '@dimforge/rapier3d-compat';
+import { waterAreaHeight } from '../src/audio/water-audio.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
-import {
-  buildCollision,
-  HAVOK_SCALE,
-  type CollisionBody,
-  type CollisionData,
-} from '../src/physics/collision-data.ts';
-import { Layer, readCollisionMatrix } from '../src/physics/collision-layers.ts';
-import { landscapeMesh } from '../src/physics/landscape.ts';
-import {
-  GRAVITY,
-  initPhysics,
-  PhysicsWorld,
-  type PlacedCollision,
-} from '../src/physics/physics-world.ts';
+import { HAVOK_SCALE, type CollisionBody } from '../src/physics/collision-data.ts';
+import { Layer } from '../src/physics/collision-layers.ts';
+import type { PhysicsWorld, PlacedCollision } from '../src/physics/physics-world.ts';
 import { objectWorld, playSequence, type ModelSequences } from '../src/render/animation.ts';
 import { invert } from '../src/render/frustum.ts';
 import { multiply, transformPoint, type Mat4, type Vec3 } from '../src/render/math.ts';
 import { buildModel } from '../src/render/model-data.ts';
-import { Player, readPlayerData, type PlayerData } from '../src/shell/player.ts';
-import { Vfs } from '../src/vfs/vfs.ts';
+import type { Player } from '../src/shell/player.ts';
 import { cellArrival, loadCellData, type CellData } from '../src/world/cell-loader.ts';
 import { enabledAtGameStart, parseTeleport } from '../src/world/cell-records.ts';
-import { enabledReferences, findToggles, gameStartSelection } from '../src/world/cell-upgrades.ts';
-import {
-  findHomeActions,
-  fullyUpgraded,
-  NEW_GAME,
-  playHomeActions,
-  ScriptEnvironment,
-} from '../src/world/player-home.ts';
-import { GameSettings } from '../src/world/game-settings.ts';
 import { CELL_SIZE, LAND_GRID } from '../src/world/land.ts';
-import { RecordDatabase } from '../src/world/record-db.ts';
 import { cellWater } from '../src/world/water.ts';
-import { waterAreaHeight } from '../src/audio/water-audio.ts';
 import { Worldspace } from '../src/world/worldspace.ts';
-import { openGameFolder } from './gamedata-path.ts';
+import { PlayWorld } from './play-world.ts';
 
 /** Standing this long after arriving; walking this long in each direction (seconds). */
 const STAND_SECONDS = 1;
@@ -84,97 +63,8 @@ const filter = (
 const hex = (id: number): string => id.toString(16).padStart(8, '0');
 const round = (v: number): string => v.toFixed(0);
 
-const vfs = await Vfs.mount(openGameFolder());
-const db = await RecordDatabase.open(vfs);
-await initPhysics();
-const matrix = await readCollisionMatrix(db);
-const playerData: PlayerData = await readPlayerData(
-  db,
-  vfs,
-  await GameSettings.read(db),
-  async (path) => parseNif(await vfs.read(path)),
-);
-
-const collisions = new Map<string, Promise<CollisionData | undefined>>();
-function collisionOf(path: string): Promise<CollisionData | undefined> {
-  let pending = collisions.get(path);
-  if (!pending) {
-    pending = (async () => {
-      if (path === '' || !vfs.has(path)) return undefined;
-      try {
-        const collision = buildCollision(parseNif(await vfs.read(path)));
-        return collision.bodies.length > 0 ? collision : undefined;
-      } catch {
-        return undefined;
-      }
-    })();
-    collisions.set(path, pending);
-  }
-  return pending;
-}
-
-const scripts = await ScriptEnvironment.create(db, vfs);
-
-/**
- * Which references are enabled: as at the start of a new game, with player homes bought and
- * built (the interior viewer's default; their markers follow the scripts).
- */
-async function enabledIn(data: CellData, homes: boolean): Promise<(reference: number) => boolean> {
-  if (!homes) {
-    const toggles = findToggles(data);
-    return enabledReferences(data, toggles, gameStartSelection(toggles));
-  }
-  const actions = await findHomeActions(scripts, data);
-  const scripted =
-    actions.purchases.length > 0 || actions.house
-      ? (await playHomeActions(scripts, actions, fullyUpgraded(actions, NEW_GAME))).enabled
-      : new Map<number, boolean>();
-  const toggles = findToggles(data, actions.controlled);
-  return enabledReferences(data, toggles, gameStartSelection(toggles), scripted);
-}
-
-/** Places a cell's enabled objects and primitives (and its landscape) as PlaySession does. */
-async function placeCell(
-  physics: PhysicsWorld,
-  data: CellData,
-  isEnabled: (reference: number) => boolean,
-  land?: { readonly data: Parameters<typeof landscapeMesh>[0]; x: number; y: number },
-): Promise<{ placed: PlacedCollision[]; names: Map<number, string> }> {
-  const placed: PlacedCollision[] = [];
-  const names = new Map<number, string>();
-  if (land) {
-    const { vertices, indices } = landscapeMesh(land.data, land.x, land.y);
-    placed.push(
-      physics.addMesh(vertices, indices, Layer.ground, { reference: 0, kind: 'landscape' }),
-    );
-  }
-  const objects = data.objects.filter((object) => isEnabled(object.reference));
-  const loaded = await Promise.all(objects.map((object) => collisionOf(object.model)));
-  objects.forEach((object, i) => {
-    const collision = loaded[i];
-    if (!collision) return;
-    const one = physics.addObject(
-      collision,
-      object.world,
-      { reference: object.reference, kind: 'object' },
-      false,
-    );
-    placed.push(one);
-    names.set(object.reference, object.editorId !== '' ? object.editorId : object.model);
-    if (object.dontHavokSettle !== true && one.dynamic) physics.settle(one);
-  });
-  for (const primitive of data.primitives) {
-    if (!isEnabled(primitive.reference)) continue;
-    placed.push(
-      physics.addPrimitive(primitive.shape, primitive.bounds, primitive.world, primitive.layer, {
-        reference: primitive.reference,
-        kind: 'object',
-      }),
-    );
-    names.set(primitive.reference, `collision ${primitive.shape}`);
-  }
-  return { placed, names };
-}
+const game = await PlayWorld.open();
+const { db, vfs } = game;
 
 /** A door's arrival: where the player comes in, through which door, from where. */
 interface Arrival {
@@ -308,7 +198,7 @@ function newPlayer(
   physics: PhysicsWorld,
   water: (x: number, y: number) => number | undefined,
 ): Player {
-  return new Player({ ...playerData, physics, waterHeight: water }, [0, 0, 0], 0);
+  return game.newPlayer(physics, water);
 }
 
 let disabledDoors = 0;
@@ -590,10 +480,10 @@ for (const cell of interiors) {
     }
   }
   if (arrivals.length === 0 && !passages) continue;
-  const physics = new PhysicsWorld(matrix, GRAVITY);
+  const physics = game.newPhysics();
   try {
-    const isEnabled = await enabledIn(data, true);
-    const { placed, names } = await placeCell(physics, data, isEnabled);
+    const isEnabled = await game.enabledIn(data, true);
+    const { placed, names } = await game.placeCell(physics, data, isEnabled);
     if (passages) {
       const player = newPlayer(physics, () => undefined);
       await walkThroughDoors(cell.editorId, data, isEnabled, physics, player, placed, names);
@@ -669,7 +559,7 @@ for (const info of passages ? [] : await db.worldspaces()) {
       cellOf(a.position[0]) - cellOf(b.position[0]) ||
       cellOf(a.position[1]) - cellOf(b.position[1]),
   );
-  const physics = new PhysicsWorld(matrix, GRAVITY);
+  const physics = game.newPhysics();
   const loaded = new Map<
     string,
     { placed: PlacedCollision[]; names: Map<number, string>; water: number | undefined }
@@ -701,10 +591,10 @@ for (const info of passages ? [] : await db.worldspaces()) {
           }
           const data = await loadCellData(db, cellId, world.persistentReferences(x, y));
           const land = await world.land(x, y);
-          const placed = await placeCell(
+          const placed = await game.placeCell(
             physics,
             data,
-            await enabledIn(data, false),
+            await game.enabledIn(data, false),
             land && { data: land, x, y },
           );
           const water = cellWater(data.cell, {

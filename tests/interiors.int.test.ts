@@ -15,6 +15,7 @@ import {
   playHomeActions,
   ScriptEnvironment,
 } from '../src/world/player-home.ts';
+import { parseNavmesh } from '../src/world/navmesh.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
@@ -130,4 +131,31 @@ describe.skipIf(!hasGamedata())('interiors on the local game data', () => {
       }
     }
   }, 120_000);
+
+  it('reads the navigation mesh actors walk on (Breezehome: its floors, its door)', async () => {
+    const cell = await cellId('WhiterunBreezehome');
+    const navmeshes = db.cellReferences(cell).filter((id) => {
+      const location = db.locate(id);
+      return location !== undefined && db.typeAt(location) === 'NAVM';
+    });
+    // One mesh (an older version of it is deleted by Update.esm).
+    const meshes = [];
+    for (const id of navmeshes) {
+      const record = await db.get(id);
+      const navmesh = record && !record.deleted ? parseNavmesh(record) : undefined;
+      if (navmesh) meshes.push(navmesh);
+    }
+    expect(meshes).toHaveLength(1);
+    const navmesh = meshes[0];
+    expect(navmesh?.cell).toBe(cell);
+    expect(navmesh?.triangles.length).toBeGreaterThan(100);
+    // Every neighbour is a triangle of the mesh, and the front door stands on one.
+    for (const triangle of navmesh?.triangles ?? []) {
+      for (const edge of triangle.edges) {
+        expect(edge).toBeGreaterThanOrEqual(-1);
+        expect(edge).toBeLessThan(navmesh?.triangles.length ?? 0);
+      }
+    }
+    expect(navmesh?.doors).toHaveLength(1);
+  });
 });

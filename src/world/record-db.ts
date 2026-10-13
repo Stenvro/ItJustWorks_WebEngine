@@ -11,7 +11,13 @@ import {
   readRecord,
   type PluginIndex,
 } from '../formats/esm/plugin-index.ts';
-import { fourCCToInt, GroupType, parseFields, RecordFlag } from '../formats/esm/record.ts';
+import {
+  fourCCFromInt,
+  fourCCToInt,
+  GroupType,
+  parseFields,
+  RecordFlag,
+} from '../formats/esm/record.ts';
 import {
   PluginStrings,
   STRING_TABLE_KINDS,
@@ -249,6 +255,11 @@ export class RecordDatabase {
       if (record >= 0) return { plugin, record };
     }
     return undefined;
+  }
+
+  /** The record type ("REFR", "NAVM", ...) of a record version. */
+  typeAt(location: RecordLocation): string {
+    return fourCCFromInt(location.plugin.index.types[location.record] ?? 0);
   }
 
   /** Global form ids of every record of a type (e.g. "COBJ") in any plugin, in load order. */

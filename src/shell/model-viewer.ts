@@ -41,6 +41,7 @@ import {
 } from '../world/cell-loader.ts';
 import type { Arrival } from '../world/worldspace.ts';
 import { DEFAULT_WATER } from '../world/water.ts';
+import { cellNavmeshes, NAVMESH_TOLERANCE, NavmeshSurface } from '../world/navmesh.ts';
 import { waterAreaHeight } from '../audio/water-audio.ts';
 import {
   DEFAULT_INTERIOR_IMAGE_SPACE,
@@ -113,6 +114,8 @@ interface CellView {
   readonly waterTypes: ReadonlyMap<number, GpuWaterType | undefined>;
   /** Placed decals (blood, scorch marks, puddles), shown by the selection. */
   readonly decals: GpuDecals | undefined;
+  /** Where actors walk (its navigation meshes): the player steps onto it off the stairs too. */
+  readonly navmesh: NavmeshSurface;
 }
 
 const numberFormat = new Intl.NumberFormat('en-US');
@@ -282,6 +285,8 @@ export class ModelViewer {
       feet,
       yaw,
     );
+    player.character.walkable = (x, y, z) =>
+      this.#cell?.navmesh.heightNear(x, y, z, NAVMESH_TOLERANCE) !== undefined;
     const play = new PlaySession({
       physics,
       player,
@@ -514,6 +519,7 @@ export class ModelViewer {
       imageSpace,
       waterTypes,
       decals,
+      navmesh: new NavmeshSurface(await cellNavmeshes(db, formId)),
     };
     // The player arrives as through the cell's door; without one, at its middle.
     const comeIn = arrival ?? (await cellArrival(db, data));
