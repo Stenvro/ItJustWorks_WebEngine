@@ -30,13 +30,19 @@ The engine's controller shape (hkCharControllerShape) is a convex hull of two ri
 points with one point below and one above (PLANCK and Dynamic Collision Adjustment read and
 rebuild it at runtime), made from the skeleton's collision bound "BBX" scaled by the race's
 height. Its exact ring radius and heights are not documented. Here: the bound's narrow half
-extent (14 × 1.03 for a Nord), rings one radius from the ends, the full bound height, and
-Havok's default convex shell of 0.05. The cone between end point and ring rides over small
+extent (14 × 1.03 for a Nord) as its radius and the full bound height, with Havok's default
+convex shell of 0.05 inside both (the points are inset by it, as Havok builds shapes: the
+shape with its shell is the bound, 29 units across), rings one radius from the ends. The cone between end point and ring rides over small
 steps (about 14 units); on stair materials (MATT stairs flag) whole stairs up to 24 units
 are climbed (the risers of the vanilla stair meshes). The steepest walkable slope is kept in
 hkpCharacterProxy::maxSlopeCosine without an INI setting or GMST: 60° here, TODO(M13):
 calibrate both against the game.
 
+- **On the ground** it only moves along the ground; snapping to the ground (as far as the
+  shape's radius) keeps it on slopes and down steps. Pressing down every step as well makes
+  Rapier's controller meet the floor at the start of the step and now and then drop the rest
+  of the step there (the player stuttered and stuck on flat floors: 69 times in a run through
+  the Palace of the Kings, now 2).
 - Gravity × `[HAVOK] fInAirFallingCharGravityMult` (1.35) while falling, ×
   `fUnsupportedGravMult` (4) while standing on something too steep (sliding off).
 - **Speeds** come from the movement types (MOVT): NPCDefault walking and running,

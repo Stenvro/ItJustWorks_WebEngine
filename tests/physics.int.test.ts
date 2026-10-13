@@ -179,6 +179,59 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
     physics.free();
   }, 60_000);
 
+  it('runs over a floor of many triangles without stopping at their edges', () => {
+    // A flat floor of 32 × 32 quads, 64 units each.
+    const quads = 32;
+    const vertices: number[] = [];
+    const indices: number[] = [];
+    for (let y = 0; y <= quads; y++) {
+      for (let x = 0; x <= quads; x++) vertices.push(x * 64 - 1024, y * 64 - 1024, 0);
+    }
+    for (let y = 0; y < quads; y++) {
+      for (let x = 0; x < quads; x++) {
+        const a = y * (quads + 1) + x;
+        indices.push(a, a + 1, a + quads + 2, a, a + quads + 2, a + quads + 1);
+      }
+    }
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.addMesh(Float32Array.from(vertices), Uint32Array.from(indices), Layer.ground, {
+      reference: 0,
+      kind: 'landscape',
+    });
+    const character = new CharacterBody(
+      physics,
+      { radius: 14.42, height: 131.84 },
+      {
+        maxSlope: 60,
+        fallingGravity: 1.35,
+        unsupportedGravity: 4,
+        stairMaterials: new Set(),
+        stairHeight: 24,
+      },
+      [-600, -500, 1],
+      { reference: 0x14, kind: 'actor' },
+    );
+    const step = (): void => {
+      physics.step(1 / 60, (dt) => {
+        character.step(dt);
+      });
+    };
+    for (let i = 0; i < 30; i++) step();
+    expect(character.grounded).toBe(true);
+    // Running diagonally across the triangles' edges: every step covers its distance.
+    let slowest = Infinity;
+    for (let i = 0; i < 180; i++) {
+      const before = character.feet;
+      character.velocity = [370 * Math.cos(0.6), 370 * Math.sin(0.6)];
+      step();
+      const after = character.feet;
+      slowest = Math.min(slowest, Math.hypot(after[0] - before[0], after[1] - before[1]));
+    }
+    expect(slowest).toBeGreaterThan(0.9 * (370 / 60));
+    expect(character.grounded).toBe(true);
+    physics.free();
+  });
+
   it("stops the player at Tamriel's border regions", async () => {
     const border = await WorldBorder.of(db, 0x3c);
     expect(border.regions.map((region) => region.editorId).sort()).toEqual([

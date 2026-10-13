@@ -55,7 +55,11 @@ fASFadeOutTime 8 s, fASFadeInTime 3 s). In interiors the space's region (RDAT) g
 region sounds (below); the Creation Kit offers that field for interiors only. The
 reverb is a convolver with an impulse response built from the I3DL2 parameters (decay, HF
 decay ratio at the HF reference, room and room HF level, reflections and reverb level and
-delay; `reverb.ts`): XAudio2's own algorithm is not documented, so this is an approximation
+delay; `reverb.ts`). As I3DL2 defines them, the Reflections and Reverb levels are energies
+relative to the direct sound: each part of the response is scaled so that the sum of its squared
+samples is that level, however long the decay (the Palace of the Kings' IntRoomStoneLargeReverb,
+2.9 s, was otherwise 22 dB louder than the dry sound). XAudio2's own algorithm is not
+documented, so this is an approximation
 (TODO(M13): compare with the game). Spaces without reverb (DefaultReverb, −100 dB) have none.
 
 ## Ambience
