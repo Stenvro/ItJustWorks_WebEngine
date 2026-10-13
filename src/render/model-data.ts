@@ -146,6 +146,21 @@ export interface ModelPart {
    * identity), drawn with GPU skinning.
    */
   readonly skin?: PartSkin;
+  /**
+   * Models worn on a skeleton (ModelData.nodes): the node the part hangs under and the part's
+   * own transform under it, so a rigid part follows that node of the actor.
+   */
+  readonly node?: number;
+  readonly local?: Mat4;
+}
+
+/** A node of a model worn on a skeleton (an actor merges them into its own by name). */
+export interface ModelNode {
+  readonly name: string;
+  /** Index of the parent node (−1 for the root). */
+  readonly parent: number;
+  /** Its transform under its parent (the root's own is ignored). */
+  readonly local: Mat4;
 }
 
 /** A run of the index list: `count` indices from `first`. */
@@ -178,6 +193,13 @@ export interface ModelData {
   readonly behaviorGraph?: string;
   /** Particle systems (fire, smoke, dust, ...). */
   readonly particles: readonly ParticleSystemData[];
+  /**
+   * Models that can be worn on a skeleton (skinned parts, or a "Prn" extra data): the node
+   * tree, merged by name into an actor's skeleton.
+   */
+  readonly nodes?: readonly ModelNode[];
+  /** NiStringExtraData "Prn" on the root: the skeleton node it hangs on (shields: SHIELD). */
+  readonly attachTo?: string;
   /**
    * AddOnNodes: where the engine attaches the model of an ADDN record (candle flames, torch
    * fire, chimney smoke), by the record's index, in model space.
@@ -386,6 +408,19 @@ export function packTriShapeData(data: NiTriShapeDataBlock): {
   };
 }
 
+/** The root's "Prn" (NiStringExtraData): the skeleton node a worn model hangs on. */
+function attachmentNode(file: NifFile): string | undefined {
+  for (const root of file.roots) {
+    const node = file.blocks[root];
+    if (!node || !('extraData' in node)) continue;
+    for (const ref of node.extraData) {
+      const extra = getBlock(file, ref, 'string-extra-data');
+      if (extra?.name === 'Prn' && extra.text !== '') return extra.text;
+    }
+  }
+  return undefined;
+}
+
 function isEditorMarker(file: NifFile): boolean {
   return file.roots.some((root) => {
     const node = file.blocks[root];
@@ -443,6 +478,11 @@ export function buildModel(file: NifFile): ModelData {
   let worlds: Map<Ref, Mat4> | undefined;
   const particleRefs: Ref[] = [];
   const addons: AddonNode[] = [];
+  /** The node tree (for models worn on a skeleton) and the node being visited. */
+  const nodes: ModelNode[] = [];
+  let currentNode = -1;
+  /** The shape being visited, under its node. */
+  let currentLocal: Mat4 = identity();
 
   const visit = (ref: Ref, parentWorld: Mat4, depth: number): void => {
     if (depth > 64) return; // guards against reference cycles in broken files
@@ -456,11 +496,10 @@ export function buildModel(file: NifFile): ModelData {
     // (reference, inventory, ...), so it is ignored here: 866 vanilla meshes have a rotated
     // root (e.g. Raven Rock's hut pieces, turned 90°) and 96 a moved one.
     const { translation, rotation, scale } = block.transform;
-    const world =
-      depth === 0
-        ? parentWorld
-        : multiply(parentWorld, fromNifTransform(translation, rotation, scale));
+    const local = depth === 0 ? identity() : fromNifTransform(translation, rotation, scale);
+    const world = depth === 0 ? parentWorld : multiply(parentWorld, local);
     currentBlock = ref;
+    currentLocal = local;
 
     switch (block.kind) {
       case 'node': {
@@ -468,6 +507,9 @@ export function buildModel(file: NifFile): ModelData {
           block.switchIndex !== undefined
             ? [block.children[block.switchIndex] ?? -1]
             : block.children;
+        const parentNode = currentNode;
+        currentNode = nodes.length;
+        nodes.push({ name: block.name, parent: parentNode, local });
         nodeNames.push(block.name);
         if (block.value !== undefined && block.name.startsWith('AddOnNode')) {
           addons.push({ index: block.value, world });
@@ -478,6 +520,7 @@ export function buildModel(file: NifFile): ModelData {
         for (const child of children) visit(child, world, depth + 1);
         if (block.billboardMode !== undefined) billboards.pop();
         nodeNames.pop();
+        currentNode = parentNode;
         return;
       }
       case 'tri-shape': {
@@ -631,6 +674,8 @@ export function buildModel(file: NifFile): ModelData {
       center: transformPoint(world, center),
       radius: radius * maxScale(world),
       ...(skin && { skin }),
+      node: currentNode,
+      local: currentLocal,
     });
   };
 
@@ -680,8 +725,13 @@ export function buildModel(file: NifFile): ModelData {
 
   const animation = buildAnimation(file, graphDriven);
   const sequences = buildSequences(file, graphDriven);
+  // Models worn on a skeleton keep their node tree.
+  const attachTo = attachmentNode(file);
+  const worn = attachTo !== undefined || parts.some((part) => part.skin);
   return {
     parts,
+    ...(worn && { nodes }),
+    ...(attachTo !== undefined && { attachTo }),
     center,
     radius,
     skipped,

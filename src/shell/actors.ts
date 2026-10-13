@@ -2,7 +2,7 @@
 // skeleton: the skeleton model and Havok skeleton give a pose, the models it wears and its
 // FaceGen head are skinned to it, and an animation moves it every frame.
 
-import { ActorPose, ActorSkeleton, type RigData } from '../animation/skeleton.ts';
+import { ActorPose, ActorSkeleton, wearOnRig, type RigData } from '../animation/skeleton.ts';
 import {
   readAnimationContainer,
   TRANSFORM_FLOATS,
@@ -177,8 +177,6 @@ export class ActorPlacer {
       character?.rig ? this.#havokSkeleton(character.rig) : undefined,
     ]);
     if (!rig) return undefined;
-    const skeleton = new ActorSkeleton(rig, havok);
-    const pose = new ActorPose(skeleton);
 
     // The models it wears, then its head.
     const weight = Math.round(Math.min(100, Math.max(0, look.weight)));
@@ -212,6 +210,18 @@ export class ActorPlacer {
         ? await session.actorModel(look.faceGen.geometry, undefined, 100, {})
         : undefined;
 
+    // The models go on the skeleton: their nodes are its nodes (the ones it lacks added).
+    const models: { model: GpuModel; addon: number | undefined }[] = [
+      ...worn.flatMap((entry) => (entry ? [entry] : [])),
+      ...(head ? [{ model: head, addon: undefined }] : []),
+    ];
+    const dressed = wearOnRig(
+      rig,
+      models.map(({ model }) => ({ nodes: model.nodes ?? [], attachTo: model.attachTo })),
+    );
+    const skeleton = new ActorSkeleton(dressed.rig, havok);
+    const pose = new ActorPose(skeleton);
+
     // Placed upright at the reference, at its race's and its own size.
     const world = referenceMatrix({
       position: actor.position,
@@ -222,15 +232,14 @@ export class ActorPlacer {
       ...(look.skinTone && { skin: look.skinTone }),
       ...(look.hairColor && { hair: look.hairColor }),
     };
-    const instance = (model: GpuModel, addon: number | undefined): ModelInstance => ({
+    const instances = models.map(({ model, addon }, i): ModelInstance => ({
       model,
       world,
       pose,
+      ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),
       tints,
       partitionVisible: (bodyPart) => partitionVisible(bodyPart, look.owners, addon),
-    });
-    const instances = worn.flatMap((entry) => (entry ? [instance(entry.model, entry.addon)] : []));
-    if (head) instances.push(instance(head, undefined));
+    }));
 
     const binding = character && havok ? await this.#idle(character, look.female) : undefined;
     const clip: ActorClip | undefined =

@@ -32,6 +32,7 @@ import type {
   LightingMaterial,
   IndexRange,
   ModelData,
+  ModelNode,
   ModelPart,
   PartMaterial,
   VertexLayout,
@@ -63,6 +64,8 @@ export const MAX_LIGHTS = 256;
 /** Size of the WGSL `Draw` struct and the stride between draws (uniform offset alignment). */
 const DRAW_SIZE = 256;
 const DRAW_STRIDE = 256;
+/** The identity transform (a part with no transform of its own). */
+const IDENTITY = identity();
 /** A draw's bone palette: as many bones as a vertex can name, three vec4 rows each. */
 const PALETTE_BYTES = MAX_PALETTE_BONES * PALETTE_BONE_FLOATS * 4;
 /** Palettes start at storage buffer offset alignment. */
@@ -381,6 +384,9 @@ export class GpuModel {
   readonly bytes: number;
   /** The root is a leaf animation node: Tree_Anim parts flutter (ModelData.leafAnimation). */
   readonly leafAnimation: boolean;
+  /** Worn on a skeleton: the model's node tree and the node it hangs on (ModelData). */
+  readonly nodes: readonly ModelNode[] | undefined;
+  readonly attachTo: string | undefined;
   /** performance.now() when a scene last took or let go of it (eviction order). */
   lastUsed = performance.now();
   readonly #buffers: readonly GPUBuffer[];
@@ -398,8 +404,12 @@ export class GpuModel {
     particles: readonly GpuParticleSystem[];
     textures: { readonly cache: TextureCache; readonly paths: readonly string[] };
     leafAnimation: boolean;
+    nodes?: readonly ModelNode[] | undefined;
+    attachTo?: string | undefined;
   }) {
     this.leafAnimation = init.leafAnimation;
+    this.nodes = init.nodes;
+    this.attachTo = init.attachTo;
     this.center = init.center;
     this.radius = init.radius;
     this.parts = init.parts;
@@ -461,6 +471,8 @@ export interface ModelInstance {
   readonly emittance?: EmittanceColor;
   /** An actor's skeleton: the model's skinned parts follow its nodes (by bone name). */
   readonly pose?: ActorPose;
+  /** With a pose: the pose node of each of the model's nodes (rigid parts follow theirs). */
+  readonly poseNodes?: Int16Array;
   /** An actor's colours: its skin tone on skin shapes, its hair colour on hair shapes. */
   readonly tints?: ActorTints;
   /** An actor's equipment: whether a body part's partitions of the model are drawn. */
@@ -566,6 +578,8 @@ interface AnimatedDraw {
   readonly bones?: number;
   /** An actor's part: the pose its palette follows. */
   readonly posed?: PosedDraw;
+  /** An actor's rigid part: the pose node it hangs on. */
+  readonly hung?: { readonly pose: ActorPose; readonly node: number };
 }
 
 /** A skinned part on an actor's skeleton: the pose node of each of its bones. */
@@ -1442,6 +1456,8 @@ export class SceneRenderer {
       particles,
       textures: { cache: textures, paths: [...texturePaths] },
       leafAnimation: data.leafAnimation === true,
+      nodes: data.nodes,
+      attachTo: data.attachTo,
     });
   }
 
@@ -1547,7 +1563,14 @@ export class SceneRenderer {
             writeRestPalette(skin, boneData, bones / 4);
           }
         }
-        if (animation || part.part.billboard || sky || playback || graph || posed) {
+        // A rigid part of an actor's model hangs on its node of the actor's skeleton.
+        const poseNode =
+          !skin && instance.pose && part.part.node !== undefined
+            ? (instance.poseNodes?.[part.part.node] ?? -1)
+            : -1;
+        const hung =
+          instance.pose && poseNode >= 0 ? { pose: instance.pose, node: poseNode } : undefined;
+        if (animation || part.part.billboard || sky || playback || graph || posed || hung) {
           animated.push({
             offset,
             instanceWorld: instance.world,
@@ -1557,6 +1580,7 @@ export class SceneRenderer {
             ...(graph && { graph }),
             ...(bones !== undefined && { bones }),
             ...(posed && { posed }),
+            ...(hung && { hung }),
           });
         }
         const floats = new Float32Array(uniforms, offset, DRAW_SIZE / 4);
@@ -1952,6 +1976,16 @@ export class SceneRenderer {
         } else if (billboard) {
           const node = multiply(draw.instanceWorld, billboard.node);
           multiply(billboardWorld(node, billboard.mode, camera), billboard.local, world);
+          floats.set(world, 0);
+        } else if (draw.hung) {
+          // On an actor's skeleton: the node's pose, then the part under it.
+          const { pose, node } = draw.hung;
+          multiply(
+            pose.worlds.subarray(node * 16, node * 16 + 16),
+            draw.part.local ?? IDENTITY,
+            world,
+          );
+          multiply(draw.instanceWorld, world, world);
           floats.set(world, 0);
         } else {
           // A skinned shape is placed by its bones, never by its own node.

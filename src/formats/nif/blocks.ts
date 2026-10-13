@@ -24,6 +24,7 @@ import type {
   NifTransform,
   DismemberPartition,
   NiSkinDataBlock,
+  StringExtraDataBlock,
   NiSkinInstanceBlock,
   NiSkinPartitionBlock,
   Ref,
@@ -491,6 +492,12 @@ const parseIntegerExtraData: BlockParser = (reader, context): IntegerExtraDataBl
   value: reader.u32(),
 });
 
+const parseStringExtraData: BlockParser = (reader, context): StringExtraDataBlock => ({
+  kind: 'string-extra-data',
+  name: readStringRef(reader, context),
+  text: readStringRef(reader, context),
+});
+
 const parseBehaviorGraphExtraData: BlockParser = (
   reader,
   context,
@@ -674,6 +681,7 @@ export const BLOCK_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string, B
   ['NiIntegerExtraData', parseIntegerExtraData],
   ['BSXFlags', parseIntegerExtraData],
   ['BSBehaviorGraphExtraData', parseBehaviorGraphExtraData],
+  ['NiStringExtraData', parseStringExtraData],
   ['BSBound', parseBound],
   ['NiSkinInstance', parseSkinInstance],
   ['BSDismemberSkinInstance', parseSkinInstance],

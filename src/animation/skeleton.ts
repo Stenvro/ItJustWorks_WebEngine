@@ -44,6 +44,68 @@ export function buildRig(file: NifFile): RigData {
   return { names, parents: Int16Array.from(parents), local };
 }
 
+/** A model worn on a skeleton: its node tree and the skeleton node its root hangs on. */
+export interface WornNodes {
+  readonly nodes: readonly {
+    readonly name: string;
+    readonly parent: number;
+    readonly local: Float32Array;
+  }[];
+  readonly attachTo: string | undefined;
+}
+
+/**
+ * Puts worn models on a skeleton, as the engine does when it attaches them: a model's nodes
+ * are the skeleton's nodes of the same name; the ones the skeleton lacks (a skirt's or a
+ * cloak's bones, a horse's harness) are added under their parent with their own transform.
+ * A model's root is the node its "Prn" names (a shield's SHIELD), else the skeleton's root.
+ * Returns the skeleton with the added nodes and, per model, the skeleton node of each of its
+ * nodes.
+ */
+export function wearOnRig(
+  rig: RigData,
+  models: readonly WornNodes[],
+): { rig: RigData; nodeMaps: Int16Array[] } {
+  const names = [...rig.names];
+  const parents = [...rig.parents];
+  const locals: Float32Array[] = [];
+  const byName = new Map<string, number>();
+  names.forEach((name, i) => {
+    const key = name.toLowerCase();
+    if (!byName.has(key)) byName.set(key, i);
+  });
+  const nodeMaps = models.map((model) => {
+    const map = new Int16Array(model.nodes.length).fill(-1);
+    model.nodes.forEach((node, i) => {
+      if (node.parent < 0) {
+        const target =
+          model.attachTo === undefined ? undefined : byName.get(model.attachTo.toLowerCase());
+        map[i] = target ?? 0;
+        return;
+      }
+      const known = byName.get(node.name.toLowerCase());
+      if (known !== undefined) {
+        map[i] = known;
+        return;
+      }
+      const index = names.length;
+      names.push(node.name);
+      parents.push(map[node.parent] ?? 0);
+      locals.push(node.local);
+      byName.set(node.name.toLowerCase(), index);
+      map[i] = index;
+    });
+    return map;
+  });
+  if (locals.length === 0) return { rig, nodeMaps };
+  const local = new Float32Array(names.length * 16);
+  local.set(rig.local);
+  locals.forEach((matrix, i) => {
+    local.set(matrix, (rig.names.length + i) * 16);
+  });
+  return { rig: { names, parents: Int16Array.from(parents), local }, nodeMaps };
+}
+
 /** Writes an hkQsTransform (translation, quaternion xyzw, scale xyz) as a 4x4 matrix. */
 export function qsMatrix(source: Float32Array, at: number, out: Float32Array, outAt: number): void {
   const tx = source[at] ?? 0;
