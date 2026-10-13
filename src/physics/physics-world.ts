@@ -678,11 +678,12 @@ export class PhysicsWorld {
       { x: toHavok(origin[0]), y: toHavok(origin[1]), z: toHavok(origin[2]) },
       { x: direction[0] / length, y: direction[1] / length, z: direction[2] / length },
     );
+    // Phantoms (trigger volumes) are not surfaces: the character controller passes them too.
     const hit = this.world.castRayAndGetNormal(
       ray,
       toHavok(maxDistance),
       true,
-      undefined,
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
       undefined,
       exclude,
       undefined,

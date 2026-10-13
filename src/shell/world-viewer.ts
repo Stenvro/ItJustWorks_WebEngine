@@ -266,11 +266,25 @@ export class WorldViewer {
   }
 
   /** Whether the collision under a point is in place (the player can stand there). */
+  /**
+   * Whether the collision around a point is in place: its cell and the eight around it (a
+   * floor near a cell's edge, a bridge or a city's street may belong to a neighbour).
+   */
   #groundReady(feet: Vec3): boolean {
-    const cell = this.#cells.get(
-      cellKey(Math.floor(feet[0] / CELL_SIZE), Math.floor(feet[1] / CELL_SIZE)),
-    );
-    return cell?.ready === true && (!cell.exists || cell.collision.ready);
+    const cx = Math.floor(feet[0] / CELL_SIZE);
+    const cy = Math.floor(feet[1] / CELL_SIZE);
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        const cell = this.#cells.get(cellKey(cx + dx, cy + dy));
+        if (!cell) {
+          // Only the cell itself must be loading; neighbours beyond the loaded grid are not.
+          if (dx === 0 && dy === 0) return false;
+          continue;
+        }
+        if (!cell.ready || (cell.exists && !cell.collision.ready)) return false;
+      }
+    }
+    return true;
   }
 
   set lensShift(shift: number) {
@@ -437,6 +451,7 @@ export class WorldViewer {
       // Arrival points stand on the ground; without one the landscape may be anywhere below
       // or above the guess.
       searchAbove: comeIn ? 64 : 8192,
+      arrivesOnFloor: comeIn !== undefined,
       activatable: (reference) => this.#activatable(reference),
       prompt: this.#ui.prompt,
       notice: this.#ui.notice,

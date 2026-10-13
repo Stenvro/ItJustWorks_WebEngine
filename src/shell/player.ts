@@ -211,7 +211,8 @@ export class Player implements Camera {
     return pressed;
   }
 
-  update(deltaSeconds: number): void {
+  /** Every frame; `held`: the ground is not there yet, the player stays where they are. */
+  update(deltaSeconds: number, held = false): void {
     const { physics, ini } = this.#setup;
     if (this.#take('Toggle POV')) this.#setPov(this.pov === 'first' ? 'third' : 'first');
     if (this.#take('Toggle Always Run')) this.#alwaysRun = !this.#alwaysRun;
@@ -220,7 +221,7 @@ export class Player implements Camera {
     // A press waits for the next physics step (a frame may have none).
     if (this.#take('Jump')) this.#jumpRequested = true;
     physics.step(deltaSeconds, (step) => {
-      this.#move(step);
+      if (!held) this.#move(step);
       this.onStep?.(step);
     });
     // Third-person zoom eases towards its target (fMouseWheelZoomSpeed).
