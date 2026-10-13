@@ -31,6 +31,7 @@ const SLSF2_SNOW = 0x10000000u;
 const SHADER_ENVIRONMENT_MAP = 1u;
 const SHADER_GLOW = 2u;
 const SHADER_PARALLAX = 3u;
+const SHADER_FACEGEN = 4u;
 const SHADER_SKIN_TINT = 5u;
 const SHADER_HAIR_TINT = 6u;
 const SHADER_LOD_LANDSCAPE = 9u;
@@ -216,7 +217,10 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   let noiseGradients = Gradients(dpdx(noiseUv), dpdy(noiseUv));
   let faceNormalRaw = cross(dpdx(in.worldPos), dpdy(in.worldPos));
   // Parallax: the height map (slot 3, bound in the layer map's place) shifts the texture.
-  let height = textureSample(layerMap, linearSampler, in.uv).r;
+  // FaceGen heads keep their tint in the same slot (6).
+  let layerSample = textureSample(layerMap, linearSampler, in.uv);
+  let height = layerSample.r;
+  let detailSample = textureSample(detailMap, linearSampler, in.uv);
   let modelView = safeNormalize(transpose(worldRotation()) * toCamera);
   let surfaceUv = select(
     in.uv,
@@ -256,7 +260,12 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
   var n: vec3f;
   if (modelSpace) {
     mapped = normalSample.xzy * 2.0 - 1.0;
-    n = safeNormalize(worldRotation() * mapped);
+    if ((drawFlags & DRAW_SKINNED) != 0u) {
+      // Skinned: the vertex frame carries the bones' turn (skinning.wgsl).
+      n = safeNormalize(mapped.x * tangent + mapped.y * bitangent + mapped.z * vertexNormal);
+    } else {
+      n = safeNormalize(worldRotation() * mapped);
+    }
   } else {
     mapped = normalSample.rgb * 2.0 - 1.0;
     n = safeNormalize(mapped.x * tangent + mapped.y * bitangent + mapped.z * vertexNormal);
@@ -272,6 +281,12 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     if (shaderType == SHADER_LOD_LANDSCAPE_NOISE) {
       base *= lodLandNoise(base, sampleGrad(layerMap, in.uv * 3.0, uvGradients, 3.0).r);
     }
+  }
+  if (shaderType == SHADER_FACEGEN) {
+    // The actor's face tint (slot 6) over the head, times the detail map (slot 3).
+    let detail = 3.984375 * (vec3f(0.00392156886, 0.0, 0.00392156886) + detailSample.rgb);
+    let tint = layerSample.rgb * base * 2.0;
+    base = (base * base + tint - tint * base) * detail;
   }
   if (shaderType == SHADER_SKIN_TINT) {
     let tint = draw.extra.rgb * base * 2.0;

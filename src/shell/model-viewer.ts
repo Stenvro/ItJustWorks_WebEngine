@@ -65,6 +65,7 @@ import {
   type HouseStage,
 } from '../world/player-home.ts';
 import type { InteriorCell, RecordDatabase } from '../world/record-db.ts';
+import { animateActors, type PlacedActor } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import { startObjectGraph } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
@@ -116,6 +117,8 @@ interface CellView {
   readonly decals: GpuDecals | undefined;
   /** Where actors walk (its navigation meshes): the player steps onto it off the stairs too. */
   readonly navmesh: NavmeshSurface;
+  /** Every actor that can appear (shown by the selection). */
+  readonly actors: readonly PlacedActor[];
 }
 
 const numberFormat = new Intl.NumberFormat('en-US');
@@ -259,6 +262,8 @@ export class ModelViewer {
 
   /** The drawn instances of the cell on screen, by reference. */
   #instances = new Map<number, ModelInstance>();
+  /** The actors of the cell on screen (they animate every frame). */
+  #actorsShown: readonly PlacedActor[] = [];
 
   /** Starts playing the cell on screen: physics, and the player standing at `feet`. */
   async #startPlay(
@@ -447,37 +452,39 @@ export class ModelViewer {
         data.objects.flatMap((object) => (object.water === undefined ? [] : [object.water])),
       ),
     ];
-    const [models, collisions, directionals, actions, imageSpace, waterTypes] = await Promise.all([
-      Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)).then(
-        (entries) => new Map(entries),
-      ),
-      Promise.all(paths.map(async (path) => [path, await session?.collision(path)] as const)).then(
-        (entries) => new Map(entries),
-      ),
-      Promise.all(
-        data.objects.map(
-          async (object) =>
-            [object.reference, await session?.directionalMaterial(object.directional)] as const,
+    const [models, collisions, directionals, actions, imageSpace, waterTypes, actors] =
+      await Promise.all([
+        Promise.all(paths.map(async (path) => [path, await this.#cellModel(path)] as const)).then(
+          (entries) => new Map(entries),
         ),
-      ).then(
-        (entries) =>
-          new Map(
-            entries.flatMap(([reference, directional]) =>
-              directional ? [[reference, directional] as const] : [],
-            ),
+        Promise.all(
+          paths.map(async (path) => [path, await session?.collision(path)] as const),
+        ).then((entries) => new Map(entries)),
+        Promise.all(
+          data.objects.map(
+            async (object) =>
+              [object.reference, await session?.directionalMaterial(object.directional)] as const,
           ),
-      ),
-      this.#homeActions(data),
-      db
-        .get(data.cell.imageSpace ?? DEFAULT_INTERIOR_IMAGE_SPACE)
-        .then((record) => (record?.type === 'IMGS' ? parseImageSpace(record) : undefined)),
-      Promise.all(waterIds.map(async (id) => [id, await session?.waterType(id)] as const)).then(
-        (entries) => new Map(entries),
-      ),
-      session?.waterType(DEFAULT_WATER).then((type) => {
-        this.#renderer.scene.defaultWater = type;
-      }),
-    ]);
+        ).then(
+          (entries) =>
+            new Map(
+              entries.flatMap(([reference, directional]) =>
+                directional ? [[reference, directional] as const] : [],
+              ),
+            ),
+        ),
+        this.#homeActions(data),
+        db
+          .get(data.cell.imageSpace ?? DEFAULT_INTERIOR_IMAGE_SPACE)
+          .then((record) => (record?.type === 'IMGS' ? parseImageSpace(record) : undefined)),
+        Promise.all(waterIds.map(async (id) => [id, await session?.waterType(id)] as const)).then(
+          (entries) => new Map(entries),
+        ),
+        this.#placeActors(data),
+        session?.waterType(DEFAULT_WATER).then((type) => {
+          this.#renderer.scene.defaultWater = type;
+        }),
+      ]);
     const toggles = findToggles(data, actions.controlled);
     // Homes open furnished; "new game" shows them as bought.
     const choices = fullyUpgraded(actions, NEW_GAME);
@@ -520,6 +527,7 @@ export class ModelViewer {
       waterTypes,
       decals,
       navmesh: new NavmeshSurface(await cellNavmeshes(db, formId)),
+      actors,
     };
     // The player arrives as through the cell's door; without one, at its middle.
     const comeIn = arrival ?? (await cellArrival(db, data));
@@ -556,6 +564,7 @@ export class ModelViewer {
     this.#terminal.log(
       'cell',
       `${label} ${hex(formId)} · ${visible} of ${data.objects.length} objects shown · ` +
+        `${this.#actorsShown.length} of ${data.actors.length} actors · ` +
         `${models.size} models${what.length > 0 ? ` · ${what.join(' · ')}` : ''} · ` +
         `${(performance.now() - start).toFixed(0)} ms`,
       'ok',
@@ -564,6 +573,26 @@ export class ModelViewer {
       'cell',
       'click the scene to look around · WASD to move · shift to run · esc to release',
     );
+  }
+
+  /** The cell's actors, ready to draw (those that cannot be made are left out, logged). */
+  async #placeActors(data: CellData): Promise<PlacedActor[]> {
+    const session = this.#session;
+    if (!session || data.actors.length === 0) return [];
+    const placer = await session.actors();
+    const placed = await Promise.all(
+      data.actors.map((actor) =>
+        placer.place(actor).catch((error: unknown) => {
+          this.#terminal.log(
+            'actor',
+            `${actor.editorId || hex(actor.reference)}: ${describe(error)}`,
+            'warn',
+          );
+          return undefined;
+        }),
+      ),
+    );
+    return placed.filter((actor): actor is PlacedActor => actor !== undefined);
   }
 
   #scriptEnvironment(): Promise<ScriptEnvironment> | undefined {
@@ -641,6 +670,11 @@ export class ModelViewer {
         shown.set(object.reference, instance);
       }
     }
+    // Actors.
+    const objectCount = instances.length;
+    const actors = cell.actors.filter((actor) => isEnabled(actor.actor.reference));
+    for (const actor of actors) instances.push(...actor.instances);
+    this.#actorsShown = actors;
     // The collision of what is shown (rebuilt when the selection changes).
     const play = this.#play;
     if (play) {
@@ -689,7 +723,7 @@ export class ModelViewer {
       lights,
       decals: cell.decals,
     });
-    return instances.length;
+    return objectCount;
   }
 
   /** Plays new choices for the cell on screen and shows the result. */
@@ -1019,6 +1053,9 @@ export class ModelViewer {
         imageSpace: () => imageSpace,
         decals: () => (decals ? [decals] : []),
         backdrop: false,
+        update: (seconds) => {
+          animateActors(this.#actorsShown, seconds);
+        },
       });
     }
     this.#viewShown = true;

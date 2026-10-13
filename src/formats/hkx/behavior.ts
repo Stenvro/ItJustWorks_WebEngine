@@ -431,6 +431,17 @@ function activeChildren(
   return [];
 }
 
+/** A path relative to a behavior project's folder; ".." steps up (bows share weapons\bow\). */
+function projectRelative(project: string, name: string): string {
+  const folder = folderOf(normalizePath(project));
+  const parts: string[] = [];
+  for (const part of normalizePath(folder ? `${folder}\\${name}` : name).split('\\')) {
+    if (part === '..') parts.pop();
+    else if (part !== '.') parts.push(part);
+  }
+  return parts.join('\\');
+}
+
 /**
  * Reads a behavior project and the files it names: `project` is the mesh's graph path under
  * meshes\ (or any data path); the character and behavior files are relative to its folder.
@@ -440,18 +451,53 @@ export async function loadBehaviorGraph(
   read: (path: string) => Promise<Uint8Array>,
 ): Promise<BehaviorGraph> {
   const path = normalizePath(project);
-  const folder = folderOf(path);
-  // Relative to the project's folder; ".." steps up (the bows share weapons\bow\).
-  const relative = (name: string): string => {
-    const parts: string[] = [];
-    for (const part of normalizePath(folder ? `${folder}\\${name}` : name).split('\\')) {
-      if (part === '..') parts.pop();
-      else if (part !== '.') parts.push(part);
-    }
-    return parts.join('\\');
-  };
   const character = Packfile.parse(
-    await read(relative(projectCharacterFile(Packfile.parse(await read(path))))),
+    await read(projectRelative(path, projectCharacterFile(Packfile.parse(await read(path))))),
   );
-  return parseBehaviorGraph(Packfile.parse(await read(relative(characterBehaviorFile(character)))));
+  return parseBehaviorGraph(
+    Packfile.parse(await read(projectRelative(path, characterBehaviorFile(character)))),
+  );
+}
+
+/** What a behavior project's character names (hkbCharacterStringData), as VFS paths. */
+export interface CharacterInfo {
+  readonly name: string;
+  /** The Havok skeleton (rigName). */
+  readonly rig: string | undefined;
+  /** The ragdoll skeleton (ragdollName). */
+  readonly ragdoll: string | undefined;
+  readonly behavior: string | undefined;
+  /** Every animation the character's behaviors may play (animationNames). */
+  readonly animations: readonly string[];
+}
+
+/** Reads a behavior project's character: its skeleton, behavior and animations. */
+export async function loadCharacterInfo(
+  project: string,
+  read: (path: string) => Promise<Uint8Array>,
+): Promise<CharacterInfo> {
+  const path = normalizePath(project);
+  const character = Packfile.parse(
+    await read(projectRelative(path, projectCharacterFile(Packfile.parse(await read(path))))),
+  );
+  const data = requireObject(character, 'hkbCharacterData');
+  const strings = character.object(data.offset + 152);
+  if (strings?.className !== 'hkbCharacterStringData') {
+    throw new FormatError('hkbCharacterData without string data', data.offset);
+  }
+  // hkbCharacterStringData: animationNames 48, name 160, rigName 168, ragdollName 176,
+  // behaviorFilename 184 (paths relative to the project's folder).
+  const file = (offset: number): string | undefined => {
+    const name = character.string(strings.offset + offset);
+    return name ? projectRelative(path, name) : undefined;
+  };
+  return {
+    name: character.string(strings.offset + 160) ?? '',
+    rig: file(168),
+    ragdoll: file(176),
+    behavior: file(184),
+    animations: character
+      .stringArray(strings.offset + 48)
+      .map((name) => projectRelative(path, name)),
+  };
 }

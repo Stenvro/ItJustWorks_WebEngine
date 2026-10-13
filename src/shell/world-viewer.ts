@@ -41,6 +41,7 @@ import {
   loadCellData,
   type CellLight,
   type CellAcousticArea,
+  type CellActor,
   type CellObject,
   type CellSoundEmitter,
   type DoorDestination,
@@ -54,6 +55,7 @@ import { CELL_SIZE, LAND_GRID, landHeightAt, landTexture, type LandData } from '
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
 import { cellKey, WorldFlag, Worldspace, type Arrival } from '../world/worldspace.ts';
 import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-references.ts';
+import { animateActors, type PlacedActor } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import { startObjectGraph } from './object-graphs.ts';
 import { WorldLod } from './world-lod.ts';
@@ -124,6 +126,8 @@ interface LoadedCell {
   acousticAreas: readonly CellAcousticArea[];
   /** Where actors walk (its navigation meshes): the player steps onto it off the stairs too. */
   navmesh: NavmeshSurface | undefined;
+  /** Its enabled actors (they animate every frame). */
+  actors: readonly PlacedActor[];
   /**
    * Whether the worldspace has a cell record here. Positions without one (around a city
    * worldspace's few cells) stay empty and keep showing the distant LOD, as in the game.
@@ -536,6 +540,10 @@ export class WorldViewer {
       imageSpace: () => this.#sky?.imageSpace(),
       backdrop: false,
       shadows: true,
+      update: (seconds) => {
+        for (const cell of this.#cells.values())
+          if (cell.ready) animateActors(cell.actors, seconds);
+      },
     });
     document.body.classList.add('has-scene', 'content-scene');
     this.#update();
@@ -693,6 +701,7 @@ export class WorldViewer {
         emitters: [],
         acousticAreas: [],
         navmesh: undefined,
+        actors: [],
         exists: false,
         ready: false,
       };
@@ -743,6 +752,11 @@ export class WorldViewer {
     const flow = this.#flowMap(world, cell.x, cell.y);
     const placed = await this.#place(session, objects, flow, true);
     const instances = placed.map(({ instance }) => instance);
+    const actors = await this.#placeActors(
+      session,
+      data.actors.filter((actor) => isEnabled(actor.reference)),
+    );
+    for (const actor of actors) instances.push(...actor.instances);
     // The cell's water plane (lakes, rivers and the sea are cell water at a height).
     const water = cellWater(data.cell, {
       height: world.defaultWaterHeight,
@@ -774,6 +788,7 @@ export class WorldViewer {
     cell.decals = decals;
     cell.lights = lights;
     cell.placed = placed;
+    cell.actors = actors;
     cell.waterHeight = water?.height;
     cell.waterType = water ? (water.type ?? DEFAULT_WATER) : undefined;
     cell.land = land;
@@ -863,6 +878,25 @@ export class WorldViewer {
       });
     });
     return placed;
+  }
+
+  /** Actors ready to draw (those that cannot be made are left out, logged). */
+  async #placeActors(session: GameSession, actors: readonly CellActor[]): Promise<PlacedActor[]> {
+    if (actors.length === 0) return [];
+    const placer = await session.actors();
+    const placed = await Promise.all(
+      actors.map((actor) =>
+        placer.place(actor).catch((error: unknown) => {
+          this.#terminal.log(
+            'actor',
+            `${actor.editorId || String(actor.reference)}: ${describe(error)}`,
+            'warn',
+          );
+          return undefined;
+        }),
+      ),
+    );
+    return placed.filter((actor): actor is PlacedActor => actor !== undefined);
   }
 
   /** A cell beyond the loaded grid: a scene of just its large references. */

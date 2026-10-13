@@ -57,9 +57,20 @@ covers 256 bones, as many as a byte can name). A vertex blends the rows by its w
 (normalised; a vertex without weights follows bone 0) and then goes on like any other
 vertex, placed by its instance. Palettes start in the rest pose (the file's own bones) and
 follow the bones' animated matrices every frame for models whose controllers move them; an
-actor's skeleton poses them (TODO(M7)). Rays (decal placement) skin the vertices on the CPU
+actor's skeleton poses them (below). Rays (decal placement) skin the vertices on the CPU
 in the rest pose. 3056 vanilla meshes outside actors have skinned parts (books, banners,
 flags, clothes, sacks, some plants).
+
+**Actors** (`ModelInstance.pose`, `tints`, `partitionVisible`): an actor's palettes follow its
+skeleton's pose (animation.md, Actors); its skin tone (NPC QNAM) replaces the tint of skin
+shapes (skin tint, type 5) and its hair colour (CLFM) that of hair shapes (hair tint, type 6);
+partitions its equipment hides are left out of the draw (only the visible index ranges are
+drawn, also into the shadow map). Model-space normal maps of skinned shapes (FaceGen heads)
+turn with the vertex's bones: the vertex stage passes the blended rotation as the vertex's
+frame (`DRAW_SKINNED`). **FaceGen heads** (type 4) put the actor's face tint (slot 6) over the
+head: `tint = 2·t·b − 2·t·b²`, `(b² + tint) · detail` with `detail = 3.984375 · (d + (1/255, 0,
+1/255))` from the detail map (slot 3, a 64 grey default leaves the face as it is), the
+engine's FACEGEN formula (Community Shaders' reconstruction of the SSE shader).
 
 ## Landscape
 

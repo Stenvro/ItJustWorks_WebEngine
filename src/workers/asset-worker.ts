@@ -5,7 +5,9 @@ import { decodeBsaPayload } from '../formats/bsa/bsa.ts';
 import { parseDds } from '../formats/dds/dds.ts';
 import { parseNif } from '../formats/nif/nif.ts';
 import { buildCollision } from '../physics/collision-data.ts';
-import { buildModel } from '../render/model-data.ts';
+import { buildRig } from '../animation/skeleton.ts';
+import { blendWeight, swapTextures } from '../render/actor-model.ts';
+import { buildModel, type ModelData } from '../render/model-data.ts';
 import type { AssetRequest, AssetResponse } from './protocol.ts';
 
 interface WorkerScope {
@@ -23,6 +25,50 @@ function handle(request: AssetRequest): [AssetResponse, ArrayBuffer[]] {
     if (array.buffer instanceof ArrayBuffer) buffers.add(array.buffer);
   };
 
+  const ownModel = (model: ModelData): void => {
+    for (const part of model.parts) {
+      own(part.vertices);
+      own(part.indices);
+      own(part.world);
+    }
+  };
+
+  if (request.kind === 'actor-part') {
+    const nif = parseNif(bytes);
+    let model = buildModel(nif);
+    const problems = [...nif.problems];
+    if (request.thin) {
+      const thin = parseNif(decodeBsaPayload(request.thin));
+      problems.push(...thin.problems);
+      model = blendWeight(buildModel(thin), model, request.weight);
+    }
+    model = swapTextures(model, request.swaps);
+    ownModel(model);
+    const response: AssetResponse = {
+      id: request.id,
+      ok: true,
+      kind: 'actor-part',
+      model,
+      problems,
+      workMs: performance.now() - start,
+    };
+    return [response, [...buffers]];
+  }
+
+  if (request.kind === 'rig') {
+    const rig = buildRig(parseNif(bytes));
+    own(rig.parents);
+    own(rig.local);
+    const response: AssetResponse = {
+      id: request.id,
+      ok: true,
+      kind: 'rig',
+      rig,
+      workMs: performance.now() - start,
+    };
+    return [response, [...buffers]];
+  }
+
   if (request.kind === 'model') {
     const nif = parseNif(bytes);
     const model = buildModel(nif);
@@ -37,11 +83,7 @@ function handle(request: AssetRequest): [AssetResponse, ArrayBuffer[]] {
         }
       }
     }
-    for (const part of model.parts) {
-      own(part.vertices);
-      own(part.indices);
-      own(part.world);
-    }
+    ownModel(model);
     for (const system of model.particles) {
       for (const mesh of system.emitters.flatMap((emitter) => emitter.meshes)) {
         own(mesh.positions);

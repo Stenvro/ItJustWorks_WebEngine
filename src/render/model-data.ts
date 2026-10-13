@@ -21,7 +21,7 @@ import {
 } from './animation.ts';
 import { buildParticleSystem, type ParticleSystemData } from './particle-data.ts';
 import { invert } from './frustum.ts';
-import { skinnedGeometry, type PartSkin } from './skinning.ts';
+import { skinnedGeometry, withDynamicPositions, type PartSkin } from './skinning.ts';
 import {
   fromNifTransform,
   identity,
@@ -507,11 +507,17 @@ export function buildModel(file: NifFile): ModelData {
           );
           return;
         }
-        if (block.dynamicPositions) {
-          skipped.push(`${block.name || 'shape'}: dynamic face geometry (TODO(M7))`);
-          return;
-        }
-        const desc = block.vertexDesc;
+        // BSDynamicTriShape: its positions are kept apart from the vertex data.
+        const dynamic =
+          block.dynamicPositions && block.dynamicPositions.length >= block.vertexCount * 4
+            ? withDynamicPositions(
+                block.vertexDesc,
+                block.vertexData,
+                block.vertexCount,
+                block.dynamicPositions,
+              )
+            : undefined;
+        const desc = dynamic?.desc ?? block.vertexDesc;
         const has = (flag: number): boolean => (desc.attributes & flag) !== 0;
         const layout: VertexLayout = {
           stride: desc.stride,
@@ -525,7 +531,7 @@ export function buildModel(file: NifFile): ModelData {
           block.name,
           world,
           layout,
-          block.vertexData,
+          dynamic?.data ?? block.vertexData,
           block.vertexCount,
           block.triangles,
           block.shaderProperty,

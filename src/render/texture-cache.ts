@@ -15,6 +15,8 @@ export interface DefaultTextures {
   readonly flatNormal: GPUTexture;
   /** Black cubemap: no reflections. */
   readonly blackCube: GPUTexture;
+  /** A FaceGen detail map that leaves the face as it is (64 grey: 3.984375 · 64/255 ≈ 1). */
+  readonly blankDetail: GPUTexture;
 }
 
 const isCompressed = (format: string): boolean => format.startsWith('bc');
@@ -100,6 +102,7 @@ export class TextureCache {
       black: solid(device, 'default-black', [0, 0, 0, 255]),
       flatNormal: solid(device, 'default-normal', [128, 128, 255, 0]),
       blackCube: solid(device, 'default-cube', [0, 0, 0, 255], 6),
+      blankDetail: solid(device, 'default-detail', [64, 64, 64, 255]),
     };
   }
 

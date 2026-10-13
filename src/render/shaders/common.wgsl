@@ -46,6 +46,8 @@ struct Draw {
 @group(2) @binding(8) var projectedDiffuse: texture_2d<f32>;
 @group(2) @binding(9) var projectedNormal: texture_2d<f32>;
 @group(2) @binding(10) var projectedNoise: texture_2d<f32>;
+// FaceGen heads: the detail map (slot 3).
+@group(2) @binding(11) var detailMap: texture_2d<f32>;
 
 struct VertexIn {
   @location(0) position: vec3f,
@@ -82,6 +84,8 @@ fn projectedCoordinates(worldPos: vec3f) -> vec2f {
 // by the vertex position, times the leaf amplitude and the vertex alpha. The amplitude fades
 // out between fLeafAnimDampenDistStart and -End (3600 and 4600 units from the camera).
 const DRAW_TREE_ANIM = 0x400000u;
+// The part is skinned (skinning.wgsl): its model-space normals turn with its bones.
+const DRAW_SKINNED = 0x800000u;
 const LEAF_DAMPEN_START = 3600.0;
 const LEAF_DAMPEN_END = 4600.0;
 

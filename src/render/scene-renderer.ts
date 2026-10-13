@@ -4,6 +4,7 @@
 // opaque first, then blended parts sorted back to front.
 
 import type { ObjectGraph } from '../animation/object-graph.ts';
+import type { ActorPose } from '../animation/skeleton.ts';
 import type { BehaviorGraph } from '../formats/hkx/behavior.ts';
 import {
   animate,
@@ -19,6 +20,7 @@ import { billboardWorld } from './billboard.ts';
 import {
   MAX_PALETTE_BONES,
   PALETTE_BONE_FLOATS,
+  writePaletteBone,
   writePosedPalette,
   writeRestPalette,
 } from './bone-palette.ts';
@@ -28,6 +30,7 @@ import type {
   AlphaState,
   EffectMaterial,
   LightingMaterial,
+  IndexRange,
   ModelData,
   ModelPart,
   PartMaterial,
@@ -199,6 +202,8 @@ const SLSF1_EXTERNAL_EMITTANCE = 0x20000000;
 const SLSF2_EFFECT_LIGHTING = 0x40000000;
 /** Draw flag (common.wgsl): leaves flutter in the wind (SLSF2 Tree_Anim). */
 const DRAW_TREE_ANIM = 0x400000;
+/** A skinned part: model-space normals turn with its bones (common.wgsl). */
+const DRAW_SKINNED = 0x800000;
 const SLSF2_TREE_ANIM = 0x20000000;
 /** The engine's directional material textures (BSGraphics default textures). */
 const PROJECTED_TEXTURES = {
@@ -209,6 +214,7 @@ const PROJECTED_TEXTURES = {
 /** The LOD landscape noise texture (type 18, LOD landscape noise). */
 const LOD_LANDSCAPE_NOISE = 'textures\\terrain\\noise.dds';
 const SHADER_LOD_LANDSCAPE_NOISE = 18;
+const SHADER_FACEGEN = 4;
 const SHADER_MULTI_LAYER_PARALLAX = 11;
 const SHADER_PARALLAX = 3;
 const SLSF1_MODEL_SPACE_NORMALS = 0x1000;
@@ -453,7 +459,22 @@ export interface ModelInstance {
   readonly leafAnimation?: { readonly amplitude: number; readonly frequency: number };
   /** XEMI: the colour that drives the model's External_Emittance shapes. */
   readonly emittance?: EmittanceColor;
+  /** An actor's skeleton: the model's skinned parts follow its nodes (by bone name). */
+  readonly pose?: ActorPose;
+  /** An actor's colours: its skin tone on skin shapes, its hair colour on hair shapes. */
+  readonly tints?: ActorTints;
+  /** An actor's equipment: whether a body part's partitions of the model are drawn. */
+  readonly partitionVisible?: (bodyPart: number) => boolean;
 }
+
+export interface ActorTints {
+  readonly skin?: readonly [number, number, number];
+  readonly hair?: readonly [number, number, number];
+}
+
+/** Lighting shader types that take an actor's colour: skin tint and hair tint. */
+const SHADER_SKIN_TINT = 5;
+const SHADER_HAIR_TINT = 6;
 
 /**
  * The current colour of an emittance source (a light, or a region's weather by the hour),
@@ -527,6 +548,8 @@ interface Draw {
   readonly lodSegments: readonly LodSegment[] | undefined;
   /** Skinned: byte offset of its bone palette in the scene's bone buffer. */
   readonly bones: number | undefined;
+  /** An actor's part with hidden partitions: the index ranges that are drawn. */
+  readonly ranges?: readonly IndexRange[];
 }
 
 /** A draw that changes every frame (animated, or turning to the camera). */
@@ -541,6 +564,59 @@ interface AnimatedDraw {
   readonly graph?: GraphDraw;
   /** Skinned: byte offset of its bone palette (posed from the frame's bone matrices). */
   readonly bones?: number;
+  /** An actor's part: the pose its palette follows. */
+  readonly posed?: PosedDraw;
+}
+
+/** A skinned part on an actor's skeleton: the pose node of each of its bones. */
+interface PosedDraw {
+  readonly pose: ActorPose;
+  /** Pose node per skin bone (−1: the bone keeps its rest matrix). */
+  readonly nodes: Int16Array;
+  /** The pose version its palette shows. */
+  version: number;
+}
+
+/** Writes a skinned part's palette from an actor pose. */
+function writePosePalette(
+  skin: NonNullable<ModelPart['skin']>,
+  posed: PosedDraw,
+  out: Float32Array,
+  at: number,
+): void {
+  const worlds = posed.pose.worlds;
+  for (let i = 0; i < skin.bones.length; i++) {
+    const node = posed.nodes[i] ?? -1;
+    if (node >= 0) {
+      writePaletteBone(out, at + i * PALETTE_BONE_FLOATS, worlds, node * 16, skin.bind, i * 16);
+    } else {
+      writePaletteBone(out, at + i * PALETTE_BONE_FLOATS, skin.rest, i * 16, skin.bind, i * 16);
+    }
+  }
+}
+
+/** The index ranges of a part's partitions that are drawn (adjacent ones merged). */
+function visibleRanges(
+  part: ModelPart,
+  visible: ((bodyPart: number) => boolean) | undefined,
+): IndexRange[] | undefined {
+  const partitions = part.skin?.partitions;
+  if (!visible || !partitions) return undefined;
+  const ranges: IndexRange[] = [];
+  let hidden = false;
+  for (const partition of partitions) {
+    if (!visible(partition.bodyPart)) {
+      hidden = true;
+      continue;
+    }
+    const last = ranges.at(-1);
+    if (last && last.first + last.count === partition.first) {
+      ranges[ranges.length - 1] = { first: last.first, count: last.count + partition.count };
+    } else {
+      ranges.push({ first: partition.first, count: partition.count });
+    }
+  }
+  return hidden ? ranges : undefined;
 }
 
 /** An instance's running behavior graph with what it plays from. */
@@ -930,17 +1006,19 @@ function writeMultiPass(
  */
 function materialTextures(
   material: PartMaterial | undefined,
-): [string, string, string, string, string, string, string] {
+): [string, string, string, string, string, string, string, string] {
   if (material?.kind === 'effect') {
-    return [material.sourceTexture, '', material.greyscaleTexture, '', '', '', ''];
+    return [material.sourceTexture, '', material.greyscaleTexture, '', '', '', '', ''];
   }
-  if (material?.kind !== 'lighting') return ['', '', '', '', '', '', ''];
+  if (material?.kind !== 'lighting') return ['', '', '', '', '', '', '', ''];
   const slot = (index: number): string => material.textures[index] ?? '';
   const multiLayer = material.shaderType === SHADER_MULTI_LAYER_PARALLAX;
   const environment = (material.flags1 & SLSF1_ENVIRONMENT_MAPPING) !== 0 || multiLayer;
   const glow = material.shaderType === SHADER_GLOW && (material.flags2 & SLSF2_GLOW_MAP) !== 0;
   const rimSoft = (material.flags2 & (SLSF2_SOFT_LIGHTING | SLSF2_RIM_LIGHTING)) !== 0;
   const backLight = (material.flags2 & SLSF2_BACK_LIGHTING) !== 0;
+  // FaceGen heads: the face tint (slot 6, in the layer's place) and the detail map (slot 3).
+  const facegen = material.shaderType === SHADER_FACEGEN;
   const specularMap =
     (material.flags1 & SLSF1_MODEL_SPACE_NORMALS) !== 0 && (material.flags1 & SLSF1_SPECULAR) !== 0;
   return [
@@ -950,13 +1028,14 @@ function materialTextures(
     environment ? slot(4) : '',
     environment ? slot(5) : '',
     backLight || specularMap ? slot(7) : '',
-    multiLayer
+    multiLayer || facegen
       ? slot(6)
       : material.shaderType === SHADER_PARALLAX
         ? slot(3)
         : material.shaderType === SHADER_LOD_LANDSCAPE_NOISE
           ? LOD_LANDSCAPE_NOISE
           : '',
+    facegen ? slot(3) : '',
   ];
 }
 
@@ -1114,6 +1193,7 @@ export class SceneRenderer {
         texture2d(8),
         texture2d(9),
         texture2d(10),
+        texture2d(11),
       ],
     });
     this.#pipelineLayout = device.createPipelineLayout({
@@ -1451,12 +1531,23 @@ export class SceneRenderer {
         const graph = graphDraw(instance);
         const skin = part.part.skin;
         let bones: number | undefined;
+        let posed: PosedDraw | undefined;
         if (skin && boneData) {
           bones = Math.ceil(paletteCursor / PALETTE_ALIGNMENT) * PALETTE_ALIGNMENT;
           paletteCursor = bones + skin.bones.length * PALETTE_BONE_FLOATS * 4;
-          writeRestPalette(skin, boneData, bones / 4);
+          const pose = instance.pose;
+          if (pose) {
+            const nodes = Int16Array.from(
+              skin.names,
+              (name) => pose.skeleton.nodeByName.get(name.toLowerCase()) ?? -1,
+            );
+            posed = { pose, nodes, version: pose.version };
+            writePosePalette(skin, posed, boneData, bones / 4);
+          } else {
+            writeRestPalette(skin, boneData, bones / 4);
+          }
         }
-        if (animation || part.part.billboard || sky || playback || graph) {
+        if (animation || part.part.billboard || sky || playback || graph || posed) {
           animated.push({
             offset,
             instanceWorld: instance.world,
@@ -1465,6 +1556,7 @@ export class SceneRenderer {
             ...(playback && { playback }),
             ...(graph && { graph }),
             ...(bones !== undefined && { bones }),
+            ...(posed && { posed }),
           });
         }
         const floats = new Float32Array(uniforms, offset, DRAW_SIZE / 4);
@@ -1473,6 +1565,18 @@ export class SceneRenderer {
         floats.set(world, 0);
         writeMaterial(floats, uints, part.part);
         if (sky) uints[38] = (uints[38] ?? 0) | SKY_DRAW;
+        if (part.part.skin) uints[38] = (uints[38] ?? 0) | DRAW_SKINNED;
+        const tints = instance.tints;
+        const tinted = part.part.material;
+        if (tints && tinted?.kind === 'lighting') {
+          const color =
+            tinted.shaderType === SHADER_SKIN_TINT
+              ? tints.skin
+              : tinted.shaderType === SHADER_HAIR_TINT
+                ? tints.hair
+                : undefined;
+          if (color) floats.set(color, 32);
+        }
         const partMaterial = part.part.material;
         const source = instance.emittance;
         if (source && partMaterial && partMaterial.kind !== 'water') {
@@ -1539,6 +1643,7 @@ export class SceneRenderer {
             uints[38] = (uints[38] ?? 0) | snow;
           }
         }
+        const ranges = visibleRanges(part.part, instance.partitionVisible);
         const draw: Draw = {
           part,
           uniformOffset: offset,
@@ -1548,6 +1653,7 @@ export class SceneRenderer {
           sky,
           lodSegments: lodSegments(part.part, world),
           bones,
+          ...(ranges && { ranges }),
         };
         draws.push(draw);
         if (instance.motion) {
@@ -1584,6 +1690,7 @@ export class SceneRenderer {
             sky,
             lodSegments: undefined,
             bones,
+            ...(ranges && { ranges }),
           };
           draws.push(passDraw);
           if (instance.motion) {
@@ -1857,7 +1964,20 @@ export class SceneRenderer {
         if (frame) writeAnimatedMaterial(floats, draw.part, frame);
         const skin = draw.part.skin;
         const bones = scene.bones;
-        if (frame && skin && bones && draw.bones !== undefined) {
+        const posed = draw.posed;
+        if (posed && skin && bones && draw.bones !== undefined) {
+          if (posed.version !== posed.pose.version) {
+            posed.version = posed.pose.version;
+            writePosePalette(skin, posed, bones.data, draw.bones / 4);
+            this.#device.queue.writeBuffer(
+              bones.buffer,
+              draw.bones,
+              bones.data,
+              draw.bones / 4,
+              skin.bones.length * PALETTE_BONE_FLOATS,
+            );
+          }
+        } else if (frame && skin && bones && draw.bones !== undefined) {
           writePosedPalette(
             skin,
             (i) => frame.worlds.get(skin.bones[i] ?? -1),
@@ -2266,7 +2386,11 @@ export class SceneRenderer {
         }
         pass.setVertexBuffer(0, part.vertexBuffer);
         pass.setIndexBuffer(part.indexBuffer, 'uint16');
-        pass.drawIndexed(part.indexCount);
+        if (draw.ranges) {
+          for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
+        } else {
+          pass.drawIndexed(part.indexCount);
+        }
       }
     }
   }
@@ -2372,6 +2496,10 @@ export class SceneRenderer {
     }
     pass.setVertexBuffer(0, part.vertexBuffer);
     pass.setIndexBuffer(part.indexBuffer, 'uint16');
+    if (draw.ranges) {
+      for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
+      return;
+    }
     const segments = draw.lodSegments;
     if (!segments) {
       pass.drawIndexed(part.indexCount);
@@ -2405,7 +2533,7 @@ export class SceneRenderer {
     textures: TextureCache,
   ): Promise<GPUBindGroup> {
     const { defaults } = textures;
-    const [diffuse, normal, glow, env, envMask, slot7, slot6] = await Promise.all(
+    const [diffuse, normal, glow, env, envMask, slot7, slot6, detail] = await Promise.all(
       materialTextures(material).map((path) => textures.get(path)),
     );
     // The engine's directional material textures (not held by models: never evicted).
@@ -2444,6 +2572,8 @@ export class SceneRenderer {
         { binding: 8, resource: (flat(projectedDiffuse) ?? defaults.white).createView() },
         { binding: 9, resource: (flat(projectedNormal) ?? defaults.flatNormal).createView() },
         { binding: 10, resource: (flat(projectedNoise) ?? defaults.black).createView() },
+        // A missing detail map leaves the face as it is (the engine's blank detail map).
+        { binding: 11, resource: (flat(detail) ?? defaults.blankDetail).createView() },
       ],
     });
   }
