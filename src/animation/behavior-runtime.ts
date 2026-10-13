@@ -122,7 +122,7 @@ interface Generated {
 }
 
 /** The smooth and linear blend curves of transitions (hkbBlendCurveUtils). */
-function blendCurve(curve: number, t: number): number {
+export function blendCurve(curve: number, t: number): number {
   const x = Math.min(1, Math.max(0, t));
   const smooth = x * x * (3 - 2 * x);
   switch (curve) {
