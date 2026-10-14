@@ -33,6 +33,10 @@ const condition = (fn: number, form: number, comparand: number, extra: Partial<C
     strings: [],
     runOn: 0,
     reference: 0,
+    raw1: 0,
+    form2: 0,
+    param3: -1,
+    eventMember: '',
     ...extra,
   }) satisfies Condition;
 
