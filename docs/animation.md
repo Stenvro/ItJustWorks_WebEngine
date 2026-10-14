@@ -135,7 +135,11 @@ Two graphs run: the race's (`defaultmale.hkx`) on the body and the first-person 
 drives both, as the engine drives them: Speed (the controller's horizontal speed, game units per
 second), Direction (the movement against the facing: 0 ahead, 0.25 right, 0.5 behind, 0.75 left),
 IsSprinting, IsSneaking; moveStart / moveStop when it starts and stops moving (over 5 units per
-second), SprintStart / SprintStop, SneakStart / SneakStop, SwimStart / SwimStop. A jump sends
+second), SprintStart / SprintStop, SneakStart / SneakStop, SwimStart / SwimStop, and
+**iSyncIdleLocomotion** with them (1 moving, 0 standing): the executable names it and no vanilla
+graph writes it outside blocking, while 38 state machines start from it and leave state 0 on
+moveStart and state 1 on moveStop; without it, landing from a jump while running restarted
+`MT_Default_Behavior` standing (no new moveStart comes while the player keeps moving). A jump sends
 JumpStandingStart or JumpDirectionalStart; the jump clip's **JumpUp** annotation pushes off (the
 controller's take-off speed from fJumpHeightMin), JumpFall goes out once it comes down and
 JumpLand (JumpLandDirectional when moving) when it stands again. In third person the body turns
@@ -193,7 +197,9 @@ them by name (a variable keeps the first file's initial value). Each frame:
    exit events, entering one its enter events and the machine's change event; a transition
    with a blending effect (duration, curve) plays both states and blends them, an instant one
    switches; a self transition starts the state over (unless its effect continues); a
-   transition into a nested state sets that machine's start.
+   transition into a nested state sets that machine's start. A machine with a sync variable writes the id
+   of the state it enters into it, and one whose start mode is SYNC starts from it (sneaking
+   locomotion and the idle turns share iIsInSneak that way).
 2. **Update** of the active nodes: transitions without an event whose condition holds are
    taken; clips advance by their playback speed (looping, single play, ping-pong, user
    controlled; an enforced duration plays the clip in that time) and raise their triggers
@@ -220,7 +226,8 @@ A standing NPC (variable IsNPC 1) reaches `MT_Standing_State` and plays `MT_Idle
 blended by speed in step, raising FootLeft / FootRight. All 53 skeletons of the placed actors
 start their graph and play idles (`tools/actor-info.ts --audit --deep`); some creatures start
 in a combat idle (dragons, rieklings) or a transform (vampire lords, werewolves) until the
-engine sets the variables of their state (TODO(M10)). Not yet: procedural modifiers (look-at,
+engine sets the variables of their state (TODO(M10)). The dead run no graph: their ragdolls pose them
+(physics.md, Constraints and ragdolls). Not yet: procedural modifiers (look-at,
 foot IK, twists, keyframed bones, ragdoll controls: TODO(M10)), the engine's events and
 variables of movement and combat (M10, M11).
 

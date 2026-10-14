@@ -255,9 +255,13 @@ moons (bits 0–5 days per phase, `0x40` Masser, `0x80` Secunda). Vanilla: 5:30�
 
 **WTHR:**
 
+- The clock the sky follows runs at the **TimeScale** global (GLOB FLTV; Skyrim.esm: 20, a game
+  day in 72 real minutes), read from the load order.
 - Cloud layers: texture fields `00TX`, `10TX`, … `90TX`, `:0TX`, … (the first character is
   `'0' + layer`), RNAM / QNAM one byte per layer: Y / X scroll speed, `(b − 127) / 1270`
-  (−0.1..0.1), PNAM 32 × 4 times × RGBA u8 colours, JNAM 32 × 4 times × f32 alpha, NAM1
+  (−0.1..0.1; read as texture widths per real second: UESP gives no unit, TODO(M13): compare
+  with the game; SkyrimClear's upper layers 0.03, the storm and overcast weathers 0), PNAM
+  32 × 4 times × RGBA u8 colours, JNAM 32 × 4 times × f32 alpha, NAM1
   disabled-layer bits, LNAM layer count (4 or 29). Many disabled or transparent layers name
   textures that do not ship; only TESTCloudyRain shows a missing one.
 - NAM0: 17 colours × 4 times (sunrise, day, sunset, night) × RGBA u8: 0 sky upper, 1 fog
@@ -347,10 +351,11 @@ behind the landscape's LOD with the same angular size (`src/shell/sky-objects.ts
 
 ## Water
 
-**WATR:** SNAM open sound (the water's ambient loop: 26 vanilla types), ANAM opacity (0–100), FNAM flags (`0x1` causes damage, `0x8` flow map, `0x10` blend
-normals), NAM2/NAM3/NAM4 the three noise layers' normal maps (SSE; older files use three NNAM;
-vanilla names `Data\Textures\Water\DefaultWater.dds`: the path is relative to Data), INAM
-imagespace modifier, DNAM 228 bytes (232 in SSE with the flow map scale). DNAM as 4-byte
+**WATR:** SNAM open sound (the water's ambient loop: 26 vanilla types), TNAM material (MATT:
+footsteps in it; 5 puddle types MaterialWaterPuddle, 2 blood waters MaterialWater, 51 none),
+ANAM opacity (0–100), FNAM flags (`0x1` causes damage, `0x8` flow map, `0x10` blend normals),
+NAM2/NAM3/NAM4 the three noise layers' normal maps (SSE; older files use three NNAM; vanilla names
+`Data\Textures\Water\DefaultWater.dds`: the path is relative to Data), INAM imagespace modifier, DNAM 228 bytes (232 in SSE with the flow map scale). DNAM as 4-byte
 values (UESP numbering − 1): 4 sun specular power, 5 reflectivity, 6 fresnel, 8/9 above-water
 fog near/far, 10/11/12 shallow / deep / reflection colour (RGBA u8), 18–22 displacement,
 24 noise falloff, 25–27 wind direction (degrees) and 28–30 wind speed per layer, 33 fog
@@ -713,7 +718,8 @@ health offset, bleedout override. TPLT template (NPC_ or LVLN), RNAM race, WNAM 
 (ARMO), DOFT / SOFT default and sleep outfit, PNAM head parts (HDPT, repeated), HCLF hair colour
 (CLFM), FTST head texture set, QNAM skin tone (3 × f32, 0..1), NAM6 height multiplier, NAM7
 weight (0..100), NAM9 face morphs (18 f32 + 4 bytes), NAMA face parts, CNTO inventory (form id,
-count), tint layers TINI / TINC / TINV / TIAS.
+count), tint layers TINI / TINC / TINV / TIAS, PKID AI packages (PACK, repeated, in order), SNAM
+factions (form id, rank i8, 3 unused). ACHR record flag 0x200: the actor starts dead.
 
 **RACE:** DATA (128 or 164 bytes): 7 skill / bonus pairs, height male / female (f32 at 16, 20),
 weight (24, 28), flags u32 at 32 (0x1 playable, 0x2 FaceGen head, 0x4 child, ...). WNAM skin.
@@ -765,6 +771,45 @@ is baked with the actor's weight: its neck seam meets the body blended at that w
 closer than with the TRI's SkinnyMorph applied again (measured on light NPCs: 1.9 against 2.1
 units, 2.3 for the heaviest body), so SkinnyMorph is left to heads made at run time (the
 player's).
+
+## AI packages
+
+**PACK** (`src/ai/package-records.ts`; check: `node tools/package-info.ts --parse`: 7633
+vanilla packages, 240 with a procedure tree of their own). After UESP, in field order:
+
+- **PKDT** 12 bytes: misc flags u32 (0x4 must complete, 0x400 once per day, 0x2000 preferred
+  speed, 0x20000 always sneak, 0x800000 weapon drawn, 0x20000000 wear sleep outfit, ...),
+  type u8 (0x1 a template), interrupt override u8, preferred speed u8 (walk, jog, run, fast
+  walk), unknown u8, interrupt flags u32.
+- **PSDT** 12 bytes: month i8 (−1 any), day of week i8 (−1 any, 0 Sundas .. 6 Loredas, 7
+  weekdays, 8 weekends, 9 Morndas / Middas / Fredas, 10 Tirdas / Turdas), date u8 (0 any),
+  hour i8 (−1 any time), minute i8, 3 unused, duration u32 in minutes. Vanilla: 1977 start
+  hours, 53 days of the week, no months or dates.
+- **CTDA** conditions on when it may run, **QNAM** owner quest, **PKCU** 12 bytes: data input
+  count, the template package (its tree runs with this package's inputs), version.
+- **Public data inputs:** each **ANAM** (Bool, Int, Float, ObjectList, Location, SingleRef,
+  TargetSelector, Topic) is followed by its value: CNAM (u8 bool, i32, f32; an ObjectList's
+  f32 is not documented), **PLDT** (type i32: 0 near reference, 1 in cell, 2 near the package
+  start, 3 near the editor location, 6 near the linked reference of a keyword, 8 / 9 alias
+  reference / location, 12 near self; the form or alias id; radius i32), **PTDA** (type i32: 0
+  a specific reference, 1 an object, 2 an object type, 3 the linked reference of a keyword, 4
+  a reference alias, 6 self; the form, type or alias id; count i32), PDTO / TPIC topics. Then
+  one **UNAM** (u8 id) per input in the same order, and **XNAM** ends them.
+- **Procedure tree** (templates, and packages without one): branches in depth-first order,
+  each an **ANAM** (Procedure, Sequence, Simultaneous, Random, Stacked), CITC condition count
+  and its CTDA, **PRCB** (two u32s, undocumented: the first is the branch's child count in every
+  vanilla package), for procedures **PNAM** the procedure (Travel, Sit, Sleep, Patrol, Sandbox,
+  Guard, UseIdleMarker, ForceGreet, ... 30 in vanilla), FNAM flags (0x1 success completes the
+  package) and **PKC2** the ids of the inputs it takes (u8, repeated; 255 none), PFO2 / PFOR
+  undocumented.
+- **Procedure data:** UNAM id, BNAM the name the Creation Kit shows ("Patrol Start", "Sleep
+  Location", "Target"), PNAM u32 (1: public).
+- **POBA / POEA / POCA** on begin / end / change: INAM idle, SCHR, TNAM, PDTO.
+
+**QUST** (what package starts read): DNAM flags u8 (0x01 start game enabled), INDX stages
+(i16 index, u8 flags: 0x02 start-up stage, 0x04 shut-down stage), VMAD stage fragments, and
+reference aliases from ALST to ALED: ALFR forced reference, ALUA unique actor (NPC_), ALPC
+packages added while the alias holds the actor (they run before its own).
 
 ## Default objects
 

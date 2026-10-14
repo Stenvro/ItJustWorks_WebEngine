@@ -13,6 +13,8 @@ export const RecordFlag = {
   deleted: 0x20,
   localized: 0x80, // TES4: FULL/DESC/... are string table ids
   light: 0x200, // TES4: ESL
+  /** ACHR: the actor is dead when the game starts (its ragdoll lies where it falls). */
+  startsDead: 0x200,
   persistent: 0x400, // REFR/ACHR
   initiallyDisabled: 0x800,
   ignored: 0x1000,

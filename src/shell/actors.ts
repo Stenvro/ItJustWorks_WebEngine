@@ -28,6 +28,13 @@ import {
   type GroundHit,
 } from '../world/actor-ground.ts';
 import { referenceMatrix, type CellActor } from '../world/cell-loader.ts';
+import { parseReference } from '../world/cell-records.ts';
+import { activeMarker, furnitureMarkers, markerPlacement } from '../world/furniture.ts';
+import { parseNif } from '../formats/nif/nif.ts';
+import type { FurniturePosition } from '../formats/nif/types.ts';
+import type { PackageStart } from '../ai/package-start.ts';
+import type { CollisionData } from '../physics/collision-data.ts';
+import type { CellRagdoll } from './play-session.ts';
 import { parseTextureSet } from '../world/decal.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import type { GameSession } from './game-session.ts';
@@ -37,8 +44,13 @@ import type { Terminal } from './terminal.ts';
 
 /** An actor placed in a scene: its look, its pose and the instances that draw it. */
 export interface PlacedActor extends AnimatedSkeleton {
+  /** The actor where it is: where its package has it (else as placed in its cell). */
   readonly actor: CellActor;
   readonly look: ActorLook;
+  /** Where its AI package had it as its cell loaded (undefined: dead, no package runs). */
+  readonly start: PackageStart | undefined;
+  /** In the furniture its package uses: the furniture holds it, not the ground. */
+  readonly inFurniture: boolean;
   readonly instances: readonly ModelInstance[];
   /** Its behavior graph, running (undefined: it stands in its skeleton's rest pose). */
   readonly behavior: BehaviorRuntime | undefined;
@@ -63,7 +75,7 @@ export function groundActor(
   cast: (from: Vec3, length: number) => GroundHit | undefined,
 ): void {
   const instance = placed.instances[0];
-  if (!instance?.motion || !standsOnGround(placed.look.raceFlags)) return;
+  if (!instance?.motion || placed.inFurniture || !standsOnGround(placed.look.raceFlags)) return;
   const [x, y, z] = placed.actor.position;
   const hit = cast([x, y, z + GROUND_ABOVE], GROUND_ABOVE + GROUND_BELOW);
   if (!hit) return;
@@ -83,6 +95,32 @@ export function groundActors(actors: readonly PlacedActor[], physics: PhysicsWor
     return hit && { point: hit.point, normal: hit.normal };
   };
   for (const placed of actors) groundActor(placed, cast);
+}
+
+/**
+ * The ragdolls of the dead among placed actors: their skeleton's bodies (the race's
+ * skeleton.nif: capsules on the bones, joined by ragdoll and hinge constraints) move their
+ * pose and fall where they lie as the cell settles. TODO(M13): the pose a dead actor's ragdoll
+ * starts from as its cell first loads is not documented; it starts in the skeleton's rest pose.
+ */
+export async function ragdollsOf(
+  actors: readonly PlacedActor[],
+  collision: (path: string) => Promise<CollisionData | undefined>,
+): Promise<CellRagdoll[]> {
+  const ragdolls = await Promise.all(
+    actors.map(async (placed): Promise<CellRagdoll | undefined> => {
+      const world = placed.instances[0]?.world;
+      const skeleton = placed.look.skeleton;
+      if (!placed.actor.startsDead || !world || skeleton === undefined) return undefined;
+      return {
+        reference: placed.actor.reference,
+        world,
+        collision: await collision(skeleton),
+        pose: placed.pose,
+      };
+    }),
+  );
+  return ragdolls.filter((ragdoll): ragdoll is CellRagdoll => ragdoll !== undefined);
 }
 
 /** Where an actor's head is, in the world (TODO(M10): creatures' heads by their race). */
@@ -212,6 +250,7 @@ export class ActorPlacer {
   readonly #resolver: ActorResolver;
   readonly #rigs = new Map<string, Promise<RigData | undefined>>();
   readonly #textureSets = new Map<number, Promise<readonly string[] | undefined>>();
+  readonly #furniture = new Map<number, Promise<FurniturePosition | undefined>>();
   #blink: Promise<BlinkSettings> | undefined;
   /** Spoken lines by lower-case voice type (sound\voice\<plugin>\<voice type>\). */
   #voices: Map<string, string[]> | undefined;
@@ -241,6 +280,37 @@ export class ActorPlacer {
 
   #rig(path: string): Promise<RigData | undefined> {
     return this.#cached(this.#rigs, path, () => this.#session.loader.loadRig(path));
+  }
+
+  /**
+   * An actor moved to a reference its package names: on it, facing its way; in furniture, at
+   * its first active marker (FURN MNAM), facing the marker's heading. TODO(M10): the
+   * furniture's idle, which puts the actor's root at the marker's height (a bed's surface, an
+   * alcove's 114 units); until then the feet stay at the furniture's.
+   */
+  async #atReference(actor: CellActor, reference: number, furniture: boolean): Promise<CellActor> {
+    const record = await this.#db.get(reference);
+    if (!record || record.deleted) return actor;
+    const placed = parseReference(record);
+    const marker = furniture ? await this.#furnitureMarker(placed.base) : undefined;
+    if (marker) {
+      const at = markerPlacement(placed, marker, false);
+      return { ...actor, position: at.position, rotation: [0, 0, at.heading] };
+    }
+    return { ...actor, position: placed.position, rotation: [0, 0, placed.rotation[2]] };
+  }
+
+  /** The marker actors use a furniture (FURN) from, read once per furniture. */
+  #furnitureMarker(base: number): Promise<FurniturePosition | undefined> {
+    return this.#cached(this.#furniture, base, async () => {
+      const record = await this.#db.get(base);
+      const model = record?.type === 'FURN' ? record.fields.zstring('MODL') : undefined;
+      if (!record || model === undefined) return undefined;
+      const path = meshPath(model);
+      if (!this.#session.vfs.has(path)) return undefined;
+      const markers = furnitureMarkers(parseNif(await this.#session.vfs.read(path)));
+      return activeMarker(markers, record.fields.u32('MNAM'));
+    });
   }
 
   /** The voice files of a voice type, found once for all. */
@@ -332,11 +402,23 @@ export class ActorPlacer {
     });
   }
 
-  /** An actor ready to draw, or undefined if its look or skeleton cannot be made. */
-  async place(actor: CellActor): Promise<PlacedActor | undefined> {
-    const look = await this.#resolver.resolve(actor.base, actor.reference);
+  /**
+   * An actor ready to draw where its AI package has it, or undefined if its package has it in
+   * another cell or its look or skeleton cannot be made.
+   */
+  async place(placedInCell: CellActor): Promise<PlacedActor | undefined> {
+    const look = await this.#resolver.resolve(placedInCell.base, placedInCell.reference);
     if (!look?.skeleton) return undefined;
     const session = this.#session;
+    // The dead run no packages.
+    const start = placedInCell.startsDead
+      ? undefined
+      : await session.packageStart(placedInCell, look);
+    if (start?.kind === 'elsewhere') return undefined;
+    const actor =
+      start?.kind === 'at'
+        ? await this.#atReference(placedInCell, start.reference, start.furniture)
+        : placedInCell;
     const animation = session.animation;
     const behaviors = look.behavior ? await animation.behaviors(look.behavior) : undefined;
     const character = behaviors?.character;
@@ -407,8 +489,10 @@ export class ActorPlacer {
           for (const { part } of entry.model.parts) expressions.set(part.name.toLowerCase(), tri);
       }
     }
-    // Its face: the head parts' expression morphs, moved by blinks, moods and speech.
-    const face = heads.length > 0 ? await this.#face(expressions, actor) : undefined;
+    // Its face: the head parts' expression morphs, moved by blinks, moods and speech (the
+    // dead's no longer move).
+    const dead = actor.startsDead;
+    const face = heads.length > 0 && !dead ? await this.#face(expressions, actor) : undefined;
 
     // The models go on the skeleton: their nodes are its nodes (the ones it lacks added).
     const models: { model: GpuModel; addon: number | undefined }[] = [
@@ -432,8 +516,9 @@ export class ActorPlacer {
       ...(look.skinTone && { skin: look.skinTone }),
       ...(look.hairColor && { hair: look.hairColor }),
     };
-    // Actors that stand on the ground are moved onto it once their cell's collision is in.
-    const motion = standsOnGround(look.raceFlags) ? { version: 0 } : undefined;
+    // Actors that stand on the ground are moved onto it once their cell's collision is in; the
+    // dead's ragdolls fall (ragdollsOf).
+    const motion = !dead && standsOnGround(look.raceFlags) ? { version: 0 } : undefined;
     const instances = models.map(({ model, addon }, i): ModelInstance => {
       // What it wears plays its own graph (the steam that flows around automatons' joints).
       const graph = startObjectGraph(model, actor.reference);
@@ -453,7 +538,7 @@ export class ActorPlacer {
     // Its behavior graph: started, its first clips loaded, then run on by a moment of its
     // own (actors placed together do not all breathe together).
     let behavior: BehaviorRuntime | undefined;
-    if (behaviors && havok) {
+    if (behaviors && havok && !dead) {
       const host = animation.host(behaviors, look.female);
       const random = seededRandom(actor.reference);
       behavior = new BehaviorRuntime({
@@ -477,6 +562,8 @@ export class ActorPlacer {
     const placed: PlacedActor = {
       actor,
       look,
+      start,
+      inFurniture: start?.kind === 'at' && start.furniture,
       pose,
       instances,
       behavior,

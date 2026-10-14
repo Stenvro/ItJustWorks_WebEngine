@@ -39,8 +39,6 @@ import type { GameSession } from './game-session.ts';
 import { SkyObjects } from './sky-objects.ts';
 import type { Terminal } from './terminal.ts';
 
-/** Game seconds per real second (GLOB TimeScale default). */
-export const TIMESCALE = 20;
 const DEFAULT_SKY_MODEL = 'meshes\\sky\\stars.nif';
 const DEFAULT_SUN = 'textures\\sky\\sun.dds';
 const DEFAULT_SUN_GLARE = 'textures\\sky\\sunglare.dds';
@@ -83,7 +81,6 @@ export class WorldSky {
   #pinned = false;
   #hour = 10;
   readonly #session: GameSession;
-  #days = 0;
   #seconds = 0;
   #lastFrame: number | undefined;
   #state: SkyState | undefined;
@@ -304,10 +301,10 @@ export class WorldSky {
     this.#lastFrame = now;
     this.#seconds += delta;
     if (this.#ui.timeFlows.checked) {
-      this.#hour += (delta * TIMESCALE) / 3600;
+      this.#hour += (delta * this.#session.timeScale) / 3600;
       if (this.#hour >= 24) {
         this.#hour -= 24;
-        this.#days++;
+        this.#session.gameDaysPassed++;
       }
       if (Math.abs(Number(this.#ui.time.value) - this.#hour) > 0.04) {
         this.#ui.time.value = this.#hour.toFixed(2);
@@ -333,7 +330,7 @@ export class WorldSky {
       ...(this.#previous && { previous: this.#previous, transition: this.#transition }),
       climate: this.#climate,
       hour: this.#hour,
-      daysPassed: this.#days,
+      daysPassed: this.#session.gameDaysPassed,
       seconds: this.#seconds,
       settings: this.#settings,
     });

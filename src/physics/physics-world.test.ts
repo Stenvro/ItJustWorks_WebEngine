@@ -245,9 +245,9 @@ describe('physics constraints', () => {
   });
   const heightAfter = (data: CollisionData, seconds: number, push?: number): number => {
     const physics = new PhysicsWorld(matrix, GRAVITY);
-    // Not placed to settle (that would hold it still a moment): woken at once.
+    // Not placed to settle (that would hold it still a moment): let go at once.
     const placed = physics.addObject(data, IDENTITY, { reference: 1, kind: 'object' }, false);
-    for (const { body } of placed.bodies) body.wakeUp();
+    for (const { body } of placed.bodies) physics.release(body);
     const weight = placed.bodies[1]?.body;
     if (push !== undefined) weight?.applyImpulse({ x: push, y: 0, z: 0 }, true);
     for (let t = 0; t < seconds; t += 1 / 60) physics.step(1 / 60);
@@ -352,6 +352,33 @@ describe('settling placed objects', () => {
     physics.free();
   });
 
+  it('holds what waits where it is until something that moves touches it', () => {
+    const physics = new PhysicsWorld(clutterMatrix, GRAVITY);
+    // Antlers mounted on a wall: touching it, nothing under them.
+    physics.addObject(collision(body(box([-20, -100, 0], [0, 100, 300]))), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    const antlers = physics.addObject(
+      collision(clutter([0, -10, 190], [8, 10, 210])),
+      IDENTITY,
+      { reference: 2, kind: 'object' },
+      false,
+    );
+    // How far the body went down from its placement (its shape lies 190–210 above its origin).
+    const z = (): number => (antlers.bodies[0]?.body.translation().z ?? 0) * 69.99125;
+    for (let i = 0; i < 60; i++) physics.step(1 / 60);
+    expect(z()).toBeCloseTo(0, 3);
+    // A cup dropped onto them knocks them down.
+    physics.addObject(collision(clutter([0, -4, 230], [8, 4, 238])), IDENTITY, {
+      reference: 3,
+      kind: 'object',
+    });
+    for (let i = 0; i < 120; i++) physics.step(1 / 60);
+    expect(z()).toBeLessThan(-50);
+    physics.free();
+  });
+
   it('lets a hung body pass through what it was placed into, and still rest', () => {
     const physics = new PhysicsWorld(clutterMatrix, GRAVITY);
     // A beam the pheasant's hook is set into.
@@ -397,7 +424,7 @@ describe('settling placed objects', () => {
       { reference: 1, kind: 'object' },
       false,
     );
-    for (const { body: rigid } of placed.bodies) rigid.wakeUp();
+    for (const { body: rigid } of placed.bodies) physics.release(rigid);
     for (let i = 0; i < 60; i++) physics.step(1 / 60);
     // It fell through the hook as through nothing.
     expect((placed.bodies[1]?.body.translation().z ?? 0) * 69.99125).toBeLessThan(-200);

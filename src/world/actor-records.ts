@@ -115,6 +115,10 @@ export interface NpcRecord {
   readonly weight: number;
   /** CNTO: the inventory. */
   readonly items: readonly InventoryItem[];
+  /** PKID: its AI packages, in order (the first that may run runs). */
+  readonly packages: readonly number[];
+  /** SNAM: its factions and its rank in each (−1: listed but not a member). */
+  readonly factions: ReadonlyMap<number, number>;
 }
 
 export interface RaceRecord {
@@ -312,6 +316,16 @@ export function parseNpc(record: RecordSource): NpcRecord {
     height: record.fields.f32('NAM6') ?? 1,
     weight: record.fields.f32('NAM7') ?? 0,
     items,
+    packages: record.fields
+      .all('PKID')
+      .map((data) => formOf(record, data))
+      .filter((formId): formId is number => formId !== undefined),
+    factions: new Map(
+      record.fields.all('SNAM').flatMap((data): [number, number][] => {
+        const faction = formOf(record, data);
+        return faction !== undefined && data.length >= 5 ? [[faction, view(data).getInt8(4)]] : [];
+      }),
+    ),
   };
 }
 

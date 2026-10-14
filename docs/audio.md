@@ -154,7 +154,12 @@ creatures' skins) lists footsteps by gait, each with a tag (FootLeft, FootRight,
 FootSprintRight, FootFront, JumpUp, JumpDown, a wolf's NPCWolfHowl) and an impact data set. An
 event the set has a footstep for in the actor's gait (else in the walking one) plays that set's
 impact for the ground under the actor's feet (a ray down from 32 units above them, leaving out
-the player's own capsule: the shape's material, or the land texture's) at the feet. The player's
+the player's own capsule: the shape's material, or the land texture's) at the feet; feet under
+a water surface (a water activator's volume, the cell's water) step in that water instead: its
+type's material (WATR TNAM: MaterialWaterPuddle for the 5 puddle and ankle-deep interior
+types, whose impacts are FSTWaterPuddleImpact), else Water, the material of the water volumes'
+collision (FSTWaterWalk / Run / Sprint impacts). The engine's exact rule (how deep) is not
+documented: TODO(M13). The player's
 gait: sneaking, sprinting, running or walking; placed NPCs walk (TODO(M10) with their
 movement). The player in iron boots running across the Abandoned Shack's floor plays
 FSTWoodRunArmorHeavyLSD / RSD. Animations' **SoundPlay.`<descriptor>`** events play that sound

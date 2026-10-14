@@ -483,6 +483,19 @@ export class BehaviorRuntime {
     return state;
   }
 
+  /**
+   * A machine with a sync variable keeps it at its current state's id; started in sync mode,
+   * a machine begins in the state the variable names. Two machines sharing one keep each
+   * other's place: the sneak idle and the sneak locomotion (iIsInSneak), so walking off
+   * while sneaking goes on sneaking.
+   */
+  #syncState(node: StateMachine, id: number): void {
+    const index = node.syncVariableIndex;
+    if (index === undefined || index < 0) return;
+    const global = this.#scopeOf(node).variables[index];
+    if (global !== undefined && global >= 0) this.#values[global] = id;
+  }
+
   /** Enters the state a machine starts in. */
   #enterStart(node: StateMachine, machine: MachineState): void {
     const scope = this.#scopeOf(node);
@@ -520,6 +533,7 @@ export class BehaviorRuntime {
     machine.timeInState = 0;
     machine.received.clear();
     machine.pending = undefined;
+    if (start) this.#syncState(node, start.id);
     if (start) for (const event of start.enterNotifyEvents ?? []) this.#raise(event, scope);
   }
 
@@ -725,6 +739,7 @@ export class BehaviorRuntime {
     machine.timeInState = 0;
     machine.received.clear();
     machine.pending = undefined;
+    this.#syncState(node, to.id);
     if ((transition?.flags ?? 0) & TRANSITION_FLAGS.toNestedStateIdIsValid) {
       this.#setNestedStart(to.generator, transition?.toNestedStateId ?? -1);
     }
@@ -749,6 +764,7 @@ export class BehaviorRuntime {
           machine.timeInState = 0;
           machine.received.clear();
           machine.pending = undefined;
+          this.#syncState(node, state.id);
         } else {
           this.#machines.set(node, {
             current: undefined,

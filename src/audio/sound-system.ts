@@ -42,6 +42,7 @@ import {
   parseFootstepSet,
   type Footstep,
   type FootstepGait,
+  type FootstepGround,
   type FootstepSet,
 } from '../world/footstep-records.ts';
 import {
@@ -50,7 +51,7 @@ import {
   type Impact,
   type ImpactDataSet,
 } from '../world/impact-records.ts';
-import { parseMaterialType, type MaterialType } from '../world/material-type.ts';
+import { materialId, parseMaterialType, type MaterialType } from '../world/material-type.ts';
 import { WebMusicOutput } from './music-output.ts';
 import type { AudioLoader } from './audio-loader.ts';
 import { AudioEngine } from './audio-engine.ts';
@@ -60,6 +61,8 @@ import { SoundInstance, type SoundBuffer, type SoundPlace } from './sound-instan
 const BUFFER_BUDGET = 256 * 1024 * 1024;
 /** A placed loop starts within its range and stops beyond it by this share more. */
 const EMITTER_HYSTERESIS = 1.1;
+/** The collision material of water volumes (MaterialWater). */
+const WATER_MATERIAL = materialId('Water');
 
 /** A placed looping sound (CellSoundEmitter) as the system tracks it. */
 export interface SoundEmitter {
@@ -375,15 +378,15 @@ export class SoundSystem {
   /**
    * An actor's footstep: the footstep of its set answering an animation event (`tag`) in its
    * gait (else in the walking one), sounding the impact of its impact data set for the ground
-   * at `position` (a material id, or the landscape's by its land texture). False if the set
-   * answers nothing to the event.
+   * at `position` (a material id, or the landscape's by its land texture), or for the water the
+   * feet are in (its type's material). False if the set answers nothing to the event.
    */
   async footstep(
     set: number,
     tag: string,
     gait: FootstepGait,
     position: Vec3,
-    ground: { readonly material: number; readonly landscape: boolean },
+    ground: FootstepGround,
   ): Promise<boolean> {
     const footsteps = await this.#footstepSet(set);
     if (!footsteps) return false;
@@ -402,14 +405,27 @@ export class SoundSystem {
     if (!impactSet) return true;
     const records = this.#impactSources;
     const material =
-      ground.material !== 0
-        ? await records.materialById(ground.material)
-        : ground.landscape
-          ? await landMaterial(records, position)
-          : undefined;
+      'water' in ground
+        ? await this.#waterMaterial(ground.water)
+        : ground.material !== 0
+          ? await records.materialById(ground.material)
+          : ground.landscape
+            ? await landMaterial(records, position)
+            : undefined;
     const impact = await impactAgainst(records, impactSet, material);
     if (impact?.sound !== undefined) void this.play(impact.sound, position);
     return true;
+  }
+
+  /**
+   * The material of a water type: its own (WATR TNAM: MaterialWaterPuddle for the puddles and
+   * ankle-deep interior waters), else that of water's collision (the WATER phantoms' Water).
+   */
+  async #waterMaterial(type: number): Promise<MaterialType | undefined> {
+    const record = await this.#db.get(type);
+    const own = record?.type === 'WATR' && !record.deleted ? record.formIdField('TNAM') : 0;
+    const materials = await this.#materialTypes();
+    return (own ? materials.byForm.get(own) : undefined) ?? materials.byId.get(WATER_MATERIAL);
   }
 
   /** Plays a sound descriptor by editor id at a place (animations' SoundPlay events). */

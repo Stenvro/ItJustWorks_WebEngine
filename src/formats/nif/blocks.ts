@@ -14,6 +14,7 @@ import type {
   BSShaderTextureSetBlock,
   BSTriShapeBlock,
   IntegerExtraDataBlock,
+  FurnitureMarkerBlock,
   NiAlphaPropertyBlock,
   NiAvObject,
   NifBlock,
@@ -493,6 +494,19 @@ const parseIntegerExtraData: BlockParser = (reader, context): IntegerExtraDataBl
   value: reader.u32(),
 });
 
+/** nif.xml FurniturePosition after BS version 34: offset, heading, animation type, entries. */
+const parseFurnitureMarker: BlockParser = (reader, context): FurnitureMarkerBlock => {
+  const name = readStringRef(reader, context);
+  const count = reader.u32();
+  const positions = Array.from({ length: count }, () => ({
+    offset: readVec3(reader),
+    heading: reader.f32(),
+    animationType: reader.u16(),
+    entryPoints: reader.u16(),
+  }));
+  return { kind: 'furniture-marker', name, positions };
+};
+
 const parseStringExtraData: BlockParser = (reader, context): StringExtraDataBlock => ({
   kind: 'string-extra-data',
   name: readStringRef(reader, context),
@@ -681,6 +695,8 @@ export const BLOCK_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string, B
   ['NiAlphaProperty', parseAlpha],
   ['NiIntegerExtraData', parseIntegerExtraData],
   ['BSXFlags', parseIntegerExtraData],
+  ['BSFurnitureMarker', parseFurnitureMarker],
+  ['BSFurnitureMarkerNode', parseFurnitureMarker],
   ['BSBehaviorGraphExtraData', parseBehaviorGraphExtraData],
   ['NiStringExtraData', parseStringExtraData],
   ['BSBound', parseBound],

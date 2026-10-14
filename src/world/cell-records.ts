@@ -296,6 +296,16 @@ export function parseReference(record: GameRecord): PlacedReference {
   };
 }
 
+/** XLKR: a reference's linked references by keyword (0: none). */
+export function linkedReferences(record: GameRecord): Map<number, number> {
+  const links = new Map<number, number>();
+  for (const data of record.fields.all('XLKR')) {
+    if (data.length < 8) continue;
+    links.set(record.formIdAt(data, 0), record.formIdAt(data, 4));
+  }
+  return links;
+}
+
 // --- Base objects ---------------------------------------------------------------
 
 /** Base object types that are drawn from a NIF in the world. */

@@ -21,11 +21,13 @@ import {
   type Rgb,
   parseTeleport,
   type Teleport,
+  linkedReferences,
 } from './cell-records.ts';
 export { parseTeleport, type Teleport } from './cell-records.ts';
 import { parseTextureSet, placeDecal, type PlacedDecal, type TextureSet } from './decal.ts';
 import { parseStaticDirectional, type StaticDirectional } from './material-object.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
+import { weaponRackHolds } from './weapon-racks.ts';
 
 export interface CellObject {
   readonly reference: number;
@@ -50,6 +52,11 @@ export interface CellObject {
    * something touches it, instead of settling when its cell loads.
    */
   readonly dontHavokSettle?: boolean;
+  /**
+   * A script holds it keyframed (it does not fall): a weapon a rack holds
+   * (src/world/weapon-racks.ts).
+   */
+  readonly keyframed?: boolean;
   /** XTEL: a load door's destination (the door it leads to and where the player arrives). */
   readonly teleport?: Teleport;
   /** Sounds of using it (SNDR): doors and containers opening and closing, activators. */
@@ -67,6 +74,10 @@ export interface CellActor {
   readonly rotation: readonly [number, number, number];
   /** The reference's own scale (XSCL). */
   readonly scale: number;
+  /** XLKR: its linked references by keyword (0: none). */
+  readonly links: ReadonlyMap<number, number>;
+  /** Dead when the game starts (ACHR flag 0x200). */
+  readonly startsDead: boolean;
 }
 
 /** The sounds an object makes when used (SNDR form ids). */
@@ -469,6 +480,11 @@ export async function loadCellData(
     if (ref.enableParent) pending.push(ref.enableParent.formId);
   }
 
+  // Weapons that racks hold (their scripts keyframe them).
+  const racked = await weaponRackHolds(
+    db,
+    placed.map(({ record }) => record),
+  );
   for (const { record, ref } of placed) {
     const base = await db.get(ref.base);
     if (!base) {
@@ -487,6 +503,8 @@ export async function loadCellData(
         position: ref.position,
         rotation: ref.rotation,
         scale: ref.scale,
+        links: linkedReferences(record),
+        startsDead: (record.flags & RecordFlag.startsDead) !== 0,
       });
       continue;
     }
@@ -577,6 +595,7 @@ export async function loadCellData(
       ...leafAnimationOf(base),
       ...emittanceOf(record),
       ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
+      ...(racked.has(ref.formId) && { keyframed: true }),
       ...(base.type === 'DOOR' && { teleport: parseTeleport(record) }),
       ...objectSoundsOf(base),
     });

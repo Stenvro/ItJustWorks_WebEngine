@@ -124,6 +124,8 @@ export class PlayerAvatar {
       position: [feet[0], feet[1], feet[2]],
       rotation: [0, 0, player.yaw],
       scale: 1,
+      links: new Map(),
+      startsDead: false,
     });
     if (!body) return undefined;
     // One placement matrix the body's instances share, moved every frame.
@@ -178,8 +180,9 @@ export class PlayerAvatar {
     const skeletons: AnimatedSkeleton[] = [this.body];
     if (this.#firstPerson) skeletons.push(this.#firstPerson);
     animateSkeletons(skeletons, seconds);
-    // The body stands on the player's feet, facing its own way.
-    const feet = player.character.feetAt(1);
+    // The body stands on the player's feet, facing its own way: where the camera has them
+    // between physics steps (the last step's feet put the body up to a step off the camera).
+    const feet = player.drawnFeet;
     // The race's height times its own (as placed actors are).
     const scale = this.body.look.scale * this.body.actor.scale;
     const sin = Math.sin(this.#bodyYaw);
@@ -236,6 +239,11 @@ export class PlayerAvatar {
     this.#set('IsSneaking', player.sneaking ? 1 : 0);
     const told = this.#told;
     const moving = speed > 5;
+    // The engine keeps iSyncIdleLocomotion with the movement (its name is in the executable;
+    // no graph writes it outside blocking): 38 state machines start from it, leaving state 0 on
+    // moveStart and state 1 on moveStop, so a graph that comes back (landing from a jump)
+    // starts moving while the player moves.
+    this.#set('iSyncIdleLocomotion', moving ? 1 : 0);
     if (moving !== told.moving) this.#send(moving ? 'moveStart' : 'moveStop');
     if (motion.sprinting !== told.sprinting) {
       this.#send(motion.sprinting ? 'SprintStart' : 'SprintStop');

@@ -9,7 +9,8 @@ the engine only, and needs a legitimately owned copy of Skyrim Special Edition. 
 
 > **Status: early development.** The worlds can be walked through — interior cells and the
 > exterior worldspaces with their landscape, water, sky, weather, lighting, sound and music —
-> but there are no characters, quests or game menus yet. See [Milestones](#milestones).
+> with their people and creatures standing in them, animated by the game's own behavior
+> graphs. There are no quests, scripts, AI or game menus yet. See [Milestones](#milestones).
 
 ## What works
 
@@ -22,8 +23,14 @@ the engine only, and needs a legitimately owned copy of Skyrim Special Edition. 
 - **Playing:** the player in first and third person with the game's controls and movement
   speeds, collision and physics (Rapier) built from the models' Havok data, doors between
   cells and worldspaces, swimming, picking up and holding objects.
-- **Audio:** sound effects in 3D with reverb by acoustic space, ambience, water, impacts, and
-  the music system with its types and crossfades.
+- **Audio:** sound effects in 3D with reverb by acoustic space, ambience, water, impacts,
+  footsteps by ground material, and the music system with its types and crossfades.
+- **Actors:** people and creatures dressed and skinned on their race's skeleton, with FaceGen
+  heads; the game's Havok animations and behavior graphs (also of animated objects, from
+  packfiles and Creation Club tagfiles); blinking, moods and lip-synced voice lines; the
+  player's own body in third person; ragdolls and hinged objects held by their constraints, the
+  dead lying as ragdolls; actors where their AI packages have them as their cells load (on
+  their posts, in their ambush alcoves, away when asleep elsewhere).
 
 ## Milestones
 
@@ -36,8 +43,8 @@ the engine only, and needs a legitimately owned copy of Skyrim Special Edition. 
 | M4        | Tamriel's exterior: terrain, streaming, LOD, water, sky, weather          | done  |
 | M5        | The player: first and third person, collision, physics                    | done  |
 | M6        | Audio: xWMA, 3D sound, the music system                                   | done  |
-| M7        | Actors: skinning, Havok animations and behavior graphs, faces, lip sync   | next  |
-| M8        | The Papyrus virtual machine: quests and scripts as in the original        |       |
+| M7        | Actors: skinning, Havok animations and behavior graphs, faces, lip sync   | done  |
+| M8        | The Papyrus virtual machine: quests and scripts as in the original        | next  |
 | M9        | The game's own menus (Scaleform through Ruffle)                           |       |
 | M10       | AI: packages, navigation meshes, combat, detection, schedules             |       |
 | M11       | Gameplay: skills, perks, magic, shouts, crafting, crime, factions         |       |
@@ -102,6 +109,9 @@ never in a build).
 | `node tools/bsa-list.ts <bsa> --verify` | Contents of an archive; verifies and extracts everything      |
 | `node tools/nif-stats.ts --parse`       | Block types of all meshes; parses every block                 |
 | `node tools/navmesh-info.ts --verify`   | Reads every navigation mesh                                   |
+| `node tools/hkx-info.ts --audit`        | Loads and starts every behavior graph a mesh names            |
+| `node tools/actor-info.ts <npc>`        | An actor's look, skeleton and behavior graph                  |
+| `node tools/package-info.ts <actor>`    | An actor's AI packages and where they have it                 |
 | `node tools/music-info.ts [type]`       | Music types and tracks of the load order                      |
 | `node tools/spawn-audit.ts [filter]`    | Arrives through every load door; walks through doors          |
 | `node tools/stairs-audit.ts [filter]`   | Walks the player up and down every staircase of the interiors |
@@ -119,8 +129,9 @@ src/
   render/     WebGPU: shaders, terrain, water, sky, particles, LOD, post-processing
   physics/    Rapier: collision from the Havok data, the character controller
   audio/      Web Audio: 3D sound, reverb, music
-  animation/  behavior graphs of objects
+  animation/  skeletons, the Havok Behavior runtime, faces and lip sync, tree sway
   scripting/  the Papyrus virtual machine
+  ai/         AI packages: where they put actors
   shell/      the web shell: main menu, sandbox, viewers, the player
   workers/    parsing off the main thread
 tools/        command-line tools over the local game files

@@ -348,6 +348,17 @@ Whiterun's stairs: bounds 3300 units high from the stairs past the walls) are on
 heard. Volumes are placed with the reference (its scale included); hulls and capsules are
 taken as their bounding boxes.
 
+## Furniture markers
+
+**BSFurnitureMarkerNode** (and BSFurnitureMarker; nif.xml), an extra data named "FRN" on a
+furniture's root: a u32 count of positions, each (BS version over 34) an offset (3 × f32, model
+space), a heading (f32, radians about z), the animation type (u16: 1 sit, 2 sleep, 4 lean) and
+the entry points (u16: 0x1 front, 0x2 behind, 0x4 right, 0x8 left, 0x10 up); 20 bytes each.
+243 vanilla meshes hold one (`node tools/nif-stats.ts --parse`). The furniture record makes
+some of them active (FURN MNAM, a bit per marker in the low 24 bits; FNPR repeats each marker's
+type and entry points). A creature alcove's single marker is a sleep marker 114 units above its
+origin: where the actor's root goes with the furniture's idle (`src/world/furniture.ts`).
+
 ## TRI (FaceGen morphs)
 
 A head part (HDPT) names its morph files by part type (NAM0 then NAM1 path): 0 race morphs,

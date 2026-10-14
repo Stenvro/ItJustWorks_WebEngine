@@ -47,6 +47,19 @@ import {
 } from '../world/weather.ts';
 import { ScriptEnvironment } from '../world/player-home.ts';
 import { RecordDatabase } from '../world/record-db.ts';
+import {
+  dateAfter,
+  dayOfWeekAfter,
+  DEFAULT_START_DATE,
+  DEFAULT_TIME_SCALE,
+  readStartDate,
+  readTimeScale,
+  type GameDate,
+} from '../world/game-time.ts';
+import { PackageData } from '../ai/package-data.ts';
+import { packageStart, type GameTime, type PackageStart } from '../ai/package-start.ts';
+import type { ActorLook } from '../world/actors.ts';
+import type { CellActor } from '../world/cell-loader.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
 import { PluginIndexer } from '../workers/plugin-indexer.ts';
 import { ActorPlacer } from './actors.ts';
@@ -115,6 +128,13 @@ export class GameSession {
    * sets it from its time slider, interiors advance it at the timescale too.
    */
   gameHour = 10;
+  /** Whole days passed since the game started (the clock's midnights). */
+  gameDaysPassed = 0;
+  /** The date a new game starts on (the GameYear, GameMonth and GameDay globals). */
+  #startDate: GameDate = DEFAULT_START_DATE;
+  #packages: Promise<PackageData> | undefined;
+  /** Game seconds per real second: the plugins' TimeScale global (Skyrim.esm: 20). */
+  timeScale = DEFAULT_TIME_SCALE;
   /**
    * The weather picked by hand (the dev panel, as the console's fw), kept going in and out of
    * doors as the game keeps its weather; undefined: the regions pick.
@@ -170,6 +190,55 @@ export class GameSession {
       );
       return db;
     });
+    void this.db.then(async (db) => {
+      this.timeScale = await readTimeScale(db);
+      this.#startDate = await readStartDate(db);
+    });
+  }
+
+  /** The game's date and time now. */
+  gameTime(): GameTime {
+    const date = dateAfter(this.#startDate, this.gameDaysPassed);
+    return {
+      hour: this.gameHour,
+      dayOfWeek: dayOfWeekAfter(this.gameDaysPassed),
+      month: date.month,
+      date: date.day,
+    };
+  }
+
+  /** Advances the clock by game hours, counting the midnights it passes. */
+  advanceClock(hours: number): void {
+    const next = this.gameHour + hours;
+    this.gameDaysPassed += Math.floor(next / 24);
+    this.gameHour = ((next % 24) + 24) % 24;
+  }
+
+  /** Where an actor's AI package has it now, as its cell loads (src/ai/package-start.ts). */
+  async packageStart(actor: CellActor, look: ActorLook): Promise<PackageStart> {
+    this.#packages ??= this.db.then(async (db) => {
+      const data = new PackageData(db);
+      await data.ready();
+      return data;
+    });
+    const data = await this.#packages;
+    const placed = await data.reference(actor.reference);
+    if (!placed) return { kind: 'undecided', reason: 'its cell is not known' };
+    return packageStart(
+      {
+        reference: actor.reference,
+        base: look.base,
+        npc: look.npc,
+        race: look.race,
+        female: look.female,
+        factions: look.factions,
+        packages: look.packages,
+        space: placed.space,
+        linked: (keyword) => actor.links.get(keyword),
+      },
+      data,
+      this.gameTime(),
+    );
   }
 
   /**

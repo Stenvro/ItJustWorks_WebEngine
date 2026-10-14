@@ -122,6 +122,10 @@ export interface ActorLook {
    * engine's choice is not documented.
    */
   readonly footstepSet: number | undefined;
+  /** Its AI packages (PACK), of the NPC_ its templates give them from. */
+  readonly packages: readonly number[];
+  /** Its factions and ranks, of the NPC_ its templates give them from. */
+  readonly factions: ReadonlyMap<number, number>;
 }
 
 /** The footstep set of what an actor wears: on its feet first, else any with one. */
@@ -472,6 +476,9 @@ export class ActorResolver {
     const named = await this.#templated(placed, TemplateFlag.baseData, level, random);
     const name = (await this.#db.get(named.formId))?.text('FULL') ?? '';
     const voice = traits.voiceType === undefined ? undefined : await this.#db.get(traits.voiceType);
+    // Resolved last: leveled templates draw from the same random sequence as the look.
+    const ai = await this.#templated(placed, TemplateFlag.aiPackages, level, random);
+    const factions = await this.#templated(placed, TemplateFlag.factions, level, random);
     return {
       base,
       npc: traits.formId,
@@ -500,6 +507,8 @@ export class ActorResolver {
         [...shown, ...bare].find((addon) => firstSlot(addon.slots) === BipedSlot.body)
           ?.weaponAdjust ?? 0,
       footstepSet: footstepSetOf([...shown, ...bare]),
+      packages: ai.packages,
+      factions: factions.factions,
     };
   }
 }
