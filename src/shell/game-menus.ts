@@ -10,7 +10,10 @@ import { formatGameDate } from '../world/game-time.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 import { JournalMenu, JournalPage } from './journal-menu.ts';
-import { InventoryMenu } from './inventory-menu.ts';
+import { inventoryModel } from './inventory-menu.ts';
+import { magicModel } from './magic-menu.ts';
+import { ItemMenu, type ItemMenuModel } from './item-menu.ts';
+import { FavoritesMenu } from './favorites-menu.ts';
 
 /** The menus' depth among the game's menus (over the HUD, under message boxes). */
 const MENU_DEPTH = 6;
@@ -42,7 +45,10 @@ export class GameMenus {
   #open: { menu: Menu | undefined; leave: () => void } | undefined;
   readonly #missing = new Set<string>();
   readonly #journal: JournalMenu;
-  readonly #inventory: InventoryMenu;
+  readonly #items: ItemMenu;
+  readonly #inventory: ItemMenuModel;
+  readonly #magic: ItemMenuModel;
+  readonly #favorites: FavoritesMenu;
 
   constructor(
     host: MenuHost,
@@ -55,10 +61,10 @@ export class GameMenus {
     this.#terminal = terminal;
     this.#enterMenuMode = enterMenuMode;
     this.#journal = new JournalMenu(host, session, terminal);
-    this.#inventory = new InventoryMenu(host, session, terminal);
-    this.#inventory.onTween = () => {
-      this.openMenu('Tween');
-    };
+    this.#items = new ItemMenu(host, terminal);
+    this.#inventory = inventoryModel(session, terminal);
+    this.#magic = magicModel(session, terminal);
+    this.#favorites = new FavoritesMenu(host, session, this.#inventory, this.#magic);
   }
 
   /** Quit to the main menu (false) or to the desktop (true), from the journal's system page. */
@@ -85,16 +91,18 @@ export class GameMenus {
         ? this.#openTween()
         : name === 'Journal' || name === 'Pause'
           ? this.#openJournal(name === 'Pause' ? JournalPage.system : undefined)
-          : name === 'Inventory'
-            ? this.#openInventory()
-            : (() => {
-                // TODO(M9): the inventory, magic, skills, map, favorites and wait menus.
-                if (!this.#missing.has(name)) {
-                  this.#missing.add(name);
-                  this.#terminal.log('ui', `the ${name} menu is not built yet`, 'warn');
-                }
-                return Promise.resolve();
-              })();
+          : name === 'Inventory' || name === 'Magic'
+            ? this.#openItems(name === 'Inventory' ? this.#inventory : this.#magic)
+            : name === 'Favorites'
+              ? this.#openFavorites()
+              : (() => {
+                  // TODO(M9): the inventory, magic, skills, map, favorites and wait menus.
+                  if (!this.#missing.has(name)) {
+                    this.#missing.add(name);
+                    this.#terminal.log('ui', `the ${name} menu is not built yet`, 'warn');
+                  }
+                  return Promise.resolve();
+                })();
     opening.catch((error: unknown) => {
       this.#terminal.log(
         'ui',
@@ -117,8 +125,11 @@ export class GameMenus {
     open?.leave();
   }
 
-  /** The inventory, the HUD aside; it closes itself after its fade (CloseMenu). */
-  async #openInventory(): Promise<void> {
+  /**
+   * An item menu (inventory, magic), the HUD aside; it closes itself after its fade (CloseMenu),
+   * back to the tween menu if the player went there.
+   */
+  async #openItems(model: ItemMenuModel): Promise<void> {
     const leaveMenuMode = this.#enterMenuMode();
     const hud = this.#session.hud;
     hud.shown(false);
@@ -130,11 +141,24 @@ export class GameMenus {
       },
     };
     this.#open = open;
-    open.menu = await this.#inventory.open(() => {
+    open.menu = await this.#items.open(model, (toTween) => {
       if (this.#open !== open) return;
       this.#open = undefined;
       open.leave();
+      if (toTween) this.openMenu('Tween');
     });
+    if (this.#open !== open) this.#host.close(open.menu);
+  }
+
+  /** The favorites menu, over the game (the HUD stays); it closes after its fade (FadeDone). */
+  async #openFavorites(): Promise<void> {
+    const open = { menu: undefined as Menu | undefined, leave: this.#enterMenuMode() };
+    this.#open = open;
+    open.menu = await this.#favorites.open(() => {
+      if (this.#open !== open) return;
+      this.#open = undefined;
+      open.leave();
+    }, MENU_DEPTH);
     if (this.#open !== open) this.#host.close(open.menu);
   }
 

@@ -975,6 +975,22 @@ DATA flags u32 @0 (0x1 hostile, 0x200 no duration, 0x400 no magnitude, 0x800 no 
 hidden in the interface), base cost f32 @4, magic skill i32 @12, archetype u32 @64, actor value
 i32 @68; DNAM: the description, with `<mag>`, `<dur>`, `<area>` for the values.
 
+## Spells and shouts
+
+`src/world/spell-records.ts`, after UESP's SPEL, SHOU and WOOP pages:
+
+- SPEL: SPIT (base cost u32 @0, flags u32 @4: 0x1 the cost is SPIT's own, 0x20000 a player's
+  starting spell; type u32 @8: 0 spell, 1 disease, 2 power, 3 lesser power, 4 ability, 5
+  poison, 10 addiction, 11 voice; charge time f32 @12, cast type u32 @16: 0 constant, 1 fire and
+  forget, 2 concentration, 3 scroll; delivery u32 @20, cast duration f32 @24, range f32 @28,
+  half-cost perk @32), ETYP (the hand or voice), then its effects as an item's.
+- A spell's base cost, unless SPIT gives it: the sum over its effects of the effect's base cost ×
+  (magnitude × duration / 10)^1.1, a magnitude under 1 counted as 1, a duration of 0 (and any for
+  concentration spells) as 10.
+- SHOU: FULL, DESC, and per word an SNAM (WOOP u32, its spell u32, recovery seconds f32).
+- WOOP: FULL the word in the dragon tongue, TNAM its translation.
+- A magic effect's minimum skill (u32 @40 of DATA) is its spells' level.
+
 ## Dialogue
 
 Topics, branches and infos (`src/world/dialogue-records.ts`, `src/world/dialogue.ts`,

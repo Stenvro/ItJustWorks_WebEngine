@@ -190,6 +190,8 @@ export class GameState {
   nextCreated = 0xff000800;
   /** The next id of an active magic effect (script objects that are not forms). */
   nextEffect = 0xfd000001;
+  /** The player's favorites (items, spells, shouts): the favorites menu's (Q). */
+  readonly favorites = new Set<number>();
   /** Actors dead, by their base (GetDeadCount). */
   readonly deadCounts = new Map<number, number>();
   /** Counts the quests' updates for the player (QuestState.updated). */

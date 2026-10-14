@@ -32,6 +32,8 @@ export interface MagicEffectRecord {
   readonly baseCost: number;
   /** The magic skill it belongs to (an actor value index; -1 none). */
   readonly skill: number;
+  /** DATA: the skill level it needs (its spells' level: novice 0 .. master 100). */
+  readonly minimumSkill: number;
   /** DATA: its archetype (value modifier, script, ...) and the actor value it changes. */
   readonly archetype: number;
   readonly actorValue: number;
@@ -48,6 +50,7 @@ export function parseMagicEffect(record: RecordSource): MagicEffectRecord {
     flags: d?.getUint32(0, true) ?? 0,
     baseCost: d?.getFloat32(4, true) ?? 0,
     skill: d?.getInt32(12, true) ?? -1,
+    minimumSkill: d?.getUint32(40, true) ?? 0,
     archetype: d?.getUint32(64, true) ?? 0,
     actorValue: d?.getInt32(68, true) ?? -1,
   };

@@ -465,6 +465,18 @@ export class ActorEngine {
     return race?.spells.includes(spell) ?? false;
   }
 
+  /** Every spell and shout it has: its base's and race's, with what scripts added or removed. */
+  async spells(reference: number): Promise<number[]> {
+    const info = await this.info(reference);
+    const race = await this.race((await this.raceOf(reference)) ?? 0);
+    const all = new Set([...(info?.spells.spells ?? []), ...(race?.spells ?? [])]);
+    for (const [spell, has] of this.#runtime.state.actors.get(reference)?.spells ?? []) {
+      if (has) all.add(spell);
+      else all.delete(spell);
+    }
+    return [...all];
+  }
+
   /** AddSpell / AddShout: false if it had it. */
   async addSpell(reference: number, spell: number): Promise<boolean> {
     if (await this.hasSpell(reference, spell)) return false;

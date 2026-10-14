@@ -406,6 +406,30 @@ which share its parts, alike):
 - Keys the engine takes in the item menus: F (favorite), and Esc and E reach the movie as Tab and
   Enter (the control map's menu contexts: Cancel is Tab and Esc, Accept is E).
 
+The magic menu (`magicmenu.swf`, `src/shell/magic-menu.ts`; P, or the tween menu's Magic) is
+driven the same way (`src/shell/item-menu.ts` holds what they share; each menu is a model of what
+it lists and what its entries do):
+
+- Its categories: sFavorites 0x1, sAllItems, sAlteration 0x2, sIllusion 0x4, sDestruction 0x8,
+  sConjuration 0x10, sRestoration 0x20, sShouts 0x40, sPowers 0x80, sActiveEffects 0x100; before
+  the list is filled the engine sets `Menu_mc.hideButtonFlag` to the active effects' bit (their
+  entries show no buttons).
+- A spell's school is its costliest effect's magic skill; its card (ICT_SPELL 3) has `castLevel`
+  (that effect's minimum skill: sNoviceDisplayName below 25 .. sMasterDisplayName at 100),
+  `castTime` (SPIT's charge time; 0 for concentration spells, whose cost the card shows per
+  second), `spellCost`: the base cost (`spellBaseCost`, docs/formats/esm.md) × (1 −
+  (skill / 400)^0.65) (UESP, "Magic Overview"). Powers have ICT_SPELL_DEFAULT 4, shouts
+  ICT_SHOUT 5 with `word0..2` (translation), `dragonWord0..2` and `unlocked0..2`, and the
+  recovery of the last unlocked word as their cost.
+
+The favorites menu (`favoritesmenu.swf`, `src/shell/favorites-menu.ts`; Q) lists the items,
+spells and shouts marked with F. Its own `PopulateItems` names a function the movie does not
+have, so the engine sets `_root.MenuHolder.Menu_mc.itemList.entryList` itself (`{text, hotkey,
+equipState, index}`; index the form id) and invokes its `InvalidateData()`. On `ItemSelect` the
+engine reads `_root.GetSelectedIndex()` and acts as the inventory or the magic menu would; the
+menu closes itself with its fade (Tab, Esc, Q) and `FadeDone`.
+
 TODO(M9): the item's 3D model behind the card (UpdateItem3D, rotation, zoom), the container,
-barter, gift, magic and favorites menus. TODO(M11): using, eating and reading items, equipping to
-a hand, the quantity of a drop, skills and perks in armor and damage, ingredients' known effects.
+barter and gift menus. TODO(M11): using, eating and reading items, equipping to a hand (items and
+spells) and shouts to the voice, the active effects, favorites' hotkeys, the quantity of a drop,
+skills and perks in armor, damage and spell costs, ingredients' known effects.
