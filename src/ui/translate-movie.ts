@@ -7,6 +7,7 @@
 
 import { BinaryReader } from '../formats/binary-reader.ts';
 import { rewriteAvm1Strings, type StringRewrite } from '../formats/swf/avm1-rewrite.ts';
+import { rewriteClipActions } from '../formats/swf/place-object.ts';
 import {
   readSwf,
   readSwfString,
@@ -48,6 +49,10 @@ function tagBody(movie: SwfMovie, tag: SwfTag, translate: StringRewrite): Uint8A
           encodeTag(child.code, tagBody(movie, child, translate)),
         ),
       ]);
+    case SwfTagCode.placeObject2:
+    case SwfTagCode.placeObject3:
+      // A placed instance's clip actions: how a component gets its inspector parameters.
+      return rewriteClipActions(body, tag.code, version, translate);
     case SwfTagCode.defineEditText:
       return translatedEditText(body, version, translate);
     default:

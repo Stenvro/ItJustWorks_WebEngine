@@ -83,7 +83,10 @@ text (plain, or between HTML tags) that is a key is replaced by its text; string
 key (font names such as `$EverywhereFont`) stay. The ActionScript is re-encoded with every
 branch, function, With and Try size moved along (`src/formats/swf/avm1-rewrite.ts`); the
 integration test translates every vanilla menu and checks every branch still lands on an action.
-Text the engine sends is translated before it is sent.
+Placed instances' clip actions (PlaceObject2/3, `src/formats/swf/place-object.ts`) are
+translated too: that is where a CLIK component gets the parameters set for it in Flash's
+component inspector (the start menu's `$Yes`, `$No`, `$Delete` button labels). The integration
+test checks that no string of any vanilla menu is still a key. Text the engine sends is translated before it is sent.
 
 ## The main menu
 
