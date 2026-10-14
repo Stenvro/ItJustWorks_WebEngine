@@ -115,6 +115,36 @@ describe('the physics world', () => {
   });
 });
 
+describe('placements scripts change', () => {
+  const hits = (physics: PhysicsWorld): number | undefined =>
+    physics.raycast([-50, 0, 100], [1, 0, 0], 100, Layer.charController)?.distance;
+
+  it('leave the simulation when disabled and come back when enabled', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const placed = physics.addObject(wall(), IDENTITY, { reference: 1, kind: 'object' });
+    physics.step(1 / 60);
+    expect(hits(physics)).toBeCloseTo(50, 1);
+    physics.setEnabled(placed, false);
+    physics.step(1 / 60);
+    expect(hits(physics)).toBeUndefined();
+    physics.setEnabled(placed, true);
+    physics.step(1 / 60);
+    expect(hits(physics)).toBeCloseTo(50, 1);
+    physics.free();
+  });
+
+  it('move with the reference a script moves', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const placed = physics.addObject(wall(), IDENTITY, { reference: 1, kind: 'object' });
+    const moved = new Float32Array(IDENTITY);
+    moved[12] = 30; // 30 units along x
+    physics.teleport(placed, IDENTITY, moved);
+    physics.step(1 / 60);
+    expect(hits(physics)).toBeCloseTo(80, 1);
+    physics.free();
+  });
+});
+
 describe('the character controller', () => {
   it('is pushed out of what it stands in (penetration recovery)', () => {
     const physics = new PhysicsWorld(matrix, GRAVITY);

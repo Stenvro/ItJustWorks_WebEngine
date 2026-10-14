@@ -252,6 +252,23 @@ function isHung(placed: PlacedCollision): boolean {
   return fixed && simulated && placed.joints.length > 0;
 }
 
+/** The inverse of a rotation and translation. */
+function rigidInverse(m: Mat4): Mat4 {
+  const out = new Float32Array(16);
+  for (let row = 0; row < 3; row++) {
+    for (let col = 0; col < 3; col++) out[col * 4 + row] = m[row * 4 + col] ?? 0;
+  }
+  for (let row = 0; row < 3; row++) {
+    out[12 + row] = -(
+      (out[row] ?? 0) * (m[12] ?? 0) +
+      (out[4 + row] ?? 0) * (m[13] ?? 0) +
+      (out[8 + row] ?? 0) * (m[14] ?? 0)
+    );
+  }
+  out[15] = 1;
+  return out;
+}
+
 function multiplyInto(a: Mat4, b: Mat4, out: Mat4): void {
   const r = new Float32Array(16);
   for (let col = 0; col < 4; col++) {
@@ -959,6 +976,78 @@ export class PhysicsWorld {
       if (!dynamicBody(data)) continue;
       this.#held.delete(body.handle);
       body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, false);
+    }
+  }
+
+  /**
+   * A placement leaves the simulation or comes back (its reference disabled or enabled by a
+   * script): its bodies and colliders stay, switched off, so it returns where it was.
+   */
+  setEnabled(placed: PlacedCollision, enabled: boolean): void {
+    for (const { body } of placed.bodies) body.setEnabled(enabled);
+    for (const body of placed.fixedBodies) body.setEnabled(enabled);
+    for (const collider of placed.colliders) collider.setEnabled(enabled);
+    this.#changed = true;
+  }
+
+  /**
+   * A script moved the placement (MoveTo, SetPosition, SetAngle): every body follows the
+   * model from `from` to `to` (placements, game units), at rest. Held bodies stay held.
+   */
+  teleport(placed: PlacedCollision, from: Mat4, to: Mat4): void {
+    const delta = new Float32Array(16);
+    multiplyInto(rigidPart(to), rigidInverse(rigidPart(from)), delta);
+    const pose = new Float32Array(16);
+    for (const { body } of [...placed.bodies, ...placed.fixedBodies.map((body) => ({ body }))]) {
+      const t = body.translation();
+      multiplyInto(
+        delta,
+        poseMatrix([t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE], body.rotation()),
+        pose,
+      );
+      body.setTranslation(
+        { x: toHavok(pose[12] ?? 0), y: toHavok(pose[13] ?? 0), z: toHavok(pose[14] ?? 0) },
+        true,
+      );
+      body.setRotation(matrixQuaternion(pose), true);
+      if (body.isDynamic()) {
+        body.setLinvel({ x: 0, y: 0, z: 0 }, true);
+        body.setAngvel({ x: 0, y: 0, z: 0 }, true);
+      }
+    }
+    this.#changed = true;
+  }
+
+  /**
+   * SetMotionType: keyframed bodies stay where they are; dynamic ones move from now on (a
+   * held body no longer waits for the player's touch: a script's action wakes it).
+   */
+  setMotion(placed: PlacedCollision, keyframed: boolean): void {
+    if (keyframed) {
+      this.keyframe(placed);
+      return;
+    }
+    for (const { body, data } of placed.bodies) {
+      if (!dynamicBody(data)) continue;
+      this.#held.delete(body.handle);
+      body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    }
+  }
+
+  /** ApplyHavokImpulse: a push (direction and magnitude in Havok units) on its bodies. */
+  impulse(placed: PlacedCollision, direction: Vec3, magnitude: number): void {
+    const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;
+    for (const { body, data } of placed.bodies) {
+      if (!dynamicBody(data)) continue;
+      this.release(body);
+      body.applyImpulse(
+        {
+          x: (direction[0] / length) * magnitude,
+          y: (direction[1] / length) * magnitude,
+          z: (direction[2] / length) * magnitude,
+        },
+        true,
+      );
     }
   }
 

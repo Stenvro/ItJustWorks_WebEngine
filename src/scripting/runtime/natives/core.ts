@@ -191,7 +191,9 @@ export function registerCore(n: Register, runtime: ScriptRuntime): void {
       runtime.vm.warn(`${record.editorId ?? formatValue(self)}: a constant global was set`);
       return null;
     }
-    state.globals.set(self.formId, num(args[0]));
+    // The clock's globals move the clock.
+    if (!runtime.setClockGlobal(self.formId, num(args[0])))
+      state.globals.set(self.formId, num(args[0]));
     return null;
   });
 

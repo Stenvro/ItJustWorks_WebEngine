@@ -460,6 +460,11 @@ async function main(): Promise<void> {
     session?.dispose();
     session = new GameSession(gpu.device, renderer, vfs, terminal);
     await Promise.all([modelViewer.connect(session), worldViewer.connect(session)]);
+    // The running game's scripts: a new game starts as the session opens.
+    const started = session;
+    void started.runtime().catch((error: unknown) => {
+      terminal.log('papyrus', `scripts not running: ${describeError(error)}`, 'error');
+    });
   };
   // Centre the scene in the part of the screen the shell column does not cover.
   const updateLensShift = (): void => {
@@ -499,11 +504,16 @@ async function main(): Promise<void> {
       session: () => session,
     };
   }
+  let lastScriptTick = performance.now() / 1000;
   // Sounds follow the camera; browsers start audio only after a user gesture.
   startRenderLoop(
     renderer,
     () => session?.memory,
     () => {
+      // The scripts' clocks move on (their waits and updates run as the game's time passes).
+      const now = performance.now() / 1000;
+      session?.tickScripts(Math.min(0.25, now - lastScriptTick));
+      lastScriptTick = now;
       session?.soundSystem?.update(renderer.view?.camera);
       // The loading screen while a cell or worldspace loads, until the player stands in it.
       const loading = worldViewer.loading ?? modelViewer.loading;

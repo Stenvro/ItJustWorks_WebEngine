@@ -68,6 +68,17 @@ export class GameRecord {
     this.fields = fields;
   }
 
+  /**
+   * The record with its fields in memory of their own (a record from a scan shares the chunk
+   * it was read from; one kept for long must not keep the chunk alive).
+   */
+  detached(): GameRecord {
+    const fields = new Fields(
+      this.fields.list.map((field) => ({ type: field.type, data: field.data.slice() })),
+    );
+    return new GameRecord(this.#db, this.plugin, this.type, this.formId, this.flags, fields);
+  }
+
   get editorId(): string | undefined {
     return this.fields.zstring('EDID');
   }

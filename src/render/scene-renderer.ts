@@ -469,11 +469,21 @@ export interface InstanceMotion {
   version: number;
 }
 
+/**
+ * Whether an instance is drawn: a disabled reference keeps its draws, hidden (scripts enable
+ * and disable references without the scene being built again).
+ */
+export interface InstanceVisibility {
+  hidden: boolean;
+}
+
 export interface ModelInstance {
   readonly model: GpuModel;
   readonly world: Mat4;
   /** The instance moves (its world matrix changes, see InstanceMotion). */
   readonly motion?: InstanceMotion;
+  /** Shown or hidden (an enabled or disabled reference); always shown without. */
+  readonly visibility?: InstanceVisibility;
   /** The sequence the instance plays (a door opening); its model's sequences. */
   readonly playback?: Playback;
   /** The instance's running behavior graph (over its model's graph and sequences). */
@@ -604,6 +614,8 @@ interface Draw {
   readonly ranges?: readonly IndexRange[];
   /** A FaceGen head part: its morphs and the byte offset of its active morphs. */
   readonly face?: { readonly morphs: GpuMorphs; readonly offset: number };
+  /** Its instance's visibility (hidden: not drawn, no shadow). */
+  readonly visibility?: InstanceVisibility;
 }
 
 /** A draw that changes every frame (animated, or turning to the camera). */
@@ -734,6 +746,8 @@ interface ParticleDraw {
   readonly animation: ModelAnimation | undefined;
   /** The instance's behavior graph: its sequences drive the system's controllers. */
   readonly graph?: GraphDraw;
+  /** Its instance's visibility (hidden: neither simulated nor drawn). */
+  readonly visibility?: InstanceVisibility;
   readonly uniformOffset: number;
   /** Where the system sits in the world (update distance before it has particles). */
   readonly origin: readonly [number, number, number];
@@ -1827,6 +1841,7 @@ export class SceneRenderer {
           bones,
           ...(ranges && { ranges }),
           ...(face && { face: { morphs: face.morphs, offset: face.offset } }),
+          ...(instance.visibility && { visibility: instance.visibility }),
         };
         draws.push(draw);
         if (instance.motion) {
@@ -1864,6 +1879,7 @@ export class SceneRenderer {
             lodSegments: undefined,
             bones,
             ...(ranges && { ranges }),
+            ...(instance.visibility && { visibility: instance.visibility }),
           };
           draws.push(passDraw);
           if (instance.motion) {
@@ -1900,6 +1916,7 @@ export class SceneRenderer {
           instanceWorld: instance.world,
           animation,
           ...(graph && { graph }),
+          ...(instance.visibility && { visibility: instance.visibility }),
           uniformOffset: offset,
           origin,
           first: 0,
@@ -2264,6 +2281,7 @@ export class SceneRenderer {
     for (const scene of scenes) {
       for (const draw of scene.particles) {
         draw.count = 0;
+        if (draw.visibility?.hidden) continue;
         const simulation = draw.simulation;
         const frame = frameOf(draw);
         if (frame?.hidden.has(simulation.data.block)) continue;
@@ -2604,7 +2622,7 @@ export class SceneRenderer {
     for (const scene of scenes) {
       for (const draw of scene.draws) {
         const { part } = draw;
-        if (!part.shadowPipeline || draw.radius < minRadius) continue;
+        if (!part.shadowPipeline || draw.radius < minRadius || draw.visibility?.hidden) continue;
         if (!sphereVisible(planes, draw.center, draw.radius)) continue;
         pass.setPipeline(part.shadowPipeline);
         pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
@@ -2622,6 +2640,7 @@ export class SceneRenderer {
   }
 
   #visible(draw: Draw): boolean {
+    if (draw.visibility?.hidden) return false;
     return draw.sky || sphereVisible(this.#planes, draw.center, draw.radius);
   }
 
