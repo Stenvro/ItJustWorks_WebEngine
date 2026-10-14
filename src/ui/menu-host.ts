@@ -364,6 +364,9 @@ export class MenuHost {
       return;
     }
     menu.updateStage();
+    // The player has the page's focus before the menu's setup runs: a movie's
+    // Selection.setFocus (a message box's first button) holds only in a player with focus.
+    if (options.interactive) menu.focus();
     await options.setup?.(menu);
     if (options.interactive && menu.element === element) menu.focus();
   }

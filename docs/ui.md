@@ -255,3 +255,23 @@ user event; one done is not shown again until `ResetHelpMessage`. A "[Activate]"
 becomes the key's art: the HUD asks `GetButtonFromUserEvent("Activate")` and the engine answers
 the art's name (`E`; `src/ui/button-art.ts`: the event's first key in the control map, else its
 mouse button) for the HUD's exported bitmap `E.png`.
+
+## Menu mode
+
+While a menu that pauses the game is open (a message box now; the journal, the inventory and
+the game's other menus as they come), the game is in menu mode (`PlayMode`, `GameSession.
+menuMode`): the frames' game clock stands still (`main.ts`), so the player, the actors'
+animations, the particles and the sky's hour stop; the scripts' clocks stop too, and only
+`Utility.WaitMenuMode` counts on (`PapyrusScheduler.wallTime`; `Utility.Wait` waits out the
+menu), `Utility.IsInMenuMode` is true; the sound categories the data pauses during menus
+(`AudioCategoryPausedDuringMenu`, `...Fade`, `...Load`) go quiet while music and the interface
+play on; the mouse leaves the 3D view for the menu's cursor and comes back after.
+
+## Message boxes
+
+`messagebox.swf` shows Debug.MessageBox and Message.Show (`src/shell/message-boxes.ts`), one at
+a time: `_root.InitExtensions()`, `_root.SetPlatform(0, false)`, then the callbacks
+`setMessageText(text, html)`, `setIsCancellable(cancellable, cancelIndex)` and
+`setButtons(focusFirst, ...labels)` (a box without buttons of its own shows `sOk`); the menu
+answers `buttonPress(index)`. On PC the buttons take no keyboard focus (the movie sets
+`disableFocus` for platform 0): they are clicked, and a Yes/No box also takes Y and N.

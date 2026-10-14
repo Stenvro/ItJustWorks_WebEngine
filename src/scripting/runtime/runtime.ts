@@ -1617,6 +1617,11 @@ export class ScriptRuntime implements VmHost {
     this.vm.scheduler.advance(realSeconds, gameDays);
   }
 
+  /** A frame in a menu (menu mode): only the wall clock moves on (WaitMenuMode). */
+  updateInMenu(realSeconds: number): void {
+    this.vm.scheduler.advance(0, 0, realSeconds);
+  }
+
   sunPosition(): Vec3 {
     return this.world.sunPosition?.() ?? [0, 0, 0];
   }

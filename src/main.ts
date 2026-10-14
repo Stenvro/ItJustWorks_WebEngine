@@ -161,13 +161,20 @@ function startRenderLoop(
   renderer: Renderer,
   memory: () => number | undefined,
   everyFrame: () => void,
+  paused: () => boolean,
 ): void {
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let frames = 0;
   let windowStart = performance.now();
 
+  // The game's clock: it stands still while the game is in a menu (the player, animations,
+  // particles and the sky's hour stop with it).
+  let gameTime = 0;
+  let last: number | undefined;
   const frame = (now: number): void => {
-    renderer.render(reducedMotion ? 30 : now / 1000, devicePixelRatio);
+    if (last !== undefined && !paused()) gameTime += (now - last) / 1000;
+    last = now;
+    renderer.render(reducedMotion ? 30 : gameTime, devicePixelRatio);
     everyFrame();
 
     frames++;
@@ -511,6 +518,14 @@ async function main(): Promise<void> {
       }
     },
     heading: () => (worldViewer.player ?? modelViewer.player)?.yaw,
+    capturePointer: (on) => {
+      if (!on) {
+        if (document.pointerLockElement) document.exitPointerLock();
+        return;
+      }
+      // Back from a menu: the mouse looks again (a click takes it if the browser wants one).
+      ui.canvas.requestPointerLock().catch(() => undefined);
+    },
     follow: (on) => {
       modelViewer.followsScripts = on;
       worldViewer.followsScripts = on;
@@ -706,6 +721,7 @@ async function main(): Promise<void> {
       ui.loadingScreen.classList.toggle('visible', loading !== undefined);
       if (loading !== undefined) ui.loadingWhat.textContent = loading;
     },
+    () => session?.menuMode === true,
   );
   const resumeAudio = (): void => {
     void session?.sounds().then((sounds) => sounds.engine.resume());
