@@ -150,6 +150,11 @@ export class HudController implements HudSink {
     this.#menu?.call('ShowMessage', text);
   }
 
+  /** ShowElements(mode, show): the HUD's modes, a stack whose last one says what shows. */
+  mode(name: string, on: boolean): void {
+    this.#menu?.call('ShowElements', name, on);
+  }
+
   /**
    * A quest's update, as the HUD announces it: a quest's first objective shown announces the
    * quest (its name, the UIQuestNew sound) with the objective under it; later objectives come

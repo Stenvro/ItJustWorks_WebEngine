@@ -113,3 +113,60 @@ export async function readGlobals(
   }
   return values;
 }
+
+/** The game's names for the days of the week (Sundas first) and the months (Morning Star first). */
+const DAY_SETTINGS = [
+  'sDaySunday',
+  'sDayMonday',
+  'sDayTuesday',
+  'sDayWednesday',
+  'sDayThursday',
+  'sDayFriday',
+  'sDaySaturday',
+] as const;
+const MONTH_SETTINGS = [
+  'sMonthJanuary',
+  'sMonthFebruary',
+  'sMonthMarch',
+  'sMonthApril',
+  'sMonthMay',
+  'sMonthJune',
+  'sMonthJuly',
+  'sMonthAugust',
+  'sMonthSeptember',
+  'sMonthOctober',
+  'sMonthNovember',
+  'sMonthDecember',
+] as const;
+
+/** A day of the month's ordinal suffix: 1st, 2nd, 3rd, 4th, 11th, 21st, ... */
+function ordinalSuffix(day: number, setting: (name: string) => string | undefined): string {
+  const teen = day % 100 >= 11 && day % 100 <= 13;
+  const last = day % 10;
+  if (!teen && last === 1) return setting('sFirstOrdSuffix') ?? 'st';
+  if (!teen && last === 2) return setting('sSecondOrdSuffix') ?? 'nd';
+  if (!teen && last === 3) return setting('sThirdOrdSuffix') ?? 'rd';
+  return setting('sDefaultOrdSuffix') ?? 'th';
+}
+
+/**
+ * The date as the game's menus show it (the tween menu, the wait menu): "Sundas, 7:12 PM, 17th
+ * of Last Seed, 4E 201", from the game settings' names of days, months, AM/PM and ordinal
+ * suffixes. The era, 4E, has no setting of its own.
+ */
+export function formatGameDate(
+  date: GameDate,
+  weekday: number,
+  hour: number,
+  setting: (name: string) => string | undefined,
+): string {
+  const day = setting(DAY_SETTINGS[((weekday % 7) + 7) % 7] ?? 'sDaySunday') ?? '';
+  const month = setting(MONTH_SETTINGS[date.month] ?? 'sMonthJanuary') ?? '';
+  const minutes = Math.floor((((hour % 24) + 24) % 24) * 60);
+  const hours24 = Math.floor(minutes / 60);
+  const hours12 = hours24 % 12 === 0 ? 12 : hours24 % 12;
+  const half = hours24 < 12 ? (setting('sTimeAM') ?? 'AM') : (setting('sTimePM') ?? 'PM');
+  const time = `${String(hours12)}:${String(minutes % 60).padStart(2, '0')} ${half}`;
+  const ordinal = `${String(date.day)}${ordinalSuffix(date.day, setting)}`;
+  return `${day}, ${time}, ${ordinal}${setting('sOf') ?? ' of '}${month}, 4E ${String(date.year)}`;
+}

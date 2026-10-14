@@ -19,6 +19,7 @@ import { InterfaceFiles } from '../ui/interface-files.ts';
 import { MistMenu } from './mist-menu.ts';
 import { HudController } from './hud-controller.ts';
 import { MessageBoxes } from './message-boxes.ts';
+import { GameMenus } from './game-menus.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -90,6 +91,7 @@ export class PlayMode {
   #loadingScreens: Promise<LoadingScreen[]> | undefined;
   #hud: HudController | undefined;
   #messageBoxes: MessageBoxes | undefined;
+  #menus: GameMenus | undefined;
   /** The menus open that pause the game (menu mode while there is one). */
   #pausing = 0;
   #starting = false;
@@ -232,8 +234,27 @@ export class PlayMode {
     await hud.open();
     const boxes = new MessageBoxes(this.#host, session.settings(), () => this.#enterMenuMode());
     this.#messageBoxes = boxes;
-    session.hud.menus = { messageBox: (text, buttons) => boxes.show(text, buttons) };
+    const menus = new GameMenus(this.#host, session, this.#terminal, () => this.#enterMenuMode());
+    this.#menus = menus;
+    session.hud.menus = {
+      messageBox: (text, buttons) => boxes.show(text, buttons),
+      userEvent: (name) => {
+        menus.userEvent(name);
+      },
+    };
+    document.addEventListener('pointerlockchange', this.#pointerLockChanged);
   }
+
+  /**
+   * Esc in the game: the browser takes it to free the mouse (a page cannot keep it), so the
+   * mouse let go while the game plays is the game's Pause (the journal's system page), as Esc
+   * is in the game.
+   */
+  readonly #pointerLockChanged = (): void => {
+    if (document.pointerLockElement || this.#session.menuMode || !this.#menus) return;
+    if (this.#menus.isOpen) return;
+    this.#menus.openMenu('Pause');
+  };
 
   /**
    * A menu that pauses the game opens: the game is in menu mode (the world and its clocks stand
@@ -327,6 +348,9 @@ export class PlayMode {
   }
 
   stop(): void {
+    document.removeEventListener('pointerlockchange', this.#pointerLockChanged);
+    this.#menus?.close();
+    this.#menus = undefined;
     this.#world.follow(false);
     this.#messageBoxes?.close();
     this.#messageBoxes = undefined;

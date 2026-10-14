@@ -1590,6 +1590,12 @@ export class ScriptRuntime implements VmHost {
     return (this.state.gameDaysPassed % 1) * 24;
   }
 
+  /** The game's date today (the calendar from the start date on). */
+  get date(): GameDate {
+    const start = this.#startDate ?? DEFAULT_START_DATE;
+    return dateAfter(start, Math.floor(this.state.gameDaysPassed) - Math.floor(this.#startDays));
+  }
+
   /** 0 Sundas .. 6 Loredas. */
   get dayOfWeek(): number {
     return (
