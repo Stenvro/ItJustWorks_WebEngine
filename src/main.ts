@@ -157,6 +157,12 @@ function showFatal(error: unknown): void {
 // --- Render loop ----------------------------------------------------------
 
 /** `memory`: GPU bytes of the session's models and textures (none without a session). */
+/** The Keyboard Lock API (Chromium; not in TypeScript's DOM types). */
+interface KeyboardLock {
+  lock?(keyCodes?: readonly string[]): Promise<void>;
+  unlock?(): void;
+}
+
 function startRenderLoop(
   renderer: Renderer,
   memory: () => number | undefined,
@@ -745,6 +751,15 @@ async function main(): Promise<void> {
     },
     { capture: true },
   );
+
+  // In full screen the page keeps Esc (Keyboard Lock, Chromium): the game's Pause, not the
+  // browser's way out (held down, Esc still leaves full screen). Outside full screen the
+  // browser frees the mouse on Esc, which Play takes as Pause.
+  document.addEventListener('fullscreenchange', () => {
+    const keyboard = (navigator as Navigator & { keyboard?: KeyboardLock }).keyboard;
+    if (document.fullscreenElement) keyboard?.lock?.(['Escape']).catch(() => undefined);
+    else keyboard?.unlock?.();
+  });
 
   const backdrop = await findCustomBackdrop();
   if (backdrop) {

@@ -31,12 +31,19 @@ export interface HudSink {
   helpMessage(message: HelpMessage): void;
   resetHelpMessage(event: string): void;
   userEvent(name: string): void;
+  /**
+   * A HUD mode on or off (the HUD shows the elements of its last mode: "TweenMode",
+   * "InventoryMode", "DialogueMode", "BookMode", "BarterMode", "WorldMapMode", ...).
+   */
+  mode(name: string, on: boolean): void;
 }
 
 /** What shows the game's menus that scripts open (Play). */
 export interface MenuSink {
   /** A message box; resolves to the button pressed. */
   messageBox(text: string, buttons: readonly string[]): Promise<number>;
+  /** A gameplay user event the player pressed (the tween menu's Tab, the journal's J). */
+  userEvent(name: string): void;
 }
 
 export class HudSignals {
@@ -70,7 +77,12 @@ export class HudSignals {
     this.sink?.resetHelpMessage(event);
   }
 
+  mode(name: string, on: boolean): void {
+    this.sink?.mode(name, on);
+  }
+
   userEvent(name: string): void {
     this.sink?.userEvent(name);
+    this.menus?.userEvent(name);
   }
 }

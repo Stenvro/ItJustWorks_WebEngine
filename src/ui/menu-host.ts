@@ -310,6 +310,7 @@ export class MenuHost {
     this.#stopServing = undefined;
     this.#sizeWatch.disconnect();
     this.#layer.removeEventListener('pointerdown', this.#pointed);
+    this.#layer.removeEventListener('keydown', this.#keyed, { capture: true });
     if (this.#resizeTimer !== undefined) clearTimeout(this.#resizeTimer);
     if (window[BRIDGE_GLOBAL] === this.#dispatch) window[BRIDGE_GLOBAL] = undefined;
   }
@@ -377,6 +378,7 @@ export class MenuHost {
     this.#stopServing = this.#files.serve();
     this.#sizeWatch.observe(this.#layer);
     this.#layer.addEventListener('pointerdown', this.#pointed);
+    this.#layer.addEventListener('keydown', this.#keyed, { capture: true });
     window[BRIDGE_GLOBAL] = this.#dispatch;
   }
 
@@ -405,6 +407,11 @@ export class MenuHost {
         });
     }
   }
+
+  /** Tab is the menus' (closing the tween menu, the next field), not the page's focus. */
+  readonly #keyed = (event: KeyboardEvent): void => {
+    if (event.key === 'Tab') event.preventDefault();
+  };
 
   /** A click in the game: the keys go to the topmost menu again. */
   readonly #pointed = (): void => {

@@ -275,3 +275,28 @@ a time: `_root.InitExtensions()`, `_root.SetPlatform(0, false)`, then the callba
 `setButtons(focusFirst, ...labels)` (a box without buttons of its own shows `sOk`); the menu
 answers `buttonPress(index)`. On PC the buttons take no keyboard focus (the movie sets
 `disableFocus` for platform 0): they are clicked, and a Yes/No box also takes Y and N.
+
+## The game's menus in play
+
+`src/shell/game-menus.ts` opens the menus the player opens by the control map's gameplay
+events (Tween Menu, Journal, Pause, Quick Inventory, Quick Magic, Quick Stats, Quick Map,
+Favorites, Wait), one at a time, each in menu mode, and sets the HUD's mode for it
+(`ShowElements(mode, show)`: the HUD shows the elements of its last mode, `TweenMode`,
+`InventoryMode`, `DialogueMode`, `BookMode`, `BarterMode`, `WorldMapMode`, ...).
+
+Esc: a page cannot keep the browser from freeing the mouse on Esc, so in Play the mouse let go
+while the game plays opens Pause, as Esc does in the game. In full screen the page keeps Esc
+(Keyboard Lock, Chromium) and the key itself is the game's. Tab stays with the menus (the
+menu layer keeps it from moving the page's focus).
+
+The tween menu (`tweenmenu.swf`): `_root.InitExtensions()`, `_root.SetPlatform(0, false)`, then
+`StartOpenMenuAnim(abLevelUp, date, level, progress)`: its bottom bar shows the date as the game
+writes it (`formatGameDate`, `src/world/game-time.ts`: "Sundas, 7:12 PM, 17th of Last Seed, 4E
+201" from `sDay*`, `sMonth*`, `sTimeAM`/`sTimePM`, the ordinal suffixes and `sOf`; the era has
+no setting), the player's level and the progress to the next. The menu asks `HighlightMenu(i)`
+and `OpenHighlightedMenu(i)` (1 Skills, up; 2 Magic, left; 3 Inventory, right; 4 Map, down: its
+`FrameToLabelMap`), and on Tab or Esc `StartCloseMenu`; the engine answers
+`StartCloseMenuAnim()`, and the menu's `CloseMenu` once its animation is done closes it. A
+menu chosen takes the tween's place at once.
+TODO(M9): the tween camera (the view of the player in third person behind the menu) and the
+sounds of highlighting and choosing.
