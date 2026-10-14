@@ -122,7 +122,6 @@ const ui = {
     results: byId('quest-results', HTMLOListElement),
     count: byId('quest-count', HTMLElement),
     detail: byId('quest-detail', HTMLElement),
-    newGame: byId('quest-new-game', HTMLButtonElement),
   },
   fatal: byId('fatal', HTMLDivElement),
 };
@@ -469,8 +468,8 @@ async function main(): Promise<void> {
   };
   modelViewer.onTravel = onTravel;
   worldViewer.onTravel = onTravel;
-  // A script sends the player elsewhere (MoveTo): the same journey, to the cell it names.
-  const onPlayerSent = (at: Placement): void => {
+  // The quest panel's go to: a journey to the cell or worldspace of the place, as a door's.
+  const journeyTo = (at: Placement): void => {
     const arrival = { position: at.position, heading: at.rotation[2] };
     const going =
       at.world !== undefined
@@ -486,21 +485,19 @@ async function main(): Promise<void> {
       terminal.log('papyrus', `the player cannot go there: ${describeError(error)}`, 'error');
     });
   };
-  modelViewer.onPlayerSent = onPlayerSent;
-  worldViewer.onPlayerSent = onPlayerSent;
-  // The quests one at a time; going to a target is the player's MoveTo (a journey when no
-  // scene is being played).
+  // The quests one at a time (a debug tool, as the console); going to a target moves the
+  // player there.
   const questPanel = new QuestPanel(ui.quests, terminal);
-  // A new game: everything the scripts did goes; the scene on screen loads again, the player
-  // where they stood.
-  const restartGame = async (): Promise<void> => {
+  // Reset states: everything the scripts and the panels changed goes (a new game's state);
+  // the scene on screen loads again, the player where they stood.
+  const resetStates = async (): Promise<void> => {
     const current = session;
     if (!current) return;
     const player = current.scriptWorld.livePlacement(PLAYER_REF);
     const world = worldViewer.shownWorld;
     const cell = modelViewer.shownCell;
-    terminal.log('papyrus', 'new game: the running game is thrown away');
-    const runtime = current.newGame();
+    terminal.log('papyrus', 'reset states: the running game starts over');
+    const runtime = current.resetStates();
     void runtime.catch((error: unknown) => {
       terminal.log('papyrus', `scripts not running: ${describeError(error)}`, 'error');
     });
@@ -520,15 +517,15 @@ async function main(): Promise<void> {
       await modelViewer.showCell(cell, arrival);
     }
   };
-  ui.quests.newGame.addEventListener('click', () => {
-    restartGame().catch((error: unknown) => {
+  byId('reset-states', HTMLButtonElement).addEventListener('click', () => {
+    resetStates().catch((error: unknown) => {
       terminal.log('papyrus', describeError(error), 'error');
     });
   });
   questPanel.onGoTo = (at) => {
     // The scripts know where the player is going; the view takes them there.
     session?.scriptsReady?.move(PLAYER_REF, at.position, at.rotation, at.cell, at.world);
-    if (!modelViewer.sendPlayer(at) && !worldViewer.sendPlayer(at)) onPlayerSent(at);
+    if (!modelViewer.sendPlayer(at) && !worldViewer.sendPlayer(at)) journeyTo(at);
   };
   connectSession = async (vfs: Vfs): Promise<void> => {
     session?.dispose();

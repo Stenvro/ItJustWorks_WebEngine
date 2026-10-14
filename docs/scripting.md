@@ -117,9 +117,9 @@ worldspaces on screen:
 - **Created references** (PlaceAtMe, an alias's Create Reference) are drawn, collide and
   light like placed ones, and go and come back with their cell.
 - **Moves**: MoveTo, SetPosition, SetAngle, MoveToNode move what is shown; keyframed
-  (SetMotionType) bodies follow. MoveTo on the player puts them there, through a journey to
-  the cell or worldspace when it is elsewhere, as a load door does; the runtime knows where
-  the player is and the cell they walked into.
+  (SetMotionType) bodies follow. The runtime knows where the player is and the cell they
+  walked into. The sandbox is not the game: scripts do not move its player (TODO(M9): Play
+  takes the player where the scripts send them, through a journey as a load door does).
 - **Animation**: PlayAnimation and the animation variables reach a reference's behavior
   graph (an object's sequences and skeleton, an actor's), and the events the graph raises
   reach OnAnimationEvent.
@@ -132,7 +132,8 @@ worldspaces on screen:
 at a time, as the console shows and drives them: running or not, its stage and the stages
 done, the objectives shown with their targets, who fills each alias; start and stop
 (StartQuest, StopQuest), set any stage (SetStage), and go to a target or an alias's
-reference (MoveTo). What came of each action is shown in words: a quest that does not start
+reference (MoveTo). "Reset states" in the dev panel throws the running game away and starts
+from a new game's state again (the scene on screen loads again). What came of each action is shown in words: a quest that does not start
 says why (it runs once and ran, it starts only from its story manager event, or which alias
 found nobody to fill it).
 
