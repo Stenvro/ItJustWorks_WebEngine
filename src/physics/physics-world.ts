@@ -14,7 +14,7 @@ import {
   type CollisionData,
   type CollisionShape,
 } from './collision-data.ts';
-import { Layer, type CollisionMatrix } from './collision-layers.ts';
+import { Layer, LayerFlag, type CollisionMatrix } from './collision-layers.ts';
 
 export type Rapier = typeof RAPIER;
 
@@ -1049,6 +1049,30 @@ export class PhysicsWorld {
         true,
       );
     }
+  }
+
+  /**
+   * The trigger volumes (colliders on layers flagged "trigger volume") a collider overlaps now:
+   * their owners' references (a trap's trigger, a quest's activator box).
+   */
+  triggersOverlapping(collider: RAPIER.Collider): Set<number> {
+    const found = new Set<number>();
+    this.world.intersectionsWithShape(
+      collider.translation(),
+      collider.rotation(),
+      collider.shape,
+      (other) => {
+        if (!other.isEnabled()) return true;
+        if ((this.matrix.flags(this.layerOf(other)) & LayerFlag.triggerVolume) === 0) return true;
+        const reference = this.ownerOf(other)?.reference;
+        if (reference !== undefined && reference !== 0) found.add(reference);
+        return true;
+      },
+      undefined,
+      undefined,
+      collider,
+    );
+    return found;
   }
 
   /** A held body moves from now on (settled, touched, taken hold of); others are left. */

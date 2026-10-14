@@ -395,6 +395,7 @@ export class PlaySession {
       this.#activate(hit);
     }
     for (const impact of this.physics.drainImpacts()) this.#onImpact?.(impact);
+    this.#watchTriggers();
     // What waited for cells' collision, once queries see it.
     if (this.#completed.length > 0 && this.physics.queriesCurrent) {
       for (const run of this.#completed.splice(0)) run();
@@ -572,6 +573,31 @@ export class PlaySession {
       }
     }
   }
+
+  /**
+   * The trigger volumes the player is in: entering and leaving one is told (OnTriggerEnter,
+   * OnTriggerLeave). TODO(M10): actors that walk into them.
+   */
+  #watchTriggers(): void {
+    if (!this.physics.queriesCurrent || this.#spawnPending) return;
+    const inside = this.physics.triggersOverlapping(this.player.character.collider);
+    for (const reference of inside) {
+      if (!this.#inTriggers.has(reference)) this.onTrigger?.(reference, true);
+    }
+    for (const reference of this.#inTriggers) {
+      if (!inside.has(reference)) this.onTrigger?.(reference, false);
+    }
+    this.#inTriggers = inside;
+  }
+
+  /** How many of the tracked (the player) are in a trigger volume now. */
+  triggerCount(reference: number): number {
+    return this.#inTriggers.has(reference) ? 1 : 0;
+  }
+
+  /** The player entered (true) or left a trigger volume of a reference. */
+  onTrigger: ((reference: number, entered: boolean) => void) | undefined;
+  #inTriggers = new Set<number>();
 
   /** A cell's collision is complete: the warm start lets its loose objects settle. */
   #complete(group: CollisionGroup): void {

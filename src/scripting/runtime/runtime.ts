@@ -522,6 +522,15 @@ export class ScriptRuntime implements VmHost {
     return this.state.references.get(reference)?.activationBlocked !== true;
   }
 
+  /** Something entered or left a reference's trigger volume (OnTriggerEnter / OnTriggerLeave). */
+  triggered(reference: number, actor: number, entered: boolean): void {
+    this.detach(
+      this.sendEvent(reference, entered ? 'OnTriggerEnter' : 'OnTriggerLeave', [
+        this.referenceHandle(actor),
+      ]),
+    );
+  }
+
   async #hasScripts(reference: number): Promise<boolean> {
     if (this.#index?.scripted.has(reference)) return true;
     const base = await this.baseOf(reference);
