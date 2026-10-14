@@ -27,6 +27,7 @@ import type { CellObject, CellPrimitive, Teleport } from '../world/cell-loader.t
 import type { LandData } from '../world/land.ts';
 import type { Player } from './player.ts';
 import { attachPlayerInput } from './player-input.ts';
+import type { HudSignals } from './hud-signals.ts';
 
 /** How long a notification stays (the HUD's own timing: TODO(M9)). */
 const NOTICE_MS = 3000;
@@ -235,6 +236,7 @@ export class PlaySession {
       ) => { readonly distance: number; readonly target: Activatable } | undefined)
     | undefined;
   readonly #prompt: HTMLElement | undefined;
+  readonly #hud: HudSignals | undefined;
   readonly #notice: HTMLElement | undefined;
   readonly #onImpact: ((impact: PhysicsImpact) => void) | undefined;
   #noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -279,6 +281,8 @@ export class PlaySession {
     ) => { readonly distance: number; readonly target: Activatable } | undefined;
     /** Where the activation prompt is shown. */
     prompt?: HTMLElement;
+    /** The HUD's signals: the activation target goes to the game's HUD while one listens. */
+    hud?: HudSignals;
     /** Where the game's notifications are shown. */
     notice?: HTMLElement;
     /** Collisions hard enough to be heard (the sound system's impact sounds). */
@@ -294,6 +298,7 @@ export class PlaySession {
     this.#activatable = init.activatable;
     this.#actorAt = init.actorAt;
     this.#prompt = init.prompt;
+    this.#hud = init.hud;
     this.#notice = init.notice;
     this.#onImpact = init.onImpact;
     const active = (): Camera =>
@@ -521,13 +526,18 @@ export class PlaySession {
     grab.spring.apply(step);
   }
 
-  /** Shows what activating would do. TODO(M9): the HUD's own activation prompt. */
+  /** Shows what activating would do: the game's HUD in Play, the engine's prompt elsewhere. */
   #setTarget(target: Activatable | undefined): void {
     if (target?.verb === this.#target?.verb && target?.name === this.#target?.name) {
       this.#target = target;
       return;
     }
     this.#target = target;
+    if (this.#hud?.listening) {
+      this.#hud.target(target && { verb: target.verb, name: target.name });
+      if (this.#prompt) this.#prompt.hidden = true;
+      return;
+    }
     const prompt = this.#prompt;
     if (!prompt) return;
     prompt.hidden = !target;

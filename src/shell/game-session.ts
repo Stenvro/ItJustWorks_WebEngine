@@ -8,6 +8,7 @@ import { loadBehaviorGraph, type BehaviorGraph } from '../formats/hkx/behavior.t
 import { parseNif, type NifFile } from '../formats/nif/nif.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import { IniSettings } from '../world/ini-settings.ts';
+import { HudSignals } from './hud-signals.ts';
 import { readPlayerData, type PlayerData } from './player.ts';
 import { readCollisionMatrix, type CollisionMatrix } from '../physics/collision-layers.ts';
 import type { ModelTextureSwaps } from '../render/actor-model.ts';
@@ -129,6 +130,8 @@ export class GameSession {
   scriptsProgress = '';
   /** What the scripts do to the world on screen (the viewers attach to it). */
   readonly scriptWorld: ScriptWorld;
+  /** What the game tells its HUD (Play's hudmenu.swf listens). */
+  readonly hud = new HudSignals();
   #settings: Promise<GameSettings> | undefined;
   readonly #waterTypes = new Map<string, Promise<GpuWaterType | undefined>>();
   readonly #waterRecords = new Map<number, Promise<WaterType | undefined>>();
@@ -190,7 +193,7 @@ export class GameSession {
     this.vfs = vfs;
     this.#renderer = renderer;
     this.#terminal = terminal;
-    this.scriptWorld = new ScriptWorld(terminal);
+    this.scriptWorld = new ScriptWorld(terminal, this.hud);
     this.scriptWorld.sounds = () => this.soundSystem;
     const loader = new AssetLoader(vfs);
     this.loader = loader;

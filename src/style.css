@@ -1229,7 +1229,10 @@ body[data-screen='play'] .shell,
 body[data-screen='play'] .dev-panel,
 body[data-screen='play'] .crt,
 body[data-screen='play'] .backdrop,
-body[data-screen='play'] .hud > :not(.hud-brand) {
+body[data-screen='play'] .hud > :not(.hud-brand),
+body[data-screen='play'] .activate-prompt,
+body[data-screen='play'] .loading-screen,
+body[data-screen='play'] .hud-notice {
   display: none;
 }
 

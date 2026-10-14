@@ -232,6 +232,11 @@ export class ModelViewer {
   /** A script sent the player somewhere this view does not show (Play). */
   onPlayerSent: ((at: Placement) => void) | undefined;
 
+  /** The player in this view's scene, if one plays it. */
+  get player(): Player | undefined {
+    return this.#play?.player;
+  }
+
   /** Whether the player is in this view's scene (playing it). */
   get playing(): boolean {
     return this.#play !== undefined;
@@ -515,6 +520,7 @@ export class ModelViewer {
         this.#terminal,
       ),
       prompt: this.#ui.prompt,
+      hud: session.hud,
       onImpact: (impact) => {
         this.#session?.soundSystem?.impact(impact);
       },
