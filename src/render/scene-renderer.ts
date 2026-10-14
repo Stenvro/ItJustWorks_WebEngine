@@ -1619,7 +1619,17 @@ export class SceneRenderer {
             version: -1,
           });
         }
-        place({ model: addon.model, world, ...(motion && { motion }) }, depth + 1);
+        // It shows, hides and moves with the instance it hangs on (candle flames, embers).
+        const visibility = instance.visibility;
+        place(
+          {
+            model: addon.model,
+            world,
+            ...(motion && { motion }),
+            ...(visibility && { visibility }),
+          },
+          depth + 1,
+        );
       }
     };
     for (const instance of instances) place(instance, 0);
