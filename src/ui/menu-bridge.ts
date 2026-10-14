@@ -30,9 +30,9 @@ export const BRIDGE_GET = '__itjwGetVariable';
 /** A menu asks the engine to translate a key it sets at run time (GFx's translator). */
 export const BRIDGE_TRANSLATE = '__itjwTranslate';
 /**
- * A clip a menu passes to the engine reaches it as this prefix and a number: the clip is
- * `_global.__itjwRefs[number]` (GFx hands the engine the object itself; a Flash player's
- * ExternalInterface only copies).
+ * An object a menu passes to the engine (a clip, a text field, an array) reaches it as this
+ * prefix and a number: the object is `_global.__itjwRefs[number]` (GFx hands the engine the
+ * object itself, to read or fill; a Flash player's ExternalInterface only copies).
  */
 export const BRIDGE_REFERENCE = '__itjwRef:';
 /** The clips passed so far, by number. */
@@ -114,8 +114,8 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   });
 
   // ExternalInterface.call = function () {
-  //   for (var i = 0; i < arguments.length; i++)      // clips go as references
-  //     if (typeof arguments[i] == "movieclip") {
+  //   for (var i = 0; i < arguments.length; i++)      // objects go as references
+  //     if (typeof arguments[i] == "movieclip" || typeof arguments[i] == "object") {
   //       if (typeof arguments[i].__itjwRefId != "number") {
   //         arguments[i].__itjwRefId = __itjwRefs.length; __itjwRefs.push(arguments[i]);
   //       }
@@ -134,8 +134,10 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
     body.push({ register: 2 }, { register: 1 }, 'length').op(Op.getMember).op(Op.less2);
     body.op(Op.not).ifTo('done');
     body.push({ register: 1 }, { register: 2 }).op(Op.getMember).storeRegister(3).op(Op.pop);
-    body.push({ register: 3 }).op(Op.typeOf).push('movieclip').op(Op.equals2).op(Op.not);
+    body.push({ register: 3 }).op(Op.typeOf).push('movieclip').op(Op.equals2).ifTo('object');
+    body.push({ register: 3 }).op(Op.typeOf).push('object').op(Op.equals2).op(Op.not);
     body.ifTo('skip');
+    body.label('object');
     body.push({ register: 3 }, REFERENCE_ID).op(Op.getMember).op(Op.typeOf).push('number');
     body.op(Op.equals2).ifTo('known');
     body.push({ register: 3 }, REFERENCE_ID).getPath(BRIDGE_REFERENCES).push('length');

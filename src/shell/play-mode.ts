@@ -10,6 +10,8 @@ import type { Renderer } from '../render/renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { IniSettings } from '../world/ini-settings.ts';
+import type { ControlMap } from '../formats/controlmap/controlmap.ts';
+import { buttonArt, userEvent } from '../ui/button-art.ts';
 import {
   parseLoadingScreen,
   pickLoadingScreen,
@@ -97,6 +99,8 @@ export class PlayMode {
   /** The menus open that pause the game (menu mode while there is one). */
   #pausing = 0;
   #starting = false;
+  /** The input bindings (the menus show the keys of the events their texts name). */
+  #controls: ControlMap | undefined;
   /** The loading menu's text (the loading screen's, once chosen). */
   #loadingText = '';
   /** Leaving Play (Quit to Desktop): back to the engine's own main menu. */
@@ -117,6 +121,9 @@ export class PlayMode {
       terminal.log('ui', message);
     };
     const ini = new IniSettings(session.vfs.defaultIni);
+    void session.playerData().then((data) => {
+      this.#controls = data.controls;
+    });
     this.#host = new MenuHost(
       layer,
       new InterfaceFiles(session.vfs, log),
@@ -133,6 +140,11 @@ export class PlayMode {
         // A UI sound by editor id ("UIMenuOK", "UIObjectiveNew"), at no place.
         PlaySound: (_menu, args) => {
           void session.sounds().then((sounds) => sounds.playNamed(String(args[1]), undefined));
+        },
+        // A text's "[Activate]": the art of the key bound to it, answered at once (the menu
+        // reads it right after asking).
+        GetButtonFromUserEvent: (menu, args) => {
+          menu.respond(args[0], buttonArt(userEvent(this.#controls, String(args[1]))));
         },
       },
     );
@@ -229,7 +241,6 @@ export class PlayMode {
     const hud = new HudController(this.#host, session.hud, {
       heading: () => this.#world.heading(),
       runtime: () => session.scriptsReady,
-      controls: session.playerData().then((data) => data.controls),
       settings: session.settings(),
     });
     this.#hud = hud;

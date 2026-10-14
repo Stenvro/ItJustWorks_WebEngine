@@ -14,6 +14,9 @@ import { formatGameDate } from '../world/game-time.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 
+/** HelpManualPC: the help topics of the PC game (Skyrim.esm's FLST 0x163). */
+const HELP_MANUAL_PC = 0x163;
+
 /** The journal's pages (its tabs). */
 export const JournalPage = { quests: 0, stats: 1, system: 2 } as const;
 
@@ -69,6 +72,7 @@ export class JournalMenu {
     const runtime = this.#session.scriptsReady;
     this.#quests = runtime ? await journalQuests(runtime) : [];
     const bar = await playerBarInfo(this.#session);
+    const help = await this.#helpTopics();
     let done = false;
     const close = (menu: Menu): void => {
       if (done) return;
@@ -134,6 +138,29 @@ export class JournalMenu {
             if (quest.type === MISC_QUEST_TYPE && runtime)
               runtime.state.quest(quest.formId).active = this.#memory.miscActive;
           }
+        },
+        // The help topics (HelpManualPC's messages: their titles), and one's title and text.
+        PopulateHelpTopics: (menu, args) => {
+          const list = menu.reference(args[1]);
+          if (!list) return;
+          help.forEach((topic, index) => {
+            menu.invoke(`${list}.push`, { text: topic.title, index });
+          });
+        },
+        RequestHelpText: (menu, args) => {
+          const topic = typeof args[1] === 'number' ? help[args[1]] : undefined;
+          const title = menu.reference(args[2]);
+          const text = menu.reference(args[3]);
+          if (!topic) return;
+          // A text field and a TextArea (CLIK) both take `text`.
+          if (title) menu.set(`${title}.text`, topic.title);
+          if (text) menu.set(`${text}.text`, topic.text);
+        },
+        // The game's version under the system page's list: the engine runs no game executable
+        // and has none to show (the field stays empty rather than showing its placeholder).
+        SetVersionText: (menu, args) => {
+          const field = menu.reference(args[1]);
+          if (field) menu.set(`${field}.text`, '');
         },
         updateStats: (menu, args) => {
           menu.respond(args[0], ...this.#stats());
@@ -246,6 +273,19 @@ export class JournalMenu {
     return values;
   }
 
+  /** The help topics: the messages of the form list HelpManualPC (FLST 0x163), in order. */
+  async #helpTopics(): Promise<{ title: string; text: string }[]> {
+    const db = await this.#session.db;
+    const list = await db.get(HELP_MANUAL_PC);
+    const topics: { title: string; text: string }[] = [];
+    for (const data of list?.fields.all('LNAM') ?? []) {
+      const message = list ? await db.get(list.formIdAt(data)) : undefined;
+      if (message?.type !== 'MESG') continue;
+      topics.push({ title: message.text('FULL') ?? '', text: message.text('DESC') ?? '' });
+    }
+    return topics;
+  }
+
   #notAnswered(name: string): void {
     if (this.#unanswered.has(name)) return;
     this.#unanswered.add(name);
@@ -260,7 +300,7 @@ export class JournalMenu {
 
 /**
  * The system page's requests not answered yet: saving and loading (TODO(M12)), the settings
- * and controls (TODO(M9)), help (TODO(M9)).
+ * and controls (TODO(M9)), Show on Map (TODO(M9)).
  */
 const UNBUILT = [
   'SAVE',
@@ -286,7 +326,5 @@ const UNBUILT = [
   'ResetControlsToDefaults',
   'ResetControlsToDefaults_Ounce',
   'SaveControls',
-  'PopulateHelpTopics',
-  'RequestHelpText',
   'ShowTargetOnMap',
 ] as const;

@@ -344,4 +344,8 @@ after UESP); the menu shows `"$" + name`, translated as it is set.
 
 System: the menu lists Quicksave, Save, Load, Installed Content, Settings, Controls, Help and
 Quit. Quit to the main menu ends the game and opens its main menu; quit to the desktop leaves
-Play. TODO(M12): saving and loading. TODO(M9): the settings, the controls, help, Show on Map.
+Play. Help: `PopulateHelpTopics(list)` gets the topics of HelpManualPC (FLST 0x163, Skyrim.esm:
+its messages, by their titles) as `{text, index}`; `RequestHelpText(index, titleField,
+textField)` sets the message's title and text, and the menu turns its "[Event]"s into key art
+(`GetButtonFromUserEvent`, answered for every menu in Play). TODO(M12): saving and loading.
+TODO(M9): the settings, the controls, Show on Map.

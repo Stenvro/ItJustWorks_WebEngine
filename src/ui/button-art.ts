@@ -5,7 +5,12 @@
 // those of the exported bitmaps; the key is the event's first keyboard binding in the control
 // map, else its first mouse binding. Platform-independent.
 
-import { MouseInput, SCAN_CODES, type UserEvent } from '../formats/controlmap/controlmap.ts';
+import {
+  MouseInput,
+  SCAN_CODES,
+  type ControlMap,
+  type UserEvent,
+} from '../formats/controlmap/controlmap.ts';
 
 /** Art for a key the menus have no picture of. */
 export const UNKNOWN_KEY = 'UnknownKey';
@@ -90,4 +95,14 @@ export function buttonArt(event: UserEvent | undefined): string {
   if (scanCode !== undefined) return keyArt(scanCode);
   const button = event?.mouse[0];
   return button === undefined ? UNKNOWN_KEY : mouseArt(button);
+}
+
+/** A user event by name (any case), from the gameplay bindings first. */
+export function userEvent(controls: ControlMap | undefined, name: string): UserEvent | undefined {
+  const wanted = name.toLowerCase();
+  for (const events of controls?.contexts ?? []) {
+    const event = events.find((entry) => entry.name.toLowerCase() === wanted);
+    if (event) return event;
+  }
+  return undefined;
 }
