@@ -106,3 +106,24 @@ guide). Without them every locked position is NaN and the menu vanishes. The bri
 first in the menu's first frame, for its stage shown whole on the screen; the host sets them
 again once the menu has set its own scale mode and whenever the window resizes
 (`src/ui/stage-rects.ts`).
+
+## The main menu's background: the mist menu
+
+Behind the start menu the game renders its "Mist Menu" (CommonLibSSE-NG's `RE::MistMenu`:
+six directional ambient colours, the mist model, a camera path, the default logo's shader
+property, a load screen model, the image space it replaces). `src/shell/mist-menu.ts`:
+
+- The mist: `meshes\interface\intmenufogparticles.nif` (a particle system on AutoPlay),
+  turned by `fUIMistModel_RotateZ_G` (-180) and moved by `fUIMistModel_Translate*_G` (0).
+- The logo: `meshes\interface\logo\logo.nif` (a lit, mirror-like shape and the Autoplay
+  behavior), scaled by `fUIMistMenu_DefaultLogoNIFScale` (1), moved by
+  `fUIAltLogoModel_Translate*_G` (0).
+- The camera: at `fUIMistMenu_CameraX/Y/Z_G` (-50, 600, 80) looking at
+  `fUIMistMenu_CameraLookAtX/Y/Z_G` (-50, 0, 0), `fUIMistMenu_CameraFOV_G` 75 (horizontal, of a
+  4:3 frame, as the world FOV). INI defaults from the STEP INI guide.
+- Light: none, and the ambient colours (`rUIMistMenu_Ambient*`) are 0. The logo's lit shader
+  would show black; the menu keeps the default logo's shader property, and the logo has a fade
+  time (`fUILogoModel_FadeSecs`), so the logo is taken to show by its emissive colour, set to
+  white. This is inferred, not documented.
+- TODO(M9): the AE logo models (`logo01ae*.nif`) for players with the Anniversary upgrade; the
+  camera path (`sUIMistMenu_DefaultLogoCameraPath`, empty by default); the image space.

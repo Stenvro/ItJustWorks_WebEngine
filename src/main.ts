@@ -590,7 +590,7 @@ async function main(): Promise<void> {
   ui.menuPlay.addEventListener('click', () => {
     if (!session || play) return;
     showScreen('play');
-    play = new PlayMode(session, ui.uiLayer, terminal);
+    play = new PlayMode(session, renderer, ui.uiLayer, terminal);
     play.onQuit = leavePlay;
     play.start().catch((error: unknown) => {
       terminal.log('ui', `the main menu does not open: ${describeError(error)}`, 'error');

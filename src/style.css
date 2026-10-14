@@ -1224,7 +1224,11 @@ details:not([open]) > .viewer-head {
   outline: none;
 }
 
+/* The game shows nothing of the engine's shell. TODO(M13): the engine's statistics as an option. */
 body[data-screen='play'] .shell,
-body[data-screen='play'] .dev-panel {
+body[data-screen='play'] .dev-panel,
+body[data-screen='play'] .crt,
+body[data-screen='play'] .backdrop,
+body[data-screen='play'] .hud > :not(.hud-brand) {
   display: none;
 }
