@@ -472,6 +472,11 @@ export class ModelViewer {
   #waterVolumes: readonly WaterVolume[] = [];
   /** The actors of the cell on screen (they animate every frame). */
   #actorsShown: readonly PlacedActor[] = [];
+
+  /** A placed actor shown now, by its reference. */
+  placedActor(reference: number): PlacedActor | undefined {
+    return this.#actorsShown.find((placed) => placed.actor.reference === reference);
+  }
   /** The player's body while playing. */
   #avatar: PlayerAvatar | undefined;
   /** Shown objects whose behavior graph moves their skeleton. */

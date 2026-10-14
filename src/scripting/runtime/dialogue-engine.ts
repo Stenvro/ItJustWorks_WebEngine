@@ -11,7 +11,6 @@
 import {
   BranchFlag,
   InfoFlag,
-  parseBranch,
   TopicCategory,
   type BranchRecord,
   type InfoRecord,
@@ -52,7 +51,6 @@ const GOODBYE = 'GBYE';
 export class DialogueEngine {
   readonly #runtime: ScriptRuntime;
   readonly index: DialogueIndex;
-  #branches: Promise<BranchRecord[]> | undefined;
   /** Infos said with Say Once, topics the player has chosen (TODO(M12): in the save). */
   readonly #saidOnce = new Set<number>();
   readonly #chosen = new Set<number>();
@@ -98,10 +96,16 @@ export class DialogueEngine {
       }
     }
     const choices: (TopicChoice & { priority: number; blocking: boolean })[] = [];
+    const speaks = new Map<number, boolean>();
     for (const { topic, blocking } of candidates) {
       const quest = topic.quest;
       if (quest === undefined) continue;
-      if (!(await this.#questSpeaks(quest, speaker))) continue;
+      let questSpeaks = speaks.get(quest);
+      if (questSpeaks === undefined) {
+        questSpeaks = await this.#questSpeaks(quest, speaker);
+        speaks.set(quest, questSpeaks);
+      }
+      if (!questSpeaks) continue;
       const info = await this.#validInfo(topic, quest, speaker);
       if (!info) continue;
       const record = await runtime.forms.quest(quest);
@@ -133,23 +137,26 @@ export class DialogueEngine {
     if ((info.flags & InfoFlag.sayOnce) !== 0) this.#saidOnce.add(info.formId);
   }
 
-  /** The voice file of a response for a voice type (Sound\Voice\<plugin>\<type>\<file>.fuz). */
+  /**
+   * The voice file of a response for a voice type (by its editor id):
+   * SoundVoice<plugin><voice type><file>.fuz.
+   */
   async voiceFile(
     spoken: SpokenInfo,
     response: number,
-    voiceType: number,
+    voiceType: string,
   ): Promise<string | undefined> {
     const db = this.#runtime.forms.db;
-    const [quest, voice] = await Promise.all([db.get(spoken.source.quest), db.get(voiceType)]);
+    const quest = await db.get(spoken.source.quest);
     const plugin = db.locate(spoken.source.info.formId)?.plugin.entry.name;
-    if (!quest?.editorId || !voice?.editorId || !plugin) return undefined;
+    if (!quest?.editorId || !plugin) return undefined;
     const name = voiceFileName(
       quest.editorId,
       spoken.source.topic,
       spoken.source.info.formId,
       response,
     );
-    return ['sound', 'voice', plugin, voice.editorId, `${name}.fuz`].join('\\').toLowerCase();
+    return ['sound', 'voice', plugin, voiceType, `${name}.fuz`].join('\\').toLowerCase();
   }
 
   /** Runs an info's fragment ("begin" as its first response starts, "end" after its last). */
@@ -167,20 +174,25 @@ export class DialogueEngine {
   async #firstOfSubtype(speaker: number, subtype: string): Promise<SpokenInfo | undefined> {
     const runtime = this.#runtime;
     await this.index.build();
-    const quests: { quest: number; priority: number }[] = [];
-    for (const quest of this.index.questsWithTopics()) {
-      if (!runtime.quests.isRunning(quest)) continue;
-      quests.push({ quest, priority: (await runtime.forms.quest(quest))?.priority ?? 0 });
+    // The topics of the subtype of running quests, higher quest priority first.
+    const topics: { topic: TopicRecord; quest: number; priority: number }[] = [];
+    for (const formId of this.index.topicsOfSubtype(subtype)) {
+      const topic = await this.index.topic(formId);
+      const quest = topic?.quest;
+      if (!topic || quest === undefined || !runtime.quests.isRunning(quest)) continue;
+      topics.push({ topic, quest, priority: (await runtime.forms.quest(quest))?.priority ?? 0 });
     }
-    quests.sort((a, b) => b.priority - a.priority);
-    for (const { quest } of quests) {
-      if (!(await this.#questSpeaks(quest, speaker))) continue;
-      for (const formId of this.index.topicsOfQuest(quest)) {
-        const topic = await this.index.topic(formId);
-        if (topic?.subtypeName !== subtype) continue;
-        const info = await this.#validInfo(topic, quest, speaker);
-        if (info) return this.#spoken(info, topic, quest);
+    topics.sort((x, y) => y.priority - x.priority || y.topic.priority - x.topic.priority);
+    const speaks = new Map<number, boolean>();
+    for (const { topic, quest } of topics) {
+      let questSpeaks = speaks.get(quest);
+      if (questSpeaks === undefined) {
+        questSpeaks = await this.#questSpeaks(quest, speaker);
+        speaks.set(quest, questSpeaks);
       }
+      if (!questSpeaks) continue;
+      const info = await this.#validInfo(topic, quest, speaker);
+      if (info) return this.#spoken(info, topic, quest);
     }
     return undefined;
   }
@@ -259,18 +271,8 @@ export class DialogueEngine {
     };
   }
 
-  #topLevelBranches(): Promise<BranchRecord[]> {
-    this.#branches ??= (async () => {
-      const db = this.#runtime.forms.db;
-      const branches: BranchRecord[] = [];
-      for (const formId of db.formIdsOfType('DLBR')) {
-        const record = await db.get(formId);
-        if (!record || record.deleted) continue;
-        const branch = parseBranch(record);
-        if ((branch.flags & BranchFlag.topLevel) !== 0) branches.push(branch);
-      }
-      return branches;
-    })();
-    return this.#branches;
+  async #topLevelBranches(): Promise<readonly BranchRecord[]> {
+    await this.index.build();
+    return this.index.branches.filter((branch) => (branch.flags & BranchFlag.topLevel) !== 0);
   }
 }

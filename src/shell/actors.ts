@@ -41,8 +41,15 @@ import type { GameSession } from './game-session.ts';
 import { startObjectGraph } from './object-graphs.ts';
 import type { Activatable } from './play-session.ts';
 import type { Terminal } from './terminal.ts';
+import type { SoundInstance } from '../audio/sound-instance.ts';
 
 /** An actor placed in a scene: its look, its pose and the instances that draw it. */
+/** A line an actor is saying: how long it takes (seconds), and a way to end it early. */
+export interface SpokenLine {
+  readonly duration: number;
+  stop(): void;
+}
+
 export interface PlacedActor extends AnimatedSkeleton {
   /** The actor where it is: where its package has it (else as placed in its cell). */
   readonly actor: CellActor;
@@ -215,6 +222,12 @@ export function talkTargets(
         verb: 'Talk',
         name: look.name !== '' ? look.name : look.editorId,
         activate: () => {
+          // In Play: a conversation in the game's dialogue menu.
+          const menus = session()?.hud.menus;
+          if (menus) {
+            menus.talk(placed);
+            return;
+          }
           void session()
             ?.actors()
             .then((placer) => placer.speak(placed))
@@ -366,16 +379,22 @@ export class ActorPlacer {
   }
 
   /**
-   * The actor says one of its voice type's lines at its head, its face lip-syncing (lines
-   * with lip-sync data start their curves first, by their lead-in). TODO(M9): the dialogue
-   * menu and its topics choose the line; until then it is a random one of its voice.
-   * Returns the line's file, or undefined if it has none.
+   * The actor says one of its voice type's lines at its head (the sandbox's Talk; in Play the
+   * dialogue menu chooses the lines). Returns the line's file, or undefined if it has none.
    */
   async speak(placed: PlacedActor): Promise<string | undefined> {
     const voiceType = placed.look.voiceType;
     const lines = voiceType === undefined ? [] : this.#voiceLines(voiceType);
     const path = lines[Math.floor(Math.random() * lines.length)];
     if (path === undefined) return undefined;
+    return (await this.say(placed, path)) ? path : undefined;
+  }
+
+  /**
+   * The actor says a voice file at its head, its face lip-syncing (lines with lip-sync data
+   * start their curves first, by their lead-in). Undefined if the file cannot be read.
+   */
+  async say(placed: PlacedActor, path: string): Promise<SpokenLine | undefined> {
     const sounds = await this.#session.sounds();
     const line = await sounds.voiceLine(path);
     if (!line) return undefined;
@@ -387,13 +406,23 @@ export class ActorPlacer {
     }
     const face = placed.face;
     if (lip && face) face.speak(lip);
-    const start = (): void => {
-      void line.play(() => headPosition(placed));
-    };
     const lead = lip ? lipLeadIn(lip) : 0;
-    if (lead > 0) setTimeout(start, lead * 1000);
-    else start();
-    return path;
+    let instance: Promise<SoundInstance | undefined> | undefined;
+    let stopped = false;
+    const start = (): void => {
+      if (!stopped) instance = line.play(() => headPosition(placed));
+    };
+    const timer = lead > 0 ? setTimeout(start, lead * 1000) : undefined;
+    if (lead <= 0) start();
+    return {
+      duration: line.duration + lead,
+      stop: () => {
+        stopped = true;
+        if (timer !== undefined) clearTimeout(timer);
+        face?.stopSpeaking();
+        void instance?.then((playing) => playing?.stop());
+      },
+    };
   }
 
   /** Blink timing from the game settings, read once. */

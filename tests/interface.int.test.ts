@@ -19,6 +19,7 @@ import { decodeUtf16le, decodeWindows1252 } from '../src/formats/text.ts';
 import { buildFontLibrary } from '../src/ui/font-library.ts';
 import { withBridge } from '../src/ui/menu-bridge.ts';
 import { translateMovie } from '../src/ui/translate-movie.ts';
+import { linkImports } from '../src/formats/swf/swf-link.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
@@ -118,6 +119,47 @@ describe.skipIf(!hasGamedata())('the interface movies on the local game data', (
       }
     }
     expect(Object.fromEntries(left)).toEqual({});
+  }, 120_000);
+
+  it("links the menus' imported parts: every placed character is defined, no import left", async () => {
+    const BACKSLASH = String.fromCharCode(92);
+    const read = async (url: string): Promise<Uint8Array | undefined> => {
+      const path = `interface${BACKSLASH}${url.replaceAll('/', BACKSLASH)}`.toLowerCase();
+      return vfs.has(path) ? vfs.read(path) : undefined;
+    };
+    const problems: string[] = [];
+    let linked = 0;
+    for (const path of menus) {
+      const original = readSwf(await vfs.read(path));
+      const parts = swfImports(original).filter((entry) => !/gfxfontlib.swf$/i.test(entry.url));
+      if (parts.length === 0) continue;
+      linked++;
+      const movie = readSwf(
+        await linkImports(original.bytes, (url) => !/gfxfontlib.swf$/i.test(url), read),
+      );
+      const left = swfImports(movie).filter((entry) => !/gfxfontlib.swf$/i.test(entry.url));
+      if (left.length > 0) problems.push(`${path}: imports left`);
+      // Every character id a placement names is defined (or imported from the font library).
+      const defined = new Set<number>();
+      for (const tag of movie.tags) {
+        const body = tagBody(movie, tag);
+        if (tag.code === SwfTagCode.importAssets2) {
+          for (const entry of swfImports({ ...movie, tags: [tag] }))
+            for (const symbol of entry.symbols) defined.add(symbol.id);
+        } else if (tag.code !== SwfTagCode.exportAssets && tag.code !== SwfTagCode.doInitAction) {
+          if (body.length >= 2) defined.add((body[0] ?? 0) | ((body[1] ?? 0) << 8));
+        }
+      }
+      for (const tag of allTags(movie.tags)) {
+        if (tag.code !== SwfTagCode.placeObject2) continue;
+        const body = tagBody(movie, tag);
+        if (((body[0] ?? 0) & 0x02) === 0) continue;
+        const id = (body[3] ?? 0) | ((body[4] ?? 0) << 8);
+        if (!defined.has(id)) problems.push(`${path}: character ${String(id)} placed, not defined`);
+      }
+    }
+    expect(linked).toBeGreaterThan(4);
+    expect(problems.slice(0, 10)).toEqual([]);
   }, 120_000);
 
   it('builds a font library with every font name a menu imports', async () => {
