@@ -452,8 +452,13 @@ function finishAlias(alias: AliasDraft): QuestAlias {
       location: alias.aliasField[alias.aliasField.length - 1] ?? 0,
       referenceType: alias.referenceType,
     };
-  else if (alias.location && alias.keyword !== undefined)
-    fill = { kind: 'referenceLocation', alias: alias.aliasField[0] ?? 0, keyword: alias.keyword };
+  else if (alias.location && alias.aliasField.length > 0)
+    // Reference Alias Location: the reference's location, or its parent with the keyword.
+    fill = {
+      kind: 'referenceLocation',
+      alias: alias.aliasField[0] ?? 0,
+      keyword: alias.keyword ?? 0,
+    };
   else if (alias.event !== undefined)
     fill = { kind: 'fromEvent', event: alias.event, data: alias.eventData ?? '' };
   else if (

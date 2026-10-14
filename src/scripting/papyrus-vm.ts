@@ -297,8 +297,13 @@ export class PapyrusVm {
     try {
       return await body(thread);
     } catch (error) {
-      if (!(error instanceof PapyrusError)) throw error;
-      this.warn(error.message);
+      // A script error ends its thread with a warning, as in the game; so does a fault in a
+      // native (a broken record must not stop every script).
+      this.warn(
+        error instanceof PapyrusError
+          ? error.message
+          : `native fault: ${error instanceof Error ? error.message : String(error)}`,
+      );
       return fallback;
     } finally {
       thread.state = 'done';
@@ -402,16 +407,26 @@ export class PapyrusVm {
    * has finished, their other events and other scripts' calls into them wait.
    */
   async initialize(target: ObjectHandle): Promise<void> {
+    await (
+      await this.startInitialize(target)
+    ).done;
+  }
+
+  /**
+   * Starts OnInit for every script attached to an object, as the game does when an object
+   * comes into being: resolves once they run (their other events and calls wait for them),
+   * with `done` for when they have finished.
+   */
+  async startInitialize(target: ObjectHandle): Promise<{ readonly done: Promise<void> }> {
     const instances = await this.#attachedInstances(target);
-    await Promise.all(
-      instances.map((instance) => {
-        const done = this.#dispatch(instance, 'OnInit', [], true);
-        instance.initializing = done.then(() => {
-          instance.initializing = undefined;
-        });
-        return instance.initializing;
-      }),
-    );
+    const done = instances.map((instance) => {
+      const finished = this.#dispatch(instance, 'OnInit', [], true);
+      instance.initializing = finished.then(() => {
+        instance.initializing = undefined;
+      });
+      return instance.initializing;
+    });
+    return { done: Promise.all(done).then(() => undefined) };
   }
 
   #dispatch(
@@ -503,9 +518,11 @@ export class PapyrusVm {
     args: Value[],
     depth: number,
     thread: Thread,
+    caller?: string,
   ): Promise<Value> {
     if (!(target instanceof ObjectHandle)) {
-      this.warn(`call to ${name} on ${formatValue(target)}`);
+      // The game logs this as an error of the calling script; the call returns None.
+      this.warn(`${caller ? `${caller}: ` : ''}call to ${name} on ${formatValue(target)}`);
       return null;
     }
     const instance = await this.#resolve(target);
@@ -848,7 +865,17 @@ export class PapyrusVm {
           break;
         case 'callmethod': {
           const name = identifier(arg(0));
-          set(2, await this.#callMethod(get(1), name, rest(3), frame.depth + 1, thread));
+          set(
+            2,
+            await this.#callMethod(
+              get(1),
+              name,
+              rest(3),
+              frame.depth + 1,
+              thread,
+              frame.level.displayName,
+            ),
+          );
           break;
         }
         case 'callparent': {

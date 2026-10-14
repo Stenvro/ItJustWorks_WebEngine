@@ -536,6 +536,13 @@ QUST records: about 125 ms for all vanilla plugins.
 (0x01 OR, 0x04 compare with a global), float comparison value (or global form id), u16
 function index, u16 padding, param 1, param 2, u32 run-on, reference, i32 param 3. A following
 CIS1/CIS2 holds a string parameter (e.g. the variable for `GetVMQuestVariable`, function 629).
+Function names by index: `src/scripting/condition-functions.ts` (UESP's list, 734). Run-on 7
+(event data) names the event member in param 3: two letters (`R1`, `L1`, ...). **GetEventData**
+(576) packs its event function in param 1's low 16 bits (0 GetIsID, 1 IsInList, 2 GetValue,
+3 HasKeyword, 4 GetItemValue) and the member's two letters in its high 16 bits (`K1` keyword,
+`L1`/`L2` locations, `R1`/`R2` references, `V1`/`V2` values, `O1` an object form); param 2
+is the data (a form). Functions that take an alias (GetIsAliasRef, GetInCurrentLocAlias, ...)
+take its id in param 1; GetActorValue and its kin the actor value index.
 OR-flagged conditions join the next one into a group; all groups must hold. Recipes use
 `GetItemCount` (47, on the player), `GetGlobalValue` (74), `GetVMQuestVariable` (629) and
 `GetInCurrentLoc` (359).
@@ -724,9 +731,27 @@ health offset, bleedout override. TPLT template (NPC_ or LVLN), RNAM race, WNAM 
 weight (0..100), NAM9 face morphs (18 f32 + 4 bytes), NAMA face parts, CNTO inventory (form id,
 count), tint layers TINI / TINC / TINV / TIAS, PKID AI packages (PACK, repeated, in order), SNAM
 factions (form id, rank i8, 3 unused). ACHR record flag 0x200: the actor starts dead.
+Its stats (`src/world/actor-stats-records.ts`): **DNAM** 52 bytes: the 18 skills u8 (actor
+values 6..23: one-handed .. enchanting), their 18 offsets u8, health, magicka, stamina u16 (as
+the Creation Kit calculated them: base from race, class and level, plus the offset), unused
+u16, far away model distance f32, geared up weapons u8. **AIDT** 20 bytes: aggression,
+confidence, energy, morality, mood, assistance u8 (actor values 0..5), flags u8 (0x1 aggro
+radius), unused, warn / warn-or-attack / attack radii u32. CNAM class, SPLO spells and shouts,
+PRKR perks (form id, rank u8, 3 unused), CRIF crime faction, INAM death item, KWDA keywords,
+ZNAM combat style, GNAM gift filter. Actor values by index: `src/world/actor-values.ts`
+(UESP's "Actor Value Indices", 164).
 
-**RACE:** DATA (128 or 164 bytes): 7 skill / bonus pairs, height male / female (f32 at 16, 20),
-weight (24, 28), flags u32 at 32 (0x1 playable, 0x2 FaceGen head, 0x4 child, ...). WNAM skin.
+**RELA** DATA 16 bytes: parent NPC\_, child NPC\_, rank u16 (0 lover .. 8 archnemesis; scripts'
+GetRelationshipRank gives 4 − it), flags u16 (0x8000 secret), association type (ASTP).
+**FACT** XNAM per other faction: form id, modifier i32, combat reaction u32 (0 neutral, 1 enemy,
+2 ally, 3 friend).
+
+**RACE:** DATA (128 or 164 bytes): 7 skill / bonus pairs (actor value u8, 0xFF none; bonus i8),
+height male / female (f32 at 16, 20), weight (24, 28), flags u32 at 32 (0x1 playable, 0x2
+FaceGen head, 0x4 child, ...), starting health, magicka, stamina, base carry weight, base mass
+(f32 at 36..52), acceleration, deceleration, size u32 at 64, ..., health, magicka and stamina
+regeneration (f32 at 84, 88, 92), unarmed damage and reach (96, 100). SPLO racial abilities.
+WNAM skin.
 Zero-length MNAM / FNAM mark the male and female half of what follows: at the top **ANAM**
 the skeleton (`Actors\Character\Character Assets\skeleton.nif`); after NAM1 the body egt
 models; after **NAM3** MODL the behavior project (`Actors\Character\DefaultMale.hkx`); after
@@ -753,7 +778,9 @@ NPC\_ its base data comes from, template flag 0x80).
 
 **Resolving a look:** a leveled base picks one entry: of those up to the actor's level, the
 highest level's (or any, with flag 0x1), at random (seeded by the reference, so a reference
-always looks the same; TODO(M11): the level from encounter zones and the player). Traits
+always looks the same; TODO(M11): the level from encounter zones and the player). Each leveled
+list on the template chain is picked once per actor (`src/world/actor-templates.ts`), so its
+look and what its scripts see (stats, factions, spells) come from the same picks. Traits
 (race, sex, head, skin, colours, size) come from the end of the template chain while the
 traits flag is set, the outfit while the inventory flag is. An armor wears the addons that fit
 the race (RNAM or MODL), else those of the race's armor race; one without addons takes its
@@ -823,7 +850,10 @@ vanilla packages, 240 with a procedure tree of their own). After UESP, in field 
 - CTDA dialogue conditions, then after an empty **NEXT** the event's conditions.
 - Stages: **INDX** (i16 index, u8 flags: 0x02 start-up, 0x04 shut-down, 0x08 keep instance
   data, i8), each with log entries: **QSDT** u8 (0x01 completes the quest, 0x02 fails it),
-  CTDA, CNAM the journal text (localized), NAM0 the next quest. VMAD's fragments run per stage.
+  CTDA, CNAM the journal text (localized), NAM0 the next quest. VMAD's fragments belong to a
+  stage's log entry: only the fragment of the entry that happens (the first whose conditions
+  hold) runs. (MQ101's early stages have a debug entry after the real one: running all of a
+  stage's fragments asked "Who did you befriend while escaping from Helgen?" on a new game.)
 - Objectives: **QOBJ** i16 index, FNAM flags (0x1 ORed with the previous), NNAM text, then
   targets: **QSTA** (alias i32, flags u32: 1 the compass ignores locks) with their CTDA.
 - ANAM the next alias id, then the aliases from **ALST** (reference) / **ALLS** (location) to
@@ -832,14 +862,47 @@ vanilla packages, 240 with a procedure tree of their own). After UESP, in field 
   type, 0x2000 closest, 0x8000 initially disabled), ALFI the alias it is forced into, and its
   fill: ALFR / ALFL a forced reference / location; ALUA a unique actor (NPC_); ALCO a created
   object with ALCA (high bit: in, else at; the alias) and ALCL its level; ALEQ / ALEA another
-  quest's alias; ALFA + ALRT a location alias's reference of a type (LCRT); ALFA + KNAM a
-  reference alias's location of a keyword; ALFE / ALFD a story manager event and its data;
+  quest's alias; ALFA + ALRT a location alias's reference of a type (LCRT); ALFA (+ KNAM) a
+  reference alias's location (the parent with the keyword); ALFE / ALFD a story manager event
+  and its data;
   else Find Matching Reference by its CTDA (in the loaded area, closest, ALNA near an alias),
   or Forced: None (no fill type: scripts fill it). CTDA match conditions, KWDA keywords, CNTO
   items, ALSP spells, ALFC factions, **ALPC packages** (they run before the actor's own while
   the alias holds it), ALDN display name, SPOR / ECOR package lists. Vanilla fills: unique actor
   3537, forced 3275, a location's reference 2320, from an event 2055, matching 1544, none 985,
   created 968 (reference aliases).
+
+## Story manager
+
+The story manager's trees (`src/world/story-manager-records.ts`; check:
+`node tools/story-manager.ts`: 658 nodes, 24 event types; `node tools/story-manager.ts SCPT`
+prints one tree). After xEdit's definitions (UESP's pages leave the flags open):
+
+- **SMEN** event node, **SMBN** branch node, **SMQN** quest node: PNAM parent, SNAM the
+  previous sibling (0 for the first child: the children's order is this chain), CITC and CTDA
+  conditions (CIS2 a variable name), DNAM flags, XNAM. Every SMEN's parent is the SMBN "Root".
+- SMEN: ENAM the event type (four characters: SCPT script event, KILL, CLOC, ADIA, ...), DNAM
+  node flags u32.
+- SMBN: DNAM node flags u32 (0x1 random, else stacked; 0x2 warn if no child quest started).
+- SMQN: DNAM u32: node flags in the low 16 bits as above, quest flags in the high 16 (0x1 do
+  all before repeating, 0x2 shares event, 0x4 num quests to run); XNAM max concurrent quests
+  (0: no limit), MNAM num quests to run, QNAM the quest count, then per quest NNAM (QUST), FNAM
+  (0 or 2), RNAM hours until reset as f32 × 24 (the Creation Kit shows RNAM / 24 as hours;
+  xEdit reads it so: WEDA02 1728 → 72 h, the bounty collector 1152 → 48 h).
+
+## Locations
+
+**LCTN** (`parseLocation` in `src/world/actor-stats-records.ts`): PNAM parent location, KWDA
+keywords, MNAM world location marker, RNAM radius, FNAM unreported crime faction, NAM1 music.
+Its references are lists the master keeps and later plugins change: **LC\*\*** the master's
+(LCPR persistent actors, 12 bytes: actor, cell or worldspace, grid x / y i16; LCUN unique
+actors: NPC\_, ACHR, location; LCSR special references, 16 bytes: location reference type
+LCRT, reference, cell or worldspace, grid; LCEC encounter cells; LCID; LCEP enable points),
+**AC\*\*** those a plugin adds, **RC\*\*** those it removes (form ids). An override carries only
+its own changes: Skyrim.esm's BleakFallsBarrowLocation lists the barrow's special references
+(LCSR 224 bytes), Dawnguard.esm's override only four added ones (ACSR). The lists are therefore
+read from every version of the record in load order: a version's LC\*\* replace them, AC\*\* add
+to them, RC\*\* remove from them; the rest is the last version's.
 
 ## Default objects
 
