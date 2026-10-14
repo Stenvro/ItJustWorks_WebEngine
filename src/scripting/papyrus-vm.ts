@@ -1,11 +1,16 @@
 // Papyrus virtual machine: runs compiled scripts (PEX) against a host that provides the
 // game's forms, the scripts attached to them and the native functions.
 //
-// Scripts run to completion (no threads or latent waits yet): a call returns when the
-// function returns. Utility.Wait and friends are natives that return at once.
-// TODO(M8): threads, latent functions, events from the engine, save state.
+// Threads as the Creation Kit documents them ("Threading Notes"): every event runs on a thread
+// of its own; a script instance is locked while a thread runs in it, and any external call (a
+// function on another object, a global function, a native of another object, a latent wait)
+// unlocks it until the call returns, letting waiting threads in. Until a script's OnInit has
+// finished, its other events and other threads' calls into it wait. Threads that run past the
+// frame's budget go on in the next frame (scheduler.ts).
+// TODO(M12): save state (threads, variables, registrations).
 
 import type { PexFunction, PexValue } from '../formats/pex/pex.ts';
+import { PapyrusScheduler } from './scheduler.ts';
 import { chainOf, extendsScript, type LoadedScript, type ScriptLibrary } from './script-library.ts';
 import {
   defaultValue,
@@ -33,6 +38,8 @@ export interface NativeCall {
   readonly args: readonly Value[];
   /** Lowercase "script.function". */
   readonly name: string;
+  /** The calling thread waits for this (a latent function: Wait, PlayAnimationAndWait). */
+  readonly latent: <T>(promise: Promise<T>) => Promise<T>;
 }
 
 export type NativeFunction = (call: NativeCall) => Value | Promise<Value>;
@@ -53,7 +60,39 @@ export class PapyrusError extends Error {
 }
 
 const MAX_DEPTH = 64;
+/** Instructions a thread may run without waiting at all (an endless loop where no frames come). */
 const MAX_INSTRUCTIONS = 2_000_000;
+/** How often a thread looks at the frame's budget (instructions). */
+const BUDGET_CHECK = 256;
+
+/** A thread: one event's (or one engine call's) chain of calls. */
+class Thread {
+  readonly id: number;
+  /** The instance whose lock it holds (the innermost script it runs in), if any. */
+  inside: Instance | null = null;
+  /** It runs an OnInit (calls from inside OnInit do not wait for other OnInits). */
+  readonly initializing: boolean;
+  #state: 'running' | 'waiting' | 'done' = 'running';
+  readonly #changed: () => void;
+  /** Instructions since it last waited or yielded. */
+  instructions = 0;
+
+  constructor(id: number, initializing: boolean, changed: () => void) {
+    this.id = id;
+    this.initializing = initializing;
+    this.#changed = changed;
+  }
+
+  get state(): 'running' | 'waiting' | 'done' {
+    return this.#state;
+  }
+
+  set state(state: 'running' | 'waiting' | 'done') {
+    if (state === this.#state) return;
+    this.#state = state;
+    this.#changed();
+  }
+}
 
 /** One attached script (or native type) of one object, with its variables per script level. */
 class Instance {
@@ -61,6 +100,11 @@ class Instance {
   readonly script: LoadedScript;
   readonly vars = new Map<string, Map<string, Value>>();
   state = '';
+  /** The thread running in it (the lock), and the threads waiting to get in. */
+  owner: Thread | undefined;
+  readonly waiters: (() => void)[] = [];
+  /** While its OnInit runs: resolved when it has finished. */
+  initializing: Promise<void> | undefined;
 
   constructor(target: ObjectHandle, script: LoadedScript) {
     this.target = target;
@@ -85,6 +129,7 @@ interface Frame {
   readonly locals: Map<string, Value>;
   readonly types: Map<string, string>;
   readonly depth: number;
+  readonly thread: Thread;
 }
 
 function literal(value: PexValue, type = ''): Value {
@@ -122,22 +167,38 @@ function retype(value: Value, type: string): Value {
 export class PapyrusVm {
   readonly library: ScriptLibrary;
   readonly host: VmHost;
+  readonly scheduler: PapyrusScheduler;
   /** Set to log every instruction (for tools and debugging). */
   trace: ((line: string) => void) | undefined;
   readonly #attached = new Map<string, Promise<Instance[]>>();
   readonly #natives = new Map<string, Instance>();
   readonly #warned = new Set<string>();
-  #instructions = 0;
+  readonly #threads = new Set<Thread>();
+  #nextThread = 1;
+  /** Resolved when a thread stops running (it waits or ends): idle() looks again then. */
+  #change: { promise: Promise<void>; resolve: () => void } = changeSignal();
 
-  constructor(library: ScriptLibrary, host: VmHost) {
+  constructor(library: ScriptLibrary, host: VmHost, scheduler = new PapyrusScheduler()) {
     this.library = library;
     this.host = host;
+    this.scheduler = scheduler;
   }
 
   warn(message: string): void {
     if (this.#warned.has(message)) return;
     this.#warned.add(message);
     this.host.warn(message);
+  }
+
+  /** Threads that have not finished: running, or waiting for a clock, a lock or a frame. */
+  get threads(): { running: number; waiting: number } {
+    let running = 0;
+    let waiting = 0;
+    for (const thread of this.#threads) {
+      if (thread.state === 'running') running++;
+      else if (thread.state === 'waiting') waiting++;
+    }
+    return { running, waiting };
   }
 
   // --- Objects ----------------------------------------------------------------------
@@ -178,6 +239,11 @@ export class PapyrusVm {
     return instances;
   }
 
+  /** Forgets an object's script instances (a reset: they start over from the plugin). */
+  reset(target: ObjectHandle): void {
+    this.#attached.delete(target.key);
+  }
+
   /** Native type chain instance (e.g. ObjectReference → Form) for a handle. */
   async #nativeInstance(target: ObjectHandle): Promise<Instance | undefined> {
     const formType = await this.host.formType(target);
@@ -216,18 +282,173 @@ export class PapyrusVm {
     return (await this.#attachedInstances(target)).some((i) => extendsScript(i.script, lower));
   }
 
+  // --- Threads --------------------------------------------------------------------------
+
+  /** Runs `body` on a new thread; its errors are reported, never thrown at the engine. */
+  async #spawn<T>(
+    initializing: boolean,
+    body: (thread: Thread) => Promise<T>,
+    fallback: T,
+  ): Promise<T> {
+    const thread = new Thread(this.#nextThread++, initializing, () => {
+      this.#signal();
+    });
+    this.#threads.add(thread);
+    try {
+      return await body(thread);
+    } catch (error) {
+      if (!(error instanceof PapyrusError)) throw error;
+      this.warn(error.message);
+      return fallback;
+    } finally {
+      thread.state = 'done';
+      this.#threads.delete(thread);
+    }
+  }
+
+  /**
+   * Gets a thread into an instance (its lock), first waiting for the instance's OnInit unless
+   * the thread runs an OnInit itself.
+   */
+  async #lock(instance: Instance, thread: Thread): Promise<void> {
+    if (instance.initializing && !thread.initializing) await instance.initializing;
+    while (instance.owner && instance.owner !== thread) {
+      thread.state = 'waiting';
+      await new Promise<void>((resume) => {
+        instance.waiters.push(resume);
+      });
+      thread.state = 'running';
+    }
+    instance.owner = thread;
+  }
+
+  #unlock(instance: Instance): void {
+    instance.owner = undefined;
+    instance.waiters.shift()?.();
+  }
+
+  /**
+   * Runs `run` with the thread in `instance` (null: in no script, a global or another
+   * object's native): leaving the instance it was in unlocks that one until `run` returns.
+   */
+  async #within<T>(thread: Thread, instance: Instance | null, run: () => Promise<T>): Promise<T> {
+    const previous = thread.inside;
+    if (previous === instance) return run();
+    if (previous) this.#unlock(previous);
+    if (instance) await this.#lock(instance, thread);
+    thread.inside = instance;
+    try {
+      return await run();
+    } finally {
+      if (instance) this.#unlock(instance);
+      thread.inside = null;
+      if (previous) {
+        await this.#lock(previous, thread);
+        thread.inside = previous;
+      }
+    }
+  }
+
+  #signal(): void {
+    const change = this.#change;
+    this.#change = changeSignal();
+    change.resolve();
+  }
+
+  /**
+   * Resolves once no thread runs: every thread has ended or waits (for a clock, a frame, a
+   * lock). Tools and the engine's offline uses wait for what their calls set off.
+   */
+  async idle(): Promise<void> {
+    while ([...this.#threads].some((thread) => thread.state === 'running')) {
+      await this.#change.promise;
+    }
+  }
+
+  /** Waits for a latent call on a thread (it counts as waiting meanwhile). */
+  async #latent<T>(thread: Thread, promise: Promise<T>): Promise<T> {
+    thread.state = 'waiting';
+    try {
+      return await promise;
+    } finally {
+      thread.state = 'running';
+      thread.instructions = 0;
+    }
+  }
+
   // --- Public API ---------------------------------------------------------------------
 
-  /** Calls a method on an object (as the engine does for events and API calls). */
-  async call(target: ObjectHandle, name: string, args: readonly Value[] = []): Promise<Value> {
-    this.#instructions = 0;
-    return this.#callMethod(target, name, [...args], 0);
+  /** Calls a method on an object (as the engine does for API calls), on a thread of its own. */
+  call(target: ObjectHandle, name: string, args: readonly Value[] = []): Promise<Value> {
+    return this.#spawn(
+      false,
+      (thread) => this.#callMethod(target, name, [...args], 0, thread),
+      null,
+    );
+  }
+
+  /**
+   * Sends an event to every script attached to an object: each runs its handler (if it has one
+   * in its current state) on a thread of its own once its OnInit has finished. Resolves when
+   * they all have returned.
+   */
+  async sendEvent(target: ObjectHandle, event: string, args: readonly Value[] = []): Promise<void> {
+    const instances = await this.#attachedInstances(target);
+    await Promise.all(instances.map((instance) => this.#dispatch(instance, event, args, false)));
+  }
+
+  /**
+   * Runs OnInit for every script attached to an object (their properties are set): until it
+   * has finished, their other events and other scripts' calls into them wait.
+   */
+  async initialize(target: ObjectHandle): Promise<void> {
+    const instances = await this.#attachedInstances(target);
+    await Promise.all(
+      instances.map((instance) => {
+        const done = this.#dispatch(instance, 'OnInit', [], true);
+        instance.initializing = done.then(() => {
+          instance.initializing = undefined;
+        });
+        return instance.initializing;
+      }),
+    );
+  }
+
+  #dispatch(
+    instance: Instance,
+    event: string,
+    args: readonly Value[],
+    initializing: boolean,
+  ): Promise<Value> {
+    return this.#spawn(
+      initializing,
+      async (thread) => {
+        if (!initializing && instance.initializing) {
+          thread.state = 'waiting';
+          await instance.initializing;
+          thread.state = 'running';
+        }
+        // The handler of the state the script is in when the event comes.
+        const found = this.#findFunction(instance, instance.script, event);
+        if (!found) return null;
+        return this.#invoke(
+          found.level,
+          found.fn,
+          event,
+          instance.target,
+          instance,
+          [...args],
+          0,
+          thread,
+        );
+      },
+      null,
+    );
   }
 
   /** Reads a property of an object. */
-  async getProperty(target: ObjectHandle, name: string): Promise<Value> {
-    this.#instructions = 0;
-    return this.#propGet(target, name, 0);
+  getProperty(target: ObjectHandle, name: string): Promise<Value> {
+    return this.#spawn(false, (thread) => this.#propGet(target, name, 0, thread), null);
   }
 
   /** Reads a script variable (e.g. "::iHouseStyles_var") of any script attached to an object. */
@@ -243,8 +464,19 @@ export class PapyrusVm {
 
   /** Writes a property of an object. */
   async setProperty(target: ObjectHandle, name: string, value: Value): Promise<void> {
-    this.#instructions = 0;
-    await this.#propSet(target, name, value, 0);
+    await this.#spawn(
+      false,
+      async (thread) => {
+        await this.#propSet(target, name, value, 0, thread);
+        return null;
+      },
+      null,
+    );
+  }
+
+  /** The current state of the script attached to an object as a type ('' for the empty one). */
+  async stateOf(target: ObjectHandle): Promise<string> {
+    return (await this.#resolve(target))?.state ?? '';
   }
 
   // --- Calls --------------------------------------------------------------------------
@@ -265,7 +497,13 @@ export class PapyrusVm {
     return undefined;
   }
 
-  async #callMethod(target: Value, name: string, args: Value[], depth: number): Promise<Value> {
+  async #callMethod(
+    target: Value,
+    name: string,
+    args: Value[],
+    depth: number,
+    thread: Thread,
+  ): Promise<Value> {
     if (!(target instanceof ObjectHandle)) {
       this.warn(`call to ${name} on ${formatValue(target)}`);
       return null;
@@ -283,7 +521,16 @@ export class PapyrusVm {
       }
       return null;
     }
-    return this.#invoke(found.level, found.fn, name, instance.target, instance, args, depth);
+    return this.#invoke(
+      found.level,
+      found.fn,
+      name,
+      instance.target,
+      instance,
+      args,
+      depth,
+      thread,
+    );
   }
 
   async #invoke(
@@ -294,6 +541,7 @@ export class PapyrusVm {
     instance: Instance | null,
     args: Value[],
     depth: number,
+    thread: Thread,
   ): Promise<Value> {
     if (fn.native) {
       const key = `${level.name}.${name.toLowerCase()}`;
@@ -302,7 +550,20 @@ export class PapyrusVm {
         this.warn(`native ${level.displayName}.${name} is not implemented`);
         return defaultValue(fn.returnType);
       }
-      return native({ vm: this, self, args, name: key });
+      const call: NativeCall = {
+        vm: this,
+        self,
+        args,
+        name: key,
+        // A latent wait unlocks the script the thread runs in, also for natives on self.
+        latent: (promise) => this.#within(thread, null, () => this.#latent(thread, promise)),
+      };
+      // A native of the object the thread runs in keeps its lock; others' and globals do not.
+      const own = self !== null && thread.inside?.target.sameObject(self) === true;
+      const result = own
+        ? native(call)
+        : this.#within(thread, null, () => Promise.resolve(native(call)));
+      return result;
     }
     if (depth >= MAX_DEPTH) throw new PapyrusError(`call depth over ${MAX_DEPTH} in ${name}`);
     const locals = new Map<string, Value>();
@@ -317,7 +578,9 @@ export class PapyrusVm {
       types.set(key, local.type);
       locals.set(key, defaultValue(local.type));
     }
-    return this.#execute({ fn, level, self, instance, locals, types, depth });
+    return this.#within(thread, instance, () =>
+      this.#execute({ fn, level, self, instance, locals, types, depth, thread }),
+    );
   }
 
   // --- Variables ----------------------------------------------------------------------
@@ -400,7 +663,7 @@ export class PapyrusVm {
 
   // --- Properties ---------------------------------------------------------------------
 
-  async #propGet(target: Value, name: string, depth: number): Promise<Value> {
+  async #propGet(target: Value, name: string, depth: number, thread: Thread): Promise<Value> {
     if (!(target instanceof ObjectHandle)) {
       this.warn(`property ${name} of ${formatValue(target)}`);
       return null;
@@ -414,13 +677,30 @@ export class PapyrusVm {
       return null;
     }
     if (property.autoVariable) {
+      // Reading another script's property waits for its OnInit like a call would.
+      if (instance.initializing && !thread.initializing) await instance.initializing;
       return instance.vars.get(level.name)?.get(property.autoVariable.toLowerCase()) ?? null;
     }
     if (!property.getter) return defaultValue(property.type);
-    return this.#invoke(level, property.getter, name, instance.target, instance, [], depth + 1);
+    return this.#invoke(
+      level,
+      property.getter,
+      name,
+      instance.target,
+      instance,
+      [],
+      depth + 1,
+      thread,
+    );
   }
 
-  async #propSet(target: Value, name: string, value: Value, depth: number): Promise<void> {
+  async #propSet(
+    target: Value,
+    name: string,
+    value: Value,
+    depth: number,
+    thread: Thread,
+  ): Promise<void> {
     if (!(target instanceof ObjectHandle)) {
       this.warn(`property ${name} of ${formatValue(target)} set`);
       return;
@@ -434,6 +714,7 @@ export class PapyrusVm {
       return;
     }
     if (property.autoVariable) {
+      if (instance.initializing && !thread.initializing) await instance.initializing;
       instance.vars
         .get(level.name)
         ?.set(property.autoVariable.toLowerCase(), retype(value, property.type));
@@ -446,6 +727,7 @@ export class PapyrusVm {
         instance,
         [value],
         depth + 1,
+        thread,
       );
     }
   }
@@ -454,10 +736,17 @@ export class PapyrusVm {
 
   async #execute(frame: Frame): Promise<Value> {
     const code = frame.fn.code;
+    const thread = frame.thread;
     let pc = 0;
     while (pc < code.length) {
-      if (++this.#instructions > MAX_INSTRUCTIONS) {
-        throw new PapyrusError(`over ${MAX_INSTRUCTIONS} instructions (endless loop?)`);
+      if (++thread.instructions > MAX_INSTRUCTIONS) {
+        throw new PapyrusError(
+          `${frame.level.displayName}: over ${MAX_INSTRUCTIONS} instructions without waiting (endless loop?)`,
+        );
+      }
+      // Past the frame's budget, the thread goes on in the next frame (keeping its lock).
+      if (thread.instructions % BUDGET_CHECK === 0 && this.scheduler.overBudget) {
+        await this.#latent(thread, this.scheduler.nextFrame());
       }
       const instruction = code[pc];
       if (!instruction) break;
@@ -558,8 +847,8 @@ export class PapyrusVm {
           }
           break;
         case 'callmethod': {
-          const name = arg(0).kind === 'identifier' ? (arg(0) as { name: string }).name : '';
-          set(2, await this.#callMethod(get(1), name, rest(3), frame.depth + 1));
+          const name = identifier(arg(0));
+          set(2, await this.#callMethod(get(1), name, rest(3), frame.depth + 1, thread));
           break;
         }
         case 'callparent': {
@@ -577,6 +866,7 @@ export class PapyrusVm {
                 frame.instance,
                 rest(2),
                 frame.depth + 1,
+                thread,
               ),
             );
           } else {
@@ -592,7 +882,16 @@ export class PapyrusVm {
           if (found) {
             set(
               2,
-              await this.#invoke(found.level, found.fn, name, null, null, rest(3), frame.depth + 1),
+              await this.#invoke(
+                found.level,
+                found.fn,
+                name,
+                null,
+                null,
+                rest(3),
+                frame.depth + 1,
+                thread,
+              ),
             );
           } else {
             this.warn(`${scriptName}.${name} not found`);
@@ -606,10 +905,10 @@ export class PapyrusVm {
           set(0, formatValue(get(1)) + formatValue(get(2)));
           break;
         case 'propget':
-          set(2, await this.#propGet(get(1), identifier(arg(0)), frame.depth));
+          set(2, await this.#propGet(get(1), identifier(arg(0)), frame.depth, thread));
           break;
         case 'propset':
-          await this.#propSet(get(1), identifier(arg(0)), get(2), frame.depth);
+          await this.#propSet(get(1), identifier(arg(0)), get(2), frame.depth, thread);
           break;
         case 'array_create': {
           const size = Math.max(0, num(get(1)));
@@ -684,4 +983,12 @@ function compare(a: Value, b: Value): number {
     return a.toLowerCase().localeCompare(b.toLowerCase());
   }
   return num(a) - num(b);
+}
+
+function changeSignal(): { promise: Promise<void>; resolve: () => void } {
+  let resolve = (): void => undefined;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
 }
