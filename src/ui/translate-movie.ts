@@ -83,6 +83,7 @@ function translatedEditText(
   reader.seek(2 + Math.ceil(bits / 8));
   const flags1 = reader.u8();
   const flags2 = reader.u8();
+  const flagsAt = reader.offset - 1;
   if ((flags1 & EditText.hasText) === 0) return body;
   if (flags1 & EditText.hasFont) reader.skip(2);
   if (flags2 & EditText.hasFontClass) readSwfString(reader, version);
@@ -90,6 +91,7 @@ function translatedEditText(
   if (flags1 & EditText.hasFont || flags2 & EditText.hasFontClass) reader.skip(2);
   if (flags1 & EditText.hasTextColor) reader.skip(4);
   if (flags1 & EditText.hasMaxLength) reader.skip(2);
+  const layoutAt = reader.offset;
   if (flags2 & EditText.hasLayout) reader.skip(9);
   readSwfString(reader, version); // the variable name
   const textStart = reader.offset;
@@ -101,6 +103,17 @@ function translatedEditText(
       const value = translate(key);
       return value === undefined ? whole : `>${escapeHtml(value)}<`;
     });
+    const paragraph = singleParagraph(html);
+    if (paragraph) {
+      return oneParagraphEditText(body, {
+        flagsAt,
+        flags2,
+        layoutAt,
+        textStart,
+        textEnd: reader.offset,
+        ...paragraph,
+      });
+    }
     translated = html === text ? undefined : html;
   } else {
     translated = translate(text);
@@ -110,6 +123,54 @@ function translatedEditText(
     body.subarray(0, textStart),
     encodeSwfString(translated),
     body.subarray(reader.offset),
+  ]);
+}
+
+/** Paragraph alignments as DefineEditText's layout has them. */
+const ALIGNS: Readonly<Record<string, number>> = { left: 0, right: 1, center: 2, justify: 3 };
+
+/**
+ * An HTML text that is one paragraph (`<p align="right">...</p>`, as most of the menus' fields
+ * start): its alignment and what it holds.
+ */
+function singleParagraph(html: string): { align: number; inner: string } | undefined {
+  const match = /^\s*<p(?:\s+align\s*=\s*["']?(\w+)["']?)?\s*>([\s\S]*)<\/p>\s*$/i.exec(html);
+  const inner = match?.[2];
+  if (inner === undefined || /<\/?p[\s>]/i.test(inner)) return undefined;
+  const align = ALIGNS[(match?.[1] ?? 'left').toLowerCase()];
+  return align === undefined ? undefined : { align, inner };
+}
+
+/**
+ * A one-paragraph HTML field with its paragraph's alignment as the field's own (its layout)
+ * and its text without the <p>: GFx reads such a field's text without a paragraph end, Ruffle
+ * with one ("VALUE\r"), which the menus' code then carries into the text it builds (the HUD's
+ * "WEIGHT 9 VALUE 25" broken over lines). The field shows the same.
+ */
+function oneParagraphEditText(
+  body: Uint8Array,
+  at: {
+    readonly flagsAt: number;
+    readonly flags2: number;
+    readonly layoutAt: number;
+    readonly textStart: number;
+    readonly textEnd: number;
+    readonly align: number;
+    readonly inner: string;
+  },
+): Uint8Array {
+  const hasLayout = (at.flags2 & EditText.hasLayout) !== 0;
+  // Layout: align u8, left margin u16, right margin u16, indent u16, leading i16.
+  const layout = hasLayout ? body.slice(at.layoutAt, at.layoutAt + 9) : new Uint8Array(9);
+  layout[0] = at.align;
+  const head = body.slice(0, at.layoutAt);
+  head[at.flagsAt] = at.flags2 | EditText.hasLayout;
+  return concatBytes([
+    head,
+    layout,
+    body.subarray(at.layoutAt + (hasLayout ? 9 : 0), at.textStart),
+    encodeSwfString(at.inner),
+    body.subarray(at.textEnd),
   ]);
 }
 

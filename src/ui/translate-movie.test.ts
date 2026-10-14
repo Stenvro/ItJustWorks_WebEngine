@@ -30,12 +30,16 @@ function editText(id: number, text: string, html: boolean): Uint8Array {
   ]);
 }
 
-/** The initial text of a DefineEditText written by editText. */
-function initialText(body: Uint8Array): string {
-  const reader = new BinaryReader(body, 2 + encodeRect(100, 20).length + 2 + 4);
+/** The layout's alignment (if it has one) and the initial text of a field from editText. */
+function fieldText(body: Uint8Array): { align: number | undefined; text: string } {
+  const flagsAt = 2 + encodeRect(100, 20).length + 1;
+  const reader = new BinaryReader(body, flagsAt + 1 + 4);
+  const align = ((body[flagsAt] ?? 0) & 0x20) !== 0 ? body[reader.offset] : undefined;
+  if (align !== undefined) reader.skip(9);
   readSwfString(reader, 15);
-  return readSwfString(reader, 15);
+  return { align, text: readSwfString(reader, 15) };
 }
+const initialText = (body: Uint8Array): string => fieldText(body).text;
 
 describe('parseTranslations', () => {
   it('reads keys and texts, matching as written then ignoring case', () => {
@@ -53,6 +57,10 @@ describe('translateMovie', () => {
     {
       code: SwfTagCode.defineEditText,
       body: editText(3, '<p align="left"><font face="$EverywhereFont">$CONTINUE</font></p>', true),
+    },
+    {
+      code: SwfTagCode.defineEditText,
+      body: editText(5, '<p align="right">$NEW</p><p>$CONTINUE</p>', true),
     },
     {
       code: SwfTagCode.defineSprite,
@@ -74,15 +82,28 @@ describe('translateMovie', () => {
   const translated = readSwf(translateMovie(movie, (text) => table.translate(text)));
 
   it('translates text fields, plain and HTML, font names kept', () => {
-    const [plain, html] = translated.tags;
+    const [plain, html, paragraphs] = translated.tags;
     expect(plain && initialText(tagBody(translated, plain))).toBe('NEW');
     expect(html && initialText(tagBody(translated, html))).toBe(
-      '<p align="left"><font face="$EverywhereFont">CONTINUE</font></p>',
+      '<font face="$EverywhereFont">CONTINUE</font>',
     );
+    expect(paragraphs && fieldText(tagBody(translated, paragraphs))).toEqual({
+      align: undefined,
+      text: '<p align="right">NEW</p><p>CONTINUE</p>',
+    });
+  });
+
+  it('makes a one-paragraph HTML field’s paragraph its own alignment (no paragraph end)', () => {
+    const one = writeSwf([
+      { code: SwfTagCode.defineEditText, body: editText(2, '<p align="right">$NEW</p>', true) },
+    ]);
+    const tag = readSwf(translateMovie(one, (text) => table.translate(text)));
+    const field = tag.tags[0];
+    expect(field && fieldText(tagBody(tag, field))).toEqual({ align: 1, text: 'NEW' });
   });
 
   it('translates the scripts inside sprites', () => {
-    const sprite = translated.tags[2];
+    const sprite = translated.tags[3];
     const action = sprite?.children?.[0];
     expect(action?.code).toBe(SwfTagCode.doAction);
     const values = action && decodeAvm1(tagBody(translated, action), 15)[0]?.values;
