@@ -585,12 +585,16 @@ async function main(): Promise<void> {
   const leavePlay = (): void => {
     play?.stop();
     play = undefined;
+    ui.brand.tabIndex = 0;
     showScreen('menu');
   };
   ui.menuPlay.addEventListener('click', () => {
     if (!session || play) return;
     showScreen('play');
     play = new PlayMode(session, renderer, ui.uiLayer, terminal);
+    // The way back stays for the mouse; keys belong to the game's menus.
+    ui.brand.tabIndex = -1;
+    ui.brand.blur();
     play.onQuit = leavePlay;
     play.start().catch((error: unknown) => {
       terminal.log('ui', `the main menu does not open: ${describeError(error)}`, 'error');

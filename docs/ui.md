@@ -144,3 +144,12 @@ property, a load screen model, the image space it replaces). `src/shell/mist-men
   view is the INI's `fUIMistMenu_CameraFOV_G` (75, horizontal of a 4:3 frame).
 - TODO(M9): the AE logo models (`logo01ae*.nif`, silver to gold) for players with the
   Anniversary upgrade; the image space the menu sets; how the engine places its camera.
+
+## A new size
+
+A menu lays itself out once, as it opens (the game cannot change resolution with a menu open).
+When the layer's size changes (a resized window, full screen), the host loads each menu laid out
+for another size again and runs its owner's setup again (`MenuOptions.setup`: for the start
+menu its extensions, properties, platform and fade-in), as the game would after a change of
+resolution. A click in the game gives the keys back to the topmost menu; the engine's own
+corner button leaves the keyboard's tab order in Play, so Enter always reaches the game.
