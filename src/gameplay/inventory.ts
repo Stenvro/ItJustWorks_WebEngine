@@ -140,3 +140,27 @@ export function bookTeaches(item: ItemRecord): 'spell' | 'skill' | undefined {
   if ((flags & BookFlag.teachesSkill) !== 0) return 'skill';
   return undefined;
 }
+
+/**
+ * The sound of picking an item up or putting it down: its own (YNAM / ZNAM), else the default
+ * object for its kind (weapons, armor, books, ingredients, the rest).
+ */
+export function itemSound(
+  item: Pick<ItemRecord, 'type' | 'pickUpSound' | 'putDownSound'>,
+  pickUp: boolean,
+  defaults: { get(use: string): number | undefined },
+): number | undefined {
+  const own = pickUp ? item.pickUpSound : item.putDownSound;
+  if (own !== undefined) return own;
+  const kind =
+    item.type === 'WEAP' || item.type === 'AMMO'
+      ? 'W'
+      : item.type === 'ARMO'
+        ? 'A'
+        : item.type === 'BOOK'
+          ? 'B'
+          : item.type === 'INGR'
+            ? 'I'
+            : 'G';
+  return defaults.get(`${pickUp ? 'PUS' : 'PDS'}${kind}`);
+}

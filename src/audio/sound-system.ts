@@ -157,6 +157,8 @@ export class SoundSystem {
   #space: number | undefined;
   #ambientLoop: SoundInstance | undefined;
   #spaceVersion = 0;
+  /** The default objects (the sounds the engine plays where records name none). */
+  readonly defaults: DefaultObjects;
   #listener: Vec3 = [0, 0, 0];
   #bufferBytes = 0;
   #random = 0x9e3779b9;
@@ -169,6 +171,7 @@ export class SoundSystem {
     defaults: DefaultObjects,
   ) {
     this.engine = engine;
+    this.defaults = defaults;
     this.#db = db;
     this.#loader = loader;
     this.#ini = ini;

@@ -24,7 +24,7 @@ import {
 } from '../world/spell-records.ts';
 import type { GameSession } from './game-session.ts';
 import { effectsText, playerMeters } from './inventory-menu.ts';
-import type { ItemMenuModel } from './item-menu.ts';
+import type { ItemEntry, ItemMenuModel } from './item-menu.ts';
 import type { Terminal } from './terminal.ts';
 
 /** The magic menu's category bits (the movie only tests them). */
@@ -101,8 +101,8 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
     view: async () => {
       const game = runtime();
       const settings = await session.settings();
-      const entries: (Record<string, unknown> & { formId: number })[] = [];
-      const cards = new Map<number, Record<string, unknown>>();
+      const entries: ItemEntry[] = [];
+      const cards: Record<string, unknown>[] = [];
       for (const formId of await game.actors.spells(PLAYER_REF)) {
         const record = await game.forms.record(formId);
         const favorite = game.state.favorites.has(formId);
@@ -117,7 +117,7 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
             enabled: true,
             equipState: EquipState.none,
           });
-          cards.set(formId, await shoutCard(game, shout));
+          cards.push(await shoutCard(game, shout));
           continue;
         }
         if (record?.type !== 'SPEL') continue;
@@ -137,7 +137,7 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
         });
         const text = await effectsText(game, spell.effects);
         if (power) {
-          cards.set(formId, {
+          cards.push({
             type: CardType.spellDefault,
             name: spell.name,
             effects: text,
@@ -148,7 +148,7 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
         const skill = main ? (await game.actors.value(PLAYER_REF, main.skill)).current : 0;
         const base = spellBaseCost(spell, (id) => effects.get(id)?.baseCost ?? 0);
         const level = LEVELS.find(([minimum]) => (main?.minimumSkill ?? 0) >= minimum)?.[1];
-        cards.set(formId, {
+        cards.push({
           type: CardType.spell,
           name: spell.name,
           effects: text,
@@ -159,12 +159,12 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
       }
       return { entries, cards, player: await playerMeters(game) };
     },
-    select: (formId) => {
+    select: ({ formId }) => {
       // TODO(M11): equipping spells to a hand and shouts to the voice (the magic system).
       terminal.log('ui', `equipping ${formId.toString(16)} is not built yet`, 'warn');
       return Promise.resolve();
     },
-    favorite: (formId) => {
+    favorite: ({ formId }) => {
       const favorites = runtime().state.favorites;
       if (favorites.has(formId)) favorites.delete(formId);
       else favorites.add(formId);

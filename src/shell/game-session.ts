@@ -760,7 +760,7 @@ export class GameSession {
   scriptedEnables(): Map<number, boolean> {
     const states = new Map<number, boolean>();
     for (const [reference, state] of this.scriptsReady?.state.references ?? []) {
-      if (state.deleted) states.set(reference, false);
+      if (state.deleted || state.container !== undefined) states.set(reference, false);
       else if (state.enabled !== undefined) states.set(reference, state.enabled);
     }
     return states;

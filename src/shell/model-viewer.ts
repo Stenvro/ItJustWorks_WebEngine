@@ -273,8 +273,13 @@ export class ModelViewer {
     const runtime = this.#session?.scriptsReady;
     if (!runtime || (!fallback && !this.#scripted.has(reference))) return fallback;
     return {
-      verb: fallback?.verb ?? 'Activate',
+      verb:
+        fallback?.verb ??
+        object.activateText ??
+        this.#session?.hud.uses?.text('sActivate') ??
+        'Activate',
       name: fallback?.name ?? object.name,
+      ...(fallback?.item && { item: fallback.item }),
       activate: () => {
         if (runtime.playerActivated(reference)) fallback?.activate();
       },
@@ -283,16 +288,20 @@ export class ModelViewer {
 
   /** What activating a reference does by default (a load door, a door that opens). */
   #defaultActivation(reference: number): Activatable | undefined {
-    const object = this.#cell?.data.objects.find((candidate) => candidate.reference === reference);
+    const created = this.#created?.get(reference);
+    const object =
+      this.#cell?.data.objects.find((candidate) => candidate.reference === reference) ??
+      created?.object;
     if (!object) return undefined;
     return objectActivation(
       object,
-      this.#instances.get(reference),
+      this.#instances.get(reference) ?? created?.instance,
       {
         name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
         go: (teleport) => this.onTravel?.(teleport),
       },
       (descriptor, at) => void this.#session?.soundSystem?.play(descriptor, at),
+      this.#session?.hud.uses,
     );
   }
 

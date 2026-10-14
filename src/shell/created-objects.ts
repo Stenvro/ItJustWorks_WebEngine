@@ -5,6 +5,7 @@
 
 import { parseLight, LightFlag, baseModelPath } from '../world/cell-records.ts';
 import { referenceMatrix, type CellLight, type CellObject } from '../world/cell-loader.ts';
+import { parseItem } from '../world/item-records.ts';
 import type { GpuScene, InstanceVisibility, ModelInstance } from '../render/scene-renderer.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -57,14 +58,17 @@ export class CreatedObjects {
     });
     const visibility: InstanceVisibility = { hidden: !createdEnabled(runtime, reference) };
     const path = baseModelPath(record);
+    const item = parseItem(record);
     const object: CellObject = {
       reference,
+      base: base ?? 0,
       baseType: record.type,
       editorId: record.editorId ?? '',
       name: record.text('FULL') ?? '',
       model: path ?? '',
       world,
       water: undefined,
+      ...(item && { item: { weight: item.weight, value: item.value } }),
     };
     const [model, collision] = path
       ? await Promise.all([this.#session.model(path), this.#session.collision(path)])
@@ -154,5 +158,5 @@ export class CreatedObjects {
 /** A created reference is enabled unless a script disabled or deleted it. */
 function createdEnabled(runtime: ScriptRuntime, reference: number): boolean {
   const state = runtime.state.references.get(reference);
-  return state?.deleted !== true && state?.enabled !== false;
+  return state?.deleted !== true && state?.container === undefined && state?.enabled !== false;
 }

@@ -48,6 +48,8 @@ export interface ReferenceState {
   /** The worldspace of an exterior cell it was moved into. */
   world?: number;
   deleted?: boolean;
+  /** Taken into a container (an actor's inventory) as its base's count: out of the world. */
+  container?: { readonly holder: number; readonly base: number; readonly count: number };
   destroyed?: boolean;
   destructionStage?: number;
   /** Doors and containers: 0 none, 1 open, 2 opening, 3 closed, 4 closing. */

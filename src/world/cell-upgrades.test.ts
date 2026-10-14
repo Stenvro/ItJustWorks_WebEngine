@@ -62,6 +62,7 @@ const data: CellData = {
   lighting: undefined,
   objects: [...references.keys()].map((reference) => ({
     reference,
+    base: 0,
     baseType: 'STAT',
     editorId: '',
     name: '',
