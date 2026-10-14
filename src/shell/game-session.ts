@@ -664,9 +664,12 @@ export class GameSession {
       });
       this.scriptsStarting = runtime;
       await runtime.newGame((what) => {
+        if (runtime.retired) return;
         this.scriptsProgress = what;
         this.#terminal.log('papyrus', what);
       });
+      // A new game asked for meanwhile replaced this one.
+      if (runtime.retired) return runtime;
       // From now on threads share each frame's budget ([Papyrus] fUpdateBudgetMS).
       runtime.vm.scheduler.framed = true;
       // A new game's clock: the plugins' day and hour.
@@ -688,6 +691,25 @@ export class GameSession {
       return runtime;
     });
     return this.#runtime;
+  }
+
+  /**
+   * Throws the running game away and starts a new one: quests, what scripts enabled, moved and
+   * created, the quest and scene states chosen in the panel, the clock. The sandbox's clean
+   * state; the viewers load their scene again to show it.
+   */
+  newGame(): Promise<ScriptRuntime> {
+    this.scriptsReady?.retire();
+    this.scriptsStarting?.retire();
+    this.scriptsReady = undefined;
+    this.scriptsStarting = undefined;
+    this.scriptsProgress = '';
+    this.#runtime = undefined;
+    this.cellSelections.clear();
+    void this.sounds().then((sounds) => {
+      sounds.globals = undefined;
+    });
+    return this.runtime();
   }
 
   /**

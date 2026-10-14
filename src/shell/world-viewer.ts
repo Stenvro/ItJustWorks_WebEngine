@@ -331,6 +331,20 @@ export class WorldViewer {
   get playing(): boolean {
     return this.#play !== undefined;
   }
+
+  /** Puts the player at a place in the worldspace on screen: false if it is not in it. */
+  sendPlayer(at: Placement): boolean {
+    if (!this.#play || at.world === undefined || at.world !== this.#world?.record.formId) {
+      return false;
+    }
+    this.#play.placePlayer(at.position, at.rotation[2]);
+    return true;
+  }
+
+  /** The worldspace on screen, if any. */
+  get shownWorld(): number | undefined {
+    return this.#world?.record.formId;
+  }
   /** A script moved the player somewhere this view does not show. */
   onPlayerSent: ((at: Placement) => void) | undefined;
   /** Load door destinations by destination door. */
@@ -462,13 +476,11 @@ export class WorldViewer {
     const at = runtime && (await runtime.placement(reference, reference !== PLAYER_REF));
     if (!at) return;
     if (reference === PLAYER_REF) {
-      // MoveTo on the player: in this worldspace, or a journey to where the script sent them.
-      if (!this.#play) return;
-      if (at.world !== undefined && at.world === this.#world?.record.formId) {
-        this.#play.placePlayer(at.position, at.rotation[2]);
-      } else {
-        this.onPlayerSent?.(at);
-      }
+      // MoveTo on the player while they are played (the pointer in the scene): here, or a
+      // journey. Not while the sandbox is only looked at: a new game's opening sends the
+      // player to the cart to Helgen, and the sandbox stays where it is.
+      if (!this.#play || document.pointerLockElement !== this.#canvas) return;
+      if (!this.sendPlayer(at)) this.onPlayerSent?.(at);
       return;
     }
     const created = this.#created?.get(reference);

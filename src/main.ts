@@ -122,6 +122,7 @@ const ui = {
     results: byId('quest-results', HTMLOListElement),
     count: byId('quest-count', HTMLElement),
     detail: byId('quest-detail', HTMLElement),
+    newGame: byId('quest-new-game', HTMLButtonElement),
   },
   fatal: byId('fatal', HTMLDivElement),
 };
@@ -490,13 +491,44 @@ async function main(): Promise<void> {
   // The quests one at a time; going to a target is the player's MoveTo (a journey when no
   // scene is being played).
   const questPanel = new QuestPanel(ui.quests, terminal);
-  questPanel.onGoTo = (at) => {
-    const runtime = session?.scriptsReady;
-    if (runtime && (modelViewer.playing || worldViewer.playing)) {
-      runtime.move(PLAYER_REF, at.position, at.rotation, at.cell, at.world);
-    } else {
-      onPlayerSent(at);
+  // A new game: everything the scripts did goes; the scene on screen loads again, the player
+  // where they stood.
+  const restartGame = async (): Promise<void> => {
+    const current = session;
+    if (!current) return;
+    const player = current.scriptWorld.livePlacement(PLAYER_REF);
+    const world = worldViewer.shownWorld;
+    const cell = modelViewer.shownCell;
+    terminal.log('papyrus', 'new game: the running game is thrown away');
+    const runtime = current.newGame();
+    void runtime.catch((error: unknown) => {
+      terminal.log('papyrus', `scripts not running: ${describeError(error)}`, 'error');
+    });
+    void questPanel.connect(current, runtime).catch(() => undefined);
+    const arrival = player && {
+      position: player.position,
+      heading: player.rotation?.[2] ?? 0,
+    };
+    if (world !== undefined) {
+      const at = player?.position;
+      await worldViewer.open(
+        world,
+        at && [Math.floor(at[0] / CELL_SIZE), Math.floor(at[1] / CELL_SIZE)],
+        arrival,
+      );
+    } else if (cell !== undefined) {
+      await modelViewer.showCell(cell, arrival);
     }
+  };
+  ui.quests.newGame.addEventListener('click', () => {
+    restartGame().catch((error: unknown) => {
+      terminal.log('papyrus', describeError(error), 'error');
+    });
+  });
+  questPanel.onGoTo = (at) => {
+    // The scripts know where the player is going; the view takes them there.
+    session?.scriptsReady?.move(PLAYER_REF, at.position, at.rotation, at.cell, at.world);
+    if (!modelViewer.sendPlayer(at) && !worldViewer.sendPlayer(at)) onPlayerSent(at);
   };
   connectSession = async (vfs: Vfs): Promise<void> => {
     session?.dispose();
