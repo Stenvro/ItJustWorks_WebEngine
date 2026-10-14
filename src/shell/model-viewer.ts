@@ -232,6 +232,20 @@ export class ModelViewer {
   get playing(): boolean {
     return this.#play !== undefined;
   }
+
+  /** Puts the player at a place in the scene on screen: false if it is not in this cell. */
+  sendPlayer(at: Placement): boolean {
+    if (!this.#play || at.world !== undefined || at.cell !== this.#cell?.data.cell.formId) {
+      return false;
+    }
+    this.#play.placePlayer(at.position, at.rotation[2]);
+    return true;
+  }
+
+  /** The interior cell on screen, if any. */
+  get shownCell(): number | undefined {
+    return this.#cell?.data.cell.formId;
+  }
   /** A script moved the player somewhere this view does not show. */
   onPlayerSent: ((at: Placement) => void) | undefined;
   /** Load door destinations by destination door. */
@@ -377,13 +391,11 @@ export class ModelViewer {
     const at = runtime && (await runtime.placement(reference, reference !== PLAYER_REF));
     if (!at) return;
     if (reference === PLAYER_REF) {
-      // MoveTo on the player: here, or a journey to where the script sent them.
-      if (!this.#play) return;
-      if (at.world === undefined && at.cell === this.#cell?.data.cell.formId) {
-        this.#play.placePlayer(at.position, at.rotation[2]);
-      } else {
-        this.onPlayerSent?.(at);
-      }
+      // MoveTo on the player while they are played (the pointer in the scene): here, or a
+      // journey. Not while the sandbox is only looked at: a new game's opening sends the
+      // player to the cart to Helgen, and the sandbox stays where it is.
+      if (!this.#play || document.pointerLockElement !== this.#canvas) return;
+      if (!this.sendPlayer(at)) this.onPlayerSent?.(at);
       return;
     }
     const actor = this.#actorsShown.find((placed) => placed.actor.reference === reference);
@@ -711,8 +723,9 @@ export class ModelViewer {
         }),
       ]);
     const toggles = findToggles(data, actions.controlled);
-    // Homes open furnished; "new game" shows them as bought.
-    const choices = fullyUpgraded(actions, NEW_GAME);
+    // Homes open as the running game has them: bought, built and furnished only as far as its
+    // scripts did (their enable states); the panel's presets preview the rest.
+    const choices = NEW_GAME;
     const scripted = await this.#playActions(actions, choices);
     if (token !== this.#loadToken) return;
 
@@ -1150,8 +1163,8 @@ export class ModelViewer {
       title.textContent = actions.house ? 'build' : 'purchases';
       head.append(
         title,
-        button('new game', () => {
-          this.#setCellPreset('new game');
+        button('not bought', () => {
+          this.#setCellPreset('not bought');
         }),
         button('fully upgraded', () => {
           this.#setCellPreset('fully upgraded');
@@ -1236,13 +1249,13 @@ export class ModelViewer {
     container.hidden = false;
   }
 
-  #setCellPreset(preset: 'new game' | 'fully upgraded'): void {
+  #setCellPreset(preset: 'not bought' | 'fully upgraded'): void {
     const cell = this.#cell;
     if (!cell) return;
     cell.selection = gameStartSelection(cell.toggles);
     this.#run(
       this.#setChoices(
-        preset === 'new game' ? NEW_GAME : fullyUpgraded(cell.actions, cell.choices),
+        preset === 'not bought' ? NEW_GAME : fullyUpgraded(cell.actions, cell.choices),
       ),
     );
   }
@@ -1263,7 +1276,7 @@ export class ModelViewer {
   }
 
   /** Applies a preset to the cell on screen (for dev checks). */
-  setCellPreset(preset: 'new game' | 'fully upgraded'): void {
+  setCellPreset(preset: 'not bought' | 'fully upgraded'): void {
     this.#setCellPreset(preset);
   }
 

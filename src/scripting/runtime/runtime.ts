@@ -295,7 +295,10 @@ export class ScriptRuntime implements VmHost {
   timeScale = DEFAULT_TIME_SCALE;
   /** A script moved the clock (set GameHour, ...): the engine takes the clock from here. */
   clockChanged = false;
-  readonly world: WorldBridge;
+  /** The world on screen (none once the game is retired). */
+  world: WorldBridge;
+  /** Thrown away for a new game: its scripts no longer reach the world. */
+  retired = false;
   readonly controls: Controls = {
     movement: true,
     fighting: true,
@@ -320,9 +323,9 @@ export class ScriptRuntime implements VmHost {
   readonly wordsLearned = new Map<number, boolean>();
   readonly iniOverrides = new Map<string, Value>();
   /** Debug.Trace lines (the Papyrus log). */
-  readonly log: (line: string) => void;
+  log: (line: string) => void;
   readonly #natives: NativeRegistry = new Map();
-  readonly #warn: (message: string) => void;
+  #warn: (message: string) => void;
   /** References → the aliases that hold them ("quest:alias"). */
   readonly #aliasesOf = new Map<number, Set<string>>();
   readonly #updates = new Map<string, number>();
@@ -426,6 +429,17 @@ export class ScriptRuntime implements VmHost {
    * Work that goes on by itself (events sent, waits, story events): a fault in it (a broken
    * record) is reported, never left to stop the app.
    */
+  /**
+   * Throws this game away (a new game replaces it): what its scripts still do reaches neither
+   * the world nor the log. Its threads stop with the frames that no longer run them.
+   */
+  retire(): void {
+    this.retired = true;
+    this.world = {};
+    this.#warn = () => undefined;
+    this.log = () => undefined;
+  }
+
   detach(work: Promise<unknown>): void {
     work.catch((error: unknown) => {
       this.warn(`background fault: ${error instanceof Error ? error.message : String(error)}`);

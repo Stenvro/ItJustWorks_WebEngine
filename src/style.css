@@ -620,6 +620,10 @@ button.preset {
   color: var(--ash);
 }
 
+.quest-game {
+  margin: 10px 16px 0;
+}
+
 .quest-hint {
   padding-bottom: 0;
 }

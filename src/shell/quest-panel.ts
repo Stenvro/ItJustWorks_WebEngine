@@ -73,6 +73,8 @@ export class QuestPanel {
     this.#shown = undefined;
     this.#feedback.clear();
     this.#ui.detail.hidden = true;
+    this.#ui.count.textContent = 'starting…';
+    this.#ui.results.replaceChildren();
     const scripts = await runtime;
     if (this.#session !== session) return;
     const quests: QuestRecord[] = [];
