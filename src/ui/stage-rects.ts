@@ -15,8 +15,16 @@ export interface Rect {
 /** Stage.scaleMode as a movie sets it (case-insensitive). */
 export type ScaleMode = 'showAll' | 'noBorder' | 'exactFit' | 'noScale';
 
-/** The INI's safe zone defaults ([Interface] fSafeZoneX, fSafeZoneY and the Wide pair). */
-export const SAFE_ZONE = { x: 15, y: 15, xWide: 15, yWide: 15 } as const;
+/** The safe zone margins ([Interface] fSafeZoneX, fSafeZoneY and the Wide pair). */
+export interface SafeZone {
+  readonly x: number;
+  readonly y: number;
+  readonly xWide: number;
+  readonly yWide: number;
+}
+
+/** The INI's defaults. */
+export const SAFE_ZONE: SafeZone = { x: 15, y: 15, xWide: 15, yWide: 15 };
 
 export function scaleMode(text: unknown): ScaleMode {
   switch (String(text).toLowerCase()) {
@@ -71,9 +79,9 @@ export function visibleRect(
 }
 
 /** The safe zone in stage coordinates: the visible part less the margins on each side. */
-export function safeRect(visible: Rect, wide: boolean): Rect {
-  const marginX = wide ? SAFE_ZONE.xWide : SAFE_ZONE.x;
-  const marginY = wide ? SAFE_ZONE.yWide : SAFE_ZONE.y;
+export function safeRect(visible: Rect, wide: boolean, zone: SafeZone = SAFE_ZONE): Rect {
+  const marginX = wide ? zone.xWide : zone.x;
+  const marginY = wide ? zone.yWide : zone.y;
   return {
     x: marginX,
     y: marginY,

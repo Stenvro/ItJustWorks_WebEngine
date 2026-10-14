@@ -72,6 +72,27 @@ export const INI_DEFAULTS = {
     fActivatePickLength: 180,
     fActivatePickRadius: 16,
     fFadeToBlackFadeSeconds: 1,
+    // The safe zone the menus keep inside the screen's edges.
+    fSafeZoneX: 15,
+    fSafeZoneXWide: 15,
+    fSafeZoneY: 15,
+    fSafeZoneYWide: 15,
+    // The main menu's 3D background (the mist menu).
+    fUIAltLogoModel_TranslateX_G: 0,
+    fUIAltLogoModel_TranslateY_G: 0,
+    fUIAltLogoModel_TranslateZ_G: 0,
+    fUIMistMenu_CameraFOV_G: 75,
+    fUIMistMenu_CameraLookAtX_G: -50,
+    fUIMistMenu_CameraLookAtY_G: 0,
+    fUIMistMenu_CameraLookAtZ_G: 0,
+    fUIMistMenu_CameraX_G: -50,
+    fUIMistMenu_CameraY_G: 600,
+    fUIMistMenu_CameraZ_G: 80,
+    fUIMistMenu_DefaultLogoNIFScale: 1,
+    fUIMistModel_RotateZ_G: -180,
+    fUIMistModel_TranslateX_G: 0,
+    fUIMistModel_TranslateY_G: 0,
+    fUIMistModel_TranslateZ_G: 0,
   },
 } as const;
 

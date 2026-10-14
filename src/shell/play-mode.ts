@@ -1,8 +1,12 @@
 // Play: the game as the game is, from its own main menu (interface\startmenu.swf) on. The
 // menus play in the menu host over the 3D view; what they ask of the engine is answered here.
-// TODO(M9): the main menu's 3D logo, New Game into the opening, the HUD and the in-game menus.
+// The main menu shows over its 3D background (the mist menu, mist-menu.ts).
+// TODO(M9): New Game into the opening, the HUD and the in-game menus.
 
+import type { Renderer } from '../render/renderer.ts';
+import { IniSettings } from '../world/ini-settings.ts';
 import { InterfaceFiles } from '../ui/interface-files.ts';
+import { MistMenu } from './mist-menu.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -46,12 +50,22 @@ export class PlayMode {
   /** Leaving Play (Quit to Desktop): back to the engine's own main menu. */
   onQuit: (() => void) | undefined;
 
-  constructor(session: GameSession, layer: HTMLElement, terminal: Terminal) {
+  readonly #renderer: Renderer;
+  #mist: MistMenu | undefined;
+
+  constructor(session: GameSession, renderer: Renderer, layer: HTMLElement, terminal: Terminal) {
+    this.#renderer = renderer;
     this.#session = session;
     const log = (message: string): void => {
       terminal.log('ui', message);
     };
-    this.#host = new MenuHost(layer, new InterfaceFiles(session.vfs, log), log);
+    const ini = new IniSettings(session.vfs.defaultIni);
+    this.#host = new MenuHost(layer, new InterfaceFiles(session.vfs, log), log, {
+      x: ini.number('Interface', 'fSafeZoneX'),
+      y: ini.number('Interface', 'fSafeZoneY'),
+      xWide: ini.number('Interface', 'fSafeZoneXWide'),
+      yWide: ini.number('Interface', 'fSafeZoneYWide'),
+    });
   }
 
   /** The main menu while it is open (dev checks). */
@@ -65,6 +79,9 @@ export class PlayMode {
 
   /** Opens the game's main menu. */
   async start(): Promise<void> {
+    const mist = MistMenu.show(this.#session, this.#renderer).then((menu) => {
+      this.#mist = menu;
+    });
     this.#startMenu = await this.#host.open('startmenu.swf', {
       depth: DEPTH.startMenu,
       interactive: true,
@@ -83,9 +100,12 @@ export class PlayMode {
     // TODO(M12): saves (Continue, Load).
     menu.call('sendMenuProperties', ...mainMenuProperties(false));
     menu.call('FadeInMenu');
+    await mist;
   }
 
   stop(): void {
+    this.#mist?.hide();
+    this.#mist = undefined;
     this.#host.dispose();
     this.#startMenu = undefined;
   }

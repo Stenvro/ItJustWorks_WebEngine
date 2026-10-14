@@ -9,7 +9,7 @@ import { INTERFACE_URL, type InterfaceFiles } from './interface-files.ts';
 import { BRIDGE_CALL, BRIDGE_GET, BRIDGE_INVOKE, BRIDGE_SET, withBridge } from './menu-bridge.ts';
 import { loadRuffle, type RuffleApi, type RufflePlayerElement } from './ruffle.ts';
 import { readSwf } from '../formats/swf/swf.ts';
-import { safeRect, scaleMode, visibleRect } from './stage-rects.ts';
+import { SAFE_ZONE, safeRect, scaleMode, visibleRect, type SafeZone } from './stage-rects.ts';
 
 /**
  * What answers a menu's call to the engine: `args` as the menu passed them (a GameDelegate
@@ -41,6 +41,8 @@ export class Menu {
   /** The movie, e.g. "hudmenu.swf". */
   readonly movie: string;
   readonly element: RufflePlayerElement;
+  /** The INI's safe zone margins. */
+  safeZone: SafeZone = SAFE_ZONE;
   /** The movie's stage size in pixels. */
   readonly stageWidth: number;
   readonly stageHeight: number;
@@ -150,7 +152,7 @@ export class Menu {
       typeof align === 'string' ? align : '',
     );
     this.set('Stage.visibleRect', visible);
-    this.set('Stage.safeRect', safeRect(visible, width / height > 4 / 3 + 0.01));
+    this.set('Stage.safeRect', safeRect(visible, width / height > 4 / 3 + 0.01, this.safeZone));
   }
 
   /** Puts keyboard focus on the menu (an interactive menu as it opens). */
@@ -192,10 +194,18 @@ export class MenuHost {
   #next = 1;
   #stopServing: (() => void) | undefined;
 
-  constructor(layer: HTMLElement, files: InterfaceFiles, log: (message: string) => void) {
+  readonly #safeZone: SafeZone;
+
+  constructor(
+    layer: HTMLElement,
+    files: InterfaceFiles,
+    log: (message: string) => void,
+    safeZone: SafeZone = SAFE_ZONE,
+  ) {
     this.#layer = layer;
     this.#files = files;
     this.#log = log;
+    this.#safeZone = safeZone;
   }
 
   /** The open menus. */
@@ -223,6 +233,7 @@ export class MenuHost {
       height: (frameSize.yMax - frameSize.yMin) / 20,
     };
     const menu = new Menu(id, movie, element, options.handlers ?? {}, this.#log, stage);
+    menu.safeZone = this.#safeZone;
     // The rects the menu starts with: its stage shown whole (showAll, Ruffle's default) on
     // the layer; updateStage corrects them once the menu has set its own scale mode.
     const view = this.#layer.getBoundingClientRect();
@@ -233,7 +244,10 @@ export class MenuHost {
       view.height || stage.height,
       'showAll',
     );
-    const rects = { visible, safe: safeRect(visible, view.width / view.height > 4 / 3 + 0.01) };
+    const rects = {
+      visible,
+      safe: safeRect(visible, view.width / view.height > 4 / 3 + 0.01, this.#safeZone),
+    };
     this.#menus.set(id, menu);
     await menu.api.load({
       data: withBridge(bytes, id, rects),
