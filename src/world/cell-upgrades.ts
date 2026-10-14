@@ -6,8 +6,8 @@
 // scripted enable states. The other markers are set by quests and scenes (a guild's status,
 // a fort's garrison): they start as the plugin places them, which is what a new game
 // shows, and can be switched here to look at the other states. A state's "...Disable" or
-// "...Start" counterpart (X_Enable ↔ X_Disable) switches with it.
-// TODO(M8): quest states follow the running quests.
+// "...Start" counterpart (X_Enable ↔ X_Disable) switches with it. Once the game's scripts
+// run, what they enable and disable is applied on top (src/shell/game-session.ts).
 
 import type { CellData, ReferenceState } from './cell-loader.ts';
 

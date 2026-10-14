@@ -1,5 +1,6 @@
 // Every native function the engine provides, by lowercase "script.function". Natives not
-// registered warn once when called and return their type's default (TODO(M8): all of them).
+// registered warn once when called and return their type's default; tools/papyrus-natives.ts
+// lists any the scripts call that are missing (none in the vanilla scripts).
 // Platform-independent. Notes: docs/scripting.md ("Natives").
 
 import type { NativeRegistry, ScriptRuntime } from '../runtime.ts';

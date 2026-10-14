@@ -126,7 +126,8 @@ walks from a landing below to the one above and back, through the middles of the
 flight's triangles share, steering as a player would. Of 14,367 walks over 6,767 flights, 854
 do not arrive (1,138 with steps on stairs only): closed doors, gates and portcullises, magic
 barriers, spider webs and cocoons to cut through, moving bridges and platforms (game states:
-scripts open, lower and raise them, TODO(M8); combat cuts the webs, TODO(M11); the bridges'
+the running game's scripts open, lower and raise them, the audit runs none; combat cuts the
+webs, TODO(M11); the bridges'
 collision follows their animation already, see Constraints and ragdolls and animation.md,
 Skeletal objects); walks that hug an obstacle beside the way (the audit steers
 through the edges' middles, a player walks around it); and a few steps higher than 32 units.
@@ -215,7 +216,8 @@ Tower is buried in ash), and drops by design (the Ratway's sewer outlet into Lak
 prison release markers). Of 1,492 doors, 104 stay shut to the walk: deadbolted ones (opened
 from the other side), spider webs to cut through, Nchardak's seals, rubble behind false doors,
 and load doors used as plain doors (their Open only cracks them, as the game plays it): the
-deadbolts, seals and secret doors are scripts (TODO(M8)), cutting webs is combat (TODO(M11)).
+deadbolts, seals and secret doors are scripts (the running game's, not the audit's), cutting
+webs is combat (TODO(M11)).
 
 **Grabbing:** Activate on a loose (simulated) object waits `[Controls] fZKeyDelay` (0.2 s): let
 go before that, it activates; held longer, the player takes hold of the object where the

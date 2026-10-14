@@ -55,4 +55,7 @@ stay, 498 are not decided and 938 are dead.
 
 TODO(M10): running the packages (travel, sandbox, patrols, furniture use with its entry
 markers and idles, schedules changing while a cell is loaded), actors coming into a cell from
-another, and objects found by searching. TODO(M8): quest state, aliases and their packages.
+another, and objects found by searching. With the running game's scripts, quest state and
+globals are theirs, and the packages of the aliases that hold an actor come before its own
+(by quest priority, as the Creation Kit stacks them); without them an actor an alias may hold
+is not decided.

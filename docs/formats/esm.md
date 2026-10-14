@@ -555,9 +555,10 @@ give its forced reference / location.
 placeable bases handle OnCellLoad, OnLoad, OnCellAttach or OnInit, e.g.
 RemovableTorchSconce01SCRIPT, which on cell load puts a torch in its sconce (PlaceAtMe of
 RemovableTorch01) and enables its linked chain (the torch's light), or DLC1VCEmberToggleScript,
-which disables a toggleable fire's light. Running them when cells load, with the natives they
-call (PlaceAtMe, EnableLinkChain, PlayAnimation into the object's behavior graph, ...):
-TODO(M8). Until then sconces stay empty and lights stay as the plugins place them.
+which disables a toggleable fire's light. The script runtime runs them as their cells load,
+with the natives they call (PlaceAtMe, EnableLinkChain, PlayAnimation into the object's
+behavior graph, ...): sconces get their torches, lights go on and off as the scripts say
+([scripting.md](../scripting.md), "The world").
 
 ## Collision layers
 
@@ -633,7 +634,8 @@ the speeds of its quadrant.
   u32 (1 box, 2 sphere, 3 portal box, 4 line). References to the engine's **CollisionMarker**
   (STAT 0x21) are invisible collision: boxes and spheres on the layer in **XTRI** (u32), else
   L_COLLISIONBOX. RoomMarker, PortalMarker and PlaneMarker primitives are rooms, portals and
-  occlusion planes (no collision); activators' primitives are triggers (TODO(M8)).
+  occlusion planes (no collision); activators' primitives are triggers, whose scripts hear
+  the player come and go (OnTriggerEnter, OnTriggerLeave; [scripting.md](../scripting.md)).
 
 ## Navigation meshes
 

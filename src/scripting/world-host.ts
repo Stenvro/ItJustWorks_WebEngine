@@ -1,14 +1,17 @@
-// Binds the Papyrus VM to the game data: forms and their scripts come from the record
-// database, and natives act on a WorldState (enable states, globals, quest stages,
-// inventories). Natives that only matter to a running game (sounds, animations, UI) do
-// nothing here and are listed as such.
-// TODO(M8): the full native API (Actor, Game, Debug, UI, ...) on the live game world.
+// Binds the Papyrus VM to the game data for playing a few scripts from a new game's state
+// (player-home.ts: a home's purchases and HearthFire builds, shown in the sandbox): forms and
+// their scripts come from the record database, and natives act on a WorldState (enable
+// states, globals, quest stages, inventories). Natives that only matter to a running game
+// (sounds, animations, UI) do nothing here and are listed as such. The running game has the
+// full native API on the live world: src/scripting/runtime/.
 
 import { parseVmad, type PropertyValue, type ScriptAttachments } from '../formats/esm/vmad.ts';
 import { GroupType, RecordFlag } from '../formats/esm/record.ts';
 import type { GameRecord, RecordDatabase } from '../world/record-db.ts';
 import type { AttachedScriptInfo, NativeCall, NativeFunction, VmHost } from './papyrus-vm.ts';
 import { ObjectHandle, PapyrusArray, formatValue, type Value } from './values.ts';
+import { evaluateConditions } from './conditions.ts';
+import { parseQuest } from '../world/quest-records.ts';
 
 /** The player's reference (PlayerRef). */
 export const PLAYER_REF = 0x14;
@@ -532,13 +535,20 @@ export class GameHost implements VmHost {
     this.state.stagesDone.set(self.formId, done);
     this.state.currentStage.set(self.formId, stage);
     const attachments = await this.attachments(self.formId);
-    // A fragment belongs to a log entry and only the entry that happens runs its own; this
-    // host takes the stage's first (TODO(M8): the shell moves to the script runtime, whose
-    // quests.ts picks the first entry whose conditions hold).
-    const fragments = (attachments?.fragments ?? []).filter((fragment) => fragment.stage === stage);
-    const entry = Math.min(...fragments.map((fragment) => fragment.logEntry));
-    for (const fragment of fragments) {
-      if (fragment.logEntry !== entry) continue;
+    // A fragment belongs to a log entry and only the entry that happens runs its own: the
+    // first whose conditions hold (as src/scripting/runtime/quests.ts).
+    const record = await this.record(self.formId);
+    const entries =
+      (record && parseQuest(record).stages.find((s) => s.index === stage)?.logEntries) ?? [];
+    let entry: number | undefined;
+    for (const [index, logEntry] of entries.entries()) {
+      if (await evaluateConditions(logEntry.conditions, vm, this, PLAYER_REF)) {
+        entry = index;
+        break;
+      }
+    }
+    for (const fragment of attachments?.fragments ?? []) {
+      if (fragment.stage !== stage || fragment.logEntry !== entry) continue;
       await latent(vm.call(new ObjectHandle(self.formId, fragment.script), fragment.function));
     }
     return true;

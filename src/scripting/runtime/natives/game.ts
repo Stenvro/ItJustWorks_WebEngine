@@ -134,7 +134,7 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
   n('game.addachievement', () => null);
   n('game.calculatefavorcost', ({ args }) => int(args[0]));
 
-  // --- Finding references near a point (TODO(M8): among the loaded cells' references) -------
+  // --- Finding references near a point (among the loaded cells' references) ---------------
   n('game.findclosestreferenceoftype', async ({ args }) =>
     runtime.referenceHandleOrNone(await runtime.findReference([formOf(args[0])], args, true)),
   );

@@ -88,14 +88,15 @@ or not, and the last lightning flash.
   median of the region one-shots'; TODO(M13)).
 - **Conditions** (`sound-conditions.ts`) of ambient sounds use GetCurrentTime (308 uses),
   GetIsCurrentWeather (96), IsInInterior (38), IsRaining and GetGlobalValue (one each: the
-  distant catapults of SkyrimOvercastWar while CWDistantCatapultsAMB is 1). Globals have their
-  starting value (FLTV) until scripts run: TODO(M8).
+  distant catapults of SkyrimOvercastWar while CWDistantCatapultsAMB is 1). Globals have the
+  running game's values (what scripts set, the clock's), their starting value (FLTV) before
+  its scripts run.
 
 ## Music
 
 `music.ts` decides what plays, `music-output.ts` plays it. Music types are in play: the
 location's and those game events add (combat: BTMS, TODO(M10); discoveries, quest moments
-and the rest through Papyrus MusicType.Add / Remove, TODO(M8)). The location's is the cell's
+and the rest through Papyrus MusicType.Add / Remove, from the script runtime). The location's is the cell's
 XCMO; indoors else the default object DFMS; outdoors else the music of the camera cell's
 regions in effect (RDMO; the same priority and override rule as region sounds), the
 worldspace's ZNAM, then DFMS. Tamriel's ZNAM is `_NONE`, so the regions give its music:

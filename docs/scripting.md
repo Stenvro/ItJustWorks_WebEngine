@@ -97,6 +97,43 @@ and DLC set-up quests stop themselves at once) and MQ101 runs; no native is miss
   quests run in the game. A filled alias fills the alias it is forced into, reserves what fills
   it if it reserves, disables it if "initially disabled", and gives it its inventory.
 
+## The world
+
+The shell (`src/shell/script-world.ts`) is the runtime's WorldBridge for the cells and
+worldspaces on screen:
+
+- **Cells**: as a cell's references load, those with scripts get OnInit the first time (a
+  non-persistent reference's scripts start with its cell), then OnCellAttach, OnLoad and
+  OnCellLoad; leaving, OnUnload and OnCellDetach.
+- **Enable state**: what scripts enable and disable shows and hides at once, collision
+  included, without loading the cell again; enable parents follow.
+- **Activation**: the player's Activate goes to the reference's OnActivate first; what
+  activating does by default (doors, containers, items) follows unless a script blocks it.
+  A script's Activate does the same, so an object a script moves first is not left waiting
+  for the player.
+- **Triggers**: trigger volumes (activators' primitives and trigger-layer collision) tell
+  their scripts when the player enters and leaves (OnTriggerEnter, OnTriggerLeave,
+  GetTriggerObjectCount).
+- **Created references** (PlaceAtMe, an alias's Create Reference) are drawn, collide and
+  light like placed ones, and go and come back with their cell.
+- **Moves**: MoveTo, SetPosition, SetAngle, MoveToNode move what is shown; keyframed
+  (SetMotionType) bodies follow. MoveTo on the player puts them there, through a journey to
+  the cell or worldspace when it is elsewhere, as a load door does; the runtime knows where
+  the player is and the cell they walked into.
+- **Animation**: PlayAnimation and the animation variables reach a reference's behavior
+  graph (an object's sequences and skeleton, an actor's), and the events the graph raises
+  reach OnAnimationEvent.
+- **Music, sounds, packages**: MusicType.Add / Remove, the globals ambient sounds read, quest
+  state and alias packages for the actors' packages come from the runtime.
+- What only the game's menus show (notifications, message boxes, help messages) goes to the
+  terminal until the menus run (TODO(M9)).
+
+**The sandbox's quests** (`src/shell/quest-panel.ts`): every quest of the running game, one
+at a time, as the console shows and drives them: running or not, its stage and the stages
+done, the objectives shown with their targets, who fills each alias; start and stop
+(StartQuest, StopQuest), set any stage (SetStage), and go to a target or an alias's
+reference (MoveTo).
+
 ## Story manager
 
 `story-manager.ts`, after the Creation Kit's "Story Manager" and "SM Event Node" pages: an

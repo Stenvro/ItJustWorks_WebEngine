@@ -43,9 +43,9 @@ Formats: [nif.md](formats/nif.md#animation) (controllers, sequences, keys),
   of aligned quaternions; a visibility the heaviest one's), over the model's free controllers.
 - **Conditions** (hkbExpressionCondition) are evaluated over the graph's variables, as in the
   full runtime. Variables changed by modifiers are not (ObjectGraph runs no modifiers); graphs
-  that need them play skeletal clips and run in the full runtime below. Unifying the two
-  (sequences as leaves of the full runtime) and the events and variables scripts send
-  (ObjectReference.PlayAnimation, SetAnimationVariable*): TODO(M8).
+  that need them play skeletal clips and run in the full runtime below. The events and
+  variables scripts send (ObjectReference.PlayAnimation, SetAnimationVariable*) reach the
+  graph, and the text keys it plays reach their OnAnimationEvent.
 - Particles follow: the manager-controlled controllers of a particle system (birth rate,
   emitter active) take their values from the sequences the graph plays.
 
@@ -73,10 +73,12 @@ its character's Havok skeleton, every behavior file, and the clips its start sta
   their rest pose is that state's first frame. CasSecEntrance01 (the Volkihar courtyard's
   secret stair, Valerica's dial puzzle) stands closed in ClosedLoop, which is its rest
   pose; its `Open` clip lowers and turns the platforms and stair by 24 units. The events
-  come from scripts and activation (traps' trigger volumes, the dials): TODO(M8).
+  come from their scripts (traps' trigger volumes, the dials), which the script runtime runs;
+  the events the graph raises reach the scripts' OnAnimationEvent.
 - Graphs that play both clips and NIF sequences (WhiterunDragonTrap01, TrapBladeSwinging01,
   the bound bow) run both: the sequences through `ObjectGraph`, the clips through the
-  runtime (TODO(M8): one runtime, so an event reaches both).
+  runtime; an event or variable from a script reaches both, as it reaches the one graph in
+  the game (`placedScriptGraph`, src/shell/script-world.ts).
 
 ## Actors
 
