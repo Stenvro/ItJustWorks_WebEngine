@@ -5,6 +5,8 @@ import { findCustomBackdrop } from './shell/custom-backdrop.ts';
 import { GameSession, MEMORY_BUDGET } from './shell/game-session.ts';
 import { ModelViewer } from './shell/model-viewer.ts';
 import { WorldViewer } from './shell/world-viewer.ts';
+import { showClockSpeed } from './shell/world-sky.ts';
+import { nextClockSpeed } from './world/game-time.ts';
 import { forgetPanels, setupHideShortcut, setupPanels } from './shell/panels.ts';
 import { Terminal } from './shell/terminal.ts';
 import { BrowserGameFolder } from './vfs/browser/browser-game-folder.ts';
@@ -86,7 +88,8 @@ const ui = {
       sky: byId('scene-sky', HTMLElement),
       time: byId('scene-time', HTMLInputElement),
       timeLabel: byId('scene-time-label', HTMLOutputElement),
-      timeFlows: byId('scene-time-flows', HTMLInputElement),
+      timeSpeed: byId('scene-time-speed', HTMLButtonElement),
+      timeScale: byId('scene-time-scale', HTMLElement),
       weather: byId('scene-weather', HTMLSelectElement),
     },
     prompt: byId('activate-prompt', HTMLDivElement),
@@ -105,7 +108,8 @@ const ui = {
     sky: byId('scene-sky', HTMLElement),
     time: byId('scene-time', HTMLInputElement),
     timeLabel: byId('scene-time-label', HTMLOutputElement),
-    timeFlows: byId('scene-time-flows', HTMLInputElement),
+    timeSpeed: byId('scene-time-speed', HTMLButtonElement),
+    timeScale: byId('scene-time-scale', HTMLElement),
     weather: byId('scene-weather', HTMLSelectElement),
   },
   fatal: byId('fatal', HTMLDivElement),
@@ -417,6 +421,12 @@ async function main(): Promise<void> {
     worldViewer.deactivate();
   };
   let session: GameSession | undefined;
+  // The dev panel's fast-forward of the game clock: off (the game's pace), 2×, 5×, 10×, 20×.
+  ui.viewer.sky.timeSpeed.addEventListener('click', () => {
+    if (!session) return;
+    session.timeSpeed = nextClockSpeed(session.timeSpeed);
+    showClockSpeed(ui.viewer.sky, session.timeScale, session.timeSpeed);
+  });
   // Load doors: the player goes to the door on the other side, inside or out.
   // TODO(M9): the loading screen while the destination loads.
   const travel = async (teleport: Teleport): Promise<void> => {

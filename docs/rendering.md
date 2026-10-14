@@ -6,7 +6,12 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
 1. **Sun shadow map** (exteriors): 4 cascades, 2048² each (`shadow-cascades.ts`). The view
    up to 8000 units (fShadowDistance, Ultra) is cut at 700/1800/4000/8000; each slice gets an
    orthographic view from the sun around its bounding sphere, snapped to whole texels (no
-   shimmer), reaching 20000 units towards the sun for casters. Cascades 1–2 update every
+   shimmer), reaching 20000 units towards the sun for casters. The sun moves with the clock
+   and its shadows with it (SSE's bDisableShadowJumps: no jumps, fSunUpdateThreshold and
+   fSunShadowUpdateTime unused): the light's view turns about the camera's place rounded to
+   4096 units, so its texel grid slides over the scene by only the turn times the distance
+   from there (turning about the world's origin, it slid nearly a texel a frame in Whiterun
+   at TimeScale 20 and every shadow edge flickered). Cascades 1–2 update every
    frame, 3 every second and 4 every fourth frame; the shader samples each with the matrix it
    was rendered with. Casters: terrain and parts with `Cast_Shadows` (SLSF1 `0x200`), alpha
    tested where their NiAlphaProperty tests; not LOD; objects smaller than 3 texels of a

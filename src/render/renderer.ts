@@ -1,7 +1,7 @@
 import { GBUFFER_FORMAT, gbufferTarget } from './gbuffer.ts';
 import { frustumPlanes, invert } from './frustum.ts';
 import type { GpuContext } from './gpu.ts';
-import { fitCascades, type Cascade } from './shadow-cascades.ts';
+import { fitCascades, shadowAnchor, SHADOW_SPLITS, type Cascade } from './shadow-cascades.ts';
 
 /**
  * Frames between updates of each shadow cascade: the near ones every frame, the far ones
@@ -256,6 +256,8 @@ export class Renderer {
           view.camera.near,
           lighting.sunDirection,
           SHADOW_MAP_SIZE,
+          SHADOW_SPLITS,
+          shadowAnchor(view.camera.position),
         );
         this.#shadowFrame++;
         fitted.forEach((cascade, i) => {

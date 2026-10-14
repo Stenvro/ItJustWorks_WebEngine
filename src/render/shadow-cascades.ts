@@ -1,6 +1,10 @@
 // Cascaded shadow maps for the sun: the view frustum up to the shadow distance is cut into
 // slices, each covered by an orthographic view from the light, snapped to whole shadow-map
-// texels so shadows do not shimmer as the camera moves. Platform-independent.
+// texels so shadows do not shimmer as the camera moves. The light's view turns about an
+// anchor near the camera: as the sun moves, its texel grid then slides over the scene by the
+// turn times the distance from the anchor (a few hundredths of a texel a frame), where turning
+// about the world's origin slid it nearly a texel a frame 23000 units away (in Whiterun), and
+// every shadow edge flickered while time passed. Platform-independent.
 
 import { project } from './frustum.ts';
 import { lookAt, multiply, type Mat4, type Vec3 } from './math.ts';
@@ -10,6 +14,15 @@ export const SHADOW_CASCADES = 4;
 export const SHADOW_SPLITS: readonly number[] = [700, 1800, 4000, 8000];
 /** Casters this far towards the light from a slice still throw shadows into it. */
 const CASTER_REACH = 20000;
+/** The light's view turns about the camera's place rounded to this grid (an exterior cell). */
+export const SHADOW_ANCHOR_GRID = 4096;
+
+/** Where the light's view turns about for a camera: its place rounded to the anchor grid. */
+export function shadowAnchor(camera: Vec3): Vec3 {
+  const snap = (value: number): number =>
+    Math.round(value / SHADOW_ANCHOR_GRID) * SHADOW_ANCHOR_GRID;
+  return [snap(camera[0]), snap(camera[1]), snap(camera[2])];
+}
 
 export interface Cascade {
   readonly viewProj: Mat4;
@@ -41,7 +54,8 @@ export function orthographic(
 
 /**
  * Fits the cascades. `inverseViewProj` is the camera's (reversed-Z, infinite) inverse
- * view-projection with near plane `near`; `toLight` points towards the sun.
+ * view-projection with near plane `near`; `toLight` points towards the sun; the light's view
+ * turns about `anchor` (shadowAnchor of the camera).
  */
 export function fitCascades(
   inverseViewProj: Mat4,
@@ -49,10 +63,15 @@ export function fitCascades(
   toLight: Vec3,
   mapSize: number,
   splits: readonly number[] = SHADOW_SPLITS,
+  anchor: Vec3 = [0, 0, 0],
 ): Cascade[] {
   const up: Vec3 = Math.abs(toLight[2]) > 0.99 ? [0, 1, 0] : [0, 0, 1];
-  // Rotation only: the light looks along −toLight from the origin.
-  const view = lookAt([0, 0, 0], [-toLight[0], -toLight[1], -toLight[2]], up);
+  // The light looks along −toLight from the anchor.
+  const view = lookAt(
+    anchor,
+    [anchor[0] - toLight[0], anchor[1] - toLight[1], anchor[2] - toLight[2]],
+    up,
+  );
   const cascades: Cascade[] = [];
   let start = near;
   for (const end of splits) {

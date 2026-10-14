@@ -4,7 +4,7 @@
 // (world-sky.ts), so the panel offers the same in both.
 
 import type { GameSession } from './game-session.ts';
-import type { SkyElements } from './world-sky.ts';
+import { showClockSpeed, type SkyElements } from './world-sky.ts';
 
 const formatHour = (hour: number): string => {
   const minutes = Math.floor((((hour % 24) + 24) % 24) * 60);
@@ -19,6 +19,7 @@ export class InteriorSkyControls {
   constructor(session: GameSession, ui: SkyElements) {
     this.#session = session;
     this.#ui = ui;
+    showClockSpeed(ui, session.timeScale, session.timeSpeed);
     const onTime = (): void => {
       session.gameHour = Number(ui.time.value);
       ui.timeLabel.value = formatHour(session.gameHour);
@@ -43,11 +44,6 @@ export class InteriorSkyControls {
       ui.weather.replaceChildren(new Option('as the region picks', '0'), all);
       ui.weather.value = String(session.pinnedWeather ?? 0);
     });
-  }
-
-  /** Whether the clock runs (the panel's "time passes"). */
-  get timeFlows(): boolean {
-    return this.#ui.timeFlows.checked;
   }
 
   /** The slider follows the clock. */

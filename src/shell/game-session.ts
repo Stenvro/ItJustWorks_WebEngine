@@ -136,6 +136,16 @@ export class GameSession {
   /** Game seconds per real second: the plugins' TimeScale global (Skyrim.esm: 20). */
   timeScale = DEFAULT_TIME_SCALE;
   /**
+   * The dev panel's fast-forward: the clock runs this many times the TimeScale (1: as the
+   * game), as the console's `set timescale` would.
+   */
+  timeSpeed = 1;
+
+  /** Game seconds per real second now: the TimeScale times the panel's fast-forward. */
+  get clockRate(): number {
+    return this.timeScale * this.timeSpeed;
+  }
+  /**
    * The weather picked by hand (the dev panel, as the console's fw), kept going in and out of
    * doors as the game keeps its weather; undefined: the regions pick.
    */

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { frustumPlanes, invert, project, sphereVisible } from './frustum.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Vec3 } from './math.ts';
-import { fitCascades, orthographic, SHADOW_SPLITS } from './shadow-cascades.ts';
+import { fitCascades, orthographic, shadowAnchor, SHADOW_SPLITS } from './shadow-cascades.ts';
 
 const camera = (eye: Vec3, target: Vec3) =>
   multiply(perspectiveReversedZ(Math.PI / 3, 16 / 9, 4), lookAt(eye, target, [0, 0, 1]));
@@ -84,5 +84,32 @@ describe('orthographic', () => {
     const far = project(m, [-10, -5, -101]);
     expect(far[0]).toBeCloseTo(-1, 6);
     expect(far[2]).toBeCloseTo(1, 6);
+  });
+});
+
+describe('shadows as the sun moves', () => {
+  // In Whiterun, 23000 units from the world's origin.
+  const eye: Vec3 = [22249, -6781, -3147];
+  const inverse = invert(camera(eye, [22249, -5781, -3200]));
+  if (!inverse) throw new Error('singular');
+  const sun = (angle: number): Vec3 => [Math.cos(angle) * 0.73, 0.06, Math.sin(angle) * 0.68];
+  // One frame at TimeScale 20 and 60 frames a second: the sun turns 0.0014°.
+  const turn = (0.0014 * Math.PI) / 180;
+  /** How far (texels) a point near the camera moves in the first cascade's map in a frame. */
+  const slide = (anchor: Vec3 | undefined): number => {
+    const [a] = fitCascades(inverse, 4, sun(0.75), 2048, SHADOW_SPLITS, anchor);
+    const [b] = fitCascades(inverse, 4, sun(0.75 + turn), 2048, SHADOW_SPLITS, anchor);
+    if (!a || !b) throw new Error('no cascade');
+    const point: Vec3 = [eye[0], eye[1] + 300, eye[2] - 60];
+    const [ax, ay] = project(a.viewProj, point);
+    const [bx, by] = project(b.viewProj, point);
+    // Clip units to texels: the map is 2 units wide in clip space.
+    return (Math.hypot(bx - ax, by - ay) * 2048) / 2;
+  };
+
+  it('slide their texel grid over the scene by a fraction of a texel near the camera', () => {
+    expect(shadowAnchor(eye)).toEqual([20480, -8192, -4096]);
+    expect(slide(undefined)).toBeGreaterThan(0.5);
+    expect(slide(shadowAnchor(eye))).toBeLessThan(0.1);
   });
 });
