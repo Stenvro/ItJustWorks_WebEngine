@@ -400,6 +400,8 @@ export class GpuModel {
   /** Worn on a skeleton: the model's node tree and the node it hangs on (ModelData). */
   readonly nodes: readonly ModelNode[] | undefined;
   readonly attachTo: string | undefined;
+  /** Each named node's model-space matrix at rest, by lower-case name (ModelData.nodeWorlds). */
+  readonly nodeWorlds: ReadonlyMap<string, Mat4>;
   /** BSTreeNode: its trunk and branch bones (ModelData.treeBones). */
   readonly treeBones: ModelData['treeBones'];
   /** performance.now() when a scene last took or let go of it (eviction order). */
@@ -420,11 +422,13 @@ export class GpuModel {
     textures: { readonly cache: TextureCache; readonly paths: readonly string[] };
     leafAnimation: boolean;
     nodes?: readonly ModelNode[] | undefined;
+    nodeWorlds?: ReadonlyMap<string, Mat4> | undefined;
     attachTo?: string | undefined;
     treeBones?: ModelData['treeBones'];
   }) {
     this.leafAnimation = init.leafAnimation;
     this.nodes = init.nodes;
+    this.nodeWorlds = init.nodeWorlds ?? new Map();
     this.attachTo = init.attachTo;
     this.treeBones = init.treeBones;
     this.center = init.center;
@@ -1581,6 +1585,7 @@ export class SceneRenderer {
       textures: { cache: textures, paths: [...texturePaths] },
       leafAnimation: data.leafAnimation === true,
       nodes: data.nodes,
+      nodeWorlds: data.nodeWorlds,
       attachTo: data.attachTo,
       treeBones: data.treeBones,
     });

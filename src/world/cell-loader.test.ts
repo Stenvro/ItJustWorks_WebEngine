@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { transformPoint } from '../render/math.ts';
-import { referenceMatrix } from './cell-loader.ts';
+import { matrixPlacement, referenceMatrix } from './cell-loader.ts';
 import type { PlacedReference } from './cell-records.ts';
 
 const reference = (overrides: Partial<PlacedReference>): PlacedReference => ({
@@ -42,5 +42,26 @@ describe('referenceMatrix', () => {
     close(transformPoint(m, [0, 1, 0]), [1, 0, 0]);
     // +Z → (Z) → +Z → (X, clockwise about +X) → +Y
     close(transformPoint(m, [0, 0, 1]), [0, 1, 0]);
+  });
+});
+
+describe('matrixPlacement', () => {
+  it('gives back the position, rotation and scale referenceMatrix was made from', () => {
+    const angles: [number, number, number][] = [
+      [0, 0, 0],
+      [0.3, -0.7, 2.1],
+      [-1.2, 0.4, -2.9],
+      [0.05, 1.2, 0.5],
+    ];
+    for (const rotation of angles) {
+      const placement = matrixPlacement(
+        referenceMatrix({ position: [10, -20, 30], rotation, scale: 1.5 }),
+      );
+      expect(placement.position).toEqual([10, -20, 30]);
+      expect(placement.scale).toBeCloseTo(1.5, 5);
+      placement.rotation.forEach((angle, i) => {
+        expect(angle).toBeCloseTo(rotation[i] ?? 0, 5);
+      });
+    }
   });
 });

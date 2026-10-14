@@ -79,7 +79,7 @@ import {
   type AnimatedSkeleton,
 } from '../animation/animated-skeleton.ts';
 import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
-import { MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
+import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
 import { cellStatesElement } from './cell-states.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { TreeSway } from '../animation/tree-sway.ts';
@@ -406,6 +406,13 @@ export class WorldViewer {
     },
     activate: (reference) => {
       this.#defaultActivation(reference)?.activate();
+    },
+    nodeWorld: (reference, node) => {
+      for (const cell of this.#cells.values()) {
+        const placed = cell.placed.find((entry) => entry.object.reference === reference);
+        if (placed) return instanceNodeWorld(placed.instance, node);
+      }
+      return undefined;
     },
   };
 

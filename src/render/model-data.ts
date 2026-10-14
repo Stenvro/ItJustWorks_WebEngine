@@ -199,6 +199,11 @@ export interface ModelData {
    * (a graph that plays skeletal clips moves their nodes).
    */
   readonly nodes?: readonly ModelNode[];
+  /**
+   * Each named node's model-space matrix at rest, by lower-case name (scripts' MoveToNode and
+   * HasNode, a weapon rack's pivots).
+   */
+  readonly nodeWorlds?: ReadonlyMap<string, Mat4>;
   /** NiStringExtraData "Prn" on the root: the skeleton node it hangs on (shields: SHIELD). */
   readonly attachTo?: string;
   /** BSTreeNode: the nodes (ModelData.nodes) of its trunk and branch bones. */
@@ -484,6 +489,8 @@ export function buildModel(file: NifFile): ModelData {
   /** The node tree (for models worn on a skeleton) and the node being visited. */
   const nodes: ModelNode[] = [];
   const nodeOfBlock = new Map<Ref, number>();
+  /** Every named node's place in the model (lower-case name; the first of a name). */
+  const namedNodes = new Map<string, Mat4>();
   let currentNode = -1;
   /** The shape being visited, under its node. */
   let currentLocal: Mat4 = identity();
@@ -515,6 +522,8 @@ export function buildModel(file: NifFile): ModelData {
         currentNode = nodes.length;
         nodeOfBlock.set(ref, currentNode);
         nodes.push({ name: block.name, parent: parentNode, local });
+        const key = block.name.toLowerCase();
+        if (key !== '' && !namedNodes.has(key)) namedNodes.set(key, world);
         nodeNames.push(block.name);
         if (block.value !== undefined && block.name.startsWith('AddOnNode')) {
           addons.push({ index: block.value, world });
@@ -758,6 +767,7 @@ export function buildModel(file: NifFile): ModelData {
   return {
     parts,
     ...(skeletal && { nodes }),
+    nodeWorlds: namedNodes,
     ...(attachTo !== undefined && { attachTo }),
     center,
     radius,

@@ -35,13 +35,11 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   Settled, Dragonsreach's antlers fell 600 units off its walls, which they never do in the
   game; only 13 of 379 such statics carry "Don't Havok Settle". TODO(M13): inferred from the
   data.
-- **Weapon racks** hold their starting weapons keyframed (`src/world/weapon-racks.ts`): the
-  rack activator's WeaponRackActivateSCRIPT takes the reference it links to without a keyword,
-  checks it against its RackType (1, the script's initial value: anything but a shield; 2: a
-  shield; 3: neither a dagger, a shield nor a bow) and, if its trigger (linked by the
-  WRackTrigger keyword) is there, sets its motion type to keyframed and moves it to the
-  trigger's pivot node for its type. TODO(M8): the script itself runs, MoveToNode included;
-  until then the weapons are held where they were placed.
+- **Weapon racks** are the game's own WeaponRackActivateSCRIPT (docs/scripting.md): as its
+  cell attaches, the rack takes the reference it links to without a keyword, checks it against
+  its RackType (1: anything but a shield; 2: a shield; 3: neither a dagger, a shield nor a
+  bow), sets its motion type to keyframed (the body stops waiting for a touch) and moves it to
+  its trigger's pivot node for its type (MoveToNode: the node's place in the trigger's model).
 - **Settling without throwing:** what a placement overlaps (book corners in a shelf's back
   panel, a cover into the board under it) is pushed out by the solver; for the first half
   second after a body is set to settle its speed is taken away after every step, so the push

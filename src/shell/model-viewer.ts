@@ -80,7 +80,7 @@ import {
   type AnimatedSkeleton,
 } from '../animation/animated-skeleton.ts';
 import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
-import { MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
+import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
@@ -344,6 +344,7 @@ export class ModelViewer {
     activate: (reference) => {
       this.#defaultActivation(reference)?.activate();
     },
+    nodeWorld: (reference, node) => instanceNodeWorld(this.#instances.get(reference), node),
   };
 
   /** The references of the cell on screen whose 3D is loaded (the enabled ones drawn). */

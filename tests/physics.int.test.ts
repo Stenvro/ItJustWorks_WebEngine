@@ -297,17 +297,6 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
     physics.free();
   }, 60_000);
 
-  it("holds the weapons on Warmaiden's racks and plaques as their scripts do", async () => {
-    const cell = (await db.interiorCells()).find((c) => c.editorId === 'WhiterunWarmaidens');
-    if (!cell) throw new Error('no Warmaidens');
-    const data = await loadCellData(db, cell.formId);
-    const held = data.objects.filter((object) => object.keyframed === true);
-    // RackType 1 (its script's default) racks hold anything but a shield.
-    expect(held.map((object) => object.baseType)).toEqual(held.map(() => 'WEAP'));
-    expect(held.length).toBeGreaterThanOrEqual(5);
-    expect(held.map((object) => object.editorId)).toContain('IronWarhammer');
-  });
-
   it('lifts a grabbed bucket to the point held, and drops it when let go', async () => {
     const physics = new PhysicsWorld(matrix, GRAVITY);
     physics.addMesh(

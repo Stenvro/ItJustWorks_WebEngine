@@ -70,6 +70,44 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     expect(boss && [...boss.values()].length).toBeGreaterThan(0);
   });
 
+  it("lets the game's weapon racks hold their weapons (OnCellAttach, MoveToNode)", async () => {
+    // Jorrvaskr's racks (Breezehome's are part of furnishings not yet bought: disabled).
+    const JORRVASKR = 0x000165b5;
+    const moved = new Map<number, number>();
+    const world = runtime.world;
+    world.loaded = () => true;
+    world.triggerCount = () => 0;
+    world.nodePlacement = (_reference, node) =>
+      node.toLowerCase().endsWith('pivot01')
+        ? { position: [1, 2, 3], rotation: [0, 0, 0] }
+        : undefined;
+    world.motionTypeChanged = (reference, motion) => moved.set(reference, motion);
+    const references = db.cellReferences(JORRVASKR);
+    const racks: number[] = [];
+    for (const reference of references) {
+      const scripts = await runtime.attachedScripts(runtime.referenceHandle(reference));
+      if (scripts.some((script) => script.name.toLowerCase() === 'weaponrackactivatescript')) {
+        racks.push(reference);
+      }
+    }
+    expect(racks.length).toBeGreaterThan(0);
+    await runtime.cellAttached(references, () => true);
+    for (let t = 0; t < 2; t += 0.1) {
+      runtime.update(0.1, 0);
+      await runtime.vm.idle();
+    }
+    const held: number[] = [];
+    for (const rack of racks) {
+      const weapon = await runtime.linkedReference(rack, 0);
+      if (weapon !== undefined && moved.get(weapon) === 4) held.push(weapon);
+    }
+    // At least one starting weapon is keyframed and sits on its rack's pivot.
+    expect(held.length).toBeGreaterThan(0);
+    for (const weapon of held) {
+      expect(runtime.state.references.get(weapon)?.position).toEqual([1, 2, 3]);
+    }
+  });
+
   it("gives the player the race's starting attributes", async () => {
     const health = await runtime.actors.value(PLAYER, ActorValue.health);
     expect(health.max).toBeGreaterThan(0);
