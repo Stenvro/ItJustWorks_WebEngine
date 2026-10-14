@@ -18,6 +18,7 @@ import {
 import { InterfaceFiles } from '../ui/interface-files.ts';
 import { MistMenu } from './mist-menu.ts';
 import { HudController } from './hud-controller.ts';
+import { MessageBoxes } from './message-boxes.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -68,6 +69,8 @@ export interface PlayWorld {
   follow(on: boolean): void;
   /** The player's heading: radians, 0 north (+Y), π/2 east (+X); undefined out of the world. */
   heading(): number | undefined;
+  /** The mouse looks around (the game) or moves a cursor (a menu). */
+  capturePointer(on: boolean): void;
 }
 
 const wait = (ms: number): Promise<void> =>
@@ -86,6 +89,9 @@ export class PlayMode {
   #mist: MistMenu | undefined;
   #loadingScreens: Promise<LoadingScreen[]> | undefined;
   #hud: HudController | undefined;
+  #messageBoxes: MessageBoxes | undefined;
+  /** The menus open that pause the game (menu mode while there is one). */
+  #pausing = 0;
   #starting = false;
   /** The loading menu's text (the loading screen's, once chosen). */
   #loadingText = '';
@@ -224,6 +230,31 @@ export class PlayMode {
     });
     this.#hud = hud;
     await hud.open();
+    const boxes = new MessageBoxes(this.#host, session.settings(), () => this.#enterMenuMode());
+    this.#messageBoxes = boxes;
+    session.hud.menus = { messageBox: (text, buttons) => boxes.show(text, buttons) };
+  }
+
+  /**
+   * A menu that pauses the game opens: the game is in menu mode (the world and its clocks stand
+   * still, the sounds paused in menus go quiet, the mouse moves a cursor) until every such
+   * menu has closed. Returns what ends this one's part.
+   */
+  #enterMenuMode(): () => void {
+    if (this.#pausing++ === 0) this.#setMenuMode(true);
+    let left = false;
+    return () => {
+      if (left) return;
+      left = true;
+      if (--this.#pausing === 0) this.#setMenuMode(false);
+    };
+  }
+
+  #setMenuMode(on: boolean, pointer = true): void {
+    const session = this.#session;
+    session.menuMode = on;
+    session.soundSystem?.engine.setInMenu(on);
+    if (pointer) this.#world.capturePointer(!on);
   }
 
   /** The runtime the session's new game runs in, as soon as it exists. */
@@ -297,6 +328,11 @@ export class PlayMode {
 
   stop(): void {
     this.#world.follow(false);
+    this.#messageBoxes?.close();
+    this.#messageBoxes = undefined;
+    if (this.#session.hud.menus) this.#session.hud.menus = undefined;
+    if (this.#pausing > 0) this.#setMenuMode(false, false);
+    this.#pausing = 0;
     this.#hud?.close();
     this.#hud = undefined;
     this.#mist?.hide();

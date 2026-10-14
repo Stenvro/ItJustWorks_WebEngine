@@ -16,9 +16,9 @@ export function registerCore(n: Register, runtime: ScriptRuntime): void {
   n('utility.wait', ({ args, latent, vm }) =>
     latent(vm.scheduler.waitReal(num(args[0]))).then(() => null),
   );
-  // In menus game time stands still; Wait in menus waits for real time all the same.
+  // In menus the game's clocks stand still (Wait waits on); WaitMenuMode counts menus too.
   n('utility.waitmenumode', ({ args, latent, vm }) =>
-    latent(vm.scheduler.waitReal(num(args[0]))).then(() => null),
+    latent(vm.scheduler.waitWall(num(args[0]))).then(() => null),
   );
   n('utility.waitgametime', ({ args, latent, vm }) =>
     latent(vm.scheduler.waitGame(num(args[0]))).then(() => null),

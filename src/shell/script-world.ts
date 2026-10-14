@@ -165,7 +165,9 @@ export class ScriptWorld implements WorldBridge {
     else this.#terminal.log('papyrus', text);
   }
 
+  /** Debug.MessageBox, Message.Show: the game's message box (Play), the terminal otherwise. */
   messageBox(text: string, buttons?: readonly string[]): Promise<number> {
+    if (this.hud.menus) return this.hud.menus.messageBox(text, buttons ?? []);
     const choices = buttons && buttons.length > 0 ? ` [${buttons.join(' | ')}]` : '';
     this.#terminal.log('papyrus', `${text}${choices}`);
     return Promise.resolve(0);

@@ -1,7 +1,8 @@
 // What the game tells its HUD as it plays: the activation target under the crosshair, the
 // notifications scripts post (Debug.Notification), quest updates, help messages, and the user
-// events the player presses (a help message waits for one). The play session and the scripts'
-// world send here; in Play the HUD (the game's hudmenu.swf, hud-controller.ts) listens, and the
+// events the player presses (a help message waits for one); and the message boxes scripts
+// show. The play session and the scripts' world send here; in Play the HUD (the game's
+// hudmenu.swf, hud-controller.ts) and the message boxes (message-boxes.ts) listen, and the
 // sandbox shows them its own way (the prompt, the terminal).
 
 import type { QuestUpdate } from '../scripting/runtime/runtime.ts';
@@ -32,9 +33,17 @@ export interface HudSink {
   userEvent(name: string): void;
 }
 
+/** What shows the game's menus that scripts open (Play). */
+export interface MenuSink {
+  /** A message box; resolves to the button pressed. */
+  messageBox(text: string, buttons: readonly string[]): Promise<number>;
+}
+
 export class HudSignals {
   /** The HUD listening (Play), if any. */
   sink: HudSink | undefined;
+  /** The menus (Play), if any. */
+  menus: MenuSink | undefined;
 
   /** Whether a HUD shows these (the sandbox's own prompt and notices then stay quiet). */
   get listening(): boolean {

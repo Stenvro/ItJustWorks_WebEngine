@@ -8,6 +8,9 @@ import type { Vec3 } from '../render/math.ts';
 import type { Reverb, SoundCategory } from '../world/sound-records.ts';
 import { reverbImpulse } from './reverb.ts';
 
+/** The categories paused during menus (their editor ids begin so). */
+const PAUSED_IN_MENUS = 'audiocategorypausedduringmenu';
+
 export class AudioEngine {
   readonly context: AudioContext;
   /** Where sounds without a category play (the master category's node once known). */
@@ -23,6 +26,8 @@ export class AudioEngine {
   #reverb: Reverb | undefined;
   /** The listener is under water: categories flagged so (SNCT FNAM 0x1) are muted. */
   #submerged = false;
+  /** The game is in a menu: the categories paused during menus are silent. */
+  #inMenu = false;
 
   constructor() {
     this.context = new AudioContext({ latencyHint: 'interactive' });
@@ -90,10 +95,32 @@ export class AudioEngine {
     }
   }
 
+  /**
+   * The game goes into a menu or comes out: the categories the data pauses during menus
+   * (AudioCategoryPausedDuringMenu, ...Fade fading, ...Load) go silent, the others (music,
+   * the interface) play on. TODO(M13): their sounds hold their place instead of playing on
+   * silenced.
+   */
+  setInMenu(inMenu: boolean): void {
+    if (inMenu === this.#inMenu) return;
+    this.#inMenu = inMenu;
+    for (const [formId, node] of this.#categories) {
+      const name = this.#categoryData.get(formId)?.editorId.toLowerCase() ?? '';
+      if (!name.startsWith(PAUSED_IN_MENUS)) continue;
+      const fades = name === `${PAUSED_IN_MENUS}fade`;
+      node.gain.setTargetAtTime(
+        this.#gainOf(formId),
+        this.context.currentTime,
+        fades ? 0.15 : 0.01,
+      );
+    }
+  }
+
   /** A category's own gain: its volume × the user's, muted under water if it mutes. */
   #gainOf(formId: number): number {
     const data = this.#categoryData.get(formId);
     if (data?.muteWhenSubmerged && this.#submerged) return 0;
+    if (this.#inMenu && data?.editorId.toLowerCase().startsWith(PAUSED_IN_MENUS)) return 0;
     const user = this.#userVolumes.get(formId) ?? (data?.onMenu ? data.menuVolume : 1);
     return (data?.volume ?? 1) * user;
   }

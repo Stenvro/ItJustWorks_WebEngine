@@ -716,12 +716,24 @@ export class GameSession {
   }
 
   /**
+   * The game is in a menu that pauses it (a message box, the journal, the inventory, ...): the
+   * world stands still (main.ts holds the frames' game clock) and so do the scripts' clocks,
+   * but for WaitMenuMode's.
+   */
+  menuMode = false;
+
+  /**
    * Every frame: the scripts' clocks move with the game's (real seconds, and game days as the
    * sky moves the hour); a script that set the clock (GameHour) sets the game's.
    */
   tickScripts(realSeconds: number): void {
     const runtime = this.scriptsReady;
     if (!runtime) return;
+    runtime.inMenuMode = this.menuMode;
+    if (this.menuMode) {
+      runtime.updateInMenu(realSeconds);
+      return;
+    }
     this.timeScale = runtime.timeScale;
     const days = this.gameDaysPassed + this.gameHour / 24;
     if (runtime.clockChanged) {

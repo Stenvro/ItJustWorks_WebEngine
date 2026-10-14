@@ -16,10 +16,13 @@ export class PapyrusScheduler {
   realTime = 0;
   /** Game days passed (as the GameDaysPassed global): Utility.GetCurrentGameTime. */
   gameTime = 0;
+  /** Real seconds in and out of menus (Utility.WaitMenuMode waits on these). */
+  wallTime = 0;
   /** Milliseconds of each frame threads may run in ([Papyrus] fUpdateBudgetMS). */
   budgetMs: number;
   #realWaiters: Waiter[] = [];
   #gameWaiters: Waiter[] = [];
+  #wallWaiters: Waiter[] = [];
   #frameWaiters: (() => void)[] = [];
   #frameStart = 0;
   /** Whether frames come (the game runs); Node tools run threads straight through. */
@@ -32,13 +35,18 @@ export class PapyrusScheduler {
     this.#now = now;
   }
 
-  /** Every frame: moves the clocks on and resumes what waited for them or for the frame. */
-  advance(realSeconds: number, gameDays: number): void {
+  /**
+   * Every frame: moves the clocks on and resumes what waited for them or for the frame. In a
+   * menu only `menuSeconds` pass (the wall clock's), the game's clocks stand still.
+   */
+  advance(realSeconds: number, gameDays: number, menuSeconds = 0): void {
     this.realTime += Math.max(0, realSeconds);
     this.gameTime += Math.max(0, gameDays);
+    this.wallTime += Math.max(0, realSeconds) + Math.max(0, menuSeconds);
     this.#frameStart = this.#now();
     this.#realWaiters = this.#release(this.#realWaiters, this.realTime);
     this.#gameWaiters = this.#release(this.#gameWaiters, this.gameTime);
+    this.#wallWaiters = this.#release(this.#wallWaiters, this.wallTime);
     const frame = this.#frameWaiters;
     this.#frameWaiters = [];
     for (const resume of frame) resume();
@@ -49,6 +57,14 @@ export class PapyrusScheduler {
     if (!(seconds > 0)) return Promise.resolve();
     return new Promise((resume) => {
       this.#realWaiters.push({ at: this.realTime + seconds, resume });
+    });
+  }
+
+  /** Resolves after `seconds` of real time, menus included (Utility.WaitMenuMode). */
+  waitWall(seconds: number): Promise<void> {
+    if (!(seconds > 0)) return Promise.resolve();
+    return new Promise((resume) => {
+      this.#wallWaiters.push({ at: this.wallTime + seconds, resume });
     });
   }
 
