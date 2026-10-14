@@ -81,8 +81,12 @@ export interface PackageWorld {
   stageDone(quest: number, stage: number): boolean | undefined;
   questRunning(quest: number): boolean | undefined;
   questCompleted(quest: number): boolean | undefined;
-  /** The quests whose alias packages the actor takes before its own (their aliases hold it). */
-  aliasPackages(actor: PackageActor): Promise<readonly number[]>;
+  /**
+   * The packages of the quest aliases that hold the actor (ALPC), taken before its own (the
+   * Creation Kit: an alias's packages sit on top of the actor's, by quest priority); undefined
+   * if an alias may hold it but which packages it gives is not known (no scripts running).
+   */
+  aliasPackages(actor: PackageActor): Promise<readonly number[] | undefined>;
 }
 
 export type PackageStart =
@@ -293,11 +297,8 @@ export async function packageStart(
         (formId) => world.global(formId),
       );
   const aliases = await world.aliasPackages(actor);
-  if (aliases.length > 0) {
-    // TODO(M8): which quests run and whom their aliases hold.
-    return { kind: 'undecided', reason: 'a quest alias holds it' };
-  }
-  for (const id of actor.packages) {
+  if (aliases === undefined) return { kind: 'undecided', reason: 'a quest alias holds it' };
+  for (const id of [...aliases, ...actor.packages]) {
     const pack = await world.package(id);
     if (!pack || !scheduleFits(pack.schedule, time)) continue;
     const template = pack.template === undefined ? pack : await world.package(pack.template);
