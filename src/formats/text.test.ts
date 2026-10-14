@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { asciiLowerCase, decodeWindows1252, encodeWindows1252 } from './text.ts';
+import { asciiLowerCase, decodeWindows1252, encodeUtf8, encodeWindows1252 } from './text.ts';
 
 const allBytes = Uint8Array.from({ length: 256 }, (_, i) => i);
 
@@ -24,5 +24,13 @@ describe('Windows-1252', () => {
 describe('asciiLowerCase', () => {
   it('changes only A-Z', () => {
     expect(asciiLowerCase('Meshes\\ÄBC.NIF')).toBe('meshes\\Äbc.nif');
+  });
+});
+
+describe('encodeUtf8', () => {
+  it('encodes as TextEncoder does', () => {
+    for (const text of ['$EverywhereFont', 'Ærø ñ', '日本語', 'a\u{1F600}b', '\uD800x']) {
+      expect(encodeUtf8(text)).toEqual(new TextEncoder().encode(text));
+    }
   });
 });

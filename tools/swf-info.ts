@@ -4,6 +4,7 @@
 //   node tools/swf-info.ts                    every movie, one line each
 //   node tools/swf-info.ts hudmenu.swf        details of one movie
 //   node tools/swf-info.ts --all              details of every movie
+//   node tools/swf-info.ts --fontlib          the menus' font library built from fontconfig.txt
 
 import {
   readSwf,
@@ -13,6 +14,9 @@ import {
   swfTagCounts,
   type SwfMovie,
 } from '../src/formats/swf/swf.ts';
+import { parseFontConfig } from '../src/formats/swf/fontconfig.ts';
+import { decodeWindows1252 } from '../src/formats/text.ts';
+import { buildFontLibrary } from '../src/ui/font-library.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { openGameFolder } from './gamedata-path.ts';
 
@@ -21,6 +25,36 @@ const movies = vfs
   .list('interface')
   .filter((path) => /\.(swf|gfx)$/i.test(path))
   .sort();
+if (process.argv.includes('--fontlib')) {
+  const config = parseFontConfig(decodeWindows1252(await vfs.read('interface\\fontconfig.txt')));
+  const libraries = await Promise.all(
+    config.libraries.map(async (path) => readSwf(await vfs.read(path))),
+  );
+  const shipped = readSwf(await vfs.read('interface\\gfxfontlib.swf'));
+  const library = buildFontLibrary(config, libraries, shipped);
+  console.log(
+    `font library: ${String(library.movie.length)} bytes, ${String(library.fonts.size)} fonts`,
+  );
+  for (const [name, font] of library.fonts) console.log(`  ${name.padEnd(30)} ${font}`);
+  if (library.missing.length > 0) console.log(`  missing: ${library.missing.join(', ')}`);
+  // Every name a menu imports from gfxfontlib.swf, and whether the library has it.
+  const asked = new Set<string>();
+  for (const path of movies) {
+    try {
+      for (const entry of swfImports(readSwf(await vfs.read(path)))) {
+        if (/gfxfontlib\.swf$/i.test(entry.url)) for (const s of entry.symbols) asked.add(s.name);
+      }
+    } catch {
+      // A movie that does not read is reported by the listing.
+    }
+  }
+  const lacking = [...asked].filter((name) => !library.fonts.has(name));
+  console.log(
+    `menus import ${String(asked.size)} names; not in the library: ${lacking.join(', ') || 'none'}`,
+  );
+  await vfs.close();
+  process.exit(0);
+}
 const wanted = process.argv.slice(2).filter((arg) => !arg.startsWith('--'));
 const all = process.argv.includes('--all');
 

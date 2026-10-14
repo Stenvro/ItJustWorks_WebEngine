@@ -152,11 +152,12 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 Installed from npm, not part of this repository; a built copy of the engine includes them.
 
-| Package                                                                                                                              | Licence                   | Use                 |
-| ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- | ------------------- |
-| [@ffmpeg/core](https://github.com/ffmpegwasm/ffmpeg.wasm) 0.12 (FFmpeg compiled to WebAssembly)                                      | GPL-2.0-or-later          | decoding xWMA audio |
-| [@dimforge/rapier3d-compat](https://rapier.rs)                                                                                       | Apache-2.0                | physics             |
-| [@fontsource/cinzel](https://fontsource.org/fonts/cinzel), [@fontsource/jetbrains-mono](https://fontsource.org/fonts/jetbrains-mono) | SIL Open Font License 1.1 | the shell's fonts   |
+| Package                                                                                                                              | Licence                   | Use                        |
+| ------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- | -------------------------- |
+| [@ffmpeg/core](https://github.com/ffmpegwasm/ffmpeg.wasm) 0.12 (FFmpeg compiled to WebAssembly)                                      | GPL-2.0-or-later          | decoding xWMA audio        |
+| [@dimforge/rapier3d-compat](https://rapier.rs)                                                                                       | Apache-2.0                | physics                    |
+| [@ruffle-rs/ruffle](https://ruffle.rs) 0.7 (a Flash player in WebAssembly)                                                           | MIT OR Apache-2.0         | the game's Scaleform menus |
+| [@fontsource/cinzel](https://fontsource.org/fonts/cinzel), [@fontsource/jetbrains-mono](https://fontsource.org/fonts/jetbrains-mono) | SIL Open Font License 1.1 | the shell's fonts          |
 
 The fonts: Cinzel, Copyright 2020 The Cinzel Project Authors
 (<https://github.com/NDISCOVER/Cinzel>); JetBrains Mono, Copyright 2020 The JetBrains Mono
