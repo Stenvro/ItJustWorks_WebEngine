@@ -28,6 +28,7 @@ import { Vfs } from './vfs/vfs.ts';
 import type { Placement } from './scripting/runtime/runtime.ts';
 import { PLAYER_REF } from './scripting/runtime/forms.ts';
 import { QuestPanel } from './shell/quest-panel.ts';
+import { PlayMode } from './shell/play-mode.ts';
 
 function byId<T extends HTMLElement>(id: string, type: new () => T): T {
   const element = document.getElementById(id);
@@ -56,6 +57,8 @@ const ui = {
   shell: byId('shell', HTMLElement),
   menu: byId('main-menu', HTMLElement),
   menuSandbox: byId('menu-sandbox', HTMLButtonElement),
+  menuPlay: byId('menu-play', HTMLButtonElement),
+  uiLayer: byId('ui-layer', HTMLDivElement),
   sandbox: byId('sandbox', HTMLElement),
   brand: byId('brand', HTMLButtonElement),
   finders: [
@@ -196,13 +199,14 @@ function describeGpu(gpu: GpuContext): string {
  * The sandbox has the running game's quests one at a time (src/shell/quest-panel.ts).
  * TODO(M9): playing the game from its own main menu.
  */
-type Screen = 'start' | 'menu' | 'sandbox';
+type Screen = 'start' | 'menu' | 'sandbox' | 'play';
 
 function showScreen(screen: Screen): void {
   document.body.dataset.screen = screen;
   ui.menu.hidden = screen !== 'menu';
   ui.summary.hidden = screen !== 'menu' || currentVfs === undefined;
   ui.sandbox.hidden = screen !== 'sandbox';
+  ui.uiLayer.hidden = screen !== 'play';
   // The main menu shows what was loaded (log, load order, archives); the sandbox keeps the
   // log folded away above its finders.
   if (screen === 'menu') {
@@ -559,6 +563,23 @@ async function main(): Promise<void> {
   ui.menuSandbox.addEventListener('click', () => {
     showScreen('sandbox');
   });
+  // Play: the game from its own main menu.
+  let play: PlayMode | undefined;
+  const leavePlay = (): void => {
+    play?.stop();
+    play = undefined;
+    showScreen('menu');
+  };
+  ui.menuPlay.addEventListener('click', () => {
+    if (!session || play) return;
+    showScreen('play');
+    play = new PlayMode(session, ui.uiLayer, terminal);
+    play.onQuit = leavePlay;
+    play.start().catch((error: unknown) => {
+      terminal.log('ui', `the main menu does not open: ${describeError(error)}`, 'error');
+      leavePlay();
+    });
+  });
   // The brand in the corner leads back to the main menu (from the sandbox).
   ui.brand.addEventListener('click', () => {
     if (document.body.dataset.screen !== 'sandbox') return;
@@ -575,6 +596,7 @@ async function main(): Promise<void> {
       renderer,
       device: gpu.device,
       session: () => session,
+      play: () => play,
     };
   }
   let lastScriptTick = performance.now() / 1000;
