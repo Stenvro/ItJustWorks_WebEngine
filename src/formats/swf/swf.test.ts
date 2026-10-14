@@ -17,18 +17,24 @@ function tag(code: number, body: number[], long = false): number[] {
   return [...u16((code << 6) | 0x3f), ...u32(body.length), ...body];
 }
 
+/** `count` bits of a value, the highest first. */
+const bitsOf = (value: number, count: number): number[] =>
+  Array.from({ length: count }, (_, i) => Math.floor(value / 2 ** (count - 1 - i)) % 2);
+
 /** A RECT of 0..1280 × 0..720 pixels in twips: 16-bit signed fields. */
 function rect(): number[] {
   const bits = [
-    ...(16).toString(2).padStart(5, '0'),
-    ...(0).toString(2).padStart(16, '0'),
-    ...(25600).toString(2).padStart(16, '0'),
-    ...(0).toString(2).padStart(16, '0'),
-    ...(14400).toString(2).padStart(16, '0'),
+    ...bitsOf(16, 5),
+    ...bitsOf(0, 16),
+    ...bitsOf(25600, 16),
+    ...bitsOf(0, 16),
+    ...bitsOf(14400, 16),
   ];
-  while (bits.length % 8 !== 0) bits.push('0');
+  while (bits.length % 8 !== 0) bits.push(0);
   const bytes: number[] = [];
-  for (let i = 0; i < bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8).join(''), 2));
+  for (let i = 0; i < bits.length; i += 8) {
+    bytes.push(bits.slice(i, i + 8).reduce((byte, bit) => byte * 2 + bit, 0));
+  }
   return bytes;
 }
 
@@ -73,7 +79,11 @@ function movie(signature: 'FWS' | 'CWS' | 'CFX'): Uint8Array {
     ...tag(SwfTagCode.end, []),
   ];
   const length = 8 + body.length;
-  const head = [...[...signature].map((c) => c.charCodeAt(0)), 15, ...u32(length)];
+  const head = [
+    ...Array.from({ length: 3 }, (_, i) => signature.charCodeAt(i)),
+    15,
+    ...u32(length),
+  ];
   if (signature === 'FWS') return Uint8Array.from([...head, ...body]);
   return Uint8Array.from([...head, ...deflateSync(Uint8Array.from(body))]);
 }
