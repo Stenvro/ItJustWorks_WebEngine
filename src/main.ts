@@ -524,6 +524,10 @@ async function main(): Promise<void> {
       }
     },
     heading: () => (worldViewer.player ?? modelViewer.player)?.yaw,
+    leave: () => {
+      modelViewer.deactivate();
+      worldViewer.deactivate();
+    },
     capturePointer: (on) => {
       if (!on) {
         if (document.pointerLockElement) document.exitPointerLock();

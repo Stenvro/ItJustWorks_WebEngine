@@ -23,7 +23,10 @@ export const Function2Flag = {
 export const Op = {
   end: 0x00,
   subtract: 0x0b,
+  multiply: 0x0c,
   divide: 0x0d,
+  and: 0x10,
+  or: 0x11,
   pop: 0x17,
   getVariable: 0x1c,
   setVariable: 0x1d,
@@ -34,6 +37,15 @@ export const Op = {
   initObject: 0x43,
   typeOf: 0x44,
   add2: 0x47,
+  less2: 0x48,
+  toNumber: 0x4a,
+  toString: 0x4b,
+  pushDuplicate: 0x4c,
+  increment: 0x50,
+  decrement: 0x51,
+  newMethod: 0x53,
+  strictEquals: 0x66,
+  greater: 0x67,
   getMember: 0x4e,
   setMember: 0x4f,
   callMethod: 0x52,
@@ -43,6 +55,33 @@ export const Op = {
 
 export class Avm1Writer {
   readonly #bytes: number[] = [];
+  /** Labels by name: their offsets. */
+  readonly #labels = new Map<string, number>();
+  /** Jumps to labels: where their offset goes, and where it counts from (the action's end). */
+  readonly #fixups: { label: string; at: number; from: number }[] = [];
+
+  /** Names this point of the code, for jumpTo and ifTo (within this writer). */
+  label(name: string): this {
+    if (this.#labels.has(name)) throw new Error(`label ${name} placed twice`);
+    this.#labels.set(name, this.#bytes.length);
+    return this;
+  }
+
+  /** Jump to a label (before or after this). */
+  jumpTo(name: string): this {
+    return this.#jumpAction(0x99, name);
+  }
+
+  /** If: to a label when the popped value is true. */
+  ifTo(name: string): this {
+    return this.#jumpAction(0x9d, name);
+  }
+
+  #jumpAction(code: number, label: string): this {
+    this.#bytes.push(code, 2, 0, 0, 0);
+    this.#fixups.push({ label, at: this.#bytes.length - 2, from: this.#bytes.length });
+    return this;
+  }
 
   /** An action without payload. */
   op(code: number): this {
@@ -95,7 +134,8 @@ export class Avm1Writer {
 
   /**
    * DefineFunction2: an anonymous function (pushed) unless named; `params` are put in
-   * registers 1.. in order, `registers` is how many it uses in all; `body` assembles it.
+   * registers `firstParam`.. in order (after the preloaded ones: `this`, `arguments`, ... take
+   * registers from 1 on), `registers` is how many it uses in all; `body` assembles it.
    */
   function2(
     name: string,
@@ -103,6 +143,7 @@ export class Avm1Writer {
     registers: number,
     flags: number,
     body: (writer: Avm1Writer) => void,
+    firstParam = 1,
   ): this {
     const inner = new Avm1Writer();
     body(inner);
@@ -113,7 +154,7 @@ export class Avm1Writer {
       ...u16(params.length),
       registers,
       ...u16(flags),
-      ...params.flatMap((param, i) => [i + 1, ...encodeUtf8(param), 0]),
+      ...params.flatMap((param, i) => [i + firstParam, ...encodeUtf8(param), 0]),
       ...u16(code.length),
     ];
     this.#action(0x8e, payload);
@@ -130,7 +171,15 @@ export class Avm1Writer {
   }
 
   bytes(): Uint8Array {
-    return Uint8Array.from(this.#bytes);
+    const bytes = Uint8Array.from(this.#bytes);
+    for (const { label, at, from } of this.#fixups) {
+      const to = this.#labels.get(label);
+      if (to === undefined) throw new Error(`label ${label} is not placed`);
+      const distance = to - from;
+      bytes[at] = distance & 0xff;
+      bytes[at + 1] = (distance >> 8) & 0xff;
+    }
+    return bytes;
   }
 
   #action(code: number, payload: readonly number[]): this {

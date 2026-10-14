@@ -37,6 +37,13 @@ menu, `node tools/swf-actions.ts hudmenu.swf GameDelegate`):
 - `GameDelegate.call(name, params, scope, callback)`: a request id is kept with the callback,
   then `ExternalInterface.call(name, id, ...params)`. The engine answers through the callback
   `respond` (`receiveResponse(id, ...values)`).
+- A request is answered during the call: `GameDelegate.call` keeps the callback only until
+  `ExternalInterface.call` returns (it deletes it from its `responseHash` right after), so the
+  engine reads what a menu will ask for before it opens and answers at once.
+- A clip passed in a call (the journal passes the quest list it wants filled) reaches the engine
+  as a reference: GFx hands the engine the object; a Flash player's ExternalInterface only copies.
+  The bridge passes a clip as `__itjwRef:<n>` and keeps it as `_global.__itjwRefs[n]`
+  (`Menu.reference()` gives that path), so the engine fills it through the paths below.
 - `GameDelegate.addCallBack(name, scope, method)`: the engine calls it through the callback
   `call` (`receiveCall(name, ...args)`), e.g. the HUD's `SetCompassAngle`, `SetLocationName`,
   `ShowNotification`, registered in `HUDMovieBaseInstance.InitExtensions()`.
@@ -138,6 +145,16 @@ menu, the tutorial). The bridge adds them to `TextField.prototype`:
   the widest line's width, exact for the single-line fields that ask (the HUD's letters measure
   each letter this way); the menus read `width`, and books `leading`.
 - `appendText`, `appendHtml`: add to `text` / `htmlText`.
+- `getLineOffset`, `getCharBoundaries`, `getLineIndexAtPoint`: from a hidden measuring field on
+  `_root` set up like the field (width, wrapping, fonts, first format): a line's first character
+  is where a prefix of the text first takes that many lines; a character's box spans the width
+  of its line's text before it, at its line's top (the journal places its objectives under the
+  description's last line this way).
+- Texts set at run time that are keys: GFx translates a text beginning with "$" as it is set
+  (the journal's stats are `"$" + name`). The menus set their texts through
+  `Shared.GlobalFunc`'s `SetText`; the bridge wraps it as the movie defines it (`Object.watch`
+  on `TextField.prototype`), and a key goes to the engine (`__itjwTranslate`, answered from the
+  translations at once) before the text is set.
 - `new TextField()`: under GFx a text object off the stage whose `text` keeps what is set (the
   HUD writes a quest's status before its name through one, "Quest completed: "). The bridge's
   `TextField` makes one, and leaves the fields the player places to the original class (Ruffle
@@ -146,8 +163,7 @@ menu, the tutorial). The bridge adds them to `TextField.prototype`:
 
 Still missing in Ruffle (0.7.1), and so in the menus: `<img>` in a text field's HTML (the HUD's
 help messages show their keys' art as `<img src='E.png'>`: the text shows, the key does not),
-`textAutoSize` and `verticalAlign`, `getCharBoundaries`, `getLineOffset`,
-`getLineIndexAtPoint` (books and the journal). TODO(M9).
+`textAutoSize` and `verticalAlign`. TODO(M9).
 
 ## The main menu's background: the mist menu
 
@@ -300,3 +316,32 @@ and `OpenHighlightedMenu(i)` (1 Skills, up; 2 Magic, left; 3 Inventory, right; 4
 menu chosen takes the tween's place at once.
 TODO(M9): the tween camera (the view of the player in third person behind the menu) and the
 sounds of highlighting and choosing.
+
+## The journal
+
+`quest_journal.swf` (`src/shell/journal-menu.ts`): J opens it on the page it was left on, Pause
+(Esc) on the system page: `_root.InitExtensions()`, `_root.SetPlatform(0, false)`, then
+`RestoreSavedSettings(page, tabsDisabled)`. It asks `ShouldShowMod` (no: the installed content
+page is an online store), `RememberCurrentTabIndex(page)` and, as it closes,
+`CloseMenu(page, quest, instance)` (both remembered for the next time); its bottom bar asks
+`RequestPlayerInfo` (the date, the level and the progress, as the tween menu's bar).
+
+Quests (`journalQuests`, `src/scripting/runtime/journal.ts`): the quests given to the player (an
+objective shown, or a journal text from a stage), newest update first. `RequestQuestsData(list)`
+fills the list's `entryList` with `{text, formID, instance, active, completed, type}` (type picks
+the title's end pieces: the quest's type) and answers `(questToSelect, instance, hasMisc,
+miscActive, allowShowOnMap)`; the menu adds the MISCELLANEOUS entry itself and sorts (done
+quests last). `RequestObjectivesData` (no answer: the menu reads the entry right after) sets
+the selected entry's `description` (the latest journal text the quest's stages chose: their log
+entries' CNAM) and `objectives` (`{text, active, completed, failed}`, newer first; for
+MISCELLANEOUS every miscellaneous objective not done, with its quest's `formID`).
+`ToggleQuestActiveStatus(formID, instance)` turns a quest active or not (several may be) and
+answers its new state; `ToggleShowMiscObjectives(active)` does it for the miscellaneous ones.
+
+Stats: `updateStats` is answered with every statistic as name, value, category and an unused
+field (`src/gameplay/misc-stats.ts`: the game's stats in the journal's order and categories,
+after UESP); the menu shows `"$" + name`, translated as it is set.
+
+System: the menu lists Quicksave, Save, Load, Installed Content, Settings, Controls, Help and
+Quit. Quit to the main menu ends the game and opens its main menu; quit to the desktop leaves
+Play. TODO(M12): saving and loading. TODO(M9): the settings, the controls, help, Show on Map.

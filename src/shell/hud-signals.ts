@@ -36,6 +36,8 @@ export interface HudSink {
    * "InventoryMode", "DialogueMode", "BookMode", "BarterMode", "WorldMapMode", ...).
    */
   mode(name: string, on: boolean): void;
+  /** The HUD shows or steps aside (behind a menu that covers the game: the journal, ...). */
+  shown(on: boolean): void;
 }
 
 /** What shows the game's menus that scripts open (Play). */
@@ -79,6 +81,10 @@ export class HudSignals {
 
   mode(name: string, on: boolean): void {
     this.sink?.mode(name, on);
+  }
+
+  shown(on: boolean): void {
+    this.sink?.shown(on);
   }
 
   userEvent(name: string): void {

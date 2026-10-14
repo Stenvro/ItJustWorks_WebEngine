@@ -140,6 +140,11 @@ export class QuestEngine {
         continue;
       }
       chosen = index;
+      // Its journal text, if it has one, is the quest's latest for the player.
+      if (entry.text) {
+        state.log.push({ stage, entry: index });
+        state.updated = ++runtime.state.questClock;
+      }
       if ((entry.flags & LogEntryFlag.completeQuest) !== 0) this.complete(record.formId);
       if ((entry.flags & LogEntryFlag.failQuest) !== 0) this.fail(record.formId);
       if (entry.nextQuest !== undefined && entry.nextQuest !== 0) {
@@ -185,6 +190,7 @@ export class QuestEngine {
     state.stagesDone.clear();
     state.stage = 0;
     state.objectives.clear();
+    state.log.length = 0;
     state.completed = false;
     state.failed = false;
     this.#resetScripts(record);

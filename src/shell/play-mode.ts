@@ -72,6 +72,8 @@ export interface PlayWorld {
   heading(): number | undefined;
   /** The mouse looks around (the game) or moves a cursor (a menu). */
   capturePointer(on: boolean): void;
+  /** The game ends (back to the main menu): the world on screen goes. */
+  leave(): void;
 }
 
 const wait = (ms: number): Promise<void> =>
@@ -236,6 +238,19 @@ export class PlayMode {
     this.#messageBoxes = boxes;
     const menus = new GameMenus(this.#host, session, this.#terminal, () => this.#enterMenuMode());
     this.#menus = menus;
+    menus.onQuit = (toDesktop) => {
+      if (toDesktop) {
+        this.onQuit?.();
+        return;
+      }
+      this.#quitToMainMenu().catch((error: unknown) => {
+        this.#terminal.log(
+          'ui',
+          `the main menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+      });
+    };
     session.hud.menus = {
       messageBox: (text, buttons) => boxes.show(text, buttons),
       userEvent: (name) => {
@@ -348,10 +363,20 @@ export class PlayMode {
   }
 
   stop(): void {
+    this.#endGame();
+    this.#world.follow(false);
+    this.#mist?.hide();
+    this.#mist = undefined;
+    this.#host.dispose();
+    this.#startMenu = undefined;
+    this.#loadingMenu = undefined;
+  }
+
+  /** The game's menus, HUD and menu mode go (Play ends, or the game goes back to its menu). */
+  #endGame(): void {
     document.removeEventListener('pointerlockchange', this.#pointerLockChanged);
     this.#menus?.close();
     this.#menus = undefined;
-    this.#world.follow(false);
     this.#messageBoxes?.close();
     this.#messageBoxes = undefined;
     if (this.#session.hud.menus) this.#session.hud.menus = undefined;
@@ -359,11 +384,14 @@ export class PlayMode {
     this.#pausing = 0;
     this.#hud?.close();
     this.#hud = undefined;
-    this.#mist?.hide();
-    this.#mist = undefined;
-    this.#host.dispose();
-    this.#startMenu = undefined;
-    this.#loadingMenu = undefined;
+  }
+
+  /** Quit to the main menu (the journal's system page): the game ends, its main menu opens. */
+  async #quitToMainMenu(): Promise<void> {
+    this.#endGame();
+    this.#world.leave();
+    this.#starting = false;
+    await this.start();
   }
 
   get session(): GameSession {

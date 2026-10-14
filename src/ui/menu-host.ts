@@ -10,7 +10,17 @@
 // Notes: docs/ui.md.
 
 import { INTERFACE_URL, type InterfaceFiles } from './interface-files.ts';
-import { BRIDGE_CALL, BRIDGE_GET, BRIDGE_INVOKE, BRIDGE_SET, withBridge } from './menu-bridge.ts';
+import {
+  BRIDGE_CALL,
+  BRIDGE_GET,
+  BRIDGE_INVOKE,
+  BRIDGE_REFERENCE,
+  BRIDGE_REFERENCES,
+  BRIDGE_SET,
+  BRIDGE_TRANSLATE,
+  withBridge,
+} from './menu-bridge.ts';
+import type { Translations } from '../formats/swf/translation.ts';
 import { loadRuffle, type RuffleApi, type RufflePlayerElement } from './ruffle.ts';
 import { readSwf } from '../formats/swf/swf.ts';
 import { SAFE_ZONE, safeRect, scaleMode, visibleRect, type SafeZone } from './stage-rects.ts';
@@ -140,6 +150,16 @@ export class Menu {
     return this.#external(BRIDGE_INVOKE, path.slice(0, dot), path.slice(dot + 1), args);
   }
 
+  /**
+   * The path of a clip the menu passed in a call (GFx gives the engine the clip itself, e.g. the
+   * list RequestQuestsData is to fill); undefined if the argument is no clip.
+   */
+  reference(argument: unknown): string | undefined {
+    if (typeof argument !== 'string' || !argument.startsWith(BRIDGE_REFERENCE)) return undefined;
+    const index = Number(argument.slice(BRIDGE_REFERENCE.length));
+    return Number.isInteger(index) ? `${BRIDGE_REFERENCES}.${String(index)}` : undefined;
+  }
+
   set(path: string, value: unknown): void {
     this.#external(BRIDGE_SET, path, value);
   }
@@ -235,6 +255,8 @@ export class MenuHost {
   readonly #safeZone: SafeZone;
   readonly #common: ReadonlyMap<string, MenuCallHandler>;
   #next = 1;
+  /** The interface's translations, for keys the menus set at run time (loaded with the first). */
+  #translations: Translations | undefined;
   #stopServing: (() => void) | undefined;
   #resizeTimer: ReturnType<typeof setTimeout> | undefined;
   /** Watches the layer's size (window resizes and full screen alike). */
@@ -376,6 +398,9 @@ export class MenuHost {
   #start(): void {
     if (this.#stopServing) return;
     this.#stopServing = this.#files.serve();
+    void this.#files.translations().then((translations) => {
+      this.#translations = translations;
+    });
     this.#sizeWatch.observe(this.#layer);
     this.#layer.addEventListener('pointerdown', this.#pointed);
     this.#layer.addEventListener('keydown', this.#keyed, { capture: true });
@@ -418,6 +443,9 @@ export class MenuHost {
     this.focusTop();
   };
 
-  readonly #dispatch = (menu: string, name: string, ...args: unknown[]): unknown =>
-    this.#menus.get(menu)?.received(name, args);
+  readonly #dispatch = (menu: string, name: string, ...args: unknown[]): unknown => {
+    // GFx's translator: a key a menu sets at run time (SetText("$Locations Discovered")).
+    if (name === BRIDGE_TRANSLATE) return this.#translations?.translate(String(args[0]));
+    return this.#menus.get(menu)?.received(name, args);
+  };
 }
