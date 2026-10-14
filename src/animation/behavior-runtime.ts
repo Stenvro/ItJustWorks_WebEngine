@@ -289,10 +289,12 @@ export class BehaviorRuntime {
     if (index !== undefined) this.#values[index] = value;
   }
 
-  /** Sends an event to the graph (handled at the next update). */
-  sendEvent(name: string): void {
+  /** Sends an event to the graph (handled at the next update): false if it knows none so named. */
+  sendEvent(name: string): boolean {
     const id = this.#eventIndex.get(name.toLowerCase());
-    if (id !== undefined) this.#queue.push(id);
+    if (id === undefined) return false;
+    this.#queue.push(id);
+    return true;
   }
 
   /** The events and annotations the graph raised since the last call (sounds, footsteps). */

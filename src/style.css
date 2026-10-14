@@ -385,7 +385,7 @@ body[data-screen='sandbox'] .sandbox {
 
 .sandbox-finders {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 10px;
   align-items: end;
 }
@@ -600,6 +600,59 @@ button.preset {
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+/* The quests finder: the chosen quest above its search. */
+.quest-detail {
+  max-height: 40vh;
+  overflow-y: auto;
+  margin: 0;
+  padding: 10px 16px 0;
+  border-top: 0;
+  border-bottom: 1px solid var(--line);
+  scrollbar-width: thin;
+  scrollbar-color: var(--ash-dim) transparent;
+}
+
+.quest-status {
+  margin: 0 0 8px;
+  font-size: 11px;
+  color: var(--ash);
+}
+
+.quest-section {
+  margin-bottom: 10px;
+}
+
+.quest-section-head {
+  margin-bottom: 4px;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ash-dim);
+}
+
+.quest-line {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  margin: 0 0 4px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--bone);
+}
+
+.quest-stages {
+  max-height: 14rem;
+  overflow-y: auto;
+}
+
+button.quest-stage {
+  min-width: 4.5em;
+  font-family: var(--mono);
+  text-align: left;
+  white-space: pre;
 }
 
 .upgrade-list .toggle {

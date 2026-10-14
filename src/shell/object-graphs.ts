@@ -8,7 +8,7 @@ import { ObjectGraph } from '../animation/object-graph.ts';
 import type { GpuModel } from '../render/scene-renderer.ts';
 
 /** Seconds on the renderer's clock (main.ts renders with requestAnimationFrame's time). */
-const clock = (): number => performance.now() / 1000;
+export const clock = (): number => performance.now() / 1000;
 
 /**
  * A placed object's run of its model's behavior graph, or undefined if the model has none.

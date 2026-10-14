@@ -25,6 +25,9 @@ import { formatModIndex } from './vfs/load-order.ts';
 import { doorDestination, type Teleport } from './world/cell-loader.ts';
 import { CELL_SIZE } from './world/land.ts';
 import { Vfs } from './vfs/vfs.ts';
+import type { Placement } from './scripting/runtime/runtime.ts';
+import { PLAYER_REF } from './scripting/runtime/forms.ts';
+import { QuestPanel } from './shell/quest-panel.ts';
 
 function byId<T extends HTMLElement>(id: string, type: new () => T): T {
   const element = document.getElementById(id);
@@ -59,6 +62,7 @@ const ui = {
     byId('viewer', HTMLDetailsElement),
     byId('cell-viewer', HTMLDetailsElement),
     byId('world-viewer', HTMLDetailsElement),
+    byId('quest-viewer', HTMLDetailsElement),
   ],
   devSettings: byId('dev-settings', HTMLDetailsElement),
   loadingScreen: byId('loading-screen', HTMLElement),
@@ -111,6 +115,13 @@ const ui = {
     timeSpeed: byId('scene-time-speed', HTMLButtonElement),
     timeScale: byId('scene-time-scale', HTMLElement),
     weather: byId('scene-weather', HTMLSelectElement),
+  },
+  quests: {
+    panel: byId('quest-viewer', HTMLDetailsElement),
+    search: byId('quest-search', HTMLInputElement),
+    results: byId('quest-results', HTMLOListElement),
+    count: byId('quest-count', HTMLElement),
+    detail: byId('quest-detail', HTMLElement),
   },
   fatal: byId('fatal', HTMLDivElement),
 };
@@ -182,7 +193,8 @@ function describeGpu(gpu: GpuContext): string {
 /**
  * What the shell shows: the start (choosing the game folder), the main menu (the log, the load
  * order and what to load) or the sandbox (loading any model, interior cell or worldspace).
- * TODO(M8): missions, one quest at a time. TODO(M9): playing the game from its own main menu.
+ * The sandbox has the running game's quests one at a time (src/shell/quest-panel.ts).
+ * TODO(M9): playing the game from its own main menu.
  */
 type Screen = 'start' | 'menu' | 'sandbox';
 
@@ -456,15 +468,47 @@ async function main(): Promise<void> {
   };
   modelViewer.onTravel = onTravel;
   worldViewer.onTravel = onTravel;
+  // A script sends the player elsewhere (MoveTo): the same journey, to the cell it names.
+  const onPlayerSent = (at: Placement): void => {
+    const arrival = { position: at.position, heading: at.rotation[2] };
+    const going =
+      at.world !== undefined
+        ? worldViewer.open(
+            at.world,
+            [Math.floor(at.position[0] / CELL_SIZE), Math.floor(at.position[1] / CELL_SIZE)],
+            arrival,
+          )
+        : at.cell !== undefined
+          ? modelViewer.showCell(at.cell, arrival)
+          : Promise.resolve();
+    going.catch((error: unknown) => {
+      terminal.log('papyrus', `the player cannot go there: ${describeError(error)}`, 'error');
+    });
+  };
+  modelViewer.onPlayerSent = onPlayerSent;
+  worldViewer.onPlayerSent = onPlayerSent;
+  // The quests one at a time; going to a target is the player's MoveTo (a journey when no
+  // scene is being played).
+  const questPanel = new QuestPanel(ui.quests, terminal);
+  questPanel.onGoTo = (at) => {
+    const runtime = session?.scriptsReady;
+    if (runtime && (modelViewer.playing || worldViewer.playing)) {
+      runtime.move(PLAYER_REF, at.position, at.rotation, at.cell, at.world);
+    } else {
+      onPlayerSent(at);
+    }
+  };
   connectSession = async (vfs: Vfs): Promise<void> => {
     session?.dispose();
     session = new GameSession(gpu.device, renderer, vfs, terminal);
     await Promise.all([modelViewer.connect(session), worldViewer.connect(session)]);
     // The running game's scripts: a new game starts as the session opens.
     const started = session;
-    void started.runtime().catch((error: unknown) => {
+    const runtime = started.runtime();
+    void runtime.catch((error: unknown) => {
       terminal.log('papyrus', `scripts not running: ${describeError(error)}`, 'error');
     });
+    void questPanel.connect(started, runtime).catch(() => undefined);
   };
   // Centre the scene in the part of the screen the shell column does not cover.
   const updateLensShift = (): void => {

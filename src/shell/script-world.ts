@@ -4,13 +4,12 @@
 // moving one is now) comes from them. The script runtime's WorldBridge.
 
 import type { Vec3 } from '../scripting/runtime/game-state.ts';
-import type { WorldBridge } from '../scripting/runtime/runtime.ts';
+import type { LivePlacement, WorldBridge } from '../scripting/runtime/runtime.ts';
 import { multiply, type Mat4 } from '../render/math.ts';
 import type { ModelInstance } from '../render/scene-renderer.ts';
 import { matrixPlacement } from '../world/cell-loader.ts';
 import type { SoundSystem } from '../audio/sound-system.ts';
-import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
-import type { ObjectGraph } from '../animation/object-graph.ts';
+import type { ScriptGraph } from '../animation/script-graphs.ts';
 import type { Terminal } from './terminal.ts';
 
 /** A viewer that shows references to the scripts (the interior or the world viewer). */
@@ -19,7 +18,7 @@ export interface ScriptView {
   loadedReferences(): Iterable<number>;
   loaded(reference: number): boolean;
   /** Where a loaded reference is now (moving objects, actors); undefined if not shown here. */
-  livePlacement?(reference: number): { position: Vec3; rotation?: Vec3 } | undefined;
+  livePlacement?(reference: number): LivePlacement | undefined;
   /** A script created a reference (PlaceAtMe): the view shows it if it is there. */
   created?(reference: number): void;
   /** Scripts changed what is enabled: the view applies the new states. */
@@ -37,43 +36,6 @@ export interface ScriptView {
   nodeWorld?(reference: number, node: string): Mat4 | undefined;
   /** What activating a reference does by default (a script's Activate). */
   activate?(reference: number): void;
-}
-
-/** A running behavior graph as scripts use it (PlayAnimation, the animation variables). */
-export interface ScriptGraph {
-  /** Sends an event: false if the graph has none so named. */
-  send(event: string): boolean;
-  variable(name: string): number | undefined;
-  setVariable(name: string, value: number): void;
-}
-
-/** An object's graph (sequences) for the scripts. */
-export function objectScriptGraph(graph: ObjectGraph | undefined): ScriptGraph | undefined {
-  return (
-    graph && {
-      send: (event) => graph.send(event, performance.now() / 1000),
-      variable: (name) => graph.variable(name),
-      setVariable: (name, value) => {
-        graph.setVariable(name, value);
-      },
-    }
-  );
-}
-
-/** An actor's behavior graph for the scripts. */
-export function actorScriptGraph(behavior: BehaviorRuntime | undefined): ScriptGraph | undefined {
-  return (
-    behavior && {
-      send: (event) => {
-        behavior.sendEvent(event);
-        return true;
-      },
-      variable: (name) => behavior.variable(name),
-      setVariable: (name, value) => {
-        behavior.setVariable(name, value);
-      },
-    }
-  );
 }
 
 /** SetMotionType's keyframed motion. */
@@ -122,7 +84,7 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) yield* view.loadedReferences();
   }
 
-  livePlacement(reference: number): { position: Vec3; rotation?: Vec3 } | undefined {
+  livePlacement(reference: number): LivePlacement | undefined {
     for (const view of this.#views) {
       const placement = view.livePlacement?.(reference);
       if (placement) return placement;
