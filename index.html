@@ -8,6 +8,8 @@
   </head>
   <body>
     <canvas id="viewport"></canvas>
+    <!-- Play: the game's own menus (Scaleform movies in Ruffle), over the 3D view. -->
+    <div id="ui-layer" class="ui-layer" hidden></div>
     <div id="backdrop" class="backdrop" hidden></div>
     <div class="crt" aria-hidden="true"></div>
     <div id="activate-prompt" class="activate-prompt" hidden></div>
@@ -64,11 +66,11 @@
 
       <!-- The main menu: what to load, once the game folder is mounted. -->
       <nav id="main-menu" class="main-menu" aria-label="main menu" hidden>
-        <button id="menu-play" class="menu-item" type="button" disabled>
-          <span>play</span><small>the game from its own main menu · coming with M8–M12</small>
+        <button id="menu-play" class="menu-item" type="button">
+          <span>play</span><small>the game from its own main menu · in the making (M9–M13)</small>
         </button>
         <button id="menu-missions" class="menu-item" type="button" disabled>
-          <span>missions</span><small>one quest at a time · coming with M8</small>
+          <span>missions</span><small>one quest at a time · after the game plays</small>
         </button>
         <button id="menu-sandbox" class="menu-item" type="button">
           <span>sandbox</span><small>models, interior cells and worldspaces</small>
