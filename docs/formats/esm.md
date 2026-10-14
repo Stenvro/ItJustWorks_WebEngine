@@ -974,3 +974,28 @@ f32, area u32, duration u32), then the effect's CTDA. Magic effects (`src/world/
 DATA flags u32 @0 (0x1 hostile, 0x200 no duration, 0x400 no magnitude, 0x800 no area, 0x8000
 hidden in the interface), base cost f32 @4, magic skill i32 @12, archetype u32 @64, actor value
 i32 @68; DNAM: the description, with `<mag>`, `<dur>`, `<area>` for the values.
+
+## Dialogue
+
+Topics, branches and infos (`src/world/dialogue-records.ts`, `src/world/dialogue.ts`,
+`node tools/dialogue-info.ts <quest>`), after UESP:
+
+- DIAL: FULL (what the player says), PNAM priority, BNAM branch, QNAM quest, DATA (flags u8:
+  0x1 do all before repeating; category u8: 0 topic, 1 favor, 2 scene, 3 combat, 4 favors, 5
+  detection, 6 service, 7 miscellaneous; subtype u16), SNAM (the subtype's code: CUST, HELO,
+  GBYE, HIT\_, SCEN, ...), TIFC (its info count). Its infos sit in its topic children group.
+- DLBR: QNAM quest, TNAM category, DNAM flags (0x1 top-level, 0x2 blocking, 0x4 exclusive), SNAM
+  the starting topic.
+- INFO: ENAM (flags u16: 0x1 goodbye, 0x2 random, 0x4 say once, 0x8 requires player
+  activation, 0x40 invisible continue, 0x80 walk away, ...; reset hours u16), PNAM (the info it
+  follows: a topic's infos are in this order), TCLT (the topics offered after it), DNAM (the
+  info whose responses it shares), RNAM (the player's prompt), ANAM (the speaker), CTDA
+  conditions, and per response TRDT (emotion u32, emotion value u32, response number u8 @12,
+  sound @16, flags u8 @20: 0x1 use the emotion animation), NAM1 (the text), SNAM / LNAM (the
+  speaker's and listener's idles).
+
+A response's voice file is `Sound\Voice\<plugin>\<voice type>\<quest>_<topic>_<info>_<n>.fuz`:
+the topic's quest's and the topic's editor ids (cut to 10 and 15 characters when longer than 25
+together; a topic without one leaves its part empty), the info's form id as 8 hex digits
+without the load order index, the response's number. Checked against all 35,580 voiced
+responses of the vanilla data.
