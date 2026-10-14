@@ -970,17 +970,22 @@ export class ScriptRuntime implements VmHost {
     };
   }
 
-  async placement(reference: number): Promise<Placement | undefined> {
+  /**
+   * Where a reference is: where the world shows it now (`live`), else where scripts put it,
+   * else where the plugin placed it. Without `live`, where scripts last put it (a MoveTo on the
+   * player, before the world has taken them there).
+   */
+  async placement(reference: number, live = true): Promise<Placement | undefined> {
     const state = this.state.references.get(reference);
-    const live = this.world.livePlacement?.(reference);
+    const shown = live ? this.world.livePlacement?.(reference) : undefined;
     const editor = await this.#editorPlacement(reference);
-    const position = live?.position ?? state?.position ?? editor?.position;
+    const position = shown?.position ?? state?.position ?? editor?.position;
     if (!position) return undefined;
-    const rotation = live?.rotation ?? state?.rotation ?? editor?.rotation ?? [0, 0, 0];
+    const rotation = shown?.rotation ?? state?.rotation ?? editor?.rotation ?? [0, 0, 0];
     const scale = state?.scale ?? editor?.scale ?? 1;
     // The cell it walked into (the player through a door) over the one a script left it in.
-    if (live?.cell !== undefined) {
-      return { position, rotation, cell: live.cell, world: live.world, scale };
+    if (shown?.cell !== undefined) {
+      return { position, rotation, cell: shown.cell, world: shown.world, scale };
     }
     const editorCell = this.forms.db.cellOfReference(reference);
     const cell = state?.cell ?? editorCell;

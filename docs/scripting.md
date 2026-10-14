@@ -132,7 +132,9 @@ worldspaces on screen:
 at a time, as the console shows and drives them: running or not, its stage and the stages
 done, the objectives shown with their targets, who fills each alias; start and stop
 (StartQuest, StopQuest), set any stage (SetStage), and go to a target or an alias's
-reference (MoveTo).
+reference (MoveTo). What came of each action is shown in words: a quest that does not start
+says why (it runs once and ran, it starts only from its story manager event, or which alias
+found nobody to fill it).
 
 ## Story manager
 

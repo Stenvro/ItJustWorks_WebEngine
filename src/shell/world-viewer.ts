@@ -458,7 +458,8 @@ export class WorldViewer {
   /** A script moved a reference of a loaded cell: its instance and its collision follow. */
   async #scriptMoved(reference: number): Promise<void> {
     const runtime = this.#session?.scriptsReady;
-    const at = runtime && (await runtime.placement(reference));
+    // The player: where the script sent them, not where they stand.
+    const at = runtime && (await runtime.placement(reference, reference !== PLAYER_REF));
     if (!at) return;
     if (reference === PLAYER_REF) {
       // MoveTo on the player: in this worldspace, or a journey to where the script sent them.

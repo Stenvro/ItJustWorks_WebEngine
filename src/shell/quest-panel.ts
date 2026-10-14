@@ -4,7 +4,7 @@
 // aliases. Starting, stopping and setting stages go through the script runtime, so the
 // quest's own scripts run as they do in the game.
 
-import type { QuestRecord } from '../world/quest-records.ts';
+import type { QuestAlias, QuestRecord } from '../world/quest-records.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -26,6 +26,15 @@ const hex = (formId: number): string => formId.toString(16).toUpperCase().padSta
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/** What the panel says about a reference or location that fills an alias. */
+interface Filler {
+  readonly name: string;
+  /** Where it is (undefined: nowhere in the world, e.g. an item in an inventory). */
+  readonly at: Placement | undefined;
+  readonly enabled: boolean;
+  readonly dead: boolean;
+}
+
 export class QuestPanel {
   readonly #ui: QuestPanelUi;
   readonly #terminal: Terminal;
@@ -35,6 +44,10 @@ export class QuestPanel {
   #timer: ReturnType<typeof setInterval> | undefined;
   /** What the shown quest's state was when it was last drawn (redrawn only on a change). */
   #drawn = '';
+  /** Draws in progress: only the latest one is put on screen. */
+  #generation = 0;
+  /** The result of the last thing done to each quest, in words. */
+  readonly #feedback = new Map<number, string>();
   /** Where the player goes to a quest target (the shell's journey, or a MoveTo). */
   onGoTo: ((at: Placement) => void) | undefined;
 
@@ -58,6 +71,7 @@ export class QuestPanel {
     this.#session = session;
     this.#quests = [];
     this.#shown = undefined;
+    this.#feedback.clear();
     this.#ui.detail.hidden = true;
     const scripts = await runtime;
     if (this.#session !== session) return;
@@ -93,7 +107,7 @@ export class QuestPanel {
       this.#matches(),
       (quest) => {
         const running = runtime?.quests.isRunning(quest.formId) === true ? '● ' : '';
-        return `${running}${quest.editorId}${quest.name ? ` · ${quest.name}` : ''}`;
+        return `${running}${quest.name ? `${quest.name} · ` : ''}${quest.editorId}`;
       },
       (quest) => {
         this.#show(quest);
@@ -123,9 +137,11 @@ export class QuestPanel {
   #signature(): string {
     const quest = this.#shown;
     const state = quest && this.#runtime()?.state.quests.get(quest.formId);
-    if (!quest || !state) return String(quest?.formId);
+    const feedback = quest && this.#feedback.get(quest.formId);
+    if (!quest || !state) return `${String(quest?.formId)} ${feedback ?? ''}`;
     return JSON.stringify([
       quest.formId,
+      feedback,
       state.running,
       state.stage,
       state.completed,
@@ -136,9 +152,16 @@ export class QuestPanel {
     ]);
   }
 
-  /** The shown quest's state now: header, actions, objectives, stages, aliases. */
   #render(): void {
     this.#drawn = this.#signature();
+    const generation = ++this.#generation;
+    this.#draw(generation).catch((error: unknown) => {
+      this.#terminal.log('quest', describe(error), 'error');
+    });
+  }
+
+  /** The shown quest's state now: what it is, what was done, objectives, stages, roles. */
+  async #draw(generation: number): Promise<void> {
     const quest = this.#shown;
     const runtime = this.#runtime();
     const detail = this.#ui.detail;
@@ -146,135 +169,208 @@ export class QuestPanel {
       detail.hidden = true;
       return;
     }
-    // Keep the scroll position of the stage list across refreshes.
-    const scroll = detail.querySelector('.quest-stages')?.scrollTop ?? 0;
     const state = runtime.state.quests.get(quest.formId);
-    const running = state?.running === true;
-    const head = element('div', 'upgrades-head');
-    head.append(
-      element('span', '', `${quest.editorId}${quest.name ? ` · ${quest.name}` : ''}`),
-      button(running ? 'stop' : 'start', () => {
-        this.#act(
-          running ? 'StopQuest' : 'StartQuest',
-          quest,
-          running
-            ? runtime.quests.stop(quest.formId)
-            : runtime.quests.start(quest.formId).then((started) => {
-                if (!started) this.#log(`${quest.editorId} does not start (its conditions)`);
-              }),
-        );
+    // Who fills each alias, by name, and whether one can go there.
+    const fillers = new Map<number, Filler>();
+    await Promise.all(
+      quest.aliases.map(async (alias) => {
+        const filled = state?.aliases.get(alias.id);
+        if (filled !== undefined) fillers.set(alias.id, await this.#filler(runtime, alias, filled));
       }),
     );
-    const status = [
-      running ? `running · stage ${String(state.stage)}` : 'not running',
-      state?.completed === true ? 'completed' : '',
-      state?.failed === true ? 'failed' : '',
-      `priority ${String(quest.priority)}`,
-      hex(quest.formId),
-    ].filter((part) => part !== '');
-    const parts: HTMLElement[] = [head, element('p', 'quest-status', status.join(' · '))];
+    if (generation !== this.#generation) return;
+    // Keep the scroll positions across redraws.
+    const scroll = detail.scrollTop;
+    const stageScroll = detail.querySelector('.quest-stages')?.scrollTop ?? 0;
+    const running = state?.running === true;
 
-    // Objectives: the shown ones, with the references their targets point at.
+    const head = element('div', 'upgrades-head');
+    head.append(
+      element('span', '', quest.name ?? quest.editorId),
+      button(running ? 'stop quest' : 'start quest', () => {
+        if (running) {
+          this.#act(quest, 'StopQuest', runtime.quests.stop(quest.formId), () => 'stopped');
+        } else {
+          this.#act(quest, 'StartQuest', runtime.quests.start(quest.formId), (started) =>
+            started
+              ? 'started'
+              : `did not start: ${runtime.quests.notStarted.get(quest.formId) ?? 'unknown'}`,
+          );
+        }
+      }),
+    );
+    const status = running
+      ? `running · stage ${String(state.stage)}`
+      : state?.completed === true
+        ? 'completed (not running)'
+        : (state?.starts ?? 0) > 0
+          ? 'stopped'
+          : 'not started';
+    const parts: HTMLElement[] = [
+      head,
+      element(
+        'p',
+        'quest-status',
+        [
+          status,
+          state?.completed === true && running ? 'completed' : '',
+          state?.failed === true ? 'failed' : '',
+          quest.editorId,
+          hex(quest.formId),
+        ]
+          .filter((part) => part !== '')
+          .join(' · '),
+      ),
+    ];
+    const feedback = this.#feedback.get(quest.formId);
+    if (feedback) parts.push(element('p', 'quest-feedback', feedback));
+
+    // The journal's objectives: those the quest shows now, with where their targets are.
     const objectives = quest.objectives.filter(
       (objective) => state?.objectives.get(objective.index)?.displayed === true,
     );
-    if (objectives.length > 0) {
-      const list = element('ul', 'upgrade-list');
-      for (const objective of objectives) {
-        const done = state?.objectives.get(objective.index);
-        const mark = done?.completed === true ? '✓ ' : done?.failed === true ? '✗ ' : '';
-        const item = element(
-          'li',
-          'quest-line',
-          `${mark}${String(objective.index)} ${objective.text ?? ''}`,
-        );
-        for (const target of objective.targets) {
-          const reference = state?.aliases.get(target.alias);
-          const alias = quest.aliases.find((entry) => entry.id === target.alias);
-          if (reference === undefined || reference === PLAYER_REF || alias?.location === true)
-            continue;
-          item.append(
-            button(`go to ${alias?.name ?? hex(reference)}`, () => {
-              void this.#goTo(reference);
-            }),
-          );
-        }
-        list.append(item);
+    const objectiveList = element('ul', 'upgrade-list');
+    for (const objective of objectives) {
+      const done = state?.objectives.get(objective.index);
+      const mark = done?.completed === true ? '✓' : done?.failed === true ? '✗' : '•';
+      const item = element('li', 'quest-line', `${mark} ${objective.text ?? ''}`);
+      for (const target of objective.targets) {
+        const filler = fillers.get(target.alias);
+        const reference = state?.aliases.get(target.alias);
+        if (filler?.at && reference !== PLAYER_REF) item.append(this.#goToButton(filler));
       }
-      parts.push(section('objectives', list));
+      objectiveList.append(item);
+    }
+    if (objectives.length === 0) {
+      objectiveList.append(element('li', 'quest-line quest-none', 'none shown yet'));
+    }
+    parts.push(section('journal objectives', objectiveList));
+
+    // Stages: each one's journal text; a click sets it (SetStage).
+    if (quest.stages.length > 0) {
+      const stages = element('ul', 'upgrade-list quest-stages');
+      for (const stage of quest.stages) {
+        const done = state?.stagesDone.has(stage.index) === true;
+        const text = stage.logEntries.find((entry) => entry.text)?.text;
+        const row = element('li', 'quest-line');
+        if (running && state.stage === stage.index) row.classList.add('quest-current');
+        const set = button(`${done ? '✓' : ' '} ${String(stage.index)}`, () => {
+          this.#act(
+            quest,
+            `SetStage ${String(stage.index)}`,
+            runtime.quests.setStage(quest.formId, stage.index),
+            (set) =>
+              set
+                ? `stage ${String(stage.index)} set`
+                : runtime.quests.isRunning(quest.formId)
+                  ? `stage ${String(stage.index)} was set before (the quest sets a stage once)`
+                  : `stage ${String(stage.index)} not set, the quest did not start: ${
+                      runtime.quests.notStarted.get(quest.formId) ?? 'unknown'
+                    }`,
+          );
+        });
+        set.classList.add('quest-stage');
+        set.title = done ? 'done; click to set it again' : 'click to set this stage';
+        row.append(set, element('span', text ? '' : 'quest-none', text ?? 'no journal text'));
+        stages.append(row);
+      }
+      parts.push(section('stages · ✓ done · click one to set it', stages));
     }
 
-    // Stages: each one's first journal text; a click sets it (SetStage).
-    const stages = element('ul', 'upgrade-list quest-stages');
-    for (const stage of quest.stages) {
-      const done = state?.stagesDone.has(stage.index) === true;
-      const text = stage.logEntries.find((entry) => entry.text)?.text ?? '';
-      const row = element('li', 'quest-line');
-      const set = button(`${done ? '✓' : ' '} ${String(stage.index)}`, () => {
-        this.#act(
-          `SetStage ${String(stage.index)}`,
-          quest,
-          runtime.quests.setStage(quest.formId, stage.index).then((set) => {
-            if (!set) this.#log(`${quest.editorId} stage ${String(stage.index)} was not set`);
-          }),
-        );
-      });
-      set.classList.add('quest-stage');
-      row.append(set, element('span', '', text));
-      stages.append(row);
-    }
-    if (quest.stages.length > 0) parts.push(section('stages', stages));
-
-    // Aliases: who fills them now.
+    // Roles: who or what fills each alias now.
     if (quest.aliases.length > 0) {
-      const aliases = element('ul', 'upgrade-list quest-aliases');
+      const roles = element('ul', 'upgrade-list quest-aliases');
       for (const alias of quest.aliases) {
-        const filled = state?.aliases.get(alias.id);
-        const row = element(
-          'li',
-          'quest-line',
-          `${alias.name}: ${filled === undefined ? '—' : hex(filled)}`,
-        );
-        if (filled !== undefined && filled !== PLAYER_REF && !alias.location) {
+        const filler = fillers.get(alias.id);
+        const row = element('li', 'quest-line');
+        row.append(element('span', 'quest-role', alias.name));
+        if (!filler) {
+          row.append(element('span', 'quest-none', 'nobody'));
+        } else {
+          const notes = [
+            !filler.enabled ? 'disabled' : '',
+            filler.dead ? 'dead' : '',
+            !filler.at && !alias.location && state?.aliases.get(alias.id) !== PLAYER_REF
+              ? 'not placed in the world'
+              : '',
+          ].filter((note) => note !== '');
           row.append(
-            button('go to', () => {
-              void this.#goTo(filled);
-            }),
+            element(
+              'span',
+              '',
+              `${filler.name}${notes.length > 0 ? ` (${notes.join(', ')})` : ''}`,
+            ),
           );
+          if (filler.at && state?.aliases.get(alias.id) !== PLAYER_REF && !alias.location) {
+            row.append(this.#goToButton(filler));
+          }
         }
-        aliases.append(row);
+        roles.append(row);
       }
-      parts.push(section('aliases', aliases));
+      parts.push(section('roles (aliases)', roles));
     }
 
     detail.replaceChildren(...parts);
     detail.hidden = false;
+    detail.scrollTop = scroll;
     const list = detail.querySelector('.quest-stages');
-    if (list) list.scrollTop = scroll;
+    if (list) list.scrollTop = stageScroll;
   }
 
-  /** Runs a console action on the quest, logs it and shows the result. */
-  #act(what: string, quest: QuestRecord, done: Promise<unknown>): void {
+  async #filler(runtime: ScriptRuntime, alias: QuestAlias, filled: number): Promise<Filler> {
+    if (alias.location) {
+      const record = await runtime.forms.record(filled);
+      return {
+        name: record?.text('FULL') ?? record?.editorId ?? hex(filled),
+        at: undefined,
+        enabled: true,
+        dead: false,
+      };
+    }
+    if (filled === PLAYER_REF)
+      return { name: 'the player', at: undefined, enabled: true, dead: false };
+    const [record, base, at, enabled, dead] = await Promise.all([
+      runtime.forms.record(filled),
+      runtime
+        .baseOf(filled)
+        .then((id) => (id === undefined ? undefined : runtime.forms.record(id))),
+      runtime.placement(filled),
+      runtime.isEnabled(filled),
+      runtime.actors.isDead(filled).catch(() => false),
+    ]);
+    const name = base?.text('FULL') ?? record?.editorId ?? base?.editorId ?? hex(filled);
+    return { name, at, enabled, dead };
+  }
+
+  #goToButton(filler: Filler): HTMLButtonElement {
+    const go = button(`go to ${filler.name}`, () => {
+      if (!filler.at) return;
+      this.#log(`player.moveto ${filler.name}`);
+      this.onGoTo?.(filler.at);
+    });
+    go.title = filler.enabled ? 'MoveTo: the player goes there' : 'it is disabled: nothing to see';
+    return go;
+  }
+
+  /** Runs a console action on the quest: logs it and shows what came of it in words. */
+  #act<T>(quest: QuestRecord, what: string, done: Promise<T>, result: (value: T) => string): void {
     this.#log(`${what} ${quest.editorId}`);
+    this.#feedback.set(quest.formId, `${what}…`);
+    this.#render();
     done
+      .then((value) => {
+        const text = result(value);
+        this.#feedback.set(quest.formId, `${what}: ${text}`);
+        this.#log(`${quest.editorId}: ${text}`);
+      })
       .catch((error: unknown) => {
+        this.#feedback.set(quest.formId, `${what} failed: ${describe(error)}`);
         this.#terminal.log('quest', describe(error), 'error');
       })
       .finally(() => {
         this.#render();
         this.#showResults();
       });
-    this.#render();
-  }
-
-  async #goTo(reference: number): Promise<void> {
-    const at = await this.#runtime()?.placement(reference);
-    if (!at) {
-      this.#log(`${hex(reference)} has no place in the world`);
-      return;
-    }
-    this.#log(`player.moveto ${hex(reference)}`);
-    this.onGoTo?.(at);
   }
 
   #log(text: string): void {

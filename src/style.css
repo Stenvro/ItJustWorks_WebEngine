@@ -620,6 +620,36 @@ button.preset {
   color: var(--ash);
 }
 
+.quest-hint {
+  padding-bottom: 0;
+}
+
+.quest-feedback {
+  margin: 0 0 10px;
+  padding: 4px 8px;
+  font-size: 12px;
+  color: var(--bone);
+  border-left: 2px solid var(--line-strong);
+  background: rgb(205 174 110 / 0.08);
+}
+
+.quest-none {
+  color: var(--ash-dim);
+  font-style: italic;
+}
+
+.quest-role {
+  color: var(--ash);
+}
+
+.quest-role::after {
+  content: ':';
+}
+
+.quest-current {
+  background: rgb(205 174 110 / 0.12);
+}
+
 .quest-section {
   margin-bottom: 10px;
 }
