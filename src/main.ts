@@ -28,7 +28,7 @@ import { Vfs } from './vfs/vfs.ts';
 import type { Placement } from './scripting/runtime/runtime.ts';
 import { PLAYER_REF } from './scripting/runtime/forms.ts';
 import { QuestPanel } from './shell/quest-panel.ts';
-import { PlayMode } from './shell/play-mode.ts';
+import { PlayMode, type PlayWorld } from './shell/play-mode.ts';
 import { Launcher } from './shell/launcher.ts';
 
 function byId<T extends HTMLElement>(id: string, type: new () => T): T {
@@ -492,6 +492,31 @@ async function main(): Promise<void> {
       terminal.log('papyrus', `the player cannot go there: ${describeError(error)}`, 'error');
     });
   };
+  // Play's 3D view: a journey into the world that resolves once it has loaded, and the
+  // scripts' MoveTo of the player followed (the sandbox never follows them).
+  const playWorld: PlayWorld = {
+    enter: async (at) => {
+      const arrival = { position: at.position, heading: at.rotation[2] };
+      if (at.world !== undefined) {
+        await worldViewer.open(
+          at.world,
+          [Math.floor(at.position[0] / CELL_SIZE), Math.floor(at.position[1] / CELL_SIZE)],
+          arrival,
+        );
+      } else if (at.cell !== undefined) {
+        await modelViewer.showCell(at.cell, arrival);
+      }
+      while (worldViewer.loading !== undefined || modelViewer.loading !== undefined) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+    },
+    follow: (on) => {
+      modelViewer.followsScripts = on;
+      worldViewer.followsScripts = on;
+      modelViewer.onPlayerSent = on ? journeyTo : undefined;
+      worldViewer.onPlayerSent = on ? journeyTo : undefined;
+    },
+  };
   // The quests one at a time (a debug tool, as the console); going to a target moves the
   // player there.
   const questPanel = new QuestPanel(ui.quests, terminal);
@@ -626,7 +651,7 @@ async function main(): Promise<void> {
       });
     }
     showScreen('play');
-    play = new PlayMode(session, renderer, ui.uiLayer, terminal);
+    play = new PlayMode(session, renderer, playWorld, ui.uiLayer, terminal);
     // The way back stays for the mouse; keys belong to the game's menus.
     ui.brand.tabIndex = -1;
     ui.brand.blur();

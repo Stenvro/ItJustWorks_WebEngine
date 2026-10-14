@@ -1,10 +1,20 @@
 // Play: the game as the game is, from its own main menu (interface\startmenu.swf) on. The
 // menus play in the menu host over the 3D view; what they ask of the engine is answered here.
-// The main menu shows over its 3D background (the mist menu, mist-menu.ts).
-// TODO(M9): New Game into the opening, the HUD and the in-game menus.
+// The main menu and the loading screens show over their 3D background (the mist menu,
+// mist-menu.ts). New starts a new game: the loading menu (loadingmenu.swf) over a loading
+// screen (LSCR) while the game's scripts start their new game, until the opening has placed the
+// player (MQ101: the cart to Helgen) and the world there has loaded.
+// TODO(M9): the HUD and the in-game menus.
 
 import type { Renderer } from '../render/renderer.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { IniSettings } from '../world/ini-settings.ts';
+import {
+  parseLoadingScreen,
+  pickLoadingScreen,
+  type LoadingScreen,
+} from '../world/loading-screens.ts';
 import { InterfaceFiles } from '../ui/interface-files.ts';
 import { MistMenu } from './mist-menu.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
@@ -40,22 +50,55 @@ function mainMenuProperties(hasSaves: boolean): unknown[] {
 /** The game's menu depths (higher over lower). */
 const DEPTH = {
   hud: 2,
+  loadingMenu: 9,
   startMenu: 10,
 } as const;
 
+/** A menu's fade before it closes (its FadeOutMenu animation), ms. */
+const FADE_OUT_MS = 500;
+/** How long a new game's opening may take to place the player, ms. */
+const OPENING_TIMEOUT_MS = 30_000;
+
+/** What Play asks of the 3D view (the viewers, through main.ts). */
+export interface PlayWorld {
+  /** Takes the player to a place: its cell or worldspace loads; resolves once it has. */
+  enter(at: Placement): Promise<void>;
+  /** Whether the world follows the scripts' MoveTo of the player (Play: yes). */
+  follow(on: boolean): void;
+}
+
+const wait = (ms: number): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
 export class PlayMode {
   readonly #session: GameSession;
+  readonly #renderer: Renderer;
+  readonly #world: PlayWorld;
+  readonly #terminal: Terminal;
   readonly #host: MenuHost;
   #startMenu: Menu | undefined;
+  #loadingMenu: Menu | undefined;
+  #mist: MistMenu | undefined;
+  #loadingScreens: Promise<LoadingScreen[]> | undefined;
+  #starting = false;
+  /** The loading menu's text (the loading screen's, once chosen). */
+  #loadingText = '';
   /** Leaving Play (Quit to Desktop): back to the engine's own main menu. */
   onQuit: (() => void) | undefined;
 
-  readonly #renderer: Renderer;
-  #mist: MistMenu | undefined;
-
-  constructor(session: GameSession, renderer: Renderer, layer: HTMLElement, terminal: Terminal) {
-    this.#renderer = renderer;
+  constructor(
+    session: GameSession,
+    renderer: Renderer,
+    world: PlayWorld,
+    layer: HTMLElement,
+    terminal: Terminal,
+  ) {
     this.#session = session;
+    this.#renderer = renderer;
+    this.#world = world;
+    this.#terminal = terminal;
     const log = (message: string): void => {
       terminal.log('ui', message);
     };
@@ -79,6 +122,7 @@ export class PlayMode {
 
   /** Opens the game's main menu. */
   async start(): Promise<void> {
+    this.#world.follow(true);
     const mist = MistMenu.show(this.#session, this.#renderer).then((menu) => {
       this.#mist = menu;
     });
@@ -90,6 +134,15 @@ export class PlayMode {
         myLog: () => undefined,
         QuitToDesktop: () => {
           this.onQuit?.();
+        },
+        NEW: () => {
+          this.#newGame().catch((error: unknown) => {
+            this.#terminal.log(
+              'ui',
+              `the new game does not start: ${error instanceof Error ? error.message : String(error)}`,
+              'error',
+            );
+          });
         },
       },
       // As the game opens it: its extensions, its entries, its platform, then it fades in.
@@ -108,11 +161,123 @@ export class PlayMode {
     await mist;
   }
 
+  /**
+   * New: the main menu fades out; a new game's scripts start (a clean game state) behind the
+   * loading menu; once the opening has placed the player, the world there loads and the
+   * loading menu goes.
+   */
+  async #newGame(): Promise<void> {
+    if (this.#starting) return;
+    this.#starting = true;
+    const session = this.#session;
+    const startMenu = this.#startMenu;
+    startMenu?.call('FadeOutMenu');
+    await wait(FADE_OUT_MS);
+    if (startMenu) this.#host.close(startMenu);
+    this.#startMenu = undefined;
+    // A new game: everything any game before it did goes. The loading menu over the mist while
+    // its scripts start; the loading screen is chosen once the opening runs (a new game's own,
+    // ChargenLoadScreen, asks for MQ101 at stage 10).
+    const ready = session.resetStates();
+    this.#loadingText = '';
+    this.#mist?.showMist();
+    await this.#openLoadingMenu();
+    const runtime = await this.#runtimeStarting();
+    await ready;
+    const at = await this.#openingPlacement(runtime);
+    if (!at) throw new Error('the opening placed no player');
+    const screen = await this.#pickLoadingScreen(runtime);
+    if (screen) {
+      this.#loadingText = screen.text;
+      this.#loadingMenu?.invoke('_root.Menu_mc.refreshLoadingText');
+      await this.#mist?.showLoadingScreen(screen);
+    }
+    await this.#world.enter(at);
+    const loading = this.#loadingMenu;
+    loading?.invoke('_root.Menu_mc.FadeOutMenu');
+    await wait(FADE_OUT_MS);
+    if (loading) this.#host.close(loading);
+    this.#loadingMenu = undefined;
+    this.#mist?.hide();
+    this.#mist = undefined;
+  }
+
+  /** The runtime the session's new game runs in, as soon as it exists. */
+  async #runtimeStarting(): Promise<ScriptRuntime> {
+    for (;;) {
+      const runtime = this.#session.scriptsStarting ?? this.#session.scriptsReady;
+      if (runtime) return runtime;
+      await wait(16);
+    }
+  }
+
+  /** Where the opening puts the player (MQ101 moves them as its first stages run). */
+  async #openingPlacement(runtime: ScriptRuntime): Promise<Placement | undefined> {
+    const until = performance.now() + OPENING_TIMEOUT_MS;
+    while (performance.now() < until) {
+      if (runtime.state.references.get(PLAYER_REF)?.position) {
+        return runtime.placement(PLAYER_REF, false);
+      }
+      await wait(100);
+    }
+    return undefined;
+  }
+
+  /**
+   * A loading screen whose conditions hold (run on the player): those with conditions first
+   * (inferred: a new game always shows its own, ChargenLoadScreen), else one at random.
+   */
+  async #pickLoadingScreen(runtime: ScriptRuntime): Promise<LoadingScreen | undefined> {
+    this.#loadingScreens ??= this.#session.db.then(async (db) => {
+      const screens: LoadingScreen[] = [];
+      for (const formId of db.formIdsOfType('LSCR')) {
+        const record = await db.get(formId);
+        if (record) screens.push(parseLoadingScreen(record));
+      }
+      return screens;
+    });
+    const screens = await this.#loadingScreens;
+    const player = runtime.referenceHandle(PLAYER_REF);
+    const holding = new Set<LoadingScreen>();
+    for (const screen of screens) {
+      if (screen.conditions.length === 0) continue;
+      if (await runtime.conditionsHold(screen.conditions, player)) holding.add(screen);
+    }
+    return holding.size > 0
+      ? pickLoadingScreen([...holding], () => true)
+      : pickLoadingScreen(screens, (screen) => screen.conditions.length === 0);
+  }
+
+  /** The loading menu, its text the loading screen's. */
+  async #openLoadingMenu(): Promise<void> {
+    this.#loadingMenu = await this.#host.open('loadingmenu.swf', {
+      depth: DEPTH.loadingMenu,
+      interactive: false,
+      handlers: {
+        RequestLoadingText: (menu, args) => {
+          menu.respond(args[0], this.#loadingText);
+        },
+        // A new game's player: level 1, no progress; the meter is not shown (no save yet).
+        RequestPlayerInfo: (menu, args) => {
+          menu.respond(args[0], 1, 0, false);
+        },
+      },
+      setup: async (menu) => {
+        await menu.waitFor('_root.InitExtensions');
+        menu.invoke('_root.InitExtensions');
+        menu.invoke('_root.SetPlatform', 0);
+        menu.invoke('_root.Menu_mc.FadeInMenu');
+      },
+    });
+  }
+
   stop(): void {
+    this.#world.follow(false);
     this.#mist?.hide();
     this.#mist = undefined;
     this.#host.dispose();
     this.#startMenu = undefined;
+    this.#loadingMenu = undefined;
   }
 
   get session(): GameSession {

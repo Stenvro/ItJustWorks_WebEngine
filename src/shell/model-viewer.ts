@@ -227,6 +227,10 @@ export class ModelViewer {
 
   /** Called when the player goes through a load door (the app takes them there). */
   onTravel: ((teleport: Teleport) => void) | undefined;
+  /** Play: a script's MoveTo takes the player (the sandbox: never). */
+  followsScripts = false;
+  /** A script sent the player somewhere this view does not show (Play). */
+  onPlayerSent: ((at: Placement) => void) | undefined;
 
   /** Whether the player is in this view's scene (playing it). */
   get playing(): boolean {
@@ -389,9 +393,10 @@ export class ModelViewer {
     const at = runtime && (await runtime.placement(reference, reference !== PLAYER_REF));
     if (!at) return;
     if (reference === PLAYER_REF) {
-      // The sandbox is not the game: scripts do not move its player (a new game's opening
-      // would send them to the cart to Helgen). TODO(M9): Play takes the player where the
-      // scripts send them.
+      // Play: the player goes where the scripts send them, through a journey as a load door
+      // does when it is elsewhere. The sandbox is not the game: scripts do not move its player
+      // (a new game's opening would send them to the cart to Helgen).
+      if (this.followsScripts && !this.sendPlayer(at)) this.onPlayerSent?.(at);
       return;
     }
     const actor = this.#actorsShown.find((placed) => placed.actor.reference === reference);

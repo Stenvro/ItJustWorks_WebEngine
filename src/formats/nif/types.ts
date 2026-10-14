@@ -824,7 +824,25 @@ export interface CompressedMeshDataBlock {
   readonly chunks: readonly CompressedMeshChunk[];
 }
 
+/**
+ * NiCamera (nif.xml, 20.2.0.7): a camera node; it looks along its local +X axis with +Y up
+ * (Gamebryo's convention). Its frustum gives the field of view.
+ */
+export interface NiCameraBlock extends NiAvObject {
+  readonly kind: 'camera';
+  readonly frustum: {
+    readonly left: number;
+    readonly right: number;
+    readonly top: number;
+    readonly bottom: number;
+    readonly near: number;
+    readonly far: number;
+  };
+  readonly orthographic: boolean;
+}
+
 export type NifBlock =
+  | NiCameraBlock
   | CollisionObjectBlock
   | RigidBodyBlock
   | ConstraintBlock
