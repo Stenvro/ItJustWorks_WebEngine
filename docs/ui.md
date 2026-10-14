@@ -125,6 +125,30 @@ the start menu then shows the mouse version of its buttons, and `ShowDeleteButto
 hides the delete-save hint while there is no save. PRESS ANY BUTTON (property 3) is not shown:
 the menu opens on its list.
 
+## Scaleform's text fields
+
+GFx gives AS2 text fields some members a Flash player's AS2 lacks, and the menus use them
+(`node tools/swf-actions.ts --strings`: `getLineMetrics` in the HUD, the item menus, the
+message box, the journal, books; `numLines`; `appendText`/`appendHtml` in the journal, the race
+menu, the tutorial). The bridge adds them to `TextField.prototype`:
+
+- `numLines`: `maxscroll + bottomScroll - scroll` (the lines past the first one in view, plus
+  those in view): exact.
+- `getLineMetrics(line)`: `{x: 0, width: textWidth, height: textHeight / numLines, leading}`:
+  the widest line's width, exact for the single-line fields that ask (the HUD's letters measure
+  each letter this way); the menus read `width`, and books `leading`.
+- `appendText`, `appendHtml`: add to `text` / `htmlText`.
+- `new TextField()`: under GFx a text object off the stage whose `text` keeps what is set (the
+  HUD writes a quest's status before its name through one, "Quest completed: "). The bridge's
+  `TextField` makes one, and leaves the fields the player places to the original class (Ruffle
+  constructs those with `_global.TextField` as well; they have a `_width`, an object off the
+  stage has none). Its prototype is the original one, so `instanceof TextField` holds.
+
+Still missing in Ruffle (0.7.1), and so in the menus: `<img>` in a text field's HTML (the HUD's
+help messages show their keys' art as `<img src='E.png'>`: the text shows, the key does not),
+`textAutoSize` and `verticalAlign`, `getCharBoundaries`, `getLineOffset`,
+`getLineIndexAtPoint` (books and the journal). TODO(M9).
+
 ## The main menu's background: the mist menu
 
 Behind the start menu the game renders its "Mist Menu" (CommonLibSSE-NG's `RE::MistMenu`:
@@ -201,5 +225,33 @@ show)` (the heading in degrees, 0 north, 90 east; the compass strip is placed by
 `SetCrosshairTarget(abActivate, aName, abShowButton, abTextOnly, abFavorMode, abShowCrosshair,
 aWeight, aCost, aFieldValue, aFieldText)` for what the crosshair is on (the play session's
 activation target, through `HudSignals`), and `ShowMessage` for Debug.Notification (the
-messages at the top left; `ShowNotification` is for quest updates). The engine's own prompt,
-notice and loading screen stay out of Play.
+messages at the top left). The engine's own prompt, notice and loading screen stay out of Play.
+
+Every menu's `PlaySound(id)` plays a UI sound by editor id at no place: a sound descriptor's
+(`UIObjectiveNew`, `UIMenuFocus`: SNDR) or a sound's (`UIMenuOK`: SOUN, through its SDSC).
+
+Quest updates (`QuestNotification` in the HUD): the HUD shows one notification at a time, and
+the engine sends the next only once `QuestUpdateBaseInstance.CanShowNotification()` says the last
+one has played out. A notification is `ShowNotification(text, status, soundId, objectiveCount,
+type, ...)` (type 0: a quest's) with the objectives put into `QuestUpdateBaseInstance.ObjectivesA`
+first, as pairs of text and status (a status shows as "Status: text"); the HUD shows at most 3.
+With a text, the HUD spells out `status: TEXT` letter by letter, then the objectives; without
+one, only the objectives (and their sound, `UIObjectiveNew`). The engine sends (`questUpdate` in
+`src/shell/hud-controller.ts`, from the runtime's quest updates):
+
+- a quest's first objective shown: the quest's name, no status, `UIQuestNew`, the objective;
+- later objectives: their lines (completed or failed ones after `sHUDCompleted` /
+  `sHUDFailed`), together while they come together;
+- a quest completed or failed: its name after `sQuestCompletedText` / `sQuestFailed` ("QUEST
+  COMPLETED: UNBOUND"), `UIQuestComplete`.
+
+Miscellaneous objectives (quest type 6) and quests without a name announce no quest, only lines.
+Texts have their tags filled in (`src/scripting/runtime/quest-text.ts`: `<Alias=...>`,
+`<Alias.ShortName=...>`, `<Global=...>` of the quest's QTGL globals).
+
+Help messages (Message.ShowAsHelpMessage) are `ShowTutorialHintText(text, show)`: shown for
+their seconds, again after their interval, at most their times, until the player presses their
+user event; one done is not shown again until `ResetHelpMessage`. A "[Activate]" in the text
+becomes the key's art: the HUD asks `GetButtonFromUserEvent("Activate")` and the engine answers
+the art's name (`E`; `src/ui/button-art.ts`: the event's first key in the control map, else its
+mouse button) for the HUD's exported bitmap `E.png`.

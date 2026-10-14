@@ -428,7 +428,10 @@ export class SoundSystem {
     return (own ? materials.byForm.get(own) : undefined) ?? materials.byId.get(WATER_MATERIAL);
   }
 
-  /** Plays a sound descriptor by editor id at a place (animations' SoundPlay events). */
+  /**
+   * Plays a sound by editor id at a place (animations' SoundPlay events; the menus' PlaySound,
+   * at no place): a sound descriptor's (SNDR), else a sound's (SOUN: its descriptor, SDSC).
+   */
   async playNamed(editorId: string, place: SoundPlace): Promise<SoundInstance | undefined> {
     const byName = await this.#descriptorNames();
     const formId = byName.get(editorId.toLowerCase());
@@ -441,6 +444,13 @@ export class SoundSystem {
       for (const formId of this.#db.formIdsOfType('SNDR')) {
         const record = await this.#db.get(formId);
         if (record?.editorId && !record.deleted) names.set(record.editorId.toLowerCase(), formId);
+      }
+      for (const formId of this.#db.formIdsOfType('SOUN')) {
+        const record = await this.#db.get(formId);
+        if (!record || record.deleted) continue;
+        const descriptor = record.formIdField('SDSC');
+        const name = record.editorId?.toLowerCase();
+        if (name && descriptor && !names.has(name)) names.set(name, descriptor);
       }
       return names;
     })();

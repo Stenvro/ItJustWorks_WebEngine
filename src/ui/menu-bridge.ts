@@ -94,6 +94,7 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   constant('Selection', 'getControllerMaskByFocusGroup', 1);
   constant('Selection', 'getModalClip', null);
   constant('Selection', 'setModalClip', null);
+  textFieldExtensions(w);
 
   // ExternalInterface.call = function () {
   //   arguments.unshift(BRIDGE_CALL, menu);
@@ -205,4 +206,119 @@ export function bridgeMovie(menu: string): Uint8Array {
     { code: SwfTagCode.doAction, body: concatBytes([bridgeActions(menu), Uint8Array.of(0)]) },
     { code: SwfTagCode.showFrame, body: new Uint8Array(0) },
   ]);
+}
+
+/**
+ * Scaleform's TextField extensions the menus use that a Flash player's AS2 lacks (GFx gives
+ * AS2 text fields some of AS3's members): numLines, getLineMetrics, appendText, appendHtml,
+ * and `new TextField()`: a text object of its own, off the stage (the menus put a status
+ * before a quest's name through one); its text and htmlText keep what is set. The class keeps
+ * its prototype, so the fields on the stage and `instanceof TextField` are as they were.
+ * numLines is exact (maxscroll + bottomScroll - scroll: the lines past the first visible one,
+ * plus those visible). A line's metrics give the field's widest line (textWidth: exact for the
+ * single-line fields that ask, the HUD's letters, the item cards' names), the lines' average
+ * height and the format's leading; the vanilla menus read width and leading only.
+ * TODO(M9): getCharBoundaries, getLineOffset, getLineIndexAtPoint (books, the journal) and
+ * textAutoSize, verticalAlign.
+ */
+/** The bridge's globals for `new TextField()`. */
+const STANDALONE_TEXT = '__itjwText';
+const STANDALONE_VALUE = '__itjwValue';
+const TEXT_FIELD_CLASS = '__itjwTextField';
+
+function textFieldExtensions(w: Avm1Writer): void {
+  const field = (body: Avm1Writer, member: string): Avm1Writer =>
+    body.push('this').op(Op.getVariable).push(member).op(Op.getMember);
+  // TextField.prototype.addProperty("numLines", function () {...}, null)
+  w.push(null);
+  w.function2('', [], 1, Function2Flag.suppressArguments, (body) => {
+    field(field(body, 'maxscroll'), 'bottomScroll').op(Op.add2);
+    field(body, 'scroll').op(Op.subtract).op(Op.return);
+  });
+  w.push('numLines', 3).getPath('TextField.prototype').push('addProperty');
+  w.op(Op.callMethod).op(Op.pop);
+  // getLineMetrics(lineIndex): { x, width, height, leading }
+  w.getPath('TextField.prototype').push('getLineMetrics');
+  w.function2('', ['lineIndex'], 2, Function2Flag.suppressArguments, (body) => {
+    body.push('x', 0, 'width');
+    field(body, 'textWidth').push('height');
+    field(body, 'textHeight');
+    field(body, 'numLines').op(Op.divide).push('leading');
+    body.push(0).push('this').op(Op.getVariable).push('getTextFormat').op(Op.callMethod);
+    body.push('leading').op(Op.getMember);
+    body.push(4).op(Op.initObject).op(Op.return);
+  });
+  w.op(Op.setMember);
+  // var standalone = new Object(); standalone.__proto__ = TextField.prototype;
+  // standalone.addProperty("text" | "htmlText", get this.__itjwValue, set this.__itjwValue)
+  w.push('_global').op(Op.getVariable).push(STANDALONE_TEXT, 0, 'Object').op(Op.newObject);
+  w.op(Op.setMember);
+  w.getPath(`_global.${STANDALONE_TEXT}`).push('__proto__').getPath('TextField.prototype');
+  w.op(Op.setMember);
+  for (const name of ['text', 'htmlText']) {
+    w.function2('', ['value'], 2, Function2Flag.suppressArguments, (body) => {
+      body.push('this').op(Op.getVariable).push(STANDALONE_VALUE, { register: 1 });
+      body.op(Op.setMember);
+    });
+    w.function2('', [], 1, Function2Flag.suppressArguments, (body) => {
+      body.push('this').op(Op.getVariable).push(STANDALONE_VALUE).op(Op.getMember).op(Op.return);
+    });
+    w.push(name, 3).getPath(`_global.${STANDALONE_TEXT}`).push('addProperty');
+    w.op(Op.callMethod).op(Op.pop);
+  }
+  // _global.__itjwTextField = TextField; ASSetPropFlags(_global, "TextField", 0, 7);
+  // _global.TextField = function () {
+  //   if (typeof this._width == "number") __itjwTextField.call(this); // a field on the stage
+  //   else { this.__proto__ = standalone; this.__itjwValue = ""; }    // new TextField()
+  // };
+  // TextField.prototype = __itjwTextField.prototype; TextField.StyleSheet, getFontList as well
+  w.push('_global').op(Op.getVariable).push(TEXT_FIELD_CLASS).getPath('TextField');
+  w.op(Op.setMember);
+  w.push(7, 0, 'TextField', '_global').op(Op.getVariable).push(4, 'ASSetPropFlags');
+  w.op(Op.callFunction).op(Op.pop);
+  w.push('_global').op(Op.getVariable).push('TextField');
+  // (The player constructs the fields it places with the class too.)
+  w.function2('', [], 1, Function2Flag.suppressArguments, (body) => {
+    const standalone = new Avm1Writer()
+      .push('this')
+      .op(Op.getVariable)
+      .push('__proto__')
+      .getPath(`_global.${STANDALONE_TEXT}`)
+      .op(Op.setMember)
+      .push('this')
+      .op(Op.getVariable)
+      .push(STANDALONE_VALUE, '')
+      .op(Op.setMember)
+      .bytes();
+    const placed = new Avm1Writer()
+      .push('this')
+      .op(Op.getVariable)
+      .push(1)
+      .getPath(`_global.${TEXT_FIELD_CLASS}`)
+      .push('call')
+      .op(Op.callMethod)
+      .op(Op.pop);
+    placed.jump(standalone.length);
+    const real = placed.bytes();
+    body.push('this').op(Op.getVariable).push('_width').op(Op.getMember).op(Op.typeOf);
+    body.push('number').op(Op.equals2).op(Op.not).jumpIf(real.length);
+    body.append(real).append(standalone);
+  });
+  w.op(Op.setMember);
+  for (const member of ['prototype', 'StyleSheet', 'getFontList']) {
+    w.getPath('_global.TextField').push(member).getPath(`_global.${TEXT_FIELD_CLASS}.${member}`);
+    w.op(Op.setMember);
+  }
+  // appendText(text): this.text += text; appendHtml(html): this.htmlText += html
+  for (const [method, member] of [
+    ['appendText', 'text'],
+    ['appendHtml', 'htmlText'],
+  ] as const) {
+    w.getPath('TextField.prototype').push(method);
+    w.function2('', ['added'], 2, Function2Flag.suppressArguments, (body) => {
+      body.push('this').op(Op.getVariable).push(member);
+      field(body, member).push({ register: 1 }).op(Op.add2).op(Op.setMember);
+    });
+    w.op(Op.setMember);
+  }
 }

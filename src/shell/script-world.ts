@@ -4,7 +4,7 @@
 // moving one is now) comes from them. The script runtime's WorldBridge.
 
 import type { Vec3 } from '../scripting/runtime/game-state.ts';
-import type { LivePlacement, WorldBridge } from '../scripting/runtime/runtime.ts';
+import type { LivePlacement, QuestUpdate, WorldBridge } from '../scripting/runtime/runtime.ts';
 import { multiply, type Mat4 } from '../render/math.ts';
 import type { ModelInstance } from '../render/scene-renderer.ts';
 import { matrixPlacement } from '../world/cell-loader.ts';
@@ -171,12 +171,26 @@ export class ScriptWorld implements WorldBridge {
     return Promise.resolve(0);
   }
 
-  helpMessage(text: string): void {
-    this.#terminal.log('papyrus', text);
+  /** Message.ShowAsHelpMessage: the HUD's help text (Play), the terminal in the sandbox. */
+  helpMessage(text: string, event: string, seconds: number, interval: number, times: number): void {
+    if (this.hud.listening) this.hud.helpMessage({ text, event, seconds, interval, times });
+    else this.#terminal.log('papyrus', text);
   }
 
-  objective(_quest: number, _index: number, text: string): void {
-    this.#terminal.log('quest', `objective: ${text}`, 'ok');
+  resetHelpMessage(event: string): void {
+    this.hud.resetHelpMessage(event);
+  }
+
+  /** A quest's update: the HUD's quest notifications (Play), the terminal in the sandbox. */
+  questUpdate(update: QuestUpdate): void {
+    if (this.hud.listening) {
+      this.hud.questUpdate(update);
+      return;
+    }
+    const what = update.objective
+      ? `objective ${update.status}: ${update.objective.text}`
+      : `${update.name} ${update.status}`;
+    this.#terminal.log('quest', what, update.status === 'failed' ? 'warn' : 'ok');
   }
 }
 

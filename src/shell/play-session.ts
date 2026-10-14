@@ -299,6 +299,12 @@ export class PlaySession {
     this.#actorAt = init.actorAt;
     this.#prompt = init.prompt;
     this.#hud = init.hud;
+    if (init.hud) {
+      const hud = init.hud;
+      init.player.onPress = (name) => {
+        hud.userEvent(name);
+      };
+    }
     this.#notice = init.notice;
     this.#onImpact = init.onImpact;
     const active = (): Camera =>

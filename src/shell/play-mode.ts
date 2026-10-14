@@ -107,12 +107,25 @@ export class PlayMode {
       terminal.log('ui', message);
     };
     const ini = new IniSettings(session.vfs.defaultIni);
-    this.#host = new MenuHost(layer, new InterfaceFiles(session.vfs, log), log, {
-      x: ini.number('Interface', 'fSafeZoneX'),
-      y: ini.number('Interface', 'fSafeZoneY'),
-      xWide: ini.number('Interface', 'fSafeZoneXWide'),
-      yWide: ini.number('Interface', 'fSafeZoneYWide'),
-    });
+    this.#host = new MenuHost(
+      layer,
+      new InterfaceFiles(session.vfs, log),
+      log,
+      {
+        x: ini.number('Interface', 'fSafeZoneX'),
+        y: ini.number('Interface', 'fSafeZoneY'),
+        xWide: ini.number('Interface', 'fSafeZoneXWide'),
+        yWide: ini.number('Interface', 'fSafeZoneYWide'),
+      },
+      {
+        // The menus' own debug lines; the game drops them.
+        myLog: () => undefined,
+        // A UI sound by editor id ("UIMenuOK", "UIObjectiveNew"), at no place.
+        PlaySound: (_menu, args) => {
+          void session.sounds().then((sounds) => sounds.playNamed(String(args[1]), undefined));
+        },
+      },
+    );
   }
 
   /** The main menu while it is open (dev checks). */
@@ -134,8 +147,6 @@ export class PlayMode {
       depth: DEPTH.startMenu,
       interactive: true,
       handlers: {
-        // The menus' own debug lines; the game drops them.
-        myLog: () => undefined,
         QuitToDesktop: () => {
           this.onQuit?.();
         },
@@ -208,6 +219,8 @@ export class PlayMode {
     const hud = new HudController(this.#host, session.hud, {
       heading: () => this.#world.heading(),
       runtime: () => session.scriptsReady,
+      controls: session.playerData().then((data) => data.controls),
+      settings: session.settings(),
     });
     this.#hud = hud;
     await hud.open();

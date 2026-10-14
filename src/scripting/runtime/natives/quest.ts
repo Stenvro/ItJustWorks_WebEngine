@@ -40,7 +40,7 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     self ? (state.quests.get(self.formId)?.completed ?? false) : false,
   );
   n('quest.completequest', ({ self }) => {
-    if (self) state.quest(self.formId).completed = true;
+    if (self) quests.complete(self.formId);
     return null;
   });
   n('quest.isactive', ({ self }) =>
@@ -63,20 +63,28 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     if (!self) return null;
     // Displaying an objective starts the quest.
     if (!quests.isRunning(self.formId)) await latent(quests.start(self.formId));
-    const entry = objective(self.formId, int(args[0]));
+    const index = int(args[0]);
+    // The quest's first objective shown announces it (abForce shows one shown before again).
+    const first = ![...state.quest(self.formId).objectives.values()].some((o) => o.displayed);
+    const entry = objective(self.formId, index);
     const displayed = bool(args[1], true);
-    // TODO(M9): the HUD's "objective added / completed" lines and the journal.
     if (displayed && (!entry.displayed || bool(args[2])))
-      runtime.objectiveShown(self.formId, int(args[0]));
+      runtime.questUpdated(self.formId, 'shown', index, first);
     entry.displayed = displayed;
     return null;
   });
+  // A shown objective's completion and failure are announced too.
+  const finish = (quest: number, index: number, status: 'completed' | 'failed', on: boolean) => {
+    const entry = objective(quest, index);
+    if (on && !entry[status] && entry.displayed) runtime.questUpdated(quest, status, index);
+    entry[status] = on;
+  };
   n('quest.setobjectivecompleted', ({ self, args }) => {
-    if (self) objective(self.formId, int(args[0])).completed = bool(args[1], true);
+    if (self) finish(self.formId, int(args[0]), 'completed', bool(args[1], true));
     return null;
   });
   n('quest.setobjectivefailed', ({ self, args }) => {
-    if (self) objective(self.formId, int(args[0])).failed = bool(args[1], true);
+    if (self) finish(self.formId, int(args[0]), 'failed', bool(args[1], true));
     return null;
   });
   n('quest.isobjectivedisplayed', ({ self, args }) =>
@@ -93,14 +101,14 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     self ? (state.quests.get(self.formId)?.objectives.get(int(args[0]))?.failed ?? false) : false,
   );
   n('quest.completeallobjectives', ({ self }) => {
-    for (const entry of self ? state.quest(self.formId).objectives.values() : []) {
-      if (entry.displayed) entry.completed = true;
+    for (const [index, entry] of self ? state.quest(self.formId).objectives : []) {
+      if (self && entry.displayed) finish(self.formId, index, 'completed', true);
     }
     return null;
   });
   n('quest.failallobjectives', ({ self }) => {
-    for (const entry of self ? state.quest(self.formId).objectives.values() : []) {
-      if (entry.displayed) entry.failed = true;
+    for (const [index, entry] of self ? state.quest(self.formId).objectives : []) {
+      if (self && entry.displayed) finish(self.formId, index, 'failed', true);
     }
     return null;
   });
