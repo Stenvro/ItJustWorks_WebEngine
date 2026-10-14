@@ -144,12 +144,19 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     return null;
   });
   n('objectreference.movetonode', async (call) => {
-    // TODO(M8): the node's place in the target's model (loaded 3D); its origin until then.
+    // To the node of the target's model (its 3D must be loaded); its origin without one.
     const reference = self(call);
     const target = ref(call.args[0]);
     const at = target === undefined ? undefined : await runtime.placement(target);
-    if (reference !== undefined && at)
-      runtime.move(reference, [...at.position], [...at.rotation], at.cell, at.world);
+    if (reference === undefined || target === undefined || !at) return null;
+    const node = world.nodePlacement?.(target, str(call.args[1]));
+    runtime.move(
+      reference,
+      node ? [...node.position] : [...at.position],
+      node ? [...node.rotation] : [...at.rotation],
+      at.cell,
+      at.world,
+    );
     return null;
   });
   n('objectreference.movetomyeditorlocation', (call) => {

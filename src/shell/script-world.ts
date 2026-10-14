@@ -5,6 +5,9 @@
 
 import type { Vec3 } from '../scripting/runtime/game-state.ts';
 import type { WorldBridge } from '../scripting/runtime/runtime.ts';
+import { multiply, type Mat4 } from '../render/math.ts';
+import type { ModelInstance } from '../render/scene-renderer.ts';
+import { matrixPlacement } from '../world/cell-loader.ts';
 import type { Terminal } from './terminal.ts';
 
 /** A viewer that shows references to the scripts (the interior or the world viewer). */
@@ -23,6 +26,8 @@ export interface ScriptView {
   /** SetMotionType (1 dynamic .. 4 keyframed). */
   motionTypeChanged?(reference: number, motionType: number): void;
   impulse?(reference: number, direction: Vec3, magnitude: number): void;
+  /** A named node of a shown reference's model: where it is in the world. */
+  nodeWorld?(reference: number, node: string): Mat4 | undefined;
   /** What activating a reference does by default (a script's Activate). */
   activate?(reference: number): void;
 }
@@ -92,6 +97,22 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) view.impulse?.(reference, direction, magnitude);
   }
 
+  hasNode(reference: number, node: string): boolean {
+    for (const view of this.#views) if (view.nodeWorld?.(reference, node)) return true;
+    return false;
+  }
+
+  nodePlacement(reference: number, node: string): { position: Vec3; rotation: Vec3 } | undefined {
+    for (const view of this.#views) {
+      const world = view.nodeWorld?.(reference, node);
+      if (world) {
+        const placement = matrixPlacement(world);
+        return { position: placement.position, rotation: placement.rotation };
+      }
+    }
+    return undefined;
+  }
+
   activate(reference: number): void {
     for (const view of this.#views) view.activate?.(reference);
   }
@@ -114,4 +135,13 @@ export class ScriptWorld implements WorldBridge {
   objective(_quest: number, _index: number, text: string): void {
     this.#terminal.log('quest', `objective: ${text}`, 'ok');
   }
+}
+
+/** A named node of an instance's model in the world (its rest place under the instance). */
+export function instanceNodeWorld(
+  instance: ModelInstance | undefined,
+  node: string,
+): Mat4 | undefined {
+  const local = instance?.model.nodeWorlds.get(node.toLowerCase());
+  return instance && local ? multiply(instance.world, local) : undefined;
 }

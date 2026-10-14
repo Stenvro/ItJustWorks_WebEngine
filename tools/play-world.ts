@@ -174,8 +174,8 @@ export class PlayWorld {
       );
       placed.push(one);
       names.set(object.reference, object.editorId !== '' ? object.editorId : object.model);
-      if (object.keyframed === true) physics.keyframe(one);
-      else if (settlesWhenPlaced(object) && one.dynamic) physics.settle(one);
+      // Weapon racks keyframe their weapons with their scripts (not run in this tool).
+      if (settlesWhenPlaced(object) && one.dynamic) physics.settle(one);
     });
     for (const primitive of data.primitives) {
       if (!isEnabled(primitive.reference)) continue;

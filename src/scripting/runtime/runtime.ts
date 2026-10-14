@@ -82,6 +82,8 @@ export interface WorldBridge {
   impulse?(reference: number, direction: Vec3, magnitude: number): void;
   pushAway?(pushed: number, from: number, force: number): void;
   hasNode?(reference: number, node: string): boolean;
+  /** Where a named node of a loaded reference's model is (MoveToNode). */
+  nodePlacement?(reference: number, node: string): { position: Vec3; rotation: Vec3 } | undefined;
   triggerCount?(reference: number): number;
   openChanged?(reference: number, open: boolean): void;
   lockChanged?(reference: number): void;

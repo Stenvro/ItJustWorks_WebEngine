@@ -27,7 +27,6 @@ export { parseTeleport, type Teleport } from './cell-records.ts';
 import { parseTextureSet, placeDecal, type PlacedDecal, type TextureSet } from './decal.ts';
 import { parseStaticDirectional, type StaticDirectional } from './material-object.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
-import { weaponRackHolds } from './weapon-racks.ts';
 
 export interface CellObject {
   readonly reference: number;
@@ -52,11 +51,6 @@ export interface CellObject {
    * something touches it, instead of settling when its cell loads.
    */
   readonly dontHavokSettle?: boolean;
-  /**
-   * A script holds it keyframed (it does not fall): a weapon a rack holds
-   * (src/world/weapon-racks.ts).
-   */
-  readonly keyframed?: boolean;
   /** XTEL: a load door's destination (the door it leads to and where the player arrives). */
   readonly teleport?: Teleport;
   /** Sounds of using it (SNDR): doors and containers opening and closing, activators. */
@@ -399,6 +393,26 @@ export function referenceMatrix(
   return m;
 }
 
+/**
+ * A reference's placement from a matrix (the inverse of referenceMatrix): its position, its
+ * rotation (radians, as REFR DATA has it) and its scale.
+ */
+export function matrixPlacement(m: Mat4): {
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale: number;
+} {
+  const scale = Math.hypot(m[0] ?? 0, m[1] ?? 0, m[2] ?? 0) || 1;
+  const at = (i: number): number => (m[i] ?? 0) / scale;
+  // referenceMatrix's rotation is X(−rx)·Y(−ry)·Z(−rz); its transpose Z(rz)·Y(ry)·X(rx).
+  const ry = Math.asin(Math.max(-1, Math.min(1, -at(8))));
+  return {
+    position: [m[12] ?? 0, m[13] ?? 0, m[14] ?? 0],
+    rotation: [Math.atan2(at(9), at(10)), ry, Math.atan2(at(4), at(0))],
+    scale,
+  };
+}
+
 function referenceState(ref: PlacedReference): ReferenceState {
   return {
     editorId: ref.editorId,
@@ -480,11 +494,6 @@ export async function loadCellData(
     if (ref.enableParent) pending.push(ref.enableParent.formId);
   }
 
-  // Weapons that racks hold (their scripts keyframe them).
-  const racked = await weaponRackHolds(
-    db,
-    placed.map(({ record }) => record),
-  );
   for (const { record, ref } of placed) {
     const base = await db.get(ref.base);
     if (!base) {
@@ -595,7 +604,6 @@ export async function loadCellData(
       ...leafAnimationOf(base),
       ...emittanceOf(record),
       ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
-      ...(racked.has(ref.formId) && { keyframed: true }),
       ...(base.type === 'DOOR' && { teleport: parseTeleport(record) }),
       ...objectSoundsOf(base),
     });

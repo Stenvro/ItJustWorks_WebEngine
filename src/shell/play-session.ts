@@ -637,8 +637,7 @@ export class PlaySession {
         );
         group.collision.push(placed);
         if (cell.isEnabled?.(object.reference) === false) physics.setEnabled(placed, false);
-        if (object.keyframed === true) physics.keyframe(placed);
-        else if (settlesWhenPlaced(object) && placed.dynamic) group.settle.push(placed);
+        if (settlesWhenPlaced(object) && placed.dynamic) group.settle.push(placed);
         if (instance?.motion) group.moving.push({ placed, instance, motion: instance.motion });
         if (articulated && instance) {
           group.articulated.push(new Articulation(placed, articulated, instance.world));
