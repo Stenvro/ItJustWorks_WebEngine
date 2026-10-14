@@ -519,8 +519,12 @@ export class GameHost implements VmHost {
     n('actor.isdead', () => false);
   }
 
-  /** Quest.SetCurrentStageID: marks the stage done and runs its fragments. */
-  async #setStage({ vm, self, args }: NativeCall): Promise<Value> {
+  /**
+   * Quest.SetCurrentStageID: marks the stage done and runs its fragments, each on a thread of
+   * its own; the caller waits for them, unlocked meanwhile (the Creation Kit warns that setting
+   * a stage in OnInit can deadlock: the fragment waits for the OnInit that waits for it).
+   */
+  async #setStage({ vm, self, args, latent }: NativeCall): Promise<Value> {
     if (!self) return false;
     const stage = typeof args[0] === 'number' ? args[0] : 0;
     const done = this.state.stagesDone.get(self.formId) ?? new Set<number>();
@@ -530,7 +534,7 @@ export class GameHost implements VmHost {
     const attachments = await this.attachments(self.formId);
     for (const fragment of attachments?.fragments ?? []) {
       if (fragment.stage !== stage) continue;
-      await vm.call(new ObjectHandle(self.formId, fragment.script), fragment.function);
+      await latent(vm.call(new ObjectHandle(self.formId, fragment.script), fragment.function));
     }
     return true;
   }

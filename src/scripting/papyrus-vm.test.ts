@@ -216,7 +216,9 @@ describe('Papyrus VM', () => {
 
   it('stops endless loops and reports missing functions and natives', async () => {
     const { vm, host, house } = setup();
-    await expect(vm.call(house, 'Forever')).rejects.toThrow(/instructions/);
+    // A runaway thread is stopped and reported, as the game logs a script error.
+    expect(await vm.call(house, 'Forever')).toBeNull();
+    expect(host.warnings.some((w) => w.includes('instructions without waiting'))).toBe(true);
     expect(await vm.call(house, 'NoSuchFunction')).toBeNull();
     expect(await vm.call(new ObjectHandle(0x20, 'objectreference'), 'GetFormID')).toBe(0);
     expect(host.warnings.some((w) => w.includes('NoSuchFunction'))).toBe(true);
