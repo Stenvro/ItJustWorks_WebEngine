@@ -20,11 +20,11 @@ desktop.ini
 .idea/
 *.swp
 .eslintcache
-# the assistant: the shared launch configuration is kept, local settings are not
-a hidden folder/settings.local.json
+# Assistant tooling: local only, never in the repository
+README.md
 
 # --- Hard rule 1: never game files in the repo ---
-# Game data lives outside the repo (see README.md). This list is a safety net;
+# Game data lives outside the repo (see README.md, "No game files in the repository"). This list is a safety net;
 # tools/check-no-gamefiles.ts (pre-commit hook) also checks file contents.
 /skyrim-data/
 /Data/
