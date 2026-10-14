@@ -5,7 +5,7 @@
 
 import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
-import type { Vec3 } from '../render/math.ts';
+import type { Mat4, Vec3 } from '../render/math.ts';
 import type { Camera, Renderer } from '../render/renderer.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
 import { articulatedPose } from '../physics/articulation.ts';
@@ -81,6 +81,7 @@ import {
 import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
+import { CreatedObjects } from './created-objects.ts';
 import { cellStatesElement } from './cell-states.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { TreeSway } from '../animation/tree-sway.ts';
@@ -359,6 +360,8 @@ export class WorldViewer {
   /** The loaded cells' references with scripts (activating them tells the scripts). */
   readonly #scripted = new Set<number>();
   #detachScripts: (() => void) | undefined;
+  /** What the scripts created in the loaded cells (PlaceAtMe). */
+  #created: CreatedObjects | undefined;
 
   /** What the running game's scripts see of, and do to, the loaded cells. */
   readonly #scriptView: ScriptView = {
@@ -368,7 +371,12 @@ export class WorldViewer {
       [...this.#cells.values()].some((cell) =>
         this.#cellLoadedReferences(cell).includes(reference),
       ),
+    created: (reference) => {
+      void this.#showCreated(reference);
+    },
     livePlacement: (reference) => {
+      const created = this.#created?.get(reference)?.instance?.world;
+      if (created) return { position: [created[12] ?? 0, created[13] ?? 0, created[14] ?? 0] };
       for (const cell of this.#cells.values()) {
         if (!cell.ready) continue;
         const actor = cell.actors.find((placed) => placed.actor.reference === reference);
@@ -383,6 +391,8 @@ export class WorldViewer {
     enableStatesChanged: () => {
       for (const cell of this.#cells.values()) if (cell.ready) this.#refreshCell(cell);
       this.#refreshSounds();
+      const runtime = this.#session?.scriptsReady;
+      if (runtime) this.#created?.refresh(runtime, this.#play);
     },
     moved: (reference) => {
       void this.#scriptMoved(reference);
@@ -423,6 +433,29 @@ export class WorldViewer {
     const runtime = this.#session?.scriptsReady;
     const at = runtime && (await runtime.placement(reference));
     if (!at) return;
+    const created = this.#created?.get(reference);
+    if (created) {
+      const world = referenceMatrix({
+        position: at.position,
+        rotation: at.rotation,
+        scale: at.scale,
+      });
+      for (const collision of this.#play?.placementsOf(reference) ?? []) {
+        this.#play?.physics.teleport(
+          collision,
+          created.instance?.world ?? created.object.world,
+          world,
+        );
+      }
+      if (created.instance?.motion) {
+        created.instance.world.set(world);
+        created.instance.motion.version++;
+      } else {
+        this.#created?.remove(reference, this.#play);
+        await this.#showCreated(reference);
+      }
+      return;
+    }
     for (const cell of this.#cells.values()) {
       const actor = cell.allActors.find((placed) => placed.actor.reference === reference);
       if (actor) {
@@ -454,8 +487,10 @@ export class WorldViewer {
     }
   }
 
-  /** An enabled object of the loaded cells. */
+  /** An enabled object of the loaded cells (or one the scripts created). */
   #objectOf(reference: number): CellObject | undefined {
+    const created = this.#created?.get(reference);
+    if (created) return created.object;
     for (const cell of this.#cells.values()) {
       const object = cell.objects.get(reference);
       if (object) return object;
@@ -567,6 +602,7 @@ export class WorldViewer {
     this.#session = session;
     this.#detachScripts?.();
     this.#detachScripts = session.scriptWorld.attach(this.#scriptView);
+    this.#created = new CreatedObjects(session, this.#renderer);
     this.#landTextures.clear();
     const db = await session.db;
     this.#db = db;
@@ -904,6 +940,14 @@ export class WorldViewer {
         (reference) => loaded.has(reference),
       );
       for (const reference of scripted) this.#scripted.add(reference);
+      for (const [reference, state] of runtime.state.references) {
+        if (!runtime.state.created.has(reference) || !state.position) continue;
+        const key = cellKey(
+          Math.floor(state.position[0] / CELL_SIZE),
+          Math.floor(state.position[1] / CELL_SIZE),
+        );
+        if (key === cellKey(cell.x, cell.y)) await this.#showCreated(reference);
+      }
     } catch (error) {
       this.#terminal.log('papyrus', `scripts not running: ${describe(error)}`, 'warn');
     }
@@ -917,7 +961,37 @@ export class WorldViewer {
         .map(({ object }) => object.reference)
         .filter((reference) => cell.isEnabled(reference)),
       ...cell.actors.map((actor) => actor.actor.reference),
+      ...[...(this.#created?.all ?? [])]
+        .filter(
+          (entry) => !entry.visibility.hidden && this.#cellOfCreated(entry.object.world) === cell,
+        )
+        .map((entry) => entry.reference),
     ];
+  }
+
+  /** The loaded cell a created reference stands in. */
+  #cellOfCreated(world: Mat4): LoadedCell | undefined {
+    const key = cellKey(
+      Math.floor((world[12] ?? 0) / CELL_SIZE),
+      Math.floor((world[13] ?? 0) / CELL_SIZE),
+    );
+    const cell = this.#cells.get(key);
+    return cell?.ready === true ? cell : undefined;
+  }
+
+  /** A reference the scripts created: shown if it stands in a loaded cell of this world. */
+  async #showCreated(reference: number): Promise<void> {
+    const runtime = this.#session?.scriptsReady;
+    const world = this.#world;
+    if (!runtime || !world || !this.#created) return;
+    const at = await runtime.placement(reference);
+    if (at?.world !== world.record.formId) return;
+    const key = cellKey(
+      Math.floor(at.position[0] / CELL_SIZE),
+      Math.floor(at.position[1] / CELL_SIZE),
+    );
+    if (this.#cells.get(key)?.ready !== true || this.#world !== world) return;
+    await this.#created.add(runtime, reference, this.#play);
   }
 
   /** How often each skeleton moves, by where it is seen from (animationInterval). */
@@ -1641,6 +1715,14 @@ export class WorldViewer {
       );
     }
     cell.scriptsAttached = false;
+    for (const entry of [...(this.#created?.all ?? [])]) {
+      const at = entry.object.world;
+      const key = cellKey(
+        Math.floor((at[12] ?? 0) / CELL_SIZE),
+        Math.floor((at[13] ?? 0) / CELL_SIZE),
+      );
+      if (key === cellKey(cell.x, cell.y)) this.#created?.remove(entry.reference, this.#play);
+    }
     this.#play?.remove(cell.collision);
     cell.terrain?.destroy();
     cell.scene?.destroy();
@@ -1661,6 +1743,7 @@ export class WorldViewer {
     if (play && avatar && (play.freeCamera || play.player.pov === 'third')) yield avatar.scene;
     if (this.#lod) yield* this.#lod.scenes();
     for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
+    if (this.#created) yield* this.#created.scenes();
     for (const [key, large] of this.#largeCells) {
       // The full cell shows them once it is ready.
       if (large.ready && large.scene && this.#cells.get(key)?.ready !== true) yield large.scene;
@@ -1747,9 +1830,20 @@ export class WorldViewer {
   #lighting(camera: Vec3): SceneLighting {
     const lights: (PointLight & { distance: number })[] = [];
     const seconds = performance.now() / 1000;
+    const created = this.#created?.lights() ?? [];
     for (const cell of this.#cells.values()) {
       if (!cell.ready) continue;
-      for (const light of pointLights(cell.lights, seconds, camera, this.#emittanceRgb)) {
+      const cellLights = [
+        ...cell.lights,
+        ...created.filter(
+          (light) =>
+            cellKey(
+              Math.floor(light.position[0] / CELL_SIZE),
+              Math.floor(light.position[1] / CELL_SIZE),
+            ) === cellKey(cell.x, cell.y),
+        ),
+      ];
+      for (const light of pointLights(cellLights, seconds, camera, this.#emittanceRgb)) {
         lights.push({
           ...light,
           distance: Math.hypot(

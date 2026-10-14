@@ -17,6 +17,8 @@ export interface ScriptView {
   loaded(reference: number): boolean;
   /** Where a loaded reference is now (moving objects, actors); undefined if not shown here. */
   livePlacement?(reference: number): { position: Vec3; rotation?: Vec3 } | undefined;
+  /** A script created a reference (PlaceAtMe): the view shows it if it is there. */
+  created?(reference: number): void;
   /** Scripts changed what is enabled: the view applies the new states. */
   enableStatesChanged(): void;
   /** A script moved or scaled a reference. */
@@ -61,6 +63,10 @@ export class ScriptWorld implements WorldBridge {
       this.#enableQueued = false;
       for (const view of this.#views) view.enableStatesChanged();
     });
+  }
+
+  created(reference: number): void {
+    for (const view of this.#views) view.created?.(reference);
   }
 
   moved(reference: number): void {
