@@ -17,6 +17,8 @@ import type { StoryEventData } from './story-manager.ts';
 export class QuestEngine {
   readonly #runtime: ScriptRuntime;
   readonly filler: AliasFiller;
+  /** Why each quest that last failed to start did not (the sandbox's quests show it). */
+  readonly notStarted = new Map<number, string>();
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
@@ -39,13 +41,16 @@ export class QuestEngine {
     const state = runtime.state.quest(quest);
     if (state.running) return true;
     if (record.event !== undefined && event?.type !== record.event) {
-      runtime.warn(
-        `${record.editorId}: starts only from the story manager's ${record.event} event`,
-      );
+      const why = `starts only from the story manager's ${record.event} event`;
+      this.notStarted.set(quest, why);
+      runtime.warn(`${record.editorId}: ${why}`);
       return false;
     }
     const runOnce = (record.flags & QuestFlag.runOnce) !== 0;
-    if (runOnce && state.starts > 0) return false;
+    if (runOnce && state.starts > 0) {
+      this.notStarted.set(quest, 'it runs once, and it ran');
+      return false;
+    }
     if (event) state.event = event;
     else delete state.event;
     // Quests that start with a new game may take reserved references (Creation Kit).
@@ -54,10 +59,18 @@ export class QuestEngine {
       if ((record.flags & QuestFlag.warnOnAliasFillFailure) !== 0) {
         runtime.warn(`${record.editorId}: an alias could not be filled, the quest does not start`);
       }
+      const alias = this.filler.failures.get(quest);
+      this.notStarted.set(
+        quest,
+        alias
+          ? `its alias ${alias.name} found nobody to fill it (${alias.fill.kind})`
+          : 'an alias could not be filled',
+      );
       this.#clearAliases(quest);
       delete state.event;
       return false;
     }
+    this.notStarted.delete(quest);
     state.running = true;
     state.starts++;
     state.completed = false;
