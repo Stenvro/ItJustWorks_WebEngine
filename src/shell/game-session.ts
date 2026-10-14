@@ -12,7 +12,7 @@ import { readPlayerData, type PlayerData } from './player.ts';
 import { readCollisionMatrix, type CollisionMatrix } from '../physics/collision-layers.ts';
 import type { ModelTextureSwaps } from '../render/actor-model.ts';
 import type { Renderer } from '../render/renderer.ts';
-import { propertyMaterial, type AddonNode, type PartMaterial } from '../render/model-data.ts';
+import { propertyMaterial, type AddonNode } from '../render/model-data.ts';
 import type {
   EmittanceColor,
   GpuDirectionalMaterial,
@@ -274,30 +274,6 @@ export class GameSession {
   }
 
   /** Models attached at AddOnNodes get no add-ons of their own (no cycles). */
-  /**
-   * A model of its own, not shared with others, its materials changed by `material` (the
-   * main menu's logo, whose shader the menu sets): the caller destroys it.
-   */
-  async ownModel(
-    path: string,
-    material: (material: PartMaterial) => PartMaterial,
-  ): Promise<GpuModel | undefined> {
-    const loaded = await this.loader.loadModel(path);
-    const data = {
-      ...loaded.model,
-      parts: loaded.model.parts.map((part) =>
-        part.material ? { ...part, material: material(part.material) } : part,
-      ),
-    };
-    if (data.parts.length === 0 && data.particles.length === 0) return undefined;
-    const model = await this.#renderer.scene.createModel(data, this.textures);
-    if (data.behaviorGraph !== undefined) {
-      model.graph = await this.behaviorGraph(data.behaviorGraph);
-      if (model.graph) model.skeletal = await this.animation.skeletalGraph(data.behaviorGraph);
-    }
-    return model;
-  }
-
   #model(path: string, withAddons: boolean): Promise<GpuModel | undefined> {
     const key = withAddons ? path : `${path}|addon`;
     let entry = this.#models.get(key);

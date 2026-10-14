@@ -107,23 +107,37 @@ first in the menu's first frame, for its stage shown whole on the screen; the ho
 again once the menu has set its own scale mode and whenever the window resizes
 (`src/ui/stage-rects.ts`).
 
+## Focus and keys
+
+Keys reach a menu as Flash input; CLIK's `InputDelegate` turns them into `handleInput` calls
+down the focus path that `FocusHandler` keeps. Both rely on Scaleform's focus model, which the
+bridge gives each menu: any clip may take focus (Flash: only those with `focusEnabled`), with no
+focus rectangle, and its multi-controller extensions for one controller in focus group 0
+(`System.capabilities.numControllers` 1, `Selection.getControllerFocusGroup` 0,
+`Selection.getControllerMaskByFocusGroup` 1, `Selection.setControllerFocusGroup`,
+`Selection.getModalClip` / `setModalClip`). Without them no menu takes a key.
+
+The engine tells each menu its platform (`SetPlatform(0, false)`: PC with keyboard and mouse);
+the start menu then shows the mouse version of its buttons, and `ShowDeleteButtonHelp(false)`
+hides the delete-save hint while there is no save. PRESS ANY BUTTON (property 3) is not shown:
+the menu opens on its list.
+
 ## The main menu's background: the mist menu
 
 Behind the start menu the game renders its "Mist Menu" (CommonLibSSE-NG's `RE::MistMenu`:
 six directional ambient colours, the mist model, a camera path, the default logo's shader
 property, a load screen model, the image space it replaces). `src/shell/mist-menu.ts`:
 
-- The mist: `meshes\interface\intmenufogparticles.nif` (a particle system on AutoPlay),
+- The mist: `meshesinterfaceintmenufogparticles.nif` (a particle system on AutoPlay),
   turned by `fUIMistModel_RotateZ_G` (-180) and moved by `fUIMistModel_Translate*_G` (0).
-- The logo: `meshes\interface\logo\logo.nif` (a lit, mirror-like shape and the Autoplay
-  behavior), scaled by `fUIMistMenu_DefaultLogoNIFScale` (1), moved by
+- The logo: `meshesinterfacelogologo.nif` (a lit, mirror-like shape, 39 × 73 units, and
+  the Autoplay behavior), scaled by `fUIMistMenu_DefaultLogoNIFScale` (1), moved by
   `fUIAltLogoModel_Translate*_G` (0).
-- The camera: at `fUIMistMenu_CameraX/Y/Z_G` (-50, 600, 80) looking at
-  `fUIMistMenu_CameraLookAtX/Y/Z_G` (-50, 0, 0), `fUIMistMenu_CameraFOV_G` 75 (horizontal, of a
-  4:3 frame, as the world FOV). INI defaults from the STEP INI guide.
-- Light: none, and the ambient colours (`rUIMistMenu_Ambient*`) are 0. The logo's lit shader
-  would show black; the menu keeps the default logo's shader property, and the logo has a fade
-  time (`fUILogoModel_FadeSecs`), so the logo is taken to show by its emissive colour, set to
-  white. This is inferred, not documented.
-- TODO(M9): the AE logo models (`logo01ae*.nif`) for players with the Anniversary upgrade; the
-  camera path (`sUIMistMenu_DefaultLogoCameraPath`, empty by default); the image space.
+- The camera and the light: the INI's camera (`fUIMistMenu_CameraX/Y/Z_G` -50, 600, 80 looking
+  at -50, 0, 0) shows the logo at about 12% of the screen's height, and the data holds no light
+  for the menu (`rUIMistMenu_Ambient*` are 0). Both are fitted to the game as it shows itself
+  (1.7.104, a screenshot of its main menu): the logo 69% of the screen's height, its middle at
+  36% of the width and 47% of the height, lit from the upper left and the front; the field of
+  view is the INI's `fUIMistMenu_CameraFOV_G` (75, horizontal of a 4:3 frame).
+- TODO(M9): the AE logo models (`logo01ae*.nif`, silver to gold) for players with the
+  Anniversary upgrade; the image space the menu sets; how the engine places its camera.

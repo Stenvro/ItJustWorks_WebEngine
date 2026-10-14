@@ -15,7 +15,7 @@
 // The bridge is a DoAction put first in the movie's first frame, so it runs before the menu's
 // own frame scripts. Platform-independent. Notes: docs/ui.md.
 
-import { Avm1Writer, Function2Flag, Op } from '../formats/swf/avm1-writer.ts';
+import { Avm1Writer, Function2Flag, Op, type PushValue } from '../formats/swf/avm1-writer.ts';
 import { readSwf, SwfTagCode, tagBody } from '../formats/swf/swf.ts';
 import { concatBytes, encodeTag, writeSwf } from '../formats/swf/swf-writer.ts';
 import type { Rect } from './stage-rects.ts';
@@ -73,6 +73,27 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   // ExternalInterface, "call", 0, 7) clears that, as an AS2 program may.
   w.push(7, 0, 'call').getPath(EXTERNAL_INTERFACE).push(4, 'ASSetPropFlags');
   w.op(Op.callFunction).op(Op.pop);
+
+  // Scaleform's focus model, which CLIK's FocusHandler and the menus rely on: any clip may
+  // take focus (Flash: only those with focusEnabled), with no yellow focus rectangle; and its
+  // multi-controller extensions, for one controller in focus group 0 (System.capabilities.
+  // numControllers, Selection.getControllerFocusGroup, getControllerMaskByFocusGroup, ...).
+  w.getPath('MovieClip.prototype').push('focusEnabled', true).op(Op.setMember);
+  w.getPath('MovieClip.prototype').push('_focusrect', false).op(Op.setMember);
+  w.push('_focusrect', false).op(Op.setVariable);
+  w.getPath('System.capabilities').push('numControllers', 1).op(Op.setMember);
+  const constant = (object: string, name: string, value: PushValue): void => {
+    w.getPath(object).push(name);
+    w.function2('', [], 1, Function2Flag.suppressThis | Function2Flag.suppressArguments, (body) =>
+      body.push(value).op(Op.return),
+    );
+    w.op(Op.setMember);
+  };
+  constant('Selection', 'getControllerFocusGroup', 0);
+  constant('Selection', 'setControllerFocusGroup', true);
+  constant('Selection', 'getControllerMaskByFocusGroup', 1);
+  constant('Selection', 'getModalClip', null);
+  constant('Selection', 'setModalClip', null);
 
   // ExternalInterface.call = function () {
   //   arguments.unshift(BRIDGE_CALL, menu);
