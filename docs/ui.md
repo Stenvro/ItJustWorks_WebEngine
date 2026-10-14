@@ -56,3 +56,18 @@ first frame (after the header tags; written with `src/formats/swf/avm1-writer.ts
 
 Checked in the browser on `hudmenu.swf`: its own calls reach the page tagged with the menu, and
 `InitExtensions` then `call("SetLocationName", "Whiterun")` set the location text.
+
+## What the menus ask of the engine
+
+`node tools/swf-actions.ts --calls` lists, per menu, the names it passes to `GameDelegate.call`
+(requests the engine answers), to `GameDelegate.addCallBack` (what the engine calls) and to
+`ExternalInterface.call` directly (CLIK's `__handleEvent`). The HUD, for instance, asks
+`RegisterHUDComponents`, `GetButtonFromUserEvent`, `PlaySound` and `myLog`, and offers
+`SetCompassAngle`, `SetCompassMarkers`, `SetHealthMeterPercent`, `SetMagickaMeterPercent`,
+`SetStaminaMeterPercent`, `SetCrosshairTarget`, `SetLocationName`, `ShowNotification`,
+`ShowMessage`, `ShowSubtitle`, `SetLoadDoorInfo`, `ShowElements` and more. The start menu asks
+`NEW`, `CONTINUE`, `StartState`, `EndPressStartState`, `PlaySound`, ... and offers
+`ConfirmNewGame`, `FadeInMenu`, `FadeOutMenu`, ...
+
+Keyboard and mouse reach the movies as Flash input (the Key and Mouse objects; CLIK's
+`InputDelegate` turns keys into `handleInput` down the focus path), as under Scaleform.
