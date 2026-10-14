@@ -82,8 +82,21 @@ describe('water audio', () => {
       min: [-512, -512, 0] as const,
       max: [512, 512, 0] as const,
     };
-    expect(waterAreaHeight(area, 100, 200)).toBeCloseTo(50);
-    expect(waterAreaHeight(area, 600, 200)).toBeCloseTo(50);
-    expect(waterAreaHeight(area, 700, 200)).toBeUndefined();
+    expect(waterAreaHeight(area, 100, 200, 0)).toBeCloseTo(50);
+    expect(waterAreaHeight(area, 600, 200, 900)).toBeCloseTo(50);
+    expect(waterAreaHeight(area, 700, 200, 0)).toBeUndefined();
+  });
+
+  it('takes the height nearest the listener for water running down a slope', () => {
+    // Whiterun's streams: a box 3300 units high from the stairs down past the walls.
+    const area = {
+      type: RIVER,
+      world: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, -3520, 1]),
+      min: [-2524, -2009, -1768] as const,
+      max: [781, 1292, 1539] as const,
+    };
+    expect(waterAreaHeight(area, 0, 0, -3400)).toBeCloseTo(-3400);
+    expect(waterAreaHeight(area, 0, 0, 0)).toBeCloseTo(-3520 + 1539);
+    expect(waterAreaHeight(area, 0, 0, -9000)).toBeCloseTo(-3520 - 1768);
   });
 });

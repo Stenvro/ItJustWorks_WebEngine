@@ -337,6 +337,17 @@ prismatic or malleable ones. Two in an actor's hair name entity −1 (the wearer
 **BSBound** (extra data): name, centre vec3, half extents vec3. A skeleton's "BBX" is the
 actor's collision bound (the human skeleton: centre 0,0,64, half extents 22,14,64).
 
+## Water volumes
+
+A water activator's model holds the water one can enter as **phantoms on the WATER layer**
+(11): `water1024.nif` a box 1024 units wide and deep under its surface, `wrwaterpool01.nif`
+(Whiterun's Wind District pool) two boxes, the Markarth canals, mineral pools, puddles. 27
+vanilla meshes hold such shapes (47 boxes, 2 convex hulls, 1 capsule); the activator's
+bounds (OBND) only say where it is drawn. Water meshes without them (the streams down
+Whiterun's stairs: bounds 3300 units high from the stairs past the walls) are only seen and
+heard. Volumes are placed with the reference (its scale included); hulls and capsules are
+taken as their bounding boxes.
+
 ## TRI (FaceGen morphs)
 
 A head part (HDPT) names its morph files by part type (NAM0 then NAM1 path): 0 race morphs,

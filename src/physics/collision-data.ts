@@ -113,6 +113,34 @@ export interface CollisionData {
   readonly skipped: readonly string[];
 }
 
+const fixedCollisions = new WeakMap<CollisionData, CollisionData>();
+
+/**
+ * The collision of a placed object: statics (STAT) stand still whatever their model says, so
+ * their simulated bodies are fixed and their constraints dropped. The "...Static" clutter
+ * (GlazedCandlesStatic, RuinsPot01Static, the "...ForDisplay" weapons, mounted antlers) reuses
+ * the meshes of the items one can knock over; 165 such statics in a sixth of the interiors.
+ * Movable statics (MSTT) and items move as their models say.
+ */
+export function placedCollision(
+  baseType: string,
+  collision: CollisionData | undefined,
+): CollisionData | undefined {
+  if (!collision || baseType !== 'STAT') return collision;
+  if (!collision.bodies.some((body) => body.motion === 'dynamic')) return collision;
+  let fixed = fixedCollisions.get(collision);
+  if (!fixed) {
+    fixed = {
+      bodies: collision.bodies.map((body) =>
+        body.motion === 'dynamic' ? { ...body, motion: 'fixed', mass: 0 } : body,
+      ),
+      skipped: collision.skipped,
+    };
+    fixedCollisions.set(collision, fixed);
+  }
+  return fixed;
+}
+
 /**
  * Whether a model's bodies move one another (constraints, or several simulated bodies): its
  * nodes then follow their bodies one by one rather than the whole model following one.

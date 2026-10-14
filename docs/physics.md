@@ -22,7 +22,50 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
   stutter. Simulated objects stay asleep until their cell's collision is complete, then
   settle (the warm start) unless "Don't Havok Settle"; their drawn model follows the body.
   Large references beyond the loaded grid and distant LOD have no collision, as in the game.
+- **Statics never move:** a STAT's bodies are fixed whatever its model says
+  (`placedCollision`). The "...Static" clutter (GlazedCandlesStatic, RuinsPot01Static, the
+  "...ForDisplay" weapons on Jorrvaskr's walls, WallMountedElkAntlers) reuses the meshes of the
+  items one can knock over, with their simulated bodies: 165 such statics in a sixth of the
+  interiors. Movable statics (MSTT), items, activators and flora move as their models say.
+- **Settling without throwing:** what a placement overlaps (book corners in a shelf's back
+  panel, a cover into the board under it) is pushed out by the solver; for the first half
+  second after a body is set to settle its speed is taken away after every step, so the push
+  only moves it (Havok recovers penetrations slowly; Rapier's push sent Jorrvaskr's books
+  off their shelves and the weapons off Warmaiden's wall plaques). TODO(M13): how far the
+  engine's warm start goes. Settled over 10 s: Breezehome, Warmaiden's, Belethor's and the
+  Bannered Mare keep everything in place; Jorrvaskr 3 books (placed over a shelf's edge).
+- **Solver:** 8 iterations per step (Rapier's default 4 lets stacks and hinged bodies creep
+  and jitter: 34 bodies of Jorrvaskr stayed awake after 10 s, 9 with 8), at the same cost as
+  fewer bodies stay awake.
+- **An object's bodies never collide with one another** (Havok's group filter gives each
+  placed object a system group): a hanging pheasant's body against the hook it hangs on, a
+  book's covers.
+- **Hung objects** (simulated bodies on a fixed one: hanging game, chains) placed into other
+  collision deeper than a game unit (a pheasant's hook set into a beam, its body in it) never
+  collide with that collision: unable to leave it, it would push against its hinges and swing
+  for good (it did in nearly every inn). Found by the contacts after their first step.
 - **Keyframed bodies** (door leaves) follow their node in the sequence the object plays.
+
+## Actors on the ground
+
+Until actors get their own character controllers (TODO(M10)), placed actors are set on the
+ground as a controller would put them when their cell loads (`src/world/actor-ground.ts`):
+once the cell's collision is complete, a ray straight down from 16 units above the
+reference to 16 below it, on what the character controller collides with, gives the feet's
+height. Races that tilt lean with the ground's normal there: RACE DATA flag 0x8 "tilt
+front/back" (four-legged animals) about their sideways axis, 0x10 "tilt left/right" (spiders,
+chaurus, mudcrabs, mammoths) about their length too; others stay upright. Races that do not
+walk (0x100 "walks" unset: slaughterfish) stay where they were placed, and so do actors further
+off the ground, put there on purpose (Falmer and automatons waiting in ambush in the walls,
+corpses on tables; their packages and furniture are M10). Mzinchaleft's actors moved by up to
+12 units this way.
+
+## Water volumes
+
+Swimming and the sound under water test where water can be entered
+(`src/world/water-volumes.ts`): a water activator's (ACTI WNAM) WATER-layer phantoms
+([nif.md](formats/nif.md#water-volumes)), and the cell's water plane where it lies above the
+landscape (no bottom). Water without a volume is only seen and heard.
 
 ## The character controller
 

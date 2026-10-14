@@ -21,11 +21,23 @@ export interface AnimatedSkeleton {
 /** A frame longer than this (a hitch, a hidden tab) advances the graphs by this much. */
 const MAX_STEP = 0.1;
 
-/** Moves every skeleton: its graph runs to `seconds` on the renderer's clock. */
-export function animateSkeletons(skeletons: Iterable<AnimatedSkeleton>, seconds: number): void {
+/**
+ * Moves every skeleton: its graph runs to `seconds` on the renderer's clock. `interval`
+ * says how often one is moved at the least (seconds; 0: every frame): far or unseen ones less
+ * often, their graphs then running a longer step at once.
+ */
+export function animateSkeletons(
+  skeletons: Iterable<AnimatedSkeleton>,
+  seconds: number,
+  interval?: (animated: AnimatedSkeleton) => number,
+): void {
   for (const animated of skeletons) {
+    const every = interval?.(animated) ?? 0;
+    if (animated.time !== undefined && seconds - animated.time < every) continue;
     const dt =
-      animated.time === undefined ? 0 : Math.min(MAX_STEP, Math.max(0, seconds - animated.time));
+      animated.time === undefined
+        ? 0
+        : Math.min(Math.max(MAX_STEP, every * 2), Math.max(0, seconds - animated.time));
     animated.time = seconds;
     animated.face?.update(dt);
     const behavior = animated.behavior;
@@ -93,4 +105,31 @@ export function startObjectSkeleton(
   behavior.takeRaised();
   pose.update(behavior.pose);
   return { skeleton: { pose, behavior, time: undefined }, poseNodes };
+}
+
+/** Skeletons nearer the camera than this move every frame, seen or not (game units). */
+const ANIMATE_NEAR = 512;
+/** Beyond this, or behind the camera, they move ten times a second. */
+const ANIMATE_MID = 2048;
+/** Beyond this five times a second. */
+const ANIMATE_FAR = 4096;
+
+/**
+ * How often a skeleton at \`at\` is moved (animateSkeletons' interval): every frame near the
+ * camera and in front of it, less often far away or behind it, where a coarser pose is not
+ * seen. The engine's own scheme (actors' processing levels) is not documented: TODO(M13).
+ */
+export function animationInterval(
+  at: readonly [number, number, number],
+  camera: readonly [number, number, number],
+  forward: readonly [number, number, number] | undefined,
+): number {
+  const dx = at[0] - camera[0];
+  const dy = at[1] - camera[1];
+  const dz = at[2] - camera[2];
+  const distance = Math.hypot(dx, dy, dz);
+  if (distance < ANIMATE_NEAR) return 0;
+  if (distance > ANIMATE_FAR) return 0.2;
+  const behind = forward !== undefined && dx * forward[0] + dy * forward[1] + dz * forward[2] < 0;
+  return behind || distance > ANIMATE_MID ? 0.1 : 0;
 }

@@ -12,8 +12,15 @@ import { invert } from '../render/frustum.ts';
 import { transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 
-/** Water at a point: its surface height and type (WATR), if water covers the ground there. */
-export type WaterAt = (x: number, y: number) => { height: number; type: number } | undefined;
+/**
+ * Water at a point: its surface height (the one nearest the height `z`) and type (WATR), if
+ * water covers the ground there.
+ */
+export type WaterAt = (
+  x: number,
+  y: number,
+  z: number,
+) => { height: number; type: number } | undefined;
 
 /** A water activator's surface (CellWaterArea). */
 export interface WaterArea {
@@ -25,16 +32,24 @@ export interface WaterArea {
 
 /**
  * The surface height of a water activator over a point, if the point lies within its bounds:
- * the top of its box (water meshes are flat), in the world.
+ * the top of its box for flat water; water running down a slope or stairs (Whiterun's streams)
+ * lies somewhere between its box's bottom and top, taken as the height there nearest `z`.
  */
-export function waterAreaHeight(area: WaterArea, x: number, y: number): number | undefined {
-  const height = transformPoint(area.world, [0, 0, area.max[2]])[2];
+export function waterAreaHeight(
+  area: WaterArea,
+  x: number,
+  y: number,
+  z: number,
+): number | undefined {
+  const top = transformPoint(area.world, [0, 0, area.max[2]])[2];
+  const bottom = transformPoint(area.world, [0, 0, area.min[2]])[2];
   const toLocal = invert(area.world);
   if (!toLocal) return undefined;
-  const [lx, ly] = transformPoint(toLocal, [x, y, height]);
-  return lx >= area.min[0] && lx <= area.max[0] && ly >= area.min[1] && ly <= area.max[1]
-    ? height
-    : undefined;
+  const [lx, ly] = transformPoint(toLocal, [x, y, top]);
+  if (lx < area.min[0] || lx > area.max[0] || ly < area.min[1] || ly > area.max[1]) {
+    return undefined;
+  }
+  return Math.min(Math.max(z, Math.min(bottom, top)), Math.max(bottom, top));
 }
 
 /** A playing water loop as water audio controls it (SoundInstance). */
@@ -127,7 +142,7 @@ export class WaterAudio {
       for (let j = 0; j < count; j++) {
         const x = listener[0] - reach + i * step;
         const y = listener[1] - reach + j * step;
-        const water = waterAt(x, y);
+        const water = waterAt(x, y, listener[2]);
         if (!water) continue;
         const sound = this.#sound(water.type);
         if (sound === undefined) continue;

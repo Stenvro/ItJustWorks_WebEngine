@@ -118,8 +118,8 @@ export const MAX_SLOPE = 60;
 
 export interface PlayerSetup extends PlayerData {
   readonly physics: PhysicsWorld;
-  /** The water surface at a point, if there is water there. */
-  readonly waterHeight: (x: number, y: number) => number | undefined;
+  /** The surface of the water a point (the feet) is in or over, if any. */
+  readonly waterHeight: (x: number, y: number, z: number) => number | undefined;
 }
 
 /**
@@ -411,7 +411,7 @@ export class Player implements Camera {
     const moving = x !== 0 || y !== 0;
     // Swimming: deep enough water lifts the body.
     const [fx, fy, fz] = character.feet;
-    const water = this.#setup.waterHeight(fx, fy);
+    const water = this.#setup.waterHeight(fx, fy, fz);
     const depth = water === undefined ? 0 : (water - fz) / character.shape.height;
     const swimming =
       depth >= SWIM_SUBMERSION || (character.swimming && depth > SWIM_SUBMERSION - 0.05);

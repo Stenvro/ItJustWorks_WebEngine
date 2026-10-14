@@ -245,7 +245,9 @@ describe('physics constraints', () => {
   });
   const heightAfter = (data: CollisionData, seconds: number, push?: number): number => {
     const physics = new PhysicsWorld(matrix, GRAVITY);
-    const placed = physics.addObject(data, IDENTITY, { reference: 1, kind: 'object' });
+    // Not placed to settle (that would hold it still a moment): woken at once.
+    const placed = physics.addObject(data, IDENTITY, { reference: 1, kind: 'object' }, false);
+    for (const { body } of placed.bodies) body.wakeUp();
     const weight = placed.bodies[1]?.body;
     if (push !== undefined) weight?.applyImpulse({ x: push, y: 0, z: 0 }, true);
     for (let t = 0; t < seconds; t += 1 / 60) physics.step(1 / 60);
@@ -301,5 +303,104 @@ describe('physics constraints', () => {
     expect(heightAfter(hanging(rope, { threshold: 1, removeWhenBroken: false }), 1)).toBeLessThan(
       -200,
     );
+  });
+});
+
+describe('settling placed objects', () => {
+  /** Clutter rests on statics and on other clutter. */
+  const clutterMatrix = new CollisionMatrix([
+    { formId: 1, editorId: 'L_STATIC', index: Layer.static, name: '', flags: 0, collidesWith: [4] },
+    {
+      formId: 4,
+      editorId: 'L_CLUTTER',
+      index: Layer.clutter,
+      name: '',
+      flags: 0,
+      collidesWith: [1, 4],
+    },
+  ]);
+  const clutter = (
+    min: [number, number, number],
+    max: [number, number, number],
+  ): CollisionBody => ({
+    ...body({ ...box(min, max), layer: Layer.clutter }),
+    motion: 'dynamic',
+    layer: Layer.clutter,
+    mass: 5,
+    inertia: [0.05, 0.05, 0.05],
+  });
+
+  it('pushes an object out of what it was placed in without throwing it', () => {
+    const physics = new PhysicsWorld(clutterMatrix, GRAVITY);
+    physics.addObject(collision(body(box([-200, -200, -20], [200, 200, 0]))), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    // A book's cover placed 4 units into the shelf board under it.
+    const placed = physics.addObject(collision(clutter([-10, -10, -4], [10, 10, 6])), IDENTITY, {
+      reference: 2,
+      kind: 'object',
+    });
+    for (let i = 0; i < 120; i++) physics.step(1 / 60);
+    const cover = placed.bodies[0]?.body;
+    const at = cover?.translation() ?? { x: 0, y: 0, z: 0 };
+    const speed = cover?.linvel() ?? { x: 0, y: 0, z: 0 };
+    // Out on the board (its centre 5 above it, within the solver's slop), where it was, at rest.
+    expect(at.z * 69.99125).toBeGreaterThan(3.5);
+    expect(Math.hypot(at.x, at.y) * 69.99125).toBeLessThan(1);
+    expect(Math.hypot(speed.x, speed.y, speed.z) * 69.99125).toBeLessThan(5);
+    physics.free();
+  });
+
+  it('lets a hung body pass through what it was placed into, and still rest', () => {
+    const physics = new PhysicsWorld(clutterMatrix, GRAVITY);
+    // A beam the pheasant's hook is set into.
+    physics.addObject(collision(body(box([-50, -50, -20], [50, 50, 20]))), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    const hook = body(box([-2, -2, 18], [2, 2, 22]));
+    const pheasant = clutter([-6, -6, -10], [6, 6, 10]);
+    const placed = physics.addObject(
+      {
+        bodies: [hook, pheasant],
+        constraints: [
+          {
+            bodyA: 1,
+            bodyB: 0,
+            data: { type: 'ball-and-socket', pivotA: [0, 0, 10], pivotB: [0, 0, 10] },
+          },
+        ],
+        skipped: [],
+      },
+      IDENTITY,
+      { reference: 2, kind: 'object' },
+    );
+    for (let i = 0; i < 300; i++) physics.step(1 / 60);
+    const rigid = placed.bodies[1]?.body;
+    const speed = rigid?.linvel() ?? { x: 0, y: 0, z: 0 };
+    // Not pushed out of the beam against its hinge: it hangs still where it was.
+    expect(Math.hypot(speed.x, speed.y, speed.z) * 69.99125).toBeLessThan(1);
+    expect(Math.abs((rigid?.translation().x ?? 0) * 69.99125)).toBeLessThan(2);
+    physics.free();
+  });
+
+  it("does not let an object's bodies collide with one another", () => {
+    const physics = new PhysicsWorld(clutterMatrix, GRAVITY);
+    // A hanging pheasant's hook (fixed) and its body (simulated) placed inside the hook.
+    const placed = physics.addObject(
+      collision(
+        { ...body(box([-20, -20, -20], [20, 20, 20])), layer: Layer.clutter },
+        clutter([-5, -5, -5], [5, 5, 5]),
+      ),
+      IDENTITY,
+      { reference: 1, kind: 'object' },
+      false,
+    );
+    for (const { body: rigid } of placed.bodies) rigid.wakeUp();
+    for (let i = 0; i < 60; i++) physics.step(1 / 60);
+    // It fell through the hook as through nothing.
+    expect((placed.bodies[1]?.body.translation().z ?? 0) * 69.99125).toBeLessThan(-200);
+    physics.free();
   });
 });

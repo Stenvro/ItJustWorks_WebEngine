@@ -18,7 +18,6 @@
 //                                              player through it both ways
 
 import RAPIER from '@dimforge/rapier3d-compat';
-import { waterAreaHeight } from '../src/audio/water-audio.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
 import { HAVOK_SCALE, type CollisionBody } from '../src/physics/collision-data.ts';
 import { Layer } from '../src/physics/collision-layers.ts';
@@ -32,6 +31,7 @@ import { cellArrival, loadCellData, type CellData } from '../src/world/cell-load
 import { enabledAtGameStart, parseTeleport } from '../src/world/cell-records.ts';
 import { CELL_SIZE, LAND_GRID } from '../src/world/land.ts';
 import { cellWater } from '../src/world/water.ts';
+import { surfaceOver } from '../src/world/water-volumes.ts';
 import { Worldspace } from '../src/world/worldspace.ts';
 import { PlayWorld } from './play-world.ts';
 
@@ -196,7 +196,7 @@ function tryArrival(
 
 function newPlayer(
   physics: PhysicsWorld,
-  water: (x: number, y: number) => number | undefined,
+  water: (x: number, y: number, z: number) => number | undefined,
 ): Player {
   return game.newPlayer(physics, water);
 }
@@ -491,22 +491,17 @@ for (const cell of interiors) {
       physics.free();
       continue;
     }
-    // Interiors' water is placed: the water activators' surfaces.
-    const waterAt = (x: number, y: number): number | undefined => {
-      for (const area of data.waterAreas) {
-        if (!isEnabled(area.reference)) continue;
-        const height = waterAreaHeight(area, x, y);
-        if (height !== undefined) return height;
-      }
-      return undefined;
-    };
+    // Interiors' water is placed: the water activators' volumes.
+    const volumes = await game.waterVolumesIn(data, isEnabled);
+    const waterAt = (x: number, y: number, z: number): number | undefined =>
+      surfaceOver(volumes, x, y, z)?.height;
     const player = newPlayer(physics, waterAt);
     for (const arrival of arrivals) {
-      const [x, y] = arrival.position;
+      const [x, y, z] = arrival.position;
       await report(
         cell.editorId,
         arrival,
-        tryArrival(physics, player, arrival, waterAt(x, y), names),
+        tryArrival(physics, player, arrival, waterAt(x, y, z), names),
       );
     }
     player.free();

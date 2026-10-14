@@ -90,7 +90,7 @@ export function groundUnder(
 export function soundPlacedActors(actors: readonly PlacedActorLike[], world: SoundingWorld): void {
   for (const placed of actors) {
     placed.onEvents = actorSounds(
-      { look: placed.look, feet: () => placed.actor.position, gait: () => 'walk', player: false },
+      { look: placed.look, feet: () => feetOf(placed), gait: () => 'walk', player: false },
       world,
     );
   }
@@ -100,5 +100,13 @@ export function soundPlacedActors(actors: readonly PlacedActorLike[], world: Sou
 interface PlacedActorLike {
   readonly look: ActorLook;
   readonly actor: { readonly position: Vec3 };
+  /** Its placement (its feet are where it was set on the ground). */
+  readonly instances: readonly { readonly world: Float32Array }[];
   onEvents?: (events: readonly string[]) => void;
+}
+
+/** Where a placed actor's feet are: its placement, else its reference. */
+function feetOf(placed: PlacedActorLike): Vec3 {
+  const world = placed.instances[0]?.world;
+  return world ? [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] : placed.actor.position;
 }

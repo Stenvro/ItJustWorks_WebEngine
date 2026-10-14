@@ -167,13 +167,17 @@ Each water type's open sound (WATR SNAM: AMBWaterRiverLPSD for rivers and lakes,
 cave pools and Blackreach, Apocrypha's sea) loops while such water is near (`water-audio.ts`).
 Following the `[Audio]` settings, a grid of uWaterAudioAxisSamplePoints² (8 × 8) points
 around the listener, reaching uWaterAudioAmbientAttenuation (2200) units each way, is checked
-for water four times a second: a water activator's surface (ACTI WNAM, its bounds), else the
-cell's water where it lies above the landscape (indoors: everywhere in the cell). The
+for water four times a second: a water activator's surface (ACTI WNAM, within its bounds: their
+top for flat water; water running down a slope or stairs, as Whiterun's streams, lies
+somewhere between the bounds' bottom and top and is taken at the height nearest the listener),
+else the cell's water where it lies above the landscape (indoors: everywhere in the cell). The
 uWaterAudioSamplePointsToUse (8) nearest water points place each type's loop: towards their
 centre (weighted by nearness) at the nearest one's distance, so it follows the shore without
 jumping; it fades in over fWaterAudioFadeInSeconds (3 s) and out over fWaterAudioFadeOutSeconds
 (5 s). How the engine combines the points is not documented: TODO(M13).
 
-**Under water** (the camera below the water's surface): the categories that mute when
+**Under water** (the camera in water: below the surface of a water activator's volume or of
+the cell's water, see [physics.md](physics.md#water-volumes)): the categories that mute when
 submerged (SNCT FNAM 0x1) fall silent and the default object UWLS (AMBUnderwater2DLPM)
-loops.
+loops. Whiterun's streams have no volume: walking past them (out of Breezehome) is not under
+water, as their bounds' top, 1500 units above the street, once made it.

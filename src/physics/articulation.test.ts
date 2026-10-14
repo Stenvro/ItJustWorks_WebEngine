@@ -89,7 +89,8 @@ describe('articulated objects', () => {
     const world = identity();
     world[12] = 1000;
     world[13] = 500;
-    const placed = physics.addObject(collision, world, { reference: 1, kind: 'object' });
+    const placed = physics.addObject(collision, world, { reference: 1, kind: 'object' }, false);
+    for (const { body } of placed.bodies) body.wakeUp();
     const swing = new Articulation(placed, articulated.pose, world);
     physics.step(1 / 60);
     const weight = placed.bodies[1]?.body;

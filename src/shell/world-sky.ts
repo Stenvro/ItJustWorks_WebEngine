@@ -135,10 +135,12 @@ export class WorldSky {
       const id = Number(ui.weather.value);
       if (!Number.isFinite(id) || id === 0) {
         this.#pinned = false;
+        session.pinnedWeather = undefined;
         this.#cell = undefined; // re-pick from the region on the next update
         return;
       }
       this.#pinned = true;
+      session.pinnedWeather = id;
       void this.#changeWeather(id, false);
     };
     ui.time.addEventListener('input', onTime);
@@ -150,6 +152,13 @@ export class WorldSky {
     ui.time.value = String(this.#hour);
     ui.timeLabel.value = formatHour(this.#hour);
     ui.sky.hidden = false;
+    // A weather picked by hand (also indoors) stays.
+    const pinned = session.pinnedWeather;
+    if (pinned !== undefined) {
+      this.#pinned = true;
+      void this.#changeWeather(pinned, false);
+    }
+    this.#fillWeatherSelect();
   }
 
   static async create(
@@ -257,6 +266,7 @@ export class WorldSky {
   /** Sets a weather by form id at once (dev helper); `transition` fades to it instead. */
   async setWeather(formId: number, transition = false): Promise<void> {
     this.#pinned = true;
+    this.#session.pinnedWeather = formId;
     await this.#changeWeather(formId, transition);
   }
 
@@ -516,25 +526,37 @@ export class WorldSky {
     return pending;
   }
 
+  /** The region's weathers with their chances, then every other weather (as the console's fw). */
   #fillWeatherSelect(): void {
     const select = this.#ui.weather;
-    const current = this.#pinned ? select.value : '0';
-    const options = [new Option('as the region picks', '0')];
     const total = this.#list.reduce((sum, entry) => sum + entry.chance, 0) || 1;
-    void Promise.all(this.#list.map((entry) => this.#weatherRecord(entry.weather))).then(
-      (records) => {
-        records.forEach((record, i) => {
-          const entry = this.#list[i];
-          if (!record || !entry) return;
-          const percent = Math.round((entry.chance / total) * 100);
-          options.push(
-            new Option(`${record.editorId} · ${String(percent)}%`, String(record.formId)),
-          );
-        });
-        select.replaceChildren(...options);
-        select.value = current;
-        if (select.value !== current) select.value = '0';
-      },
-    );
+    void Promise.all([
+      Promise.all(this.#list.map((entry) => this.#weatherRecord(entry.weather))),
+      this.#session.weathers(),
+    ]).then(([records, all]) => {
+      const current = this.#pinned ? String(this.#session.pinnedWeather ?? 0) : '0';
+      const region = document.createElement('optgroup');
+      region.label = 'this region';
+      const listed = new Set<number>();
+      records.forEach((record, i) => {
+        const entry = this.#list[i];
+        if (!record || !entry) return;
+        listed.add(record.formId);
+        const percent = Math.round((entry.chance / total) * 100);
+        region.append(
+          new Option(`${record.editorId} · ${String(percent)}%`, String(record.formId)),
+        );
+      });
+      const others = document.createElement('optgroup');
+      others.label = 'all weathers';
+      for (const weather of all) {
+        if (!listed.has(weather.formId)) {
+          others.append(new Option(weather.editorId, String(weather.formId)));
+        }
+      }
+      select.replaceChildren(new Option('as the region picks', '0'), region, others);
+      select.value = current;
+      if (select.value !== current) select.value = '0';
+    });
   }
 }

@@ -123,6 +123,8 @@ export interface CollisionGroup {
   readonly posed: PosedCollision[];
   /** Objects whose bodies move their nodes one by one (ragdolls, hinged signs, chains). */
   readonly articulated: Articulation[];
+  /** What waits for all of it to be in place (actors set on the ground). */
+  readonly whenComplete: (() => void)[];
 }
 
 /** A placed object's bodies on nodes its skeleton moves. */
@@ -162,6 +164,7 @@ export function collisionGroup(): CollisionGroup {
     animated: [],
     posed: [],
     articulated: [],
+    whenComplete: [],
   };
 }
 
@@ -179,6 +182,8 @@ export interface CellCollision {
   }[];
   /** Enabled collision primitives. */
   readonly primitives: readonly CellPrimitive[];
+  /** Runs once all of it is in place (and queries see it). */
+  readonly whenComplete?: () => void;
 }
 
 export class PlaySession {
@@ -192,6 +197,8 @@ export class PlaySession {
   readonly #groundReady: (feet: Vec3) => boolean;
   readonly #searchAbove: number;
   readonly #queue: { readonly group: CollisionGroup; readonly run: () => void }[] = [];
+  /** Callbacks of cells whose collision is complete, run once queries see it. */
+  readonly #completed: (() => void)[] = [];
   readonly #groups = new Set<CollisionGroup>();
   #spawnPending = true;
   /** When the player started waiting for the ground (seconds). */
@@ -370,6 +377,10 @@ export class PlaySession {
       this.#activate(hit);
     }
     for (const impact of this.physics.drainImpacts()) this.#onImpact?.(impact);
+    // What waited for cells' collision, once queries see it.
+    if (this.#completed.length > 0 && this.physics.queriesCurrent) {
+      for (const run of this.#completed.splice(0)) run();
+    }
     // Ragdolls and hinged objects: their nodes go where their bodies went.
     for (const group of this.#groups) for (const entry of group.articulated) entry.update();
     // Simulated objects that move take their drawn models along.
@@ -545,6 +556,7 @@ export class PlaySession {
   #complete(group: CollisionGroup): void {
     group.ready = true;
     for (const placed of group.settle.splice(0)) this.physics.settle(placed);
+    this.#completed.push(...group.whenComplete.splice(0));
   }
 
   #trySpawn(): void {
@@ -580,6 +592,7 @@ export class PlaySession {
     const physics = this.physics;
     this.#groups.add(group);
     const tasks: (() => void)[] = [];
+    if (cell.whenComplete) group.whenComplete.push(cell.whenComplete);
     const land = cell.land;
     if (land) {
       tasks.push(() => {
@@ -656,6 +669,7 @@ export class PlaySession {
     group.posed.length = 0;
     group.articulated.length = 0;
     group.settle.length = 0;
+    group.whenComplete.length = 0;
     group.ready = false;
     this.#groups.delete(group);
   }
