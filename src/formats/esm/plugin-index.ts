@@ -221,7 +221,8 @@ export async function readRecord(
 /**
  * Visits every record in file order with its decompressed data, reading the file in large
  * chunks. With `types` (four-character codes as integers), only records of those types are
- * read. For tools, verification passes and indexes over a few record types.
+ * read, and with `accept` only those it accepts (by their index entry). For tools,
+ * verification passes and indexes over a few record types.
  */
 export async function forEachRecord(
   source: ByteSource,
@@ -230,10 +231,12 @@ export async function forEachRecord(
   types?: ReadonlySet<number>,
   chunkSize = DEFAULT_CHUNK,
   range: readonly [number, number] = [0, index.recordCount],
+  accept?: (record: number) => boolean,
 ): Promise<void> {
   const reader = new ChunkReader(source, chunkSize);
   for (let record = range[0]; record < range[1]; record++) {
     if (types && !types.has(index.types[record] ?? 0)) continue;
+    if (accept && !accept(record)) continue;
     const offset = index.offsets[record] ?? 0;
     const size = index.dataSizes[record] ?? 0;
     const bytes = await reader.read(offset, RECORD_HEADER_SIZE + size);

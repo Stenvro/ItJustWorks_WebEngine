@@ -536,6 +536,10 @@ export class ActorEngine {
   async isDead(reference: number): Promise<boolean> {
     const set = this.#runtime.state.actors.get(reference)?.dead;
     if (set !== undefined) return set;
+    const flags = this.#runtime.indexedFlags(reference);
+    if (flags !== undefined) {
+      return this.#runtime.isIndexedActor(reference) && (flags & RecordFlag.startsDead) !== 0;
+    }
     const record = await this.#runtime.forms.record(reference);
     return record?.type === 'ACHR' && (record.flags & RecordFlag.startsDead) !== 0;
   }

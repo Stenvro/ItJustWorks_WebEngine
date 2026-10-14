@@ -80,6 +80,8 @@ for (const formId of shouldRun) {
   const record = await runtime.forms.quest(formId);
   const startsWithGame = record !== undefined && (record.flags & 0x1) !== 0;
   if (!startsWithGame && record?.editorId !== 'MQ101') continue;
+  // Quests that ran and stopped themselves (the update and DLC set-up quests) started.
+  if ((runtime.state.quests.get(formId)?.starts ?? 0) > 0) continue;
   const alias = runtime.quests.filler.failures.get(formId);
   const why = alias
     ? `alias ${alias.name || String(alias.id)} (${alias.fill.kind}) stays empty`
