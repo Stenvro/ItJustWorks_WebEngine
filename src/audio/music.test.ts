@@ -171,6 +171,10 @@ const night = {
   strings: [],
   runOn: 0,
   reference: 0,
+  raw1: 0,
+  form2: 0,
+  param3: -1,
+  eventMember: '',
 };
 
 describe('music', () => {

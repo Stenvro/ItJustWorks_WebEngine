@@ -37,6 +37,10 @@ export interface Condition {
   readonly form: number;
   /** The second parameter as an integer. */
   readonly param2: number;
+  /** The first parameter as stored (GetEventData packs its function and member in it). */
+  readonly raw1: number;
+  /** The second parameter as a global form id (for functions whose second takes a form). */
+  readonly form2: number;
   /** String parameters (CIS1, CIS2). */
   readonly strings: readonly string[];
   /**
@@ -46,6 +50,10 @@ export interface Condition {
   readonly runOn: number;
   /** The reference it runs on (a global form id) when `runOn` is a reference. */
   readonly reference: number;
+  /** The third parameter: the alias it runs on (`runOn` quest alias), or the event member. */
+  readonly param3: number;
+  /** The event member it runs on ("R1", "L1", ...) when `runOn` is event data. */
+  readonly eventMember: string;
 }
 
 /** CTDA run-on values. */
@@ -94,9 +102,17 @@ export function conditionAt(
       (flags & 0x04) !== 0 ? { global: source.formIdAt(field.data, 4) } : data.getFloat32(4, true),
     form: source.formIdAt(field.data, 12),
     param2: data.getInt32(16, true),
+    raw1: data.getUint32(12, true),
+    form2: source.formIdAt(field.data, 16),
     strings,
     runOn,
     reference: runOn === ConditionRunOn.reference ? source.formIdAt(field.data, 24) : 0,
+    param3: field.data.length >= 32 ? data.getInt32(28, true) : -1,
+    // Event data: the member's two letters in the third parameter (offset 28).
+    eventMember:
+      runOn === ConditionRunOn.eventData && field.data.length >= 30
+        ? String.fromCharCode(field.data[28] ?? 0, field.data[29] ?? 0)
+        : '',
   };
 }
 
