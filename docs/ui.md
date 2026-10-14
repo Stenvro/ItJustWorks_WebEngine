@@ -189,3 +189,17 @@ viewport, LOD adjust, scene, screen polygons and textures). The paths place the 
 units in front of the model on the -Y side: it looks along +Y with +Z up (the NiCamera's 90°
 turn maps Gamebryo's X-forward camera onto the world's axes); the frustum gives 45° across a
 4:3 frame. TODO(M9): turning the model with the mouse within ONAM's limits.
+
+## The HUD
+
+In the game Play opens `hudmenu.swf` (`src/shell/hud-controller.ts`):
+`HUDMovieBaseInstance.InitExtensions()` and `SetPlatform(0, false)`, then every frame the
+GameDelegate callbacks the engine drives it with: `SetCompassAngle(playerAngle, compassAngle,
+show)` (the heading in degrees, 0 north, 90 east; the compass strip is placed by lerping
+`CompassZeroX` → `CompassThreeSixtyX` over 0..360), `SetHealthMeterPercent`,
+`SetMagickaMeterPercent`, `SetStaminaMeterPercent` (0..100, from the player's actor values),
+`SetCrosshairTarget(abActivate, aName, abShowButton, abTextOnly, abFavorMode, abShowCrosshair,
+aWeight, aCost, aFieldValue, aFieldText)` for what the crosshair is on (the play session's
+activation target, through `HudSignals`), and `ShowMessage` for Debug.Notification (the
+messages at the top left; `ShowNotification` is for quest updates). The engine's own prompt,
+notice and loading screen stay out of Play.

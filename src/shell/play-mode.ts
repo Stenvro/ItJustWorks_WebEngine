@@ -4,7 +4,7 @@
 // mist-menu.ts). New starts a new game: the loading menu (loadingmenu.swf) over a loading
 // screen (LSCR) while the game's scripts start their new game, until the opening has placed the
 // player (MQ101: the cart to Helgen) and the world there has loaded.
-// TODO(M9): the HUD and the in-game menus.
+// In the game the HUD shows (hud-controller.ts). TODO(M9): the in-game menus.
 
 import type { Renderer } from '../render/renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -17,6 +17,7 @@ import {
 } from '../world/loading-screens.ts';
 import { InterfaceFiles } from '../ui/interface-files.ts';
 import { MistMenu } from './mist-menu.ts';
+import { HudController } from './hud-controller.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -65,6 +66,8 @@ export interface PlayWorld {
   enter(at: Placement): Promise<void>;
   /** Whether the world follows the scripts' MoveTo of the player (Play: yes). */
   follow(on: boolean): void;
+  /** The player's heading: radians, 0 north (+Y), π/2 east (+X); undefined out of the world. */
+  heading(): number | undefined;
 }
 
 const wait = (ms: number): Promise<void> =>
@@ -82,6 +85,7 @@ export class PlayMode {
   #loadingMenu: Menu | undefined;
   #mist: MistMenu | undefined;
   #loadingScreens: Promise<LoadingScreen[]> | undefined;
+  #hud: HudController | undefined;
   #starting = false;
   /** The loading menu's text (the loading screen's, once chosen). */
   #loadingText = '';
@@ -200,6 +204,13 @@ export class PlayMode {
     this.#loadingMenu = undefined;
     this.#mist?.hide();
     this.#mist = undefined;
+    // In the game: its HUD.
+    const hud = new HudController(this.#host, session.hud, {
+      heading: () => this.#world.heading(),
+      runtime: () => session.scriptsReady,
+    });
+    this.#hud = hud;
+    await hud.open();
   }
 
   /** The runtime the session's new game runs in, as soon as it exists. */
@@ -273,6 +284,8 @@ export class PlayMode {
 
   stop(): void {
     this.#world.follow(false);
+    this.#hud?.close();
+    this.#hud = undefined;
     this.#mist?.hide();
     this.#mist = undefined;
     this.#host.dispose();

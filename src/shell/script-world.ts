@@ -11,6 +11,7 @@ import { matrixPlacement } from '../world/cell-loader.ts';
 import type { SoundSystem } from '../audio/sound-system.ts';
 import type { ScriptGraph } from '../animation/script-graphs.ts';
 import type { Terminal } from './terminal.ts';
+import type { HudSignals } from './hud-signals.ts';
 
 /** A viewer that shows references to the scripts (the interior or the world viewer). */
 export interface ScriptView {
@@ -46,8 +47,12 @@ export class ScriptWorld implements WorldBridge {
   readonly #terminal: Terminal;
   #enableQueued = false;
 
-  constructor(terminal: Terminal) {
+  /** The HUD the notifications go to in Play. */
+  readonly hud: HudSignals;
+
+  constructor(terminal: Terminal, hud: HudSignals) {
     this.#terminal = terminal;
+    this.hud = hud;
   }
 
   /** A viewer shows references from now on (until the returned function is called). */
@@ -154,9 +159,10 @@ export class ScriptWorld implements WorldBridge {
     else music?.remove(type);
   }
 
-  // TODO(M9): the HUD's notifications and the game's message boxes; until then the terminal.
+  /** Debug.Notification: the HUD's notifications (Play), the terminal in the sandbox. */
   notification(text: string): void {
-    this.#terminal.log('papyrus', text);
+    if (this.hud.listening) this.hud.notification(text);
+    else this.#terminal.log('papyrus', text);
   }
 
   messageBox(text: string, buttons?: readonly string[]): Promise<number> {

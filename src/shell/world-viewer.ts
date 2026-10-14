@@ -784,6 +784,7 @@ export class WorldViewer {
         this.#terminal,
       ),
       prompt: this.#ui.prompt,
+      hud: session.hud,
       notice: this.#ui.notice,
       onImpact: (impact) => {
         this.#session?.soundSystem?.impact(impact);

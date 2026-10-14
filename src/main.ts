@@ -510,6 +510,7 @@ async function main(): Promise<void> {
         await new Promise((resolve) => setTimeout(resolve, 100));
       }
     },
+    heading: () => (worldViewer.player ?? modelViewer.player)?.yaw,
     follow: (on) => {
       modelViewer.followsScripts = on;
       worldViewer.followsScripts = on;
