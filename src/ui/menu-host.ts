@@ -3,6 +3,10 @@
 // The host routes what a menu asks of the engine (GameDelegate.call, ExternalInterface.call,
 // tagged with the menu by the bridge, src/ui/menu-bridge.ts) to that menu's handlers, and
 // lets the engine call into a menu: its GameDelegate callbacks, any function, any variable.
+//
+// A menu lays itself out for the screen once, as it opens (the game cannot change resolution
+// with a menu open). When the window's size changes, each menu is loaded again and set up
+// again by its owner (MenuOptions.setup), as the game would after a change of resolution.
 // Notes: docs/ui.md.
 
 import { INTERFACE_URL, type InterfaceFiles } from './interface-files.ts';
@@ -24,10 +28,18 @@ export interface MenuOptions {
   /** Takes mouse and keyboard (menus); the HUD does not. */
   readonly interactive: boolean;
   readonly handlers?: Readonly<Record<string, MenuCallHandler>>;
+  /**
+   * What the engine does as the menu opens, once its first frame has run (its extensions,
+   * its data): run again whenever the menu is loaded again.
+   */
+  readonly setup?: (menu: Menu) => Promise<void> | void;
 }
 
 /** The page function the bridge calls (checked against the bridge's name at compile time). */
 const BRIDGE_GLOBAL: typeof BRIDGE_CALL = '__itjwMenuCall';
+
+/** How long the window's size must rest before the menus are loaded again (ms). */
+const RESIZE_SETTLE_MS = 250;
 
 declare global {
   interface Window {
@@ -40,13 +52,16 @@ export class Menu {
   readonly id: string;
   /** The movie, e.g. "hudmenu.swf". */
   readonly movie: string;
-  readonly element: RufflePlayerElement;
+  readonly options: MenuOptions;
   /** The INI's safe zone margins. */
   safeZone: SafeZone = SAFE_ZONE;
   /** The movie's stage size in pixels. */
   readonly stageWidth: number;
   readonly stageHeight: number;
-  readonly #api: RuffleApi;
+  /** The menu's size on screen when it was laid out. */
+  laidOut = { width: 0, height: 0 };
+  #element: RufflePlayerElement | undefined;
+  #api: RuffleApi | undefined;
   readonly #handlers: Map<string, MenuCallHandler>;
   readonly #unanswered: Set<string>;
   readonly #log: (message: string) => void;
@@ -55,28 +70,37 @@ export class Menu {
   constructor(
     id: string,
     movie: string,
-    element: RufflePlayerElement,
-    handlers: Readonly<Record<string, MenuCallHandler>>,
+    options: MenuOptions,
     log: (message: string) => void,
     stage: { readonly width: number; readonly height: number },
   ) {
     this.id = id;
     this.movie = movie;
-    this.element = element;
+    this.options = options;
     this.stageWidth = stage.width;
     this.stageHeight = stage.height;
-    this.#api = element.ruffle();
-    this.#handlers = new Map(Object.entries(handlers));
+    this.#handlers = new Map(Object.entries(options.handlers ?? {}));
     this.#unanswered = new Set();
     this.#log = log;
   }
 
-  get api(): RuffleApi {
+  get element(): RufflePlayerElement | undefined {
+    return this.#element;
+  }
+
+  get api(): RuffleApi | undefined {
     return this.#api;
   }
 
   get closed(): boolean {
     return this.#closed;
+  }
+
+  /** The player the menu plays in now (the host gives it one, and a new one on reloads). */
+  attach(element: RufflePlayerElement): void {
+    this.#detachPlayer();
+    this.#element = element;
+    this.#api = element.ruffle();
   }
 
   /** Answers a name the menu calls (adds or replaces its handler). */
@@ -126,7 +150,8 @@ export class Menu {
    */
   async waitFor(path: string, timeout = 10_000): Promise<boolean> {
     const until = performance.now() + timeout;
-    while (!this.#closed) {
+    const element = this.#element;
+    while (!this.#closed && this.#element === element) {
       const value = this.get(path);
       if (value !== undefined && value !== null) return true;
       if (performance.now() > until) return false;
@@ -140,43 +165,55 @@ export class Menu {
    * them (src/ui/stage-rects.ts).
    */
   updateStage(): void {
-    const { width, height } = this.element.getBoundingClientRect();
-    if (width <= 0 || height <= 0) return;
+    const box = this.#element?.getBoundingClientRect();
+    if (!box || box.width <= 0 || box.height <= 0) return;
     const align = this.get('Stage.align');
     const visible = visibleRect(
       this.stageWidth,
       this.stageHeight,
-      width,
-      height,
+      box.width,
+      box.height,
       scaleMode(this.get('Stage.scaleMode')),
       typeof align === 'string' ? align : '',
     );
     this.set('Stage.visibleRect', visible);
-    this.set('Stage.safeRect', safeRect(visible, width / height > 4 / 3 + 0.01, this.safeZone));
+    this.set(
+      'Stage.safeRect',
+      safeRect(visible, box.width / box.height > 4 / 3 + 0.01, this.safeZone),
+    );
   }
 
   /** Puts keyboard focus on the menu (an interactive menu as it opens). */
   focus(): void {
-    this.element.focus();
+    this.#element?.focus();
   }
 
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
+    this.#detachPlayer();
+  }
+
+  #detachPlayer(): void {
+    const element = this.#element;
+    const api = this.#api;
+    this.#element = undefined;
+    this.#api = undefined;
     // Out of the page first: Ruffle ends a player that leaves the document. Pausing it as well
     // may fail on a player Ruffle has ended; that is no fault of the menu.
-    this.element.remove();
+    element?.remove();
     try {
-      this.#api.pause();
+      api?.pause();
     } catch {
       // Ended already.
     }
   }
 
   #external(name: string, ...args: unknown[]): unknown {
-    if (this.#closed) return undefined;
+    const api = this.#api;
+    if (this.#closed || !api) return undefined;
     try {
-      return this.#api.callExternalInterface(name, ...args);
+      return api.callExternalInterface(name, ...args);
     } catch (error) {
       this.#log(
         `${this.movie}: ${name} failed: ${error instanceof Error ? error.message : String(error)}`,
@@ -191,10 +228,14 @@ export class MenuHost {
   readonly #files: InterfaceFiles;
   readonly #log: (message: string) => void;
   readonly #menus = new Map<string, Menu>();
+  readonly #safeZone: SafeZone;
   #next = 1;
   #stopServing: (() => void) | undefined;
-
-  readonly #safeZone: SafeZone;
+  #resizeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Watches the layer's size (window resizes and full screen alike). */
+  readonly #sizeWatch = new ResizeObserver(() => {
+    this.#resized();
+  });
 
   constructor(
     layer: HTMLElement,
@@ -216,42 +257,79 @@ export class MenuHost {
   /** Opens a menu movie of the interface folder ("hudmenu.swf"). */
   async open(movie: string, options: MenuOptions): Promise<Menu> {
     this.#start();
-    const source = await loadRuffle();
     const bytes = await this.#files.read(movie);
     if (!bytes) throw new Error(`interface\\${movie} is missing`);
     const id = `${movie.replace(/\.(swf|gfx)$/i, '')}#${String(this.#next++)}`;
+    const { frameSize } = readSwf(bytes).header;
+    const menu = new Menu(id, movie, options, this.#log, {
+      width: (frameSize.xMax - frameSize.xMin) / 20,
+      height: (frameSize.yMax - frameSize.yMin) / 20,
+    });
+    menu.safeZone = this.#safeZone;
+    this.#menus.set(id, menu);
+    await this.#mount(menu, bytes);
+    return menu;
+  }
+
+  close(menu: Menu): void {
+    menu.close();
+    this.#menus.delete(menu.id);
+  }
+
+  closeAll(): void {
+    for (const menu of [...this.#menus.values()]) this.close(menu);
+  }
+
+  /** Puts keyboard focus on the topmost interactive menu. */
+  focusTop(): void {
+    let top: Menu | undefined;
+    for (const menu of this.#menus.values()) {
+      if (menu.options.interactive && (!top || menu.options.depth >= top.options.depth)) top = menu;
+    }
+    top?.focus();
+  }
+
+  dispose(): void {
+    this.closeAll();
+    this.#stopServing?.();
+    this.#stopServing = undefined;
+    this.#sizeWatch.disconnect();
+    this.#layer.removeEventListener('pointerdown', this.#pointed);
+    if (this.#resizeTimer !== undefined) clearTimeout(this.#resizeTimer);
+    if (window[BRIDGE_GLOBAL] === this.#dispatch) window[BRIDGE_GLOBAL] = undefined;
+  }
+
+  /** Loads the menu's movie into a new player in the layer and sets it up. */
+  async #mount(menu: Menu, bytes: Uint8Array): Promise<void> {
+    const source = await loadRuffle();
+    if (menu.closed) return;
+    const { options } = menu;
     const element = source.createPlayer();
     element.classList.add('menu-movie');
-    element.dataset.menu = id;
+    element.dataset.menu = menu.id;
     element.style.zIndex = String(options.depth);
     element.style.pointerEvents = options.interactive ? 'auto' : 'none';
     element.tabIndex = options.interactive ? 0 : -1;
     this.#layer.append(element);
-    const { frameSize } = readSwf(bytes).header;
-    const stage = {
-      width: (frameSize.xMax - frameSize.xMin) / 20,
-      height: (frameSize.yMax - frameSize.yMin) / 20,
-    };
-    const menu = new Menu(id, movie, element, options.handlers ?? {}, this.#log, stage);
-    menu.safeZone = this.#safeZone;
-    // The rects the menu starts with: its stage shown whole (showAll, Ruffle's default) on
-    // the layer; updateStage corrects them once the menu has set its own scale mode.
+    menu.attach(element);
+    // The rects the menu starts with: its stage shown whole (showAll, Ruffle's default) on the
+    // layer; updateStage corrects them once the menu has set its own scale mode.
     const view = this.#layer.getBoundingClientRect();
     const visible = visibleRect(
-      stage.width,
-      stage.height,
-      view.width || stage.width,
-      view.height || stage.height,
+      menu.stageWidth,
+      menu.stageHeight,
+      view.width || menu.stageWidth,
+      view.height || menu.stageHeight,
       'showAll',
     );
     const rects = {
       visible,
       safe: safeRect(visible, view.width / view.height > 4 / 3 + 0.01, this.#safeZone),
     };
-    this.#menus.set(id, menu);
-    await menu.api.load({
-      data: withBridge(bytes, id, rects),
-      swfFileName: movie,
+    menu.laidOut = { width: view.width, height: view.height };
+    await element.ruffle().load({
+      data: withBridge(bytes, menu.id, rects),
+      swfFileName: menu.movie,
       base: INTERFACE_URL,
       allowScriptAccess: true,
       backgroundColor: null,
@@ -267,40 +345,52 @@ export class MenuHost {
     });
     // Its first frame has run once the bridge has (it runs first in it).
     if (!(await menu.waitFor('_global.gfxExtensions'))) {
-      this.#log(`${movie} did not start playing`);
+      if (menu.element === element) this.#log(`${menu.movie} did not start playing`);
+      return;
     }
     menu.updateStage();
-    if (options.interactive) menu.focus();
-    return menu;
-  }
-
-  close(menu: Menu): void {
-    menu.close();
-    this.#menus.delete(menu.id);
-  }
-
-  closeAll(): void {
-    for (const menu of [...this.#menus.values()]) this.close(menu);
-  }
-
-  dispose(): void {
-    this.closeAll();
-    this.#stopServing?.();
-    this.#stopServing = undefined;
-    window.removeEventListener('resize', this.#resized);
-    if (window[BRIDGE_GLOBAL] === this.#dispatch) window[BRIDGE_GLOBAL] = undefined;
+    await options.setup?.(menu);
+    if (options.interactive && menu.element === element) menu.focus();
   }
 
   /** Serves the interface files and receives the menus' calls (once). */
   #start(): void {
     if (this.#stopServing) return;
     this.#stopServing = this.#files.serve();
-    window.addEventListener('resize', this.#resized);
+    this.#sizeWatch.observe(this.#layer);
+    this.#layer.addEventListener('pointerdown', this.#pointed);
     window[BRIDGE_GLOBAL] = this.#dispatch;
   }
 
   readonly #resized = (): void => {
-    for (const menu of this.#menus.values()) menu.updateStage();
+    if (this.#resizeTimer !== undefined) clearTimeout(this.#resizeTimer);
+    this.#resizeTimer = setTimeout(() => {
+      this.#resizeTimer = undefined;
+      this.relayout();
+    }, RESIZE_SETTLE_MS);
+  };
+
+  /** Loads again every menu laid out for another size than the layer's now. */
+  relayout(): void {
+    const view = this.#layer.getBoundingClientRect();
+    if (view.width <= 0 || view.height <= 0) return;
+    for (const menu of this.#menus.values()) {
+      const { width, height } = menu.laidOut;
+      if (Math.abs(width - view.width) < 1 && Math.abs(height - view.height) < 1) continue;
+      this.#files
+        .read(menu.movie)
+        .then((bytes) => (bytes ? this.#mount(menu, bytes) : undefined))
+        .catch((error: unknown) => {
+          this.#log(
+            `${menu.movie} could not be loaded again: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+    }
+  }
+
+  /** A click in the game: the keys go to the topmost menu again. */
+  readonly #pointed = (): void => {
+    this.focusTop();
   };
 
   readonly #dispatch = (menu: string, name: string, ...args: unknown[]): unknown =>

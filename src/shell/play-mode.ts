@@ -92,18 +92,19 @@ export class PlayMode {
           this.onQuit?.();
         },
       },
+      // As the game opens it: its extensions, its entries, its platform, then it fades in.
+      setup: async (menu) => {
+        await menu.waitFor('_root.MenuHolder.Menu_mc.InitExtensions');
+        menu.invoke('_root.MenuHolder.Menu_mc.InitExtensions');
+        // TODO(M12): saves (Continue, Load).
+        menu.call('sendMenuProperties', ...mainMenuProperties(false));
+        // The platform: PC with keyboard and mouse (PLATFORM_PC_KBMOUSE 0; no PS3 button swap).
+        menu.invoke('_root.MenuHolder.Menu_mc.SetPlatform', 0, false);
+        // The delete-save hint (and the version beside it) only with saves to delete.
+        menu.invoke('_root.MenuHolder.Menu_mc.ShowDeleteButtonHelp', false);
+        menu.call('FadeInMenu');
+      },
     });
-    // As the game opens it: its extensions, then its entries, then it fades in.
-    const menu = this.#startMenu;
-    await menu.waitFor('_root.MenuHolder.Menu_mc.InitExtensions');
-    menu.invoke('_root.MenuHolder.Menu_mc.InitExtensions');
-    // TODO(M12): saves (Continue, Load).
-    menu.call('sendMenuProperties', ...mainMenuProperties(false));
-    // The platform: PC with keyboard and mouse (PLATFORM_PC_KBMOUSE 0; no PS3 button swap).
-    menu.invoke('_root.MenuHolder.Menu_mc.SetPlatform', 0, false);
-    // The delete-save hint (and the version beside it) only with saves to delete.
-    menu.invoke('_root.MenuHolder.Menu_mc.ShowDeleteButtonHelp', false);
-    menu.call('FadeInMenu');
     await mist;
   }
 
