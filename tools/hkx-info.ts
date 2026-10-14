@@ -4,17 +4,22 @@
 //   node tools/hkx-info.ts meshes\effects\fxfirewithembersheavytoggle.nif   the mesh's graph
 //   node tools/hkx-info.ts meshes\genericbehaviors\autoplay.hkx             a project
 //   node tools/hkx-info.ts <file.hkx> --objects                             a packfile's objects
+//   node tools/hkx-info.ts <file.hkt>                                       a tagfile: its classes,
+//                                                                           and as a packfile
 //   node tools/hkx-info.ts --audit            every vanilla mesh's graph: loads and starts
 
 import {
   graphStart,
   loadBehaviorGraph,
   parseBehaviorGraph,
+  readHavokFile,
   type BehaviorGenerator,
   type BehaviorGraph,
   type StateTransition,
 } from '../src/formats/hkx/behavior.ts';
+import { packfileFromTagfile } from '../src/formats/hkx/packfile-image.ts';
 import { Packfile } from '../src/formats/hkx/packfile.ts';
+import { isTagfile, parseTagfile } from '../src/formats/hkx/tagfile.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
 import { behaviorGraphPath } from '../src/render/animation.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -132,7 +137,23 @@ if (process.argv.includes('--audit')) {
     printGraph(await loadBehaviorGraph(project, read));
   }
 } else {
-  const file = Packfile.parse(await vfs.read(target));
+  const bytes = await readHavokFile(target, read);
+  if (isTagfile(bytes)) {
+    // What the tagfile defines, and what of it has no place in the packfile it becomes.
+    const tagfile = parseTagfile(bytes);
+    console.log(
+      `${target}: tagfile version ${String(tagfile.version)}, ${String(tagfile.classes.length - 1)} classes`,
+    );
+    for (const type of tagfile.classes.slice(1)) {
+      const members = type.members.map((member) => member.name).join(', ');
+      console.log(
+        `  class ${type.name} (${type.parent === 0 ? '-' : (tagfile.classes[type.parent]?.name ?? '?')}): ${members}`,
+      );
+    }
+    for (const member of packfileFromTagfile(tagfile).skipped)
+      console.log(`  not placed: ${member}`);
+  }
+  const file = Packfile.parse(bytes);
   console.log(
     `${target}: ${file.version}, ${String(file.objects.size)} objects, root ${file.root?.className ?? '-'}`,
   );

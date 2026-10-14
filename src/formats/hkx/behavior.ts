@@ -1063,11 +1063,44 @@ export async function loadBehaviorGraph(
   read: (path: string) => Promise<Uint8Array>,
 ): Promise<BehaviorGraph> {
   const path = normalizePath(project);
-  const character = Packfile.parse(
-    await read(projectRelative(path, projectCharacterFile(Packfile.parse(await read(path))))),
-  );
+  const character = await readProjectCharacter(path, read);
   return parseBehaviorGraph(
-    Packfile.parse(await read(projectRelative(path, characterBehaviorFile(character)))),
+    Packfile.parse(
+      await readHavokFile(projectRelative(path, characterBehaviorFile(character)), read),
+    ),
+  );
+}
+
+/**
+ * Reads a Havok file. A missing .hkx is looked for as a tagfile (.hkt): Creation Club and
+ * resource-pack meshes name their behavior projects .hkx while only the .hkt exists, and the
+ * game plays those graphs. TODO(M13): inferred from the data; confirm how the engine resolves
+ * the name.
+ */
+export async function readHavokFile(
+  path: string,
+  read: (path: string) => Promise<Uint8Array>,
+): Promise<Uint8Array> {
+  try {
+    return await read(path);
+  } catch (error) {
+    if (!/\.hkx$/i.test(path)) throw error;
+    try {
+      return await read(path.replace(/\.hkx$/i, '.hkt'));
+    } catch {
+      throw error;
+    }
+  }
+}
+
+/** A behavior project's character file (`path` normalized). */
+async function readProjectCharacter(
+  path: string,
+  read: (path: string) => Promise<Uint8Array>,
+): Promise<Packfile> {
+  const project = Packfile.parse(await readHavokFile(path, read));
+  return Packfile.parse(
+    await readHavokFile(projectRelative(path, projectCharacterFile(project)), read),
   );
 }
 
@@ -1085,7 +1118,7 @@ export async function loadBehaviorFiles(
     const key = normalizePath(path);
     const known = files.get(key);
     if (known) return known;
-    const graph = parseBehaviorGraph(Packfile.parse(await read(key)));
+    const graph = parseBehaviorGraph(Packfile.parse(await readHavokFile(key, read)));
     files.set(key, graph);
     const references = new Set<string>();
     const seen = new Set<object>();
@@ -1150,9 +1183,7 @@ export async function loadCharacterInfo(
   read: (path: string) => Promise<Uint8Array>,
 ): Promise<CharacterInfo> {
   const path = normalizePath(project);
-  const character = Packfile.parse(
-    await read(projectRelative(path, projectCharacterFile(Packfile.parse(await read(path))))),
-  );
+  const character = await readProjectCharacter(path, read);
   const data = requireObject(character, 'hkbCharacterData');
   const strings = character.object(data.offset + 152);
   if (strings?.className !== 'hkbCharacterStringData') {

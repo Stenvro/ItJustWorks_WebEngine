@@ -87,10 +87,21 @@ describe.skipIf(!hasGamedata())('behavior graphs on the local game data', () => 
     }
   });
 
-  it('rejects the tagfiles that Creation Club behaviors ship', async () => {
-    const tagfile = await vfs.read(
-      'meshes\\_resourcepack\\genericbehaviors\\stagescycle\\stagescycle.hkt',
+  it('plays the tagfile graphs of Creation Club meshes under their .hkx names', async () => {
+    const project = 'meshes\\_resourcepack\\genericbehaviors\\stagescycle\\stagescycle';
+    expect(Packfile.parse(await vfs.read(`${project}.hkt`)).root?.className).toBe(
+      'hkRootLevelContainer',
     );
-    expect(() => Packfile.parse(tagfile)).toThrow(/tagfile/);
+    expect(graphStart(await loadBehaviorGraph(`${project}.hkx`, read)).sequences).toEqual([
+      { sequence: 'stage1state', weight: 1 },
+    ]);
+    // A harvestable plant: ready until harvested.
+    const plant = await run(
+      'meshes\\creationclub\\_shared\\plants\\rootflamestalk01activator.nif',
+      0,
+    );
+    expect(plant.playing.map((playing) => playing.sequence)).toEqual(['ready']);
+    expect(plant.send('Harvest', 1)).toBe(true);
+    expect(plant.playing.map((playing) => playing.sequence)).toEqual(['harvested']);
   });
 });

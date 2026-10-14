@@ -51,7 +51,7 @@ describe('Havok packfile', () => {
     expect(file.bool(data + 40)).toBe(true);
   });
 
-  it('rejects tagfiles, 32-bit packfiles and reads outside the data', () => {
+  it('rejects broken tagfiles, 32-bit packfiles and reads outside the data', () => {
     const tagfile = new Uint8Array(72);
     new DataView(tagfile.buffer).setUint32(0, 0xcab00d1e, true);
     new DataView(tagfile.buffer).setUint32(4, 0xd011face, true);
