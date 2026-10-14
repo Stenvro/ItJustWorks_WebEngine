@@ -35,5 +35,5 @@ export function emittanceColor(
 ): Rgb {
   if (source.kind === 'light') return source.color;
   if (!weather) return [0, 0, 0];
-  return skyState({ weather, climate, hour, daysPassed: 0, seconds: 0 }).sunlight;
+  return skyState({ weather, climate, hour, daysPassed: 0, cloudMinutes: 0 }).sunlight;
 }

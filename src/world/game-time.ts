@@ -32,8 +32,8 @@ export function nextClockSpeed(speed: number): number {
 }
 
 /**
- * The clock's pace for the panel: game time only (the sun, the sky's colours and what follows
- * the hour); animations (fire, water, trees) and clouds run in real time, as in the game.
+ * The clock's pace for the panel: game time (the sun, moons, clouds, the sky's colours and what
+ * follows the hour); animations (fire, water, trees, people) run in real time, as in the game.
  */
 export function clockPaceText(timeScale: number, speed: number): string {
   const rate = timeScale * speed;

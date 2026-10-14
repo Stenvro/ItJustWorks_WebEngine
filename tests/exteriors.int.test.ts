@@ -109,8 +109,8 @@ describe.skipIf(!hasGamedata())('exteriors on the local game data', () => {
     const weather = parseWeather(record);
     const climateRecord = await db.get(0x15f); // DefaultClimate
     const climate = climateRecord ? parseClimate(climateRecord) : undefined;
-    const noon = skyState({ weather, climate, hour: 13, daysPassed: 0, seconds: 0 });
-    const night = skyState({ weather, climate, hour: 1, daysPassed: 0, seconds: 0 });
+    const noon = skyState({ weather, climate, hour: 13, daysPassed: 0, cloudMinutes: 0 });
+    const night = skyState({ weather, climate, hour: 1, daysPassed: 0, cloudMinutes: 0 });
     const brightness = (c: readonly number[]): number => c.reduce((a, b) => a + b, 0);
     expect(brightness(noon.skyUpper)).toBeGreaterThan(brightness(night.skyUpper));
     expect(brightness(noon.sunlight)).toBeGreaterThan(1);

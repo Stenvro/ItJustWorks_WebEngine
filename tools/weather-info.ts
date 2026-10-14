@@ -42,7 +42,7 @@ if (query) {
   if (!weather) throw new Error(`no weather ${query}`);
   const climate = [...climates.values()].find((c) => c.editorId === 'DefaultClimate');
   const hour = Number(process.argv[3] ?? '12');
-  const sky = skyState({ weather, climate, hour, daysPassed: 0, seconds: 0 });
+  const sky = skyState({ weather, climate, hour, daysPassed: 0, cloudMinutes: 0 });
   console.log(`${weather.editorId} at ${String(hour)}h, weights ${sky.weights.join(' ')}`);
   console.log(
     `  sky upper ${rgb(sky.skyUpper)} lower ${rgb(sky.skyLower)} horizon ${rgb(sky.horizon)}`,

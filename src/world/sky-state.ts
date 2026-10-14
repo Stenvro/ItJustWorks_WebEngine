@@ -244,8 +244,14 @@ export interface SkyInput {
   readonly hour: number;
   /** Days since the game started (moon phases, stars). */
   readonly daysPassed: number;
-  /** Real seconds (cloud scrolling). */
-  readonly seconds: number;
+  /**
+   * Game minutes the clouds have scrolled for: the layers' speeds read as texture widths per
+   * game minute, so they follow the clock (at TimeScale 20, a third of a minute a real second;
+   * faster as the clock is sped up). TODO(M13): UESP and the Creation Kit give no unit; real
+   * seconds scrolled three times too fast and ignored the TimeScale, unlike the game's clouds
+   * in timelapses at a raised timescale.
+   */
+  readonly cloudMinutes: number;
   readonly settings?: SkySettings;
   /** Lightning flash 0..1 this moment (see lightning.ts). */
   readonly lightning?: number;
@@ -335,7 +341,7 @@ function cloudStates(
   previous: WeatherRecord | undefined,
   transition: number,
   weights: TimeWeights,
-  seconds: number,
+  minutes: number,
 ): CloudState[] {
   const states: CloudState[] = [];
   weather.clouds.forEach((layer, index) => {
@@ -356,7 +362,7 @@ function cloudStates(
       blend: previous ? transition : 1,
       color,
       alpha,
-      offset: [wrap(layer.speed[0] * seconds), wrap(layer.speed[1] * seconds)],
+      offset: [wrap(layer.speed[0] * minutes), wrap(layer.speed[1] * minutes)],
     });
   });
   return states;
@@ -527,7 +533,7 @@ export function skyState(input: SkyInput): SkyState {
       ? input.previous.windSpeed + (input.weather.windSpeed - input.previous.windSpeed) * transition
       : input.weather.windSpeed,
     windDirection: input.weather.windDirection,
-    clouds: cloudStates(input.weather, input.previous, transition, weights, input.seconds),
+    clouds: cloudStates(input.weather, input.previous, transition, weights, input.cloudMinutes),
     masser,
     secunda,
     starsRotation,
