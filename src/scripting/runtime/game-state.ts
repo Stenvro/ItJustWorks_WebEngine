@@ -101,6 +101,8 @@ export interface ActorState {
   readonly spells: Map<number, boolean>;
   /** Perks added (true) or removed (false) by scripts. */
   readonly perks: Map<number, boolean>;
+  /** It has talked to the player (GetTalkedToPC). */
+  talkedToPlayer?: boolean;
   /** Items equipped by scripts (TODO(M11): the equip system). */
   readonly equipped: Set<number>;
   crimeFaction?: number | null;
@@ -188,6 +190,8 @@ export class GameState {
   nextCreated = 0xff000800;
   /** The next id of an active magic effect (script objects that are not forms). */
   nextEffect = 0xfd000001;
+  /** Actors dead, by their base (GetDeadCount). */
+  readonly deadCounts = new Map<number, number>();
   /** Counts the quests' updates for the player (QuestState.updated). */
   questClock = 0;
   /** What Debug.Notification / MessageBox showed (the HUD's until M9). */

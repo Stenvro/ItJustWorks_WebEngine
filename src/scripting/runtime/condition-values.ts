@@ -18,6 +18,18 @@ import type { StoryEventData } from './story-manager.ts';
 /** UESP's function indices of the conditions valued here. */
 export const Fn = {
   getDistance: 1,
+  getInSameCell: 32,
+  getTalkedToPC: 50,
+  getDeadCount: 84,
+  getPCIsRace: 130,
+  getPCIsSex: 131,
+  getIsCurrentPackage: 161,
+  isScenePlaying: 248,
+  isInDialogueWithPlayer: 249,
+  getOffersServicesNow: 255,
+  hasSpell: 264,
+  isBribedByPlayer: 402,
+  isKiller: 408,
   getLocked: 5,
   getActorValue: 14,
   getCurrentTime: 18,
@@ -478,10 +490,13 @@ async function conditionValue(
     }
 
     // --- Locations ----------------------------------------------------------------------------
-    case Fn.locationHasKeyword:
-      return location === undefined
-        ? undefined
-        : flag((await runtime.location(location))?.keywords.includes(form) ?? false);
+    case Fn.locationHasKeyword: {
+      // Run on a reference: the location it is in now.
+      const at = await currentLocation();
+      return at === undefined
+        ? 0
+        : flag((await runtime.location(at))?.keywords.includes(form) ?? false);
+    }
     case Fn.locationHasRefType: {
       if (location === undefined) return undefined;
       // Creation Kit: false when the references of the type are dead or disabled.
@@ -529,6 +544,51 @@ async function conditionValue(
       const target = alias(condition.raw1);
       return flag(target !== undefined && (runtime.world.locationLoaded?.(target) ?? false));
     }
+    // --- The player, conversations, services ---------------------------------------------
+    case Fn.getPCIsSex:
+      return flag((await actors.isFemale(PLAYER_REF)) === (condition.raw1 === 1));
+    case Fn.getPCIsRace:
+      return flag((await actors.raceOf(PLAYER_REF)) === form);
+    case Fn.getTalkedToPC:
+      return reference === undefined
+        ? undefined
+        : flag(state.actors.get(reference)?.talkedToPlayer ?? false);
+    case Fn.isInDialogueWithPlayer:
+      return flag(reference !== undefined && runtime.dialogueSpeaker === reference);
+    case Fn.getIsCurrentPackage:
+      // The package the world runs it on (none while it runs none).
+      return reference === undefined
+        ? undefined
+        : flag(runtime.world.currentPackage?.(reference) === form);
+    case Fn.isScenePlaying:
+      return flag(runtime.scenePlaying(form));
+    case Fn.hasSpell:
+      return reference === undefined ? undefined : flag(await actors.hasSpell(reference, form));
+    case Fn.isBribedByPlayer:
+      return reference === undefined
+        ? undefined
+        : flag(state.actors.get(reference)?.bribed ?? false);
+    case Fn.isKiller:
+      // The calling actor killed the one given.
+      return flag(reference !== undefined && state.actors.get(form)?.killer === reference);
+    case Fn.getDeadCount:
+      return state.deadCounts.get(form) ?? 0;
+    case Fn.getInSameCell: {
+      if (reference === undefined) return undefined;
+      const [mine, theirs] = await Promise.all([
+        runtime.placement(reference),
+        runtime.placement(form),
+      ]);
+      if (!mine || !theirs) return 0;
+      if (mine.world !== undefined || theirs.world !== undefined) {
+        const cell = (at: typeof mine): string =>
+          `${String(at.world)}:${String(Math.floor(at.position[0] / 4096))}:${String(Math.floor(at.position[1] / 4096))}`;
+        return flag(mine.world === theirs.world && cell(mine) === cell(theirs));
+      }
+      return flag(mine.cell === theirs.cell);
+    }
+    case Fn.getOffersServicesNow:
+      return reference === undefined ? undefined : flag(await actors.offersServicesNow(reference));
     default:
       return undefined;
   }

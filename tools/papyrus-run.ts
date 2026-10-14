@@ -6,10 +6,14 @@
 //   node tools/papyrus-run.ts --new-game                 a new game, then 30 s of play
 //   node tools/papyrus-run.ts --new-game --seconds 300   ... then 5 minutes
 //   node tools/papyrus-run.ts --new-game --log           ... and print the Papyrus log
+//   node tools/papyrus-run.ts --new-game --talk RalofREF ... and what an actor says to the
+//                                                        player: its greeting and its topics
 
 import { parseArgs } from 'node:util';
 import { ScriptLibrary } from '../src/scripting/script-library.ts';
 import { ScriptRuntime } from '../src/scripting/runtime/runtime.ts';
+import { DialogueEngine } from '../src/scripting/runtime/dialogue-engine.ts';
+import { conditionFunctionName } from '../src/scripting/condition-functions.ts';
 import { readTimeScale } from '../src/world/game-time.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -21,6 +25,7 @@ const { values } = parseArgs({
     seconds: { type: 'string', default: '30' },
     log: { type: 'boolean', default: false },
     top: { type: 'string', default: '60' },
+    talk: { type: 'string' },
   },
 });
 if (!values['new-game']) {
@@ -63,6 +68,48 @@ for (let t = 0; t < seconds; t += frame) {
 console.log(
   `${String(seconds)} s of play in ${((performance.now() - played) / 1000).toFixed(1)} s`,
 );
+
+// --- What an actor says ------------------------------------------------------------------
+if (values.talk) {
+  const wanted = values.talk.toLowerCase();
+  const speaker = [...db.formIdsOfType('ACHR'), ...db.formIdsOfType('REFR')].find(
+    (formId) => formId === Number.parseInt(wanted, 16),
+  );
+  let found = speaker;
+  if (found === undefined) {
+    for (const formId of db.formIdsOfType('ACHR')) {
+      if ((await db.get(formId))?.editorId?.toLowerCase() === wanted) found = formId;
+    }
+  }
+  if (found === undefined) {
+    console.log(`no reference ${values.talk}`);
+  } else {
+    const dialogue = new DialogueEngine(runtime);
+    const greeting = await dialogue.greeting(found);
+    console.log(`
+${values.talk} [${hex(found)}] greets:`);
+    if (greeting) {
+      const quest = await runtime.forms.quest(greeting.quest);
+      console.log(
+        `  (${quest?.editorId ?? '?'} / ${greeting.topic.editorId || hex(greeting.topic.formId)} / info ${hex(greeting.info.formId)}: ${greeting.info.conditions.map((c) => conditionFunctionName(c.function)).join(', ')})`,
+      );
+    }
+    for (const response of greeting?.source.info.responses ?? [])
+      console.log(`  "${response.text}"`);
+    console.log('topics:');
+    for (const choice of await dialogue.topics(found)) {
+      const quest = await runtime.forms.quest(choice.quest);
+      console.log(
+        `  ${choice.isNew ? '* ' : '  '}${choice.text} (${quest?.editorId ?? '?'} / ${choice.topic.editorId})`,
+      );
+      const info = await dialogue.choose(choice, found);
+      if (info)
+        console.log(
+          `      ${info.info.conditions.map((c) => `${conditionFunctionName(c.function)}(${hex(c.form)})`).join(', ')}`,
+        );
+    }
+  }
+}
 
 // --- Report ---------------------------------------------------------------------------------
 const running = [...runtime.state.quests].filter(([, quest]) => quest.running);
