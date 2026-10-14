@@ -1204,10 +1204,8 @@ export class ModelViewer {
     const session = this.#session;
     if (session) {
       const delta = this.#lastClock === undefined ? 0 : Math.min(0.25, now - this.#lastClock);
-      // Unless the panel stops it (or sets it with its slider).
-      if (this.#sky?.timeFlows !== false) {
-        session.advanceClock((delta * session.timeScale) / 3600);
-      }
+      // At the TimeScale times the panel's fast-forward (the slider sets the hour).
+      session.advanceClock((delta * session.clockRate) / 3600);
       this.#sky?.sync();
       session.updateEmittance(session.gameHour);
       // Indoors the sound system plays the region of the cell's acoustic space.

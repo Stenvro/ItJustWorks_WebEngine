@@ -256,7 +256,9 @@ moons (bits 0–5 days per phase, `0x40` Masser, `0x80` Secunda). Vanilla: 5:30�
 **WTHR:**
 
 - The clock the sky follows runs at the **TimeScale** global (GLOB FLTV; Skyrim.esm: 20, a game
-  day in 72 real minutes), read from the load order.
+  day in 72 real minutes), read from the load order; the dev panel speeds it up 2×, 5×, 10× or
+  20× (as the console's `set timescale`). Only game time follows it: animations (fire, water,
+  trees) and clouds run in real time.
 - Cloud layers: texture fields `00TX`, `10TX`, … `90TX`, `:0TX`, … (the first character is
   `'0' + layer`), RNAM / QNAM one byte per layer: Y / X scroll speed, `(b − 127) / 1270`
   (−0.1..0.1; read as texture widths per real second: UESP gives no unit, TODO(M13): compare

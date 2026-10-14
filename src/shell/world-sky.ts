@@ -38,6 +38,7 @@ import type { Worldspace } from '../world/worldspace.ts';
 import type { GameSession } from './game-session.ts';
 import { SkyObjects } from './sky-objects.ts';
 import type { Terminal } from './terminal.ts';
+import { clockPaceText } from '../world/game-time.ts';
 
 const DEFAULT_SKY_MODEL = 'meshes\\sky\\stars.nif';
 const DEFAULT_SUN = 'textures\\sky\\sun.dds';
@@ -47,8 +48,19 @@ export interface SkyElements {
   readonly sky: HTMLElement;
   readonly time: HTMLInputElement;
   readonly timeLabel: HTMLOutputElement;
-  readonly timeFlows: HTMLInputElement;
+  /** Speeds the game clock up in steps (CLOCK_SPEEDS). */
+  readonly timeSpeed: HTMLButtonElement;
+  /** How fast the clock runs (the TimeScale global, times the fast-forward). */
+  readonly timeScale: HTMLElement;
   readonly weather: HTMLSelectElement;
+}
+
+/** Shows the clock's fast-forward step on its button and its pace beside it. */
+export function showClockSpeed(ui: SkyElements, timeScale: number, speed: number): void {
+  ui.timeSpeed.textContent = speed === 1 ? 'off' : `${String(speed)}×`;
+  ui.timeSpeed.title =
+    speed === 1 ? 'the game clock at its own pace: speed it up' : 'speed the game clock up more';
+  ui.timeScale.textContent = clockPaceText(timeScale, speed);
 }
 
 /** A path, or the engine's default when it is empty or missing. */
@@ -115,6 +127,7 @@ export class WorldSky {
   ) {
     this.#session = session;
     this.#hour = session.gameHour;
+    showClockSpeed(ui, session.timeScale, session.timeSpeed);
     this.#objects = objects;
     this.#precipitationRenderer = precipitation;
     this.#textures = textures;
@@ -300,16 +313,15 @@ export class WorldSky {
       this.#lastFrame === undefined ? 0 : Math.min(0.25, (now - this.#lastFrame) / 1000);
     this.#lastFrame = now;
     this.#seconds += delta;
-    if (this.#ui.timeFlows.checked) {
-      this.#hour += (delta * this.#session.timeScale) / 3600;
-      if (this.#hour >= 24) {
-        this.#hour -= 24;
-        this.#session.gameDaysPassed++;
-      }
-      if (Math.abs(Number(this.#ui.time.value) - this.#hour) > 0.04) {
-        this.#ui.time.value = this.#hour.toFixed(2);
-        this.#ui.timeLabel.value = formatHour(this.#hour);
-      }
+    // The clock runs at the TimeScale (times the panel's fast-forward).
+    this.#hour += (delta * this.#session.clockRate) / 3600;
+    if (this.#hour >= 24) {
+      this.#hour -= 24;
+      this.#session.gameDaysPassed++;
+    }
+    if (Math.abs(Number(this.#ui.time.value) - this.#hour) > 0.04) {
+      this.#ui.time.value = this.#hour.toFixed(2);
+      this.#ui.timeLabel.value = formatHour(this.#hour);
     }
     // The session's clock follows the sky's (the slider sets it), and with it the colours of
     // the references' emittance (window glow by night, sunbeams by day).

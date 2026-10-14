@@ -22,6 +22,26 @@ export interface GameDate {
 /** Skyrim.esm's start date (GameYear 201, GameMonth 7: Last Seed, GameDay 17). */
 export const DEFAULT_START_DATE: GameDate = { year: 201, month: 7, day: 17 };
 
+/** The dev panel's fast-forward steps of the game clock; the first is the game's own pace. */
+export const CLOCK_SPEEDS: readonly number[] = [1, 2, 5, 10, 20];
+
+/** The next fast-forward step (after the last, the game's own pace again). */
+export function nextClockSpeed(speed: number): number {
+  const at = CLOCK_SPEEDS.indexOf(speed);
+  return CLOCK_SPEEDS[(at + 1) % CLOCK_SPEEDS.length] ?? 1;
+}
+
+/**
+ * The clock's pace for the panel: game time only (the sun, the sky's colours and what follows
+ * the hour); animations (fire, water, trees) and clouds run in real time, as in the game.
+ */
+export function clockPaceText(timeScale: number, speed: number): string {
+  const rate = timeScale * speed;
+  const day = 1440 / rate;
+  const minutes = day >= 10 ? String(Math.round(day)) : day.toFixed(1);
+  return `TimeScale ${String(rate)}: a game day in ${minutes} min`;
+}
+
 /** The global TimeScale of the load order (game seconds per real second). */
 export async function readTimeScale(db: RecordDatabase): Promise<number> {
   const value = (await readGlobals(db, ['timescale'])).get('timescale');

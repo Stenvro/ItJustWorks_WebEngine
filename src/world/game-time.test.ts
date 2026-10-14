@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { dateAfter, dayOfWeekAfter, DEFAULT_START_DATE } from './game-time.ts';
+import {
+  clockPaceText,
+  dateAfter,
+  dayOfWeekAfter,
+  DEFAULT_START_DATE,
+  nextClockSpeed,
+} from './game-time.ts';
 
 describe('game calendar', () => {
   it('counts days on through the months and into the next year', () => {
@@ -20,5 +26,18 @@ describe('game calendar', () => {
     expect(dayOfWeekAfter(1)).toBe(1);
     expect(dayOfWeekAfter(7)).toBe(0);
     expect(dayOfWeekAfter(13)).toBe(6);
+  });
+});
+
+describe('the clock fast-forward', () => {
+  it('steps from the game pace through 2×, 5×, 10× and 20× back to the game pace', () => {
+    const steps = [1];
+    for (let i = 0; i < 5; i++) steps.push(nextClockSpeed(steps[steps.length - 1] ?? 1));
+    expect(steps).toEqual([1, 2, 5, 10, 20, 1]);
+  });
+
+  it('tells how long a game day lasts', () => {
+    expect(clockPaceText(20, 1)).toBe('TimeScale 20: a game day in 72 min');
+    expect(clockPaceText(20, 20)).toBe('TimeScale 400: a game day in 3.6 min');
   });
 });

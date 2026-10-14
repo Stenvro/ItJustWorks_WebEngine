@@ -158,10 +158,18 @@
             <input id="scene-time" type="range" min="0" max="24" step="0.05" value="10" />
             <output id="scene-time-label">10:00</output>
           </label>
-          <label class="choice">
-            <input id="scene-time-flows" type="checkbox" checked />
-            <span>time passes (at the game's TimeScale)</span>
-          </label>
+          <div class="choice">
+            <span>clock</span>
+            <button
+              id="scene-time-speed"
+              class="preset"
+              type="button"
+              title="speed the game clock up"
+            >
+              off
+            </button>
+            <span id="scene-time-scale" class="clock-pace">TimeScale 20: a game day in 72 min</span>
+          </div>
           <label class="choice">
             <span>weather</span>
             <select id="scene-weather"></select>
