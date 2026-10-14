@@ -38,6 +38,7 @@ import { GameState, type Vec3 } from './game-state.ts';
 import { registerNatives } from './natives/index.ts';
 import { ActorEngine } from './actor-engine.ts';
 import { QuestEngine } from './quests.ts';
+import { questText } from './quest-text.ts';
 import { scriptEvent, StoryManager, type StoryEventData } from './story-manager.ts';
 
 /** What scripts do to the world the engine shows, and what they read of it (nothing in Node). */
@@ -69,8 +70,8 @@ export interface WorldBridge {
   itemMessage?(item: number, count: number, added: boolean): void;
   /** Havok mass of a loaded reference's bodies. */
   mass?(reference: number): number;
-  /** An objective shown (TODO(M9): the HUD's "objective added" line and the journal). */
-  objective?(quest: number, index: number, text: string): void;
+  /** A quest's update: the HUD announces it (TODO(M9): the journal keeps it). */
+  questUpdate?(update: QuestUpdate): void;
   /** A behavior graph event sent to a reference (PlayAnimation): false if it has none. */
   animationEvent?(reference: number, event: string): boolean;
   /** A NIF sequence played (PlayGamebryoAnimation). */
@@ -181,6 +182,20 @@ export interface WorldBridge {
     speakAs: number | undefined,
     inHead: boolean,
   ): void;
+}
+
+/** A quest's update as the HUD announces it. */
+export interface QuestUpdate {
+  readonly quest: number;
+  /** The quest's name, its tags filled in (quest-text.ts); empty if it has none. */
+  readonly name: string;
+  /** Its type (QuestRecord.type; 6: miscellaneous). */
+  readonly type: number;
+  /** The objective updated (its text, tags filled in); none: the quest itself. */
+  readonly objective?: { readonly index: number; readonly text: string };
+  readonly status: 'shown' | 'completed' | 'failed';
+  /** The quest's first objective shown: the quest has started (for the player). */
+  readonly first: boolean;
 }
 
 /** The persistent references of the load order (ScriptRuntime.persistentIndex). */
@@ -1635,12 +1650,36 @@ export class ScriptRuntime implements VmHost {
     this.world.resetHelpMessage?.(event);
   }
 
-  objectiveShown(quest: number, index: number): void {
+  /**
+   * A quest's update for the HUD: an objective shown (the quest's first: `first`), completed
+   * or failed, or (without an objective) the quest completed or failed. Its texts are filled
+   * in as they read now.
+   */
+  questUpdated(
+    quest: number,
+    status: QuestUpdate['status'],
+    objective?: number,
+    first = false,
+  ): void {
     this.detach(
-      this.forms.quest(quest).then((record) => {
-        const text = record?.objectives.find((objective) => objective.index === index)?.text ?? '';
-        this.world.objective?.(quest, index, text);
-      }),
+      (async () => {
+        const record = await this.forms.quest(quest);
+        if (!record) return;
+        const text =
+          objective === undefined
+            ? undefined
+            : (record.objectives.find((entry) => entry.index === objective)?.text ?? '');
+        this.world.questUpdate?.({
+          quest,
+          name: await questText(this, record, record.name ?? ''),
+          type: record.type,
+          ...(objective !== undefined && {
+            objective: { index: objective, text: await questText(this, record, text ?? '') },
+          }),
+          status,
+          first,
+        });
+      })(),
     );
   }
 

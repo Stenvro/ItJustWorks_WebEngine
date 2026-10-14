@@ -151,6 +151,8 @@ export interface QuestRecord {
   readonly stages: readonly QuestStage[];
   readonly objectives: readonly QuestObjective[];
   readonly aliases: readonly QuestAlias[];
+  /** QTGL: the globals its texts may show (`<Global=EditorId>`). */
+  readonly textGlobals: readonly number[];
 }
 
 const fourCC = (data: Uint8Array): string =>
@@ -337,6 +339,10 @@ export function parseQuest(record: RecordSource): QuestRecord {
     stages,
     objectives,
     aliases,
+    textGlobals: record.fields
+      .all('QTGL')
+      .filter((data) => data.length >= 4)
+      .map((data) => record.formIdAt(data)),
   };
 }
 

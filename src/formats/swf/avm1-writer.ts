@@ -22,6 +22,8 @@ export const Function2Flag = {
 
 export const Op = {
   end: 0x00,
+  subtract: 0x0b,
+  divide: 0x0d,
   pop: 0x17,
   getVariable: 0x1c,
   setVariable: 0x1d,
@@ -30,6 +32,8 @@ export const Op = {
   newObject: 0x40,
   initArray: 0x42,
   initObject: 0x43,
+  typeOf: 0x44,
+  add2: 0x47,
   getMember: 0x4e,
   setMember: 0x4f,
   callMethod: 0x52,
@@ -72,6 +76,11 @@ export class Avm1Writer {
   /** If: jumps `distance` bytes past itself when the popped value is true. */
   jumpIf(distance: number): this {
     return this.#action(0x9d, [distance & 0xff, (distance >> 8) & 0xff]);
+  }
+
+  /** Jump: goes `distance` bytes past itself. */
+  jump(distance: number): this {
+    return this.#action(0x99, [distance & 0xff, (distance >> 8) & 0xff]);
   }
 
   /** Already assembled actions, as they are. */

@@ -140,8 +140,8 @@ export class QuestEngine {
         continue;
       }
       chosen = index;
-      if ((entry.flags & LogEntryFlag.completeQuest) !== 0) state.completed = true;
-      if ((entry.flags & LogEntryFlag.failQuest) !== 0) state.failed = true;
+      if ((entry.flags & LogEntryFlag.completeQuest) !== 0) this.complete(record.formId);
+      if ((entry.flags & LogEntryFlag.failQuest) !== 0) this.fail(record.formId);
       if (entry.nextQuest !== undefined && entry.nextQuest !== 0) {
         runtime.detach(this.start(entry.nextQuest));
       }
@@ -159,6 +159,19 @@ export class QuestEngine {
     if (wait) await run();
     else runtime.detach(run());
     return true;
+  }
+
+  /** The quest completed (a log entry's flag, CompleteQuest): the HUD announces it once. */
+  complete(quest: number): void {
+    const state = this.#runtime.state.quest(quest);
+    if (!state.completed) this.#runtime.questUpdated(quest, 'completed');
+    state.completed = true;
+  }
+
+  fail(quest: number): void {
+    const state = this.#runtime.state.quest(quest);
+    if (!state.failed) this.#runtime.questUpdated(quest, 'failed');
+    state.failed = true;
   }
 
   /** Quest.Reset: back to its start (stages, objectives, aliases); not for run-once quests. */

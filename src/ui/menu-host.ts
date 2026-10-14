@@ -63,6 +63,8 @@ export class Menu {
   #element: RufflePlayerElement | undefined;
   #api: RuffleApi | undefined;
   readonly #handlers: Map<string, MenuCallHandler>;
+  /** What every menu of the host asks (PlaySound, ...), unless the menu answers it itself. */
+  readonly #common: ReadonlyMap<string, MenuCallHandler>;
   readonly #unanswered: Set<string>;
   readonly #log: (message: string) => void;
   #closed = false;
@@ -73,6 +75,7 @@ export class Menu {
     options: MenuOptions,
     log: (message: string) => void,
     stage: { readonly width: number; readonly height: number },
+    common: ReadonlyMap<string, MenuCallHandler> = new Map(),
   ) {
     this.id = id;
     this.movie = movie;
@@ -80,6 +83,7 @@ export class Menu {
     this.stageWidth = stage.width;
     this.stageHeight = stage.height;
     this.#handlers = new Map(Object.entries(options.handlers ?? {}));
+    this.#common = common;
     this.#unanswered = new Set();
     this.#log = log;
   }
@@ -110,7 +114,7 @@ export class Menu {
 
   /** A call from the menu (through the bridge). */
   received(name: string, args: readonly unknown[]): unknown {
-    const handler = this.#handlers.get(name);
+    const handler = this.#handlers.get(name) ?? this.#common.get(name);
     if (handler) return handler(this, args);
     if (!this.#unanswered.has(name)) {
       this.#unanswered.add(name);
@@ -229,6 +233,7 @@ export class MenuHost {
   readonly #log: (message: string) => void;
   readonly #menus = new Map<string, Menu>();
   readonly #safeZone: SafeZone;
+  readonly #common: ReadonlyMap<string, MenuCallHandler>;
   #next = 1;
   #stopServing: (() => void) | undefined;
   #resizeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -242,7 +247,10 @@ export class MenuHost {
     files: InterfaceFiles,
     log: (message: string) => void,
     safeZone: SafeZone = SAFE_ZONE,
+    /** What every menu may ask (a menu's own handlers come first). */
+    common: Readonly<Record<string, MenuCallHandler>> = {},
   ) {
+    this.#common = new Map(Object.entries(common));
     this.#layer = layer;
     this.#files = files;
     this.#log = log;
@@ -261,10 +269,17 @@ export class MenuHost {
     if (!bytes) throw new Error(`interface\\${movie} is missing`);
     const id = `${movie.replace(/\.(swf|gfx)$/i, '')}#${String(this.#next++)}`;
     const { frameSize } = readSwf(bytes).header;
-    const menu = new Menu(id, movie, options, this.#log, {
-      width: (frameSize.xMax - frameSize.xMin) / 20,
-      height: (frameSize.yMax - frameSize.yMin) / 20,
-    });
+    const menu = new Menu(
+      id,
+      movie,
+      options,
+      this.#log,
+      {
+        width: (frameSize.xMax - frameSize.xMin) / 20,
+        height: (frameSize.yMax - frameSize.yMin) / 20,
+      },
+      this.#common,
+    );
     menu.safeZone = this.#safeZone;
     this.#menus.set(id, menu);
     await this.#mount(menu, bytes);

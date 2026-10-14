@@ -544,10 +544,16 @@ export class Player implements Camera {
     return multiply(projection, view, out);
   }
 
+  /** Told of each user event the player presses (help messages wait for one). */
+  onPress: ((name: string) => void) | undefined;
+
   /** Presses or releases a user event by its control map name ("Forward", "Jump", ...). */
   press(name: string, down: boolean): void {
     if (down) {
-      if (!this.#held.has(name)) this.#pressed.add(name);
+      if (!this.#held.has(name)) {
+        this.#pressed.add(name);
+        this.onPress?.(name);
+      }
       this.#held.add(name);
     } else {
       this.#held.delete(name);
