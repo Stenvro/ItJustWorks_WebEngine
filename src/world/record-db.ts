@@ -7,6 +7,7 @@ import { Fields, view, zstring } from '../formats/esm/fields.ts';
 import { parsePluginInfo, type PluginInfo } from '../formats/esm/plugin-header.ts';
 import {
   findRecord,
+  forEachRecord,
   indexPlugin,
   readRecord,
   type PluginIndex,
@@ -376,6 +377,47 @@ export class RecordDatabase {
       loaded.header.flags,
       new Fields(parseFields(loaded.data)),
     );
+  }
+
+  /**
+   * Visits the winning version of every record of some types whose record flags `accept`
+   * takes, reading each plugin in file order in large chunks (far faster than reading them one
+   * by one: a new game finds the persistent references with scripts so).
+   */
+  async scan(
+    types: readonly string[],
+    accept: (flags: number) => boolean,
+    visit: (record: GameRecord) => void,
+  ): Promise<void> {
+    const codes = new Set(types.map((type) => fourCCToInt(type)));
+    for (const plugin of this.plugins) {
+      const { index } = plugin;
+      await forEachRecord(
+        plugin.source,
+        index,
+        (_record, loaded) => {
+          visit(
+            new GameRecord(
+              this,
+              plugin,
+              loaded.header.type,
+              this.toGlobal(plugin, loaded.header.formId),
+              loaded.header.flags,
+              new Fields(parseFields(loaded.data)),
+            ),
+          );
+        },
+        codes,
+        undefined,
+        undefined,
+        (record) => {
+          if (!accept(index.flags[record] ?? 0)) return false;
+          // Only the version that wins.
+          const winner = this.locate(this.toGlobal(plugin, index.formIds[record] ?? 0));
+          return winner?.plugin === plugin && winner.record === record;
+        },
+      );
+    }
   }
 
   /** The winning version of a record, or undefined if no plugin has it. */

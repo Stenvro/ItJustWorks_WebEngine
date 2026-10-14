@@ -13,7 +13,7 @@ import {
 } from '../src/world/material-object.ts';
 import { emittanceColor, emittanceWeather, type EmittanceSource } from '../src/world/emittance.ts';
 import { parseRegionWeather, parseWeather } from '../src/world/weather.ts';
-import { RecordDatabase } from '../src/world/record-db.ts';
+import { RecordDatabase, type GameRecord } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
@@ -80,9 +80,16 @@ describe.skipIf(!hasGamedata())('record database on the local game data', () => 
   it('finds the directional materials of statics', async () => {
     let withMaterial = 0;
     let snow = 0;
-    for (const formId of db.formIdsOfType('STAT')) {
-      const record = await db.get(formId);
-      const directional = record && parseStaticDirectional(record);
+    // Every winning STAT, read in one sequential pass.
+    const statics: GameRecord[] = [];
+    await db.scan(
+      ['STAT'],
+      () => true,
+      (record) => statics.push(record),
+    );
+    expect(statics.length).toBe(new Set(db.formIdsOfType('STAT')).size);
+    for (const record of statics) {
+      const directional = parseStaticDirectional(record);
       if (!directional) continue;
       if (directional.consideredSnow) snow++;
       if (directional.material === 0) continue;

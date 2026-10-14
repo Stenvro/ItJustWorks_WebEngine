@@ -11,6 +11,8 @@ import { ObjectHandle, PapyrusArray, type Value } from '../values.ts';
 
 /** The player's reference (PlayerRef) and base (Player). */
 export const PLAYER_REF = 0x14;
+/** Records kept read (the most recently used): bounds the memory a long game takes. */
+const RECORD_CACHE = 50_000;
 export const PLAYER_BASE = 0x7;
 
 /** The native script of each record type. */
@@ -90,7 +92,8 @@ export const SCRIPT_TYPES: Readonly<Record<string, string>> = {
 
 export class FormIndex {
   readonly db: RecordDatabase;
-  readonly #records = new Map<number, Promise<GameRecord | undefined>>();
+  #records = new Map<number, Promise<GameRecord | undefined>>();
+  #olderRecords = new Map<number, Promise<GameRecord | undefined>>();
   readonly #vmad = new Map<number, Promise<ScriptAttachments | undefined>>();
   readonly #quests = new Map<number, Promise<QuestRecord | undefined>>();
   #unique: Promise<Map<number, number>> | undefined;
@@ -107,10 +110,29 @@ export class FormIndex {
   record(formId: number): Promise<GameRecord | undefined> {
     let pending = this.#records.get(formId);
     if (!pending) {
-      pending = this.db.get(formId).then((record) => (record?.deleted ? undefined : record));
-      this.#records.set(formId, pending);
+      pending =
+        this.#olderRecords.get(formId) ??
+        this.db.get(formId).then((record) => (record?.deleted ? undefined : record));
+      this.#remember(formId, pending);
     }
     return pending;
+  }
+
+  /** A record read another way (a scan), kept as if read here. */
+  remember(record: GameRecord): void {
+    this.#remember(record.formId, Promise.resolve(record.deleted ? undefined : record));
+  }
+
+  /**
+   * Keeps a record read: the records used lately stay (two generations: when the newer one is
+   * full it becomes the older and the older one goes), which bounds the memory a game takes.
+   */
+  #remember(formId: number, pending: Promise<GameRecord | undefined>): void {
+    if (this.#records.size >= RECORD_CACHE / 2) {
+      this.#olderRecords = this.#records;
+      this.#records = new Map();
+    }
+    this.#records.set(formId, pending);
   }
 
   /** The script attachments (VMAD) of a form; undefined if it has none or they are corrupt. */

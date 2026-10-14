@@ -179,6 +179,22 @@ export interface WorldBridge {
   ): void;
 }
 
+/** The persistent references of the load order (ScriptRuntime.persistentIndex). */
+export interface PersistentIndex {
+  readonly all: number[];
+  readonly base: Map<number, number>;
+  readonly byBase: Map<number, number[]>;
+  /** Those with scripts of their own (VMAD). */
+  readonly scripted: Set<number>;
+  /** By reference: the references whose link without a keyword is it. */
+  readonly linkedTo: Map<number, number[]>;
+  /** Record flags (initially disabled, persistent, an ACHR's "starts dead", ...). */
+  readonly flags: Map<number, number>;
+  readonly enableParent: Map<number, { readonly reference: number; readonly opposite: boolean }>;
+  /** Those that are ACHR (actors). */
+  readonly actors: Set<number>;
+}
+
 /** Native implementations by lowercase "script.function". */
 export type NativeRegistry = Map<string, NativeFunction>;
 
@@ -281,6 +297,9 @@ export class ScriptRuntime implements VmHost {
   readonly #mapMarkers = new Map<number, { visible: boolean; travel: boolean }>();
   readonly #seeded = new Set<number>();
   readonly #locations = new Map<number, Promise<LocationRecord | undefined>>();
+  #persistent: Promise<PersistentIndex> | undefined;
+  #index: PersistentIndex | undefined;
+  readonly #keywordCache = new Map<number, Promise<number[]>>();
   #settings: Promise<GameSettings> | undefined;
   #startDate: GameDate | undefined;
   #startDays = 0;
@@ -628,19 +647,47 @@ export class ScriptRuntime implements VmHost {
     this.#formListAdded.delete(list);
   }
 
-  /** A form's keywords (KWDA), a reference's being its base's. */
+  /**
+   * A form's keywords (KWDA); a reference's are its base's, an actor's its keywords NPC_'s,
+   * with those of the aliases that hold it (Creation Kit: an alias's keywords).
+   */
   async keywords(formId: number): Promise<number[]> {
-    const base =
-      (await this.forms.record(formId))?.type === 'REFR' ||
-      (await this.forms.record(formId))?.type === 'ACHR'
-        ? await this.baseOf(formId)
-        : formId;
-    const record = base === undefined ? undefined : await this.forms.record(base);
-    const data = record?.fields.first('KWDA');
-    const keywords: number[] = [];
-    for (let at = 0; data && record && at + 4 <= data.length; at += 4)
-      keywords.push(record.formIdAt(data, at));
-    return keywords;
+    let base = this.#index?.base.get(formId) ?? this.state.created.get(formId)?.base;
+    let reference = base !== undefined;
+    if (base === undefined) {
+      const record = await this.forms.record(formId);
+      reference = record?.type === 'REFR' || record?.type === 'ACHR' || record?.type === 'PGRE';
+      base = reference ? record?.formIdField('NAME') : formId;
+    }
+    if (reference) {
+      const info = await this.actors.info(formId);
+      if (info) base = info.keywords.formId;
+    }
+    const own = base === undefined ? [] : await this.#formKeywords(base);
+    const aliases = reference ? this.aliasesHolding(formId) : [];
+    if (aliases.length === 0) return own;
+    const all = [...own];
+    for (const { quest, alias } of aliases) {
+      all.push(...((await this.forms.alias(quest, alias))?.keywords ?? []));
+    }
+    return all;
+  }
+
+  /** A base form's own keywords (KWDA), read once. */
+  #formKeywords(formId: number): Promise<number[]> {
+    let pending = this.#keywordCache.get(formId);
+    if (!pending) {
+      pending = this.forms.record(formId).then((record) => {
+        const data = record?.fields.first('KWDA');
+        const keywords: number[] = [];
+        for (let at = 0; data && record && at + 4 <= data.length; at += 4) {
+          keywords.push(record.formIdAt(data, at));
+        }
+        return keywords;
+      });
+      this.#keywordCache.set(formId, pending);
+    }
+    return pending;
   }
 
   async hasKeyword(formId: number, keyword: number): Promise<boolean> {
@@ -671,6 +718,8 @@ export class ScriptRuntime implements VmHost {
     if (reference === PLAYER_REF) return PLAYER_BASE;
     const created = this.state.created.get(reference);
     if (created) return created.base;
+    const indexed = this.#index?.base.get(reference);
+    if (indexed !== undefined) return indexed;
     return (await this.forms.record(reference))?.formIdField('NAME');
   }
 
@@ -678,14 +727,38 @@ export class ScriptRuntime implements VmHost {
   async isEnabled(reference: number, depth = 0): Promise<boolean> {
     const state = this.state.references.get(reference);
     if (state?.deleted) return false;
-    const record = await this.forms.record(reference);
-    const xesp = record?.fields.first('XESP');
-    if (record && xesp && xesp.length >= 5 && depth < 16) {
-      const parent = await this.isEnabled(record.formIdAt(xesp), depth + 1);
-      return ((xesp[4] ?? 0) & 1) !== 0 ? !parent : parent;
+    // A persistent reference's enable parent and flags are in the index (no read).
+    const indexed = this.#index?.flags.get(reference);
+    let parent: { readonly reference: number; readonly opposite: boolean } | undefined;
+    let initiallyDisabled: boolean;
+    if (indexed !== undefined) {
+      parent = this.#index?.enableParent.get(reference);
+      initiallyDisabled = (indexed & RecordFlag.initiallyDisabled) !== 0;
+    } else {
+      const record = await this.forms.record(reference);
+      const xesp = record?.fields.first('XESP');
+      if (record && xesp && xesp.length >= 5) {
+        parent = { reference: record.formIdAt(xesp), opposite: ((xesp[4] ?? 0) & 1) !== 0 };
+      }
+      initiallyDisabled =
+        record !== undefined && (record.flags & RecordFlag.initiallyDisabled) !== 0;
+    }
+    if (parent && depth < 16) {
+      const enabled = await this.isEnabled(parent.reference, depth + 1);
+      return parent.opposite ? !enabled : enabled;
     }
     if (state?.enabled !== undefined) return state.enabled;
-    return !record || (record.flags & RecordFlag.initiallyDisabled) === 0;
+    return !initiallyDisabled;
+  }
+
+  /** Whether a persistent reference is an actor (ACHR), from the index. */
+  isIndexedActor(reference: number): boolean {
+    return this.#index?.actors.has(reference) ?? false;
+  }
+
+  /** A persistent reference's record flags, if it is one (from the index, no read). */
+  indexedFlags(reference: number): number | undefined {
+    return this.#index?.flags.get(reference);
   }
 
   async setEnabled(reference: number, enabled: boolean): Promise<void> {
@@ -1240,6 +1313,62 @@ export class ScriptRuntime implements VmHost {
     this.vm.reset(handle);
   }
 
+  /**
+   * The persistent references (always in memory, so found by searches anywhere: Find Matching
+   * Reference), read in one pass: their bases, those with scripts of their own, and the
+   * references linked (without a keyword) to each.
+   */
+  persistentIndex(): Promise<PersistentIndex> {
+    this.#persistent ??= (async () => {
+      const index: PersistentIndex = {
+        all: [PLAYER_REF],
+        base: new Map([[PLAYER_REF, PLAYER_BASE]]),
+        byBase: new Map([[PLAYER_BASE, [PLAYER_REF]]]),
+        scripted: new Set(),
+        linkedTo: new Map(),
+        flags: new Map(),
+        enableParent: new Map(),
+        actors: new Set(),
+      };
+      const wanted = RecordFlag.persistent | RecordFlag.deleted;
+      await this.forms.db.scan(
+        ['REFR', 'ACHR'],
+        (flags) => (flags & wanted) === RecordFlag.persistent,
+        (record) => {
+          const reference = record.formId;
+          if (reference === PLAYER_REF) return;
+          index.all.push(reference);
+          const base = record.formIdField('NAME');
+          if (base !== undefined) {
+            index.base.set(reference, base);
+            const list = index.byBase.get(base) ?? [];
+            list.push(reference);
+            index.byBase.set(base, list);
+          }
+          if (record.fields.has('VMAD')) index.scripted.add(reference);
+          index.flags.set(reference, record.flags);
+          if (record.type === 'ACHR') index.actors.add(reference);
+          const xesp = record.fields.first('XESP');
+          if (xesp && xesp.length >= 5) {
+            index.enableParent.set(reference, {
+              reference: record.formIdAt(xesp),
+              opposite: ((xesp[4] ?? 0) & 1) !== 0,
+            });
+          }
+          const linked = linkedReferences(record).get(0);
+          if (linked !== undefined && linked !== 0) {
+            const list = index.linkedTo.get(linked) ?? [];
+            list.push(reference);
+            index.linkedTo.set(linked, list);
+          }
+        },
+      );
+      this.#index = index;
+      return index;
+    })();
+    return this.#persistent;
+  }
+
   /** Dead actors of a base (ActorBase.GetDeadCount). */
   async deadCount(base: number): Promise<number> {
     let count = 0;
@@ -1521,15 +1650,15 @@ export class ScriptRuntime implements VmHost {
       const record = await this.forms.quest(quest);
       if (record) await this.quests.initialize(record);
     }
+    // Persistent references with scripts (their own or their base's).
+    const index = await this.persistentIndex();
     const persistent: number[] = [];
-    for (const type of ['REFR', 'ACHR']) {
-      for (const formId of db.formIdsOfType(type)) {
-        const record = await this.forms.record(formId);
-        if (!record || (record.flags & RecordFlag.persistent) === 0) continue;
-        if ((await this.forms.attachedScripts(new ObjectHandle(formId, 'form'))).length === 0)
-          continue;
-        persistent.push(formId);
-      }
+    for (const reference of index.all) {
+      const base = index.base.get(reference);
+      const scripted =
+        index.scripted.has(reference) ||
+        (base !== undefined && (await this.forms.attachments(base)) !== undefined);
+      if (scripted) persistent.push(reference);
     }
     progress?.(`initializing ${String(persistent.length)} persistent references with scripts`);
     await Promise.all(

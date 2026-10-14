@@ -20,7 +20,6 @@
 
 import type { LocationRecord } from '../../world/actor-stats-records.ts';
 import { AliasFlag, type QuestAlias, type QuestRecord } from '../../world/quest-records.ts';
-import { RecordFlag } from '../../formats/esm/record.ts';
 import { ConditionRunOn } from '../conditions.ts';
 import { ObjectHandle } from '../values.ts';
 import { Fn } from './condition-values.ts';
@@ -40,7 +39,6 @@ export class AliasFiller {
   readonly #runtime: ScriptRuntime;
   /** References and locations in an alias that reserves them: by whom ("quest:alias"). */
   readonly #reserved = new Map<number, Set<string>>();
-  #persistent: Promise<{ all: number[]; byBase: Map<number, number[]> }> | undefined;
   random: () => number = Math.random;
   /** The alias each quest that failed to start could not fill (for reports). */
   readonly failures = new Map<number, QuestAlias>();
@@ -268,9 +266,8 @@ export class AliasFiller {
     const found = new Set<number>();
     const own = await runtime.linkedReference(reference, 0);
     if (own !== undefined) found.add(own);
-    const { all } = await this.#persistentIndex();
-    for (const candidate of all) {
-      if ((await runtime.linkedReference(candidate, 0)) === reference) found.add(candidate);
+    for (const candidate of (await runtime.persistentIndex()).linkedTo.get(reference) ?? []) {
+      found.add(candidate);
     }
     return [...found];
   }
@@ -280,7 +277,7 @@ export class AliasFiller {
    * narrowed by a GetIsID or GetIsReference condition the alias must meet.
    */
   async #persistentCandidates(alias: QuestAlias): Promise<number[]> {
-    const index = await this.#persistentIndex();
+    const index = await this.#runtime.persistentIndex();
     for (let i = 0; i < alias.conditions.length; i++) {
       const condition = alias.conditions[i];
       const previous = alias.conditions[i - 1];
@@ -299,34 +296,6 @@ export class AliasFiller {
       }
     }
     return index.all;
-  }
-
-  #persistentIndex(): Promise<{ all: number[]; byBase: Map<number, number[]> }> {
-    this.#persistent ??= (async () => {
-      const runtime = this.#runtime;
-      const all: number[] = [PLAYER_REF];
-      const byBase = new Map<number, number[]>();
-      for (const type of ['ACHR', 'REFR']) {
-        for (const formId of runtime.forms.db.formIdsOfType(type)) {
-          const record = await runtime.forms.record(formId);
-          if (
-            !record ||
-            record.deleted ||
-            (record.flags & RecordFlag.persistent) === 0 ||
-            formId === PLAYER_REF
-          )
-            continue;
-          all.push(formId);
-          const base = record.formIdField('NAME');
-          if (base === undefined) continue;
-          const list = byBase.get(base) ?? [];
-          list.push(formId);
-          byBase.set(base, list);
-        }
-      }
-      return { all, byBase };
-    })();
-    return this.#persistent;
   }
 
   /** Find Matching Location: any location that meets the conditions, uncleared ones first. */
