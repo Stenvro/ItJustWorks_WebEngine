@@ -1,14 +1,16 @@
 // The game data packages are started from (PackageWorld over the record database): packages,
 // where references and cells are, globals, and the quests at the start of a new game. Quests
 // that start with the game (QUST DNAM 0x01) run, and their start-up stage (INDX flag 0x02) is
-// done; where that stage runs a script fragment, what the script sets is not known until the
-// Papyrus VM runs it (TODO(M8)), nor is what any start-up script sets in other quests. Other
-// quests have not started: stage 0, no stage done. Platform-independent.
+// done; where that stage runs a script fragment, what the script sets is not known. Other
+// quests have not started: stage 0, no stage done. Once the running game's scripts are there,
+// their quests, aliases and globals are used instead. Platform-independent.
 // Notes: docs/ai.md ("Where packages put actors").
 
 import { view } from '../formats/esm/fields.ts';
 import { parseVmad } from '../formats/esm/vmad.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
+import { globalValue } from '../scripting/runtime/condition-values.ts';
+import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { parsePackage, type PackageRecord } from './package-records.ts';
 import type { PackageActor, PackageReference, PackageWorld, Space } from './package-start.ts';
 
@@ -45,10 +47,21 @@ export class PackageData implements PackageWorld {
   #quests: Promise<QuestIndex> | undefined;
   #index: QuestIndex | undefined;
 
-  /** `states`: the stages scripts have set (the player-home quests'), if any ran. */
-  constructor(db: RecordDatabase, states: () => QuestStates | undefined = () => undefined) {
+  readonly #scripts: () => ScriptRuntime | undefined;
+
+  /**
+   * `states`: the stages scripts have set (the player-home quests'), if any ran;
+   * `scripts`: the running game's scripts, whose quests, aliases and globals are then the
+   * truth.
+   */
+  constructor(
+    db: RecordDatabase,
+    states: () => QuestStates | undefined = () => undefined,
+    scripts: () => ScriptRuntime | undefined = () => undefined,
+  ) {
     this.#db = db;
     this.#states = states;
+    this.#scripts = scripts;
   }
 
   /** Reads the quests once (aliasPackages and the quest state need them). */
@@ -96,7 +109,13 @@ export class PackageData implements PackageWorld {
   }
 
   async readGlobals(formIds: Iterable<number>): Promise<void> {
+    const runtime = this.#scripts();
     for (const formId of formIds) {
+      // The running game's values (scripts set them; the clock's move).
+      if (runtime) {
+        this.#globals.set(formId, await globalValue(runtime, formId));
+        continue;
+      }
       if (this.#globals.has(formId)) continue;
       const record = await this.#db.get(formId);
       this.#globals.set(formId, record?.type === 'GLOB' ? record.fields.f32('FLTV') : undefined);
@@ -104,6 +123,8 @@ export class PackageData implements PackageWorld {
   }
 
   questStage(quest: number): number | undefined {
+    const runtime = this.#scripts();
+    if (runtime) return runtime.state.quests.get(quest)?.stage ?? 0;
     const set = this.#states()?.currentStage.get(quest);
     if (set !== undefined) return set;
     if (!this.#startsWithGame(quest)) return 0;
@@ -111,30 +132,48 @@ export class PackageData implements PackageWorld {
   }
 
   stageDone(quest: number, stage: number): boolean | undefined {
+    const runtime = this.#scripts();
+    if (runtime) return runtime.state.quests.get(quest)?.stagesDone.has(stage) ?? false;
     if (this.#states()?.stagesDone.get(quest)?.has(stage) === true) return true;
     if (!this.#startsWithGame(quest)) return false;
     return this.#index?.started.get(quest)?.done.has(stage);
   }
 
   questRunning(quest: number): boolean | undefined {
+    const runtime = this.#scripts();
+    if (runtime) return runtime.quests.isRunning(quest);
     if (this.#states()?.stagesDone.has(quest) === true) return true;
     return this.#index ? this.#index.startEnabled.has(quest) : undefined;
   }
 
   questCompleted(quest: number): boolean | undefined {
+    const runtime = this.#scripts();
+    if (runtime) return runtime.state.quests.get(quest)?.completed ?? false;
     return !this.#startsWithGame(quest) || this.#index?.started.has(quest) === true
       ? false
       : undefined;
   }
 
-  async aliasPackages(actor: PackageActor): Promise<readonly number[]> {
+  async aliasPackages(actor: PackageActor): Promise<readonly number[] | undefined> {
+    const runtime = this.#scripts();
+    if (runtime) {
+      // The aliases that hold it now, their quests by priority (the highest first).
+      const held: { priority: number; packages: readonly number[] }[] = [];
+      for (const { quest, alias } of runtime.aliasesHolding(actor.reference)) {
+        const record = await runtime.forms.quest(quest);
+        const packages = record?.aliases.find((entry) => entry.id === alias)?.packages ?? [];
+        if (record && packages.length > 0) held.push({ priority: record.priority, packages });
+      }
+      return held.sort((a, b) => b.priority - a.priority).flatMap((entry) => entry.packages);
+    }
     await this.ready();
     const holders = this.#index?.holders;
-    return [
+    const quests = [
       ...(holders?.get(actor.reference) ?? []),
       ...(holders?.get(actor.base) ?? []),
       ...(actor.npc === actor.base ? [] : (holders?.get(actor.npc) ?? [])),
     ];
+    return quests.length > 0 ? undefined : [];
   }
 
   /** Whether a quest starts with the game (unknown until the quests are read). */

@@ -240,7 +240,7 @@ export class GameSession {
   /** Where an actor's AI package has it now, as its cell loads (src/ai/package-start.ts). */
   async packageStart(actor: CellActor, look: ActorLook): Promise<PackageStart> {
     this.#packages ??= this.db.then(async (db) => {
-      const data = new PackageData(db);
+      const data = new PackageData(db, undefined, () => this.scriptsReady);
       await data.ready();
       return data;
     });

@@ -99,7 +99,7 @@ const REFERENCES = new Map<number, PackageReference>([
   [0x14, { space: TAMRIEL, baseType: 'NPC_' }],
 ]);
 
-function world(packages: PackageRecord[], aliases: number[] = []): PackageWorld {
+function world(packages: PackageRecord[], aliases: number[] | 'unknown' = []): PackageWorld {
   const all = new Map([...TEMPLATES, ...packages].map((entry) => [entry.formId, entry]));
   return {
     package: (formId) => Promise.resolve(all.get(formId)),
@@ -111,7 +111,7 @@ function world(packages: PackageRecord[], aliases: number[] = []): PackageWorld 
     stageDone: (quest) => (quest === 0x77 ? undefined : false),
     questRunning: () => false,
     questCompleted: () => false,
-    aliasPackages: () => Promise.resolve(aliases),
+    aliasPackages: () => Promise.resolve(aliases === 'unknown' ? undefined : aliases),
   };
 }
 
@@ -289,11 +289,17 @@ describe('where packages put actors', () => {
     expect(await packageStart(actor([0x105], linked), world([own]), at(10))).toMatchObject({
       kind: 'at',
     });
-    expect(await packageStart(actor([0x105], linked), world([own], [0x500]), at(10))).toMatchObject(
-      {
-        kind: 'undecided',
-      },
-    );
+    // Held by an alias whose packages are not known (no scripts run): left to its quest.
+    expect(
+      await packageStart(actor([0x105], linked), world([own], 'unknown'), at(10)),
+    ).toMatchObject({
+      kind: 'undecided',
+    });
+    // An alias's package comes before the actor's own.
+    const sandbox = pack(0x106, {});
+    expect(
+      await packageStart(actor([0x105], linked), world([own, sandbox], [0x106]), at(10)),
+    ).toMatchObject({ package: 0x106 });
     // Without its patrol start linked, where it patrols is not known.
     expect(await packageStart(actor([0x105]), world([own]), at(10))).toMatchObject({
       kind: 'undecided',
