@@ -201,6 +201,8 @@ export interface ModelData {
   readonly nodes?: readonly ModelNode[];
   /** NiStringExtraData "Prn" on the root: the skeleton node it hangs on (shields: SHIELD). */
   readonly attachTo?: string;
+  /** BSTreeNode: the nodes (ModelData.nodes) of its trunk and branch bones. */
+  readonly treeBones?: { readonly trunk: readonly number[]; readonly branches: readonly number[] };
   /**
    * AddOnNodes: where the engine attaches the model of an ADDN record (candle flames, torch
    * fire, chimney smoke), by the record's index, in model space.
@@ -481,6 +483,7 @@ export function buildModel(file: NifFile): ModelData {
   const addons: AddonNode[] = [];
   /** The node tree (for models worn on a skeleton) and the node being visited. */
   const nodes: ModelNode[] = [];
+  const nodeOfBlock = new Map<Ref, number>();
   let currentNode = -1;
   /** The shape being visited, under its node. */
   let currentLocal: Mat4 = identity();
@@ -510,6 +513,7 @@ export function buildModel(file: NifFile): ModelData {
             : block.children;
         const parentNode = currentNode;
         currentNode = nodes.length;
+        nodeOfBlock.set(ref, currentNode);
         nodes.push({ name: block.name, parent: parentNode, local });
         nodeNames.push(block.name);
         if (block.value !== undefined && block.name.startsWith('AddOnNode')) {
@@ -530,8 +534,12 @@ export function buildModel(file: NifFile): ModelData {
           worlds ??= nodeWorlds(file);
           const skinned = block.skin >= 0 ? skinnedGeometry(file, block, worlds) : undefined;
           if (!skinned) {
+            // Nothing to place: a shape without vertex data and skin (one vanilla hair mesh,
+            // HairShortHumanFOld) or with a broken skin. The game draws nothing of it either.
             skipped.push(
-              `${block.name || 'shape'}: skinned geometry without usable skin (TODO(M7))`,
+              block.skin >= 0
+                ? `${block.name || 'shape'}: broken skin (its vertices cannot be placed)`
+                : `${block.name || 'shape'}: no vertex data`,
             );
             return;
           }
@@ -596,7 +604,10 @@ export function buildModel(file: NifFile): ModelData {
         const data = getBlock(file, block.data, 'ni-tri-shape-data');
         if (!data) return;
         if (block.skin >= 0) {
-          skipped.push(`${block.name || 'shape'}: skinned geometry (TODO(M7))`);
+          // Skyrim LE's skinned NiTriShape: SSE draws skinned geometry only as BSTriShape with
+          // its vertices in the skin partition (unconverted LE meshes stay invisible); none in
+          // the SSE data.
+          skipped.push(`${block.name || 'shape'}: skinned NiTriShape (LE format, not drawn)`);
           return;
         }
         const packed = packTriShapeData(data);
@@ -724,6 +735,15 @@ export function buildModel(file: NifFile): ModelData {
     }
   }
 
+  // BSTreeNode: the bones the wind moves (pines: their branches).
+  const treeRoot = file.blocks[file.roots[0] ?? -1];
+  const treeBones =
+    treeRoot?.kind === 'node' && treeRoot.treeBones
+      ? {
+          trunk: treeRoot.treeBones.trunk.flatMap((ref) => nodeOfBlock.get(ref) ?? []),
+          branches: treeRoot.treeBones.branches.flatMap((ref) => nodeOfBlock.get(ref) ?? []),
+        }
+      : undefined;
   const animation = buildAnimation(file, graphDriven);
   const sequences = buildSequences(file, graphDriven);
   // Models worn on a skeleton keep their node tree, as do models whose behavior graph may
@@ -750,6 +770,7 @@ export function buildModel(file: NifFile): ModelData {
     ...(animation && { animation }),
     ...(sequences && { sequences }),
     ...(behaviorGraph !== undefined && { behaviorGraph }),
+    ...(treeBones && skeletal && { treeBones }),
     particles,
     addons,
   };

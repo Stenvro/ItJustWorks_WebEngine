@@ -400,6 +400,8 @@ export class GpuModel {
   /** Worn on a skeleton: the model's node tree and the node it hangs on (ModelData). */
   readonly nodes: readonly ModelNode[] | undefined;
   readonly attachTo: string | undefined;
+  /** BSTreeNode: its trunk and branch bones (ModelData.treeBones). */
+  readonly treeBones: ModelData['treeBones'];
   /** performance.now() when a scene last took or let go of it (eviction order). */
   lastUsed = performance.now();
   readonly #buffers: readonly GPUBuffer[];
@@ -419,10 +421,12 @@ export class GpuModel {
     leafAnimation: boolean;
     nodes?: readonly ModelNode[] | undefined;
     attachTo?: string | undefined;
+    treeBones?: ModelData['treeBones'];
   }) {
     this.leafAnimation = init.leafAnimation;
     this.nodes = init.nodes;
     this.attachTo = init.attachTo;
+    this.treeBones = init.treeBones;
     this.center = init.center;
     this.radius = init.radius;
     this.parts = init.parts;
@@ -1564,6 +1568,7 @@ export class SceneRenderer {
       leafAnimation: data.leafAnimation === true,
       nodes: data.nodes,
       attachTo: data.attachTo,
+      treeBones: data.treeBones,
     });
   }
 
@@ -1645,6 +1650,10 @@ export class SceneRenderer {
           )
         : undefined;
     let paletteCursor = 0;
+    const sharedPalettes = new Map<
+      ModelPart,
+      Map<ActorPose, { bones: number; posed: PosedDraw }>
+    >();
     let morphCursor = morphBase + MORPH_REGION_BYTES;
     const draws: Draw[] = [];
     const animated: AnimatedDraw[] = [];
@@ -1667,10 +1676,15 @@ export class SceneRenderer {
         const skin = part.part.skin;
         let bones: number | undefined;
         let posed: PosedDraw | undefined;
-        if (skin && boneData) {
+        const pose = instance.pose;
+        // Placements sharing a pose (a tree model's sway) share their palettes too.
+        const shared = skin && pose ? sharedPalettes.get(part.part)?.get(pose) : undefined;
+        if (shared) {
+          bones = shared.bones;
+          posed = shared.posed;
+        } else if (skin && boneData) {
           bones = Math.ceil(paletteCursor / PALETTE_ALIGNMENT) * PALETTE_ALIGNMENT;
           paletteCursor = bones + skin.bones.length * PALETTE_BONE_FLOATS * 4;
-          const pose = instance.pose;
           if (pose) {
             const nodes = Int16Array.from(
               skin.names,
@@ -1678,6 +1692,12 @@ export class SceneRenderer {
             );
             posed = { pose, nodes, version: pose.version };
             writePosePalette(skin, posed, boneData, bones / 4);
+            let byPose = sharedPalettes.get(part.part);
+            if (!byPose) {
+              byPose = new Map<ActorPose, { bones: number; posed: PosedDraw }>();
+              sharedPalettes.set(part.part, byPose);
+            }
+            byPose.set(pose, { bones, posed });
           } else {
             writeRestPalette(skin, boneData, bones / 4);
           }

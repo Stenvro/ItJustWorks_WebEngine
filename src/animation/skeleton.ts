@@ -258,6 +258,26 @@ export class ActorPose {
     this.version++;
   }
 
+  /**
+   * Places every node under its parent: those in `locals` by the transform given there (a
+   * tree's swaying branches), the others as the skeleton model places them.
+   */
+  placeLocals(locals: ReadonlyMap<number, Float32Array>): void {
+    const { rig } = this.skeleton;
+    for (let node = 0; node < rig.names.length; node++) {
+      const own = locals.get(node);
+      const source = own ?? rig.local;
+      const at = own ? 0 : node * 16;
+      const parent = rig.parents[node] ?? -1;
+      if (parent < 0) {
+        this.worlds.set(source.subarray(at, at + 16), node * 16);
+      } else {
+        multiplyAt(this.worlds, parent * 16, source, at, this.worlds, node * 16);
+      }
+    }
+    this.version++;
+  }
+
   /** A node's model-space matrix by name, or undefined. */
   world(name: string): Float32Array | undefined {
     const node = this.skeleton.nodeByName.get(name.toLowerCase());

@@ -67,7 +67,9 @@ walks from a landing below to the one above and back, through the middles of the
 flight's triangles share, steering as a player would. Of 14,367 walks over 6,767 flights, 854
 do not arrive (1,138 with steps on stairs only): closed doors, gates and portcullises, magic
 barriers, spider webs and cocoons to cut through, moving bridges and platforms (game states:
-TODO(M7), TODO(M8), TODO(M11)); walks that hug an obstacle beside the way (the audit steers
+scripts open, lower and raise them, TODO(M8); combat cuts the webs, TODO(M11); the bridges'
+collision follows their animation already, see Constraints and ragdolls and animation.md,
+Skeletal objects); walks that hug an obstacle beside the way (the audit steers
 through the edges' middles, a player walks around it); and a few steps higher than 32 units.
 
 - **On the ground** it only moves along the ground; snapping to the ground (as far as the

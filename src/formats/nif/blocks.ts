@@ -131,6 +131,7 @@ const parseNode: BlockParser = (reader, context, type): NiNodeBlock => {
   let switchIndex: number | undefined;
   let billboardMode: number | undefined;
   let value: number | undefined;
+  let treeBones: { trunk: Ref[]; branches: Ref[] } | undefined;
 
   switch (type) {
     case 'NiSwitchNode':
@@ -141,8 +142,7 @@ const parseNode: BlockParser = (reader, context, type): NiNodeBlock => {
       billboardMode = reader.u16();
       break;
     case 'BSTreeNode':
-      readRefs(reader); // bones 1
-      readRefs(reader); // bones 2
+      treeBones = { trunk: readRefs(reader), branches: readRefs(reader) };
       break;
     case 'BSMultiBoundNode':
       reader.i32(); // multi bound
@@ -178,6 +178,7 @@ const parseNode: BlockParser = (reader, context, type): NiNodeBlock => {
     ...(switchIndex !== undefined && { switchIndex }),
     ...(billboardMode !== undefined && { billboardMode }),
     ...(value !== undefined && { value }),
+    ...(treeBones && { treeBones }),
   };
 };
 

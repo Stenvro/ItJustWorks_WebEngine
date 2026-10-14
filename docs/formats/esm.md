@@ -214,8 +214,15 @@ BSLeafAnimNode root (172 vanilla trees: leaves only) or a BSTreeNode (71, the pi
 shapes are skinned to a trunk bone and branch bones, its two bone lists). Shapes with SLSF2
 Tree_Anim flutter in the wind (lighting shader TreeParams, see
 [rendering.md](../rendering.md#lighting-shader)). The trunk and branch values move the
-BSTreeNode bones; how is not documented (TODO(M7): with the skinning of actors, which the
-bones need).
+BSTreeNode bones (its first list the trunk's, "Bones 1", its second the branches'). The
+Creation Kit computes the amplitudes and frequencies from the flexibilities (pines: trunk 0,
+branch 2.75 → front / back / side amplitude 0.08 / 0.11 / 0.09, frequency 1.38 / 1.38 / 1.10,
+that is branch × 0.03 / 0.04 / 0.033 and branch / 2, branch × 0.4); it documents only that the
+trunk moves horizontally and the branches in every direction. How the engine turns them into
+motion is not documented; `src/animation/tree-sway.ts` swings each bone about its own x and z
+axes by the amplitudes (radians) at the frequencies (radians per second) times the weather's
+wind speed, the trunk about the model's horizontal axes (TODO(M13): the engine's formula). The
+motion is the model's: every placement of a tree model sways alike, turned with the reference.
 
 ## Grass
 

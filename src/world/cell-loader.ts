@@ -41,6 +41,8 @@ export interface CellObject {
   readonly directional?: StaticDirectional;
   /** Trees (TREE CNAM): how their leaves flutter in the wind. */
   readonly leafAnimation?: LeafAnimation;
+  /** Trees (TREE CNAM): how the wind moves their trunk and branch bones (BSTreeNode). */
+  readonly treeSway?: TreeSwaySettings;
   /** XEMI: the light or region whose colour drives the External_Emittance shapes. */
   readonly emittance?: number;
   /**
@@ -199,6 +201,16 @@ export interface LeafAnimation {
   readonly frequency: number;
 }
 
+/** TREE CNAM: how the wind moves a BSTreeNode tree's trunk and branch bones. */
+export interface TreeSwaySettings {
+  readonly trunkFlexibility: number;
+  readonly branchFlexibility: number;
+  readonly trunkAmplitude: number;
+  /** Front, back and side: how far (amplitude) and how fast (frequency). */
+  readonly amplitudes: readonly [number, number, number];
+  readonly frequencies: readonly [number, number, number];
+}
+
 /** A decal reference: a texture set (TXST with decal data) projected inside a box. */
 export interface CellDecal extends PlacedDecal {
   readonly reference: number;
@@ -307,12 +319,23 @@ function objectBounds(
  * branch flexibility, trunk amplitude, front / back / side amplitude, front / back / side
  * frequency, leaf flexibility, leaf amplitude, leaf frequency.
  */
-function leafAnimationOf(base: GameRecord): { leafAnimation?: LeafAnimation } {
+function leafAnimationOf(base: GameRecord): {
+  leafAnimation?: LeafAnimation;
+  treeSway?: TreeSwaySettings;
+} {
   const data = base.type === 'TREE' ? base.fields.first('CNAM') : undefined;
   if (!data || data.length < 48) return {};
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const f = (i: number): number => view.getFloat32(i * 4, true);
   return {
-    leafAnimation: { amplitude: view.getFloat32(40, true), frequency: view.getFloat32(44, true) },
+    leafAnimation: { amplitude: f(10), frequency: f(11) },
+    treeSway: {
+      trunkFlexibility: f(0),
+      branchFlexibility: f(1),
+      trunkAmplitude: f(2),
+      amplitudes: [f(3), f(4), f(5)],
+      frequencies: [f(6), f(7), f(8)],
+    },
   };
 }
 
