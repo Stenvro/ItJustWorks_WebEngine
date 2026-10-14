@@ -10,10 +10,8 @@
 // TODO(M9): compass markers (quests, map markers), a map marker discovered (SetLocationName
 // with sDiscoveredText), subtitles, enemy health, shout meter, HUD modes.
 
-import type { ControlMap } from '../formats/controlmap/controlmap.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { QuestUpdate, ScriptRuntime } from '../scripting/runtime/runtime.ts';
-import { buttonArt } from '../ui/button-art.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import type { GameSettings } from '../world/game-settings.ts';
@@ -24,8 +22,6 @@ export interface HudSource {
   /** The player's heading: radians, 0 north (+Y), π/2 east (+X). */
   heading(): number | undefined;
   runtime(): ScriptRuntime | undefined;
-  /** The input bindings (help messages show the keys of the events they name). */
-  readonly controls: Promise<ControlMap>;
   readonly settings: Promise<GameSettings>;
 }
 
@@ -70,7 +66,6 @@ export class HudController implements HudSink {
   #shown = { heading: Number.NaN, health: -1, magicka: -1, stamina: -1 };
   /** The meters are read now and then (the runtime answers asynchronously). */
   #readingMeters = false;
-  #controls: ControlMap | undefined;
   #settings: GameSettings | undefined;
   readonly #notices: QuestNotice[] = [];
   /** Help messages by their event (lower case). */
@@ -85,21 +80,13 @@ export class HudController implements HudSink {
   }
 
   async open(): Promise<void> {
-    [this.#controls, this.#settings] = await Promise.all([
-      this.#source.controls,
-      this.#source.settings,
-    ]);
+    this.#settings = await this.#source.settings;
     this.#menu = await this.#host.open('hudmenu.swf', {
       depth: HUD_DEPTH,
       interactive: false,
       handlers: {
         // TODO(M9): the HUD's components registered for SkyUI-like widgets (none in vanilla).
         RegisterHUDComponents: () => undefined,
-        // A help text's "[Event]": the art of the key bound to it, answered at once (the HUD
-        // reads it right after asking).
-        GetButtonFromUserEvent: (menu, args) => {
-          menu.respond(args[0], buttonArt(this.#userEvent(String(args[1]))));
-        },
       },
       setup: async (menu) => {
         await menu.waitFor(`${BASE}.InitExtensions`);
@@ -264,16 +251,6 @@ export class HudController implements HudSink {
     clearTimeout(help.timer);
     this.#help.delete(key);
     this.#menu?.call('ShowTutorialHintText', help.message.text, false);
-  }
-
-  /** A user event by name, from the gameplay bindings first. */
-  #userEvent(name: string): ControlMap['contexts'][number][number] | undefined {
-    const wanted = name.toLowerCase();
-    for (const events of this.#controls?.contexts ?? []) {
-      const event = events.find((entry) => entry.name.toLowerCase() === wanted);
-      if (event) return event;
-    }
-    return undefined;
   }
 
   #update(): void {

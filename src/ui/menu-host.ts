@@ -151,13 +151,19 @@ export class Menu {
   }
 
   /**
-   * The path of a clip the menu passed in a call (GFx gives the engine the clip itself, e.g. the
-   * list RequestQuestsData is to fill); undefined if the argument is no clip.
+   * The path of an object the menu passed in a call (GFx gives the engine the object itself,
+   * e.g. the list RequestQuestsData is to fill); undefined if the argument is no object.
    */
   reference(argument: unknown): string | undefined {
     if (typeof argument !== 'string' || !argument.startsWith(BRIDGE_REFERENCE)) return undefined;
     const index = Number(argument.slice(BRIDGE_REFERENCE.length));
     return Number.isInteger(index) ? `${BRIDGE_REFERENCES}.${String(index)}` : undefined;
+  }
+
+  /** An argument's value: an object the menu passed, read through its reference. */
+  value(argument: unknown): unknown {
+    const path = this.reference(argument);
+    return path === undefined ? argument : this.get(path);
   }
 
   set(path: string, value: unknown): void {
