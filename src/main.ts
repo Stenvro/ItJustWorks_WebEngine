@@ -29,6 +29,7 @@ import type { Placement } from './scripting/runtime/runtime.ts';
 import { PLAYER_REF } from './scripting/runtime/forms.ts';
 import { QuestPanel } from './shell/quest-panel.ts';
 import { PlayMode } from './shell/play-mode.ts';
+import { Launcher } from './shell/launcher.ts';
 
 function byId<T extends HTMLElement>(id: string, type: new () => T): T {
   const element = document.getElementById(id);
@@ -59,6 +60,7 @@ const ui = {
   menuSandbox: byId('menu-sandbox', HTMLButtonElement),
   menuPlay: byId('menu-play', HTMLButtonElement),
   uiLayer: byId('ui-layer', HTMLDivElement),
+  launcher: byId('launcher', HTMLElement),
   sandbox: byId('sandbox', HTMLElement),
   brand: byId('brand', HTMLButtonElement),
   finders: [
@@ -199,7 +201,7 @@ function describeGpu(gpu: GpuContext): string {
  * The sandbox has the running game's quests one at a time (src/shell/quest-panel.ts).
  * TODO(M9): playing the game from its own main menu.
  */
-type Screen = 'start' | 'menu' | 'sandbox' | 'play';
+type Screen = 'start' | 'menu' | 'sandbox' | 'launcher' | 'play';
 
 function showScreen(screen: Screen): void {
   document.body.dataset.screen = screen;
@@ -207,6 +209,7 @@ function showScreen(screen: Screen): void {
   ui.summary.hidden = screen !== 'menu' || currentVfs === undefined;
   ui.sandbox.hidden = screen !== 'sandbox';
   ui.uiLayer.hidden = screen !== 'play';
+  ui.launcher.hidden = screen !== 'launcher';
   // The main menu shows what was loaded (log, load order, archives); the sandbox keeps the
   // log folded away above its finders.
   if (screen === 'menu') {
@@ -588,8 +591,40 @@ async function main(): Promise<void> {
     ui.brand.tabIndex = 0;
     showScreen('menu');
   };
+  // Play: the launcher first, as the game starts; its Play opens the game's main menu.
+  const launcher = new Launcher(
+    {
+      panel: ui.launcher,
+      play: byId('launcher-play', HTMLButtonElement),
+      options: byId('launcher-options', HTMLButtonElement),
+      exit: byId('launcher-exit', HTMLButtonElement),
+      dialog: byId('launcher-options-dialog', HTMLDialogElement),
+      windowed: byId('launcher-windowed', HTMLInputElement),
+      detail: byId('launcher-detail', HTMLElement),
+      adapter: byId('launcher-adapter', HTMLElement),
+      ok: byId('launcher-ok', HTMLButtonElement),
+      cancel: byId('launcher-cancel', HTMLButtonElement),
+    },
+    describeGpu(gpu),
+  );
   ui.menuPlay.addEventListener('click', () => {
     if (!session || play) return;
+    showScreen('launcher');
+    launcher.show();
+  });
+  launcher.onExit = () => {
+    launcher.hide();
+    showScreen('menu');
+  };
+  launcher.onPlay = (prefs) => {
+    if (!session || play) return;
+    launcher.hide();
+    // Full screen unless the Options chose a window (asked for in the click itself).
+    if (!prefs.windowed && !document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((error: unknown) => {
+        terminal.log('sys', `full screen: ${describeError(error)}`, 'warn');
+      });
+    }
     showScreen('play');
     play = new PlayMode(session, renderer, ui.uiLayer, terminal);
     // The way back stays for the mouse; keys belong to the game's menus.
@@ -600,11 +635,16 @@ async function main(): Promise<void> {
       terminal.log('ui', `the main menu does not open: ${describeError(error)}`, 'error');
       leavePlay();
     });
-  });
+  };
   // The brand in the corner leads back to the main menu (from the sandbox).
   ui.brand.addEventListener('click', () => {
     if (document.body.dataset.screen === 'play') {
       leavePlay();
+      return;
+    }
+    if (document.body.dataset.screen === 'launcher') {
+      launcher.hide();
+      showScreen('menu');
       return;
     }
     if (document.body.dataset.screen !== 'sandbox') return;

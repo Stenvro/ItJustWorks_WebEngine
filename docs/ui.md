@@ -153,3 +153,12 @@ for another size again and runs its owner's setup again (`MenuOptions.setup`: fo
 menu its extensions, properties, platform and fade-in), as the game would after a change of
 resolution. A click in the game gives the keys back to the topmost menu; the engine's own
 corner button leaves the keyboard's tab order in Play, so Enter always reaches the game.
+
+## The launcher
+
+Play starts where the game starts, at its launcher (`src/shell/launcher.ts`): Play, Options,
+Exit. Options keeps what the launcher writes to SkyrimPrefs.ini (in the browser's storage, per
+player): Windowed Mode (off: Play asks for full screen in the click that starts it) and the
+Detail preset. The Graphics Adapter shows the GPU. The launcher's art lives in its executable,
+not in the game's data, so it wears the engine's own look. TODO(M13): the detail presets and the
+Advanced settings (detail, view distance, water) applied by the renderer, which draws at Ultra.
