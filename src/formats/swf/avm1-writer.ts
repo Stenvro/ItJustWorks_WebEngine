@@ -29,6 +29,7 @@ export const Op = {
   return: 0x3e,
   newObject: 0x40,
   initArray: 0x42,
+  initObject: 0x43,
   getMember: 0x4e,
   setMember: 0x4f,
   callMethod: 0x52,
