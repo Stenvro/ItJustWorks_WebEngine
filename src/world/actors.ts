@@ -77,6 +77,8 @@ export interface ActorLook {
   readonly female: boolean;
   readonly race: number;
   readonly raceEditorId: string;
+  /** Its race's DATA flags (RaceFlag): whether it walks, swims, flies, tilts with the ground. */
+  readonly raceFlags: number;
   /** Skeleton model and behavior project (meshes\ paths). */
   readonly skeleton: string | undefined;
   readonly behavior: string | undefined;
@@ -479,6 +481,7 @@ export class ActorResolver {
       female,
       race: race.formId,
       raceEditorId: race.editorId,
+      raceFlags: race.flags,
       skeleton: skeleton === undefined ? undefined : meshPath(skeleton),
       behavior: behavior === undefined ? undefined : meshPath(behavior),
       scale: race.height[sex] * traits.height,

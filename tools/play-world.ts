@@ -3,7 +3,11 @@
 // which references are enabled, and cells placed into a physics world.
 
 import { parseNif } from '../src/formats/nif/nif.ts';
-import { buildCollision, type CollisionData } from '../src/physics/collision-data.ts';
+import {
+  buildCollision,
+  placedCollision,
+  type CollisionData,
+} from '../src/physics/collision-data.ts';
 import {
   Layer,
   readCollisionMatrix,
@@ -30,6 +34,7 @@ import {
   ScriptEnvironment,
 } from '../src/world/player-home.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
+import { waterVolumes, type WaterVolume } from '../src/world/water-volumes.ts';
 import { openGameFolder } from './gamedata-path.ts';
 
 /** A cell's collision placed in a physics world, with names for what was placed. */
@@ -117,9 +122,28 @@ export class PlayWorld {
     return new PhysicsWorld(this.matrix, GRAVITY);
   }
 
-  /** The player in a physics world, with the water surface at a point. */
-  newPlayer(physics: PhysicsWorld, water: (x: number, y: number) => number | undefined): Player {
+  /** The player in a physics world, with the surface of the water a point is in or over. */
+  newPlayer(
+    physics: PhysicsWorld,
+    water: (x: number, y: number, z: number) => number | undefined,
+  ): Player {
     return new Player({ ...this.playerData, physics, waterHeight: water }, [0, 0, 0], 0);
+  }
+
+  /** The water volumes of a cell's enabled water activators. */
+  async waterVolumesIn(
+    data: CellData,
+    isEnabled: (reference: number) => boolean,
+  ): Promise<WaterVolume[]> {
+    const water = data.objects.filter(
+      (object) => object.water !== undefined && isEnabled(object.reference),
+    );
+    const volumes = await Promise.all(
+      water.map(async (object) =>
+        waterVolumes(await this.collisionOf(object.model), object.world, object.water ?? 0),
+      ),
+    );
+    return volumes.flat();
   }
 
   /** Places a cell's enabled objects and primitives (and its landscape) as PlaySession does. */
@@ -138,7 +162,11 @@ export class PlayWorld {
       );
     }
     const objects = data.objects.filter((object) => isEnabled(object.reference));
-    const loaded = await Promise.all(objects.map((object) => this.collisionOf(object.model)));
+    const loaded = await Promise.all(
+      objects.map(async (object) =>
+        placedCollision(object.baseType, await this.collisionOf(object.model)),
+      ),
+    );
     objects.forEach((object, i) => {
       const collision = loaded[i];
       if (!collision) return;

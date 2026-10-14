@@ -45,6 +45,10 @@ export const RaceFlag = {
   playable: 0x1,
   faceGenHead: 0x2,
   child: 0x4,
+  /** Leans with the ground along its length (four-legged animals). */
+  tiltFrontBack: 0x8,
+  /** Leans with the ground across too (spiders, chaurus, mudcrabs, mammoths). */
+  tiltLeftRight: 0x10,
   noShadow: 0x20,
   swims: 0x40,
   flies: 0x80,

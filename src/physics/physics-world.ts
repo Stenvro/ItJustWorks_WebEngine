@@ -36,6 +36,27 @@ export const GRAVITY = 9.8;
 export const PHYSICS_STEP = 1 / 60;
 /** At most this many steps per frame; a longer frame slows the simulation down instead. */
 const MAX_STEPS = 4;
+/**
+ * Solver iterations per step. Havok's solver holds stacks and hinged bodies (closed books on
+ * one another, hanging game) still where Rapier's default 4 lets them creep and jitter: with 8
+ * the settled clutter of Jorrvaskr sleeps (34 bodies awake after 10 s with 4, 9 with 8) at
+ * about the same cost, as fewer bodies stay awake.
+ */
+const SOLVER_ITERATIONS = 8;
+/**
+ * Placed bodies start with what overlaps their placement leaves (books whose corners reach
+ * into a shelf's back panel, a cover into the board under it): for this long after they are
+ * placed to settle, the solver's push out of those overlaps only moves them, without the speed
+ * it would give them (Havok recovers penetrations slowly; Rapier's push sent books off their
+ * shelves). TODO(M13): how far the engine's warm start goes.
+ */
+const DEPENETRATE_SECONDS = 0.5;
+/**
+ * Hung objects (a fixed body with simulated ones on it: hanging game, chains) placed into
+ * other collision deeper than this (Havok units; one game unit) never collide with it: a
+ * pheasant's hook set into a beam would push its body against its hinges for good, swinging.
+ */
+const HUNG_OVERLAP = 1 / HAVOK_SCALE;
 
 /** What a collider belongs to: a placed reference, the landscape, an actor. */
 export interface PhysicsOwner {
@@ -209,6 +230,23 @@ export function poseMatrix(t: Vec3, q: Quaternion): Mat4 {
   return m;
 }
 
+/** A key for an unordered pair of colliders. */
+function pairKey(a: number, b: number): string {
+  return a < b ? `${String(a)}:${String(b)}` : `${String(b)}:${String(a)}`;
+}
+
+/** Whether a placed object hangs: simulated bodies on a fixed one (hanging game, chains). */
+function isHung(placed: PlacedCollision): boolean {
+  let fixed = false;
+  let simulated = false;
+  for (const { data } of placed.bodies) {
+    if (data.phantom) continue;
+    if (data.motion === 'fixed') fixed = true;
+    else if (data.motion === 'dynamic') simulated = true;
+  }
+  return fixed && simulated && placed.joints.length > 0;
+}
+
 function multiplyInto(a: Mat4, b: Mat4, out: Mat4): void {
   const r = new Float32Array(16);
   for (let col = 0; col < 4; col++) {
@@ -340,6 +378,18 @@ export class PhysicsWorld {
   readonly #breakable = new Set<PlacedJoint>();
   /** Bodies settling after being placed: silent until they first sleep (or this time). */
   readonly #settling = new Map<number, number>();
+  /**
+   * The system (one placed object of several bodies) of each of its colliders: its bodies do
+   * not collide with one another (a hanging pheasant's body against the hook it hangs on).
+   */
+  readonly #systems = new Map<number, number>();
+  #nextSystem = 1;
+  /** Hung objects placed to settle whose overlaps are looked for after the next step. */
+  readonly #hungToCheck: PlacedCollision[] = [];
+  /** Collider pairs that never collide: a hung body and what it was placed into. */
+  readonly #ignoredPairs = new Set<string>();
+  /** Bodies just placed to settle, until when their overlaps only move them. */
+  readonly #depenetrating = new Map<number, number>();
   /** Simulated seconds. */
   #time = 0;
   /** Collision was placed or removed since the last step (queries do not see it yet). */
@@ -361,13 +411,20 @@ export class PhysicsWorld {
     this.matrix = matrix;
     this.world = new RAPIER.World({ x: 0, y: 0, z: -gravity });
     this.world.timestep = PHYSICS_STEP;
+    this.world.integrationParameters.numSolverIterations = SOLVER_ITERATIONS;
     const layers = this.#layers;
+    const systems = this.#systems;
+    // Havok's group filter: layers that collide, and never two bodies of one object's system.
+    const ignored = this.#ignoredPairs;
+    const collides = (a: number, b: number): boolean => {
+      const system = systems.get(a);
+      if (system !== undefined && system === systems.get(b)) return false;
+      if (ignored.size > 0 && ignored.has(pairKey(a, b))) return false;
+      return matrix.collides(layers.get(a) ?? 0, layers.get(b) ?? 0);
+    };
     this.#hooks = {
-      filterContactPair: (a, b) =>
-        matrix.collides(layers.get(a) ?? 0, layers.get(b) ?? 0)
-          ? RAPIER.SolverFlags.COMPUTE_IMPULSE
-          : null,
-      filterIntersectionPair: (a, b) => matrix.collides(layers.get(a) ?? 0, layers.get(b) ?? 0),
+      filterContactPair: (a, b) => (collides(a, b) ? RAPIER.SolverFlags.COMPUTE_IMPULSE : null),
+      filterIntersectionPair: collides,
     };
   }
 
@@ -394,6 +451,7 @@ export class PhysicsWorld {
 
   unregister(collider: RAPIER.Collider): void {
     this.#layers.delete(collider.handle);
+    this.#systems.delete(collider.handle);
     this.#owners.delete(collider.handle);
     this.#materials.delete(collider.handle);
     this.#objectMaterials.delete(collider.handle);
@@ -523,7 +581,10 @@ export class PhysicsWorld {
           : RAPIER.RigidBodyDesc.fixed();
       desc.setTranslation(translation.x, translation.y, translation.z).setRotation(rotation);
       const body = this.world.createRigidBody(desc);
-      if (dynamic && settle) this.#settling.set(body.handle, this.#time + this.settleSeconds);
+      if (dynamic && settle) {
+        this.#settling.set(body.handle, this.#time + this.settleSeconds);
+        this.#depenetrating.set(body.handle, this.#time + DEPENETRATE_SECONDS);
+      }
       for (const shape of data.shapes) {
         const colliderDesc = this.#colliderDesc(shape, scale, dynamic);
         if (!colliderDesc) continue;
@@ -569,6 +630,10 @@ export class PhysicsWorld {
     }
     const materials = new Set(colliders.map((collider) => this.materialOf(collider)));
     for (const collider of colliders) this.#objectMaterials.set(collider.handle, materials);
+    if (bodies.length > 1) {
+      const system = this.#nextSystem++;
+      for (const collider of colliders) this.#systems.set(collider.handle, system);
+    }
     const joints: PlacedJoint[] = [];
     for (const constraint of collision.constraints ?? []) {
       const a = bodies[constraint.bodyA];
@@ -580,7 +645,9 @@ export class PhysicsWorld {
       if (constraint.breakable) this.#breakable.add(placed);
     }
     this.#changed = true;
-    return new PlacedCollision(owner, bodies, colliders, scale, [], joints);
+    const placed = new PlacedCollision(owner, bodies, colliders, scale, [], joints);
+    if (settle && isHung(placed)) this.#hungToCheck.push(placed);
+    return placed;
   }
 
   /**
@@ -814,6 +881,8 @@ export class PhysicsWorld {
       this.world.step(this.#events, this.#hooks);
       this.#changed = false;
       this.#time += PHYSICS_STEP;
+      if (this.#depenetrating.size > 0) this.#depenetrate();
+      if (this.#hungToCheck.length > 0) this.#ignoreHungOverlaps();
       if (this.#breakable.size > 0) this.#breakJoints();
       this.#collectImpacts();
       this.#accumulator -= PHYSICS_STEP;
@@ -827,10 +896,51 @@ export class PhysicsWorld {
    * impact sounds until they first sleep (at most settleSeconds).
    */
   settle(placed: PlacedCollision): void {
+    if (isHung(placed)) this.#hungToCheck.push(placed);
     for (const { body, data } of placed.bodies) {
       if (data.motion !== 'dynamic' || data.phantom) continue;
       body.wakeUp();
       this.#settling.set(body.handle, this.#time + this.settleSeconds);
+      this.#depenetrating.set(body.handle, this.#time + DEPENETRATE_SECONDS);
+    }
+  }
+
+  /** Lets hung objects' bodies pass through what they were placed into (HUNG_OVERLAP). */
+  #ignoreHungOverlaps(): void {
+    const narrow = this.world.narrowPhase;
+    for (const placed of this.#hungToCheck.splice(0)) {
+      const own = new Set(placed.colliders.map((collider) => collider.handle));
+      for (const { body, data } of placed.bodies) {
+        if (data.motion !== 'dynamic') continue;
+        for (let i = 0; i < body.numColliders(); i++) {
+          const handle = body.collider(i).handle;
+          narrow.contactPairsWith(handle, (other) => {
+            if (own.has(other)) return;
+            narrow.contactPair(handle, other, this.world.bodies, (manifold) => {
+              for (let k = 0; k < manifold.numContacts(); k++) {
+                if (manifold.contactDist(k) < -HUNG_OVERLAP) {
+                  this.#ignoredPairs.add(pairKey(handle, other));
+                  return;
+                }
+              }
+            });
+          });
+        }
+      }
+    }
+  }
+
+  /** Takes from bodies placed a moment ago the speed the step gave them (DEPENETRATE_SECONDS). */
+  #depenetrate(): void {
+    const still = { x: 0, y: 0, z: 0 };
+    for (const [handle, until] of this.#depenetrating) {
+      const body = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
+      if (!body || this.#time >= until) {
+        this.#depenetrating.delete(handle);
+        continue;
+      }
+      body.setLinvel(still, false);
+      body.setAngvel(still, false);
     }
   }
 

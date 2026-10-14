@@ -9,6 +9,7 @@ import type { Vec3 } from '../render/math.ts';
 import type { Camera, Renderer } from '../render/renderer.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
 import { articulatedPose } from '../physics/articulation.ts';
+import { placedCollision } from '../physics/collision-data.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
 import {
   placedParts,
@@ -30,6 +31,7 @@ import { parseGrass, placeGrass, type GrassType } from '../world/grass.ts';
 import type { AmbientState } from '../audio/ambience.ts';
 import { waterAreaHeight } from '../audio/water-audio.ts';
 import { cellWater, DEFAULT_WATER } from '../world/water.ts';
+import { surfaceOver, waterVolumes, type WaterVolume } from '../world/water-volumes.ts';
 import type { GpuTerrainCell, TerrainLodBlock, TerrainTexturePaths } from '../render/terrain.ts';
 import { parseLodSettings, type LodSettings } from '../formats/lod/lod.ts';
 import {
@@ -51,7 +53,12 @@ import {
   type CellWaterArea,
 } from '../world/cell-loader.ts';
 import { raycastParts } from '../render/raycast.ts';
-import { enabledReferences, findToggles, gameStartSelection } from '../world/cell-upgrades.ts';
+import {
+  enabledReferences,
+  findToggles,
+  gameStartSelection,
+  type CellToggle,
+} from '../world/cell-upgrades.ts';
 import { cellNavmeshes, NAVMESH_TOLERANCE, NavmeshSurface } from '../world/navmesh.ts';
 import {
   CELL_SIZE,
@@ -64,8 +71,13 @@ import {
 import type { RecordDatabase, WorldspaceInfo } from '../world/record-db.ts';
 import { cellKey, WorldFlag, Worldspace, type Arrival } from '../world/worldspace.ts';
 import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-references.ts';
-import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
-import { talkTargets, type PlacedActor } from './actors.ts';
+import {
+  animateSkeletons,
+  animationInterval,
+  type AnimatedSkeleton,
+} from '../animation/animated-skeleton.ts';
+import { groundActors, talkTargets, type PlacedActor } from './actors.ts';
+import { cellStatesElement } from './cell-states.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { TreeSway } from '../animation/tree-sway.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
@@ -102,6 +114,8 @@ export interface WorldElements extends SkyElements {
   readonly results: HTMLOListElement;
   readonly count: HTMLElement;
   readonly status: HTMLElement;
+  /** The quest and scene states of the cell the camera is in. */
+  readonly states: HTMLElement;
   /** Play controls (the free camera). */
   readonly play: HTMLElement;
   readonly freeCamera: HTMLInputElement;
@@ -132,6 +146,11 @@ interface LoadedCell {
   /** Its landscape (where the water lies above it) and water activators' surfaces. */
   land: LandData | undefined;
   waterAreas: readonly CellWaterArea[];
+  /** The water activators' volumes (where one swims and goes under). */
+  waterVolumes: readonly WaterVolume[];
+  /** Its record and the quest and scene states it has (the dev panel's list). */
+  formId: number | undefined;
+  toggles: readonly CellToggle[];
   /** The placed objects with their instances (development: what the camera looks at). */
   placed: readonly { readonly object: CellObject; readonly instance: ModelInstance }[];
   /** Its enabled looping sounds and acoustic spaces. */
@@ -193,6 +212,11 @@ export class WorldViewer {
   #play: PlaySession | undefined;
   /** The swaying skeletons of tree models (BSTreeNode), shared by their placements. */
   readonly #treeSways = new Map<string, TreeSway | undefined>();
+  /** The cell whose states the panel lists, and whether that list is unfolded. */
+  #statesShown: number | undefined;
+  #statesOpen = false;
+  /** Where placed objects' skeletons are (their instance's placement). */
+  readonly #skeletonPlaces = new WeakMap<AnimatedSkeleton, Float32Array>();
   /** Land textures' materials (LTEX MNAM) by LTEX, as cells load. */
   readonly #landMaterials = new Map<number, number | undefined>();
   /** The player's body while playing. */
@@ -494,9 +518,7 @@ export class WorldViewer {
       {
         ...playerData,
         physics,
-        waterHeight: (px, py) =>
-          this.#cells.get(cellKey(Math.floor(px / CELL_SIZE), Math.floor(py / CELL_SIZE)))
-            ?.waterHeight,
+        waterHeight: (px, py, pz) => this.#waterAt(px, py, pz)?.height,
       },
       feet,
       comeIn?.heading ?? 0,
@@ -590,8 +612,9 @@ export class WorldViewer {
         // Pines' branches sway with the weather's wind.
         const wind = this.#sky?.lighting()?.wind ?? 0;
         for (const sway of this.#treeSways.values()) sway?.update(seconds, wind);
+        const interval = this.#animationInterval();
         for (const cell of this.#cells.values())
-          if (cell.ready) animateSkeletons(cell.skeletons, seconds);
+          if (cell.ready) animateSkeletons(cell.skeletons, seconds, interval);
       },
     });
     document.body.classList.add('has-scene', 'content-scene');
@@ -603,8 +626,80 @@ export class WorldViewer {
     }, 250);
   }
 
+  /** A cell's quest and scene states: as set in the panel, else as a new game has them. */
+  #selection(
+    session: GameSession,
+    cellId: number,
+    toggles: readonly CellToggle[],
+  ): ReadonlySet<number> {
+    return session.cellSelections.get(cellId) ?? gameStartSelection(toggles);
+  }
+
+  /** The panel's states: those of the cell the camera is in, once it is loaded. */
+  #showStates(cx: number, cy: number): void {
+    const cell = this.#cells.get(cellKey(cx, cy));
+    const session = this.#session;
+    const shown = cell?.ready === true ? cell.formId : undefined;
+    if (shown === this.#statesShown) return;
+    this.#statesShown = shown;
+    const container = this.#ui.states;
+    if (!cell || !session || shown === undefined || cell.toggles.length === 0) {
+      container.hidden = true;
+      container.replaceChildren();
+      return;
+    }
+    container.replaceChildren(
+      cellStatesElement(
+        cell.toggles,
+        this.#selection(session, shown, cell.toggles),
+        (selection) => {
+          session.cellSelections.set(shown, selection);
+          this.#reloadCell(cell);
+        },
+        this.#statesOpen,
+        (open) => {
+          this.#statesOpen = open;
+        },
+        `quest & scene states of cell ${String(cx)},${String(cy)}`,
+      ),
+    );
+    container.hidden = false;
+  }
+
+  /** Loads a cell again (its states changed in the panel). */
+  #reloadCell(cell: LoadedCell): void {
+    const key = cellKey(cell.x, cell.y);
+    if (this.#cells.get(key) !== cell) return;
+    this.#free(cell);
+    this.#cells.delete(key);
+    this.#statesShown = undefined;
+    this.#refreshSounds();
+    this.#update();
+  }
+
+  /** How often each skeleton moves, by where it is seen from (animationInterval). */
+  #animationInterval(): ((animated: AnimatedSkeleton) => number) | undefined {
+    const camera = this.#renderer.view?.camera;
+    if (!camera) return undefined;
+    return (animated) => {
+      const world =
+        this.#skeletonPlaces.get(animated) ??
+        (animated as Partial<PlacedActor>).instances?.[0]?.world;
+      return world
+        ? animationInterval(
+            [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0],
+            camera.position,
+            camera.forward,
+          )
+        : 0;
+    };
+  }
+
   /** Stops showing the world and frees its cells (another viewer takes the screen). */
   deactivate(): void {
+    // The panel's controls are shared with the interiors: only a world that was open puts
+    // them away (the interior viewer may already show its own).
+    const active = this.#world !== undefined || this.#play !== undefined;
     this.#generation++;
     this.#opening = undefined;
     if (this.#world) this.#session?.soundSystem?.stopAll();
@@ -620,6 +715,12 @@ export class WorldViewer {
     this.#world = undefined;
     this.#sky?.dispose();
     this.#sky = undefined;
+    if (active) {
+      this.#ui.status.hidden = true;
+      this.#ui.states.hidden = true;
+      this.#ui.states.replaceChildren();
+    }
+    this.#statesShown = undefined;
     this.#lod?.dispose();
     this.#lod = undefined;
     this.#avatar?.destroy();
@@ -627,7 +728,7 @@ export class WorldViewer {
     this.#play?.dispose();
     this.#play = undefined;
     if (this.#session?.soundSystem) this.#session.soundSystem.landMaterialAt = undefined;
-    this.#ui.play.hidden = true;
+    if (active) this.#ui.play.hidden = true;
   }
 
   // --- Streaming ------------------------------------------------------------------------
@@ -661,6 +762,7 @@ export class WorldViewer {
     });
     this.#ui.status.hidden = false;
     this.#ui.status.textContent = `cell ${String(cx)},${String(cy)} · ${String(this.loadedCells)} cells loaded · ${String(this.#queue.length + this.#loading)} loading`;
+    this.#showStates(cx, cy);
   }
 
   /**
@@ -749,6 +851,9 @@ export class WorldViewer {
         waterType: undefined,
         land: undefined,
         waterAreas: [],
+        waterVolumes: [],
+        formId: undefined,
+        toggles: [],
         placed: [],
         emitters: [],
         acousticAreas: [],
@@ -799,7 +904,7 @@ export class WorldViewer {
 
     const data = await loadCellData(db, cellId, world.persistentReferences(cell.x, cell.y));
     const toggles = findToggles(data);
-    const isEnabled = enabledReferences(data, toggles, gameStartSelection(toggles));
+    const isEnabled = enabledReferences(data, toggles, this.#selection(session, cellId, toggles));
     const objects = data.objects.filter((object) => isEnabled(object.reference));
     // Rivers move along the flow map of the cell they lie in.
     const flow = this.#flowMap(world, cell.x, cell.y);
@@ -843,11 +948,23 @@ export class WorldViewer {
     cell.placed = placed;
     cell.actors = actors;
     cell.skeletons = [...actors, ...placed.flatMap(({ skeleton }) => (skeleton ? [skeleton] : []))];
+    for (const { skeleton, instance } of placed) {
+      if (skeleton) this.#skeletonPlaces.set(skeleton, instance.world);
+    }
     cell.waterHeight = water?.height;
     cell.waterType = water ? (water.type ?? DEFAULT_WATER) : undefined;
     cell.land = land;
     if (land) this.#learnLandMaterials(land);
+    cell.formId = cellId;
+    cell.toggles = toggles;
     cell.waterAreas = data.waterAreas.filter((area) => isEnabled(area.reference));
+    cell.waterVolumes = (
+      await Promise.all(
+        objects.map(async ({ model, world: matrix, water: type }) =>
+          type === undefined ? [] : waterVolumes(await session.collision(model), matrix, type),
+        ),
+      )
+    ).flat();
     cell.objects = new Map(objects.map((object) => [object.reference, object]));
     cell.emitters = data.emitters.filter((emitter) => isEnabled(emitter.reference));
     cell.acousticAreas = data.acousticAreas.filter((area) => isEnabled(area.reference));
@@ -864,12 +981,18 @@ export class WorldViewer {
       // Collision: the landscape, the enabled objects (also those with nothing to draw) and
       // collision primitives.
       const collisions = await Promise.all(
-        objects.map((object) => session.collision(object.model)),
+        objects.map(async (object) =>
+          placedCollision(object.baseType, await session.collision(object.model)),
+        ),
       );
       if (play !== this.#play) return;
       const entries = new Map(placed.map((entry) => [entry.object, entry]));
       play.add(cell.collision, {
         ...(land && { land: { data: land, x: cell.x, y: cell.y } }),
+        // Its actors stand on the ground once it is in place.
+        whenComplete: () => {
+          groundActors(cell.actors, play.physics);
+        },
         objects: objects.map((object, i) => {
           const entry = entries.get(object);
           return {
@@ -902,7 +1025,11 @@ export class WorldViewer {
     const models = await Promise.all(objects.map((object) => session.model(object.model)));
     // In loaded cells, objects with simulated collision move: they get a matrix of their own.
     const collisions = simulated
-      ? await Promise.all(objects.map((object) => session.collision(object.model)))
+      ? await Promise.all(
+          objects.map(async (object) =>
+            placedCollision(object.baseType, await session.collision(object.model)),
+          ),
+        )
       : [];
     // Statics' directional materials (snow, moss, ice) as placed.
     const directionals = await Promise.all(
@@ -1039,7 +1166,7 @@ export class WorldViewer {
     if (cellId === undefined) return;
     const data = await loadCellData(db, cellId, world.persistentReferences(large.x, large.y));
     const toggles = findToggles(data);
-    const isEnabled = enabledReferences(data, toggles, gameStartSelection(toggles));
+    const isEnabled = enabledReferences(data, toggles, this.#selection(session, cellId, toggles));
     const objects = data.objects.filter(
       (object) => large.references.has(object.reference) && isEnabled(object.reference),
     );
@@ -1158,27 +1285,55 @@ export class WorldViewer {
   }
 
   /**
-   * Water at a point of the loaded cells: a water activator's surface, else the cell's water
-   * where it lies above the landscape.
+   * The water a point of the loaded cells is in or over (swimming, under water): a water
+   * activator's volume, or the cell's water where it lies above the landscape; the higher.
    */
-  readonly #waterAt = (x: number, y: number): { height: number; type: number } | undefined => {
+  readonly #waterAt = (
+    x: number,
+    y: number,
+    z: number,
+  ): { height: number; type: number } | undefined => {
+    const cell = this.#cells.get(cellKey(Math.floor(x / CELL_SIZE), Math.floor(y / CELL_SIZE)));
+    if (!cell?.ready) return undefined;
+    const volume = surfaceOver(cell.waterVolumes, x, y, z);
+    const plane = this.#cellWaterAt(cell, x, y);
+    return volume && (!plane || volume.height > plane.height) ? volume : plane;
+  };
+
+  /** The water one hears around a point (height `z`): water activators' surfaces, cell water. */
+  readonly #waterSurfaceAt = (
+    x: number,
+    y: number,
+    z: number,
+  ): { height: number; type: number } | undefined => {
     const cell = this.#cells.get(cellKey(Math.floor(x / CELL_SIZE), Math.floor(y / CELL_SIZE)));
     if (!cell?.ready) return undefined;
     for (const area of cell.waterAreas) {
-      const height = waterAreaHeight(area, x, y);
+      const height = waterAreaHeight(area, x, y, z);
       if (height !== undefined) return { height, type: area.type };
     }
+    return this.#cellWaterAt(cell, x, y);
+  };
+
+  /** A cell's water plane at a point, where it lies above the landscape. */
+  #cellWaterAt(
+    cell: LoadedCell,
+    x: number,
+    y: number,
+  ): { height: number; type: number } | undefined {
     if (cell.waterHeight === undefined || cell.waterType === undefined) return undefined;
     const ground = cell.land ? landHeightAt(cell.land, cell.x, cell.y, x, y) : undefined;
     if (ground !== undefined && ground >= cell.waterHeight) return undefined;
     return { height: cell.waterHeight, type: cell.waterType };
-  };
+  }
 
   /** The surroundings for region and weather sounds. */
   #ambientState(sky: WorldSky): AmbientState {
     const flash = sky.flashStart;
-    const camera = this.camera.position;
-    const water = this.#waterAt(camera[0], camera[1]);
+    // What the renderer looks through: the player's camera while playing, not the free one
+    // (left where it was, it once put the player "under water" far from any).
+    const camera = this.#view.position;
+    const water = this.#waterAt(camera[0], camera[1], camera[2]);
     return {
       regions: sky.regions,
       weather: sky.weather,
@@ -1190,7 +1345,7 @@ export class WorldViewer {
       flash: Number.isFinite(flash) ? flash : undefined,
       cellMusic: sky.cellMusic,
       worldMusic: this.#world?.record.music,
-      waterAt: this.#waterAt,
+      waterAt: this.#waterSurfaceAt,
       underwater: water !== undefined && camera[2] < water.height,
     };
   }

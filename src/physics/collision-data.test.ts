@@ -6,6 +6,8 @@ import {
   compressedMeshTriangles,
   HAVOK_SCALE,
   havokRotation,
+  placedCollision,
+  type CollisionData,
 } from './collision-data.ts';
 import { CollisionMatrix, parseCollisionLayer } from './collision-layers.ts';
 
@@ -233,5 +235,45 @@ describe('CollisionMatrix', () => {
     expect(matrix.collides(1, 31)).toBe(true); // listed by STATIC only: still a pair
     expect(matrix.collides(12, 30)).toBe(false);
     expect(matrix.flags(12)).toBe(3);
+  });
+});
+
+describe('placedCollision', () => {
+  const candles: CollisionData = {
+    bodies: [
+      {
+        node: 'GlazedCandles01',
+        transform: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]),
+        motion: 'dynamic',
+        phantom: false,
+        layer: 4,
+        mass: 0.5,
+        inertia: [0.01, 0.01, 0.01],
+        centerOfMass: [0, 0, 0],
+        friction: 0.5,
+        restitution: 0.4,
+        linearDamping: 0.1,
+        angularDamping: 0.05,
+        gravityFactor: 1,
+        maxLinearVelocity: 104,
+        maxAngularVelocity: 31.57,
+        quality: 4,
+        shapes: [{ type: 'sphere', layer: 4, material: 0, center: [0, 0, 0], radius: 5 }],
+      },
+    ],
+    skipped: [],
+  };
+
+  it('holds statics still whatever their model says (GlazedCandlesStatic)', () => {
+    const fixed = placedCollision('STAT', candles);
+    expect(fixed?.bodies[0]?.motion).toBe('fixed');
+    expect(fixed?.bodies[0]?.mass).toBe(0);
+    expect(placedCollision('STAT', candles)).toBe(fixed);
+  });
+
+  it('lets items and movable statics move as their model says', () => {
+    expect(placedCollision('MISC', candles)).toBe(candles);
+    expect(placedCollision('MSTT', candles)).toBe(candles);
+    expect(placedCollision('STAT', undefined)).toBeUndefined();
   });
 });

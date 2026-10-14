@@ -102,8 +102,17 @@ their look: [formats/esm.md](formats/esm.md#actors)).
 - **What plays:** the race's behavior graph (below), started when the actor is placed with
   the clips its start states play loaded, then run on by a moment its reference picks (actors
   placed together do not breathe together); clips load as the graph first asks for them (the
-  female clip for women where one exists). Actors stand where they were placed until their
-  AI packages move them (M10).
+  female clip for women where one exists). Actors stand where they were placed (set on the
+  ground: [physics.md](physics.md#actors-on-the-ground)) until their AI packages move them (M10).
+- **What they wear plays too:** a worn model with a behavior graph of its own runs it (the
+  Dwemer centurion's `FXSteamCenturionFogSkin.nif`: Autoplay plays its AutoPlay, then loops
+  AutoLoop, scrolling the steam's texture along its skin; without it the steam stood still
+  around its joints).
+- **How often they move:** near the camera (512 units) and in front of it every frame; behind
+  it or beyond 2048 units ten times a second, beyond 4096 five times a second, their graphs
+  then running the longer step at once (`animationInterval`). In Whiterun's 25 cells this
+  took the actors' per-frame cost from 6.1 to 0.3 ms. The engine's own scheme (actors'
+  processing levels) is not documented: TODO(M13).
 
 ## The player
 

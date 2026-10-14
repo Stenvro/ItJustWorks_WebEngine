@@ -115,6 +115,17 @@ export class GameSession {
    * sets it from its time slider, interiors advance it at the timescale too.
    */
   gameHour = 10;
+  /**
+   * The weather picked by hand (the dev panel, as the console's fw), kept going in and out of
+   * doors as the game keeps its weather; undefined: the regions pick.
+   */
+  pinnedWeather: number | undefined;
+  /**
+   * Quest and scene states set by hand, by cell form id (enable-parent markers that are on);
+   * cells without an entry show them as a new game has them.
+   */
+  readonly cellSelections = new Map<number, ReadonlySet<number>>();
+  #weathersEntry: Promise<readonly { formId: number; editorId: string }[]> | undefined;
   /** The hour and climate the emittance colours were last moved to. */
   #emittanceAt: { hour: number; climate: ClimateRecord | undefined } | undefined;
   /** Emittance sources (XEMI) by form id, with their current colour. */
@@ -225,6 +236,10 @@ export class GameSession {
           for (const problem of problems) this.#terminal.log('nif', `${path}: ${problem}`, 'warn');
           if (data.parts.length === 0) return undefined;
           const model = await this.#renderer.scene.createModel(data, this.textures);
+          // Its sequences play by its own graph (an automaton's steam flowing on its skin).
+          if (data.behaviorGraph !== undefined) {
+            model.graph = await this.behaviorGraph(data.behaviorGraph);
+          }
           this.#loadedModels.set(key, model);
           return model;
         },
@@ -236,6 +251,19 @@ export class GameSession {
       this.#models.set(key, entry);
     }
     return entry;
+  }
+
+  /** Every weather (WTHR) of the load order, by editor id. */
+  weathers(): Promise<readonly { formId: number; editorId: string }[]> {
+    this.#weathersEntry ??= this.db.then(async (db) => {
+      const records = await Promise.all(db.formIdsOfType('WTHR').map((id) => db.get(id)));
+      return records
+        .flatMap((record) =>
+          record ? [{ formId: record.formId, editorId: record.editorId ?? '' }] : [],
+        )
+        .sort((a, b) => a.editorId.localeCompare(b.editorId));
+    });
+    return this.#weathersEntry;
   }
 
   /** A head part's expression morphs (its TRI file) on the GPU, read once. */

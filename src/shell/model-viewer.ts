@@ -3,11 +3,13 @@
 
 import { OrbitCamera, type OrbitView } from '../render/camera.ts';
 import type { Rgb } from '../world/cell-records.ts';
-import { TIMESCALE } from './world-sky.ts';
+import { cellStatesElement, checkboxRow } from './cell-states.ts';
+import { InteriorSkyControls } from './interior-sky.ts';
+import { TIMESCALE, type SkyElements } from './world-sky.ts';
 import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
-import type { CollisionData } from '../physics/collision-data.ts';
+import { placedCollision, type CollisionData } from '../physics/collision-data.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
 import { articulatedPose } from '../physics/articulation.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
@@ -38,11 +40,13 @@ import {
   loadCellData,
   type CellData,
   type CellLight,
+  type CellWaterArea,
   type DoorDestination,
   type Teleport,
 } from '../world/cell-loader.ts';
 import type { Arrival } from '../world/worldspace.ts';
 import { DEFAULT_WATER } from '../world/water.ts';
+import { surfaceOver, waterVolumes, type WaterVolume } from '../world/water-volumes.ts';
 import { cellNavmeshes, NAVMESH_TOLERANCE, NavmeshSurface } from '../world/navmesh.ts';
 import { waterAreaHeight } from '../audio/water-audio.ts';
 import {
@@ -67,8 +71,12 @@ import {
   type HouseStage,
 } from '../world/player-home.ts';
 import type { InteriorCell, RecordDatabase } from '../world/record-db.ts';
-import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
-import { talkTargets, type PlacedActor } from './actors.ts';
+import {
+  animateSkeletons,
+  animationInterval,
+  type AnimatedSkeleton,
+} from '../animation/animated-skeleton.ts';
+import { groundActors, talkTargets, type PlacedActor } from './actors.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
@@ -90,6 +98,10 @@ export interface ViewerElements {
   /** Cells: play controls (the free camera). */
   readonly play: HTMLElement;
   readonly freeCamera: HTMLInputElement;
+  /** Cells: what is on screen (the same line as the world's). */
+  readonly status: HTMLElement;
+  /** Cells: the clock and the weather outside (the same controls as the world's sky). */
+  readonly sky: SkyElements;
   /** What the crosshair rests on. */
   readonly prompt: HTMLElement;
 }
@@ -267,6 +279,11 @@ export class ModelViewer {
 
   /** The drawn instances of the cell on screen, by reference. */
   #instances = new Map<number, ModelInstance>();
+  /** The time and weather controls while a cell is shown. */
+  #sky: InteriorSkyControls | undefined;
+  /** The enabled water activators: their surfaces (heard) and volumes (entered). */
+  #waterAreas: readonly CellWaterArea[] = [];
+  #waterVolumes: readonly WaterVolume[] = [];
   /** The actors of the cell on screen (they animate every frame). */
   #actorsShown: readonly PlacedActor[] = [];
   /** The player's body while playing. */
@@ -295,7 +312,7 @@ export class ModelViewer {
     physics.impactSpeed = playerData.ini.number('Audio', 'fMinSoundVel');
     physics.settleSeconds = playerData.ini.number('HAVOK', 'fWarmStartMaxTime');
     const player = new Player(
-      { ...playerData, physics, waterHeight: (x, y) => this.#waterAt(x, y)?.height },
+      { ...playerData, physics, waterHeight: (x, y, z) => this.#waterAt(x, y, z)?.height },
       feet,
       yaw,
     );
@@ -548,7 +565,7 @@ export class ModelViewer {
     this.#cell = {
       data,
       toggles,
-      selection: gameStartSelection(toggles),
+      selection: new Set(session?.cellSelections.get(formId) ?? gameStartSelection(toggles)),
       actions,
       choices,
       scripted,
@@ -588,6 +605,14 @@ export class ModelViewer {
 
     this.#renderUpgrades();
     const visible = this.#applyCellSelection();
+    if (session) {
+      this.#sky?.dispose();
+      this.#sky = new InteriorSkyControls(session, this.#ui.sky);
+    }
+    this.#ui.status.hidden = false;
+    this.#ui.status.textContent =
+      `${label} · ${String(visible)} of ${String(data.objects.length)} objects · ` +
+      `${String(this.#actorsShown.length)} of ${String(data.actors.length)} actors`;
     if (previousDecals !== decals) previousDecals?.destroy();
     const what = [
       actions.purchases.length > 0 ? `${String(actions.purchases.length)} purchases` : '',
@@ -680,14 +705,20 @@ export class ModelViewer {
     const articulatedPoses = new Map<CellData['objects'][number], ActorPose>();
     const shown = new Map<number, ModelInstance>();
     this.#instances = shown;
+    this.#waterAreas = cell.data.waterAreas.filter((area) => isEnabled(area.reference));
+    const volumes: WaterVolume[] = [];
+    this.#waterVolumes = volumes;
     const skeletons: AnimatedSkeleton[] = [];
     for (const object of cell.data.objects) {
       if (!isEnabled(object.reference)) continue;
+      const collision = placedCollision(object.baseType, cell.collisions.get(object.model));
+      if (object.water !== undefined) {
+        volumes.push(...waterVolumes(collision, object.world, object.water));
+      }
       if (this.#hidden?.test(object.model)) continue;
       const model = cell.models.get(object.model);
       const water = object.water === undefined ? undefined : cell.waterTypes.get(object.water);
       const directional = cell.directionals.get(object.reference);
-      const collision = cell.collisions.get(object.model);
       if (model) {
         const graph = startObjectGraph(model, object.reference);
         const skeletal = startPlacedSkeleton(model, object.reference);
@@ -733,14 +764,19 @@ export class ModelViewer {
     if (play) {
       play.remove(this.#collision);
       this.#collision = collisionGroup();
+      const actors = this.#actorsShown;
       play.add(this.#collision, {
+        // Its actors stand on the ground once it is in place.
+        whenComplete: () => {
+          groundActors(actors, play.physics);
+        },
         objects: cell.data.objects
           .filter((object) => isEnabled(object.reference))
           .map((object) => {
             const articulated = articulatedPoses.get(object);
             return {
               object,
-              collision: cell.collisions.get(object.model),
+              collision: placedCollision(object.baseType, cell.collisions.get(object.model)),
               instance: placed.get(object),
               ...(articulated && { articulated }),
             };
@@ -823,26 +859,7 @@ export class ModelViewer {
       element.addEventListener('click', onClick);
       return element;
     };
-    const checkbox = (
-      text: string,
-      checked: boolean,
-      onChange: (on: boolean) => void,
-      title = '',
-    ): HTMLLIElement => {
-      const item = document.createElement('li');
-      const labelElement = document.createElement('label');
-      labelElement.className = 'toggle';
-      labelElement.title = title;
-      const input = document.createElement('input');
-      input.type = 'checkbox';
-      input.checked = checked;
-      input.addEventListener('change', () => {
-        onChange(input.checked);
-      });
-      labelElement.append(input, text);
-      item.append(labelElement);
-      return item;
-    };
+    const checkbox = checkboxRow;
     const select = (
       text: string,
       options: readonly (readonly [string, string])[],
@@ -944,38 +961,21 @@ export class ModelViewer {
     }
 
     if (cell.toggles.length > 0) {
-      const details = document.createElement('details');
-      details.className = 'cell-states';
-      details.open = this.#statesOpen;
-      details.addEventListener('toggle', () => {
-        this.#statesOpen = details.open;
-      });
-      const summary = document.createElement('summary');
-      summary.textContent = `quest & scene states (${String(cell.toggles.length)})`;
-      const note = document.createElement('p');
-      note.className = 'hint';
-      note.textContent =
-        'Set by quests and scenes, not by the player. Shown as a new game has them.';
-      const list = document.createElement('ul');
-      list.className = 'upgrade-list';
-      for (const toggle of cell.toggles) {
-        list.append(
-          checkbox(
-            toggle.label,
-            cell.selection.has(toggle.formId),
-            (on) => {
-              const selection = new Set(cell.selection);
-              if (on) selection.add(toggle.formId);
-              else selection.delete(toggle.formId);
-              cell.selection = selection;
-              this.#applyCellSelection();
-            },
-            toggle.editorId,
-          ),
-        );
-      }
-      details.append(summary, note, list);
-      parts.push(details);
+      parts.push(
+        cellStatesElement(
+          cell.toggles,
+          cell.selection,
+          (selection) => {
+            cell.selection = selection;
+            this.#session?.cellSelections.set(cell.data.cell.formId, selection);
+            this.#applyCellSelection();
+          },
+          this.#statesOpen,
+          (open) => {
+            this.#statesOpen = open;
+          },
+        ),
+      );
     }
 
     container.replaceChildren(...parts);
@@ -1133,7 +1133,22 @@ export class ModelViewer {
         backdrop: false,
         update: (seconds) => {
           this.#avatar?.update(seconds);
-          animateSkeletons(this.#actorsShown, seconds);
+          const camera = this.#renderer.view?.camera;
+          animateSkeletons(
+            this.#actorsShown,
+            seconds,
+            camera &&
+              ((animated) => {
+                const world = (animated as PlacedActor).instances[0]?.world;
+                return world
+                  ? animationInterval(
+                      [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0],
+                      camera.position,
+                      camera.forward,
+                    )
+                  : 0;
+              }),
+          );
           animateSkeletons(this.#objectSkeletons, seconds);
         },
       });
@@ -1146,12 +1161,21 @@ export class ModelViewer {
     document.body.classList.add('content-scene');
   }
 
-  /** Water in the shown interior: the surface of a water activator (interiors' water). */
-  readonly #waterAt = (x: number, y: number): { height: number; type: number } | undefined => {
-    const data = this.#cell?.data;
-    if (!data) return undefined;
-    for (const area of data.waterAreas) {
-      const height = waterAreaHeight(area, x, y);
+  /** The water a point of the interior is in or over: a water activator's volume. */
+  readonly #waterAt = (
+    x: number,
+    y: number,
+    z: number,
+  ): { height: number; type: number } | undefined => surfaceOver(this.#waterVolumes, x, y, z);
+
+  /** The water one hears around a point (height `z`): the water activators' surfaces. */
+  readonly #waterSurfaceAt = (
+    x: number,
+    y: number,
+    z: number,
+  ): { height: number; type: number } | undefined => {
+    for (const area of this.#waterAreas) {
+      const height = waterAreaHeight(area, x, y, z);
       if (height !== undefined) return { height, type: area.type };
     }
     return undefined;
@@ -1161,7 +1185,7 @@ export class ModelViewer {
   #underwater(): boolean {
     const camera = this.#renderer.view?.camera.position;
     if (!camera) return false;
-    const water = this.#waterAt(camera[0], camera[1]);
+    const water = this.#waterAt(camera[0], camera[1], camera[2]);
     return water !== undefined && camera[2] < water.height;
   }
 
@@ -1174,7 +1198,11 @@ export class ModelViewer {
     const session = this.#session;
     if (session) {
       const delta = this.#lastClock === undefined ? 0 : Math.min(0.25, now - this.#lastClock);
-      session.gameHour = (session.gameHour + (delta * TIMESCALE) / 3600) % 24;
+      // Unless the panel stops it (or sets it with its slider).
+      if (this.#sky?.timeFlows !== false) {
+        session.gameHour = (session.gameHour + (delta * TIMESCALE) / 3600) % 24;
+      }
+      this.#sky?.sync();
       session.updateEmittance(session.gameHour);
       // Indoors the sound system plays the region of the cell's acoustic space.
       session.soundSystem?.setAmbience(
@@ -1189,7 +1217,7 @@ export class ModelViewer {
           flash: undefined,
           cellMusic: this.#cell.data.cell.musicType,
           worldMusic: undefined,
-          waterAt: this.#waterAt,
+          waterAt: this.#waterSurfaceAt,
           underwater: this.#underwater(),
         },
       );
@@ -1205,8 +1233,13 @@ export class ModelViewer {
   /** Forgets the shown cell and frees what was made for it. */
   #releaseCell(): void {
     this.#stopPlay();
+    this.#sky?.dispose();
+    this.#sky = undefined;
+    this.#ui.status.hidden = true;
     const decals = this.#cell?.decals;
     this.#cell = undefined;
+    this.#waterAreas = [];
+    this.#waterVolumes = [];
     decals?.destroy();
   }
 

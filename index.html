@@ -144,35 +144,30 @@
     <aside id="dev-panel" class="dev-panel" aria-label="development settings">
       <details id="dev-settings" class="panel" data-panel="dev" open>
         <summary class="viewer-head"><span class="panel-title">// dev</span></summary>
-        <div id="world-status" class="upgrades" hidden></div>
-        <div id="cell-play" class="upgrades" hidden>
+        <!-- The same controls for interiors and worldspaces. -->
+        <div id="scene-status" class="upgrades" hidden></div>
+        <div id="scene-play" class="upgrades" hidden>
           <label class="choice">
-            <input id="cell-free-camera" type="checkbox" />
+            <input id="free-camera" type="checkbox" />
             <span>free camera (tfc)</span>
           </label>
         </div>
-        <div id="world-play" class="upgrades" hidden>
-          <label class="choice">
-            <input id="world-free-camera" type="checkbox" />
-            <span>free camera (tfc)</span>
-          </label>
-        </div>
-        <div id="world-sky" class="upgrades sky-controls" hidden>
+        <div id="scene-sky" class="upgrades sky-controls" hidden>
           <label class="choice">
             <span>time</span>
-            <input id="world-time" type="range" min="0" max="24" step="0.05" value="10" />
-            <output id="world-time-label">10:00</output>
+            <input id="scene-time" type="range" min="0" max="24" step="0.05" value="10" />
+            <output id="scene-time-label">10:00</output>
           </label>
           <label class="choice">
-            <input id="world-time-flows" type="checkbox" checked />
+            <input id="scene-time-flows" type="checkbox" checked />
             <span>time passes (timescale 20)</span>
           </label>
           <label class="choice">
             <span>weather</span>
-            <select id="world-weather"></select>
+            <select id="scene-weather"></select>
           </label>
         </div>
-        <div id="cell-upgrades" class="upgrades" hidden></div>
+        <div id="scene-states" class="upgrades" hidden></div>
         <p class="hint">
           drag to orbit · right-drag to pan · wheel to zoom · click the scene to play · wasd to move
           · space to jump · alt to sprint · ctrl to sneak · shift to walk · f for the camera · esc

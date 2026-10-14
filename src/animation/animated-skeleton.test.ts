@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { AnimationBinding, HkxSkeleton } from '../formats/hkx/animation.ts';
 import { identity } from '../render/math.ts';
-import { animateSkeletons, startObjectSkeleton } from './animated-skeleton.ts';
+import { animateSkeletons, animationInterval, startObjectSkeleton } from './animated-skeleton.ts';
 import type { SkeletalGraph } from './behavior-runtime.ts';
 
 /** One Havok bone, "Arm", which the clip moves along x by time. */
@@ -62,6 +62,31 @@ describe('object skeletons', () => {
     // The blade follows the arm: 0.05 s into the clip, 0.5 along x.
     expect(pose.worlds[2 * 16 + 12]).toBeCloseTo(0.5);
     expect(pose.worlds[3 * 16 + 12]).toBe(0);
+  });
+
+  it('moves far or unseen skeletons less often, keeping time', () => {
+    const object = startObjectSkeleton(nodes, graph, () => 0.5);
+    if (!object) throw new Error('no skeleton');
+    const { pose } = object.skeleton;
+    const every = (): number => 0.1;
+    animateSkeletons([object.skeleton], 0, every);
+    animateSkeletons([object.skeleton], 0.05, every);
+    // Not due yet: still in its start pose.
+    expect(pose.worlds[2 * 16 + 12]).toBeCloseTo(0);
+    animateSkeletons([object.skeleton], 0.15, every);
+    // Due: the whole 0.15 s at once.
+    expect(pose.worlds[2 * 16 + 12]).toBeCloseTo(1.5);
+  });
+
+  it('says how often by distance and facing', () => {
+    const camera = [0, 0, 0] as const;
+    const ahead = [0, 1, 0] as const;
+    expect(animationInterval([0, 300, 0], camera, ahead)).toBe(0);
+    expect(animationInterval([0, -300, 0], camera, ahead)).toBe(0);
+    expect(animationInterval([0, 1500, 0], camera, ahead)).toBe(0);
+    expect(animationInterval([0, -1500, 0], camera, ahead)).toBe(0.1);
+    expect(animationInterval([0, 3000, 0], camera, ahead)).toBe(0.1);
+    expect(animationInterval([0, 5000, 0], camera, ahead)).toBe(0.2);
   });
 
   it('leaves models whose nodes no bone of the graph names', () => {

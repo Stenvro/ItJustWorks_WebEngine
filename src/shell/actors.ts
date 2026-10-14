@@ -8,6 +8,8 @@ import { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { FaceAnimation, lipLeadIn, VANILLA_BLINK, type BlinkSettings } from '../animation/face.ts';
 import { ActorPose, ActorSkeleton, wearOnRig, type RigData } from '../animation/skeleton.ts';
 import { parseLip, type LipFile } from '../formats/audio/lip.ts';
+import { Layer } from '../physics/collision-layers.ts';
+import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { thinModelPath, type ModelTextureSwaps } from '../render/actor-model.ts';
 import { transformPoint, type Vec3 } from '../render/math.ts';
 import type { GpuModel, GpuMorphs, ModelInstance } from '../render/scene-renderer.ts';
@@ -18,10 +20,18 @@ import {
   seededRandom,
   type ActorLook,
 } from '../world/actors.ts';
+import {
+  GROUND_ABOVE,
+  GROUND_BELOW,
+  groundedPlacement,
+  standsOnGround,
+  type GroundHit,
+} from '../world/actor-ground.ts';
 import { referenceMatrix, type CellActor } from '../world/cell-loader.ts';
 import { parseTextureSet } from '../world/decal.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import type { GameSession } from './game-session.ts';
+import { startObjectGraph } from './object-graphs.ts';
 import type { Activatable } from './play-session.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -37,12 +47,50 @@ export interface PlacedActor extends AnimatedSkeleton {
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/** Where an actor's feet are: its placement (set on the ground once its cell's collision is in). */
+export function actorFeet(placed: PlacedActor): Vec3 {
+  const world = placed.instances[0]?.world;
+  return world ? [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] : placed.actor.position;
+}
+
+/**
+ * Sets an actor on the ground under its reference (src/world/actor-ground.ts); `cast` finds
+ * what a ray straight down from a point meets within a length (what character controllers
+ * stand on). Its instances share one placement, which moves with them.
+ */
+export function groundActor(
+  placed: PlacedActor,
+  cast: (from: Vec3, length: number) => GroundHit | undefined,
+): void {
+  const instance = placed.instances[0];
+  if (!instance?.motion || !standsOnGround(placed.look.raceFlags)) return;
+  const [x, y, z] = placed.actor.position;
+  const hit = cast([x, y, z + GROUND_ABOVE], GROUND_ABOVE + GROUND_BELOW);
+  if (!hit) return;
+  const upright = referenceMatrix({
+    position: placed.actor.position,
+    rotation: [0, 0, placed.actor.rotation[2]],
+    scale: placed.actor.scale * placed.look.scale,
+  });
+  instance.world.set(groundedPlacement(upright, placed.look.raceFlags, hit));
+  instance.motion.version++;
+}
+
+/** Sets placed actors on what character controllers stand on in a physics world. */
+export function groundActors(actors: readonly PlacedActor[], physics: PhysicsWorld): void {
+  const cast = (from: Vec3, length: number): GroundHit | undefined => {
+    const hit = physics.raycast(from, [0, 0, -1], length, Layer.charController);
+    return hit && { point: hit.point, normal: hit.normal };
+  };
+  for (const placed of actors) groundActor(placed, cast);
+}
+
 /** Where an actor's head is, in the world (TODO(M10): creatures' heads by their race). */
 export function headPosition(placed: PlacedActor): Vec3 {
   const world = placed.instances[0]?.world;
   const head = placed.pose.world('NPC Head [Head]') ?? placed.pose.world('Head');
   const local: Vec3 = head ? [head[12] ?? 0, head[13] ?? 0, head[14] ?? 0] : [0, 0, 120];
-  return world ? transformPoint(world, local) : placed.actor.position;
+  return world ? transformPoint(world, local) : actorFeet(placed);
 }
 
 /**
@@ -59,7 +107,7 @@ export function actorOnRay(
 ): { readonly actor: PlacedActor; readonly distance: number } | undefined {
   let best: { actor: PlacedActor; distance: number } | undefined;
   for (const placed of actors) {
-    const feet = placed.actor.position;
+    const feet = actorFeet(placed);
     const head = headPosition(placed);
     const along = closestOnRay(origin, direction, length, feet, head, radius + BODY_RADIUS);
     if (along !== undefined && (!best || along < best.distance)) {
@@ -384,15 +432,23 @@ export class ActorPlacer {
       ...(look.skinTone && { skin: look.skinTone }),
       ...(look.hairColor && { hair: look.hairColor }),
     };
-    const instances = models.map(({ model, addon }, i): ModelInstance => ({
-      model,
-      world,
-      pose,
-      ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),
-      tints,
-      partitionVisible: (bodyPart) => partitionVisible(bodyPart, look.owners, addon),
-      ...(face && heads.includes(model) && { face }),
-    }));
+    // Actors that stand on the ground are moved onto it once their cell's collision is in.
+    const motion = standsOnGround(look.raceFlags) ? { version: 0 } : undefined;
+    const instances = models.map(({ model, addon }, i): ModelInstance => {
+      // What it wears plays its own graph (the steam that flows around automatons' joints).
+      const graph = startObjectGraph(model, actor.reference);
+      return {
+        model,
+        world,
+        ...(motion && { motion }),
+        ...(graph && { graph }),
+        pose,
+        ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),
+        tints,
+        partitionVisible: (bodyPart) => partitionVisible(bodyPart, look.owners, addon),
+        ...(face && heads.includes(model) && { face }),
+      };
+    });
 
     // Its behavior graph: started, its first clips loaded, then run on by a moment of its
     // own (actors placed together do not all breathe together).
