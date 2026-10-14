@@ -34,6 +34,8 @@ export interface NiNodeBlock extends NiAvObject {
   readonly billboardMode?: number;
   /** BSValueNode: its value (AddOnNode: the ADDN index of the model attached there). */
   readonly value?: number;
+  /** BSTreeNode: the trunk's bones ("Bones 1") and the branches' ("Bones"). */
+  readonly treeBones?: { readonly trunk: readonly Ref[]; readonly branches: readonly Ref[] };
 }
 
 /** Unpacked BSVertexDesc. Offsets and stride in bytes. */

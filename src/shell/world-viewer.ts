@@ -67,6 +67,7 @@ import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-refe
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { talkTargets, type PlacedActor } from './actors.ts';
 import { PlayerAvatar } from './player-avatar.ts';
+import { TreeSway } from '../animation/tree-sway.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
 import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
@@ -190,6 +191,8 @@ export class WorldViewer {
   readonly #camera = new FlyCamera();
   /** The physics world and the player while a world is open. */
   #play: PlaySession | undefined;
+  /** The swaying skeletons of tree models (BSTreeNode), shared by their placements. */
+  readonly #treeSways = new Map<string, TreeSway | undefined>();
   /** Land textures' materials (LTEX MNAM) by LTEX, as cells load. */
   readonly #landMaterials = new Map<number, number | undefined>();
   /** The player's body while playing. */
@@ -584,6 +587,9 @@ export class WorldViewer {
       shadows: true,
       update: (seconds) => {
         this.#avatar?.update(seconds);
+        // Pines' branches sway with the weather's wind.
+        const wind = this.#sky?.lighting()?.wind ?? 0;
+        for (const sway of this.#treeSways.values()) sway?.update(seconds, wind);
         for (const cell of this.#cells.values())
           if (cell.ready) animateSkeletons(cell.skeletons, seconds);
       },
@@ -930,7 +936,7 @@ export class WorldViewer {
         collisions[i]?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
       const posed = skeletal
         ? { pose: skeletal.skeleton.pose, poseNodes: skeletal.poseNodes }
-        : articulated;
+        : (articulated ?? this.#treeSway(model, object));
       placed.push({
         object,
         ...(skeletal && { skeleton: skeletal.skeleton }),
@@ -1009,6 +1015,18 @@ export class WorldViewer {
         });
       }
     }
+  }
+
+  /** A tree model's swaying skeleton (shared by its placements), if the wind moves it. */
+  #treeSway(model: GpuModel, object: CellObject): TreeSway | undefined {
+    const settings = object.treeSway;
+    if (!settings || !model.treeBones || !model.nodes) return undefined;
+    const key = `${object.model}|${JSON.stringify(settings)}`;
+    if (!this.#treeSways.has(key)) {
+      const sway = new TreeSway(model.nodes, model.treeBones, settings);
+      this.#treeSways.set(key, sway.moves ? sway : undefined);
+    }
+    return this.#treeSways.get(key);
   }
 
   /** A cell beyond the loaded grid: a scene of just its large references. */
