@@ -89,7 +89,11 @@ export class GameRecord {
   /** A text field: a string table id in localized plugins, otherwise the text itself. */
   text(type: string): string | undefined {
     const data = this.fields.first(type);
-    if (!data) return undefined;
+    return data && this.textAt(data);
+  }
+
+  /** The text of one text field's data (repeated fields: log entries, objectives). */
+  textAt(data: Uint8Array): string {
     if (this.plugin.strings && data.length === 4) {
       return this.plugin.strings.get(view(data).getUint32(0, true)) ?? '';
     }
