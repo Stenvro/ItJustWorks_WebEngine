@@ -1916,6 +1916,14 @@ export class ScriptRuntime implements VmHost {
     }
   }
 
+  /**
+   * A global's value now when the scripts know it without reading (the clock's, those scripts
+   * set); undefined for one still at its plugin value.
+   */
+  globalNow(formId: number): number | undefined {
+    return this.clockGlobal(formId) ?? this.state.globals.get(formId);
+  }
+
   /** A script set a clock global: the clock jumps (SetValue on GameHour, ...). */
   setClockGlobal(formId: number, value: number): boolean {
     const clock = this.#clockGlobals.get(formId);

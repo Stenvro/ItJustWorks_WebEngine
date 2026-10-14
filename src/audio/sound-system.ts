@@ -225,7 +225,7 @@ export class SoundSystem {
       {
         descriptor: (formId) => this.descriptor(formId),
         regionAudio: (formId) => this.regionAudio(formId),
-        global: (formId) => this.#globalValues.get(formId) ?? 0,
+        global: (formId) => this.#globalValue(formId),
         play: (descriptor, place, fadeIn) => this.play(descriptor, place, fadeIn),
       },
       ini,
@@ -622,7 +622,7 @@ export class SoundSystem {
       this.#musicOutput.update();
       this.music.update(
         this.engine.context.currentTime,
-        ambientConditions(ambient, (formId) => this.#globalValues.get(formId) ?? 0),
+        ambientConditions(ambient, (formId) => this.#globalValue(formId)),
       );
     }
   }
@@ -709,9 +709,17 @@ export class SoundSystem {
   }
 
   /**
-   * Loads a global variable: its starting value. TODO(M8): the running game's values (scripts
-   * set them, e.g. CWDistantCatapultsAMB during a civil war battle).
+   * The running game's value of a global (scripts set them, e.g. CWDistantCatapultsAMB during
+   * a civil war battle; the clock's move), else its starting value.
    */
+  #globalValue(formId: number): number {
+    return this.globals?.(formId) ?? this.#globalValues.get(formId) ?? 0;
+  }
+
+  /** The running game's globals (the scripts'), once they run. */
+  globals: ((formId: number) => number | undefined) | undefined;
+
+  /** Loads a global variable's starting value (FLTV). */
   #global(formId: number): Promise<number> {
     let entry = this.#globals.get(formId);
     if (!entry) {

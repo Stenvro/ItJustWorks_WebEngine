@@ -81,7 +81,13 @@ import {
 } from '../animation/animated-skeleton.ts';
 import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
-import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
+import {
+  actorScriptGraph,
+  instanceNodeWorld,
+  MOTION_KEYFRAMED,
+  objectScriptGraph,
+  type ScriptView,
+} from './script-world.ts';
 import { CreatedObjects } from './created-objects.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
@@ -341,8 +347,11 @@ export class ModelViewer {
     moved: (reference) => {
       void this.#scriptMoved(reference);
     },
-    animationEvent: (reference, event) =>
-      this.#instances.get(reference)?.graph?.send(event, performance.now() / 1000) ?? false,
+    graphOf: (reference) =>
+      objectScriptGraph(this.#instances.get(reference)?.graph) ??
+      actorScriptGraph(
+        this.#actorsShown.find((actor) => actor.actor.reference === reference)?.behavior,
+      ),
     motionTypeChanged: (reference, motionType) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.setMotion(placed, motionType === MOTION_KEYFRAMED);
@@ -933,6 +942,10 @@ export class ModelViewer {
       const directional = cell.directionals.get(object.reference);
       if (model) {
         const graph = startObjectGraph(model, object.reference);
+        // The events its sequences raise reach its scripts (OnAnimationEvent).
+        if (graph)
+          graph.onEvent = (event) =>
+            this.#session?.scriptsReady?.animationEvent(object.reference, event);
         const skeletal = startPlacedSkeleton(model, object.reference);
         if (skeletal) skeletons.push({ reference: object.reference, skeleton: skeletal.skeleton });
         // Bodies that move nodes one by one pose the model (ragdolls, hinged signs); objects
