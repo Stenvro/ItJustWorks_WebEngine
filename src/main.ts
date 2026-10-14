@@ -642,6 +642,23 @@ async function main(): Promise<void> {
   };
   window.addEventListener('pointerdown', resumeAudio);
   window.addEventListener('keydown', resumeAudio);
+  // F11: full screen, taken before a menu's Flash player (which keeps the keys it is given) and
+  // done by the page, so it works the same whichever part has focus.
+  window.addEventListener(
+    'keydown',
+    (event) => {
+      if (event.key !== 'F11') return;
+      event.preventDefault();
+      event.stopPropagation();
+      const done = document.fullscreenElement
+        ? document.exitFullscreen()
+        : document.documentElement.requestFullscreen();
+      done.catch((error: unknown) => {
+        terminal.log('sys', `full screen: ${describeError(error)}`, 'warn');
+      });
+    },
+    { capture: true },
+  );
 
   const backdrop = await findCustomBackdrop();
   if (backdrop) {

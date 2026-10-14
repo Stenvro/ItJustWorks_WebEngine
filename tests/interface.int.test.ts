@@ -97,6 +97,29 @@ describe.skipIf(!hasGamedata())('the interface movies on the local game data', (
     expect([...strings].filter((text) => translations.translate(text) !== undefined)).toEqual([]);
   });
 
+  it('leaves no translation key as a string in any menu, clip actions included', async () => {
+    const left = new Map<string, string[]>();
+    for (const path of menus) {
+      const movie = readSwf(
+        translateMovie(await vfs.read(path), (text) => translations.translate(text)),
+      );
+      // Every null-terminated string in the movie's tags that is a key.
+      const bytes = movie.bytes;
+      let start = 0;
+      for (let i = 0; i < bytes.length; i++) {
+        if (bytes[i] !== 0) continue;
+        if (i > start && bytes[start] === 0x24) {
+          const text = new TextDecoder().decode(bytes.subarray(start, i));
+          if (translations.translate(text) !== undefined) {
+            left.set(path, [...(left.get(path) ?? []), text]);
+          }
+        }
+        start = i + 1;
+      }
+    }
+    expect(Object.fromEntries(left)).toEqual({});
+  }, 120_000);
+
   it('builds a font library with every font name a menu imports', async () => {
     const config = parseFontConfig(decodeWindows1252(await vfs.read('interface\\fontconfig.txt')));
     const libraries = await Promise.all(
