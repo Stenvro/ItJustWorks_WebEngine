@@ -10,6 +10,8 @@ export const GROUP_HEADER_SIZE = 24;
 /** Record flags (meaning depends on the record type for some bits). */
 export const RecordFlag = {
   master: 0x1, // TES4
+  /** ARMO: not playable (never shown in a menu). */
+  nonPlayable: 0x4,
   deleted: 0x20,
   localized: 0x80, // TES4: FULL/DESC/... are string table ids
   light: 0x200, // TES4: ESL

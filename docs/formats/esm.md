@@ -952,3 +952,25 @@ uWaterAudioSamplePointsToUse 8 (the compiled defaults as Step's INI guide lists 
 `[Display]` fDefaultWorldFOV 80, fNearDistance 15; `[HAVOK]` fInAirFallingCharGravityMult 1.35,
 fUnsupportedGravMult 4, fMaxTime 0.0167; `[Interface]` fActivatePickLength 180,
 fActivatePickRadius 16.
+
+## Items
+
+What a player can carry (`src/world/item-records.ts`, `node tools/item-info.ts`), after UESP and
+xEdit's TES5 definitions:
+
+| Type                   | Value / weight                                                                                                                                                                       | Also                                                                                                                                                                                                                |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| WEAP                   | DATA: value u32, weight f32, damage u16                                                                                                                                              | DNAM (100 bytes): animation type u8 @0, speed f32 @4, reach f32 @8, flags u16 @12 (0x80 non-playable), skill (actor value) i32 @76, stagger f32 @96; CRDT: critical damage u16 @0                                   |
+| ARMO                   | DATA: value i32, weight f32                                                                                                                                                          | DNAM: armor rating × 100 (i32); BOD2: biped slots u32, armor type u32 (0 light, 1 heavy, 2 clothing); BODT (older): slots, flags, armor type @8; record flag 0x4: non-playable; MOD2/MOD4: male/female world models |
+| AMMO                   | DATA: projectile, flags u32 (0x2 non-playable), damage f32, value u32 @12, weight f32 @16                                                                                            |                                                                                                                                                                                                                     |
+| ALCH                   | DATA: weight f32; ENIT: value i32 @0                                                                                                                                                 | ENIT flags u32 @4: 0x2 food, 0x10000 medicine, 0x20000 poison                                                                                                                                                       |
+| INGR, MISC, KEYM, SLGM | DATA: value i32, weight f32                                                                                                                                                          | SLGM: SOUL (u8, the soul held), SLCP (u8, its capacity)                                                                                                                                                             |
+| BOOK                   | DATA (16 bytes): flags u8 (0x1 teaches a skill, 0x2 can't be taken, 0x4 teaches a spell), type u8 (255: a note), teaches i32 @4 (actor value or spell), value u32 @8, weight f32 @12 | CNAM: the item card's description                                                                                                                                                                                   |
+| SCRL                   | DATA: value u32, weight f32                                                                                                                                                          | its effects                                                                                                                                                                                                         |
+| LIGH                   | DATA (48 bytes): flags u32 @12 (0x2: can be carried), value u32 @40, weight f32 @44                                                                                                  | only carryable lights are items                                                                                                                                                                                     |
+
+Effects (potions, ingredients, scrolls, enchantments): EFID (the magic effect), EFIT (magnitude
+f32, area u32, duration u32), then the effect's CTDA. Magic effects (`src/world/magic-effects.ts`):
+DATA flags u32 @0 (0x1 hostile, 0x200 no duration, 0x400 no magnitude, 0x800 no area, 0x8000
+hidden in the interface), base cost f32 @4, magic skill i32 @12, archetype u32 @64, actor value
+i32 @68; DNAM: the description, with `<mag>`, `<dur>`, `<area>` for the values.
