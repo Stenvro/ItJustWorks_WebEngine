@@ -6,7 +6,7 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
-import type { CollisionData } from '../physics/collision-data.ts';
+import { settlesWhenPlaced, type CollisionData } from '../physics/collision-data.ts';
 import { GrabSpring } from '../physics/grab.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { landscapeMesh } from '../physics/landscape.ts';
@@ -182,8 +182,19 @@ export interface CellCollision {
   }[];
   /** Enabled collision primitives. */
   readonly primitives: readonly CellPrimitive[];
+  /** The dead: ragdolls of their skeletons' bodies, which fall as the cell settles. */
+  readonly ragdolls?: readonly CellRagdoll[];
   /** Runs once all of it is in place (and queries see it). */
   readonly whenComplete?: () => void;
+}
+
+/** A dead actor's ragdoll: its skeleton's bodies (skeleton.nif) moving its pose's nodes. */
+export interface CellRagdoll {
+  readonly reference: number;
+  /** Its placement (its instances share it). */
+  readonly world: Mat4;
+  readonly collision: CollisionData | undefined;
+  readonly pose: ActorPose;
 }
 
 export class PlaySession {
@@ -365,6 +376,8 @@ export class PlaySession {
       // Where the ground has not loaded yet (streaming ahead of a fast player), the player
       // waits instead of falling through.
       this.player.update(deltaSeconds, !this.#groundReady(this.player.feet));
+      // What the player walked into moves from now on (held objects wait for a touch).
+      for (const collider of this.player.character.touched) this.physics.touch(collider);
       // An actor nearer than what the physics pick found is the target.
       const picked = this.#pick();
       const ray = this.#pickRay();
@@ -386,8 +399,9 @@ export class PlaySession {
     // Simulated objects that move take their drawn models along.
     for (const group of this.#groups) {
       for (const link of group.moving) {
+        // Held bodies (kinematic until touched) stay where they are.
         const awake = link.placed.bodies.some(
-          ({ body, data }) => data.motion === 'dynamic' && !body.isSleeping(),
+          ({ body, data }) => data.motion === 'dynamic' && body.isDynamic() && !body.isSleeping(),
         );
         if (awake && link.placed.placement(link.instance.world)) link.motion.version++;
       }
@@ -454,6 +468,8 @@ export class PlaySession {
       } else if (clock() - hold.since >= player.ini.number('Controls', 'fZKeyDelay')) {
         this.#hold = undefined;
         const camera = player.position;
+        // Taken hold of: it moves from now on, even if it was placed asleep.
+        this.physics.release(hold.body);
         this.#grab = {
           spring: new GrabSpring(hold.body, hold.point, player.grab),
           distance: Math.hypot(
@@ -615,7 +631,8 @@ export class PlaySession {
           moved && new Set(moved.keys()),
         );
         group.collision.push(placed);
-        if (object.dontHavokSettle !== true && placed.dynamic) group.settle.push(placed);
+        if (object.keyframed === true) physics.keyframe(placed);
+        else if (settlesWhenPlaced(object) && placed.dynamic) group.settle.push(placed);
         if (instance?.motion) group.moving.push({ placed, instance, motion: instance.motion });
         if (articulated && instance) {
           group.articulated.push(new Articulation(placed, articulated, instance.world));
@@ -636,6 +653,23 @@ export class PlaySession {
           });
           if (bodies.length > 0) group.posed.push({ placed, instance, pose, bodies, version: -1 });
         }
+      });
+    }
+    for (const ragdoll of cell.ragdolls ?? []) {
+      const collision = ragdoll.collision;
+      if (!collision?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom)) continue;
+      tasks.push(() => {
+        // Its bodies start in the skeleton's rest pose, as its nodes do.
+        ragdoll.pose.update(undefined);
+        const placed = physics.addObject(
+          collision,
+          ragdoll.world,
+          { reference: ragdoll.reference, kind: 'actor' },
+          false,
+        );
+        group.collision.push(placed);
+        if (placed.dynamic) group.settle.push(placed);
+        group.articulated.push(new Articulation(placed, ragdoll.pose, ragdoll.world));
       });
     }
     for (const primitive of cell.primitives) {

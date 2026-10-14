@@ -113,32 +113,20 @@ export interface CollisionData {
   readonly skipped: readonly string[];
 }
 
-const fixedCollisions = new WeakMap<CollisionData, CollisionData>();
-
 /**
- * The collision of a placed object: statics (STAT) stand still whatever their model says, so
- * their simulated bodies are fixed and their constraints dropped. The "...Static" clutter
- * (GlazedCandlesStatic, RuinsPot01Static, the "...ForDisplay" weapons, mounted antlers) reuses
- * the meshes of the items one can knock over; 165 such statics in a sixth of the interiors.
- * Movable statics (MSTT) and items move as their models say.
+ * Whether a placed object's simulated bodies settle once its cell's collision is in place (the
+ * warm start). Not those flagged "Don't Havok Settle", and not statics: a STAT whose model has
+ * simulated bodies (the "...Static" clutter, mounted antlers, the "...ForDisplay" weapons on
+ * Jorrvaskr's and Dragonsreach's walls) stays where it was placed until something knocks it,
+ * then falls like any item. Settled, Dragonsreach's antlers fell 600 units off its walls,
+ * which they never do in the game; only 13 of 379 such statics carry the flag. TODO(M13):
+ * inferred from the data, not documented.
  */
-export function placedCollision(
-  baseType: string,
-  collision: CollisionData | undefined,
-): CollisionData | undefined {
-  if (!collision || baseType !== 'STAT') return collision;
-  if (!collision.bodies.some((body) => body.motion === 'dynamic')) return collision;
-  let fixed = fixedCollisions.get(collision);
-  if (!fixed) {
-    fixed = {
-      bodies: collision.bodies.map((body) =>
-        body.motion === 'dynamic' ? { ...body, motion: 'fixed', mass: 0 } : body,
-      ),
-      skipped: collision.skipped,
-    };
-    fixedCollisions.set(collision, fixed);
-  }
-  return fixed;
+export function settlesWhenPlaced(object: {
+  readonly baseType: string;
+  readonly dontHavokSettle?: boolean;
+}): boolean {
+  return object.dontHavokSettle !== true && object.baseType !== 'STAT';
 }
 
 /**

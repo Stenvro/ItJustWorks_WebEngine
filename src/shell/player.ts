@@ -300,6 +300,11 @@ export class Player implements Camera {
     return this.character.feet;
   }
 
+  /** Where the player is drawn: the feet between the last two steps, as the camera has them. */
+  get drawnFeet(): Vec3 {
+    return this.character.feetAt(this.#setup.physics.alpha);
+  }
+
   get swimming(): boolean {
     return this.character.swimming;
   }

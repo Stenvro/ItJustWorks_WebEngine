@@ -297,6 +297,17 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
     physics.free();
   }, 60_000);
 
+  it("holds the weapons on Warmaiden's racks and plaques as their scripts do", async () => {
+    const cell = (await db.interiorCells()).find((c) => c.editorId === 'WhiterunWarmaidens');
+    if (!cell) throw new Error('no Warmaidens');
+    const data = await loadCellData(db, cell.formId);
+    const held = data.objects.filter((object) => object.keyframed === true);
+    // RackType 1 (its script's default) racks hold anything but a shield.
+    expect(held.map((object) => object.baseType)).toEqual(held.map(() => 'WEAP'));
+    expect(held.length).toBeGreaterThanOrEqual(5);
+    expect(held.map((object) => object.editorId)).toContain('IronWarhammer');
+  });
+
   it('lifts a grabbed bucket to the point held, and drops it when let go', async () => {
     const physics = new PhysicsWorld(matrix, GRAVITY);
     physics.addMesh(
@@ -311,6 +322,8 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
     const placed = physics.addObject(bucket, world, { reference: 0x1234, kind: 'object' }, false);
     const body = placed.bodies[0]?.body;
     if (!body) throw new Error('no bucket body');
+    // Placed to wait, it is held where it is until let go (as taking hold of it does).
+    physics.release(body);
     for (let i = 0; i < 120; i++) physics.step(1 / 60);
     const resting = body.translation().z;
     // The collider is grabbable (a placed object's simulated body).
@@ -333,6 +346,44 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
     // Let go, it falls back to the floor (it may land on its side).
     expect(body.translation().z * 69.99125).toBeLessThan(resting * 69.99125 + 20);
     expect(Math.hypot(body.linvel().x, body.linvel().y, body.linvel().z)).toBeLessThan(0.05);
+    physics.free();
+  }, 60_000);
+
+  it("lays a dead actor's ragdoll on the floor: its skeleton's bodies fall and lie still", async () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.addMesh(
+      Float32Array.of(-1000, -1000, 0, 1000, -1000, 0, 1000, 1000, 0, -1000, 1000, 0),
+      Uint32Array.of(0, 1, 2, 0, 2, 3),
+      Layer.ground,
+      { reference: 0, kind: 'landscape' },
+    );
+    const skeleton = buildCollision(
+      parseNif(await vfs.read('meshes\\actors\\character\\character assets\\skeleton.nif')),
+    );
+    const world = new Float32Array(16);
+    world.set([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    const placed = physics.addObject(skeleton, world, { reference: 0x1234, kind: 'actor' }, false);
+    const bones = placed.bodies.filter(({ data }) => data.motion === 'dynamic' && !data.phantom);
+    expect(bones.length).toBeGreaterThanOrEqual(18);
+    expect(placed.joints.length).toBeGreaterThanOrEqual(17);
+    const height = (name: string): number =>
+      (bones.find(({ data }) => data.node === name)?.body.translation().z ?? NaN) * 69.99125;
+    // Standing in the skeleton's rest pose, the head is up high.
+    expect(height('NPC Head [Head]')).toBeGreaterThan(100);
+    physics.settle(placed);
+    for (let i = 0; i < 300; i++) physics.step(1 / 60);
+    // Collapsed: the head near the floor, nothing through it, the joints held together.
+    expect(height('NPC Head [Head]')).toBeLessThan(40);
+    for (const { body } of bones) {
+      expect(body.translation().z * 69.99125).toBeGreaterThan(-4);
+      expect(Math.hypot(body.linvel().x, body.linvel().y, body.linvel().z)).toBeLessThan(0.1);
+    }
+    const pelvis = bones.find(({ data }) => data.node === 'NPC COM [COM ]')?.body.translation();
+    const head = bones.find(({ data }) => data.node === 'NPC Head [Head]')?.body.translation();
+    if (!pelvis || !head) throw new Error('no pelvis or head');
+    expect(
+      Math.hypot(head.x - pelvis.x, head.y - pelvis.y, head.z - pelvis.z) * 69.99125,
+    ).toBeLessThan(80);
     physics.free();
   }, 60_000);
 

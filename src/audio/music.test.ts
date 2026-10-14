@@ -169,6 +169,8 @@ const night = {
   form: 0,
   param2: 0,
   strings: [],
+  runOn: 0,
+  reference: 0,
 };
 
 describe('music', () => {

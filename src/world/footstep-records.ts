@@ -18,6 +18,13 @@ type RecordSource = Pick<GameRecord, 'formId' | 'editorId' | 'fields' | 'formIdA
 export const FOOTSTEP_GAITS = ['sneak', 'sprint', 'run', 'walk', 'other'] as const;
 export type FootstepGait = (typeof FOOTSTEP_GAITS)[number];
 
+/**
+ * What a footstep lands on: the ground's collision material (0: none; the landscape's comes
+ * from its land texture), or the water (WATR) the feet are in.
+ */
+export type FootstepGround =
+  { readonly material: number; readonly landscape: boolean } | { readonly water: number };
+
 /** FSTS: the footsteps (FSTP form ids) of each gait. */
 export interface FootstepSet {
   readonly formId: number;

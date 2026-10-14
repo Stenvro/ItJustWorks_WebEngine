@@ -8,7 +8,17 @@ const condition = (
   comparand: number,
   or = false,
   form = 0,
-): Condition => ({ function: fn, operator, comparand, or, form, param2: 0, strings: [] });
+): Condition => ({
+  function: fn,
+  operator,
+  comparand,
+  or,
+  form,
+  param2: 0,
+  strings: [],
+  runOn: 0,
+  reference: 0,
+});
 
 const day: SoundConditionContext = {
   hour: 10,

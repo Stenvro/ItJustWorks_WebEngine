@@ -5,11 +5,11 @@ import { OrbitCamera, type OrbitView } from '../render/camera.ts';
 import type { Rgb } from '../world/cell-records.ts';
 import { cellStatesElement, checkboxRow } from './cell-states.ts';
 import { InteriorSkyControls } from './interior-sky.ts';
-import { TIMESCALE, type SkyElements } from './world-sky.ts';
+import type { SkyElements } from './world-sky.ts';
 import { FlyCamera } from '../render/fly-camera.ts';
 import { identity } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
-import { placedCollision, type CollisionData } from '../physics/collision-data.ts';
+import type { CollisionData } from '../physics/collision-data.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
 import { articulatedPose } from '../physics/articulation.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
@@ -20,6 +20,7 @@ import {
   openable,
   PlaySession,
   type Activatable,
+  type CellRagdoll,
   type CollisionGroup,
 } from './play-session.ts';
 import { projectDecals } from '../render/decal-projection.ts';
@@ -76,7 +77,7 @@ import {
   animationInterval,
   type AnimatedSkeleton,
 } from '../animation/animated-skeleton.ts';
-import { groundActors, talkTargets, type PlacedActor } from './actors.ts';
+import { groundActors, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
@@ -123,6 +124,8 @@ interface CellView {
   readonly models: ReadonlyMap<string, GpuModel | undefined>;
   /** The models' collision, by path. */
   readonly collisions: ReadonlyMap<string, CollisionData | undefined>;
+  /** The dead actors' ragdolls (their skeletons' bodies). */
+  readonly ragdolls: readonly CellRagdoll[];
   /** Statics' directional materials (snow, moss, ice) as placed, by reference. */
   readonly directionals: ReadonlyMap<number, PlacedDirectional>;
   readonly label: string;
@@ -578,6 +581,7 @@ export class ModelViewer {
       decals,
       navmesh: new NavmeshSurface(await cellNavmeshes(db, formId)),
       actors,
+      ragdolls: session ? await ragdollsOf(actors, (path) => session.collision(path)) : [],
     };
     // The player arrives as through the cell's door; without one, at its middle.
     const comeIn = arrival ?? (await cellArrival(db, data));
@@ -659,6 +663,7 @@ export class ModelViewer {
   readonly #soundingWorld: SoundingWorld = {
     sounds: () => this.#session?.soundSystem,
     ground: (at, exclude) => groundUnder(this.#play?.physics, at, exclude),
+    water: (at) => this.#waterAt(at[0], at[1], at[2]),
   };
 
   #scriptEnvironment(): Promise<ScriptEnvironment> | undefined {
@@ -711,7 +716,7 @@ export class ModelViewer {
     const skeletons: AnimatedSkeleton[] = [];
     for (const object of cell.data.objects) {
       if (!isEnabled(object.reference)) continue;
-      const collision = placedCollision(object.baseType, cell.collisions.get(object.model));
+      const collision = cell.collisions.get(object.model);
       if (object.water !== undefined) {
         volumes.push(...waterVolumes(collision, object.world, object.water));
       }
@@ -776,12 +781,13 @@ export class ModelViewer {
             const articulated = articulatedPoses.get(object);
             return {
               object,
-              collision: placedCollision(object.baseType, cell.collisions.get(object.model)),
+              collision: cell.collisions.get(object.model),
               instance: placed.get(object),
               ...(articulated && { articulated }),
             };
           }),
         primitives: cell.data.primitives.filter((primitive) => isEnabled(primitive.reference)),
+        ragdolls: cell.ragdolls.filter((ragdoll) => isEnabled(ragdoll.reference)),
       });
     }
     // The cell's sounds: its enabled loops, acoustic spaces and its own acoustic space.
@@ -1200,7 +1206,7 @@ export class ModelViewer {
       const delta = this.#lastClock === undefined ? 0 : Math.min(0.25, now - this.#lastClock);
       // Unless the panel stops it (or sets it with its slider).
       if (this.#sky?.timeFlows !== false) {
-        session.gameHour = (session.gameHour + (delta * TIMESCALE) / 3600) % 24;
+        session.advanceClock((delta * session.timeScale) / 3600);
       }
       this.#sky?.sync();
       session.updateEmittance(session.gameHour);

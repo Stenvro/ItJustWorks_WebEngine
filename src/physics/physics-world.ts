@@ -230,6 +230,11 @@ export function poseMatrix(t: Vec3, q: Quaternion): Mat4 {
   return m;
 }
 
+/** A body the simulation moves (not a phantom). */
+function dynamicBody(data: CollisionBody): boolean {
+  return data.motion === 'dynamic' && !data.phantom;
+}
+
 /** A key for an unordered pair of colliders. */
 function pairKey(a: number, b: number): string {
   return a < b ? `${String(a)}:${String(b)}` : `${String(b)}:${String(a)}`;
@@ -384,10 +389,25 @@ export class PhysicsWorld {
    */
   readonly #systems = new Map<number, number>();
   #nextSystem = 1;
-  /** Hung objects placed to settle whose overlaps are looked for after the next step. */
-  readonly #hungToCheck: PlacedCollision[] = [];
+  /**
+   * Hung objects placed to settle whose overlaps are looked for after the next step, with
+   * where their bodies were placed (that step's push out of the overlap is undone).
+   */
+  readonly #hungToCheck: {
+    readonly placed: PlacedCollision;
+    readonly poses: readonly (readonly [RAPIER.Vector, RAPIER.Rotation])[];
+  }[] = [];
   /** Collider pairs that never collide: a hung body and what it was placed into. */
   readonly #ignoredPairs = new Set<string>();
+  /**
+   * Simulated bodies placed to wait (until their cell settles, or for good: "Don't Havok
+   * Settle", statics). Havok leaves a deactivated body where it is until an active one touches
+   * it; Rapier wakes a sleeping body at its first contact, even with the wall it hangs on
+   * (mounted antlers fell). So they are held as kinematic bodies, which meet nothing fixed,
+   * and become simulated when something that moves touches them (the player, an object in
+   * motion) or the player takes hold of them.
+   */
+  readonly #held = new Set<number>();
   /** Bodies just placed to settle, until when their overlaps only move them. */
   readonly #depenetrating = new Map<number, number>();
   /** Simulated seconds. */
@@ -646,7 +666,9 @@ export class PhysicsWorld {
     }
     this.#changed = true;
     const placed = new PlacedCollision(owner, bodies, colliders, scale, [], joints);
-    if (settle && isHung(placed)) this.#hungToCheck.push(placed);
+    if (settle && isHung(placed)) this.#checkHung(placed);
+    // Placed to wait: held where they are until something that moves touches them.
+    if (!settle) for (const { body, data } of bodies) if (dynamicBody(data)) this.#hold(body);
     return placed;
   }
 
@@ -863,7 +885,10 @@ export class PhysicsWorld {
     for (const joint of placed.joints) this.#breakable.delete(joint);
     for (const collider of placed.colliders) this.unregister(collider);
     // Removing a body removes its colliders.
-    for (const { body } of placed.bodies) this.world.removeRigidBody(body);
+    for (const { body } of placed.bodies) {
+      this.#held.delete(body.handle);
+      this.world.removeRigidBody(body);
+    }
     for (const body of placed.fixedBodies) this.world.removeRigidBody(body);
     this.#changed = true;
   }
@@ -882,6 +907,7 @@ export class PhysicsWorld {
       this.#changed = false;
       this.#time += PHYSICS_STEP;
       if (this.#depenetrating.size > 0) this.#depenetrate();
+      if (this.#held.size > 0) this.#releaseTouched();
       if (this.#hungToCheck.length > 0) this.#ignoreHungOverlaps();
       if (this.#breakable.size > 0) this.#breakJoints();
       this.#collectImpacts();
@@ -896,7 +922,8 @@ export class PhysicsWorld {
    * impact sounds until they first sleep (at most settleSeconds).
    */
   settle(placed: PlacedCollision): void {
-    if (isHung(placed)) this.#hungToCheck.push(placed);
+    if (isHung(placed)) this.#checkHung(placed);
+    for (const { body } of placed.bodies) this.release(body);
     for (const { body, data } of placed.bodies) {
       if (data.motion !== 'dynamic' || data.phantom) continue;
       body.wakeUp();
@@ -905,11 +932,68 @@ export class PhysicsWorld {
     }
   }
 
+  /** Looks for a hung object's overlaps after the next step (HUNG_OVERLAP). */
+  #checkHung(placed: PlacedCollision): void {
+    this.#hungToCheck.push({
+      placed,
+      poses: placed.bodies.map(({ body }) => [{ ...body.translation() }, { ...body.rotation() }]),
+    });
+  }
+
+  /** Holds a simulated body where it is (see #held). */
+  #hold(body: RAPIER.RigidBody): void {
+    body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, false);
+    for (let i = 0; i < body.numColliders(); i++) {
+      const collider = body.collider(i);
+      collider.setActiveEvents(collider.activeEvents() | RAPIER.ActiveEvents.COLLISION_EVENTS);
+    }
+    this.#held.add(body.handle);
+  }
+
+  /**
+   * Keeps a placed object's simulated bodies keyframed (as a script's SetMotionType does): they
+   * stay where they are whatever touches them.
+   */
+  keyframe(placed: PlacedCollision): void {
+    for (const { body, data } of placed.bodies) {
+      if (!dynamicBody(data)) continue;
+      this.#held.delete(body.handle);
+      body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, false);
+    }
+  }
+
+  /** A held body moves from now on (settled, touched, taken hold of); others are left. */
+  release(body: RAPIER.RigidBody): void {
+    if (!this.#held.delete(body.handle)) return;
+    body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+  }
+
+  /** Something moving (the player's shape) touched a collider: a held body under it moves. */
+  touch(collider: RAPIER.Collider): void {
+    const body = collider.parent();
+    if (body) this.release(body);
+  }
+
+  /** Held bodies that something moving touched in the step move from now on. */
+  #releaseTouched(): void {
+    this.#events.drainCollisionEvents((a, b, started) => {
+      if (!started) return;
+      const one = this.world.getCollider(a).parent();
+      const other = this.world.getCollider(b).parent();
+      if (!one || !other) return;
+      const moves = (body: RAPIER.RigidBody): boolean =>
+        !this.#held.has(body.handle) && !body.isFixed();
+      if (this.#held.has(one.handle) && moves(other)) this.release(one);
+      if (this.#held.has(other.handle) && moves(one)) this.release(other);
+    });
+  }
+
   /** Lets hung objects' bodies pass through what they were placed into (HUNG_OVERLAP). */
   #ignoreHungOverlaps(): void {
     const narrow = this.world.narrowPhase;
-    for (const placed of this.#hungToCheck.splice(0)) {
+    for (const { placed, poses } of this.#hungToCheck.splice(0)) {
       const own = new Set(placed.colliders.map((collider) => collider.handle));
+      const before = this.#ignoredPairs.size;
       for (const { body, data } of placed.bodies) {
         if (data.motion !== 'dynamic') continue;
         for (let i = 0; i < body.numColliders(); i++) {
@@ -927,6 +1011,17 @@ export class PhysicsWorld {
           });
         }
       }
+      // Pushed out of what it now passes through by that first step: back to its place.
+      if (this.#ignoredPairs.size === before) continue;
+      const still = { x: 0, y: 0, z: 0 };
+      placed.bodies.forEach(({ body }, i) => {
+        const pose = poses[i];
+        if (!pose || !body.isDynamic()) return;
+        body.setTranslation(pose[0], false);
+        body.setRotation(pose[1], false);
+        body.setLinvel(still, false);
+        body.setAngvel(still, false);
+      });
     }
   }
 
@@ -937,6 +1032,8 @@ export class PhysicsWorld {
       const body = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
       if (!body || this.#time >= until) {
         this.#depenetrating.delete(handle);
+        // Held still, it may have fallen asleep in the air: it settles from now on.
+        body?.wakeUp();
         continue;
       }
       body.setLinvel(still, false);
@@ -1122,7 +1219,7 @@ export class PhysicsWorld {
   grabbable(collider: RAPIER.Collider): RAPIER.RigidBody | undefined {
     if (this.ownerOf(collider)?.kind !== 'object') return undefined;
     const body = collider.parent();
-    return body?.isDynamic() ? body : undefined;
+    return body && (body.isDynamic() || this.#held.has(body.handle)) ? body : undefined;
   }
 
   free(): void {

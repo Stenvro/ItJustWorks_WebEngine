@@ -5,7 +5,7 @@
 import { parseNif } from '../src/formats/nif/nif.ts';
 import {
   buildCollision,
-  placedCollision,
+  settlesWhenPlaced,
   type CollisionData,
 } from '../src/physics/collision-data.ts';
 import {
@@ -162,11 +162,7 @@ export class PlayWorld {
       );
     }
     const objects = data.objects.filter((object) => isEnabled(object.reference));
-    const loaded = await Promise.all(
-      objects.map(async (object) =>
-        placedCollision(object.baseType, await this.collisionOf(object.model)),
-      ),
-    );
+    const loaded = await Promise.all(objects.map(async (object) => this.collisionOf(object.model)));
     objects.forEach((object, i) => {
       const collision = loaded[i];
       if (!collision) return;
@@ -178,7 +174,8 @@ export class PlayWorld {
       );
       placed.push(one);
       names.set(object.reference, object.editorId !== '' ? object.editorId : object.model);
-      if (object.dontHavokSettle !== true && one.dynamic) physics.settle(one);
+      if (object.keyframed === true) physics.keyframe(one);
+      else if (settlesWhenPlaced(object) && one.dynamic) physics.settle(one);
     });
     for (const primitive of data.primitives) {
       if (!isEnabled(primitive.reference)) continue;

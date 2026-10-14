@@ -4,6 +4,7 @@
 // TODO(M11): every condition function, run on the right subject (actors, packages, ...).
 
 import { view } from '../formats/esm/fields.ts';
+import type { Field } from '../formats/esm/record.ts';
 import { decodeGameText } from '../formats/text.ts';
 import type { GameRecord } from '../world/record-db.ts';
 import type { PapyrusVm } from './papyrus-vm.ts';
@@ -38,6 +39,65 @@ export interface Condition {
   readonly param2: number;
   /** String parameters (CIS1, CIS2). */
   readonly strings: readonly string[];
+  /**
+   * What it runs on (ConditionRunOn): the subject, its target, a reference, its combat
+   * target, its linked reference, a quest alias, package data, event data.
+   */
+  readonly runOn: number;
+  /** The reference it runs on (a global form id) when `runOn` is a reference. */
+  readonly reference: number;
+}
+
+/** CTDA run-on values. */
+export const ConditionRunOn = {
+  subject: 0,
+  target: 1,
+  reference: 2,
+  combatTarget: 3,
+  linkedReference: 4,
+  questAlias: 5,
+  packageData: 6,
+  eventData: 7,
+} as const;
+
+/** What CTDA form ids are read with (a record's formIdAt). */
+interface FormIdSource {
+  formIdAt(data: Uint8Array, offset?: number): number;
+}
+
+/**
+ * The condition of the CTDA at `fields[index]` with the CIS1 / CIS2 strings right after it,
+ * or undefined if that field is not a whole CTDA.
+ */
+export function conditionAt(
+  fields: readonly Field[],
+  index: number,
+  source: FormIdSource,
+): Condition | undefined {
+  const field = fields[index];
+  if (field?.type !== 'CTDA' || field.data.length < 28) return undefined;
+  const data = view(field.data);
+  const flags = field.data[0] ?? 0;
+  const strings: string[] = [];
+  for (let j = index + 1; j < fields.length; j++) {
+    const next = fields[j];
+    if (next?.type !== 'CIS1' && next?.type !== 'CIS2') break;
+    const end = next.data.indexOf(0);
+    strings.push(decodeGameText(next.data, 0, end < 0 ? next.data.length : end));
+  }
+  const runOn = data.getUint32(20, true);
+  return {
+    function: data.getUint16(8, true),
+    operator: flags >> 5,
+    or: (flags & 0x01) !== 0,
+    comparand:
+      (flags & 0x04) !== 0 ? { global: source.formIdAt(field.data, 4) } : data.getFloat32(4, true),
+    form: source.formIdAt(field.data, 12),
+    param2: data.getInt32(16, true),
+    strings,
+    runOn,
+    reference: runOn === ConditionRunOn.reference ? source.formIdAt(field.data, 24) : 0,
+  };
 }
 
 /** The CTDA conditions of a record, in order. */
@@ -45,29 +105,8 @@ export function parseConditions(record: GameRecord): Condition[] {
   const conditions: Condition[] = [];
   const fields = record.fields.list;
   for (let i = 0; i < fields.length; i++) {
-    const field = fields[i];
-    if (field?.type !== 'CTDA' || field.data.length < 28) continue;
-    const data = view(field.data);
-    const flags = field.data[0] ?? 0;
-    const strings: string[] = [];
-    for (let j = i + 1; j < fields.length; j++) {
-      const next = fields[j];
-      if (next?.type !== 'CIS1' && next?.type !== 'CIS2') break;
-      const end = next.data.indexOf(0);
-      strings.push(decodeGameText(next.data, 0, end < 0 ? next.data.length : end));
-    }
-    conditions.push({
-      function: data.getUint16(8, true),
-      operator: flags >> 5,
-      or: (flags & 0x01) !== 0,
-      comparand:
-        (flags & 0x04) !== 0
-          ? { global: record.formIdAt(field.data, 4) }
-          : data.getFloat32(4, true),
-      form: record.formIdAt(field.data, 12),
-      param2: data.getInt32(16, true),
-      strings,
-    });
+    const condition = conditionAt(fields, i, record);
+    if (condition) conditions.push(condition);
   }
   return conditions;
 }

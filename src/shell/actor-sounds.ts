@@ -1,16 +1,15 @@
 // The sounds actors' animations raise: their footsteps (the events their footstep set answers,
-// FootLeft, FootRight, FootFront, JumpDown, ..., sounding the impact for the ground underfoot)
-// and SoundPlay events (SoundPlay.<descriptor>: a sound descriptor by editor id at the actor;
-// NPCSoundPlay.<descriptor> only for actors other than the player). Notes: docs/audio.md
-// ("Footsteps").
+// FootLeft, FootRight, FootFront, JumpDown, ..., sounding the impact for the ground underfoot
+// or the water the feet are in) and SoundPlay events (SoundPlay.<descriptor>: a sound
+// descriptor by editor id at the actor; NPCSoundPlay.<descriptor> only for actors other than
+// the player). Notes: docs/audio.md ("Footsteps").
 
 import type RAPIER from '@dimforge/rapier3d-compat';
-import type { SoundSystem } from '../audio/sound-system.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { ActorLook } from '../world/actors.ts';
-import type { FootstepGait } from '../world/footstep-records.ts';
+import type { FootstepGait, FootstepGround } from '../world/footstep-records.ts';
 
 /** An actor whose animations sound. */
 export interface SoundingActor {
@@ -24,14 +23,28 @@ export interface SoundingActor {
   readonly collider?: RAPIER.Collider;
 }
 
+/** What actors' sounds play through (the session's SoundSystem). */
+export interface ActorSoundOutput {
+  footstep(
+    set: number,
+    tag: string,
+    gait: FootstepGait,
+    position: Vec3,
+    ground: FootstepGround,
+  ): Promise<boolean>;
+  playNamed(editorId: string, place: () => Vec3): Promise<unknown>;
+}
+
 /** What actors' sounds need of the world. */
 export interface SoundingWorld {
-  sounds(): SoundSystem | undefined;
+  sounds(): ActorSoundOutput | undefined;
   /** What lies underfoot at a point (a ray down), or undefined where nothing is loaded. */
   ground(
     at: Vec3,
     exclude?: RAPIER.Collider,
   ): { readonly material: number; readonly landscape: boolean } | undefined;
+  /** The water a point is in or over (its surface and water type), if any is there. */
+  water(at: Vec3): { readonly height: number; readonly type: number } | undefined;
 }
 
 const SOUND_PLAY = 'soundplay.';
@@ -59,7 +72,12 @@ export function actorSounds(
       const set = actor.look.footstepSet;
       if (set === undefined) continue;
       const feet = actor.feet();
-      const ground = world.ground(feet, actor.collider);
+      // Feet under a water surface (a cave's puddle, a stream, the shallows) step in it.
+      const water = world.water(feet);
+      const ground =
+        water && feet[2] < water.height
+          ? { water: water.type }
+          : world.ground(feet, actor.collider);
       if (!ground) continue;
       void sounds.footstep(set, event, actor.gait(), feet, ground);
     }

@@ -4,6 +4,7 @@
 //
 //   node tools/behavior-run.ts meshes\actors\character\defaultmale.hkx
 //   node tools/behavior-run.ts <project> --set Speed=150 --event moveStart --time 3 --every 5
+//   node tools/behavior-run.ts <project> --at 0.5:SneakStart --set-at 0.5:IsSneaking=1 //     --set-at 1:Speed=100 --at 1:moveStart --time 2      events and variables at times
 
 import { BehaviorRuntime, type BehaviorHost } from '../src/animation/behavior-runtime.ts';
 import { readAnimationContainer, type AnimationBinding } from '../src/formats/hkx/animation.ts';
@@ -59,12 +60,32 @@ for (const assignment of option('--set')) {
 const total = Number(option('--time')[0] ?? 2);
 const every = Number(option('--every')[0] ?? 30);
 const events = option('--event');
+/** "seconds:what" options, by time. */
+const timed = (name: string): { at: number; what: string }[] =>
+  option(name).map((entry) => {
+    const colon = entry.indexOf(':');
+    return { at: Number(entry.slice(0, colon)), what: entry.slice(colon + 1) };
+  });
+const timedEvents = timed('--at');
+const timedSets = timed('--set-at');
 console.log(
   `${character.name}: ${String(files.size)} behavior files, skeleton ${String(skeleton.bones.length)} bones`,
 );
 const step = 1 / 30;
 for (let time = 0, frame = 0; time <= total; time += step, frame++) {
   if (frame === 1) for (const event of events) runtime.sendEvent(event);
+  const due = (at: number): boolean => at > time - step / 2 && at <= time + step / 2;
+  for (const { at, what } of timedSets) {
+    if (!due(at)) continue;
+    const [name = '', value = '0'] = what.split('=');
+    runtime.setVariable(name, Number(value));
+    console.log(`t=${time.toFixed(2)} set ${name}=${value}`);
+  }
+  for (const { at, what } of timedEvents) {
+    if (!due(at)) continue;
+    runtime.sendEvent(what);
+    console.log(`t=${time.toFixed(2)} event ${what}`);
+  }
   runtime.update(step);
   await Promise.all(pending.splice(0));
   if (frame === 0 || Math.abs(time - total) < step / 2 || frame % every === 0) {

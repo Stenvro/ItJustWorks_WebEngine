@@ -1,11 +1,11 @@
-// Where a placed actor stands: its character controller puts it on the ground under its
-// reference when its cell loads (the reference's height is where it was placed in the editor:
-// a little above or into the ground), and races that tilt (RACE flags "tilt front/back", four-
-// legged animals; "tilt left/right" too, spiders, chaurus, mudcrabs, mammoths) lean with the
-// ground under them. Races that do not walk (slaughterfish) stay where they were placed.
-// Only small gaps are closed: actors further off the ground were put there on purpose (Falmer
-// and automatons waiting in ambush inside the walls, corpses on tables); their packages and
-// furniture (M10) say where they are. TODO(M10): the character controllers themselves.
+// Where a placed actor stands: its character controller falls onto what is under it when its
+// cell loads (the reference's height is where it was placed in the editor: a little above or
+// into the ground; leveled animals and bandits up to 120 units over it), and races that tilt
+// (RACE flags "tilt front/back", four-legged animals; "tilt left/right" too, spiders, chaurus,
+// mudcrabs, mammoths) lean with the ground under them. Races that do not walk (slaughterfish)
+// stay where they were placed, as do actors in furniture (their package's: Falmer in their
+// wall pods) and actors with nothing under them (held in a cell until their package moves
+// them). TODO(M10): the character controllers themselves.
 // Platform-independent. Notes: docs/physics.md ("Actors on the ground").
 
 import type { Mat4, Vec3 } from '../render/math.ts';
@@ -13,8 +13,8 @@ import { RaceFlag } from './actor-records.ts';
 
 /** How far above its reference an actor's ground is looked for (sunk into it). */
 export const GROUND_ABOVE = 16;
-/** How far below its reference (floating above it). */
-export const GROUND_BELOW = 16;
+/** How far below its reference: it falls onto whatever is under it, however far. */
+export const GROUND_BELOW = 65536;
 
 /** The ground under a point: where a ray straight down meets it and the surface's normal. */
 export interface GroundHit {

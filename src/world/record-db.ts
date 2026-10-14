@@ -27,6 +27,7 @@ import {
 import { asciiLowerCase } from '../formats/text.ts';
 import type { LoadOrderEntry } from '../vfs/load-order.ts';
 import type { Vfs } from '../vfs/vfs.ts';
+import { parsePex, type PexScript } from '../formats/pex/pex.ts';
 
 export interface Plugin {
   readonly slot: number;
@@ -131,10 +132,13 @@ export class RecordDatabase {
     Map<number, { subBlocks: Map<string, number>; persistent: number[] }>
   >();
   readonly #subBlockCache = new Map<string, Promise<Map<string, number>>>();
+  readonly #vfs: Vfs;
+  readonly #scripts = new Map<string, Promise<PexScript | undefined>>();
 
-  private constructor(plugins: Plugin[], problems: string[]) {
+  private constructor(plugins: Plugin[], problems: string[], vfs: Vfs) {
     this.plugins = plugins;
     this.problems = problems;
+    this.#vfs = vfs;
     for (const plugin of plugins) {
       const { entry } = plugin;
       if (entry.lightIndex === undefined) this.#fullSlots.set(entry.modIndex, plugin.slot);
@@ -187,7 +191,24 @@ export class RecordDatabase {
         return { slot, entry, info, index: pluginIndex, source, masterSlots, strings };
       }),
     );
-    return new RecordDatabase(plugins, problems);
+    return new RecordDatabase(plugins, problems, vfs);
+  }
+
+  /** A compiled Papyrus script of the load order (scripts\<name>.pex), read once. */
+  script(name: string): Promise<PexScript | undefined> {
+    const key = name.toLowerCase();
+    let pending = this.#scripts.get(key);
+    if (!pending) {
+      const path = `scripts\\${key}.pex`;
+      pending = this.#vfs.has(path)
+        ? this.#vfs.read(path).then(
+            (bytes) => parsePex(bytes),
+            () => undefined,
+          )
+        : Promise.resolve(undefined);
+      this.#scripts.set(key, pending);
+    }
+    return pending;
   }
 
   // --- Form ids ---------------------------------------------------------------

@@ -9,7 +9,6 @@ import type { Vec3 } from '../render/math.ts';
 import type { Camera, Renderer } from '../render/renderer.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
 import { articulatedPose } from '../physics/articulation.ts';
-import { placedCollision } from '../physics/collision-data.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
 import {
   placedParts,
@@ -76,7 +75,7 @@ import {
   animationInterval,
   type AnimatedSkeleton,
 } from '../animation/animated-skeleton.ts';
-import { groundActors, talkTargets, type PlacedActor } from './actors.ts';
+import { groundActors, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
 import { cellStatesElement } from './cell-states.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { TreeSway } from '../animation/tree-sway.ts';
@@ -981,10 +980,9 @@ export class WorldViewer {
       // Collision: the landscape, the enabled objects (also those with nothing to draw) and
       // collision primitives.
       const collisions = await Promise.all(
-        objects.map(async (object) =>
-          placedCollision(object.baseType, await session.collision(object.model)),
-        ),
+        objects.map(async (object) => session.collision(object.model)),
       );
+      const ragdolls = await ragdollsOf(cell.actors, (path) => session.collision(path));
       if (play !== this.#play) return;
       const entries = new Map(placed.map((entry) => [entry.object, entry]));
       play.add(cell.collision, {
@@ -1003,6 +1001,7 @@ export class WorldViewer {
           };
         }),
         primitives: data.primitives.filter((primitive) => isEnabled(primitive.reference)),
+        ragdolls,
       });
     }
     if (land) cell.grass = await this.#grass(land, cell, water?.height);
@@ -1025,11 +1024,7 @@ export class WorldViewer {
     const models = await Promise.all(objects.map((object) => session.model(object.model)));
     // In loaded cells, objects with simulated collision move: they get a matrix of their own.
     const collisions = simulated
-      ? await Promise.all(
-          objects.map(async (object) =>
-            placedCollision(object.baseType, await session.collision(object.model)),
-          ),
-        )
+      ? await Promise.all(objects.map(async (object) => session.collision(object.model)))
       : [];
     // Statics' directional materials (snow, moss, ice) as placed.
     const directionals = await Promise.all(
@@ -1114,6 +1109,7 @@ export class WorldViewer {
   readonly #soundingWorld: SoundingWorld = {
     sounds: () => this.#session?.soundSystem,
     ground: (at, exclude) => groundUnder(this.#play?.physics, at, exclude),
+    water: (at) => this.#waterAt(at[0], at[1], at[2]),
   };
 
   /**

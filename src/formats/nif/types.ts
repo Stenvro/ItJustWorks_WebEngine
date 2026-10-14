@@ -219,6 +219,27 @@ export interface IntegerExtraDataBlock {
   readonly value: number;
 }
 
+/**
+ * BSFurnitureMarker / BSFurnitureMarkerNode ("FRN"): the places actors use a furniture from,
+ * in the model's space.
+ */
+export interface FurnitureMarkerBlock {
+  readonly kind: 'furniture-marker';
+  readonly name: string;
+  readonly positions: readonly FurniturePosition[];
+}
+
+/** A furniture marker position (Skyrim: BS version over 34). */
+export interface FurniturePosition {
+  readonly offset: Vec3;
+  /** Radians about z: the way the actor faces. */
+  readonly heading: number;
+  /** 1 sit, 2 sleep, 4 lean. */
+  readonly animationType: number;
+  /** Where it is entered from: 0x1 front, 0x2 behind, 0x4 right, 0x8 left, 0x10 up. */
+  readonly entryPoints: number;
+}
+
 /** NiStringExtraData: a named text (e.g. "Prn": the skeleton node a weapon or shield hangs on). */
 export interface StringExtraDataBlock {
   readonly kind: 'string-extra-data';
@@ -822,6 +843,7 @@ export type NifBlock =
   | BSShaderTextureSetBlock
   | NiAlphaPropertyBlock
   | IntegerExtraDataBlock
+  | FurnitureMarkerBlock
   | StringExtraDataBlock
   | BehaviorGraphExtraDataBlock
   | BoundBlock
