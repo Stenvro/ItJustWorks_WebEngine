@@ -112,7 +112,6 @@ export class QuestEngine {
     if (state.stagesDone.has(stage) && !repeated) return false;
     state.stagesDone.add(stage);
     state.stage = stage;
-    // The first log entry whose conditions hold.
     // The first log entry whose conditions hold is the one that happens: its flags, its next
     // quest and its fragment (each log entry has its own; the others' do not run).
     const entries = record.stages.find((s) => s.index === stage)?.logEntries ?? [];

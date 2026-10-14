@@ -1,8 +1,9 @@
 // Which scripts refer to a form: an index over the script properties (VMAD) of dialogue
 // responses and quests. Used to tell what drives a cell's enable-parent markers: something
 // the player buys in conversation (a room from a steward: the response's script takes
-// gold), a house-building script, or a quest stage. Built once per record database by reading only INFO and QUST records.
-// TODO(M8): the Papyrus VM uses the same properties at run time.
+// gold), a house-building script, or a quest stage. Built once per record database by
+// reading only INFO and QUST records. (The running game's scripts read the same properties
+// through the script runtime.)
 
 import { forEachRecord } from '../formats/esm/plugin-index.ts';
 import { fourCCToInt, parseFields } from '../formats/esm/record.ts';

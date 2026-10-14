@@ -103,7 +103,10 @@ export type PackageStart =
     }
   /** Its package has it in another cell or world. */
   | { readonly kind: 'elsewhere'; readonly package: number; readonly procedure: string }
-  /** Not known yet (TODO(M8)/(M10)): it stays where it was placed. */
+  /**
+   * Not known yet (TODO(M10): running the packages; or, before the game's scripts run, held by
+   * a quest alias): it stays where it was placed.
+   */
   | { readonly kind: 'undecided'; readonly package?: number; readonly reason: string };
 
 /** Condition functions the start values (UESP: Function Indices). */

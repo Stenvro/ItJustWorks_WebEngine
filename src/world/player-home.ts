@@ -4,8 +4,9 @@
 //   drafting table and workbenches, then crafting the furniture of each finished room.
 // This module finds those actions for a cell and plays a chosen set of them from the state
 // of a new game in the Papyrus VM; the result is which references the scripts enabled or
-// disabled.
-// TODO(M8): the player's real actions in a running game, with dialogue conditions (M9).
+// disabled. In a running game the same scripts run in the script runtime when the player
+// does these things: buying in conversation (TODO(M9): dialogue) and crafting at the
+// drafting table and workbenches (TODO(M11): crafting).
 
 import { evaluateConditions, parseConditions, type Condition } from '../scripting/conditions.ts';
 import { PapyrusVm } from '../scripting/papyrus-vm.ts';
@@ -341,7 +342,7 @@ async function furnish(
       if (script) await craft(vm, host, item, script);
     }
   }
-  // TODO(M8): trophies are chosen per trophy base (BuildTrophy on the activated base).
+  // Trophies are the player's choice at each trophy base, crafted there (TODO(M11): crafting).
 }
 
 /**
