@@ -50,3 +50,21 @@ resolves the rest through `fontconfig.txt`, which loads font libraries (`fontlib
 = "Futura Condensed" Normal`). `fonts_en.swf` holds the fonts themselves (DefineFont3 with
 their glyphs: Futura Condensed, Futura CondensedLight, the book and rune fonts, the controller
 buttons).
+
+## Linking imports
+
+Scaleform loads the movies a menu imports symbols from (ImportAssets2) before the menu plays;
+a Flash player loads them afterwards, and Ruffle neither places an imported clip in the frame
+that ran before it arrived nor lets it be attached later. The item menus build themselves from
+imported parts (`Inventory components/InventoryLists.swf`, `ItemCard.swf`, `BottomBar.swf`), so
+the engine links them in (`src/formats/swf/swf-link.ts`): each import of such a movie is
+replaced, where it stands, by that movie's definitions (shapes, bitmaps, sprites, edit texts,
+fonts, their own imports of the font library, their class code, their exports; not its own
+timeline). Their character ids move past the importing movie's own, and the symbol imported
+takes the id the import gave it. What names a character by id is renumbered: definitions,
+placements in sprites (PlaceObject2/3, the character after a class name), edit texts' fonts,
+bitmap fills in shapes (DefineShape 1–4's fill style arrays, in the shape's header and in its
+records' new styles; LINESTYLE2 fills), CSM text settings, scaling grids, init actions, exports
+and imports. Text records, buttons and morph shapes, which no linked movie has, are refused.
+The font library (`gfxfontlib.swf`) stays an import. The integration test checks that every
+menu with parts links and that every character placed in it is defined.

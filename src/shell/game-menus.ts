@@ -10,6 +10,7 @@ import { formatGameDate } from '../world/game-time.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 import { JournalMenu, JournalPage } from './journal-menu.ts';
+import { InventoryMenu } from './inventory-menu.ts';
 
 /** The menus' depth among the game's menus (over the HUD, under message boxes). */
 const MENU_DEPTH = 6;
@@ -41,6 +42,7 @@ export class GameMenus {
   #open: { menu: Menu | undefined; leave: () => void } | undefined;
   readonly #missing = new Set<string>();
   readonly #journal: JournalMenu;
+  readonly #inventory: InventoryMenu;
 
   constructor(
     host: MenuHost,
@@ -53,6 +55,10 @@ export class GameMenus {
     this.#terminal = terminal;
     this.#enterMenuMode = enterMenuMode;
     this.#journal = new JournalMenu(host, session, terminal);
+    this.#inventory = new InventoryMenu(host, session, terminal);
+    this.#inventory.onTween = () => {
+      this.openMenu('Tween');
+    };
   }
 
   /** Quit to the main menu (false) or to the desktop (true), from the journal's system page. */
@@ -79,14 +85,16 @@ export class GameMenus {
         ? this.#openTween()
         : name === 'Journal' || name === 'Pause'
           ? this.#openJournal(name === 'Pause' ? JournalPage.system : undefined)
-          : (() => {
-              // TODO(M9): the inventory, magic, skills, map, favorites and wait menus.
-              if (!this.#missing.has(name)) {
-                this.#missing.add(name);
-                this.#terminal.log('ui', `the ${name} menu is not built yet`, 'warn');
-              }
-              return Promise.resolve();
-            })();
+          : name === 'Inventory'
+            ? this.#openInventory()
+            : (() => {
+                // TODO(M9): the inventory, magic, skills, map, favorites and wait menus.
+                if (!this.#missing.has(name)) {
+                  this.#missing.add(name);
+                  this.#terminal.log('ui', `the ${name} menu is not built yet`, 'warn');
+                }
+                return Promise.resolve();
+              })();
     opening.catch((error: unknown) => {
       this.#terminal.log(
         'ui',
@@ -107,6 +115,27 @@ export class GameMenus {
     this.#open = undefined;
     if (open?.menu) this.#host.close(open.menu);
     open?.leave();
+  }
+
+  /** The inventory, the HUD aside; it closes itself after its fade (CloseMenu). */
+  async #openInventory(): Promise<void> {
+    const leaveMenuMode = this.#enterMenuMode();
+    const hud = this.#session.hud;
+    hud.shown(false);
+    const open = {
+      menu: undefined as Menu | undefined,
+      leave: () => {
+        hud.shown(true);
+        leaveMenuMode();
+      },
+    };
+    this.#open = open;
+    open.menu = await this.#inventory.open(() => {
+      if (this.#open !== open) return;
+      this.#open = undefined;
+      open.leave();
+    });
+    if (this.#open !== open) this.#host.close(open.menu);
   }
 
   /** The journal: on the system page for Pause, else on the page it was left on. */

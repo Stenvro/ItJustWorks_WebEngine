@@ -4,41 +4,68 @@
 // ("Dialogue").
 
 import { GroupType } from '../formats/esm/record.ts';
-import { parseInfo, parseTopic, type InfoRecord, type TopicRecord } from './dialogue-records.ts';
+import {
+  parseBranch,
+  parseInfo,
+  parseTopic,
+  type BranchRecord,
+  type InfoRecord,
+  type TopicRecord,
+} from './dialogue-records.ts';
 import type { RecordDatabase } from './record-db.ts';
 
 export class DialogueIndex {
   readonly #db: RecordDatabase;
-  /** Topic → its infos' form ids (unordered until asked for). */
-  readonly #infos = new Map<number, number[]>();
-  readonly #ordered = new Map<number, Promise<InfoRecord[]>>();
+  /** Topic → its infos (unordered until asked for). */
+  readonly #infos = new Map<number, InfoRecord[]>();
+  readonly #ordered = new Map<number, InfoRecord[]>();
   readonly #topics = new Map<number, Promise<TopicRecord | undefined>>();
   /** Quest → its topics. */
   readonly #byQuest = new Map<number, number[]>();
+  /** Every dialogue branch. */
+  readonly #branches: BranchRecord[] = [];
+  /** Subtype code ("HELO", "GBYE", ...) → the topics of that subtype. */
+  readonly #bySubtype = new Map<string, number[]>();
   #built: Promise<void> | undefined;
 
   constructor(db: RecordDatabase) {
     this.#db = db;
   }
 
-  /** Reads which infos each topic has and which topics each quest has (once). */
+  /**
+   * Reads the dialogue (once): every topic, branch and info, in bulk (one by one would take
+   * long in the browser; the infos take some 40 MB), each info under its topic.
+   */
   build(): Promise<void> {
     this.#built ??= (async () => {
       const db = this.#db;
-      for (const formId of db.formIdsOfType('INFO')) {
-        const location = db.locate(formId);
-        const group = location && db.parentGroup(location);
-        if (group?.type !== GroupType.topicChildren) continue;
-        const list = this.#infos.get(group.label) ?? [];
-        list.push(formId);
-        this.#infos.set(group.label, list);
-      }
-      for (const formId of db.formIdsOfType('DIAL')) {
-        const topic = await this.topic(formId);
-        if (topic?.quest === undefined) continue;
+      const topics: TopicRecord[] = [];
+      await db.scan(
+        ['DIAL', 'DLBR', 'INFO'],
+        () => true,
+        (record) => {
+          if (record.deleted) return;
+          if (record.type === 'DIAL') topics.push(parseTopic(record));
+          else if (record.type === 'DLBR') this.#branches.push(parseBranch(record));
+          else {
+            const location = db.locate(record.formId);
+            const group = location && db.parentGroup(location);
+            if (group?.type !== GroupType.topicChildren) return;
+            const list = this.#infos.get(group.label) ?? [];
+            list.push(parseInfo(record));
+            this.#infos.set(group.label, list);
+          }
+        },
+      );
+      for (const topic of topics) {
+        this.#topics.set(topic.formId, Promise.resolve(topic));
+        if (topic.quest === undefined) continue;
         const list = this.#byQuest.get(topic.quest) ?? [];
-        list.push(formId);
+        list.push(topic.formId);
         this.#byQuest.set(topic.quest, list);
+        const ofSubtype = this.#bySubtype.get(topic.subtypeName) ?? [];
+        ofSubtype.push(topic.formId);
+        this.#bySubtype.set(topic.subtypeName, ofSubtype);
       }
     })();
     return this.#built;
@@ -62,27 +89,30 @@ export class DialogueIndex {
     return this.#byQuest.get(quest) ?? [];
   }
 
+  /** Every dialogue branch (after build). */
+  get branches(): readonly BranchRecord[] {
+    return this.#branches;
+  }
+
+  /** The topics of a subtype ("HELO", ...) (after build). */
+  topicsOfSubtype(subtype: string): readonly number[] {
+    return this.#bySubtype.get(subtype) ?? [];
+  }
+
   /** Every quest with topics (after build). */
   questsWithTopics(): Iterable<number> {
     return this.#byQuest.keys();
   }
 
   /** A topic's infos in their order: from the one without a previous info along PNAM. */
-  infos(topic: number): Promise<InfoRecord[]> {
-    let pending = this.#ordered.get(topic);
-    if (!pending) {
-      pending = (async () => {
-        await this.build();
-        const infos: InfoRecord[] = [];
-        for (const formId of this.#infos.get(topic) ?? []) {
-          const record = await this.#db.get(formId);
-          if (record && !record.deleted) infos.push(parseInfo(record));
-        }
-        return orderInfos(infos);
-      })();
-      this.#ordered.set(topic, pending);
+  async infos(topic: number): Promise<InfoRecord[]> {
+    await this.build();
+    let ordered = this.#ordered.get(topic);
+    if (!ordered) {
+      ordered = orderInfos(this.#infos.get(topic) ?? []);
+      this.#ordered.set(topic, ordered);
     }
-    return pending;
+    return ordered;
   }
 }
 

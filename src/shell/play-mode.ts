@@ -22,8 +22,10 @@ import { MistMenu } from './mist-menu.ts';
 import { HudController } from './hud-controller.ts';
 import { MessageBoxes } from './message-boxes.ts';
 import { GameMenus } from './game-menus.ts';
+import { DialogueMenu } from './dialogue-menu.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
+import type { PlacedActor } from './actors.ts';
 import type { Terminal } from './terminal.ts';
 
 /**
@@ -96,6 +98,7 @@ export class PlayMode {
   #hud: HudController | undefined;
   #messageBoxes: MessageBoxes | undefined;
   #menus: GameMenus | undefined;
+  #dialogue: DialogueMenu | undefined;
   /** The menus open that pause the game (menu mode while there is one). */
   #pausing = 0;
   #starting = false;
@@ -262,10 +265,16 @@ export class PlayMode {
         );
       });
     };
+    const dialogue = new DialogueMenu(this.#host, session, this.#terminal);
+    this.#dialogue = dialogue;
+    dialogue.prepare();
     session.hud.menus = {
       messageBox: (text, buttons) => boxes.show(text, buttons),
       userEvent: (name) => {
-        menus.userEvent(name);
+        if (!dialogue.isOpen) menus.userEvent(name);
+      },
+      talk: (speaker) => {
+        this.#talk(dialogue, menus, speaker);
       },
     };
     document.addEventListener('pointerlockchange', this.#pointerLockChanged);
@@ -281,6 +290,30 @@ export class PlayMode {
     if (this.#menus.isOpen) return;
     this.#menus.openMenu('Pause');
   };
+
+  /**
+   * A conversation: the dialogue menu over the game, which goes on (no menu mode); the HUD in
+   * its dialogue mode and the mouse on the menu until it ends.
+   */
+  #talk(dialogue: DialogueMenu, menus: GameMenus, speaker: PlacedActor): void {
+    if (dialogue.isOpen || menus.isOpen || this.#session.menuMode) return;
+    const hud = this.#session.hud;
+    hud.mode('DialogueMode', true);
+    this.#world.capturePointer(false);
+    dialogue
+      .talk(speaker, () => {
+        hud.mode('DialogueMode', false);
+        this.#world.capturePointer(true);
+      })
+      .catch((error: unknown) => {
+        this.#terminal.log(
+          'ui',
+          `the conversation does not start: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+        dialogue.close();
+      });
+  }
 
   /**
    * A menu that pauses the game opens: the game is in menu mode (the world and its clocks stand
@@ -386,6 +419,8 @@ export class PlayMode {
   /** The game's menus, HUD and menu mode go (Play ends, or the game goes back to its menu). */
   #endGame(): void {
     document.removeEventListener('pointerlockchange', this.#pointerLockChanged);
+    this.#dialogue?.close();
+    this.#dialogue = undefined;
     this.#menus?.close();
     this.#menus = undefined;
     this.#messageBoxes?.close();

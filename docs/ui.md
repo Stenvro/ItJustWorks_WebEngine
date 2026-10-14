@@ -349,3 +349,63 @@ its messages, by their titles) as `{text, index}`; `RequestHelpText(index, title
 textField)` sets the message's title and text, and the menu turns its "[Event]"s into key art
 (`GetButtonFromUserEvent`, answered for every menu in Play). TODO(M12): saving and loading.
 TODO(M9): the settings, the controls, Show on Map.
+
+## Dialogue
+
+Talking to an actor in Play opens `dialoguemenu.swf` (`src/shell/dialogue-menu.ts`) over the game,
+which goes on (no menu mode; the HUD in `DialogueMode`, the mouse on the menu): the engine calls
+`_root.InitExtensions()`, `_root.SetPlatform(0, false)`, `SetSpeakerName(name)`; the actor greets
+(`ShowDialogueText(line)` while each response is said, `HideDialogueText()` after;
+`NotifyVoiceReady()` lets the player skip, which the menu asks with `SkipText`); then the topics:
+`PopulateDialogueList(text, isNew, index, ..., selected)` (triples, then the topic to select or -1)
+and `ShowDialogueList(slideAnim, copyVisible)`. The menu asks `TopicClicked(index)`; the actor says
+the topic's info, and its choices (or the actor's topics again) are listed; a Goodbye info ends
+it with `StartHideMenu()`. Tab: the menu fades, asks `CloseMenu`, and `FadeDone` once faded.
+
+What is said (`src/scripting/runtime/dialogue-engine.ts`, after the Creation Kit's "Dialogue" and
+"Topic Info" pages): the greeting is the first valid info of the running quests' Hello topics
+(`HELO`, by quest priority, then topic priority); the player's topics are the starting topics of
+the top-level dialogue branches of running quests (a blocking branch's valid topic alone) or the
+info's choices (TCLT); a topic says its first info whose conditions hold (run on the speaker, the
+player their target, the topic's quest for alias conditions; the quest's dialogue conditions
+first), a run of Random infos one of its valid ones, Say Once infos once; a shared info's
+responses (DNAM) are said with its voice files. Each response is the voice file of the speaker's
+voice type (`src/world/dialogue.ts`: `Sound\Voice\<plugin>\<voice type>\<quest>_<topic>_<info>_<n>.fuz`)
+with the face lip-syncing; without one the subtitle stays for `fAIDefaultSpeechMult` seconds a
+character. The info's fragments (TIF scripts: begin, end) run with the speaker as `akSpeakerRef`.
+The game's dialogue (20,000 topics, 41,000 infos, about 40 MB) is read in bulk once as Play
+starts. TODO(M10): the dialogue camera, scenes, the speaker turning to the player. TODO(M11):
+persuade, bribe, intimidate, favors.
+
+## The item menus
+
+The inventory (`inventorymenu.swf`, `src/shell/inventory-menu.ts`; I, or the tween menu's Items),
+as its movie expects to be driven (and the container, barter, gift, magic and favorites menus,
+which share its parts, alike):
+
+- It imports its parts: `Inventory components/InventoryLists.swf`, `ItemCard.swf`, `BottomBar.swf`
+  (served and translated like the menus; the lists' panel animations are only there).
+- The engine calls `_root.InitExtensions()`, `_root.SetPlatform(0, false)`, then
+  `SetCategoriesList(text, flag, alwaysShown, ...)` (triples; the first category must be Favorites:
+  its bit is the one the favorite button tests), fills
+  `Menu_mc.InventoryLists_mc.ItemsListHolder.List_mc.entryList` with
+  `{text, count, equipState, favorite, filterFlag, enabled, ...}`, calls `InvalidateListData()`, then
+  `UpdatePlayerInfo({encumbrance, maxEncumbrance, gold, armor, damage, health, maxHealth, ...})`
+  and `RestoreIndices(...)` with what `SaveIndices` gave last time.
+- Categories (`src/gameplay/inventory.ts`): their labels are the settings sFavorites, sAllItems,
+  sWeapons, ...; their bits (which the movie only tests) the documented vanilla values: Favorites
+  0x1, Weapons 0x2, Apparel 0x4, Potions 0x8, Scrolls 0x10, Food 0x20, Ingredients 0x40, Books
+  0x80, Keys 0x100, Misc 0x200; All is all of them.
+- `RequestItemCardInfo` (on every highlight) is answered at once with the selected item's card
+  (`{type, name, count, value, weight, armor | damage | effects | description | soulLVL ...}`; the
+  type is InventoryDefines' ICT_ARMOR 1, ICT_WEAPON 2, ...); effects are their magic effects'
+  descriptions with the values filled in.
+- `ItemSelect` equips or takes off armor and weapons (OnObjectEquipped / OnObjectUnequipped);
+  `ItemDrop(amount)` removes them; `ShowTweenMenu` (Left) and `CloseTweenMenu` (Tab) say where the
+  player goes once the menu has faded and asked `CloseMenu`.
+- Keys the engine takes in the item menus: F (favorite), and Esc and E reach the movie as Tab and
+  Enter (the control map's menu contexts: Cancel is Tab and Esc, Accept is E).
+
+TODO(M9): the item's 3D model behind the card (UpdateItem3D, rotation, zoom), the container,
+barter, gift, magic and favorites menus. TODO(M11): using, eating and reading items, equipping to
+a hand, the quantity of a drop, skills and perks in armor and damage, ingredients' known effects.

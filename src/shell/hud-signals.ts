@@ -6,6 +6,7 @@
 // sandbox shows them its own way (the prompt, the terminal).
 
 import type { QuestUpdate } from '../scripting/runtime/runtime.ts';
+import type { PlacedActor } from './actors.ts';
 
 export interface HudTarget {
   /** "Open", "Take", ... */
@@ -46,6 +47,8 @@ export interface MenuSink {
   messageBox(text: string, buttons: readonly string[]): Promise<number>;
   /** A gameplay user event the player pressed (the tween menu's Tab, the journal's J). */
   userEvent(name: string): void;
+  /** The player talks to an actor (the dialogue menu). */
+  talk(speaker: PlacedActor): void;
 }
 
 export class HudSignals {

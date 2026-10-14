@@ -43,6 +43,16 @@ export interface MenuOptions {
    * its data): run again whenever the menu is loaded again.
    */
   readonly setup?: (menu: Menu) => Promise<void> | void;
+  /**
+   * Keys the engine handles itself while this is the topmost menu (the item menus' favorite,
+   * drop, charge): true takes the key from the movie.
+   */
+  readonly onKey?: (menu: Menu, event: KeyboardEvent) => boolean;
+  /**
+   * Keys the movie gets as other keys, by KeyboardEvent.code (the control map's menu mode:
+   * Cancel is Tab and Esc, Accept is Enter and E, so Esc reaches a movie as Tab).
+   */
+  readonly keyAs?: Readonly<Record<string, string>>;
 }
 
 /** The page function the bridge calls (checked against the bridge's name at compile time). */
@@ -325,11 +335,7 @@ export class MenuHost {
 
   /** Puts keyboard focus on the topmost interactive menu. */
   focusTop(): void {
-    let top: Menu | undefined;
-    for (const menu of this.#menus.values()) {
-      if (menu.options.interactive && (!top || menu.options.depth >= top.options.depth)) top = menu;
-    }
-    top?.focus();
+    this.#topInteractive()?.focus();
   }
 
   dispose(): void {
@@ -442,7 +448,32 @@ export class MenuHost {
   /** Tab is the menus' (closing the tween menu, the next field), not the page's focus. */
   readonly #keyed = (event: KeyboardEvent): void => {
     if (event.key === 'Tab') event.preventDefault();
+    if (!event.isTrusted) return;
+    const top = this.#topInteractive();
+    if (!top) return;
+    if (top.options.onKey?.(top, event)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    const as = top.options.keyAs?.[event.code];
+    const element = top.element;
+    if (as === undefined || !element) return;
+    event.preventDefault();
+    event.stopPropagation();
+    // The key the movie takes instead, down and up.
+    for (const type of ['keydown', 'keyup']) {
+      element.dispatchEvent(new KeyboardEvent(type, { key: as, code: as, bubbles: true }));
+    }
   };
+
+  #topInteractive(): Menu | undefined {
+    let top: Menu | undefined;
+    for (const menu of this.#menus.values()) {
+      if (menu.options.interactive && (!top || menu.options.depth >= top.options.depth)) top = menu;
+    }
+    return top;
+  }
 
   /** A click in the game: the keys go to the topmost menu again. */
   readonly #pointed = (): void => {

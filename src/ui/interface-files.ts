@@ -12,6 +12,7 @@ import { buildFontLibrary } from './font-library.ts';
 import { parseTranslations, type Translations } from '../formats/swf/translation.ts';
 import { decodeUtf16le } from '../formats/text.ts';
 import { translateMovie } from './translate-movie.ts';
+import { linkImports } from '../formats/swf/swf-link.ts';
 
 /** Where the interface folder is served: a movie's base URL. */
 export const INTERFACE_URL = '/@interface/';
@@ -40,8 +41,22 @@ export class InterfaceFiles {
     if (!/\.(swf|gfx)$/.test(path) || path.startsWith('fonts_')) return this.#vfs.read(full);
     let movie = this.#movies.get(path);
     if (!movie) {
-      movie = Promise.all([this.#vfs.read(full), this.translations()]).then(([bytes, table]) =>
-        translateMovie(bytes, (text) => table.translate(text)),
+      movie = Promise.all([this.#vfs.read(full), this.translations()]).then(
+        async ([bytes, table]) => {
+          const translated = translateMovie(bytes, (text) => table.translate(text));
+          // Movies it imports symbols from (not the font library) become part of it: a Flash
+          // player loads imports after the frame that places them has run.
+          return linkImports(
+            translated,
+            (url) => !/gfxfontlib.swf$/i.test(url),
+            (url) => this.read(url),
+          ).catch((error: unknown) => {
+            this.#warn(
+              `${relative}: its imports are not linked: ${error instanceof Error ? error.message : String(error)}`,
+            );
+            return translated;
+          });
+        },
       );
       this.#movies.set(path, movie);
     }

@@ -361,7 +361,14 @@ export class WorldViewer {
 
   /** What activating a reference does: load doors take the player to their destination. */
   /** The actors of the loaded cells. */
-  *#readyActors(): Iterable<PlacedActor> {
+  /** A placed actor shown now, by its reference. */
+  placedActor(reference: number): PlacedActor | undefined {
+    for (const actor of this.readyActors()) if (actor.actor.reference === reference) return actor;
+    return undefined;
+  }
+
+  /** The actors shown now (of the cells loaded and ready). */
+  *readyActors(): Iterable<PlacedActor> {
     for (const cell of this.#cells.values()) if (cell.ready) yield* cell.actors;
   }
 
@@ -779,7 +786,7 @@ export class WorldViewer {
       arrivesOnFloor: comeIn !== undefined,
       activatable: (reference) => this.#activatable(reference),
       actorAt: talkTargets(
-        () => this.#readyActors(),
+        () => this.readyActors(),
         () => this.#session,
         this.#terminal,
       ),
