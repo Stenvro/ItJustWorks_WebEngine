@@ -16,6 +16,7 @@
 // own frame scripts. Platform-independent. Notes: docs/ui.md.
 
 import { Avm1Writer, Function2Flag, Op, type PushValue } from '../formats/swf/avm1-writer.ts';
+import { textFieldExtensions } from './gfx-text.ts';
 import { readSwf, SwfTagCode, tagBody } from '../formats/swf/swf.ts';
 import { concatBytes, encodeTag, writeSwf } from '../formats/swf/swf-writer.ts';
 import type { Rect } from './stage-rects.ts';
@@ -26,10 +27,22 @@ export const BRIDGE_CALL = '__itjwMenuCall';
 export const BRIDGE_INVOKE = '__itjwInvoke';
 export const BRIDGE_SET = '__itjwSetVariable';
 export const BRIDGE_GET = '__itjwGetVariable';
+/** A menu asks the engine to translate a key it sets at run time (GFx's translator). */
+export const BRIDGE_TRANSLATE = '__itjwTranslate';
+/**
+ * A clip a menu passes to the engine reaches it as this prefix and a number: the clip is
+ * `_global.__itjwRefs[number]` (GFx hands the engine the object itself; a Flash player's
+ * ExternalInterface only copies).
+ */
+export const BRIDGE_REFERENCE = '__itjwRef:';
+/** The clips passed so far, by number. */
+export const BRIDGE_REFERENCES = '_global.__itjwRefs';
 
 const EXTERNAL_INTERFACE = 'flash.external.ExternalInterface';
 /** Where the bridge keeps the player's own ExternalInterface.call. */
 const ORIGINAL_CALL = '__itjwOriginalCall';
+/** A clip's number among the references (set on the clip). */
+const REFERENCE_ID = '__itjwRefId';
 
 /** Stage.visibleRect and Stage.safeRect as the menu starts (src/ui/stage-rects.ts). */
 export interface StageRects {
@@ -94,15 +107,47 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   constant('Selection', 'getControllerMaskByFocusGroup', 1);
   constant('Selection', 'getModalClip', null);
   constant('Selection', 'setModalClip', null);
-  textFieldExtensions(w);
+  // A key set at run time: ExternalInterface.call(BRIDGE_TRANSLATE, key) (the wrapper below
+  // tags it with the menu).
+  textFieldExtensions(w, (body) => {
+    body.push(BRIDGE_TRANSLATE, 2).getPath(EXTERNAL_INTERFACE).push('call');
+  });
 
   // ExternalInterface.call = function () {
+  //   for (var i = 0; i < arguments.length; i++)      // clips go as references
+  //     if (typeof arguments[i] == "movieclip") {
+  //       if (typeof arguments[i].__itjwRefId != "number") {
+  //         arguments[i].__itjwRefId = __itjwRefs.length; __itjwRefs.push(arguments[i]);
+  //       }
+  //       arguments[i] = BRIDGE_REFERENCE + arguments[i].__itjwRefId;
+  //     }
   //   arguments.unshift(BRIDGE_CALL, menu);
   //   return _global.__itjwOriginalCall.apply(ExternalInterface, arguments);
   // }
+  w.push('_global').op(Op.getVariable).push('__itjwRefs', 0, 'Array').op(Op.newObject);
+  w.op(Op.setMember);
   w.getPath(EXTERNAL_INTERFACE).push('call');
-  w.function2('', [], 2, Function2Flag.preloadArguments | Function2Flag.suppressThis, (body) => {
-    // arguments are in register 1.
+  w.function2('', [], 4, Function2Flag.preloadArguments | Function2Flag.suppressThis, (body) => {
+    // arguments are in register 1; the index in 2, the argument in 3.
+    body.push(0).storeRegister(2).op(Op.pop);
+    body.label('next');
+    body.push({ register: 2 }, { register: 1 }, 'length').op(Op.getMember).op(Op.less2);
+    body.op(Op.not).ifTo('done');
+    body.push({ register: 1 }, { register: 2 }).op(Op.getMember).storeRegister(3).op(Op.pop);
+    body.push({ register: 3 }).op(Op.typeOf).push('movieclip').op(Op.equals2).op(Op.not);
+    body.ifTo('skip');
+    body.push({ register: 3 }, REFERENCE_ID).op(Op.getMember).op(Op.typeOf).push('number');
+    body.op(Op.equals2).ifTo('known');
+    body.push({ register: 3 }, REFERENCE_ID).getPath(BRIDGE_REFERENCES).push('length');
+    body.op(Op.getMember).op(Op.setMember);
+    body.push({ register: 3 }, 1).getPath(BRIDGE_REFERENCES).push('push').op(Op.callMethod);
+    body.op(Op.pop);
+    body.label('known');
+    body.push({ register: 1 }, { register: 2 }, BRIDGE_REFERENCE, { register: 3 }, REFERENCE_ID);
+    body.op(Op.getMember).op(Op.add2).op(Op.setMember);
+    body.label('skip');
+    body.push({ register: 2 }).op(Op.increment).storeRegister(2).op(Op.pop).jumpTo('next');
+    body.label('done');
     body
       .push(menu, BRIDGE_CALL, 2, { register: 1 }, 'unshift')
       .op(Op.callMethod)
@@ -206,119 +251,4 @@ export function bridgeMovie(menu: string): Uint8Array {
     { code: SwfTagCode.doAction, body: concatBytes([bridgeActions(menu), Uint8Array.of(0)]) },
     { code: SwfTagCode.showFrame, body: new Uint8Array(0) },
   ]);
-}
-
-/**
- * Scaleform's TextField extensions the menus use that a Flash player's AS2 lacks (GFx gives
- * AS2 text fields some of AS3's members): numLines, getLineMetrics, appendText, appendHtml,
- * and `new TextField()`: a text object of its own, off the stage (the menus put a status
- * before a quest's name through one); its text and htmlText keep what is set. The class keeps
- * its prototype, so the fields on the stage and `instanceof TextField` are as they were.
- * numLines is exact (maxscroll + bottomScroll - scroll: the lines past the first visible one,
- * plus those visible). A line's metrics give the field's widest line (textWidth: exact for the
- * single-line fields that ask, the HUD's letters, the item cards' names), the lines' average
- * height and the format's leading; the vanilla menus read width and leading only.
- * TODO(M9): getCharBoundaries, getLineOffset, getLineIndexAtPoint (books, the journal) and
- * textAutoSize, verticalAlign.
- */
-/** The bridge's globals for `new TextField()`. */
-const STANDALONE_TEXT = '__itjwText';
-const STANDALONE_VALUE = '__itjwValue';
-const TEXT_FIELD_CLASS = '__itjwTextField';
-
-function textFieldExtensions(w: Avm1Writer): void {
-  const field = (body: Avm1Writer, member: string): Avm1Writer =>
-    body.push('this').op(Op.getVariable).push(member).op(Op.getMember);
-  // TextField.prototype.addProperty("numLines", function () {...}, null)
-  w.push(null);
-  w.function2('', [], 1, Function2Flag.suppressArguments, (body) => {
-    field(field(body, 'maxscroll'), 'bottomScroll').op(Op.add2);
-    field(body, 'scroll').op(Op.subtract).op(Op.return);
-  });
-  w.push('numLines', 3).getPath('TextField.prototype').push('addProperty');
-  w.op(Op.callMethod).op(Op.pop);
-  // getLineMetrics(lineIndex): { x, width, height, leading }
-  w.getPath('TextField.prototype').push('getLineMetrics');
-  w.function2('', ['lineIndex'], 2, Function2Flag.suppressArguments, (body) => {
-    body.push('x', 0, 'width');
-    field(body, 'textWidth').push('height');
-    field(body, 'textHeight');
-    field(body, 'numLines').op(Op.divide).push('leading');
-    body.push(0).push('this').op(Op.getVariable).push('getTextFormat').op(Op.callMethod);
-    body.push('leading').op(Op.getMember);
-    body.push(4).op(Op.initObject).op(Op.return);
-  });
-  w.op(Op.setMember);
-  // var standalone = new Object(); standalone.__proto__ = TextField.prototype;
-  // standalone.addProperty("text" | "htmlText", get this.__itjwValue, set this.__itjwValue)
-  w.push('_global').op(Op.getVariable).push(STANDALONE_TEXT, 0, 'Object').op(Op.newObject);
-  w.op(Op.setMember);
-  w.getPath(`_global.${STANDALONE_TEXT}`).push('__proto__').getPath('TextField.prototype');
-  w.op(Op.setMember);
-  for (const name of ['text', 'htmlText']) {
-    w.function2('', ['value'], 2, Function2Flag.suppressArguments, (body) => {
-      body.push('this').op(Op.getVariable).push(STANDALONE_VALUE, { register: 1 });
-      body.op(Op.setMember);
-    });
-    w.function2('', [], 1, Function2Flag.suppressArguments, (body) => {
-      body.push('this').op(Op.getVariable).push(STANDALONE_VALUE).op(Op.getMember).op(Op.return);
-    });
-    w.push(name, 3).getPath(`_global.${STANDALONE_TEXT}`).push('addProperty');
-    w.op(Op.callMethod).op(Op.pop);
-  }
-  // _global.__itjwTextField = TextField; ASSetPropFlags(_global, "TextField", 0, 7);
-  // _global.TextField = function () {
-  //   if (typeof this._width == "number") __itjwTextField.call(this); // a field on the stage
-  //   else { this.__proto__ = standalone; this.__itjwValue = ""; }    // new TextField()
-  // };
-  // TextField.prototype = __itjwTextField.prototype; TextField.StyleSheet, getFontList as well
-  w.push('_global').op(Op.getVariable).push(TEXT_FIELD_CLASS).getPath('TextField');
-  w.op(Op.setMember);
-  w.push(7, 0, 'TextField', '_global').op(Op.getVariable).push(4, 'ASSetPropFlags');
-  w.op(Op.callFunction).op(Op.pop);
-  w.push('_global').op(Op.getVariable).push('TextField');
-  // (The player constructs the fields it places with the class too.)
-  w.function2('', [], 1, Function2Flag.suppressArguments, (body) => {
-    const standalone = new Avm1Writer()
-      .push('this')
-      .op(Op.getVariable)
-      .push('__proto__')
-      .getPath(`_global.${STANDALONE_TEXT}`)
-      .op(Op.setMember)
-      .push('this')
-      .op(Op.getVariable)
-      .push(STANDALONE_VALUE, '')
-      .op(Op.setMember)
-      .bytes();
-    const placed = new Avm1Writer()
-      .push('this')
-      .op(Op.getVariable)
-      .push(1)
-      .getPath(`_global.${TEXT_FIELD_CLASS}`)
-      .push('call')
-      .op(Op.callMethod)
-      .op(Op.pop);
-    placed.jump(standalone.length);
-    const real = placed.bytes();
-    body.push('this').op(Op.getVariable).push('_width').op(Op.getMember).op(Op.typeOf);
-    body.push('number').op(Op.equals2).op(Op.not).jumpIf(real.length);
-    body.append(real).append(standalone);
-  });
-  w.op(Op.setMember);
-  for (const member of ['prototype', 'StyleSheet', 'getFontList']) {
-    w.getPath('_global.TextField').push(member).getPath(`_global.${TEXT_FIELD_CLASS}.${member}`);
-    w.op(Op.setMember);
-  }
-  // appendText(text): this.text += text; appendHtml(html): this.htmlText += html
-  for (const [method, member] of [
-    ['appendText', 'text'],
-    ['appendHtml', 'htmlText'],
-  ] as const) {
-    w.getPath('TextField.prototype').push(method);
-    w.function2('', ['added'], 2, Function2Flag.suppressArguments, (body) => {
-      body.push('this').op(Op.getVariable).push(member);
-      field(body, member).push({ register: 1 }).op(Op.add2).op(Op.setMember);
-    });
-    w.op(Op.setMember);
-  }
 }

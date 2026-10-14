@@ -12,6 +12,8 @@ export interface ObjectiveState {
   displayed: boolean;
   completed: boolean;
   failed: boolean;
+  /** When it was last shown (GameState.questClock): the journal lists newer ones first. */
+  shown?: number;
 }
 
 export interface QuestState {
@@ -28,6 +30,10 @@ export interface QuestState {
   active: boolean;
   /** Times started (Run Once quests start once). */
   starts: number;
+  /** The log entries its stages chose that have a journal text (stage, entry index), in order. */
+  readonly log: { readonly stage: number; readonly entry: number }[];
+  /** When it was last updated for the player (GameState.questClock): the journal's order. */
+  updated: number;
   /** The story manager event that started it (its conditions and aliases read its data). */
   event?: StoryEventData;
 }
@@ -182,6 +188,8 @@ export class GameState {
   nextCreated = 0xff000800;
   /** The next id of an active magic effect (script objects that are not forms). */
   nextEffect = 0xfd000001;
+  /** Counts the quests' updates for the player (QuestState.updated). */
+  questClock = 0;
   /** What Debug.Notification / MessageBox showed (the HUD's until M9). */
   readonly messages: string[] = [];
 
@@ -198,6 +206,8 @@ export class GameState {
         failed: false,
         active: false,
         starts: 0,
+        log: [],
+        updated: 0,
       };
       this.quests.set(formId, state);
     }

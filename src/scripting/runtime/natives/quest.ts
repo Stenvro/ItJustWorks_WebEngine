@@ -68,8 +68,11 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     const first = ![...state.quest(self.formId).objectives.values()].some((o) => o.displayed);
     const entry = objective(self.formId, index);
     const displayed = bool(args[1], true);
-    if (displayed && (!entry.displayed || bool(args[2])))
+    if (displayed && (!entry.displayed || bool(args[2]))) {
       runtime.questUpdated(self.formId, 'shown', index, first);
+      state.quest(self.formId).updated = ++state.questClock;
+      entry.shown = state.questClock;
+    }
     entry.displayed = displayed;
     return null;
   });

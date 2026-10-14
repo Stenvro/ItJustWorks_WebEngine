@@ -150,6 +150,11 @@ export class HudController implements HudSink {
     this.#menu?.call('ShowMessage', text);
   }
 
+  shown(on: boolean): void {
+    const element = this.#menu?.element;
+    if (element) element.style.visibility = on ? '' : 'hidden';
+  }
+
   /** ShowElements(mode, show): the HUD's modes, a stack whose last one says what shows. */
   mode(name: string, on: boolean): void {
     this.#menu?.call('ShowElements', name, on);
