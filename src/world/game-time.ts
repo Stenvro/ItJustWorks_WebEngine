@@ -88,7 +88,7 @@ export const dayOfWeekAfter = (days: number): number =>
   (START_DAY_OF_WEEK + (Math.max(0, Math.floor(days)) % 7)) % 7;
 
 /** Global values (FLTV) by lower-case editor id. */
-async function readGlobals(
+export async function readGlobals(
   db: RecordDatabase,
   names: readonly string[],
 ): Promise<Map<string, number>> {

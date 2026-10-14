@@ -1,0 +1,373 @@
+// What an actor is besides its look: an NPC_'s stats (level, health, magicka, stamina, skills),
+// AI data, spells, perks, factions, crime faction, keywords; its race's starting values and
+// abilities; relationships between NPCs (RELA); factions' reactions (FACT) and locations'
+// parents, keywords and references (LCTN). Layouts: UESP "Skyrim Mod:Mod File Format"
+// (NPC_, RACE, RELA, FACT, LCTN) and xEdit. Notes: docs/formats/esm.md ("Actors").
+// Platform-independent.
+
+import { view } from '../formats/esm/fields.ts';
+import { SKILL_COUNT } from './actor-values.ts';
+import type { GameRecord } from './record-db.ts';
+
+type RecordSource = Pick<GameRecord, 'formId' | 'type' | 'editorId' | 'fields' | 'formIdAt'> &
+  Partial<Pick<GameRecord, 'text'>>;
+
+const formAt = (
+  record: RecordSource,
+  data: Uint8Array | undefined,
+  offset = 0,
+): number | undefined => {
+  if (!data || data.length < offset + 4) return undefined;
+  const formId = record.formIdAt(data, offset);
+  return formId === 0 ? undefined : formId;
+};
+const nonEmpty = (text: string | undefined): string | undefined => (text === '' ? undefined : text);
+const formField = (record: RecordSource, type: string): number | undefined =>
+  formAt(record, record.fields.first(type));
+const formList = (record: RecordSource, type: string): number[] =>
+  record.fields.all(type).flatMap((data) => {
+    const formId = formAt(record, data);
+    return formId === undefined ? [] : [formId];
+  });
+const keywords = (record: RecordSource): number[] => {
+  const data = record.fields.first('KWDA');
+  const list: number[] = [];
+  for (let at = 0; data && at + 4 <= data.length; at += 4) {
+    const formId = formAt(record, data, at);
+    if (formId !== undefined) list.push(formId);
+  }
+  return list;
+};
+
+/** NPC_ AIDT: the AI values (actor values 0..5) and aggro radii. */
+export interface AiData {
+  readonly aggression: number;
+  readonly confidence: number;
+  readonly energy: number;
+  readonly morality: number;
+  readonly mood: number;
+  readonly assistance: number;
+  /** Aggro radius behavior on, with its warn / warn-or-attack / attack radii. */
+  readonly aggroRadius: readonly [number, number, number] | undefined;
+}
+
+export interface NpcStats {
+  readonly formId: number;
+  readonly name: string | undefined;
+  /** ACBS flags (NpcFlag). */
+  readonly flags: number;
+  /** ACBS template data flags (TemplateFlag). */
+  readonly templateFlags: number;
+  readonly template: number | undefined;
+  /** Level, or the player's level multiplier × 1000 with NpcFlag.pcLevelMult. */
+  readonly level: number;
+  readonly calcMinLevel: number;
+  readonly calcMaxLevel: number;
+  readonly healthOffset: number;
+  readonly magickaOffset: number;
+  readonly staminaOffset: number;
+  /** ACBS speed multiplier (%: the SpeedMult actor value). */
+  readonly speedMult: number;
+  /** ACBS bleedout override. */
+  readonly bleedoutOverride: number;
+  /** DNAM: the 18 skills (actor values 6..23) and their offsets. */
+  readonly skills: readonly number[];
+  readonly skillOffsets: readonly number[];
+  /** DNAM: health, magicka and stamina as the Creation Kit calculated them (base + offset). */
+  readonly health: number;
+  readonly magicka: number;
+  readonly stamina: number;
+  readonly race: number | undefined;
+  readonly class: number | undefined;
+  /** SPLO: spells (SPEL) and shouts (SHOU). */
+  readonly spells: readonly number[];
+  /** PRKR: perks. */
+  readonly perks: readonly number[];
+  /** SNAM: factions and ranks. */
+  readonly factions: ReadonlyMap<number, number>;
+  readonly crimeFaction: number | undefined;
+  readonly aiData: AiData;
+  readonly deathItem: number | undefined;
+  readonly keywords: readonly number[];
+  readonly voiceType: number | undefined;
+  readonly giftFilter: number | undefined;
+  readonly combatStyle: number | undefined;
+  readonly outfit: number | undefined;
+  readonly sleepOutfit: number | undefined;
+}
+
+export function parseNpcStats(record: RecordSource): NpcStats {
+  const acbs = record.fields.first('ACBS');
+  const a = acbs && acbs.length >= 24 ? view(acbs) : undefined;
+  const dnam = record.fields.first('DNAM');
+  const d = dnam && dnam.length >= 42 ? view(dnam) : undefined;
+  const aidt = record.fields.first('AIDT');
+  const ai = aidt && aidt.length >= 8 ? aidt : undefined;
+  const aiView = aidt && aidt.length >= 20 ? view(aidt) : undefined;
+  return {
+    formId: record.formId,
+    name: nonEmpty(record.text?.('FULL')),
+    flags: a?.getUint32(0, true) ?? 0,
+    magickaOffset: a?.getInt16(4, true) ?? 0,
+    staminaOffset: a?.getInt16(6, true) ?? 0,
+    level: a?.getUint16(8, true) ?? 1,
+    calcMinLevel: a?.getUint16(10, true) ?? 0,
+    calcMaxLevel: a?.getUint16(12, true) ?? 0,
+    speedMult: a?.getUint16(14, true) ?? 100,
+    templateFlags: a?.getUint16(18, true) ?? 0,
+    healthOffset: a?.getInt16(20, true) ?? 0,
+    bleedoutOverride: a?.getUint16(22, true) ?? 0,
+    template: formField(record, 'TPLT'),
+    skills: d ? Array.from({ length: SKILL_COUNT }, (_, i) => d.getUint8(i)) : [],
+    skillOffsets: d
+      ? Array.from({ length: SKILL_COUNT }, (_, i) => d.getUint8(SKILL_COUNT + i))
+      : [],
+    health: d?.getUint16(36, true) ?? 0,
+    magicka: d?.getUint16(38, true) ?? 0,
+    stamina: d?.getUint16(40, true) ?? 0,
+    race: formField(record, 'RNAM'),
+    class: formField(record, 'CNAM'),
+    spells: formList(record, 'SPLO'),
+    perks: formList(record, 'PRKR'),
+    factions: new Map(
+      record.fields.all('SNAM').flatMap((data): [number, number][] => {
+        const faction = formAt(record, data);
+        return faction !== undefined && data.length >= 5 ? [[faction, view(data).getInt8(4)]] : [];
+      }),
+    ),
+    crimeFaction: formField(record, 'CRIF'),
+    aiData: {
+      aggression: ai?.[0] ?? 0,
+      confidence: ai?.[1] ?? 2,
+      energy: ai?.[2] ?? 50,
+      morality: ai?.[3] ?? 3,
+      mood: ai?.[4] ?? 0,
+      assistance: ai?.[5] ?? 0,
+      aggroRadius:
+        aiView && ((ai?.[6] ?? 0) & 0x1) !== 0
+          ? [aiView.getUint32(8, true), aiView.getUint32(12, true), aiView.getUint32(16, true)]
+          : undefined,
+    },
+    deathItem: formField(record, 'INAM'),
+    keywords: keywords(record),
+    voiceType: formField(record, 'VTCK'),
+    giftFilter: formField(record, 'GNAM'),
+    combatStyle: formField(record, 'ZNAM'),
+    outfit: formField(record, 'DOFT'),
+    sleepOutfit: formField(record, 'SOFT'),
+  };
+}
+
+export interface RaceStats {
+  readonly formId: number;
+  /** DATA: up to seven skill boosts (actor value index, bonus). */
+  readonly skillBoosts: readonly { readonly actorValue: number; readonly bonus: number }[];
+  readonly flags: number;
+  readonly startingHealth: number;
+  readonly startingMagicka: number;
+  readonly startingStamina: number;
+  readonly baseCarryWeight: number;
+  readonly baseMass: number;
+  readonly healthRegen: number;
+  readonly magickaRegen: number;
+  readonly staminaRegen: number;
+  readonly unarmedDamage: number;
+  readonly unarmedReach: number;
+  /** SPLO: racial spells and abilities. */
+  readonly spells: readonly number[];
+  readonly keywords: readonly number[];
+}
+
+export function parseRaceStats(record: RecordSource): RaceStats {
+  const data = record.fields.first('DATA');
+  const d = data && data.length >= 104 ? view(data) : undefined;
+  const skillBoosts: { actorValue: number; bonus: number }[] = [];
+  for (let i = 0; data && d && i < 7; i++) {
+    const actorValue = data[i * 2] ?? 0xff;
+    if (actorValue !== 0xff) skillBoosts.push({ actorValue, bonus: d.getInt8(i * 2 + 1) });
+  }
+  return {
+    formId: record.formId,
+    skillBoosts,
+    flags: d?.getUint32(32, true) ?? 0,
+    startingHealth: d?.getFloat32(36, true) ?? 50,
+    startingMagicka: d?.getFloat32(40, true) ?? 50,
+    startingStamina: d?.getFloat32(44, true) ?? 50,
+    baseCarryWeight: d?.getFloat32(48, true) ?? 300,
+    baseMass: d?.getFloat32(52, true) ?? 1,
+    healthRegen: d?.getFloat32(84, true) ?? 0,
+    magickaRegen: d?.getFloat32(88, true) ?? 0,
+    staminaRegen: d?.getFloat32(92, true) ?? 0,
+    unarmedDamage: d?.getFloat32(96, true) ?? 0,
+    unarmedReach: d?.getFloat32(100, true) ?? 0,
+    spells: formList(record, 'SPLO'),
+    keywords: keywords(record),
+  };
+}
+
+/** RELA: a relationship between two NPCs (GetRelationshipRank: 4 lover .. −4 archnemesis). */
+export interface Relationship {
+  readonly parent: number;
+  readonly child: number;
+  /** As GetRelationshipRank returns it: 4 − the stored rank (0 lover .. 8 archnemesis). */
+  readonly rank: number;
+  readonly secret: boolean;
+  readonly association: number | undefined;
+}
+
+export function parseRelationship(record: RecordSource): Relationship | undefined {
+  const data = record.fields.first('DATA');
+  if (!data || data.length < 12) return undefined;
+  const parent = formAt(record, data, 0);
+  const child = formAt(record, data, 4);
+  if (parent === undefined || child === undefined) return undefined;
+  const v = view(data);
+  return {
+    parent,
+    child,
+    rank: 4 - v.getUint16(8, true),
+    secret: (v.getUint16(10, true) & 0x8000) !== 0,
+    association: formAt(record, data, 12),
+  };
+}
+
+/** FACT XNAM: how a faction regards another (combat reaction: 0 neutral, 1 enemy, 2 ally, 3 friend). */
+export interface FactionReaction {
+  readonly faction: number;
+  readonly modifier: number;
+  readonly combat: number;
+}
+
+export interface FactionRecord {
+  readonly formId: number;
+  /** DATA flags (hidden from the player 0x1, special combat 0x2, track crime 0x40, ...). */
+  readonly flags: number;
+  readonly reactions: readonly FactionReaction[];
+  /** RNAM ranks (their index). */
+  readonly ranks: readonly number[];
+}
+
+export function parseFaction(record: RecordSource): FactionRecord {
+  const data = record.fields.first('DATA');
+  return {
+    formId: record.formId,
+    flags: data && data.length >= 4 ? view(data).getUint32(0, true) : 0,
+    reactions: record.fields.all('XNAM').flatMap((xnam): FactionReaction[] => {
+      const faction = formAt(record, xnam);
+      if (faction === undefined || xnam.length < 12) return [];
+      const v = view(xnam);
+      return [{ faction, modifier: v.getInt32(4, true), combat: v.getUint32(8, true) }];
+    }),
+    ranks: record.fields
+      .all('RNAM')
+      .map((rnam) => (rnam.length >= 4 ? view(rnam).getUint32(0, true) : 0)),
+  };
+}
+
+/** A location's reference of a location reference type (LCTN ACSR/LCSR). */
+export interface LocationReference {
+  readonly type: number;
+  readonly reference: number;
+  /** The cell or worldspace it is in. */
+  readonly space: number | undefined;
+}
+
+export interface LocationRecord {
+  readonly formId: number;
+  readonly parent: number | undefined;
+  readonly keywords: readonly number[];
+  /** Special references by type ("Boss", "MapMarker", ...): master's and added, less removed. */
+  readonly references: readonly LocationReference[];
+  /** Unique actors (NPC_ → its ACHR). */
+  readonly uniques: ReadonlyMap<number, number>;
+  /** Persistent actors of the location (ACHR). */
+  readonly persistent: readonly number[];
+  /** MNAM: the world location marker. */
+  readonly marker: number | undefined;
+  /** RNAM: the world location radius. */
+  readonly radius: number;
+  /** FNAM: the unreported crime faction. */
+  readonly crimeFaction: number | undefined;
+  readonly music: number | undefined;
+}
+
+/**
+ * A location from every version of its record, in load order: the lists of its references
+ * are the master's (LC**: LCPR, LCUN, LCSR) with what later plugins add (AC**) and remove
+ * (RC**); a version that repeats the master lists replaces them. The rest is the last
+ * version's. (Skyrim.esm keeps the lists; Dawnguard.esm's overrides carry only ACSR.)
+ */
+export function parseLocation(versions: readonly RecordSource[]): LocationRecord | undefined {
+  const record = versions.at(-1);
+  if (!record) return undefined;
+  const references = new Map<number, LocationReference>();
+  const uniques = new Map<number, number>();
+  const persistent = new Set<number>();
+  const forms = (source: RecordSource, type: string): number[] =>
+    source.fields.all(type).flatMap((data) => {
+      const list: number[] = [];
+      for (let at = 0; at + 4 <= data.length; at += 4) {
+        const formId = formAt(source, data, at);
+        if (formId !== undefined) list.push(formId);
+      }
+      return list;
+    });
+  const special = (source: RecordSource, type: string): void => {
+    for (const data of source.fields.all(type)) {
+      for (let at = 0; at + 16 <= data.length; at += 16) {
+        const refType = formAt(source, data, at);
+        const reference = formAt(source, data, at + 4);
+        if (refType === undefined || reference === undefined) continue;
+        references.set(reference, {
+          type: refType,
+          reference,
+          space: formAt(source, data, at + 8),
+        });
+      }
+    }
+  };
+  const unique = (source: RecordSource, type: string): void => {
+    for (const data of source.fields.all(type)) {
+      for (let at = 0; at + 12 <= data.length; at += 12) {
+        const npc = formAt(source, data, at);
+        const actor = formAt(source, data, at + 4);
+        if (npc !== undefined && actor !== undefined) uniques.set(npc, actor);
+      }
+    }
+  };
+  const actors = (source: RecordSource, type: string): void => {
+    for (const data of source.fields.all(type)) {
+      for (let at = 0; at + 12 <= data.length; at += 12) {
+        const actor = formAt(source, data, at);
+        if (actor !== undefined) persistent.add(actor);
+      }
+    }
+  };
+  for (const version of versions) {
+    if (version.fields.has('LCSR')) references.clear();
+    if (version.fields.has('LCUN')) uniques.clear();
+    if (version.fields.has('LCPR')) persistent.clear();
+    special(version, 'LCSR');
+    special(version, 'ACSR');
+    unique(version, 'LCUN');
+    unique(version, 'ACUN');
+    actors(version, 'LCPR');
+    actors(version, 'ACPR');
+    for (const removed of forms(version, 'RCSR')) references.delete(removed);
+    for (const removed of forms(version, 'RCUN')) uniques.delete(removed);
+    for (const removed of forms(version, 'RCPR')) persistent.delete(removed);
+  }
+  const rnam = record.fields.first('RNAM');
+  return {
+    formId: record.formId,
+    parent: formField(record, 'PNAM'),
+    keywords: keywords(record),
+    references: [...references.values()],
+    uniques,
+    persistent: [...persistent],
+    marker: formField(record, 'MNAM'),
+    radius: rnam && rnam.length >= 4 ? view(rnam).getFloat32(0, true) : 0,
+    crimeFaction: formField(record, 'FNAM'),
+    music: formField(record, 'NAM1'),
+  };
+}

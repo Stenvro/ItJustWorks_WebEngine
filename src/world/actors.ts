@@ -12,7 +12,6 @@ import {
   type HeadPartRecord,
   HeadPartType,
   LeveledFlag,
-  type LeveledList,
   NpcFlag,
   parseArmor,
   parseArmorAddon,
@@ -27,7 +26,11 @@ import {
   RaceFlag,
   TemplateFlag,
 } from './actor-records.ts';
+import { resolveActorTemplates } from './actor-templates.ts';
+import { pickLeveled, seededRandom } from './leveled.ts';
 import type { RecordDatabase } from './record-db.ts';
+
+export { pickLeveled, seededRandom } from './leveled.ts';
 
 /** An armor addon an actor wears. */
 export interface WornAddon {
@@ -139,40 +142,6 @@ function footstepSetOf(worn: readonly WornAddon[]): number | undefined {
 
 /** Templates and leveled lists nest; vanilla chains are a few levels deep. */
 const MAX_DEPTH = 16;
-
-/** A small deterministic generator (mulberry32): the same reference always looks the same. */
-export function seededRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let t = state;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
-
-/**
- * Picks one entry of a leveled list for an actor or item of `level`: among the entries up to
- * that level, the highest level's (or, with "calculate from all levels", any of them), at
- * random; nothing for its chance of none. TODO(M13): the engine's exact draw (it is
- * documented only as "random among the eligible entries").
- */
-export function pickLeveled(
-  list: LeveledList,
-  level: number,
-  random: () => number,
-): number | undefined {
-  if (list.chanceNone > 0 && random() * 100 < list.chanceNone) return undefined;
-  const eligible = list.entries.filter((entry) => entry.level <= level);
-  if (eligible.length === 0) return undefined;
-  const top = Math.max(...eligible.map((entry) => entry.level));
-  const choices =
-    (list.flags & LeveledFlag.allLevels) !== 0
-      ? eligible
-      : eligible.filter((entry) => entry.level === top);
-  return choices[Math.floor(random() * choices.length)]?.formId;
-}
 
 /** The addons of an armor that fit a race (falling back to the race's armor race). */
 export function addonsForRace(
@@ -325,40 +294,6 @@ export class ActorResolver {
     return looks;
   }
 
-  /** An NPC_ (or a leveled list of them) down to one NPC_. */
-  async #npc(
-    formId: number,
-    level: number,
-    random: () => number,
-    depth = 0,
-  ): Promise<NpcRecord | undefined> {
-    if (depth > MAX_DEPTH) return undefined;
-    const record = await this.#db.get(formId);
-    if (record?.type === 'NPC_') return parseNpc(record);
-    if (record?.type === 'LVLN') {
-      const picked = pickLeveled(parseLeveledList(record), level, random);
-      return picked === undefined ? undefined : this.#npc(picked, level, random, depth + 1);
-    }
-    return undefined;
-  }
-
-  /** Follows the template chain while `flag` says to take that part from the template. */
-  async #templated(
-    npc: NpcRecord,
-    flag: number,
-    level: number,
-    random: () => number,
-  ): Promise<NpcRecord> {
-    let current = npc;
-    for (let depth = 0; depth < MAX_DEPTH; depth++) {
-      if ((current.templateFlags & flag) === 0 || current.template === undefined) break;
-      const next = await this.#npc(current.template, level, random);
-      if (!next) break;
-      current = next;
-    }
-    return current;
-  }
-
   /** The armor items of an outfit (leveled items picked), in order. */
   async #outfit(formId: number, level: number, random: () => number): Promise<number[]> {
     const record = await this.#db.get(formId);
@@ -433,11 +368,17 @@ export class ActorResolver {
    * zones and the player's level).
    */
   async resolve(base: number, reference: number, level = 1): Promise<ActorLook | undefined> {
-    const random = seededRandom(reference ^ 0x9e3779b9);
-    const placed = await this.#npc(base, level, random);
-    if (!placed) return undefined;
-    const traits = await this.#templated(placed, TemplateFlag.traits, level, random);
-    const inventory = await this.#templated(placed, TemplateFlag.inventory, level, random);
+    const templates = await resolveActorTemplates((id) => this.#db.get(id), base, reference, level);
+    if (!templates) return undefined;
+    const npc = async (formId: number): Promise<NpcRecord | undefined> => {
+      const record = await this.#db.get(formId);
+      return record?.type === 'NPC_' ? parseNpc(record) : undefined;
+    };
+    const traits = await npc(templates.part(TemplateFlag.traits));
+    const inventory = await npc(templates.part(TemplateFlag.inventory));
+    if (!traits || !inventory) return undefined;
+    // Outfits' leveled items: the actor's own draws, after its templates'.
+    const random = seededRandom(reference ^ 0x5bd1e995);
     const race = traits.race === undefined ? undefined : await this.#race(traits.race);
     if (!race) return undefined;
     const female = (traits.flags & NpcFlag.female) !== 0;
@@ -473,16 +414,14 @@ export class ActorResolver {
     }
     const skeleton = race.skeleton[sex];
     const behavior = race.behavior[sex];
-    const named = await this.#templated(placed, TemplateFlag.baseData, level, random);
-    const name = (await this.#db.get(named.formId))?.text('FULL') ?? '';
+    const name = (await this.#db.get(templates.part(TemplateFlag.baseData)))?.text('FULL') ?? '';
     const voice = traits.voiceType === undefined ? undefined : await this.#db.get(traits.voiceType);
-    // Resolved last: leveled templates draw from the same random sequence as the look.
-    const ai = await this.#templated(placed, TemplateFlag.aiPackages, level, random);
-    const factions = await this.#templated(placed, TemplateFlag.factions, level, random);
+    const ai = await npc(templates.part(TemplateFlag.aiPackages));
+    const factions = await npc(templates.part(TemplateFlag.factions));
     return {
       base,
       npc: traits.formId,
-      editorId: placed.editorId,
+      editorId: (await this.#db.get(templates.placed))?.editorId ?? '',
       name,
       voiceType: voice?.type === 'VTYP' ? voice.editorId : undefined,
       female,
@@ -507,8 +446,8 @@ export class ActorResolver {
         [...shown, ...bare].find((addon) => firstSlot(addon.slots) === BipedSlot.body)
           ?.weaponAdjust ?? 0,
       footstepSet: footstepSetOf([...shown, ...bare]),
-      packages: ai.packages,
-      factions: factions.factions,
+      packages: ai?.packages ?? [],
+      factions: factions?.factions ?? new Map<number, number>(),
     };
   }
 }
