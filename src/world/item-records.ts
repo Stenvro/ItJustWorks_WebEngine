@@ -143,7 +143,7 @@ const u16 = (data: Uint8Array | undefined, at: number): number =>
   data && data.length >= at + 2 ? view(data).getUint16(at, true) : 0;
 
 /** The record's effects: EFID (the magic effect) each followed by EFIT and its CTDA. */
-export function parseEffects(record: RecordSource): ItemEffect[] {
+export function parseEffects(record: Pick<GameRecord, 'fields' | 'formIdAt'>): ItemEffect[] {
   const effects: ItemEffect[] = [];
   let current: { effect: number; magnitude: number; area: number; duration: number } | undefined;
   let conditions: Condition[] = [];
