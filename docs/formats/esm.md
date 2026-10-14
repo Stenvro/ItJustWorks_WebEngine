@@ -810,10 +810,36 @@ vanilla packages, 240 with a procedure tree of their own). After UESP, in field 
   Location", "Target"), PNAM u32 (1: public).
 - **POBA / POEA / POCA** on begin / end / change: INAM idle, SCHR, TNAM, PDTO.
 
-**QUST** (what package starts read): DNAM flags u8 (0x01 start game enabled), INDX stages
-(i16 index, u8 flags: 0x02 start-up stage, 0x04 shut-down stage), VMAD stage fragments, and
-reference aliases from ALST to ALED: ALFR forced reference, ALUA unique actor (NPC_), ALPC
-packages added while the alias holds the actor (they run before its own).
+## Quests
+
+**QUST** (`src/world/quest-records.ts`; check: `node tools/quest-info.ts --parse`: 2338 quests,
+443 starting with the game, 7150 stages, 2074 objectives, 16099 aliases). After UESP:
+
+- **DNAM** 12 bytes: flags u8 (0x01 start game enabled, 0x04 wilderness encounter, 0x08 allow
+  repeated stages), flags u8 (0x01 run once, 0x02 exclude from dialogue export, 0x04 warn on
+  alias fill failure), priority u8, unknown u8, unknown i32, type u32 (0 none, 1 main quest,
+  2 Mages' Guild, ..., 9 Civil War, 10 Dawnguard, 11 Dragonborn). ENAM the story manager event
+  that starts it (four characters: ADIA 900 quests, SCPT 264, CLOC 172, KILL 15, ...).
+- CTDA dialogue conditions, then after an empty **NEXT** the event's conditions.
+- Stages: **INDX** (i16 index, u8 flags: 0x02 start-up, 0x04 shut-down, 0x08 keep instance
+  data, i8), each with log entries: **QSDT** u8 (0x01 completes the quest, 0x02 fails it),
+  CTDA, CNAM the journal text (localized), NAM0 the next quest. VMAD's fragments run per stage.
+- Objectives: **QOBJ** i16 index, FNAM flags (0x1 ORed with the previous), NNAM text, then
+  targets: **QSTA** (alias i32, flags u32: 1 the compass ignores locks) with their CTDA.
+- ANAM the next alias id, then the aliases from **ALST** (reference) / **ALLS** (location) to
+  ALED: ALID name, FNAM flags (0x1 reserves, 0x2 optional, 0x4 quest object, 0x8 allow reuse,
+  0x10 allow dead, 0x20 in loaded area, 0x40 essential, 0x80 allow disabled, ..., 0x800 no fill
+  type, 0x2000 closest, 0x8000 initially disabled), ALFI the alias it is forced into, and its
+  fill: ALFR / ALFL a forced reference / location; ALUA a unique actor (NPC_); ALCO a created
+  object with ALCA (high bit: in, else at; the alias) and ALCL its level; ALEQ / ALEA another
+  quest's alias; ALFA + ALRT a location alias's reference of a type (LCRT); ALFA + KNAM a
+  reference alias's location of a keyword; ALFE / ALFD a story manager event and its data;
+  else Find Matching Reference by its CTDA (in the loaded area, closest, ALNA near an alias),
+  or Forced: None (no fill type: scripts fill it). CTDA match conditions, KWDA keywords, CNTO
+  items, ALSP spells, ALFC factions, **ALPC packages** (they run before the actor's own while
+  the alias holds it), ALDN display name, SPOR / ECOR package lists. Vanilla fills: unique actor
+  3537, forced 3275, a location's reference 2320, from an event 2055, matching 1544, none 985,
+  created 968 (reference aliases).
 
 ## Default objects
 
