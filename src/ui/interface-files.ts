@@ -9,6 +9,9 @@ import { readSwf } from '../formats/swf/swf.ts';
 import { decodeWindows1252 } from '../formats/text.ts';
 import type { Vfs } from '../vfs/vfs.ts';
 import { buildFontLibrary } from './font-library.ts';
+import { parseTranslations, type Translations } from '../formats/swf/translation.ts';
+import { decodeUtf16le } from '../formats/text.ts';
+import { translateMovie } from './translate-movie.ts';
 
 /** Where the interface folder is served: a movie's base URL. */
 export const INTERFACE_URL = '/@interface/';
@@ -18,6 +21,9 @@ const FONT_LIBRARY = 'gfxfontlib.swf';
 export class InterfaceFiles {
   readonly #vfs: Vfs;
   #fontLibrary: Promise<Uint8Array> | undefined;
+  #translations: Promise<Translations> | undefined;
+  /** Movies as they play: translated (by path). */
+  readonly #movies = new Map<string, Promise<Uint8Array>>();
   readonly #warn: (message: string) => void;
 
   constructor(vfs: Vfs, warn: (message: string) => void) {
@@ -30,7 +36,29 @@ export class InterfaceFiles {
     const path = relative.replace(/^\/+/, '').replaceAll('/', '\\').toLowerCase();
     if (path === FONT_LIBRARY || path.endsWith(`\\${FONT_LIBRARY}`)) return this.fontLibrary();
     const full = `interface\\${path}`;
-    return this.#vfs.has(full) ? this.#vfs.read(full) : undefined;
+    if (!this.#vfs.has(full)) return undefined;
+    if (!/\.(swf|gfx)$/.test(path) || path.startsWith('fonts_')) return this.#vfs.read(full);
+    let movie = this.#movies.get(path);
+    if (!movie) {
+      movie = Promise.all([this.#vfs.read(full), this.translations()]).then(([bytes, table]) =>
+        translateMovie(bytes, (text) => table.translate(text)),
+      );
+      this.#movies.set(path, movie);
+    }
+    return movie;
+  }
+
+  /** The interface's translations (English; TODO(M13): the game's language setting). */
+  translations(): Promise<Translations> {
+    this.#translations ??= (async () => {
+      const path = 'interface\\translate_english.txt';
+      if (!this.#vfs.has(path)) {
+        this.#warn(`${path} is missing: menus show their keys`);
+        return parseTranslations('');
+      }
+      return parseTranslations(decodeUtf16le(await this.#vfs.read(path)));
+    })();
+    return this.#translations;
   }
 
   /** The menus' font library (built once). */

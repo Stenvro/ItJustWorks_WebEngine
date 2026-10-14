@@ -84,7 +84,7 @@ export interface SwfTag {
 
 export interface SwfMovie {
   readonly header: SwfHeader;
-  /** The whole movie uncompressed, header included (its signature as in the file). */
+  /** The whole movie uncompressed, header included: a movie of its own (FWS or GFX). */
   readonly bytes: Uint8Array;
   readonly tags: readonly SwfTag[];
 }
@@ -129,6 +129,10 @@ export function readSwf(file: Uint8Array): SwfMovie {
       bytes = new Uint8Array(fileLength);
       bytes.set(file.subarray(0, 8));
       bytes.set(inflateZlib(file.subarray(8), fileLength - 8), 8);
+      // Uncompressed now: FWS, or Scaleform's GFX.
+      bytes[0] = signature === 'CWS' ? 0x46 : 0x47;
+      bytes[1] = signature === 'CWS' ? 0x57 : 0x46;
+      bytes[2] = signature === 'CWS' ? 0x53 : 0x58;
       break;
     }
     case 'ZWS':

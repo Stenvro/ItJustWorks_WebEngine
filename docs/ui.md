@@ -71,3 +71,27 @@ Checked in the browser on `hudmenu.swf`: its own calls reach the page tagged wit
 
 Keyboard and mouse reach the movies as Flash input (the Key and Mouse objects; CLIK's
 `InputDelegate` turns keys into `handleInput` down the focus path), as under Scaleform.
+
+## Translations
+
+Scaleform shows a text field whose text is a translation key (`$NEW`) as the key's text from
+`interface\translate_english.txt` (UTF-16 lines of `$KEY<tab>text`, 861 keys; matched as
+written, then ignoring case). A Flash player has no translator, and a TextField's `text` is
+native, so the engine translates the movie as it loads (`src/ui/translate-movie.ts`): every
+string of its ActionScript (ConstantPool entries, pushed strings) and every text field's initial
+text (plain, or between HTML tags) that is a key is replaced by its text; strings that are no
+key (font names such as `$EverywhereFont`) stay. The ActionScript is re-encoded with every
+branch, function, With and Try size moved along (`src/formats/swf/avm1-rewrite.ts`); the
+integration test translates every vanilla menu and checks every branch still lands on an action.
+Text the engine sends is translated before it is sent.
+
+## The main menu
+
+`src/shell/play-mode.ts` opens `startmenu.swf` as the game does: once its first frame has run,
+`_root.MenuHolder.Menu_mc.InitExtensions()`, then the callback `sendMenuProperties` with the
+menu's properties (read by its `setupMainMenu` by index: 0 Quit, 1 saves exist (Continue, Load),
+2 version text, 3 Press Start, 4 the Anniversary upgrade banner, 5 Downloadable Content, 6 Help,
+7 Mod Manager, 8 Creations shown, 9 logged in, 11 PS5 transfer, 12 new Creations, 13 Creations
+usable, 14 Switch transfer), then `FadeInMenu`. On PC since 1.6.1130 Mods are part of Creations
+(UESP). Creations is an online store and stays unusable (localhost only). It shows NEW, LOAD,
+CREATIONS, CREDITS, QUIT.

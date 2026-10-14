@@ -110,6 +110,21 @@ export class Menu {
     return this.#external(BRIDGE_GET, path);
   }
 
+  /**
+   * Waits until a path exists in the movie (its frames have run that far): true, or false
+   * after `timeout` ms or once the menu closed.
+   */
+  async waitFor(path: string, timeout = 10_000): Promise<boolean> {
+    const until = performance.now() + timeout;
+    while (!this.#closed) {
+      const value = this.get(path);
+      if (value !== undefined && value !== null) return true;
+      if (performance.now() > until) return false;
+      await new Promise((resolve) => setTimeout(resolve, 16));
+    }
+    return false;
+  }
+
   /** Puts keyboard focus on the menu (an interactive menu as it opens). */
   focus(): void {
     this.element.focus();
@@ -186,6 +201,10 @@ export class MenuHost {
       openUrlMode: 'deny',
       logLevel: 'warn',
     });
+    // Its first frame has run once the bridge has (it runs first in it).
+    if (!(await menu.waitFor('_global.gfxExtensions'))) {
+      this.#log(`${movie} did not start playing`);
+    }
     if (options.interactive) menu.focus();
     return menu;
   }

@@ -74,6 +74,21 @@ export function decodeUtf8(bytes: Uint8Array, start = 0, end = bytes.length): st
   return result;
 }
 
+/** UTF-16 little-endian text, a byte order mark skipped (the interface's translate_*.txt). */
+export function decodeUtf16le(bytes: Uint8Array): string {
+  let start = bytes[0] === 0xff && bytes[1] === 0xfe ? 2 : 0;
+  let result = '';
+  const units: number[] = [];
+  for (; start + 1 < bytes.length; start += 2) {
+    units.push((bytes[start] ?? 0) | ((bytes[start + 1] ?? 0) << 8));
+    if (units.length === 8192) {
+      result += String.fromCharCode(...units);
+      units.length = 0;
+    }
+  }
+  return result + String.fromCharCode(...units);
+}
+
 /** UTF-8 bytes of a string (lone surrogates become U+FFFD, as TextEncoder does). */
 export function encodeUtf8(text: string): Uint8Array {
   const out: number[] = [];
