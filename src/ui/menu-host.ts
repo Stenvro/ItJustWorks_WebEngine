@@ -161,8 +161,14 @@ export class Menu {
   close(): void {
     if (this.#closed) return;
     this.#closed = true;
-    this.#api.pause();
+    // Out of the page first: Ruffle ends a player that leaves the document. Pausing it as well
+    // may fail on a player Ruffle has ended; that is no fault of the menu.
     this.element.remove();
+    try {
+      this.#api.pause();
+    } catch {
+      // Ended already.
+    }
   }
 
   #external(name: string, ...args: unknown[]): unknown {

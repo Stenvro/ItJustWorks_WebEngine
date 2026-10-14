@@ -531,17 +531,21 @@ async function main(): Promise<void> {
     session?.scriptsReady?.move(PLAYER_REF, at.position, at.rotation, at.cell, at.world);
     if (!modelViewer.sendPlayer(at) && !worldViewer.sendPlayer(at)) journeyTo(at);
   };
+  /** The session whose scripts the sandbox started (see startSandboxScripts). */
+  let sandboxScripts: GameSession | undefined;
+  // Sandbox and Play open once the session is ready (its records indexed, the finders
+  // filled).
+  const setEntriesReady = (ready: boolean): void => {
+    ui.menuSandbox.disabled = !ready;
+    ui.menuPlay.disabled = !ready;
+  };
   connectSession = async (vfs: Vfs): Promise<void> => {
+    setEntriesReady(false);
     session?.dispose();
+    sandboxScripts = undefined;
     session = new GameSession(gpu.device, renderer, vfs, terminal);
     await Promise.all([modelViewer.connect(session), worldViewer.connect(session)]);
-    // The running game's scripts: a new game starts as the session opens.
-    const started = session;
-    const runtime = started.runtime();
-    void runtime.catch((error: unknown) => {
-      terminal.log('papyrus', `scripts not running: ${describeError(error)}`, 'error');
-    });
-    void questPanel.connect(started, runtime).catch(() => undefined);
+    setEntriesReady(true);
   };
   // Centre the scene in the part of the screen the shell column does not cover.
   const updateLensShift = (): void => {
@@ -562,7 +566,20 @@ async function main(): Promise<void> {
   showScreen('start');
   ui.menuSandbox.addEventListener('click', () => {
     showScreen('sandbox');
+    startSandboxScripts();
   });
+  // The sandbox's game state: its scripts start a new game the first time the sandbox opens
+  // (not before: the home page and Play need none of it).
+  const startSandboxScripts = (): void => {
+    const current = session;
+    if (!current || sandboxScripts === current) return;
+    sandboxScripts = current;
+    const runtime = current.runtime();
+    void runtime.catch((error: unknown) => {
+      terminal.log('papyrus', `scripts not running: ${describeError(error)}`, 'error');
+    });
+    void questPanel.connect(current, runtime).catch(() => undefined);
+  };
   // Play: the game from its own main menu.
   let play: PlayMode | undefined;
   const leavePlay = (): void => {
@@ -582,6 +599,10 @@ async function main(): Promise<void> {
   });
   // The brand in the corner leads back to the main menu (from the sandbox).
   ui.brand.addEventListener('click', () => {
+    if (document.body.dataset.screen === 'play') {
+      leavePlay();
+      return;
+    }
     if (document.body.dataset.screen !== 'sandbox') return;
     // Back on the main menu, nothing stays loaded.
     modelViewer.deactivate();
