@@ -162,3 +162,30 @@ player): Windowed Mode (off: Play asks for full screen in the click that starts 
 Detail preset. The Graphics Adapter shows the GPU. The launcher's art lives in its executable,
 not in the game's data, so it wears the engine's own look. TODO(M13): the detail presets and the
 Advanced settings (detail, view distance, water) applied by the renderer, which draws at Ultra.
+
+## New game and loading screens
+
+New (the start menu's `NEW` call) starts a new game as the game does: the start menu fades out
+(`FadeOutMenu`); the loading menu (`loadingmenu.swf`: the engine calls `_root.InitExtensions`,
+`_root.SetPlatform(0)`, `_root.Menu_mc.FadeInMenu`, and answers `RequestLoadingText` with the
+loading screen's text and `RequestPlayerInfo` with level 1, no progress, no meter) shows over
+the mist while the game's scripts start a clean new game; once the opening has placed the
+player (MQ101 stage 0 → 10, `Fragment_4`: the player to `MQ101PlayerStartMarker` in Tamriel,
+by the cart), the loading screen is chosen, the world there loads, and the loading menu fades
+out.
+
+**Loading screens** (LSCR, `src/world/loading-screens.ts`): DESC the text, CTDA conditions (run
+on the player), NNAM the static whose model is shown, SNAM its scale, RNAM its rotation
+(degrees), ONAM the rotation limits, XNAM its offset, MOD2 a camera path. Of the 371 vanilla
+screens 134 have conditions; after a new game's opening exactly one holds, `ChargenLoadScreen`
+(MQ101 stage 10: Alduin's wall and the Song of the Dragonborn). Screens whose conditions hold
+are taken before those without (inferred from the new game always showing its own); else one at
+random.
+
+**Camera paths** (`meshes\cameras\LSCamera*.nif`, `src/render/camera-path.ts`): a
+`CameraPathNode` moved by the 60-second looping `CameraPath` sequence, with an NiCamera under it
+(nif.xml: NiAVObject, camera flags, frustum left/right/top/bottom/near/far, orthographic,
+viewport, LOD adjust, scene, screen polygons and textures). The paths place the camera 250–300
+units in front of the model on the -Y side: it looks along +Y with +Z up (the NiCamera's 90°
+turn maps Gamebryo's X-forward camera onto the world's axes); the frustum gives 45° across a
+4:3 frame. TODO(M9): turning the model with the mouse within ONAM's limits.

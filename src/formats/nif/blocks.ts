@@ -5,6 +5,7 @@
 import { BinaryReader, FormatError } from '../binary-reader.ts';
 import { readSizedString } from './header.ts';
 import type {
+  NiCameraBlock,
   BehaviorGraphExtraDataBlock,
   BoundBlock,
   BSEffectShaderPropertyBlock,
@@ -657,6 +658,30 @@ const parseSkinPartition: BlockParser = (reader, context): NiSkinPartitionBlock 
   return { kind: 'skin-partition', vertexDesc, vertexCount, vertexData, partitions };
 };
 
+// --- Cameras ----------------------------------------------------------------
+
+const parseCamera: BlockParser = (reader, context): NiCameraBlock => {
+  const base = readAvObject(reader, context);
+  reader.u16(); // camera flags
+  const left = reader.f32();
+  const right = reader.f32();
+  const top = reader.f32();
+  const bottom = reader.f32();
+  const near = reader.f32();
+  const far = reader.f32();
+  const orthographic = readBool(reader);
+  reader.skip(4 * 4 + 4); // viewport (left, right, top, bottom), LOD adjust
+  reader.i32(); // scene
+  reader.u32(); // screen polygons (0)
+  reader.u32(); // screen textures (0)
+  return {
+    ...base,
+    kind: 'camera',
+    frustum: { left, right, top, bottom, near, far },
+    orthographic,
+  };
+};
+
 // --- Registry ---------------------------------------------------------------
 
 const NODE_TYPES = [
@@ -704,4 +729,5 @@ export const BLOCK_PARSERS: ReadonlyMap<string, BlockParser> = new Map<string, B
   ['BSDismemberSkinInstance', parseSkinInstance],
   ['NiSkinData', parseSkinData],
   ['NiSkinPartition', parseSkinPartition],
+  ['NiCamera', parseCamera],
 ]);
