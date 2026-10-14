@@ -94,6 +94,8 @@ describe.skipIf(!hasGamedata())('sound records in the local game data', () => {
     const music = [...categories.values()].find((c) => c.editorId === 'AudioCategoryMUS');
     expect(music?.volume).toBeCloseTo(0.7, 2);
     expect(music?.onMenu).toBe(true);
+    // The settings sliders' names come from the string tables: keys the menus translate (M9).
+    expect(music?.name).toBe('$Music');
   });
 
   it('reads music types and tracks, files under music\\ with cue points and finales', async () => {

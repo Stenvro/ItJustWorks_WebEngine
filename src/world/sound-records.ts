@@ -291,7 +291,9 @@ export function parseSoundCategory(record: GameRecord): SoundCategory {
   return {
     formId: record.formId,
     editorId: record.editorId ?? '',
-    name: record.fields.zstring('FULL') ?? '',
+    // FULL: the settings slider's name, from the string tables: a key the menus translate
+    // ("$Music", Interface\Translations; M9).
+    name: record.text('FULL') ?? '',
     parent: record.formIdField('PNAM'),
     muteWhenSubmerged: (flags & 0x1) !== 0,
     onMenu: (flags & 0x2) !== 0,
