@@ -7,12 +7,15 @@
 
 import type { QuestUpdate } from '../scripting/runtime/runtime.ts';
 import type { PlacedActor } from './actors.ts';
+import type { ObjectUses } from './play-session.ts';
 
 export interface HudTarget {
   /** "Open", "Take", ... */
   readonly verb: string;
   /** What it is (a door's destination, an item's name). */
   readonly name: string;
+  /** An item's weight and value (shown under its name). */
+  readonly item?: { readonly weight: number; readonly value: number };
 }
 
 /** Message.ShowAsHelpMessage's: shown for `seconds` every `interval`, at most `times` times. */
@@ -49,6 +52,8 @@ export interface MenuSink {
   userEvent(name: string): void;
   /** The player talks to an actor (the dialogue menu). */
   talk(speaker: PlacedActor): void;
+  /** A container's menu (a chest, a corpse searched); `closed` once it has closed. */
+  container(reference: number, closed: () => void): void;
 }
 
 export class HudSignals {
@@ -56,6 +61,8 @@ export class HudSignals {
   sink: HudSink | undefined;
   /** The menus (Play), if any. */
   menus: MenuSink | undefined;
+  /** What activating containers and items does (Play), if anything. */
+  uses: ObjectUses | undefined;
 
   /** Whether a HUD shows these (the sandbox's own prompt and notices then stay quiet). */
   get listening(): boolean {

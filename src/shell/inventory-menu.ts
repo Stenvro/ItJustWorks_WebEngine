@@ -27,16 +27,16 @@ import {
 } from '../world/item-records.ts';
 import { effectText, EffectFlag, parseMagicEffect } from '../world/magic-effects.ts';
 import type { GameSession } from './game-session.ts';
-import type { ItemMenuModel, ItemMenuView } from './item-menu.ts';
+import type { ItemEntry, ItemMenuModel, ItemMenuView } from './item-menu.ts';
 import type { Terminal } from './terminal.ts';
 
 /** Gold (Gold001): its count is the player's gold. */
-const GOLD = 0xf;
+export const GOLD = 0xf;
 /** The first actor value's AVIF (actor value names: AVIF 0x3E8 + index). */
 export const AVIF_BASE = 0x3e8;
 
 /** An item row of the menu. */
-interface Row {
+export interface Row {
   readonly formId: number;
   readonly item: ItemRecord;
   readonly count: number;
@@ -73,40 +73,16 @@ export function inventoryModel(session: GameSession, terminal: Terminal): ItemMe
       const game = runtime();
       const settings = await session.settings();
       const inventory = await game.inventory(PLAYER_REF);
-      const worn = new Set([
-        ...(await game.actors.worn(PLAYER_REF)),
-        ...game.state.actor(PLAYER_REF).equipped,
-      ]);
-      const rows: Row[] = [];
-      for (const [formId, count] of inventory) {
-        if (count <= 0 || formId === GOLD) continue;
-        const record = await item(formId);
-        if (!record || record.nonPlayable || record.name === '') continue;
-        rows.push({
-          formId,
-          item: record,
-          count,
-          worn: worn.has(formId),
-          favorite: game.state.favorites.has(formId),
-        });
-      }
-      const cards = new Map<number, Record<string, unknown>>();
-      for (const row of rows) cards.set(row.formId, await itemCard(game, settings, row));
+      const rows = await itemRows(game, PLAYER_REF, inventory, item);
+      const cards: Record<string, unknown>[] = [];
+      for (const row of rows) cards.push(await itemCard(game, settings, row));
       return {
-        entries: rows.map((row) => ({
-          text: row.item.name,
-          count: row.count,
-          equipState: row.worn ? EquipState.equipped : EquipState.none,
-          favorite: row.favorite,
-          filterFlag: itemCategory(row.item) | (row.favorite ? ItemCategory.favorites : 0),
-          enabled: true,
-          formId: row.formId,
-        })),
+        entries: rows.map((row) => itemEntry(row)),
         cards,
         player: await playerInfo(game, rows, inventory.get(GOLD) ?? 0),
       };
     },
-    select: async (formId) => {
+    select: async ({ formId }) => {
       const game = runtime();
       const record = await item(formId);
       if (!record) return;
@@ -128,11 +104,11 @@ export function inventoryModel(session: GameSession, terminal: Terminal): ItemMe
       }
     },
     // TODO(M11): the dropped items placed in the world at the player's feet.
-    drop: async (formId, amount) => {
+    drop: async ({ formId }, amount) => {
       const game = runtime();
       await game.removeItem(PLAYER_REF, game.formHandle(formId), amount, false, undefined);
     },
-    favorite: (formId) => {
+    favorite: ({ formId }) => {
       const favorites = runtime().state.favorites;
       if (favorites.has(formId)) favorites.delete(formId);
       else favorites.add(formId);
@@ -140,8 +116,52 @@ export function inventoryModel(session: GameSession, terminal: Terminal): ItemMe
   };
 }
 
+/**
+ * The items of a container (an actor's: what it wears, the player's: their favorites) that
+ * the menus list: playable and named (the player's gold is their info, not an item; another
+ * container's is one of its items).
+ */
+export async function itemRows(
+  runtime: ScriptRuntime,
+  container: number,
+  inventory: ReadonlyMap<number, number>,
+  item: (formId: number) => Promise<ItemRecord | undefined>,
+): Promise<Row[]> {
+  const worn = new Set([
+    ...(await runtime.actors.worn(container)),
+    ...(runtime.state.actors.get(container)?.equipped ?? []),
+  ]);
+  const rows: Row[] = [];
+  for (const [formId, count] of inventory) {
+    if (count <= 0 || (formId === GOLD && container === PLAYER_REF)) continue;
+    const record = await item(formId);
+    if (!record || record.nonPlayable || record.name === '') continue;
+    rows.push({
+      formId,
+      item: record,
+      count,
+      worn: worn.has(formId),
+      favorite: container === PLAYER_REF && runtime.state.favorites.has(formId),
+    });
+  }
+  return rows;
+}
+
+/** A row's entry: name, count, worn, favorite, its category's bits. */
+export function itemEntry(row: Row): ItemEntry {
+  return {
+    text: row.item.name,
+    count: row.count,
+    equipState: row.worn ? EquipState.equipped : EquipState.none,
+    favorite: row.favorite,
+    filterFlag: itemCategory(row.item) | (row.favorite ? ItemCategory.favorites : 0),
+    enabled: true,
+    formId: row.formId,
+  };
+}
+
 /** An item's card (UpdateItemCardInfo): its type's fields. */
-async function itemCard(
+export async function itemCard(
   runtime: ScriptRuntime,
   settings: GameSettings,
   row: Row,
@@ -224,7 +244,7 @@ export async function effectsText(
 }
 
 /** UpdatePlayerInfo: carried weight and its limit, gold, armor, damage, the meters. */
-async function playerInfo(
+export async function playerInfo(
   runtime: ScriptRuntime,
   rows: readonly Row[],
   gold: number,

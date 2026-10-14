@@ -385,8 +385,13 @@ export class WorldViewer {
     const object = this.#objectOf(reference);
     if (!object) return fallback;
     return {
-      verb: fallback?.verb ?? 'Activate',
+      verb:
+        fallback?.verb ??
+        object.activateText ??
+        this.#session?.hud.uses?.text('sActivate') ??
+        'Activate',
       name: fallback?.name ?? object.name,
+      ...(fallback?.item && { item: fallback.item }),
       activate: () => {
         if (runtime.playerActivated(reference)) fallback?.activate();
       },
@@ -558,21 +563,30 @@ export class WorldViewer {
 
   /** What activating a reference does by default (a load door, a door that opens). */
   #defaultActivation(reference: number): Activatable | undefined {
-    for (const cell of this.#cells.values()) {
+    const created = this.#created?.get(reference);
+    for (const cell of created ? [] : this.#cells.values()) {
       const object = cell.objects.get(reference);
       if (!object) continue;
       const instance = cell.placed.find((placed) => placed.object === object)?.instance;
-      return objectActivation(
-        object,
-        instance,
-        {
-          name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
-          go: (teleport) => this.onTravel?.(teleport),
-        },
-        (descriptor, at) => void this.#session?.soundSystem?.play(descriptor, at),
-      );
+      return this.#objectActivation(object, instance);
     }
-    return undefined;
+    return created && this.#objectActivation(created.object, created.instance);
+  }
+
+  #objectActivation(
+    object: CellObject,
+    instance: ModelInstance | undefined,
+  ): Activatable | undefined {
+    return objectActivation(
+      object,
+      instance,
+      {
+        name: (teleport) => this.#destinations.get(teleport.door)?.name ?? '',
+        go: (teleport) => this.onTravel?.(teleport),
+      },
+      (descriptor, at) => void this.#session?.soundSystem?.play(descriptor, at),
+      this.#session?.hud.uses,
+    );
   }
 
   /** Whether the collision under a point is in place (the player can stand there). */

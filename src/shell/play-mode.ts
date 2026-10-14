@@ -10,6 +10,9 @@ import type { Renderer } from '../render/renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { IniSettings } from '../world/ini-settings.ts';
+import type { CellObject } from '../world/cell-loader.ts';
+import { parseItem } from '../world/item-records.ts';
+import { itemSound } from '../gameplay/inventory.ts';
 import type { ControlMap } from '../formats/controlmap/controlmap.ts';
 import { buttonArt, userEvent } from '../ui/button-art.ts';
 import {
@@ -276,6 +279,26 @@ export class PlayMode {
       talk: (speaker) => {
         this.#talk(dialogue, menus, speaker);
       },
+      container: (reference, closed) => {
+        if (dialogue.isOpen) closed();
+        else menus.openContainer(reference, closed);
+      },
+    };
+    const settings = await session.settings();
+    session.hud.uses = {
+      text: (setting) => settings.string(setting) ?? setting,
+      openContainer: (reference, closed) => {
+        session.hud.menus?.container(reference, closed);
+      },
+      take: (object) => {
+        this.#take(object).catch((error: unknown) => {
+          this.#terminal.log(
+            'ui',
+            `${object.name} is not taken: ${error instanceof Error ? error.message : String(error)}`,
+            'error',
+          );
+        });
+      },
     };
     document.addEventListener('pointerlockchange', this.#pointerLockChanged);
   }
@@ -313,6 +336,23 @@ export class PlayMode {
         );
         dialogue.close();
       });
+  }
+
+  /** The player takes an item lying in the world: it joins their items, its sound playing. */
+  async #take(object: CellObject): Promise<void> {
+    const runtime = this.#session.scriptsReady;
+    if (!runtime) return;
+    await runtime.pickUp(object.reference, PLAYER_REF);
+    const record = await runtime.forms.record(object.base);
+    const item = record && parseItem(record);
+    const sounds = this.#session.soundSystem;
+    const sound = item && sounds && itemSound(item, true, sounds.defaults);
+    if (sound !== undefined)
+      void sounds?.play(sound, [
+        object.world[12] ?? 0,
+        object.world[13] ?? 0,
+        object.world[14] ?? 0,
+      ]);
   }
 
   /**
@@ -426,6 +466,7 @@ export class PlayMode {
     this.#messageBoxes?.close();
     this.#messageBoxes = undefined;
     if (this.#session.hud.menus) this.#session.hud.menus = undefined;
+    if (this.#session.hud.uses) this.#session.hud.uses = undefined;
     if (this.#pausing > 0) this.#setMenuMode(false, false);
     this.#pausing = 0;
     this.#hud?.close();

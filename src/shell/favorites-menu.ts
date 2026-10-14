@@ -25,7 +25,7 @@ export class FavoritesMenu {
     this.#select = async (formId) => {
       const record = await session.scriptsReady?.forms.record(formId);
       const model = record?.type === 'SPEL' || record?.type === 'SHOU' ? magic : items;
-      await model.select(formId, undefined);
+      await model.select({ formId }, undefined);
     };
   }
 

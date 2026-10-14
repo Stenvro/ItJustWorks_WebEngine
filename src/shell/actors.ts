@@ -216,11 +216,28 @@ export function talkTargets(
     if (!hit) return undefined;
     const placed = hit.actor;
     const look = placed.look;
+    const name = look.name !== '' ? look.name : look.editorId;
+    const hud = session()?.hud;
+    const reference = placed.actor.reference;
+    // In Play the dead are searched: their items in the container menu.
+    if (hud?.uses && session()?.scriptsReady?.state.actors.get(reference)?.dead === true) {
+      const uses = hud.uses;
+      return {
+        distance: hit.distance,
+        target: {
+          verb: uses.text('sSearch'),
+          name,
+          activate: () => {
+            uses.openContainer(reference, () => undefined);
+          },
+        },
+      };
+    }
     return {
       distance: hit.distance,
       target: {
-        verb: 'Talk',
-        name: look.name !== '' ? look.name : look.editorId,
+        verb: hud?.uses?.text('sTalk') ?? 'Talk',
+        name,
         activate: () => {
           // In Play: a conversation in the game's dialogue menu.
           const menus = session()?.hud.menus;

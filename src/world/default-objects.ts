@@ -29,6 +29,19 @@ export const DefaultObjectUse = {
   /** SOPM of spoken lines in the world (SOMDialogue3DDefault) and at the listener (2D). */
   dialogueOutput3d: 'DOP2',
   dialogueOutput2d: 'DOP3',
+  /** SNDR of picking up and putting down items that name none: generic, weapons, armor, books, ingredients. */
+  pickUpGeneric: 'PUSG',
+  putDownGeneric: 'PDSG',
+  pickUpWeapon: 'PUSW',
+  putDownWeapon: 'PDSW',
+  pickUpArmor: 'PUSA',
+  putDownArmor: 'PDSA',
+  pickUpBook: 'PUSB',
+  putDownBook: 'PDSB',
+  pickUpIngredient: 'PUSI',
+  putDownIngredient: 'PDSI',
+  /** SNDR of an activation that fails (a locked door without its key). */
+  activateFail: 'NASD',
 } as const;
 
 /** Entries of DOBJ DNAM: u32 use code (four characters), form id. */

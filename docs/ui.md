@@ -160,6 +160,11 @@ menu, the tutorial). The bridge adds them to `TextField.prototype`:
   `TextField` makes one, and leaves the fields the player places to the original class (Ruffle
   constructs those with `_global.TextField` as well; they have a `_width`, an object off the
   stage has none). Its prototype is the original one, so `instanceof TextField` holds.
+- A field's `text`: GFx gives an HTML field that is one paragraph (`<p align="right">VALUE</p>`)
+  without a paragraph end ("VALUE"), Ruffle with one ("VALUE\r"); the HUD builds its item
+  prompt from such fields ("WEIGHT 9 VALUE 25"), which then broke over lines. As the movie
+  loads (`src/ui/translate-movie.ts`) such a field's paragraph becomes its own alignment (its
+  layout) and its text loses the `<p>`: it shows the same.
 
 Still missing in Ruffle (0.7.1), and so in the menus: `<img>` in a text field's HTML (the HUD's
 help messages show their keys' art as `<img src='E.png'>`: the text shows, the key does not),
@@ -414,12 +419,12 @@ it lists and what its entries do):
   sConjuration 0x10, sRestoration 0x20, sShouts 0x40, sPowers 0x80, sActiveEffects 0x100; before
   the list is filled the engine sets `Menu_mc.hideButtonFlag` to the active effects' bit (their
   entries show no buttons).
-- A spell's school is its costliest effect's magic skill; its card (ICT_SPELL 3) has `castLevel`
+- A spell's school is its costliest effect's magic skill; its card (ICT_SPELL 7) has `castLevel`
   (that effect's minimum skill: sNoviceDisplayName below 25 .. sMasterDisplayName at 100),
   `castTime` (SPIT's charge time; 0 for concentration spells, whose cost the card shows per
   second), `spellCost`: the base cost (`spellBaseCost`, docs/formats/esm.md) × (1 −
-  (skill / 400)^0.65) (UESP, "Magic Overview"). Powers have ICT_SPELL_DEFAULT 4, shouts
-  ICT_SHOUT 5 with `word0..2` (translation), `dragonWord0..2` and `unlocked0..2`, and the
+  (skill / 400)^0.65) (UESP, "Magic Overview"). Powers have ICT_SPELL_DEFAULT 13, shouts
+  ICT_SHOUT 10 with `word0..2` (translation), `dragonWord0..2` and `unlocked0..2`, and the
   recovery of the last unlocked word as their cost.
 
 The favorites menu (`favoritesmenu.swf`, `src/shell/favorites-menu.ts`; Q) lists the items,
@@ -429,7 +434,31 @@ equipState, index}`; index the form id) and invokes its `InvalidateData()`. On `
 engine reads `_root.GetSelectedIndex()` and acts as the inventory or the magic menu would; the
 menu closes itself with its fade (Tab, Esc, Q) and `FadeDone`.
 
-TODO(M9): the item's 3D model behind the card (UpdateItem3D, rotation, zoom), the container,
-barter and gift menus. TODO(M11): using, eating and reading items, equipping to a hand (items and
+The container menu (`containermenu.swf`, `src/shell/container-menu.ts`; a chest opened, a corpse
+searched) lists the container's items and the player's in one list:
+
+- Its categories are the container's (the inventory's without Favorites, their bits moved up by
+  10), a divider (a category whose bits are 0: `{text: "", flag: 0, bDontHide: true}`), then the
+  player's (the inventory's). The movie is viewing the container while the category selected is
+  above the divider (`isViewingContainer`), and shows its buttons for that side.
+- E takes or stores the selected item (`ItemTransfer(amount, fromContainer)`, after the
+  quantity slider for a stack); R is the movie's X button (`XButtonPress`, which the engine
+  calls): on the container's side `TakeAllItems`, on the player's it stores. Equipping a
+  container's item (`EquipItem(hand, amount)`) takes it first; the player's (`EquipItem(slot)`)
+  is the inventory's.
+- Items moved play their pick-up or put-down sound (the item's YNAM / ZNAM, else the default
+  object PUSW/PDSW for weapons, PUSA/PDSA armor, PUSB/PDSB books, PUSI/PDSI ingredients,
+  PUSG/PDSG the rest).
+
+Activating in the world (`objectActivation`, `src/shell/play-session.ts`): the prompts' verbs are
+the settings sOpen, sClose, sTake, sSearch, sTalk, sActivate, or an activator's or flora's RNAM;
+an item's prompt shows its weight and value (SetCrosshairTarget's aWeight and aCost; the HUD
+leaves out those passed undefined). A container opens its menu, its lid's open sequence and
+sound playing (and close as the menu closes); an item is taken (`ScriptRuntime.pickUp`: the
+reference leaves the world, its count joins the player's items, OnContainerChanged and
+OnItemAdded); the dead are searched.
+
+TODO(M9): the item's 3D model behind the card (UpdateItem3D, rotation, zoom), the barter and
+gift menus. TODO(M11): using, eating and reading items, equipping to a hand (items and
 spells) and shouts to the voice, the active effects, favorites' hotkeys, the quantity of a drop,
 skills and perks in armor, damage and spell costs, ingredients' known effects.

@@ -25,11 +25,14 @@ import {
 } from './cell-records.ts';
 export { parseTeleport, type Teleport } from './cell-records.ts';
 import { parseTextureSet, placeDecal, type PlacedDecal, type TextureSet } from './decal.ts';
+import { parseItem } from './item-records.ts';
 import { parseStaticDirectional, type StaticDirectional } from './material-object.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
 
 export interface CellObject {
   readonly reference: number;
+  /** The base object (its form id) and its record type. */
+  readonly base: number;
   readonly baseType: string;
   readonly editorId: string;
   /** The base object's name (FULL), e.g. "Door"; empty if it has none. */
@@ -55,6 +58,10 @@ export interface CellObject {
   readonly teleport?: Teleport;
   /** Sounds of using it (SNDR): doors and containers opening and closing, activators. */
   readonly sounds?: ObjectSounds;
+  /** Carryable items: what the crosshair shows of them (weight and value). */
+  readonly item?: { readonly weight: number; readonly value: number };
+  /** ACTI / FLOR RNAM: the verb its activation prompt shows instead of the default. */
+  readonly activateText?: string;
 }
 
 /** A placed actor (ACHR): its base and placement; its look is resolved when it is shown. */
@@ -592,8 +599,12 @@ export async function loadCellData(
       if (base.type !== 'LIGH' && base.type !== 'SOUN') skip(`${base.type} without a world model`);
       continue;
     }
+    const item = parseItem(base);
+    const activateText =
+      base.type === 'ACTI' || base.type === 'FLOR' ? base.text('RNAM') : undefined;
     objects.push({
       reference: ref.formId,
+      base: ref.base,
       baseType: base.type,
       editorId: base.editorId ?? '',
       name: base.text('FULL') ?? '',
@@ -606,6 +617,8 @@ export async function loadCellData(
       ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
       ...(base.type === 'DOOR' && { teleport: parseTeleport(record) }),
       ...objectSoundsOf(base),
+      ...(item && { item: { weight: item.weight, value: item.value } }),
+      ...(activateText && { activateText }),
     });
   }
 

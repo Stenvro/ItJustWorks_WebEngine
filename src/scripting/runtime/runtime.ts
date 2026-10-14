@@ -896,7 +896,7 @@ export class ScriptRuntime implements VmHost {
   /** Whether a reference is enabled: its own state, or its enable parent's. */
   async isEnabled(reference: number, depth = 0): Promise<boolean> {
     const state = this.state.references.get(reference);
-    if (state?.deleted) return false;
+    if (state?.deleted || state?.container !== undefined) return false;
     // A persistent reference's enable parent and flags are in the index (no read).
     const indexed = this.#index?.flags.get(reference);
     let parent: { readonly reference: number; readonly opposite: boolean } | undefined;
@@ -1040,6 +1040,15 @@ export class ScriptRuntime implements VmHost {
 
   move(reference: number, position: Vec3, rotation?: Vec3, cell?: number, world?: number): void {
     const state = this.state.reference(reference);
+    // A reference taken into a container comes back out into the world.
+    const taken = state.container;
+    if (taken) {
+      const items = this.state.inventories.get(taken.holder);
+      const have = items?.get(taken.base) ?? 0;
+      items?.set(taken.base, Math.max(0, have - taken.count));
+      delete state.container;
+      this.world.enableChanged?.(reference, true);
+    }
     state.position = position;
     if (rotation) state.rotation = rotation;
     if (cell !== undefined) {
@@ -1406,6 +1415,32 @@ export class ScriptRuntime implements VmHost {
         );
       }
     }
+  }
+
+  /**
+   * An actor takes an item lying in the world (the player's Take): the reference leaves the
+   * world (its container holds it from now on) and its count (XCNT) joins the actor's items;
+   * its scripts get OnContainerChanged, the actor OnItemAdded with the reference.
+   */
+  async pickUp(reference: number, by: number): Promise<void> {
+    const base = await this.baseOf(reference);
+    if (base === undefined) return;
+    const created = this.state.created.get(reference);
+    const xcnt = created ? undefined : (await this.forms.record(reference))?.fields.first('XCNT');
+    const count = created?.count ?? (xcnt && xcnt.length >= 4 ? view(xcnt).getInt32(0, true) : 1);
+    const items = await this.inventory(by);
+    this.state.reference(reference).container = { holder: by, base, count: Math.max(1, count) };
+    this.world.enableChanged?.(reference, false);
+    items.set(base, (items.get(base) ?? 0) + Math.max(1, count));
+    this.detach(this.sendEvent(reference, 'OnContainerChanged', [this.referenceHandle(by), null]));
+    this.detach(
+      this.sendEvent(by, 'OnItemAdded', [
+        this.formHandle(base),
+        Math.max(1, count),
+        this.referenceHandle(reference),
+        null,
+      ]),
+    );
   }
 
   async removeAllItems(container: number, to: number | undefined): Promise<void> {

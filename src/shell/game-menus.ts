@@ -14,6 +14,7 @@ import { inventoryModel } from './inventory-menu.ts';
 import { magicModel } from './magic-menu.ts';
 import { ItemMenu, type ItemMenuModel } from './item-menu.ts';
 import { FavoritesMenu } from './favorites-menu.ts';
+import { containerModel } from './container-menu.ts';
 
 /** The menus' depth among the game's menus (over the HUD, under message boxes). */
 const MENU_DEPTH = 6;
@@ -96,7 +97,7 @@ export class GameMenus {
             : name === 'Favorites'
               ? this.#openFavorites()
               : (() => {
-                  // TODO(M9): the inventory, magic, skills, map, favorites and wait menus.
+                  // TODO(M9): the skills, map and wait menus.
                   if (!this.#missing.has(name)) {
                     this.#missing.add(name);
                     this.#terminal.log('ui', `the ${name} menu is not built yet`, 'warn');
@@ -111,6 +112,27 @@ export class GameMenus {
       );
       this.#closeOpen();
     });
+  }
+
+  /**
+   * A container's menu (a chest opened, a corpse searched); `closed` once it has closed (at
+   * once if another menu is open).
+   */
+  openContainer(reference: number, closed: () => void): void {
+    if (this.#open || this.#session.menuMode) {
+      closed();
+      return;
+    }
+    this.#openItems(containerModel(this.#session, reference, this.#inventory), closed).catch(
+      (error: unknown) => {
+        this.#terminal.log(
+          'ui',
+          `the container menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+        this.#closeOpen();
+      },
+    );
   }
 
   /** Closes the menu open (Play ends). */
@@ -129,7 +151,7 @@ export class GameMenus {
    * An item menu (inventory, magic), the HUD aside; it closes itself after its fade (CloseMenu),
    * back to the tween menu if the player went there.
    */
-  async #openItems(model: ItemMenuModel): Promise<void> {
+  async #openItems(model: ItemMenuModel, closed?: () => void): Promise<void> {
     const leaveMenuMode = this.#enterMenuMode();
     const hud = this.#session.hud;
     hud.shown(false);
@@ -138,6 +160,7 @@ export class GameMenus {
       leave: () => {
         hud.shown(true);
         leaveMenuMode();
+        closed?.();
       },
     };
     this.#open = open;

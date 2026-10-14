@@ -117,7 +117,8 @@ export class HudController implements HudSink {
     const menu = this.#menu;
     if (!menu) return;
     // (abActivate, aName, abShowButton, abTextOnly, abFavorMode, abShowCrosshair, aWeight,
-    // aCost, aFieldValue, aFieldText): the verb over the name, the activate button shown.
+    // aCost, aFieldValue, aFieldText): the verb over the name, the activate button shown; an
+    // item's weight and value under them (the HUD leaves out those that are undefined).
     menu.call(
       'SetCrosshairTarget',
       target !== undefined,
@@ -126,10 +127,10 @@ export class HudController implements HudSink {
       false,
       false,
       true,
-      0,
-      0,
-      0,
-      '',
+      target?.item?.weight ?? null,
+      target?.item?.value ?? null,
+      null,
+      null,
     );
   }
 

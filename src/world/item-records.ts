@@ -121,6 +121,9 @@ export interface ItemRecord {
   /** EITM: its enchantment, EAMT: its charge. */
   readonly enchantment: number | undefined;
   readonly charge: number;
+  /** YNAM / ZNAM: the sounds of picking it up and putting it down (SNDR). */
+  readonly pickUpSound: number | undefined;
+  readonly putDownSound: number | undefined;
   readonly effects: readonly ItemEffect[];
   readonly weapon?: WeaponData;
   readonly armor?: ArmorData;
@@ -195,6 +198,8 @@ export function parseItem(record: RecordSource): ItemRecord | undefined {
     femaleModel: type === 'ARMO' ? record.fields.zstring('MOD4') : undefined,
     enchantment: record.formIdField('EITM'),
     charge: u16(record.fields.first('EAMT'), 0),
+    pickUpSound: record.formIdField('YNAM'),
+    putDownSound: record.formIdField('ZNAM'),
     effects: parseEffects(record),
   };
   switch (type) {

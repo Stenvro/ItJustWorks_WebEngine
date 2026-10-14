@@ -969,6 +969,10 @@ xEdit's TES5 definitions:
 | SCRL                   | DATA: value u32, weight f32                                                                                                                                                          | its effects                                                                                                                                                                                                         |
 | LIGH                   | DATA (48 bytes): flags u32 @12 (0x2: can be carried), value u32 @40, weight f32 @44                                                                                                  | only carryable lights are items                                                                                                                                                                                     |
 
+Every item but lights: YNAM and ZNAM, the sounds (SNDR) of picking it up and putting it down; where
+an item names none the default objects do (PUSG/PDSG generic, PUSW/PDSW weapons, PUSA/PDSA armor,
+PUSB/PDSB books, PUSI/PDSI ingredients). A reference's XCNT (i32) is how many of its base it is.
+
 Effects (potions, ingredients, scrolls, enchantments): EFID (the magic effect), EFIT (magnitude
 f32, area u32, duration u32), then the effect's CTDA. Magic effects (`src/world/magic-effects.ts`):
 DATA flags u32 @0 (0x1 hostile, 0x200 no duration, 0x400 no magnitude, 0x800 no area, 0x8000

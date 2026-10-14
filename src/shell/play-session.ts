@@ -44,16 +44,32 @@ const GROUND_WAIT_SECONDS = 60;
 /** Seconds on the renderer's clock (sequences and their collision run on it). */
 const clock = (): number => performance.now() / 1000;
 
-/** A door that is not a load door: its sequence state and its model's sequences. */
+/**
+ * A door that is not a load door, or a container, whose model has an open sequence: its
+ * sequence state (doors open and close as they are activated, containers while their menu is
+ * open).
+ */
 export function openable(object: CellObject, hasOpen: boolean): Playback | undefined {
-  return object.baseType === 'DOOR' && !object.teleport && hasOpen
+  return ((object.baseType === 'DOOR' && !object.teleport) || object.baseType === 'CONT') && hasOpen
     ? { sequence: undefined, start: 0 }
     : undefined;
 }
 
+/** What activating containers and items does in a running game (Play). */
+export interface ObjectUses {
+  /** A game setting's text (the prompts' verbs: sOpen, sTake, ...). */
+  text(setting: string): string;
+  /** Opens a container's menu; `closed` once the player has closed it. */
+  openContainer(reference: number, closed: () => void): void;
+  /** The player takes an item lying in the world. */
+  take(object: CellObject): void;
+}
+
 /**
  * What activating a placed object does: load doors take the player to their destination;
- * other doors open and close.
+ * other doors open and close. In a running game (`uses`) containers open their menu (their
+ * lid opening meanwhile) and items are taken. TODO(M11): flora harvested (FLOR PFIG), owned
+ * objects stolen (sSteal, sStealFrom) and locked ones picked (the lockpicking menu).
  */
 export function objectActivation(
   object: CellObject,
@@ -64,15 +80,17 @@ export function objectActivation(
   },
   /** Plays a sound (SNDR) at the object. */
   sound?: (descriptor: number, at: Vec3) => void,
+  uses?: ObjectUses,
 ): Activatable | undefined {
   const at: Vec3 = [object.world[12] ?? 0, object.world[13] ?? 0, object.world[14] ?? 0];
   const play = (descriptor: number | undefined): void => {
     if (descriptor !== undefined) sound?.(descriptor, at);
   };
+  const verb = (setting: string, english: string): string => uses?.text(setting) ?? english;
   const teleport = object.teleport;
   if (teleport) {
     return {
-      verb: 'Open',
+      verb: verb('sOpen', 'Open'),
       name: travel.name(teleport),
       activate: () => {
         play(object.sounds?.open);
@@ -81,15 +99,43 @@ export function objectActivation(
     };
   }
   const playback = instance?.playback;
-  if (playback) {
+  const sequence = (name: 'open' | 'close'): void => {
+    if (!playback) return;
+    playback.sequence = name;
+    playback.start = clock();
+  };
+  if (uses && object.baseType === 'CONT') {
+    return {
+      verb: verb('sOpen', 'Open'),
+      name: object.name,
+      activate: () => {
+        play(object.sounds?.open);
+        sequence('open');
+        uses.openContainer(object.reference, () => {
+          play(object.sounds?.close);
+          sequence('close');
+        });
+      },
+    };
+  }
+  if (uses && object.item) {
+    return {
+      verb: verb('sTake', 'Take'),
+      name: object.name,
+      item: object.item,
+      activate: () => {
+        uses.take(object);
+      },
+    };
+  }
+  if (playback && object.baseType === 'DOOR') {
     const open = playback.sequence === 'open';
     return {
-      verb: open ? 'Close' : 'Open',
+      verb: open ? verb('sClose', 'Close') : verb('sOpen', 'Open'),
       name: object.name,
       activate: () => {
         play(open ? object.sounds?.close : object.sounds?.open);
-        playback.sequence = open ? 'close' : 'open';
-        playback.start = clock();
+        sequence(open ? 'close' : 'open');
       },
     };
   }
@@ -102,6 +148,8 @@ export interface Activatable {
   readonly verb: string;
   /** What it is (a door's destination, an item's name). */
   readonly name: string;
+  /** An item's weight and value (the crosshair shows them under its name). */
+  readonly item?: { readonly weight: number; readonly value: number };
   activate(): void;
 }
 
@@ -540,7 +588,13 @@ export class PlaySession {
     }
     this.#target = target;
     if (this.#hud?.listening) {
-      this.#hud.target(target && { verb: target.verb, name: target.name });
+      this.#hud.target(
+        target && {
+          verb: target.verb,
+          name: target.name,
+          ...(target.item && { item: target.item }),
+        },
+      );
       if (this.#prompt) this.#prompt.hidden = true;
       return;
     }
