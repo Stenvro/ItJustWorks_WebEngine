@@ -257,12 +257,14 @@ moons (bits 0–5 days per phase, `0x40` Masser, `0x80` Secunda). Vanilla: 5:30�
 
 - The clock the sky follows runs at the **TimeScale** global (GLOB FLTV; Skyrim.esm: 20, a game
   day in 72 real minutes), read from the load order; the dev panel speeds it up 2×, 5×, 10× or
-  20× (as the console's `set timescale`). Only game time follows it: animations (fire, water,
-  trees) and clouds run in real time.
+  20× (as the console's `set timescale`). The sky follows it (sun, moons, clouds, colours,
+  weather); animations (fire, water, trees, people) run in real time, as in the game.
 - Cloud layers: texture fields `00TX`, `10TX`, … `90TX`, `:0TX`, … (the first character is
   `'0' + layer`), RNAM / QNAM one byte per layer: Y / X scroll speed, `(b − 127) / 1270`
-  (−0.1..0.1; read as texture widths per real second: UESP gives no unit, TODO(M13): compare
-  with the game; SkyrimClear's upper layers 0.03, the storm and overcast weathers 0), PNAM
+  (−0.1..0.1; read as texture widths per game minute, so the clouds follow the clock: UESP and
+  the Creation Kit give no unit; per real second they scrolled three times too fast and
+  ignored the TimeScale, unlike the game's clouds in timelapses. TODO(M13): compare with the
+  game; SkyrimClear's upper layers 0.03, the storm and overcast weathers 0), PNAM
   32 × 4 times × RGBA u8 colours, JNAM 32 × 4 times × f32 alpha, NAM1
   disabled-layer bits, LNAM layer count (4 or 29). Many disabled or transparent layers name
   textures that do not ship; only TESTCloudyRain shows a missing one.

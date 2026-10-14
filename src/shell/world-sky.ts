@@ -94,6 +94,8 @@ export class WorldSky {
   #hour = 10;
   readonly #session: GameSession;
   #seconds = 0;
+  /** Game minutes the clouds have scrolled for (they follow the clock). */
+  #cloudMinutes = 0;
   #lastFrame: number | undefined;
   #state: SkyState | undefined;
   #cell: string | undefined;
@@ -313,8 +315,9 @@ export class WorldSky {
       this.#lastFrame === undefined ? 0 : Math.min(0.25, (now - this.#lastFrame) / 1000);
     this.#lastFrame = now;
     this.#seconds += delta;
-    // The clock runs at the TimeScale (times the panel's fast-forward).
+    // The clock runs at the TimeScale (times the panel's fast-forward), the clouds with it.
     this.#hour += (delta * this.#session.clockRate) / 3600;
+    this.#cloudMinutes += (delta * this.#session.clockRate) / 60;
     if (this.#hour >= 24) {
       this.#hour -= 24;
       this.#session.gameDaysPassed++;
@@ -343,7 +346,7 @@ export class WorldSky {
       climate: this.#climate,
       hour: this.#hour,
       daysPassed: this.#session.gameDaysPassed,
-      seconds: this.#seconds,
+      cloudMinutes: this.#cloudMinutes,
       settings: this.#settings,
     });
     const spaces: { space: ImageSpace; weight: number }[] = [];

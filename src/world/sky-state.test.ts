@@ -135,7 +135,7 @@ describe('skyState', () => {
       climate: undefined,
       hour: 13,
       daysPassed: 0,
-      seconds: 0,
+      cloudMinutes: 0,
     });
     expect(state.skyUpper).toEqual([1 / 3, 1 / 3, 1 / 3]);
     expect(state.fogFarDistance).toBe(80000);
@@ -149,7 +149,7 @@ describe('skyState', () => {
       climate: undefined,
       hour: 1,
       daysPassed: 0,
-      seconds: 0,
+      cloudMinutes: 0,
     });
     expect(state.fogFarDistance).toBe(40000);
     expect(state.lightDirection[2]).toBeGreaterThan(0);
@@ -170,7 +170,7 @@ describe('skyState', () => {
       climate: undefined,
       hour: 13,
       daysPassed: 0,
-      seconds: 0,
+      cloudMinutes: 0,
     });
     expect(state.horizon[0]).toBeCloseTo((1 / 3 + 1) / 2, 6);
   });
@@ -192,7 +192,7 @@ describe('skyState', () => {
       climate: undefined,
       hour: 13,
       daysPassed: 0,
-      seconds: 10,
+      cloudMinutes: 10,
     });
     expect(state.clouds.map((c) => c.layer)).toEqual([3]);
     expect(state.clouds[0]?.offset[0]).toBeCloseTo(0.1, 6);
