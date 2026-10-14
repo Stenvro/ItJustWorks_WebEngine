@@ -49,7 +49,9 @@ for (const path of paths) {
 }
 
 if (violations.length > 0) {
-  console.error('Game files found — these must never be in the repo (CLAUDE.md, hard rule 1):');
+  console.error(
+    'Game files found — these must never be in the repo (README.md, "No game files in the repository"):',
+  );
   console.error(violations.join('\n'));
   console.error('\nRemove them from the index with: git rm --cached <path>');
   process.exit(1);
@@ -93,7 +95,7 @@ function checkHistory(): void {
   }
   if (found.length > 0) {
     console.error(
-      'Game files in the history — they must never be in the repo (CLAUDE.md, hard rule 1):',
+      'Game files in the history — they must never be in the repo (README.md, "No game files in the repository"):',
     );
     console.error(found.join('\n'));
     process.exit(1);
