@@ -18,6 +18,7 @@
 import { Avm1Writer, Function2Flag, Op } from '../formats/swf/avm1-writer.ts';
 import { readSwf, SwfTagCode, tagBody } from '../formats/swf/swf.ts';
 import { concatBytes, encodeTag, writeSwf } from '../formats/swf/swf-writer.ts';
+import type { Rect } from './stage-rects.ts';
 
 /** The page's function the menus' ExternalInterface calls reach (menu id, name, args...). */
 export const BRIDGE_CALL = '__itjwMenuCall';
@@ -30,9 +31,27 @@ const EXTERNAL_INTERFACE = 'flash.external.ExternalInterface';
 /** Where the bridge keeps the player's own ExternalInterface.call. */
 const ORIGINAL_CALL = '__itjwOriginalCall';
 
+/** Stage.visibleRect and Stage.safeRect as the menu starts (src/ui/stage-rects.ts). */
+export interface StageRects {
+  readonly visible: Rect;
+  readonly safe: Rect;
+}
+
 /** The bridge's actions for a menu. */
-export function bridgeActions(menu: string): Uint8Array {
+export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   const w = new Avm1Writer();
+  // Stage.visibleRect and Stage.safeRect: the menus lay themselves out by them in their first
+  // frame; the host keeps them up to date as the screen changes.
+  if (stage) {
+    for (const [name, rect] of [
+      ['visibleRect', stage.visible],
+      ['safeRect', stage.safe],
+    ] as const) {
+      w.push('Stage').op(Op.getVariable).push(name);
+      w.push('x', rect.x, 'y', rect.y, 'width', rect.width, 'height', rect.height, 4);
+      w.op(Op.initObject).op(Op.setMember);
+    }
+  }
   // _global.gfxExtensions = true
   w.push('_global').op(Op.getVariable).push('gfxExtensions', true).op(Op.setMember);
 
@@ -133,11 +152,11 @@ const HEADER_TAGS: ReadonlySet<number> = new Set([
 /**
  * The movie with the bridge first in its first frame (after its header tags), uncompressed.
  */
-export function withBridge(movieBytes: Uint8Array, menu: string): Uint8Array {
+export function withBridge(movieBytes: Uint8Array, menu: string, stage?: StageRects): Uint8Array {
   const movie = readSwf(movieBytes);
   const bridge = encodeTag(
     SwfTagCode.doAction,
-    concatBytes([bridgeActions(menu), Uint8Array.of(0)]),
+    concatBytes([bridgeActions(menu, stage), Uint8Array.of(0)]),
   );
   const parts: Uint8Array[] = [];
   let inserted = false;

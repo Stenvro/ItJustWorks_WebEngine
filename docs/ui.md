@@ -95,3 +95,14 @@ menu's properties (read by its `setupMainMenu` by index: 0 Quit, 1 saves exist (
 usable, 14 Switch transfer), then `FadeInMenu`. On PC since 1.6.1130 Mods are part of Creations
 (UESP). Creations is an online store and stays unusable (localhost only). It shows NEW, LOAD,
 CREATIONS, CREDITS, QUIT.
+
+## Stage.visibleRect and Stage.safeRect
+
+The menus lay themselves out with Scaleform's Stage extensions (their `Shared.GlobalFunc`
+`Lock("BR")` and the like): `Stage.visibleRect`, the part of the screen the movie shows in its
+stage coordinates, and `Stage.safeRect`, whose x and y are the safe zone margins ([Interface]
+`fSafeZoneX` / `fSafeZoneY`, and the Wide pair on widescreen; 15 by default, per the STEP INI
+guide). Without them every locked position is NaN and the menu vanishes. The bridge sets both
+first in the menu's first frame, for its stage shown whole on the screen; the host sets them
+again once the menu has set its own scale mode and whenever the window resizes
+(`src/ui/stage-rects.ts`).

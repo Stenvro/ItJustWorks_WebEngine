@@ -8,6 +8,8 @@
 import { INTERFACE_URL, type InterfaceFiles } from './interface-files.ts';
 import { BRIDGE_CALL, BRIDGE_GET, BRIDGE_INVOKE, BRIDGE_SET, withBridge } from './menu-bridge.ts';
 import { loadRuffle, type RuffleApi, type RufflePlayerElement } from './ruffle.ts';
+import { readSwf } from '../formats/swf/swf.ts';
+import { safeRect, scaleMode, visibleRect } from './stage-rects.ts';
 
 /**
  * What answers a menu's call to the engine: `args` as the menu passed them (a GameDelegate
@@ -39,6 +41,9 @@ export class Menu {
   /** The movie, e.g. "hudmenu.swf". */
   readonly movie: string;
   readonly element: RufflePlayerElement;
+  /** The movie's stage size in pixels. */
+  readonly stageWidth: number;
+  readonly stageHeight: number;
   readonly #api: RuffleApi;
   readonly #handlers: Map<string, MenuCallHandler>;
   readonly #unanswered: Set<string>;
@@ -51,10 +56,13 @@ export class Menu {
     element: RufflePlayerElement,
     handlers: Readonly<Record<string, MenuCallHandler>>,
     log: (message: string) => void,
+    stage: { readonly width: number; readonly height: number },
   ) {
     this.id = id;
     this.movie = movie;
     this.element = element;
+    this.stageWidth = stage.width;
+    this.stageHeight = stage.height;
     this.#api = element.ruffle();
     this.#handlers = new Map(Object.entries(handlers));
     this.#unanswered = new Set();
@@ -125,6 +133,26 @@ export class Menu {
     return false;
   }
 
+  /**
+   * Sets Stage.visibleRect and Stage.safeRect for the menu's size on screen, as GFx keeps
+   * them (src/ui/stage-rects.ts).
+   */
+  updateStage(): void {
+    const { width, height } = this.element.getBoundingClientRect();
+    if (width <= 0 || height <= 0) return;
+    const align = this.get('Stage.align');
+    const visible = visibleRect(
+      this.stageWidth,
+      this.stageHeight,
+      width,
+      height,
+      scaleMode(this.get('Stage.scaleMode')),
+      typeof align === 'string' ? align : '',
+    );
+    this.set('Stage.visibleRect', visible);
+    this.set('Stage.safeRect', safeRect(visible, width / height > 4 / 3 + 0.01));
+  }
+
   /** Puts keyboard focus on the menu (an interactive menu as it opens). */
   focus(): void {
     this.element.focus();
@@ -183,10 +211,26 @@ export class MenuHost {
     element.style.pointerEvents = options.interactive ? 'auto' : 'none';
     element.tabIndex = options.interactive ? 0 : -1;
     this.#layer.append(element);
-    const menu = new Menu(id, movie, element, options.handlers ?? {}, this.#log);
+    const { frameSize } = readSwf(bytes).header;
+    const stage = {
+      width: (frameSize.xMax - frameSize.xMin) / 20,
+      height: (frameSize.yMax - frameSize.yMin) / 20,
+    };
+    const menu = new Menu(id, movie, element, options.handlers ?? {}, this.#log, stage);
+    // The rects the menu starts with: its stage shown whole (showAll, Ruffle's default) on
+    // the layer; updateStage corrects them once the menu has set its own scale mode.
+    const view = this.#layer.getBoundingClientRect();
+    const visible = visibleRect(
+      stage.width,
+      stage.height,
+      view.width || stage.width,
+      view.height || stage.height,
+      'showAll',
+    );
+    const rects = { visible, safe: safeRect(visible, view.width / view.height > 4 / 3 + 0.01) };
     this.#menus.set(id, menu);
     await menu.api.load({
-      data: withBridge(bytes, id),
+      data: withBridge(bytes, id, rects),
       swfFileName: movie,
       base: INTERFACE_URL,
       allowScriptAccess: true,
@@ -205,6 +249,7 @@ export class MenuHost {
     if (!(await menu.waitFor('_global.gfxExtensions'))) {
       this.#log(`${movie} did not start playing`);
     }
+    menu.updateStage();
     if (options.interactive) menu.focus();
     return menu;
   }
@@ -222,6 +267,7 @@ export class MenuHost {
     this.closeAll();
     this.#stopServing?.();
     this.#stopServing = undefined;
+    window.removeEventListener('resize', this.#resized);
     if (window[BRIDGE_GLOBAL] === this.#dispatch) window[BRIDGE_GLOBAL] = undefined;
   }
 
@@ -229,8 +275,13 @@ export class MenuHost {
   #start(): void {
     if (this.#stopServing) return;
     this.#stopServing = this.#files.serve();
+    window.addEventListener('resize', this.#resized);
     window[BRIDGE_GLOBAL] = this.#dispatch;
   }
+
+  readonly #resized = (): void => {
+    for (const menu of this.#menus.values()) menu.updateStage();
+  };
 
   readonly #dispatch = (menu: string, name: string, ...args: unknown[]): unknown =>
     this.#menus.get(menu)?.received(name, args);
