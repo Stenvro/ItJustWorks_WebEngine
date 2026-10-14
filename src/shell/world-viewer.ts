@@ -345,8 +345,6 @@ export class WorldViewer {
   get shownWorld(): number | undefined {
     return this.#world?.record.formId;
   }
-  /** A script moved the player somewhere this view does not show. */
-  onPlayerSent: ((at: Placement) => void) | undefined;
   /** Load door destinations by destination door. */
   readonly #destinations = new Map<number, DoorDestination | undefined>();
 
@@ -476,11 +474,9 @@ export class WorldViewer {
     const at = runtime && (await runtime.placement(reference, reference !== PLAYER_REF));
     if (!at) return;
     if (reference === PLAYER_REF) {
-      // MoveTo on the player while they are played (the pointer in the scene): here, or a
-      // journey. Not while the sandbox is only looked at: a new game's opening sends the
-      // player to the cart to Helgen, and the sandbox stays where it is.
-      if (!this.#play || document.pointerLockElement !== this.#canvas) return;
-      if (!this.sendPlayer(at)) this.onPlayerSent?.(at);
+      // The sandbox is not the game: scripts do not move its player (a new game's opening
+      // would send them to the cart to Helgen). TODO(M9): Play takes the player where the
+      // scripts send them.
       return;
     }
     const created = this.#created?.get(reference);

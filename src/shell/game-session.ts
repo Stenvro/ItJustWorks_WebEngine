@@ -698,7 +698,7 @@ export class GameSession {
    * created, the quest and scene states chosen in the panel, the clock. The sandbox's clean
    * state; the viewers load their scene again to show it.
    */
-  newGame(): Promise<ScriptRuntime> {
+  resetStates(): Promise<ScriptRuntime> {
     this.scriptsReady?.retire();
     this.scriptsStarting?.retire();
     this.scriptsReady = undefined;

@@ -142,16 +142,12 @@
               <span class="panel-title">// quests</span>
               <span id="quest-count"></span>
             </summary>
-            <div class="upgrades-head quest-game">
-              <span>the running game</span>
-              <button id="quest-new-game" class="preset" type="button">new game</button>
-            </div>
             <p class="hint quest-hint">
               The game's quests with their own scripts, as the console drives them: start, stop, set
               a stage, go to whoever plays a role. Not yet: dialogue, the journal and the compass
               (M9); people acting out their roles (M10); combat and crafting (M11). Nothing is
-              saved: "new game" (or reloading) throws everything away and starts clean, and the
-              scene on screen loads again as the new game has it.
+              saved: "reset states" in the dev panel (or reloading) starts over from a new game's
+              state.
             </p>
             <div id="quest-detail" class="upgrades quest-detail" hidden></div>
             <input
@@ -172,6 +168,17 @@
     <aside id="dev-panel" class="dev-panel" aria-label="development settings">
       <details id="dev-settings" class="panel" data-panel="dev" open>
         <summary class="viewer-head"><span class="panel-title">// dev</span></summary>
+        <div class="upgrades-head dev-reset">
+          <span>game state</span>
+          <button
+            id="reset-states"
+            class="preset"
+            type="button"
+            title="throw away what the scripts and the panels changed; the scene loads again"
+          >
+            reset states
+          </button>
+        </div>
         <!-- The same controls for interiors and worldspaces. -->
         <div id="scene-status" class="upgrades" hidden></div>
         <div id="scene-play" class="upgrades" hidden>
