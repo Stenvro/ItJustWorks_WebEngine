@@ -80,20 +80,20 @@ import {
 } from '../animation/animated-skeleton.ts';
 import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import type { Placement } from '../scripting/runtime/runtime.ts';
+import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
 import {
   actorScriptGraph,
-  instanceNodeWorld,
-  MOTION_KEYFRAMED,
-  objectScriptGraph,
-  type ScriptView,
-} from './script-world.ts';
+  placedScriptGraph,
+  skeletonEventsToScripts,
+} from '../animation/script-graphs.ts';
 import { CreatedObjects } from './created-objects.ts';
 import { cellStatesElement } from './cell-states.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { TreeSway } from '../animation/tree-sway.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
-import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
+import { clock, startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import { WorldLod } from './world-lod.ts';
 import { WorldSky, type SkyElements } from './world-sky.ts';
 import type { Rgb } from '../world/cell-records.ts';
@@ -326,6 +326,13 @@ export class WorldViewer {
 
   /** Called when the player goes through a load door (the app takes them there). */
   onTravel: ((teleport: Teleport) => void) | undefined;
+
+  /** Whether the player is in this view's scene (playing it). */
+  get playing(): boolean {
+    return this.#play !== undefined;
+  }
+  /** A script moved the player somewhere this view does not show. */
+  onPlayerSent: ((at: Placement) => void) | undefined;
   /** Load door destinations by destination door. */
   readonly #destinations = new Map<number, DoorDestination | undefined>();
 
@@ -381,6 +388,17 @@ export class WorldViewer {
       void this.#showCreated(reference);
     },
     livePlacement: (reference) => {
+      const player = this.#play?.player;
+      if (reference === PLAYER_REF && player && this.#world) {
+        const [x, y, z] = player.feet;
+        const cell = this.#cells.get(cellKey(Math.floor(x / CELL_SIZE), Math.floor(y / CELL_SIZE)));
+        return {
+          position: [x, y, z],
+          rotation: [0, 0, player.yaw],
+          world: this.#world.record.formId,
+          ...(cell?.formId !== undefined && { cell: cell.formId }),
+        };
+      }
       const created = this.#created?.get(reference)?.instance?.world;
       if (created) return { position: [created[12] ?? 0, created[13] ?? 0, created[14] ?? 0] };
       for (const cell of this.#cells.values()) {
@@ -406,7 +424,9 @@ export class WorldViewer {
     graphOf: (reference) => {
       for (const cell of this.#cells.values()) {
         const placed = cell.placed.find((entry) => entry.object.reference === reference);
-        if (placed?.instance.graph) return objectScriptGraph(placed.instance.graph);
+        const skeleton = cell.objectSkeletons.find((entry) => entry.reference === reference);
+        const graph = placedScriptGraph(placed?.instance.graph, skeleton?.skeleton.behavior, clock);
+        if (graph) return graph;
         const actor = cell.actors.find((entry) => entry.actor.reference === reference);
         if (actor?.behavior) return actorScriptGraph(actor.behavior);
       }
@@ -440,6 +460,16 @@ export class WorldViewer {
     const runtime = this.#session?.scriptsReady;
     const at = runtime && (await runtime.placement(reference));
     if (!at) return;
+    if (reference === PLAYER_REF) {
+      // MoveTo on the player: in this worldspace, or a journey to where the script sent them.
+      if (!this.#play) return;
+      if (at.world !== undefined && at.world === this.#world?.record.formId) {
+        this.#play.placePlayer(at.position, at.rotation[2]);
+      } else {
+        this.onPlayerSent?.(at);
+      }
+      return;
+    }
     const created = this.#created?.get(reference);
     if (created) {
       const world = referenceMatrix({
@@ -1403,6 +1433,11 @@ export class WorldViewer {
         graph.onEvent = (event) =>
           this.#session?.scriptsReady?.animationEvent(object.reference, event);
       const skeletal = startPlacedSkeleton(model, object.reference);
+      if (skeletal) {
+        skeletonEventsToScripts(skeletal.skeleton, (event) =>
+          this.#session?.scriptsReady?.animationEvent(object.reference, event),
+        );
+      }
       // Bodies that move nodes one by one pose the model (ragdolls, hinged signs); objects
       // simulated as one body get a matrix of their own.
       const articulated = skeletal ? undefined : articulatedPose(model.nodes, collisions[i]);

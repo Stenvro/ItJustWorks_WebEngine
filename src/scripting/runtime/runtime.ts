@@ -48,8 +48,8 @@ export interface WorldBridge {
   moved?(reference: number): void;
   /** A reference was created (PlaceAtMe, an alias's Create Reference). */
   created?(reference: number): void;
-  /** Where a loaded reference is now (actors and simulated objects move). */
-  livePlacement?(reference: number): { position: Vec3; rotation?: Vec3 } | undefined;
+  /** Where a loaded reference is now (actors and simulated objects move; the player). */
+  livePlacement?(reference: number): LivePlacement | undefined;
   /** Whether a reference's 3D is loaded (Is3DLoaded). */
   loaded?(reference: number): boolean;
   /** References whose 3D is loaded (finding references near a point). */
@@ -238,7 +238,15 @@ export interface Controls {
   aiDriven: boolean;
 }
 
-interface Placement {
+/** Where the world shows a reference now; `cell` (and `world`) where it walked to. */
+export interface LivePlacement {
+  readonly position: Vec3;
+  readonly rotation?: Vec3;
+  readonly cell?: number;
+  readonly world?: number;
+}
+
+export interface Placement {
   readonly position: Vec3;
   readonly rotation: Vec3;
   readonly cell: number | undefined;
@@ -968,14 +976,20 @@ export class ScriptRuntime implements VmHost {
     const editor = await this.#editorPlacement(reference);
     const position = live?.position ?? state?.position ?? editor?.position;
     if (!position) return undefined;
+    const rotation = live?.rotation ?? state?.rotation ?? editor?.rotation ?? [0, 0, 0];
+    const scale = state?.scale ?? editor?.scale ?? 1;
+    // The cell it walked into (the player through a door) over the one a script left it in.
+    if (live?.cell !== undefined) {
+      return { position, rotation, cell: live.cell, world: live.world, scale };
+    }
     const editorCell = this.forms.db.cellOfReference(reference);
     const cell = state?.cell ?? editorCell;
     return {
       position,
-      rotation: live?.rotation ?? state?.rotation ?? editor?.rotation ?? [0, 0, 0],
+      rotation,
       cell,
       world: state?.world ?? (cell === undefined ? undefined : this.forms.db.worldOfCell(cell)),
-      scale: state?.scale ?? editor?.scale ?? 1,
+      scale,
     };
   }
 
@@ -1638,7 +1652,7 @@ export class ScriptRuntime implements VmHost {
     return this.sceneActors.get(reference);
   }
 
-  // --- Skills, story events, finding references (TODO(M8)/(M11)) ---------------------------
+  // --- Skills (their experience: TODO(M11)), story events, finding references --------------
 
   advanceSkill(skill: string, magnitude: number): void {
     const key = skill.toLowerCase();

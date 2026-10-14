@@ -81,18 +81,19 @@ import {
 } from '../animation/animated-skeleton.ts';
 import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { matches, renderResults } from './finder.ts';
+import type { Placement } from '../scripting/runtime/runtime.ts';
+import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
 import {
   actorScriptGraph,
-  instanceNodeWorld,
-  MOTION_KEYFRAMED,
-  objectScriptGraph,
-  type ScriptView,
-} from './script-world.ts';
+  placedScriptGraph,
+  skeletonEventsToScripts,
+} from '../animation/script-graphs.ts';
 import { CreatedObjects } from './created-objects.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
-import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
+import { clock, startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
 
 export interface SearchElements {
@@ -119,7 +120,6 @@ export interface ViewerElements {
 }
 
 const MODEL_VIEW: OrbitView = { up: 'z', yaw: 0.6, pitch: 0.3, idleSpin: 10 };
-const MAX_RESULTS = 80;
 /** Camera height above the floor when entering a cell (≈ 1.7 m). */
 const EYE_HEIGHT = 120;
 
@@ -156,52 +156,6 @@ const numberFormat = new Intl.NumberFormat('en-US');
 const hex = (formId: number): string => formId.toString(16).toUpperCase().padStart(8, '0');
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
-
-function matches<T>(items: readonly T[], text: (item: T) => string, query: string): T[] {
-  const terms = query
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((term) => term !== '');
-  const found: T[] = [];
-  for (const item of items) {
-    const haystack = text(item);
-    if (terms.every((term) => haystack.includes(term))) {
-      found.push(item);
-      if (found.length >= MAX_RESULTS) break;
-    }
-  }
-  return found;
-}
-
-function renderResults<T>(
-  list: HTMLOListElement,
-  items: readonly T[],
-  label: (item: T) => string,
-  open: (item: T) => void,
-): void {
-  if (items.length === 0) {
-    const empty = document.createElement('li');
-    empty.className = 'no-results';
-    empty.textContent = 'no matches';
-    list.replaceChildren(empty);
-    return;
-  }
-  list.replaceChildren(
-    ...items.map((item) => {
-      const li = document.createElement('li');
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'result';
-      button.textContent = label(item);
-      button.title = label(item);
-      button.addEventListener('click', () => {
-        open(item);
-      });
-      li.append(button);
-      return li;
-    }),
-  );
-}
 
 export class ModelViewer {
   readonly #renderer: Renderer;
@@ -273,6 +227,13 @@ export class ModelViewer {
 
   /** Called when the player goes through a load door (the app takes them there). */
   onTravel: ((teleport: Teleport) => void) | undefined;
+
+  /** Whether the player is in this view's scene (playing it). */
+  get playing(): boolean {
+    return this.#play !== undefined;
+  }
+  /** A script moved the player somewhere this view does not show. */
+  onPlayerSent: ((at: Placement) => void) | undefined;
   /** Load door destinations by destination door. */
   readonly #destinations = new Map<number, DoorDestination | undefined>();
 
@@ -330,6 +291,15 @@ export class ModelViewer {
     loadedReferences: () => this.#loadedReferences(),
     loaded: (reference) => this.#loadedReferences().includes(reference),
     livePlacement: (reference) => {
+      const player = this.#play?.player;
+      if (reference === PLAYER_REF && player && this.#cell) {
+        const [x, y, z] = player.feet;
+        return {
+          position: [x, y, z],
+          rotation: [0, 0, player.yaw],
+          cell: this.#cell.data.cell.formId,
+        };
+      }
       const world =
         this.#actorsShown.find((actor) => actor.actor.reference === reference)?.instances[0]
           ?.world ??
@@ -348,7 +318,11 @@ export class ModelViewer {
       void this.#scriptMoved(reference);
     },
     graphOf: (reference) =>
-      objectScriptGraph(this.#instances.get(reference)?.graph) ??
+      placedScriptGraph(
+        this.#instances.get(reference)?.graph,
+        this.#allObjectSkeletons.find((entry) => entry.reference === reference)?.skeleton.behavior,
+        clock,
+      ) ??
       actorScriptGraph(
         this.#actorsShown.find((actor) => actor.actor.reference === reference)?.behavior,
       ),
@@ -401,6 +375,16 @@ export class ModelViewer {
     const runtime = this.#session?.scriptsReady;
     const at = runtime && (await runtime.placement(reference));
     if (!at) return;
+    if (reference === PLAYER_REF) {
+      // MoveTo on the player: here, or a journey to where the script sent them.
+      if (!this.#play) return;
+      if (at.world === undefined && at.cell === this.#cell?.data.cell.formId) {
+        this.#play.placePlayer(at.position, at.rotation[2]);
+      } else {
+        this.onPlayerSent?.(at);
+      }
+      return;
+    }
     const actor = this.#actorsShown.find((placed) => placed.actor.reference === reference);
     if (actor) {
       moveActor(actor, at.position, at.rotation[2], this.#play?.physics);
@@ -947,7 +931,12 @@ export class ModelViewer {
           graph.onEvent = (event) =>
             this.#session?.scriptsReady?.animationEvent(object.reference, event);
         const skeletal = startPlacedSkeleton(model, object.reference);
-        if (skeletal) skeletons.push({ reference: object.reference, skeleton: skeletal.skeleton });
+        if (skeletal) {
+          skeletons.push({ reference: object.reference, skeleton: skeletal.skeleton });
+          skeletonEventsToScripts(skeletal.skeleton, (event) =>
+            this.#session?.scriptsReady?.animationEvent(object.reference, event),
+          );
+        }
         // Bodies that move nodes one by one pose the model (ragdolls, hinged signs); objects
         // simulated as one body get a matrix of their own.
         const articulated = skeletal ? undefined : articulatedPose(model.nodes, collision);

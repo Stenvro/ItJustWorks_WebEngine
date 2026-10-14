@@ -4,7 +4,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ScriptLibrary } from '../src/scripting/script-library.ts';
-import { ScriptRuntime } from '../src/scripting/runtime/runtime.ts';
+import { ScriptRuntime, type WorldBridge } from '../src/scripting/runtime/runtime.ts';
 import { QuestFlag } from '../src/world/quest-records.ts';
 import { ActorValue } from '../src/world/actor-values.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
@@ -20,6 +20,7 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
   let db: RecordDatabase;
   let runtime: ScriptRuntime;
   const warnings: string[] = [];
+  const world: WorldBridge = {};
 
   beforeAll(async () => {
     vfs = await Vfs.mount(openGameFolder());
@@ -28,7 +29,10 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
       const path = `scripts\\${name}.pex`;
       return vfs.has(path) ? vfs.read(path) : undefined;
     });
-    runtime = new ScriptRuntime(db, library, { warn: (message) => warnings.push(message) });
+    runtime = new ScriptRuntime(db, library, {
+      world,
+      warn: (message) => warnings.push(message),
+    });
     await runtime.newGame();
     // Ten seconds of play at TimeScale 20.
     for (let t = 0; t < 10; t += 0.1) {
@@ -50,6 +54,25 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
       if ((runtime.state.quests.get(formId)?.starts ?? 0) === 0) missed.push(quest.editorId);
     }
     expect(missed).toEqual([]);
+  });
+
+  it('places the player where the world shows them, in the cell they walked into', async () => {
+    // A script left the player somewhere; the player then walked through a door.
+    const interior = 0x000165a7;
+    world.livePlacement = (reference) =>
+      reference === PLAYER
+        ? { position: [1, 2, 3], rotation: [0, 0, 1], cell: interior }
+        : undefined;
+    try {
+      expect(await runtime.placement(PLAYER)).toMatchObject({
+        position: [1, 2, 3],
+        rotation: [0, 0, 1],
+        cell: interior,
+        world: undefined,
+      });
+    } finally {
+      delete world.livePlacement;
+    }
   });
 
   it('runs the opening, its stages choosing their log entry (no debug fragments)', () => {

@@ -266,7 +266,7 @@ export class ObjectGraph {
         return;
       default:
         // Skeletal clips (hkbClipGenerator) run in the full runtime beside this one
-        // (src/animation/animated-skeleton.ts); TODO(M8): one runtime for both.
+        // (src/animation/animated-skeleton.ts); scripts reach both (src/shell/script-world.ts).
         return;
     }
   }
