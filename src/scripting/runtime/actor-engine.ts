@@ -353,6 +353,26 @@ export class ActorEngine {
     return ranks;
   }
 
+  /**
+   * It offers its services now (GetOffersServicesNow): it is in a vendor faction (rank 0 or
+   * more) whose hours (VEND) include the game's hour now (hours past midnight wrap).
+   */
+  async offersServicesNow(reference: number): Promise<boolean> {
+    const hour = this.#runtime.gameHour;
+    for (const [formId, rank] of await this.factionsOf(reference)) {
+      if (rank < 0) continue;
+      const vendor = (await this.faction(formId))?.vendor;
+      if (!vendor) continue;
+      const { startHour, endHour } = vendor;
+      const open =
+        startHour <= endHour
+          ? hour >= startHour && hour < endHour
+          : hour >= startHour || hour < endHour;
+      if (open) return true;
+    }
+    return false;
+  }
+
   setFactionRank(reference: number, faction: number, rank: number): void {
     this.#runtime.state.actor(reference).factions.set(faction, rank);
   }
@@ -550,6 +570,11 @@ export class ActorEngine {
     const state = this.#runtime.state.actor(reference);
     state.dead = true;
     if (killer !== undefined) state.killer = killer;
+    const base = await this.#runtime.baseOf(reference);
+    if (base !== undefined) {
+      const counts = this.#runtime.state.deadCounts;
+      counts.set(base, (counts.get(base) ?? 0) + 1);
+    }
     this.#own(reference, ActorValue.health).damage = (
       await this.value(reference, ActorValue.health)
     ).max;

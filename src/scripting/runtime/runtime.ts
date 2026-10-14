@@ -332,6 +332,8 @@ export class ScriptRuntime implements VmHost {
   perkPoints = 0;
   lastHorse: number | undefined;
   inMenuMode = false;
+  /** The actor the player is in a conversation with (IsInDialogueWithPlayer), if any. */
+  dialogueSpeaker: number | undefined;
   frameRate = 60;
   readonly stats = new Map<string, number>();
   /** Words of power: learned (false) or unlocked (true). */

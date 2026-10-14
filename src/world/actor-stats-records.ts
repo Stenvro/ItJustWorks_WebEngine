@@ -245,7 +245,16 @@ export interface FactionRecord {
   readonly reactions: readonly FactionReaction[];
   /** RNAM ranks (their index). */
   readonly ranks: readonly number[];
+  /** A vendor faction's hours (DATA flag 0x4000; VEND: start, end, radius). */
+  readonly vendor?: {
+    readonly startHour: number;
+    readonly endHour: number;
+    readonly radius: number;
+  };
 }
+
+/** FACT DATA flags. */
+export const FactionFlag = { vendor: 0x4000 } as const;
 
 export function parseFaction(record: RecordSource): FactionRecord {
   const data = record.fields.first('DATA');
@@ -261,6 +270,25 @@ export function parseFaction(record: RecordSource): FactionRecord {
     ranks: record.fields
       .all('RNAM')
       .map((rnam) => (rnam.length >= 4 ? view(rnam).getUint32(0, true) : 0)),
+    ...vendorOf(record, data),
+  };
+}
+
+/** VEND (UESP): start hour u16, end hour u16, radius u32, then its buy/sell flags. */
+function vendorOf(
+  record: RecordSource,
+  data: Uint8Array | undefined,
+): Pick<FactionRecord, 'vendor'> {
+  const flags = data && data.length >= 4 ? view(data).getUint32(0, true) : 0;
+  const vend = record.fields.first('VEND');
+  if ((flags & FactionFlag.vendor) === 0 || !vend || vend.length < 8) return {};
+  const v = view(vend);
+  return {
+    vendor: {
+      startHour: v.getUint16(0, true),
+      endHour: v.getUint16(2, true),
+      radius: v.getUint32(4, true),
+    },
   };
 }
 
