@@ -166,6 +166,41 @@
       </section>
     </main>
 
+    <!-- Play starts at the game's launcher: Play, Options, Exit. -->
+    <section id="launcher" class="launcher" aria-label="launcher" hidden>
+      <p class="launcher-title">The Elder Scrolls V: Skyrim Special Edition</p>
+      <div class="launcher-buttons">
+        <button id="launcher-play" type="button">Play</button>
+        <button id="launcher-options" type="button">Options</button>
+        <button id="launcher-exit" type="button">Exit</button>
+      </div>
+      <dialog id="launcher-options-dialog" class="launcher-dialog">
+        <h2>Options</h2>
+        <p class="launcher-row">
+          <span>Graphics Adapter</span><output id="launcher-adapter"></output>
+        </p>
+        <div id="launcher-detail" class="launcher-row">
+          <span>Detail</span>
+          <span class="launcher-presets">
+            <button type="button" data-detail="low">Low</button>
+            <button type="button" data-detail="medium">Medium</button>
+            <button type="button" data-detail="high">High</button>
+            <button type="button" data-detail="ultra">Ultra</button>
+          </span>
+        </div>
+        <label class="launcher-row">
+          <span>Windowed Mode</span><input id="launcher-windowed" type="checkbox" />
+        </label>
+        <p class="hint">
+          The engine draws at Ultra for now; the presets and the Advanced settings follow in M13.
+        </p>
+        <div class="launcher-dialog-buttons">
+          <button id="launcher-ok" type="button">OK</button>
+          <button id="launcher-cancel" type="button">Cancel</button>
+        </div>
+      </dialog>
+    </section>
+
     <!-- Development settings of the scene on screen, apart from what to load. -->
     <aside id="dev-panel" class="dev-panel" aria-label="development settings">
       <details id="dev-settings" class="panel" data-panel="dev" open>

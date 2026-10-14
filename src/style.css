@@ -1232,3 +1232,98 @@ body[data-screen='play'] .backdrop,
 body[data-screen='play'] .hud > :not(.hud-brand) {
   display: none;
 }
+
+/* --- The launcher: Play, Options, Exit, before the game's main menu ------- */
+
+.launcher {
+  position: fixed;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 28px;
+  padding: 0 8vw;
+  background: radial-gradient(ellipse at 30% 50%, #10141a 0%, var(--bg) 75%);
+}
+
+.launcher-title {
+  font-family: var(--serif);
+  font-size: 1.1rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--bone);
+}
+
+.launcher-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 16rem;
+}
+
+.launcher-buttons button {
+  padding: 12px 18px;
+  font-family: var(--serif);
+  font-size: 1.05rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+
+.launcher-dialog {
+  width: min(32rem, calc(100% - 32px));
+  padding: 22px 24px;
+  color: var(--bone);
+  background: rgb(6 8 11 / 0.97);
+  border: 1px solid var(--line-strong);
+}
+
+.launcher-dialog::backdrop {
+  background: rgb(0 0 0 / 0.6);
+}
+
+.launcher-dialog h2 {
+  margin: 0 0 16px;
+  font-family: var(--serif);
+  font-size: 1rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+}
+
+.launcher-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin: 0 0 12px;
+  font-size: 13px;
+}
+
+.launcher-presets {
+  display: flex;
+  gap: 6px;
+}
+
+.launcher-presets button {
+  padding: 4px 10px;
+  font-size: 11px;
+}
+
+.launcher-presets button.chosen {
+  color: var(--gold);
+  border-color: var(--gold);
+}
+
+.launcher-dialog-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+body[data-screen='launcher'] .shell,
+body[data-screen='launcher'] .dev-panel,
+body[data-screen='launcher'] .hud > :not(.hud-brand) {
+  display: none;
+}
