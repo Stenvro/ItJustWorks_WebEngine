@@ -113,9 +113,10 @@ export interface SwfFont {
 /** Reads a movie's header and tags; a compressed body is inflated. */
 export function readSwf(file: Uint8Array): SwfMovie {
   if (file.length < 8) throw new FormatError('SWF too short', 0);
-  const signature = String.fromCharCode(file[0]!, file[1]!, file[2]!);
-  const version = file[3]!;
-  const fileLength = new DataView(file.buffer, file.byteOffset + 4, 4).getUint32(0, true);
+  const head = new BinaryReader(file);
+  const signature = String.fromCharCode(head.u8(), head.u8(), head.u8());
+  const version = head.u8();
+  const fileLength = head.u32();
   let bytes: Uint8Array;
   switch (signature) {
     case 'FWS':
