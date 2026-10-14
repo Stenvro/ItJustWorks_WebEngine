@@ -1,5 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import { devGamedata } from './tools/dev-gamedata-plugin.ts';
+import { ruffle } from './tools/ruffle-plugin.ts';
 
 // Cross-origin isolation is required for SharedArrayBuffer (workers, WASM threads).
 const isolationHeaders = {
@@ -9,7 +10,7 @@ const isolationHeaders = {
 
 // Hard rule 4: localhost only.
 export default defineConfig({
-  plugins: [devGamedata()],
+  plugins: [devGamedata(), ruffle()],
   server: { host: 'localhost', port: 5173, strictPort: true, headers: isolationHeaders },
   preview: { host: 'localhost', port: 4173, strictPort: true, headers: isolationHeaders },
   build: { sourcemap: true },

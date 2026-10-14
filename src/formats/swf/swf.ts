@@ -22,6 +22,7 @@ export const SwfTagCode = {
   exportAssets: 56,
   importAssets: 57,
   doInitAction: 59,
+  scriptLimits: 65,
   fileAttributes: 69,
   importAssets2: 71,
   defineFontAlignZones: 73,
