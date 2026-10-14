@@ -1164,21 +1164,23 @@ export class ScriptRuntime implements VmHost {
   }
 
   /** A new reference (PlaceAtMe, an alias's Create Reference), at or in another one. */
-  createReference(base: number, at: number | undefined, inside: boolean): number {
+  async createReference(base: number, at: number | undefined, inside: boolean): Promise<number> {
     const formId = this.state.create(base);
     if (inside && at !== undefined) {
-      const items = this.state.inventories.get(at) ?? new Map<number, number>();
-      this.state.inventories.set(at, items);
+      const items = await this.inventory(at);
       items.set(base, (items.get(base) ?? 0) + 1);
       return formId;
     }
-    if (at !== undefined) {
-      const from = this.state.references.get(at);
+    const placement = at === undefined ? undefined : await this.placement(at);
+    if (placement) {
       const reference = this.state.reference(formId);
-      if (from?.position) reference.position = [...from.position];
-      reference.cell = from?.cell;
-      reference.world = from?.world;
+      reference.position = [...placement.position];
+      reference.rotation = [...placement.rotation];
+      reference.cell = placement.cell;
+      reference.world = placement.world;
     }
+    this.#initialized.add(formId);
+    await this.vm.startInitialize(this.referenceHandle(formId));
     this.world.created?.(formId);
     return formId;
   }
@@ -1194,8 +1196,9 @@ export class ScriptRuntime implements VmHost {
       reference.cell = placement.cell;
       reference.world = placement.world;
     }
-    this.world.created?.(formId);
+    this.#initialized.add(formId);
     await this.vm.startInitialize(this.referenceHandle(formId));
+    this.world.created?.(formId);
     return formId;
   }
 

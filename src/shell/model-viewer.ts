@@ -82,6 +82,7 @@ import {
 import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
+import { CreatedObjects } from './created-objects.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
@@ -276,7 +277,9 @@ export class ModelViewer {
    * TODO(M9): the activator's own prompt (ACTI RNAM "activate text override").
    */
   #activatable(reference: number): Activatable | undefined {
-    const object = this.#cell?.data.objects.find((candidate) => candidate.reference === reference);
+    const object =
+      this.#cell?.data.objects.find((candidate) => candidate.reference === reference) ??
+      this.#created?.get(reference)?.object;
     if (!object) return undefined;
     const fallback = this.#defaultActivation(reference);
     const runtime = this.#session?.scriptsReady;
@@ -310,9 +313,14 @@ export class ModelViewer {
   /** The cell's references with scripts (activating them tells the scripts). */
   #scripted = new Set<number>();
   #detachScripts: (() => void) | undefined;
+  /** What the scripts created in the cell on screen (PlaceAtMe). */
+  #created: CreatedObjects | undefined;
 
   /** What the running game's scripts see of, and do to, the cell on screen. */
   readonly #scriptView: ScriptView = {
+    created: (reference) => {
+      void this.#showCreated(reference);
+    },
     loadedReferences: () => this.#loadedReferences(),
     loaded: (reference) => this.#loadedReferences().includes(reference),
     livePlacement: (reference) => {
@@ -321,11 +329,14 @@ export class ModelViewer {
           ?.world ??
         (this.#instances.get(reference)?.motion
           ? this.#instances.get(reference)?.world
-          : undefined);
+          : undefined) ??
+        this.#created?.get(reference)?.instance?.world;
       return world && { position: [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] };
     },
     enableStatesChanged: () => {
       if (this.#cell) this.#refreshEnabled();
+      const runtime = this.#session?.scriptsReady;
+      if (runtime) this.#created?.refresh(runtime, this.#play);
     },
     moved: (reference) => {
       void this.#scriptMoved(reference);
@@ -346,7 +357,11 @@ export class ModelViewer {
       this.#defaultActivation(reference)?.activate();
     },
     triggerCount: (reference) => this.#play?.triggerCount(reference) ?? 0,
-    nodeWorld: (reference, node) => instanceNodeWorld(this.#instances.get(reference), node),
+    nodeWorld: (reference, node) =>
+      instanceNodeWorld(
+        this.#instances.get(reference) ?? this.#created?.get(reference)?.instance,
+        node,
+      ),
   };
 
   /** The references of the cell on screen whose 3D is loaded (the enabled ones drawn). */
@@ -356,7 +371,20 @@ export class ModelViewer {
     return [
       ...[...this.#instances.keys()].filter((reference) => this.#isEnabled(reference)),
       ...this.#actorsShown.map((actor) => actor.actor.reference),
+      ...[...(this.#created?.all ?? [])]
+        .filter((entry) => !entry.visibility.hidden)
+        .map((entry) => entry.reference),
     ];
+  }
+
+  /** A reference the scripts created: shown if it is in the cell on screen. */
+  async #showCreated(reference: number): Promise<void> {
+    const runtime = this.#session?.scriptsReady;
+    const cell = this.#cell;
+    if (!runtime || !cell || !this.#created) return;
+    const at = await runtime.placement(reference);
+    if (at?.cell !== cell.data.cell.formId || this.#cell !== cell) return;
+    await this.#created.add(runtime, reference, this.#play);
   }
 
   /** A script moved a reference: its drawn instance and its collision follow. */
@@ -367,6 +395,30 @@ export class ModelViewer {
     const actor = this.#actorsShown.find((placed) => placed.actor.reference === reference);
     if (actor) {
       moveActor(actor, at.position, at.rotation[2], this.#play?.physics);
+      return;
+    }
+    const created = this.#created?.get(reference);
+    if (created) {
+      const world = referenceMatrix({
+        position: at.position,
+        rotation: at.rotation,
+        scale: at.scale,
+      });
+      for (const placed of this.#play?.placementsOf(reference) ?? []) {
+        this.#play?.physics.teleport(
+          placed,
+          created.instance?.world ?? created.object.world,
+          world,
+        );
+      }
+      if (created.instance?.motion) {
+        created.instance.world.set(world);
+        created.instance.motion.version++;
+      } else {
+        // Its scene holds one instance: built again at the new place.
+        this.#created?.remove(reference, this.#play);
+        await this.#showCreated(reference);
+      }
       return;
     }
     const instance = this.#instances.get(reference);
@@ -526,6 +578,7 @@ export class ModelViewer {
     this.#session = session;
     this.#detachScripts?.();
     this.#detachScripts = session.scriptWorld.attach(this.#scriptView);
+    this.#created = new CreatedObjects(session, this.#renderer);
     const { vfs, loader } = session;
     this.#meshes = vfs.list('meshes').filter((path) => path.endsWith('.nif'));
     this.#terminal.log(
@@ -1318,12 +1371,15 @@ export class ModelViewer {
       }
       const { lighting, imageSpace, lights, decals } = view;
       this.#renderer.setView({
-        scenes: () => [scene, ...this.#avatarScenes()],
+        scenes: () => [scene, ...this.#avatarScenes(), ...(this.#created?.scenes() ?? [])],
         camera,
         lighting: () => ({
           ...lighting(),
           lights: pointLights(
-            lights.filter((light) => this.#isEnabled(light.reference)),
+            [
+              ...lights.filter((light) => this.#isEnabled(light.reference)),
+              ...(this.#created?.lights() ?? []),
+            ],
             this.#tickClock(),
             camera.position,
             (id) => this.#emittanceRgb(id),
@@ -1450,6 +1506,11 @@ export class ModelViewer {
       this.#scripted = new Set(
         await runtime.cellAttached(references, (reference) => loaded.has(reference)),
       );
+      for (const [reference, state] of runtime.state.references) {
+        if (runtime.state.created.has(reference) && state.cell === cell.data.cell.formId) {
+          await this.#showCreated(reference);
+        }
+      }
     } catch (error) {
       this.#terminal.log('papyrus', `scripts not running: ${describe(error)}`, 'warn');
     }
@@ -1471,6 +1532,7 @@ export class ModelViewer {
       );
     }
     this.#scripted = new Set();
+    this.#created?.clear(this.#play);
     this.#stopPlay();
     this.#sky?.dispose();
     this.#sky = undefined;
