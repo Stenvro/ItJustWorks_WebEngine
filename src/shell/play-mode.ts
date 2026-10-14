@@ -20,7 +20,7 @@ function mainMenuProperties(hasSaves: boolean): unknown[] {
   properties[0] = true; // QUIT shown
   properties[1] = hasSaves; // CONTINUE shown, LOAD enabled
   properties[2] = undefined; // the version text ("v " + it); none: the engine reads no exe
-  properties[3] = false; // PRESS START first (consoles)
+  properties[3] = false; // PRESS ANY BUTTON first: not here, the menu opens on its list
   // TODO(M9): the Anniversary upgrade banner (shown only to some players; not decided yet).
   properties[4] = false;
   properties[5] = false; // DOWNLOADABLE CONTENT (consoles)
@@ -99,6 +99,10 @@ export class PlayMode {
     menu.invoke('_root.MenuHolder.Menu_mc.InitExtensions');
     // TODO(M12): saves (Continue, Load).
     menu.call('sendMenuProperties', ...mainMenuProperties(false));
+    // The platform: PC with keyboard and mouse (PLATFORM_PC_KBMOUSE 0; no PS3 button swap).
+    menu.invoke('_root.MenuHolder.Menu_mc.SetPlatform', 0, false);
+    // The delete-save hint (and the version beside it) only with saves to delete.
+    menu.invoke('_root.MenuHolder.Menu_mc.ShowDeleteButtonHelp', false);
     menu.call('FadeInMenu');
     await mist;
   }

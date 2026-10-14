@@ -1,19 +1,17 @@
 // The main menu's 3D background, the game's "mist menu": the fog particles of
-// meshes\interface\intmenufogparticles.nif and the game's logo (meshes\interface\logo\logo.nif),
-// seen by a camera the INI places ([Interface] fUIMistMenu_Camera*, fUIMistMenu_CameraFOV_G),
-// the mist turned and moved by fUIMistModel_*, the logo scaled by
-// fUIMistMenu_DefaultLogoNIFScale and moved by fUIAltLogoModel_Translate*_G; no ambient light
-// (rUIMistMenu_Ambient* are 0). Notes: docs/ui.md.
+// meshes\interface\intmenufogparticles.nif rising from below and the game's logo
+// (meshes\interface\logo\logo.nif), the mist turned and moved by [Interface] fUIMistModel_*,
+// the logo scaled by fUIMistMenu_DefaultLogoNIFScale and moved by fUIAltLogoModel_Translate*_G,
+// the field of view fUIMistMenu_CameraFOV_G. The INI's camera (fUIMistMenu_Camera*_G) shows the
+// logo far smaller than the game does, and the menu has no light of its own in the data, so the
+// camera and the light are fitted to the game as it shows itself (1.7.104, a screenshot of its
+// main menu): the logo 69% of the screen's height, its middle at 36% of the width and 47% of
+// the height, lit from the upper left and the front. Notes: docs/ui.md.
 
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
 import type { Camera, Renderer, SceneView } from '../render/renderer.ts';
-import {
-  flatAmbient,
-  type GpuModel,
-  type GpuScene,
-  type ModelInstance,
-} from '../render/scene-renderer.ts';
+import { flatAmbient, type GpuScene, type ModelInstance } from '../render/scene-renderer.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
 import { IniSettings, type INI_DEFAULTS } from '../world/ini-settings.ts';
 import type { GameSession } from './game-session.ts';
@@ -22,11 +20,22 @@ import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 const FOG_MODEL = 'meshes\\interface\\intmenufogparticles.nif';
 const LOGO_MODEL = 'meshes\\interface\\logo\\logo.nif';
 
+/**
+ * The camera fitted to the game's main menu (see above): the logo's shape spans x 4..43,
+ * z -37..37 at y 14..20 (as placed); seen frontally along -Y with the 75° FOV (horizontal, of a
+ * 4:3 frame) from 92 units in front of it, 26 units to its right (screen left is +X) and 3
+ * below its middle.
+ */
+const FITTED_CAMERA: Vec3 = [-2.5, 108.4, -2.7];
+const FITTED_LOOK_AT: Vec3 = [-2.5, 0, -2.7];
+/** Towards the light: from the upper left (+X is screen left) and the front (+Y). */
+const FITTED_LIGHT: Vec3 = [0.55, 0.6, 0.58];
+
 /** A camera standing still, looking at a point (Skyrim's FOV: horizontal, of a 4:3 frame). */
 class FixedCamera implements Camera {
   readonly position: Vec3;
   readonly forward: Vec3;
-  readonly near = 15;
+  readonly near = 1;
   readonly #target: Vec3;
   readonly #fovY: number;
 
@@ -61,19 +70,10 @@ export class MistMenu {
   readonly #scene: GpuScene;
   readonly #view: SceneView;
 
-  /** The logo, a model of the menu's own. */
-  readonly #logo: GpuModel | undefined;
-
-  private constructor(
-    renderer: Renderer,
-    scene: GpuScene,
-    view: SceneView,
-    logo: GpuModel | undefined,
-  ) {
+  private constructor(renderer: Renderer, scene: GpuScene, view: SceneView) {
     this.#renderer = renderer;
     this.#scene = scene;
     this.#view = view;
-    this.#logo = logo;
   }
 
   /** Loads the mist and the logo and shows them as the renderer's view. */
@@ -81,15 +81,7 @@ export class MistMenu {
     const ini = new IniSettings(session.vfs.defaultIni);
     const n = (key: keyof (typeof INI_DEFAULTS)['Interface']): number =>
       ini.number('Interface', key);
-    // The menu sets the default logo's shader (MistMenu keeps it: CommonLibSSE-NG): with no
-    // light and no ambient (rUIMistMenu_Ambient* are 0) the logo shows by its own emissive
-    // colour. Inferred, not documented: white, faded in over fUILogoModel_FadeSecs (0.0001).
-    const [fog, logo] = await Promise.all([
-      session.model(FOG_MODEL),
-      session.ownModel(LOGO_MODEL, (material) =>
-        material.kind === 'lighting' ? { ...material, emissiveColor: [1, 1, 1] } : material,
-      ),
-    ]);
+    const [fog, logo] = await Promise.all([session.model(FOG_MODEL), session.model(LOGO_MODEL)]);
     const instances: ModelInstance[] = [];
     const skeletons: AnimatedSkeleton[] = [];
     const place = (
@@ -134,21 +126,14 @@ export class MistMenu {
       2,
     );
     const scene = renderer.scene.createScene(instances);
-    const camera = new FixedCamera(
-      [n('fUIMistMenu_CameraX_G'), n('fUIMistMenu_CameraY_G'), n('fUIMistMenu_CameraZ_G')],
-      [
-        n('fUIMistMenu_CameraLookAtX_G'),
-        n('fUIMistMenu_CameraLookAtY_G'),
-        n('fUIMistMenu_CameraLookAtZ_G'),
-      ],
-      n('fUIMistMenu_CameraFOV_G'),
-    );
+    const camera = new FixedCamera(FITTED_CAMERA, FITTED_LOOK_AT, n('fUIMistMenu_CameraFOV_G'));
     const view: SceneView = {
       scenes: () => [scene],
       camera,
       lighting: () => ({
-        sunDirection: [0, 0, 1],
-        sunColor: [0, 0, 0],
+        sunDirection: FITTED_LIGHT,
+        sunColor: [1.8, 1.8, 1.8],
+        // rUIMistMenu_Ambient*: 0 (the INI's).
         ambient: flatAmbient([0, 0, 0]),
         fog: undefined,
         lights: [],
@@ -159,13 +144,12 @@ export class MistMenu {
       },
     };
     renderer.setView(view);
-    return new MistMenu(renderer, scene, view, logo);
+    return new MistMenu(renderer, scene, view);
   }
 
   /** Takes the background away (the game starts, or Play ends). */
   hide(): void {
     if (this.#renderer.view === this.#view) this.#renderer.setView(undefined);
     this.#scene.destroy();
-    this.#logo?.destroy();
   }
 }
