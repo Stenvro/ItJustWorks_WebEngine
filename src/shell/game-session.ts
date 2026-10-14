@@ -191,6 +191,7 @@ export class GameSession {
     this.#renderer = renderer;
     this.#terminal = terminal;
     this.scriptWorld = new ScriptWorld(terminal);
+    this.scriptWorld.sounds = () => this.soundSystem;
     const loader = new AssetLoader(vfs);
     this.loader = loader;
     this.textures = new TextureCache(device, (path) => loader.loadTexture(path));
@@ -679,6 +680,10 @@ export class GameSession {
         'ok',
       );
       this.scriptsReady = runtime;
+      // Sounds and music read the running game's globals from now on.
+      void this.sounds().then((sounds) => {
+        sounds.globals = (formId) => runtime.globalNow(formId);
+      });
       this.scriptWorld.enableChanged();
       return runtime;
     });

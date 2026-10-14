@@ -80,7 +80,13 @@ import {
 } from '../animation/animated-skeleton.ts';
 import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
-import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
+import {
+  actorScriptGraph,
+  instanceNodeWorld,
+  MOTION_KEYFRAMED,
+  objectScriptGraph,
+  type ScriptView,
+} from './script-world.ts';
 import { CreatedObjects } from './created-objects.ts';
 import { cellStatesElement } from './cell-states.ts';
 import { PlayerAvatar } from './player-avatar.ts';
@@ -397,13 +403,14 @@ export class WorldViewer {
     moved: (reference) => {
       void this.#scriptMoved(reference);
     },
-    animationEvent: (reference, event) => {
+    graphOf: (reference) => {
       for (const cell of this.#cells.values()) {
         const placed = cell.placed.find((entry) => entry.object.reference === reference);
-        if (placed?.instance.graph)
-          return placed.instance.graph.send(event, performance.now() / 1000);
+        if (placed?.instance.graph) return objectScriptGraph(placed.instance.graph);
+        const actor = cell.actors.find((entry) => entry.actor.reference === reference);
+        if (actor?.behavior) return actorScriptGraph(actor.behavior);
       }
-      return false;
+      return undefined;
     },
     motionTypeChanged: (reference, motionType) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
@@ -1391,6 +1398,10 @@ export class WorldViewer {
       const directional = directionals[i];
       if (!model) return;
       const graph = startObjectGraph(model, object.reference);
+      // The events its sequences raise reach its scripts (OnAnimationEvent).
+      if (graph)
+        graph.onEvent = (event) =>
+          this.#session?.scriptsReady?.animationEvent(object.reference, event);
       const skeletal = startPlacedSkeleton(model, object.reference);
       // Bodies that move nodes one by one pose the model (ragdolls, hinged signs); objects
       // simulated as one body get a matrix of their own.

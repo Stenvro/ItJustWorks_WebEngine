@@ -8,6 +8,9 @@ import type { WorldBridge } from '../scripting/runtime/runtime.ts';
 import { multiply, type Mat4 } from '../render/math.ts';
 import type { ModelInstance } from '../render/scene-renderer.ts';
 import { matrixPlacement } from '../world/cell-loader.ts';
+import type { SoundSystem } from '../audio/sound-system.ts';
+import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
+import type { ObjectGraph } from '../animation/object-graph.ts';
 import type { Terminal } from './terminal.ts';
 
 /** A viewer that shows references to the scripts (the interior or the world viewer). */
@@ -23,8 +26,8 @@ export interface ScriptView {
   enableStatesChanged(): void;
   /** A script moved or scaled a reference. */
   moved?(reference: number): void;
-  /** A behavior graph or NIF sequence event (PlayAnimation): false if it has none. */
-  animationEvent?(reference: number, event: string): boolean;
+  /** A shown reference's running behavior graph (an object's or an actor's). */
+  graphOf?(reference: number): ScriptGraph | undefined;
   /** SetMotionType (1 dynamic .. 4 keyframed). */
   motionTypeChanged?(reference: number, motionType: number): void;
   impulse?(reference: number, direction: Vec3, magnitude: number): void;
@@ -34,6 +37,43 @@ export interface ScriptView {
   nodeWorld?(reference: number, node: string): Mat4 | undefined;
   /** What activating a reference does by default (a script's Activate). */
   activate?(reference: number): void;
+}
+
+/** A running behavior graph as scripts use it (PlayAnimation, the animation variables). */
+export interface ScriptGraph {
+  /** Sends an event: false if the graph has none so named. */
+  send(event: string): boolean;
+  variable(name: string): number | undefined;
+  setVariable(name: string, value: number): void;
+}
+
+/** An object's graph (sequences) for the scripts. */
+export function objectScriptGraph(graph: ObjectGraph | undefined): ScriptGraph | undefined {
+  return (
+    graph && {
+      send: (event) => graph.send(event, performance.now() / 1000),
+      variable: (name) => graph.variable(name),
+      setVariable: (name, value) => {
+        graph.setVariable(name, value);
+      },
+    }
+  );
+}
+
+/** An actor's behavior graph for the scripts. */
+export function actorScriptGraph(behavior: BehaviorRuntime | undefined): ScriptGraph | undefined {
+  return (
+    behavior && {
+      send: (event) => {
+        behavior.sendEvent(event);
+        return true;
+      },
+      variable: (name) => behavior.variable(name),
+      setVariable: (name, value) => {
+        behavior.setVariable(name, value);
+      },
+    }
+  );
 }
 
 /** SetMotionType's keyframed motion. */
@@ -93,8 +133,20 @@ export class ScriptWorld implements WorldBridge {
   animationEvent(reference: number, event: string): boolean {
     let handled = false;
     for (const view of this.#views)
-      handled = (view.animationEvent?.(reference, event) ?? false) || handled;
+      handled = (view.graphOf?.(reference)?.send(event) ?? false) || handled;
     return handled;
+  }
+
+  animationVariable(reference: number, name: string): number | undefined {
+    for (const view of this.#views) {
+      const value = view.graphOf?.(reference)?.variable(name);
+      if (value !== undefined) return value;
+    }
+    return undefined;
+  }
+
+  setAnimationVariable(reference: number, name: string, value: number): void {
+    for (const view of this.#views) view.graphOf?.(reference)?.setVariable(name, value);
   }
 
   motionTypeChanged(reference: number, motionType: number): void {
@@ -129,6 +181,15 @@ export class ScriptWorld implements WorldBridge {
 
   activate(reference: number): void {
     for (const view of this.#views) view.activate?.(reference);
+  }
+
+  /** The session's sound system (music types scripts add and remove). */
+  sounds: (() => SoundSystem | undefined) | undefined;
+
+  music(type: number, add: boolean): void {
+    const music = this.sounds?.()?.music;
+    if (add) music?.add(type);
+    else music?.remove(type);
   }
 
   // TODO(M9): the HUD's notifications and the game's message boxes; until then the terminal.

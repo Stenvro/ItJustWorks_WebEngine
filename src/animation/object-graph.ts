@@ -5,7 +5,7 @@
 // sequence on the mesh's controller manager. The text keys of a playing sequence ("start",
 // "end", ...) are sent to the graph as events (by name, case-insensitive), and events take
 // state machine transitions: AutoPlay's "end" moves to AutoLoop. Scripts send events too
-// (ObjectReference.PlayAnimation: TODO(M8)). Notes: docs/animation.md.
+// (ObjectReference.PlayAnimation). Notes: docs/animation.md.
 
 import { blendCurve } from './behavior-runtime.ts';
 import { evaluateNode, parseExpression, type Expression } from './behavior-expression.ts';
@@ -104,6 +104,9 @@ export class ObjectGraph {
     return this.#playing;
   }
 
+  /** Told every text key the playing sequences pass (scripts' OnAnimationEvent). */
+  onEvent: ((event: string) => void) | undefined;
+
   /** Advances to `now`: sends the text keys passed since the last update as events. */
   update(now: number): void {
     // Blends that ran their course: the old sequences stop, the new ones play in full.
@@ -126,6 +129,7 @@ export class ObjectGraph {
       if (!next) break;
       next.state.sent = next.time;
       this.#handle(next.text, next.time);
+      this.onEvent?.(next.text);
     }
     for (const state of this.#leaves.values()) state.sent = Math.max(state.sent, now);
   }
@@ -345,19 +349,45 @@ export class ObjectGraph {
     return evaluateNode(expression.value, (name) => this.#variable(name)) !== 0;
   }
 
-  /** A variable's value by name (TODO(M8): as scripts set them; their initial values). */
+  /** A variable's value by name: as a script set it (SetAnimationVariable*), else its initial. */
   #variable(name: string): number {
     const lower = name.toLowerCase();
-    return (
-      this.#graph.variables.find((variable) => variable.name.toLowerCase() === lower)?.initial ?? 0
+    const index = this.#graph.variables.findIndex(
+      (variable) => variable.name.toLowerCase() === lower,
     );
+    return index < 0 ? 0 : (this.#values.get(index) ?? this.#graph.variables[index]?.initial ?? 0);
   }
 
   #resolve(bindable: Bindable): number {
     if (bindable.variable === undefined) return bindable.value;
-    // TODO(M8): variables that scripts and modifiers change (SetAnimationVariableFloat).
-    return this.#graph.variables[bindable.variable]?.initial ?? bindable.value;
+    return (
+      this.#values.get(bindable.variable) ??
+      this.#graph.variables[bindable.variable]?.initial ??
+      bindable.value
+    );
   }
+
+  /** GetAnimationVariable*: a variable's value now (undefined: the graph has none so named). */
+  variable(name: string): number | undefined {
+    const lower = name.toLowerCase();
+    return this.#graph.variables.some((variable) => variable.name.toLowerCase() === lower)
+      ? this.#variable(name)
+      : undefined;
+  }
+
+  /** SetAnimationVariable*: a script sets a variable (the blends and conditions that read it follow). */
+  setVariable(name: string, value: number): void {
+    const lower = name.toLowerCase();
+    const index = this.#graph.variables.findIndex(
+      (variable) => variable.name.toLowerCase() === lower,
+    );
+    if (index < 0) return;
+    this.#values.set(index, value);
+    this.#refresh();
+  }
+
+  /** Variables scripts set, by index. */
+  readonly #values = new Map<number, number>();
 
   /** Rebuilds the playing list from the active leaves (and those fading out). */
   #refresh(): void {
