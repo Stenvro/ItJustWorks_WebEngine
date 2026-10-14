@@ -27,10 +27,65 @@ side.
   `0x80000000` set: the array does not own its memory). `hkStringPtr` and `char*`: a local
   fixup to a NUL-terminated string.
 - Skyrim LE's 32-bit packfiles are not loaded by SSE and are rejected. Creation Club and
-  resource-pack behaviors ship **binary tagfiles** (`.hkt`, magic `0xCAB00D1E 0xD011FACE`) next
-  to Havok Behavior Tool sources (`.hkp`, `.hkc`, `.hkb`, XML) instead of packfiles:
-  TODO(M7), together with the question of how the engine finds them for the `.hkx` names
-  their meshes use (9 projects, 21 meshes; vanilla's 357 graphs are packfiles).
+  resource-pack behaviors are binary tagfiles instead ([Tagfiles](#tagfiles)).
+
+## Tagfiles
+
+Creation Club and resource-pack behaviors ship **binary tagfiles** (`.hkt`, magic
+`0xCAB00D1E 0xD011FACE`, `src/formats/hkx/tagfile.ts`) next to their Havok Behavior Tool
+sources (`.hkp` project, `.hkc` character, `.hkb` behavior: HBT XML, which the game does not
+read; the project's export settings name `.hkt` as the tagfile extension). Layout: hkxparse
+(exyorha, MIT) read as documentation, extended by what the data shows (version 0 below).
+
+- After the magic, a stream of **tags**, each a variable-length integer: file info 1,
+  class definition 2, object 3, remembered object 4, reference 5, null 6, end 7.
+- **Integers**: the first byte holds the sign (bit 0) and 6 bits of magnitude (bits 1–6),
+  bit 7 says another byte follows with 7 more bits (low bits first).
+- **Strings**: a length, then that many bytes, added to a pool; a length ≤ 0 is the pool
+  entry at its negation. The pool starts as two empty strings and is reset by a file info.
+- **File info**: the version (3 or 0 in the game files; 4 adds the Havok version string).
+- **Class definition**: name, version, parent (class index, 0 none), member count, per member
+  its name, type, tuple size (tuples only) and class name (objects and structs only). Classes
+  are numbered from 1 in order. Types: low 4 bits void 0, byte 1, int 2, real 3, vec4 4,
+  vec8 5, vec12 6 (hkQsTransform, hkMatrix3: 12 floats), vec16 7, object 8, struct 9,
+  cstring 10; `0x10` array, `0x20` tuple. Runtime members are listed with type void and never
+  carry a value.
+- **Object**: its class (an index), a bitmap of the members present ((n + 7) / 8 bytes, the
+  bases' members first), then each present member's value. **A member left out is zero** (the
+  state with id 0 has no stateId; a probability of 1.0 is written).
+- **Values**: bytes as one byte, ints as an integer of the stream (any width), reals as f32,
+  vectors as 4/8/12/16 floats, cstrings as strings, structs in place (class from the member).
+  Byte arrays and tuples are raw bytes. Other arrays give their count (tuples their fixed
+  size), then: int arrays the element width and vec4 arrays the component count (version 3,
+  once per array), then the elements. **Struct arrays** are written member by member: one
+  bitmap for the class, then per present member its values for all elements (read as an array
+  of the member's basic type, without a count of its own).
+- **Objects, version 3**: every object is a top-level remembered object, numbered from 1 as
+  they come; an object member is that number (0 null), and may come before the object. The
+  root is object 1.
+- **Objects, version 0** (the fishing rod's skeleton and two unused clips, read from the data):
+  an object member is a tag in place: a new object (3), a new object remembered for later
+  references (4, numbered from 0), a reference to one (5 and its number) or null (6). The
+  root is the first top-level object; the file ends after it without an end tag, and arrays
+  carry no element width.
+
+The engine turns a tagfile into the **packfile** it would be (`packfile-image.ts`): every
+object laid out as its class's 64-bit layout says (`layouts.ts`: serde-hkx's offsets, those
+the readers use checked against vanilla packfiles), its pointers, strings and arrays as
+fixups. `Packfile.parse` does this for a tagfile, so the behavior and animation readers take
+either. Members of classes without a known layout are reported, not placed: the ragdoll and
+get-up modifiers of an unused ballista behavior (`bcbehavior.hkt`; the ballista plays its
+`.hkx`) and the name of the skeleton files' hkMemoryResourceContainer.
+
+The meshes name their projects `.hkx` while only the `.hkt` exists (`stagescycle.hkx` →
+`stagescycle.hkt`); the files inside name `.hkt` themselves (`Characters\Character.hkt`). A
+missing `.hkx` is therefore read as `.hkt` (`readHavokFile`; TODO(M13): inferred, the game
+plays these graphs). All 6 projects load and start (20 meshes): the resource pack's stage
+cycle (stage1state) and Dwemer vault seal (idle), the Ayleid activators (stage1), harvestable
+plants (ready), the fishing rod (ready) and the giant mudcrab (ready, mouthidle). Of the 366 graphs
+meshes name, 363 load; the other 3 are errors in the data (a mesh names
+`dragonbloodwingl\dragonbloodheadwingr.hkx`, which lies in `dragonbloodwingr\`; the scorpion
+trap's folder is empty; `magic\shoutimod.hkx` names no character).
 
 ## Behavior graphs of objects
 

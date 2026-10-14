@@ -9,11 +9,11 @@
 // that interprets them (behavior.ts).
 
 import { FormatError } from '../binary-reader.ts';
+import { packfileFromTagfile } from './packfile-image.ts';
+import { isTagfile, parseTagfile } from './tagfile.ts';
 
 const MAGIC_0 = 0x57e0e057;
 const MAGIC_1 = 0x10c0c010;
-const TAGFILE_0 = 0xcab00d1e;
-const TAGFILE_1 = 0xd011face;
 const HEADER_SIZE = 64;
 const SECTION_HEADER_SIZE = 48;
 /** hkArray's capacityAndFlags: the array does not own its memory (always set in packfiles). */
@@ -72,14 +72,15 @@ export class Packfile {
     this.root = root;
   }
 
-  /** Parses a packfile; throws FormatError for anything else (tagfiles, 32-bit packfiles). */
+  /**
+   * Parses a packfile, or a binary tagfile as the packfile it would be (Creation Club and
+   * resource-pack behaviors ship tagfiles, .hkt); throws FormatError for anything else
+   * (32-bit packfiles, XML).
+   */
   static parse(bytes: Uint8Array): Packfile {
+    if (isTagfile(bytes)) return Packfile.parse(packfileFromTagfile(parseTagfile(bytes)).bytes);
     const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     if (bytes.byteLength < HEADER_SIZE) throw new FormatError('HKX file too short', 0);
-    if (view.getUint32(0, true) === TAGFILE_0 && view.getUint32(4, true) === TAGFILE_1) {
-      // Creation Club and resource-pack behaviors ship binary tagfiles (.hkt).
-      throw new FormatError('Havok binary tagfiles are not read yet: TODO(M7)', 0);
-    }
     if (view.getUint32(0, true) !== MAGIC_0 || view.getUint32(4, true) !== MAGIC_1) {
       throw new FormatError('Not a Havok packfile', 0);
     }

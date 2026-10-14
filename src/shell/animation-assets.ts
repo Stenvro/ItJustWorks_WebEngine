@@ -15,6 +15,7 @@ import {
 import {
   loadBehaviorFiles,
   loadCharacterInfo,
+  readHavokFile,
   projectRelative,
   type BehaviorGenerator,
   type BehaviorGraph,
@@ -149,7 +150,9 @@ export class AnimationAssets {
   /** A Havok skeleton (a character's rig). */
   havokSkeleton(path: string): Promise<HkxSkeleton | undefined> {
     return this.#cached(this.#skeletons, path, async () => {
-      const container = readAnimationContainer(Packfile.parse(await this.#vfs.read(path)));
+      const container = readAnimationContainer(
+        Packfile.parse(await readHavokFile(path, (file) => this.#vfs.read(file))),
+      );
       const skeleton = container.skeletons[0];
       if (!skeleton) throw new Error('no skeleton');
       return skeleton;
@@ -159,7 +162,9 @@ export class AnimationAssets {
   /** A clip, read once. */
   clip(path: string): Promise<AnimationBinding | undefined> {
     return this.#cached(this.#clips, path, async () => {
-      const container = readAnimationContainer(Packfile.parse(await this.#vfs.read(path)));
+      const container = readAnimationContainer(
+        Packfile.parse(await readHavokFile(path, (file) => this.#vfs.read(file))),
+      );
       const binding = container.bindings[0];
       if (!binding) throw new Error('no animation');
       return binding;
