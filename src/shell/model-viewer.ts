@@ -80,6 +80,7 @@ import {
   type AnimatedSkeleton,
 } from '../animation/animated-skeleton.ts';
 import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
@@ -344,6 +345,7 @@ export class ModelViewer {
     activate: (reference) => {
       this.#defaultActivation(reference)?.activate();
     },
+    triggerCount: (reference) => this.#play?.triggerCount(reference) ?? 0,
     nodeWorld: (reference, node) => instanceNodeWorld(this.#instances.get(reference), node),
   };
 
@@ -463,6 +465,10 @@ export class ModelViewer {
       this.#ui.freeCamera.checked = free;
     };
     this.#play = play;
+    // The player walking into trigger volumes tells their scripts.
+    play.onTrigger = (reference, entered) => {
+      this.#session?.scriptsReady?.triggered(reference, PLAYER_REF, entered);
+    };
     this.#ui.freeCamera.checked = false;
     this.#ui.play.hidden = false;
     // The player's body (third person) and first-person camera animation.

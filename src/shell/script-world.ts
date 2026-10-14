@@ -26,6 +26,8 @@ export interface ScriptView {
   /** SetMotionType (1 dynamic .. 4 keyframed). */
   motionTypeChanged?(reference: number, motionType: number): void;
   impulse?(reference: number, direction: Vec3, magnitude: number): void;
+  /** How many are inside a reference's trigger volume now. */
+  triggerCount?(reference: number): number;
   /** A named node of a shown reference's model: where it is in the world. */
   nodeWorld?(reference: number, node: string): Mat4 | undefined;
   /** What activating a reference does by default (a script's Activate). */
@@ -95,6 +97,12 @@ export class ScriptWorld implements WorldBridge {
 
   impulse(reference: number, direction: Vec3, magnitude: number): void {
     for (const view of this.#views) view.impulse?.(reference, direction, magnitude);
+  }
+
+  triggerCount(reference: number): number {
+    let count = 0;
+    for (const view of this.#views) count += view.triggerCount?.(reference) ?? 0;
+    return count;
   }
 
   hasNode(reference: number, node: string): boolean {

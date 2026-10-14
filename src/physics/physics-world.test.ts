@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from 'vitest';
 import type { Mat4 } from '../render/math.ts';
 import { CharacterBody } from './character.ts';
 import type { CollisionBody, CollisionData } from './collision-data.ts';
-import { CollisionMatrix, Layer } from './collision-layers.ts';
+import { CollisionMatrix, Layer, LayerFlag } from './collision-layers.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from './physics-world.ts';
 
 const IDENTITY: Mat4 = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -141,6 +141,51 @@ describe('placements scripts change', () => {
     physics.teleport(placed, IDENTITY, moved);
     physics.step(1 / 60);
     expect(hits(physics)).toBeCloseTo(80, 1);
+    physics.free();
+  });
+});
+
+describe('trigger volumes', () => {
+  it('tell which ones the player stands in', () => {
+    const withTrigger = new CollisionMatrix([
+      {
+        formId: 2,
+        editorId: 'L_CHARCONTROLLER',
+        index: Layer.charController,
+        name: '',
+        flags: 0,
+        collidesWith: [],
+      },
+      {
+        formId: 3,
+        editorId: 'L_TRIGGER',
+        index: Layer.trigger,
+        name: '',
+        flags: LayerFlag.triggerVolume,
+        collidesWith: [],
+      },
+    ]);
+    const physics = new PhysicsWorld(withTrigger, GRAVITY);
+    const box = new Float32Array(IDENTITY);
+    box[12] = 500; // a 200-unit box around (500, 0, 100)
+    box[14] = 100;
+    physics.addPrimitive('box', [200, 200, 200], box, Layer.trigger, {
+      reference: 0x77,
+      kind: 'object',
+    });
+    const character = new CharacterBody(
+      physics,
+      { radius: 14.42, height: 131.84 },
+      settings(new Set()),
+      [0, 0, 0],
+      { reference: 0x14, kind: 'actor' },
+    );
+    physics.step(1 / 60);
+    expect(physics.triggersOverlapping(character.collider).size).toBe(0);
+    character.teleport([500, 0, 50]);
+    physics.step(1 / 60);
+    expect([...physics.triggersOverlapping(character.collider)]).toEqual([0x77]);
+    character.free();
     physics.free();
   });
 });

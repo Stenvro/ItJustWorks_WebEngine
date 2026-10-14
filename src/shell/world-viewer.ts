@@ -79,6 +79,7 @@ import {
   type AnimatedSkeleton,
 } from '../animation/animated-skeleton.ts';
 import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
 import { cellStatesElement } from './cell-states.ts';
 import { PlayerAvatar } from './player-avatar.ts';
@@ -407,6 +408,7 @@ export class WorldViewer {
     activate: (reference) => {
       this.#defaultActivation(reference)?.activate();
     },
+    triggerCount: (reference) => this.#play?.triggerCount(reference) ?? 0,
     nodeWorld: (reference, node) => {
       for (const cell of this.#cells.values()) {
         const placed = cell.placed.find((entry) => entry.object.reference === reference);
@@ -717,6 +719,10 @@ export class WorldViewer {
       this.#ui.freeCamera.checked = free;
     };
     this.#play = play;
+    // The player walking into trigger volumes tells their scripts.
+    play.onTrigger = (reference, entered) => {
+      this.#session?.scriptsReady?.triggered(reference, PLAYER_REF, entered);
+    };
     this.#ui.freeCamera.checked = false;
     this.#ui.play.hidden = false;
     // Impacts and footsteps on the landscape sound by its land textures.
