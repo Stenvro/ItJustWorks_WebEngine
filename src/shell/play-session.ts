@@ -172,7 +172,7 @@ export function collisionGroup(): CollisionGroup {
 export interface CellCollision {
   /** Exterior cells: the landscape, with the cell's grid position. */
   readonly land?: { readonly data: LandData; readonly x: number; readonly y: number };
-  /** Enabled objects with their collision and, if drawn, their instance. */
+  /** Objects with their collision and, if drawn, their instance. */
   readonly objects: readonly {
     readonly object: CellObject;
     readonly collision: CollisionData | undefined;
@@ -180,12 +180,17 @@ export interface CellCollision {
     /** Its pose, where its bodies move its nodes one by one (src/physics/articulation.ts). */
     readonly articulated?: ActorPose;
   }[];
-  /** Enabled collision primitives. */
+  /** Collision primitives. */
   readonly primitives: readonly CellPrimitive[];
   /** The dead: ragdolls of their skeletons' bodies, which fall as the cell settles. */
   readonly ragdolls?: readonly CellRagdoll[];
   /** Runs once all of it is in place (and queries see it). */
   readonly whenComplete?: () => void;
+  /**
+   * Whether a reference is enabled now: a disabled one's collision is placed switched off (it
+   * comes back when a script enables it). All are enabled without.
+   */
+  readonly isEnabled?: (reference: number) => boolean;
 }
 
 /** A dead actor's ragdoll: its skeleton's bodies (skeleton.nif) moving its pose's nodes. */
@@ -631,6 +636,7 @@ export class PlaySession {
           moved && new Set(moved.keys()),
         );
         group.collision.push(placed);
+        if (cell.isEnabled?.(object.reference) === false) physics.setEnabled(placed, false);
         if (object.keyframed === true) physics.keyframe(placed);
         else if (settlesWhenPlaced(object) && placed.dynamic) group.settle.push(placed);
         if (instance?.motion) group.moving.push({ placed, instance, motion: instance.motion });
@@ -668,28 +674,44 @@ export class PlaySession {
           false,
         );
         group.collision.push(placed);
+        if (cell.isEnabled?.(ragdoll.reference) === false) physics.setEnabled(placed, false);
         if (placed.dynamic) group.settle.push(placed);
         group.articulated.push(new Articulation(placed, ragdoll.pose, ragdoll.world));
       });
     }
     for (const primitive of cell.primitives) {
       tasks.push(() => {
-        group.collision.push(
-          physics.addPrimitive(
-            primitive.shape,
-            primitive.bounds,
-            primitive.world,
-            primitive.layer,
-            {
-              reference: primitive.reference,
-              kind: 'object',
-            },
-          ),
+        const placed = physics.addPrimitive(
+          primitive.shape,
+          primitive.bounds,
+          primitive.world,
+          primitive.layer,
+          {
+            reference: primitive.reference,
+            kind: 'object',
+          },
         );
+        group.collision.push(placed);
+        if (cell.isEnabled?.(primitive.reference) === false) physics.setEnabled(placed, false);
       });
     }
     if (tasks.length === 0) this.#complete(group);
     for (const run of tasks) this.#queue.push({ group, run });
+  }
+
+  /** A reference's collision in every loaded cell (placed so far). */
+  placementsOf(reference: number): PlacedCollision[] {
+    const found: PlacedCollision[] = [];
+    for (const group of this.#groups) {
+      for (const placed of group.collision)
+        if (placed.owner.reference === reference) found.push(placed);
+    }
+    return found;
+  }
+
+  /** A script enabled or disabled a reference: its collision comes back or leaves. */
+  setReferenceEnabled(reference: number, enabled: boolean): void {
+    for (const placed of this.placementsOf(reference)) this.physics.setEnabled(placed, enabled);
   }
 
   /** Takes a cell's collision out of the world (and out of the queue). */

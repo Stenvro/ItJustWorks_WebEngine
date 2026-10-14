@@ -60,6 +60,10 @@ import { PackageData } from '../ai/package-data.ts';
 import { packageStart, type GameTime, type PackageStart } from '../ai/package-start.ts';
 import type { ActorLook } from '../world/actors.ts';
 import type { CellActor } from '../world/cell-loader.ts';
+import { ScriptLibrary } from '../scripting/script-library.ts';
+import { PapyrusScheduler } from '../scripting/scheduler.ts';
+import { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import { ScriptWorld } from './script-world.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
 import { PluginIndexer } from '../workers/plugin-indexer.ts';
 import { ActorPlacer } from './actors.ts';
@@ -117,6 +121,14 @@ export class GameSession {
   /** Behavior graphs by project path (shared by all the meshes that name them). */
   readonly #graphs = new Map<string, Promise<BehaviorGraph | undefined>>();
   #scripts: Promise<ScriptEnvironment> | undefined;
+  #runtime: Promise<ScriptRuntime> | undefined;
+  /** The running game's scripts once their new game has started. */
+  scriptsReady: ScriptRuntime | undefined;
+  /** The scripts while their new game starts, and what they are doing (dev checks). */
+  scriptsStarting: ScriptRuntime | undefined;
+  scriptsProgress = '';
+  /** What the scripts do to the world on screen (the viewers attach to it). */
+  readonly scriptWorld: ScriptWorld;
   #settings: Promise<GameSettings> | undefined;
   readonly #waterTypes = new Map<string, Promise<GpuWaterType | undefined>>();
   readonly #waterRecords = new Map<number, Promise<WaterType | undefined>>();
@@ -178,6 +190,7 @@ export class GameSession {
     this.vfs = vfs;
     this.#renderer = renderer;
     this.#terminal = terminal;
+    this.scriptWorld = new ScriptWorld(terminal);
     const loader = new AssetLoader(vfs);
     this.loader = loader;
     this.textures = new TextureCache(device, (path) => loader.loadTexture(path));
@@ -627,6 +640,88 @@ export class GameSession {
   actors(): Promise<ActorPlacer> {
     this.#actors ??= this.db.then((db) => new ActorPlacer(this, db, this.#terminal));
     return this.#actors;
+  }
+
+  /**
+   * The running game's scripts: a new game started as the session opens (every quest's and
+   * persistent reference's OnInit, the quests that start with the game, the opening). The
+   * game's clock is the scripts' from then on.
+   */
+  runtime(): Promise<ScriptRuntime> {
+    this.#runtime ??= this.db.then(async (db) => {
+      const start = performance.now();
+      const library = new ScriptLibrary((name) => db.script(name));
+      const runtime = new ScriptRuntime(db, library, {
+        world: this.scriptWorld,
+        scheduler: new PapyrusScheduler(1.2, () => performance.now()),
+        warn: (message) => {
+          this.#terminal.log('papyrus', message, 'warn');
+        },
+        log: (line) => {
+          this.#terminal.log('papyrus', line);
+        },
+      });
+      this.scriptsStarting = runtime;
+      await runtime.newGame((what) => {
+        this.scriptsProgress = what;
+        this.#terminal.log('papyrus', what);
+      });
+      // From now on threads share each frame's budget ([Papyrus] fUpdateBudgetMS).
+      runtime.vm.scheduler.framed = true;
+      // A new game's clock: the plugins' day and hour.
+      this.gameDaysPassed = Math.floor(runtime.state.gameDaysPassed);
+      this.gameHour = (runtime.state.gameDaysPassed % 1) * 24;
+      this.timeScale = runtime.timeScale;
+      const running = [...runtime.state.quests.values()].filter((quest) => quest.running).length;
+      this.#terminal.log(
+        'papyrus',
+        `new game: ${String(running)} quests running · ${(performance.now() - start).toFixed(0)} ms`,
+        'ok',
+      );
+      this.scriptsReady = runtime;
+      this.scriptWorld.enableChanged();
+      return runtime;
+    });
+    return this.#runtime;
+  }
+
+  /**
+   * Every frame: the scripts' clocks move with the game's (real seconds, and game days as the
+   * sky moves the hour); a script that set the clock (GameHour) sets the game's.
+   */
+  tickScripts(realSeconds: number): void {
+    const runtime = this.scriptsReady;
+    if (!runtime) return;
+    this.timeScale = runtime.timeScale;
+    const days = this.gameDaysPassed + this.gameHour / 24;
+    if (runtime.clockChanged) {
+      runtime.clockChanged = false;
+      this.gameDaysPassed = Math.floor(runtime.state.gameDaysPassed);
+      this.gameHour = (runtime.state.gameDaysPassed % 1) * 24;
+      runtime.update(realSeconds, 0);
+      return;
+    }
+    const passed = days - runtime.state.gameDaysPassed;
+    if (passed < 0) {
+      // Set back by hand (the dev panel's clock): the scripts' clock follows, no waits end.
+      runtime.state.gameDaysPassed = days;
+      runtime.update(realSeconds, 0);
+    } else {
+      runtime.update(realSeconds, passed);
+    }
+  }
+
+  /**
+   * The enable states the scripts gave references (Enable, Disable, Delete), for the viewers;
+   * empty until the scripts run.
+   */
+  scriptedEnables(): Map<number, boolean> {
+    const states = new Map<number, boolean>();
+    for (const [reference, state] of this.scriptsReady?.state.references ?? []) {
+      if (state.deleted) states.set(reference, false);
+      else if (state.enabled !== undefined) states.set(reference, state.enabled);
+    }
+    return states;
   }
 
   /** The Papyrus environment, created on first use. */

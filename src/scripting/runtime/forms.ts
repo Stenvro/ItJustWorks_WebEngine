@@ -3,6 +3,7 @@
 // quest gives them), quests parsed once, and the placed reference of each unique actor.
 // Platform-independent. Notes: docs/scripting.md ("Forms").
 
+import { RecordFlag } from '../../formats/esm/record.ts';
 import { parseVmad, type PropertyValue, type ScriptAttachments } from '../../formats/esm/vmad.ts';
 import { parseQuest, type QuestAlias, type QuestRecord } from '../../world/quest-records.ts';
 import type { GameRecord, RecordDatabase } from '../../world/record-db.ts';
@@ -263,15 +264,19 @@ export class FormIndex {
   async uniqueReference(npc: number): Promise<number | undefined> {
     if (npc === PLAYER_BASE) return PLAYER_REF;
     this.#unique ??= (async () => {
+      // Every placed actor, read in one pass over the plugins.
       const byBase = new Map<number, number[]>();
-      for (const formId of this.db.formIdsOfType('ACHR')) {
-        const record = await this.record(formId);
-        const base = record?.formIdField('NAME');
-        if (base === undefined) continue;
-        const refs = byBase.get(base) ?? [];
-        refs.push(formId);
-        byBase.set(base, refs);
-      }
+      await this.db.scan(
+        ['ACHR'],
+        (flags) => (flags & RecordFlag.deleted) === 0,
+        (record) => {
+          const base = record.formIdField('NAME');
+          if (base === undefined) return;
+          const refs = byBase.get(base) ?? [];
+          refs.push(record.formId);
+          byBase.set(base, refs);
+        },
+      );
       const unique = new Map<number, number>();
       for (const [base, refs] of byBase) {
         const [only] = refs;

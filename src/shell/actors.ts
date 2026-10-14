@@ -88,6 +88,41 @@ export function groundActor(
   instance.motion.version++;
 }
 
+/**
+ * A script moved an actor (MoveTo, SetPosition): it stands at the new place, turned to the
+ * new heading, on the ground there (if the physics world has some under it).
+ */
+export function moveActor(
+  placed: PlacedActor,
+  position: Vec3,
+  heading: number,
+  physics: PhysicsWorld | undefined,
+): void {
+  const instance = placed.instances[0];
+  if (!instance?.motion) return;
+  const upright = referenceMatrix({
+    position,
+    rotation: [0, 0, heading],
+    scale: placed.actor.scale * placed.look.scale,
+  });
+  const [x, y, z] = position;
+  const hit =
+    physics && !placed.inFurniture && standsOnGround(placed.look.raceFlags)
+      ? physics.raycast(
+          [x, y, z + GROUND_ABOVE],
+          [0, 0, -1],
+          GROUND_ABOVE + GROUND_BELOW,
+          Layer.charController,
+        )
+      : undefined;
+  instance.world.set(
+    hit
+      ? groundedPlacement(upright, placed.look.raceFlags, { point: hit.point, normal: hit.normal })
+      : upright,
+  );
+  instance.motion.version++;
+}
+
 /** Sets placed actors on what character controllers stand on in a physics world. */
 export function groundActors(actors: readonly PlacedActor[], physics: PhysicsWorld): void {
   const cast = (from: Vec3, length: number): GroundHit | undefined => {

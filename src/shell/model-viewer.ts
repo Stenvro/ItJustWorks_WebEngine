@@ -30,6 +30,7 @@ import {
   type GpuModel,
   type GpuScene,
   type GpuWaterType,
+  type InstanceVisibility,
   type ModelInstance,
   type PlacedDirectional,
 } from '../render/scene-renderer.ts';
@@ -39,6 +40,7 @@ import {
   cellArrival,
   doorDestination,
   loadCellData,
+  referenceMatrix,
   type CellData,
   type CellLight,
   type CellWaterArea,
@@ -77,7 +79,8 @@ import {
   animationInterval,
   type AnimatedSkeleton,
 } from '../animation/animated-skeleton.ts';
-import { groundActors, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
+import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
+import { MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
@@ -265,8 +268,29 @@ export class ModelViewer {
   /** Load door destinations by destination door. */
   readonly #destinations = new Map<number, DoorDestination | undefined>();
 
-  /** What activating a reference does: load doors take the player to their destination. */
+  /**
+   * What activating a reference does: its scripts get OnActivate; by default load doors take
+   * the player to their destination and doors open (unless a script blocks activation).
+   * References with scripts and no default (levers, shrines) are activated for the scripts.
+   * TODO(M9): the activator's own prompt (ACTI RNAM "activate text override").
+   */
   #activatable(reference: number): Activatable | undefined {
+    const object = this.#cell?.data.objects.find((candidate) => candidate.reference === reference);
+    if (!object) return undefined;
+    const fallback = this.#defaultActivation(reference);
+    const runtime = this.#session?.scriptsReady;
+    if (!runtime || (!fallback && !this.#scripted.has(reference))) return fallback;
+    return {
+      verb: fallback?.verb ?? 'Activate',
+      name: fallback?.name ?? object.name,
+      activate: () => {
+        if (runtime.playerActivated(reference)) fallback?.activate();
+      },
+    };
+  }
+
+  /** What activating a reference does by default (a load door, a door that opens). */
+  #defaultActivation(reference: number): Activatable | undefined {
     const object = this.#cell?.data.objects.find((candidate) => candidate.reference === reference);
     if (!object) return undefined;
     return objectActivation(
@@ -282,6 +306,98 @@ export class ModelViewer {
 
   /** The drawn instances of the cell on screen, by reference. */
   #instances = new Map<number, ModelInstance>();
+  /** The cell's references with scripts (activating them tells the scripts). */
+  #scripted = new Set<number>();
+  #detachScripts: (() => void) | undefined;
+
+  /** What the running game's scripts see of, and do to, the cell on screen. */
+  readonly #scriptView: ScriptView = {
+    loadedReferences: () => this.#loadedReferences(),
+    loaded: (reference) => this.#loadedReferences().includes(reference),
+    livePlacement: (reference) => {
+      const world =
+        this.#actorsShown.find((actor) => actor.actor.reference === reference)?.instances[0]
+          ?.world ??
+        (this.#instances.get(reference)?.motion
+          ? this.#instances.get(reference)?.world
+          : undefined);
+      return world && { position: [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] };
+    },
+    enableStatesChanged: () => {
+      if (this.#cell) this.#refreshEnabled();
+    },
+    moved: (reference) => {
+      void this.#scriptMoved(reference);
+    },
+    animationEvent: (reference, event) =>
+      this.#instances.get(reference)?.graph?.send(event, performance.now() / 1000) ?? false,
+    motionTypeChanged: (reference, motionType) => {
+      for (const placed of this.#play?.placementsOf(reference) ?? []) {
+        this.#play?.physics.setMotion(placed, motionType === MOTION_KEYFRAMED);
+      }
+    },
+    impulse: (reference, direction, magnitude) => {
+      for (const placed of this.#play?.placementsOf(reference) ?? []) {
+        this.#play?.physics.impulse(placed, direction, magnitude);
+      }
+    },
+    activate: (reference) => {
+      this.#defaultActivation(reference)?.activate();
+    },
+  };
+
+  /** The references of the cell on screen whose 3D is loaded (the enabled ones drawn). */
+  #loadedReferences(): number[] {
+    const cell = this.#cell;
+    if (!cell) return [];
+    return [
+      ...[...this.#instances.keys()].filter((reference) => this.#isEnabled(reference)),
+      ...this.#actorsShown.map((actor) => actor.actor.reference),
+    ];
+  }
+
+  /** A script moved a reference: its drawn instance and its collision follow. */
+  async #scriptMoved(reference: number): Promise<void> {
+    const runtime = this.#session?.scriptsReady;
+    const at = runtime && (await runtime.placement(reference));
+    if (!at) return;
+    const actor = this.#actorsShown.find((placed) => placed.actor.reference === reference);
+    if (actor) {
+      moveActor(actor, at.position, at.rotation[2], this.#play?.physics);
+      return;
+    }
+    const instance = this.#instances.get(reference);
+    const object = this.#cell?.data.objects.find((candidate) => candidate.reference === reference);
+    if (!object) return;
+    const world = referenceMatrix({
+      position: at.position,
+      rotation: at.rotation,
+      scale: at.scale,
+    });
+    for (const placed of this.#play?.placementsOf(reference) ?? []) {
+      this.#play?.physics.teleport(placed, instance?.world ?? object.world, world);
+    }
+    if (instance?.motion) {
+      instance.world.set(world);
+      instance.motion.version++;
+    } else {
+      // A static instance is part of the built scene: it is built again at its new place.
+      object.world.set(world);
+      this.#applyCellSelection();
+    }
+  }
+  /** The enable state of the cell on screen (see #enableState). */
+  #isEnabled: (reference: number) => boolean = () => true;
+  /** Each drawn reference's visibility (hidden while disabled). */
+  #visibility = new Map<number, InstanceVisibility>();
+  /** The enable state each reference with collision was last given. */
+  #enabledNow = new Map<number, boolean>();
+  /** Every water activator's volumes; those of the enabled ones are #waterVolumes. */
+  #allWaterVolumes: readonly { reference: number; volumes: WaterVolume[] }[] = [];
+  /** Every object skeleton; those of the enabled objects animate. */
+  #allObjectSkeletons: readonly { reference: number; skeleton: AnimatedSkeleton }[] = [];
+  /** The cell's lighting with its enabled lights (see #refreshEnabled). */
+  #cellLighting: ReturnType<typeof cellSceneLighting> | undefined;
   /** The time and weather controls while a cell is shown. */
   #sky: InteriorSkyControls | undefined;
   /** The enabled water activators: their surfaces (heard) and volumes (entered). */
@@ -401,6 +517,8 @@ export class ModelViewer {
   async connect(session: GameSession): Promise<void> {
     this.#reset();
     this.#session = session;
+    this.#detachScripts?.();
+    this.#detachScripts = session.scriptWorld.attach(this.#scriptView);
     const { vfs, loader } = session;
     this.#meshes = vfs.list('meshes').filter((path) => path.endsWith('.nif'));
     this.#terminal.log(
@@ -609,6 +727,7 @@ export class ModelViewer {
 
     this.#renderUpgrades();
     const visible = this.#applyCellSelection();
+    void this.#attachToScripts(token);
     if (session) {
       this.#sky?.dispose();
       this.#sky = new InteriorSkyControls(session, this.#ui.sky);
@@ -699,26 +818,54 @@ export class ModelViewer {
     return result.enabled;
   }
 
-  /** Rebuilds the cell scene for the current choices; returns the object count. */
+  /**
+   * The enable state of the cell's references now: what the scripts set (the running game's
+   * and the home's actions), else the states panel's choice, else the plugin's.
+   */
+  #enableState(cell: CellView): (reference: number) => boolean {
+    const scripted = new Map(cell.scripted);
+    for (const [reference, enabled] of this.#session?.scriptedEnables() ?? []) {
+      scripted.set(reference, enabled);
+    }
+    return enabledReferences(cell.data, cell.toggles, cell.selection, scripted);
+  }
+
+  /**
+   * Builds the cell scene: every object and actor that can appear, each with its visibility,
+   * and all their collision (a disabled reference's switched off); then applies the enable
+   * state. Returns the number of objects shown.
+   */
   #applyCellSelection(): number {
     const cell = this.#cell;
     if (!cell) return 0;
-    const isEnabled = enabledReferences(cell.data, cell.toggles, cell.selection, cell.scripted);
     const session = this.#session;
     const instances: ModelInstance[] = [];
     const placed = new Map<CellData['objects'][number], ModelInstance>();
     const articulatedPoses = new Map<CellData['objects'][number], ActorPose>();
     const shown = new Map<number, ModelInstance>();
     this.#instances = shown;
-    this.#waterAreas = cell.data.waterAreas.filter((area) => isEnabled(area.reference));
-    const volumes: WaterVolume[] = [];
-    this.#waterVolumes = volumes;
-    const skeletons: AnimatedSkeleton[] = [];
+    const visibility = new Map<number, InstanceVisibility>();
+    this.#visibility = visibility;
+    this.#enabledNow = new Map();
+    const shownBy = (reference: number): InstanceVisibility => {
+      let entry = visibility.get(reference);
+      if (!entry) {
+        entry = { hidden: false };
+        visibility.set(reference, entry);
+      }
+      return entry;
+    };
+    const volumes: { reference: number; volumes: WaterVolume[] }[] = [];
+    this.#allWaterVolumes = volumes;
+    const skeletons: { reference: number; skeleton: AnimatedSkeleton }[] = [];
+    this.#allObjectSkeletons = skeletons;
     for (const object of cell.data.objects) {
-      if (!isEnabled(object.reference)) continue;
       const collision = cell.collisions.get(object.model);
       if (object.water !== undefined) {
-        volumes.push(...waterVolumes(collision, object.world, object.water));
+        volumes.push({
+          reference: object.reference,
+          volumes: waterVolumes(collision, object.world, object.water),
+        });
       }
       if (this.#hidden?.test(object.model)) continue;
       const model = cell.models.get(object.model);
@@ -727,7 +874,7 @@ export class ModelViewer {
       if (model) {
         const graph = startObjectGraph(model, object.reference);
         const skeletal = startPlacedSkeleton(model, object.reference);
-        if (skeletal) skeletons.push(skeletal.skeleton);
+        if (skeletal) skeletons.push({ reference: object.reference, skeleton: skeletal.skeleton });
         // Bodies that move nodes one by one pose the model (ragdolls, hinged signs); objects
         // simulated as one body get a matrix of their own.
         const articulated = skeletal ? undefined : articulatedPose(model.nodes, collision);
@@ -742,6 +889,7 @@ export class ModelViewer {
           model,
           world: moves ? new Float32Array(object.world) : object.world,
           ...(moves && { motion: { version: 0 } }),
+          visibility: shownBy(object.reference),
           ...(graph && { graph }),
           ...(posed && { pose: posed.pose, poseNodes: posed.poseNodes }),
           ...(this.#play && {
@@ -758,39 +906,94 @@ export class ModelViewer {
         shown.set(object.reference, instance);
       }
     }
-    // Actors.
-    const objectCount = instances.length;
-    const actors = cell.actors.filter((actor) => isEnabled(actor.actor.reference));
-    for (const actor of actors) instances.push(...actor.instances);
-    this.#actorsShown = actors;
-    this.#objectSkeletons = skeletons;
-    // The collision of what is shown (rebuilt when the selection changes).
+    // Actors: their instances drawn with their reference's visibility.
+    for (const actor of cell.actors) {
+      const shownActor = shownBy(actor.actor.reference);
+      for (const instance of actor.instances)
+        instances.push({ ...instance, visibility: shownActor });
+    }
+    // All the collision; a disabled reference's is switched off as it is placed.
     const play = this.#play;
     if (play) {
       play.remove(this.#collision);
       this.#collision = collisionGroup();
-      const actors = this.#actorsShown;
       play.add(this.#collision, {
         // Its actors stand on the ground once it is in place.
         whenComplete: () => {
-          groundActors(actors, play.physics);
+          groundActors(this.#actorsShown, play.physics);
         },
-        objects: cell.data.objects
-          .filter((object) => isEnabled(object.reference))
-          .map((object) => {
-            const articulated = articulatedPoses.get(object);
-            return {
-              object,
-              collision: cell.collisions.get(object.model),
-              instance: placed.get(object),
-              ...(articulated && { articulated }),
-            };
-          }),
-        primitives: cell.data.primitives.filter((primitive) => isEnabled(primitive.reference)),
-        ragdolls: cell.ragdolls.filter((ragdoll) => isEnabled(ragdoll.reference)),
+        objects: cell.data.objects.map((object) => {
+          const articulated = articulatedPoses.get(object);
+          return {
+            object,
+            collision: cell.collisions.get(object.model),
+            instance: placed.get(object),
+            ...(articulated && { articulated }),
+          };
+        }),
+        primitives: cell.data.primitives,
+        ragdolls: cell.ragdolls,
+        isEnabled: (reference) => this.#isEnabled(reference),
       });
     }
+    const scene = this.#renderer.scene.createScene(instances);
+    const shownCount = this.#refreshEnabled();
+    // The imagespace's Sunlight Scale brightens the cell's directional light (HDR).
+    const scale = cell.imageSpace?.hdr.sunlightScale ?? 1;
+    this.#present(scene, undefined, {
+      camera: 'fly',
+      lighting: () => {
+        const lighting = this.#cellLighting ?? cellSceneLighting(cell.data, this.#isEnabled);
+        return {
+          ...lighting,
+          sunColor: [
+            lighting.sunColor[0] * scale,
+            lighting.sunColor[1] * scale,
+            lighting.sunColor[2] * scale,
+          ],
+        };
+      },
+      imageSpace: cell.imageSpace,
+      lights: cell.data.lights,
+      decals: cell.decals,
+    });
+    return shownCount;
+  }
+
+  /**
+   * Applies the enable state to the cell on screen (a script enabled or disabled references,
+   * the home's actions or the states panel changed): what is drawn, collides, sounds, lights
+   * and holds water, without building the scene again. Returns the number of objects shown.
+   */
+  #refreshEnabled(): number {
+    const cell = this.#cell;
+    if (!cell) return 0;
+    const isEnabled = this.#enableState(cell);
+    this.#isEnabled = isEnabled;
+    for (const [reference, entry] of this.#visibility) entry.hidden = !isEnabled(reference);
+    // Collision: every reference that has some, switched as its state changes.
+    const play = this.#play;
+    const references = [
+      ...cell.data.objects.map((object) => object.reference),
+      ...cell.data.primitives.map((primitive) => primitive.reference),
+      ...cell.ragdolls.map((ragdoll) => ragdoll.reference),
+    ];
+    for (const reference of references) {
+      const enabled = isEnabled(reference);
+      const before = this.#enabledNow.get(reference);
+      this.#enabledNow.set(reference, enabled);
+      if (before !== undefined && before !== enabled) play?.setReferenceEnabled(reference, enabled);
+    }
+    this.#actorsShown = cell.actors.filter((actor) => isEnabled(actor.actor.reference));
+    this.#objectSkeletons = this.#allObjectSkeletons
+      .filter((entry) => isEnabled(entry.reference))
+      .map((entry) => entry.skeleton);
+    this.#waterAreas = cell.data.waterAreas.filter((area) => isEnabled(area.reference));
+    this.#waterVolumes = this.#allWaterVolumes
+      .filter((entry) => isEnabled(entry.reference))
+      .flatMap((entry) => entry.volumes);
     // The cell's sounds: its enabled loops, acoustic spaces and its own acoustic space.
+    const session = this.#session;
     if (session) {
       const emitters = cell.data.emitters.filter((emitter) => isEnabled(emitter.reference));
       const areas = cell.data.acousticAreas.filter((area) => isEnabled(area.reference));
@@ -802,27 +1005,9 @@ export class ModelViewer {
         sounds.setCellAcousticSpace(space);
       });
     }
-    const scene = this.#renderer.scene.createScene(instances);
     cell.decals?.select(isEnabled);
-    const lighting = cellSceneLighting(cell.data, isEnabled);
-    const lights = cell.data.lights.filter((light) => isEnabled(light.reference));
-    // The imagespace's Sunlight Scale brightens the cell's directional light (HDR).
-    const scale = cell.imageSpace?.hdr.sunlightScale ?? 1;
-    this.#present(scene, undefined, {
-      camera: 'fly',
-      lighting: {
-        ...lighting,
-        sunColor: [
-          lighting.sunColor[0] * scale,
-          lighting.sunColor[1] * scale,
-          lighting.sunColor[2] * scale,
-        ],
-      },
-      imageSpace: cell.imageSpace,
-      lights,
-      decals: cell.decals,
-    });
-    return objectCount;
+    this.#cellLighting = cellSceneLighting(cell.data, isEnabled);
+    return [...this.#instances.keys()].filter((reference) => isEnabled(reference)).length;
   }
 
   /** Plays new choices for the cell on screen and shows the result. */
@@ -835,7 +1020,7 @@ export class ModelViewer {
     if (token !== this.#choiceToken || this.#cell !== cell) return;
     cell.scripted = scripted;
     this.#renderUpgrades();
-    this.#applyCellSelection();
+    this.#refreshEnabled();
   }
 
   /**
@@ -974,7 +1159,7 @@ export class ModelViewer {
           (selection) => {
             cell.selection = selection;
             this.#session?.cellSelections.set(cell.data.cell.formId, selection);
-            this.#applyCellSelection();
+            this.#refreshEnabled();
           },
           this.#statesOpen,
           (open) => {
@@ -1026,7 +1211,7 @@ export class ModelViewer {
   ): { reference: string; model: string; enabled: boolean; loaded: boolean }[] {
     const cell = this.#cell;
     if (!cell) return [];
-    const isEnabled = enabledReferences(cell.data, cell.toggles, cell.selection, cell.scripted);
+    const isEnabled = this.#enableState(cell);
     return cell.data.objects
       .filter(
         (o) =>
@@ -1072,7 +1257,7 @@ export class ModelViewer {
   get cellObjectsShown(): number {
     const cell = this.#cell;
     if (!cell) return 0;
-    const isEnabled = enabledReferences(cell.data, cell.toggles, cell.selection, cell.scripted);
+    const isEnabled = this.#enableState(cell);
     return cell.data.objects.filter((object) => isEnabled(object.reference)).length;
   }
 
@@ -1088,7 +1273,7 @@ export class ModelViewer {
       | { camera: 'orbit' }
       | {
           camera: 'fly';
-          lighting: ReturnType<typeof cellSceneLighting>;
+          lighting: () => ReturnType<typeof cellSceneLighting>;
           imageSpace: ImageSpace | undefined;
           /** Placed lights, flickering and pulsing per frame. */
           lights: readonly CellLight[];
@@ -1129,9 +1314,12 @@ export class ModelViewer {
         scenes: () => [scene, ...this.#avatarScenes()],
         camera,
         lighting: () => ({
-          ...lighting,
-          lights: pointLights(lights, this.#tickClock(), camera.position, (id) =>
-            this.#emittanceRgb(id),
+          ...lighting(),
+          lights: pointLights(
+            lights.filter((light) => this.#isEnabled(light.reference)),
+            this.#tickClock(),
+            camera.position,
+            (id) => this.#emittanceRgb(id),
           ),
         }),
         imageSpace: () => imageSpace,
@@ -1235,7 +1423,47 @@ export class ModelViewer {
   }
 
   /** Forgets the shown cell and frees what was made for it. */
+  /**
+   * The cell on screen joins the running game: its references' scripts start (OnInit the first
+   * time) and get their cell and load events, once the scripts' new game has started.
+   */
+  async #attachToScripts(token: number): Promise<void> {
+    const session = this.#session;
+    if (!session) return;
+    try {
+      const runtime = await session.runtime();
+      const cell = this.#cell;
+      if (token !== this.#loadToken || !cell) return;
+      this.#refreshEnabled();
+      const references = [
+        ...cell.data.objects.map((object) => object.reference),
+        ...cell.data.actors.map((actor) => actor.reference),
+      ];
+      const loaded = new Set(this.#loadedReferences());
+      this.#scripted = new Set(
+        await runtime.cellAttached(references, (reference) => loaded.has(reference)),
+      );
+    } catch (error) {
+      this.#terminal.log('papyrus', `scripts not running: ${describe(error)}`, 'warn');
+    }
+  }
+
   #releaseCell(): void {
+    const cell = this.#cell;
+    const runtime = this.#session?.scriptsReady;
+    if (cell && runtime) {
+      const loaded = new Set(this.#loadedReferences());
+      runtime.detach(
+        runtime.cellDetached(
+          [
+            ...cell.data.objects.map((object) => object.reference),
+            ...cell.data.actors.map((actor) => actor.reference),
+          ],
+          (reference) => loaded.has(reference),
+        ),
+      );
+    }
+    this.#scripted = new Set();
     this.#stopPlay();
     this.#sky?.dispose();
     this.#sky = undefined;

@@ -182,6 +182,8 @@ export async function evaluateCondition(
 
 /** A global's value: as a script set it, else its record's (GLOB FLTV). */
 export async function globalValue(runtime: ScriptRuntime, formId: number): Promise<number> {
+  const clock = runtime.clockGlobal(formId);
+  if (clock !== undefined) return clock;
   const set = runtime.state.globals.get(formId);
   if (set !== undefined) return set;
   return (await runtime.forms.record(formId))?.fields.f32('FLTV') ?? 0;

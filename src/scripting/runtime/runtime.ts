@@ -11,7 +11,9 @@ import { LeveledFlag, parseLeveledList, type LeveledList } from '../../world/act
 import { pickLeveled, seededRandom } from '../../world/actors.ts';
 import {
   dateAfter,
-  readStartDate,
+  daysBetween,
+  DEFAULT_START_DATE,
+  DEFAULT_TIME_SCALE,
   START_DAY_OF_WEEK,
   type GameDate,
 } from '../../world/game-time.ts';
@@ -47,7 +49,7 @@ export interface WorldBridge {
   /** A reference was created (PlaceAtMe, an alias's Create Reference). */
   created?(reference: number): void;
   /** Where a loaded reference is now (actors and simulated objects move). */
-  livePlacement?(reference: number): { position: Vec3; rotation: Vec3 } | undefined;
+  livePlacement?(reference: number): { position: Vec3; rotation?: Vec3 } | undefined;
   /** Whether a reference's 3D is loaded (Is3DLoaded). */
   loaded?(reference: number): boolean;
   /** References whose 3D is loaded (finding references near a point). */
@@ -193,6 +195,28 @@ export interface PersistentIndex {
   readonly enableParent: Map<number, { readonly reference: number; readonly opposite: boolean }>;
   /** Those that are ACHR (actors). */
   readonly actors: Set<number>;
+  /** Where the plugin places each (DATA, XSCL). */
+  readonly placement: Map<number, EditorPlacement>;
+  /** Their persist locations (XLCN), where they have one. */
+  readonly persistLocation: Map<number, number>;
+}
+
+/** Where the plugin places a reference: DATA position and rotation (radians), XSCL scale. */
+export interface EditorPlacement {
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+  readonly scale: number;
+}
+
+function editorPlacementOf(record: GameRecord): EditorPlacement | undefined {
+  const data = record.fields.first('DATA');
+  if (!data || data.length < 24) return undefined;
+  const d = view(data);
+  return {
+    position: [d.getFloat32(0, true), d.getFloat32(4, true), d.getFloat32(8, true)],
+    rotation: [d.getFloat32(12, true), d.getFloat32(16, true), d.getFloat32(20, true)],
+    scale: record.fields.f32('XSCL') ?? 1,
+  };
 }
 
 /** Native implementations by lowercase "script.function". */
@@ -222,6 +246,17 @@ interface Placement {
 
 const CELL_INTERIOR = 0x01;
 
+/** The globals the engine keeps as its clock (UESP: GameHour, GameDaysPassed, ...). */
+type ClockGlobal = 'hour' | 'days' | 'day' | 'month' | 'year' | 'timescale';
+const CLOCK_GLOBALS: Readonly<Record<string, ClockGlobal>> = {
+  gamehour: 'hour',
+  gamedayspassed: 'days',
+  gameday: 'day',
+  gamemonth: 'month',
+  gameyear: 'year',
+  timescale: 'timescale',
+};
+
 /** Unbound (MQ101), Skyrim.esm: the opening a new game starts with. */
 const OPENING_QUEST = 0x03372b;
 
@@ -246,6 +281,10 @@ export class ScriptRuntime implements VmHost {
   readonly actors: ActorEngine;
   /** While a new game starts its quests (their aliases may take reserved references). */
   startingNewGame = false;
+  /** Game seconds per real second (the TimeScale global; scripts may set it). */
+  timeScale = DEFAULT_TIME_SCALE;
+  /** A script moved the clock (set GameHour, ...): the engine takes the clock from here. */
+  clockChanged = false;
   readonly world: WorldBridge;
   readonly controls: Controls = {
     movement: true,
@@ -298,8 +337,13 @@ export class ScriptRuntime implements VmHost {
   readonly #seeded = new Set<number>();
   readonly #locations = new Map<number, Promise<LocationRecord | undefined>>();
   #persistent: Promise<PersistentIndex> | undefined;
+  /** References whose scripts have started (OnInit): persistent ones at the game's start. */
+  readonly #initialized = new Set<number>();
+  readonly #clockGlobals = new Map<number, ClockGlobal>();
+  #globalsByName: Promise<Map<string, { formId: number; value: number | undefined }>> | undefined;
   #index: PersistentIndex | undefined;
   readonly #keywordCache = new Map<number, Promise<number[]>>();
+  readonly #cellLocations = new Map<number, Promise<number | undefined>>();
   #settings: Promise<GameSettings> | undefined;
   #startDate: GameDate | undefined;
   #startDays = 0;
@@ -334,6 +378,10 @@ export class ScriptRuntime implements VmHost {
       const base = await this.forms.record(created.base);
       return base?.type === 'NPC_' || base?.type === 'LVLN' ? 'actor' : 'objectreference';
     }
+    // A persistent reference's type is in the index (no read).
+    if (target.alias < 0 && this.#index?.flags.has(target.formId)) {
+      return this.#index.actors.has(target.formId) ? 'actor' : 'objectreference';
+    }
     return this.forms.scriptType(target);
   }
 
@@ -344,6 +392,15 @@ export class ScriptRuntime implements VmHost {
     const created = target.alias < 0 ? this.state.created.get(target.formId) : undefined;
     // A created reference runs its base object's scripts.
     if (created) return this.forms.attachedScripts(new ObjectHandle(created.base, 'form'));
+    // A persistent reference without scripts of its own runs its base's (no read of its own).
+    const base = target.alias < 0 ? this.#index?.base.get(target.formId) : undefined;
+    if (
+      base !== undefined &&
+      target.formId !== PLAYER_REF &&
+      !this.#index?.scripted.has(target.formId)
+    ) {
+      return this.forms.attachedScripts(new ObjectHandle(base, 'form'));
+    }
     return this.forms.attachedScripts(target);
   }
 
@@ -405,6 +462,69 @@ export class ScriptRuntime implements VmHost {
       sends.push(this.vm.sendEvent(new ObjectHandle(quest, 'form', alias), event, args));
     }
     await Promise.all(sends);
+  }
+
+  // --- What the engine tells the scripts ---------------------------------------------------
+
+  /**
+   * A cell became part of the loaded area with these references (`loaded`: those whose 3D
+   * is there, the enabled ones). A reference's scripts start (OnInit) the first time it comes
+   * into existence (persistent ones did at the game's start); then, as the Creation Kit's
+   * events describe: OnCellAttach for the cell's references, OnLoad for the loaded ones, and
+   * OnCellLoad once every object's 3D in the cell is there. Returns those with scripts.
+   */
+  async cellAttached(
+    references: readonly number[],
+    loaded: (reference: number) => boolean,
+  ): Promise<number[]> {
+    const scripted: number[] = [];
+    for (const reference of references) {
+      if (await this.#hasScripts(reference)) scripted.push(reference);
+    }
+    for (const reference of scripted) {
+      if (this.#initialized.has(reference)) continue;
+      this.#initialized.add(reference);
+      await this.vm.startInitialize(this.referenceHandle(reference));
+    }
+    const sends: Promise<void>[] = [];
+    for (const reference of scripted) sends.push(this.sendEvent(reference, 'OnCellAttach'));
+    for (const reference of scripted)
+      if (loaded(reference)) sends.push(this.sendEvent(reference, 'OnLoad'));
+    for (const reference of scripted)
+      if (loaded(reference)) sends.push(this.sendEvent(reference, 'OnCellLoad'));
+    this.detach(Promise.all(sends));
+    return scripted;
+  }
+
+  /** A cell left the loaded area: OnCellDetach for its references, OnUnload for the loaded. */
+  async cellDetached(
+    references: readonly number[],
+    loaded: (reference: number) => boolean,
+  ): Promise<void> {
+    const sends: Promise<void>[] = [];
+    for (const reference of references) {
+      if (!(await this.#hasScripts(reference))) continue;
+      if (loaded(reference)) sends.push(this.sendEvent(reference, 'OnUnload'));
+      sends.push(this.sendEvent(reference, 'OnCellDetach'));
+    }
+    this.detach(Promise.all(sends));
+  }
+
+  /**
+   * The player activated a reference: its scripts get OnActivate (on their own threads, as the
+   * game sends it). Returns whether the engine does what activating it does by default (open a
+   * door, take an item): not while a script blocks its activation.
+   */
+  playerActivated(reference: number): boolean {
+    this.detach(this.sendEvent(reference, 'OnActivate', [this.actorHandle(PLAYER_REF)]));
+    return this.state.references.get(reference)?.activationBlocked !== true;
+  }
+
+  async #hasScripts(reference: number): Promise<boolean> {
+    if (this.#index?.scripted.has(reference)) return true;
+    const base = await this.baseOf(reference);
+    if (base !== undefined && (await this.forms.attachments(base)) !== undefined) return true;
+    return (await this.forms.record(reference))?.fields.has('VMAD') === true;
   }
 
   aliasFilled(quest: number, alias: number, reference: number): void {
@@ -834,15 +954,7 @@ export class ScriptRuntime implements VmHost {
   async placement(reference: number): Promise<Placement | undefined> {
     const state = this.state.references.get(reference);
     const live = this.world.livePlacement?.(reference);
-    const record = await this.forms.record(reference);
-    const data = record?.fields.first('DATA');
-    const editor =
-      data && data.length >= 24
-        ? {
-            position: [0, 4, 8].map((at) => view(data).getFloat32(at, true)) as Vec3,
-            rotation: [12, 16, 20].map((at) => view(data).getFloat32(at, true)) as Vec3,
-          }
-        : undefined;
+    const editor = await this.#editorPlacement(reference);
     const position = live?.position ?? state?.position ?? editor?.position;
     if (!position) return undefined;
     const editorCell = this.forms.db.cellOfReference(reference);
@@ -852,8 +964,17 @@ export class ScriptRuntime implements VmHost {
       rotation: live?.rotation ?? state?.rotation ?? editor?.rotation ?? [0, 0, 0],
       cell,
       world: state?.world ?? (cell === undefined ? undefined : this.forms.db.worldOfCell(cell)),
-      scale: state?.scale ?? record?.fields.f32('XSCL') ?? 1,
+      scale: state?.scale ?? editor?.scale ?? 1,
     };
+  }
+
+  /** Where the plugin places a reference (DATA, XSCL): a persistent one's from the index. */
+  async #editorPlacement(reference: number): Promise<EditorPlacement | undefined> {
+    const indexed = this.#index?.placement.get(reference);
+    if (indexed) return indexed;
+    if (this.#index?.flags.has(reference)) return undefined;
+    const record = await this.forms.record(reference);
+    return record ? editorPlacementOf(record) : undefined;
   }
 
   move(reference: number, position: Vec3, rotation?: Vec3, cell?: number, world?: number): void {
@@ -922,23 +1043,33 @@ export class ScriptRuntime implements VmHost {
    * in (for a worldspace's persistent references, the exterior cell at its place).
    */
   async editorLocation(reference: number): Promise<number | undefined> {
-    const record = await this.forms.record(reference);
-    const own = record?.formIdField('XLCN');
+    const indexed = this.#index?.flags.has(reference) === true;
+    const own = indexed
+      ? this.#index?.persistLocation.get(reference)
+      : (await this.forms.record(reference))?.formIdField('XLCN');
     if (own !== undefined) return own;
     let cell = this.forms.db.cellOfReference(reference);
     const world = cell === undefined ? undefined : this.forms.db.worldOfCell(cell);
-    const data = record?.fields.first('DATA');
-    if (
-      world !== undefined &&
-      cell === this.forms.db.persistentCell(world) &&
-      data &&
-      data.length >= 8
-    ) {
-      const x = view(data).getFloat32(0, true);
-      const y = view(data).getFloat32(4, true);
-      cell = await this.forms.db.exteriorCell(world, Math.floor(x / 4096), Math.floor(y / 4096));
+    if (world !== undefined && cell === this.forms.db.persistentCell(world)) {
+      const at = (await this.#editorPlacement(reference))?.position;
+      if (at)
+        cell = await this.forms.db.exteriorCell(
+          world,
+          Math.floor(at[0] / 4096),
+          Math.floor(at[1] / 4096),
+        );
     }
-    return cell === undefined ? undefined : (await this.forms.record(cell))?.formIdField('XLCN');
+    return cell === undefined ? undefined : this.#cellLocation(cell);
+  }
+
+  /** A cell's location (XLCN), read once per cell. */
+  #cellLocation(cell: number): Promise<number | undefined> {
+    let pending = this.#cellLocations.get(cell);
+    if (!pending) {
+      pending = this.forms.record(cell).then((record) => record?.formIdField('XLCN'));
+      this.#cellLocations.set(cell, pending);
+    }
+    return pending;
   }
 
   /** The size of its base object's bounds (OBND), at its scale. */
@@ -1329,6 +1460,8 @@ export class ScriptRuntime implements VmHost {
         flags: new Map(),
         enableParent: new Map(),
         actors: new Set(),
+        placement: new Map(),
+        persistLocation: new Map(),
       };
       const wanted = RecordFlag.persistent | RecordFlag.deleted;
       await this.forms.db.scan(
@@ -1345,8 +1478,16 @@ export class ScriptRuntime implements VmHost {
             list.push(reference);
             index.byBase.set(base, list);
           }
-          if (record.fields.has('VMAD')) index.scripted.add(reference);
+          if (record.fields.has('VMAD')) {
+            index.scripted.add(reference);
+            // Kept: a new game starts their scripts (one read each would be slow in the browser).
+            this.forms.remember(record.detached());
+          }
           index.flags.set(reference, record.flags);
+          const placed = editorPlacementOf(record);
+          if (placed) index.placement.set(reference, placed);
+          const location = record.formIdField('XLCN');
+          if (location !== undefined) index.persistLocation.set(reference, location);
           if (record.type === 'ACHR') index.actors.add(reference);
           const xesp = record.fields.first('XESP');
           if (xesp && xesp.length >= 5) {
@@ -1637,7 +1778,18 @@ export class ScriptRuntime implements VmHost {
    */
   async newGame(progress?: (what: string) => void): Promise<void> {
     const db = this.forms.db;
-    this.#startDate = await readStartDate(db);
+    // The start date: the GameYear, GameMonth and GameDay globals (as readStartDate reads them).
+    const whole = async (name: string, fallback: number): Promise<number> => {
+      const value = await this.#globalByName(name);
+      return value !== undefined && Number.isFinite(value) ? Math.round(value) : fallback;
+    };
+    this.#startDate = {
+      year: await whole('GameYear', DEFAULT_START_DATE.year),
+      month: await whole('GameMonth', DEFAULT_START_DATE.month),
+      day: await whole('GameDay', DEFAULT_START_DATE.day),
+    };
+    await this.#findClockGlobals();
+    this.timeScale = (await this.#globalByName('TimeScale')) ?? DEFAULT_TIME_SCALE;
     // GameDaysPassed (1 in Skyrim.esm) plus GameHour (8): TODO(M13) whether the engine counts so.
     const hour = await this.#globalByName('GameHour');
     const days = await this.#globalByName('GameDaysPassed');
@@ -1646,6 +1798,13 @@ export class ScriptRuntime implements VmHost {
     this.vm.scheduler.gameTime = this.state.gameDaysPassed;
     const quests = db.formIdsOfType('QUST');
     progress?.(`initializing ${String(quests.length)} quests`);
+    await db.scan(
+      ['QUST'],
+      () => true,
+      (record) => {
+        this.forms.remember(record.detached());
+      },
+    );
     for (const quest of quests) {
       const record = await this.forms.quest(quest);
       if (record) await this.quests.initialize(record);
@@ -1661,6 +1820,7 @@ export class ScriptRuntime implements VmHost {
       if (scripted) persistent.push(reference);
     }
     progress?.(`initializing ${String(persistent.length)} persistent references with scripts`);
+    for (const formId of persistent) this.#initialized.add(formId);
     await Promise.all(
       persistent.map((formId) => this.vm.startInitialize(this.referenceHandle(formId))),
     );
@@ -1685,11 +1845,99 @@ export class ScriptRuntime implements VmHost {
   }
 
   async #globalByName(name: string): Promise<number | undefined> {
-    for (const formId of this.forms.db.formIdsOfType('GLOB')) {
-      const record: GameRecord | undefined = await this.forms.record(formId);
-      if (record?.editorId?.toLowerCase() === name.toLowerCase()) return record.fields.f32('FLTV');
+    return (await this.#globals()).get(name.toLowerCase())?.value;
+  }
+
+  /** Every global by lower-case editor id, read in one pass. */
+  #globals(): Promise<Map<string, { formId: number; value: number | undefined }>> {
+    this.#globalsByName ??= (async () => {
+      const globals = new Map<string, { formId: number; value: number | undefined }>();
+      await this.forms.db.scan(
+        ['GLOB'],
+        (flags) => (flags & RecordFlag.deleted) === 0,
+        (record) => {
+          const name = record.editorId?.toLowerCase();
+          if (name !== undefined)
+            globals.set(name, { formId: record.formId, value: record.fields.f32('FLTV') });
+        },
+      );
+      return globals;
+    })();
+    return this.#globalsByName;
+  }
+
+  /** The globals that are the game's clock, by form id (found once). */
+  async #findClockGlobals(): Promise<void> {
+    for (const [name, { formId }] of await this.#globals()) {
+      const clock = CLOCK_GLOBALS[name];
+      if (clock) this.#clockGlobals.set(formId, clock);
     }
-    return undefined;
+  }
+
+  /**
+   * A global that is the game's clock (GameHour, GameDaysPassed, GameDay, GameMonth,
+   * GameYear, TimeScale): its value now; undefined for any other global.
+   */
+  clockGlobal(formId: number): number | undefined {
+    const clock = this.#clockGlobals.get(formId);
+    if (!clock) return undefined;
+    const days = this.state.gameDaysPassed;
+    const date = dateAfter(
+      this.#startDate ?? DEFAULT_START_DATE,
+      Math.floor(days) - Math.floor(this.#startDays),
+    );
+    switch (clock) {
+      case 'hour':
+        return this.gameHour;
+      case 'days':
+        return days;
+      case 'day':
+        return date.day;
+      case 'month':
+        return date.month;
+      case 'year':
+        return date.year;
+      case 'timescale':
+        return this.timeScale;
+    }
+  }
+
+  /** A script set a clock global: the clock jumps (SetValue on GameHour, ...). */
+  setClockGlobal(formId: number, value: number): boolean {
+    const clock = this.#clockGlobals.get(formId);
+    if (!clock) return false;
+    const days = this.state.gameDaysPassed;
+    const start = this.#startDate ?? DEFAULT_START_DATE;
+    const today = dateAfter(start, Math.floor(days) - Math.floor(this.#startDays));
+    const onDate = (date: GameDate): number =>
+      Math.floor(this.#startDays) + daysBetween(start, date) + (days % 1);
+    let next = days;
+    switch (clock) {
+      case 'hour':
+        next = Math.floor(days) + Math.max(0, Math.min(24, value)) / 24;
+        break;
+      case 'days':
+        next = value;
+        break;
+      case 'day':
+        next = onDate({ ...today, day: Math.round(value) });
+        break;
+      case 'month':
+        next = onDate({ ...today, month: Math.round(value) });
+        break;
+      case 'year':
+        next = onDate({ ...today, year: Math.round(value) });
+        break;
+      case 'timescale':
+        this.timeScale = value;
+        return true;
+    }
+    // Waits on game time count from the clock: a jump moves them on too.
+    const passed = next - days;
+    this.state.gameDaysPassed = next;
+    if (passed > 0) this.vm.scheduler.advance(0, passed);
+    this.clockChanged = true;
+    return true;
   }
 }
 

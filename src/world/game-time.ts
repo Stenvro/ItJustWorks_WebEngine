@@ -83,6 +83,16 @@ export function dateAfter(start: GameDate, days: number): GameDate {
   return { year, month, day };
 }
 
+/** Whole days from `start` to `date` (negative before it). */
+export function daysBetween(start: GameDate, date: GameDate): number {
+  const ordinal = (d: GameDate): number => {
+    let total = d.year * 365 + d.day;
+    for (let month = 0; month < d.month; month++) total += MONTH_DAYS[month] ?? 30;
+    return total;
+  };
+  return ordinal(date) - ordinal(start);
+}
+
 /** The day of the week `days` whole days after a new game's start (0 Sundas .. 6 Loredas). */
 export const dayOfWeekAfter = (days: number): number =>
   (START_DAY_OF_WEEK + (Math.max(0, Math.floor(days)) % 7)) % 7;
