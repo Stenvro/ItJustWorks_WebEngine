@@ -199,6 +199,28 @@ export const INI_DEFAULTS = {
     fLockpickLightDiffuseColorG: 0.95,
     fLockpickLightDiffuseColorB: 0.83,
     fActivatePickRadius: 16,
+    // The race menu (character creation): the camera fPlayerFaceEditDistance in front of the
+    // player's face, looking at fRSMCameraLookAtPercent of their height, zooming over
+    // fPlayerZoomTime ms; its two lights (src/shell/race-menu-camera.ts).
+    fPlayerFaceEditDistance: 100,
+    fPlayerZoomTime: 1000,
+    fRSMCameraLookAtPercent: 0.955,
+    fUIRaceSexLightX: 0.5,
+    fUIRaceSexLightY: -600,
+    fUIRaceSexLightZ: 60.5,
+    fUIRaceSexLightRadius: 1400,
+    fUIRaceSexLightDimmerValue: 0.65,
+    fUIRaceSexLightDiffuseColorR: 0.98,
+    fUIRaceSexLightDiffuseColorG: 0.95,
+    fUIRaceSexLightDiffuseColorB: 0.83,
+    fUIRaceSexLight2X: 0.5,
+    fUIRaceSexLight2Y: -150,
+    fUIRaceSexLight2Z: 60.5,
+    fUIRaceSexLight2Radius: 1400,
+    fUIRaceSexLight2DimmerValue: 1.75,
+    fUIRaceSexLight2DiffuseColorR: 0.98,
+    fUIRaceSexLight2DiffuseColorG: 0.95,
+    fUIRaceSexLight2DiffuseColorB: 0.83,
     fFadeToBlackFadeSeconds: 1,
     // The safe zone the menus keep inside the screen's edges.
     fSafeZoneX: 15,
@@ -267,7 +289,16 @@ export const INI_DEFAULTS = {
   },
 } as const;
 
+/** The text settings the engine uses, with the same defaults' source. */
+export const INI_TEXT_DEFAULTS = {
+  Interface: {
+    // The idle the player holds while the race menu is open.
+    sPosePlayerRaceSexMenu: 'OffsetBoundStandingPlayerInstant',
+  },
+} as const;
+
 type Defaults = typeof INI_DEFAULTS;
+type TextDefaults = typeof INI_TEXT_DEFAULTS;
 
 /** Settings the player changed (the game's SkyrimPrefs.ini), over the INI files. */
 export interface IniOverrides {
@@ -306,12 +337,23 @@ export class IniSettings {
     return this.number(section as keyof Defaults, key as never);
   }
 
-  /** A text setting from the INI file (sIntroSequence), else `fallback`. */
-  text(section: string, key: string, fallback: string): string {
+  /**
+   * A text setting from the INI file as it is (an empty value stays empty: sIntroSequence=
+   * plays no intro), else `fallback`.
+   */
+  rawText(section: string, key: string, fallback: string): string {
     return (this.#ini && iniValue(this.#ini, section, key)) ?? fallback;
   }
 
   bool<S extends keyof Defaults>(section: S, key: keyof Defaults[S] & string): boolean {
     return this.number(section, key) !== 0;
+  }
+
+  /** A text setting: the INI file's value if it has one, else the default. */
+  text<S extends keyof TextDefaults>(section: S, key: keyof TextDefaults[S] & string): string {
+    const value = this.#ini && iniValue(this.#ini, section, key);
+    return value === undefined || value.trim() === ''
+      ? (INI_TEXT_DEFAULTS[section][key] as string)
+      : value.trim();
   }
 }

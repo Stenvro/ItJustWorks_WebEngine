@@ -10,11 +10,15 @@ import {
   applyPreset,
   applySlider,
   buildSliders,
+  categoryArguments,
   chargenMorphWeights,
   composeFaceTint,
   currentHeadPart,
   defaultAppearance,
+  faceTextureSlots,
   faceTintLayers,
+  playerNameOf,
+  raceListArguments,
   skinnyMorphWeight,
   sliderArguments,
   type ChargenRaceData,
@@ -354,5 +358,46 @@ describe('character creation model', () => {
     );
     // Pixel 0: 200→ lerp to 0 by 128/255 → 99.6, then halfway to 100.
     expect([...out]).toEqual([100, 75, 62, 255, 150, 100, 75, 255]);
+  });
+
+  it('lists the categories and the races as the movie takes them', () => {
+    const args = categoryArguments((label) => label.replace('sRSM', ''));
+    expect(args.slice(0, 6)).toEqual(['Race', 0x2, 'Body', 0x4, 'Head', 0x8]);
+    expect(args).toHaveLength(16);
+    const races = [
+      { formId: 1, name: 'Argonian', description: 'Lizards' },
+      { formId: 2, name: 'Breton', description: 'Mages' },
+    ];
+    expect(raceListArguments(races, 2)).toEqual(['Argonian', 'Lizards', 0, 'Breton', 'Mages', 1]);
+  });
+
+  it('takes a typed name, none when cancelled or empty', () => {
+    expect(playerNameOf('  Big E ')).toBe('Big E');
+    expect(playerNameOf('')).toBeUndefined();
+    expect(playerNameOf(undefined)).toBeUndefined();
+    expect(playerNameOf('x'.repeat(40))).toHaveLength(26);
+  });
+
+  it('puts a complexion on the face as the baked heads have it', () => {
+    const complexion = [
+      'textures\\male\\malehead.dds',
+      'textures\\male\\malehead_msn.dds',
+      '',
+      'textures\\male\\malehead_sk.dds',
+      'textures\\male\\maleheaddetail_age40.dds',
+      '',
+      '',
+      'textures\\male\\malehead_s.dds',
+    ];
+    expect(faceTextureSlots(complexion, 'tint')).toEqual([
+      'textures\\male\\malehead.dds',
+      'textures\\male\\malehead_msn.dds',
+      'textures\\male\\malehead_sk.dds',
+      'textures\\male\\maleheaddetail_age40.dds',
+      '',
+      '',
+      'tint',
+      'textures\\male\\malehead_s.dds',
+    ]);
   });
 });

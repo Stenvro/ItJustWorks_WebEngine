@@ -119,16 +119,30 @@ their look: [formats/esm.md](formats/esm.md#actors)).
 ## The player
 
 The player's body (`player-avatar.ts`) is the Player actor (NPC_ 0x7, reference 0x14) placed like
-any actor: its race's skeleton, its outfit (the iron set) and its head. No FaceGen head is baked
-for the player (the engine makes it at run time), so its head is put together from its head parts
-(`ActorLook.headParts`: the race's defaults, those of a type it has its own of replaced, and the
-parts they bring along: head, mouth, eyes, hair, hairline for the vanilla Nord), the face part
-with the NPC's face texture set (FTST) or the race's default (DFTM / DFTF), each part with its
-expression TRI. TODO(M9): the RaceSex menu's sliders (NAM9 / NAMA through the race's and the
-chargen TRIs) and tint layers (TINI..TINV). It is drawn in third person and from the free
-camera; in first person nothing of it is drawn (TODO(M11): the first-person arms once weapons
-or spells are drawn; TODO(M13): the third-person body's shadow, which the game casts in first
-person too).
+any actor: its race's skeleton, its outfit (the iron set) and its head, in the player's
+appearance (`GameState.playerAppearance`: the race menu's choices, made from the Player record
+when first needed; `src/shell/player-look.ts`). Its race (Actor.SetRace's, else the appearance's),
+sex, weight, head parts, hair colour (HCLF), skin tone (QNAM) and complexion (FTST) go over the
+Player record's (`LookOverrides`). No FaceGen head is baked for the player (the engine makes it
+at run time), so its head is put together from its head parts (`ActorLook.headParts`: the
+race's defaults, those of a type it has its own of replaced, and the parts they bring along:
+head, mouth, eyes, hair, hairline for the vanilla Nord), each shaped for the face: the part's
+model's own positions plus its race morph TRI (the race's NAM8 morph race at 1), its chargen
+morph TRI (the NAM9 pairs, the NAMA types) and SkinnyMorph by the weight
+(`src/gameplay/chargen-morphs.ts`, measured against the baked FaceGen heads), baked on the CPU
+into the player's own copy of the part (the expressions still play on the GPU over it). The face
+takes its complexion's textures as the baked heads have them (TX03 the subsurface map in slot 2,
+TX04 the detail map in slot 3) and the face tint in slot 6: the appearance's tint layers
+composited over the race's masks (`composeFaceTint`) into a 512×512 texture the engine writes.
+The body is made again when the appearance changes (the race menu) or a script changes the
+player's race (`ScriptWorld.lookChanged`; the other sex brings the other first-person graph); a
+part is baked again only when the weights of its own morphs change, and a tint alone only
+paints the texture again. Its race's height sets the cameras' (TODO(M13): the character
+controller keeps the size it was made with). It is drawn in third person, from the free camera
+and from the race menu's camera; in first person nothing of it is drawn (TODO(M11): the
+first-person arms once weapons or spells are drawn; TODO(M13): the third-person body's shadow,
+which the game casts in first person too). A menu that shows the player (the race menu)
+animates the body on real time while the game stands still, and turns it itself.
 
 Two graphs run: the race's (`defaultmale.hkx`) on the body and the first-person one
 (`_1stperson\firstperson.hkx`) on the first-person skeleton (`_1stperson\skeleton.nif` with

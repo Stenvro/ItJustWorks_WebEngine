@@ -6,7 +6,8 @@
 //
 // Built so far: help, centeroncell (coc), additem / removeitem, setstage / getstage /
 // startquest / stopquest / completequest, set <global> to <value> (TimeScale too), getav /
-// setav / modav / forceav, advlevel, togglemenus (tm), forceweather (fw), quitquitquit (qqq).
+// setav / modav / forceav, advlevel, togglemenus (tm), forceweather (fw), showracemenu,
+// quitquitquit (qqq).
 // TODO(M13): the rest of the game's console commands (tgm, tcl, tai, kill, resurrect, moveto,
 // prid by clicking, ...), coc to exterior cells and the COC markers.
 
@@ -27,6 +28,8 @@ export interface ConsoleContext {
   toggleMenus(): void;
   /** Forces a weather (fw). */
   forceWeather(weather: number): void;
+  /** Opens the race menu (showracemenu). */
+  showRaceMenu(): void;
   /** Quits the game (qqq). */
   quit(): void;
 }
@@ -117,6 +120,10 @@ export class ConsoleCommands {
         this.#context.forceWeather(weather);
         return [];
       }
+      case 'showracemenu':
+        // TODO(M11): after the opening, a new race resets the skills (UESP, "Console").
+        this.#context.showRaceMenu();
+        return [];
       case 'qqq':
       case 'quitquitquit':
         this.#context.quit();

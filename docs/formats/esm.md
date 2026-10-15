@@ -935,6 +935,13 @@ actor's tint layers in stored (ascending TINI) order, each the race layer's mask
 skin tone mask is all white at value 1, so the start colour does not matter. Mean error against
 the baked textures: 1.2–2.8 / 255 (the alpha channel as coverage: 107 / 255).
 
+**Face textures:** the baked face's texture set is its complexion's (FTST) moved for the
+FaceGen shader: TX00 diffuse and TX01 normal map in slots 0 and 1, **TX03** (the subsurface
+map, `MaleHead_sk.dds`) in slot 2, **TX04** (the detail map, `MaleHeadDetail_Age40.dds`) in
+slot 3, the face tint in slot 6, TX07 (specular) in slot 7 (`facegeom\skyrim.esm\0010A1AA.nif`
+against SkinHeadMaleNordComplexion_Age40). The head part's own NIF (MaleHead.nif) leaves 3 and
+6 empty; the engine fills them for the player's head (`faceTextureSlots`).
+
 ## AI packages
 
 **PACK** (`src/ai/package-records.ts`; check: `node tools/package-info.ts --parse`: 7633

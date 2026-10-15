@@ -44,6 +44,11 @@ export interface ScriptView {
   nodeWorld?(reference: number, node: string): Mat4 | undefined;
   /** What activating a reference does by default (a script's Activate). */
   activate?(reference: number): void;
+  /**
+   * An actor's look changed (Actor.SetRace; the player's appearance in the race menu): the
+   * view makes its 3D again; resolves once it shows the new look.
+   */
+  lookChanged?(reference: number): Promise<void>;
 }
 
 /** SetMotionType's keyframed motion. */
@@ -165,6 +170,30 @@ export class ScriptWorld implements WorldBridge {
 
   activate(reference: number): void {
     for (const view of this.#views) view.activate?.(reference);
+  }
+
+  /** Actor.SetRace: the actor is made again in its new race where it is shown. */
+  raceChanged(actor: number): void {
+    this.lookChanged(actor).catch((error: unknown) => {
+      this.#terminal.log(
+        'actor',
+        `${actor.toString(16)}: not made again in its race: ${error instanceof Error ? error.message : String(error)}`,
+        'warn',
+      );
+    });
+  }
+
+  /**
+   * An actor's look changed (its race; the player's appearance): the views showing it make it
+   * again; resolves once they have.
+   */
+  async lookChanged(actor: number): Promise<void> {
+    const changing: Promise<void>[] = [];
+    for (const view of this.#views) {
+      const done = view.lookChanged?.(actor);
+      if (done) changing.push(done);
+    }
+    await Promise.all(changing);
   }
 
   /** The session's sound system (music types scripts add and remove). */

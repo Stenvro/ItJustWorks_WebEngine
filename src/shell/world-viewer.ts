@@ -78,7 +78,15 @@ import {
   animationInterval,
   type AnimatedSkeleton,
 } from '../animation/animated-skeleton.ts';
-import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
+import {
+  groundActors,
+  moveActor,
+  placeAgain,
+  ragdollsOf,
+  talkTargets,
+  withActorInstances,
+  type PlacedActor,
+} from './actors.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
@@ -90,6 +98,7 @@ import {
 import { CreatedObjects } from './created-objects.ts';
 import { cellStatesElement } from './cell-states.ts';
 import { PlayerAvatar } from './player-avatar.ts';
+import type { PlayerView } from './race-menu.ts';
 import { TreeSway } from '../animation/tree-sway.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
@@ -313,6 +322,12 @@ export class WorldViewer {
     return this.#play?.player;
   }
 
+  /** The player being played: their session and body (the race menu's). */
+  get playerView(): PlayerView | undefined {
+    const play = this.#play;
+    return play && { play, avatar: this.#avatar };
+  }
+
   /**
    * What the map's local map shows here: the loaded cells' landscape, objects and load doors
    * (enabled), and the area they span. Undefined before a world is open.
@@ -528,7 +543,43 @@ export class WorldViewer {
       }
       return undefined;
     },
+    lookChanged: (reference) => this.#lookChanged(reference),
   };
+
+  /**
+   * An actor's look changed: the player's body is made again (its appearance, its race); an
+   * actor of a loaded cell is placed again in its new race where it stands, its cell's scene
+   * built again with it. TODO(M13): a dead actor's ragdoll keeps its old skeleton's bodies.
+   */
+  async #lookChanged(reference: number): Promise<void> {
+    if (reference === PLAYER_REF) {
+      await this.#avatar?.rebuild();
+      return;
+    }
+    const session = this.#session;
+    if (!session) return;
+    for (const cell of this.#cells.values()) {
+      const old = cell.allActors.find((placed) => placed.actor.reference === reference);
+      if (!old || !cell.ready) continue;
+      const source = cell.data?.actors.find((actor) => actor.reference === reference) ?? old.actor;
+      const placed = await placeAgain(session, old, source);
+      // The cell went meanwhile, or the actor cannot be made in its new race.
+      if (!placed || !cell.allActors.includes(old)) return;
+      soundPlacedActors([placed], this.#soundingWorld);
+      cell.allActors = cell.allActors.map((actor) => (actor === old ? placed : actor));
+      cell.sceneInstances = withActorInstances(
+        cell.sceneInstances,
+        old,
+        placed,
+        cell.visibility.get(reference),
+      );
+      const previous = cell.scene;
+      cell.scene = this.#renderer.scene.createScene(cell.sceneInstances);
+      previous?.destroy();
+      this.#refreshCell(cell);
+      return;
+    }
+  }
 
   /** A script moved a reference of a loaded cell: its instance and its collision follow. */
   async #scriptMoved(reference: number): Promise<void> {
@@ -1867,10 +1918,10 @@ export class WorldViewer {
 
   *#readyScenes(): Iterable<GpuScene> {
     if (this.#sky && !this.#noSky) yield* this.#sky.skyScenes();
-    // The player's body, in third person or seen from the free camera.
+    // The player's body, in third person or seen from the free camera or a menu's.
     const play = this.#play;
     const avatar = this.#avatar;
-    if (play && avatar && (play.freeCamera || play.player.pov === 'third')) yield avatar.scene;
+    if (play && avatar && play.bodyShown) yield avatar.scene;
     if (this.#lod) yield* this.#lod.scenes();
     for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
     if (this.#created) yield* this.#created.scenes();
@@ -1991,7 +2042,9 @@ export class WorldViewer {
     const world = this.#sky;
     if (world?.located) this.#session?.soundSystem?.setAmbience(this.#ambientState(world));
     const sky = this.#sky?.lighting() ?? NO_SKY;
-    return { ...sky, lights: lights.slice(0, MAX_LIGHTS) };
+    // A menu's lights (the race menu's) first: they light what it shows.
+    const extra = this.#play?.extraLights ?? [];
+    return { ...sky, lights: [...extra, ...lights].slice(0, MAX_LIGHTS) };
   }
 
   // --- UI -------------------------------------------------------------------------------

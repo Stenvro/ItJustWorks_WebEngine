@@ -84,6 +84,8 @@ interface TextureEntry {
   held: boolean;
   /** performance.now() of the last request or release. */
   lastUsed: number;
+  /** Provided by its owner (`provide`): never evicted, however few models hold it. */
+  provided?: boolean;
 }
 
 export class TextureCache {
@@ -153,6 +155,7 @@ export class TextureCache {
       refs: 0,
       held: false,
       lastUsed: performance.now(),
+      provided: true,
     });
   }
 
@@ -194,7 +197,10 @@ export class TextureCache {
     if (this.#bytes <= maxBytes) return 0;
     const now = performance.now();
     const idle = [...this.#cache.entries()]
-      .filter(([, entry]) => entry.held && entry.refs === 0 && now - entry.lastUsed > graceMs)
+      .filter(
+        ([, entry]) =>
+          entry.held && !entry.provided && entry.refs === 0 && now - entry.lastUsed > graceMs,
+      )
       .sort((a, b) => a[1].lastUsed - b[1].lastUsed);
     let freed = 0;
     for (const [path, entry] of idle) {

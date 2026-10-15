@@ -537,6 +537,7 @@ async function main(): Promise<void> {
     localMap: () =>
       worldViewer.player ? worldViewer.localMapContent() : modelViewer.localMapContent(),
     tweenCamera: () => (worldViewer.player ?? modelViewer.player)?.tween,
+    player: () => worldViewer.playerView ?? modelViewer.playerView,
     inAir: () => {
       const player = worldViewer.player ?? modelViewer.player;
       return player !== undefined && !player.character.grounded && !player.character.swimming;

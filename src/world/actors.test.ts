@@ -16,6 +16,7 @@ import {
   pickLeveled,
   seededRandom,
   slotOwners,
+  withOverrides,
   type WornAddon,
 } from './actors.ts';
 import type { GameRecord } from './record-db.ts';
@@ -298,5 +299,32 @@ describe('actor looks', () => {
     expect(partitionVisible(130, helmet, undefined)).toBe(true);
     expect(partitionVisible(230, slotOwners([worn(5, 0x1)]), undefined)).toBe(false);
     expect(firstSlot(0x174)).toBe(32);
+  });
+
+  it("puts a made look's traits over the record's (the player's appearance)", () => {
+    const player = parseNpc(
+      record('NPC_', 7, [
+        ['ACBS', bytes(['u32', 0])],
+        ['RNAM', bytes(['u32', 0x13746])],
+        ['PNAM', bytes(['u32', 0x100])],
+        ['HCLF', bytes(['u32', 0x200])],
+      ]),
+    );
+    const made = withOverrides(player, {
+      race: 0x13740,
+      female: true,
+      weight: 30,
+      headParts: [],
+      skinTone: [0.5, 0.4, 0.3],
+    });
+    expect(made.race).toBe(0x13740);
+    expect(made.flags & 0x1).toBe(1);
+    expect(made.weight).toBe(30);
+    // No head parts of its own (a race's default look): the race's fill every type.
+    expect(made.headParts).toEqual([]);
+    // What the look leaves out stays the record's.
+    expect(made.hairColor).toBe(0x200);
+    expect(made.skinTone).toEqual([0.5, 0.4, 0.3]);
+    expect(withOverrides(made, { female: false }).flags & 0x1).toBe(0);
   });
 });

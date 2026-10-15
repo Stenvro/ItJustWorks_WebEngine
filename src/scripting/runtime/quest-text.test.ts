@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { QuestRecord } from '../../world/quest-records.ts';
+import { PLAYER_REF } from './forms.ts';
 import { questText } from './quest-text.ts';
 import type { ScriptRuntime } from './runtime.ts';
 
@@ -45,8 +46,19 @@ const runtime = {
   forms: { record: (formId: number) => Promise.resolve(records.get(formId)) },
   state: {
     globals: new Map([[GLOBAL, 7.6]]),
-    quests: new Map([[QUEST, { aliases: new Map([[0, REFERENCE]]) }]]),
+    quests: new Map([
+      [
+        QUEST,
+        {
+          aliases: new Map([
+            [0, REFERENCE],
+            [2, PLAYER_REF],
+          ]),
+        },
+      ],
+    ]),
   },
+  actors: { playerName: () => Promise.resolve('Big E') },
   baseOf: (reference: number) => Promise.resolve(reference === REFERENCE ? NPC : undefined),
 } as unknown as ScriptRuntime;
 
@@ -56,6 +68,7 @@ const quest = {
   aliases: [
     { id: 0, name: 'Ingun', location: false, displayName: undefined },
     { id: 1, name: 'Empty', location: false, displayName: undefined },
+    { id: 2, name: 'Player', location: false, displayName: undefined },
   ],
 } as unknown as QuestRecord;
 
@@ -65,6 +78,10 @@ describe('questText', () => {
       'Talk to Ingun Black-Briar',
     );
     expect(await questText(runtime, quest, 'Ask <Alias.ShortName=ingun>')).toBe('Ask Ingun');
+  });
+
+  it("fills in the player's name as chosen in the race menu", async () => {
+    expect(await questText(runtime, quest, 'Follow <Alias=Player>')).toBe('Follow Big E');
   });
 
   it("fills in the quest's text globals as whole numbers", async () => {

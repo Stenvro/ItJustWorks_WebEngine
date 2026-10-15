@@ -76,6 +76,7 @@ import { AnimationAssets } from './animation-assets.ts';
 import { audioSettingKey, Preferences } from './preferences.ts';
 import { ControlSettings } from './control-settings.ts';
 import { WorldLines } from './world-lines.ts';
+import { PlayerLook } from './player-look.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { PlacedActor } from './actors.ts';
 import type { Terminal } from './terminal.ts';
@@ -723,6 +724,14 @@ export class GameSession {
     return parseNif(await this.vfs.read(path));
   }
 
+  #playerLook: PlayerLook | undefined;
+
+  /** The player's look as the engine makes it (the race menu's choices), made once. */
+  get playerLook(): PlayerLook {
+    this.#playerLook ??= new PlayerLook(this, this.#terminal);
+    return this.#playerLook;
+  }
+
   /** What places actors in cells (their looks, skeletons and clips are shared). */
   actors(): Promise<ActorPlacer> {
     this.#actors ??= this.db.then((db) => new ActorPlacer(this, db, this.#terminal));
@@ -979,6 +988,7 @@ export class GameSession {
   }
 
   dispose(): void {
+    this.#playerLook?.dispose();
     this.soundSystem?.dispose();
     void this.soundSystem?.engine.context.close();
     this.#audioLoader?.dispose();

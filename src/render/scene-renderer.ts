@@ -1517,6 +1517,36 @@ export class SceneRenderer {
     });
   }
 
+  /**
+   * A texture whose pixels (RGBA8, `mipLevels` levels) the engine writes (writePixels): the
+   * player's face tint.
+   */
+  createPixelTexture(width: number, height: number, mipLevels: number, label: string): GPUTexture {
+    return this.#device.createTexture({
+      label,
+      size: [width, height],
+      mipLevelCount: mipLevels,
+      format: 'rgba8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+  }
+
+  /** Writes one level of a pixel texture (RGBA8). */
+  writePixels(
+    texture: GPUTexture,
+    mip: number,
+    width: number,
+    height: number,
+    data: Uint8Array,
+  ): void {
+    this.#device.queue.writeTexture(
+      { texture, mipLevel: mip },
+      data,
+      { bytesPerRow: width * 4, rowsPerImage: height },
+      [width, height, 1],
+    );
+  }
+
   /** Copies a canvas's image (its alpha not premultiplied) into a texture's top left. */
   copyCanvas(canvas: HTMLCanvasElement, texture: GPUTexture, width: number, height: number): void {
     this.#device.queue.copyExternalImageToTexture(

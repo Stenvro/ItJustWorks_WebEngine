@@ -31,6 +31,7 @@ import { CraftingMenu } from './crafting-menu.ts';
 import type { TweenCamera } from './tween-camera.ts';
 import type { CraftingMenuType } from '../gameplay/crafting.ts';
 import type { LocalMapContent } from './local-map.ts';
+import { RaceMenu, type PlayerView } from './race-menu.ts';
 
 /** The menus' depth among the game's menus (over the HUD, under message boxes). */
 const MENU_DEPTH = 6;
@@ -68,6 +69,8 @@ export interface MenusWorld {
   noFastTravelReason(): Promise<string | undefined>;
   /** Fast travel to a reference, `distance` away on the map (the time it takes). */
   fastTravel(destination: number, distance: number | undefined): Promise<void>;
+  /** The player being played (the race menu shows them). */
+  player(): PlayerView | undefined;
 }
 
 export class GameMenus {
@@ -92,6 +95,7 @@ export class GameMenus {
   readonly #lockpicking: LockpickingMenu;
   readonly #skills: SkillsMenu;
   readonly #map: MapMenu;
+  readonly #race: RaceMenu;
   /** The tutorials of the menus, the first time each opens. */
   readonly #tutorials: TutorialMenu;
   readonly #crafting: CraftingMenu;
@@ -135,6 +139,10 @@ export class GameMenus {
       openJournal: () => {
         this.openMenu('Journal');
       },
+    });
+    this.#race = new RaceMenu(host, session, terminal, {
+      confirm: (text, buttons) => world.confirm(text, buttons),
+      player: () => world.player(),
     });
     this.#inventory = inventoryModel(session, terminal, (book) => this.#readFromInventory(book));
     this.#magic = magicModel(session, terminal);
@@ -228,8 +236,8 @@ export class GameMenus {
   }
 
   /**
-   * A menu a script opens (OpenInventory, ShowBarterMenu, ShowGiftMenu); resolves once it has
-   * closed, with what it returns (ShowGiftMenu's favor points: TODO(M11), 0).
+   * A menu a script opens (OpenInventory, ShowBarterMenu, ShowGiftMenu, ShowRaceMenu); resolves
+   * once it has closed, with what it returns (ShowGiftMenu's favor points: TODO(M11), 0).
    */
   async openScripted(request: MenuRequest): Promise<number> {
     if (this.#open || this.#session.menuMode) return 0;
@@ -237,6 +245,7 @@ export class GameMenus {
     if (request.name === 'Training Menu') {
       return request.actor === undefined ? 0 : this.#openTraining(request.actor);
     }
+    if (request.name === 'RaceSex Menu') return this.#openRaceMenu(request.limited);
     let model: ItemMenuModel | undefined;
     switch (request.name) {
       case 'Container Menu':
@@ -250,7 +259,6 @@ export class GameMenus {
         model = await giftModel(session, request.actor, request);
         break;
       default:
-        // TODO(M9): the race menu.
         this.#terminal.log('ui', `the ${request.name} is not built yet`, 'warn');
         return 0;
     }
@@ -293,6 +301,60 @@ export class GameMenus {
           this.#terminal.log(
             'ui',
             `the training menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+            'error',
+          );
+          closed();
+        });
+    });
+  }
+
+  /**
+   * The race menu (character creation; `limited`: ShowLimitedRaceMenu's), the HUD hidden;
+   * resolves once it has faded and closed.
+   */
+  async #openRaceMenu(limited: boolean): Promise<number> {
+    const leaveMenuMode = this.#enterMenuMode();
+    const hud = this.#session.hud;
+    hud.shown(false);
+    const open = {
+      menu: undefined as Menu | undefined,
+      leave: () => {
+        hud.shown(true);
+        leaveMenuMode();
+      },
+    };
+    this.#open = open;
+    return new Promise((resolve) => {
+      const closed = (): void => {
+        if (this.#open === open) {
+          this.#open = undefined;
+          open.leave();
+        }
+        resolve(0);
+      };
+      this.#race
+        .open(limited, MENU_DEPTH, closed)
+        .then((opened) => {
+          if (!opened) {
+            closed();
+            return;
+          }
+          if (this.#open !== open) {
+            opened.close();
+            return;
+          }
+          open.menu = opened.menu;
+          // Closed from outside (Play ends): the player's camera and pose come back.
+          open.leave = () => {
+            opened.close();
+            hud.shown(true);
+            leaveMenuMode();
+          };
+        })
+        .catch((error: unknown) => {
+          this.#terminal.log(
+            'ui',
+            `the race menu does not open: ${error instanceof Error ? error.message : String(error)}`,
             'error',
           );
           closed();

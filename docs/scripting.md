@@ -164,3 +164,12 @@ scripts set), spells and perks (its own, its race's, scripts'), being essential 
 (its base, scripts' ActorBase changes, or an alias), dead (killed, or placed dead) and dying
 (OnDying, then OnDeath). TODO(M11): stats recalculated with the player's level, bleedout,
 the magic system's effects; TODO(M10): combat, detection, packages.
+
+The player's race, sex and name are the race menu's choices (`GameState.playerAppearance`,
+`playerName`): ActorBase.GetRace and GetSex of the Player base (0x7), Actor.GetRace and the
+conditions GetIsRace, GetIsSex, GetPCIsRace and GetPCIsSex read them, and `<Alias=...>` text
+filled by the player shows the chosen name. Actor.SetRace sets the actor's own race (its base
+keeps its own: MQ101's AddRaceSpells reads the base's) and the world makes the actor again in
+it (`WorldBridge.raceChanged`): the player's body keeps the chosen face (a werewolf and back),
+an NPC of a loaded cell is placed again where it stands. The race menu gives up the actor's own
+race for the race chosen. TODO(M12): both in the save.

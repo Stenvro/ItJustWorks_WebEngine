@@ -223,10 +223,13 @@ export class Player implements Camera {
   readonly #fovDegrees: number;
   /** The tween menu's camera while it is open (it leans and zooms the view). */
   readonly tween: TweenCamera;
+  /** The race's body (the cameras' heights). */
+  #body: PlayerBody;
 
   constructor(setup: PlayerSetup, feet: Vec3, yaw: number) {
     this.#setup = setup;
     const { body, ini } = setup;
+    this.#body = body;
     this.character = new CharacterBody(
       setup.physics,
       {
@@ -313,12 +316,27 @@ export class Player implements Camera {
 
   /** The first-person camera in the player's frame (the animated node, else the rest one). */
   #eyeOffset(): Vec3 {
-    return this.cameraOffset?.() ?? [0, 0, this.#setup.body.eyeHeight];
+    return this.cameraOffset?.() ?? [0, 0, this.#body.eyeHeight];
   }
 
   /** The race's height (the body and its camera nodes are scaled by it). */
   get height(): number {
-    return this.#setup.body.height;
+    return this.#body.height;
+  }
+
+  /** The body's height: the top of its skeleton's bound (game units, scaled). */
+  get bodyHeight(): number {
+    const { bound } = this.#body;
+    return bound.center[2] + bound.halfExtents[2];
+  }
+
+  /**
+   * The player's race or sex changed (the race menu, Actor.SetRace): the cameras follow the new
+   * body's height. TODO(M13): the character controller keeps the size it was made with (the
+   * playable races' bounds differ by their height, 0.9 to 1.1 times).
+   */
+  setBody(body: PlayerBody): void {
+    this.#body = body;
   }
 
   /** The movement types the player moves with. */
@@ -532,7 +550,8 @@ export class Player implements Camera {
 
   /** First person at the eye; third person behind the shoulder, kept out of walls. */
   #placeCamera(alpha: number): void {
-    const { body, ini, physics } = this.#setup;
+    const { ini, physics } = this.#setup;
+    const body = this.#body;
     const feet = this.character.feetAt(alpha);
     if (this.pov === 'first') {
       // The camera rides the first-person skeleton's Camera1st node (sneaking lowers it).

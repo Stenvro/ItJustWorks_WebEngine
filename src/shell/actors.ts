@@ -12,13 +12,20 @@ import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { thinModelPath, type ModelTextureSwaps } from '../render/actor-model.ts';
 import { transformPoint, type Vec3 } from '../render/math.ts';
-import type { GpuModel, GpuMorphs, ModelInstance } from '../render/scene-renderer.ts';
+import type {
+  GpuModel,
+  GpuMorphs,
+  InstanceVisibility,
+  ModelInstance,
+} from '../render/scene-renderer.ts';
 import {
   ActorResolver,
   meshPath,
   partitionVisible,
   seededRandom,
   type ActorLook,
+  type HeadPartLook,
+  type LookOverrides,
 } from '../world/actors.ts';
 import {
   GROUND_ABOVE,
@@ -61,6 +68,18 @@ export interface PlacedActor extends AnimatedSkeleton {
   readonly instances: readonly ModelInstance[];
   /** Its behavior graph, running (undefined: it stands in its skeleton's rest pose). */
   readonly behavior: BehaviorRuntime | undefined;
+}
+
+/**
+ * An actor's look the engine makes at run time (the player's: src/shell/player-look.ts): its
+ * traits put another way, and its head parts shaped and painted for its face.
+ */
+export interface MadeLook {
+  readonly overrides: LookOverrides;
+  /** The head part models of the look's head parts (with its face tint, its shape baked in). */
+  heads(
+    look: ActorLook,
+  ): Promise<readonly { readonly model: GpuModel; readonly part: HeadPartLook }[]>;
 }
 
 const describe = (error: unknown): string =>
@@ -128,6 +147,43 @@ export function moveActor(
       : upright,
   );
   instance.motion.version++;
+}
+
+/**
+ * An actor made again in the race Actor.SetRace gave it (its look, skeleton and graph that
+ * race's), standing where it stands now; undefined if it cannot be made.
+ */
+export async function placeAgain(
+  session: GameSession,
+  old: PlacedActor,
+  placedInCell: CellActor,
+): Promise<PlacedActor | undefined> {
+  const race = session.scriptsReady?.state.actors.get(old.actor.reference)?.race;
+  const placer = await session.actors();
+  const placed = await placer.place(placedInCell, undefined, race);
+  const instance = placed?.instances[0];
+  const from = old.instances[0]?.world;
+  if (instance && from) {
+    instance.world.set(from);
+    if (instance.motion) instance.motion.version++;
+  }
+  return placed;
+}
+
+/**
+ * A scene's instances with an actor's replaced by those of the actor made again (drawn with
+ * its reference's visibility).
+ */
+export function withActorInstances(
+  instances: readonly ModelInstance[],
+  old: PlacedActor,
+  placed: PlacedActor,
+  visibility: InstanceVisibility | undefined,
+): ModelInstance[] {
+  return [
+    ...instances.filter((instance) => instance.pose !== old.pose),
+    ...placed.instances.map((instance) => ({ ...instance, ...(visibility && { visibility }) })),
+  ];
 }
 
 /** Sets placed actors on what character controllers stand on in a physics world. */
@@ -485,10 +541,24 @@ export class ActorPlacer {
 
   /**
    * An actor ready to draw where its AI package has it, or undefined if its package has it in
-   * another cell or its look or skeleton cannot be made.
+   * another cell or its look or skeleton cannot be made. `made`: its look as the engine makes it
+   * (the player's); `race`: the race Actor.SetRace gave it.
    */
-  async place(placedInCell: CellActor): Promise<PlacedActor | undefined> {
-    const look = await this.#resolver.resolve(placedInCell.base, placedInCell.reference);
+  async place(
+    placedInCell: CellActor,
+    made?: MadeLook,
+    race?: number,
+  ): Promise<PlacedActor | undefined> {
+    const overrides: LookOverrides = {
+      ...made?.overrides,
+      ...(race !== undefined && { race }),
+    };
+    const look = await this.#resolver.resolve(
+      placedInCell.base,
+      placedInCell.reference,
+      1,
+      overrides,
+    );
     if (!look?.skeleton) return undefined;
     const session = this.#session;
     // The dead run no packages.
@@ -536,10 +606,11 @@ export class ActorPlacer {
         return model ? { model, addon: addon.addon } : undefined;
       }),
     );
-    // Its head: the FaceGen head baked for it, else its head parts put together (the
-    // player's: the engine makes it at run time).
+    // Its head: the FaceGen head baked for it, else its head parts put together: the head the
+    // engine makes (the player's: shaped and painted by the race menu's choices), else as they
+    // are (a race's defaults, unshaped).
     const baked =
-      look.faceGen && session.vfs.has(look.faceGen.geometry)
+      !made && look.faceGen && session.vfs.has(look.faceGen.geometry)
         ? await session.actorModel(look.faceGen.geometry, undefined, 100, {})
         : undefined;
     const heads: GpuModel[] = [];
@@ -549,19 +620,19 @@ export class ActorPlacer {
       for (const [shape, path] of look.faceGen.expressions) expressions.set(shape, path);
     } else if (look.faceGen) {
       // Races with FaceGen heads only; the others (creatures) have no head parts.
-      // TODO(M9): the RaceSex menu's sliders (NAM9 and NAMA through the race's and the
-      // chargen TRIs) and tint layers (TINI..TINV) that shape and paint a made head.
-      const parts = await Promise.all(
-        look.headParts.map(async (part) => {
-          if (!session.vfs.has(part.model)) return undefined;
-          const textures =
-            part.textureSet === undefined ? undefined : await this.#textureSet(part.textureSet);
-          const model = await session.actorModel(part.model, undefined, 100, {
-            ...(textures && { all: textures }),
-          });
-          return model && { model, part };
-        }),
-      );
+      const parts = made
+        ? await made.heads(look)
+        : await Promise.all(
+            look.headParts.map(async (part) => {
+              if (!session.vfs.has(part.model)) return undefined;
+              const textures =
+                part.textureSet === undefined ? undefined : await this.#textureSet(part.textureSet);
+              const model = await session.actorModel(part.model, undefined, 100, {
+                ...(textures && { all: textures }),
+              });
+              return model && { model, part };
+            }),
+          );
       for (const entry of parts) {
         if (!entry) continue;
         heads.push(entry.model);

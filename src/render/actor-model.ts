@@ -77,6 +77,45 @@ export function blendWeight(thin: ModelData, heavy: ModelData, weight: number): 
   return { ...heavy, parts };
 }
 
+/** A part's vertex positions (x, y, z per vertex: f32 at the start of every vertex). */
+export function partPositions(part: ModelPart): Float32Array {
+  const view = new DataView(
+    part.vertices.buffer,
+    part.vertices.byteOffset,
+    part.vertices.byteLength,
+  );
+  const stride = part.layout.stride;
+  const positions = new Float32Array(part.vertexCount * 3);
+  for (let v = 0; v < part.vertexCount; v++) {
+    for (let k = 0; k < 3; k++) positions[v * 3 + k] = view.getFloat32(v * stride + k * 4, true);
+  }
+  return positions;
+}
+
+/**
+ * The part with other vertex positions (x, y, z per vertex; a head part shaped for an actor's
+ * face): its vertices copied, the rest of each vertex kept. Its bounding sphere grows by the
+ * farthest a vertex moved.
+ */
+export function withPositions(part: ModelPart, positions: Float32Array): ModelPart {
+  if (positions.length < part.vertexCount * 3) return part;
+  const vertices = part.vertices.slice();
+  const view = new DataView(vertices.buffer);
+  const stride = part.layout.stride;
+  let moved = 0;
+  for (let v = 0; v < part.vertexCount; v++) {
+    let distance = 0;
+    for (let k = 0; k < 3; k++) {
+      const at = v * stride + k * 4;
+      const value = positions[v * 3 + k] ?? 0;
+      distance += (value - view.getFloat32(at, true)) ** 2;
+      view.setFloat32(at, value, true);
+    }
+    moved = Math.max(moved, Math.sqrt(distance));
+  }
+  return { ...part, vertices, radius: part.radius + moved };
+}
+
 /** Puts texture sets into an actor model's shapes (slots the set leaves empty are kept). */
 export function swapTextures(model: ModelData, swaps: ModelTextureSwaps): ModelData {
   const byShape = new Map(swaps.shapes?.map((swap) => [swap.shape.toLowerCase(), swap.textures]));

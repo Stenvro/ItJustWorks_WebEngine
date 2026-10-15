@@ -118,7 +118,8 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   ask('getlevel', 1, (actor) => actors.level(actor));
   ask('getrace', null, async (actor) => object(await actors.raceOf(actor), 'race'));
   act('setrace', (actor, call) => {
-    // TODO(M7): the look follows the race (SetRace changes the player's in chargen).
+    // The actor's own race (its base keeps its own); its 3D is made again in it (the player's
+    // with the face chosen in the race menu: a werewolf and back keeps it).
     state.actor(actor).race = formOf(call.args[0]);
     world.raceChanged?.(actor);
   });
@@ -529,11 +530,15 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     'actorbase.isunique',
     async (call) => (((await baseStats(call))?.flags ?? 0) & NpcFlag.unique) !== 0,
   );
+  // The Player base's race and sex are the race menu's choice (GameState.playerAppearance).
   n('actorbase.getsex', async (call) => {
-    const stats = await baseStats(call);
-    return stats === undefined ? -1 : (stats.flags & NpcFlag.female) !== 0 ? 1 : 0;
+    const formId = base(call);
+    return formId === undefined ? -1 : runtime.actors.baseSex(formId);
   });
-  n('actorbase.getrace', async (call) => object((await baseStats(call))?.race, 'race'));
+  n('actorbase.getrace', async (call) => {
+    const formId = base(call);
+    return object(formId === undefined ? undefined : await runtime.actors.baseRace(formId), 'race');
+  });
   n('actorbase.getclass', async (call) => object((await baseStats(call))?.class, 'class'));
   n('actorbase.getgiftfilter', async (call) =>
     object((await baseStats(call))?.giftFilter, 'formlist'),

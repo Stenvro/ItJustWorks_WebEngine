@@ -4,6 +4,7 @@
 // scripts created. Plain data, to be saved (TODO(M12)). Platform-independent.
 // Notes: docs/scripting.md ("Game state").
 
+import type { PlayerAppearance } from '../../gameplay/chargen.ts';
 import type { StoryEventData } from './story-manager.ts';
 
 export type Vec3 = [number, number, number];
@@ -212,6 +213,15 @@ export class GameState {
   training = { level: 0, sessions: 0 };
   /** Level-ups waiting for the player to choose (the level-up menu). */
   levelUps = 0;
+  /**
+   * What the player looks like (the race menu's choices; its race is the Player base's race,
+   * ActorBase.GetRace, while Actor.SetRace changes the actor's own: ActorState.race). Made from
+   * the Player record (NPC_ 0x7) when first needed; undefined until then. TODO(M12): in the
+   * save.
+   */
+  playerAppearance: PlayerAppearance | undefined;
+  /** The name the player chose in the race menu (else the Player record's). TODO(M12). */
+  playerName: string | undefined;
   /** Actors dead, by their base (GetDeadCount). */
   readonly deadCounts = new Map<number, number>();
   /**

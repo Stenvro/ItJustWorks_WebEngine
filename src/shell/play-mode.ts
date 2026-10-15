@@ -46,6 +46,7 @@ import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
 import type { PlacedActor } from './actors.ts';
 import type { PlayerData } from './player.ts';
+import type { PlayerView } from './race-menu.ts';
 import type { Terminal } from './terminal.ts';
 
 /**
@@ -108,6 +109,8 @@ export interface PlayWorld {
   localMap(): LocalMapContent | undefined;
   /** The player's tween menu camera (undefined out of the world). */
   tweenCamera(): TweenCamera | undefined;
+  /** The player being played, their session and body (the viewer on screen's). */
+  player(): PlayerView | undefined;
 }
 
 const wait = (ms: number): Promise<void> =>
@@ -373,6 +376,7 @@ export class PlayMode {
       tweenCamera: () => this.#world.tweenCamera(),
       noFastTravelReason: () => this.#noFastTravelReason(),
       fastTravel: (destination, distance) => this.#fastTravel(destination, distance),
+      player: () => this.#world.player(),
     });
     this.#menus = menus;
     menus.onQuit = (toDesktop) => {
@@ -636,6 +640,9 @@ export class PlayMode {
             session.hud.shown(this.#menusShown);
           },
           forceWeather: (weather) => runtime.world.setWeather?.(weather, true, false, false),
+          showRaceMenu: () => {
+            this.#showRaceMenu();
+          },
           quit: () => this.onQuit?.(),
         }),
       };
@@ -645,6 +652,15 @@ export class PlayMode {
 
   /** The HUD and menus shown (the console's tm hides them). */
   #menusShown = true;
+
+  /** The console's showracemenu: the console slides away, then the race menu opens. */
+  #showRaceMenu(): void {
+    this.#console.hide();
+    void (async () => {
+      while (this.#console.isOpen) await wait(16);
+      await this.#menus?.openScripted({ name: 'RaceSex Menu', limited: false });
+    })();
+  }
 
   /**
    * Esc in the game: the browser takes it to free the mouse (a page cannot keep it), so the

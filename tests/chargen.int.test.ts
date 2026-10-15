@@ -21,6 +21,8 @@ import {
   headPartBasePositions,
   headPartMorphPaths,
 } from '../src/gameplay/chargen-morphs.ts';
+import { partPositions, withPositions } from '../src/render/actor-model.ts';
+import { buildModel } from '../src/render/model-data.ts';
 import { HeadPartType, parseHeadPart, type HeadPartRecord } from '../src/world/actor-records.ts';
 import { meshPath } from '../src/world/actors.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
@@ -162,6 +164,37 @@ describe.skipIf(!hasGamedata())('character creation on the local game data', () 
       }
     },
   );
+
+  it("shapes the drawn head parts: a model part's positions are the morphs' base", async () => {
+    // The player's head is baked into the model the renderer draws (src/shell/player-look.ts):
+    // its skinned part holds the BSDynamicTriShape's positions in the same vertex order.
+    for (const name of ['maleheadnord', 'femaleheadnord', 'malemouthhumanoiddefault']) {
+      const part = headParts.get(name);
+      if (!part?.model) throw new Error(`no head part ${name}`);
+      const nif = parseNif(await vfs.read(meshPath(part.model)));
+      const base = headPartBasePositions(nif);
+      const shape = buildModel(nif).parts.find((p) => p.vertexCount * 4 === base?.length);
+      if (!base || !shape) throw new Error(`no shape in ${part.model}`);
+      const positions = partPositions(shape);
+      for (let v = 0; v < shape.vertexCount; v++) {
+        for (let k = 0; k < 3; k++) expect(positions[v * 3 + k]).toBe(base[v * 4 + k]);
+      }
+      const paths = headPartMorphPaths(part);
+      const morphs = {
+        race: await tri(paths.race),
+        chargen: await tri(paths.chargen),
+        expressions: await tri(paths.expressions),
+      };
+      const weights = new Map([['nordrace', 1]]);
+      const baked = withPositions(shape, bakeHeadPart(positions, 3, morphs, weights));
+      const expected = bakeHeadPart(base, 4, morphs, weights);
+      const drawn = partPositions(baked);
+      for (let v = 0; v < shape.vertexCount; v++) {
+        for (let k = 0; k < 3; k++)
+          expect(drawn[v * 3 + k]).toBeCloseTo(expected[v * 4 + k] ?? 0, 4);
+      }
+    }
+  });
 
   it.each([...NORD_MEN, ...NORD_WOMEN])(
     'composites the face tint of %s like the baked one',
