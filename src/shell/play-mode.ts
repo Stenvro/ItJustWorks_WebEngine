@@ -283,6 +283,24 @@ export class PlayMode {
         if (dialogue.isOpen) closed();
         else menus.openContainer(reference, closed);
       },
+      open: (request) => {
+        if (request.name === 'Main Menu') {
+          this.#quitToMainMenu().catch((error: unknown) => {
+            this.#terminal.log(
+              'ui',
+              `the main menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+              'error',
+            );
+          });
+          return Promise.resolve(0);
+        }
+        // A conversation's menu (barter, gift) shows in its place; it comes back after.
+        const talking = dialogue.isOpen;
+        if (talking) dialogue.shown = false;
+        return menus.openScripted(request).finally(() => {
+          if (talking) dialogue.shown = true;
+        });
+      },
     };
     const settings = await session.settings();
     session.hud.uses = {
@@ -374,7 +392,8 @@ export class PlayMode {
     const session = this.#session;
     session.menuMode = on;
     session.soundSystem?.engine.setInMenu(on);
-    if (pointer) this.#world.capturePointer(!on);
+    // A conversation keeps the mouse on its menu.
+    if (pointer && !(this.#dialogue?.isOpen === true && !on)) this.#world.capturePointer(!on);
   }
 
   /** The runtime the session's new game runs in, as soon as it exists. */

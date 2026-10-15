@@ -47,6 +47,12 @@ export class DialogueMenu {
     return this.#menu !== undefined;
   }
 
+  /** The conversation steps aside while a menu it opened is open (barter, gift, training). */
+  set shown(on: boolean) {
+    const element = this.#menu?.element;
+    if (element) element.style.visibility = on ? '' : 'hidden';
+  }
+
   /** The conversation's engine for the game now running. */
   #engine(): DialogueEngine | undefined {
     const runtime = this.#session.scriptsReady;

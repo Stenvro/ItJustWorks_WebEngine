@@ -42,6 +42,21 @@ import { questText } from './quest-text.ts';
 import { scriptEvent, StoryManager, type StoryEventData } from './story-manager.ts';
 
 /** What scripts do to the world the engine shows, and what they read of it (nothing in Node). */
+/** A menu a script opens (Actor.ShowBarterMenu, Game.ShowTrainingMenu, ...). */
+export type MenuRequest =
+  | { readonly name: 'Container Menu' | 'Barter Menu'; readonly actor: number }
+  | {
+      readonly name: 'Gift Menu';
+      readonly actor: number;
+      readonly giving: boolean;
+      readonly filter: number | undefined;
+      readonly showStolen: boolean;
+      readonly useFavorPoints: boolean;
+    }
+  | { readonly name: 'Training Menu'; readonly actor: number | undefined }
+  | { readonly name: 'RaceSex Menu'; readonly limited: boolean }
+  | { readonly name: 'Main Menu' };
+
 export interface WorldBridge {
   /** A reference was enabled or disabled (shown or hidden). */
   enableChanged?(reference: number, enabled: boolean): void;
@@ -97,8 +112,11 @@ export interface WorldBridge {
   pointOfView?(pov: 'first' | 'third'): void;
   shakeCamera?(strength: number, seconds: number): void;
   grabbed?(): number | undefined;
-  /** A menu opened (TODO(M9): the game's menus), for an actor (inventory, barter, gift). */
-  menu?(name: string, actor?: number): void;
+  /**
+   * A menu the scripts open; resolves once it has closed, with what it returns (ShowGiftMenu:
+   * favor points).
+   */
+  menu?(request: MenuRequest): Promise<number>;
   video?(file: string): void;
   sunPosition?(): Vec3;
   /** An actor died (its ragdoll; silent: no death cry or alarm). */

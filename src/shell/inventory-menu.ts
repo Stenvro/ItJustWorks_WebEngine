@@ -79,7 +79,7 @@ export function inventoryModel(session: GameSession, terminal: Terminal): ItemMe
       return {
         entries: rows.map((row) => itemEntry(row)),
         cards,
-        player: await playerInfo(game, rows, inventory.get(GOLD) ?? 0),
+        player: [await playerInfo(game, rows, inventory.get(GOLD) ?? 0)],
       };
     },
     select: async ({ formId }) => {

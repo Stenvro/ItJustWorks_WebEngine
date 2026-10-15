@@ -17,6 +17,7 @@ import {
   parseRaceStats,
   parseRelationship,
   type FactionRecord,
+  type FactionVendor,
   type NpcStats,
   type RaceStats,
 } from '../../world/actor-stats-records.ts';
@@ -355,22 +356,38 @@ export class ActorEngine {
 
   /**
    * It offers its services now (GetOffersServicesNow): it is in a vendor faction (rank 0 or
-   * more) whose hours (VEND) include the game's hour now (hours past midnight wrap).
+   * more) whose hours (VENV) include the game's hour now (hours past midnight wrap) and whose
+   * conditions hold on it. TODO(M10): the vendor's location and radius.
    */
   async offersServicesNow(reference: number): Promise<boolean> {
+    return (await this.vendorFaction(reference)) !== undefined;
+  }
+
+  /**
+   * The vendor faction an actor trades for now (see offersServicesNow), if any; with `now`
+   * false, its vendor faction at any hour.
+   */
+  async vendorFaction(
+    reference: number,
+    now = true,
+  ): Promise<{ readonly faction: number; readonly vendor: FactionVendor } | undefined> {
     const hour = this.#runtime.gameHour;
     for (const [formId, rank] of await this.factionsOf(reference)) {
       if (rank < 0) continue;
       const vendor = (await this.faction(formId))?.vendor;
       if (!vendor) continue;
+      if (!now) return { faction: formId, vendor };
       const { startHour, endHour } = vendor;
       const open =
         startHour <= endHour
           ? hour >= startHour && hour < endHour
           : hour >= startHour || hour < endHour;
-      if (open) return true;
+      if (!open) continue;
+      const self = this.#runtime.referenceHandle(reference);
+      if (await this.#runtime.conditionsHold(vendor.conditions, self))
+        return { faction: formId, vendor };
     }
-    return false;
+    return undefined;
   }
 
   setFactionRank(reference: number, faction: number, rank: number): void {

@@ -157,7 +157,7 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
           spellCost: Math.round(base * (1 - (Math.max(0, skill) / 400) ** 0.65)),
         });
       }
-      return { entries, cards, player: await playerMeters(game) };
+      return { entries, cards, player: [await playerMeters(game)] };
     },
     select: ({ formId }) => {
       // TODO(M11): equipping spells to a hand and shouts to the voice (the magic system).

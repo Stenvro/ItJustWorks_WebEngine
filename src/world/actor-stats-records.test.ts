@@ -131,6 +131,32 @@ describe('actor stats', () => {
     );
   });
 
+  it("read a vendor faction's list, merchant chest, hours and buying rules", () => {
+    const venv = new Uint8Array(12);
+    new DataView(venv.buffer).setUint16(0, 8, true);
+    new DataView(venv.buffer).setUint16(2, 20, true);
+    venv[9] = 1;
+    const faction = parseFaction(
+      record('FACT', [
+        ['DATA', u32s(0x4000)],
+        ['VEND', u32s(0x6cb48)],
+        ['VENC', u32s(0x9caf9)],
+        ['VENV', venv],
+      ]),
+    );
+    expect(faction.vendor).toEqual({
+      startHour: 8,
+      endHour: 20,
+      radius: 0,
+      onlyStolen: false,
+      notInList: true,
+      list: 0x6cb48,
+      chest: 0x9caf9,
+      conditions: [],
+    });
+    expect(parseFaction(record('FACT', [['VENV', venv]])).vendor).toBeUndefined();
+  });
+
   it("merge a location's reference lists: the master's, then added and removed ones", () => {
     const special = (type: number, reference: number): Uint8Array => u32s(type, reference, 0x3c, 0);
     const master = record('LCTN', [

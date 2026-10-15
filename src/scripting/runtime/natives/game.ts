@@ -195,15 +195,15 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
   n('game.requestsave', () => null);
   n('game.requestautosave', () => null);
   n('game.showracemenu', () => {
-    world.menu?.('RaceSex Menu');
+    void world.menu?.({ name: 'RaceSex Menu', limited: false });
     return null;
   });
   n('game.showlimitedracemenu', () => {
-    world.menu?.('RaceSex Menu');
+    void world.menu?.({ name: 'RaceSex Menu', limited: true });
     return null;
   });
-  n('game.showtrainingmenu', () => {
-    world.menu?.('Training Menu');
+  n('game.showtrainingmenu', ({ args }) => {
+    void world.menu?.({ name: 'Training Menu', actor: runtime.reference(args[0] ?? null) });
     return null;
   });
   n('game.showtitlesequencemenu', () => null);
@@ -214,7 +214,7 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     return null;
   });
   n('game.quittomainmenu', () => {
-    world.menu?.('Main Menu');
+    void world.menu?.({ name: 'Main Menu' });
     return null;
   });
   n('game.setbeastform', () => null);
