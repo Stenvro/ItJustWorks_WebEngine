@@ -55,6 +55,16 @@ export class ScriptWorld implements WorldBridge {
   /** The HUD the notifications go to in Play. */
   readonly hud: HudSignals;
 
+  /** A line an actor says (Say): the session's line speaker answers. */
+  say:
+    | ((
+        speaker: number,
+        topic: number | undefined,
+        speakAs: number | undefined,
+        inHead: boolean,
+      ) => void)
+    | undefined;
+
   constructor(terminal: Terminal, hud: HudSignals) {
     this.#terminal = terminal;
     this.hud = hud;

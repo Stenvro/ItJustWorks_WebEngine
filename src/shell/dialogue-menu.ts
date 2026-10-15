@@ -7,11 +7,10 @@
 // Notes: docs/ui.md ("Dialogue").
 
 import {
-  DialogueEngine,
+  type DialogueEngine,
   type SpokenInfo,
   type TopicChoice,
 } from '../scripting/runtime/dialogue-engine.ts';
-import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { InfoFlag } from '../world/dialogue-records.ts';
 import type { PlacedActor, SpokenLine } from './actors.ts';
@@ -28,7 +27,6 @@ export class DialogueMenu {
   readonly #host: MenuHost;
   readonly #session: GameSession;
   readonly #terminal: Terminal;
-  readonly #engines = new WeakMap<ScriptRuntime, DialogueEngine>();
   #menu: Menu | undefined;
   #speaker: PlacedActor | undefined;
   #choices: TopicChoice[] = [];
@@ -55,14 +53,7 @@ export class DialogueMenu {
 
   /** The conversation's engine for the game now running. */
   #engine(): DialogueEngine | undefined {
-    const runtime = this.#session.scriptsReady;
-    if (!runtime) return undefined;
-    let engine = this.#engines.get(runtime);
-    if (!engine) {
-      engine = new DialogueEngine(runtime);
-      this.#engines.set(runtime, engine);
-    }
-    return engine;
+    return this.#session.scriptsReady?.dialogue;
   }
 
   /** Reads the game's dialogue ahead (its topics and infos), so the first conversation starts at once. */

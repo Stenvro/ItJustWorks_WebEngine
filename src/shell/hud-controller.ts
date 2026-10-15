@@ -27,12 +27,16 @@ export interface HudSource {
   /** The player's settings (Crosshair, HUD Opacity), and their changes. */
   readonly ini: () => IniSettings;
   readonly onSettingsChange: (listener: () => void) => () => void;
+  /** The compass's markers now (CompassTargetDataA: 4 numbers a marker), src/shell/compass.ts. */
+  readonly compass?: () => Promise<number[]>;
 }
 
 /** The HUD's depth among the menus. */
 const HUD_DEPTH = 2;
 
 const BASE = '_root.HUDMovieBaseInstance';
+/** How often the compass's markers are read (ms). */
+const COMPASS_INTERVAL_MS = 250;
 /** The quest notifications (the HUD's QuestNotification). */
 const QUESTS = `${BASE}.QuestUpdateBaseInstance`;
 
@@ -118,11 +122,39 @@ export class HudController implements HudSink {
     if (!menu) return;
     const ini = this.#source.ini();
     menu.call('SetCrosshairEnabled', ini.bool('Main', 'bCrosshairEnabled'));
+    menu.call('SetSubtitlesEnabled', ini.bool('Interface', 'bGeneralSubtitles'));
     const element = menu.element;
     if (element) element.style.opacity = String(ini.number('Interface', 'fHUDOpacity'));
   }
 
   #stopSettings: (() => void) | undefined;
+
+  /** The compass's markers: read four times a second, sent when they changed. */
+  #compassBusy = false;
+  #compassNext = 0;
+  #compassShown = '';
+
+  #updateCompass(menu: Menu): void {
+    const now = performance.now();
+    const read = this.#source.compass;
+    if (!read || this.#compassBusy || now < this.#compassNext) return;
+    this.#compassBusy = true;
+    this.#compassNext = now + COMPASS_INTERVAL_MS;
+    read()
+      .then((data) => {
+        const key = data.map((value) => Math.round(value)).join(',');
+        if (key === this.#compassShown || this.#menu !== menu) return;
+        this.#compassShown = key;
+        menu.set(`${BASE}.CompassTargetDataA`, data);
+        menu.call('SetCompassMarkers');
+        // The markers take their places as the compass turns: it is turned again.
+        this.#shown.heading = Number.NaN;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        this.#compassBusy = false;
+      });
+  }
 
   close(): void {
     this.#stopSettings?.();
@@ -158,6 +190,26 @@ export class HudController implements HudSink {
 
   notification(text: string): void {
     this.#menu?.call('ShowMessage', text);
+  }
+
+  loadDoor(text: string | undefined): void {
+    this.#menu?.call('SetLoadDoorInfo', text !== undefined, text ?? '');
+  }
+
+  /** A place discovered: announced as a quest is, its name and the status. */
+  discovered(name: string, status: string): void {
+    this.#notices.push({ quest: -1, text: name, status, sound: '', objectives: [] });
+  }
+
+  location(name: string): void {
+    this.#menu?.call('SetLocationName', name);
+  }
+
+  subtitle(text: string | undefined): void {
+    const menu = this.#menu;
+    if (!menu) return;
+    if (text === undefined) menu.call('HideSubtitle');
+    else menu.call('ShowSubtitle', text);
   }
 
   shown(on: boolean): void {
@@ -282,12 +334,14 @@ export class HudController implements HudSink {
     const heading = this.#source.heading();
     if (heading !== undefined) {
       const degrees = ((((heading * 180) / Math.PI) % 360) + 360) % 360;
-      if (Math.abs(degrees - this.#shown.heading) > 0.05) {
+      // (Not "> 0.05": a heading not shown yet is NaN, which compares false.)
+      if (!(Math.abs(degrees - this.#shown.heading) <= 0.05)) {
         this.#shown.heading = degrees;
         menu.call('SetCompassAngle', degrees, degrees, true);
       }
     }
     this.#showNotice(menu);
+    this.#updateCompass(menu);
     if (!this.#readingMeters) {
       this.#readingMeters = true;
       void this.#updateMeters(menu).finally(() => {

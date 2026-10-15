@@ -481,10 +481,15 @@ async function main(): Promise<void> {
       await worldViewer.open(destination.world, cell, arrival);
     }
   };
+  // A load door: its prompt stays on the HUD while the place loads (SetLoadDoorInfo).
   const onTravel = (teleport: Teleport): void => {
-    travel(teleport).catch((error: unknown) => {
-      terminal.log('door', describeError(error), 'error');
-    });
+    travel(teleport)
+      .catch((error: unknown) => {
+        terminal.log('door', describeError(error), 'error');
+      })
+      .finally(() => {
+        session?.hud.loadDoor(undefined);
+      });
   };
   modelViewer.onTravel = onTravel;
   worldViewer.onTravel = onTravel;
@@ -602,6 +607,8 @@ async function main(): Promise<void> {
     session?.dispose();
     sandboxScripts = undefined;
     session = new GameSession(gpu.device, renderer, vfs, terminal);
+    session.placedActor = (reference) =>
+      worldViewer.placedActor(reference) ?? modelViewer.placedActor(reference);
     await Promise.all([modelViewer.connect(session), worldViewer.connect(session)]);
     setEntriesReady(true);
   };

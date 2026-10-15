@@ -132,6 +132,14 @@ export class DialogueEngine {
     return info && (await this.#spoken(info, choice.topic, choice.quest));
   }
 
+  /** What an actor says of a topic (ObjectReference.Say): its first valid info. */
+  async topicLine(topic: number, speaker: number): Promise<SpokenInfo | undefined> {
+    const record = await this.index.topic(topic);
+    if (record?.quest === undefined) return undefined;
+    const info = await this.#validInfo(record, record.quest, speaker);
+    return info && (await this.#spoken(info, record, record.quest));
+  }
+
   /** The info is said: Say Once infos are not said again. */
   said(info: InfoRecord): void {
     if ((info.flags & InfoFlag.sayOnce) !== 0) this.#saidOnce.add(info.formId);

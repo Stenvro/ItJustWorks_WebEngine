@@ -26,6 +26,7 @@ import { GameMenus } from './game-menus.ts';
 import { DialogueMenu } from './dialogue-menu.ts';
 import { ConsoleMenu, isConsoleKey } from './console-menu.ts';
 import { ConsoleCommands } from './console-commands.ts';
+import { Compass } from './compass.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
 import type { PlacedActor } from './actors.ts';
@@ -250,13 +251,15 @@ export class PlayMode {
     this.#loadingMenu = undefined;
     this.#mist?.hide();
     this.#mist = undefined;
-    // In the game: its HUD.
+    // In the game: its HUD, its compass.
+    const compass = new Compass(session);
     const hud = new HudController(this.#host, session.hud, {
       heading: () => this.#world.heading(),
       runtime: () => session.scriptsReady,
       settings: session.settings(),
       ini: () => session.ini,
       onSettingsChange: (listener) => session.preferences.onChange(listener),
+      compass: () => compass.targets(),
     });
     this.#hud = hud;
     await hud.open();
@@ -321,6 +324,9 @@ export class PlayMode {
       },
       sleep: () => {
         menus.sleep();
+      },
+      loadDoor: (text) => {
+        session.hud.loadDoor(text);
       },
       take: (object) => {
         this.#take(object).catch((error: unknown) => {

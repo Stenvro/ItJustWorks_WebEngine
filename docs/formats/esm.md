@@ -995,6 +995,14 @@ i32 @68; DNAM: the description, with `<mag>`, `<dur>`, `<area>` for the values.
 - WOOP: FULL the word in the dragon tongue, TNAM its translation.
 - A magic effect's minimum skill (u32 @40 of DATA) is its spells' level.
 
+## Map markers
+
+A map marker is a persistent REFR with XMRK (no data) followed by FNAM (flags u8: 0x1 visible on
+the map from the start, 0x2 can be travelled to, 0x4 show all hidden), FULL (its name) and TNAM
+(its type u8, the icon: in the vanilla data 0 .. 58, e.g. 2 towns, 4 caves, 36..52 the holds'
+cities and keeps; then u8 unused) (`src/world/map-markers.ts`). Skyrim.esm and its DLC have 471.
+They are found in one scan of the persistent REFRs (about 0.2 s in Node).
+
 ## Vendors
 
 A faction with DATA flag 0x4000 trades (`FactionVendor`, `src/world/actor-stats-records.ts`,

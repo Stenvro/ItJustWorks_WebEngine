@@ -287,6 +287,24 @@ becomes the key's art: the HUD asks `GetButtonFromUserEvent("Activate")` and the
 the art's name (`E`; `src/ui/button-art.ts`: the event's first key in the control map, else its
 mouse button) for the HUD's exported bitmap `E.png`.
 
+The compass (`src/shell/compass.ts`): four times a second the engine sets
+`HUDMovieBaseInstance.CompassTargetDataA` (per marker its heading in degrees from north, alpha
+0..100, the "Compass Marker" frame, scale in percent) and calls `SetCompassMarkers()` when it
+changed. Its frames: 1 Quest, 2 QuestDoor, 3 PlayerSet, 4 Enemy, 5 + a map marker's type
+(discovered), 72 + its type (undiscovered). It shows the targets of the active quests' shown
+objectives (QOBJ QSTA, the alias's reference) in the player's worldspace or cell, and the map
+markers within iMapMarkerVisibleDistance, fading from iMapMarkerFadeStartDistance; a marker seen
+so is visible on the map, one reached within iMapMarkerRevealDistance is discovered (it can be
+travelled to) and announced as a quest is: its name and sDiscoveredText. TODO(M10): the door
+toward a quest target elsewhere, enemies, the discovery's experience and music.
+
+The HUD also shows: speech around the player (`ShowSubtitle(text)`, `HideSubtitle()`; with
+General Subtitles, `SetSubtitlesEnabled`), the lines actors say from scripts
+(`src/shell/world-lines.ts`, ObjectReference.Say: the topic's first valid info in the speaker's
+voice, lips moving); a location the player enters (`SetLocationName(name)`, as the player's
+location changes, their scripts hearing OnLocationChange(old, new)); a load door's prompt kept
+while its place loads (`SetLoadDoorInfo(show, text)`).
+
 ## Menu mode
 
 While a menu that pauses the game is open (a message box now; the journal, the inventory and
