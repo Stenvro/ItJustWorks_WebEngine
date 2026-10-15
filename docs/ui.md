@@ -366,8 +366,16 @@ and `OpenHighlightedMenu(i)` (1 Skills, up; 2 Magic, left; 3 Inventory, right; 4
 `StartCloseMenuAnim()`, and the menu's `CloseMenu` once its animation is done closes it. A
 menu chosen takes the tween's place at once.
 The movie plays no sounds; choosing plays the engine's UITweenSelectSD (silence in the vanilla
-data), highlighting nothing. TODO(M9): the tween camera (the view of the player in third person
-behind the menu).
+data), highlighting nothing.
+
+**The tween camera** (`src/shell/tween-camera.ts`; CommonLibSSE-NG's TweenMenuCameraState: the
+rotation and field of view it began with, an added rotation and field of view eased toward
+targets, an ending flag). The view stays the one the menu opened over, first or third person
+(camera mods keep the state before it: SmoothCam, TrueDirectionalMovement); it zooms in by
+[Camera] fTweenCamZoomFOVMod (10°) at fTweenCamZoomSpeed (25° a second) and leans
+fTweenCamRotAngle (0.05 radians) toward the highlighted choice (Skills up, Magic left, Items
+right, Map down) at fTweenCamRotSpeed (4), coming back at fTweenCamRotClosingSpeed (10) as it
+closes. The easing and the signs are inferred from the settings' names (TODO(M13): check).
 
 While scripts keep the menus from the player (`Game.DisablePlayerControls`' abMenu, as the
 opening does) only the journal opens, and with abJournalTabs its system page alone
@@ -703,6 +711,54 @@ and "<spell> sAddItemtoSpellList", or sAlreadyKnown, and is used up; it opens no
   book and closes it, Cancel (Tab, Esc) closes it.
 - The first time a skill book (BOOK DATA flag 0x1) is read its skill rises (sSkillIncreased); a
   book read from the world sends OnRead to its reference.
+
+## Crafting
+
+Workbenches (FURN with WBDT: the bench type, the skill) open `craftingmenu.swf`
+(`src/shell/crafting-menu.ts`; the data: `src/world/crafting-records.ts`,
+`src/gameplay/crafting.ts`, docs/formats/esm.md "Crafting"); the prompt is sCraft. The movie
+has no InitExtensions: the engine goes to the subtype's frame (`ConstructibleObject`,
+`Smithing`, `EnchantConstruct`, `Alchemy`), calls `_root.Menu.Initialize()` and
+`_root.SetPlatform(0, false)`, sets `Menu.MenuName` (the header over the categories: the
+workbench's name, or the menu's) and `Menu.MenuDescription`, clears the line under the card
+(its placeholder text), sends `SetCategoriesList` (alchemy:
+`SetPartitionedFilterMode(true)` first), fills `Menu.ItemList.entryList` and calls
+`InvalidateListData`, sets `Menu.ButtonText` ([select, exit, aux, craft]; "" hides one) and
+`bCanCraft` (its setter; then `UpdateButtonText`), and the bottom bar's skill
+(`BottomBarInfo.UpdateCraftingInfo(name, level, percent)`, or `HidePlayerInfo` for benches
+without one). There is no RequestItemCardInfo: on `SetSelectedItem(index)` the engine sets
+`Menu.ItemInfo.itemInfo` and `UpdateIngredients(title, [{Name, RequiredCount, PlayerCount}],
+showCount)`; `ShowItem3D` shows the entry's 3D (the item menus' Item3D); `ChooseItem(index)`
+(E, Enter, a click) is the subtype's action; R crafts (`CraftButtonPress` for the mouse), F the
+aux action; Esc and Tab close unless the card's slider or name field is open (the movie takes
+Tab then). After a change: `InvalidateListData`, `UpdateItemList(false)`, `UpdateItemDisplay`
+(alchemy, its categories changed: `PreRebuildList`, `SetCategoriesList`, the entries,
+`PostRebuildList(true)`).
+
+- **Constructible** (forges, smelters, tanning racks, cooking pots, HearthFire's tables): the
+  recipes (COBJ) whose workbench keyword the bench has and whose conditions hold for the
+  player, in the material categories; greyed without the components; choosing one removes
+  them, adds the made object (NAM1 of it), plays UISmithingCreateGeneric, gives the skill its
+  use (fConstructibleSkillUse*) and tells the story manager (CRFT).
+- **Smithing** (the grindstone: weapons; the armor workbench: armor): the player's items with
+  a tempering recipe at the bench, named with their quality (sHealthDataPrefixWeap1.. "Fine");
+  choosing one improves it as far as the skill reaches (UESP's formula), else says why
+  (sLackRequiredPerkToImproveMagical, sLackRequiredPerksToImprove, sLackRequiredToImprove,
+  sLackRequiredSkillToImprove); UISmithingImproveWeapon / UISmithingImproveArmor.
+- **Enchanting**: enchanted items to disenchant (sConfirmDisenchant: the item goes, its base
+  enchantment is learned, sEnchantmentsLearned; known: sEnchantmentKnown), items, the learned
+  enchantments and filled soul gems to choose; F renames the chosen item (`EditItemName`,
+  `EndItemRename`). TODO(M11): making the enchanted item (a form made in the game), the
+  weapon's charge slider, the skill's experience.
+- **Alchemy**: the player's ingredients, by the effects they know (partitioned filter flags);
+  up to three chosen; crafting with no shared effect fails (sPotionCreationFailed,
+  UIAlchemyFail), else the shared effects are learned on each (UIAlchemyLearnEffect).
+  TODO(M11): the potion or poison made, the ingredients used up.
+
+Each bench's first use shows its tutorial (HBFG forges, HBSM the grindstone, HBSA the armor
+workbench, HBEC enchanting, HBAL alchemy, HBCO cooking pots, HBML smelters, HBTA tanning racks).
+TODO(M10): the player sits at the workbench first. TODO(M11): the smithing perks, Fortify
+Smithing and improved items kept per item (the game's ExtraHealth).
 
 ## Lockpicking
 

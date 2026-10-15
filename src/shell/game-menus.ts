@@ -27,6 +27,9 @@ import { SkillsMenu } from './skills-menu.ts';
 import { BookFlag, parseItem } from '../world/item-records.ts';
 import { MapMenu } from './map-menu.ts';
 import { TutorialMenu } from './tutorial-menu.ts';
+import { CraftingMenu } from './crafting-menu.ts';
+import type { TweenCamera } from './tween-camera.ts';
+import type { CraftingMenuType } from '../gameplay/crafting.ts';
 import type { LocalMapContent } from './local-map.ts';
 
 /** The menus' depth among the game's menus (over the HUD, under message boxes). */
@@ -57,6 +60,8 @@ export interface MenusWorld {
   confirm(text: string, buttons: readonly string[]): Promise<number>;
   /** The player's heading (radians, clockwise from north); undefined out of the world. */
   heading(): number | undefined;
+  /** The player's tween menu camera (undefined out of the world). */
+  tweenCamera(): TweenCamera | undefined;
   /** What the map's local map shows where the player is. */
   localMap(): LocalMapContent | undefined;
   /** Why the player may not fast travel now (a setting's name), if they may not. */
@@ -89,6 +94,7 @@ export class GameMenus {
   readonly #map: MapMenu;
   /** The tutorials of the menus, the first time each opens. */
   readonly #tutorials: TutorialMenu;
+  readonly #crafting: CraftingMenu;
   /** Show on Map chosen in the journal: the map opens on this reference as the journal closes. */
   #mapFocus: number | undefined;
   /** A book open (over the world, or over the inventory it was read from). */
@@ -133,6 +139,12 @@ export class GameMenus {
     this.#inventory = inventoryModel(session, terminal, (book) => this.#readFromInventory(book));
     this.#magic = magicModel(session, terminal);
     this.#favorites = new FavoritesMenu(host, session, this.#inventory, this.#magic);
+    this.#crafting = new CraftingMenu(host, session, terminal, {
+      confirm: (text, buttons) => world.confirm(text, buttons),
+      notify: (text) => {
+        session.hud.notification(text);
+      },
+    });
   }
 
   /** Quit to the main menu (false) or to the desktop (true), from the journal's system page. */
@@ -534,6 +546,66 @@ export class GameMenus {
       });
   }
 
+  /**
+   * A workbench used (the crafting menu), the HUD hidden. TODO(M10): the player sits at it
+   * (its furniture markers) first and gets up after.
+   */
+  craft(reference: number, base: number): void {
+    if (this.#open || this.#reading || this.#session.menuMode) return;
+    const hud = this.#session.hud;
+    hud.shown(false);
+    const leave = this.#enterMenuMode();
+    const open = { menu: undefined as Menu | undefined, leave: () => undefined as unknown };
+    const closed = (): void => {
+      if (this.#open === open) this.#open = undefined;
+      hud.shown(true);
+      leave();
+    };
+    open.leave = closed;
+    this.#open = open;
+    this.#crafting
+      .open(reference, base, closed)
+      .then(async (crafting) => {
+        if (!crafting) closed();
+        else if (this.#open !== open) this.#host.close(crafting.menu);
+        else {
+          open.menu = crafting.menu;
+          const use = await this.#craftingTutorial(crafting.type, base);
+          if (use) this.#tutorial(use);
+        }
+      })
+      .catch((error: unknown) => {
+        this.#terminal.log(
+          'ui',
+          `the crafting menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+        closed();
+      });
+  }
+
+  /**
+   * A workbench's first-use help (DOBJ): the grindstone HBSM, the armor workbench HBSA,
+   * enchanting HBEC, alchemy HBAL; of the constructible ones by their keyword: forges HBFG,
+   * cooking pots HBCO, smelters HBML, tanning racks HBTA.
+   */
+  async #craftingTutorial(type: CraftingMenuType, base: number): Promise<string | undefined> {
+    if (type.kind === 'smithing') return type.improves === 'ARMO' ? 'HBSA' : 'HBSM';
+    if (type.kind === 'enchanting') return 'HBEC';
+    if (type.kind === 'alchemy') return 'HBAL';
+    const bench = await this.#crafting.workbench(base);
+    const runtime = this.#session.scriptsReady;
+    if (!bench || !runtime) return undefined;
+    for (const keyword of bench.bench.keywords) {
+      const id = (await runtime.forms.record(keyword))?.editorId?.toLowerCase() ?? '';
+      if (id.includes('forge')) return 'HBFG';
+      if (id.includes('cookpot') || id.includes('cooking')) return 'HBCO';
+      if (id.includes('smelter')) return 'HBML';
+      if (id.includes('tanningrack')) return 'HBTA';
+    }
+    return undefined;
+  }
+
   /** Closes the menu open (Play ends). */
   close(): void {
     this.#reading?.close();
@@ -639,9 +711,13 @@ export class GameMenus {
     const leaveMenuMode = this.#enterMenuMode();
     const hud = this.#session.hud;
     hud.mode('TweenMode', true);
+    // The view leans and zooms while it is open (the tween camera), and goes back as it closes.
+    const camera = this.#world.tweenCamera();
+    camera?.open();
     const open = {
       menu: undefined as Menu | undefined,
       leave: () => {
+        camera?.close();
         hud.mode('TweenMode', false);
         leaveMenuMode();
       },
@@ -663,7 +739,9 @@ export class GameMenus {
       interactive: true,
       handlers: {
         // The movie plays no sounds; highlighting has none of the engine's either.
-        HighlightMenu: () => undefined,
+        HighlightMenu: (_menu, args) => {
+          camera?.highlight(typeof args[1] === 'number' ? args[1] : 0);
+        },
         OpenAnimFinished: () => undefined,
         OpenHighlightedMenu: (_menu, args) => {
           chosen = TWEEN_CHOICES[typeof args[1] === 'number' ? args[1] : 0];
@@ -677,6 +755,7 @@ export class GameMenus {
           if (chosen) this.openMenu(chosen);
         },
         StartCloseMenu: (menu) => {
+          camera?.close();
           menu.call('StartCloseMenuAnim');
         },
         CloseMenu: () => {

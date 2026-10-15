@@ -71,6 +71,8 @@ export interface ObjectUses {
   read(object: CellObject): void;
   /** The player sleeps in a bed (the sleep menu). TODO(M10): getting into the bed first. */
   sleep(object: CellObject): void;
+  /** The player uses a workbench (the crafting menu). */
+  craft(object: CellObject): void;
   /** A load door was opened: its prompt stays while its place loads. */
   loadDoor(text: string): void;
   /** Its lock now, if it is locked (scripts lock and unlock: the state, else as placed). */
@@ -170,6 +172,15 @@ ${name}`);
       item: object.item,
       activate: () => {
         uses.take(object);
+      },
+    };
+  }
+  if (uses && object.furniture && object.furniture.workbench !== 0) {
+    return {
+      verb: verb('sCraft', 'Craft'),
+      name: object.name,
+      activate: () => {
+        uses.craft(object);
       },
     };
   }

@@ -60,6 +60,10 @@ export const CardType = {
   soulGem: 12,
   spellDefault: 13,
   list: 14,
+  /** The enchanting menu's cards (its slider, a weapon, an armor, a soul gem, an enchantment). */
+  craftEnchanting: 15,
+  /** HearthFire's house parts. */
+  housePart: 16,
 } as const;
 
 /** The menus' equip states (the row's icon). */

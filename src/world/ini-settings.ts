@@ -42,6 +42,12 @@ export const INI_DEFAULTS = {
     fOverShoulderPosX: 30,
     fOverShoulderPosZ: -10,
     fPitchZoomOutMaxDist: 100,
+    // The tween menu's camera (STEP's SSE default values; src/shell/tween-camera.ts).
+    fTweenCamRotAngle: 0.05,
+    fTweenCamRotClosingSpeed: 10,
+    fTweenCamRotSpeed: 4,
+    fTweenCamZoomFOVMod: 10,
+    fTweenCamZoomSpeed: 25,
     fVanityModeMaxDist: 600,
     fVanityModeMinDist: 155,
   },

@@ -214,6 +214,16 @@ export class GameState {
   levelUps = 0;
   /** Actors dead, by their base (GetDeadCount). */
   readonly deadCounts = new Map<number, number>();
+  /**
+   * The player's improved weapons and armor (the smithing benches): their health (1 plain,
+   * 1.1 Fine, ...), by base. TODO(M11): per item (the game keeps it on each item, ExtraHealth),
+   * which the item stacks of the inventories do not tell apart yet. TODO(M12): in the save.
+   */
+  readonly itemHealth = new Map<number, number>();
+  /** Enchantments the player learned by disenchanting (their base enchantments). */
+  readonly knownEnchantments = new Set<number>();
+  /** The effects the player found out on each ingredient, by effect slot (0..3). */
+  readonly ingredientEffects = new Map<number, ReadonlySet<number>>();
   /** Counts the quests' updates for the player (QuestState.updated). */
   questClock = 0;
   /** What Debug.Notification / MessageBox showed (the HUD's until M9). */
