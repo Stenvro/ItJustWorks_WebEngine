@@ -38,6 +38,7 @@ import { GameState, type Vec3 } from './game-state.ts';
 import { registerNatives } from './natives/index.ts';
 import { ActorEngine } from './actor-engine.ts';
 import { QuestEngine } from './quests.ts';
+import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
 import { scriptEvent, StoryManager, type StoryEventData } from './story-manager.ts';
 
@@ -320,6 +321,13 @@ export class ScriptRuntime implements VmHost {
   readonly state = new GameState();
   readonly vm: PapyrusVm;
   readonly quests: QuestEngine;
+  /** The game's dialogue (conversations and lines actors say), read on first use. */
+  get dialogue(): DialogueEngine {
+    this.#dialogue ??= new DialogueEngine(this);
+    return this.#dialogue;
+  }
+
+  #dialogue: DialogueEngine | undefined;
   readonly storyManager: StoryManager;
   readonly actors: ActorEngine;
   /** While a new game starts its quests (their aliases may take reserved references). */

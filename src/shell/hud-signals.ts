@@ -42,6 +42,14 @@ export interface HudSink {
   mode(name: string, on: boolean): void;
   /** The HUD shows or steps aside (behind a menu that covers the game: the journal, ...). */
   shown(on: boolean): void;
+  /** A subtitle of speech around the player (undefined: none). */
+  subtitle(text: string | undefined): void;
+  /** The player entered a location: its name. */
+  location(name: string): void;
+  /** A place discovered (a map marker reached): its name and the status ("discovered"). */
+  discovered(name: string, status: string): void;
+  /** A load door's prompt kept while its place loads (undefined: the load is done). */
+  loadDoor(text: string | undefined): void;
 }
 
 /** What shows the game's menus that scripts open (Play). */
@@ -97,6 +105,22 @@ export class HudSignals {
 
   shown(on: boolean): void {
     this.sink?.shown(on);
+  }
+
+  subtitle(text: string | undefined): void {
+    this.sink?.subtitle(text);
+  }
+
+  location(name: string): void {
+    this.sink?.location(name);
+  }
+
+  discovered(name: string, status: string): void {
+    this.sink?.discovered(name, status);
+  }
+
+  loadDoor(text: string | undefined): void {
+    this.sink?.loadDoor(text);
   }
 
   userEvent(name: string): void {

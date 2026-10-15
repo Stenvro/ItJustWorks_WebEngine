@@ -71,6 +71,9 @@ import { ActorPlacer } from './actors.ts';
 import { AnimationAssets } from './animation-assets.ts';
 import { audioSettingKey, Preferences } from './preferences.ts';
 import { ControlSettings } from './control-settings.ts';
+import { WorldLines } from './world-lines.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import type { PlacedActor } from './actors.ts';
 import type { Terminal } from './terminal.ts';
 
 const numberFormat = new Intl.NumberFormat('en-US');
@@ -148,6 +151,10 @@ export class GameSession {
   scriptsProgress = '';
   /** What the scripts do to the world on screen (the viewers attach to it). */
   readonly scriptWorld: ScriptWorld;
+  /** The actor a reference shows as on screen, if it does (the viewers answer: main.ts). */
+  placedActor: ((reference: number) => PlacedActor | undefined) | undefined;
+  /** Lines actors say outside conversations (Say). */
+  readonly lines: WorldLines;
   /** What the game tells its HUD (Play's hudmenu.swf listens). */
   readonly hud = new HudSignals();
   #settings: Promise<GameSettings> | undefined;
@@ -212,6 +219,13 @@ export class GameSession {
     this.#renderer = renderer;
     this.#terminal = terminal;
     this.scriptWorld = new ScriptWorld(terminal, this.hud);
+    this.lines = new WorldLines(this, terminal);
+    this.scriptWorld.say = (speaker, topic, speakAs) => {
+      if (topic === undefined) return;
+      this.lines.say(speaker, topic, speakAs).catch((error: unknown) => {
+        terminal.log('papyrus', `Say: ${describe(error)}`, 'warn');
+      });
+    };
     this.scriptWorld.sounds = () => this.soundSystem;
     const loader = new AssetLoader(vfs);
     this.loader = loader;
@@ -764,6 +778,7 @@ export class GameSession {
       runtime.updateInMenu(realSeconds);
       return;
     }
+    this.#watchLocation(runtime, realSeconds);
     this.timeScale = runtime.timeScale;
     const days = this.gameDaysPassed + this.gameHour / 24;
     if (runtime.clockChanged) {
@@ -781,6 +796,35 @@ export class GameSession {
     } else {
       runtime.update(realSeconds, passed);
     }
+  }
+
+  /** The player's location as last seen, and the time to the next look. */
+  #location: { runtime: ScriptRuntime; location: number | undefined } | undefined;
+  #locationWait = 0;
+
+  /**
+   * The player's location (their cell's, CELL XLCN), looked at every second: as it changes the
+   * player's scripts hear (OnLocationChange(old, new)) and the HUD shows the new one's name
+   * (SetLocationName).
+   */
+  #watchLocation(runtime: ScriptRuntime, realSeconds: number): void {
+    this.#locationWait -= realSeconds;
+    if (this.#locationWait > 0) return;
+    this.#locationWait = 1;
+    void runtime.locationOf(PLAYER_REF).then(async (location) => {
+      const last = this.#location;
+      this.#location = { runtime, location };
+      if (last?.runtime !== runtime || last.location === location) return;
+      const handle = (formId: number | undefined) =>
+        formId === undefined ? null : runtime.formHandle(formId);
+      await runtime.sendEvent(PLAYER_REF, 'OnLocationChange', [
+        handle(last.location),
+        handle(location),
+      ]);
+      const name =
+        location === undefined ? undefined : (await runtime.forms.record(location))?.text('FULL');
+      if (name) this.hud.location(name);
+    });
   }
 
   /**

@@ -65,6 +65,8 @@ export interface ObjectUses {
   take(object: CellObject): void;
   /** The player sleeps in a bed (the sleep menu). TODO(M10): getting into the bed first. */
   sleep(object: CellObject): void;
+  /** A load door was opened: its prompt stays while its place loads. */
+  loadDoor(text: string): void;
 }
 
 /**
@@ -92,11 +94,14 @@ export function objectActivation(
   const verb = (setting: string, english: string): string => uses?.text(setting) ?? english;
   const teleport = object.teleport;
   if (teleport) {
+    const name = travel.name(teleport);
     return {
       verb: verb('sOpen', 'Open'),
-      name: travel.name(teleport),
+      name,
       activate: () => {
         play(object.sounds?.open);
+        uses?.loadDoor(`${verb('sOpen', 'Open')}
+${name}`);
         travel.go(teleport);
       },
     };
