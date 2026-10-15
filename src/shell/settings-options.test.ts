@@ -15,10 +15,14 @@ describe('settings options', () => {
     expect(fromMenuValue(objects, 0.5)).toBeCloseTo(17.5);
   });
 
-  it('give a stepper the index of its setting (Difficulty runs Legendary down)', () => {
+  it('give a stepper the index of its setting, in the order the movie lists them', () => {
+    // The movie's InitArray takes the pushed values in reverse: Very Easy first.
     const difficulty = option('GamePlay:iDifficulty');
-    expect(toMenuValue(difficulty, 2)).toBe(3);
-    expect(fromMenuValue(difficulty, 0)).toBe(5);
+    expect(toMenuValue(difficulty, 2)).toBe(2);
+    expect(fromMenuValue(difficulty, 5)).toBe(5);
+    const autosave = option('SaveGame:fAutosaveEveryXMins');
+    expect(toMenuValue(autosave, 15)).toBe(2);
+    expect(fromMenuValue(autosave, 6)).toBe(0);
   });
 
   it('give a checkbox 0 or 1', () => {

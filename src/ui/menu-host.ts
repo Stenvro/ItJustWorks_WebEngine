@@ -26,6 +26,7 @@ import type { Translations } from '../formats/swf/translation.ts';
 import { loadRuffle, type RuffleApi, type RufflePlayerElement } from './ruffle.ts';
 import { readSwf } from '../formats/swf/swf.ts';
 import { flashKeyCode } from './key-codes.ts';
+import { DEFAULT_MENU_KEYS } from './menu-keys.ts';
 import { SAFE_ZONE, safeRect, scaleMode, visibleRect, type SafeZone } from './stage-rects.ts';
 
 /**
@@ -70,10 +71,29 @@ export interface MenuOptions {
 }
 
 /**
- * Keys every menu takes as others, as the control map's menu contexts have them: Cancel is
- * Esc and Tab, Accept is E and Enter, and the menus test Tab and Enter.
+ * The menu whose call into the engine runs now (a GameDelegate.call, ...). Ruffle enters no
+ * other player meanwhile (a call into one answers undefined and does nothing): what the engine
+ * asks of other menus then (the HUD's ShowElements as the tween menu closes) waits until that
+ * call has returned, in order.
  */
-const MENU_KEYS: Readonly<Record<string, string>> = { Escape: 'Tab', KeyE: 'Enter' };
+let calling: string | undefined;
+const waiting: (() => void)[] = [];
+
+/**
+ * Whether a call into a menu (by its id) must wait for another menu's call to return: then it
+ * runs after it.
+ */
+function whenFree(menu: string, action: () => void): boolean {
+  if (calling === undefined || calling === menu) return false;
+  // A microtask runs once the page's code has returned all the way: past the player's call.
+  if (waiting.length === 0) queueMicrotask(runWaiting);
+  waiting.push(action);
+  return true;
+}
+
+function runWaiting(): void {
+  for (let action = waiting.shift(); action; action = waiting.shift()) action();
+}
 
 /** CLIK's input manager, which every menu built on CLIK reads its keys from. */
 const INPUT_DELEGATE = 'gfx.managers.InputDelegate.instance';
@@ -188,7 +208,15 @@ export class Menu {
   /** A call from the menu (through the bridge). */
   received(name: string, args: readonly unknown[]): unknown {
     const handler = this.#handlers.get(name) ?? this.#common.get(name);
-    if (handler) return handler(this, args);
+    if (handler) {
+      const outer = calling;
+      calling = this.id;
+      try {
+        return handler(this, args);
+      } finally {
+        calling = outer;
+      }
+    }
     if (!this.#unanswered.has(name)) {
       this.#unanswered.add(name);
       this.#log(`${this.movie} asks ${name}: not answered yet`);
@@ -219,7 +247,9 @@ export class Menu {
 
   /** Calls a GameDelegate callback of the menu (GameDelegate.addCallBack). */
   call(name: string, ...args: unknown[]): unknown {
-    return this.#external('call', name, ...args);
+    const result = this.#external('call', name, ...args);
+    this.#noteSelection();
+    return result;
   }
 
   /** Answers a GameDelegate.call request of the menu. */
@@ -311,30 +341,57 @@ export class Menu {
    * focused while its player was still starting gets it again.
    */
   focus(): void {
+    if (
+      whenFree(this.id, () => {
+        this.focus();
+      })
+    )
+      return;
     const element = this.#element;
     if (!element) return;
     // Ruffle clears the movie's Selection as its element gets focus (on one of its next
     // frames); the movie's own focus comes back (CLIK's FocusHandler follows Selection: the
     // tween menu's handleInput, a message box's first button its setup focused meanwhile).
-    const selection = (): unknown => (this.#api ? this.invoke('Selection.getFocus') : undefined);
-    const now = selection();
-    let known = typeof now === 'string' ? now : this.#lastSelection;
+    const now = this.#selection();
+    this.#watched = typeof now === 'string' ? now : this.#lastSelection;
     if (document.activeElement === element) element.blur();
     element.focus();
     const started = performance.now();
-    const watch = setInterval(() => {
+    clearInterval(this.#watch);
+    this.#watch = setInterval(() => {
       if (
         this.#closed ||
         this.#element !== element ||
         performance.now() - started > FOCUS_WATCH_MS
       ) {
-        clearInterval(watch);
+        clearInterval(this.#watch);
+        this.#watch = undefined;
         return;
       }
-      const now = selection();
-      if (typeof now === 'string') known = now;
-      else if (now === null && typeof known === 'string') this.invoke('Selection.setFocus', known);
+      const now = this.#selection();
+      if (typeof now === 'string') this.#watched = now;
+      else if (now === null && this.#watched !== undefined) {
+        this.invoke('Selection.setFocus', this.#watched);
+      }
     }, FOCUS_WATCH_STEP_MS);
+  }
+
+  /** While focus() watches: the movie's own focus, given back if Ruffle clears it. */
+  #watched: string | undefined;
+  #watch: ReturnType<typeof setInterval> | undefined;
+
+  #selection(): unknown {
+    return this.#api ? this.invoke('Selection.getFocus') : undefined;
+  }
+
+  /**
+   * A call of the engine may move the movie's focus (the race menu's name box takes it): while
+   * focus() watches, that focus is the one to keep, not what the watch saw before the call.
+   */
+  #noteSelection(): void {
+    if (this.#watch === undefined) return;
+    const now = this.#selection();
+    if (typeof now === 'string') this.#watched = now;
   }
 
   close(): void {
@@ -360,6 +417,9 @@ export class Menu {
   }
 
   #external(name: string, ...args: unknown[]): unknown {
+    // While another menu's call runs, this one's waits (what it would answer is lost: none of
+    // the engine's calls then reads one).
+    if (whenFree(this.id, () => this.#external(name, ...args))) return undefined;
     const api = this.#api;
     if (this.#closed || !api) return undefined;
     try {
@@ -441,6 +501,23 @@ export class MenuHost {
     await this.#mount(menu, bytes);
     this.#syncCursor();
     return menu;
+  }
+
+  /**
+   * The keys the menus take as their navigation keys (src/ui/menu-keys.ts: the control map's
+   * Menu Mode, W, A, S and D as the arrows); undefined: Esc as Tab and E as Enter.
+   */
+  menuKeys: (() => Readonly<Record<string, string>>) | undefined;
+
+  /**
+   * Keys the menus leave to the game once the topmost menu's own onKey has passed them: the
+   * console's (the Menu Mode context binds Console too: it opens over every menu).
+   */
+  passKey: ((event: KeyboardEvent) => boolean) | undefined;
+
+  /** The key the menus take a page key (KeyboardEvent.code) as: E as Enter, D as ArrowRight, ... */
+  menuKey(code: string): string {
+    return (this.menuKeys?.() ?? DEFAULT_MENU_KEYS)[code] ?? code;
   }
 
   close(menu: Menu): void {
@@ -680,7 +757,9 @@ export class MenuHost {
       event.stopPropagation();
       return;
     }
-    const as = top.options.keyAs?.[event.code] ?? MENU_KEYS[event.code];
+    if (this.passKey?.(event)) return;
+    const as =
+      top.options.keyAs?.[event.code] ?? (this.menuKeys?.() ?? DEFAULT_MENU_KEYS)[event.code];
     const code = flashKeyCode(as ?? event.code);
     if (code === undefined || top.typing) return;
     const type = !down ? 'keyUp' : event.repeat ? 'keyHold' : 'keyDown';

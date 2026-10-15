@@ -58,6 +58,21 @@ describe('the menu bridge', () => {
     expect(lines).toContain('"gfxExtensions", true');
   });
 
+  it("gives the menus Scaleform's focus groups, which CLIK's focused and TextInput walk", () => {
+    expect(lines).toContain('Push "numFocusGroups", 1');
+    expect(lines).toMatch(
+      /Push "getFocusBitmask"\n\s+\d+\s+DefineFunction2 \(clip@r1\)[\s\S]*?Push r1\n\s+\d+\s+TargetPath\n/,
+    );
+  });
+
+  it("gives the menus Scaleform's Mouse.getTopMostEntity, searching the display list", () => {
+    expect(lines).toMatch(
+      /Push "Mouse"\n\s+\d+\s+GetVariable\n\s+\d+\s+Push "getTopMostEntity"\n\s+\d+\s+DefineFunction2/,
+    );
+    expect(lines).toContain('Enumerate2');
+    expect(lines).toContain('Push true, r3, r2, 3, r1, "hitTest"');
+  });
+
   it('goes first in the first frame, after the header tags', () => {
     const menu = writeSwf(
       [

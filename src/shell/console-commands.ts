@@ -4,17 +4,18 @@
 // in hex. A command prints what it did or found, as the game does; an unknown one prints
 // "Script command "<name>" not found." (UESP, "Skyrim:Console").
 //
-// Built so far: help, centeroncell (coc), additem / removeitem, setstage / getstage /
-// startquest / stopquest / completequest, set <global> to <value> (TimeScale too), getav /
-// setav / modav / forceav, advlevel, togglemenus (tm), forceweather (fw), showracemenu,
+// Built so far: help, centeroncell (coc: where, src/shell/cell-placement.ts), additem /
+// removeitem, setstage / getstage / startquest / stopquest / completequest, set <global> to
+// <value> (TimeScale too), getav / setav / modav / forceav, advlevel, togglemenus (tm),
+// forceweather (fw), enableplayercontrols (epc) / disableplayercontrols (dpc), showracemenu,
 // quitquitquit (qqq).
 // TODO(M13): the rest of the game's console commands (tgm, tcl, tai, kill, resurrect, moveto,
-// prid by clicking, ...), coc to exterior cells and the COC markers.
+// prid by clicking, ...).
 
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { actorValueIndex } from '../world/actor-values.ts';
-import { cellArrival, loadCellData } from '../world/cell-loader.ts';
+import { cellPlacement } from './cell-placement.ts';
 import { ITEM_TYPES } from '../world/item-records.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 
@@ -30,6 +31,8 @@ export interface ConsoleContext {
   forceWeather(weather: number): void;
   /** Opens the race menu (showracemenu). */
   showRaceMenu(): void;
+  /** The player's controls changed (epc, dpc). */
+  controlsChanged(): void;
   /** Quits the game (qqq). */
   quit(): void;
 }
@@ -120,6 +123,25 @@ export class ConsoleCommands {
         this.#context.forceWeather(weather);
         return [];
       }
+      case 'epc':
+      case 'enableplayercontrols':
+      case 'dpc':
+      case 'disableplayercontrols': {
+        // As Game.EnablePlayerControls / DisablePlayerControls with every control named.
+        const enabled = command === 'epc' || command === 'enableplayercontrols';
+        const controls = runtime.controls;
+        controls.movement = enabled;
+        controls.fighting = enabled;
+        controls.camSwitch = enabled;
+        controls.looking = enabled;
+        controls.sneaking = enabled;
+        controls.menu = enabled;
+        controls.activate = enabled;
+        controls.journalTabs = enabled;
+        controls.disablePov = 0;
+        this.#context.controlsChanged();
+        return [];
+      }
       case 'showracemenu':
         // TODO(M11): after the opening, a new race resets the skills (UESP, "Console").
         this.#context.showRaceMenu();
@@ -192,21 +214,12 @@ export class ConsoleCommands {
   }
 
   async #centerOnCell(name: string): Promise<string[]> {
-    const db = this.#context.db;
-    const cell = (await db.interiorCells()).find(
-      (entry) => entry.editorId.toLowerCase() === name.toLowerCase(),
-    );
-    if (!cell) return [`Cell '${name}' not found.`];
-    const data = await loadCellData(db, cell.formId);
-    const arrival = await cellArrival(db, data);
-    const position = arrival?.position ?? [0, 0, 0];
-    await this.#context.travel({
-      position: [...position],
-      rotation: [0, 0, arrival?.heading ?? 0],
-      cell: cell.formId,
-      world: undefined,
-      scale: 1,
+    const at = await cellPlacement(this.#context.db, name, async (cell) => {
+      const found = (await this.#index()).get(cell);
+      return found?.type === 'CELL' ? found.formId : undefined;
     });
+    if (typeof at === 'string') return [at];
+    await this.#context.travel(at);
     return [];
   }
 

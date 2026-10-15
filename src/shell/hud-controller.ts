@@ -29,6 +29,8 @@ export interface HudSource {
   readonly onSettingsChange: (listener: () => void) => () => void;
   /** The compass's markers now (CompassTargetDataA: 4 numbers a marker), src/shell/compass.ts. */
   readonly compass?: () => Promise<number[]>;
+  /** A text's "[Event]"s as the keys bound to them (the help messages). */
+  readonly keyLabels?: (text: string) => string;
 }
 
 /** The HUD's depth among the menus. */
@@ -104,7 +106,8 @@ export class HudController implements HudSink {
         // Everything the HUD shows anew after a reload.
         this.#shown = { heading: Number.NaN, health: -1, magicka: -1, stamina: -1 };
         this.#cartMode = false;
-        this.#applySettings();
+        // (The HUD is not this.#menu yet as it first opens.)
+        this.#applySettings(menu);
       },
     });
     this.#stopSettings = this.#source.onSettingsChange(() => {
@@ -119,8 +122,7 @@ export class HudController implements HudSink {
   }
 
   /** The settings Crosshair (SetCrosshairEnabled) and HUD Opacity (the whole HUD's). */
-  #applySettings(): void {
-    const menu = this.#menu;
+  #applySettings(menu = this.#menu): void {
     if (!menu) return;
     const ini = this.#source.ini();
     menu.call('SetCrosshairEnabled', ini.bool('Main', 'bCrosshairEnabled'));
@@ -309,12 +311,17 @@ export class HudController implements HudSink {
     this.#helpDone.add(key);
   }
 
+  /** A help message's text with its keys written out (Ruffle draws no key art in text). */
+  #helpText(message: HelpMessage): string {
+    return this.#source.keyLabels?.(message.text) ?? message.text;
+  }
+
   #showHelp(key: string, help: ShownHelp): void {
     const { message } = help;
     help.shown++;
-    this.#menu?.call('ShowTutorialHintText', message.text, true);
+    this.#menu?.call('ShowTutorialHintText', this.#helpText(message), true);
     help.timer = setTimeout(() => {
-      this.#menu?.call('ShowTutorialHintText', message.text, false);
+      this.#menu?.call('ShowTutorialHintText', this.#helpText(message), false);
       if (message.times > 0 && help.shown >= message.times) {
         this.#help.delete(key);
         return;
@@ -330,7 +337,7 @@ export class HudController implements HudSink {
     if (!help) return;
     clearTimeout(help.timer);
     this.#help.delete(key);
-    this.#menu?.call('ShowTutorialHintText', help.message.text, false);
+    this.#menu?.call('ShowTutorialHintText', this.#helpText(help.message), false);
   }
 
   #update(): void {

@@ -221,5 +221,6 @@ describe.skipIf(!hasGamedata())('sound records in the local game data', () => {
       for (const ipct of data.impacts.values()) expect((await db.require(ipct)).type).toBe('IPCT');
     }
     expect(sets).toBeGreaterThan(300);
-  });
+    // Every impact data set and its impacts read: seconds while the other suites run alongside.
+  }, 60_000);
 });

@@ -1968,9 +1968,10 @@ export class ScriptRuntime implements VmHost {
    * Starts a new game's scripts: the clock at the plugins' date and hour, every quest's and
    * alias's scripts and every persistent reference's initialized (their OnInit), then the
    * quests that start with the game started (a start resets a quest that does not run once:
-   * its OnInit runs again).
+   * its OnInit runs again), then the opening (Unbound), unless the game starts without it (the
+   * main menu's coc: UESP, "Skyrim:Console").
    */
-  async newGame(progress?: (what: string) => void): Promise<void> {
+  async newGame(progress?: (what: string) => void, opening = true): Promise<void> {
     const db = this.forms.db;
     // The start date: the GameYear, GameMonth and GameDay globals (as readStartDate reads them).
     const whole = async (name: string, fallback: number): Promise<number> => {
@@ -2033,8 +2034,8 @@ export class ScriptRuntime implements VmHost {
     this.startingNewGame = false;
     // The opening: no record or script starts Unbound (MQ101); the game does as a new game
     // begins (UESP: "this quest starts automatically when you begin a new game").
-    const opening = db.formIdOf('Skyrim.esm', OPENING_QUEST);
-    if (opening !== undefined) await this.quests.start(opening);
+    const unbound = opening ? db.formIdOf('Skyrim.esm', OPENING_QUEST) : undefined;
+    if (unbound !== undefined) await this.quests.start(unbound);
     await this.vm.idle();
   }
 

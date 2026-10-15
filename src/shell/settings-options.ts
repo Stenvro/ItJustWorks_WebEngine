@@ -31,7 +31,9 @@ export const SETTING_OPTIONS: Readonly<Record<'gameplay' | 'display', readonly S
       key: '$Save on Pause',
       id: 'SaveGame:fAutosaveEveryXMins',
       kind: OptionKind.stepper,
-      steps: [0, 60, 45, 30, 15, 10, 5],
+      // The movie lists 5, 10, 15, 30, 45 and 60 minutes, then Disabled (its InitArray takes
+      // the values in reverse of their push order).
+      steps: [5, 10, 15, 30, 45, 60, 0],
     },
     {
       key: '$Save on Travel',
@@ -53,12 +55,12 @@ export const SETTING_OPTIONS: Readonly<Record<'gameplay' | 'display', readonly S
       id: 'GamePlay:bShowFloatingQuestMarkers',
       kind: OptionKind.checkbox,
     },
-    // Legendary .. Very Easy: iDifficulty 5 .. 0.
+    // Very Easy (Novice) .. Legendary: iDifficulty 0 .. 5, as the movie lists them.
     {
       key: '$Difficulty',
       id: 'GamePlay:iDifficulty',
       kind: OptionKind.stepper,
-      steps: [5, 4, 3, 2, 1, 0],
+      steps: [0, 1, 2, 3, 4, 5],
     },
     // TODO(M13): the game's ends of this slider (not documented; linear about the default).
     {

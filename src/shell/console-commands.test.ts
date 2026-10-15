@@ -12,6 +12,37 @@ describe('ConsoleCommands', () => {
     expect(await commands.run('ShowRaceMenu')).toEqual([]);
     expect(opened).toBe(1);
   });
+
+  it('gives the player every control back with epc, takes them with dpc', async () => {
+    const controls = {
+      movement: false,
+      fighting: false,
+      camSwitch: false,
+      looking: false,
+      sneaking: false,
+      menu: false,
+      activate: false,
+      journalTabs: false,
+      disablePov: 1,
+    };
+    let changed = 0;
+    const commands = new ConsoleCommands({
+      runtime: { controls },
+      controlsChanged: () => {
+        changed++;
+      },
+    } as unknown as ConsoleContext);
+    expect(await commands.run('EnablePlayerControls')).toEqual([]);
+    expect(controls).toMatchObject({
+      movement: true,
+      menu: true,
+      journalTabs: true,
+      disablePov: 0,
+    });
+    expect(await commands.run('dpc')).toEqual([]);
+    expect(controls.menu).toBe(false);
+    expect(changed).toBe(2);
+  });
 });
 
 describe('parseConsoleLine', () => {

@@ -13,7 +13,8 @@ import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import { parseItem } from '../world/item-records.ts';
 import { itemSound } from '../gameplay/inventory.ts';
-import { buttonArt, userEvent } from '../ui/button-art.ts';
+import { buttonArt, userEvent, withKeyLabels } from '../ui/button-art.ts';
+import { menuKeys } from '../ui/menu-keys.ts';
 import {
   parseLoadingScreen,
   pickLoadingScreen,
@@ -39,8 +40,9 @@ import { HudController } from './hud-controller.ts';
 import { MessageBoxes } from './message-boxes.ts';
 import { GameMenus } from './game-menus.ts';
 import { DialogueMenu } from './dialogue-menu.ts';
-import { ConsoleMenu, isConsoleKey } from './console-menu.ts';
-import { ConsoleCommands } from './console-commands.ts';
+import { cellPlacement, exteriorCells } from './cell-placement.ts';
+import { ConsoleMenu, isConsoleKey, type ConsoleRunner } from './console-menu.ts';
+import { ConsoleCommands, parseConsoleLine } from './console-commands.ts';
 import { Compass } from './compass.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
@@ -193,6 +195,9 @@ export class PlayMode {
         },
       },
     );
+    // The menus' navigation keys as the player's bindings say (W, A, S, D as the arrows).
+    this.#host.menuKeys = () => menuKeys(this.#playerData?.controls);
+    this.#host.passKey = isConsoleKey;
     this.#console = new ConsoleMenu(this.#host, terminal, ini);
     this.#fader = new FaderMenu(this.#host, terminal, () => session.loading);
     this.#titles = new TitleSequence(this.#host, terminal, () => session.loading);
@@ -282,6 +287,8 @@ export class PlayMode {
         menu.call('FadeInMenu');
       },
     });
+    // The console works at the main menu too (its coc starts a new game in that cell).
+    document.addEventListener('keydown', this.#consoleKey);
     await mist;
   }
 
@@ -309,9 +316,10 @@ export class PlayMode {
   /**
    * New: the main menu fades out; a new game's scripts start (a clean game state) behind the
    * loading menu; once the opening has placed the player, the world there loads and the
-   * loading menu goes.
+   * loading menu goes. With a place (the main menu's coc) the game starts there, without the
+   * opening (UESP, "Skyrim:Console": coc from the main menu skips it).
    */
-  async #newGame(): Promise<void> {
+  async #newGame(place?: Placement): Promise<void> {
     if (this.#starting) return;
     this.#starting = true;
     const session = this.#session;
@@ -324,13 +332,13 @@ export class PlayMode {
     // A new game: everything any game before it did goes. The loading menu over the mist while
     // its scripts start; the loading screen is chosen once the opening runs (a new game's own,
     // ChargenLoadScreen, asks for MQ101 at stage 10).
-    const ready = session.resetStates();
+    const ready = session.resetStates(place === undefined);
     this.#loadingText = '';
     this.#mist?.showMist();
     await this.#openLoadingMenu();
     const runtime = await this.#runtimeStarting();
     await ready;
-    const at = await this.#openingPlacement(runtime);
+    const at = place ?? (await this.#openingPlacement(runtime));
     if (!at) throw new Error('the opening placed no player');
     const screen = await this.#pickLoadingScreen(runtime);
     if (screen) {
@@ -363,6 +371,7 @@ export class PlayMode {
       ini: () => session.ini,
       onSettingsChange: (listener) => session.preferences.onChange(listener),
       compass: () => compass.targets(),
+      keyLabels: (text) => withKeyLabels(text, this.#playerData?.controls),
     });
     this.#hud = hud;
     await hud.open();
@@ -600,7 +609,10 @@ export class PlayMode {
   #commands: { readonly runtime: ScriptRuntime; readonly commands: ConsoleCommands } | undefined;
 
   readonly #consoleKey = (event: KeyboardEvent): void => {
-    if (!isConsoleKey(event) || event.repeat || this.#console.isOpen || !this.#menus) return;
+    if (!isConsoleKey(event) || event.repeat || this.#console.isOpen) return;
+    // In the game, or at the main menu (not while a new game starts from it).
+    const atMainMenu = !this.#menus && this.#startMenu !== undefined && !this.#starting;
+    if (!this.#menus && !atMainMenu) return;
     // Not while a place loads.
     if (this.#session.loading) return;
     event.preventDefault();
@@ -608,7 +620,7 @@ export class PlayMode {
     this.#console
       .open(
         CONSOLE_DEPTH,
-        () => this.#consoleCommands(),
+        () => (atMainMenu ? this.#mainMenuCommands : this.#consoleCommands()),
         () => {
           leave();
         },
@@ -621,6 +633,47 @@ export class PlayMode {
         );
         leave();
       });
+  };
+
+  /** Every exterior cell by editor id, for the main menu's coc (read once). */
+  #exteriorCells: Promise<Map<string, number>> | undefined;
+
+  /**
+   * The main menu's console: centeroncell (coc) starts a new game in that cell, without the
+   * opening; quitquitquit (qqq) quits; the game's other commands want a game running.
+   */
+  readonly #mainMenuCommands: ConsoleRunner = {
+    run: async (line) => {
+      const { command, args } = parseConsoleLine(line);
+      switch (command) {
+        case '':
+          return [];
+        case 'coc':
+        case 'centeroncell': {
+          const db = await this.#session.db;
+          const cells = await (this.#exteriorCells ??= exteriorCells(db));
+          const at = await cellPlacement(db, args[0] ?? '', (name) =>
+            Promise.resolve(cells.get(name)),
+          );
+          if (typeof at === 'string') return [at];
+          this.#console.hide();
+          this.#newGame(at).catch((error: unknown) => {
+            this.#terminal.log(
+              'ui',
+              `the new game does not start: ${error instanceof Error ? error.message : String(error)}`,
+              'error',
+            );
+          });
+          return [];
+        }
+        case 'qqq':
+        case 'quitquitquit':
+          this.onQuit?.();
+          return [];
+        default:
+          return [`${command}: no game is running`];
+      }
+    },
   };
 
   /** The commands for the game now running. */
@@ -643,6 +696,7 @@ export class PlayMode {
           showRaceMenu: () => {
             this.#showRaceMenu();
           },
+          controlsChanged: () => runtime.world.controlsChanged?.(),
           quit: () => this.onQuit?.(),
         }),
       };

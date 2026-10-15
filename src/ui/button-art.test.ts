@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { UserEvent } from '../formats/controlmap/controlmap.ts';
-import { buttonArt, keyArt, mouseArt, UNKNOWN_KEY } from './button-art.ts';
+import { buttonArt, keyArt, keyLabel, mouseArt, UNKNOWN_KEY, withKeyLabels } from './button-art.ts';
 
 const event = (keys: number[][], mouse: number[] = []): UserEvent => ({
   name: 'Test',
@@ -40,5 +40,29 @@ describe('button art', () => {
     expect(buttonArt(event([[0x1d, 0xb7]]))).toBe(UNKNOWN_KEY);
     expect(buttonArt(event([], [0]))).toBe('Mouse1');
     expect(buttonArt(undefined)).toBe(UNKNOWN_KEY);
+  });
+});
+
+describe('key labels', () => {
+  it('reads an art as the key it shows', () => {
+    expect(keyLabel('E')).toBe('E');
+    expect(keyLabel('L-Shift')).toBe('Shift');
+    expect(keyLabel('Mouse1')).toBe('Left Click');
+    expect(keyLabel('NumPad5')).toBe('Num 5');
+  });
+
+  it("writes a text's [Event]s as their keys, other brackets as they are", () => {
+    // Activate on E (scan code 0x12), Jump on Space (0x39).
+    const controls = {
+      contexts: [
+        [
+          { ...event([[0x12]]), name: 'Activate' },
+          { ...event([[0x39]]), name: 'Jump' },
+        ],
+      ],
+    };
+    expect(withKeyLabels('Press [Activate] to take, [jump] to jump [here].', controls)).toBe(
+      'Press E to take, Space to jump [here].',
+    );
   });
 });

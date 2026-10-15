@@ -50,6 +50,8 @@ const WATCHER_DEPTH = 1047999;
 const WATCH_SIZING = '__itjwWatchSizing';
 /** Applies the sizing properties a field has (as SetText sets its text). */
 const APPLY_SIZING = '__itjwApplySizing';
+/** Marks a field whose autoSize the sizing gave it (it had none of its own). */
+const OWN_AUTO_SIZE = '__itjwFitsHeight';
 /** The sizing properties and their watchers (_global.__itjwOn<property>). */
 const SIZING = ['verticalAutoSize', 'textAutoSize', 'verticalAlign'] as const;
 const ORIGINAL_CREATE_TEXT_FIELD = '__itjwCreateTextField';
@@ -231,7 +233,7 @@ function defineAutoSizing(w: Avm1Writer): void {
    */
   const property = (name: string, key: string, set: (body: Avm1Writer) => void): void => {
     w.push('_global').op(Op.getVariable).push(`__itjwOn${name}`);
-    w.function2('', ['name', 'old', 'value'], 4, FLAGS, (body) => {
+    w.function2('', ['name', 'old', 'value'], 5, FLAGS, (body) => {
       body.push('this').op(Op.getVariable).push(key, reg(3)).op(Op.setMember);
       set(body);
       body.label('end');
@@ -243,14 +245,29 @@ function defineAutoSizing(w: Avm1Writer): void {
     body.push('this').op(Op.getVariable).push(1, '_global').op(Op.getVariable).push(WATCH);
     body.op(Op.callMethod).op(Op.pop);
   };
-  const autoSize = (body: Avm1Writer, value: string): void => {
-    body.push('this').op(Op.getVariable).push('autoSize', value).op(Op.setMember);
+  // The box's height fits its text through AS2's autoSize, which sizes the width as well: a field
+  // the movie gives an autoSize of its own ("center": a message box's button) keeps it; one
+  // without gets the alignment of its text (the text stays where it is) and is marked so.
+  const fitHeight = (body: Avm1Writer): void => {
+    own(body, 'autoSize').push('none').op(Op.equals2).op(Op.not).ifTo('ownAutoSize');
+    body.push('this').op(Op.getVariable).push(OWN_AUTO_SIZE, true).op(Op.setMember);
+    body.push('this').op(Op.getVariable).push('autoSize');
+    body.push(0, 'this').op(Op.getVariable).push('getNewTextFormat').op(Op.callMethod);
+    body.push('align').op(Op.getMember).storeRegister(4);
+    body.push('center').op(Op.equals2).ifTo('aligned');
+    body.push(reg(4), 'right').op(Op.equals2).ifTo('aligned');
+    body.push('left').storeRegister(4).op(Op.pop);
+    body.label('aligned');
+    body.push(reg(4)).op(Op.setMember);
+    body.label('ownAutoSize');
   };
-  // verticalAutoSize: "none" lets the box be; else it fits its text (autoSize), "bottom" and
-  // "center" keep that edge where it is now.
+  // verticalAutoSize: "none" lets the box be (the autoSize it fitted its height with gone);
+  // else it fits its text, "bottom" and "center" keep that edge where it is now.
   property('verticalAutoSize', '__itjwVAuto', (body) => {
     body.push(reg(3), 'none').op(Op.equals2).op(Op.not).ifTo('fits');
-    autoSize(body, 'none');
+    own(body, OWN_AUTO_SIZE).op(Op.not).ifTo('end');
+    body.push('this').op(Op.getVariable).push(OWN_AUTO_SIZE, false).op(Op.setMember);
+    body.push('this').op(Op.getVariable).push('autoSize', 'none').op(Op.setMember);
     body.jumpTo('end');
     body.label('fits');
     body.push('this').op(Op.getVariable).push('__itjwAnchor');
@@ -262,7 +279,7 @@ function defineAutoSizing(w: Avm1Writer): void {
     body.push(2).op(Op.divide);
     body.label('anchor');
     body.op(Op.add2).op(Op.setMember);
-    autoSize(body, 'left');
+    fitHeight(body);
     watch(body);
   });
   // textAutoSize: fitted as its text changes.
@@ -276,7 +293,7 @@ function defineAutoSizing(w: Avm1Writer): void {
     body.push(reg(3), 'bottom').op(Op.equals2).ifTo('fits');
     body.push(reg(3), 'center').op(Op.equals2).op(Op.not).ifTo('end');
     body.label('fits');
-    autoSize(body, 'left');
+    fitHeight(body);
     watch(body);
   });
   // _global.__itjwWatchSizing(field): field.watch(each sizing property, its watcher).
