@@ -111,6 +111,9 @@ const wait = (ms: number): Promise<void> =>
     setTimeout(resolve, ms);
   });
 
+/** The main menu's music (mods replace this file). */
+const MAIN_THEME = 'music\\special\\mus_maintheme.xwm';
+
 export class PlayMode {
   readonly #session: GameSession;
   readonly #renderer: Renderer;
@@ -212,6 +215,7 @@ export class PlayMode {
     const mist = MistMenu.show(this.#session, this.#renderer).then((menu) => {
       this.#mist = menu;
     });
+    this.#playMainTheme();
     this.#startMenu = await this.#host.open('startmenu.swf', {
       depth: DEPTH.startMenu,
       interactive: true,
@@ -262,6 +266,27 @@ export class PlayMode {
     await mist;
   }
 
+  /** The main menu's music (music\special\mus_maintheme.xwm), once, from its start. */
+  #playMainTheme(): void {
+    const playing = (this.#mainTheme = this.#session
+      .sounds()
+      .then((sounds) => sounds.playMusicFile(MAIN_THEME))
+      .then((stop) => {
+        // Stopped before it began: it goes at once.
+        if (this.#mainTheme !== playing) stop?.(0);
+        return stop;
+      }));
+  }
+
+  #stopMainTheme(seconds: number): void {
+    const playing = this.#mainTheme;
+    this.#mainTheme = undefined;
+    void playing?.then((stop) => stop?.(seconds));
+  }
+
+  /** The main menu's music while it plays (resolves to what stops it). */
+  #mainTheme: Promise<((seconds: number) => void) | undefined> | undefined;
+
   /**
    * New: the main menu fades out; a new game's scripts start (a clean game state) behind the
    * loading menu; once the opening has placed the player, the world there loads and the
@@ -273,6 +298,7 @@ export class PlayMode {
     const session = this.#session;
     const startMenu = this.#startMenu;
     startMenu?.call('FadeOutMenu');
+    this.#stopMainTheme(FADE_OUT_MS / 1000);
     await wait(FADE_OUT_MS);
     if (startMenu) this.#host.close(startMenu);
     this.#startMenu = undefined;
@@ -764,6 +790,8 @@ export class PlayMode {
 
   /** The loading menu, its text the loading screen's. */
   async #openLoadingMenu(): Promise<void> {
+    // The loading screen's mist whooshes in (UILoadscreenMist, the engine's).
+    void this.#session.sounds().then((sounds) => sounds.playNamed('UILoadscreenMist', undefined));
     const runtime = this.#session.scriptsReady;
     const level = runtime ? await runtime.actors.level(PLAYER_REF) : 1;
     this.#loadingMenu = await this.#host.open('loadingmenu.swf', {
@@ -789,6 +817,7 @@ export class PlayMode {
   }
 
   stop(): void {
+    this.#stopMainTheme(0);
     this.#endGame();
     this.#session.hud.screen = undefined;
     this.#world.follow(false);

@@ -152,6 +152,9 @@ class SkillsCamera implements Camera {
   }
 }
 
+/** The music type the menu plays while open. */
+const SKILLS_MUSIC = 'MUSSkillsMenu';
+
 export class SkillsMenu {
   readonly #host: MenuHost;
   readonly #session: GameSession;
@@ -193,6 +196,10 @@ export class SkillsMenu {
       return undefined;
     }
     const settings = await session.settings();
+    // Its music while it is open (MUSSkillsMenu: silence that ducks what played).
+    const sounds = session.soundSystem;
+    const music = await sounds?.musicNamed(SKILLS_MUSIC);
+    if (music !== undefined) sounds?.music.add(music);
     const viewing = new Viewing(this.#host, session, runtime, settings, {
       levelUp,
       dome,
@@ -202,6 +209,7 @@ export class SkillsMenu {
       confirm: this.#confirm,
       closed: (ring) => {
         this.#ring = ring;
+        if (music !== undefined) sounds?.music.remove(music);
         closed();
       },
     });

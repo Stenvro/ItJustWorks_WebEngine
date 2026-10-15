@@ -99,6 +99,9 @@ export interface VoiceLine {
   play(place: SoundPlace): Promise<SoundInstance | undefined>;
 }
 
+/** How long a music file played on its own may take to get ready. */
+const MUSIC_FILE_WAIT_MS = 60_000;
+
 export class SoundSystem {
   readonly engine: AudioEngine;
   readonly #db: RecordDatabase;
@@ -444,6 +447,16 @@ export class SoundSystem {
     return formId === undefined ? undefined : this.play(formId, place);
   }
 
+  /** A music type (MUSC) by editor id ("MUSSkillsMenu"). */
+  async musicNamed(editorId: string): Promise<number | undefined> {
+    const wanted = editorId.toLowerCase();
+    for (const formId of this.#db.formIdsOfType('MUSC')) {
+      const record = await this.#db.get(formId);
+      if (record && !record.deleted && record.editorId?.toLowerCase() === wanted) return formId;
+    }
+    return undefined;
+  }
+
   #descriptorNames(): Promise<Map<string, number>> {
     this.#namedDescriptors ??= (async () => {
       const names = new Map<string, number>();
@@ -538,6 +551,36 @@ export class SoundSystem {
       this.#impactRecords.set(formId, entry);
     }
     return entry;
+  }
+
+  /**
+   * A music file on its own, outside the music types (the main menu's theme), into the music
+   * category, once; resolves as it starts to what stops it (fading out over seconds), or to
+   * undefined if it cannot play.
+   */
+  async playMusicFile(file: string, fadeIn = 0): Promise<((seconds: number) => void) | undefined> {
+    const output = this.#musicOutput;
+    let ready = output.prepare(file);
+    for (let waited = 0; ready === undefined && waited < MUSIC_FILE_WAIT_MS; waited += 100) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      ready = output.prepare(file);
+    }
+    if (ready !== true) return undefined;
+    const bus = output.bus();
+    const voice = output.play(file, bus, fadeIn, undefined);
+    if (!voice) {
+      bus.dispose();
+      return undefined;
+    }
+    return (seconds) => {
+      voice.stop(seconds);
+      setTimeout(
+        () => {
+          bus.dispose();
+        },
+        seconds * 1000 + 100,
+      );
+    };
   }
 
   /** The surroundings for ambience: regions, weather, time of day (every frame). */
