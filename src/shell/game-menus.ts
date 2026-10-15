@@ -23,6 +23,7 @@ import { giftModel } from './gift-menu.ts';
 import type { MenuRequest } from '../scripting/runtime/runtime.ts';
 import { BookMenu, type BookToRead } from './book-menu.ts';
 import { LockpickingMenu } from './lockpicking-menu.ts';
+import { SkillsMenu } from './skills-menu.ts';
 import { BookFlag, parseItem } from '../world/item-records.ts';
 
 /** The menus' depth among the game's menus (over the HUD, under message boxes). */
@@ -49,6 +50,8 @@ const EVENT_MENUS: Readonly<Record<string, string>> = {
 export interface MenusWorld {
   /** The player is off the ground (falling, jumping). */
   inAir(): boolean;
+  /** A message box with buttons; resolves with the button chosen. */
+  confirm(text: string, buttons: readonly string[]): Promise<number>;
 }
 
 export class GameMenus {
@@ -71,6 +74,7 @@ export class GameMenus {
   readonly #world: MenusWorld;
   readonly #books: BookMenu;
   readonly #lockpicking: LockpickingMenu;
+  readonly #skills: SkillsMenu;
   /** A book open (over the world, or over the inventory it was read from). */
   #reading: { close(): void } | undefined;
 
@@ -93,6 +97,9 @@ export class GameMenus {
     this.#items = new ItemMenu(host, session, terminal);
     this.#books = new BookMenu(host, session, terminal);
     this.#lockpicking = new LockpickingMenu(host, session, terminal);
+    this.#skills = new SkillsMenu(host, session, terminal, (text, buttons) =>
+      world.confirm(text, buttons),
+    );
     this.#inventory = inventoryModel(session, terminal, (book) => this.#readFromInventory(book));
     this.#magic = magicModel(session, terminal);
     this.#favorites = new FavoritesMenu(host, session, this.#inventory, this.#magic);
@@ -136,14 +143,16 @@ export class GameMenus {
                 ? this.#openSleepWait(false)
                 : name === 'Skills' && (this.#session.scriptsReady?.state.levelUps ?? 0) > 0
                   ? this.#openLevelUp()
-                  : (() => {
-                      // TODO(M9): the skills and map menus.
-                      if (!this.#missing.has(name)) {
-                        this.#missing.add(name);
-                        this.#terminal.log('ui', `the ${name} menu is not built yet`, 'warn');
-                      }
-                      return Promise.resolve();
-                    })();
+                  : name === 'Skills'
+                    ? this.#openSkills(false)
+                    : (() => {
+                        // TODO(M9): the map menu.
+                        if (!this.#missing.has(name)) {
+                          this.#missing.add(name);
+                          this.#terminal.log('ui', `the ${name} menu is not built yet`, 'warn');
+                        }
+                        return Promise.resolve();
+                      })();
     opening.catch((error: unknown) => {
       this.#terminal.log(
         'ui',
@@ -255,9 +264,46 @@ export class GameMenus {
       if (this.#open !== open) return;
       this.#open = undefined;
       open.leave();
-      if (chose) this.openMenu('Skills');
+      if (!chose) return;
+      this.#openSkills(true).catch((error: unknown) => {
+        this.#terminal.log(
+          'ui',
+          `the skills menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+        this.#closeOpen();
+      });
     });
     if (this.#open !== open) this.#host.close(open.menu);
+  }
+
+  /**
+   * The skills menu (after levelling up: `levelUp`), the HUD hidden; it closes after its
+   * camera's outro.
+   */
+  async #openSkills(levelUp: boolean): Promise<void> {
+    const leaveMenuMode = this.#enterMenuMode();
+    const hud = this.#session.hud;
+    hud.shown(false);
+    const open = {
+      menu: undefined as Menu | undefined,
+      leave: () => {
+        hud.shown(true);
+        leaveMenuMode();
+      },
+    };
+    this.#open = open;
+    const opened = await this.#skills.open(levelUp, () => {
+      if (this.#open !== open) return;
+      this.#open = undefined;
+      open.leave();
+    });
+    if (!opened) {
+      if (this.#open === open) this.#closeOpen();
+      return;
+    }
+    if (this.#open !== open) opened.close();
+    else open.menu = opened.menu;
   }
 
   /** Sleeping in a bed: the sleep menu (rest how long?). */

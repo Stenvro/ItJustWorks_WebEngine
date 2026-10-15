@@ -1037,3 +1037,16 @@ the topic's quest's and the topic's editor ids (cut to 10 and 15 characters when
 together; a topic without one leaves its part empty), the info's form id as 8 hex digits
 without the load order index, the response's number. Checked against all 35,580 voiced
 responses of the vanilla data.
+
+## Perk trees
+
+A skill's AVIF (editor id "AV" + its name; Illusion's is still Oblivion's AVMysticism) holds its
+perk tree after its own fields (CNAM its category, AVSK four floats: skill use mult, use offset,
+improve mult, improve offset). One group per node, in this order: PNAM the perk (0 for the root,
+whose grid fields are garbage), FNAM flags, XNAM / YNAM (u32) its grid column and row, HNAM /
+VNAM (float) its offset from that grid point, SNAM the skill, CNAM (u32, repeated) the nodes it
+leads to by their INAM, INAM (u32) the node's own index. `node tools/perk-info.ts` lists them.
+
+A PERK: FULL, DESC, its requirements (the CTDA before its first effect, PRKE), DATA (u8 trait,
+u8 level, u8 rank count, u8 playable, u8 hidden), NNAM the next rank (Armsman00 → 20 → 40 ...);
+then its effects (PRKE, DATA, PRKC + CTDA, EPFT, EPFD, PRKF).

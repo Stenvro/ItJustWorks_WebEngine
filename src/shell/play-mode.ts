@@ -268,6 +268,7 @@ export class PlayMode {
     this.#messageBoxes = boxes;
     const menus = new GameMenus(this.#host, session, this.#terminal, () => this.#enterMenuMode(), {
       inAir: () => this.#world.inAir(),
+      confirm: (text, buttons) => boxes.show(text, buttons),
     });
     this.#menus = menus;
     menus.onQuit = (toDesktop) => {

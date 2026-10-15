@@ -5,7 +5,7 @@
 // the image. ASCII only.
 
 struct Overlay {
-  // x: 1 / the player's gamma (fGamma).
+  // x: 1 / the player's gamma (fGamma), y: 1 hides the world (black where nothing is drawn).
   param: vec4f,
 };
 
@@ -32,10 +32,12 @@ fn fs_composite(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
   }
   let resolved = textureLoad(color, texel, 0);
-  let coverage = clamp(max(drawn / f32(samples), resolved.a), 0.0, 1.0);
+  let coverage = select(clamp(max(drawn / f32(samples), resolved.a), 0.0, 1.0), 1.0, overlay.param.y > 0.5);
   if (coverage <= 0.0) {
     discard;
   }
-  let shown = clamp(max(resolved.rgb, vec3f(0.0)) / coverage, vec3f(0.0), vec3f(1.0));
+  // Opaque: the colour as drawn over black.
+  let divisor = select(coverage, 1.0, overlay.param.y > 0.5);
+  let shown = clamp(max(resolved.rgb, vec3f(0.0)) / divisor, vec3f(0.0), vec3f(1.0));
   return vec4f(pow(shown, vec3f(overlay.param.x)) * coverage, coverage);
 }

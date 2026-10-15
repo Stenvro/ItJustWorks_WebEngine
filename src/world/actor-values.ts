@@ -88,3 +88,12 @@ export function actorValueName(index: number): string {
 }
 
 export const ACTOR_VALUE_COUNT = NAMES.length;
+
+/**
+ * The editor id of an actor value's AVIF record: "AV" + its name, but Illusion's is still
+ * Oblivion's AVMysticism.
+ */
+export function actorValueEditorId(index: number): string {
+  const name = actorValueName(index);
+  return `AV${name.toLowerCase() === 'illusion' ? 'Mysticism' : name}`;
+}
