@@ -249,9 +249,16 @@ export class Menu {
     );
   }
 
-  /** Puts keyboard focus on the menu (an interactive menu as it opens). */
+  /**
+   * Puts keyboard focus on the menu (an interactive menu as it opens). The player takes keys
+   * only after focus comes to it from outside (Ruffle: a focusin from elsewhere): a menu
+   * focused while its player was still starting gets it again.
+   */
   focus(): void {
-    this.#element?.focus();
+    const element = this.#element;
+    if (!element) return;
+    if (document.activeElement === element) element.blur();
+    element.focus();
   }
 
   close(): void {

@@ -370,6 +370,29 @@ sInsufficientGoldToTrain say why one cannot be had. An actor value's name is its
 the one named "AV" + the value's name. TODO(M11): the skill's progress, the experience a session
 gives, the skill increase notice.
 
+## Levelling up
+
+`levelupmenu.swf` (`src/shell/level-up-menu.ts`): `_root.InitExtensions()`; the menu calls
+`addHealth`, `addMagicka` or `addStamina` as its buttons are pressed. The choice raises the
+attribute by iAVDhmsLevelUp (stamina also the carry weight by fLevelUpCarryWeightMod), the level
+by one, and gives a perk point (UESP, "Leveling"). It opens instead of the skills menu while a
+level-up waits (`GameState.levelUps`; the tween menu's `StartOpenMenuAnim(abLevelUp, ...)` shows
+it), the skills menu after it. TODO(M11): the experience that makes a level up wait.
+
+## The console
+
+`console.swf` (`src/shell/console-menu.ts`; ~): the engine shows it (`Console.Show()`) and hides
+it (`Console.Hide()`, then the menu's `HideComplete`); the command field is the player's own text
+input (Ruffle takes the typing), and Enter makes the menu call `ExecuteCommand(line)`. What a
+command prints goes to `Console.AddHistory(text)` (kept between openings). The game is in menu
+mode while it is open. The commands (`src/shell/console-commands.ts`): a line is a command and
+its arguments (quotes keep spaces), optionally after a reference and a dot ("player.additem f
+100"); forms by editor id or hex form id; an unknown command prints `Script command "x" not
+found.`. Built: help, coc, additem, removeitem, setstage, getstage, startquest, stopquest,
+completequest, set ... to, getav, setav, modav, forceav, advlevel, tm, fw, qqq. TODO(M13): the
+rest of the game's commands, coc to exterior cells and their COC markers, selecting references
+by clicking.
+
 ## The journal
 
 `quest_journal.swf` (`src/shell/journal-menu.ts`): J opens it on the page it was left on, Pause
