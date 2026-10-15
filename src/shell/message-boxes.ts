@@ -117,8 +117,17 @@ export class MessageBoxes {
   }
 }
 
-/** The buttons (MessageMenu.MessageButtons): which has the focus (its `focused`), else the first. */
+/**
+ * The buttons (MessageMenu.MessageButtons): which has the focus (the movie's Selection,
+ * `_level0.MessageMenu.Buttons.Button1`, else the one marked `focused`), else the first.
+ */
 function focusedButton(menu: Menu, count: number): number {
+  const focus = menu.invoke('Selection.getFocus');
+  const match = typeof focus === 'string' ? /Button(\d+)$/.exec(focus) : null;
+  if (match) {
+    const index = Number(match[1]);
+    if (index < count) return index;
+  }
   for (let i = 0; i < count; i++) {
     const focused = menu.get(`${BUTTONS}.${String(i)}.focused`);
     if (focused === true || (typeof focused === 'number' && focused > 0)) return i;
