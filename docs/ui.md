@@ -712,3 +712,40 @@ lockpicks)`; the rest is the menus' 3D. `meshes\interface\lockpicking\lockpicksh
   zone. A lock's sweet spot stays where it is until the game is loaded again.
 - Sounds: UILockpickingEnter, PickMovement, CylinderTurn, CylinderStop, PickTensionLPM (while
   strained), PickBreak, Unlock. The opened lock sends OnLockStateChanged.
+
+## The skills menu
+
+`statsmenu.swf` over the menus' 3D (`src/shell/skills-menu.ts`; the tween menu's Skills, the
+Quick Stats key, and after a level up in its LEVEL_UP state: `SetStatsMode(false, perkPoints)`).
+
+- The sky dome `meshes\interface\intperkskydome.nif`: its CameraIntro brings its CameraPosition node
+  (the camera: it looks along its local X, here +Y) from z −3000 up to −16.44, CameraOutro back
+  down as the menu closes; its own Idle animation moves the nebula meanwhile. The camera turns
+  about the dome's middle; its field of view is fStatsCameraFOV (50, of a 4:3 frame).
+- The ring (`src/gameplay/skills-ring.ts`): the dome's Point00 .. Point17 every 20° clockwise from
+  +Y, each with its constellation image (cImage00 .. 17: its quad spans about ±9° about its point,
+  7° .. 30° up, about 92 out). The images name the skills (Point01 the anvil: Smithing, Point09
+  the key: Lockpicking); clockwise: Enchanting, Smithing, Heavy Armor, Block, Two-handed,
+  One-handed, Archery, Light Armor, Sneak, Lockpicking, Pickpocket, Speech, Alchemy, Illusion,
+  Conjuration, Destruction, Restoration, Alteration. The movie's names follow the same ring
+  (`_global.StatsMenu.SkillStatsA`: level, name, progress, colour, legendary count, five a skill,
+  then `UpdateSkillList(true)`; `SetDirection(degrees)` turns them with the camera; SKILL_ANGLE 20).
+- A perk's star (`intperkstars01.nif`, its graph Interface\INTPerkStars01.hkx: Locked (lavender),
+  Unlocked, Owned (golden), Selected, Own as it is taken; the engine sends reset, UnlockedWild,
+  OwnedWild, SelectedWild) stands on its constellation's image: fStatsStarXIncrement (5) a grid
+  column (AVIF XNAM + HNAM) along it, the tree's columns about the point; fStatsStarYIncrement +
+  fStatsStarZIncrement (15 − 9 = 6) a grid row (YNAM + VNAM) up it from its foot (z −2). These fit
+  the images (Smithing's twelve columns span its anvil's 35°, Lockpicking's five rows its key).
+  Lines (`intperkline01.nif`: a beam along +Y to BeamEnd at 56.2, scaled to the distance; its
+  graph: Locked, Unlocked) join a perk to those it leads to (CNAM), lit when both are owned.
+- In a tree the camera pitches up to the tree's middle; the perks' names stand where their stars
+  are (`_global.StatsMenu.PerkNamesA`: name, x, y in 0..1, then
+  `StatsMenuInstance.UpdatePerkText(true)`); `HideRing` hides the skill names.
+- `SetPlayerInfo(name, level, level progress, race, magicka now, max, colour, health ..., stamina
+...)`, `SetDescriptionCard(perkMode, name, meter, description, requirements, skill level, skill,
+legendary count)`: a skill's card on the ring, a perk's in a tree (its rank, sRequirements or
+  sStatsNextRank with the skill levels its conditions ask), `SetPerkCount(points)`.
+- A perk can be taken when the tree leads to it (the root, or a perk before it owned) and its
+  conditions (the CTDA before its effects) hold: Accept asks sStatsPerkConfirm, then it is the
+  player's (the next rank of a perk with ranks, NNAM). Space at a skill of 100 makes it Legendary
+  (sLegendaryResetConfirm, sLegendaryResetSecondConfirm): back to 15, its perks' points returned.

@@ -16,6 +16,8 @@ export interface OverlayView {
   readonly lighting: (camera: Camera) => SceneLighting;
   /** Called once a frame before the scenes animate. */
   readonly update?: (timeSeconds: number) => void;
+  /** It hides the world (the skills menu's sky): what it does not draw is black. */
+  readonly opaque?: boolean;
 }
 
 /** The renderer's multisampled targets, reused once the world is drawn. */
@@ -163,6 +165,7 @@ export class MenuOverlay {
     scene.useFrame(undefined);
 
     this.#uniformData[0] = 1 / Math.max(gamma, 0.05);
+    this.#uniformData[1] = view.opaque === true ? 1 : 0;
     this.#device.queue.writeBuffer(this.#uniforms, 0, this.#uniformData);
     const composite = encoder.beginRenderPass({
       label: 'menu-3d-composite',

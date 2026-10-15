@@ -475,7 +475,10 @@ export class MenuHost {
     // Selection.setFocus (a message box's first button) holds only in a player with focus.
     if (options.interactive) menu.focus();
     await options.setup?.(menu);
-    if (options.interactive && menu.element === element) menu.focus();
+    // Still focused: left so (focusing it again would take the focus its setup gave a button).
+    if (options.interactive && menu.element === element && document.activeElement !== element) {
+      menu.focus();
+    }
   }
 
   /** Serves the interface files and receives the menus' calls (once). */

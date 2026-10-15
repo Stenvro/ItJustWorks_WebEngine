@@ -5,7 +5,7 @@
 
 import { RecordFlag } from '../../formats/esm/record.ts';
 import { parseVmad, type PropertyValue, type ScriptAttachments } from '../../formats/esm/vmad.ts';
-import { actorValueName } from '../../world/actor-values.ts';
+import { actorValueEditorId } from '../../world/actor-values.ts';
 import { parseQuest, type QuestAlias, type QuestRecord } from '../../world/quest-records.ts';
 import type { GameRecord, RecordDatabase } from '../../world/record-db.ts';
 import type { AttachedScriptInfo } from '../papyrus-vm.ts';
@@ -105,7 +105,7 @@ export class FormIndex {
     this.db = db;
   }
 
-  /** An actor value's AVIF record (its name, description): the one named "AV" + its name. */
+  /** An actor value's AVIF record (its name, description): by its editor id (actorValueEditorId). */
   async actorValueForm(index: number): Promise<GameRecord | undefined> {
     this.#actorValueForms ??= (async () => {
       const byName = new Map<string, number>();
@@ -115,7 +115,7 @@ export class FormIndex {
       }
       return byName;
     })();
-    const formId = (await this.#actorValueForms).get(`av${actorValueName(index).toLowerCase()}`);
+    const formId = (await this.#actorValueForms).get(actorValueEditorId(index).toLowerCase());
     return formId === undefined ? undefined : this.record(formId);
   }
 

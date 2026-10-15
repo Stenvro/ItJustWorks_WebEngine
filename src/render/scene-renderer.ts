@@ -2256,7 +2256,12 @@ export class SceneRenderer {
           floats.fill(0, 0, 16);
         } else if (billboard) {
           const node = multiply(draw.instanceWorld, billboard.node);
-          multiply(billboardWorld(node, billboard.mode, camera), billboard.local, world);
+          // Animated under its billboard node (a perk star's size in its states): the animated
+          // place relative to the node.
+          const animated = frame?.worlds.get(draw.part.block);
+          const inverse = animated && invert(billboard.node);
+          const local = animated && inverse ? multiply(inverse, animated) : billboard.local;
+          multiply(billboardWorld(node, billboard.mode, camera), local, world);
           floats.set(world, 0);
         } else if (draw.hung) {
           // On a skeleton: the node's pose, then the part under it.

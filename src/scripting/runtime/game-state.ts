@@ -196,6 +196,8 @@ export class GameState {
   readonly favorites = new Set<number>();
   /** The books the player has read (a skill book teaches once; TODO(M12): in the save). */
   readonly booksRead = new Set<number>();
+  /** How often each skill (actor value) has been made Legendary (TODO(M12): in the save). */
+  readonly legendary = new Map<number, number>();
   /** Training sessions the player had at a level (five a level: the training menu). */
   training = { level: 0, sessions: 0 };
   /** Level-ups waiting for the player to choose (the level-up menu). */
