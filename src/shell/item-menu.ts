@@ -28,8 +28,12 @@ export interface ItemEntry {
 export interface ItemMenuView {
   readonly entries: readonly ItemEntry[];
   readonly cards: readonly Record<string, unknown>[];
-  readonly player: Record<string, unknown>;
+  /** UpdatePlayerInfo's arguments (the inventory's: one object; barter: gold, gold, name, ...). */
+  readonly player: readonly unknown[];
 }
+
+/** A call of a menu the model answers itself (its arguments after the request id). */
+export type ItemMenuHandler = (menu: Menu, request: unknown, args: readonly unknown[]) => void;
 
 /** What a menu lists and what its entries do. */
 export interface ItemMenuModel {
@@ -46,6 +50,15 @@ export interface ItemMenuModel {
   transfer?(entry: ItemEntry, amount: number, fromContainer: boolean): Promise<void>;
   /** The container menu's TakeAllItems. */
   takeAll?(): Promise<void>;
+  /**
+   * ItemSelect in the menus that trade (barter: buy or sell; gift: give or take), with the
+   * call's arguments; else ItemSelect equips (`select`).
+   */
+  trade?(entry: ItemEntry, args: readonly unknown[]): Promise<void>;
+  /** The model's own calls (barter: GetRawDealWarningString). */
+  readonly handlers?: Readonly<Record<string, ItemMenuHandler>>;
+  /** What it tells the menu as it opens, after its categories (barter: its multipliers). */
+  start?(menu: Menu): void;
   /** Set as the menu opens (magic: the bits of the entries whose buttons are hidden). */
   readonly menuProperties?: Readonly<Record<string, unknown>>;
   /** Whether the list positions are kept from one opening to the next (not a container's). */
@@ -78,7 +91,7 @@ export class ItemMenu {
         view.entries.map((entry, itemId) => ({ ...entry, itemId })),
       );
       menu.call('InvalidateListData');
-      menu.call('UpdatePlayerInfo', view.player);
+      menu.call('UpdatePlayerInfo', ...view.player);
     };
     const refresh = async (menu: Menu): Promise<void> => {
       view = await model.view();
@@ -139,9 +152,21 @@ export class ItemMenu {
           const itemId = selected(menu);
           menu.respond(args[0], itemId === undefined ? {} : (view.cards[itemId] ?? {}));
         },
+        ...Object.fromEntries(
+          Object.entries(model.handlers ?? {}).map(([name, handler]) => [
+            name,
+            (menu: Menu, args: unknown[]) => {
+              handler(menu, args[0], args.slice(1));
+            },
+          ]),
+        ),
         ItemSelect: (menu, args) => {
           const chosen = entry(menu);
           if (!chosen) return;
+          if (model.trade) {
+            act(menu, model.trade(chosen, args.slice(1)));
+            return;
+          }
           act(menu, model.select(chosen, typeof args[1] === 'number' ? args[1] : undefined));
         },
         // The container menu: (slot) for the player's entry; (hand, amount) for the
@@ -210,6 +235,7 @@ export class ItemMenu {
           menu.set(`_root.Menu_mc.${name}`, value);
         }
         menu.call('SetCategoriesList', ...categories);
+        model.start?.(menu);
         show(menu);
         const indices = this.#indices.get(model.movie);
         if (indices && model.keepsIndices !== false) menu.call('RestoreIndices', ...indices);

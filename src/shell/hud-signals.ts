@@ -5,7 +5,7 @@
 // hudmenu.swf, hud-controller.ts) and the message boxes (message-boxes.ts) listen, and the
 // sandbox shows them its own way (the prompt, the terminal).
 
-import type { QuestUpdate } from '../scripting/runtime/runtime.ts';
+import type { MenuRequest, QuestUpdate } from '../scripting/runtime/runtime.ts';
 import type { PlacedActor } from './actors.ts';
 import type { ObjectUses } from './play-session.ts';
 
@@ -54,6 +54,8 @@ export interface MenuSink {
   talk(speaker: PlacedActor): void;
   /** A container's menu (a chest, a corpse searched); `closed` once it has closed. */
   container(reference: number, closed: () => void): void;
+  /** A menu a script opens; resolves once it has closed, with what it returns. */
+  open(request: MenuRequest): Promise<number>;
 }
 
 export class HudSignals {

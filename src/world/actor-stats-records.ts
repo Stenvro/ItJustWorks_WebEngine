@@ -6,6 +6,7 @@
 // Platform-independent.
 
 import { view } from '../formats/esm/fields.ts';
+import { conditionAt, type Condition } from '../scripting/conditions.ts';
 import { SKILL_COUNT } from './actor-values.ts';
 import type { GameRecord } from './record-db.ts';
 
@@ -245,12 +246,27 @@ export interface FactionRecord {
   readonly reactions: readonly FactionReaction[];
   /** RNAM ranks (their index). */
   readonly ranks: readonly number[];
-  /** A vendor faction's hours (DATA flag 0x4000; VEND: start, end, radius). */
-  readonly vendor?: {
-    readonly startHour: number;
-    readonly endHour: number;
-    readonly radius: number;
-  };
+  /** A vendor faction's trade (DATA flag 0x4000). */
+  readonly vendor?: FactionVendor;
+}
+
+/** What a vendor faction trades, where and when (UESP, xEdit's FACT). */
+export interface FactionVendor {
+  /** VENV: the hours its members trade (start .. end, past midnight wrapping). */
+  readonly startHour: number;
+  readonly endHour: number;
+  /** VENV: how far from its location it trades. */
+  readonly radius: number;
+  /** VENV: it buys only stolen items. */
+  readonly onlyStolen: boolean;
+  /** VENV: it buys what is not in its list (else what is). */
+  readonly notInList: boolean;
+  /** VEND: the list (FLST of keywords) of what it buys. */
+  readonly list: number | undefined;
+  /** VENC: the merchant container, its goods and gold. */
+  readonly chest: number | undefined;
+  /** The conditions under which it trades (CITC, then its CTDA). */
+  readonly conditions: readonly Condition[];
 }
 
 /** FACT DATA flags. */
@@ -274,20 +290,37 @@ export function parseFaction(record: RecordSource): FactionRecord {
   };
 }
 
-/** VEND (UESP): start hour u16, end hour u16, radius u32, then its buy/sell flags. */
+/**
+ * VEND the buy/sell list, VENC the merchant container, VENV (start hour u16, end hour u16,
+ * radius u32, only buys stolen items u8, buys what is not in the list u8), and its conditions
+ * (CITC, CTDA) after them.
+ */
 function vendorOf(
   record: RecordSource,
   data: Uint8Array | undefined,
 ): Pick<FactionRecord, 'vendor'> {
   const flags = data && data.length >= 4 ? view(data).getUint32(0, true) : 0;
-  const vend = record.fields.first('VEND');
-  if ((flags & FactionFlag.vendor) === 0 || !vend || vend.length < 8) return {};
-  const v = view(vend);
+  const venv = record.fields.first('VENV');
+  if ((flags & FactionFlag.vendor) === 0 || !venv || venv.length < 10) return {};
+  const v = view(venv);
+  const fields = record.fields.list;
+  const conditions: Condition[] = [];
+  const citc = fields.findIndex((field) => field.type === 'CITC');
+  for (let index = citc + 1; citc >= 0 && index < fields.length; index++) {
+    if (fields[index]?.type !== 'CTDA') continue;
+    const condition = conditionAt(fields, index, record);
+    if (condition) conditions.push(condition);
+  }
   return {
     vendor: {
       startHour: v.getUint16(0, true),
       endHour: v.getUint16(2, true),
       radius: v.getUint32(4, true),
+      onlyStolen: v.getUint8(8) !== 0,
+      notInList: v.getUint8(9) !== 0,
+      list: formField(record, 'VEND'),
+      chest: formField(record, 'VENC'),
+      conditions,
     },
   };
 }

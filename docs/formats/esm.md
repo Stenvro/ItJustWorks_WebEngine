@@ -995,6 +995,16 @@ i32 @68; DNAM: the description, with `<mag>`, `<dur>`, `<area>` for the values.
 - WOOP: FULL the word in the dragon tongue, TNAM its translation.
 - A magic effect's minimum skill (u32 @40 of DATA) is its spells' level.
 
+## Vendors
+
+A faction with DATA flag 0x4000 trades (`FactionVendor`, `src/world/actor-stats-records.ts`,
+after xEdit's FACT): VEND is the FLST of keywords it buys, VENC its merchant container (a REFR),
+VENV (12 bytes) its start and end hour (u16 each), radius (u32), "only buys stolen items" (u8)
+and "buys what is not in the list" (u8); PLVD its location; CITC then CTDA its conditions. Its
+members (rank 0 or more) offer their services while the hour is within its hours and the
+conditions hold (GetOffersServicesNow). An older reading took VEND for the hours: VEND is 4
+bytes, the hours are in VENV.
+
 ## Dialogue
 
 Topics, branches and infos (`src/world/dialogue-records.ts`, `src/world/dialogue.ts`,

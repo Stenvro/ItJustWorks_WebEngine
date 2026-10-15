@@ -15,6 +15,9 @@ import { magicModel } from './magic-menu.ts';
 import { ItemMenu, type ItemMenuModel } from './item-menu.ts';
 import { FavoritesMenu } from './favorites-menu.ts';
 import { containerModel } from './container-menu.ts';
+import { barterModel } from './barter-menu.ts';
+import { giftModel } from './gift-menu.ts';
+import type { MenuRequest } from '../scripting/runtime/runtime.ts';
 
 /** The menus' depth among the game's menus (over the HUD, under message boxes). */
 const MENU_DEPTH = 6;
@@ -133,6 +136,45 @@ export class GameMenus {
         this.#closeOpen();
       },
     );
+  }
+
+  /**
+   * A menu a script opens (OpenInventory, ShowBarterMenu, ShowGiftMenu); resolves once it has
+   * closed, with what it returns (ShowGiftMenu's favor points: TODO(M11), 0).
+   */
+  async openScripted(request: MenuRequest): Promise<number> {
+    if (this.#open || this.#session.menuMode) return 0;
+    const session = this.#session;
+    let model: ItemMenuModel | undefined;
+    switch (request.name) {
+      case 'Container Menu':
+        model = containerModel(session, request.actor, this.#inventory, true);
+        break;
+      case 'Barter Menu':
+        model = await barterModel(session, this.#terminal, request.actor);
+        break;
+      case 'Gift Menu':
+        model = await giftModel(session, request.actor, request);
+        break;
+      default:
+        // TODO(M9): the training and race menus.
+        this.#terminal.log('ui', `the ${request.name} is not built yet`, 'warn');
+        return 0;
+    }
+    const opened = model;
+    return new Promise((resolve) => {
+      this.#openItems(opened, () => {
+        resolve(0);
+      }).catch((error: unknown) => {
+        this.#terminal.log(
+          'ui',
+          `the ${request.name} does not open: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+        this.#closeOpen();
+        resolve(0);
+      });
+    });
   }
 
   /** Closes the menu open (Play ends). */

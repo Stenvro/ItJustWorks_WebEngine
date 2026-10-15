@@ -461,12 +461,23 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   act('seteyetexture', () => undefined);
   act('clearextraarrows', () => undefined);
 
-  // --- Menus (TODO(M9): the game's menus) -------------------------------------------------
-  act('openinventory', (actor) => world.menu?.('ContainerMenu', actor));
-  act('showbartermenu', (actor) => world.menu?.('BarterMenu', actor));
-  ask('showgiftmenu', 0, (actor) => {
-    world.menu?.('GiftMenu', actor);
-    return 0;
+  // --- Menus ----------------------------------------------------------------------------------
+  // TODO(M11): OpenInventory's abForceOpen (else only a follower's opens).
+  act('openinventory', (actor) => void world.menu?.({ name: 'Container Menu', actor }));
+  act('showbartermenu', (actor) => void world.menu?.({ name: 'Barter Menu', actor }));
+  // Latent: the favor points once the menu closes.
+  ask('showgiftmenu', 0, async (actor, call) => {
+    const list = formOf(call.args[1]);
+    return (
+      (await world.menu?.({
+        name: 'Gift Menu',
+        actor,
+        giving: bool(call.args[0]),
+        filter: list,
+        showStolen: bool(call.args[2]),
+        useFavorPoints: bool(call.args[3], true),
+      })) ?? 0
+    );
   });
 
   // --- Lycanthropy and vampirism (their scripts listen for these) ----------------------------

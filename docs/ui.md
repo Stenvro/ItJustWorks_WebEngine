@@ -127,6 +127,16 @@ focus rectangle, and its multi-controller extensions for one controller in focus
 `Selection.getControllerMaskByFocusGroup` 1, `Selection.setControllerFocusGroup`,
 `Selection.getModalClip` / `setModalClip`). Without them no menu takes a key.
 
+The engine hands the keys over itself (`Menu.pressKey`, `src/ui/menu-host.ts`), as GFx gets
+them from the game: a page key on the topmost menu becomes `InputDelegate.instance
+.handleKeyPress("keyDown" | "keyHold" | "keyUp", code)` with its Flash key code
+(`src/ui/key-codes.ts`), and the page's event stops there. A Flash player takes keys only once
+it has been clicked (Ruffle's own focus, which no script can give it), and a menu opened by a key
+(E on a chest, Tab) must take keys at once. Keys the engine handles first (`onKey`: F to favor,
+R to drop) and keys a menu takes as others (`keyAs`: Esc as Tab, E as Enter) come before; a menu
+without an `InputDelegate`, or a text field being typed into, gets the page's keys from the
+player itself.
+
 The engine tells each menu its platform (`SetPlatform(0, false)`: PC with keyboard and mouse);
 the start menu then shows the mouse version of its buttons, and `ShowDeleteButtonHelp(false)`
 hides the delete-save hint while there is no save. PRESS ANY BUTTON (property 3) is not shown:
@@ -458,7 +468,31 @@ sound playing (and close as the menu closes); an item is taken (`ScriptRuntime.p
 reference leaves the world, its count joins the player's items, OnContainerChanged and
 OnItemAdded); the dead are searched.
 
-TODO(M9): the item's 3D model behind the card (UpdateItem3D, rotation, zoom), the barter and
-gift menus. TODO(M11): using, eating and reading items, equipping to a hand (items and
+The barter menu (`bartermenu.swf`, `src/shell/barter-menu.ts`; a dialogue's
+`Actor.ShowBarterMenu`) lists the vendor's goods above the divider and below it what the vendor
+buys:
+
+- The vendor is the actor's vendor faction (FACT DATA flag 0x4000; its hours and conditions, see
+  docs/formats/esm.md): its goods are those in its merchant chest (VENC), what it buys the
+  player's items with a keyword in its list (VEND), or without one when it buys what is not
+  listed; its gold the chest's and its own (UESP, "Merchants").
+- `SetBarterMultipliers(buy, sell)`: the menu shows a vendor's item at value × buy and the
+  player's at value × sell. The factor is fBarterMax − (fBarterMax − fBarterMin) × min(Speech, 100) / 100; buying costs at least 1.05 × value, selling gets at most the value (UESP,
+  "Speech").
+- `UpdatePlayerInfo(playerGold, vendorGold, vendorName, info)`; `ItemSelect(fromVendor, price,
+amount)` trades: bought from the chest (sItemTooExpensive when the player cannot pay), sold
+  into it, the vendor paying what it has. Selling for more asks first: `GetRawDealWarningString
+(total)` is answered at once with sNotEnoughVendorGold.
+
+The gift menu (`giftmenu.swf`, `src/shell/gift-menu.ts`; `Actor.ShowGiftMenu(abGiving,
+apFilterList, abShowStolenItems, abUseFavorPoints)`) lists the giver's items (only those of the
+filter list, by form or keyword); `SetMenuInfo(abGiving, abUseFavorPoints)` names it GIVE GIFT or
+TAKE GIFT; `ItemSelect(amount)` moves them. The function is latent: it returns once the menu
+closes. A conversation's menus show in its place: the dialogue menu steps aside and comes back,
+and keeps the mouse.
+
+TODO(M9): the item's 3D model behind the card (UpdateItem3D, rotation, zoom). TODO(M11): the
+Haggling, Allure, Merchant and Investor perks, Fortify Barter, fences and stolen goods, the
+chest's restock (every 48 hours), favor points. TODO(M11): using, eating and reading items, equipping to a hand (items and
 spells) and shouts to the voice, the active effects, favorites' hotkeys, the quantity of a drop,
 skills and perks in armor, damage and spell costs, ingredients' known effects.

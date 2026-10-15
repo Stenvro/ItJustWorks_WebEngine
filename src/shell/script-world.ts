@@ -4,7 +4,12 @@
 // moving one is now) comes from them. The script runtime's WorldBridge.
 
 import type { Vec3 } from '../scripting/runtime/game-state.ts';
-import type { LivePlacement, QuestUpdate, WorldBridge } from '../scripting/runtime/runtime.ts';
+import type {
+  LivePlacement,
+  MenuRequest,
+  QuestUpdate,
+  WorldBridge,
+} from '../scripting/runtime/runtime.ts';
 import { multiply, type Mat4 } from '../render/math.ts';
 import type { ModelInstance } from '../render/scene-renderer.ts';
 import { matrixPlacement } from '../world/cell-loader.ts';
@@ -163,6 +168,13 @@ export class ScriptWorld implements WorldBridge {
   notification(text: string): void {
     if (this.hud.listening) this.hud.notification(text);
     else this.#terminal.log('papyrus', text);
+  }
+
+  /** A menu a script opens (Play); elsewhere only noted. Resolves once it has closed. */
+  menu(request: MenuRequest): Promise<number> {
+    if (this.hud.menus) return this.hud.menus.open(request);
+    this.#terminal.log('papyrus', `the ${request.name} is opened only in Play`);
+    return Promise.resolve(0);
   }
 
   /** Debug.MessageBox, Message.Show: the game's message box (Play), the terminal otherwise. */
