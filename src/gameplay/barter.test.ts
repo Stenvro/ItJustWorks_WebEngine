@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { barterMultipliers, vendorBuys } from './barter-menu.ts';
+import { barterMultipliers, vendorBuys } from './barter.ts';
 
 describe('barterMultipliers', () => {
   it('follows UESP: 3.3 without Speech, 2 at 100, no better beyond', () => {

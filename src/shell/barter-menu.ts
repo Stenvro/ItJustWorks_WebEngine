@@ -16,9 +16,9 @@
 // and at most the value. TODO(M11): the Haggling and Allure perks, Fortify Barter, stolen
 // goods (fences), the Merchant and Investor perks, the chest's restock every 48 hours.
 
+import { barterMultipliers, vendorBuys } from '../gameplay/barter.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { actorValueIndex } from '../world/actor-values.ts';
-import type { FactionVendor } from '../world/actor-stats-records.ts';
 import type { ItemRecord } from '../world/item-records.ts';
 import { GOLD } from './inventory-menu.ts';
 import type { GameSession } from './game-session.ts';
@@ -26,30 +26,6 @@ import type { ItemMenuModel } from './item-menu.ts';
 import { ItemShelf, otherSideEntry, sideCategories } from './container-menu.ts';
 import { itemEntry } from './inventory-menu.ts';
 import type { Terminal } from './terminal.ts';
-
-/** UESP's limits on the price factors: buying at least this × value, selling at most value. */
-const BUY_AT_LEAST = 1.05;
-const SELL_AT_MOST = 1;
-
-/** The barter multipliers for a Speech skill and the settings fBarterMin / fBarterMax. */
-export function barterMultipliers(
-  speech: number,
-  min: number,
-  max: number,
-): { readonly buy: number; readonly sell: number } {
-  const factor = max - ((max - min) * Math.min(Math.max(speech, 0), 100)) / 100;
-  return { buy: Math.max(BUY_AT_LEAST, factor), sell: Math.min(SELL_AT_MOST, 1 / factor) };
-}
-
-/** Whether a vendor buys an item: one of its keywords is in the vendor's list (or none is). */
-export function vendorBuys(
-  item: Pick<ItemRecord, 'keywords'>,
-  vendor: Pick<FactionVendor, 'notInList'>,
-  list: ReadonlySet<number>,
-): boolean {
-  const listed = item.keywords.some((keyword) => list.has(keyword));
-  return vendor.notInList ? !listed : listed;
-}
 
 export async function barterModel(
   session: GameSession,
