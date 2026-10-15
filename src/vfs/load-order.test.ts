@@ -7,6 +7,8 @@ import {
   computeLoadOrder,
   DEFAULT_ARCHIVE_LIST,
   formatModIndex,
+  hasAnniversaryContent,
+  type LoadOrderEntry,
   type PluginCandidate,
 } from './load-order.ts';
 
@@ -130,5 +132,33 @@ describe('archives', () => {
       ['MOD - textures.bsa', 'Mod.bsa', 'Skyrim - Misc.bsa', 'Unrelated.bsa'],
     );
     expect(order).toEqual(['Skyrim - Misc.bsa', 'Mod.bsa', 'MOD - textures.bsa']);
+  });
+});
+
+describe('hasAnniversaryContent', () => {
+  const entry = (name: string, source: LoadOrderEntry['source']): LoadOrderEntry => ({
+    name,
+    source,
+    isLight: name.endsWith('.esl'),
+    isMaster: true,
+    modIndex: 0,
+  });
+
+  it('is false with only the free Creations', () => {
+    expect(
+      hasAnniversaryContent([
+        entry('Skyrim.esm', 'implicit'),
+        entry('ccBGSSSE001-Fish.esm', 'Skyrim.ccc'),
+        entry('ccQDRSSE001-SurvivalMode.esl', 'Skyrim.ccc'),
+        entry('ccBGSSSE037-Curios.esl', 'Skyrim.ccc'),
+        entry('ccBGSSSE025-AdvDSGS.esm', 'Skyrim.ccc'),
+        entry('_ResourcePack.esl', 'Skyrim.ccc'),
+        entry('MyMod.esp', 'plugins.txt'),
+      ]),
+    ).toBe(false);
+  });
+
+  it('is true with another Creation', () => {
+    expect(hasAnniversaryContent([entry('ccBGSSSE002-ExoticArrows.esl', 'Skyrim.ccc')])).toBe(true);
   });
 });

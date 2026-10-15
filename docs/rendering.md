@@ -149,7 +149,9 @@ field (bDynamicDOF, fDynamicDOF*: near and far blur around an automatic focus, t
 depth at the centre, changing after fDDOFFocusDelay over fDDOFFocusDuration; ISDepthOfField's
 autofocus path) is not part of plain play: imagespace modifiers switch it on (IMAD DNAM
 "DoF - Use Target" and the flags Mode Front/Back, the near and far sides), and the game plays
-those in dialogue and menus (TODO(M9)) and for spells and other effects (TODO(M11)).
+those for spells and other effects (TODO(M11)). Behind the tween and item menus the game applies
+DOBJ IMID (ISMTween, a constant −0.15 brightness) while any of them is open, as UIBlurManager
+counts them (src/shell/game-menus.ts).
 
 A modifier's own depth of field (below) goes through the same pass with its mode: front
 blurs what is nearer than the focus distance, back what is farther (ISDepthOfField without

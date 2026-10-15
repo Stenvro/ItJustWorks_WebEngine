@@ -29,11 +29,18 @@ import { referenceMatrix } from '../world/cell-loader.ts';
 import { baseModelPath } from '../world/cell-records.ts';
 import { IniSettings, type INI_DEFAULTS } from '../world/ini-settings.ts';
 import type { LoadingScreen } from '../world/loading-screens.ts';
+import { hasAnniversaryContent } from '../vfs/load-order.ts';
 import type { GameSession } from './game-session.ts';
 import { startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 
 const FOG_MODEL = 'meshes\\interface\\intmenufogparticles.nif';
 const LOGO_MODEL = 'meshes\\interface\\logo\\logo.nif';
+/**
+ * The Anniversary Edition's logo (turning from silver to gold), shown with the upgrade's
+ * Creations installed (TODO(M13): check which of logo01ae.nif and logo01ae_animated.nif the
+ * main menu shows).
+ */
+const AE_LOGO_MODEL = 'meshes\\interface\\logo\\logo01ae_animated.nif';
 
 /**
  * The main menu's camera fitted to the game (see above): the logo's shape spans x 4..43,
@@ -212,7 +219,9 @@ export class MistMenu {
     const n = (key: keyof (typeof INI_DEFAULTS)['Interface']): number =>
       this.#ini.number('Interface', key);
     const skeletons: AnimatedSkeleton[] = [];
-    const logo = await this.#session.model(LOGO_MODEL);
+    const logo = await this.#session.model(
+      hasAnniversaryContent(this.#session.vfs.loadOrder) ? AE_LOGO_MODEL : LOGO_MODEL,
+    );
     const scene = this.#renderer.scene.createScene(
       placed(
         logo,
