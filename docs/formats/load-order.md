@@ -52,7 +52,8 @@ Order from low to high; for the same path the archive loaded **later** wins:
 file date does not matter).
 
 `MarketplaceTextures.bsa` belongs to no INI list or plugin and is therefore not in the VFS.
-TODO(M9): find out when the Creations menu loads this archive.
+It holds only `interfacemarketplace*.png`, the online Creations store's pictures, so it
+is never needed offline.
 `sArchiveToLoadInMemoryList` (Animations) is only a performance hint.
 
 Vanilla conflicts: 44 files from `Skyrim - Animations.bsa` and 3 from

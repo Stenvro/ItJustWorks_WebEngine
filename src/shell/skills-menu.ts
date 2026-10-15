@@ -314,6 +314,7 @@ class Viewing {
     this.#menu = await this.#host.open('statsmenu.swf', {
       depth: STATS_DEPTH,
       interactive: true,
+      cursor: false,
       onKey: (_menu, event) => this.#key(event),
       handlers: {
         // The movie's own camera animation reports its progress; the engine turns the camera.

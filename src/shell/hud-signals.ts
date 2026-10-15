@@ -68,11 +68,21 @@ export interface MenuSink {
   fastTravel(destination: number): void;
 }
 
+/** What covers the screen (Play, from its main menu on: a new game's opening uses them). */
+export interface ScreenSink {
+  /** The opening's title cards: shown, one played, hidden. */
+  titles(action: 'show' | 'hide' | 'start', name?: string): void;
+  /** Game.FadeOutGame: the game fades out (and stays so) or in, to black or white. */
+  fade(out: boolean, black: boolean, secondsBefore: number, duration: number): void;
+}
+
 export class HudSignals {
   /** The HUD listening (Play), if any. */
   sink: HudSink | undefined;
   /** The menus (Play), if any. */
   menus: MenuSink | undefined;
+  /** The fader and the title cards (Play), if any. */
+  screen: ScreenSink | undefined;
   /** What activating containers and items does (Play), if anything. */
   uses: ObjectUses | undefined;
 

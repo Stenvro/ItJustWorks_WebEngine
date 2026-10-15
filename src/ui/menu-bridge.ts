@@ -10,6 +10,9 @@
 //   registered with ExternalInterface.addCallback, so the bridge registers three such callbacks
 //   that do it by path. GameDelegate's own callbacks ("call", "respond") stay as the menu
 //   registers them.
+// - Code objects: a few menus call methods of an object the engine fills with its own functions
+//   (the credits menu's CodeObj.requestCredits); BRIDGE_NATIVE(objectPath, names) gives such an
+//   object methods that call the engine by those names (as ExternalInterface calls).
 // - _global.gfxExtensions is true, as under Scaleform (the menus test it).
 //
 // The bridge is a DoAction put first in the movie's first frame, so it runs before the menu's
@@ -27,6 +30,10 @@ export const BRIDGE_CALL = '__itjwMenuCall';
 export const BRIDGE_INVOKE = '__itjwInvoke';
 export const BRIDGE_SET = '__itjwSetVariable';
 export const BRIDGE_GET = '__itjwGetVariable';
+/** Gives an object methods that call the engine (a code object): (objectPath, names). */
+export const BRIDGE_NATIVE = '__itjwNative';
+/** _global's maker of such methods (one name each). */
+const NATIVE_MAKER = '__itjwMakeNative';
 /** A menu asks the engine to translate a key it sets at run time (GFx's translator). */
 export const BRIDGE_TRANSLATE = '__itjwTranslate';
 /**
@@ -179,6 +186,56 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   });
   w.op(Op.setMember);
 
+  // _global.__itjwMakeNative = function (n) {                // n: a named variable (register 0)
+  //   return function () {                                    //   so the method closes over it
+  //     arguments.unshift(n); return ExternalInterface.call.apply(ExternalInterface, arguments);
+  //   };
+  // }
+  w.push('_global').op(Op.getVariable).push(NATIVE_MAKER);
+  w.function2(
+    '',
+    ['n'],
+    1,
+    Function2Flag.suppressThis | Function2Flag.suppressArguments,
+    (maker) => {
+      maker.function2(
+        '',
+        [],
+        2,
+        Function2Flag.preloadArguments | Function2Flag.suppressThis,
+        (method) => {
+          method.push('n').op(Op.getVariable).push(1, { register: 1 }, 'unshift');
+          method.op(Op.callMethod).op(Op.pop);
+          method
+            .push({ register: 1 })
+            .getPath(EXTERNAL_INTERFACE)
+            .push(2)
+            .getPath(`${EXTERNAL_INTERFACE}.call`)
+            .push('apply')
+            .op(Op.callMethod)
+            .op(Op.return);
+        },
+      );
+      maker.op(Op.return);
+    },
+    0,
+  );
+  w.op(Op.setMember);
+  // native(objectPath, names): var o = eval(objectPath);
+  //   for (var i = 0; i < names.length; i++) o[names[i]] = _global.__itjwMakeNative(names[i]);
+  addCallback(w, BRIDGE_NATIVE, ['objectPath', 'names'], 5, (body) => {
+    body.push({ register: 1 }).op(Op.getVariable).storeRegister(3).op(Op.pop);
+    body.push(0).storeRegister(4).op(Op.pop);
+    body.label('next');
+    body.push({ register: 4 }, { register: 2 }, 'length').op(Op.getMember).op(Op.less2);
+    body.op(Op.not).ifTo('done');
+    body.push({ register: 3 }, { register: 2 }, { register: 4 }).op(Op.getMember);
+    body.push({ register: 2 }, { register: 4 }).op(Op.getMember).push(1, '_global');
+    body.op(Op.getVariable).push(NATIVE_MAKER).op(Op.callMethod).op(Op.setMember);
+    body.push({ register: 4 }).op(Op.increment).storeRegister(4).op(Op.pop).jumpTo('next');
+    body.label('done');
+    body.push(true).op(Op.return);
+  });
   // invoke(objectPath, method, args): var o = eval(objectPath); return o[method].apply(o, args)
   addCallback(w, BRIDGE_INVOKE, ['objectPath', 'method', 'args'], 5, (body) => {
     body

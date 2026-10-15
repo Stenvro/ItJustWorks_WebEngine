@@ -30,7 +30,10 @@ import type { Player } from './player.ts';
 import { attachPlayerInput } from './player-input.ts';
 import type { HudSignals } from './hud-signals.ts';
 
-/** How long a notification stays (the HUD's own timing: TODO(M9)). */
+/**
+ * How long the sandbox's notice stays (it has no HUD); also how long a notification repeated
+ * without a pause stays one (the HUD queues each it is given).
+ */
 const NOTICE_MS = 3000;
 
 /** Milliseconds per frame spent placing collision of loaded cells. */
@@ -84,7 +87,7 @@ export interface ObjectUses {
  * other doors open and close. In a running game (`uses`) containers open their menu (their
  * lid opening meanwhile), books read, other items taken, beds slept in. TODO(M11): flora harvested (FLOR
  * PFIG), owned objects stolen (sSteal, sStealFrom) and locked ones picked (the lockpicking
- * menu). TODO(M10): sitting (sSit). TODO(M9): workbenches (the crafting menu).
+ * menu). TODO(M10): sitting (sSit). Workbenches open the crafting menu.
  */
 export function objectActivation(
   object: CellObject,
@@ -336,6 +339,8 @@ export class PlaySession {
     | undefined;
   readonly #prompt: HTMLElement | undefined;
   readonly #hud: HudSignals | undefined;
+  /** The HUD notification last given and when it was last asked for (a repeat is not queued). */
+  #notified: { readonly text: string; readonly at: number } | undefined;
   readonly #notice: HTMLElement | undefined;
   readonly #onImpact: ((impact: PhysicsImpact) => void) | undefined;
   #noticeTimer: ReturnType<typeof setTimeout> | undefined;
@@ -445,12 +450,21 @@ export class PlaySession {
   }
 
   /**
-   * Shows one of the game's notifications for a few seconds (a repeat only extends it).
-   * TODO(M9): the HUD's own notifications (HUDMenu), with their timing.
+   * Shows one of the game's notifications: the HUD's in the game, the sandbox's notice (it has no
+   * HUD) for a few seconds otherwise. A repeat while it shows only extends it.
    */
   notify(text: string): void {
+    if (text === '') return;
+    const hud = this.#hud;
+    if (hud?.listening) {
+      const now = performance.now();
+      const last = this.#notified;
+      this.#notified = { text, at: now };
+      if (last?.text !== text || now - last.at > NOTICE_MS) hud.notification(text);
+      return;
+    }
     const notice = this.#notice;
-    if (!notice || text === '') return;
+    if (!notice) return;
     notice.textContent = text;
     notice.hidden = false;
     if (this.#noticeTimer !== undefined) clearTimeout(this.#noticeTimer);

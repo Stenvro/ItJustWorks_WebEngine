@@ -270,6 +270,7 @@ class Picking {
     this.#menu = await this.#host.open('lockpickingmenu.swf', {
       depth: LOCK_DEPTH,
       interactive: true,
+      cursor: false,
       onKey: (_menu, event) => this.#key(event),
       setup: async (menu) => {
         if (!(await menu.waitFor('_root.InitExtensions'))) return;

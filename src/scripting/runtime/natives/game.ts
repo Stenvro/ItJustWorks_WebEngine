@@ -162,7 +162,7 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     ),
   );
 
-  // --- The engine: camera, fades, menus, video (TODO(M9): the game's menus) ---------------------
+  // --- The engine: camera, fades, menus, video ------------------------------------------------
   n('game.fadeoutgame', ({ args }) => {
     world.fade?.(bool(args[0]), bool(args[1]), num(args[2]), num(args[3]));
     return null;
@@ -206,9 +206,18 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     void world.menu?.({ name: 'Training Menu', actor: runtime.reference(args[0] ?? null) });
     return null;
   });
-  n('game.showtitlesequencemenu', () => null);
-  n('game.hidetitlesequencemenu', () => null);
-  n('game.starttitlesequence', () => null);
+  n('game.showtitlesequencemenu', () => {
+    world.titleSequence?.('show');
+    return null;
+  });
+  n('game.hidetitlesequencemenu', () => {
+    world.titleSequence?.('hide');
+    return null;
+  });
+  n('game.starttitlesequence', ({ args }) => {
+    world.titleSequence?.('start', str(args[0]));
+    return null;
+  });
   n('game.playbink', ({ args }) => {
     world.video?.(str(args[0]));
     return null;

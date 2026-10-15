@@ -26,6 +26,7 @@ import { LockpickingMenu } from './lockpicking-menu.ts';
 import { SkillsMenu } from './skills-menu.ts';
 import { BookFlag, parseItem } from '../world/item-records.ts';
 import { MapMenu } from './map-menu.ts';
+import { TutorialMenu } from './tutorial-menu.ts';
 import type { LocalMapContent } from './local-map.ts';
 
 /** The menus' depth among the game's menus (over the HUD, under message boxes). */
@@ -86,6 +87,8 @@ export class GameMenus {
   readonly #lockpicking: LockpickingMenu;
   readonly #skills: SkillsMenu;
   readonly #map: MapMenu;
+  /** The tutorials of the menus, the first time each opens. */
+  readonly #tutorials: TutorialMenu;
   /** Show on Map chosen in the journal: the map opens on this reference as the journal closes. */
   #mapFocus: number | undefined;
   /** A book open (over the world, or over the inventory it was read from). */
@@ -99,6 +102,7 @@ export class GameMenus {
     world: MenusWorld,
   ) {
     this.#world = world;
+    this.#tutorials = new TutorialMenu(host, session, terminal, enterMenuMode);
     this.#sleepWait = new SleepWaitMenu(host, session, terminal);
     this.#training = new TrainingMenu(host, session, terminal);
     this.#levelUp = new LevelUpMenu(host, session, terminal);
@@ -148,7 +152,7 @@ export class GameMenus {
    */
   userEvent(name: string): void {
     const menu = EVENT_MENUS[name.toLowerCase()];
-    if (menu === undefined || this.#open || this.#session.menuMode) return;
+    if (menu === undefined || this.#open || this.#session.menuMode || this.#session.loading) return;
     const controls = this.#session.scriptsReady?.controls;
     if (controls?.menu === false && menu !== 'Pause' && menu !== 'Journal') return;
     this.openMenu(menu);
@@ -228,6 +232,7 @@ export class GameMenus {
         break;
       case 'Barter Menu':
         model = await barterModel(session, this.#terminal, request.actor);
+        this.#tutorial('HBBR');
         break;
       case 'Gift Menu':
         model = await giftModel(session, request.actor, request);
@@ -330,7 +335,10 @@ export class GameMenus {
       return;
     }
     if (this.#open !== open) opened.close();
-    else open.menu = opened.menu;
+    else {
+      open.menu = opened.menu;
+      this.#tutorial(levelUp ? 'HBLU' : 'HBSK');
+    }
   }
 
   /** The map, the HUD hidden; the world map's 3D in place of the world while it is open. */
@@ -361,6 +369,7 @@ export class GameMenus {
     }
     if (this.#open !== open) opened.close();
     else {
+      this.#tutorial('HBMM');
       open.menu = opened.menu;
       // Closed from outside (Play ends): the map gives the world back.
       open.leave = () => {
@@ -510,7 +519,10 @@ export class GameMenus {
       .then((picking) => {
         if (!picking) closed();
         else if (this.#open !== open) picking.close();
-        else open.menu = picking.menu;
+        else {
+          open.menu = picking.menu;
+          this.#tutorial('HBLK');
+        }
       })
       .catch((error: unknown) => {
         this.#terminal.log(
@@ -571,6 +583,7 @@ export class GameMenus {
       open.leave();
     }, MENU_DEPTH);
     if (this.#open !== open) this.#host.close(open.menu);
+    else this.#tutorial('HBFS');
   }
 
   /** The journal: on the system page for Pause, else on the page it was left on. */
@@ -609,6 +622,12 @@ export class GameMenus {
       MENU_DEPTH,
     );
     if (this.#open !== open) this.#host.close(open.menu);
+    else this.#tutorial('HBJL');
+  }
+
+  /** A menu's tutorial over it, the first time (src/shell/tutorial-menu.ts). */
+  #tutorial(use: string): void {
+    void this.#tutorials.show(use);
   }
 
   /**

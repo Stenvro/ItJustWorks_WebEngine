@@ -118,15 +118,15 @@ worldspaces on screen:
   light like placed ones, and go and come back with their cell.
 - **Moves**: MoveTo, SetPosition, SetAngle, MoveToNode move what is shown; keyframed
   (SetMotionType) bodies follow. The runtime knows where the player is and the cell they
-  walked into. The sandbox is not the game: scripts do not move its player (TODO(M9): Play
-  takes the player where the scripts send them, through a journey as a load door does).
+  walked into. The sandbox is not the game: scripts do not move its player (Play does,
+  through a journey as a load door: WorldViewer.followsScripts).
 - **Animation**: PlayAnimation and the animation variables reach a reference's behavior
   graph (an object's sequences and skeleton, an actor's), and the events the graph raises
   reach OnAnimationEvent.
 - **Music, sounds, packages**: MusicType.Add / Remove, the globals ambient sounds read, quest
   state and alias packages for the actors' packages come from the runtime.
 - What only the game's menus show (notifications, message boxes, help messages) goes to the
-  terminal until the menus run (TODO(M9)).
+  HUD and menus in Play, and to the terminal in the sandbox.
 
 **The sandbox's quests** (`src/shell/quest-panel.ts`): every quest of the running game, one
 at a time, as the console shows and drives them: running or not, its stage and the stages

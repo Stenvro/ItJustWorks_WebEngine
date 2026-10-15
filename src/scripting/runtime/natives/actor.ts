@@ -193,10 +193,15 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   ask('hasparentrelationship', false, () => false);
 
   // --- Spells, shouts, perks ------------------------------------------------------------------
-  ask('addspell', false, (actor, call) => {
+  ask('addspell', false, async (actor, call) => {
     const spell = formOf(call.args[0]);
-    // TODO(M9): abVerbose shows "X learned".
-    return spell === undefined ? false : actors.addSpell(actor, spell);
+    if (spell === undefined) return false;
+    const added = await actors.addSpell(actor, spell);
+    // abVerbose (true unless given): the player's new spell is announced.
+    if (added && actor === PLAYER_REF && bool(call.args[1], true)) {
+      runtime.detach(runtime.spellMessage(spell));
+    }
+    return added;
   });
   ask('removespell', false, (actor, call) => {
     const spell = formOf(call.args[0]);

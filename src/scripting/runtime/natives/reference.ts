@@ -449,7 +449,7 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     return null;
   });
 
-  // --- Map markers (TODO(M9): the map menu) -------------------------------------------------
+  // --- Map markers (the map: src/shell/map-menu.ts; discovery: compass.ts) -------------------
   n('objectreference.addtomap', (call) => {
     const reference = self(call);
     if (reference !== undefined) runtime.mapMarker(reference, true, bool(call.args[0]));
@@ -598,14 +598,17 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   n('objectreference.playsyncedanimationandwaitss', () => false);
   n('objectreference.tethertohorse', () => null);
 
-  // --- Combat, crime, dialogue (TODO(M9)/(M10)/(M11)) -----------------------------------------
+  // --- Combat, crime, dialogue (TODO(M10)/(M11)) ----------------------------------------------
   n('objectreference.say', (call) => {
     const reference = self(call);
     if (reference !== undefined)
       runtime.say(reference, formOf(call.args[0]), ref(call.args[1]), bool(call.args[2]));
     return null;
   });
-  n('objectreference.isindialoguewithplayer', () => false);
+  n('objectreference.isindialoguewithplayer', (call) => {
+    const reference = self(call);
+    return reference !== undefined && reference === runtime.dialogueSpeaker;
+  });
   n('objectreference.createdetectionevent', () => null);
   n('objectreference.sendstealalarm', () => null);
   n('objectreference.knockareaeffect', () => null);

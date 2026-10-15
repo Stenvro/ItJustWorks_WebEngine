@@ -19,8 +19,8 @@ context.
 
 - **Categories** (SNCT): one gain per category, connected as the categories' tree to the
   master: a category plays at its own volume × its parents' (`_AudioCategoryMaster` 0.9 ×
-  SFX 0.9 × ...) × the user's slider for categories that have one (the slider's default,
-  UNAM, until the settings menu: TODO(M9)).
+  SFX 0.9 × ...) × the user's slider for categories that have one (the journal's Audio settings; the
+  slider's default is UNAM).
 - **A sound** (`sound-instance.ts`): a buffer source at the descriptor's pitch (frequency
   shift ± a random variation, percent), a gain for its static attenuation and a random cut of
   up to its dB variance, a gain for the output model's distance curve, then a 3D panner (HRTF;

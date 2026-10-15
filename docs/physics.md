@@ -173,8 +173,8 @@ The crosshair is a sphere of fActivatePickRadius (16) cast from the camera along
 fActivatePickLength (180; further in third person by the camera's distance from the eyes) on
 L_ITEMPICKER. Load doors take the player to their XTEL (inside or out, see
 [esm.md](formats/esm.md#doors-arrivals-and-collision-primitives)); other doors play their
-Open and Close sequences. The prompt is the shell's until the game's HUD: TODO(M9), as are
-loading screens.
+Open and Close sequences. The prompt is the HUD's crosshair text in Play (the shell's in the
+sandbox); load doors show the loading menu (play-mode.ts).
 
 **Arriving** through a door, the player waits (in place, behind the loading screen) until the
 collision of the cell and the eight around it is in place — a street, bridge or porch may
@@ -279,5 +279,5 @@ skeleton's rest pose.
 **Border regions:** in a worldspace with border regions (see
 [esm.md](formats/esm.md#border-regions)) movement that would leave them stops at the edge, and
 a player pushed or fallen across goes back to the last place inside; the game's notification
-"You cannot go that way." (sPlayerLeavingBorderRegion) shows in the shell until the HUD's own
-(TODO(M9)).
+"You cannot go that way." (sPlayerLeavingBorderRegion) shows on the HUD in Play
+(once while it repeats), in the shell in the sandbox.

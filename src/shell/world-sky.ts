@@ -376,7 +376,7 @@ export class WorldSky {
     // The session's clock runs at the TimeScale (times the panel's fast-forward), the clouds
     // with it; the sky follows it (the scripts, waiting and the slider set it too).
     // It stands still while the game is in a menu.
-    const rate = this.#session.menuMode ? 0 : this.#session.clockRate;
+    const rate = this.#session.menuMode || this.#session.loading ? 0 : this.#session.clockRate;
     this.#session.advanceClock((delta * rate) / 3600);
     this.#hour = this.#session.gameHour;
     this.#cloudMinutes += (delta * rate) / 60;

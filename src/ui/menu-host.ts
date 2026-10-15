@@ -14,6 +14,7 @@ import {
   BRIDGE_CALL,
   BRIDGE_GET,
   BRIDGE_INVOKE,
+  BRIDGE_NATIVE,
   BRIDGE_REFERENCE,
   BRIDGE_REFERENCES,
   BRIDGE_SET,
@@ -56,6 +57,11 @@ export interface MenuOptions {
    */
   readonly keyAs?: Readonly<Record<string, string>>;
   /**
+   * Whether the game's cursor shows over it (CommonLib's kUsesCursor); default: an interactive
+   * menu does. The lockpicking and skills menus are steered by the mouse without one.
+   */
+  readonly cursor?: boolean;
+  /**
    * A movie drawn off the page at a size of its own (CSS pixels), whose image the engine
    * copies (Menu.canvas: the book menu's pages on the 3D book); it is not laid out again as the
    * window changes.
@@ -74,6 +80,10 @@ const INPUT_DELEGATE = 'gfx.managers.InputDelegate.instance';
 
 /** The page function the bridge calls (checked against the bridge's name at compile time). */
 const BRIDGE_GLOBAL: typeof BRIDGE_CALL = '__itjwMenuCall';
+
+/** The game's mouse cursor (its clip mc_Cursor follows the mouse), over every menu. */
+const CURSOR_MOVIE = 'cursormenu.swf';
+const CURSOR_DEPTH = 100;
 
 /** How long the window's size must rest before the menus are loaded again (ms). */
 const RESIZE_SETTLE_MS = 250;
@@ -200,6 +210,14 @@ export class Menu {
   /** Answers a GameDelegate.call request of the menu. */
   respond(request: unknown, ...values: unknown[]): void {
     this.#external('respond', request, ...values);
+  }
+
+  /**
+   * Gives an object of the menu methods that call the engine by these names (a code object:
+   * the credits menu's CodeObj); answered like the menu's other calls (MenuOptions.handlers).
+   */
+  native(objectPath: string, names: readonly string[]): void {
+    this.#external(BRIDGE_NATIVE, objectPath, [...names]);
   }
 
   /** Calls a function by its path ("_root.HUDMovieBaseInstance.InitExtensions"). */
@@ -331,6 +349,9 @@ export class MenuHost {
   #translations: Translations | undefined;
   #stopServing: (() => void) | undefined;
   #resizeTimer: ReturnType<typeof setTimeout> | undefined;
+  /** The game's cursor while a menu uses it (opening: a promise), and where the mouse is. */
+  #cursor: Menu | Promise<Menu | undefined> | undefined;
+  #mouse: { x: number; y: number } | undefined;
   /** Watches the layer's size (window resizes and full screen alike). */
   readonly #sizeWatch = new ResizeObserver(() => {
     this.#resized();
@@ -382,12 +403,76 @@ export class MenuHost {
     menu.safeZone = this.#safeZone;
     this.#menus.set(id, menu);
     await this.#mount(menu, bytes);
+    this.#syncCursor();
     return menu;
   }
 
   close(menu: Menu): void {
     menu.close();
     this.#menus.delete(menu.id);
+    this.#syncCursor();
+  }
+
+  /**
+   * The game's cursor shows while a menu that uses it is open (cursormenu.swf at the top, the
+   * system's cursor hidden over the menus); it follows the mouse.
+   */
+  #syncCursor(): void {
+    const wanted = [...this.#menus.values()].some(
+      (menu) =>
+        menu.movie !== CURSOR_MOVIE &&
+        !menu.closed &&
+        menu.options.offscreen === undefined &&
+        (menu.options.cursor ?? menu.options.interactive),
+    );
+    const cursor = this.#cursor;
+    if (wanted && !cursor) {
+      const opening = this.open(CURSOR_MOVIE, { depth: CURSOR_DEPTH, interactive: false }).then(
+        (menu) => {
+          if (this.#cursor !== opening) {
+            this.close(menu);
+            return undefined;
+          }
+          this.#cursor = menu;
+          this.#placeCursor();
+          return menu;
+        },
+        (error: unknown) => {
+          this.#log(`the cursor: ${error instanceof Error ? error.message : String(error)}`);
+          return undefined;
+        },
+      );
+      this.#cursor = opening;
+      this.#layer.classList.add('game-cursor');
+    } else if (!wanted && cursor) {
+      this.#cursor = undefined;
+      this.#layer.classList.remove('game-cursor');
+      if (cursor instanceof Menu) this.close(cursor);
+    }
+  }
+
+  readonly #pointerMoved = (event: PointerEvent): void => {
+    this.#mouse = { x: event.clientX, y: event.clientY };
+    this.#placeCursor();
+  };
+
+  /** The cursor's clip at the mouse, in the cursor movie's stage coordinates. */
+  #placeCursor(): void {
+    const cursor = this.#cursor;
+    const mouse = this.#mouse;
+    if (!(cursor instanceof Menu) || !mouse) return;
+    const box = cursor.element?.getBoundingClientRect();
+    const visible = cursor.get('Stage.visibleRect') as
+      { x?: number; y?: number; width?: number; height?: number } | undefined;
+    if (!box || box.width <= 0 || !visible?.width || !visible.height) return;
+    cursor.set(
+      '_root.mc_Cursor._x',
+      (visible.x ?? 0) + ((mouse.x - box.left) / box.width) * visible.width,
+    );
+    cursor.set(
+      '_root.mc_Cursor._y',
+      (visible.y ?? 0) + ((mouse.y - box.top) / box.height) * visible.height,
+    );
   }
 
   closeAll(): void {
@@ -410,6 +495,9 @@ export class MenuHost {
     this.#stopServing = undefined;
     this.#sizeWatch.disconnect();
     this.#layer.removeEventListener('pointerdown', this.#pointed);
+    window.removeEventListener('pointermove', this.#pointerMoved, { capture: true });
+    this.#layer.classList.remove('game-cursor');
+    this.#cursor = undefined;
     this.#layer.removeEventListener('keydown', this.#keyed, { capture: true });
     this.#layer.removeEventListener('keyup', this.#keyed, { capture: true });
     if (this.#resizeTimer !== undefined) clearTimeout(this.#resizeTimer);
@@ -496,6 +584,7 @@ export class MenuHost {
     });
     this.#sizeWatch.observe(this.#layer);
     this.#layer.addEventListener('pointerdown', this.#pointed);
+    window.addEventListener('pointermove', this.#pointerMoved, { capture: true, passive: true });
     this.#layer.addEventListener('keydown', this.#keyed, { capture: true });
     this.#layer.addEventListener('keyup', this.#keyed, { capture: true });
     window[BRIDGE_GLOBAL] = this.#dispatch;

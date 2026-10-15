@@ -187,6 +187,18 @@ export class ScriptWorld implements WorldBridge {
     return Promise.resolve(0);
   }
 
+  /** The title cards (Play); elsewhere only noted. */
+  titleSequence(action: 'show' | 'hide' | 'start', name?: string): void {
+    if (this.hud.screen) this.hud.screen.titles(action, name);
+    else this.#terminal.log('papyrus', `title sequence: ${action} ${name ?? ''}`);
+  }
+
+  /** Game.FadeOutGame: the game's fader (Play); elsewhere only noted. */
+  fade(out: boolean, black: boolean, secondsBefore: number, duration: number): void {
+    if (this.hud.screen) this.hud.screen.fade(out, black, secondsBefore, duration);
+    else this.#terminal.log('papyrus', `the game fades ${out ? 'out' : 'in'} only in Play`);
+  }
+
   /** Game.FastTravel: the player goes there (Play); elsewhere only noted. */
   fastTravel(destination: number): void {
     if (this.hud.menus) this.hud.menus.fastTravel(destination);

@@ -168,7 +168,7 @@ body:not([data-screen='sandbox']) .hud-brand {
   font-weight: 600;
 }
 
-/* The game's notifications ("You cannot go that way.") until its own HUD (M9). */
+/* The sandbox's notifications ("You cannot go that way."): it has no HUD. */
 .hud-notice {
   position: fixed;
   left: 50%;
@@ -1222,6 +1222,12 @@ details:not([open]) > .viewer-head {
   width: 100%;
   height: 100%;
   outline: none;
+}
+
+/* The game's cursor (cursormenu.swf) in place of the system's while a menu uses it. */
+.ui-layer.game-cursor,
+.ui-layer.game-cursor * {
+  cursor: none !important;
 }
 
 /* The game shows nothing of the engine's shell. TODO(M13): the engine's statistics as an option. */

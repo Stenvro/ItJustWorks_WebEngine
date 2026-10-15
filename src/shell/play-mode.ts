@@ -4,7 +4,7 @@
 // mist-menu.ts). New starts a new game: the loading menu (loadingmenu.swf) over a loading
 // screen (LSCR) while the game's scripts start their new game, until the opening has placed the
 // player (MQ101: the cart to Helgen) and the world there has loaded.
-// In the game the HUD shows (hud-controller.ts). TODO(M9): the in-game menus.
+// In the game the HUD (hud-controller.ts) and the game's menus (game-menus.ts).
 
 import { lockDifficulty, LOCKPICK, SKELETON_KEY } from '../gameplay/lockpicking.ts';
 import type { Renderer } from '../render/renderer.ts';
@@ -21,6 +21,9 @@ import {
 } from '../world/loading-screens.ts';
 import { InterfaceFiles } from '../ui/interface-files.ts';
 import { MistMenu } from './mist-menu.ts';
+import { FaderMenu } from './fader-menu.ts';
+import { CreditsMenu } from './credits-menu.ts';
+import { TitleSequence } from './title-sequence.ts';
 import {
   CELL_NO_FAST_TRAVEL,
   fastTravelHours,
@@ -53,8 +56,7 @@ function mainMenuProperties(hasSaves: boolean): unknown[] {
   properties[1] = hasSaves; // CONTINUE shown, LOAD enabled
   properties[2] = undefined; // the version text ("v " + it); none: the engine reads no exe
   properties[3] = false; // PRESS ANY BUTTON first: not here, the menu opens on its list
-  // TODO(M9): the Anniversary upgrade banner (shown only to some players; not decided yet).
-  properties[4] = false;
+  properties[4] = false; // the Anniversary upgrade banner: a store's advert, never offline
   properties[5] = false; // DOWNLOADABLE CONTENT (consoles)
   properties[6] = false; // HELP (not on PC)
   properties[7] = false; // MOD MANAGER: merged into Creations since 1.6.1130 (UESP)
@@ -98,6 +100,8 @@ export interface PlayWorld {
   leave(): void;
   /** The player is off the ground (falling, jumping). */
   inAir(): boolean;
+  /** Resolves once the place the player went to has loaded (they stand in it). */
+  settled(): Promise<void>;
   /** What the map's local map shows where the player is (the viewer on screen's). */
   localMap(): LocalMapContent | undefined;
 }
@@ -113,6 +117,10 @@ export class PlayMode {
   readonly #world: PlayWorld;
   readonly #terminal: Terminal;
   readonly #host: MenuHost;
+  /** Game.FadeOutGame's fades. */
+  readonly #fader: FaderMenu;
+  /** The opening's title cards. */
+  readonly #titles: TitleSequence;
   #startMenu: Menu | undefined;
   #loadingMenu: Menu | undefined;
   #mist: MistMenu | undefined;
@@ -174,6 +182,8 @@ export class PlayMode {
       },
     );
     this.#console = new ConsoleMenu(this.#host, terminal, ini);
+    this.#fader = new FaderMenu(this.#host, terminal, () => session.loading);
+    this.#titles = new TitleSequence(this.#host, terminal, () => session.loading);
   }
 
   /** The main menu while it is open (dev checks). */
@@ -188,6 +198,17 @@ export class PlayMode {
   /** Opens the game's main menu. */
   async start(): Promise<void> {
     this.#world.follow(true);
+    // The fader and the title cards from here on: a new game's opening uses them.
+    this.#session.hud.screen = {
+      titles: (action, name) => {
+        if (action === 'show') this.#titles.show();
+        else if (action === 'hide') this.#titles.hide();
+        else this.#titles.start(name ?? '');
+      },
+      fade: (out, black, secondsBefore, duration) => {
+        this.#fader.fade(out, black, secondsBefore, duration);
+      },
+    };
     const mist = MistMenu.show(this.#session, this.#renderer).then((menu) => {
       this.#mist = menu;
     });
@@ -206,6 +227,23 @@ export class PlayMode {
               'error',
             );
           });
+        },
+        // The menu tells as its fade out starts (before it calls what comes after it).
+        fadeOutStarted: () => undefined,
+        // CREDITS, once the menu has faded out: the credits, then the menu fades in again.
+        OpenCreditsMenu: (menu) => {
+          new CreditsMenu(this.#host, this.#session, this.#terminal)
+            .open(DEPTH.startMenu + 1, () => {
+              menu.call('FadeInMenu');
+            })
+            .catch((error: unknown) => {
+              this.#terminal.log(
+                'ui',
+                `the credits do not open: ${error instanceof Error ? error.message : String(error)}`,
+                'error',
+              );
+              menu.call('FadeInMenu');
+            });
         },
       },
       // As the game opens it: its extensions, its entries, its platform, then it fades in.
@@ -255,7 +293,15 @@ export class PlayMode {
       this.#loadingMenu?.invoke('_root.Menu_mc.refreshLoadingText');
       await this.#mist?.showLoadingScreen(screen);
     }
-    await this.#world.enter(at);
+    // The world loads with the scripts and the clock standing still (the opening goes on once
+    // the player is in it), behind the loading screen (which hides it until it is there).
+    this.#mist?.cover();
+    session.loading = true;
+    try {
+      await this.#world.enter(at);
+    } finally {
+      session.loading = false;
+    }
     const loading = this.#loadingMenu;
     loading?.invoke('_root.Menu_mc.FadeOutMenu');
     await wait(FADE_OUT_MS);
@@ -452,34 +498,50 @@ export class PlayMode {
     await this.#loadInto(at);
   }
 
-  /** Goes to a place behind the loading menu and a loading screen, in menu mode, the HUD away. */
-  async #loadInto(at: Placement): Promise<void> {
+  /** Goes to a place behind the loading menu and a loading screen, the HUD away. */
+  #loadInto(at: Placement): Promise<void> {
+    return this.loadingScreen(() => this.#world.enter(at));
+  }
+
+  /**
+   * A journey behind the loading menu and a loading screen (a load door, fast travel), the HUD
+   * away: `go` takes the player there; the screen goes once the place has loaded.
+   */
+  async loadingScreen(go: () => Promise<void>): Promise<void> {
     const session = this.#session;
     const runtime = session.scriptsReady;
-    let leave: (() => void) | undefined = this.#enterMenuMode();
+    let leave: ((pointer?: boolean) => void) | undefined = this.#enterMenuMode();
     session.hud.shown(false);
+    // The world goes at once (the loading screen's mist and model come as they load).
+    const unblack = MistMenu.blackout(this.#renderer);
     let mist: MistMenu | undefined;
     try {
-      mist = await MistMenu.show(session, this.#renderer, false);
+      mist = await MistMenu.show(session, this.#renderer, false, true);
+      mist.showMist();
       const screen = runtime && (await this.#pickLoadingScreen(runtime));
       this.#loadingText = screen?.text ?? '';
       await this.#openLoadingMenu();
       if (screen) await mist.showLoadingScreen(screen);
-      else mist.showMist();
-      // The place loads with the game running (the player is put down in it), behind the
-      // loading menu.
-      leave();
+      // The place loads behind the loading menu: the player is put down in it (physics runs),
+      // the scripts and the clock stand still, and the player's controls wait (the mouse stays
+      // free until the place is there).
+      leave(false);
       leave = undefined;
-      await this.#world.enter(at);
+      session.loading = true;
+      await go();
+      await this.#world.settled();
     } finally {
+      session.loading = false;
       const loading = this.#loadingMenu;
       loading?.invoke('_root.Menu_mc.FadeOutMenu');
       await wait(FADE_OUT_MS);
       if (loading) this.#host.close(loading);
       this.#loadingMenu = undefined;
       mist?.hide();
+      unblack();
       session.hud.shown(true);
-      leave?.();
+      if (leave) leave();
+      else if (!session.menuMode) this.#world.capturePointer(true);
     }
   }
 
@@ -489,6 +551,8 @@ export class PlayMode {
 
   readonly #consoleKey = (event: KeyboardEvent): void => {
     if (!isConsoleKey(event) || event.repeat || this.#console.isOpen || !this.#menus) return;
+    // Not while a place loads.
+    if (this.#session.loading) return;
     event.preventDefault();
     const leave = this.#enterMenuMode();
     this.#console
@@ -634,13 +698,13 @@ export class PlayMode {
    * still, the sounds paused in menus go quiet, the mouse moves a cursor) until every such
    * menu has closed. Returns what ends this one's part.
    */
-  #enterMenuMode(): () => void {
+  #enterMenuMode(): (pointer?: boolean) => void {
     if (this.#pausing++ === 0) this.#setMenuMode(true);
     let left = false;
-    return () => {
+    return (pointer = true) => {
       if (left) return;
       left = true;
-      if (--this.#pausing === 0) this.#setMenuMode(false);
+      if (--this.#pausing === 0) this.#setMenuMode(false, pointer);
     };
   }
 
@@ -726,6 +790,7 @@ export class PlayMode {
 
   stop(): void {
     this.#endGame();
+    this.#session.hud.screen = undefined;
     this.#world.follow(false);
     this.#mist?.hide();
     this.#mist = undefined;
@@ -745,6 +810,8 @@ export class PlayMode {
     this.#menus = undefined;
     this.#messageBoxes?.close();
     this.#messageBoxes = undefined;
+    this.#fader.close();
+    this.#titles.hide();
     if (this.#session.hud.menus) this.#session.hud.menus = undefined;
     if (this.#session.hud.uses) this.#session.hud.uses = undefined;
     if (this.#pausing > 0) this.#setMenuMode(false, false);

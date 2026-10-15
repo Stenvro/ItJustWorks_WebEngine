@@ -196,6 +196,8 @@ export class GameState {
   readonly favorites = new Set<number>();
   /** The books the player has read (a skill book teaches once; TODO(M12): in the save). */
   readonly booksRead = new Set<number>();
+  /** The tutorials shown in this game (their default objects' uses: "HBLK", ...). */
+  readonly tutorialsShown = new Set<string>();
   /** How often each skill (actor value) has been made Legendary (TODO(M12): in the save). */
   readonly legendary = new Map<number, number>();
   /** What the player has seen of interiors (the local map's fog of war), by cell. */

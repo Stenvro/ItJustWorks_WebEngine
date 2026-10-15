@@ -7,8 +7,8 @@
 // marker comes into view as it is near (visible on the map) and is discovered within
 // iMapMarkerRevealDistance: the HUD says so (its name, sDiscoveredText) and it can be travelled
 // to. TODO(M10): a quest target in another cell (the door that leads toward it, QuestDoor),
-// enemies (Enemy), the discovery's experience (iXPRewardDiscoverMapMarker) and music. TODO(M9):
-// the player's own marker (PlayerSet, from the map).
+// enemies (Enemy), the discovery's experience (iXPRewardDiscoverMapMarker) and music. The player's
+// own marker (the map's Place Marker) shows in its world, always (PlayerSet).
 
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -53,6 +53,10 @@ export class Compass {
     const settings = await session.settings();
     const data = [...(await this.#questTargets(runtime, at))];
     if (at.world === undefined) return data;
+    const own = runtime.state.playerMarker;
+    if (own?.world === at.world) {
+      data.push(headingTo(at.position, own.position), 100, CompassFrame.playerSet, 100);
+    }
     if (this.#markersOf !== runtime || !this.#markers) {
       this.#markersOf = runtime;
       this.#markers = readMapMarkers(runtime.forms.db);

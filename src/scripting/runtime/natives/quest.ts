@@ -238,6 +238,7 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
   });
   n('scene.isplaying', ({ self }) => (self ? runtime.scenePlaying(self.formId) : false));
   n('scene.isactioncomplete', () => false);
-  // A topic added to the player's dialogue (TODO(M9): the dialogue menu).
+  // Topic.Add: Skyrim keeps no list of known topics (DIAL and INFO have nothing that gates on
+  // one; one vanilla call, MQ204), so there is nothing to do.
   n('topic.add', () => null);
 }

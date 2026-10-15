@@ -311,7 +311,6 @@ export class ModelViewer {
    * What activating a reference does: its scripts get OnActivate; by default load doors take
    * the player to their destination and doors open (unless a script blocks activation).
    * References with scripts and no default (levers, shrines) are activated for the scripts.
-   * TODO(M9): the activator's own prompt (ACTI RNAM "activate text override").
    */
   #activatable(reference: number): Activatable | undefined {
     const object =
@@ -1549,7 +1548,9 @@ export class ModelViewer {
       const delta = this.#lastClock === undefined ? 0 : Math.min(0.25, now - this.#lastClock);
       // At the TimeScale times the panel's fast-forward (the slider sets the hour); it stands
       // still while the game is in a menu.
-      if (!session.menuMode) session.advanceClock((delta * session.clockRate) / 3600);
+      if (!session.menuMode && !session.loading) {
+        session.advanceClock((delta * session.clockRate) / 3600);
+      }
       this.#sky?.sync();
       session.updateEmittance(session.gameHour);
       // Indoors the sound system plays the region of the cell's acoustic space.
