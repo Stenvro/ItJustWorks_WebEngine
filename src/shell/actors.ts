@@ -3,6 +3,7 @@
 // FaceGen head are skinned to it, and its race's behavior graph moves it every frame
 // (src/animation/behavior-runtime.ts).
 
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { FaceAnimation, lipLeadIn, VANILLA_BLINK, type BlinkSettings } from '../animation/face.ts';
@@ -544,6 +545,24 @@ export class ActorPlacer {
    * another cell or its look or skeleton cannot be made. `made`: its look as the engine makes it
    * (the player's); `race`: the race Actor.SetRace gave it.
    */
+  /**
+   * What the game changed of what an actor wears: its outfit (Actor.SetOutfit, its own or its
+   * base's) and the armor equipped (EquipItem, the inventory). The player wears only what is
+   * equipped (outfits are the NPCs').
+   */
+  async #wornInGame(actor: CellActor): Promise<LookOverrides> {
+    const runtime = this.#session.scriptsReady;
+    if (!runtime) return {};
+    const own = runtime.state.actors.get(actor.reference);
+    const outfit = own?.outfit ?? runtime.state.actorBases.get(actor.base)?.outfit;
+    const equipped: number[] = [];
+    for (const item of own?.equipped ?? []) {
+      if ((await runtime.forms.record(item))?.type === 'ARMO') equipped.push(item);
+    }
+    if (actor.reference === PLAYER_REF) return { outfit: null, equipped };
+    return { ...(outfit !== undefined && { outfit }), equipped };
+  }
+
   async place(
     placedInCell: CellActor,
     made?: MadeLook,
@@ -552,6 +571,7 @@ export class ActorPlacer {
     const overrides: LookOverrides = {
       ...made?.overrides,
       ...(race !== undefined && { race }),
+      ...(await this.#wornInGame(placedInCell)),
     };
     const look = await this.#resolver.resolve(
       placedInCell.base,
