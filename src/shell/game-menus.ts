@@ -16,6 +16,7 @@ import { ItemMenu, type ItemMenuModel } from './item-menu.ts';
 import { FavoritesMenu } from './favorites-menu.ts';
 import { noWaitReason, SleepWaitMenu } from './sleep-wait-menu.ts';
 import { TrainingMenu } from './training-menu.ts';
+import { LevelUpMenu } from './level-up-menu.ts';
 import { containerModel } from './container-menu.ts';
 import { barterModel } from './barter-menu.ts';
 import { giftModel } from './gift-menu.ts';
@@ -63,6 +64,7 @@ export class GameMenus {
   readonly #favorites: FavoritesMenu;
   readonly #sleepWait: SleepWaitMenu;
   readonly #training: TrainingMenu;
+  readonly #levelUp: LevelUpMenu;
   readonly #world: MenusWorld;
 
   constructor(
@@ -75,6 +77,7 @@ export class GameMenus {
     this.#world = world;
     this.#sleepWait = new SleepWaitMenu(host, session, terminal);
     this.#training = new TrainingMenu(host, session, terminal);
+    this.#levelUp = new LevelUpMenu(host, session, terminal);
     this.#host = host;
     this.#session = session;
     this.#terminal = terminal;
@@ -122,14 +125,16 @@ export class GameMenus {
               ? this.#openFavorites()
               : name === 'Wait'
                 ? this.#openSleepWait(false)
-                : (() => {
-                    // TODO(M9): the skills and map menus.
-                    if (!this.#missing.has(name)) {
-                      this.#missing.add(name);
-                      this.#terminal.log('ui', `the ${name} menu is not built yet`, 'warn');
-                    }
-                    return Promise.resolve();
-                  })();
+                : name === 'Skills' && (this.#session.scriptsReady?.state.levelUps ?? 0) > 0
+                  ? this.#openLevelUp()
+                  : (() => {
+                      // TODO(M9): the skills and map menus.
+                      if (!this.#missing.has(name)) {
+                        this.#missing.add(name);
+                        this.#terminal.log('ui', `the ${name} menu is not built yet`, 'warn');
+                      }
+                      return Promise.resolve();
+                    })();
     opening.catch((error: unknown) => {
       this.#terminal.log(
         'ui',
@@ -231,6 +236,19 @@ export class GameMenus {
           closed();
         });
     });
+  }
+
+  /** A level-up waiting: the player picks an attribute, then the skills menu opens. */
+  async #openLevelUp(): Promise<void> {
+    const open = { menu: undefined as Menu | undefined, leave: this.#enterMenuMode() };
+    this.#open = open;
+    open.menu = await this.#levelUp.open(MENU_DEPTH, (chose) => {
+      if (this.#open !== open) return;
+      this.#open = undefined;
+      open.leave();
+      if (chose) this.openMenu('Skills');
+    });
+    if (this.#open !== open) this.#host.close(open.menu);
   }
 
   /** Sleeping in a bed: the sleep menu (rest how long?). */
@@ -373,6 +391,7 @@ export class GameMenus {
         )
       : '';
     const level = runtime ? await runtime.actors.level(PLAYER_REF) : 1;
+    const levelUp = (runtime?.state.levelUps ?? 0) > 0;
     let chosen: TweenChoice | undefined;
     open.menu = await this.#host.open('tweenmenu.swf', {
       depth: MENU_DEPTH,
@@ -400,8 +419,8 @@ export class GameMenus {
         menu.invoke('_root.InitExtensions');
         menu.invoke('_root.SetPlatform', 0, false);
         // (abLevelUp, the date, the level, the progress to the next level 0..100).
-        // TODO(M11): leveling up (its experience and the level-up prompt).
-        menu.call('StartOpenMenuAnim', false, date, String(level), 0);
+        // TODO(M11): the progress (the experience toward the next level).
+        menu.call('StartOpenMenuAnim', levelUp, date, String(level), 0);
       },
     });
     if (this.#open !== open) this.#host.close(open.menu);

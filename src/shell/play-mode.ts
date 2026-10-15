@@ -26,6 +26,8 @@ import { HudController } from './hud-controller.ts';
 import { MessageBoxes } from './message-boxes.ts';
 import { GameMenus } from './game-menus.ts';
 import { DialogueMenu } from './dialogue-menu.ts';
+import { ConsoleMenu, isConsoleKey } from './console-menu.ts';
+import { ConsoleCommands } from './console-commands.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
 import type { PlacedActor } from './actors.ts';
@@ -58,6 +60,9 @@ function mainMenuProperties(hasSaves: boolean): unknown[] {
 }
 
 /** The game's menu depths (higher over lower). */
+/** The console's depth: over every other menu. */
+const CONSOLE_DEPTH = 12;
+
 const DEPTH = {
   hud: 2,
   loadingMenu: 9,
@@ -156,6 +161,7 @@ export class PlayMode {
         },
       },
     );
+    this.#console = new ConsoleMenu(this.#host, terminal, ini);
   }
 
   /** The main menu while it is open (dev checks). */
@@ -326,7 +332,61 @@ export class PlayMode {
       },
     };
     document.addEventListener('pointerlockchange', this.#pointerLockChanged);
+    document.addEventListener('keydown', this.#consoleKey);
   }
+
+  /** The console (~): over the game and its menus, in menu mode while open. */
+  readonly #console: ConsoleMenu;
+  #commands: { readonly runtime: ScriptRuntime; readonly commands: ConsoleCommands } | undefined;
+
+  readonly #consoleKey = (event: KeyboardEvent): void => {
+    if (!isConsoleKey(event) || event.repeat || this.#console.isOpen || !this.#menus) return;
+    event.preventDefault();
+    const leave = this.#enterMenuMode();
+    this.#console
+      .open(
+        CONSOLE_DEPTH,
+        () => this.#consoleCommands(),
+        () => {
+          leave();
+        },
+      )
+      .catch((error: unknown) => {
+        this.#terminal.log(
+          'ui',
+          `the console does not open: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+        leave();
+      });
+  };
+
+  /** The commands for the game now running. */
+  #consoleCommands(): ConsoleCommands | undefined {
+    const session = this.#session;
+    const runtime = session.scriptsReady;
+    if (!runtime) return undefined;
+    if (this.#commands?.runtime !== runtime) {
+      this.#commands = {
+        runtime,
+        commands: new ConsoleCommands({
+          runtime,
+          db: runtime.forms.db,
+          travel: (at) => this.#world.enter(at),
+          toggleMenus: () => {
+            this.#menusShown = !this.#menusShown;
+            session.hud.shown(this.#menusShown);
+          },
+          forceWeather: (weather) => runtime.world.setWeather?.(weather, true, false, false),
+          quit: () => this.onQuit?.(),
+        }),
+      };
+    }
+    return this.#commands.commands;
+  }
+
+  /** The HUD and menus shown (the console's tm hides them). */
+  #menusShown = true;
 
   /**
    * Esc in the game: the browser takes it to free the mouse (a page cannot keep it), so the
@@ -485,6 +545,8 @@ export class PlayMode {
   /** The game's menus, HUD and menu mode go (Play ends, or the game goes back to its menu). */
   #endGame(): void {
     document.removeEventListener('pointerlockchange', this.#pointerLockChanged);
+    document.removeEventListener('keydown', this.#consoleKey);
+    this.#console.close();
     this.#dialogue?.close();
     this.#dialogue = undefined;
     this.#menus?.close();

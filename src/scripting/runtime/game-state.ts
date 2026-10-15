@@ -196,6 +196,8 @@ export class GameState {
   readonly favorites = new Set<number>();
   /** Training sessions the player had at a level (five a level: the training menu). */
   training = { level: 0, sessions: 0 };
+  /** Level-ups waiting for the player to choose (the level-up menu). */
+  levelUps = 0;
   /** Actors dead, by their base (GetDeadCount). */
   readonly deadCounts = new Map<number, number>();
   /** Counts the quests' updates for the player (QuestState.updated). */

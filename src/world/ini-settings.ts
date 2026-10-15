@@ -94,6 +94,12 @@ export const INI_DEFAULTS = {
     fUIMistModel_TranslateY_G: 0,
     fUIMistModel_TranslateZ_G: 0,
   },
+  // The console: the share of the screen it takes, its text size, the history it keeps.
+  Menu: {
+    iConsoleSizeScreenPercent: 40,
+    iConsoleTextSize: 20,
+    iConsoleHistoryCharBufferSize: 16384,
+  },
 } as const;
 
 type Defaults = typeof INI_DEFAULTS;
