@@ -8,10 +8,13 @@
 // dropping, favoring or moving an entry does). The menus close with a fade (SaveIndices, then
 // CloseMenu), ShowTweenMenu / CloseTweenMenu saying where the player goes. The engine's keys:
 // F favorite, R drop (the container menu: its XButtonPress, take all or store), Esc and E as Tab
-// and Enter (the control map's menu contexts). Notes: docs/ui.md ("The item menus").
+// and Enter (the control map's menu contexts). The highlighted entry shows in 3D beside the
+// list (src/shell/item-3d.ts). Notes: docs/ui.md ("The item menus").
 
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import type { Terminal } from './terminal.ts';
+import { Item3D, type Item3DSide } from './item-3d.ts';
+import type { GameSession } from './game-session.ts';
 
 /** The items list (InventoryLists_mc.ItemsList). */
 const LIST = '_root.Menu_mc.InventoryLists_mc.ItemsListHolder.List_mc';
@@ -38,6 +41,8 @@ export type ItemMenuHandler = (menu: Menu, request: unknown, args: readonly unkn
 /** What a menu lists and what its entries do. */
 export interface ItemMenuModel {
   readonly movie: string;
+  /** Where its 3D stands: the item menus' place (the default) or the magic menu's. */
+  readonly side?: Item3DSide;
   readonly depth: number;
   /** SetCategoriesList's arguments: text, bits, listed when empty, for each category. */
   categories(): Promise<unknown[]>;
@@ -68,10 +73,12 @@ export interface ItemMenuModel {
 export class ItemMenu {
   readonly #host: MenuHost;
   readonly #terminal: Terminal;
+  readonly #session: GameSession;
   /** The list positions each menu was left at (SaveIndices), restored as it opens again. */
   readonly #indices = new Map<string, unknown[]>();
 
-  constructor(host: MenuHost, terminal: Terminal) {
+  constructor(host: MenuHost, session: GameSession, terminal: Terminal) {
+    this.#session = session;
     this.#host = host;
     this.#terminal = terminal;
   }
@@ -116,9 +123,11 @@ export class ItemMenu {
           );
         });
     };
+    const item3d = new Item3D(this.#session, model.side ?? 'inventory');
     const close = (menu: Menu): void => {
       if (done) return;
       done = true;
+      item3d.hide();
       this.#host.close(menu);
       closed(toTween);
     };
@@ -213,11 +222,19 @@ export class ItemMenu {
         CloseMenu: (menu) => {
           close(menu);
         },
-        // TODO(M9): the entry's 3D model behind the card (rotated and zoomed by the mouse).
-        UpdateItem3D: () => undefined,
-        StartMouseRotation: () => undefined,
-        StopMouseRotation: () => undefined,
-        ZoomItemModel: () => undefined,
+        // The highlighted entry's 3D (shown), or none (the list hidden).
+        UpdateItem3D: (menu, args) => {
+          void item3d.show(args[1] === true ? entry(menu)?.formId : undefined, menu);
+        },
+        StartMouseRotation: () => {
+          item3d.startRotation();
+        },
+        StopMouseRotation: () => {
+          item3d.stopRotation();
+        },
+        ZoomItemModel: (_menu, args) => {
+          item3d.zoom(typeof args[1] === 'number' ? args[1] : 0);
+        },
         CheckForMouseEquip: () => undefined,
         QuantitySliderOpen: () => undefined,
         // TODO(M11): recharging with soul gems, a shout's failure, entries that cannot be used.

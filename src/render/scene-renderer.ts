@@ -1154,6 +1154,19 @@ export const DebugView = {
   ambientOcclusion: 6,
 } as const;
 
+/** A view's frame state: its uniforms, point lights, bind group and culling. */
+export interface SceneFrame {
+  readonly buffer: GPUBuffer;
+  readonly lights: GPUBuffer;
+  bindGroup: GPUBindGroup;
+  /** Planes of the camera's frustum this frame (culling). */
+  planes: readonly Plane[];
+  /** Loaded cells this frame (object LOD leaves them out). */
+  lodMask: LodMask | undefined;
+  /** Cells whose large references are loaded this frame. */
+  largeRefMask: LargeRefMask | undefined;
+}
+
 export class SceneRenderer {
   /** One of DebugView; 0 shows the normal image. */
   debugView = 0;
@@ -1161,12 +1174,12 @@ export class SceneRenderer {
   defaultWater: GpuWaterType | undefined;
   readonly #device: GPUDevice;
   readonly #colorFormat: GPUTextureFormat;
-  readonly #frameBuffer: GPUBuffer;
   readonly #frameData = new Float32Array(FRAME_FLOATS);
   readonly #frameUints = new Uint32Array(this.#frameData.buffer);
-  readonly #lightBuffer: GPUBuffer;
   readonly #lightData = new Float32Array(MAX_LIGHTS * LIGHT_FLOATS);
-  #frameBindGroup: GPUBindGroup;
+  /** The world's view, and the view being drawn now (a menu's 3D: SceneFrame). */
+  readonly #main: SceneFrame;
+  #frame: SceneFrame;
   readonly #frameLayout: GPUBindGroupLayout;
   readonly #drawLayout: GPUBindGroupLayout;
   readonly #materialLayout: GPUBindGroupLayout;
@@ -1204,6 +1217,8 @@ export class SceneRenderer {
   readonly #samplers: readonly GPUSampler[];
   /** This frame's particle instances (CPU staging and GPU buffer). */
   #particleData = new Float32Array(4096 * PARTICLE_FLOATS);
+  /** Particle instances written this frame (a second view's go after them). */
+  #particleCursor = 0;
   #particleBuffer: GPUBuffer;
   readonly #shadowMap: GPUTexture;
   readonly #cascadeLayout: GPUBindGroupLayout;
@@ -1211,12 +1226,6 @@ export class SceneRenderer {
   readonly #cascadeBindGroup: GPUBindGroup;
   readonly #shadowModule: GPUShaderModule;
   readonly #shadowSampler: GPUSampler;
-  /** Planes of the camera's frustum this frame (culling). */
-  #planes: readonly Plane[] = [];
-  /** Loaded cells this frame (object LOD leaves them out). */
-  #lodMask: LodMask | undefined;
-  /** Cells whose large references are loaded this frame. */
-  #largeRefMask: LargeRefMask | undefined;
 
   constructor(device: GPUDevice, colorFormat: GPUTextureFormat) {
     this.#device = device;
@@ -1408,26 +1417,14 @@ export class SceneRenderer {
       addressModeV: 'clamp-to-edge',
     });
 
-    this.#frameBuffer = device.createBuffer({
-      label: 'frame',
-      size: this.#frameData.byteLength,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-    this.#lightBuffer = device.createBuffer({
-      label: 'point-lights',
-      size: this.#lightData.byteLength,
-      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
-    });
     this.#shadowSampler = device.createSampler({
       label: 'shadow',
       compare: 'less-equal',
       magFilter: 'linear',
       minFilter: 'linear',
     });
-    this.#frameBindGroup = this.#createFrameBindGroup(
-      this.#noSceneColor.createView(),
-      this.#noSceneDepth.createView(),
-    );
+    this.#main = this.createFrame('frame');
+    this.#frame = this.#main;
     this.#modules = {
       lighting: device.createShaderModule({
         label: 'lighting',
@@ -1476,13 +1473,75 @@ export class SceneRenderer {
     );
   }
 
-  #createFrameBindGroup(sceneColor: GPUTextureView, sceneDepth: GPUTextureView): GPUBindGroup {
+  /**
+   * Another view's frame state (its camera, lights, culling): a menu's 3D drawn after the world
+   * (Renderer's overlay). Draw with it after useFrame(frame); useFrame(undefined) goes back.
+   */
+  createFrame(label: string): SceneFrame {
+    const device = this.#device;
+    const buffers = {
+      buffer: device.createBuffer({
+        label,
+        size: this.#frameData.byteLength,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      }),
+      lights: device.createBuffer({
+        label: `${label}-point-lights`,
+        size: this.#lightData.byteLength,
+        usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      }),
+    };
+    return {
+      ...buffers,
+      bindGroup: this.#createFrameBindGroup(
+        buffers,
+        this.#noSceneColor.createView(),
+        this.#noSceneDepth.createView(),
+      ),
+      planes: [],
+      lodMask: undefined,
+      largeRefMask: undefined,
+    };
+  }
+
+  /** A texture the engine fills from a canvas (copyCanvas): a book menu's page of text. */
+  createCanvasTexture(width: number, height: number, label: string): GPUTexture {
+    return this.#device.createTexture({
+      label,
+      size: [width, height],
+      format: 'rgba8unorm',
+      usage:
+        GPUTextureUsage.TEXTURE_BINDING |
+        GPUTextureUsage.COPY_DST |
+        GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+  }
+
+  /** Copies a canvas's image (its alpha not premultiplied) into a texture's top left. */
+  copyCanvas(canvas: HTMLCanvasElement, texture: GPUTexture, width: number, height: number): void {
+    this.#device.queue.copyExternalImageToTexture(
+      { source: canvas },
+      { texture, premultipliedAlpha: false },
+      [width, height],
+    );
+  }
+
+  /** Draws with a view's frame state from now on (undefined: the world's). */
+  useFrame(frame: SceneFrame | undefined): void {
+    this.#frame = frame ?? this.#main;
+  }
+
+  #createFrameBindGroup(
+    frame: Pick<SceneFrame, 'buffer' | 'lights'>,
+    sceneColor: GPUTextureView,
+    sceneDepth: GPUTextureView,
+  ): GPUBindGroup {
     return this.#device.createBindGroup({
       label: 'frame',
       layout: this.#frameLayout,
       entries: [
-        { binding: 0, resource: { buffer: this.#frameBuffer } },
-        { binding: 1, resource: { buffer: this.#lightBuffer } },
+        { binding: 0, resource: { buffer: frame.buffer } },
+        { binding: 1, resource: { buffer: frame.lights } },
         { binding: 2, resource: this.#shadowMap.createView({ dimension: '2d-array' }) },
         { binding: 3, resource: this.#shadowSampler },
         { binding: 4, resource: sceneColor },
@@ -1497,7 +1556,7 @@ export class SceneRenderer {
    * reads: water, soft effects and particles. Called when the render targets change.
    */
   setSceneCopies(sceneColor: GPUTextureView, sceneDepth: GPUTextureView): void {
-    this.#frameBindGroup = this.#createFrameBindGroup(sceneColor, sceneDepth);
+    this.#main.bindGroup = this.#createFrameBindGroup(this.#main, sceneColor, sceneDepth);
   }
 
   /** Uploads a model; resolves once all its textures are loaded (missing ones use defaults). */
@@ -2020,9 +2079,9 @@ export class SceneRenderer {
     screen?: { readonly width: number; readonly height: number; readonly near: number },
     largeRefMask?: LargeRefMask,
   ): void {
-    this.#planes = frustumPlanes(viewProjection);
-    this.#lodMask = lodMask;
-    this.#largeRefMask = largeRefMask;
+    this.#frame.planes = frustumPlanes(viewProjection);
+    this.#frame.lodMask = lodMask;
+    this.#frame.largeRefMask = largeRefMask;
     const data = this.#frameData;
     data.set(viewProjection, 0);
     data.set([...cameraPosition, 1], 16);
@@ -2080,7 +2139,7 @@ export class SceneRenderer {
     data.set(axis(0), 152);
     data.set(axis(1), 156);
     data.set(invert(viewProjection) ?? viewProjection, 160);
-    this.#device.queue.writeBuffer(this.#frameBuffer, 0, data);
+    this.#device.queue.writeBuffer(this.#frame.buffer, 0, data);
 
     if (lightCount > 0) {
       for (let i = 0; i < lightCount; i++) {
@@ -2089,7 +2148,7 @@ export class SceneRenderer {
         this.#lightData.set([...light.position, light.radius, ...light.color, 0], i * LIGHT_FLOATS);
       }
       this.#device.queue.writeBuffer(
-        this.#lightBuffer,
+        this.#frame.lights,
         0,
         this.#lightData,
         0,
@@ -2104,15 +2163,22 @@ export class SceneRenderer {
   }
 
   get frameBindGroup(): GPUBindGroup {
-    return this.#frameBindGroup;
+    return this.#frame.bindGroup;
   }
 
   /**
    * Plays the models' controllers: rewrites the uniforms of animated draws for this moment
    * (each model's animation is evaluated once per call), and runs the particle systems near
-   * the camera or in view (`wind`: the weather's wind in units per second).
+   * the camera or in view (`wind`: the weather's wind in units per second). `appendParticles`:
+   * a second view's scenes this frame (the menu overlay), whose particles go after the first's.
    */
-  animate(scenes: Iterable<GpuScene>, seconds: number, camera: Vec3, wind: Vec3 = [0, 0, 0]): void {
+  animate(
+    scenes: Iterable<GpuScene>,
+    seconds: number,
+    camera: Vec3,
+    wind: Vec3 = [0, 0, 0],
+    appendParticles = false,
+  ): void {
     const frames = new Map<ModelAnimation, AnimationFrame>();
     const frameOf = (animation: ModelAnimation | undefined): AnimationFrame | undefined => {
       if (!animation) return undefined;
@@ -2274,8 +2340,13 @@ export class SceneRenderer {
         );
       }
     }
-    this.#runParticles(sceneList, seconds, camera, wind, (draw) =>
-      draw.graph ? graphFrame(draw.graph) : frameOf(draw.animation),
+    this.#runParticles(
+      sceneList,
+      seconds,
+      camera,
+      wind,
+      (draw) => (draw.graph ? graphFrame(draw.graph) : frameOf(draw.animation)),
+      appendParticles ? this.#particleCursor : 0,
     );
   }
 
@@ -2286,13 +2357,15 @@ export class SceneRenderer {
     camera: Vec3,
     wind: Vec3,
     frameOf: (draw: ParticleDraw) => AnimationFrame | undefined,
+    start: number,
   ): void {
+    this.#particleCursor = start;
     let needed = 0;
     for (const scene of scenes) {
       for (const draw of scene.particles) needed += draw.simulation.data.maxParticles;
     }
     if (needed === 0) return;
-    let cursor = 0;
+    let cursor = start;
     for (const scene of scenes) {
       for (const draw of scene.particles) {
         draw.count = 0;
@@ -2307,9 +2380,9 @@ export class SceneRenderer {
         );
         if (distance > PARTICLE_MAX_DISTANCE) continue;
         const inView =
-          sphereVisible(this.#planes, draw.origin, 512) ||
+          sphereVisible(this.#frame.planes, draw.origin, 512) ||
           (simulation.count > 0 &&
-            sphereVisible(this.#planes, simulation.center, simulation.radius));
+            sphereVisible(this.#frame.planes, simulation.center, simulation.radius));
         if (distance > PARTICLE_UPDATE_DISTANCE && !inView) continue;
         // Time since this system last ran (it may have been out of view for a while).
         const step =
@@ -2333,6 +2406,7 @@ export class SceneRenderer {
         draw.first = cursor;
         draw.count = simulation.write(this.#particleData, cursor * PARTICLE_FLOATS, context);
         cursor += draw.count;
+        this.#particleCursor = cursor;
         if (frame) {
           const floats = new Float32Array(scene.uniformData, draw.uniformOffset, DRAW_SIZE / 4);
           writeAnimatedMaterial(floats, simulation.data, frame);
@@ -2384,7 +2458,7 @@ export class SceneRenderer {
 
   /** Draws the opaque parts of scenes. */
   drawOpaque(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): void {
-    pass.setBindGroup(0, this.#frameBindGroup);
+    pass.setBindGroup(0, this.#frame.bindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
     for (const scene of scenes) {
       for (const draw of scene.draws) {
@@ -2403,7 +2477,7 @@ export class SceneRenderer {
 
   /** Draws water surfaces (they read the opaque scene's copies, see setSceneCopies). */
   drawWater(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): void {
-    pass.setBindGroup(0, this.#frameBindGroup);
+    pass.setBindGroup(0, this.#frame.bindGroup);
     pass.setBindGroup(3, this.#waterFrameBindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
     for (const scene of scenes) {
@@ -2441,7 +2515,7 @@ export class SceneRenderer {
     scenes: Iterable<GpuScene>,
     cameraPosition: Vec3,
   ): void {
-    pass.setBindGroup(0, this.#frameBindGroup);
+    pass.setBindGroup(0, this.#frame.bindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
     const shapes: { scene: GpuScene; draw: Draw; distance: number }[] = [];
     for (const scene of scenes) {
@@ -2463,7 +2537,7 @@ export class SceneRenderer {
     scenes: Iterable<GpuScene>,
     cameraPosition: Vec3,
   ): void {
-    pass.setBindGroup(0, this.#frameBindGroup);
+    pass.setBindGroup(0, this.#frame.bindGroup);
     type Blended =
       | { scene: GpuScene; draw: Draw; particles?: undefined; distance: number }
       | { scene: GpuScene; draw?: undefined; particles: ParticleDraw; distance: number };
@@ -2586,7 +2660,7 @@ export class SceneRenderer {
 
   /** Planes of the camera's frustum this frame (for culling elsewhere). */
   get viewPlanes(): readonly Plane[] {
-    return this.#planes;
+    return this.#frame.planes;
   }
 
   /** The sun's shadow map (its layers are rendered by the frame renderer). */
@@ -2656,7 +2730,7 @@ export class SceneRenderer {
 
   #visible(draw: Draw): boolean {
     if (draw.visibility?.hidden) return false;
-    return draw.sky || sphereVisible(this.#planes, draw.center, draw.radius);
+    return draw.sky || sphereVisible(this.#frame.planes, draw.center, draw.radius);
   }
 
   /**
@@ -2769,8 +2843,9 @@ export class SceneRenderer {
     let end = -1;
     for (const segment of segments) {
       if (
-        cellLoaded(this.#lodMask, segment.cellX, segment.cellY) ||
-        (segment.largeRef && largeRefsLoaded(this.#largeRefMask, segment.cellX, segment.cellY))
+        cellLoaded(this.#frame.lodMask, segment.cellX, segment.cellY) ||
+        (segment.largeRef &&
+          largeRefsLoaded(this.#frame.largeRefMask, segment.cellX, segment.cellY))
       ) {
         continue;
       }

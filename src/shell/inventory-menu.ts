@@ -2,8 +2,8 @@
 // (item-menu.ts): the player's items with their counts, what is worn and what is a favorite,
 // each item's card (its type's fields: damage, armor, effects, a book's description, a soul
 // gem's soul), and the player's carried weight, gold and meters. Selecting wears or takes off
-// armor and weapons (OnObjectEquipped / OnObjectUnequipped; TODO(M11): using, eating, reading,
-// equipping to a hand), dropping removes the items. Notes: docs/ui.md ("The item menus").
+// armor and weapons (OnObjectEquipped / OnObjectUnequipped; TODO(M11): using, eating,
+// equipping to a hand), reads books (`read`: the book menu, or a spell tome's spell learned), dropping removes the items. Notes: docs/ui.md ("The item menus").
 
 import {
   armorSkill,
@@ -42,7 +42,11 @@ export interface Row {
   readonly favorite: boolean;
 }
 
-export function inventoryModel(session: GameSession, terminal: Terminal): ItemMenuModel {
+export function inventoryModel(
+  session: GameSession,
+  terminal: Terminal,
+  read: (book: number) => Promise<void>,
+): ItemMenuModel {
   const items = new Map<number, ItemRecord | undefined>();
   const runtime = (): ScriptRuntime => {
     const ready = session.scriptsReady;
@@ -84,6 +88,10 @@ export function inventoryModel(session: GameSession, terminal: Terminal): ItemMe
       const game = runtime();
       const record = await item(formId);
       if (!record) return;
+      if (record.type === 'BOOK') {
+        await read(formId);
+        return;
+      }
       if (record.type !== 'ARMO' && record.type !== 'WEAP' && record.type !== 'AMMO') {
         terminal.log('ui', `using ${record.name} is not built yet`, 'warn');
         return;

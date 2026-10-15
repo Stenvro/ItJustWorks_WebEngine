@@ -25,7 +25,7 @@ import {
 } from './cell-records.ts';
 export { parseTeleport, type Teleport } from './cell-records.ts';
 import { parseTextureSet, placeDecal, type PlacedDecal, type TextureSet } from './decal.ts';
-import { parseItem } from './item-records.ts';
+import { BookFlag, parseItem } from './item-records.ts';
 import { parseStaticDirectional, type StaticDirectional } from './material-object.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
 
@@ -60,10 +60,23 @@ export interface CellObject {
   readonly sounds?: ObjectSounds;
   /** Carryable items: what the crosshair shows of them (weight and value). */
   readonly item?: { readonly weight: number; readonly value: number };
+  /**
+   * A book that opens the book menu when activated: one with a text (DESC) that teaches no
+   * spell (Creation Kit wiki, "Book": a spell tome or a book without text does not open).
+   */
+  readonly readable?: boolean;
+  /** XLOC: its lock as placed (doors, containers). */
+  readonly lock?: ObjectLock;
   /** ACTI / FLOR RNAM: the verb its activation prompt shows instead of the default. */
   readonly activateText?: string;
   /** Furniture: whether it is slept in (a sleep marker), its workbench (WBDT type; 0 none). */
   readonly furniture?: { readonly sleep: boolean; readonly workbench: number };
+}
+
+/** A placed lock: its level (1 Novice .. 100 Master, 255 a key only) and its key. */
+export interface ObjectLock {
+  readonly level: number;
+  readonly key: number | undefined;
 }
 
 /**
@@ -371,6 +384,17 @@ function leafAnimationOf(base: GameRecord): {
 }
 
 /** A reference's emittance source (XEMI), as a spreadable field. */
+/**
+ * XLOC: the reference is locked (u8 level: 1 Novice .. 100 Master, 255 a key only; its key at
+ * offset 4), as the plugin placed it (scripts may lock and unlock it since: ScriptRuntime.lock).
+ */
+function lockOf(record: GameRecord): { lock?: ObjectLock } {
+  const xloc = record.fields.first('XLOC');
+  if (!xloc) return {};
+  const key = xloc.length >= 8 ? record.formIdAt(xloc, 4) : 0;
+  return { lock: { level: xloc[0] ?? 0, key: key === 0 ? undefined : key } };
+}
+
 function emittanceOf(record: GameRecord): { emittance?: number } {
   const emittance = nonZeroId(record.formIdField('XEMI'));
   return emittance === undefined ? {} : { emittance };
@@ -594,6 +618,7 @@ export async function loadCellData(
           intensityAmplitude: light.intensityAmplitude,
           movementAmplitude: light.movementAmplitude,
           ...emittanceOf(record),
+          ...lockOf(record),
         });
       }
     }
@@ -637,6 +662,9 @@ export async function loadCellData(
       ...(base.type === 'DOOR' && { teleport: parseTeleport(record) }),
       ...objectSoundsOf(base),
       ...(item && { item: { weight: item.weight, value: item.value } }),
+      ...(item?.book &&
+        (item.book.flags & BookFlag.teachesSpell) === 0 &&
+        (base.text('DESC') ?? '') !== '' && { readable: true }),
       ...(activateText && { activateText }),
       ...(base.type === 'FURN' && { furniture: furnitureOf(base) }),
     });

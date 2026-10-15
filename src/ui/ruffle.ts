@@ -24,6 +24,8 @@ export interface RuffleLoadOptions {
   readonly showSwfDownload?: boolean;
   readonly openUrlMode?: 'allow' | 'confirm' | 'deny';
   readonly logLevel?: 'error' | 'warn' | 'info' | 'debug' | 'trace';
+  /** The renderer it tries first (canvas: a 2D canvas whose image can be copied at any time). */
+  readonly preferredRenderer?: 'webgpu' | 'wgpu-webgl' | 'webgl' | 'canvas';
 }
 
 export interface RuffleApi {

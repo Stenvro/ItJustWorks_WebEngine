@@ -35,6 +35,8 @@ const MEASURE_DEPTH = 1048000;
 const ORIGINAL_SET_TEXT = '__itjwOriginal';
 /** A text field's gutter: its text starts 2 pixels in. */
 const GUTTER = 2;
+/** getLineIndexAtPoint's allowance for rounding (of a line): a line's own top is in it. */
+const LINE_EPSILON = 0.001;
 
 const reg = (register: number): PushValue => ({ register });
 const FLAGS = Function2Flag.suppressArguments;
@@ -189,7 +191,10 @@ function defineLineOffset(w: Avm1Writer): void {
 
 /**
  * getCharBoundaries(charIndex): the character's box (flash.geom.Rectangle) in the field: its
- * line's top and height, from the width of the line's text before it.
+ * line's top and height, from the width of the line's text before it. A line's step is its
+ * height and the format's leading (which may be negative: the books' font), so the box ends
+ * `leading` before the next line's top, as a Flash player's does (a book's next page begins at
+ * a box's bottom plus the leading: the next line).
  * Registers: 1 index, 2 measure, 3 line, 4 line start, 5 line height, 6 x, 7 width, 8 text.
  */
 function defineCharBoundaries(w: Avm1Writer): void {
@@ -216,8 +221,10 @@ function defineCharBoundaries(w: Avm1Writer): void {
     member(body, 2, 'textWidth').push(GUTTER).op(Op.add2).storeRegister(6).op(Op.pop);
     body.push(reg(2), 'text', 1, reg(1), 2, reg(8), 'substr').op(Op.callMethod).op(Op.setMember);
     member(body, 2, 'textWidth').storeRegister(7).op(Op.pop);
-    // new flash.geom.Rectangle(x, gutter + line * height, width, height)
-    body.push(reg(5), reg(7), reg(3), reg(5)).op(Op.multiply).push(GUTTER).op(Op.add2);
+    // new flash.geom.Rectangle(x, gutter + line * step, width, step - leading)
+    body.push(reg(5), 0, 'this').op(Op.getVariable).push('getTextFormat').op(Op.callMethod);
+    body.push('leading').op(Op.getMember).op(Op.subtract);
+    body.push(reg(7), reg(3), reg(5)).op(Op.multiply).push(GUTTER).op(Op.add2);
     body.push(reg(6), 4).getPath('flash.geom').push('Rectangle').op(Op.newMethod);
     body.op(Op.return);
   });
@@ -228,10 +235,10 @@ function defineCharBoundaries(w: Avm1Writer): void {
 function defineLineIndexAtPoint(w: Avm1Writer): void {
   w.getPath('TextField.prototype').push('getLineIndexAtPoint');
   w.function2('', ['x', 'y'], 4, FLAGS, (body) => {
-    // line = floor((y - gutter) / (textHeight / numLines))
+    // line = floor((y - gutter) / (textHeight / numLines) + a little): a line's top is in it
     body.push(reg(2), GUTTER).op(Op.subtract);
     own(body, 'textHeight');
-    own(body, 'numLines').op(Op.divide).op(Op.divide);
+    own(body, 'numLines').op(Op.divide).op(Op.divide).push(LINE_EPSILON).op(Op.add2);
     floor(body).storeRegister(3).op(Op.pop);
     body.push(reg(3), 0).op(Op.less2).ifTo('outside');
     own(body, 'numLines').push(reg(3)).op(Op.greater).op(Op.not).ifTo('outside');

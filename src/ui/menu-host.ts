@@ -54,6 +54,12 @@ export interface MenuOptions {
    * (Esc as Tab, E as Enter: the control map's menu contexts).
    */
   readonly keyAs?: Readonly<Record<string, string>>;
+  /**
+   * A movie drawn off the page at a size of its own (CSS pixels), whose image the engine
+   * copies (Menu.canvas: the book menu's pages on the 3D book); it is not laid out again as the
+   * window changes.
+   */
+  readonly offscreen?: { readonly width: number; readonly height: number };
 }
 
 /**
@@ -124,6 +130,16 @@ export class Menu {
 
   get api(): RuffleApi | undefined {
     return this.#api;
+  }
+
+  /** The canvas the player draws the movie into (an offscreen menu's image). */
+  get canvas(): HTMLCanvasElement | undefined {
+    return this.#element?.shadowRoot?.querySelector('canvas') ?? undefined;
+  }
+
+  /** Shows or hides the menu (it keeps playing: another menu shows in its place a while). */
+  set shown(shown: boolean) {
+    if (this.#element) this.#element.style.visibility = shown ? '' : 'hidden';
   }
 
   get closed(): boolean {
@@ -405,11 +421,21 @@ export class MenuHost {
     element.style.zIndex = String(options.depth);
     element.style.pointerEvents = options.interactive ? 'auto' : 'none';
     element.tabIndex = options.interactive ? 0 : -1;
+    const offscreen = options.offscreen;
+    if (offscreen) {
+      Object.assign(element.style, {
+        position: 'fixed',
+        left: '-100000px',
+        top: '0',
+        width: `${String(offscreen.width)}px`,
+        height: `${String(offscreen.height)}px`,
+      });
+    }
     this.#layer.append(element);
     menu.attach(element);
     // The rects the menu starts with: its stage shown whole (showAll, Ruffle's default) on the
     // layer; updateStage corrects them once the menu has set its own scale mode.
-    const view = this.#layer.getBoundingClientRect();
+    const view = offscreen ?? this.#layer.getBoundingClientRect();
     const visible = visibleRect(
       menu.stageWidth,
       menu.stageHeight,
@@ -437,6 +463,7 @@ export class MenuHost {
       preloader: false,
       openUrlMode: 'deny',
       logLevel: 'warn',
+      ...(offscreen && { preferredRenderer: 'canvas' as const }),
     });
     // Its first frame has run once the bridge has (it runs first in it).
     if (!(await menu.waitFor('_global.gfxExtensions'))) {
@@ -478,6 +505,7 @@ export class MenuHost {
     const view = this.#layer.getBoundingClientRect();
     if (view.width <= 0 || view.height <= 0) return;
     for (const menu of this.#menus.values()) {
+      if (menu.options.offscreen) continue;
       const { width, height } = menu.laidOut;
       if (Math.abs(width - view.width) < 1 && Math.abs(height - view.height) < 1) continue;
       this.#files

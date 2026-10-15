@@ -21,6 +21,9 @@ import { containerModel } from './container-menu.ts';
 import { barterModel } from './barter-menu.ts';
 import { giftModel } from './gift-menu.ts';
 import type { MenuRequest } from '../scripting/runtime/runtime.ts';
+import { BookMenu, type BookToRead } from './book-menu.ts';
+import { LockpickingMenu } from './lockpicking-menu.ts';
+import { BookFlag, parseItem } from '../world/item-records.ts';
 
 /** The menus' depth among the game's menus (over the HUD, under message boxes). */
 const MENU_DEPTH = 6;
@@ -66,6 +69,10 @@ export class GameMenus {
   readonly #training: TrainingMenu;
   readonly #levelUp: LevelUpMenu;
   readonly #world: MenusWorld;
+  readonly #books: BookMenu;
+  readonly #lockpicking: LockpickingMenu;
+  /** A book open (over the world, or over the inventory it was read from). */
+  #reading: { close(): void } | undefined;
 
   constructor(
     host: MenuHost,
@@ -83,8 +90,10 @@ export class GameMenus {
     this.#terminal = terminal;
     this.#enterMenuMode = enterMenuMode;
     this.#journal = new JournalMenu(host, session, terminal);
-    this.#items = new ItemMenu(host, terminal);
-    this.#inventory = inventoryModel(session, terminal);
+    this.#items = new ItemMenu(host, session, terminal);
+    this.#books = new BookMenu(host, session, terminal);
+    this.#lockpicking = new LockpickingMenu(host, session, terminal);
+    this.#inventory = inventoryModel(session, terminal, (book) => this.#readFromInventory(book));
     this.#magic = magicModel(session, terminal);
     this.#favorites = new FavoritesMenu(host, session, this.#inventory, this.#magic);
   }
@@ -289,8 +298,122 @@ export class GameMenus {
     if (this.#open !== open) this.#host.close(open.menu);
   }
 
+  /**
+   * A book lying in the world, read (its activation): the book menu, the HUD hidden. TODO(M10):
+   * not in combat (sCanNotReadBook).
+   */
+  readBook(read: BookToRead): void {
+    if (this.#open || this.#reading || this.#session.menuMode) return;
+    const hud = this.#session.hud;
+    hud.shown(false);
+    this.#read(read, () => {
+      hud.shown(true);
+    });
+  }
+
+  /**
+   * A book read from the inventory (its Read, or a spell tome's Learn): a spell tome teaches its
+   * spell and is used up (UISpellLearned, sAddItemtoSpellList; sAlreadyKnown when it is
+   * known); another book opens over the inventory, which comes back as it closes.
+   */
+  async #readFromInventory(book: number): Promise<void> {
+    if (this.#reading) return;
+    const session = this.#session;
+    const runtime = session.scriptsReady;
+    const record = runtime && (await runtime.forms.record(book));
+    const item = record && parseItem(record);
+    if (!runtime || !item?.book) return;
+    if ((item.book.flags & BookFlag.teachesSpell) !== 0) {
+      const settings = await session.settings();
+      const spell = item.book.teaches;
+      const name = (await runtime.forms.record(spell))?.text('FULL') ?? '';
+      if (!(await runtime.actors.addSpell(PLAYER_REF, spell))) {
+        session.hud.notification(`${settings.string('sAlreadyKnown') ?? ''} ${name}`);
+        return;
+      }
+      await runtime.removeItem(PLAYER_REF, runtime.formHandle(book), 1, true, undefined);
+      void session.sounds().then((sounds) => sounds.playNamed('UISpellLearned', undefined));
+      session.hud.notification(`${name} ${settings.string('sAddItemtoSpellList') ?? ''}`);
+      return;
+    }
+    const under = this.#open?.menu;
+    if (under) under.shown = false;
+    this.#read({ book }, () => {
+      if (under) {
+        under.shown = true;
+        under.focus();
+      }
+    });
+  }
+
+  /** Opens the book menu, in menu mode while it is open. */
+  #read(read: BookToRead, closed: () => void): void {
+    const leave = this.#enterMenuMode();
+    const reading: { close: () => void } = {
+      close: () => {
+        // Not open yet.
+      },
+    };
+    this.#reading = reading;
+    const done = (): void => {
+      if (this.#reading === reading) this.#reading = undefined;
+      leave();
+      closed();
+    };
+    this.#books
+      .open(read, done)
+      .then((open) => {
+        if (!open) done();
+        else if (this.#reading === reading) {
+          reading.close = () => {
+            open.close();
+          };
+        } else open.close();
+      })
+      .catch((error: unknown) => {
+        this.#terminal.log(
+          'ui',
+          `the book menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+        done();
+      });
+  }
+
+  /** Picking a lock (the lockpicking menu), the HUD hidden. */
+  pickLock(reference: number): void {
+    if (this.#open || this.#reading || this.#session.menuMode) return;
+    const hud = this.#session.hud;
+    hud.shown(false);
+    const leave = this.#enterMenuMode();
+    const open = { menu: undefined as Menu | undefined, leave: () => undefined as unknown };
+    const closed = (): void => {
+      if (this.#open === open) this.#open = undefined;
+      hud.shown(true);
+      leave();
+    };
+    open.leave = closed;
+    this.#open = open;
+    this.#lockpicking
+      .open(reference, closed)
+      .then((picking) => {
+        if (!picking) closed();
+        else if (this.#open !== open) picking.close();
+        else open.menu = picking.menu;
+      })
+      .catch((error: unknown) => {
+        this.#terminal.log(
+          'ui',
+          `the lockpicking menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+        closed();
+      });
+  }
+
   /** Closes the menu open (Play ends). */
   close(): void {
+    this.#reading?.close();
     this.#closeOpen();
   }
 

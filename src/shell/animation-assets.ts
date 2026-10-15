@@ -2,11 +2,7 @@
 // (their character and every behavior file), Havok skeletons, clips (each read once), and the
 // hosts through which running graphs get their clips.
 
-import {
-  BehaviorRuntime,
-  type BehaviorHost,
-  type SkeletalGraph,
-} from '../animation/behavior-runtime.ts';
+import type { BehaviorHost, SkeletalGraph } from '../animation/behavior-runtime.ts';
 import {
   readAnimationContainer,
   type AnimationBinding,
@@ -82,35 +78,46 @@ export class ClipHost implements BehaviorHost {
   }
 }
 
-/** Whether a graph (or a file it references) plays skeletal clips. */
-function playsClips(behaviors: Behaviors): boolean {
+/** The skeletal clips a graph (and the files it references) plays: their animations. */
+function clipAnimations(behaviors: Behaviors): Set<string> {
   const seen = new Set<object>();
-  const visit = (node: BehaviorGenerator | undefined): boolean => {
-    if (!node || seen.has(node)) return false;
+  const clips = new Set<string>();
+  const visit = (node: BehaviorGenerator | undefined): void => {
+    if (!node || seen.has(node)) return;
     seen.add(node);
     switch (node.kind) {
       case 'clip':
-        return true;
+        clips.add(node.animation);
+        return;
       case 'state-machine':
-        return node.states.some((state) => visit(state.generator));
+        for (const state of node.states) visit(state.generator);
+        return;
       case 'blender':
-        return node.children.some((child) => visit(child.generator));
+        for (const child of node.children) visit(child.generator);
+        return;
       case 'manual-selector':
-        return node.generators.some((child) => visit(child));
+        for (const child of node.generators) visit(child);
+        return;
       case 'bone-switch':
-        return visit(node.generator) || node.children.some((child) => visit(child.generator));
+        visit(node.generator);
+        for (const child of node.children) visit(child.generator);
+        return;
       case 'offset-animation':
-        return visit(node.generator) || visit(node.offsetGenerator);
+        visit(node.generator);
+        visit(node.offsetGenerator);
+        return;
       case 'modifier-generator':
       case 'state-tagging':
       case 'cyclic-blend':
       case 'synchronized-clip':
-        return visit(node.generator);
+        visit(node.generator);
+        return;
       default:
-        return false;
+        return;
     }
   };
-  return [behaviors.root, ...behaviors.files.values()].some((graph) => visit(graph.root));
+  for (const graph of [behaviors.root, ...behaviors.files.values()]) visit(graph.root);
+  return clips;
 }
 
 const describe = (error: unknown): string =>
@@ -200,21 +207,20 @@ export class AnimationAssets {
 
   /**
    * An object's behavior project where its graph plays skeletal clips (traps, bows,
-   * mechanisms), with the clips of its start states loaded; undefined for the others.
+   * mechanisms, the book menu's books), with all its clips loaded (an object's graph has a few:
+   * a clip that first loads as its state begins would play no end and raise none of its
+   * events); undefined for the others.
    */
   skeletalGraph(project: string): Promise<SkeletalGraph | undefined> {
     return this.#cached(this.#skeletal, normalizePath(project), async () => {
       const behaviors = await this.behaviors(project);
       const rig = behaviors?.character.rig;
-      if (!behaviors || !rig || !playsClips(behaviors)) return undefined;
+      const clips = behaviors ? clipAnimations(behaviors) : new Set<string>();
+      if (!behaviors || !rig || clips.size === 0) return undefined;
       const havok = await this.havokSkeleton(rig);
       if (!havok) return undefined;
       const host = this.host(behaviors, false);
-      // A run to its start pose asks for the clips every instance starts with.
-      const warmUp = new BehaviorRuntime({ root: behaviors.root, host, skeleton: havok });
-      warmUp.update(0);
-      await host.loaded();
-      warmUp.update(0);
+      for (const clip of clips) host.clip(clip);
       await host.loaded();
       return { root: behaviors.root, havok, host };
     });
