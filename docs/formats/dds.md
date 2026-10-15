@@ -34,3 +34,13 @@ sizes that are multiples of 4, which WebGPU requires.
 
 Skyrim's renderer works in gamma space: textures are sampled as UNORM, not sRGB. The parser
 reports `srgb` for DX10 `*_SRGB` formats so the renderer can decide.
+
+## CPU decoding
+
+The few textures the engine reads pixel by pixel (the face tint masks of character creation
+and the baked face tints they are checked against) are decoded to RGBA8 by
+`src/formats/dds/decode.ts`: BC1 (four colours when `c0 > c1`, else three plus transparent
+black), BC3 (BC1 colours always with four; alpha from two endpoints, eight steps when
+`a0 > a1`, else six plus 0 and 255, 3-bit indices over 48 bits) and the 8-bit layouts. Of the
+1883 tint masks the vanilla races name, 1847 are RGBA8 and 28 BC3 (all 512×512); 8 are not
+in the data.

@@ -232,6 +232,16 @@ export const HeadPartType = {
   eyebrows: 6,
 } as const;
 
+/** HDPT DATA flags (u8). */
+export const HeadPartFlag = {
+  playable: 0x1,
+  male: 0x2,
+  female: 0x4,
+  /** Only comes along with another part (HNAM), never chosen on its own. */
+  extraPart: 0x8,
+  useSolidTint: 0x10,
+} as const;
+
 /** HDPT NAM0: what a head part's NAM1 file is. */
 export const HeadPartFile = {
   raceMorph: 0,
@@ -244,6 +254,10 @@ export interface HeadPartRecord {
   readonly formId: number;
   readonly editorId: string;
   readonly type: number;
+  /** DATA: HeadPartFlag. */
+  readonly flags: number;
+  /** RNAM: the races that may choose it (FLST of RACE). */
+  readonly validRaces: number | undefined;
   /** HNAM: parts that come with it. */
   readonly extraParts: readonly number[];
   readonly model: string | undefined;
@@ -528,6 +542,8 @@ export function parseHeadPart(record: RecordSource): HeadPartRecord {
     formId: record.formId,
     editorId: record.editorId ?? '',
     type: record.fields.u32('PNAM') ?? HeadPartType.misc,
+    flags: record.fields.first('DATA')?.[0] ?? 0,
+    validRaces: field(record, 'RNAM'),
     extraParts: record.fields
       .all('HNAM')
       .map((data) => formOf(record, data))
