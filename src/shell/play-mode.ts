@@ -81,6 +81,8 @@ export interface PlayWorld {
   capturePointer(on: boolean): void;
   /** The game ends (back to the main menu): the world on screen goes. */
   leave(): void;
+  /** The player is off the ground (falling, jumping). */
+  inAir(): boolean;
 }
 
 const wait = (ms: number): Promise<void> =>
@@ -253,7 +255,9 @@ export class PlayMode {
     await hud.open();
     const boxes = new MessageBoxes(this.#host, session.settings(), () => this.#enterMenuMode());
     this.#messageBoxes = boxes;
-    const menus = new GameMenus(this.#host, session, this.#terminal, () => this.#enterMenuMode());
+    const menus = new GameMenus(this.#host, session, this.#terminal, () => this.#enterMenuMode(), {
+      inAir: () => this.#world.inAir(),
+    });
     this.#menus = menus;
     menus.onQuit = (toDesktop) => {
       if (toDesktop) {
@@ -307,6 +311,9 @@ export class PlayMode {
       text: (setting) => settings.string(setting) ?? setting,
       openContainer: (reference, closed) => {
         session.hud.menus?.container(reference, closed);
+      },
+      sleep: () => {
+        menus.sleep();
       },
       take: (object) => {
         this.#take(object).catch((error: unknown) => {

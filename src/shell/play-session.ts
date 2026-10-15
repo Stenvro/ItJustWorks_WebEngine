@@ -63,13 +63,16 @@ export interface ObjectUses {
   openContainer(reference: number, closed: () => void): void;
   /** The player takes an item lying in the world. */
   take(object: CellObject): void;
+  /** The player sleeps in a bed (the sleep menu). TODO(M10): getting into the bed first. */
+  sleep(object: CellObject): void;
 }
 
 /**
  * What activating a placed object does: load doors take the player to their destination;
  * other doors open and close. In a running game (`uses`) containers open their menu (their
- * lid opening meanwhile) and items are taken. TODO(M11): flora harvested (FLOR PFIG), owned
- * objects stolen (sSteal, sStealFrom) and locked ones picked (the lockpicking menu).
+ * lid opening meanwhile), items are taken, beds slept in. TODO(M11): flora harvested (FLOR
+ * PFIG), owned objects stolen (sSteal, sStealFrom) and locked ones picked (the lockpicking
+ * menu). TODO(M10): sitting (sSit). TODO(M9): workbenches (the crafting menu).
  */
 export function objectActivation(
   object: CellObject,
@@ -125,6 +128,15 @@ export function objectActivation(
       item: object.item,
       activate: () => {
         uses.take(object);
+      },
+    };
+  }
+  if (uses && object.furniture?.sleep) {
+    return {
+      verb: verb('sFurnitureSleep', 'Sleep'),
+      name: object.name,
+      activate: () => {
+        uses.sleep(object);
       },
     };
   }
