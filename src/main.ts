@@ -516,6 +516,15 @@ async function main(): Promise<void> {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   };
+  // "Click to look around": the browser wants a click to give the mouse back to the game.
+  const pointerHint = document.createElement('div');
+  pointerHint.className = 'pointer-hint';
+  pointerHint.textContent = 'Click to look around';
+  pointerHint.hidden = true;
+  document.body.append(pointerHint);
+  document.addEventListener('pointerlockchange', () => {
+    if (document.pointerLockElement) pointerHint.hidden = true;
+  });
   // Play's 3D view: a journey into the world that resolves once it has loaded, and the
   // scripts' MoveTo of the player followed (the sandbox never follows them).
   const playWorld: PlayWorld = {
@@ -548,11 +557,15 @@ async function main(): Promise<void> {
     },
     capturePointer: (on) => {
       if (!on) {
+        pointerHint.hidden = true;
         if (document.pointerLockElement) document.exitPointerLock();
         return;
       }
-      // Back from a menu: the mouse looks again (a click takes it if the browser wants one).
-      ui.canvas.requestPointerLock().catch(() => undefined);
+      // Back from a menu: the mouse looks again. The browser gives it back only after a click
+      // once the player let go of it with Esc: then a hint says so until it has it.
+      ui.canvas.requestPointerLock().catch(() => {
+        pointerHint.hidden = false;
+      });
     },
     follow: (on) => {
       modelViewer.followsScripts = on;

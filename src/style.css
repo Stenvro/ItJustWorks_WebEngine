@@ -1348,3 +1348,21 @@ body[data-screen='launcher'] .hud > :not(.hud-brand) {
   background: #000;
   cursor: none;
 }
+
+/* The browser gives the mouse back to the game only after a click (after Esc let go of it). */
+.pointer-hint {
+  position: fixed;
+  left: 50%;
+  bottom: 18%;
+  z-index: 19;
+  transform: translateX(-50%);
+  padding: 4px 12px;
+  font-size: 14px;
+  color: #e8e2d0;
+  background: rgb(0 0 0 / 55%);
+  pointer-events: none;
+}
+
+.pointer-hint[hidden] {
+  display: none;
+}
