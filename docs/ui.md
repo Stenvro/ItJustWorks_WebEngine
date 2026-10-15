@@ -413,7 +413,7 @@ menus (the menu layer keeps it from moving the page's focus), and menus that tak
 inert, so the page's focus never lands in the HUD's player.
 
 The shell's brand (top left) leaves Play: in a game it asks as the journal's Quit to Desktop
-does ("Quit to desktop?  Any unsaved progress will be lost.", Yes / No); Play ends with its
+does ("Quit to desktop? Any unsaved progress will be lost.", Yes / No); Play ends with its
 world unloaded and its sounds stopped.
 
 The tween menu (`tweenmenu.swf`): `_root.InitExtensions()`, `_root.SetPlatform(0, false)`, then
