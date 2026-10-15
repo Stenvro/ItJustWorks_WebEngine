@@ -13,6 +13,13 @@ import type { GameSettings } from '../world/game-settings.ts';
 const MESSAGE_BOX_DEPTH = 8;
 /** The movie's buttons, in order. */
 const BUTTONS = '_root.MessageMenu.MessageButtons';
+/** The keys that move the focus among the buttons (a row, or a column in a vertical box). */
+const STEPS: Readonly<Record<string, number>> = {
+  ArrowLeft: -1,
+  ArrowUp: -1,
+  ArrowRight: 1,
+  ArrowDown: 1,
+};
 
 interface Pending {
   readonly text: string;
@@ -77,22 +84,24 @@ export class MessageBoxes {
     this.#menu = await this.#host.open('messagebox.swf', {
       depth: MESSAGE_BOX_DEPTH,
       interactive: true,
-      // The engine's keys (the movie's own CLIK input does not reach its buttons in Ruffle):
-      // Enter and E press the focused button, the arrows move the focus, Esc and Tab cancel a
-      // box that may be cancelled.
+      // The engine's keys (the movie's own CLIK input does not reach its buttons in Ruffle), as
+      // the menus take them (MenuHost.menuKey: E as Enter, W, A, S, D as the arrows, Esc as
+      // Tab): Enter presses the focused button, the arrows move the focus, Tab cancels a box
+      // that may be cancelled.
       onKey: (menu, event) => {
         if (event.repeat) return false;
+        const key = event.code === 'NumpadEnter' ? 'Enter' : this.#host.menuKey(event.code);
         const focused = focusedButton(menu, buttons.length);
-        if (event.code === 'Enter' || event.code === 'NumpadEnter' || event.code === 'KeyE') {
+        if (key === 'Enter') {
           answer(focused);
           return true;
         }
-        if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
-          const step = event.code === 'ArrowLeft' ? -1 : 1;
+        const step = STEPS[key];
+        if (step !== undefined) {
           focusButton(menu, (focused + step + buttons.length) % buttons.length);
           return true;
         }
-        if (event.code === 'Escape' || event.code === 'Tab') {
+        if (key === 'Tab' || key === 'Escape') {
           if (cancellable) answer(0);
           return true;
         }
@@ -114,40 +123,6 @@ export class MessageBoxes {
         menu.call('setButtons', true, ...buttons);
       },
     });
-    // The mouse: Ruffle does not find the movie's buttons under it (their hit areas), so the
-    // engine asks the movie which button is there (hitTest at the movie's mouse): it takes the
-    // focus, a click presses it.
-    const menu = this.#menu;
-    const element = menu.element;
-    if (!element) return;
-    const under = (): number | undefined => {
-      const x = menu.get('_root._xmouse');
-      const y = menu.get('_root._ymouse');
-      if (typeof x !== 'number' || typeof y !== 'number') return undefined;
-      for (let i = 0; i < buttons.length; i++) {
-        if (menu.invoke(`${BUTTONS}.${String(i)}.hitTest`, x, y, true) === true) return i;
-      }
-      return undefined;
-    };
-    let hovered: number | undefined;
-    element.addEventListener(
-      'pointermove',
-      () => {
-        const index = under();
-        if (index !== undefined && index !== hovered) focusButton(menu, index);
-        hovered = index;
-      },
-      { capture: true, passive: true },
-    );
-    element.addEventListener(
-      'pointerup',
-      (event) => {
-        if (event.button !== 0) return;
-        const index = under();
-        if (index !== undefined) answer(index);
-      },
-      { capture: true },
-    );
   }
 }
 

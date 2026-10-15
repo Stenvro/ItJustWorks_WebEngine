@@ -62,9 +62,11 @@ export class LevelUpMenu {
     return this.#host.open('levelupmenu.swf', {
       depth,
       interactive: true,
+      // The keys as the menus take them (MenuHost.menuKey: A and D as the arrows, E as Enter).
       onKey: (menu, event) => {
-        if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
-          const step = event.code === 'ArrowLeft' ? -1 : 1;
+        const key = this.#host.menuKey(event.code);
+        if (key === 'ArrowLeft' || key === 'ArrowRight') {
+          const step = key === 'ArrowLeft' ? -1 : 1;
           const last = BUTTONS.length - 1;
           focused =
             focused === undefined
@@ -75,7 +77,7 @@ export class LevelUpMenu {
           menu.invoke('Selection.setFocus', `${ROOT}.${BUTTONS[focused]?.[0] ?? ''}`);
           return true;
         }
-        if (event.code === 'Enter' || event.code === 'KeyE') {
+        if (key === 'Enter') {
           const button = focused === undefined ? undefined : BUTTONS[focused];
           if (button && !event.repeat) choose(menu, button[1]);
           return true;

@@ -740,10 +740,10 @@ export class GameSession {
 
   /**
    * The running game's scripts: a new game started as the session opens (every quest's and
-   * persistent reference's OnInit, the quests that start with the game, the opening). The
-   * game's clock is the scripts' from then on.
+   * persistent reference's OnInit, the quests that start with the game, the opening unless
+   * `opening` is false). The game's clock is the scripts' from then on.
    */
-  runtime(): Promise<ScriptRuntime> {
+  runtime(opening = true): Promise<ScriptRuntime> {
     this.#runtime ??= this.db.then(async (db) => {
       const start = performance.now();
       const library = new ScriptLibrary((name) => db.script(name));
@@ -762,7 +762,7 @@ export class GameSession {
         if (runtime.retired) return;
         this.scriptsProgress = what;
         this.#terminal.log('papyrus', what);
-      });
+      }, opening);
       // A new game asked for meanwhile replaced this one.
       if (runtime.retired) return runtime;
       // From now on threads share each frame's budget ([Papyrus] fUpdateBudgetMS).
@@ -791,9 +791,10 @@ export class GameSession {
   /**
    * Throws the running game away and starts a new one: quests, what scripts enabled, moved and
    * created, the quest and scene states chosen in the panel, the clock. The sandbox's clean
-   * state; the viewers load their scene again to show it.
+   * state; the viewers load their scene again to show it. Without `opening` the new game starts
+   * without Unbound (the main menu's coc).
    */
-  resetStates(): Promise<ScriptRuntime> {
+  resetStates(opening = true): Promise<ScriptRuntime> {
     this.scriptsReady?.retire();
     this.scriptsStarting?.retire();
     this.scriptsReady = undefined;
@@ -804,7 +805,7 @@ export class GameSession {
     void this.sounds().then((sounds) => {
       sounds.globals = undefined;
     });
-    return this.runtime();
+    return this.runtime(opening);
   }
 
   /**

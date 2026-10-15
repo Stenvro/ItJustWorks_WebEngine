@@ -14,11 +14,14 @@
 //   (the credits menu's CodeObj.requestCredits); BRIDGE_NATIVE(objectPath, names) gives such an
 //   object methods that call the engine by those names (as ExternalInterface calls).
 // - _global.gfxExtensions is true, as under Scaleform (the menus test it).
+// - Scaleform's extensions of AS2 the menus use: TextField's (src/ui/gfx-text.ts) and
+//   Mouse.getTopMostEntity (src/ui/gfx-mouse.ts).
 //
 // The bridge is a DoAction put first in the movie's first frame, so it runs before the menu's
 // own frame scripts. Platform-independent. Notes: docs/ui.md.
 
 import { Avm1Writer, Function2Flag, Op, type PushValue } from '../formats/swf/avm1-writer.ts';
+import { mouseExtensions } from './gfx-mouse.ts';
 import { textFieldExtensions } from './gfx-text.ts';
 import { readSwf, SwfTagCode, tagBody } from '../formats/swf/swf.ts';
 import { concatBytes, encodeTag, writeSwf } from '../formats/swf/swf-writer.ts';
@@ -112,11 +115,15 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   // Scaleform's focus model, which CLIK's FocusHandler and the menus rely on: any clip may
   // take focus (Flash: only those with focusEnabled), with no yellow focus rectangle; and its
   // multi-controller extensions, for one controller in focus group 0 (System.capabilities.
-  // numControllers, Selection.getControllerFocusGroup, getControllerMaskByFocusGroup, ...).
+  // numControllers, Selection.numFocusGroups, getControllerFocusGroup,
+  // getControllerMaskByFocusGroup, ...). CLIK's UIComponent.focused walks the focus groups to
+  // move Selection: without numFocusGroups "focused = true" (the race menu's name box) would
+  // focus nothing.
   w.getPath('MovieClip.prototype').push('focusEnabled', true).op(Op.setMember);
   w.getPath('MovieClip.prototype').push('_focusrect', false).op(Op.setMember);
   w.push('_focusrect', false).op(Op.setVariable);
   w.getPath('System.capabilities').push('numControllers', 1).op(Op.setMember);
+  w.getPath('Selection').push('numFocusGroups', 1).op(Op.setMember);
   const constant = (object: string, name: string, value: PushValue): void => {
     w.getPath(object).push(name);
     w.function2('', [], 1, Function2Flag.suppressThis | Function2Flag.suppressArguments, (body) =>
@@ -129,11 +136,30 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   constant('Selection', 'getControllerMaskByFocusGroup', 1);
   constant('Selection', 'getModalClip', null);
   constant('Selection', 'setModalClip', null);
+  // Selection.getFocusBitmask(clip): the controllers whose focus is on the clip (bit 0: the one
+  // controller). CLIK's TextInput asks it as it is focused, to focus its text field for them.
+  w.getPath('Selection').push('getFocusBitmask');
+  w.function2(
+    '',
+    ['clip'],
+    2,
+    Function2Flag.suppressThis | Function2Flag.suppressArguments,
+    (body) => {
+      body.push(0, 'Selection').op(Op.getVariable).push('getFocus').op(Op.callMethod);
+      body.push({ register: 1 }).op(Op.targetPath).op(Op.equals2).ifTo('focused');
+      body.push(0).op(Op.return);
+      body.label('focused');
+      body.push(1).op(Op.return);
+    },
+  );
+  w.op(Op.setMember);
   // A key set at run time: ExternalInterface.call(BRIDGE_TRANSLATE, key) (the wrapper below
   // tags it with the menu).
   textFieldExtensions(w, (body) => {
     body.push(BRIDGE_TRANSLATE, 2).getPath(EXTERNAL_INTERFACE).push('call');
   });
+  // Mouse.getTopMostEntity: what the menus' lists ask as they are clicked.
+  mouseExtensions(w);
 
   // ExternalInterface.call = function () {
   //   for (var i = 0; i < arguments.length; i++)      // objects go as references

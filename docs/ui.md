@@ -125,9 +125,14 @@ Keys reach a menu as Flash input; CLIK's `InputDelegate` turns them into `handle
 down the focus path that `FocusHandler` keeps. Both rely on Scaleform's focus model, which the
 bridge gives each menu: any clip may take focus (Flash: only those with `focusEnabled`), with no
 focus rectangle, and its multi-controller extensions for one controller in focus group 0
-(`System.capabilities.numControllers` 1, `Selection.getControllerFocusGroup` 0,
-`Selection.getControllerMaskByFocusGroup` 1, `Selection.setControllerFocusGroup`,
-`Selection.getModalClip` / `setModalClip`). Without them no menu takes a key.
+(`System.capabilities.numControllers` 1, `Selection.numFocusGroups` 1,
+`Selection.getControllerFocusGroup` 0, `Selection.getControllerMaskByFocusGroup` 1,
+`Selection.setControllerFocusGroup`, `Selection.getFocusBitmask` (1 for the focused clip),
+`Selection.getModalClip` / `setModalClip`). Without them no menu takes a key. CLIK's
+`UIComponent.focused` setter walks `Selection.numFocusGroups` and the controllers of each group
+to move `Selection`: without it `focused = true` (the race menu's name box, `ShowTextEntryField`)
+focuses nothing, and CLIK's `TextInput` hands the focus on to its text field only for the
+controllers `getFocusBitmask` names.
 
 The engine hands the keys over itself (`Menu.pressKey`, `src/ui/menu-host.ts`), as GFx gets
 them from the game: a page key on the topmost menu becomes `InputDelegate.instance
@@ -135,14 +140,39 @@ them from the game: a page key on the topmost menu becomes `InputDelegate.instan
 (`src/ui/key-codes.ts`), and the page's event stops there. A Flash player takes keys only once
 it has been clicked (Ruffle's own focus, which no script can give it), and a menu opened by a key
 (E on a chest, Tab) must take keys at once. Keys the engine handles first (`onKey`: F to favor,
-R to drop) and keys a menu takes as others (`keyAs`: Esc as Tab, E as Enter) come before; a menu
-without an `InputDelegate`, or a text field being typed into, gets the page's keys from the
-player itself.
+R to drop) and keys a menu takes as others come before: its own (`keyAs`), else the control
+map's Menu Mode context (`src/ui/menu-keys.ts`, `MenuHost.menuKey`), whose Accept, Cancel, Up,
+Down, Left and Right are bound "as" gameplay events: E is Enter, Tab and Esc are Tab, W, S, A
+and D are the arrows, following the player's bindings. A menu without an `InputDelegate`, or a
+text field being typed into, gets the page's keys from the player itself. The console's key
+passes every menu (`MenuHost.passKey`; Menu Mode binds Console too): it opens over any of them.
+
+Ruffle enters no other player while one runs a call into the engine (a GameDelegate.call, a
+button's onPress): a call into another menu then answers undefined and does nothing (the HUD's
+`ShowElements("TweenMode", false)` as the tween menu closes was lost, leaving the HUD in tween
+mode). The host runs such calls once that call has returned (a microtask), in order; calls into
+the menu whose call runs work at once.
 
 The engine tells each menu its platform (`SetPlatform(0, false)`: PC with keyboard and mouse);
 the start menu then shows the mouse version of its buttons, and `ShowDeleteButtonHelp(false)`
 hides the delete-save hint while there is no save. PRESS ANY BUTTON (property 3) is not shown:
 the menu opens on its list.
+
+## The mouse
+
+Ruffle takes the mouse itself and picks as Flash does: a clip with mouse handlers (`onPress`,
+`onRollOver`, ...) gets the events of everything in it, within its `hitArea` if it has one. Two
+things the menus count on under GFx are added:
+
+- `Mouse.getTopMostEntity` (`src/ui/gfx-mouse.ts`), Scaleform's: the topmost object under the
+  mouse, the deepest clip whose own shapes are hit or a text field. The race menu's list and
+  panels take a click on themselves and ask it which entry is under the mouse (the list walks up
+  from it to its selected entry, a panel calls `onPress` of its parent); CLIK's components ask it
+  as the wheel turns. Without it their clicks did nothing.
+- Text fields keep their own `autoSize` when GFx's `verticalAutoSize` or `verticalAlign` fits
+  their height (below): a message box's button centers its label (`autoSize = "center"`) over
+  its `HitArea`; sized from the left instead, the label stood beside the area that takes the
+  mouse.
 
 ## Scaleform's text fields
 
@@ -183,7 +213,9 @@ down to fit its text, as AS2's `autoSize`; "bottom", "center": that edge stays),
 ("shrink", "fit": the size goes down a point at a time until the text fits, from the size the
 field was made with) and `verticalAlign` ("bottom", "center": the text sits so in the field's box).
 The bridge gives TextField those properties; the fields that need it again as their text changes
-are watched (a clip's onEnterFrame on `_root`) and fitted again the next frame. Vanilla uses
+are watched (a clip's onEnterFrame on `_root`) and fitted again the next frame. The height fits
+through AS2's `autoSize`, which sizes the width too: a field's own `autoSize` stays, one without
+gets its text's alignment ("left", "center", "right": the text stays where it is). Vanilla uses
 "top" and "bottom" (the HUD), "shrink" and "bottom" alignment (the loading menu).
 
 Still missing in Ruffle (0.7.1), and so in the menus: `<img>` in a text field's HTML (the HUD's
@@ -266,8 +298,9 @@ random.
 viewport, LOD adjust, scene, screen polygons and textures). The paths place the camera 250–300
 units in front of the model on the -Y side: it looks along +Y with +Z up (the NiCamera's 90°
 turn maps Gamebryo's X-forward camera onto the world's axes); the frustum gives 45° across a
-4:3 frame. The mouse turns the model about Z ([Interface] fUILogoModel_MouseToRotateSpeed: 0.02
-radians a pixel); after fUILogoModel_RotationPauseDuration (0.25 s) without the mouse it turns on
+4:3 frame. The mouse turns the model about Z ([Interface] fUILogoModel_MouseToRotateSpeed, 0.02,
+times the mouse's input as mouse look scales it: π × fMouseHeadingSensitivity radians a pixel,
+so about 0.05° a pixel; taken as radians a pixel alone it turned some 80 times too fast); after fUILogoModel_RotationPauseDuration (0.25 s) without the mouse it turns on
 its own at fUILogoModel_AutoRotateSpeed (0.1 radians a second), within ONAM's limits (degrees
 from RNAM's turn; back and forth between them unless they are a full turn: 350 of the 371 vanilla
 screens allow −180 .. 180). The settings' units are inferred from their names and sizes.
@@ -354,7 +387,9 @@ a time: `_root.InitExtensions()`, `_root.SetPlatform(0, false)`, then the callba
 `setMessageText(text, html)`, `setIsCancellable(cancellable, cancelIndex)` and
 `setButtons(focusFirst, ...labels)` (a box without buttons of its own shows `sOk`); the menu
 answers `buttonPress(index)`. On PC the buttons take no keyboard focus (the movie sets
-`disableFocus` for platform 0): they are clicked, and a Yes/No box also takes Y and N.
+`disableFocus` for platform 0) and the movie's CLIK input does not reach them in Ruffle: they
+are clicked, and the engine takes the menu keys itself (Enter or E presses the focused button,
+the arrows or W, A, S, D move the focus, Tab or Esc cancels a box that may be cancelled).
 
 ## The game's menus in play
 
@@ -447,9 +482,15 @@ mode while it is open. The commands (`src/shell/console-commands.ts`): a line is
 its arguments (quotes keep spaces), optionally after a reference and a dot ("player.additem f
 100"); forms by editor id or hex form id; an unknown command prints `Script command "x" not
 found.`. Built: help, coc, additem, removeitem, setstage, getstage, startquest, stopquest,
-completequest, set ... to, getav, setav, modav, forceav, advlevel, tm, fw, qqq. TODO(M13): the
-rest of the game's commands, coc to exterior cells and their COC markers, selecting references
-by clicking.
+completequest, set ... to, getav, setav, modav, forceav, advlevel, tm, fw, epc, dpc,
+showracemenu, qqq. coc (`src/shell/cell-placement.ts`) puts the player in an interior cell at
+its entrance, in an exterior cell at its COC marker (COCMarkerHeading), else at its middle on
+the ground. TODO(M13): the rest of the game's commands, selecting references by clicking.
+
+The console opens at the main menu too, as in the game: there `coc <cell>` starts a new game in
+that cell without the opening (Unbound, MQ101, is not started: `ScriptRuntime.newGame`'s
+`opening`), with the HUD and the player's controls as a game without it has them; `qqq`
+quits; the game's other commands answer that no game is running.
 
 ## The journal
 
@@ -1071,6 +1112,13 @@ mode, the cursor, the ItemMenu control context.
   (`src/shell/player-look.ts`, docs/animation.md "The player"): a tint only paints the face
   tint again, the other sex starts from the race's default look for it, and the sliders are
   sent again where ranges or positions moved (presets, war paint and dirt masks).
+- **The categories** (the bar at the top, `CagetoryLockBaseInstance.CategoryInstance.List_mc`)
+  change on PC by the mouse only: the movie's `LeftClickInstance` and `RightClickInstance`
+  (invisible CLIK buttons over the bar's left and right halves, alpha 0) call
+  `moveCategoriesDown` / `moveCategoriesUp`; the gamepad's triggers (L2/R2 navigation codes,
+  not on platform 0) do too, and no keyboard event is bound to them. The bar is locked to the
+  top of the visible area (`Lock("T")`) and the click areas are not: with a screen taller than
+  16:9 they sit under the bar, as in the game. In the lists W and S move, A and D move a slider.
 - **ChangeRace(index)** comes 600 ms after the race list stops moving, the movie's loading icon
   showing: the race's default look (default head parts, complexion, hair colour, a neutral
   shape, the tint layers' default colours; the sex and weight kept; TODO(M13): whether vanilla
@@ -1089,7 +1137,8 @@ mode, the cursor, the ItemMenu control context.
   Rotate only: TODO(M13)). The HUD is hidden.
 - **Done** (its button, or R: the ItemMenu context's XButton) asks sRSMConfirm "Finish and name
   your character?"; Yes brings the name box (`ShowTextEntryField()`: the movie focuses its
-  field and asks SetAllowTextInput; the field takes the typed keys, Enter accepts and Esc or Tab
+  field, `TextInputInstance.focused = true`, which needs Scaleform's `Selection.numFocusGroups`
+  and `getFocusBitmask` ("Focus and keys"), and asks SetAllowTextInput; the field takes the typed keys, Enter accepts and Esc or Tab
   cancels through the movie's handleInput). The movie sends `ChangeName(name)` as the box
   accepts and again as it fades (every category change fades it too, with the name or none):
   only a name while the engine waits for one counts. sRSMNameWarning "Start game as %s?": Yes

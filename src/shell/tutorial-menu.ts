@@ -6,10 +6,12 @@
 // skills, HBBR bartering, HBFS favorites, HBFG the forge, ... CommonLib's
 // TutorialMenu::OpenTutorialMenu takes such a default object): the message's name is the
 // box's title (Menu_mc.HelpTitle), its text the help (Menu_mc.HelpScrollingText.textField),
-// whose "[Event]"s become key art (ApplyButtonArt, through GetButtonFromUserEvent). Each shows
+// whose "[Event]"s become the keys bound to them (written as text: the movie's ApplyButtonArt
+// puts in key pictures, which Ruffle does not draw in text). Each shows
 // once in a game, and only with [Interface] bShowTutorials. TODO(M12): which were shown, in the
 // save. Notes: docs/ui.md ("Tutorials").
 
+import { withKeyLabels } from '../ui/button-art.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -98,8 +100,9 @@ export class TutorialMenu {
             menu.invoke('_root.InitExtensions');
             menu.invoke('_root.SetPlatform', 0, false);
             menu.set(`${ROOT}.HelpTitle.text`, title);
-            menu.set(`${ROOT}.HelpScrollingText.textField.text`, text);
-            menu.invoke(`${ROOT}.ApplyButtonArt`);
+            // The keys as text (the movie's ApplyButtonArt puts in pictures Ruffle cannot draw).
+            const controls = (await this.#session.playerData()).controls;
+            menu.set(`${ROOT}.HelpScrollingText.textField.text`, withKeyLabels(text, controls));
           },
         })
         .catch((error: unknown) => {

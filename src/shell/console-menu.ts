@@ -8,12 +8,16 @@
 
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
-import type { ConsoleCommands } from './console-commands.ts';
 import type { Terminal } from './terminal.ts';
 
 /** The console's key: the one left of 1 (Backquote; by its character where none is given). */
 export function isConsoleKey(event: KeyboardEvent): boolean {
   return event.code === 'Backquote' || (event.code === '' && event.key === '`');
+}
+
+/** What runs the lines typed: the game's commands, or the main menu's few. */
+export interface ConsoleRunner {
+  run(line: string): Promise<string[]>;
 }
 
 export class ConsoleMenu {
@@ -38,7 +42,7 @@ export class ConsoleMenu {
   /** Opens the console; `closed` once it has slid away. */
   async open(
     depth: number,
-    commands: () => ConsoleCommands | undefined,
+    commands: () => ConsoleRunner | undefined,
     closed: () => void,
   ): Promise<Menu> {
     this.#hiding = false;

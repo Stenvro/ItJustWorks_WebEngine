@@ -522,6 +522,8 @@ async function main(): Promise<void> {
   pointerHint.textContent = 'Click to look around';
   pointerHint.hidden = true;
   document.body.append(pointerHint);
+  /** Whether the game wants the mouse now (a menu may have opened before the browser said no). */
+  let pointerWanted = false;
   document.addEventListener('pointerlockchange', () => {
     if (document.pointerLockElement) pointerHint.hidden = true;
   });
@@ -556,6 +558,7 @@ async function main(): Promise<void> {
       worldViewer.deactivate();
     },
     capturePointer: (on) => {
+      pointerWanted = on;
       if (!on) {
         pointerHint.hidden = true;
         if (document.pointerLockElement) document.exitPointerLock();
@@ -564,7 +567,7 @@ async function main(): Promise<void> {
       // Back from a menu: the mouse looks again. The browser gives it back only after a click
       // once the player let go of it with Esc: then a hint says so until it has it.
       ui.canvas.requestPointerLock().catch(() => {
-        pointerHint.hidden = false;
+        if (pointerWanted && !document.pointerLockElement) pointerHint.hidden = false;
       });
     },
     follow: (on) => {

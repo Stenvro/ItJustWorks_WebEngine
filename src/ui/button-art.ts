@@ -106,3 +106,47 @@ export function userEvent(controls: ControlMap | undefined, name: string): UserE
   }
   return undefined;
 }
+
+/** Art whose key reads otherwise than its name (the rest reads as named: E, Tab, F1, ...). */
+const ART_LABEL: ReadonlyMap<string, string> = new Map([
+  ['L-Shift', 'Shift'],
+  ['R-Shift', 'Right Shift'],
+  ['L-Ctrl', 'Ctrl'],
+  ['R-Ctrl', 'Right Ctrl'],
+  ['L-Alt', 'Alt'],
+  ['R-Alt', 'Right Alt'],
+  ['Tilde', '~'],
+  ['Hyphen', '-'],
+  ['Bracketleft', '['],
+  ['Bracketright', ']'],
+  ['Quotesingle', "'"],
+  ['PgUp', 'Page Up'],
+  ['PgDn', 'Page Down'],
+  ['CapsLock', 'Caps Lock'],
+  ['Mouse1', 'Left Click'],
+  ['Mouse2', 'Right Click'],
+  ['Mouse3', 'Middle Click'],
+  ['Wheel', 'Mouse Wheel'],
+  ['MouseMove', 'Mouse'],
+  [UNKNOWN_KEY, '?'],
+]);
+
+/**
+ * The key an art stands for, as text: where the menus would put the art in a text field
+ * (`<img src='E.png'>`) Ruffle draws nothing (ruffle-rs/ruffle#16618), so the engine writes
+ * the key instead ("press E to ...").
+ */
+export function keyLabel(art: string): string {
+  return ART_LABEL.get(art) ?? art.replace(/^NumPad/, 'Num ');
+}
+
+/**
+ * A text's "[Event]"s (a help message's, a tutorial's) as the keys bound to them; brackets that
+ * name no user event stay as they are.
+ */
+export function withKeyLabels(text: string, controls: ControlMap | undefined): string {
+  return text.replace(/\[([^[\]]+)\]/g, (whole, name: string) => {
+    const event = userEvent(controls, name);
+    return event ? keyLabel(buttonArt(event)) : whole;
+  });
+}

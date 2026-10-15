@@ -76,11 +76,13 @@ export class TrainingMenu {
       interactive: true,
       onKey: (menu, event) => {
         if (event.repeat) return false;
-        if (event.code === 'KeyE' || event.code === 'Enter') {
+        // As the menus take the keys (MenuHost.menuKey: E as Enter, Esc as Tab).
+        const key = this.#host.menuKey(event.code);
+        if (key === 'Enter') {
           train(menu);
           return true;
         }
-        if (event.code === 'Tab' || event.code === 'Escape') {
+        if (key === 'Tab' || key === 'Escape') {
           close(menu);
           return true;
         }
