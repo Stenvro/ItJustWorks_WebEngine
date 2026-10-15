@@ -269,6 +269,25 @@ export interface FactionVendor {
   readonly conditions: readonly Condition[];
 }
 
+/** A class (CLAS): the skill its members train others in, and how far (UESP CLAS DATA). */
+export interface ClassRecord {
+  readonly formId: number;
+  /** DATA @4: the skill it trains (0 one-handed .. 17 enchanting); undefined: none. */
+  readonly trainingSkill: number | undefined;
+  /** DATA @5: the skill level its trainers teach up to. */
+  readonly maxTrainingLevel: number;
+}
+
+export function parseClass(record: Pick<GameRecord, 'formId' | 'fields'>): ClassRecord {
+  const data = record.fields.first('DATA');
+  const skill = data && data.length >= 6 ? (data[4] ?? 0xff) : 0xff;
+  return {
+    formId: record.formId,
+    trainingSkill: skill < SKILL_COUNT ? skill : undefined,
+    maxTrainingLevel: data?.[5] ?? 0,
+  };
+}
+
 /** FACT DATA flags. */
 export const FactionFlag = { vendor: 0x4000 } as const;
 

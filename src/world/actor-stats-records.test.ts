@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
 import {
+  parseClass,
   parseFaction,
   parseLocation,
   parseNpcStats,
@@ -129,6 +130,18 @@ describe('actor stats', () => {
     expect(parseFaction(record('FACT', [['XNAM', new Uint8Array(xnam.buffer)]])).reactions).toEqual(
       [{ faction: 0x20, modifier: -10, combat: 1 }],
     );
+  });
+
+  it("read a class's training: its skill and how far", () => {
+    const data = new Uint8Array(36);
+    data[4] = 2;
+    data[5] = 50;
+    expect(parseClass(record('CLAS', [['DATA', data]]))).toMatchObject({
+      trainingSkill: 2,
+      maxTrainingLevel: 50,
+    });
+    data[4] = 0xff;
+    expect(parseClass(record('CLAS', [['DATA', data]])).trainingSkill).toBeUndefined();
   });
 
   it("read a vendor faction's list, merchant chest, hours and buying rules", () => {
