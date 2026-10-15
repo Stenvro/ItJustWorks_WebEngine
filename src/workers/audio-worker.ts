@@ -1,4 +1,5 @@
-// Audio worker: decodes sound files off the main thread: WAV (PCM) directly, xWMA (music, and
+// Audio worker: decodes sound files off the main thread (and converts Bink videos for the
+// media player, src/audio/bink-video.ts): WAV (PCM) directly, xWMA (music, and
 // voice inside FUZ files) with ffmpeg.wasm, which loads on the first xWMA file. Music is
 // streamed by the browser's media player instead: it gets a 16-bit WAV file. The core and its
 // WebAssembly binary are served from node_modules (no CDN).
@@ -11,6 +12,7 @@ import {
   STREAM_HEADROOM,
   type FfmpegCore,
 } from '../audio/xwma-decoder.ts';
+import { transcodeBink } from '../audio/bink-video.ts';
 import { decodeBsaPayload } from '../formats/bsa/bsa.ts';
 import { parseFuz } from '../formats/audio/fuz.ts';
 import { decodeWav, parseWav, type PcmAudio } from '../formats/audio/wav.ts';
@@ -78,6 +80,22 @@ function fail(request: AudioRequest, error: unknown): void {
 scope.addEventListener('message', (event) => {
   const request = event.data;
   const start = performance.now();
+  if (request.video) {
+    ffmpeg()
+      .then((loaded) => transcodeBink(loaded, decodeBsaPayload(request.payload)))
+      .then(
+        (file) => {
+          scope.postMessage(
+            { id: request.id, ok: true, kind: 'video', file, workMs: performance.now() - start },
+            [file.buffer as ArrayBuffer],
+          );
+        },
+        (error: unknown) => {
+          fail(request, error);
+        },
+      );
+    return;
+  }
   if (request.stream) {
     stream(request).then(
       ({ file, gain }) => {

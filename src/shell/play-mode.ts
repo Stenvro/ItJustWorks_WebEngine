@@ -21,6 +21,7 @@ import {
 } from '../world/loading-screens.ts';
 import { InterfaceFiles } from '../ui/interface-files.ts';
 import type { TweenCamera } from './tween-camera.ts';
+import { introSequence, playVideo } from './video-player.ts';
 import { MistMenu } from './mist-menu.ts';
 import { FaderMenu } from './fader-menu.ts';
 import { CreditsMenu } from './credits-menu.ts';
@@ -128,6 +129,8 @@ export class PlayMode {
   /** The opening's title cards. */
   readonly #titles: TitleSequence;
   #startMenu: Menu | undefined;
+  /** The intro plays once (not on returning to the main menu). */
+  #introPlayed = false;
   #loadingMenu: Menu | undefined;
   #mist: MistMenu | undefined;
   #loadingScreens: Promise<LoadingScreen[]> | undefined;
@@ -214,7 +217,17 @@ export class PlayMode {
       fade: (out, black, secondsBefore, duration) => {
         this.#fader.fade(out, black, secondsBefore, duration);
       },
+      video: (file) => {
+        void playVideo(this.#session, this.#terminal, file, true);
+      },
     };
+    // The intro (sIntroSequence: the studio's logo) before the main menu, the first time.
+    if (!this.#introPlayed) {
+      this.#introPlayed = true;
+      for (const file of introSequence(this.#session)) {
+        await playVideo(this.#session, this.#terminal, file, true);
+      }
+    }
     const mist = MistMenu.show(this.#session, this.#renderer).then((menu) => {
       this.#mist = menu;
     });

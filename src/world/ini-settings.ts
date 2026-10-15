@@ -306,6 +306,11 @@ export class IniSettings {
     return this.number(section as keyof Defaults, key as never);
   }
 
+  /** A text setting from the INI file (sIntroSequence), else `fallback`. */
+  text(section: string, key: string, fallback: string): string {
+    return (this.#ini && iniValue(this.#ini, section, key)) ?? fallback;
+  }
+
   bool<S extends keyof Defaults>(section: S, key: keyof Defaults[S] & string): boolean {
     return this.number(section, key) !== 0;
   }

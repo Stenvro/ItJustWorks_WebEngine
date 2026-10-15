@@ -193,6 +193,12 @@ export class ScriptWorld implements WorldBridge {
     else this.#terminal.log('papyrus', `title sequence: ${action} ${name ?? ''}`);
   }
 
+  /** Game.PlayBink: the video over the game (Play); elsewhere only noted. */
+  video(file: string): void {
+    if (this.hud.screen) this.hud.screen.video(file);
+    else this.#terminal.log('papyrus', `the video ${file} plays only in Play`);
+  }
+
   /** Game.FadeOutGame: the game's fader (Play); elsewhere only noted. */
   fade(out: boolean, black: boolean, secondsBefore: number, duration: number): void {
     if (this.hud.screen) this.hud.screen.fade(out, black, secondsBefore, duration);
