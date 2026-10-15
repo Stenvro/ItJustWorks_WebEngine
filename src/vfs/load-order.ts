@@ -176,6 +176,29 @@ export function computeArchiveOrder(
 }
 
 /** `FE:001` for light plugins, `05` for full ones. */
+/**
+ * The Creations every Skyrim Special Edition gets (since 1.6.640: Fish, Survival Mode, Rare
+ * Curios, Saints & Seducers) and the resource pack they share; any other Creation in
+ * Skyrim.ccc came with the Anniversary Upgrade or was bought.
+ */
+const FREE_CREATIONS = new Set([
+  'ccbgssse001-fish.esm',
+  'ccqdrsse001-survivalmode.esl',
+  'ccbgssse037-curios.esl',
+  'ccbgssse025-advdsgs.esm',
+  '_resourcepack.esl',
+]);
+
+/**
+ * Whether the load order has Creations beyond the free ones: the main menu then shows the
+ * Anniversary logo (inferred: the game asks its store for the upgrade, which installs them).
+ */
+export function hasAnniversaryContent(entries: readonly LoadOrderEntry[]): boolean {
+  return entries.some(
+    (entry) => entry.source === 'Skyrim.ccc' && !FREE_CREATIONS.has(entry.name.toLowerCase()),
+  );
+}
+
 export function formatModIndex(entry: LoadOrderEntry): string {
   const hex = (value: number, width: number): string =>
     value.toString(16).toUpperCase().padStart(width, '0');

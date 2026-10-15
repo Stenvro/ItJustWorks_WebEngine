@@ -627,9 +627,11 @@ export class GameMenus {
     const leaveMenuMode = this.#enterMenuMode();
     const hud = this.#session.hud;
     hud.shown(false);
+    const unblur = this.#blur();
     const open = {
       menu: undefined as Menu | undefined,
       leave: () => {
+        unblur();
         hud.shown(true);
         leaveMenuMode();
         closed?.();
@@ -697,6 +699,38 @@ export class GameMenus {
     else this.#tutorial('HBJL');
   }
 
+  /** Menus showing the menus' image-space modifier now (UIBlurManager's blur count). */
+  #blurCount = 0;
+
+  /**
+   * The modifier behind the tween and item menus (DOBJ IMID, ISMTween: CommonLib's "image
+   * space modifier for inventory menu"; UIBlurManager applies it at strength 1 as its count
+   * leaves 0 and removes it as it comes back). Returns what ends this menu's share.
+   */
+  #blur(): () => void {
+    const session = this.#session;
+    if (this.#blurCount++ === 0) {
+      void session.defaultObjects().then((defaults) => {
+        const modifier = defaults.get('IMID');
+        if (modifier !== undefined && this.#blurCount > 0) {
+          void session.imageSpaceModifiers.apply(modifier);
+        }
+      });
+    }
+    let ended = false;
+    return () => {
+      if (ended) return;
+      ended = true;
+      if (--this.#blurCount > 0) return;
+      void session.defaultObjects().then((defaults) => {
+        const modifier = defaults.get('IMID');
+        if (modifier !== undefined && this.#blurCount === 0) {
+          void session.imageSpaceModifiers.remove(modifier);
+        }
+      });
+    };
+  }
+
   /** A menu's tutorial over it, the first time (src/shell/tutorial-menu.ts). */
   #tutorial(use: string): void {
     void this.#tutorials.show(use);
@@ -714,9 +748,11 @@ export class GameMenus {
     // The view leans and zooms while it is open (the tween camera), and goes back as it closes.
     const camera = this.#world.tweenCamera();
     camera?.open();
+    const unblur = this.#blur();
     const open = {
       menu: undefined as Menu | undefined,
       leave: () => {
+        unblur();
         camera?.close();
         hud.mode('TweenMode', false);
         leaveMenuMode();

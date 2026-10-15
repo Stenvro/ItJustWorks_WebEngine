@@ -207,9 +207,9 @@ Behind the start menu the game renders its "Mist Menu" (CommonLibSSE-NG's `RE::M
 six directional ambient colours, the mist model, a camera path, the default logo's shader
 property, a load screen model, the image space it replaces). `src/shell/mist-menu.ts`:
 
-- The mist: `meshesinterfaceintmenufogparticles.nif` (a particle system on AutoPlay),
+- The mist: `meshes\interface\intmenufogparticles.nif` (a particle system on AutoPlay),
   turned by `fUIMistModel_RotateZ_G` (-180) and moved by `fUIMistModel_Translate*_G` (0).
-- The logo: `meshesinterfacelogologo.nif` (a lit, mirror-like shape, 39 × 73 units, and
+- The logo: `meshes\interface\logo\logo.nif` (a lit, mirror-like shape, 39 × 73 units, and
   the Autoplay behavior), scaled by `fUIMistMenu_DefaultLogoNIFScale` (1), moved by
   `fUIAltLogoModel_Translate*_G` (0).
 - The camera and the light: the INI's camera (`fUIMistMenu_CameraX/Y/Z_G` -50, 600, 80 looking
@@ -218,8 +218,10 @@ property, a load screen model, the image space it replaces). `src/shell/mist-men
   (1.7.104, a screenshot of its main menu): the logo 69% of the screen's height, its middle at
   36% of the width and 47% of the height, lit from the upper left and the front; the field of
   view is the INI's `fUIMistMenu_CameraFOV_G` (75, horizontal of a 4:3 frame).
-- TODO(M9): the AE logo models (`logo01ae*.nif`, silver to gold) for players with the
-  Anniversary upgrade; the image space the menu sets; how the engine places its camera.
+- The Anniversary Edition's logo (`logo01ae_animated.nif`, silver to gold) when the load order
+  has Creations beyond the free ones (Fish, Survival Mode, Rare Curios, Saints & Seducers and
+  their resource pack): inferred, as the upgrade installs them. TODO(M13): the image space the
+  menu sets and how the engine places its camera (fitted to a screenshot above).
 
 ## A new size
 
