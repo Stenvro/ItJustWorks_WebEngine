@@ -1,13 +1,19 @@
 // Checks that everything placed in interior cells can be drawn: every model loads, every
-// shape is understood and every texture exists and parses. Lists what is not drawn and why.
+// shape is understood and every texture exists and parses (of shapes and particle systems,
+// and of the models at add-on nodes, ADDN). Also the decals' texture sets and the actors
+// placed: what they wear (with its skin and alternate texture sets), their head parts and
+// FaceGen heads. Lists what is not drawn and why.
 //
 //   node tools/cell-audit.ts                       all interior cells, summary
 //   node tools/cell-audit.ts DLC2RRSeverinHouse    one cell (or editor id substring), details
 
 import { parseDds } from '../src/formats/dds/dds.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
-import { buildModel, type ModelData } from '../src/render/model-data.ts';
+import { buildModel, type ModelData, type PartMaterial } from '../src/render/model-data.ts';
+import { ActorResolver, meshPath } from '../src/world/actors.ts';
 import { loadCellData } from '../src/world/cell-loader.ts';
+import { parseAddonNode } from '../src/world/cell-records.ts';
+import { parseTextureSet } from '../src/world/decal.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { openGameFolder } from './gamedata-path.ts';
@@ -75,6 +81,56 @@ function checkTexture(path: string): Promise<string | undefined> {
   return pending;
 }
 
+/** The textures a material samples (water takes its textures from its WATR type). */
+function materialTextures(material: PartMaterial | undefined): readonly string[] {
+  if (material?.kind === 'lighting') return material.textures;
+  if (material?.kind === 'effect') return [material.sourceTexture, material.greyscaleTexture];
+  return [];
+}
+
+/** The materials of a model's shapes and particle systems. */
+function modelMaterials(model: ModelData): (PartMaterial | undefined)[] {
+  return [
+    ...model.parts.map((part) => part.material),
+    ...model.particles.map((system) => system.material),
+  ];
+}
+
+/** Problems of the textures in a list (missing or broken). */
+async function textureProblems(paths: readonly string[]): Promise<string[]> {
+  const problems: string[] = [];
+  for (const texture of paths) {
+    if (texture === '') continue;
+    const problem = await checkTexture(texture);
+    if (problem) problems.push(`texture ${problem}: ${texture}`);
+  }
+  return problems;
+}
+
+/** Problems of a model that is not placed itself (add-on node models, what actors wear). */
+async function modelProblems(path: string): Promise<string[]> {
+  const report = await loadModel(path);
+  if (report.error) return [`${report.error}: ${path}`];
+  if (!report.model) return [];
+  return textureProblems(modelMaterials(report.model).flatMap(materialTextures));
+}
+
+/** Problems of a texture set (TXST) by form id. */
+async function textureSetProblems(formId: number | undefined): Promise<string[]> {
+  if (formId === undefined) return [];
+  const record = await db.get(formId);
+  if (record?.type !== 'TXST') return [`texture set ${formId.toString(16)} missing`];
+  return textureProblems(parseTextureSet(record).textures);
+}
+
+/** ADDN model paths by add-on node index. */
+const addonModels = new Map<number, string>();
+for (const formId of db.formIdsOfType('ADDN')) {
+  const addon = parseAddonNode(await db.require(formId));
+  if (addon.model) addonModels.set(addon.index, addon.model);
+}
+const actors = new ActorResolver(db);
+
 const cells = (await db.interiorCells()).filter(
   (c) => query === '' || query.startsWith('--') || c.editorId.toLowerCase().includes(query),
 );
@@ -119,24 +175,49 @@ for (const cell of cells) {
       else count(`(info) block not understood: ${type}`, uses);
     }
     for (const skipped of new Set(model.skipped)) note(`skipped: ${skipped.replace(/^.*?: /, '')}`);
-    for (const part of model.parts) {
-      const material = part.material;
-      if (!material) {
-        note('shape without material');
-        continue;
-      }
-      const paths =
-        material.kind === 'lighting'
-          ? material.textures
-          : material.kind === 'effect'
-            ? [material.sourceTexture, material.greyscaleTexture]
-            : []; // water takes its textures from its WATR type
-      for (const texture of paths) {
-        if (texture === '') continue;
-        const problem = await checkTexture(texture);
-        if (problem) note(`texture ${problem}: ${texture}`);
+    for (const part of model.parts) if (!part.material) note('shape without material');
+    for (const problem of await textureProblems(modelMaterials(model).flatMap(materialTextures))) {
+      note(problem);
+    }
+    for (const node of model.addons) {
+      const addon = addonModels.get(node.index);
+      if (addon === undefined) note(`add-on node ${String(node.index)} without an ADDN model`);
+      else for (const problem of await modelProblems(addon)) note(`add-on: ${problem}`);
+    }
+  }
+  // Decals and actors: one problem per thing that has it.
+  const other = (kind: string, name: string, problem: string): void => {
+    issues++;
+    count(`${kind}: ${problem}`);
+    if (detail) lines.push(`    1× ${kind} ${name}: ${problem}`);
+  };
+  for (const decal of data.decals) {
+    for (const problem of await textureProblems(decal.textureSet.textures)) {
+      other('decal', decal.textureSet.editorId, problem);
+    }
+  }
+  for (const placed of data.actors) {
+    const look = await actors.resolve(placed.base, placed.reference);
+    if (!look) continue;
+    const problems: string[] = [];
+    for (const worn of look.worn) {
+      problems.push(...(await modelProblems(meshPath(worn.model.path))));
+      problems.push(...(await textureSetProblems(worn.skinTexture)));
+      for (const swap of worn.model.alternateTextures) {
+        problems.push(...(await textureSetProblems(swap.textureSet)));
       }
     }
+    if (look.faceGen && vfs.has(look.faceGen.geometry)) {
+      // A baked head (else the head parts make one, as for the player).
+      problems.push(...(await modelProblems(look.faceGen.geometry)));
+      problems.push(...(await textureProblems([look.faceGen.tint])));
+    } else if (look.faceGen) {
+      for (const part of look.headParts) {
+        problems.push(...(await modelProblems(part.model)));
+        problems.push(...(await textureSetProblems(part.textureSet)));
+      }
+    }
+    for (const problem of new Set(problems)) other('actor', look.editorId, problem);
   }
   for (const skipped of data.skipped) count(`cell: ${skipped.replace(/^\d+× /, '')}`);
   worst.push({ cell: `${cell.editorId} "${cell.name}"`, issues });
