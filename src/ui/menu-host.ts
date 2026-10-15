@@ -628,6 +628,9 @@ export class MenuHost {
     element.style.zIndex = String(options.depth);
     element.style.pointerEvents = options.interactive ? 'auto' : 'none';
     element.tabIndex = options.interactive ? 0 : -1;
+    // A menu that takes no input (the HUD, the fader, the cursor) never takes the page's focus
+    // either: the browser's Tab moved it into the HUD's player, whose keys are not the game's.
+    element.inert = !options.interactive;
     const offscreen = options.offscreen;
     if (offscreen) {
       Object.assign(element.style, {

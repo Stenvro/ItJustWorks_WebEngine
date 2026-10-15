@@ -66,5 +66,15 @@ placements in sprites (PlaceObject2/3, the character after a class name), edit t
 bitmap fills in shapes (DefineShape 1–4's fill style arrays, in the shape's header and in its
 records' new styles; LINESTYLE2 fills), CSM text settings, scaling grids, init actions, exports
 and imports. Text records, buttons and morph shapes, which no linked movie has, are refused.
-The font library (`gfxfontlib.swf`) stays an import. The integration test checks that every
-menu with parts links and that every character placed in it is defined.
+The integration test checks that every menu with parts links and that every character placed
+in it is defined.
+
+The font library (`gfxfontlib.swf`) is linked by its symbols only (`linkImports`'
+`symbolsOnly`): an import of it brings just the fonts it names and what they refer to
+(`DefineFont3` with its `DefineFontAlignZones` and `DefineFontName`, and their exports).
+As an import Ruffle loaded the whole 1 MB library anew for every menu before the menu's first
+frame ran, at its paced preloading: 1.4 s for the tween menu, 3.4 s for the inventory each time
+it opened (Scaleform loads the library once); linked, they start in 0.1–0.3 s. Only imported
+fonts were ever reachable by a menu in Ruffle, so nothing a menu can show changes. The
+integration test checks that no menu keeps an import and that every text field's font is
+defined in it.
