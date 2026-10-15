@@ -1224,6 +1224,12 @@ details:not([open]) > .viewer-head {
   outline: none;
 }
 
+/* A menu whose setup has not filled it yet: its movie's own placeholders ("TEXT", "undefined")
+   are not seen. Not hidden by visibility, which would keep it from taking the focus. */
+.ui-layer .menu-movie.menu-filling {
+  opacity: 0 !important;
+}
+
 /* The game's cursor (cursormenu.swf) in place of the system's while a menu uses it. */
 .ui-layer.game-cursor,
 .ui-layer.game-cursor * {

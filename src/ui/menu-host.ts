@@ -95,6 +95,9 @@ function runWaiting(): void {
   for (let action = waiting.shift(); action; action = waiting.shift()) action();
 }
 
+/** The class of a menu not yet filled by its setup (style.css: unseen). */
+const FILLING = 'menu-filling';
+
 /** CLIK's input manager, which every menu built on CLIK reads its keys from. */
 const INPUT_DELEGATE = 'gfx.managers.InputDelegate.instance';
 
@@ -190,6 +193,14 @@ export class Menu {
     // What the movie had focused as its player loses the page's focus (before Ruffle clears
     // it: the capture phase runs first), given back as it is focused again.
     element.addEventListener('focusout', this.#rememberSelection, { capture: true });
+    // Unseen until its setup has filled it (filled()); an offscreen menu's image is the
+    // engine's to show.
+    if (!this.options.offscreen) element.classList.add(FILLING);
+  }
+
+  /** The menu's setup has run: it shows (until then its movie's placeholders would). */
+  filled(): void {
+    this.#element?.classList.remove(FILLING);
   }
 
   /** The movie's Selection as its player last lost the page's focus. */
@@ -670,7 +681,6 @@ export class MenuHost {
       unmuteOverlay: 'hidden',
       splashScreen: false,
       contextMenu: 'off',
-      preloader: false,
       openUrlMode: 'deny',
       logLevel: 'warn',
       ...(offscreen && { preferredRenderer: 'canvas' as const }),
@@ -685,6 +695,7 @@ export class MenuHost {
     // Selection.setFocus (a message box's first button) holds only in a player with focus.
     if (options.interactive) menu.focus();
     await options.setup?.(menu);
+    if (menu.element === element) menu.filled();
     // Still focused: left so (focusing it again would take the focus its setup gave a button).
     if (options.interactive && menu.element === element && document.activeElement !== element) {
       menu.focus();

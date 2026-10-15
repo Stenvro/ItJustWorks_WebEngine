@@ -19,7 +19,6 @@ export interface RuffleLoadOptions {
   readonly unmuteOverlay?: 'visible' | 'hidden';
   readonly splashScreen?: boolean;
   readonly contextMenu?: 'on' | 'rightClickOnly' | 'off';
-  readonly preloader?: boolean;
   readonly quality?: 'low' | 'medium' | 'high' | 'best';
   readonly showSwfDownload?: boolean;
   readonly openUrlMode?: 'allow' | 'confirm' | 'deny';
