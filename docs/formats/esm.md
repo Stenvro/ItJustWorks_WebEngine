@@ -148,6 +148,14 @@ no landscape, `0x20` no sky, `0x40` fixed dimensions, `0x80` no grass).
 - A grid position without a CELL record holds nothing (not even the parent world's land):
   the LOD stays visible there. Around a city world's few cells, the parent's LOD (terrain,
   water, objects) shows what lies outside.
+- The world map (`src/world/worldspace.ts`, used by `docs/ui.md` "The map"): MNAM is 28 bytes
+  (16 in older plugins). It holds the usable width and height (i32 each, the old 2D map's;
+  unused), the NW and SE cells (i16 x, y each), then the camera's min height, max height and
+  initial pitch (f32: Tamriel 50000, 80000, 50; Solstheim 31000, 48000, 70). ONAM (4 f32: scale,
+  x, y, z offset) puts the world's places on its map world: position × scale + offset
+  (Blackreach 2.5 under Tamriel; the East Empire Warehouse 0.0001 at Solitude's docks; −1 for
+  Sovngarde and Apocrypha: no map). MODL is the map's cloud model (Solstheim's
+  `DLC02\Sky\DLC2WorldMapCloudBank_Low.nif`; Tamriel has none).
 
 **Large references** (SSE, `src/world/large-references.ts`): big objects (mountains, cliffs,
 city walls, forts) are loaded in full detail in a wider grid than the normal cells

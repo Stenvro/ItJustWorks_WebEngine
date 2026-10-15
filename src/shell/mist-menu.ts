@@ -136,8 +136,11 @@ export class MistMenu {
     this.#mistSkeletons = mistSkeletons;
   }
 
-  /** Loads the mist and shows it with the logo, as the main menu does. */
-  static async show(session: GameSession, renderer: Renderer): Promise<MistMenu> {
+  /**
+   * Loads the mist and shows it with the logo, as the main menu does (without it: the
+   * background of a loading screen, shown next).
+   */
+  static async show(session: GameSession, renderer: Renderer, logo = true): Promise<MistMenu> {
     const ini = new IniSettings(session.vfs.defaultIni);
     const n = (key: keyof (typeof INI_DEFAULTS)['Interface']): number =>
       ini.number('Interface', key);
@@ -158,7 +161,7 @@ export class MistMenu {
       ),
     );
     const menu = new MistMenu(session, renderer, ini, mist, skeletons);
-    await menu.showLogo();
+    if (logo) await menu.showLogo();
     return menu;
   }
 

@@ -13,6 +13,8 @@ import { readPlayerData, type PlayerData } from './player.ts';
 import { readCollisionMatrix, type CollisionMatrix } from '../physics/collision-layers.ts';
 import type { ModelTextureSwaps } from '../render/actor-model.ts';
 import type { Renderer } from '../render/renderer.ts';
+import { Worldspace } from '../world/worldspace.ts';
+import { markSeen } from '../world/seen-data.ts';
 import { propertyMaterial, type AddonNode } from '../render/model-data.ts';
 import type {
   EmittanceColor,
@@ -146,6 +148,7 @@ export class GameSession {
   /** The loaded ones by the same key (memory and eviction). */
   readonly #loadedModels = new Map<string, GpuModel>();
   readonly #borders = new Map<number, Promise<WorldBorder>>();
+  readonly #worldspaces = new Map<number, Promise<Worldspace>>();
   /** Behavior graphs by project path (shared by all the meshes that name them). */
   readonly #graphs = new Map<string, Promise<BehaviorGraph | undefined>>();
   #scripts: Promise<ScriptEnvironment> | undefined;
@@ -433,6 +436,20 @@ export class GameSession {
         return undefined;
       });
       this.#graphs.set(project, entry);
+    }
+    return entry;
+  }
+
+  /**
+   * A worldspace with its indexes (its persistent references by cell, its doors), read once:
+   * the world on screen and the map share it.
+   */
+  worldspace(formId: number): Promise<Worldspace> {
+    let entry = this.#worldspaces.get(formId);
+    if (!entry) {
+      entry = this.db.then((db) => Worldspace.open(db, formId));
+      entry.catch(() => this.#worldspaces.delete(formId));
+      this.#worldspaces.set(formId, entry);
     }
     return entry;
   }
@@ -785,6 +802,7 @@ export class GameSession {
       return;
     }
     this.#watchLocation(runtime, realSeconds);
+    this.#watchSeen(runtime, realSeconds);
     this.timeScale = runtime.timeScale;
     const days = this.gameDaysPassed + this.gameHour / 24;
     if (runtime.clockChanged) {
@@ -802,6 +820,23 @@ export class GameSession {
     } else {
       runtime.update(realSeconds, passed);
     }
+  }
+
+  #seenWait = 0;
+
+  /** Inside, what the player comes near is seen (the local map's fog of war), four times a second. */
+  #watchSeen(runtime: ScriptRuntime, realSeconds: number): void {
+    this.#seenWait -= realSeconds;
+    if (this.#seenWait > 0) return;
+    this.#seenWait = 0.25;
+    const at = this.scriptWorld.livePlacement(PLAYER_REF);
+    if (!at || at.world !== undefined || at.cell === undefined) return;
+    let blocks = runtime.state.seen.get(at.cell);
+    if (!blocks) {
+      blocks = new Map();
+      runtime.state.seen.set(at.cell, blocks);
+    }
+    markSeen(blocks, at.position[0], at.position[1]);
   }
 
   /** The player's location as last seen, and the time to the next look. */

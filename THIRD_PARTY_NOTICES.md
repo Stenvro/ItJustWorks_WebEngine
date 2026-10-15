@@ -18,9 +18,10 @@ WGSL shaders follow those reproductions (structure, formulas and constants), tra
 WGSL: `src/render/shaders/lighting.wgsl` (Lighting.hlsl), `terrain.wgsl` (Lighting.hlsl,
 LANDSCAPE), `snow.wgsl` (ISSAOComposite.hlsl, Lighting.hlsl), `snow-sss.wgsl`
 (ISSnowSSS.hlsl), `refraction-composite.wgsl` (ISRefraction.hlsl), `dof.wgsl`
-(ISDepthOfField.hlsl), `sao.wgsl` (ISSAOCameraZ, ISSAOMinify, ISSAOBlur, ISSAOComposite),
-`post.wgsl` and `luminance.wgsl` (ISHDR.hlsl), `effect.wgsl` and `precipitation.wgsl` (Effect
-and Particle shaders). The sun's path in `src/world/sky-state.ts` follows how Community
+(ISDepthOfField.hlsl, ISWorldMap.hlsl), `sao.wgsl` (ISSAOCameraZ, ISSAOMinify, ISSAOBlur,
+ISSAOComposite), `post.wgsl` and `luminance.wgsl` (ISHDR.hlsl), `menu-overlay.wgsl`
+(ISLocalMap.hlsl: the map's local map), `effect.wgsl` and `precipitation.wgsl` (Effect and
+Particle shaders). The sun's path in `src/world/sky-state.ts` follows how Community
 Shaders reproduces the vanilla sun (a rule written down in `docs/formats/esm.md`; no code of
 it is used).
 

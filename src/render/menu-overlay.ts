@@ -3,10 +3,13 @@
 // skills menu). It has its own camera and light (its own frame state in the SceneRenderer),
 // is drawn after the world's image is finished into the multisampled targets (cleared, so
 // where nothing is drawn stays transparent) and laid over the image (shaders/menu-overlay.wgsl).
+// The map's local map is drawn the same way (its landscape too), then laid over the image as the
+// game's ISLocalMap makes its picture: in the local map's frame only (src/shell/local-map.ts).
 
 import type { Camera } from './view-camera.ts';
 import { HDR_FORMAT } from './post.ts';
 import type { GpuScene, SceneFrame, SceneLighting, SceneRenderer } from './scene-renderer.ts';
+import type { GpuTerrainCell, TerrainRenderer } from './terrain.ts';
 import overlayShader from './shaders/menu-overlay.wgsl?raw';
 
 /** What a menu shows in 3D. */
@@ -18,6 +21,35 @@ export interface OverlayView {
   readonly update?: (timeSeconds: number) => void;
   /** It hides the world (the skills menu's sky): what it does not draw is black. */
   readonly opaque?: boolean;
+  /** Landscape drawn with the scenes (the local map's). */
+  readonly terrain?: () => Iterable<GpuTerrainCell>;
+  /** Laid over the image as the map's local map (see LocalMapFrame), not as it is drawn. */
+  readonly localMap?: () => LocalMapFrame | undefined;
+}
+
+/**
+ * Where the local map is (canvas pixels: x0, y0, x1, y1). Its frame's black field (at 80%,
+ * as the movie's frame has it) holds the picture; the picture is the drawn image as the game's
+ * ISLocalMap makes it (Community Shaders' ISLocalMap.hlsl): grey by luminance, opaque by its
+ * edges (a Sobel filter, channels weighted 0.5, 0.25, 1) and its brightness, fading out toward
+ * its sides, and not where the player has not been (`fog`: a raster of what they have seen,
+ * 255 seen, and the affine map from canvas pixels to its 0..1). `step`: the pixels between the
+ * edge filter's samples (the game's picture is 800 wide); `alpha`: the frame's fade.
+ */
+export interface LocalMapFrame {
+  readonly picture: readonly [number, number, number, number];
+  readonly field: readonly [number, number, number, number];
+  readonly step: number;
+  readonly alpha: number;
+  readonly fog?: LocalMapFog;
+}
+
+export interface LocalMapFog {
+  readonly data: Uint8Array;
+  readonly width: number;
+  readonly height: number;
+  /** u = a·x + b·y + c, v = d·x + e·y + f (canvas pixels to the raster's 0..1). */
+  readonly transform: readonly [number, number, number, number, number, number];
 }
 
 /** The renderer's multisampled targets, reused once the world is drawn. */
@@ -34,6 +66,7 @@ interface Resolved {
   readonly texture: GPUTexture;
   readonly group: GPUBindGroup;
   readonly depth: GPUTexture;
+  readonly fog: GPUTexture;
 }
 
 export class MenuOverlay {
@@ -41,37 +74,76 @@ export class MenuOverlay {
   readonly #scene: SceneRenderer;
   readonly #frame: SceneFrame;
   readonly #pipeline: GPURenderPipeline;
+  readonly #localMap: GPURenderPipeline;
+  readonly #terrain: TerrainRenderer;
   readonly #uniforms: GPUBuffer;
-  readonly #uniformData = new Float32Array(4);
+  readonly #uniformData = new Float32Array(20);
+  readonly #fogSampler: GPUSampler;
+  /** The fog raster on the GPU, for the data it was made from (none: all seen). */
+  #fog: { readonly data: Uint8Array | undefined; readonly texture: GPUTexture } | undefined;
   readonly #viewProjection = new Float32Array(16);
   /** The overlay's clock at its last frame. */
   #last: number | undefined;
   #resolved: Resolved | undefined;
 
-  constructor(device: GPUDevice, canvasFormat: GPUTextureFormat, scene: SceneRenderer) {
+  constructor(
+    device: GPUDevice,
+    canvasFormat: GPUTextureFormat,
+    scene: SceneRenderer,
+    terrain: TerrainRenderer,
+  ) {
     this.#device = device;
     this.#scene = scene;
+    this.#terrain = terrain;
     this.#frame = scene.createFrame('menu-frame');
     const module = device.createShaderModule({ label: 'menu-overlay', code: overlayShader });
-    this.#pipeline = device.createRenderPipeline({
+    const layout = device.createBindGroupLayout({
       label: 'menu-overlay',
-      layout: 'auto',
-      vertex: { module, entryPoint: 'vs_fullscreen' },
-      fragment: {
-        module,
-        entryPoint: 'fs_composite',
-        targets: [
-          {
-            format: canvasFormat,
-            blend: {
-              color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-              alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
-            },
-          },
-        ],
-      },
-      primitive: { topology: 'triangle-list' },
+      entries: [
+        { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } },
+        {
+          binding: 1,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'unfilterable-float' },
+        },
+        {
+          binding: 2,
+          visibility: GPUShaderStage.FRAGMENT,
+          texture: { sampleType: 'depth', multisampled: true },
+        },
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        { binding: 4, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+      ],
     });
+    this.#fogSampler = device.createSampler({
+      label: 'local-map-fog',
+      magFilter: 'linear',
+      minFilter: 'linear',
+      addressModeU: 'clamp-to-edge',
+      addressModeV: 'clamp-to-edge',
+    });
+    const composite = (label: string, entryPoint: string): GPURenderPipeline =>
+      device.createRenderPipeline({
+        label,
+        layout: device.createPipelineLayout({ label, bindGroupLayouts: [layout] }),
+        vertex: { module, entryPoint: 'vs_fullscreen' },
+        fragment: {
+          module,
+          entryPoint,
+          targets: [
+            {
+              format: canvasFormat,
+              blend: {
+                color: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+                alpha: { srcFactor: 'one', dstFactor: 'one-minus-src-alpha', operation: 'add' },
+              },
+            },
+          ],
+        },
+        primitive: { topology: 'triangle-list' },
+      });
+    this.#pipeline = composite('menu-overlay', 'fs_composite');
+    this.#localMap = composite('menu-overlay-local-map', 'fs_local_map');
     this.#uniforms = device.createBuffer({
       label: 'menu-overlay',
       size: this.#uniformData.byteLength,
@@ -118,7 +190,8 @@ export class MenuOverlay {
     gamma: number,
   ): void {
     const scene = this.#scene;
-    const resolved = this.#ensureResolved(targets);
+    const localMap = view.localMap?.();
+    const resolved = this.#ensureResolved(targets, this.#useFog(localMap?.fog));
     scene.useFrame(this.#frame);
     const colorView = targets.color.createView();
     const depthView = targets.depth.createView();
@@ -146,6 +219,8 @@ export class MenuOverlay {
         depthStoreOp: 'store',
       },
     });
+    const terrain = view.terrain?.();
+    if (terrain) this.#terrain.draw(opaque, scene.frameBindGroup, terrain, scene.viewPlanes);
     scene.drawOpaque(opaque, scenes);
     opaque.end();
     const blended = encoder.beginRenderPass({
@@ -164,35 +239,71 @@ export class MenuOverlay {
     blended.end();
     scene.useFrame(undefined);
 
-    this.#uniformData[0] = 1 / Math.max(gamma, 0.05);
-    this.#uniformData[1] = view.opaque === true ? 1 : 0;
-    this.#device.queue.writeBuffer(this.#uniforms, 0, this.#uniformData);
+    const data = this.#uniformData;
+    data.fill(0);
+    data[0] = 1 / Math.max(gamma, 0.05);
+    data[1] = view.opaque === true ? 1 : 0;
+    if (localMap) {
+      data[2] = Math.min(1, Math.max(0, localMap.alpha));
+      data[3] = Math.max(1, localMap.step);
+      data.set(localMap.picture, 4);
+      data.set(localMap.field, 8);
+      const fog = localMap.fog;
+      if (fog) {
+        const [a, b, c, d, e, f] = fog.transform;
+        data.set([a, b, c, 1, d, e, f, 0], 12);
+      }
+    }
+    this.#device.queue.writeBuffer(this.#uniforms, 0, data);
     const composite = encoder.beginRenderPass({
       label: 'menu-3d-composite',
       colorAttachments: [{ view: output, loadOp: 'load', storeOp: 'store' }],
     });
-    composite.setPipeline(this.#pipeline);
+    composite.setPipeline(localMap ? this.#localMap : this.#pipeline);
     composite.setBindGroup(0, resolved.group);
     composite.draw(3);
     composite.end();
   }
 
-  #ensureResolved(targets: OverlayTargets): Resolved {
+  /** The fog raster on the GPU (a white texel when there is none), made again as it changes. */
+  #useFog(fog: LocalMapFog | undefined): GPUTexture {
+    if (this.#fog && this.#fog.data === fog?.data) return this.#fog.texture;
+    this.#fog?.texture.destroy();
+    const width = fog?.width ?? 1;
+    const height = fog?.height ?? 1;
+    const texture = this.#device.createTexture({
+      label: 'local-map-fog',
+      size: [width, height],
+      format: 'r8unorm',
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    // Rows padded to 256 bytes for the copy.
+    const row = Math.ceil(width / 256) * 256;
+    const padded = new Uint8Array(row * height);
+    for (let y = 0; y < height; y++) {
+      padded.set(fog ? fog.data.subarray(y * width, (y + 1) * width) : [255], y * row);
+    }
+    this.#device.queue.writeTexture({ texture }, padded, { bytesPerRow: row }, [width, height]);
+    this.#fog = { data: fog?.data, texture };
+    return texture;
+  }
+
+  #ensureResolved(targets: OverlayTargets, fog: GPUTexture): Resolved {
     const current = this.#resolved;
-    if (
+    const sameSize =
       current?.depth === targets.depth &&
       current.texture.width === targets.width &&
-      current.texture.height === targets.height
-    ) {
-      return current;
-    }
-    current?.texture.destroy();
-    const texture = this.#device.createTexture({
-      label: 'menu-3d',
-      size: [targets.width, targets.height],
-      format: HDR_FORMAT,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
+      current.texture.height === targets.height;
+    if (sameSize && current.fog === fog) return current;
+    if (!sameSize) current?.texture.destroy();
+    const texture = sameSize
+      ? current.texture
+      : this.#device.createTexture({
+          label: 'menu-3d',
+          size: [targets.width, targets.height],
+          format: HDR_FORMAT,
+          usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+        });
     const group = this.#device.createBindGroup({
       label: 'menu-overlay',
       layout: this.#pipeline.getBindGroupLayout(0),
@@ -200,9 +311,11 @@ export class MenuOverlay {
         { binding: 0, resource: { buffer: this.#uniforms } },
         { binding: 1, resource: texture.createView() },
         { binding: 2, resource: targets.depth.createView() },
+        { binding: 3, resource: fog.createView() },
+        { binding: 4, resource: this.#fogSampler },
       ],
     });
-    this.#resolved = { texture, group, depth: targets.depth };
+    this.#resolved = { texture, group, depth: targets.depth, fog };
     return this.#resolved;
   }
 }

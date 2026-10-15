@@ -100,3 +100,15 @@ export function blocksOfLevel(block: LodBlock, level: number): LodBlock[] {
 export function blocksOverlap(a: LodBlock, b: LodBlock): boolean {
   return a.x < b.x + b.level && b.x < a.x + a.level && a.y < b.y + b.level && b.y < a.y + a.level;
 }
+
+/** Every block of one size over the whole LOD grid (the world map's locked LOD). */
+export function allLodBlocks(settings: LodSettings, level: number): LodBlock[] {
+  const blocks: LodBlock[] = [];
+  const end = (start: number): number => start + settings.stride;
+  for (let y = settings.southWestY; y < end(settings.southWestY); y += level) {
+    for (let x = settings.southWestX; x < end(settings.southWestX); x += level) {
+      blocks.push({ level, x, y });
+    }
+  }
+  return blocks;
+}

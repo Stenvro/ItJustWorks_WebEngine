@@ -187,6 +187,12 @@ export class ScriptWorld implements WorldBridge {
     return Promise.resolve(0);
   }
 
+  /** Game.FastTravel: the player goes there (Play); elsewhere only noted. */
+  fastTravel(destination: number): void {
+    if (this.hud.menus) this.hud.menus.fastTravel(destination);
+    else this.#terminal.log('papyrus', 'fast travel happens only in Play');
+  }
+
   /** Debug.MessageBox, Message.Show: the game's message box (Play), the terminal otherwise. */
   messageBox(text: string, buttons?: readonly string[]): Promise<number> {
     if (this.hud.menus) return this.hud.menus.messageBox(text, buttons ?? []);

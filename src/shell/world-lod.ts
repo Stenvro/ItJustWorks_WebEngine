@@ -21,6 +21,7 @@ import type {
 import type { GpuTreeBlock, GpuTreeTypes, TreeLodFrame } from '../render/tree-lod.ts';
 import { CELL_SIZE } from '../world/land.ts';
 import {
+  allLodBlocks,
   blockDistance,
   blocksOfLevel,
   blocksOverlap,
@@ -139,6 +140,8 @@ export class WorldLod {
   readonly #trees: BlockSet<GpuTreeBlock>;
   #scene: GpuScene | undefined;
   #disposed = false;
+  /** The world map's locked LOD: one size of terrain and of object blocks everywhere. */
+  #locked: { readonly terrain: number; readonly objects: number } | undefined;
 
   private constructor(
     session: GameSession,
@@ -202,11 +205,36 @@ export class WorldLod {
     return new WorldLod(session, renderer, terminal, name, settings, water, treeTypes, lodSnow);
   }
 
+  /**
+   * Locks the LOD to one size of blocks over the whole world, without trees (the world map:
+   * [MapMenu] uLockedTerrainLOD and uLockedObjectMapLOD).
+   */
+  lock(terrain: number, objects: number): void {
+    this.#locked = { terrain, objects };
+  }
+
   /** Chooses and loads the blocks for a camera position. */
   update(x: number, y: number): void {
     if (this.#disposed) return;
     const exists = (block: LodBlock, kind: string): boolean =>
       this.#session.vfs.has(this.#path(block, kind));
+    const locked = this.#locked;
+    if (locked) {
+      const levels = (level: number): number =>
+        Math.min(Math.max(level, this.#settings.lowestLevel), this.#settings.highestLevel);
+      const terrainChanged = this.#terrain.update(
+        allLodBlocks(this.#settings, levels(locked.terrain)).filter((block) =>
+          exists(block, 'btr'),
+        ),
+      );
+      const objectsChanged = this.#objects.update(
+        allLodBlocks(this.#settings, Math.min(levels(locked.objects), OBJECT_LOD_LEVEL)).filter(
+          (block) => exists(block, 'bto'),
+        ),
+      );
+      if (terrainChanged || objectsChanged) this.#rebuildScene();
+      return;
+    }
     const selected = selectLodBlocks(this.#settings, x, y);
     const terrain = selected.filter((block) => exists(block, 'btr'));
     const objects = selected

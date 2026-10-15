@@ -33,6 +33,17 @@ export interface ImageSpace {
     readonly blurRadius: number;
     /** Whether the sky is blurred too (else only beside geometry). */
     readonly sky: boolean;
+    /**
+     * The world map's blur instead (ISWorldMap: src/shell/world-map-view.ts): a 7×7 box whose
+     * step (pixels) grows by `scale` per unit away from `focal`, up to `maxBlur`, times
+     * `nearScale` before it; the sky too unless `sky` is false.
+     */
+    readonly worldMap?: {
+      readonly focal: number;
+      readonly maxBlur: number;
+      readonly scale: number;
+      readonly nearScale: number;
+    };
   };
 }
 

@@ -198,6 +198,14 @@ export class GameState {
   readonly booksRead = new Set<number>();
   /** How often each skill (actor value) has been made Legendary (TODO(M12): in the save). */
   readonly legendary = new Map<number, number>();
+  /** What the player has seen of interiors (the local map's fog of war), by cell. */
+  readonly seen = new Map<number, Map<string, Uint8Array>>();
+  /**
+   * The player's own map marker (the map's Place Marker), in the map's world: where it stands
+   * (TODO(M12): in the save).
+   */
+  playerMarker:
+    { readonly world: number; readonly position: readonly [number, number, number] } | undefined;
   /** Training sessions the player had at a level (five a level: the training menu). */
   training = { level: 0, sessions: 0 };
   /** Level-ups waiting for the player to choose (the level-up menu). */

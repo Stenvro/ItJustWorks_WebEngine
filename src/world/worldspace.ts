@@ -48,6 +48,34 @@ export interface WorldspaceRecord {
   readonly climate: number | undefined;
   /** ZNAM: the music type (MUSC) where no region names one. */
   readonly music: number | undefined;
+  /** MNAM: the world map's extent and camera (undefined: the world has none). */
+  readonly map: WorldMapData | undefined;
+  /** ONAM: where the world's places show on its map. */
+  readonly mapOffset: WorldMapOffset;
+  /** MODL: the world map's clouds (undefined: the engine's default). */
+  readonly cloudModel: string | undefined;
+}
+
+/**
+ * WRLD MNAM: the world map. The usable dimensions (pixels of the old 2D map, unused), the
+ * cells it spans (north-west and south-east corner cells) and its camera: the lowest and
+ * highest the camera goes and the pitch it opens with (degrees below the horizon). The 16-byte
+ * form of older plugins has no camera data: 50000, 80000 and 50 (the CK's defaults).
+ */
+export interface WorldMapData {
+  readonly usableWidth: number;
+  readonly usableHeight: number;
+  readonly northWest: readonly [number, number];
+  readonly southEast: readonly [number, number];
+  readonly minHeight: number;
+  readonly maxHeight: number;
+  readonly initialPitch: number;
+}
+
+/** WRLD ONAM: the world map's scale and offset (a world shown on another world's map). */
+export interface WorldMapOffset {
+  readonly scale: number;
+  readonly offset: readonly [number, number, number];
 }
 
 export function parseWorldspace(record: GameRecord): WorldspaceRecord {
@@ -72,6 +100,30 @@ export function parseWorldspace(record: GameRecord): WorldspaceRecord {
     lodWaterHeight: f32('NAM4') ?? 0,
     climate: record.formIdField('CNAM'),
     music: record.formIdField('ZNAM'),
+    map: parseWorldMap(record.fields.first('MNAM')),
+    mapOffset: {
+      scale: f32('ONAM', 0) ?? 1,
+      offset: [f32('ONAM', 4) ?? 0, f32('ONAM', 8) ?? 0, f32('ONAM', 12) ?? 0],
+    },
+    cloudModel: nonEmpty(record.text('MODL')),
+  };
+}
+
+const nonEmpty = (text: string | undefined): string | undefined =>
+  text === undefined || text === '' ? undefined : text;
+
+function parseWorldMap(data: Uint8Array | undefined): WorldMapData | undefined {
+  if (!data || data.length < 16) return undefined;
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  const camera = data.length >= 28;
+  return {
+    usableWidth: view.getInt32(0, true),
+    usableHeight: view.getInt32(4, true),
+    northWest: [view.getInt16(8, true), view.getInt16(10, true)],
+    southEast: [view.getInt16(12, true), view.getInt16(14, true)],
+    minHeight: camera ? view.getFloat32(16, true) : 50000,
+    maxHeight: camera ? view.getFloat32(20, true) : 80000,
+    initialPitch: camera ? view.getFloat32(24, true) : 50,
   };
 }
 
@@ -93,6 +145,8 @@ export class Worldspace {
   readonly waterWorld: WorldspaceRecord;
   readonly climateWorld: WorldspaceRecord;
   readonly lodWorld: WorldspaceRecord;
+  /** The world whose map is shown (itself or its parent). */
+  readonly mapWorld: WorldspaceRecord;
   /** Large references by the cells they reach into ("x,y"), from every plugin's RNAM. */
   readonly largeReferences: ReadonlyMap<string, readonly LargeReference[]>;
   /** Persistent references by cell "x,y". */
@@ -121,6 +175,7 @@ export class Worldspace {
     this.waterWorld = from(ParentUse.water);
     this.climateWorld = from(ParentUse.climate);
     this.lodWorld = from(ParentUse.lod);
+    this.mapWorld = from(ParentUse.map);
     this.#persistent = persistent;
     this.#doors = doors;
     this.#mapMarkers = mapMarkers;

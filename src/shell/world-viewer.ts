@@ -99,6 +99,7 @@ import { WorldSky, type SkyElements } from './world-sky.ts';
 import type { Rgb } from '../world/cell-records.ts';
 import type { Terminal } from './terminal.ts';
 import { Player } from './player.ts';
+import type { LocalMapContent } from './local-map.ts';
 import {
   collisionGroup,
   objectActivation,
@@ -310,6 +311,53 @@ export class WorldViewer {
   /** The player (while playing a world). */
   get player(): Player | undefined {
     return this.#play?.player;
+  }
+
+  /**
+   * What the map's local map shows here: the loaded cells' landscape, objects and load doors
+   * (enabled), and the area they span. Undefined before a world is open.
+   */
+  localMapContent(): LocalMapContent | undefined {
+    const session = this.#session;
+    if (!this.#world || !session) return undefined;
+    const cells = [...this.#cells.values()].filter((cell) => cell.ready);
+    if (cells.length === 0) return undefined;
+    const min: [number, number] = [Infinity, Infinity];
+    const max: [number, number] = [-Infinity, -Infinity];
+    for (const cell of cells) {
+      min[0] = Math.min(min[0], cell.x * CELL_SIZE);
+      min[1] = Math.min(min[1], cell.y * CELL_SIZE);
+      max[0] = Math.max(max[0], (cell.x + 1) * CELL_SIZE);
+      max[1] = Math.max(max[1], (cell.y + 1) * CELL_SIZE);
+    }
+    return {
+      scenes: () => this.#localMapScenes(),
+      terrain: () => this.#readyTerrain(),
+      area: { min, max },
+      interior: false,
+      doors: () =>
+        [...this.#cells.values()].flatMap((cell) => {
+          const data = cell.ready ? cell.data : undefined;
+          if (!data || cell.formId === undefined) return [];
+          const isEnabled = this.#enableState(session, data, cell.formId, cell.toggles);
+          return data.objects.flatMap((object) =>
+            object.teleport && isEnabled(object.reference)
+              ? [
+                  {
+                    reference: object.reference,
+                    teleport: object.teleport,
+                    position: [object.world[12] ?? 0, object.world[13] ?? 0, object.world[14] ?? 0],
+                  },
+                ]
+              : [],
+          );
+        }),
+    };
+  }
+
+  *#localMapScenes(): Iterable<GpuScene> {
+    for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
+    if (this.#created) yield* this.#created.scenes();
   }
 
   /** The physics world and player of the open world. */
@@ -721,7 +769,7 @@ export class WorldViewer {
     void session.sounds().then(() => {
       if (generation === this.#generation) this.#refreshSounds();
     });
-    const world = await Worldspace.open(db, formId);
+    const world = await session.worldspace(formId);
     const [sky, lod] = await Promise.all([
       WorldSky.create(
         session,

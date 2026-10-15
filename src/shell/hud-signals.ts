@@ -64,6 +64,8 @@ export interface MenuSink {
   container(reference: number, closed: () => void): void;
   /** A menu a script opens; resolves once it has closed, with what it returns. */
   open(request: MenuRequest): Promise<number>;
+  /** Game.FastTravel: the player fast travels to a reference. */
+  fastTravel(destination: number): void;
 }
 
 export class HudSignals {

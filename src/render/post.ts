@@ -16,7 +16,7 @@ const BLOOM_DIVISOR = 4;
 /** The depth of field's blurred copy is made at half the resolution. */
 const DOF_DIVISOR = 2;
 const POST_FLOATS = 32;
-const DOF_FLOATS = 8;
+const DOF_FLOATS = 12;
 
 /**
  * Rates of the two luminance averages per second. TODO(M13): the engine's exact mapping of
@@ -272,6 +272,8 @@ export class PostProcessor {
       dofWrite(5, 0, 0, 1 / targets.dofA.height);
       this.#dofData.set([field.strength, field.distance, field.range, field.sky ? 1 : 0], 0);
       this.#dofData.set([1 / width, 1 / height, depth.near, 0], 4);
+      const map = field.worldMap;
+      this.#dofData.set(map ? [map.focal, map.maxBlur, map.scale, map.nearScale] : [0, 0, 0, 0], 8);
       queue.writeBuffer(this.#dofUniforms, 0, this.#dofData);
     }
 
@@ -308,9 +310,12 @@ export class PostProcessor {
       return;
     }
     pass('composite', targets.graded.createView(), this.#compositeGraded, targets.composite);
-    pass('dof-copy', targets.dofA.createView(), this.#bright, targets.dofDown);
-    pass('dof-blur-h', targets.dofB.createView(), this.#blur, targets.dofBlurH);
-    pass('dof-blur-v', targets.dofA.createView(), this.#blur, targets.dofBlurV);
+    // The world map's blur reads the graded image itself.
+    if (!field.worldMap) {
+      pass('dof-copy', targets.dofA.createView(), this.#bright, targets.dofDown);
+      pass('dof-blur-h', targets.dofB.createView(), this.#blur, targets.dofBlurH);
+      pass('dof-blur-v', targets.dofA.createView(), this.#blur, targets.dofBlurV);
+    }
     pass('dof', output, this.#dof, this.#dofBindGroup(targets, depth.view));
   }
 

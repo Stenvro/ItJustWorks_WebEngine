@@ -249,6 +249,17 @@ export async function effectsText(
   return texts.join(' ');
 }
 
+/** What an actor carries, in weight (its items' WEIGHT times their counts). */
+export async function carriedWeight(runtime: ScriptRuntime, actor: number): Promise<number> {
+  let total = 0;
+  for (const [base, count] of await runtime.inventory(actor)) {
+    const record = await runtime.forms.record(base);
+    const item = record && parseItem(record);
+    if (item && count > 0) total += item.weight * count;
+  }
+  return total;
+}
+
 /** UpdatePlayerInfo: carried weight and its limit, gold, armor, damage, the meters. */
 export async function playerInfo(
   runtime: ScriptRuntime,
