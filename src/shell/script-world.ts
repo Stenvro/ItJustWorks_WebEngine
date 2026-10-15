@@ -1,7 +1,8 @@
 // The running game's scripts and the world on screen: what scripts do (enable, move, animate,
-// push, activate references, show messages, play sounds) reaches the viewers that show those
-// references, and what the scripts ask of the world (which references are loaded, where a
-// moving one is now) comes from them. The script runtime's WorldBridge.
+// push, activate references, show messages, play sounds, put image-space modifiers on the
+// screen) reaches the viewers that show those references, and what the scripts ask of the
+// world (which references are loaded, where a moving one is now) comes from them. The script
+// runtime's WorldBridge.
 
 import type { Vec3 } from '../scripting/runtime/game-state.ts';
 import type {
@@ -15,6 +16,7 @@ import type { ModelInstance } from '../render/scene-renderer.ts';
 import { matrixPlacement } from '../world/cell-loader.ts';
 import type { SoundSystem } from '../audio/sound-system.ts';
 import type { ScriptGraph } from '../animation/script-graphs.ts';
+import type { ScreenModifiers } from './screen-modifiers.ts';
 import type { Terminal } from './terminal.ts';
 import type { HudSignals } from './hud-signals.ts';
 
@@ -172,6 +174,37 @@ export class ScriptWorld implements WorldBridge {
     const music = this.sounds?.()?.music;
     if (add) music?.add(type);
     else music?.remove(type);
+  }
+
+  /** The session's image-space modifiers (what ImageSpaceModifier's functions change). */
+  modifiers: ScreenModifiers | undefined;
+
+  imageSpace(
+    modifier: number,
+    action: 'apply' | 'remove' | 'crossfade' | 'removeCrossfade' | 'popTo',
+    value: number,
+    other?: number,
+  ): void {
+    const modifiers = this.modifiers;
+    if (!modifiers) return;
+    switch (action) {
+      case 'apply':
+        void modifiers.apply(modifier, value);
+        break;
+      case 'remove':
+        void modifiers.remove(modifier);
+        break;
+      case 'crossfade':
+        void modifiers.crossFade(modifier, value);
+        break;
+      case 'removeCrossfade':
+        void modifiers.removeCrossFade(value);
+        break;
+      case 'popTo':
+        if (other !== undefined) void modifiers.popTo(modifier, other, value);
+        else void modifiers.remove(modifier);
+        break;
+    }
   }
 
   /** Debug.Notification: the HUD's notifications (Play), the terminal in the sandbox. */

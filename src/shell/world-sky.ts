@@ -411,7 +411,12 @@ export class WorldSky {
       const space = this.#loadImageSpace(formId);
       if (space) spaces.push({ space, weight });
     }
-    this.#imageSpace = spaces.length > 0 ? blendImageSpaces(spaces) : undefined;
+    // The image-space modifiers on the screen change the weather's imagespace (also the
+    // Sunlight Scale the directional light takes from it).
+    this.#imageSpace = this.#session.imageSpaceModifiers.imageSpace(
+      spaces.length > 0 ? blendImageSpaces(spaces) : undefined,
+      now,
+    );
     this.#falling = [];
     for (const { formId, amount } of precipitationAmounts(
       weather,
@@ -446,7 +451,7 @@ export class WorldSky {
     return this.#falling;
   }
 
-  /** The weather's imagespace of the last frame (blended by time of day). */
+  /** The weather's imagespace of the last frame (blended by time of day, with modifiers). */
   imageSpace(): ImageSpace | undefined {
     return this.#imageSpace;
   }

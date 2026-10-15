@@ -3,9 +3,10 @@
 // Depth of field of the imagespace (IMGS DNAM), as the engine's ISDepthOfField shader does it
 // for weathers ("distant" blur, Community Shaders ISDepthOfField.hlsl, DISTANT): beyond the
 // focus distance the image turns into its blurred copy over the range, up to the strength.
-// Where the sky is not blurred, a sky pixel is blurred only next to geometry (by the share of
-// sky around it), so silhouettes soften against the sky. The world map blurs its own way
-// (ISWorldMap, below). Runs on the tone-mapped image.
+// Image-space modifiers may blur in front of the focus too (the shader without DISTANT: the
+// mode's front and back flags pick the sides). Where the sky is not blurred, a sky pixel is
+// blurred only next to geometry (by the share of sky around it), so silhouettes soften against
+// the sky. The world map blurs its own way (ISWorldMap, below). Runs on the tone-mapped image.
 // ASCII only.
 
 struct Dof {
@@ -15,6 +16,8 @@ struct Dof {
   screen: vec4f,
   // The world map's blur (y > 0): focal depth, maximum step, step per unit, near scale.
   map: vec4f,
+  // x: 1 to blur in front of the focus, y: 1 to blur beyond it (imagespaces: beyond only).
+  mode: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> dof: Dof;
@@ -80,7 +83,9 @@ fn fs_dof(input: FullscreenOut) -> @location(0) vec4f {
   }
   // Reversed Z with an infinite far plane: distance = near / depth (the sky is infinitely far).
   let distance = select(1e9, dof.screen.z / depth, depth > DOF_SKY_DEPTH);
-  let amount = clamp((distance - dof.params.y) / max(dof.params.z, 1.0), 0.0, 1.0) *
+  let beyond = distance - dof.params.y;
+  let side = select(dof.mode.x, dof.mode.y, beyond > 0.0);
+  let amount = clamp(abs(beyond) / max(dof.params.z, 1.0), 0.0, 1.0) * side *
     dof.params.x * (1.0 - 0.5 * skyShare);
   return vec4f(mix(color, blur, amount), 1.0);
 }

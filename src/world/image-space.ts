@@ -18,6 +18,38 @@ export interface ImageSpaceHdr {
   readonly eyeAdaptStrength: number;
 }
 
+/**
+ * Which side of the focus distance the depth of field blurs (ImageSpaceModifierInstanceDOF's
+ * DepthOfFieldMode). Imagespaces blur the distance ('back'); modifiers may pick any.
+ */
+export type DepthOfFieldMode = 'frontBack' | 'front' | 'back' | 'none';
+
+/**
+ * What image-space modifiers (IMAD) do beyond the imagespace's own values (the engine's
+ * ImageSpaceModData): a full-screen colour faded over the image, blur, double vision, radial
+ * blur and full-screen motion blur. Built by src/world/image-space-modifiers.ts.
+ */
+export interface ScreenEffects {
+  /** Fade colour (rgb) laid over the finished image by `fadeAmount` (0..1). */
+  readonly fadeColor: Rgb;
+  readonly fadeAmount: number;
+  /** Full-screen blur radius 0..7 (0: none). */
+  readonly blurRadius: number;
+  /** Double vision strength (0: none; vanilla 0..0.1). */
+  readonly doubleVision: number;
+  readonly radialBlur: {
+    readonly strength: number;
+    readonly rampUp: number;
+    readonly start: number;
+    readonly rampDown: number;
+    readonly downStart: number;
+    /** Centre on the screen (0..1, y down). */
+    readonly center: readonly [number, number];
+  };
+  /** Full-screen motion blur strength (0: none; vanilla 0..10). */
+  readonly motionBlur: number;
+}
+
 export interface ImageSpace {
   readonly hdr: ImageSpaceHdr;
   readonly saturation: number;
@@ -44,7 +76,11 @@ export interface ImageSpace {
       readonly scale: number;
       readonly nearScale: number;
     };
+    /** Which side of the focus is blurred; absent: the distance ('back'). */
+    readonly mode?: DepthOfFieldMode;
   };
+  /** The image-space modifiers' screen effects; absent: none. */
+  readonly effects?: ScreenEffects;
 }
 
 /** DefaultImageSpaceInterior (Skyrim.esm): interiors without XCIM use it. */
@@ -69,6 +105,16 @@ export const NEUTRAL_IMAGE_SPACE: ImageSpace = {
   tintAmount: 0,
   tintColor: [1, 1, 1],
   depthOfField: { strength: 0, distance: 0, range: 0, blurRadius: 0, sky: true },
+};
+
+/** Screen effects that change nothing. */
+export const NO_SCREEN_EFFECTS: ScreenEffects = {
+  fadeColor: [0, 0, 0],
+  fadeAmount: 0,
+  blurRadius: 0,
+  doubleVision: 0,
+  radialBlur: { strength: 0, rampUp: 0, start: 0, rampDown: 0, downStart: 0, center: [0.5, 0.5] },
+  motionBlur: 0,
 };
 
 /**

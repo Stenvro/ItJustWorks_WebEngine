@@ -368,11 +368,13 @@ export function registerForms(n: Register, runtime: ScriptRuntime): void {
   );
   on('imagespacemodifier.remove', (imod) => world.imageSpace?.(imod, 'remove', 0));
   on('imagespacemodifier.applycrossfade', (imod, call) =>
-    world.imageSpace?.(imod, 'crossfade', num(call.args[0])),
+    world.imageSpace?.(imod, 'crossfade', num(call.args[0], 1)),
   );
-  on('imagespacemodifier.removecrossfade', (imod, call) =>
-    world.imageSpace?.(imod, 'removeCrossfade', num(call.args[0])),
-  );
+  // RemoveCrossFade is global: it fades out the cross-fade chain's last modifier, whichever.
+  n('imagespacemodifier.removecrossfade', (call) => {
+    world.imageSpace?.(0, 'removeCrossfade', num(call.args[0], 1));
+    return null;
+  });
   on('imagespacemodifier.popto', (imod, call) =>
     world.imageSpace?.(imod, 'popTo', num(call.args[1], 1), formOf(call.args[0])),
   );
