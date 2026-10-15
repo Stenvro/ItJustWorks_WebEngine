@@ -813,6 +813,82 @@ closer than with the TRI's SkinnyMorph applied again (measured on light NPCs: 1.
 units, 2.3 for the heaviest body), so SkinnyMorph is left to heads made at run time (the
 player's).
 
+## Character creation
+
+What the race menu edits (`src/world/chargen-records.ts`, `src/gameplay/chargen.ts`,
+`chargen-catalog.ts`, `chargen-morphs.ts`; check: `node tools/chargen-info.ts NordRace m`,
+`tests/chargen.int.test.ts` rebuilds vanilla NPC heads and face tints from their records).
+
+**RACE head data**, once per sex: `NAM0` then a zero-length `MNAM` (male) or `FNAM` (female),
+then INDX u32 + HEAD default head part pairs; four **MPAI** u32 (0 nose, 1 brow, 2 eyes, 3
+lips) each followed by **MPAV** (32 bytes = 8 u32): bit n of the words = type n offered (eye
+types run into the second word: bit 0 there is type 32). Only bits below the GMST counts
+(iNoseMorphCount 31, iBrowMorphCount 20, iEyeMorphCount 38, iLipMorphCount 31) mean anything;
+unused bits are 1 (NordRace male nose 0x001fff3e: types 1–5, 8–20; eyes 0x001ffe3e +
+0xffffff80). **RPRM / RPRF** face presets (NPC\_, ACBS flag 0x4; 10 per sex for every playable
+race), **AHCM / AHCF** hair colours (CLFM), **FTSM / FTSF** complexions (TXST; TX04 is the
+face detail map), **DFTM / DFTF** the default one. Then the **tint layers**: TINI u16 index,
+TINT mask path (under `textures\`; absent on 4 vanilla layers), TINP u16 mask type (absent:
+not editable; 1 lip colour, 2 cheek, 3 eyeliner, 4 eye socket upper, 5 lower, 6 skin tone, 7
+war paint, 8 laugh lines, 9 cheek lower, 10 nose, 11 chin, 12 neck, 13 forehead, 14 dirt),
+TIND default colour (CLFM, often absent), then presets of TINC colour (CLFM) + TINV **f32**
+default value + TIRS u16 id (every vanilla TINC has its TINV and TIRS). Top level: FULL and
+DESC (lstrings, the menu's description), DATA flags 0x1 playable (the ten vanilla races; not
+the vampire races), HCLF the default hair colour of male and female (2 form ids), TINL the
+total tint count, NAM8 the race whose race morph the head parts use.
+
+**NPC\_ face:** **NAM9** 76 bytes: 18 f32 in −1..1 and 4 bytes (0 or 0x7F7FFFFF). **NAMA** 4
+i32: nose type, unknown (−1), eye type, mouth type. Tint layers **TINI** u16 (the race layer),
+**TINC** 4 bytes RGBA (alpha unused), **TINV i32** = value × 100 (unlike RACE's f32), **TIAS**
+i16 = the race preset's TIRS (−1 none). QNAM (skin tone, 3 f32 0..1) is the skin tone layer's
+colour (MQ101ImperialSoldierUnaggressive02: 0.718, 0.612, 0.569 = TINC b7 9c 91); the Player
+record has no skin tone layer, only QNAM. **HDPT DATA** u8: 0x1 playable, 0x2 male, 0x4
+female, 0x8 extra part (only with another part's HNAM), 0x10 use solid tint; **RNAM** a FLST of
+the races that may choose it. The menu's list of a type: playable, of the sex, not an extra
+part, the race in RNAM (NordRace male: eyes 22, hair 29, facial hair 46, scars 13, brows 12).
+
+**Head shape** (fitted on the baked FaceGen heads, then rebuilt exactly): a head part's shape
+is its model's own positions (the BSDynamicTriShape of its NIF; the TRI files' base meshes
+differ from it by up to 0.48 units, MaleHeadNord 0.055, FemaleHeadNord 0.22) plus, from its
+TRI files (HDPT NAM0 0 race, 2 chargen, 1 expressions; same vertex order), by morph name
+(case-insensitive): the race morph named after the race (NAM8's, else its own editor id) at
+1; each NAM9 value on one morph of a pair with weight |value|; `NoseType<n>`, `EyesType<n>`,
+`LipType<n>` for the NAMA types at 1; `SkinnyMorph` (expression TRI) at 1 − NAM7 / 100. A
+part lacking a morph skips it (JawBack is in no male head TRI; type 0 has none).
+
+| NAM9 | slider           | < 0            | > 0              |
+| ---- | ---------------- | -------------- | ---------------- |
+| 0    | Nose Length      | NoseShort      | NoseLong         |
+| 1    | Nose Height      | NoseDown       | NoseUp           |
+| 2    | Jaw Height       | **JawUp**      | **JawDown**      |
+| 3    | Jaw Width        | JawNarrow      | JawWide          |
+| 4    | Jaw Forward      | JawBack        | JawForward       |
+| 5    | Cheekbone Height | CheeksDown     | CheeksUp         |
+| 6    | Cheekbone Width  | CheeksIn       | CheeksOut        |
+| 7    | Eye Height       | EyesMoveDown   | EyesMoveUp       |
+| 8    | Eye Width        | EyesMoveIn     | EyesMoveOut      |
+| 9    | Brow Height      | BrowDown       | BrowUp           |
+| 10   | Brow Width       | BrowIn         | BrowOut          |
+| 11   | Brow Forward     | BrowBack       | BrowForward      |
+| 12   | Mouth Height     | LipMoveDown    | LipMoveUp        |
+| 13   | Mouth Forward    | LipMoveIn      | LipMoveOut       |
+| 14   | Chin Width       | ChinThin       | ChinWide         |
+| 15   | Chin Length      | **ChinMoveUp** | **ChinMoveDown** |
+| 16   | Chin Forward     | Overbite       | Underbite        |
+| 17   | Eye Depth        | EyesBack       | EyesForward      |
+
+Rows 2 and 15 run against the slider names. UESP's NAM9 list has 6 as "cheeks forward / back"
+and 17 as "−1 forward": the fit says otherwise. Rebuilt heads of three Nord men and two Nord
+women match the FaceGen heads within 0.04 units (head, mouth, eyes, brows, hair, hairline; 0
+for eyes and mouths). TODO(M13): beards stay up to 0.08 off, and no combination of their morphs
+fits better than 0.06.
+
+**Face tint** (FaceGen shader slot 6; baked as `facetint\<plugin>\<id>.dds`, 512×512 BC3): the
+actor's tint layers in stored (ascending TINI) order, each the race layer's mask with its
+**red** channel as coverage: `dst = lerp(dst, colour / 255, mask.r / 255 × TINV / 100)`. The
+skin tone mask is all white at value 1, so the start colour does not matter. Mean error against
+the baked textures: 1.2–2.8 / 255 (the alpha channel as coverage: 107 / 255).
+
 ## AI packages
 
 **PACK** (`src/ai/package-records.ts`; check: `node tools/package-info.ts --parse`: 7633
