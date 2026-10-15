@@ -194,6 +194,8 @@ export class GameState {
   nextEffect = 0xfd000001;
   /** The player's favorites (items, spells, shouts): the favorites menu's (Q). */
   readonly favorites = new Set<number>();
+  /** The books the player has read (a skill book teaches once; TODO(M12): in the save). */
+  readonly booksRead = new Set<number>();
   /** Training sessions the player had at a level (five a level: the training menu). */
   training = { level: 0, sessions: 0 };
   /** Level-ups waiting for the player to choose (the level-up menu). */

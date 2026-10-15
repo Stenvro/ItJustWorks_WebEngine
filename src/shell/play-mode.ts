@@ -6,6 +6,7 @@
 // player (MQ101: the cart to Helgen) and the world there has loaded.
 // In the game the HUD shows (hud-controller.ts). TODO(M9): the in-game menus.
 
+import { lockDifficulty, LOCKPICK, SKELETON_KEY } from '../gameplay/lockpicking.ts';
 import type { Renderer } from '../render/renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -328,6 +329,32 @@ export class PlayMode {
       loadDoor: (text) => {
         session.hud.loadDoor(text);
       },
+      lockOf: (object) => {
+        const state = session.scriptsReady?.state.references.get(object.reference);
+        if (state?.locked === false) return undefined;
+        if (state?.locked === true) {
+          return { level: state.lockLevel ?? object.lock?.level ?? 1, key: object.lock?.key };
+        }
+        return object.lock;
+      },
+      unlock: (object, then) => {
+        this.#unlock(object.reference, then).catch((error: unknown) => {
+          this.#terminal.log(
+            'ui',
+            `${object.name} is not unlocked: ${error instanceof Error ? error.message : String(error)}`,
+            'error',
+          );
+        });
+      },
+      read: (object) => {
+        menus.readBook({
+          book: object.base,
+          reference: object.reference,
+          take: () => {
+            session.hud.uses?.take(object);
+          },
+        });
+      },
       take: (object) => {
         this.#take(object).catch((error: unknown) => {
           this.#terminal.log(
@@ -428,6 +455,47 @@ export class PlayMode {
         );
         dialogue.close();
       });
+  }
+
+  /**
+   * A lock the player opens: with its key if they carry it (sOpenWithKey; then it opens), else
+   * by picking it, unless only its key opens it (sImpossibleLock) or they have no lockpick
+   * (sOutOfLockpicks; the Skeleton Key is one). TODO(M11): not while guards pursue the player
+   * (sNoLockPickIfCrimeAlert).
+   */
+  async #unlock(reference: number, then: () => void): Promise<void> {
+    const session = this.#session;
+    const runtime = session.scriptsReady;
+    if (!runtime) return;
+    const lock = await runtime.lock(reference);
+    if (!lock.locked) {
+      then();
+      return;
+    }
+    const settings = await session.settings();
+    const say = (setting: string): void => {
+      session.hud.notification(settings.string(setting) ?? '');
+    };
+    if (lock.key !== undefined && (await runtime.itemCount(PLAYER_REF, lock.key)) > 0) {
+      runtime.state.reference(reference).locked = false;
+      void runtime.sendEvent(reference, 'OnLockStateChanged');
+      const key = (await runtime.forms.record(lock.key))?.text('FULL') ?? '';
+      session.hud.notification((settings.string('sOpenWithKey') ?? '%s').replace('%s', key));
+      then();
+      return;
+    }
+    if (lockDifficulty(lock.level) === undefined) {
+      say('sImpossibleLock');
+      return;
+    }
+    const picks =
+      (await runtime.itemCount(PLAYER_REF, LOCKPICK)) +
+      (await runtime.itemCount(PLAYER_REF, SKELETON_KEY));
+    if (picks <= 0) {
+      say('sOutOfLockpicks');
+      return;
+    }
+    this.#menus?.pickLock(reference);
   }
 
   /** The player takes an item lying in the world: it joins their items, its sound playing. */

@@ -134,6 +134,12 @@ export class GameSession {
   /** Indexed once per session (all plugins of the load order). */
   readonly db: Promise<RecordDatabase>;
   readonly #renderer: Renderer;
+
+  /** The renderer the session's models are drawn by (a menu's 3D: Renderer.overlay). */
+  get renderer(): Renderer {
+    return this.#renderer;
+  }
+
   readonly #terminal: Terminal;
   /** Models by path, shared by every cell and kept for the session. */
   readonly #models = new Map<string, Promise<GpuModel | undefined>>();

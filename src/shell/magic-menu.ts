@@ -88,6 +88,7 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
   };
   return {
     movie: 'magicmenu.swf',
+    side: 'magic',
     depth: 6,
     menuProperties: { hideButtonFlag: MagicCategory.activeEffects },
     categories: async () => {
@@ -173,7 +174,7 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
 }
 
 /** The effect that decides a spell's school and level: its costliest (its first with a skill). */
-async function mainEffect(
+export async function mainEffect(
   spell: SpellRecord,
   effect: (formId: number) => Promise<MagicEffectRecord | undefined>,
 ): Promise<MagicEffectRecord | undefined> {

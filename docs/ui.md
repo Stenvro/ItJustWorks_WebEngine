@@ -606,3 +606,109 @@ Haggling, Allure, Merchant and Investor perks, Fortify Barter, fences and stolen
 chest's restock (every 48 hours), favor points. TODO(M11): using, eating and reading items, equipping to a hand (items and
 spells) and shouts to the voice, the active effects, favorites' hotkeys, the quantity of a drop,
 skills and perks in armor, damage and spell costs, ingredients' known effects.
+
+## The menus' 3D
+
+Some menus show 3D over the world: the book being read, the item turned in the inventory, the
+lock picked, the skills' stars. The renderer draws it after the world's image is finished
+(`src/render/menu-overlay.ts`, `Renderer.overlay`): with a camera and a light of its own (a second
+frame state in the SceneRenderer: `createFrame`, `useFrame`), into the multisampled targets cleared
+to transparent (the opaque parts, then the blended ones), resolved, and laid over the image: its
+coverage is the share of samples it drew depth into (or the blended parts' alpha), its colour as
+rendered with the player's gamma (the world's eye adaptation and grading do not apply to it). Its
+particles go after the world's in the frame's particle buffer. It runs on a clock of its own: the
+world's stands still in menu mode.
+
+Its space (`src/shell/menu-3d.ts`) is the one the [Interface] settings place things in: the
+camera at the origin looking along −Y with +Z up (the mist menu's camera looks along −Y too), so
++X is the screen's left. The book lies fBookDistance (110) in front, tilted by fBookXRotation
+(−25: its top away), its middle at fBookPosWidthPercentage / fBookPosHeightPercentage of the
+screen (0.5, 0.445 from the top); the inventory's item at fInventory3DItemPos (−29, −500, 16;
+the Wide values −22, −500, 12 on screens wider than 4:3): right of the middle, the magic menu's
+at fMagic3DItemPos (29, −500, 8): left. Their lights (fBookLight*, fInventoryMenuLight* with
+fInventoryLight* colours, dimmers and radii, fLockpickLight*) stand in the same space: the
+inventory's 150 in front of its item (y −350 before −500), the book's second 35 in front of it
+(its first, y −350, behind it: a rim light); the lock is placed 150 behind its light (y −1000),
+as the item is (its distance is not among the settings). The camera's field of view
+is not among the settings: a vertical 15° is fitted so the open book at fBookDistance takes
+about the screen's height it takes in the game (TODO(M13): the engine's value). Values from the
+STEP guide to the Skyrim INI ("Interface").
+
+## The item menus' 3D
+
+The inventory, container, barter, gift and magic menus show the highlighted entry in 3D beside
+the list (`src/shell/item-3d.ts`): the movie calls `UpdateItem3D(true)` as the highlight changes
+and `UpdateItem3D(false)` as the list hides. An item shows its world model (armor the player's
+sex's, a book its inventory art, BOOK INAM), a spell its costliest effect's menu display object
+(MGEF MDOB), a shout its own (SHOU MDOB). It is scaled so its bound sphere's radius is
+fInventory3DBoundRadiusScale (12.5) times the place's scale (fInventory3DItemPosScale 1.87, Wide
+1.5; the magic menu's 1.87 / 1.75). Dragging it (`StartMouseRotation`, `StopMouseRotation`)
+turns it about its upright axis (the menu hears `ItemRotating` as it turns: the zoom button
+shows); the wheel over it (`ZoomItemModel(±1)`) brings it to fInventory3DItemZoom (0, −500, 0)
+at fInventory3DItemZoomScale (2.25) and back, at fInventory3DItemZoomSpeed.
+
+## Books
+
+Reading (`src/shell/book-menu.ts`): a book lying in the world is read by activating it (sRead),
+one in the inventory by its Read (a spell tome's Learn teaches its spell instead, UISpellLearned
+and "<spell> sAddItemtoSpellList", or sAlreadyKnown, and is used up; it opens no book).
+
+- The 3D book is the book's inventory art (BOOK INAM, a static of
+  `meshes\clutter\books\...\character assets`: JournalBasic, Book02, the spell tomes, Note01 ..
+  Note04). Its BSBehaviorGraphExtraData names its graph: Book01Project (events Open, PageForward,
+  PageBack, Close; it raises OpenStop, PageForwardStop, PageBackStop, CloseOut and
+  SoundPlay.ITMBookOpen / ITMBookPageTurnForwardSD / ...), a note's Note01 (Open, Close; OpenStop,
+  CloseStop). The graph plays skeletal clips on the model's nodes, as other animated objects'.
+- The pages are `book.swf` (300 × 475), played off the page in a player of its own drawing into a
+  2D canvas: `SetBookText(text, isNote)` lays out the book's DESC in pages (one every 30 ms; its
+  `[pagebreak]` tags break them; `iPaginationIndex` is −1 when it is done, `PageInfoA` holds them);
+  `TurnPage(delta)` (±2 a spread, ±1 a note's page; false past the ends) moves `iLeftPageNumber`;
+  `ShowPageAtOffset(n)` shows page `iPageSetIndex + n` of the four it keeps. Each page shown is
+  copied from the canvas into a texture (`copyExternalImageToTexture`) on a text rectangle of the
+  book (`src/render/page-quad.ts`: the hidden "PageText" shape is such a rectangle, 15 × 20, with an
+  effect shader whose texture the engine fills). The texts hide while a page turns or the book
+  closes.
+- Where the texts lie was measured from the models in the open pose (BookOpen's last frame): the
+  right page flat at z 1.21 from the spine (x −9.7) to x 8.2; the left page (Base Page1 on the
+  turned cover) sloping 12.5° down from the spine to x −25 (0.06 higher once a page has turned
+  onto it); y −12.4 .. 12.0 (Book02's −11.1 .. 10.8); an open note flat at z ≈ 0.25, x −8 .. 8,
+  y −11 .. 11. A note's text is wider (BookMenu.NOTE_WIDTH 400 from the visible rect's left plus
+  NOTE_X_OFFSET 20), so its page is drawn wider around the stage.
+- `bookmenu.swf` is the bar under it: `ShowTakeButton(show, steal)` (Take, or Steal for a book
+  someone else owns; none for one that cannot be taken, BOOK DATA flag 0x2, or one read from the
+  inventory). The control map's Book context: PrevPage (A, Left, the left mouse button, the
+  wheel down), NextPage (D, Right, the right mouse button, the wheel up); Accept (E) takes the
+  book and closes it, Cancel (Tab, Esc) closes it.
+- The first time a skill book (BOOK DATA flag 0x1) is read its skill rises (sSkillIncreased); a
+  book read from the world sends OnRead to its reference.
+
+## Lockpicking
+
+A locked door or container (REFR XLOC: level 1 Novice, 25 Apprentice, 50 Adept, 75 Expert, 100
+Master, 255 a key only; scripts lock and unlock it since) is prompted "Unlock" (sUnlock) with
+its lock's level after its name (sLockLevelName*, UESP: "Unlock (object)", the level shown).
+Activating it opens it with its key when the player carries it (sOpenWithKey, then it opens),
+says sImpossibleLock for a key-only lock, sOutOfLockpicks without a lockpick (or the Skeleton
+Key), and else opens the lockpicking menu (`src/shell/lockpicking-menu.ts`):
+
+- `lockpickingmenu.swf` is the bar: `SetLockInfo(skill, next skill, progress, level name,
+lockpicks)`; the rest is the menus' 3D. `meshes\interface\lockpicking\lockpickshiv01.nif` is the
+  lock with its cylinder and the shiv (its Intro slides the lock in; its Rotate turns the cylinder
+  and the shiv a quarter turn over 2.96 s, which the engine plays to the lock's angle);
+  `lockpick01.nif` (the Skeleton Key's `lockpickskeletonkey01.nif`) the pick (Intro into the
+  keyhole, PickDamage while it is strained, PickBreak). The cylinder turns about
+  LockPickLockTumble, the pick about its tip (LockPick01 after its Intro), both about the lock's
+  axis; the pick turns with the cylinder.
+- The control map's Lockpicking context: the mouse sweeps the pick over the keyhole (0..180°,
+  fPickMouseRotationSpeed), RotateLock (the movement keys) turns the lock at fLockRotationSpeed
+  as far as the pick allows; let go, it turns back. Cancel (Tab, Esc) leaves.
+- The sizes (src/gameplay/lockpicking.ts, UESP "Lockpicking" with the game settings): sweet spot
+  60 × 2^−d × (0.82 + fLockpickSkillSweetSpotMult × skill) × (1.75 + 0.25 d with the level's
+  perk); partial zones fPartialPick<level> × (fLockpickSkillPartialPickBase +
+  fLockpickSkillPartialPickMult × skill) each side; in the sweet spot the lock turns all the way
+  (90°: open), in a partial zone the less the farther out, beyond not at all. Held against the
+  pick the strain breaks it after 2, 1, 0.75, 0.5, 0.25 s by level × (1 + skill / 200)
+  (Unbreakable and the Skeleton Key: never). Locksmith starts the pick at the edge of the partial
+  zone. A lock's sweet spot stays where it is until the game is loaded again.
+- Sounds: UILockpickingEnter, PickMovement, CylinderTurn, CylinderStop, PickTensionLPM (while
+  strained), PickBreak, Unlock. The opened lock sends OnLockStateChanged.

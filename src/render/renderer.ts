@@ -42,6 +42,7 @@ import { REFRACTION_FORMAT, RefractionComposite } from './refraction.ts';
 import { GrassRenderer, type GpuGrassField } from './grass.ts';
 import { DecalRenderer, type GpuDecals } from './decals.ts';
 import { occlusionView, PrecipitationRenderer, type PrecipitationFrame } from './precipitation.ts';
+import { MenuOverlay, type OverlayView } from './menu-overlay.ts';
 
 /** Wind speed (world units per second) of a weather wind of 1 (WTHR wind speed 255). */
 const MAX_WIND_SPEED = 500;
@@ -119,7 +120,8 @@ interface RenderTargets {
  * 4. (if refraction shapes are in view) the refraction buffer, and the image-space refraction
  *    of everything drawn so far;
  * 5. the imagespace's post-processing into the canvas (with its depth of field: from the copy of
- *    the opaque scene's depth).
+ *    the opaque scene's depth);
+ * 6. (while a menu shows 3D) the menu's overlay over it (menu-overlay.ts).
  */
 export class Renderer {
   readonly scene: SceneRenderer;
@@ -138,6 +140,9 @@ export class Renderer {
   readonly decals: DecalRenderer;
   readonly precipitation: PrecipitationRenderer;
   readonly post: PostProcessor;
+  /** What an open menu shows in 3D over the world (none: nothing). */
+  overlay: OverlayView | undefined;
+  readonly #menu: MenuOverlay;
   readonly #gpu: GpuContext;
   readonly #backdrop: GPURenderPipeline;
   readonly #backdropBuffer: GPUBuffer;
@@ -172,6 +177,7 @@ export class Renderer {
     this.decals = new DecalRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.precipitation = new PrecipitationRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.post = new PostProcessor(device, format);
+    this.#menu = new MenuOverlay(device, format, this.scene);
 
     const module = device.createShaderModule({ label: 'backdrop', code: backdropShader });
     this.#backdrop = device.createRenderPipeline({
@@ -288,6 +294,8 @@ export class Renderer {
     // Controllers of the placed models (UV scrolling, turning parts, idle sequences) and
     // their particle systems.
     if (view) this.scene.animate(scenes, timeSeconds, view.camera.position, wind);
+    const overlay = this.overlay;
+    const overlayScenes = overlay ? this.#menu.prepare(overlay, targets) : [];
     const hdrView = this.post.hdrView(targets.width, targets.height);
     const colorView = targets.color.createView();
     const depthView = targets.depth.createView();
@@ -450,15 +458,19 @@ export class Renderer {
       if (refraction) this.#refract(encoder, targets, scenes, depthView, hdrView, view.camera);
     }
 
+    const canvasView = canvasTexture.createView();
     this.post.run(
       encoder,
-      canvasTexture.createView(),
+      canvasView,
       targets.width,
       targets.height,
       imageSpace,
       delta,
       depthOfField ? { view: targets.sceneDepthView, near: view.camera.near } : undefined,
     );
+    if (overlay) {
+      this.#menu.draw(encoder, overlay, overlayScenes, targets, canvasView, this.post.gamma);
+    }
     device.queue.submit([encoder.finish()]);
   }
 

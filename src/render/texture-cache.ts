@@ -142,6 +142,25 @@ export class TextureCache {
     return entry.texture;
   }
 
+  /**
+   * A texture the engine draws itself (a book menu's page), under a path of its own: models
+   * whose materials name it use it; never evicted (the owner takes it back with `withdraw`).
+   */
+  provide(path: string, texture: GPUTexture): void {
+    this.#cache.set(path, {
+      texture: Promise.resolve(texture),
+      bytes: 0,
+      refs: 0,
+      held: false,
+      lastUsed: performance.now(),
+    });
+  }
+
+  /** Forgets a provided texture (its owner destroys it). */
+  withdraw(path: string): void {
+    this.#cache.delete(path);
+  }
+
   /** A model holds the texture at `path` (see `release`). */
   retain(path: string): void {
     const entry = this.#cache.get(path);

@@ -23,7 +23,8 @@ import { invert } from '../render/frustum.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
 import type { Camera } from '../render/view-camera.ts';
 import type { InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
-import type { CellObject, CellPrimitive, Teleport } from '../world/cell-loader.ts';
+import type { CellObject, CellPrimitive, ObjectLock, Teleport } from '../world/cell-loader.ts';
+import { lockDifficulty, lockLevelSetting } from '../gameplay/lockpicking.ts';
 import type { LandData } from '../world/land.ts';
 import type { Player } from './player.ts';
 import { attachPlayerInput } from './player-input.ts';
@@ -63,16 +64,25 @@ export interface ObjectUses {
   openContainer(reference: number, closed: () => void): void;
   /** The player takes an item lying in the world. */
   take(object: CellObject): void;
+  /** The player reads a book lying in the world (the book menu; it can be taken from there). */
+  read(object: CellObject): void;
   /** The player sleeps in a bed (the sleep menu). TODO(M10): getting into the bed first. */
   sleep(object: CellObject): void;
   /** A load door was opened: its prompt stays while its place loads. */
   loadDoor(text: string): void;
+  /** Its lock now, if it is locked (scripts lock and unlock: the state, else as placed). */
+  lockOf(object: CellObject): ObjectLock | undefined;
+  /**
+   * Opens a lock: with its key (sOpenWithKey), else by picking it (the lockpicking menu);
+   * `then` once it is open by its key (activating it goes on).
+   */
+  unlock(object: CellObject, then: () => void): void;
 }
 
 /**
  * What activating a placed object does: load doors take the player to their destination;
  * other doors open and close. In a running game (`uses`) containers open their menu (their
- * lid opening meanwhile), items are taken, beds slept in. TODO(M11): flora harvested (FLOR
+ * lid opening meanwhile), books read, other items taken, beds slept in. TODO(M11): flora harvested (FLOR
  * PFIG), owned objects stolen (sSteal, sStealFrom) and locked ones picked (the lockpicking
  * menu). TODO(M10): sitting (sSit). TODO(M9): workbenches (the crafting menu).
  */
@@ -93,6 +103,20 @@ export function objectActivation(
   };
   const verb = (setting: string, english: string): string => uses?.text(setting) ?? english;
   const teleport = object.teleport;
+  // A locked door or container: "Unlock", its name with its lock's level (UESP, "Lockpicking").
+  const lock = (object.baseType === 'DOOR' || object.baseType === 'CONT') && uses?.lockOf(object);
+  if (uses && lock) {
+    const name = teleport ? travel.name(teleport) : object.name;
+    return {
+      verb: verb('sUnlock', 'Unlock'),
+      name: `${name} (${uses.text(lockLevelSetting(lockDifficulty(lock.level)))})`,
+      activate: () => {
+        uses.unlock(object, () => {
+          objectActivation(object, instance, travel, sound, uses)?.activate();
+        });
+      },
+    };
+  }
   if (teleport) {
     const name = travel.name(teleport);
     return {
@@ -123,6 +147,16 @@ ${name}`);
           play(object.sounds?.close);
           sequence('close');
         });
+      },
+    };
+  }
+  if (uses && object.item && object.readable) {
+    return {
+      verb: verb('sRead', 'Read'),
+      name: object.name,
+      item: object.item,
+      activate: () => {
+        uses.read(object);
       },
     };
   }
