@@ -50,6 +50,12 @@ are i32 indices into the header string table (−1 = empty).
 - **BSEffectShaderProperty**: source texture and greyscale texture are SizedStrings; four
   bytes (clamp mode, lighting influence, env map min LOD, unused) sit between them and the
   falloff floats.
+- **BSShaderTextureSet**: some vanilla sets hold exporter leftovers in slots without a
+  texture: the 4-byte string backspace + `NOR` or `ERR` (`"\bNOR"`; e.g. the normal slot of
+  `eyeschild.nif`, the FaceGen heads that carry those eyes, the blacksmith forge, small birds
+  and 13 grass objects; 74 such slots in the vanilla meshes). A control character is no file name, so
+  `normalizeTexturePath` reads them as empty slots (default texture) instead of asking for
+  `textures\<BS>nor`, which a log prints as `textures\nor`.
 - **NiAlphaProperty**: flags u16 (bit 0 blend, bits 1-4 src, 5-8 dst, bit 9 test, 10-12 test
   function) + threshold u8.
 

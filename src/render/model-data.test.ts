@@ -11,9 +11,17 @@ describe('normalizeTexturePath', () => {
     ['skyrimhd\\build\\pc\\data\\textures\\plants\\potato01.dds', 'textures\\plants\\potato01.dds'],
     ['textures\\metadata\\x.dds', 'textures\\metadata\\x.dds'],
     ['  ', ''],
+    ['textures\\clutter\\bucket.dds\0', 'textures\\clutter\\bucket.dds'],
   ])('%j → %j', (input, expected) => {
     expect(normalizeTexturePath(input)).toBe(expected);
   });
+
+  it.each(['\bNOR', '\bERR', 'textures\\a\u0001.dds', '\0\0'])(
+    'gives no texture for the exporter leftover %j (a control character is no file name)',
+    (input) => {
+      expect(normalizeTexturePath(input)).toBe('');
+    },
+  );
 });
 
 describe('packTriShapeData', () => {

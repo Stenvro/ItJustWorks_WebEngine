@@ -237,10 +237,19 @@ const APP_CULLED = 0x1;
  * Texture paths in NIFs are relative to Data, usually (but not always) with `textures\`.
  * Some vanilla meshes keep an absolute build path (`skyrimhd\build\pc\data\textures\...`):
  * like the engine, everything up to the last `data\` folder is dropped.
+ *
+ * Some vanilla texture sets hold exporter leftovers instead of a path in empty slots: a
+ * backspace and `NOR` or `ERR` (`"\bNOR"`, e.g. the normal slot of eyeschild.nif, the forge,
+ * birds and grass). A control character cannot be part of a file name, so such a slot names
+ * no texture and is empty ('' : the default texture), instead of asking the VFS for
+ * `textures\<BS>nor` (which a log shows as `textures\nor`).
  */
 export function normalizeTexturePath(path: string): string {
-  if (path.trim() === '') return '';
-  let normalized = normalizePath(path);
+  // Trailing NULs of a sized string that counted its terminator are not part of the name.
+  const name = path.replace(/\0+$/, '').trim();
+  // eslint-disable-next-line no-control-regex -- control characters are what is looked for
+  if (name === '' || /[\x00-\x1f\x7f]/.test(name)) return '';
+  let normalized = normalizePath(name);
   const dataFolder = /(?:^|\\)data\\/g;
   let cut = -1;
   for (let match = dataFolder.exec(normalized); match; match = dataFolder.exec(normalized)) {
