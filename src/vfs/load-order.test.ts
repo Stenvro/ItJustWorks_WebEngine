@@ -142,6 +142,7 @@ describe('hasAnniversaryContent', () => {
     isLight: name.endsWith('.esl'),
     isMaster: true,
     modIndex: 0,
+    lightIndex: undefined,
   });
 
   it('is false with only the free Creations', () => {
