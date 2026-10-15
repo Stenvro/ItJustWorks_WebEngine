@@ -115,6 +115,12 @@ export interface PlayWorld {
   player(): PlayerView | undefined;
 }
 
+/** Vite reloads the page (development): leaving it is not asked about. */
+let viteReloading = false;
+import.meta.hot?.on('vite:beforeFullReload', () => {
+  viteReloading = true;
+});
+
 const wait = (ms: number): Promise<void> =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -152,6 +158,44 @@ export class PlayMode {
   #loadingText = '';
   /** Leaving Play (Quit to Desktop): back to the engine's own main menu. */
   onQuit: (() => void) | undefined;
+
+  /**
+   * The shell's way out (its brand clicked): in a game it asks as the journal's Quit to Desktop
+   * does ("Quit to desktop?  Any unsaved progress will be lost.", Yes / No) before Play ends;
+   * from the main menu Play ends at once. Not while a place loads.
+   */
+  quitFromShell(): void {
+    const boxes = this.#messageBoxes;
+    if (!boxes) {
+      if (!this.#starting) this.onQuit?.();
+      return;
+    }
+    if (this.#session.loading || this.#asking) return;
+    this.#asking = true;
+    void (async () => {
+      const settings = await this.#session.settings();
+      const key = '$Quit to desktop?  Any unsaved progress will be lost.';
+      const text = this.#host.translate(key) ?? key.slice(1);
+      const yes = settings.string('sYes') ?? 'Yes';
+      const no = settings.string('sNo') ?? 'No';
+      const choice = await boxes.show(text, [yes, no]);
+      if (choice === 0) this.onQuit?.();
+    })().finally(() => {
+      this.#asking = false;
+    });
+  }
+
+  /** The shell's quit question is showing. */
+  #asking = false;
+
+  /**
+   * While a game runs the page asks before it is left: outside full screen the browser's own
+   * shortcuts act on the game's keys (Ctrl+W, sneaking forward, closes the tab; F5, Quicksave,
+   * reloads it) and the game would go with it. Vite reloading the page in development passes.
+   */
+  readonly #leaving = (event: BeforeUnloadEvent): void => {
+    if (!viteReloading) event.preventDefault();
+  };
 
   constructor(
     session: GameSession,
@@ -496,6 +540,7 @@ export class PlayMode {
       },
     };
     document.addEventListener('pointerlockchange', this.#pointerLockChanged);
+    window.addEventListener('beforeunload', this.#leaving);
     document.addEventListener('keydown', this.#consoleKey);
   }
 
@@ -909,6 +954,8 @@ export class PlayMode {
   stop(): void {
     this.#stopMainTheme(0);
     this.#endGame();
+    // The world the game played in goes with it (the shell shows no game behind it).
+    this.#world.leave();
     this.#session.hud.screen = undefined;
     this.#world.follow(false);
     this.#mist?.hide();
@@ -921,6 +968,7 @@ export class PlayMode {
   /** The game's menus, HUD and menu mode go (Play ends, or the game goes back to its menu). */
   #endGame(): void {
     document.removeEventListener('pointerlockchange', this.#pointerLockChanged);
+    window.removeEventListener('beforeunload', this.#leaving);
     document.removeEventListener('keydown', this.#consoleKey);
     this.#console.close();
     this.#dialogue?.close();

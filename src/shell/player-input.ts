@@ -31,7 +31,11 @@ export function attachPlayerInput(
     }
   };
   const onKeyUp = (event: KeyboardEvent): void => {
-    press(player.eventsOfKey(event.code), false);
+    const events = player.eventsOfKey(event.code);
+    // A game key's release is the game's too: Alt (Sprint) let go would focus the browser's
+    // menu button.
+    if (events && !typing(event.target)) event.preventDefault();
+    press(events, false);
   };
   const onMouseDown = (event: MouseEvent): void => {
     if (!locked()) {
