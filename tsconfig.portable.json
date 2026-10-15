@@ -1,6 +1,6 @@
 {
-  // Platform-independent code (parsers, the VFS core, the Papyrus VM and collision data): no DOM and no
-  // Node types.
+  // Platform-independent code (parsers, the VFS core, the Papyrus VM, collision data and the
+  // gameplay models): no DOM and no Node types.
   // If that code accidentally uses a browser or Node API, `npm run typecheck` fails.
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
@@ -16,7 +16,9 @@
     "src/physics/collision-data.ts",
     "src/physics/collision-layers.ts",
     "src/animation",
-    "src/audio/xwma-decoder.ts"
+    "src/audio/xwma-decoder.ts",
+    "src/gameplay",
+    "src/world/crafting-records.ts"
   ],
   "exclude": ["src/**/*.test.ts", "src/vfs/browser"]
 }
