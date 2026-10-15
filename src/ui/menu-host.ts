@@ -298,8 +298,16 @@ export class Menu {
   focus(): void {
     const element = this.#element;
     if (!element) return;
+    // Ruffle clears the movie's Selection as its element gets focus again; the movie's own
+    // focus (CLIK's FocusHandler follows Selection: the tween menu's handleInput) comes back.
+    const before = this.#api ? this.invoke('Selection.getFocus') : undefined;
     if (document.activeElement === element) element.blur();
     element.focus();
+    if (typeof before !== 'string') return;
+    setTimeout(() => {
+      if (this.#closed || this.#element !== element) return;
+      if (this.invoke('Selection.getFocus') === null) this.invoke('Selection.setFocus', before);
+    }, 0);
   }
 
   close(): void {
