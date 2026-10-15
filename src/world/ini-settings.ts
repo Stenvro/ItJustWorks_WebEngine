@@ -47,6 +47,7 @@ export const INI_DEFAULTS = {
   },
   Controls: {
     bAlwaysRunByDefault: 1,
+    bInvertYValues: 0,
     fMouseHeadingSensitivity: 0.0125,
     fMouseHeadingXScale: 0.02,
     fMouseHeadingYScale: 0.85,
@@ -55,7 +56,34 @@ export const INI_DEFAULTS = {
   Display: {
     fDefault1stPersonFOV: 80,
     fDefaultWorldFOV: 80,
+    fGamma: 1,
+    // Point lights, specular and shadows fade out from these distances (Skyrim_Default.ini).
+    fLightLODStartFade: 3500,
     fNearDistance: 15,
+    fShadowLODStartFade: 1000,
+    fSpecularLODStartFade: 2000,
+  },
+  GamePlay: {
+    bShowFloatingQuestMarkers: 1,
+    iDifficulty: 2,
+  },
+  // The player's settings that the High preset (High.ini) gives.
+  Grass: {
+    fGrassStartFadeDistance: 7000,
+  },
+  LOD: {
+    fLODFadeOutMultActors: 9,
+    fLODFadeOutMultItems: 6,
+    fLODFadeOutMultObjects: 9,
+  },
+  Main: {
+    bCrosshairEnabled: 1,
+  },
+  SaveGame: {
+    bSaveOnRest: 1,
+    bSaveOnTravel: 1,
+    bSaveOnWait: 1,
+    fAutosaveEveryXMins: 15,
   },
   General: {
     bBorderRegionsEnabled: 1,
@@ -69,6 +97,10 @@ export const INI_DEFAULTS = {
     uMaxNumPhysicsStepsPerUpdate: 3,
   },
   Interface: {
+    // Subtitles of the conversations the player is in, and of all other speech.
+    bDialogueSubtitles: 0,
+    bGeneralSubtitles: 0,
+    fHUDOpacity: 1,
     fActivatePickLength: 180,
     fActivatePickRadius: 16,
     fFadeToBlackFadeSeconds: 1,
@@ -104,20 +136,41 @@ export const INI_DEFAULTS = {
 
 type Defaults = typeof INI_DEFAULTS;
 
+/** Settings the player changed (the game's SkyrimPrefs.ini), over the INI files. */
+export interface IniOverrides {
+  number(section: string, key: string): number | undefined;
+}
+
 export class IniSettings {
   readonly #ini: Ini | undefined;
+  readonly #overrides: IniOverrides | undefined;
 
-  constructor(ini: Ini | undefined) {
+  constructor(ini: Ini | undefined, overrides?: IniOverrides) {
     this.#ini = ini;
+    this.#overrides = overrides;
   }
 
-  /** A numeric setting: the INI file's value if it has a valid one, else the default. */
+  /**
+   * A numeric setting: the player's if they changed it, else the INI file's value if it has a
+   * valid one, else the default.
+   */
   number<S extends keyof Defaults>(section: S, key: keyof Defaults[S] & string): number {
+    const own = this.#overrides?.number(section, key);
+    if (own !== undefined) return own;
     const fallback = INI_DEFAULTS[section][key] as number;
     const text = this.#ini && iniValue(this.#ini, section, key);
     if (text === undefined) return fallback;
     const value = Number.parseFloat(text);
     return Number.isFinite(value) ? value : fallback;
+  }
+
+  /** A setting by its section and key as text ("Interface", "bDialogueSubtitles"), if listed. */
+  lookup(section: string, key: string): number | undefined {
+    const defaults = (INI_DEFAULTS as Readonly<Record<string, Readonly<Record<string, number>>>>)[
+      section
+    ];
+    if (defaults?.[key] === undefined) return undefined;
+    return this.number(section as keyof Defaults, key as never);
   }
 
   bool<S extends keyof Defaults>(section: S, key: keyof Defaults[S] & string): boolean {

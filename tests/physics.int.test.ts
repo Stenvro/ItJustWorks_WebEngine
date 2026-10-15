@@ -2,7 +2,11 @@
 // game data. Skipped without game data.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { parseControlMap, SCAN_CODES } from '../src/formats/controlmap/controlmap.ts';
+import {
+  parseControlMap,
+  SCAN_CODES,
+  type ControlMap,
+} from '../src/formats/controlmap/controlmap.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
 import { decodeWindows1252 } from '../src/formats/text.ts';
 import { CharacterBody } from '../src/physics/character.ts';
@@ -26,6 +30,9 @@ import { Worldspace } from '../src/world/worldspace.ts';
 import { WorldBorder } from '../src/world/border.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
+/** A player's bindings: the control map's, with no remaps. */ const withBase = (
+  controls: ControlMap,
+) => ({ baseControls: controls, controls });
 
 const BREEZEHOME = 0x000165a8;
 const WHITERUN_WORLD = 0x0001a26f;
@@ -266,8 +273,10 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
       {
         body: await readPlayerBody(db, async (path) => parseNif(await vfs.read(path))),
         ini: new IniSettings(vfs.defaultIni),
-        controls: parseControlMap(
-          decodeWindows1252(await vfs.read('interface\\controls\\pc\\controlmap.txt')),
+        ...withBase(
+          parseControlMap(
+            decodeWindows1252(await vfs.read('interface\\controls\\pc\\controlmap.txt')),
+          ),
         ),
         movement: {
           normal: type('NPCDefault'),
@@ -424,8 +433,10 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
       {
         body: await readPlayerBody(db, async (path) => parseNif(await vfs.read(path))),
         ini: new IniSettings(vfs.defaultIni),
-        controls: parseControlMap(
-          decodeWindows1252(await vfs.read('interface\\controls\\pc\\controlmap.txt')),
+        ...withBase(
+          parseControlMap(
+            decodeWindows1252(await vfs.read('interface\\controls\\pc\\controlmap.txt')),
+          ),
         ),
         movement: {
           normal: type('NPCDefault'),

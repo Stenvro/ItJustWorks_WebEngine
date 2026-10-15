@@ -512,7 +512,12 @@ export class ModelViewer {
     physics.impactSpeed = playerData.ini.number('Audio', 'fMinSoundVel');
     physics.settleSeconds = playerData.ini.number('HAVOK', 'fWarmStartMaxTime');
     const player = new Player(
-      { ...playerData, physics, waterHeight: (x, y, z) => this.#waterAt(x, y, z)?.height },
+      {
+        ...playerData,
+        physics,
+        waterHeight: (x, y, z) => this.#waterAt(x, y, z)?.height,
+        controlsNow: () => playerData.controls,
+      },
       feet,
       yaw,
     );
@@ -1420,6 +1425,7 @@ export class ModelViewer {
             this.#tickClock(),
             camera.position,
             (id) => this.#emittanceRgb(id),
+            this.#session?.ini.number('Display', 'fLightLODStartFade'),
           ),
         }),
         imageSpace: () => imageSpace,

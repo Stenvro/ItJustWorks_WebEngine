@@ -69,6 +69,8 @@ import { AssetLoader } from '../workers/asset-loader.ts';
 import { PluginIndexer } from '../workers/plugin-indexer.ts';
 import { ActorPlacer } from './actors.ts';
 import { AnimationAssets } from './animation-assets.ts';
+import { audioSettingKey, Preferences } from './preferences.ts';
+import { ControlSettings } from './control-settings.ts';
 import type { Terminal } from './terminal.ts';
 
 const numberFormat = new Intl.NumberFormat('en-US');
@@ -106,6 +108,22 @@ const describe = (error: unknown): string =>
 
 export class GameSession {
   readonly vfs: Vfs;
+  /** The player's own key bindings (the journal's Controls page), kept in the browser. */
+  readonly controlSettings = new ControlSettings(
+    typeof localStorage === 'undefined' ? undefined : localStorage,
+  );
+  /** The player's settings (the game's SkyrimPrefs.ini), kept in the browser. */
+  readonly preferences = new Preferences(
+    typeof localStorage === 'undefined' ? undefined : localStorage,
+  );
+
+  /** The INI settings: the player's over the installation's over the engine's defaults. */
+  get ini(): IniSettings {
+    this.#ini ??= new IniSettings(this.vfs.defaultIni, this.preferences);
+    return this.#ini;
+  }
+
+  #ini: IniSettings | undefined;
   readonly loader: AssetLoader;
   readonly textures: TextureCache;
   /** Behavior projects, Havok skeletons and clips (actors and animated objects). */
@@ -428,9 +446,21 @@ export class GameSession {
    * and the movement types, read once.
    */
   playerData(): Promise<PlayerData> {
-    this.#playerData ??= this.db.then(async (db) =>
-      readPlayerData(db, this.vfs, await this.settings(), (path) => this.nif(path)),
-    );
+    this.#playerData ??= this.db.then(async (db) => {
+      const data = await readPlayerData(
+        db,
+        this.vfs,
+        await this.settings(),
+        (path) => this.nif(path),
+        this.preferences,
+      );
+      // The player's own bindings over the control map, and as they change.
+      data.controls = this.controlSettings.apply(data.baseControls);
+      this.controlSettings.onChange(() => {
+        data.controls = this.controlSettings.apply(data.baseControls);
+      });
+      return data;
+    });
     return this.#playerData;
   }
 
@@ -825,7 +855,12 @@ export class GameSession {
     this.#sounds ??= this.db.then(async (db) => {
       const loader = new AudioLoader(this.vfs);
       this.#audioLoader = loader;
-      const sounds = await SoundSystem.create(db, loader, new IniSettings(this.vfs.defaultIni));
+      const sounds = await SoundSystem.create(db, loader, this.ini);
+      // The player's volumes (the journal's audio settings).
+      for (const category of sounds.engine.menuCategories) {
+        const volume = this.preferences.number('Audio', audioSettingKey(category.formId));
+        if (volume !== undefined) sounds.engine.setUserVolume(category.formId, volume);
+      }
       sounds.onWarning = (message) => {
         this.#terminal.log('audio', message, 'warn');
       };

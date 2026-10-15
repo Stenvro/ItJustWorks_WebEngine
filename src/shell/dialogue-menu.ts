@@ -186,7 +186,10 @@ export class DialogueMenu {
           ? undefined
           : await engine.voiceFile(spoken, response.number, voiceType);
       const line: SpokenLine | undefined = path ? await placer.say(speaker, path) : undefined;
-      this.#menu.call('ShowDialogueText', response.text);
+      // Its text shows with the setting Dialogue Subtitles (off by default, as in the game).
+      if (this.#session.ini.bool('Interface', 'bDialogueSubtitles')) {
+        this.#menu.call('ShowDialogueText', response.text);
+      }
       // The menu lets the player skip once the voice is ready.
       this.#menu.call('NotifyVoiceReady');
       const seconds = line?.duration ?? Math.max(1, response.text.length * perCharacter);

@@ -78,6 +78,19 @@ export class AudioEngine {
     return volume;
   }
 
+  /** The categories with a settings slider (the master first), in their records' order. */
+  get menuCategories(): SoundCategory[] {
+    return [...this.#categoryData.values()]
+      .filter((category) => category.onMenu)
+      .sort((a, b) => Number(a.parent !== undefined) - Number(b.parent !== undefined));
+  }
+
+  /** The user's volume for a category with a settings slider (its default until set). */
+  userVolume(category: number): number {
+    const data = this.#categoryData.get(category);
+    return this.#userVolumes.get(category) ?? data?.menuVolume ?? 1;
+  }
+
   /** The user's volume for a category with a settings slider (0–1). */
   setUserVolume(category: number, volume: number): void {
     this.#userVolumes.set(category, volume);
@@ -123,11 +136,6 @@ export class AudioEngine {
     if (this.#inMenu && data?.editorId.toLowerCase().startsWith(PAUSED_IN_MENUS)) return 0;
     const user = this.#userVolumes.get(formId) ?? (data?.onMenu ? data.menuVolume : 1);
     return (data?.volume ?? 1) * user;
-  }
-
-  /** The categories with a settings slider. */
-  get menuCategories(): readonly SoundCategory[] {
-    return [...this.#categoryData.values()].filter((category) => category.onMenu);
   }
 
   /** The current acoustic space's reverb (undefined or silent: none). */

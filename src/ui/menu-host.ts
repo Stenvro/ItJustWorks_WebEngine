@@ -50,11 +50,17 @@ export interface MenuOptions {
    */
   readonly onKey?: (menu: Menu, event: KeyboardEvent) => boolean;
   /**
-   * Keys the movie gets as other keys, by KeyboardEvent.code (the control map's menu mode:
-   * Cancel is Tab and Esc, Accept is Enter and E, so Esc reaches a movie as Tab).
+   * Keys the movie gets as other keys, by KeyboardEvent.code, besides those every menu does
+   * (Esc as Tab, E as Enter: the control map's menu contexts).
    */
   readonly keyAs?: Readonly<Record<string, string>>;
 }
+
+/**
+ * Keys every menu takes as others, as the control map's menu contexts have them: Cancel is
+ * Esc and Tab, Accept is E and Enter, and the menus test Tab and Enter.
+ */
+const MENU_KEYS: Readonly<Record<string, string>> = { Escape: 'Tab', KeyE: 'Enter' };
 
 /** CLIK's input manager, which every menu built on CLIK reads its keys from. */
 const INPUT_DELEGATE = 'gfx.managers.InputDelegate.instance';
@@ -367,6 +373,11 @@ export class MenuHost {
   }
 
   /** Puts keyboard focus on the topmost interactive menu. */
+  /** A translation key's text, as the menus show it (once the translations have loaded). */
+  translate(key: string): string | undefined {
+    return this.#translations?.translate(key);
+  }
+
   focusTop(): void {
     this.#topInteractive()?.focus();
   }
@@ -507,7 +518,7 @@ export class MenuHost {
       event.stopPropagation();
       return;
     }
-    const as = top.options.keyAs?.[event.code];
+    const as = top.options.keyAs?.[event.code] ?? MENU_KEYS[event.code];
     const code = flashKeyCode(as ?? event.code);
     if (code === undefined || top.typing) return;
     const type = !down ? 'keyUp' : event.repeat ? 'keyHold' : 'keyDown';

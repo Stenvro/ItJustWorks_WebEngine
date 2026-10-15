@@ -9,11 +9,9 @@
 import type { Renderer } from '../render/renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
-import { IniSettings } from '../world/ini-settings.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import { parseItem } from '../world/item-records.ts';
 import { itemSound } from '../gameplay/inventory.ts';
-import type { ControlMap } from '../formats/controlmap/controlmap.ts';
 import { buttonArt, userEvent } from '../ui/button-art.ts';
 import {
   parseLoadingScreen,
@@ -31,6 +29,7 @@ import { ConsoleCommands } from './console-commands.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
 import type { PlacedActor } from './actors.ts';
+import type { PlayerData } from './player.ts';
 import type { Terminal } from './terminal.ts';
 
 /**
@@ -112,8 +111,8 @@ export class PlayMode {
   /** The menus open that pause the game (menu mode while there is one). */
   #pausing = 0;
   #starting = false;
-  /** The input bindings (the menus show the keys of the events their texts name). */
-  #controls: ControlMap | undefined;
+  /** The player's data: its bindings (the menus show the keys of the events their texts name). */
+  #playerData: PlayerData | undefined;
   /** The loading menu's text (the loading screen's, once chosen). */
   #loadingText = '';
   /** Leaving Play (Quit to Desktop): back to the engine's own main menu. */
@@ -133,9 +132,9 @@ export class PlayMode {
     const log = (message: string): void => {
       terminal.log('ui', message);
     };
-    const ini = new IniSettings(session.vfs.defaultIni);
+    const ini = session.ini;
     void session.playerData().then((data) => {
-      this.#controls = data.controls;
+      this.#playerData = data;
     });
     this.#host = new MenuHost(
       layer,
@@ -157,7 +156,7 @@ export class PlayMode {
         // A text's "[Activate]": the art of the key bound to it, answered at once (the menu
         // reads it right after asking).
         GetButtonFromUserEvent: (menu, args) => {
-          menu.respond(args[0], buttonArt(userEvent(this.#controls, String(args[1]))));
+          menu.respond(args[0], buttonArt(userEvent(this.#playerData?.controls, String(args[1]))));
         },
       },
     );
@@ -256,6 +255,8 @@ export class PlayMode {
       heading: () => this.#world.heading(),
       runtime: () => session.scriptsReady,
       settings: session.settings(),
+      ini: () => session.ini,
+      onSettingsChange: (listener) => session.preferences.onChange(listener),
     });
     this.#hud = hud;
     await hud.open();

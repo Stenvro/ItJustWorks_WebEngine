@@ -16,7 +16,7 @@ import { GRAB_DEFAULTS, type GrabSettings } from '../physics/grab.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vfs } from '../vfs/vfs.ts';
 import type { GameSettings } from '../world/game-settings.ts';
-import { IniSettings } from '../world/ini-settings.ts';
+import { IniSettings, type IniOverrides } from '../world/ini-settings.ts';
 import { MaterialFlag, parseMaterialType } from '../world/material-type.ts';
 import { directionalSpeed, parseMovementType, type MovementType } from '../world/movement.ts';
 import { readPlayerBody, type PlayerBody } from '../world/player-body.ts';
@@ -34,7 +34,9 @@ export interface PlayerMovement {
 export interface PlayerData {
   readonly body: PlayerBody;
   readonly ini: IniSettings;
-  readonly controls: ControlMap;
+  /** The installation's control map, and the bindings in use (the player's remaps on it). */
+  readonly baseControls: ControlMap;
+  controls: ControlMap;
   readonly movement: PlayerMovement;
   /** GMST fJumpHeightMin: how high a jump goes (game units). */
   readonly jumpHeight: number;
@@ -56,6 +58,8 @@ export async function readPlayerData(
   vfs: Vfs,
   settings: GameSettings,
   nif: (path: string) => Promise<NifFile>,
+  /** The player's own settings over the INI files (the journal's settings pages). */
+  preferences?: IniOverrides,
 ): Promise<PlayerData> {
   const [body, controlText] = await Promise.all([readPlayerBody(db, nif), vfs.read(CONTROL_MAP)]);
   const types = new Map<string, MovementType>();
@@ -78,11 +82,13 @@ export async function readPlayerData(
     const material = parseMaterialType(record);
     if ((material.flags & MaterialFlag.stairs) !== 0) stairMaterials.add(material.id);
   }
+  const controls = parseControlMap(decodeWindows1252(controlText));
   return {
     body,
     stairMaterials,
-    ini: new IniSettings(vfs.defaultIni),
-    controls: parseControlMap(decodeWindows1252(controlText)),
+    ini: new IniSettings(vfs.defaultIni, preferences),
+    baseControls: controls,
+    controls,
     // The behavior graph's movement states (MOVT MNAM).
     movement: {
       normal: type('NPCDefault'),
@@ -118,6 +124,8 @@ export const MAX_SLOPE = 60;
 
 export interface PlayerSetup extends PlayerData {
   readonly physics: PhysicsWorld;
+  /** The bindings in use now (they change as the player remaps keys). */
+  readonly controlsNow?: () => ControlMap;
   /** The surface of the water a point (the feet) is in or over, if any. */
   readonly waterHeight: (x: number, y: number, z: number) => number | undefined;
 }
@@ -230,8 +238,24 @@ export class Player implements Camera {
     // more at the sides).
     const fov = (ini.number('Display', 'fDefaultWorldFOV') * Math.PI) / 180;
     this.#fovY = 2 * Math.atan(Math.tan(fov / 2) * 0.75);
-    // Main gameplay bindings by browser key code and mouse button.
-    for (const event of setup.controls.contexts[0] ?? []) {
+    this.rebind(setup.controls);
+  }
+
+  /** The bindings the maps were made from. */
+  #bound: ControlMap | undefined;
+
+  /** Makes the maps again if the player's bindings changed. */
+  #current(): void {
+    const now = this.#setup.controlsNow?.() ?? this.#setup.controls;
+    if (now !== this.#bound) this.rebind(now);
+  }
+
+  /** Takes the main gameplay bindings by browser key code and mouse button (anew: remaps). */
+  rebind(controls: ControlMap): void {
+    this.#bound = controls;
+    this.#keyEvents.clear();
+    this.#mouseEvents.clear();
+    for (const event of controls.contexts[0] ?? []) {
       for (const binding of event.keys) {
         if (binding.length !== 1) continue; // combinations: screenshots
         const code = SCAN_CODES.get(binding[0] ?? 0);
@@ -358,6 +382,7 @@ export class Player implements Camera {
 
   /** The key a user event is bound to, as printed on the keyboard ("E", "Space"). */
   keyOf(name: string): string | undefined {
+    this.#current();
     for (const [code, events] of this.#keyEvents) {
       if (events.includes(name)) return code.replace(/^(Key|Digit)/, '');
     }
@@ -562,11 +587,13 @@ export class Player implements Camera {
 
   /** The user events bound to a key (by KeyboardEvent.code). */
   eventsOfKey(code: string): readonly string[] | undefined {
+    this.#current();
     return this.#keyEvents.get(code);
   }
 
   /** The user events bound to a mouse button (control map ids). */
   eventsOfMouse(button: number): readonly string[] | undefined {
+    this.#current();
     return this.#mouseEvents.get(button);
   }
 
@@ -586,11 +613,13 @@ export class Player implements Camera {
       ini.number('Controls', 'fMouseHeadingSensitivity') *
       ini.number('Controls', 'fMouseHeadingXScale');
     this.yaw += countsX * perCount;
+    // The setting Invert Y (bInvertYValues) turns looking up and down around.
+    const invert = ini.bool('Controls', 'bInvertYValues') ? -1 : 1;
     this.pitch = Math.max(
       -MAX_PITCH,
       Math.min(
         MAX_PITCH,
-        this.pitch - countsY * perCount * ini.number('Controls', 'fMouseHeadingYScale'),
+        this.pitch - invert * countsY * perCount * ini.number('Controls', 'fMouseHeadingYScale'),
       ),
     );
   }

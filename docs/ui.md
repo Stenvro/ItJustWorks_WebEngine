@@ -424,7 +424,38 @@ Play. Help: `PopulateHelpTopics(list)` gets the topics of HelpManualPC (FLST 0x1
 its messages, by their titles) as `{text, index}`; `RequestHelpText(index, titleField,
 textField)` sets the message's title and text, and the menu turns its "[Event]"s into key art
 (`GetButtonFromUserEvent`, answered for every menu in Play). TODO(M12): saving and loading.
-TODO(M9): the settings, the controls, Show on Map.
+TODO(M9): Show on Map.
+
+Settings (`src/shell/journal-settings.ts`, `src/shell/settings-options.ts`): the movie lists each
+page's entries and asks the engine to fill them (`RequestGameplayOptions`, `RequestDisplayOptions`,
+`RequestAudioOptions(entryList)`): an entry the engine has gets its `ID` (the INI setting,
+"Interface:bDialogueSubtitles"), `value` and `defaultVal`; those left without an ID are dropped
+(the console's and Kinect's options, Survival Mode, Tree LOD Fade and DDOF Intensity: TODO(M13)).
+A slider's value is its position 0..1 (the movie moves its bar by value × 20), a stepper's its
+index, a checkbox's 0 or 1. The slider ends are the game's where known: Object, Actor and Item
+Fade from the Low to the Ultra preset of the installation (Low.ini, Ultra.ini: 5–30, 5–15,
+1.5–10), Grass, Light, Specularity and Shadow Fade from 0 to the maxima in Skyrim_Default.ini
+(7000, 3500, 2000, 1000); Brightness and Look Sensitivity are not documented (linear about their
+defaults, Brightness fGamma 0.5–1.5: TODO(M13) check against the game). The audio page lists the master; the engine adds the
+sound categories with a slider (SNCT: on the menu, its name, UNAM its default). `OptionChange(ID,
+value)` changes a setting, `SaveSettings` keeps them (`src/shell/preferences.ts`: in the
+browser, as the game's SkyrimPrefs.ini). The engine reads them through `IniSettings` over the
+INI files and applies them at once: Dialogue Subtitles (the dialogue menu's text; off by default,
+as in the game), Crosshair (`SetCrosshairEnabled`), HUD Opacity, Invert Y, Grass Fade, Light
+Fade, Brightness (fGamma, the final image's gamma), the volumes. TODO(M13): Object, Actor, Item,
+Specularity and Shadow Fade (references and effects fading by distance). Leaving a changed page
+the menu says "Saving...", calls `SaveSettings` and waits for the engine's `SettingsSaved`.
+
+Controls (`src/shell/journal-controls.ts`, keyboard and mouse): `RequestInputMappings(entryList)`
+gets the main gameplay events the player may remap (the control map's remappable columns) as
+`{text, buttonName}` (the menu shows "$" + the name, and the art of the key or button);
+`StartRemapMode(event, entryList)`: the next key or mouse button the player presses becomes the
+event's, `FinishRemapMode(true)` and the list's art redone; a key a fixed gameplay event uses
+(Esc for Pause, the hotkeys' digits) is reserved (`FinishRemapMode(false)`); a key another
+remappable event used goes to it in exchange (`src/formats/controlmap/remap.ts`).
+`ResetControlsToDefaults` returns to the control map; `SaveControls` keeps the bindings in the
+browser (as the game's ControlMap_Custom.txt) and the engine answers `SettingsSaved`. The
+player takes new bindings at once.
 
 ## Dialogue
 

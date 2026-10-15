@@ -2,7 +2,8 @@
 // THIRD_PARTY_NOTICES.md.
 // Image post-processing as the game's HDR imagespace shader does it: eye adaptation from
 // two running averages of the scene luminance, a Reinhard tone curve, bloom added where the
-// image is dark enough to receive it, then saturation, tint, brightness and contrast.
+// image is dark enough to receive it, then saturation, tint, brightness and contrast; last the
+// player's brightness setting (fGamma) as a gamma curve.
 // ASCII only.
 
 const LUMINANCE = vec3f(0.2125, 0.7154, 0.0721);
@@ -10,7 +11,7 @@ const LUMINANCE = vec3f(0.2125, 0.7154, 0.0721);
 struct Post {
   // x: receive bloom threshold, y: tone curve shape (1 / white^2), z: eye adaptation on.
   param: vec4f,
-  // x: saturation, y: unused, z: contrast, w: brightness.
+  // x: saturation, y: 1 / the player's gamma (fGamma), z: contrast, w: brightness.
   cinematic: vec4f,
   // Tint colour (rgb) and amount (a).
   tint: vec4f,
@@ -90,5 +91,6 @@ fn fs_composite(input: FullscreenOut) -> @location(0) vec4f {
   let tinted = post.cinematic.w * mix(saturated, luminance * post.tint.rgb, post.tint.a);
   let pivot = select(0.5, adapted.x, post.param.z > 0.5);
   let contrasted = mix(vec3f(pivot), tinted, post.cinematic.z);
-  return vec4f(clamp(contrasted, vec3f(0.0), vec3f(1.0)), 1.0);
+  let graded = clamp(contrasted, vec3f(0.0), vec3f(1.0));
+  return vec4f(pow(graded, vec3f(post.cinematic.y)), 1.0);
 }

@@ -780,6 +780,7 @@ export class WorldViewer {
         ...playerData,
         physics,
         waterHeight: (px, py, pz) => this.#waterAt(px, py, pz)?.height,
+        controlsNow: () => playerData.controls,
       },
       feet,
       comeIn?.heading ?? 0,
@@ -1925,7 +1926,8 @@ export class WorldViewer {
             ) === cellKey(cell.x, cell.y),
         ),
       ];
-      for (const light of pointLights(cellLights, seconds, camera, this.#emittanceRgb)) {
+      const startFade = this.#session?.ini.number('Display', 'fLightLODStartFade');
+      for (const light of pointLights(cellLights, seconds, camera, this.#emittanceRgb, startFade)) {
         lights.push({
           ...light,
           distance: Math.hypot(
