@@ -87,6 +87,13 @@ export interface LookOverrides {
   readonly skinTone?: readonly [number, number, number];
   /** FTST: the face's texture set. */
   readonly faceTexture?: number;
+  /**
+   * The outfit worn instead of the record's (Actor.SetOutfit); null: none (the player, who
+   * wears what is equipped).
+   */
+  readonly outfit?: number | null;
+  /** Armor equipped in the game (EquipItem, the inventory): it takes its slots first. */
+  readonly equipped?: readonly number[];
 }
 
 export interface ActorLook {
@@ -417,9 +424,15 @@ export class ActorResolver {
     const female = (traits.flags & NpcFlag.female) !== 0;
     const sex = female ? 1 : 0;
 
-    // Armor of the outfit, then the skin (the actor's own, or its race's).
-    const items =
-      inventory.outfit === undefined ? [] : await this.#outfit(inventory.outfit, level, random);
+    // Armor equipped in the game, the outfit's, then the skin (the actor's own, or its race's).
+    const outfit =
+      overrides.outfit === undefined ? inventory.outfit : (overrides.outfit ?? undefined);
+    const items = [
+      ...new Set([
+        ...(overrides.equipped ?? []),
+        ...(outfit === undefined ? [] : await this.#outfit(outfit, level, random)),
+      ]),
+    ];
     const armor: WornAddon[] = [];
     for (const item of items) armor.push(...(await this.#wear(item, race, female, false)));
     const owners = slotOwners(armor);

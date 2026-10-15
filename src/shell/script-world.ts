@@ -173,6 +173,32 @@ export class ScriptWorld implements WorldBridge {
   }
 
   /** Actor.SetRace: the actor is made again in its new race where it is shown. */
+  /** Actors whose equipment changed, made again together once the scripts' turn is over. */
+  readonly #dressing = new Set<number>();
+
+  /**
+   * What an actor wears changed (EquipItem, UnequipAll, the inventory): it is made again (once
+   * for several changes in a row: a script dressing it piece by piece).
+   */
+  equipmentChanged(actor: number): void {
+    if (this.#dressing.size === 0) {
+      setTimeout(() => {
+        const actors = [...this.#dressing];
+        this.#dressing.clear();
+        for (const changed of actors) {
+          this.lookChanged(changed).catch((error: unknown) => {
+            this.#terminal.log(
+              'actor',
+              `${changed.toString(16)}: not dressed again: ${error instanceof Error ? error.message : String(error)}`,
+              'warn',
+            );
+          });
+        }
+      }, 0);
+    }
+    this.#dressing.add(actor);
+  }
+
   raceChanged(actor: number): void {
     this.lookChanged(actor).catch((error: unknown) => {
       this.#terminal.log(
