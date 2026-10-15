@@ -72,6 +72,83 @@ const formatHour = (hour: number): string => {
   return `${String(Math.floor(minutes / 60)).padStart(2, '0')}:${String(minutes % 60).padStart(2, '0')}`;
 };
 
+/** The climate's sun and its glare (else the engine's). */
+export function sunTextures(climate: ClimateRecord | undefined): {
+  sunTexture: string;
+  sunGlareTexture: string;
+} {
+  return {
+    sunTexture: orDefault(climate?.sunTexture, DEFAULT_SUN),
+    sunGlareTexture: orDefault(climate?.sunGlareTexture, DEFAULT_SUN_GLARE),
+  };
+}
+
+/** The sky's directional light (fading at the horizon), ambient and fog. */
+export function skyLighting(
+  state: SkyState,
+  imageSpace: ImageSpace | undefined,
+): Omit<SceneLighting, 'lights'> {
+  // The light fades as the sun (or the night light) nears the horizon.
+  const height = Math.abs(state.sunDirection[2]);
+  // The imagespace's Sunlight Scale brightens the directional light (HDR).
+  const fade = Math.min(1, height / 0.05) * (imageSpace?.hdr.sunlightScale ?? 1);
+  const [ambientX, ambientNX, ambientY, ambientNY, ambientZ, ambientNZ] = state.ambient.colors;
+  const dark = [0, 0, 0] as const;
+  return {
+    sunDirection: [...state.lightDirection],
+    sunColor: [state.sunlight[0] * fade, state.sunlight[1] * fade, state.sunlight[2] * fade],
+    ambient: [
+      [...(ambientX ?? dark)],
+      [...(ambientNX ?? dark)],
+      [...(ambientY ?? dark)],
+      [...(ambientNY ?? dark)],
+      [...(ambientZ ?? dark)],
+      [...(ambientNZ ?? dark)],
+    ],
+    wind: state.windSpeed,
+    windDirection: (state.windDirection * Math.PI) / 180,
+    fog: {
+      nearColor: [...state.fogNear],
+      farColor: [...state.fogFar],
+      near: state.fogNearDistance,
+      far: state.fogFarDistance,
+      power: state.fogPower,
+      max: state.fogMax,
+    },
+  };
+}
+
+/** The sky's dome, clouds and stars on the GPU (the climate's sky model, else the default). */
+export async function createGpuSky(
+  session: GameSession,
+  sky: SkyRenderer,
+  climate: ClimateRecord | undefined,
+  terminal: Terminal,
+): Promise<GpuSky> {
+  const [atmosphere, clouds, stars] = await Promise.all(
+    [
+      'meshes\\sky\\atmosphere.nif',
+      'meshes\\sky\\clouds.nif',
+      orDefault(climate?.skyModel, DEFAULT_SKY_MODEL),
+    ].map(async (path) => {
+      try {
+        return skyShapes(await session.nif(path));
+      } catch (error) {
+        terminal.log(
+          'sky',
+          `${path}: ${error instanceof Error ? error.message : String(error)}`,
+          'warn',
+        );
+        return [];
+      }
+    }),
+  );
+  return sky.createSky(
+    { atmosphere: atmosphere ?? [], clouds: clouds ?? [], stars: stars ?? [] },
+    session.textures,
+  );
+}
+
 export class WorldSky {
   readonly #db: RecordDatabase;
   readonly #ui: SkyElements;
@@ -193,28 +270,7 @@ export class WorldSky {
     const climateId = world.climateWorld.climate;
     const climateRecord = climateId === undefined ? undefined : await db.get(climateId);
     const climate = climateRecord ? parseClimate(climateRecord) : undefined;
-    const [atmosphere, clouds, stars] = await Promise.all(
-      [
-        'meshes\\sky\\atmosphere.nif',
-        'meshes\\sky\\clouds.nif',
-        orDefault(climate?.skyModel, DEFAULT_SKY_MODEL),
-      ].map(async (path) => {
-        try {
-          return skyShapes(await session.nif(path));
-        } catch (error) {
-          terminal.log(
-            'sky',
-            `${path}: ${error instanceof Error ? error.message : String(error)}`,
-            'warn',
-          );
-          return [];
-        }
-      }),
-    );
-    const gpu = sky.createSky(
-      { atmosphere: atmosphere ?? [], clouds: clouds ?? [], stars: stars ?? [] },
-      session.textures,
-    );
+    const gpu = await createGpuSky(session, sky, climate, terminal);
     return new WorldSky(
       session,
       db,
@@ -376,8 +432,7 @@ export class WorldSky {
     return {
       sky: this.#gpu,
       state,
-      sunTexture: orDefault(this.#climate?.sunTexture, DEFAULT_SUN),
-      sunGlareTexture: orDefault(this.#climate?.sunGlareTexture, DEFAULT_SUN_GLARE),
+      ...sunTextures(this.#climate),
     };
   }
 
@@ -398,36 +453,7 @@ export class WorldSky {
 
   /** Directional light, ambient and fog of the last frame. */
   lighting(): Omit<SceneLighting, 'lights'> | undefined {
-    const state = this.#state;
-    if (!state) return undefined;
-    // The light fades as the sun (or the night light) nears the horizon.
-    const height = Math.abs(state.sunDirection[2]);
-    // The imagespace's Sunlight Scale brightens the directional light (HDR).
-    const fade = Math.min(1, height / 0.05) * (this.#imageSpace?.hdr.sunlightScale ?? 1);
-    const [ambientX, ambientNX, ambientY, ambientNY, ambientZ, ambientNZ] = state.ambient.colors;
-    const dark = [0, 0, 0] as const;
-    return {
-      sunDirection: [...state.lightDirection],
-      sunColor: [state.sunlight[0] * fade, state.sunlight[1] * fade, state.sunlight[2] * fade],
-      ambient: [
-        [...(ambientX ?? dark)],
-        [...(ambientNX ?? dark)],
-        [...(ambientY ?? dark)],
-        [...(ambientNY ?? dark)],
-        [...(ambientZ ?? dark)],
-        [...(ambientNZ ?? dark)],
-      ],
-      wind: state.windSpeed,
-      windDirection: (state.windDirection * Math.PI) / 180,
-      fog: {
-        nearColor: [...state.fogNear],
-        farColor: [...state.fogFar],
-        near: state.fogNearDistance,
-        far: state.fogFarDistance,
-        power: state.fogPower,
-        max: state.fogMax,
-      },
-    };
+    return this.#state && skyLighting(this.#state, this.#imageSpace);
   }
 
   dispose(): void {

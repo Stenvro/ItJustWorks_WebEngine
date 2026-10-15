@@ -21,6 +21,15 @@ import {
 } from '../world/loading-screens.ts';
 import { InterfaceFiles } from '../ui/interface-files.ts';
 import { MistMenu } from './mist-menu.ts';
+import {
+  CELL_NO_FAST_TRAVEL,
+  fastTravelHours,
+  noFastTravelReason,
+  WORLD_NO_FAST_TRAVEL,
+} from '../gameplay/fast-travel.ts';
+import { ActorValue } from '../world/actor-values.ts';
+import { carriedWeight } from './inventory-menu.ts';
+import type { LocalMapContent } from './local-map.ts';
 import { HudController } from './hud-controller.ts';
 import { MessageBoxes } from './message-boxes.ts';
 import { GameMenus } from './game-menus.ts';
@@ -89,6 +98,8 @@ export interface PlayWorld {
   leave(): void;
   /** The player is off the ground (falling, jumping). */
   inAir(): boolean;
+  /** What the map's local map shows where the player is (the viewer on screen's). */
+  localMap(): LocalMapContent | undefined;
 }
 
 const wait = (ms: number): Promise<void> =>
@@ -269,6 +280,10 @@ export class PlayMode {
     const menus = new GameMenus(this.#host, session, this.#terminal, () => this.#enterMenuMode(), {
       inAir: () => this.#world.inAir(),
       confirm: (text, buttons) => boxes.show(text, buttons),
+      heading: () => this.#world.heading(),
+      localMap: () => this.#world.localMap(),
+      noFastTravelReason: () => this.#noFastTravelReason(),
+      fastTravel: (destination, distance) => this.#fastTravel(destination, distance),
     });
     this.#menus = menus;
     menus.onQuit = (toDesktop) => {
@@ -315,6 +330,15 @@ export class PlayMode {
         if (talking) dialogue.shown = false;
         return menus.openScripted(request).finally(() => {
           if (talking) dialogue.shown = true;
+        });
+      },
+      fastTravel: (destination) => {
+        this.#fastTravel(destination, undefined).catch((error: unknown) => {
+          this.#terminal.log(
+            'ui',
+            `the fast travel failed: ${error instanceof Error ? error.message : String(error)}`,
+            'error',
+          );
         });
       },
     };
@@ -368,6 +392,95 @@ export class PlayMode {
     };
     document.addEventListener('pointerlockchange', this.#pointerLockChanged);
     document.addEventListener('keydown', this.#consoleKey);
+  }
+
+  /** Why the player may not fast travel now (src/gameplay/fast-travel.ts), if not. */
+  async #noFastTravelReason(): Promise<string | undefined> {
+    const session = this.#session;
+    const runtime = session.scriptsReady;
+    if (!runtime) return 'sNoFastTravelDefault';
+    const at = session.scriptWorld.livePlacement(PLAYER_REF);
+    const db = runtime.forms.db;
+    let placeForbids = false;
+    if (at?.world !== undefined) {
+      const world = await db.get(at.world);
+      placeForbids = ((world?.fields.first('DATA')?.[0] ?? 0) & WORLD_NO_FAST_TRAVEL) !== 0;
+    } else if (at?.cell !== undefined) {
+      const data = (await db.get(at.cell))?.fields.first('DATA');
+      const flags = (data?.[0] ?? 0) | ((data?.[1] ?? 0) << 8);
+      placeForbids = (flags & CELL_NO_FAST_TRAVEL) !== 0;
+    }
+    return noFastTravelReason({
+      enabled: runtime.fastTravelEnabled,
+      placeForbids,
+      inAir: this.#world.inAir(),
+      carried: await carriedWeight(runtime, PLAYER_REF),
+      carryWeight: (await runtime.actors.value(PLAYER_REF, ActorValue.carryWeight)).current,
+    });
+  }
+
+  /**
+   * Fast travel (the map, Game.FastTravel): the time the way takes passes, and the player goes
+   * to the destination behind a loading screen, as through a load door.
+   */
+  async #fastTravel(destination: number, distance: number | undefined): Promise<void> {
+    const session = this.#session;
+    const runtime = session.scriptsReady;
+    if (!runtime) return;
+    const at = await runtime.placement(destination);
+    if (!at) {
+      this.#terminal.log('ui', `fast travel: ${destination.toString(16)} is nowhere`, 'warn');
+      return;
+    }
+    let way = distance;
+    if (way === undefined) {
+      const from = session.scriptWorld.livePlacement(PLAYER_REF);
+      way =
+        from?.world !== undefined && from.world === at.world
+          ? Math.hypot(at.position[0] - from.position[0], at.position[1] - from.position[1])
+          : 0;
+    }
+    const player = await session.playerData();
+    const settings = await session.settings();
+    const hours = fastTravelHours(
+      way,
+      player.movement.normal.walk.forward,
+      settings.number('fFastTravelSpeedMult') ?? 1,
+      session.timeScale,
+    );
+    if (hours > 0) session.advanceClock(hours);
+    await this.#loadInto(at);
+  }
+
+  /** Goes to a place behind the loading menu and a loading screen, in menu mode, the HUD away. */
+  async #loadInto(at: Placement): Promise<void> {
+    const session = this.#session;
+    const runtime = session.scriptsReady;
+    let leave: (() => void) | undefined = this.#enterMenuMode();
+    session.hud.shown(false);
+    let mist: MistMenu | undefined;
+    try {
+      mist = await MistMenu.show(session, this.#renderer, false);
+      const screen = runtime && (await this.#pickLoadingScreen(runtime));
+      this.#loadingText = screen?.text ?? '';
+      await this.#openLoadingMenu();
+      if (screen) await mist.showLoadingScreen(screen);
+      else mist.showMist();
+      // The place loads with the game running (the player is put down in it), behind the
+      // loading menu.
+      leave();
+      leave = undefined;
+      await this.#world.enter(at);
+    } finally {
+      const loading = this.#loadingMenu;
+      loading?.invoke('_root.Menu_mc.FadeOutMenu');
+      await wait(FADE_OUT_MS);
+      if (loading) this.#host.close(loading);
+      this.#loadingMenu = undefined;
+      mist?.hide();
+      session.hud.shown(true);
+      leave?.();
+    }
   }
 
   /** The console (~): over the game and its menus, in menu mode while open. */
@@ -587,6 +700,8 @@ export class PlayMode {
 
   /** The loading menu, its text the loading screen's. */
   async #openLoadingMenu(): Promise<void> {
+    const runtime = this.#session.scriptsReady;
+    const level = runtime ? await runtime.actors.level(PLAYER_REF) : 1;
     this.#loadingMenu = await this.#host.open('loadingmenu.swf', {
       depth: DEPTH.loadingMenu,
       interactive: false,
@@ -594,9 +709,10 @@ export class PlayMode {
         RequestLoadingText: (menu, args) => {
           menu.respond(args[0], this.#loadingText);
         },
-        // A new game's player: level 1, no progress; the meter is not shown (no save yet).
+        // The player's level and progress (a new game's: level 1); the meter shows in a
+        // game (not before a new game's first save). TODO(M11): the progress to the next level.
         RequestPlayerInfo: (menu, args) => {
-          menu.respond(args[0], 1, 0, false);
+          menu.respond(args[0], level, 0, this.#hud !== undefined);
         },
       },
       setup: async (menu) => {

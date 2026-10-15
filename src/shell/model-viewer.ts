@@ -95,6 +95,10 @@ import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-soun
 import type { GameSession } from './game-session.ts';
 import { clock, startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
+import type { LocalMapContent } from './local-map.ts';
+
+/** NorthMarker (Skyrim.esm STAT 0x3): which way an interior's local map is up. */
+const NORTH_MARKER = 0x3;
 
 export interface SearchElements {
   readonly panel: HTMLElement;
@@ -233,6 +237,51 @@ export class ModelViewer {
   onPlayerSent: ((at: Placement) => void) | undefined;
 
   /** The player in this view's scene, if one plays it. */
+  /**
+   * What the map's local map shows in the cell played in: its objects and load doors (enabled)
+   * and the area they span. Undefined unless a cell is played in.
+   */
+  localMapContent(): LocalMapContent | undefined {
+    const cell = this.#cell;
+    const scene = this.#scene;
+    if (!cell || !scene || !this.#play) return undefined;
+    const min: [number, number] = [Infinity, Infinity];
+    const max: [number, number] = [-Infinity, -Infinity];
+    const isEnabled = this.#enableState(cell);
+    for (const object of cell.data.objects) {
+      if (!isEnabled(object.reference)) continue;
+      const x = object.world[12] ?? 0;
+      const y = object.world[13] ?? 0;
+      min[0] = Math.min(min[0], x);
+      min[1] = Math.min(min[1], y);
+      max[0] = Math.max(max[0], x);
+      max[1] = Math.max(max[1], y);
+    }
+    if (!Number.isFinite(min[0])) return undefined;
+    // The cell's NorthMarker (STAT 0x3): its +Y is up on the local map.
+    const north = cell.data.objects.find((object) => object.base === NORTH_MARKER)?.world;
+    return {
+      scenes: () => [scene, ...(this.#created?.scenes() ?? [])],
+      terrain: () => [],
+      area: { min, max },
+      interior: true,
+      cell: cell.data.cell.formId,
+      ...(north && { north: Math.atan2(north[4] ?? 0, north[5] ?? 1) }),
+      doors: () =>
+        cell.data.objects.flatMap((object) =>
+          object.teleport && isEnabled(object.reference)
+            ? [
+                {
+                  reference: object.reference,
+                  teleport: object.teleport,
+                  position: [object.world[12] ?? 0, object.world[13] ?? 0, object.world[14] ?? 0],
+                },
+              ]
+            : [],
+        ),
+    };
+  }
+
   get player(): Player | undefined {
     return this.#play?.player;
   }

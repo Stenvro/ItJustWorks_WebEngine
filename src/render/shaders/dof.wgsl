@@ -4,7 +4,8 @@
 // for weathers ("distant" blur, Community Shaders ISDepthOfField.hlsl, DISTANT): beyond the
 // focus distance the image turns into its blurred copy over the range, up to the strength.
 // Where the sky is not blurred, a sky pixel is blurred only next to geometry (by the share of
-// sky around it), so silhouettes soften against the sky. Runs on the tone-mapped image.
+// sky around it), so silhouettes soften against the sky. The world map blurs its own way
+// (ISWorldMap, below). Runs on the tone-mapped image.
 // ASCII only.
 
 struct Dof {
@@ -12,6 +13,8 @@ struct Dof {
   params: vec4f,
   // 1 / width, 1 / height of the image, the camera's near plane, unused.
   screen: vec4f,
+  // The world map's blur (y > 0): focal depth, maximum step, step per unit, near scale.
+  map: vec4f,
 };
 
 @group(0) @binding(0) var<uniform> dof: Dof;
@@ -45,6 +48,9 @@ fn dofDepthAt(pixel: vec2i) -> f32 {
 
 @fragment
 fn fs_dof(input: FullscreenOut) -> @location(0) vec4f {
+  if (dof.map.y > 0.0) {
+    return worldMapBlur(input);
+  }
   let color = textureSampleLevel(image, dofSampler, input.uv, 0.0).rgb;
   let blur = textureSampleLevel(blurred, dofSampler, input.uv, 0.0).rgb;
   let pixel = vec2i(input.position.xy);
@@ -77,4 +83,28 @@ fn fs_dof(input: FullscreenOut) -> @location(0) vec4f {
   let amount = clamp((distance - dof.params.y) / max(dof.params.z, 1.0), 0.0, 1.0) *
     dof.params.x * (1.0 - 0.5 * skyShare);
   return vec4f(mix(color, blur, amount), 1.0);
+}
+
+// The world map's blur (Community Shaders' ISWorldMap.hlsl): a 7x7 box over the image, its step
+// (pixels) the distance from the focal depth times the scale, up to the maximum; nearer than
+// the focus, times the near scale; none on the sky when the sky is not blurred.
+fn worldMapBlur(input: FullscreenOut) -> vec4f {
+  let depth = dofDepthAt(vec2i(input.position.xy));
+  let distance = select(1e9, dof.screen.z / depth, depth > DOF_SKY_DEPTH);
+  var step = min(dof.map.y, dof.map.z * abs(distance - dof.map.x));
+  if (depth <= DOF_SKY_DEPTH && dof.params.w < 0.5) {
+    step = 0.0;
+  }
+  if (distance < dof.map.x) {
+    step *= dof.map.w;
+  }
+  let texel = dof.screen.xy * step;
+  let start = input.uv - 3.0 * texel;
+  var sum = vec3f(0.0);
+  for (var i = 0; i < 7; i++) {
+    for (var j = 0; j < 7; j++) {
+      sum += textureSampleLevel(image, dofSampler, start + texel * vec2f(f32(i), f32(j)), 0.0).rgb;
+    }
+  }
+  return vec4f(sum / 49.0, 1.0);
 }

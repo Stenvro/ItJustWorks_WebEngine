@@ -7,6 +7,7 @@
 import { BinaryReader, FormatError } from '../binary-reader.ts';
 import { rewriteAvm1Strings, type StringRewrite } from './avm1-rewrite.ts';
 import { SwfTagCode } from './swf.ts';
+import { decodeUtf8, decodeWindows1252 } from '../text.ts';
 
 /** Reads bit fields from a byte position, most significant bit first. */
 class Bits {
@@ -105,6 +106,37 @@ function skipFilters(bytes: Uint8Array, at: number): number {
     }
   }
   return reader.offset;
+}
+
+/** What a PlaceObject2/3 places: at which depth, which character (if new) and its name. */
+export interface Placement {
+  readonly depth: number;
+  readonly character: number | undefined;
+  readonly name: string | undefined;
+}
+
+export function readPlacement(body: Uint8Array, code: number): Placement {
+  const flags = body[0] ?? 0;
+  const third = code === SwfTagCode.placeObject3;
+  const flags2 = third ? (body[1] ?? 0) : 0;
+  let at = third ? 2 : 1;
+  const depth = (body[at] ?? 0) | ((body[at + 1] ?? 0) << 8);
+  at += 2;
+  if (third && (flags2 & 0x08 || (flags2 & 0x10 && flags & 0x02))) at = skipString(body, at);
+  let character: number | undefined;
+  if (flags & 0x02) {
+    character = (body[at] ?? 0) | ((body[at + 1] ?? 0) << 8);
+    at += 2;
+  }
+  if (flags & 0x04) at = skipMatrix(body, at);
+  if (flags & 0x08) at = skipColorTransform(body, at);
+  if (flags & 0x10) at += 2; // ratio
+  let name: string | undefined;
+  if (flags & 0x20) {
+    const end = skipString(body, at);
+    name = decodeUtf8(body, at, end - 1) ?? decodeWindows1252(body, at, end - 1);
+  }
+  return { depth, character, name };
 }
 
 /** Where a PlaceObject2/3's clip actions start, or undefined if it has none. */

@@ -91,6 +91,11 @@ export interface SceneView {
   readonly shadows?: boolean;
   /** Called once a frame before the scenes animate (actors take their poses). */
   readonly update?: (timeSeconds: number) => void;
+  /**
+   * The view's own clock (seconds) for its models' animations, where the game's stands still
+   * (the map's clouds drift while the game is in its menu).
+   */
+  readonly clock?: () => number;
 }
 
 interface RenderTargets {
@@ -177,7 +182,7 @@ export class Renderer {
     this.decals = new DecalRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.precipitation = new PrecipitationRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.post = new PostProcessor(device, format);
-    this.#menu = new MenuOverlay(device, format, this.scene);
+    this.#menu = new MenuOverlay(device, format, this.scene, this.terrain);
 
     const module = device.createShaderModule({ label: 'backdrop', code: backdropShader });
     this.#backdrop = device.createRenderPipeline({
@@ -225,6 +230,12 @@ export class Renderer {
     // A new view starts adapted to itself (like after a loading screen).
     this.post.resetAdaptation();
     this.#view = view;
+  }
+
+  /** The canvas's size in pixels at the last frame. */
+  get size(): readonly [number, number] {
+    const targets = this.#targets;
+    return targets ? [targets.width, targets.height] : [1, 1];
   }
 
   get view(): SceneView | undefined {
@@ -293,7 +304,9 @@ export class Renderer {
     const scenes = view ? [...view.scenes()] : [];
     // Controllers of the placed models (UV scrolling, turning parts, idle sequences) and
     // their particle systems.
-    if (view) this.scene.animate(scenes, timeSeconds, view.camera.position, wind);
+    if (view) {
+      this.scene.animate(scenes, view.clock?.() ?? timeSeconds, view.camera.position, wind);
+    }
     const overlay = this.overlay;
     const overlayScenes = overlay ? this.#menu.prepare(overlay, targets) : [];
     const hdrView = this.post.hdrView(targets.width, targets.height);

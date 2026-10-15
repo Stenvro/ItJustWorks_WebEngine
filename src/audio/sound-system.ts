@@ -153,6 +153,9 @@ export class SoundSystem {
   #areas: { readonly area: AcousticArea; readonly toLocal: Mat4 }[] = [];
   /** The interior's acoustic space (cell XCAS), used when no area holds the listener. */
   #cellSpace: number | undefined;
+  /** A menu's acoustic space (the map's) and its fade time, over the world's. */
+  #menuSpace: number | undefined;
+  #menuFade: number | undefined;
   /** The acoustic space in effect, its ambience loop, and a counter against stale loads. */
   #space: number | undefined;
   #ambientLoop: SoundInstance | undefined;
@@ -596,6 +599,18 @@ export class SoundSystem {
     this.#cellSpace = space;
   }
 
+  /**
+   * A menu's acoustic space over the world's (the map's UIWorldMap), fading over
+   * `fadeSeconds`;
+   * undefined gives the world's back.
+   */
+  setMenuSpace(space: number | undefined, fadeSeconds?: number): void {
+    this.#menuSpace = space;
+    this.#menuFade = fadeSeconds;
+    this.#updateSpace();
+    if (space === undefined) this.#menuFade = undefined;
+  }
+
   /** The placed acoustic spaces of the loaded exterior cells (enabled ones). */
   setAcousticAreas(areas: readonly AcousticArea[]): void {
     this.#areas = areas.flatMap((area) => {
@@ -874,8 +889,8 @@ export class SoundSystem {
 
   /** The acoustic space around the listener: an area holding it, else the interior's. */
   #updateSpace(): void {
-    let space = this.#cellSpace;
-    for (const { area, toLocal } of this.#areas) {
+    let space = this.#menuSpace ?? this.#cellSpace;
+    for (const { area, toLocal } of this.#menuSpace === undefined ? this.#areas : []) {
       const [x, y, z] = transformPoint(toLocal, this.#listener);
       if (
         x >= area.min[0] &&
@@ -897,7 +912,7 @@ export class SoundSystem {
     this.#space = space;
     const version = ++this.#spaceVersion;
     // [Audio] fASFadeInTime and fASFadeOutTime: a space's ambience fades in and out.
-    this.#ambientLoop?.fadeOut(this.#ini.number('Audio', 'fASFadeOutTime'));
+    this.#ambientLoop?.fadeOut(this.#menuFade ?? this.#ini.number('Audio', 'fASFadeOutTime'));
     this.#ambientLoop = undefined;
     if (space === undefined) {
       this.#spaceRegion = undefined;
@@ -914,7 +929,7 @@ export class SoundSystem {
       const loop = await this.play(
         data.ambient,
         undefined,
-        this.#ini.number('Audio', 'fASFadeInTime'),
+        this.#menuFade ?? this.#ini.number('Audio', 'fASFadeInTime'),
       );
       if (version !== this.#spaceVersion) {
         loop?.stop(true);

@@ -442,7 +442,10 @@ Play. Help: `PopulateHelpTopics(list)` gets the topics of HelpManualPC (FLST 0x1
 its messages, by their titles) as `{text, index}`; `RequestHelpText(index, titleField,
 textField)` sets the message's title and text, and the menu turns its "[Event]"s into key art
 (`GetButtonFromUserEvent`, answered for every menu in Play). TODO(M12): saving and loading.
-TODO(M9): Show on Map.
+Show on Map: an objective with a target on the map gets the `questTargetID` of its first
+target (its reference); the movie closes the journal and calls `ShowTargetOnMap(id)`, and the
+map opens over that target (`src/shell/game-menus.ts`: the map of the target's world, without
+the player when it is another map).
 
 Settings (`src/shell/journal-settings.ts`, `src/shell/settings-options.ts`): the movie lists each
 page's entries and asks the engine to fill them (`RequestGameplayOptions`, `RequestDisplayOptions`,
@@ -749,3 +752,138 @@ legendary count)`: a skill's card on the ring, a perk's in a tree (its rank, sRe
   conditions (the CTDA before its effects) hold: Accept asks sStatsPerkConfirm, then it is the
   player's (the next rank of a perk with ranks, NNAM). Space at a skill of 100 makes it Legendary
   (sLegendaryResetConfirm, sLegendaryResetSecondConfirm): back to 15, its perks' points returned.
+
+## The map
+
+`map.swf` over the engine's 3D world map (`src/shell/map-menu.ts`, the 3D in
+`src/shell/world-map-view.ts`, its camera in `src/world/map-camera.ts`; M, or the tween menu's
+Map). The movie's root makes `WorldMap = new Map.MapMenu()`; its bottom bar (journal, local map,
+the player's place, the date) and its markers are the movie's, everything under them the
+engine's.
+
+- **The 3D.** The renderer draws the map in place of the world (`Renderer.setView`) while it is
+  open. The world as its distant LOD draws it, locked to one block size everywhere: terrain at
+  uLockedTerrainLOD (32), objects at uLockedObjectMapLOD (16), no tree billboards. The sky,
+  light and imagespaces are those of WorldMapWeather (WTHR 000A6858, its own ISWorldMapWeather
+  DAWN/DAY/DUSK/NIGHT imagespaces) at the game's time. Nothing in the data names that weather or
+  the map's sound: the engine takes them by form id. The imagespace gets [Display]
+  fGlobalMapBloomThresholdBoost, fGlobalMapBrightnessBoost and fGlobalMapContrastBoost added, and
+  the map's blur (ISWorldMap, Community Shaders' ISWorldMap.hlsl, in
+  `src/render/shaders/dof.wgsl`): a 7 × 7 box whose step (pixels) is the distance from
+  fWorldMapFocalDepth times fWorldMapDepthBlurScale, up to fWorldMapMaximumDepthBlur, times
+  fWorldMapNearDepthBlurScale nearer than the focus (the clouds near the camera); the sky too
+  unless bWorldMapNoSkyDepthBlur. The clouds are the map world's WRLD MODL
+  (Solstheim: `DLC02\Sky\DLC2WorldMapCloudBank_Low.nif`). Tamriel has none and gets
+  `meshes\sky\skyrimworldmapcloudbank.nif`, which no record names.
+- **Which map.** A world shows its map world's map: its parent's when it uses the parent's map
+  data (WRLD PNAM 0x4, as Whiterun's world uses Tamriel's), else its own (WRLD MNAM). Its places
+  are moved onto that map by WRLD ONAM: position × scale + offset. Blackreach is scaled 2.5 under
+  Tamriel. Small worlds (the East Empire Warehouse) have scale 0 or 0.0001 and sit at one point.
+  A negative scale (Sovngarde, Apocrypha) puts the world on no map. The player inside (a house, a
+  dungeon) shows at the outer side of the door that leads in (`src/world/exterior-doors.ts`: the
+  load doors' way out, fewest doors first). Without a place on any map the map opens on
+  [MapMenu] sMapWorldDefaultWorldSpace (Tamriel), at its middle.
+- **The camera** (WRLD MNAM: the map's cells NW (−30, 15) .. SE (40, −40) for Tamriel, heights
+  50000 .. 80000, pitch 50). It opens over the player and rises from fMapWorldTransitionHeight
+  above them to the highest height, fMapTransitionSpeed of the way a second. It always looks at
+  a point of the map, from the height at the pitch.
+  - The mouse wheel zooms (fMapZoomMouseSpeed: a tenth of the height range a notch, times it);
+    the height eases to where it was sent at fMapWorldHeightAdjustmentForce.
+  - The movement keys, and the cursor beyond fMapWorldCursorMoveArea of the screen toward an
+    edge, pan at fMapWorldMinPanSpeed (zoomed in) .. fMapWorldMaxPanSpeed (out).
+  - Look mode (MapLookMode: the right mouse button held) turns it by fMapLookMouseSpeed, within
+    fMapWorldYawRange about north and fMapWorldMinPitch .. fMapWorldMaxPitch.
+  - PlayerPosition (E, the bottom bar's button) glides back to the player in
+    fMapWorldTargetTransitionTime.
+  - The field of view is the world's (fDefaultWorldFOV), the near plane fMapMenuNearClipPlane.
+  - The pan and turn rates per unit of the settings are fitted: TODO(M13) the engine's.
+- **Markers.** Created once: `WorldMap.PlayerLocationMarkerType` (66, the YouAreHereMarker) and
+  `MarkerData` (name, icon, undiscovered: three per marker), `SetNumMarkers(n)`, then
+  `CreateMarkers` while `GetCreatingMarkers`. Every frame `MarkerData` is set again (shown, x, y
+  as shares of the screen, rotation: four per marker) and `RefreshMarkers` places them. The
+  icons are `Map.MapMarker.IconTypes`:
+  - 0 .. 59: a map marker's type (REFR TNAM: EmptyMarker, CityMarker, TownMarker, ...,
+    DLC02CastleKarstaagMarker).
+  - 61 DoorMarker, 62 QuestTargetMarker, 63 QuestTargetDoorMarker,
+    64 MultipleQuestTargetMarker, 65 PlayerSetMarker, 66 YouAreHereMarker.
+
+  The map shows:
+  - The map markers seen (the compass shows them on the map as they come near) or shown by the
+    plugin (XMRK FNAM 0x1); undiscovered ones get their Undiscovered icon.
+  - The targets of the active quests' shown objectives, those inside at the door that leads in.
+    Several quests at one place share one marker, which lists them.
+  - The player's own marker (sPlayerSetMarkerName).
+  - The player, an arrow turned with their heading.
+
+- **Choosing.** The marker nearest the cursor within fMaxMarkerSelectionDist (squared, in shares
+  of the screen's height) is the engine's choice: `MarkerDescriptionObj.SetDescription(title,
+lines)` (lines: `{Item, Value}`), then `SetSelectedMarker(index)`. A click on the map
+  (`ClickCallback`) on it calls `ClickSelectedMarker`, and the movie answers `MarkerClick(index)`:
+  - A discovered place asks sFastTravelConfirm and fast travels.
+  - An undiscovered one asks sPlaceMarkerUndiscovered and puts the player's marker on it.
+  - The player's own asks sMoveMarkerQuestion (sMoveMarker: the next click places it;
+    sRemoveMarker; sLeaveMarker).
+
+  PlacePlayerMarker (P) puts the player's marker on the landscape under the cursor (the ray
+  stepped onto the land's heights). Journal (J, its button) opens the journal, and Tab and Esc
+  close the map. While the map is open, its acoustic space UIWorldMap (ASPC 000C276B: the wind
+  loop AMBrWindBedWorldMapLP) plays, fading over fMapLoopFadeTimeSeconds.
+
+- **Fast travel** (`src/gameplay/fast-travel.ts`).
+  - It is refused when:
+    - scripts block it (sNoFastTravelScriptBlock);
+    - the world (WRLD DATA 0x2) or the interior (CELL DATA 0x4) forbids it (sNoFastTravelCell);
+    - the player is in the air (sNoFastTravelInAir);
+    - the player carries more than their carry weight (sNoFastTravelOverencumbered).
+  - The time passes that walking the way would take: the distance on the map, at the NPCDefault
+    movement type's forward walk speed times fFastTravelSpeedMult (1 unless a plugin sets it),
+    at the timescale. The game's rounding is unknown (UESP).
+  - The player arrives at the map marker's reference, behind the loading menu and a loading
+    screen, as through a load door. Game.FastTravel goes the same way.
+
+## The local map
+
+L, or the bottom bar's Local Map, in the map (`src/shell/local-map.ts`).
+
+- **The movie's side.** `WorldMap.LocalMapMenu` (a `Map.LocalMap`, `LocalMapFader.MapClip`) is
+  shown: `SetTitle(name, cleared)` (the player's location, CELL XLCN, and sCleared when it is
+  cleared), `Show(true)` (the fader's fade in), `InitMap()`. InitMap loads the engine's picture
+  into `LocalMapHolder_mc` (`img://Local_Map`, sized 800 × 450) and calls
+  `SetLocalMapExtents(x0, y0, x1, y1)` with the picture's corners on the stage. Its icons are a
+  `Map.MapMenu` of its own (`LocalMapMenu.IconDisplay`) over the picture's 800 × 450, made and
+  placed as the world map's are (x, y as shares of the picture).
+- **The picture.** In the game it is a render target Scaleform draws. Here the movie gets an
+  empty picture (`InterfaceFiles.emptyImage`, served for `img://` by the page's fetch). The
+  engine draws the local map under the movie, in the picture's place on the canvas, as the menus'
+  3D (`Renderer.overlay`, `src/render/menu-overlay.ts`), its landscape too.
+  - The movie draws the picture over its frame: an ornate grey border around a black field, at
+    80%. The movie is changed as it loads (`src/ui/movie-patches.ts`): the black fill of that
+    frame becomes transparent, so the border stays the movie's. The engine draws the black field
+    (80%, faded with the frame: `LocalMapMenu._alpha`) and the picture on it.
+  - The picture is the drawn image as the game's ISLocalMap makes it (Community Shaders'
+    ISLocalMap.hlsl). It is grey by luminance (× 1.04) and opaque by its edges: a Sobel filter
+    over the 8 neighbours, the channels weighted 0.5, 0.25, 1, squared, × 4, summed × 1.75, plus
+    the luminance. It fades toward the picture's sides (1 − (2|uv − ½|)⁵ on each axis) and is
+    hidden where the player has not been.
+- **What is drawn** (the viewer on screen: `WorldViewer.localMapContent`,
+  `ModelViewer.localMapContent`). Outside: the loaded cells' landscape and objects, seen from
+  fMapLocalHeight above the player. Inside: the cell, seen from just over the player's head
+  (`INTERIOR_CUT`: the ceilings over them go; fitted). It is lit from above, without fog.
+- **The camera** (`src/world/local-map-camera.ts`) is orthographic, north up outside. Inside, the
+  cell's NorthMarker (STAT 0x3) heading is up: the Creation Kit turns an interior's local map so.
+  - The picture spans fMapLocalMinFrustumWidth .. the loaded area (inside: the cell's extent).
+    The wheel zooms by fMapLocalMouseZoomSpeed a notch.
+  - Dragging with the left button (LocalMapMoveMode) moves the map with the cursor. The cursor
+    beyond fMapWorldCursorMoveArea of the picture toward a side moves it at
+    fMapLocalCursorPanSpeed.
+- **Icons** (fMapLocalMarkerSelectionDist from the cursor, in shares of the picture, chooses):
+  - the load doors (DoorMarker, their destination's name);
+  - the map markers in the area;
+  - the targets of the active quests there;
+  - the player's own marker;
+  - the player, its arrow turned by their heading less the map's.
+- **Fog of war** (`src/world/seen-data.ts`). Inside, what the player has come within SEEN_RADIUS
+  of (fitted: the game's is not documented) is seen. It is kept per cell as the engine family's
+  SEEN_DATA: a 32 × 32 bit grid for each 4096-unit block. The save's CELL change form holds it
+  (CHANGE_CELL_SEENDATA); its layout is not documented, TODO(M12). The rest stays dark (the
+  game's LOCALMAP_FOGOFWAR pass, which ISLocalMap reads as its alpha). Outside there is none.

@@ -13,6 +13,7 @@ import { parseTranslations, type Translations } from '../formats/swf/translation
 import { decodeUtf16le } from '../formats/text.ts';
 import { translateMovie } from './translate-movie.ts';
 import { linkImports } from '../formats/swf/swf-link.ts';
+import { patchMovie } from './movie-patches.ts';
 
 /** Where the interface folder is served: a movie's base URL. */
 export const INTERFACE_URL = '/@interface/';
@@ -26,6 +27,8 @@ export class InterfaceFiles {
   /** Movies as they play: translated (by path). */
   readonly #movies = new Map<string, Promise<Uint8Array>>();
   readonly #warn: (message: string) => void;
+  /** Pictures the engine gives the menus by name (img://Local_Map): PNG bytes. */
+  readonly #images = new Map<string, Promise<Uint8Array>>();
 
   constructor(vfs: Vfs, warn: (message: string) => void) {
     this.#vfs = vfs;
@@ -43,7 +46,9 @@ export class InterfaceFiles {
     if (!movie) {
       movie = Promise.all([this.#vfs.read(full), this.translations()]).then(
         async ([bytes, table]) => {
-          const translated = translateMovie(bytes, (text) => table.translate(text));
+          const translated = translateMovie(patchMovie(path, bytes), (text) =>
+            table.translate(text),
+          );
           // Movies it imports symbols from (not the font library) become part of it: a Flash
           // player loads imports after the frame that places them has run.
           return linkImports(
@@ -101,14 +106,38 @@ export class InterfaceFiles {
   }
 
   /**
+   * A picture the menus load as img://<name> (the engine's render targets in the game): an
+   * empty one (transparent, 1×1) where the engine draws under the movie itself.
+   */
+  emptyImage(name: string): void {
+    if (this.#images.has(name.toLowerCase())) return;
+    this.#images.set(
+      name.toLowerCase(),
+      new OffscreenCanvas(1, 1)
+        .convertToBlob({ type: 'image/png' })
+        .then(async (blob) => new Uint8Array(await blob.arrayBuffer())),
+    );
+  }
+
+  /**
    * Answers the page's fetches of INTERFACE_URL from these files (Ruffle fetches through
    * window.fetch); other requests pass through. Returns the way back.
    */
   serve(): () => void {
     const original = window.fetch.bind(window);
     const read = (relative: string): Promise<Uint8Array | undefined> => this.read(relative);
+    const images = this.#images;
     window.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
       const url = new URL(input instanceof Request ? input.url : String(input), location.href);
+      if (url.protocol === 'img:') {
+        const image = await images.get(decodeURIComponent(url.href.slice(6)).toLowerCase());
+        return image
+          ? new Response(image.slice().buffer, {
+              status: 200,
+              headers: { 'Content-Type': 'image/png', 'Content-Length': String(image.length) },
+            })
+          : new Response(null, { status: 404, statusText: 'Not Found' });
+      }
       if (url.origin !== location.origin || !url.pathname.startsWith(INTERFACE_URL)) {
         return original(input, init);
       }

@@ -25,6 +25,8 @@ import { BookMenu, type BookToRead } from './book-menu.ts';
 import { LockpickingMenu } from './lockpicking-menu.ts';
 import { SkillsMenu } from './skills-menu.ts';
 import { BookFlag, parseItem } from '../world/item-records.ts';
+import { MapMenu } from './map-menu.ts';
+import type { LocalMapContent } from './local-map.ts';
 
 /** The menus' depth among the game's menus (over the HUD, under message boxes). */
 const MENU_DEPTH = 6;
@@ -52,6 +54,14 @@ export interface MenusWorld {
   inAir(): boolean;
   /** A message box with buttons; resolves with the button chosen. */
   confirm(text: string, buttons: readonly string[]): Promise<number>;
+  /** The player's heading (radians, clockwise from north); undefined out of the world. */
+  heading(): number | undefined;
+  /** What the map's local map shows where the player is. */
+  localMap(): LocalMapContent | undefined;
+  /** Why the player may not fast travel now (a setting's name), if they may not. */
+  noFastTravelReason(): Promise<string | undefined>;
+  /** Fast travel to a reference, `distance` away on the map (the time it takes). */
+  fastTravel(destination: number, distance: number | undefined): Promise<void>;
 }
 
 export class GameMenus {
@@ -75,6 +85,9 @@ export class GameMenus {
   readonly #books: BookMenu;
   readonly #lockpicking: LockpickingMenu;
   readonly #skills: SkillsMenu;
+  readonly #map: MapMenu;
+  /** Show on Map chosen in the journal: the map opens on this reference as the journal closes. */
+  #mapFocus: number | undefined;
   /** A book open (over the world, or over the inventory it was read from). */
   #reading: { close(): void } | undefined;
 
@@ -94,12 +107,25 @@ export class GameMenus {
     this.#terminal = terminal;
     this.#enterMenuMode = enterMenuMode;
     this.#journal = new JournalMenu(host, session, terminal);
+    this.#journal.onShowOnMap = (reference) => {
+      this.#mapFocus = reference;
+    };
     this.#items = new ItemMenu(host, session, terminal);
     this.#books = new BookMenu(host, session, terminal);
     this.#lockpicking = new LockpickingMenu(host, session, terminal);
     this.#skills = new SkillsMenu(host, session, terminal, (text, buttons) =>
       world.confirm(text, buttons),
     );
+    this.#map = new MapMenu(host, session, terminal, {
+      heading: () => world.heading(),
+      localMap: () => world.localMap(),
+      confirm: (text, buttons) => world.confirm(text, buttons),
+      noFastTravelReason: () => world.noFastTravelReason(),
+      fastTravel: (marker, distance) => world.fastTravel(marker, distance),
+      openJournal: () => {
+        this.openMenu('Journal');
+      },
+    });
     this.#inventory = inventoryModel(session, terminal, (book) => this.#readFromInventory(book));
     this.#magic = magicModel(session, terminal);
     this.#favorites = new FavoritesMenu(host, session, this.#inventory, this.#magic);
@@ -145,14 +171,15 @@ export class GameMenus {
                   ? this.#openLevelUp()
                   : name === 'Skills'
                     ? this.#openSkills(false)
-                    : (() => {
-                        // TODO(M9): the map menu.
-                        if (!this.#missing.has(name)) {
-                          this.#missing.add(name);
-                          this.#terminal.log('ui', `the ${name} menu is not built yet`, 'warn');
-                        }
-                        return Promise.resolve();
-                      })();
+                    : name === 'Map'
+                      ? this.#openMap()
+                      : (() => {
+                          if (!this.#missing.has(name)) {
+                            this.#missing.add(name);
+                            this.#terminal.log('ui', `there is no ${name} menu`, 'warn');
+                          }
+                          return Promise.resolve();
+                        })();
     opening.catch((error: unknown) => {
       this.#terminal.log(
         'ui',
@@ -304,6 +331,44 @@ export class GameMenus {
     }
     if (this.#open !== open) opened.close();
     else open.menu = opened.menu;
+  }
+
+  /** The map, the HUD hidden; the world map's 3D in place of the world while it is open. */
+  async #openMap(focus?: number): Promise<void> {
+    const leaveMenuMode = this.#enterMenuMode();
+    const hud = this.#session.hud;
+    hud.shown(false);
+    const open = {
+      menu: undefined as Menu | undefined,
+      leave: () => {
+        hud.shown(true);
+        leaveMenuMode();
+      },
+    };
+    this.#open = open;
+    const opened = await this.#map.open(
+      MENU_DEPTH,
+      () => {
+        if (this.#open !== open) return;
+        this.#open = undefined;
+        open.leave();
+      },
+      focus,
+    );
+    if (!opened) {
+      if (this.#open === open) this.#closeOpen();
+      return;
+    }
+    if (this.#open !== open) opened.close();
+    else {
+      open.menu = opened.menu;
+      // Closed from outside (Play ends): the map gives the world back.
+      open.leave = () => {
+        opened.close();
+        hud.shown(true);
+        leaveMenuMode();
+      };
+    }
   }
 
   /** Sleeping in a bed: the sleep menu (rest how long?). */
@@ -528,6 +593,18 @@ export class GameMenus {
         // The journal closed itself (its menu is gone): only menu mode ends.
         this.#open = undefined;
         open.leave();
+        const focus = this.#mapFocus;
+        this.#mapFocus = undefined;
+        if (focus !== undefined) {
+          this.#openMap(focus).catch((error: unknown) => {
+            this.#terminal.log(
+              'ui',
+              `the map does not open: ${error instanceof Error ? error.message : String(error)}`,
+              'error',
+            );
+            this.#closeOpen();
+          });
+        }
       },
       MENU_DEPTH,
     );

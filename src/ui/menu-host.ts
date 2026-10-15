@@ -18,6 +18,7 @@ import {
   BRIDGE_REFERENCES,
   BRIDGE_SET,
   BRIDGE_TRANSLATE,
+  rectFields,
   withBridge,
 } from './menu-bridge.ts';
 import type { Translations } from '../formats/swf/translation.ts';
@@ -264,10 +265,10 @@ export class Menu {
       scaleMode(this.get('Stage.scaleMode')),
       typeof align === 'string' ? align : '',
     );
-    this.set('Stage.visibleRect', visible);
+    this.set('Stage.visibleRect', rectFields(visible));
     this.set(
       'Stage.safeRect',
-      safeRect(visible, box.width / box.height > 4 / 3 + 0.01, this.safeZone),
+      rectFields(safeRect(visible, box.width / box.height > 4 / 3 + 0.01, this.safeZone)),
     );
   }
 
@@ -353,6 +354,11 @@ export class MenuHost {
   /** The open menus. */
   get menus(): Iterable<Menu> {
     return this.#menus.values();
+  }
+
+  /** The interface files the menus load (and the pictures the engine gives them). */
+  get files(): InterfaceFiles {
+    return this.#files;
   }
 
   /** Opens a menu movie of the interface folder ("hudmenu.swf"). */

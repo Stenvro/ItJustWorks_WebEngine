@@ -57,6 +57,11 @@ export const INI_DEFAULTS = {
     fDefault1stPersonFOV: 80,
     fDefaultWorldFOV: 80,
     fGamma: 1,
+    // The world map's changes to its imagespace (added to its bloom threshold, brightness and
+    // contrast).
+    fGlobalMapBloomThresholdBoost: 0.25,
+    fGlobalMapBrightnessBoost: 0.25,
+    fGlobalMapContrastBoost: -0.3,
     // Point lights, specular and shadows fade out from these distances (Skyrim_Default.ini).
     fLightLODStartFade: 3500,
     fNearDistance: 15,
@@ -78,6 +83,7 @@ export const INI_DEFAULTS = {
   },
   Main: {
     bCrosshairEnabled: 1,
+    fMapWorldTargetTransitionTime: 0.5,
   },
   SaveGame: {
     bSaveOnRest: 1,
@@ -207,6 +213,39 @@ export const INI_DEFAULTS = {
     fUIMistModel_TranslateX_G: 0,
     fUIMistModel_TranslateY_G: 0,
     fUIMistModel_TranslateZ_G: 0,
+  },
+  // The map menu: its camera, depth of field and locked LOD (src/world/map-camera.ts,
+  // src/shell/world-map-view.ts). fMapWorldTargetTransitionTime is in [Main].
+  MapMenu: {
+    bWorldMapNoSkyDepthBlur: 0,
+    fMapLocalCursorPanSpeed: 2000,
+    fMapLocalHeight: 40000,
+    fMapLocalMarkerSelectionDist: 0.03,
+    fMapLocalMinFrustumWidth: 4000,
+    fMapLocalMousePanSpeed: 20,
+    fMapLocalMouseZoomSpeed: 0.1,
+    fMapLookMouseSpeed: 3,
+    fMapLoopFadeTimeSeconds: 1,
+    fMapMenuNearClipPlane: 128,
+    fMapMoveKeyboardSpeed: 0.02,
+    fMapTransitionSpeed: 0.75,
+    fMapWorldCursorMoveArea: 0.9,
+    fMapWorldHeightAdjustmentForce: 4,
+    fMapWorldMaxPanSpeed: 75000,
+    fMapWorldMaxPitch: 75,
+    fMapWorldMinPanSpeed: 60000,
+    fMapWorldMinPitch: 15,
+    fMapWorldTransitionHeight: 10000,
+    fMapWorldYawRange: 80,
+    fMapWorldZoomSpeed: 2,
+    fMapZoomMouseSpeed: 2,
+    fMaxMarkerSelectionDist: 0.003,
+    fWorldMapDepthBlurScale: 0.3,
+    fWorldMapFocalDepth: 45000,
+    fWorldMapMaximumDepthBlur: 0.45,
+    fWorldMapNearDepthBlurScale: 4,
+    uLockedObjectMapLOD: 16,
+    uLockedTerrainLOD: 32,
   },
   // The console: the share of the screen it takes, its text size, the history it keeps.
   Menu: {

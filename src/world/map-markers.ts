@@ -46,8 +46,19 @@ export function parseMapMarker(
   };
 }
 
-/** Every map marker of the load order (they are persistent references). */
-export async function readMapMarkers(db: RecordDatabase): Promise<MapMarker[]> {
+const markersOf = new WeakMap<RecordDatabase, Promise<MapMarker[]>>();
+
+/** Every map marker of the load order (they are persistent references); read once. */
+export function readMapMarkers(db: RecordDatabase): Promise<MapMarker[]> {
+  let markers = markersOf.get(db);
+  if (!markers) {
+    markers = scanMapMarkers(db);
+    markersOf.set(db, markers);
+  }
+  return markers;
+}
+
+async function scanMapMarkers(db: RecordDatabase): Promise<MapMarker[]> {
   const markers: MapMarker[] = [];
   const PERSISTENT = 0x400;
   await db.scan(
@@ -61,4 +72,35 @@ export async function readMapMarkers(db: RecordDatabase): Promise<MapMarker[]> {
     },
   );
   return markers;
+}
+
+/**
+ * The map menu's icons (map.swf's Map.MapMarker.IconTypes): a map marker's type (TNAM 0 ..
+ * 59) is its icon's index; after them the engine's own.
+ */
+export const MapIcon = {
+  empty: 0,
+  door: 61,
+  questTarget: 62,
+  questTargetDoor: 63,
+  multipleQuestTargets: 64,
+  playerSet: 65,
+  youAreHere: 66,
+} as const;
+
+/**
+ * Where a place of a world shows on its map's world (WRLD ONAM: a world shown on another's map,
+ * such as Blackreach under Tamriel, its places scaled and moved; scale 0 puts all of it at one
+ * point). Undefined for a negative scale: the world is on no map.
+ */
+export function onMapPosition(
+  offset: { readonly scale: number; readonly offset: readonly [number, number, number] },
+  position: readonly [number, number, number],
+): [number, number, number] | undefined {
+  if (offset.scale < 0) return undefined;
+  return [
+    position[0] * offset.scale + offset.offset[0],
+    position[1] * offset.scale + offset.offset[1],
+    position[2] * offset.scale + offset.offset[2],
+  ];
 }

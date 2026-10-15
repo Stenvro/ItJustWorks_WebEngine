@@ -11,7 +11,7 @@
 // the player's own marker (PlayerSet, from the map).
 
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
-import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import { MapMarkerFlag, readMapMarkers, type MapMarker } from '../world/map-markers.ts';
 import type { GameSession } from './game-session.ts';
@@ -102,32 +102,61 @@ export class Compass {
     at: { readonly position: readonly number[]; readonly cell?: number; readonly world?: number },
   ): Promise<number[]> {
     const data: number[] = [];
-    for (const [formId, quest] of runtime.state.quests) {
-      if (!quest.running || !quest.active || quest.completed || quest.failed) continue;
-      const record = await runtime.forms.quest(formId);
-      for (const objective of record?.objectives ?? []) {
-        const state = quest.objectives.get(objective.index);
-        if (!state?.displayed || state.completed || state.failed) continue;
-        for (const target of objective.targets) {
-          const reference = quest.aliases.get(target.alias);
-          if (reference === undefined) continue;
-          if (
-            target.conditions.length > 0 &&
-            !(await runtime.conditionsHold(target.conditions, runtime.referenceHandle(PLAYER_REF)))
-          ) {
-            continue;
-          }
-          const placement = await runtime.placement(reference);
-          if (!placement) continue;
-          const here =
-            at.world !== undefined
-              ? placement.world === at.world
-              : placement.cell !== undefined && placement.cell === at.cell;
-          if (!here) continue;
-          data.push(headingTo(at.position, placement.position), 100, CompassFrame.quest, 100);
-        }
-      }
+    for (const target of await questTargets(runtime)) {
+      const { placement } = target;
+      const here =
+        at.world !== undefined
+          ? placement.world === at.world
+          : placement.cell !== undefined && placement.cell === at.cell;
+      if (!here) continue;
+      data.push(headingTo(at.position, placement.position), 100, CompassFrame.quest, 100);
     }
     return data;
   }
+}
+
+/** A target of an active quest's shown objective: the quest and where the target is. */
+export interface QuestTarget {
+  readonly quest: number;
+  readonly questName: string;
+  /** The objective (QOBJ index) it is a target of. */
+  readonly objective: number;
+  readonly reference: number;
+  readonly placement: Placement;
+}
+
+/**
+ * The targets of the active quests' shown objectives (QOBJ QSTA: the alias's reference, its
+ * conditions holding), wherever they are.
+ */
+export async function questTargets(runtime: ScriptRuntime): Promise<QuestTarget[]> {
+  const targets: QuestTarget[] = [];
+  for (const [formId, quest] of runtime.state.quests) {
+    if (!quest.running || !quest.active || quest.completed || quest.failed) continue;
+    const record = await runtime.forms.quest(formId);
+    for (const objective of record?.objectives ?? []) {
+      const state = quest.objectives.get(objective.index);
+      if (!state?.displayed || state.completed || state.failed) continue;
+      for (const target of objective.targets) {
+        const reference = quest.aliases.get(target.alias);
+        if (reference === undefined) continue;
+        if (
+          target.conditions.length > 0 &&
+          !(await runtime.conditionsHold(target.conditions, runtime.referenceHandle(PLAYER_REF)))
+        ) {
+          continue;
+        }
+        const placement = await runtime.placement(reference);
+        if (!placement) continue;
+        targets.push({
+          quest: formId,
+          questName: record?.name ?? '',
+          objective: objective.index,
+          reference,
+          placement,
+        });
+      }
+    }
+  }
+  return targets;
 }

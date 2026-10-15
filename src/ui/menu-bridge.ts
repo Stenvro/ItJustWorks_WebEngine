@@ -50,6 +50,20 @@ export interface StageRects {
   readonly safe: Rect;
 }
 
+/** A rect as GFx gives Stage's rects (a flash.geom.Rectangle): with its edges. */
+export function rectFields(rect: Rect): Record<string, number> {
+  return {
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
+    left: rect.x,
+    top: rect.y,
+    right: rect.x + rect.width,
+    bottom: rect.y + rect.height,
+  };
+}
+
 /** The bridge's actions for a menu. */
 export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   const w = new Avm1Writer();
@@ -60,9 +74,10 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
       ['visibleRect', stage.visible],
       ['safeRect', stage.safe],
     ] as const) {
+      // As a flash.geom.Rectangle reads: its edges too (the map reads right − left).
       w.push('Stage').op(Op.getVariable).push(name);
-      w.push('x', rect.x, 'y', rect.y, 'width', rect.width, 'height', rect.height, 4);
-      w.op(Op.initObject).op(Op.setMember);
+      for (const [key, value] of Object.entries(rectFields(rect))) w.push(key, value);
+      w.push(8).op(Op.initObject).op(Op.setMember);
     }
   }
   // _global.gfxExtensions = true

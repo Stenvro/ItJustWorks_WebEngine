@@ -12,6 +12,7 @@ import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { formatGameDate } from '../world/game-time.ts';
 import type { GameSession } from './game-session.ts';
+import { questTargets } from './compass.ts';
 import type { Terminal } from './terminal.ts';
 import { settingsHandlers } from './journal-settings.ts';
 import { controlsHandlers } from './journal-controls.ts';
@@ -56,6 +57,10 @@ export class JournalMenu {
   readonly #unanswered = new Set<string>();
   /** Quit to the main menu, or the game, ends Play's game. */
   onQuit: ((toDesktop: boolean) => void) | undefined;
+  /** Show on Map: the journal closes, the map opens on a quest target (its reference). */
+  onShowOnMap: ((reference: number) => void) | undefined;
+  /** The objectives' targets on the map ("quest:objective" → the first target's reference). */
+  #targets = new Map<string, number>();
 
   constructor(host: MenuHost, session: GameSession, terminal: Terminal) {
     this.#host = host;
@@ -75,6 +80,11 @@ export class JournalMenu {
     // returns): what the journal shows is read before it opens.
     const runtime = this.#session.scriptsReady;
     this.#quests = runtime ? await journalQuests(runtime) : [];
+    this.#targets = new Map();
+    for (const target of runtime ? await questTargets(runtime) : []) {
+      const key = `${String(target.quest)}:${String(target.objective)}`;
+      if (!this.#targets.has(key)) this.#targets.set(key, target.reference);
+    }
     const bar = await playerBarInfo(this.#session);
     const help = await this.#helpTopics();
     let done = false;
@@ -130,6 +140,12 @@ export class JournalMenu {
         },
         RequestObjectivesData: (menu) => {
           this.#objectivesData(menu);
+        },
+        // (its request id, then the objective's questTargetID: the target's reference) The
+        // movie closes the journal itself.
+        ShowTargetOnMap: (_menu, args) => {
+          const reference = Number(args[1]);
+          if (Number.isFinite(reference)) this.onShowOnMap?.(reference);
         },
         ToggleQuestActiveStatus: (menu, args) => {
           const formId = typeof args[1] === 'number' ? args[1] : 0;
@@ -219,8 +235,8 @@ export class JournalMenu {
         type: quest.type,
       });
     }
-    // TODO(M9): ShowTargetOnMap, once the map menu shows quest targets.
-    menu.respond(request, this.#memory.quest, 0, hasMisc, this.#memory.miscActive, false);
+    // Show on Map: for the objectives with a target on the map (questTargetID).
+    menu.respond(request, this.#memory.quest, 0, hasMisc, this.#memory.miscActive, true);
   }
 
   /**
@@ -246,6 +262,7 @@ export class JournalMenu {
               active: runtime?.state.quests.get(quest.formId)?.active ?? false,
               completed: false,
               failed: false,
+              ...this.#targetOf(quest.formId, objective.index),
             })),
         );
       menu.set(`${list}.selectedEntry.objectives`, objectives);
@@ -262,8 +279,15 @@ export class JournalMenu {
         active: quest.active && !objective.completed && !objective.failed,
         completed: objective.completed,
         failed: objective.failed,
+        ...this.#targetOf(quest.formId, objective.index),
       })),
     );
+  }
+
+  /** An objective's questTargetID (its target's reference), if it has one on the map. */
+  #targetOf(quest: number, objective: number): { questTargetID?: number } {
+    const reference = this.#targets.get(`${String(quest)}:${String(objective)}`);
+    return reference === undefined ? {} : { questTargetID: reference };
   }
 
   /** The stats page: name, value, category and an unused field, for every stat. */
@@ -306,10 +330,7 @@ export class JournalMenu {
   }
 }
 
-/**
- * The system page's requests not answered yet: saving and loading (TODO(M12)), Show on Map
- * (TODO(M9)).
- */
+/** The system page's requests not answered yet: saving and loading (TODO(M12)). */
 const UNBUILT = [
   'SAVE',
   'LOAD',
@@ -324,5 +345,4 @@ const UNBUILT = [
   'ForceStopSaveListLoading',
   'PrepSaveGameScreenshot',
   'SetSaveDisabled',
-  'ShowTargetOnMap',
 ] as const;
