@@ -248,7 +248,8 @@ export class HudController implements HudSink {
         status: completed
           ? setting('sQuestCompletedText', 'Quest completed')
           : setting('sQuestFailed', 'Quest FAILED'),
-        // TODO(M9): a sound for a failed quest (the data has none named for it).
+        // A failed quest has no sound: the data has UIQuestNew, UIQuestUpdate and
+        // UIQuestComplete only (and the HUD movie plays none for it).
         sound: completed ? 'UIQuestComplete' : '',
         objectives: [],
       });

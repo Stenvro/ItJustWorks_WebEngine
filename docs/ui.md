@@ -104,7 +104,9 @@ menu's properties (read by its `setupMainMenu` by index: 0 Quit, 1 saves exist (
 7 Mod Manager, 8 Creations shown, 9 logged in, 11 PS5 transfer, 12 new Creations, 13 Creations
 usable, 14 Switch transfer), then `FadeInMenu`. On PC since 1.6.1130 Mods are part of Creations
 (UESP). Creations is an online store and stays unusable (localhost only). It shows NEW, LOAD,
-CREATIONS, CREDITS, QUIT.
+CREATIONS, CREDITS, QUIT. Its music is `music\special\mus_maintheme.xwm` (the file music mods
+replace), played once from the menu's start in the music category; it fades out with the menu as
+a new game starts. The menu plays its own sounds (UIMenuOK, UIMenuFocus, UIStartNewGame).
 
 ## Stage.visibleRect and Stage.safeRect
 
@@ -235,7 +237,7 @@ loading screen's text and `RequestPlayerInfo` with level 1, no progress, no mete
 the mist while the game's scripts start a clean new game; once the opening has placed the
 player (MQ101 stage 0 → 10, `Fragment_4`: the player to `MQ101PlayerStartMarker` in Tamriel,
 by the cart), the loading screen is chosen, the world there loads, and the loading menu fades
-out.
+out. The engine plays UILoadscreenMist as a loading menu opens.
 
 **Loading screens** (LSCR, `src/world/loading-screens.ts`): DESC the text, CTDA conditions (run
 on the player), NNAM the static whose model is shown, SNAM its scale, RNAM its rotation
@@ -363,8 +365,9 @@ and `OpenHighlightedMenu(i)` (1 Skills, up; 2 Magic, left; 3 Inventory, right; 4
 `FrameToLabelMap`), and on Tab or Esc `StartCloseMenu`; the engine answers
 `StartCloseMenuAnim()`, and the menu's `CloseMenu` once its animation is done closes it. A
 menu chosen takes the tween's place at once.
-TODO(M9): the tween camera (the view of the player in third person behind the menu) and the
-sounds of highlighting and choosing.
+The movie plays no sounds; choosing plays the engine's UITweenSelectSD (silence in the vanilla
+data), highlighting nothing. TODO(M9): the tween camera (the view of the player in third person
+behind the menu).
 
 While scripts keep the menus from the player (`Game.DisablePlayerControls`' abMenu, as the
 opening does) only the journal opens, and with abJournalTabs its system page alone
@@ -739,7 +742,8 @@ Quick Stats key, and after a level up in its LEVEL_UP state: `SetStatsMode(false
 
 - The sky dome `meshes\interface\intperkskydome.nif`: its CameraIntro brings its CameraPosition node
   (the camera: it looks along its local X, here +Y) from z −3000 up to −16.44, CameraOutro back
-  down as the menu closes; its own Idle animation moves the nebula meanwhile. The camera turns
+  down as the menu closes; its own Idle animation moves the nebula meanwhile. While it is open the
+  music type MUSSkillsMenu plays (30 s of silence that ducks the other music). The camera turns
   about the dome's middle; its field of view is fStatsCameraFOV (50, of a 4:3 frame).
 - The ring (`src/gameplay/skills-ring.ts`): the dome's Point00 .. Point17 every 20° clockwise from
   +Y, each with its constellation image (cImage00 .. 17: its quad spans about ±9° about its point,

@@ -662,12 +662,16 @@ export class GameMenus {
       depth: MENU_DEPTH,
       interactive: true,
       handlers: {
-        // TODO(M9): the sounds of highlighting and choosing (UITweenSelect, ...).
+        // The movie plays no sounds; highlighting has none of the engine's either.
         HighlightMenu: () => undefined,
         OpenAnimFinished: () => undefined,
         OpenHighlightedMenu: (_menu, args) => {
           chosen = TWEEN_CHOICES[typeof args[1] === 'number' ? args[1] : 0];
           if (chosen === 'None') chosen = undefined;
+          // The engine's choosing sound (UITweenSelectSD: silence in the vanilla data).
+          if (chosen) {
+            void session.sounds().then((sounds) => sounds.playNamed('UITweenSelectSD', undefined));
+          }
           // The tween goes at once; the menu chosen takes its place.
           this.#closeOpen();
           if (chosen) this.openMenu(chosen);
