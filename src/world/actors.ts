@@ -65,6 +65,28 @@ export interface HeadPartLook {
   readonly textureSet: number | undefined;
   /** Its expression TRI (meshes\ path). */
   readonly expressions: string | undefined;
+  /** Its race morph and chargen morph TRIs (meshes\ paths), which shape a head made at run time. */
+  readonly raceMorph: string | undefined;
+  readonly chargenMorph: string | undefined;
+}
+
+/**
+ * What an actor's base says of its look, put another way (the player's: what the race menu
+ * chose, GameState.playerAppearance; an actor's race changed by Actor.SetRace).
+ */
+export interface LookOverrides {
+  readonly race?: number;
+  readonly female?: boolean;
+  /** 0..100. */
+  readonly weight?: number;
+  /** Its own head parts (PNAM): the race's defaults fill the other types. */
+  readonly headParts?: readonly number[];
+  /** HCLF: a colour form (CLFM). */
+  readonly hairColor?: number;
+  /** QNAM: 0..1 RGB. */
+  readonly skinTone?: readonly [number, number, number];
+  /** FTST: the face's texture set. */
+  readonly faceTexture?: number;
 }
 
 export interface ActorLook {
@@ -281,14 +303,19 @@ export class ActorResolver {
       seen.add(part.formId);
       for (const extra of await parts(part.extraParts)) if (extra) queue.push(extra);
       if (!part.model) continue;
-      const tri = part.files.find((file) => file.type === HeadPartFile.tri);
+      const file = (type: number): string | undefined => {
+        const found = part.files.find((entry) => entry.type === type);
+        return found && meshPath(found.path);
+      };
       looks.push({
         editorId: part.editorId,
         type: part.type,
         model: meshPath(part.model),
         textureSet:
           part.type === HeadPartType.face ? (faceTexture ?? part.textureSet) : part.textureSet,
-        expressions: tri ? meshPath(tri.path) : undefined,
+        expressions: file(HeadPartFile.tri),
+        raceMorph: file(HeadPartFile.raceMorph),
+        chargenMorph: file(HeadPartFile.chargenMorph),
       });
     }
     return looks;
@@ -365,18 +392,24 @@ export class ActorResolver {
   /**
    * The look of an actor placed with `base` (NPC_ or LVLN) by `reference` (whose form id
    * seeds the leveled choices), at `level` (the encounter's level; TODO(M11): encounter
-   * zones and the player's level).
+   * zones and the player's level), with `overrides` over its base's traits.
    */
-  async resolve(base: number, reference: number, level = 1): Promise<ActorLook | undefined> {
+  async resolve(
+    base: number,
+    reference: number,
+    level = 1,
+    overrides: LookOverrides = {},
+  ): Promise<ActorLook | undefined> {
     const templates = await resolveActorTemplates((id) => this.#db.get(id), base, reference, level);
     if (!templates) return undefined;
     const npc = async (formId: number): Promise<NpcRecord | undefined> => {
       const record = await this.#db.get(formId);
       return record?.type === 'NPC_' ? parseNpc(record) : undefined;
     };
-    const traits = await npc(templates.part(TemplateFlag.traits));
+    const own = await npc(templates.part(TemplateFlag.traits));
     const inventory = await npc(templates.part(TemplateFlag.inventory));
-    if (!traits || !inventory) return undefined;
+    if (!own || !inventory) return undefined;
+    const traits = withOverrides(own, overrides);
     // Outfits' leveled items: the actor's own draws, after its templates'.
     const random = seededRandom(reference ^ 0x5bd1e995);
     const race = traits.race === undefined ? undefined : await this.#race(traits.race);
@@ -450,6 +483,26 @@ export class ActorResolver {
       factions: factions?.factions ?? new Map<number, number>(),
     };
   }
+}
+
+/** An NPC_'s traits with a look's overrides put in. */
+export function withOverrides(traits: NpcRecord, overrides: LookOverrides): NpcRecord {
+  const { female } = overrides;
+  return {
+    ...traits,
+    flags:
+      female === undefined
+        ? traits.flags
+        : female
+          ? traits.flags | NpcFlag.female
+          : traits.flags & ~NpcFlag.female,
+    race: overrides.race ?? traits.race,
+    weight: overrides.weight ?? traits.weight,
+    headParts: overrides.headParts ?? traits.headParts,
+    hairColor: overrides.hairColor ?? traits.hairColor,
+    skinTone: overrides.skinTone ?? traits.skinTone,
+    faceTexture: overrides.faceTexture ?? traits.faceTexture,
+  };
 }
 
 /** A model path from a record (relative to meshes\) as a VFS path. */

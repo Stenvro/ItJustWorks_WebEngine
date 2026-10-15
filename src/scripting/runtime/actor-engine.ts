@@ -197,15 +197,45 @@ export class ActorEngine {
 
   // --- Race and sex ---------------------------------------------------------------------------
 
+  /**
+   * An actor's race: as Actor.SetRace set it, else its base's (the player's: the race menu's
+   * choice, GameState.playerAppearance).
+   */
   async raceOf(reference: number): Promise<number | undefined> {
-    return (
-      this.#runtime.state.actors.get(reference)?.race ?? (await this.info(reference))?.traits.race
-    );
+    const state = this.#runtime.state;
+    const set = state.actors.get(reference)?.race;
+    if (set !== undefined) return set;
+    if (reference === PLAYER_REF && state.playerAppearance) return state.playerAppearance.race;
+    return (await this.info(reference))?.traits.race;
   }
 
   async isFemale(reference: number): Promise<boolean> {
+    const appearance = this.#runtime.state.playerAppearance;
+    if (reference === PLAYER_REF && appearance) return appearance.sex === 1;
     const traits = (await this.info(reference))?.traits;
     return traits !== undefined && (traits.flags & NpcFlag.female) !== 0;
+  }
+
+  /** An actor base's race (ActorBase.GetRace): the Player base's is the race menu's choice. */
+  async baseRace(formId: number): Promise<number | undefined> {
+    const appearance = this.#runtime.state.playerAppearance;
+    if (formId === PLAYER_BASE && appearance) return appearance.race;
+    return (await this.#npc(formId))?.race;
+  }
+
+  /** An actor base's sex (ActorBase.GetSex): 0 male, 1 female, −1 not an actor base. */
+  async baseSex(formId: number): Promise<number> {
+    const appearance = this.#runtime.state.playerAppearance;
+    if (formId === PLAYER_BASE && appearance) return appearance.sex;
+    const stats = await this.#npc(formId);
+    return stats === undefined ? -1 : (stats.flags & NpcFlag.female) !== 0 ? 1 : 0;
+  }
+
+  /** The player's name: as chosen in the race menu, else the Player record's (FULL). */
+  async playerName(): Promise<string> {
+    const chosen = this.#runtime.state.playerName;
+    if (chosen !== undefined) return chosen;
+    return (await this.#runtime.forms.record(PLAYER_BASE))?.text('FULL') ?? '';
   }
 
   async isChild(reference: number): Promise<boolean> {

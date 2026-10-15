@@ -53,15 +53,21 @@ export function skeletonInfo(file: NifFile): {
 /** The bound of the vanilla human skeleton, if a skeleton has none. */
 const HUMAN_BOUND = { center: [0, 0, 64] as Vec3, halfExtents: [22, 14, 64] as Vec3 };
 
+/**
+ * The player's body: of the Player record's race and sex, or of `as` (the race and sex the
+ * race menu chose, a race Actor.SetRace gave the player).
+ */
 export async function readPlayerBody(
   db: RecordDatabase,
   readNif: (path: string) => Promise<NifFile>,
+  as?: { readonly race: number; readonly female: boolean },
 ): Promise<PlayerBody> {
   const player = await db.require(PLAYER_ACTOR);
   // ACBS flags bit 0: female.
   const acbs = player.fields.first('ACBS');
-  const female = acbs !== undefined && acbs.length >= 4 && ((acbs[0] ?? 0) & 0x1) !== 0;
-  const raceId = player.formIdField('RNAM') ?? 0;
+  const female =
+    as?.female ?? (acbs !== undefined && acbs.length >= 4 && ((acbs[0] ?? 0) & 0x1) !== 0);
+  const raceId = as?.race ?? player.formIdField('RNAM') ?? 0;
   const race = await db.require(raceId);
   // DATA: skill boosts (16 bytes), then male height, female height.
   const data = race.fields.first('DATA');

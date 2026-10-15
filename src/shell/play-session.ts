@@ -22,7 +22,7 @@ import type { FlyCamera } from '../render/fly-camera.ts';
 import { invert } from '../render/frustum.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
 import type { Camera } from '../render/view-camera.ts';
-import type { InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
+import type { InstanceMotion, ModelInstance, PointLight } from '../render/scene-renderer.ts';
 import type { CellObject, CellPrimitive, ObjectLock, Teleport } from '../world/cell-loader.ts';
 import { lockDifficulty, lockLevelSetting } from '../gameplay/lockpicking.ts';
 import type { LandData } from '../world/land.ts';
@@ -423,7 +423,7 @@ export class PlaySession {
     this.#notice = init.notice;
     this.#onImpact = init.onImpact;
     const active = (): Camera =>
-      this.#freeCamera || this.#spawnPending ? this.camera : this.player;
+      this.cameraOverride ?? (this.#freeCamera || this.#spawnPending ? this.camera : this.player);
     this.view = {
       get position() {
         return active().position;
@@ -436,9 +436,24 @@ export class PlaySession {
       },
       update: (deltaSeconds) => {
         this.#frame(deltaSeconds);
+        this.cameraOverride?.update(deltaSeconds);
       },
       viewProjection: (aspect, out) => active().viewProjection(aspect, out),
     };
+  }
+
+  /**
+   * A camera a menu looks through in the player's place (the race menu's, on the player's
+   * face), while it is set.
+   */
+  cameraOverride: Camera | undefined;
+
+  /** Lights a menu adds to the world while it is open (the race menu's two). */
+  extraLights: readonly PointLight[] = [];
+
+  /** Whether the player's body is drawn: in third person, from the free camera or a menu's. */
+  get bodyShown(): boolean {
+    return this.cameraOverride !== undefined || this.#freeCamera || this.player.pov === 'third';
   }
 
   /** The player has been placed on the ground (the loading screen can go). */

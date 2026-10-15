@@ -458,6 +458,36 @@ export function sliderArguments(
   ]);
 }
 
+/** The flat argument list of SetCategoriesList: per category (text, filter flag). */
+export function categoryArguments(text: (label: string) => string): (string | number)[] {
+  return CHARGEN_CATEGORIES.flatMap((category) => [text(category.label), category.flag]);
+}
+
+/**
+ * The flat argument list of SetRaceList: per race (name, description, equip state), the
+ * player's race with an equip state above 0 (the movie selects it).
+ */
+export function raceListArguments(
+  races: readonly {
+    readonly formId: number;
+    readonly name: string;
+    readonly description: string;
+  }[],
+  current: number,
+): (string | number)[] {
+  return races.flatMap((race) => [race.name, race.description, race.formId === current ? 1 : 0]);
+}
+
+/** The longest name the race menu's name field takes (its TextInput's maxChars). */
+export const PLAYER_NAME_MAX = 26;
+
+/** A name typed into the race menu's name field, or undefined for none (cancelled, empty). */
+export function playerNameOf(text: unknown): string | undefined {
+  if (typeof text !== 'string') return undefined;
+  const name = text.trim().slice(0, PLAYER_NAME_MAX);
+  return name === '' ? undefined : name;
+}
+
 // --- Applying sliders ---
 
 /** What a change touched: what the look has to rebuild. */
@@ -832,6 +862,20 @@ export function chargenMorphWeights(
   }
   add('SkinnyMorph', skinnyMorphWeight(appearance.weight));
   return weights;
+}
+
+// --- Face textures ---
+
+/**
+ * The face part's textures (shader slots 0..7) from its complexion's texture set (TXST
+ * TX00..TX07) and the face tint: as the Creation Kit bakes FaceGen heads, TX03 (the subsurface
+ * map, `_sk`) goes to slot 2 and TX04 (the detail map, MaleHeadDetail_Age40.dds) to slot 3, the
+ * face tint to slot 6 (compared on the baked heads: facegeom\skyrim.esm\0010A1AA.nif and its
+ * FTST). Empty slots keep the model's own texture.
+ */
+export function faceTextureSlots(textureSet: readonly string[], tint: string): string[] {
+  const tx = (index: number): string => textureSet[index] ?? '';
+  return [tx(0), tx(1), tx(3), tx(4), '', '', tint, tx(7)];
 }
 
 // --- Face tint ---

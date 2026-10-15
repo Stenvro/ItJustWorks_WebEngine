@@ -1043,3 +1043,60 @@ its button; `CloseMenu`).
   in the save). The menus open theirs as they open: the map, the journal, the skills, the
   level-up, bartering, favorites and lockpicking. The others come with what they explain:
   crafting (M9's crafting menu), low bars, jail and followers (M10, M11).
+
+## Character creation
+
+The race menu (`src/shell/race-menu.ts`): `interface\racesex_menu.swf` (1280×720; the name box
+is `TextEntry.swf`'s TextEntryClip, linked in like any import). Game.ShowRaceMenu opens it (a
+new game's MQ101 at stage 75, TriggerRaceMenuScript, the console's `showracemenu`, which slides
+the console away first), Game.ShowLimitedRaceMenu its limited form (the race cannot change and
+there is no name: Dawnguard's surgery). Neither is latent: the scripts go on once the menu has
+closed, as the game stands still in menu mode while it is open. CommonLib's RaceSexMenu: menu
+mode, the cursor, the ItemMenu control context.
+
+- **Opening.** `_root.InitExtensions()`, `_root.SetPlatform(0, false)`, for the limited menu
+  `RaceSexPanelsInstance.bLimitedMenu = true` (the race list then carries the Body category's
+  flag and the menu opens on Body), `ShowTextEntry(true)` (the PC's name box, not a console's
+  keyboard), `SetCategoriesList(text, flag, ...)` (sRSMRace .. sRSMHair; the movie's constants
+  are RACE 0, BODY 1, HEAD 2), `SetOptionSliders(...)` (8 per slider: text, filter flag,
+  callback, min, max, position, interval, id; a slider shows under a category whose flag it
+  shares), `SetRaceList(name, description, equipState, ...)` (the playable races, the player's
+  with equip state 1; after the categories) and `SetNameText(name)`.
+- **The sliders** (`src/gameplay/chargen.ts`): the movie calls each slider's callback with
+  (value, id): ChangeSex (the engine's own name: the movie names none), ChangeHeadPreset,
+  ChangeTintingMask, ChangeWeight (0..1), ChangeFaceDetails, ChangeHeadPart,
+  ChangeHairColorPreset, ChangePreset (a nose, eye or mouth type), ChangeDoubleMorph (−1..1). The
+  ids follow the movie's developer harness (`FaceChanges`). A change is the player's appearance
+  at once (`GameState.playerAppearance`) and their body is made again
+  (`src/shell/player-look.ts`, docs/animation.md "The player"): a tint only paints the face
+  tint again, the other sex starts from the race's default look for it, and the sliders are
+  sent again where ranges or positions moved (presets, war paint and dirt masks).
+- **ChangeRace(index)** comes 600 ms after the race list stops moving, the movie's loading icon
+  showing: the race's default look (default head parts, complexion, hair colour, a neutral
+  shape, the tint layers' default colours; the sex and weight kept; TODO(M13): whether vanilla
+  starts from the race's first preset), `SetRaceText(name)`, the sliders again, and
+  `HideLoadingIcon()` once the new body stands there. A race the scripts gave the player
+  (Actor.SetRace) is given up for it.
+- **The camera** (`src/shell/race-menu-camera.ts`) stands in front of the player looking at
+  fRSMCameraLookAtPercent (0.955) of their height: fPlayerFaceEditDistance (100) away on the
+  face, farther on the body (fitted: TODO(M13)), moving over fPlayerZoomTime (1000 ms) as the
+  movie calls `ZoomPC(true)` (Race, Head and the face's categories) or `ZoomPC(false)` (Body).
+  Two lights (fUIRaceSexLight*, fUIRaceSexLight2*: colour × dimmer, radius 1400) light the
+  player, placed from the point looked at as the other menus' lights are from what they show
+  (TODO(M13): against the game). The player holds sPosePlayerRaceSexMenu
+  (OffsetBoundStandingPlayerInstant, a behavior event) and animates on real time while the world
+  stands still; the mouse with its right button held turns them (the game has the gamepad's
+  Rotate only: TODO(M13)). The HUD is hidden.
+- **Done** (its button, or R: the ItemMenu context's XButton) asks sRSMConfirm "Finish and name
+  your character?"; Yes brings the name box (`ShowTextEntryField()`: the movie focuses its
+  field and asks SetAllowTextInput; the field takes the typed keys, Enter accepts and Esc or Tab
+  cancels through the movie's handleInput). The movie sends `ChangeName(name)` as the box
+  accepts and again as it fades (every category change fades it too, with the name or none):
+  only a name while the engine waits for one counts. sRSMNameWarning "Start game as %s?": Yes
+  sets the player's name (the Player base's name for the scripts' texts and the menus) and
+  closes, No brings the box back; a cancelled box goes back to the menu. The limited menu asks
+  sRSMFinishedWarning "Finished?". Closing: `FadeOut()` (the root's frames 2..9, until
+  `_root._currentframe` is 9), then the menu closes and the player's camera, controls and HUD
+  come back.
+- TODO(M11): a race changed after the opening resets the skills and changes the race's
+  abilities (RACE SPLO). TODO(M12): the appearance and the name in the save.

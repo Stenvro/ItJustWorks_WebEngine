@@ -1,5 +1,18 @@
 import { describe, expect, it } from 'vitest';
-import { parseConsoleLine } from './console-commands.ts';
+import { ConsoleCommands, parseConsoleLine, type ConsoleContext } from './console-commands.ts';
+
+describe('ConsoleCommands', () => {
+  it('opens the race menu with showracemenu', async () => {
+    let opened = 0;
+    const commands = new ConsoleCommands({
+      showRaceMenu: () => {
+        opened++;
+      },
+    } as unknown as ConsoleContext);
+    expect(await commands.run('ShowRaceMenu')).toEqual([]);
+    expect(opened).toBe(1);
+  });
+});
 
 describe('parseConsoleLine', () => {
   it('splits a command and its arguments, quotes keeping spaces', () => {

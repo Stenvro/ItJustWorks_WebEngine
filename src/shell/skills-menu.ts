@@ -484,7 +484,7 @@ class Viewing {
   async #showPlayer(menu: Menu): Promise<void> {
     const runtime = this.#runtime;
     const actors = runtime.actors;
-    const name = (await runtime.forms.record(0x7))?.text('FULL') ?? '';
+    const name = await actors.playerName();
     const race = await actors.raceOf(PLAYER_REF);
     const raceName =
       race === undefined ? '' : ((await runtime.forms.record(race))?.text('FULL') ?? '');

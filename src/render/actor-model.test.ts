@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { blendWeight, swapTextures, thinModelPath } from './actor-model.ts';
+import {
+  blendWeight,
+  partPositions,
+  swapTextures,
+  thinModelPath,
+  withPositions,
+} from './actor-model.ts';
 import { identity } from './math.ts';
 import type { LightingMaterial, ModelData, ModelPart } from './model-data.ts';
 import { withDynamicPositions } from './skinning.ts';
@@ -126,5 +132,23 @@ describe('actor models', () => {
     const view = new DataView(built.data.buffer);
     expect([view.getFloat32(32, true), view.getFloat32(44, true)]).toEqual([4, -0.5]);
     expect(built.data[48]).toBe(16);
+  });
+});
+
+describe('head part positions', () => {
+  it('reads and replaces the positions of a part, keeping the rest of each vertex', () => {
+    const shape = part('head', 3, 77);
+    expect([...partPositions(shape)]).toEqual([3, 6, 0]);
+    const moved = withPositions(shape, Float32Array.of(3, 6, 4));
+    expect([...partPositions(moved)]).toEqual([3, 6, 4]);
+    expect(moved.vertices[16]).toBe(77);
+    expect(moved.radius).toBe(5);
+    // The part it came from stays as it was.
+    expect([...partPositions(shape)]).toEqual([3, 6, 0]);
+  });
+
+  it('leaves a part alone for too few positions', () => {
+    const shape = part('head', 1, 0);
+    expect(withPositions(shape, new Float32Array(2))).toBe(shape);
   });
 });

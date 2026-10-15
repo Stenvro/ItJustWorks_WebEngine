@@ -123,6 +123,7 @@ export interface WorldBridge {
   /** An actor died (its ragdoll; silent: no death cry or alarm). */
   killed?(actor: number, killer: number | undefined, silent: boolean): void;
   resurrected?(actor: number): void;
+  /** Actor.SetRace: the actor's 3D is made again in its new race (the player's keeps its face). */
   raceChanged?(actor: number): void;
   equipmentChanged?(actor: number): void;
   /** A spell cast by a source at a target (TODO(M11): the magic system). */

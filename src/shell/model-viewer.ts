@@ -79,7 +79,15 @@ import {
   animationInterval,
   type AnimatedSkeleton,
 } from '../animation/animated-skeleton.ts';
-import { groundActors, moveActor, ragdollsOf, talkTargets, type PlacedActor } from './actors.ts';
+import {
+  groundActors,
+  moveActor,
+  placeAgain,
+  ragdollsOf,
+  talkTargets,
+  withActorInstances,
+  type PlacedActor,
+} from './actors.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { matches, renderResults } from './finder.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
@@ -91,6 +99,7 @@ import {
 } from '../animation/script-graphs.ts';
 import { CreatedObjects } from './created-objects.ts';
 import { PlayerAvatar } from './player-avatar.ts';
+import type { PlayerView } from './race-menu.ts';
 import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
 import { clock, startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
@@ -152,8 +161,8 @@ interface CellView {
   readonly decals: GpuDecals | undefined;
   /** Where actors walk (its navigation meshes): the player steps onto it off the stairs too. */
   readonly navmesh: NavmeshSurface;
-  /** Every actor that can appear (shown by the selection). */
-  readonly actors: readonly PlacedActor[];
+  /** Every actor that can appear (shown by the selection; one made again in a new race). */
+  actors: readonly PlacedActor[];
 }
 
 const numberFormat = new Intl.NumberFormat('en-US');
@@ -181,6 +190,8 @@ export class ModelViewer {
   /** The single mesh shown in mesh mode (not cached). */
   #meshModel: GpuModel | undefined;
   #scene: GpuScene | undefined;
+  /** The instances the cell's scene draws (built again with an actor made again). */
+  #sceneInstances: readonly ModelInstance[] = [];
   /** Guards against a slow load finishing after a newer one. */
   #loadToken = 0;
   /** The cell on screen, with everything needed to switch upgrades instantly. */
@@ -284,6 +295,12 @@ export class ModelViewer {
 
   get player(): Player | undefined {
     return this.#play?.player;
+  }
+
+  /** The player being played: their session and body (the race menu's). */
+  get playerView(): PlayerView | undefined {
+    const play = this.#play;
+    return play && { play, avatar: this.#avatar };
   }
 
   /** Whether the player is in this view's scene (playing it). */
@@ -418,12 +435,45 @@ export class ModelViewer {
       this.#defaultActivation(reference)?.activate();
     },
     triggerCount: (reference) => this.#play?.triggerCount(reference) ?? 0,
+    lookChanged: (reference) => this.#lookChanged(reference),
     nodeWorld: (reference, node) =>
       instanceNodeWorld(
         this.#instances.get(reference) ?? this.#created?.get(reference)?.instance,
         node,
       ),
   };
+
+  /**
+   * An actor's look changed: the player's body is made again (its appearance, its race); an
+   * actor of the cell on screen is placed again in its new race where it stands, the cell's
+   * scene built again with it. TODO(M13): a dead actor's ragdoll keeps its old skeleton's bodies.
+   */
+  async #lookChanged(reference: number): Promise<void> {
+    if (reference === PLAYER_REF) {
+      await this.#avatar?.rebuild();
+      return;
+    }
+    const cell = this.#cell;
+    const session = this.#session;
+    const old = cell?.actors.find((placed) => placed.actor.reference === reference);
+    if (!cell || !session || !old) return;
+    const source = cell.data.actors.find((actor) => actor.reference === reference) ?? old.actor;
+    const placed = await placeAgain(session, old, source);
+    // The cell went meanwhile, or the actor cannot be made in its new race.
+    if (!placed || this.#cell !== cell || !cell.actors.includes(old)) return;
+    soundPlacedActors([placed], this.#soundingWorld);
+    cell.actors = cell.actors.map((actor) => (actor === old ? placed : actor));
+    this.#sceneInstances = withActorInstances(
+      this.#sceneInstances,
+      old,
+      placed,
+      this.#visibility.get(reference),
+    );
+    const previous = this.#scene;
+    this.#scene = this.#renderer.scene.createScene(this.#sceneInstances);
+    previous?.destroy();
+    this.#refreshEnabled();
+  }
 
   /** The references of the cell on screen whose 3D is loaded (the enabled ones drawn). */
   #loadedReferences(): number[] {
@@ -981,6 +1031,7 @@ export class ModelViewer {
     if (!cell) return 0;
     const session = this.#session;
     const instances: ModelInstance[] = [];
+    this.#sceneInstances = instances;
     const placed = new Map<CellData['objects'][number], ModelInstance>();
     const articulatedPoses = new Map<CellData['objects'][number], ActorPose>();
     const shown = new Map<number, ModelInstance>();
@@ -1393,12 +1444,12 @@ export class ModelViewer {
     return this.#avatar;
   }
 
-  /** The player's body, in third person or seen from the free camera. */
+  /** The player's body, in third person or seen from the free camera or a menu's. */
   #avatarScenes(): GpuScene[] {
     const play = this.#play;
     const avatar = this.#avatar;
     if (!play || !avatar) return [];
-    return play.freeCamera || play.player.pov === 'third' ? [avatar.scene] : [];
+    return play.bodyShown ? [avatar.scene] : [];
   }
 
   /** The actors shown in the cell on screen. */
@@ -1465,20 +1516,29 @@ export class ModelViewer {
       }
       const { lighting, imageSpace, lights, decals } = view;
       this.#renderer.setView({
-        scenes: () => [scene, ...this.#avatarScenes(), ...(this.#created?.scenes() ?? [])],
+        // The cell's scene now (built again when an actor is made again in a new race).
+        scenes: () => [
+          this.#scene ?? scene,
+          ...this.#avatarScenes(),
+          ...(this.#created?.scenes() ?? []),
+        ],
         camera,
         lighting: () => ({
           ...lighting(),
-          lights: pointLights(
-            [
-              ...lights.filter((light) => this.#isEnabled(light.reference)),
-              ...(this.#created?.lights() ?? []),
-            ],
-            this.#tickClock(),
-            camera.position,
-            (id) => this.#emittanceRgb(id),
-            this.#session?.ini.number('Display', 'fLightLODStartFade'),
-          ),
+          lights: [
+            // A menu's lights (the race menu's) first: they light what it shows.
+            ...(this.#play?.extraLights ?? []),
+            ...pointLights(
+              [
+                ...lights.filter((light) => this.#isEnabled(light.reference)),
+                ...(this.#created?.lights() ?? []),
+              ],
+              this.#tickClock(),
+              camera.position,
+              (id) => this.#emittanceRgb(id),
+              this.#session?.ini.number('Display', 'fLightLODStartFade'),
+            ),
+          ],
         }),
         imageSpace,
         decals: () => (decals ? [decals] : []),

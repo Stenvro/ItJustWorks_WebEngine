@@ -8,6 +8,7 @@
 // text the HUD or journal shows. Platform-independent.
 
 import type { QuestRecord } from '../../world/quest-records.ts';
+import { PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
 
 const TAG = /<(Alias|Alias\.ShortName|Global)=([^>]+)>/gi;
@@ -73,12 +74,16 @@ async function aliasText(
   return name === '' ? undefined : name;
 }
 
-/** A reference's name: its base's (an NPC's from its templates, if it has none of its own). */
+/**
+ * A reference's name: its base's (an NPC's from its templates, if it has none of its own); the
+ * player's as chosen in the race menu.
+ */
 export async function referenceName(
   runtime: ScriptRuntime,
   reference: number,
   short = false,
 ): Promise<string> {
+  if (reference === PLAYER_REF) return runtime.actors.playerName();
   let base = await runtime.baseOf(reference);
   for (let depth = 0; base !== undefined && depth < TEMPLATE_DEPTH; depth++) {
     const record = await runtime.forms.record(base);

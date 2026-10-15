@@ -95,7 +95,7 @@ export class ChargenCatalog {
         races.push({ formId, editorId, name: name || editorId, description });
       }
     }
-    // TODO(M9): verify the vanilla order (by name and by form id agree for the vanilla races).
+    // TODO(M13): verify the vanilla order (by name and by form id agree for the vanilla races).
     races.sort((a, b) => a.name.localeCompare(b.name, 'en'));
     const catalog = new ChargenCatalog(db, counts, headParts, races);
     for (const [formId, race] of parsed) catalog.#races.set(formId, race);
@@ -150,7 +150,7 @@ export class ChargenCatalog {
   /**
    * The head parts the menu offers for a race and sex, per HeadPartType in record order:
    * playable, of that sex, not an extra part, the race in its valid races (RNAM).
-   * TODO(M9): verify the vanilla order of the lists.
+   * TODO(M13): verify the vanilla order of the lists.
    */
   async headPartLists(race: number, sex: 0 | 1): Promise<Map<number, number[]>> {
     const lists = new Map<number, number[]>();

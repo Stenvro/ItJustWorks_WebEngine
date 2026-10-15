@@ -17,7 +17,7 @@ const SKIP_KEYS = new Set(['Escape', 'Enter', 'Space', 'Tab', 'KeyE']);
 /** The videos of the intro sequence, as the INI lists them. */
 export function introSequence(session: GameSession): string[] {
   return session.ini
-    .text('General', 'sIntroSequence', DEFAULT_INTRO)
+    .rawText('General', 'sIntroSequence', DEFAULT_INTRO)
     .split(',')
     .map((name) => name.trim())
     .filter((name) => name !== '');
