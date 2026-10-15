@@ -53,7 +53,7 @@ export class AudioLoader {
   async load(path: string): Promise<DecodedSound | undefined> {
     const found = this.find(path);
     if (found === undefined) return undefined;
-    const response = await this.#request(found, false);
+    const response = await this.#request(found, 'samples');
     if (!response.ok) throw new Error(response.error);
     if (response.kind !== 'samples') throw new Error(`${found}: expected samples`);
     return {
@@ -71,16 +71,31 @@ export class AudioLoader {
   ): Promise<{ path: string; file: Uint8Array; gain: number } | undefined> {
     const found = this.find(path);
     if (found === undefined) return undefined;
-    const response = await this.#request(found, true);
+    const response = await this.#request(found, 'stream');
     if (!response.ok) throw new Error(response.error);
     if (response.kind !== 'stream') throw new Error(`${found}: expected a stream`);
     return { path: found, file: response.file, gain: response.gain };
   }
 
-  async #request(path: string, stream: boolean): Promise<AudioResponse> {
+  /** A Bink video (its data path) as an MP4 file; undefined if it does not exist. */
+  async loadVideo(path: string): Promise<Uint8Array | undefined> {
+    if (!this.#vfs.has(path)) return undefined;
+    const response = await this.#request(path, 'video');
+    if (!response.ok) throw new Error(response.error);
+    if (response.kind !== 'video') throw new Error(`${path}: expected a video`);
+    return response.file;
+  }
+
+  async #request(path: string, kind: 'samples' | 'stream' | 'video'): Promise<AudioResponse> {
     const payload = await this.#vfs.readPayload(path);
     const id = this.#nextId++;
-    const request: AudioRequest = { id, path, payload, ...(stream && { stream }) };
+    const request: AudioRequest = {
+      id,
+      path,
+      payload,
+      ...(kind === 'stream' && { stream: true }),
+      ...(kind === 'video' && { video: true }),
+    };
     return new Promise<AudioResponse>((resolve, reject) => {
       this.#pending.set(id, { resolve, reject });
       const buffer = payload.bytes.buffer;

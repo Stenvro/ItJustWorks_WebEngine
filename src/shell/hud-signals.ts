@@ -74,6 +74,8 @@ export interface ScreenSink {
   titles(action: 'show' | 'hide' | 'start', name?: string): void;
   /** Game.FadeOutGame: the game fades out (and stays so) or in, to black or white. */
   fade(out: boolean, black: boolean, secondsBefore: number, duration: number): void;
+  /** Game.PlayBink: a video over the game (DataVideo). */
+  video(file: string): void;
 }
 
 export class HudSignals {

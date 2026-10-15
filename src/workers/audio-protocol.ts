@@ -9,6 +9,8 @@ export interface AudioRequest {
   readonly payload: BsaPayload;
   /** Music: a WAV file the browser's media player streams, instead of samples. */
   readonly stream?: boolean;
+  /** A Bink video: an MP4 file the browser's media player plays. */
+  readonly video?: boolean;
 }
 
 export type AudioResponse =
@@ -34,6 +36,14 @@ export type AudioResponse =
       /** A FUZ file's lip-sync data (src/formats/audio/lip.ts). */
       readonly lip?: Uint8Array;
       /** Milliseconds spent decoding in the worker. */
+      readonly workMs: number;
+    }
+  | {
+      readonly id: number;
+      readonly ok: true;
+      readonly kind: 'video';
+      /** An MP4 file (H.264, AAC), transferred. */
+      readonly file: Uint8Array;
       readonly workMs: number;
     }
   | { readonly id: number; readonly ok: false; readonly error: string };

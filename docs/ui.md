@@ -190,6 +190,17 @@ Still missing in Ruffle (0.7.1), and so in the menus: `<img>` in a text field's 
 help messages show their keys' art as `<img src='E.png'>`: the text shows, the key does not).
 TODO(M13), ruffle-rs/ruffle#16618.
 
+## Videos
+
+Before the main menu the intro plays: [General] sIntroSequence (by default `BGS_LOGO.BIK`; a
+comma-separated list plays in turn, an empty one none), the files under `DataVideo`; Game.PlayBink
+plays one over the game. The browser plays no Bink: the audio worker converts the file with
+ffmpeg.wasm (binkvideo and binkaudio_dct to H.264 and AAC in an MP4, `src/audio/bink-video.ts`;
+the 6.9-second 1920 × 1080 logo takes about 3 s, black meanwhile) and a `<video>` element plays
+it over everything (`src/shell/video-player.ts`), its sound into the master volume. A key (Esc,
+Enter, Space, Tab, E) or a click skips it. BGS_Logo.bik has two stereo audio tracks; the first
+plays (TODO(M13): what the second is for).
+
 ## The main menu's background: the mist menu
 
 Behind the start menu the game renders its "Mist Menu" (CommonLibSSE-NG's `RE::MistMenu`:

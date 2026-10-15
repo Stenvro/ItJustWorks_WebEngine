@@ -447,6 +447,11 @@ export class SoundSystem {
     return formId === undefined ? undefined : this.play(formId, place);
   }
 
+  /** A Bink video (its data path) as an MP4 file; undefined if it does not exist. */
+  loadVideo(path: string): Promise<Uint8Array | undefined> {
+    return this.#loader.loadVideo(path);
+  }
+
   /** A music type (MUSC) by editor id ("MUSSkillsMenu"). */
   async musicNamed(editorId: string): Promise<number | undefined> {
     const wanted = editorId.toLowerCase();
