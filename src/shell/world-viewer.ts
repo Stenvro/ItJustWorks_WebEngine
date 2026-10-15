@@ -423,8 +423,7 @@ export class WorldViewer {
   /**
    * What activating a reference does: its scripts get OnActivate; by default load doors take
    * the player to their destination and doors open (unless a script blocks activation).
-   * References with scripts and no default are activated for the scripts. TODO(M9): the
-   * activator's own prompt (ACTI RNAM).
+   * References with scripts and no default are activated for the scripts.
    */
   #activatable(reference: number): Activatable | undefined {
     const fallback = this.#defaultActivation(reference);

@@ -212,7 +212,7 @@ function describeGpu(gpu: GpuContext): string {
  * What the shell shows: the start (choosing the game folder), the main menu (the log, the load
  * order and what to load) or the sandbox (loading any model, interior cell or worldspace).
  * The sandbox has the running game's quests one at a time (src/shell/quest-panel.ts).
- * TODO(M9): playing the game from its own main menu.
+ * Play is the game from its own main menu (src/shell/play-mode.ts).
  */
 type Screen = 'start' | 'menu' | 'sandbox' | 'launcher' | 'play';
 
@@ -459,8 +459,8 @@ async function main(): Promise<void> {
     session.timeSpeed = nextClockSpeed(session.timeSpeed);
     showClockSpeed(ui.viewer.sky, session.timeScale, session.timeSpeed);
   });
-  // Load doors: the player goes to the door on the other side, inside or out.
-  // TODO(M9): the loading screen while the destination loads.
+  // Load doors: the player goes to the door on the other side, inside or out (in Play behind a
+  // loading screen).
   const travel = async (teleport: Teleport): Promise<void> => {
     const db = await session?.db;
     if (!db) return;
@@ -483,7 +483,7 @@ async function main(): Promise<void> {
   };
   // A load door: its prompt stays on the HUD while the place loads (SetLoadDoorInfo).
   const onTravel = (teleport: Teleport): void => {
-    travel(teleport)
+    (play ? play.loadingScreen(() => travel(teleport)) : travel(teleport))
       .catch((error: unknown) => {
         terminal.log('door', describeError(error), 'error');
       })
@@ -510,6 +510,12 @@ async function main(): Promise<void> {
       terminal.log('papyrus', `the player cannot go there: ${describeError(error)}`, 'error');
     });
   };
+  /** Resolves once neither viewer is loading (the player stands in the place). */
+  const settled = async (): Promise<void> => {
+    while (worldViewer.loading !== undefined || modelViewer.loading !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+  };
   // Play's 3D view: a journey into the world that resolves once it has loaded, and the
   // scripts' MoveTo of the player followed (the sandbox never follows them).
   const playWorld: PlayWorld = {
@@ -524,10 +530,9 @@ async function main(): Promise<void> {
       } else if (at.cell !== undefined) {
         await modelViewer.showCell(at.cell, arrival);
       }
-      while (worldViewer.loading !== undefined || modelViewer.loading !== undefined) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
+      await settled();
     },
+    settled: () => settled(),
     heading: () => (worldViewer.player ?? modelViewer.player)?.yaw,
     localMap: () =>
       worldViewer.player ? worldViewer.localMapContent() : modelViewer.localMapContent(),

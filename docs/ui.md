@@ -176,9 +176,17 @@ menu, the tutorial). The bridge adds them to `TextField.prototype`:
   loads (`src/ui/translate-movie.ts`) such a field's paragraph becomes its own alignment (its
   layout) and its text loses the `<p>`: it shows the same.
 
+GFx sizes fields to their text (`src/ui/gfx-text.ts`): `verticalAutoSize` ("top": the field grows
+down to fit its text, as AS2's `autoSize`; "bottom", "center": that edge stays), `textAutoSize`
+("shrink", "fit": the size goes down a point at a time until the text fits, from the size the
+field was made with) and `verticalAlign` ("bottom", "center": the text sits so in the field's box).
+The bridge gives TextField those properties; the fields that need it again as their text changes
+are watched (a clip's onEnterFrame on `_root`) and fitted again the next frame. Vanilla uses
+"top" and "bottom" (the HUD), "shrink" and "bottom" alignment (the loading menu).
+
 Still missing in Ruffle (0.7.1), and so in the menus: `<img>` in a text field's HTML (the HUD's
-help messages show their keys' art as `<img src='E.png'>`: the text shows, the key does not),
-`textAutoSize` and `verticalAlign`. TODO(M9).
+help messages show their keys' art as `<img src='E.png'>`: the text shows, the key does not).
+TODO(M13), ruffle-rs/ruffle#16618.
 
 ## The main menu's background: the mist menu
 
@@ -243,7 +251,15 @@ random.
 viewport, LOD adjust, scene, screen polygons and textures). The paths place the camera 250–300
 units in front of the model on the -Y side: it looks along +Y with +Z up (the NiCamera's 90°
 turn maps Gamebryo's X-forward camera onto the world's axes); the frustum gives 45° across a
-4:3 frame. TODO(M9): turning the model with the mouse within ONAM's limits.
+4:3 frame. The mouse turns the model about Z ([Interface] fUILogoModel_MouseToRotateSpeed: 0.02
+radians a pixel); after fUILogoModel_RotationPauseDuration (0.25 s) without the mouse it turns on
+its own at fUILogoModel_AutoRotateSpeed (0.1 radians a second), within ONAM's limits (degrees
+from RNAM's turn; back and forth between them unless they are a full turn: 350 of the 371 vanilla
+screens allow −180 .. 180). The settings' units are inferred from their names and sizes.
+
+**Load doors** in Play go behind the loading menu and a loading screen as well
+(`PlayMode.loadingScreen`), as fast travel does: the place loads with the game running (the
+player is put down in it), and the screen goes once it has.
 
 ## The HUD
 
@@ -604,7 +620,7 @@ TAKE GIFT; `ItemSelect(amount)` moves them. The function is latent: it returns o
 closes. A conversation's menus show in its place: the dialogue menu steps aside and comes back,
 and keeps the mouse.
 
-TODO(M9): the item's 3D model behind the card (UpdateItem3D, rotation, zoom). TODO(M11): the
+TODO(M11): the
 Haggling, Allure, Merchant and Investor perks, Fortify Barter, fences and stolen goods, the
 chest's restock (every 48 hours), favor points. TODO(M11): using, eating and reading items, equipping to a hand (items and
 spells) and shouts to the voice, the active effects, favorites' hotkeys, the quantity of a drop,
@@ -887,3 +903,70 @@ L, or the bottom bar's Local Map, in the map (`src/shell/local-map.ts`).
   SEEN_DATA: a 32 × 32 bit grid for each 4096-unit block. The save's CELL change form holds it
   (CHANGE_CELL_SEENDATA); its layout is not documented, TODO(M12). The rest stays dark (the
   game's LOCALMAP_FOGOFWAR pass, which ISLocalMap reads as its alpha). Outside there is none.
+
+## The game's cursor
+
+While a menu that uses the cursor is open, `cursormenu.swf` plays over every menu (depth 100,
+taking no input) and the system's cursor is hidden over the menus (`.game-cursor`). Its root
+clip `mc_Cursor` would follow `Mouse.onMouseMove`; a movie that takes no input gets no mouse,
+so the host moves the clip itself, to the mouse in the movie's stage coordinates
+(`src/ui/menu-host.ts`). Interactive menus use it unless their options say not
+(`MenuOptions.cursor`): the lockpicking and skills menus are steered by the mouse without one
+(CommonLib's kUsesCursor is off for them).
+
+## Fades
+
+Game.FadeOutGame(abFadingOut, abBlackFade, afSecsBeforeFade, afFadeDuration) plays
+`fadermenu.swf` (`src/shell/fader-menu.ts`, over the HUD and the menus, under the loading
+menu). Its `InitExtensions` registers the movie's `InitFade` and `UpdateFade`. The engine calls
+`InitFade(fading in, black, duration, seconds before)` (fading in: the rect starts opaque; white when the second is false), then `UpdateFade(seconds)` every frame
+with the real time that passed. The movie fades its rect (black, or white with
+`Color.setRGB(0xFFFFFF)`) once the seconds before have passed, and calls `FadeDone` at the end.
+Faded out it stays until a fade in, which closes it.
+
+## Credits
+
+The main menu's CREDITS fades the menu out (`FadeOutAndCall`) and calls `OpenCreditsMenu`; the
+credits (`creditsmenu.swf`, `src/shell/credits-menu.ts`) open over it, and as they close the
+main menu fades in again (`FadeInMenu`).
+
+- **The code object.** The movie asks the engine through a code object: `_root.CodeObj`, whose
+  methods are the engine's (`requestCredits(field, second field)`, `getScrollSpeed()`,
+  `closeMenu()`). The engine fills it, then calls `_root.onCodeObjectInit`. The bridge gives an
+  object such methods (`Menu.native(path, names)`: each calls the engine by its name, as an
+  ExternalInterface call, answered as the menu's handlers are).
+- **The text** is the file [Interface] sCreditsFile names (`Interface\Credits.txt`), HTML, set
+  as the first field's `htmlText`. The second field is for text the first has no room for; here
+  the first holds it all.
+  - The text places logos (`<img src='SkyrimLogo'>`: symbols of the movie's library). Ruffle
+    lays out text with images wrongly (ruffle-rs/ruffle#16618), as with the books' illuminated
+    letters. They are left out: TODO(M13).
+- **Scrolling.** The movie moves the text up by `getScrollSpeed()` pixels a frame (not among the
+  settings: 1, TODO(M13)). It closes at the end, on a click, Tab or Esc.
+
+## Title cards
+
+The opening's title cards (`titles.swf`, `src/shell/title-sequence.ts`) hold four sequences:
+the clips `sequence1` .. `sequence4`, each a card fading in and out, stopped on an empty first
+frame. MQ101's fragment calls Game.ShowTitleSequenceMenu on the cart, and its quest script plays
+them one after another (`StartTitleSequence("Sequence1")` .. `"Sequence4"`, 5, 12, 5 and 10
+seconds apart) before HideTitleSequenceMenu.
+
+## Tutorials
+
+The first time the player does something the game explains, `tutorialmenu.swf`
+(`src/shell/tutorial-menu.ts`) shows its help message until they close it (Exit: Esc, Tab or
+its button; `CloseMenu`).
+
+- **The messages** are default objects (DOBJ). HBLK: lockpicking. HBMM: the world map. HBJL: the
+  journal. HBSK: the skills. HBLU: levelling up. HBBR: bartering. HBFS: favorites. HBFG: the forge.
+  HBCO: cooking. HBML: the smelter. HBTA: the tanning rack. HBEC: enchanting. HBSM: the
+  grindstone. HBSA: the armor bench. HBAL: alchemy. HBLH, HBLM, HBLS: health, magicka or stamina
+  low. HBHJ: jail. HBFT: follower commands. HBWC: weapon charge. Dragonborn adds dragon riding's.
+  CommonLib's `TutorialMenu::OpenTutorialMenu` takes such a default object.
+- **The box.** The message's name is the box's title (`Menu_mc.HelpTitle`), its text the help
+  (`Menu_mc.HelpScrollingText.textField`). `ApplyButtonArt` turns its "[Event]"s into key art.
+- Each shows once in a game, only with [Interface] bShowTutorials (TODO(M12): which were shown,
+  in the save). The menus open theirs as they open: the map, the journal, the skills, the
+  level-up, bartering, favorites and lockpicking. The others come with what they explain:
+  crafting (M9's crafting menu), low bars, jail and followers (M10, M11).

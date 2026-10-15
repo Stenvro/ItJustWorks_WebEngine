@@ -16,10 +16,12 @@ import { parseNif } from '../formats/nif/nif.ts';
 import { readCameraPath, PathCamera } from '../render/camera-path.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
 import type { Camera, Renderer, SceneView } from '../render/renderer.ts';
+import type { OverlayView } from '../render/menu-overlay.ts';
 import {
   flatAmbient,
   type GpuModel,
   type GpuScene,
+  type InstanceMotion,
   type ModelInstance,
   type SceneLighting,
 } from '../render/scene-renderer.ts';
@@ -97,6 +99,7 @@ function placed(
   scale: number,
   seed: number,
   skeletons: AnimatedSkeleton[],
+  motion?: InstanceMotion,
 ): ModelInstance[] {
   if (!model) return [];
   const graph = startObjectGraph(model, seed);
@@ -106,6 +109,7 @@ function placed(
     {
       model,
       world: referenceMatrix({ position, rotation, scale }),
+      ...(motion && { motion }),
       ...(graph && { graph }),
       ...(skeletal && { pose: skeletal.skeleton.pose, poseNodes: skeletal.poseNodes }),
     },
@@ -121,6 +125,18 @@ export class MistMenu {
   /** The logo or the loading screen's model. */
   #shown: GpuScene | undefined;
   #view: SceneView | undefined;
+  /** Over the world (a loading screen in a game): the menus' 3D, hiding what is behind. */
+  #overlay: boolean;
+  /** What #present showed last (cover() shows it again over the world). */
+  #presented:
+    | {
+        readonly scene: GpuScene;
+        readonly camera: Camera;
+        readonly skeletons: AnimatedSkeleton[];
+        readonly lighting: SceneLighting;
+      }
+    | undefined;
+  #overlayView: OverlayView | undefined;
 
   private constructor(
     session: GameSession,
@@ -128,7 +144,9 @@ export class MistMenu {
     ini: IniSettings,
     mist: GpuScene,
     mistSkeletons: AnimatedSkeleton[],
+    overlay: boolean,
   ) {
+    this.#overlay = overlay;
     this.#session = session;
     this.#renderer = renderer;
     this.#ini = ini;
@@ -137,10 +155,34 @@ export class MistMenu {
   }
 
   /**
-   * Loads the mist and shows it with the logo, as the main menu does (without it: the
-   * background of a loading screen, shown next).
+   * Black over the world at once (a loading screen's first frame, while its mist and model
+   * load); the loading screen's own view replaces it. Returns what takes it away (if it is
+   * still there).
    */
-  static async show(session: GameSession, renderer: Renderer, logo = true): Promise<MistMenu> {
+  static blackout(renderer: Renderer): () => void {
+    const black: OverlayView = {
+      scenes: () => [],
+      camera: new FixedCamera(FITTED_CAMERA, FITTED_LOOK_AT, 75),
+      lighting: () => mistLighting(FITTED_LIGHT),
+      opaque: true,
+    };
+    renderer.overlay = black;
+    return () => {
+      if (renderer.overlay === black) renderer.overlay = undefined;
+    };
+  }
+
+  /**
+   * Loads the mist and shows it with the logo, as the main menu does (without it: the
+   * background of a loading screen, shown next). Over a world being played (`overlay`) it is
+   * drawn as the menus' 3D, over and hiding the world, which goes on loading behind it.
+   */
+  static async show(
+    session: GameSession,
+    renderer: Renderer,
+    logo = true,
+    overlay = false,
+  ): Promise<MistMenu> {
     const ini = new IniSettings(session.vfs.defaultIni);
     const n = (key: keyof (typeof INI_DEFAULTS)['Interface']): number =>
       ini.number('Interface', key);
@@ -160,7 +202,7 @@ export class MistMenu {
         skeletons,
       ),
     );
-    const menu = new MistMenu(session, renderer, ini, mist, skeletons);
+    const menu = new MistMenu(session, renderer, ini, mist, skeletons, overlay);
     if (logo) await menu.showLogo();
     return menu;
   }
@@ -191,7 +233,10 @@ export class MistMenu {
 
   /**
    * A loading screen: its model at its offset, turned and scaled as the record says, seen along
-   * its camera path. TODO(M9): turning the model with the mouse within its rotation limits.
+   * its camera path. The mouse turns it about Z (fUILogoModel_MouseToRotateSpeed radians a
+   * pixel); after fUILogoModel_RotationPauseDuration without the mouse it turns on its own at
+   * fUILogoModel_AutoRotateSpeed radians a second; within its rotation limits (ONAM, degrees
+   * from its rotation: back and forth between them when they are not a full turn).
    */
   async showLoadingScreen(screen: LoadingScreen): Promise<void> {
     const session = this.#session;
@@ -204,16 +249,47 @@ export class MistMenu {
     ]);
     const degrees = Math.PI / 180;
     const skeletons: AnimatedSkeleton[] = [];
-    const scene = this.#renderer.scene.createScene(
-      placed(
-        model,
-        [...screen.translation],
-        [screen.rotation[0] * degrees, screen.rotation[1] * degrees, screen.rotation[2] * degrees],
-        screen.scale,
-        screen.formId,
-        skeletons,
-      ),
+    const motion: InstanceMotion = { version: 0 };
+    const rotation: Vec3 = [
+      screen.rotation[0] * degrees,
+      screen.rotation[1] * degrees,
+      screen.rotation[2] * degrees,
+    ];
+    const instances = placed(
+      model,
+      [...screen.translation],
+      rotation,
+      screen.scale,
+      screen.formId,
+      skeletons,
+      motion,
     );
+    const scene = this.#renderer.scene.createScene(instances);
+    const instance = instances[0];
+    if (instance) {
+      const ini = this.#ini;
+      const [min, max] = screen.rotationLimits ?? [0, 0];
+      this.#stopTurning();
+      this.#turning = {
+        scene,
+        world: instance.world,
+        motion,
+        position: [...screen.translation],
+        rotation,
+        scale: screen.scale,
+        offset: 0,
+        direction: 1,
+        min: min * degrees,
+        max: max * degrees,
+        full: max - min >= 360,
+        idle: Infinity,
+        last: performance.now(),
+        mouse: ini.number('Interface', 'fUILogoModel_MouseToRotateSpeed'),
+        auto: ini.number('Interface', 'fUILogoModel_AutoRotateSpeed'),
+        pause: ini.number('Interface', 'fUILogoModel_RotationPauseDuration'),
+      };
+      window.addEventListener('pointermove', this.#mouseMoved, { passive: true });
+    }
     // Without a path: the main menu's camera.
     const camera: Camera = cameraPath
       ? new PathCamera(cameraPath)
@@ -245,28 +321,141 @@ export class MistMenu {
     skeletons: AnimatedSkeleton[],
     lighting: SceneLighting,
   ): void {
+    // Only the loading screen's model shown turns.
+    if (this.#turning && this.#turning.scene !== scene) this.#stopTurning();
     const previous = this.#shown;
     this.#shown = scene;
+    this.#presented = { scene, camera, skeletons, lighting };
     const mist = this.#mist;
     const mistSkeletons = this.#mistSkeletons;
-    const view: SceneView = {
-      scenes: () => [mist, scene],
-      camera,
-      lighting: () => lighting,
-      backdrop: false,
-      update: (seconds) => {
-        animateSkeletons(mistSkeletons, seconds);
-        animateSkeletons(skeletons, seconds);
-      },
+    const update = (seconds: number): void => {
+      animateSkeletons(mistSkeletons, seconds);
+      animateSkeletons(skeletons, seconds);
+      this.#turn();
     };
-    this.#view = view;
-    this.#renderer.setView(view);
-    previous?.destroy();
+    if (this.#overlay) {
+      const overlay: OverlayView = {
+        scenes: () => [mist, scene],
+        camera,
+        lighting: () => lighting,
+        update,
+        opaque: true,
+      };
+      this.#overlayView = overlay;
+      this.#renderer.overlay = overlay;
+    } else {
+      const view: SceneView = {
+        scenes: () => [mist, scene],
+        camera,
+        lighting: () => lighting,
+        backdrop: false,
+        update,
+      };
+      this.#view = view;
+      this.#renderer.setView(view);
+    }
+    if (previous !== scene) previous?.destroy();
+  }
+
+  /** The loading screen's model as the mouse and the clock turn it. */
+  #turning:
+    | {
+        readonly scene: GpuScene;
+        readonly world: Mat4;
+        readonly motion: InstanceMotion;
+        readonly position: Vec3;
+        readonly rotation: Vec3;
+        readonly scale: number;
+        offset: number;
+        direction: number;
+        readonly min: number;
+        readonly max: number;
+        readonly full: boolean;
+        /** Seconds since the mouse last turned it. */
+        idle: number;
+        last: number;
+        readonly mouse: number;
+        readonly auto: number;
+        readonly pause: number;
+      }
+    | undefined;
+  /** Mouse pixels to turn by, gathered between frames. */
+  #mouseTurn = 0;
+
+  readonly #mouseMoved = (event: PointerEvent): void => {
+    this.#mouseTurn += event.movementX;
+  };
+
+  #stopTurning(): void {
+    this.#turning = undefined;
+    this.#mouseTurn = 0;
+    window.removeEventListener('pointermove', this.#mouseMoved);
+  }
+
+  /** A frame of the loading screen model's turning (real time: the game may stand still). */
+  #turn(): void {
+    const turning = this.#turning;
+    if (!turning) return;
+    const now = performance.now();
+    const seconds = Math.min(0.1, (now - turning.last) / 1000);
+    turning.last = now;
+    const mouse = this.#mouseTurn;
+    this.#mouseTurn = 0;
+    let offset = turning.offset;
+    if (mouse !== 0) {
+      offset += mouse * turning.mouse;
+      turning.idle = 0;
+      turning.direction = Math.sign(mouse);
+    } else {
+      turning.idle += seconds;
+      if (turning.idle >= turning.pause) offset += turning.direction * turning.auto * seconds;
+    }
+    if (!turning.full) {
+      if (offset >= turning.max) {
+        offset = turning.max;
+        turning.direction = -1;
+      } else if (offset <= turning.min) {
+        offset = turning.min;
+        turning.direction = 1;
+      }
+    }
+    if (offset === turning.offset) return;
+    turning.offset = offset;
+    const [x, y, z] = turning.rotation;
+    turning.world.set(
+      referenceMatrix({
+        position: turning.position,
+        rotation: [x, y, z + offset],
+        scale: turning.scale,
+      }),
+    );
+    turning.motion.version++;
+  }
+
+  /**
+   * From now on over the world (as the menus' 3D, hiding it): a new game's loading screen, as
+   * the world it goes into loads behind it. What is shown now is shown so.
+   */
+  cover(): void {
+    if (this.#overlay) return;
+    this.#overlay = true;
+    const view = this.#view;
+    this.#view = undefined;
+    const shown = this.#presented;
+    if (shown) {
+      this.#shown = undefined;
+      this.#present(shown.scene, shown.camera, shown.skeletons, shown.lighting);
+    }
+    if (view && this.#renderer.view === view) this.#renderer.setView(undefined);
   }
 
   /** Takes the background away (the game starts, or Play ends). */
   hide(): void {
+    this.#stopTurning();
     if (this.#view && this.#renderer.view === this.#view) this.#renderer.setView(undefined);
+    if (this.#overlayView && this.#renderer.overlay === this.#overlayView) {
+      this.#renderer.overlay = undefined;
+    }
     this.#shown?.destroy();
     this.#shown = undefined;
     this.#mist.destroy();

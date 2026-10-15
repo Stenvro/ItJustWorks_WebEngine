@@ -172,7 +172,7 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   output model (DOBJ DOP2) in the dialogue category (DDSC). The lines' head pitch, roll and
   yaw are kept for head tracking (TODO(M10), which moves the same bone); creature lines
   (8 curves) move jaws (TODO(M10)).
-- **Testing until dialogue (M9):** in the sandbox, the crosshair finds an actor along the
+- **Sandbox (debug only), Talk:** in the sandbox, the crosshair finds an actor along the
   activation ray (within fActivatePickRadius of the line from its feet to its head; TODO(M10):
   actors' own collision) and "Talk" makes it say a random line of its voice type (NPC VTCK,
   `sound\voice\<plugin>\<voice type>\`).

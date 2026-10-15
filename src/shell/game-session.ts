@@ -15,6 +15,7 @@ import type { ModelTextureSwaps } from '../render/actor-model.ts';
 import type { Renderer } from '../render/renderer.ts';
 import { Worldspace } from '../world/worldspace.ts';
 import { markSeen } from '../world/seen-data.ts';
+import { DefaultObjects } from '../world/default-objects.ts';
 import { propertyMaterial, type AddonNode } from '../render/model-data.ts';
 import type {
   EmittanceColor,
@@ -149,6 +150,7 @@ export class GameSession {
   readonly #loadedModels = new Map<string, GpuModel>();
   readonly #borders = new Map<number, Promise<WorldBorder>>();
   readonly #worldspaces = new Map<number, Promise<Worldspace>>();
+  #defaultObjects: Promise<DefaultObjects> | undefined;
   /** Behavior graphs by project path (shared by all the meshes that name them). */
   readonly #graphs = new Map<string, Promise<BehaviorGraph | undefined>>();
   #scripts: Promise<ScriptEnvironment> | undefined;
@@ -452,6 +454,12 @@ export class GameSession {
       this.#worldspaces.set(formId, entry);
     }
     return entry;
+  }
+
+  /** The load order's default objects (DOBJ), read once. */
+  defaultObjects(): Promise<DefaultObjects> {
+    this.#defaultObjects ??= this.db.then((db) => DefaultObjects.read(db));
+    return this.#defaultObjects;
   }
 
   /** A worldspace's border regions (where the player may go), read once per worldspace. */
@@ -790,6 +798,12 @@ export class GameSession {
   menuMode = false;
 
   /**
+   * A loading screen is up: the scripts' clocks and the game's stand still (nothing runs while
+   * the game loads), while the world loads and the player is put down in it.
+   */
+  loading = false;
+
+  /**
    * Every frame: the scripts' clocks move with the game's (real seconds, and game days as the
    * sky moves the hour); a script that set the clock (GameHour) sets the game's.
    */
@@ -797,6 +811,7 @@ export class GameSession {
     const runtime = this.scriptsReady;
     if (!runtime) return;
     runtime.inMenuMode = this.menuMode;
+    if (this.loading) return;
     if (this.menuMode) {
       runtime.updateInMenu(realSeconds);
       return;

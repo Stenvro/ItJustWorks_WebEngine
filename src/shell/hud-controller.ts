@@ -7,8 +7,8 @@
 // top left), quest updates (ShowNotification, one at a time as the HUD says it can show one),
 // and help messages (ShowTutorialHintText, their "[Event]" keys as button art).
 // Notes: docs/ui.md.
-// TODO(M9): compass markers (quests, map markers), a map marker discovered (SetLocationName
-// with sDiscoveredText), subtitles, enemy health, shout meter, HUD modes.
+// TODO(M10): enemy health, the stealth meter (through the clips the HUD registers), the
+// sneaking and riding HUD modes. TODO(M11): the shout meter, weapon charge, meters blinking.
 
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { QuestUpdate, ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -93,7 +93,8 @@ export class HudController implements HudSink {
       depth: HUD_DEPTH,
       interactive: false,
       handlers: {
-        // TODO(M9): the HUD's components registered for SkyUI-like widgets (none in vanilla).
+        // The HUD hands the engine its sneak text, stealth eye, enemy health and quest update
+        // clips, which the engine drives itself (TODO(M10): stealth and enemy health).
         RegisterHUDComponents: () => undefined,
       },
       setup: async (menu) => {
@@ -102,6 +103,7 @@ export class HudController implements HudSink {
         menu.invoke(`${BASE}.SetPlatform`, 0, false);
         // Everything the HUD shows anew after a reload.
         this.#shown = { heading: Number.NaN, health: -1, magicka: -1, stamina: -1 };
+        this.#cartMode = false;
         this.#applySettings();
       },
     });
@@ -128,6 +130,8 @@ export class HudController implements HudSink {
   }
 
   #stopSettings: (() => void) | undefined;
+  /** The CartMode shown (Game.SetHudCartMode). */
+  #cartMode = false;
 
   /** The compass's markers: read four times a second, sent when they changed. */
   #compassBusy = false;
@@ -339,6 +343,12 @@ export class HudController implements HudSink {
         this.#shown.heading = degrees;
         menu.call('SetCompassAngle', degrees, degrees, true);
       }
+    }
+    // Game.SetHudCartMode (the opening's cart): the HUD's CartMode (only the compass's frame).
+    const cart = this.#source.runtime()?.hudCartMode === true;
+    if (cart !== this.#cartMode) {
+      this.#cartMode = cart;
+      this.mode('CartMode', cart);
     }
     this.#showNotice(menu);
     this.#updateCompass(menu);

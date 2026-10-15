@@ -105,6 +105,8 @@ export const INI_DEFAULTS = {
   Interface: {
     // Subtitles of the conversations the player is in, and of all other speech.
     bDialogueSubtitles: 0,
+    // The tutorials the first time the player does something (the tutorial menu).
+    bShowTutorials: 1,
     bGeneralSubtitles: 0,
     fHUDOpacity: 1,
     fActivatePickLength: 180,
@@ -209,6 +211,10 @@ export const INI_DEFAULTS = {
     fUIMistMenu_CameraY_G: 600,
     fUIMistMenu_CameraZ_G: 80,
     fUIMistMenu_DefaultLogoNIFScale: 1,
+    // A loading screen's model turned by the mouse, and on its own after a pause.
+    fUILogoModel_AutoRotateSpeed: 0.1,
+    fUILogoModel_MouseToRotateSpeed: 0.02,
+    fUILogoModel_RotationPauseDuration: 0.25,
     fUIMistModel_RotateZ_G: -180,
     fUIMistModel_TranslateX_G: 0,
     fUIMistModel_TranslateY_G: 0,

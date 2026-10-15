@@ -71,22 +71,20 @@ export interface WorldBridge {
   loaded?(reference: number): boolean;
   /** References whose 3D is loaded (finding references near a point). */
   loadedReferences?(): Iterable<number>;
-  /** Debug.Notification (TODO(M9): the game's HUD). */
+  /** Debug.Notification (the HUD's ShowMessage in Play). */
   notification?(text: string): void;
-  /** A message box; resolves to the button chosen (TODO(M9): the game's menu). */
+  /** A message box (messagebox.swf); resolves to the button chosen. */
   messageBox?(text: string, buttons?: readonly string[]): Promise<number> | undefined;
   /**
    * A help message (Message.ShowAsHelpMessage): shown for `seconds` every `interval`, at most
-   * `times` times, until the player does the input event (TODO(M9): the HUD).
+   * `times` times, until the player does the input event (the HUD's ShowTutorialHintText).
    */
   helpMessage?(text: string, event: string, seconds: number, interval: number, times: number): void;
   /** Message.ResetHelpMessage: the help for an input event may show again. */
   resetHelpMessage?(event: string): void;
-  /** The HUD's "X added" / "X removed" for the player's items (TODO(M9)). */
-  itemMessage?(item: number, count: number, added: boolean): void;
   /** Havok mass of a loaded reference's bodies. */
   mass?(reference: number): number;
-  /** A quest's update: the HUD announces it (TODO(M9): the journal keeps it). */
+  /** A quest's update: the HUD announces it (the journal reads the quest state). */
   questUpdate?(update: QuestUpdate): void;
   /** A behavior graph event sent to a reference (PlayAnimation): false if it has none. */
   animationEvent?(reference: number, event: string): boolean;
@@ -109,6 +107,8 @@ export interface WorldBridge {
   activate?(reference: number, activator: number | undefined): void;
   controlsChanged?(): void;
   fastTravel?(destination: number): void;
+  /** The title cards (Show/HideTitleSequenceMenu, StartTitleSequence). */
+  titleSequence?(action: 'show' | 'hide' | 'start', name?: string): void;
   fade?(out: boolean, black: boolean, delay: number, duration: number): void;
   pointOfView?(pov: 'first' | 'third'): void;
   shakeCamera?(strength: number, seconds: number): void;
@@ -194,7 +194,7 @@ export interface WorldBridge {
   ): void;
   particleGeometry?(geometry: number, apply: boolean, fade: number): void;
   fireWeapon?(weapon: number, source: number, ammo: number | undefined): void;
-  /** A line spoken (TODO(M9): dialogue). */
+  /** A line spoken (Say): the speaker's voice and the HUD's subtitle. */
   say?(
     speaker: number,
     topic: number | undefined,
@@ -902,6 +902,29 @@ export class ScriptRuntime implements VmHost {
     return this.wordsLearned.has(formId);
   }
 
+  /**
+   * The HUD's notice of the player's items added or taken (not silently): the item's name, its
+   * count in brackets when more than one, sAddItemtoInventory ("Added") or
+   * sRemoveItemfromInventory ("Removed") after it.
+   */
+  async #itemMessage(item: number, count: number, added: boolean): Promise<void> {
+    const name = (await this.forms.record(item))?.text('FULL') ?? '';
+    if (name === '') return;
+    const verb = await this.gameSetting(added ? 'sAddItemtoInventory' : 'sRemoveItemfromInventory');
+    const counted = count > 1 ? `${name} (${String(count)})` : name;
+    this.world.notification?.(
+      `${counted} ${typeof verb === 'string' ? verb.toLowerCase() : ''}`.trim(),
+    );
+  }
+
+  /** A spell learned with a notice (AddSpell's abVerbose): "<spell> added". */
+  async spellMessage(spell: number): Promise<void> {
+    const name = (await this.forms.record(spell))?.text('FULL') ?? '';
+    if (name === '') return;
+    const verb = await this.gameSetting('sAddItemtoSpellList');
+    this.world.notification?.(`${name} ${typeof verb === 'string' ? verb : ''}`.trim());
+  }
+
   async gameSetting(name: string): Promise<number | string | undefined> {
     this.#settings ??= GameSettings.read(this.forms.db);
     const settings = await this.#settings;
@@ -1218,7 +1241,7 @@ export class ScriptRuntime implements VmHost {
     ]);
   }
 
-  /** A map marker shown and reachable (TODO(M9): the map); the plugin's XMRK FNAM at first. */
+  /** A map marker shown and reachable (the map, the compass); the plugin's XMRK FNAM at first. */
   mapMarker(reference: number, visible: boolean | undefined, travel: boolean): void {
     const marker = this.#mapMarkers.get(reference) ?? { visible: false, travel: false };
     if (visible !== undefined) marker.visible = visible;
@@ -1399,7 +1422,7 @@ export class ScriptRuntime implements VmHost {
       } else {
         items.set(item, (items.get(item) ?? 0) + count);
       }
-      if (!silent && container === PLAYER_REF) this.world.itemMessage?.(item, count, true);
+      if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(item, count, true));
       this.detach(
         this.sendEvent(container, 'OnItemAdded', [this.formHandle(item), count, null, null]),
       );
@@ -1419,7 +1442,7 @@ export class ScriptRuntime implements VmHost {
       const moved = Math.min(have, count);
       if (moved <= 0) continue;
       items.set(item, have - moved);
-      if (!silent && container === PLAYER_REF) this.world.itemMessage?.(item, moved, false);
+      if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(item, moved, false));
       this.detach(
         this.sendEvent(container, 'OnItemRemoved', [
           this.formHandle(item),

@@ -6,7 +6,8 @@
 // greyscale palette (U: the texture, V: the colour's red or the alpha so far), lighting
 // influence, alpha test and fog. Draw uniforms: emissive = base colour, params.w = base colour
 // scale, specular.x = lighting influence, specular.y = soft falloff depth.
-// TODO(M9): environment maps on effects (only magic and UI meshes use them).
+// No environment map: SSE effect shaders carry none (no vanilla BSEffectShaderProperty sets
+// SLSF1 Environment_Mapping, 0x80).
 
 const SLSF1_VERTEX_ALPHA = 0x8u;
 const SLSF1_GREYSCALE_TO_PALETTE_COLOR = 0x10u;

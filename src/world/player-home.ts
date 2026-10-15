@@ -5,8 +5,8 @@
 // This module finds those actions for a cell and plays a chosen set of them from the state
 // of a new game in the Papyrus VM; the result is which references the scripts enabled or
 // disabled. In a running game the same scripts run in the script runtime when the player
-// does these things: buying in conversation (TODO(M9): dialogue) and crafting at the
-// drafting table and workbenches (TODO(M11): crafting).
+// does these things: buying in conversation (the dialogue menu runs the steward's info fragments) and
+// crafting at the drafting table and workbenches (the crafting menu).
 
 import { evaluateConditions, parseConditions, type Condition } from '../scripting/conditions.ts';
 import { PapyrusVm } from '../scripting/papyrus-vm.ts';

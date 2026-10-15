@@ -16,7 +16,17 @@
 // single-line fields that ask, the HUD's letters, the item cards' names), the lines' average
 // height and the format's leading; the vanilla menus read width and leading only. The fields are
 // measured as plain text in their first format, from the left (a description, a book's page).
-// TODO(M9): textAutoSize and verticalAlign.
+//
+// GFx's sizing of a field to its text: verticalAutoSize ("top": the field grows down to fit its
+// text, as AS2's autoSize does it; "bottom", "center": its bottom or middle stays where it was),
+// textAutoSize ("shrink", "fit": the text's size goes down a point at a time until it fits the
+// field, from the size it was made with) and verticalAlign ("bottom", "center": the text sits at
+// the bottom or the middle of the field's box). Ruffle calls no setter of TextField.prototype
+// for a field on the stage (a set makes the field's own property, and it does not construct the
+// fields it places with _global.TextField), so a field's properties take effect as its text is
+// set through SetText (the menus' Shared.GlobalFunc, which they all use), and at once for a field
+// createTextField makes (Object.watch). The fields that need it again as their text changes are
+// watched (a clip's onEnterFrame on _root): a changed text is fitted again in the next frame.
 // Notes: docs/ui.md ("Scaleform's text fields").
 
 import { Avm1Writer, Function2Flag, Op, type PushValue } from '../formats/swf/avm1-writer.ts';
@@ -29,6 +39,20 @@ const TEXT_FIELD_CLASS = '__itjwTextField';
 const MEASURE_FIELD = '__itjwMeasure';
 const MEASURE = '__itjwMeasureLike';
 const LINES = '__itjwLinesOf';
+/** The fields GFx sizes as their text changes, and the clip whose frames watch them. */
+const WATCHED = '__itjwWatched';
+const WATCH = '__itjwWatch';
+const REFIT = '__itjwRefit';
+const FIT_ONE = '__itjwFitOne';
+const WATCHER = '__itjwTextWatcher';
+const WATCHER_DEPTH = 1047999;
+/** Gives a field the sizing properties' watchers. */
+const WATCH_SIZING = '__itjwWatchSizing';
+/** Applies the sizing properties a field has (as SetText sets its text). */
+const APPLY_SIZING = '__itjwApplySizing';
+/** The sizing properties and their watchers (_global.__itjwOn<property>). */
+const SIZING = ['verticalAutoSize', 'textAutoSize', 'verticalAlign'] as const;
+const ORIGINAL_CREATE_TEXT_FIELD = '__itjwCreateTextField';
 /** The measuring field's depth: the deepest a movie may use. */
 const MEASURE_DEPTH = 1048000;
 /** Where a wrapped SetText keeps the movie's own. */
@@ -80,6 +104,223 @@ export function textFieldExtensions(w: Avm1Writer, translate: (body: Avm1Writer)
   defineLineIndexAtPoint(w);
   defineStandalone(w);
   defineAppend(w);
+  defineAutoSizing(w);
+}
+
+/** `field.member` of a register (a field) onto the stack. */
+function field(body: Avm1Writer, register: number, name: string): Avm1Writer {
+  return body.push(reg(register), name).op(Op.getMember);
+}
+
+/**
+ * verticalAutoSize, textAutoSize and verticalAlign (see above): properties of TextField.prototype
+ * that remember their value on the field and size it.
+ */
+function defineAutoSizing(w: Avm1Writer): void {
+  // _global.__itjwWatched = new Array();
+  w.push('_global').op(Op.getVariable).push(WATCHED, 0, 'Array').op(Op.newObject);
+  w.op(Op.setMember);
+  // _global.__itjwWatch(field): watched from now on (the watcher made once).
+  w.push('_global').op(Op.getVariable).push(WATCH);
+  w.function2('', ['field'], 2, FLAGS, (body) => {
+    field(body, 1, '__itjwIsWatched').ifTo('done');
+    body.push(reg(1), '__itjwIsWatched', true).op(Op.setMember);
+    body.push(reg(1), 1).getPath(`_global.${WATCHED}`).push('push').op(Op.callMethod).op(Op.pop);
+    body.push('_root').op(Op.getVariable).push(WATCHER).op(Op.getMember).op(Op.typeOf);
+    body.push('movieclip').op(Op.equals2).ifTo('done');
+    body.push(WATCHER_DEPTH, WATCHER, 2, '_root').op(Op.getVariable);
+    body.push('createEmptyMovieClip').op(Op.callMethod).op(Op.pop);
+    body.push('_root').op(Op.getVariable).push(WATCHER).op(Op.getMember);
+    body.push('onEnterFrame').getPath(`_global.${REFIT}`).op(Op.setMember);
+    body.label('done');
+  });
+  w.op(Op.setMember);
+
+  // _global.__itjwRefit(): every frame, the watched fields whose text changed fitted again
+  // (those gone dropped). Registers: 1 list, 2 index, 3 field.
+  w.push('_global').op(Op.getVariable).push(REFIT);
+  w.function2('', [], 4, FLAGS, (body) => {
+    body.getPath(`_global.${WATCHED}`).storeRegister(1).op(Op.pop);
+    field(body, 1, 'length').op(Op.decrement).storeRegister(2).op(Op.pop);
+    body.label('next');
+    body.push(reg(2), 0).op(Op.less2).ifTo('end');
+    body.push(reg(1), reg(2)).op(Op.getMember).storeRegister(3).op(Op.pop);
+    field(body, 3, '_width').op(Op.typeOf).push('number').op(Op.equals2).ifTo('alive');
+    body.push(1, reg(2), 2, reg(1), 'splice').op(Op.callMethod).op(Op.pop).jumpTo('step');
+    body.label('alive');
+    field(body, 3, '__itjwSeen');
+    field(body, 3, 'htmlText').op(Op.strictEquals).ifTo('step');
+    body.push(reg(3), 1, '_global').op(Op.getVariable).push(FIT_ONE).op(Op.callMethod);
+    body.op(Op.pop);
+    body.push(reg(3), '__itjwSeen');
+    field(body, 3, 'htmlText').op(Op.setMember);
+    body.label('step');
+    body.push(reg(2)).op(Op.decrement).storeRegister(2).op(Op.pop).jumpTo('next');
+    body.label('end');
+  });
+  w.op(Op.setMember);
+
+  // _global.__itjwFitOne(field): its text shrunk to fit, and its box placed.
+  // Registers: 1 field, 2 size, 3 format.
+  w.push('_global').op(Op.getVariable).push(FIT_ONE);
+  w.function2('', ['field'], 4, FLAGS, (body) => {
+    field(body, 1, '__itjwFit').push('shrink').op(Op.equals2).ifTo('shrink');
+    field(body, 1, '__itjwFit').push('fit').op(Op.equals2).op(Op.not).ifTo('placed');
+    body.label('shrink');
+    // The size it was made with (its whole text's, else the size new text gets).
+    field(body, 1, '__itjwSize').op(Op.typeOf).push('number').op(Op.equals2).ifTo('sized');
+    body.push(reg(1), '__itjwSize', 0, reg(1), 'getTextFormat').op(Op.callMethod);
+    body.push('size').op(Op.getMember).op(Op.setMember);
+    field(body, 1, '__itjwSize').op(Op.typeOf).push('number').op(Op.equals2).ifTo('sized');
+    body.push(reg(1), '__itjwSize', 0, reg(1), 'getNewTextFormat').op(Op.callMethod);
+    body.push('size').op(Op.getMember).op(Op.setMember);
+    body.label('sized');
+    field(body, 1, '__itjwSize').storeRegister(2).op(Op.pop);
+    body.push(0, 'TextFormat').op(Op.newObject).storeRegister(3).op(Op.pop);
+    // A text shrunk before: back to its size first (only then: the text's own sizes stay).
+    field(body, 1, '__itjwShrunk').op(Op.not).ifTo('check');
+    body.push(reg(3), 'size', reg(2)).op(Op.setMember);
+    body.push(reg(3), 1, reg(1), 'setTextFormat').op(Op.callMethod).op(Op.pop);
+    body.push(reg(1), '__itjwShrunk', false).op(Op.setMember);
+    body.label('check');
+    // Too tall, or (not wrapping) too wide, and above a point: a point smaller.
+    body.push(reg(2), 1).op(Op.greater).op(Op.not).ifTo('placed');
+    field(body, 1, 'textHeight');
+    field(body, 1, '_height').push(4).op(Op.subtract).op(Op.greater).ifTo('smaller');
+    field(body, 1, 'wordWrap').ifTo('placed');
+    field(body, 1, 'textWidth');
+    field(body, 1, '_width').push(4).op(Op.subtract).op(Op.greater).op(Op.not).ifTo('placed');
+    body.label('smaller');
+    body.push(reg(2)).op(Op.decrement).storeRegister(2).op(Op.pop);
+    body.push(reg(3), 'size', reg(2)).op(Op.setMember);
+    body.push(reg(3), 1, reg(1), 'setTextFormat').op(Op.callMethod).op(Op.pop);
+    body.push(reg(1), '__itjwShrunk', true).op(Op.setMember);
+    body.jumpTo('check');
+    body.label('placed');
+    // verticalAutoSize bottom / center: that edge stays.
+    field(body, 1, '__itjwVAuto').push('bottom').op(Op.equals2).op(Op.not).ifTo('notBottom');
+    body.push(reg(1), '_y');
+    field(body, 1, '__itjwAnchor');
+    field(body, 1, '_height').op(Op.subtract).op(Op.setMember);
+    body.label('notBottom');
+    field(body, 1, '__itjwVAuto').push('center').op(Op.equals2).op(Op.not).ifTo('notCenter');
+    body.push(reg(1), '_y');
+    field(body, 1, '__itjwAnchor');
+    field(body, 1, '_height').push(2).op(Op.divide).op(Op.subtract).op(Op.setMember);
+    body.label('notCenter');
+    // verticalAlign bottom / center: in the box it had (its height fitting its text).
+    field(body, 1, '__itjwVAlign').push('bottom').op(Op.equals2).ifTo('alignBottom');
+    field(body, 1, '__itjwVAlign').push('center').op(Op.equals2).op(Op.not).ifTo('done');
+    body.push(reg(1), '_y');
+    field(body, 1, '__itjwBoxY');
+    field(body, 1, '__itjwBoxH');
+    field(body, 1, '_height').op(Op.subtract).push(2).op(Op.divide).op(Op.add2).op(Op.setMember);
+    body.jumpTo('done');
+    body.label('alignBottom');
+    body.push(reg(1), '_y');
+    field(body, 1, '__itjwBoxY');
+    field(body, 1, '__itjwBoxH');
+    field(body, 1, '_height').op(Op.subtract).op(Op.add2).op(Op.setMember);
+    body.label('done');
+  });
+  w.op(Op.setMember);
+
+  /**
+   * _global.__itjwOn<name> = function (name, old, value) { this[key] = value; ...; return value; }:
+   * the watcher a field gets for the property (Object.watch).
+   */
+  const property = (name: string, key: string, set: (body: Avm1Writer) => void): void => {
+    w.push('_global').op(Op.getVariable).push(`__itjwOn${name}`);
+    w.function2('', ['name', 'old', 'value'], 4, FLAGS, (body) => {
+      body.push('this').op(Op.getVariable).push(key, reg(3)).op(Op.setMember);
+      set(body);
+      body.label('end');
+      body.push(reg(3)).op(Op.return);
+    });
+    w.op(Op.setMember);
+  };
+  const watch = (body: Avm1Writer): void => {
+    body.push('this').op(Op.getVariable).push(1, '_global').op(Op.getVariable).push(WATCH);
+    body.op(Op.callMethod).op(Op.pop);
+  };
+  const autoSize = (body: Avm1Writer, value: string): void => {
+    body.push('this').op(Op.getVariable).push('autoSize', value).op(Op.setMember);
+  };
+  // verticalAutoSize: "none" lets the box be; else it fits its text (autoSize), "bottom" and
+  // "center" keep that edge where it is now.
+  property('verticalAutoSize', '__itjwVAuto', (body) => {
+    body.push(reg(3), 'none').op(Op.equals2).op(Op.not).ifTo('fits');
+    autoSize(body, 'none');
+    body.jumpTo('end');
+    body.label('fits');
+    body.push('this').op(Op.getVariable).push('__itjwAnchor');
+    own(body, '_y');
+    own(body, '_height');
+    body.push(reg(3), 'center').op(Op.equals2).ifTo('half');
+    body.jumpTo('anchor');
+    body.label('half');
+    body.push(2).op(Op.divide);
+    body.label('anchor');
+    body.op(Op.add2).op(Op.setMember);
+    autoSize(body, 'left');
+    watch(body);
+  });
+  // textAutoSize: fitted as its text changes.
+  property('textAutoSize', '__itjwFit', watch);
+  // verticalAlign: the box it has now, its height fitting its text from now on.
+  property('verticalAlign', '__itjwVAlign', (body) => {
+    body.push('this').op(Op.getVariable).push('__itjwBoxY');
+    own(body, '_y').op(Op.setMember);
+    body.push('this').op(Op.getVariable).push('__itjwBoxH');
+    own(body, '_height').op(Op.setMember);
+    body.push(reg(3), 'bottom').op(Op.equals2).ifTo('fits');
+    body.push(reg(3), 'center').op(Op.equals2).op(Op.not).ifTo('end');
+    body.label('fits');
+    autoSize(body, 'left');
+    watch(body);
+  });
+  // _global.__itjwWatchSizing(field): field.watch(each sizing property, its watcher).
+  w.push('_global').op(Op.getVariable).push(WATCH_SIZING);
+  w.function2('', ['field'], 2, FLAGS, (body) => {
+    body.push(reg(1)).op(Op.typeOf).push('object').op(Op.equals2).op(Op.not).ifTo('done');
+    for (const name of SIZING) {
+      body.getPath(`_global.__itjwOn${name}`).push(name, 2, reg(1), 'watch').op(Op.callMethod);
+      body.op(Op.pop);
+    }
+    body.label('done');
+  });
+  w.op(Op.setMember);
+  // _global.__itjwApplySizing(field): each sizing property the field has and that has not taken
+  // effect yet, taken now (its watcher called as if it had just been set).
+  w.push('_global').op(Op.getVariable).push(APPLY_SIZING);
+  w.function2('', ['field'], 3, FLAGS, (body) => {
+    for (const name of SIZING) {
+      const applied = `__itjwApplied${name}`;
+      body.push(reg(1), name).op(Op.getMember).storeRegister(2).op(Op.pop);
+      body.push(reg(2)).op(Op.typeOf).push('undefined').op(Op.equals2).ifTo(`skip${name}`);
+      body.push(reg(2), reg(1), applied).op(Op.getMember).op(Op.strictEquals);
+      body.ifTo(`skip${name}`);
+      body.push(reg(1), applied, reg(2)).op(Op.setMember);
+      body.push(reg(2), null, name, reg(1), 4).getPath(`_global.__itjwOn${name}`);
+      body.push('call').op(Op.callMethod).op(Op.pop);
+      body.label(`skip${name}`);
+    }
+  });
+  w.op(Op.setMember);
+  // MovieClip.prototype.createTextField: the field it makes gets them too.
+  w.getPath('MovieClip.prototype').push(ORIGINAL_CREATE_TEXT_FIELD);
+  w.getPath('MovieClip.prototype.createTextField').op(Op.setMember);
+  w.getPath('MovieClip.prototype').push('createTextField');
+  w.function2('', [], 3, Function2Flag.preloadThis | Function2Flag.preloadArguments, (body) => {
+    // var made = this.__itjwCreateTextField.apply(this, arguments);
+    body.push(reg(2), reg(1), 2, reg(1), ORIGINAL_CREATE_TEXT_FIELD).op(Op.getMember);
+    body.push('apply').op(Op.callMethod);
+    // _global.__itjwWatchSizing(this[arguments[0]]);
+    body.push(reg(1), reg(2), 0).op(Op.getMember).op(Op.getMember);
+    body.push(1, '_global').op(Op.getVariable).push(WATCH_SIZING).op(Op.callMethod).op(Op.pop);
+    body.op(Op.return);
+  });
+  w.op(Op.setMember);
 }
 
 /** TextField.prototype.addProperty("numLines", function () {...}, null) */
@@ -285,7 +526,9 @@ function defineStandalone(w: Avm1Writer): void {
   w.function2('', [], 1, FLAGS, (body) => {
     own(body, '_width').op(Op.typeOf).push('number').op(Op.equals2).op(Op.not).ifTo('off');
     body.push('this').op(Op.getVariable).push(1).getPath(`_global.${TEXT_FIELD_CLASS}`);
-    body.push('call').op(Op.callMethod).op(Op.pop).jumpTo('end');
+    body.push('call').op(Op.callMethod).op(Op.pop);
+    body.push('this').op(Op.getVariable).push(1, '_global').op(Op.getVariable).push(WATCH_SIZING);
+    body.op(Op.callMethod).op(Op.pop).jumpTo('end');
     body.label('off');
     body.push('this').op(Op.getVariable).push('__proto__').getPath(`_global.${STANDALONE_TEXT}`);
     body.op(Op.setMember);
@@ -353,6 +596,9 @@ function defineTranslatedSetText(w: Avm1Writer, translate: (body: Avm1Writer) =>
         body.label('translated');
         body.storeRegister(2).op(Op.pop);
         body.label('call');
+        // GFx's sizing properties take effect before the text is set (src: defineAutoSizing).
+        body.push('this').op(Op.getVariable).push(1, '_global').op(Op.getVariable);
+        body.push(APPLY_SIZING).op(Op.callMethod).op(Op.pop);
         body.push(reg(3), reg(2), 'this').op(Op.getVariable).push(3);
         body.push(reg(1), 'callee').op(Op.getMember).push(ORIGINAL_SET_TEXT).op(Op.getMember);
         body.push('call').op(Op.callMethod).op(Op.return);

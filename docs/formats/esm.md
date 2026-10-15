@@ -926,7 +926,7 @@ death, SCMS success, LUMS level up (both MUSSpecialSuccess), DCMS dungeon cleare
 (`_NONE`), DDSC / NDSC / SFDC / PDMC / PIMC / PDLC / SMSC / TSSC categories, DOP2 / DOP3 /
 POPM / P3OM / IOPM output models, RVBT the default reverb, UWLS the loop under water, DLMT the
 landscape's material; PUSG / PDSG (and per item kind) the sounds of picking up and putting
-down (TODO(M9)).
+down (`itemSound`, src/gameplay/inventory.ts).
 
 ## Border regions
 
