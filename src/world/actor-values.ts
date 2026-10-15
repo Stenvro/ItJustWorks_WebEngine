@@ -1,5 +1,6 @@
 // Actor values by index, as UESP's "Skyrim Mod:Actor Value Indices" lists them (the console
-// names scripts use with GetActorValue and the like; AVIF records are form 0x3E8 + ...).
+// names scripts use with GetActorValue and the like; each one's AVIF record, its name and
+// description, is the one named "AV" + its name: AVOneHanded 0x44C, AVCarryWeight 0x3F0).
 // Platform-independent.
 
 const NAMES = `

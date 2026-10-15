@@ -194,6 +194,8 @@ export class GameState {
   nextEffect = 0xfd000001;
   /** The player's favorites (items, spells, shouts): the favorites menu's (Q). */
   readonly favorites = new Set<number>();
+  /** Training sessions the player had at a level (five a level: the training menu). */
+  training = { level: 0, sessions: 0 };
   /** Actors dead, by their base (GetDeadCount). */
   readonly deadCounts = new Map<number, number>();
   /** Counts the quests' updates for the player (QuestState.updated). */

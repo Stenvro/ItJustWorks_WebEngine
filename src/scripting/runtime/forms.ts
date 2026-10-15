@@ -5,6 +5,7 @@
 
 import { RecordFlag } from '../../formats/esm/record.ts';
 import { parseVmad, type PropertyValue, type ScriptAttachments } from '../../formats/esm/vmad.ts';
+import { actorValueName } from '../../world/actor-values.ts';
 import { parseQuest, type QuestAlias, type QuestRecord } from '../../world/quest-records.ts';
 import type { GameRecord, RecordDatabase } from '../../world/record-db.ts';
 import type { AttachedScriptInfo } from '../papyrus-vm.ts';
@@ -98,9 +99,24 @@ export class FormIndex {
   readonly #vmad = new Map<number, Promise<ScriptAttachments | undefined>>();
   readonly #quests = new Map<number, Promise<QuestRecord | undefined>>();
   #unique: Promise<Map<number, number>> | undefined;
+  #actorValueForms: Promise<Map<string, number>> | undefined;
 
   constructor(db: RecordDatabase) {
     this.db = db;
+  }
+
+  /** An actor value's AVIF record (its name, description): the one named "AV" + its name. */
+  async actorValueForm(index: number): Promise<GameRecord | undefined> {
+    this.#actorValueForms ??= (async () => {
+      const byName = new Map<string, number>();
+      for (const formId of this.db.formIdsOfType('AVIF')) {
+        const editorId = (await this.record(formId))?.editorId;
+        if (editorId) byName.set(editorId.toLowerCase(), formId);
+      }
+      return byName;
+    })();
+    const formId = (await this.#actorValueForms).get(`av${actorValueName(index).toLowerCase()}`);
+    return formId === undefined ? undefined : this.record(formId);
   }
 
   /** Every version of a record in load order (the last one wins). */

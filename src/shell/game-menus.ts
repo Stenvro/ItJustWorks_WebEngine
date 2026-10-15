@@ -15,6 +15,7 @@ import { magicModel } from './magic-menu.ts';
 import { ItemMenu, type ItemMenuModel } from './item-menu.ts';
 import { FavoritesMenu } from './favorites-menu.ts';
 import { noWaitReason, SleepWaitMenu } from './sleep-wait-menu.ts';
+import { TrainingMenu } from './training-menu.ts';
 import { containerModel } from './container-menu.ts';
 import { barterModel } from './barter-menu.ts';
 import { giftModel } from './gift-menu.ts';
@@ -61,6 +62,7 @@ export class GameMenus {
   readonly #magic: ItemMenuModel;
   readonly #favorites: FavoritesMenu;
   readonly #sleepWait: SleepWaitMenu;
+  readonly #training: TrainingMenu;
   readonly #world: MenusWorld;
 
   constructor(
@@ -72,6 +74,7 @@ export class GameMenus {
   ) {
     this.#world = world;
     this.#sleepWait = new SleepWaitMenu(host, session, terminal);
+    this.#training = new TrainingMenu(host, session, terminal);
     this.#host = host;
     this.#session = session;
     this.#terminal = terminal;
@@ -165,6 +168,9 @@ export class GameMenus {
   async openScripted(request: MenuRequest): Promise<number> {
     if (this.#open || this.#session.menuMode) return 0;
     const session = this.#session;
+    if (request.name === 'Training Menu') {
+      return request.actor === undefined ? 0 : this.#openTraining(request.actor);
+    }
     let model: ItemMenuModel | undefined;
     switch (request.name) {
       case 'Container Menu':
@@ -177,7 +183,7 @@ export class GameMenus {
         model = await giftModel(session, request.actor, request);
         break;
       default:
-        // TODO(M9): the training and race menus.
+        // TODO(M9): the race menu.
         this.#terminal.log('ui', `the ${request.name} is not built yet`, 'warn');
         return 0;
     }
@@ -194,6 +200,36 @@ export class GameMenus {
         this.#closeOpen();
         resolve(0);
       });
+    });
+  }
+
+  /** The training menu for a trainer; resolves once it has closed. */
+  async #openTraining(trainer: number): Promise<number> {
+    const open = { menu: undefined as Menu | undefined, leave: this.#enterMenuMode() };
+    this.#open = open;
+    return new Promise((resolve) => {
+      const closed = (): void => {
+        if (this.#open === open) {
+          this.#open = undefined;
+          open.leave();
+        }
+        resolve(0);
+      };
+      this.#training
+        .open(trainer, MENU_DEPTH, closed)
+        .then((menu) => {
+          if (!menu) closed();
+          else if (this.#open !== open) this.#host.close(menu);
+          else open.menu = menu;
+        })
+        .catch((error: unknown) => {
+          this.#terminal.log(
+            'ui',
+            `the training menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+            'error',
+          );
+          closed();
+        });
     });
   }
 

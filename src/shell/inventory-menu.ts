@@ -32,8 +32,6 @@ import type { Terminal } from './terminal.ts';
 
 /** Gold (Gold001): its count is the player's gold. */
 export const GOLD = 0xf;
-/** The first actor value's AVIF (actor value names: AVIF 0x3E8 + index). */
-export const AVIF_BASE = 0x3e8;
 
 /** An item row of the menu. */
 export interface Row {
@@ -187,7 +185,7 @@ export async function itemCard(
       card.skillText =
         skill === undefined
           ? ''
-          : ((await runtime.forms.record(AVIF_BASE + skill))?.text('FULL') ?? '');
+          : ((await runtime.forms.actorValueForm(skill))?.text('FULL') ?? '');
       break;
     }
     case CardType.weapon:

@@ -354,6 +354,22 @@ TODO(M10): getting into the bed, enemies near, actors' places after the hours, t
 off by an attack. TODO(M11): guards pursuing, trespassing, health damage, owned beds, what
 sleep restores.
 
+## Training
+
+`trainingmenu.swf` (`src/shell/training-menu.ts`; `Game.ShowTrainingMenu(trainer)` from a
+dialogue's script) has no calls to fill it: the engine sets the card's fields
+(`_root.TrainingMenuObj`: `SkillName` the skill and the player's level in it, `TrainerSkill`
+the trainer's tier as a skill level name, `TimesTrained` "n/5", `TrainCost`, `CurrentGold`) and
+calls its `SetPlatform`. The movie handles no keys: Accept (E, Enter) trains and Cancel (Tab,
+Esc) leaves, as its buttons do (`Train`, `Exit`). The skill is the trainer's class's (CLAS DATA:
+skill u8 @4, 0 one-handed .. 17 enchanting; the level it teaches up to u8 @5: 50, 75, 90).
+A session (UESP, "Trainers") raises the skill by one, five a player level, and costs
+fTrainingMultCost × (1, iTrainingExpertCost above 50, iTrainingMasterCost above 75) × skill +
+50 gold, which goes to the trainer; sCanNotTrainAnymore, sCanNotTrainHigher and
+sInsufficientGoldToTrain say why one cannot be had. An actor value's name is its AVIF record's,
+the one named "AV" + the value's name. TODO(M11): the skill's progress, the experience a session
+gives, the skill increase notice.
+
 ## The journal
 
 `quest_journal.swf` (`src/shell/journal-menu.ts`): J opens it on the page it was left on, Pause
