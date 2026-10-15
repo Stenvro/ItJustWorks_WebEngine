@@ -23,6 +23,7 @@ import {
 import type { Translations } from '../formats/swf/translation.ts';
 import { loadRuffle, type RuffleApi, type RufflePlayerElement } from './ruffle.ts';
 import { readSwf } from '../formats/swf/swf.ts';
+import { flashKeyCode } from './key-codes.ts';
 import { SAFE_ZONE, safeRect, scaleMode, visibleRect, type SafeZone } from './stage-rects.ts';
 
 /**
@@ -54,6 +55,9 @@ export interface MenuOptions {
    */
   readonly keyAs?: Readonly<Record<string, string>>;
 }
+
+/** CLIK's input manager, which every menu built on CLIK reads its keys from. */
+const INPUT_DELEGATE = 'gfx.managers.InputDelegate.instance';
 
 /** The page function the bridge calls (checked against the bridge's name at compile time). */
 const BRIDGE_GLOBAL: typeof BRIDGE_CALL = '__itjwMenuCall';
@@ -123,6 +127,7 @@ export class Menu {
   /** The player the menu plays in now (the host gives it one, and a new one on reloads). */
   attach(element: RufflePlayerElement): void {
     this.#detachPlayer();
+    this.#inputDelegate = undefined;
     this.#element = element;
     this.#api = element.ruffle();
   }
@@ -141,6 +146,27 @@ export class Menu {
       this.#log(`${this.movie} asks ${name}: not answered yet`);
     }
     return undefined;
+  }
+
+  /** Whether the movie reads its keys through CLIK's InputDelegate (found once per load). */
+  #inputDelegate: boolean | undefined;
+
+  /**
+   * A key for the movie as GFx gives it one: through CLIK's InputDelegate ("keyDown",
+   * "keyHold", "keyUp" with the Flash key code), which turns it into the menus' input events.
+   * False if the movie has no InputDelegate (the page's key then goes to the player itself).
+   */
+  pressKey(type: 'keyDown' | 'keyHold' | 'keyUp', code: number): boolean {
+    this.#inputDelegate ??= this.get(`${INPUT_DELEGATE}.keyRepeatStateLookup`) !== undefined;
+    if (!this.#inputDelegate) return false;
+    this.invoke(`${INPUT_DELEGATE}.handleKeyPress`, type, code);
+    return true;
+  }
+
+  /** Whether the movie's focus is on a text field the player types into. */
+  get typing(): boolean {
+    const focus = this.invoke('Selection.getFocus');
+    return typeof focus === 'string' && this.get(`${focus}.type`) === 'input';
   }
 
   /** Calls a GameDelegate callback of the menu (GameDelegate.addCallBack). */
@@ -345,6 +371,7 @@ export class MenuHost {
     this.#sizeWatch.disconnect();
     this.#layer.removeEventListener('pointerdown', this.#pointed);
     this.#layer.removeEventListener('keydown', this.#keyed, { capture: true });
+    this.#layer.removeEventListener('keyup', this.#keyed, { capture: true });
     if (this.#resizeTimer !== undefined) clearTimeout(this.#resizeTimer);
     if (window[BRIDGE_GLOBAL] === this.#dispatch) window[BRIDGE_GLOBAL] = undefined;
   }
@@ -416,6 +443,7 @@ export class MenuHost {
     this.#sizeWatch.observe(this.#layer);
     this.#layer.addEventListener('pointerdown', this.#pointed);
     this.#layer.addEventListener('keydown', this.#keyed, { capture: true });
+    this.#layer.addEventListener('keyup', this.#keyed, { capture: true });
     window[BRIDGE_GLOBAL] = this.#dispatch;
   }
 
@@ -445,25 +473,49 @@ export class MenuHost {
     }
   }
 
-  /** Tab is the menus' (closing the tween menu, the next field), not the page's focus. */
+  /** Keys the engine took (onKey) while down: their release is the engine's too. */
+  readonly #taken = new Set<string>();
+
+  /**
+   * The topmost menu's keys: the engine's own first (onKey), then the movie's as GFx gives
+   * them (Menu.pressKey: a Flash player takes keys only once it has been clicked, a menu
+   * opened by a key must take keys at once), as other keys where the menu says (keyAs). Tab
+   * is the menus' (closing the tween menu, the next field), not the page's focus. A text
+   * field being typed into gets the keys from the player itself.
+   */
   readonly #keyed = (event: KeyboardEvent): void => {
     if (event.key === 'Tab') event.preventDefault();
     if (!event.isTrusted) return;
     const top = this.#topInteractive();
     if (!top) return;
-    if (top.options.onKey?.(top, event)) {
+    const down = event.type === 'keydown';
+    if (down && top.options.onKey?.(top, event)) {
+      this.#taken.add(event.code);
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    if (!down && this.#taken.delete(event.code)) {
       event.preventDefault();
       event.stopPropagation();
       return;
     }
     const as = top.options.keyAs?.[event.code];
+    const code = flashKeyCode(as ?? event.code);
+    if (code === undefined || top.typing) return;
+    const type = !down ? 'keyUp' : event.repeat ? 'keyHold' : 'keyDown';
+    if (top.pressKey(type, code)) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const element = top.element;
-    if (as === undefined || !element) return;
+    if (as === undefined || !element || !down) return;
     event.preventDefault();
     event.stopPropagation();
-    // The key the movie takes instead, down and up.
-    for (const type of ['keydown', 'keyup']) {
-      element.dispatchEvent(new KeyboardEvent(type, { key: as, code: as, bubbles: true }));
+    // The key the player takes instead, down and up.
+    for (const kind of ['keydown', 'keyup']) {
+      element.dispatchEvent(new KeyboardEvent(kind, { key: as, code: as, bubbles: true }));
     }
   };
 
