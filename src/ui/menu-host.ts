@@ -166,7 +166,19 @@ export class Menu {
     this.#inputDelegate = undefined;
     this.#element = element;
     this.#api = element.ruffle();
+    this.#lastSelection = undefined;
+    // What the movie had focused as its player loses the page's focus (before Ruffle clears
+    // it: the capture phase runs first), given back as it is focused again.
+    element.addEventListener('focusout', this.#rememberSelection, { capture: true });
   }
+
+  /** The movie's Selection as its player last lost the page's focus. */
+  #lastSelection: string | undefined;
+
+  readonly #rememberSelection = (): void => {
+    const focus = this.#api ? this.invoke('Selection.getFocus') : undefined;
+    if (typeof focus === 'string') this.#lastSelection = focus;
+  };
 
   /** Answers a name the menu calls (adds or replaces its handler). */
   handle(name: string, handler: MenuCallHandler): void {
@@ -305,7 +317,8 @@ export class Menu {
     // frames); the movie's own focus comes back (CLIK's FocusHandler follows Selection: the
     // tween menu's handleInput, a message box's first button its setup focused meanwhile).
     const selection = (): unknown => (this.#api ? this.invoke('Selection.getFocus') : undefined);
-    let known = selection();
+    const now = selection();
+    let known = typeof now === 'string' ? now : this.#lastSelection;
     if (document.activeElement === element) element.blur();
     element.focus();
     const started = performance.now();
@@ -335,6 +348,7 @@ export class Menu {
     const api = this.#api;
     this.#element = undefined;
     this.#api = undefined;
+    element?.removeEventListener('focusout', this.#rememberSelection, { capture: true });
     // Out of the page first: Ruffle ends a player that leaves the document. Pausing it as well
     // may fail on a player Ruffle has ended; that is no fault of the menu.
     element?.remove();

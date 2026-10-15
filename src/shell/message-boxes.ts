@@ -114,6 +114,40 @@ export class MessageBoxes {
         menu.call('setButtons', true, ...buttons);
       },
     });
+    // The mouse: Ruffle does not find the movie's buttons under it (their hit areas), so the
+    // engine asks the movie which button is there (hitTest at the movie's mouse): it takes the
+    // focus, a click presses it.
+    const menu = this.#menu;
+    const element = menu.element;
+    if (!element) return;
+    const under = (): number | undefined => {
+      const x = menu.get('_root._xmouse');
+      const y = menu.get('_root._ymouse');
+      if (typeof x !== 'number' || typeof y !== 'number') return undefined;
+      for (let i = 0; i < buttons.length; i++) {
+        if (menu.invoke(`${BUTTONS}.${String(i)}.hitTest`, x, y, true) === true) return i;
+      }
+      return undefined;
+    };
+    let hovered: number | undefined;
+    element.addEventListener(
+      'pointermove',
+      () => {
+        const index = under();
+        if (index !== undefined && index !== hovered) focusButton(menu, index);
+        hovered = index;
+      },
+      { capture: true, passive: true },
+    );
+    element.addEventListener(
+      'pointerup',
+      (event) => {
+        if (event.button !== 0) return;
+        const index = under();
+        if (index !== undefined) answer(index);
+      },
+      { capture: true },
+    );
   }
 }
 
