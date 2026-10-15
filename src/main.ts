@@ -156,12 +156,53 @@ function showFatal(error: unknown): void {
 
 // --- Render loop ----------------------------------------------------------
 
-/** `memory`: GPU bytes of the session's models and textures (none without a session). */
 /** The Keyboard Lock API (Chromium; not in TypeScript's DOM types). */
 interface KeyboardLock {
   lock?(keyCodes?: readonly string[]): Promise<void>;
   unlock?(): void;
 }
+
+/**
+ * The keys the page keeps in full screen (Keyboard Lock): the game's, so that the browser's
+ * shortcuts on them do not act (Ctrl+W, sneaking forward, closed the tab; F5, Quicksave,
+ * reloaded it). Tab and F11 are left to the system and the browser (Alt+Tab, leaving full
+ * screen; held down, Esc leaves it too).
+ */
+const LOCKED_KEYS: readonly string[] = [
+  'Escape',
+  'Backquote',
+  'Space',
+  'Enter',
+  'Backspace',
+  'CapsLock',
+  'Minus',
+  'Equal',
+  'BracketLeft',
+  'BracketRight',
+  'Backslash',
+  'Semicolon',
+  'Quote',
+  'Comma',
+  'Period',
+  'Slash',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'PageUp',
+  'PageDown',
+  'Home',
+  'End',
+  'Insert',
+  'Delete',
+  ...Array.from({ length: 26 }, (_, i) => `Key${String.fromCharCode(65 + i)}`),
+  ...Array.from({ length: 10 }, (_, i) => `Digit${String(i)}`),
+  ...Array.from({ length: 10 }, (_, i) => `Numpad${String(i)}`),
+  ...Array.from({ length: 10 }, (_, i) => `F${String(i + 1)}`),
+  'F12',
+];
+
+/** `memory`: GPU bytes of the session's models and textures (none without a session). */
 
 function startRenderLoop(
   renderer: Renderer,
@@ -675,6 +716,8 @@ async function main(): Promise<void> {
   const leavePlay = (): void => {
     play?.stop();
     play = undefined;
+    pointerWanted = false;
+    pointerHint.hidden = true;
     ui.brand.tabIndex = 0;
     showScreen('menu');
   };
@@ -726,7 +769,9 @@ async function main(): Promise<void> {
   // The brand in the corner leads back to the main menu (from the sandbox).
   ui.brand.addEventListener('click', () => {
     if (document.body.dataset.screen === 'play') {
-      leavePlay();
+      // In a game it asks first, as the game's Quit to Desktop does.
+      if (play) play.quitFromShell();
+      else leavePlay();
       return;
     }
     if (document.body.dataset.screen === 'launcher') {
@@ -797,12 +842,13 @@ async function main(): Promise<void> {
     { capture: true },
   );
 
-  // In full screen the page keeps Esc (Keyboard Lock, Chromium): the game's Pause, not the
-  // browser's way out (held down, Esc still leaves full screen). Outside full screen the
-  // browser frees the mouse on Esc, which Play takes as Pause.
+  // In full screen the page keeps the game's keys (Keyboard Lock, Chromium; LOCKED_KEYS): Esc is
+  // the game's Pause, not the browser's way out (held down, Esc still leaves full screen), and
+  // the browser's shortcuts do not act on them. Outside full screen the browser frees the mouse
+  // on Esc, which Play takes as Pause.
   document.addEventListener('fullscreenchange', () => {
     const keyboard = (navigator as Navigator & { keyboard?: KeyboardLock }).keyboard;
-    if (document.fullscreenElement) keyboard?.lock?.(['Escape']).catch(() => undefined);
+    if (document.fullscreenElement) keyboard?.lock?.(LOCKED_KEYS).catch(() => undefined);
     else keyboard?.unlock?.();
   });
 

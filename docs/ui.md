@@ -402,9 +402,19 @@ Favorites, Wait), one at a time, each in menu mode, and sets the HUD's mode for 
 `InventoryMode`, `DialogueMode`, `BookMode`, `BarterMode`, `WorldMapMode`, ...).
 
 Esc: a page cannot keep the browser from freeing the mouse on Esc, so in Play the mouse let go
-while the game plays opens Pause, as Esc does in the game. In full screen the page keeps Esc
-(Keyboard Lock, Chromium) and the key itself is the game's. Tab stays with the menus (the
-menu layer keeps it from moving the page's focus).
+while the game plays opens Pause, as Esc does in the game. In full screen the page keeps the
+game's keys (Keyboard Lock, Chromium: `LOCKED_KEYS` in `src/main.ts`, every key but Tab and
+F11, which stay with the system and the browser), so Esc is the game's and the browser's
+shortcuts do not act on its keys. Outside full screen they still would (Ctrl+W, sneaking
+forward, closes the tab; F5, Quicksave, reloads it): while a game runs the page asks before it
+is left (beforeunload; Vite's reloads in development pass). A game key's release is the
+game's too (Alt, Sprint, let go would focus the browser's menu button). Tab stays with the
+menus (the menu layer keeps it from moving the page's focus), and menus that take no input are
+inert, so the page's focus never lands in the HUD's player.
+
+The shell's brand (top left) leaves Play: in a game it asks as the journal's Quit to Desktop
+does ("Quit to desktop?  Any unsaved progress will be lost.", Yes / No); Play ends with its
+world unloaded and its sounds stopped.
 
 The tween menu (`tweenmenu.swf`): `_root.InitExtensions()`, `_root.SetPlatform(0, false)`, then
 `StartOpenMenuAnim(abLevelUp, date, level, progress)`: its bottom bar shows the date as the game
