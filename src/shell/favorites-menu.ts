@@ -63,7 +63,7 @@ export class FavoritesMenu {
     return this.#host.open('favoritesmenu.swf', {
       depth,
       interactive: true,
-      keyAs: { Escape: 'Tab', KeyQ: 'Tab', KeyE: 'Enter' },
+      keyAs: { KeyQ: 'Tab' },
       handlers: {
         ItemSelect: (menu) => {
           const index = menu.invoke('_root.GetSelectedIndex');

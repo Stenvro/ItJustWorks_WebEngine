@@ -75,7 +75,6 @@ export class SleepWaitMenu {
     return this.#host.open('sleepwaitmenu.swf', {
       depth,
       interactive: true,
-      keyAs: { Escape: 'Tab', KeyE: 'Enter' },
       handlers: {
         OK: (menu, args) => {
           if (passing) return;

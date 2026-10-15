@@ -125,7 +125,6 @@ export class ItemMenu {
     return this.#host.open(model.movie, {
       depth: model.depth,
       interactive: true,
-      keyAs: { Escape: 'Tab', KeyE: 'Enter' },
       onKey: (menu, event) => {
         if (event.repeat) return false;
         if (event.code === 'KeyR' && model.transfer) {

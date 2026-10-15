@@ -17,9 +17,11 @@ import { GrassFlag } from '../world/grass.ts';
 
 /** Per instance: position + rotation, scale across + up + shade + unused, ground normal. */
 const INSTANCE_FLOATS = 12;
-/** fGrassStartFadeDistance (Ultra) and the range over which plants shrink away. */
+/** fGrassStartFadeDistance (High, Ultra) and the range over which plants shrink away. */
 export const GRASS_FADE_START = 7000;
 export const GRASS_FADE_RANGE = 1000;
+/** Where the fade start sits in a field's uniforms (floats: wave period, 1, start, range, ...). */
+const FADE_START_OFFSET = 8;
 
 /** One grass type's plants in one cell. */
 export class GpuGrassField {
@@ -30,6 +32,8 @@ export class GpuGrassField {
   readonly center: readonly [number, number, number];
   readonly radius: number;
   readonly #uniforms: readonly GPUBuffer[];
+  /** The fade start its uniforms hold. */
+  #fadeStart = GRASS_FADE_START;
 
   constructor(init: {
     model: GpuModel;
@@ -51,6 +55,15 @@ export class GpuGrassField {
     this.model.acquire();
   }
 
+  /** Gives the field another fade start (the setting Grass Fade changed). */
+  fadeFrom(device: GPUDevice, start: number): void {
+    if (start === this.#fadeStart) return;
+    this.#fadeStart = start;
+    for (const buffer of this.#uniforms) {
+      device.queue.writeBuffer(buffer, FADE_START_OFFSET, Float32Array.of(start));
+    }
+  }
+
   destroy(): void {
     this.instances.destroy();
     for (const buffer of this.#uniforms) buffer.destroy();
@@ -66,6 +79,8 @@ export class GrassRenderer {
   readonly #pipelineLayout: GPUPipelineLayout;
   readonly #module: GPUShaderModule;
   readonly #pipelines = new Map<string, GPURenderPipeline>();
+  /** fGrassStartFadeDistance: where plants begin to fade (the setting Grass Fade). */
+  fadeStart = GRASS_FADE_START;
 
   constructor(device: GPUDevice, colorFormat: GPUTextureFormat, scene: SceneRenderer) {
     this.#device = device;
@@ -130,7 +145,7 @@ export class GrassRenderer {
       const buffer = device.createBuffer({
         label: `grass-${type.editorId}`,
         size: 32,
-        usage: GPUBufferUsage.UNIFORM,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         mappedAtCreation: true,
       });
       new Float32Array(buffer.getMappedRange()).set([
@@ -172,8 +187,9 @@ export class GrassRenderer {
   ): void {
     pass.setBindGroup(0, this.#scene.frameBindGroup);
     pass.setVertexBuffer(1, this.#scene.fallbackVertices);
-    const reach = GRASS_FADE_START + GRASS_FADE_RANGE;
+    const reach = this.fadeStart + GRASS_FADE_RANGE;
     for (const field of fields) {
+      field.fadeFrom(this.#device, this.fadeStart);
       const distance = Math.hypot(
         field.center[0] - camera[0],
         field.center[1] - camera[1],

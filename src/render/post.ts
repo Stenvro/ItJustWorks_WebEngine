@@ -54,6 +54,8 @@ export function dofBlurPixels(radius: number): number {
 }
 
 export class PostProcessor {
+  /** The player's brightness setting (fGamma): the gamma the final image is shown with. */
+  gamma = 1;
   readonly #device: GPUDevice;
   readonly #layout: GPUBindGroupLayout;
   readonly #luminanceLayout: GPUBindGroupLayout;
@@ -238,7 +240,10 @@ export class PostProcessor {
       [bloom ? hdr.receiveBloomThreshold : 0, 1 / Math.max(hdr.white, 0.05) ** 2, adapt ? 1 : 0, 0],
       0,
     );
-    data.set([image.saturation, 0, image.contrast, image.brightness], 4);
+    data.set(
+      [image.saturation, 1 / Math.max(this.gamma, 0.05), image.contrast, image.brightness],
+      4,
+    );
     data.set([...image.tintColor, image.tintAmount], 8);
     data.set(blurWeights(hdr.bloomBlurRadius), 16);
     const bloomWidth = targets.bloomA.width;

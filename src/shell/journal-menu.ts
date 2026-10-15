@@ -13,6 +13,8 @@ import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { formatGameDate } from '../world/game-time.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
+import { settingsHandlers } from './journal-settings.ts';
+import { controlsHandlers } from './journal-controls.ts';
 
 /** HelpManualPC: the help topics of the PC game (Skyrim.esm's FLST 0x163). */
 const HELP_MANUAL_PC = 0x163;
@@ -96,6 +98,10 @@ export class JournalMenu {
             },
           ]),
         ),
+        // The settings pages (src/shell/journal-settings.ts).
+        ...settingsHandlers(this.#host, this.#session),
+        // The controls page (src/shell/journal-controls.ts).
+        ...controlsHandlers(this.#session),
         // The installed content page (Creations): an online store, never reached from
         // localhost (hard rule 4).
         ShouldShowMod: (menu, args) => {
@@ -301,8 +307,8 @@ export class JournalMenu {
 }
 
 /**
- * The system page's requests not answered yet: saving and loading (TODO(M12)), the settings
- * and controls (TODO(M9)), Show on Map (TODO(M9)).
+ * The system page's requests not answered yet: saving and loading (TODO(M12)), Show on Map
+ * (TODO(M9)).
  */
 const UNBUILT = [
   'SAVE',
@@ -318,15 +324,5 @@ const UNBUILT = [
   'ForceStopSaveListLoading',
   'PrepSaveGameScreenshot',
   'SetSaveDisabled',
-  'RequestGameplayOptions',
-  'RequestDisplayOptions',
-  'RequestAudioOptions',
-  'OptionChange',
-  'SaveSettings',
-  'RequestInputMappings',
-  'StartRemapMode',
-  'ResetControlsToDefaults',
-  'ResetControlsToDefaults_Ounce',
-  'SaveControls',
   'ShowTargetOnMap',
 ] as const;

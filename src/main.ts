@@ -728,6 +728,11 @@ async function main(): Promise<void> {
       // The scripts' clocks move on (their waits and updates run as the game's time passes).
       const now = performance.now() / 1000;
       session?.tickScripts(Math.min(0.25, now - lastScriptTick));
+      // The settings Grass Fade and Brightness.
+      if (session) {
+        renderer.grass.fadeStart = session.ini.number('Grass', 'fGrassStartFadeDistance');
+        renderer.post.gamma = session.ini.number('Display', 'fGamma');
+      }
       lastScriptTick = now;
       session?.soundSystem?.update(renderer.view?.camera);
       // The loading screen while a cell or worldspace loads, until the player stands in it.

@@ -23,6 +23,8 @@ export function pointLights(
   seconds: number,
   camera?: Vec3,
   emittance?: (formId: number) => Rgb,
+  /** fLightLODStartFade (the setting Light Fade). */
+  startFade = LIGHT_LOD_START_FADE,
 ): PointLight[] {
   const result: PointLight[] = [];
   for (const light of lights) {
@@ -33,7 +35,7 @@ export function pointLights(
           light.position[2] - camera[2],
         )
       : 0;
-    const lod = 1 - Math.min(1, Math.max(0, (distance - LIGHT_LOD_START_FADE) / LIGHT_LOD_RANGE));
+    const lod = 1 - Math.min(1, Math.max(0, (distance - startFade) / LIGHT_LOD_RANGE));
     if (lod <= 0) continue;
     const flicker =
       camera && distance <= FLICKERING_LIGHT_DISTANCE

@@ -15,6 +15,7 @@ import type { QuestUpdate, ScriptRuntime } from '../scripting/runtime/runtime.ts
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import type { GameSettings } from '../world/game-settings.ts';
+import type { IniSettings } from '../world/ini-settings.ts';
 import type { HelpMessage, HudSignals, HudSink, HudTarget } from './hud-signals.ts';
 
 /** What the HUD reads of the game every frame. */
@@ -23,6 +24,9 @@ export interface HudSource {
   heading(): number | undefined;
   runtime(): ScriptRuntime | undefined;
   readonly settings: Promise<GameSettings>;
+  /** The player's settings (Crosshair, HUD Opacity), and their changes. */
+  readonly ini: () => IniSettings;
+  readonly onSettingsChange: (listener: () => void) => () => void;
 }
 
 /** The HUD's depth among the menus. */
@@ -94,7 +98,11 @@ export class HudController implements HudSink {
         menu.invoke(`${BASE}.SetPlatform`, 0, false);
         // Everything the HUD shows anew after a reload.
         this.#shown = { heading: Number.NaN, health: -1, magicka: -1, stamina: -1 };
+        this.#applySettings();
       },
+    });
+    this.#stopSettings = this.#source.onSettingsChange(() => {
+      this.#applySettings();
     });
     this.#signals.sink = this;
     const tick = (): void => {
@@ -104,7 +112,21 @@ export class HudController implements HudSink {
     this.#frame = requestAnimationFrame(tick);
   }
 
+  /** The settings Crosshair (SetCrosshairEnabled) and HUD Opacity (the whole HUD's). */
+  #applySettings(): void {
+    const menu = this.#menu;
+    if (!menu) return;
+    const ini = this.#source.ini();
+    menu.call('SetCrosshairEnabled', ini.bool('Main', 'bCrosshairEnabled'));
+    const element = menu.element;
+    if (element) element.style.opacity = String(ini.number('Interface', 'fHUDOpacity'));
+  }
+
+  #stopSettings: (() => void) | undefined;
+
   close(): void {
+    this.#stopSettings?.();
+    this.#stopSettings = undefined;
     cancelAnimationFrame(this.#frame);
     for (const help of this.#help.values()) clearTimeout(help.timer);
     this.#help.clear();
