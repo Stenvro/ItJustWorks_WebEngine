@@ -928,6 +928,51 @@ POPM / P3OM / IOPM output models, RVBT the default reverb, UWLS the loop under w
 landscape's material; PUSG / PDSG (and per item kind) the sounds of picking up and putting
 down (`itemSound`, src/gameplay/inventory.ts).
 
+## Crafting
+
+**COBJ** (constructible object: a recipe; `src/world/crafting-records.ts`, CLI
+`tools/cobj-list.ts`): EDID; **COCT** u32 component count, then one **CNTO** per component (u32
+form id, i32 count; it always matches COCT in the load order; an optional COED may follow each,
+none in vanilla); **CTDA** conditions (run on the player, see "Scripts and conditions");
+**CNAM** the created object; **BNAM** the workbench keyword; **NAM1** u16 created count (no NAM1:
+one). 1614 recipes in the load order, every one with a BNAM, 7 without a CNAM (none created:
+skipped). Components are MISC (ingots, leather, ...), INGR, ALCH (cooking), WEAP / ARMO / AMMO
+(HearthFire, Dawnguard upgrades) and SLGM; never form lists. Counts: 1561 make one, the arrow
+recipes 10 or 24. Conditions: GetItemCount (47, on PlayerRef: a recipe is listed only while the
+player carries some of a material), HasPerk (448, the material's smithing perk),
+EPTemperingItemIsEnchanted (659, tempering recipes: `!= 1 OR HasPerk ArcaneBlacksmith`,
+evaluated on the item being improved), GetGlobalValue, HasSpell (264, staves),
+GetVMQuestVariable, GetStageDone.
+
+A recipe is **tempering** when it sits at a smithing bench (keyword
+CraftingSmithingSharpeningWheel 251 recipes, all WEAP; CraftingSmithingArmorTable 339, ARMO):
+its CNAM is the item improved, not an item made ("TemperWeaponIronSword" for IronSword). All
+other workbench keywords make things: CraftingSmithingForge 309 (WEAP, ARMO, AMMO, the 4
+HearthFire fittings), BYOHBuildingCarpenter 200, CraftingCookpot 70 (food), BYOHBuildingDrafting
+51, DLC2StaffEnchanter 43, Camping_CampfireCookingShared 24 (Survival), CraftingSmelter 18,
+CraftingTanningRack 17, BYOHCraftingOven 13, CraftingSmithingSkyforge 12, DLC1CraftingDawnguard
+10, DLC1LD_CraftingForgeAetherium 3, isGrainMill 1, and one keyword per HearthFire furniture
+piece. A workbench offers every recipe whose BNAM is one of its keywords (a Skyforge: the
+forge's 309 and its own 12).
+
+**FURN WBDT** (2 bytes): u8 bench type (0 none, 1 create object, 2 smithing weapon, 3
+enchanting, 4 enchanting experiment, 5 alchemy, 6 alchemy experiment, 7 smithing armor; 4 and 6
+unused), u8 the skill it trains (an actor value: 10 Smithing, 16 Alchemy, 23 Enchanting; 255 =
+none). 468 furniture have WBDT bench 0 (not workbenches) and 47 are workbenches: forges and
+anvils (1, Smithing, KWDA CraftingSmithingForge), the staff enchanter (1, Enchanting), smelters,
+tanning racks, cooking pots and spits, the oven, the grain mill and the HearthFire tables (1,
+no skill), the grindstone (2), the armor workbench (7), the arcane enchanters (3, Enchanting),
+the disenchanting fonts DisenchantmentFont01 and DLC2ApocryphaFountain (3, no skill, no
+keywords) and the alchemy labs (5, Alchemy). The bench types 1-5 match the crafting menu's
+frames in order (ConstructibleObject, Smithing, EnchantConstruct, EnchantDestruct, Alchemy); 7
+is Smithing too.
+
+The constructible menu's categories (`src/gameplay/crafting.ts`) are CommonLib's
+ConstructibleObjectMenu FilterFlags, an index each (flag `1 << index`): a created object goes
+to the category of its first keyword that is one of the material **default objects** (WM\*\*
+weapon materials, AO\*\* / AL\*\* / AH\*\* armor materials, WPNC / WPSM, JWLR jewelry, GCK1-GCK8
+HearthFire categories, GCKX Aetherium), else Food (ALCH with ENIT flag 0x2), else Misc.
+
 ## Border regions
 
 A region (REGN) with record flag `0x40` (Border Region, xEdit) bounds its worldspace (WNAM)
