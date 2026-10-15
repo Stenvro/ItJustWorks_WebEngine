@@ -20,6 +20,7 @@ import {
   type LoadingScreen,
 } from '../world/loading-screens.ts';
 import { InterfaceFiles } from '../ui/interface-files.ts';
+import type { TweenCamera } from './tween-camera.ts';
 import { MistMenu } from './mist-menu.ts';
 import { FaderMenu } from './fader-menu.ts';
 import { CreditsMenu } from './credits-menu.ts';
@@ -104,6 +105,8 @@ export interface PlayWorld {
   settled(): Promise<void>;
   /** What the map's local map shows where the player is (the viewer on screen's). */
   localMap(): LocalMapContent | undefined;
+  /** The player's tween menu camera (undefined out of the world). */
+  tweenCamera(): TweenCamera | undefined;
 }
 
 const wait = (ms: number): Promise<void> =>
@@ -354,6 +357,7 @@ export class PlayMode {
       confirm: (text, buttons) => boxes.show(text, buttons),
       heading: () => this.#world.heading(),
       localMap: () => this.#world.localMap(),
+      tweenCamera: () => this.#world.tweenCamera(),
       noFastTravelReason: () => this.#noFastTravelReason(),
       fastTravel: (destination, distance) => this.#fastTravel(destination, distance),
     });
@@ -422,6 +426,9 @@ export class PlayMode {
       },
       sleep: () => {
         menus.sleep();
+      },
+      craft: (object) => {
+        menus.craft(object.reference, object.base);
       },
       loadDoor: (text) => {
         session.hud.loadDoor(text);

@@ -4,6 +4,7 @@
 // first-person camera rides the animated Camera1st node) are the player's avatar
 // (player-avatar.ts), which hooks in here.
 
+import { TweenCamera } from './tween-camera.ts';
 import type { Camera } from '../render/view-camera.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
 import { parseControlMap, SCAN_CODES, type ControlMap } from '../formats/controlmap/controlmap.ts';
@@ -163,6 +164,14 @@ export interface PlayerMotion {
   readonly sprinting: boolean;
 }
 
+/**
+ * The vertical field of view (radians) of a horizontal one across a 4:3 frame (degrees), as
+ * fDefaultWorldFOV is (wider screens see more at the sides).
+ */
+function verticalFov(degrees: number): number {
+  return 2 * Math.atan(Math.tan((degrees * Math.PI) / 360) * 0.75);
+}
+
 export class Player implements Camera {
   readonly character: CharacterBody;
   readonly #setup: PlayerSetup;
@@ -210,6 +219,10 @@ export class Player implements Camera {
   /** The last place inside the border. */
   #inside: Vec3 | undefined;
   readonly #fovY: number;
+  /** fDefaultWorldFOV: degrees across a 4:3 frame. */
+  readonly #fovDegrees: number;
+  /** The tween menu's camera while it is open (it leans and zooms the view). */
+  readonly tween: TweenCamera;
 
   constructor(setup: PlayerSetup, feet: Vec3, yaw: number) {
     this.#setup = setup;
@@ -236,8 +249,15 @@ export class Player implements Camera {
     this.near = ini.number('Display', 'fNearDistance');
     // fDefaultWorldFOV is the horizontal field of view of a 4:3 frame (wider screens see
     // more at the sides).
-    const fov = (ini.number('Display', 'fDefaultWorldFOV') * Math.PI) / 180;
-    this.#fovY = 2 * Math.atan(Math.tan(fov / 2) * 0.75);
+    this.#fovDegrees = ini.number('Display', 'fDefaultWorldFOV');
+    this.#fovY = verticalFov(this.#fovDegrees);
+    this.tween = new TweenCamera({
+      rotAngle: ini.number('Camera', 'fTweenCamRotAngle'),
+      rotSpeed: ini.number('Camera', 'fTweenCamRotSpeed'),
+      closingSpeed: ini.number('Camera', 'fTweenCamRotClosingSpeed'),
+      fovMod: ini.number('Camera', 'fTweenCamZoomFOVMod'),
+      zoomSpeed: ini.number('Camera', 'fTweenCamZoomSpeed'),
+    });
     this.rebind(setup.controls);
   }
 
@@ -557,14 +577,23 @@ export class Player implements Camera {
   }
 
   viewProjection(aspect: number, out: Mat4 = new Float32Array(16)): Mat4 {
-    const forward = this.forward;
+    let forward = this.forward;
+    let fovY = this.#fovY;
+    if (this.tween.active) {
+      const added = this.tween.sample(performance.now());
+      const yaw = this.yaw + added.yaw;
+      const pitch = this.pitch + added.pitch;
+      const c = Math.cos(pitch);
+      forward = [Math.sin(yaw) * c, Math.cos(yaw) * c, Math.sin(pitch)];
+      fovY = verticalFov(this.#fovDegrees + added.fov);
+    }
     const target: Vec3 = [
       this.position[0] + forward[0],
       this.position[1] + forward[1],
       this.position[2] + forward[2],
     ];
     const view = lookAt(this.position, target, [0, 0, 1]);
-    const projection = perspectiveReversedZ(this.#fovY, aspect, this.near);
+    const projection = perspectiveReversedZ(fovY, aspect, this.near);
     projection[8] = -this.lensShift;
     return multiply(projection, view, out);
   }
