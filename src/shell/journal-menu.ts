@@ -66,7 +66,9 @@ export class JournalMenu {
    * journal); `closed` is called once it has closed.
    */
   async open(page: number | undefined, closed: () => void, depth: number): Promise<Menu> {
-    const tab = page ?? this.#memory.tab;
+    // DisablePlayerControls' abJournalTabs: the system page alone.
+    const tabsDisabled = this.#session.scriptsReady?.controls.journalTabs === false;
+    const tab = tabsDisabled ? JournalPage.system : (page ?? this.#memory.tab);
     // A GameDelegate request is answered during the call (the menu forgets it once the call
     // returns): what the journal shows is read before it opens.
     const runtime = this.#session.scriptsReady;
@@ -178,7 +180,7 @@ export class JournalMenu {
         await menu.waitFor('_root.InitExtensions');
         menu.invoke('_root.InitExtensions');
         menu.invoke('_root.SetPlatform', 0, false);
-        menu.call('RestoreSavedSettings', tab, false);
+        menu.call('RestoreSavedSettings', tab, tabsDisabled);
       },
     });
   }

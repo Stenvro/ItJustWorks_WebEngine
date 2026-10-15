@@ -62,6 +62,25 @@ export interface CellObject {
   readonly item?: { readonly weight: number; readonly value: number };
   /** ACTI / FLOR RNAM: the verb its activation prompt shows instead of the default. */
   readonly activateText?: string;
+  /** Furniture: whether it is slept in (a sleep marker), its workbench (WBDT type; 0 none). */
+  readonly furniture?: { readonly sleep: boolean; readonly workbench: number };
+}
+
+/**
+ * FURN: a marker of type 2 (FNPR: u16 type, 1 sit, 2 sleep, 4 lean; u16 entry points) is slept
+ * in; WBDT's first byte is its workbench (1 create object, 2 smithing weapons, 3 enchanting,
+ * 5 alchemy, 7 smithing armor, ...) (UESP FURN).
+ */
+export function furnitureOf(base: Pick<GameRecord, 'fields'>): {
+  readonly sleep: boolean;
+  readonly workbench: number;
+} {
+  return {
+    sleep: base.fields
+      .all('FNPR')
+      .some((data) => data.length >= 2 && (view(data).getUint16(0, true) & 0x2) !== 0),
+    workbench: base.fields.first('WBDT')?.[0] ?? 0,
+  };
 }
 
 /** A placed actor (ACHR): its base and placement; its look is resolved when it is shown. */
@@ -619,6 +638,7 @@ export async function loadCellData(
       ...objectSoundsOf(base),
       ...(item && { item: { weight: item.weight, value: item.value } }),
       ...(activateText && { activateText }),
+      ...(base.type === 'FURN' && { furniture: furnitureOf(base) }),
     });
   }
 

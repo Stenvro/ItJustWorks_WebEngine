@@ -332,6 +332,28 @@ menu chosen takes the tween's place at once.
 TODO(M9): the tween camera (the view of the player in third person behind the menu) and the
 sounds of highlighting and choosing.
 
+While scripts keep the menus from the player (`Game.DisablePlayerControls`' abMenu, as the
+opening does) only the journal opens, and with abJournalTabs its system page alone
+(`RestoreSavedSettings(tab, abTabsDisabled)`).
+
+## Waiting and sleeping
+
+`sleepwaitmenu.swf` (`src/shell/sleep-wait-menu.ts`; T, or a bed's Sleep): the engine calls
+`_root.InitExtensions()`, `_root.SetPlatform(0, false)`, then `SleepWaitMenu_mc.SetSleeping(b)`
+("Rest how long?" or "Wait how long?") and `SetCurrentTime(date)`. `OK(hours)` passes the hours
+one at a time (the clock and the scripts' game-time timers with them, the menu's time and hours
+counting down; the game's pace is not documented: 0.2 s an hour), then closes the menu;
+`Cancel` (Tab, Esc) closes it. A sleep sends `OnSleepStart(start, desired end)` and
+`OnSleepStop(interrupted)` to those registered (`RegisterForSleep`), in game days.
+
+The menu does not open where the player may not wait, and the game's message says why:
+`sNoWaitDefault` / `sNoSleepDefault` while scripts disable waiting (`Game.SetInChargen`'s
+abDisableWaiting), `sNoWaitInAir` / `sNoSleepInAir` off the ground. A bed is furniture with a
+sleep marker (FURN FNPR type 2); its prompt is `sFurnitureSleep`.
+TODO(M10): getting into the bed, enemies near, actors' places after the hours, the wait broken
+off by an attack. TODO(M11): guards pursuing, trespassing, health damage, owned beds, what
+sleep restores.
+
 ## The journal
 
 `quest_journal.swf` (`src/shell/journal-menu.ts`): J opens it on the page it was left on, Pause

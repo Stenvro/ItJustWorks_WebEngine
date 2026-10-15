@@ -14,6 +14,7 @@ import { inventoryModel } from './inventory-menu.ts';
 import { magicModel } from './magic-menu.ts';
 import { ItemMenu, type ItemMenuModel } from './item-menu.ts';
 import { FavoritesMenu } from './favorites-menu.ts';
+import { noWaitReason, SleepWaitMenu } from './sleep-wait-menu.ts';
 import { containerModel } from './container-menu.ts';
 import { barterModel } from './barter-menu.ts';
 import { giftModel } from './gift-menu.ts';
@@ -39,6 +40,12 @@ const EVENT_MENUS: Readonly<Record<string, string>> = {
   wait: 'Wait',
 };
 
+/** What the menus ask of the world being played. */
+export interface MenusWorld {
+  /** The player is off the ground (falling, jumping). */
+  inAir(): boolean;
+}
+
 export class GameMenus {
   readonly #host: MenuHost;
   readonly #session: GameSession;
@@ -53,13 +60,18 @@ export class GameMenus {
   readonly #inventory: ItemMenuModel;
   readonly #magic: ItemMenuModel;
   readonly #favorites: FavoritesMenu;
+  readonly #sleepWait: SleepWaitMenu;
+  readonly #world: MenusWorld;
 
   constructor(
     host: MenuHost,
     session: GameSession,
     terminal: Terminal,
     enterMenuMode: () => () => void,
+    world: MenusWorld,
   ) {
+    this.#world = world;
+    this.#sleepWait = new SleepWaitMenu(host, session, terminal);
     this.#host = host;
     this.#session = session;
     this.#terminal = terminal;
@@ -81,10 +93,16 @@ export class GameMenus {
     return this.#open !== undefined;
   }
 
-  /** A gameplay user event the player pressed: the menu it opens, if any (none while open). */
+  /**
+   * A gameplay user event the player pressed: the menu it opens, if any (none while open).
+   * While scripts keep the menus from the player (DisablePlayerControls' abMenu) only the
+   * journal opens (its tabs the scripts' too: abJournalTabs).
+   */
   userEvent(name: string): void {
     const menu = EVENT_MENUS[name.toLowerCase()];
     if (menu === undefined || this.#open || this.#session.menuMode) return;
+    const controls = this.#session.scriptsReady?.controls;
+    if (controls?.menu === false && menu !== 'Pause' && menu !== 'Journal') return;
     this.openMenu(menu);
   }
 
@@ -99,14 +117,16 @@ export class GameMenus {
             ? this.#openItems(name === 'Inventory' ? this.#inventory : this.#magic)
             : name === 'Favorites'
               ? this.#openFavorites()
-              : (() => {
-                  // TODO(M9): the skills, map and wait menus.
-                  if (!this.#missing.has(name)) {
-                    this.#missing.add(name);
-                    this.#terminal.log('ui', `the ${name} menu is not built yet`, 'warn');
-                  }
-                  return Promise.resolve();
-                })();
+              : name === 'Wait'
+                ? this.#openSleepWait(false)
+                : (() => {
+                    // TODO(M9): the skills and map menus.
+                    if (!this.#missing.has(name)) {
+                      this.#missing.add(name);
+                      this.#terminal.log('ui', `the ${name} menu is not built yet`, 'warn');
+                    }
+                    return Promise.resolve();
+                  })();
     opening.catch((error: unknown) => {
       this.#terminal.log(
         'ui',
@@ -175,6 +195,44 @@ export class GameMenus {
         resolve(0);
       });
     });
+  }
+
+  /** Sleeping in a bed: the sleep menu (rest how long?). */
+  sleep(): void {
+    if (this.#open || this.#session.menuMode) return;
+    this.#openSleepWait(true).catch((error: unknown) => {
+      this.#terminal.log(
+        'ui',
+        `the sleep menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      );
+      this.#closeOpen();
+    });
+  }
+
+  /**
+   * The wait (or sleep) menu, unless the player may not wait now: then the game's message
+   * says why.
+   */
+  async #openSleepWait(sleeping: boolean): Promise<void> {
+    const session = this.#session;
+    const reason = noWaitReason(sleeping, {
+      waitingDisabled: session.scriptsReady?.chargen.noWaiting === true,
+      inAir: this.#world.inAir(),
+    });
+    if (reason) {
+      const settings = await session.settings();
+      session.hud.notification(settings.string(reason) ?? '');
+      return;
+    }
+    const open = { menu: undefined as Menu | undefined, leave: this.#enterMenuMode() };
+    this.#open = open;
+    open.menu = await this.#sleepWait.open(sleeping, MENU_DEPTH, () => {
+      if (this.#open !== open) return;
+      this.#open = undefined;
+      open.leave();
+    });
+    if (this.#open !== open) this.#host.close(open.menu);
   }
 
   /** Closes the menu open (Play ends). */

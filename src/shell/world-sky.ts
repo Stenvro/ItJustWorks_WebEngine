@@ -141,6 +141,7 @@ export class WorldSky {
     this.#gpu = gpu;
     const onTime = (): void => {
       this.#hour = Number(ui.time.value);
+      session.gameHour = this.#hour;
       ui.timeLabel.value = formatHour(this.#hour);
     };
     const onWeather = (): void => {
@@ -234,6 +235,7 @@ export class WorldSky {
 
   set hour(hour: number) {
     this.#hour = ((hour % 24) + 24) % 24;
+    this.#session.gameHour = this.#hour;
   }
 
   get weather(): WeatherRecord | undefined {
@@ -315,20 +317,19 @@ export class WorldSky {
       this.#lastFrame === undefined ? 0 : Math.min(0.25, (now - this.#lastFrame) / 1000);
     this.#lastFrame = now;
     this.#seconds += delta;
-    // The clock runs at the TimeScale (times the panel's fast-forward), the clouds with it.
-    this.#hour += (delta * this.#session.clockRate) / 3600;
-    this.#cloudMinutes += (delta * this.#session.clockRate) / 60;
-    if (this.#hour >= 24) {
-      this.#hour -= 24;
-      this.#session.gameDaysPassed++;
-    }
+    // The session's clock runs at the TimeScale (times the panel's fast-forward), the clouds
+    // with it; the sky follows it (the scripts, waiting and the slider set it too).
+    // It stands still while the game is in a menu.
+    const rate = this.#session.menuMode ? 0 : this.#session.clockRate;
+    this.#session.advanceClock((delta * rate) / 3600);
+    this.#hour = this.#session.gameHour;
+    this.#cloudMinutes += (delta * rate) / 60;
     if (Math.abs(Number(this.#ui.time.value) - this.#hour) > 0.04) {
       this.#ui.time.value = this.#hour.toFixed(2);
       this.#ui.timeLabel.value = formatHour(this.#hour);
     }
-    // The session's clock follows the sky's (the slider sets it), and with it the colours of
-    // the references' emittance (window glow by night, sunbeams by day).
-    this.#session.gameHour = this.#hour;
+    // The colours of the references' emittance follow the clock (window glow by night,
+    // sunbeams by day).
     this.#session.updateEmittance(this.#hour, this.#climate);
     const weather = this.#weather;
     if (!weather) return undefined;
