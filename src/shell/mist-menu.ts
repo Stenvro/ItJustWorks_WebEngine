@@ -242,8 +242,8 @@ export class MistMenu {
 
   /**
    * A loading screen: its model at its offset, turned and scaled as the record says, seen along
-   * its camera path. The mouse turns it about Z (fUILogoModel_MouseToRotateSpeed radians a
-   * pixel); after fUILogoModel_RotationPauseDuration without the mouse it turns on its own at
+   * its camera path. The mouse turns it about Z by fUILogoModel_MouseToRotateSpeed of
+   * the mouse's input as mouse look takes it (π × fMouseHeadingSensitivity radians a pixel); after fUILogoModel_RotationPauseDuration without the mouse it turns on its own at
    * fUILogoModel_AutoRotateSpeed radians a second; within its rotation limits (ONAM, degrees
    * from its rotation: back and forth between them when they are not a full turn).
    */
@@ -293,7 +293,10 @@ export class MistMenu {
         full: max - min >= 360,
         idle: Infinity,
         last: performance.now(),
-        mouse: ini.number('Interface', 'fUILogoModel_MouseToRotateSpeed'),
+        mouse:
+          ini.number('Interface', 'fUILogoModel_MouseToRotateSpeed') *
+          Math.PI *
+          session.ini.number('Controls', 'fMouseHeadingSensitivity'),
         auto: ini.number('Interface', 'fUILogoModel_AutoRotateSpeed'),
         pause: ini.number('Interface', 'fUILogoModel_RotationPauseDuration'),
       };
