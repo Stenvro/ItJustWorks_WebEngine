@@ -11,6 +11,8 @@ import type { GameSettings } from '../world/game-settings.ts';
 
 /** The message box's depth among the menus (over the HUD and the game's other menus). */
 const MESSAGE_BOX_DEPTH = 8;
+/** The movie's buttons, in order. */
+const BUTTONS = '_root.MessageMenu.MessageButtons';
 
 interface Pending {
   readonly text: string;
@@ -71,9 +73,31 @@ export class MessageBoxes {
       pending.resolve(index);
       void this.#next();
     };
+    const cancellable = buttons.length === 1;
     this.#menu = await this.#host.open('messagebox.swf', {
       depth: MESSAGE_BOX_DEPTH,
       interactive: true,
+      // The engine's keys (the movie's own CLIK input does not reach its buttons in Ruffle):
+      // Enter and E press the focused button, the arrows move the focus, Esc and Tab cancel a
+      // box that may be cancelled.
+      onKey: (menu, event) => {
+        if (event.repeat) return false;
+        const focused = focusedButton(menu, buttons.length);
+        if (event.code === 'Enter' || event.code === 'NumpadEnter' || event.code === 'KeyE') {
+          answer(focused);
+          return true;
+        }
+        if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
+          const step = event.code === 'ArrowLeft' ? -1 : 1;
+          focusButton(menu, (focused + step + buttons.length) % buttons.length);
+          return true;
+        }
+        if (event.code === 'Escape' || event.code === 'Tab') {
+          if (cancellable) answer(0);
+          return true;
+        }
+        return false;
+      },
       handlers: {
         buttonPress: (_menu, args) => {
           answer(typeof args[1] === 'number' ? args[1] : 0);
@@ -86,9 +110,26 @@ export class MessageBoxes {
         menu.call('setMessageText', pending.text, false);
         // A box with one button closes by Esc (or Tab) as by that button (inferred: the game's
         // single-button boxes close so).
-        menu.call('setIsCancellable', buttons.length === 1, 0);
+        menu.call('setIsCancellable', cancellable, 0);
         menu.call('setButtons', true, ...buttons);
       },
     });
   }
+}
+
+/** The buttons (MessageMenu.MessageButtons): which has the focus (its `focused`), else the first. */
+function focusedButton(menu: Menu, count: number): number {
+  for (let i = 0; i < count; i++) {
+    const focused = menu.get(`${BUTTONS}.${String(i)}.focused`);
+    if (focused === true || (typeof focused === 'number' && focused > 0)) return i;
+  }
+  return 0;
+}
+
+/** Moves the focus to a button, as the movie's arrows would (its selection indicator follows). */
+function focusButton(menu: Menu, index: number): void {
+  const target = menu.get(`${BUTTONS}.${String(index)}._target`);
+  if (typeof target !== 'string') return;
+  // The button's focus plays its sound (UIMenuFocus) as the movie's own does.
+  menu.invoke('Selection.setFocus', `_level0${target.replaceAll('/', '.')}`);
 }

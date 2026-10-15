@@ -84,6 +84,9 @@ const BRIDGE_GLOBAL: typeof BRIDGE_CALL = '__itjwMenuCall';
 /** The game's mouse cursor (its clip mc_Cursor follows the mouse), over every menu. */
 const CURSOR_MOVIE = 'cursormenu.swf';
 const CURSOR_DEPTH = 100;
+/** How long a menu focused again keeps its movie's focus against Ruffle clearing it. */
+const FOCUS_WATCH_MS = 2000;
+const FOCUS_WATCH_STEP_MS = 50;
 
 /** How long the window's size must rest before the menus are loaded again (ms). */
 const RESIZE_SETTLE_MS = 250;
@@ -298,16 +301,27 @@ export class Menu {
   focus(): void {
     const element = this.#element;
     if (!element) return;
-    // Ruffle clears the movie's Selection as its element gets focus again; the movie's own
-    // focus (CLIK's FocusHandler follows Selection: the tween menu's handleInput) comes back.
-    const before = this.#api ? this.invoke('Selection.getFocus') : undefined;
+    // Ruffle clears the movie's Selection as its element gets focus (on one of its next
+    // frames); the movie's own focus comes back (CLIK's FocusHandler follows Selection: the
+    // tween menu's handleInput, a message box's first button its setup focused meanwhile).
+    const selection = (): unknown => (this.#api ? this.invoke('Selection.getFocus') : undefined);
+    let known = selection();
     if (document.activeElement === element) element.blur();
     element.focus();
-    if (typeof before !== 'string') return;
-    setTimeout(() => {
-      if (this.#closed || this.#element !== element) return;
-      if (this.invoke('Selection.getFocus') === null) this.invoke('Selection.setFocus', before);
-    }, 0);
+    const started = performance.now();
+    const watch = setInterval(() => {
+      if (
+        this.#closed ||
+        this.#element !== element ||
+        performance.now() - started > FOCUS_WATCH_MS
+      ) {
+        clearInterval(watch);
+        return;
+      }
+      const now = selection();
+      if (typeof now === 'string') known = now;
+      else if (now === null && typeof known === 'string') this.invoke('Selection.setFocus', known);
+    }, FOCUS_WATCH_STEP_MS);
   }
 
   close(): void {
@@ -681,7 +695,10 @@ export class MenuHost {
 
   /** A click in the game: the keys go to the topmost menu again. */
   readonly #pointed = (): void => {
-    this.focusTop();
+    // A click on the topmost menu itself leaves it alone: focusing it again mid-click (a blur,
+    // then focus) would lose the press (its buttons' onRelease never comes).
+    const top = this.#topInteractive();
+    if (top && document.activeElement !== top.element) top.focus();
   };
 
   readonly #dispatch = (menu: string, name: string, ...args: unknown[]): unknown => {
