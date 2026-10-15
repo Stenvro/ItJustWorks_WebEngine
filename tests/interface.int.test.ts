@@ -162,6 +162,56 @@ describe.skipIf(!hasGamedata())('the interface movies on the local game data', (
     expect(problems.slice(0, 10)).toEqual([]);
   }, 120_000);
 
+  it("links every menu with its fonts in it: no import left, each text field's font defined", async () => {
+    // As InterfaceFiles serves the menus: their parts linked whole (each with its own fonts
+    // first), the font library by the fonts imported.
+    const BACKSLASH = String.fromCharCode(92);
+    const config = parseFontConfig(decodeWindows1252(await vfs.read('interface\\fontconfig.txt')));
+    const library = buildFontLibrary(
+      config,
+      await Promise.all(config.libraries.map(async (path) => readSwf(await vfs.read(path)))),
+      readSwf(await vfs.read('interface\\gfxfontlib.swf')),
+    ).movie;
+    const isFontLibrary = (url: string): boolean => /gfxfontlib\.swf$/i.test(url);
+    const serve = async (url: string): Promise<Uint8Array | undefined> => {
+      if (isFontLibrary(url)) return library;
+      const path = `interface${BACKSLASH}${url.replaceAll('/', BACKSLASH)}`.toLowerCase();
+      if (!vfs.has(path)) return undefined;
+      return linkImports(await vfs.read(path), () => true, serve, isFontLibrary);
+    };
+    const fontCodes = new Set<number>([
+      10,
+      SwfTagCode.defineFont2,
+      SwfTagCode.defineFont3,
+      SwfTagCode.defineFont4,
+    ]);
+    const problems: string[] = [];
+    let fields = 0;
+    for (const path of menus) {
+      const bytes = await serve(path.slice('interface\\'.length));
+      if (!bytes) continue;
+      const movie = readSwf(bytes);
+      if (swfImports(movie).length > 0) problems.push(`${path}: imports left`);
+      const fonts = new Set<number>();
+      for (const tag of movie.tags) {
+        const body = tagBody(movie, tag);
+        if (fontCodes.has(tag.code)) fonts.add((body[0] ?? 0) | ((body[1] ?? 0) << 8));
+      }
+      for (const tag of allTags(movie.tags)) {
+        if (tag.code !== SwfTagCode.defineEditText) continue;
+        // DefineEditText: id, bounds, flags; HasFont (0x01 of the first flags byte): its font.
+        const body = tagBody(movie, tag);
+        const flagsAt = 2 + Math.ceil((5 + 4 * ((body[2] ?? 0) >> 3)) / 8);
+        if (((body[flagsAt] ?? 0) & 0x01) === 0) continue;
+        fields++;
+        const id = (body[flagsAt + 2] ?? 0) | ((body[flagsAt + 3] ?? 0) << 8);
+        if (!fonts.has(id)) problems.push(`${path}: a text field's font ${String(id)} is missing`);
+      }
+    }
+    expect(fields).toBeGreaterThan(100);
+    expect(problems.slice(0, 10)).toEqual([]);
+  }, 120_000);
+
   it('builds a font library with every font name a menu imports', async () => {
     const config = parseFontConfig(decodeWindows1252(await vfs.read('interface\\fontconfig.txt')));
     const libraries = await Promise.all(

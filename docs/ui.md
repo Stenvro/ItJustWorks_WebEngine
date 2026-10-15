@@ -27,7 +27,9 @@ the network.
 `fontconfig.txt`. The engine builds that `gfxfontlib.swf` (`src/ui/font-library.ts`): every
 mapped name a copy of its font from the font libraries the config loads, renamed to the name
 and exported under it; names only the shipped gfxfontlib.swf exports keep its fonts. All ten
-names the vanilla menus import are covered (`node tools/swf-info.ts --fontlib`).
+names the vanilla menus import are covered (`node tools/swf-info.ts --fontlib`). Each menu is
+served with the fonts it imports linked into it (docs/formats/swf.md, "Linking imports"): Ruffle
+loads an imported library anew for every player, which made a menu take seconds to open.
 
 ## The bridge
 

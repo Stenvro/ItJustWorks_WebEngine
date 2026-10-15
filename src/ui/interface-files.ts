@@ -19,6 +19,7 @@ import { patchMovie } from './movie-patches.ts';
 export const INTERFACE_URL = '/@interface/';
 
 const FONT_LIBRARY = 'gfxfontlib.swf';
+const FONT_LIBRARY_URL = /gfxfontlib\.swf$/i;
 
 export class InterfaceFiles {
   readonly #vfs: Vfs;
@@ -49,12 +50,15 @@ export class InterfaceFiles {
           const translated = translateMovie(patchMovie(path, bytes), (text) =>
             table.translate(text),
           );
-          // Movies it imports symbols from (not the font library) become part of it: a Flash
-          // player loads imports after the frame that places them has run.
+          // Movies it imports symbols from become part of it: a Flash player loads imports
+          // after the frame that places them has run. Of the font library only the fonts it
+          // imports come (Ruffle takes seconds to load the whole library as an import, each
+          // time a menu opens; Scaleform loads it once).
           return linkImports(
             translated,
-            (url) => !/gfxfontlib.swf$/i.test(url),
+            () => true,
             (url) => this.read(url),
+            (url) => FONT_LIBRARY_URL.test(url),
           ).catch((error: unknown) => {
             this.#warn(
               `${relative}: its imports are not linked: ${error instanceof Error ? error.message : String(error)}`,

@@ -7,6 +7,10 @@
 // importing movie's own, the imported symbol taking the id the import gave it. What refers to
 // a character by id is renumbered: definitions, placements (in sprites), text fields' fonts,
 // shapes' bitmap fills, CSM text settings, scaling grids, init actions, exports and imports.
+// A library whose symbols stand alone (the font library: each font one definition) may be
+// linked by the symbols imported only, with what they use: a menu imports one to three of its
+// fonts, and Ruffle loads an import slowly (seconds for the 1 MB library, every time a menu
+// opens) where it reads definitions in the movie at once.
 // Platform-independent. Notes: docs/formats/swf.md ("Linking imports").
 
 import { BinaryReader, FormatError } from '../binary-reader.ts';
@@ -98,13 +102,14 @@ export type LinkSource = (url: string) => Promise<Uint8Array | undefined>;
 
 /**
  * The movie with the imports `linked` accepts (by their URL) replaced by the imported movies'
- * definitions; other imports (a font library) stay. The header is kept; the result is
- * uncompressed (FWS).
+ * definitions; other imports stay. Those `symbolsOnly` accepts bring only the symbols imported
+ * and the definitions they use. The header is kept; the result is uncompressed (FWS).
  */
 export async function linkImports(
   movieBytes: Uint8Array,
   linked: (url: string) => boolean,
   source: LinkSource,
+  symbolsOnly: (url: string) => boolean = () => false,
 ): Promise<Uint8Array> {
   const movie = readSwf(movieBytes);
   let nextId = maxCharacterId(movie, movie.tags) + 1;
@@ -122,7 +127,8 @@ export async function linkImports(
       continue;
     }
     const imported = readSwf(bytes);
-    const { tags, next } = linkedDefinitions(imported, entry.symbols, nextId);
+    const only = symbolsOnly(entry.url);
+    const { tags, next } = linkedDefinitions(imported, entry.symbols, nextId, only);
     nextId = next;
     parts.push(...tags);
   }
@@ -179,12 +185,15 @@ function maxCharacterId(movie: SwfMovie, tags: readonly SwfTag[]): number {
 /**
  * A linked movie's definitions, renumbered: the symbols imported by name take the import's
  * ids, the others ids from `firstId` on. Its exports stay for the symbols imported (by their
- * import ids) and for those whose names the importer may attach.
+ * import ids) and for those whose names the importer may attach. With `symbolsOnly` only the
+ * symbols imported and the definitions they refer to come (with their exports and the tags of
+ * those characters).
  */
 function linkedDefinitions(
   movie: SwfMovie,
   symbols: readonly { readonly id: number; readonly name: string }[],
   firstId: number,
+  symbolsOnly = false,
 ): { tags: Uint8Array[]; next: number } {
   const version = movie.header.version;
   const exported = new Map<string, number>();
@@ -213,13 +222,65 @@ function linkedDefinitions(
     }
     return mapped;
   };
+  const kept = symbolsOnly ? usedDefinitions(movie, [...ids.keys()]) : undefined;
   const tags: Uint8Array[] = [];
   for (const tag of movie.tags) {
     if (TIMELINE_TAGS.has(tag.code)) continue;
     const body = movie.bytes.subarray(tag.offset, tag.offset + tag.length);
+    if (kept) {
+      if (tag.code === SwfTagCode.exportAssets) {
+        const exports = keptSymbols(body, version, kept);
+        if (exports)
+          tags.push(encodeTag(tag.code, renumberSymbols(exports, tag.code, version, map)));
+        continue;
+      }
+      const own = (body[0] ?? 0) | ((body[1] ?? 0) << 8);
+      const ofCharacter = DEFINITIONS.has(tag.code) || OF_CHARACTER.has(tag.code);
+      if (!ofCharacter || body.length < 2 || !kept.has(own)) continue;
+    }
     tags.push(encodeTag(tag.code, renumber(movie, tag, body, map)));
   }
   return { tags, next };
+}
+
+/** The ids of the definitions `roots` name, themselves and on (the movie's own ids). */
+function usedDefinitions(movie: SwfMovie, roots: readonly number[]): Set<number> {
+  const definers = new Map<number, SwfTag>();
+  for (const tag of movie.tags) {
+    if (!DEFINITIONS.has(tag.code) || tag.length < 2) continue;
+    definers.set((movie.bytes[tag.offset] ?? 0) | ((movie.bytes[tag.offset + 1] ?? 0) << 8), tag);
+  }
+  const used = new Set<number>();
+  const waiting = [...roots];
+  for (let id = waiting.pop(); id !== undefined; id = waiting.pop()) {
+    if (id === 0 || used.has(id)) continue;
+    used.add(id);
+    const tag = definers.get(id);
+    if (!tag) continue;
+    // The ids a definition names are those renumbering it would map.
+    renumber(movie, tag, movie.bytes.subarray(tag.offset, tag.offset + tag.length), (named) => {
+      if (!used.has(named)) waiting.push(named);
+      return named;
+    });
+  }
+  return used;
+}
+
+/** An ExportAssets body with only the symbols kept (undefined: none left). */
+function keptSymbols(
+  body: Uint8Array,
+  version: number,
+  kept: ReadonlySet<number>,
+): Uint8Array | undefined {
+  const reader = new BinaryReader(body);
+  const count = reader.u16();
+  const parts: Uint8Array[] = [];
+  for (let i = 0; i < count; i++) {
+    const id = reader.u16();
+    const name = readSwfString(reader, version);
+    if (kept.has(id)) parts.push(u16Bytes(id), encodeSwfString(name));
+  }
+  return parts.length === 0 ? undefined : concatBytes([u16Bytes(parts.length / 2), ...parts]);
 }
 
 /** A tag with the character ids in it mapped. */
