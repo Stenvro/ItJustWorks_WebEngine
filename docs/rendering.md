@@ -31,7 +31,7 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
    buffer, then the image-space refraction of the scene so far (below).
 6. **Post-processing** (`post.ts`): the imagespace's eye adaptation, bloom, tone curve and
    grading into the canvas (see [formats/esm.md](formats/esm.md#imagespaces)), then its depth
-   of field (below).
+   of field and the image-space modifiers' screen effects (below).
 
 **Not yet:** the engine's volumetric lighting (bVolumetricLightingEnable: per-weather VOLI
 records, froxel shaders ISVolumetricLighting*) and its image-based lens flare of the sun and
@@ -150,6 +150,70 @@ depth at the centre, changing after fDDOFFocusDelay over fDDOFFocusDuration; ISD
 autofocus path) is not part of plain play: imagespace modifiers switch it on (IMAD DNAM
 "DoF - Use Target" and the flags Mode Front/Back, the near and far sides), and the game plays
 those in dialogue and menus (TODO(M9)) and for spells and other effects (TODO(M11)).
+
+A modifier's own depth of field (below) goes through the same pass with its mode: front
+blurs what is nearer than the focus distance, back what is farther (ISDepthOfField without
+DISTANT), each by `saturate(|distance − focus| / range) × strength`.
+
+## Image-space modifiers
+
+Image-space modifiers (IMAD, layout in [formats/esm.md](formats/esm.md#image-space-modifiers))
+change the imagespace for a while: spells, explosions, scripts (Papyrus `ImageSpaceModifier`)
+and the engine (ISMTween behind the menus, LowHealthImod). The pieces:
+
+- `src/world/image-space-modifier.ts`: parsing and a modifier's values at a point of its
+  timeline (`evaluateModifier`, `modifierKeyTime`).
+- `src/world/image-space-modifiers.ts` (`ImageSpaceModifiers`): the active ones, as the
+  engine's ImageSpaceManager keeps them, and the imagespace they make of a base one
+  (`modify`).
+- `src/shell/screen-modifiers.ts` (`ScreenModifiers`, `GameSession.imageSpaceModifiers`):
+  applies them by form id (loading the records, requests in order), advances them in real
+  time and lays them over the weather's imagespace (`WorldSky.frame`, so the directional
+  light gets their sunlight scale too) and the cell's (`ModelViewer`). Scripts reach it
+  through `ScriptWorld.imageSpace`; the shell calls `apply(formId, strength)`,
+  `remove(formId)`, `crossFade(formId, seconds)`, `removeCrossFade(seconds)` and
+  `popTo(from, to, strength)` itself.
+
+Timelines: an animatable modifier plays its keys over its duration once and ends (unless an
+engine caller asks it to loop: TODO(M11) which do); one that is not animatable, or has no
+duration, stays at its keys at time 0 until removed (Creation Kit: the duration is then
+ignored). Papyrus: `Apply(strength)` shows a modifier (again from its start), `Remove()`
+takes it off at once, `ApplyCrossFade(seconds)` puts it on the cross-fade chain and fades
+from the chain's last modifier to it, the global `RemoveCrossFade(seconds)` fades the chain's
+last modifier out and the one before back in (TODO(M13): check that it comes back), `PopTo
+(other, strength)` takes it off and shows the other at once (on the chain in its place).
+
+Combining, each modifier at weight w = strength × cross-fade (strength is not clamped):
+
+- HDR and cinematic values: `value × Π (1 + (mult − 1) w) + Σ add × w` (Creation Kit:
+  "multiply and add"; TODO(M13): the order of several modifiers).
+- Tint and fade colour: the average of the colours weighted by alpha × w, the highest alpha
+  × w as the amount (Creation Kit, for the tint; the fade likewise). The base imagespace's
+  tint takes part with its amount (TODO(M13)).
+- Blur radius, double vision and motion blur: the highest (Creation Kit, for blur and double
+  vision). Radial blur: the strongest modifier's, its strength × w.
+- Depth of field: the strongest modifier's replaces the imagespace's (TODO(M13): how the game
+  mixes them). "Use target" (radial blur centre and focus on the modifier's target) needs the
+  callers that have a target: TODO(M11); the record's centre and distance until then.
+
+The screen effects (`post.ts`, `shaders/screen-effects.wgsl`) run after the depth of field,
+each from the image so far into the next (two full-size half-float images, made the first
+time a modifier needs them), the last into the canvas. Without modifiers the post-processing
+is as before (the fade is 0 and no effect pass runs).
+
+- Fade colour: in the HDR shader's grading, last (ISHDR `Fade`).
+- Blur: a copy at half size blurred with 1 + radius pixels; the image turns into it by
+  min(radius, 1) (TODO(M13): the game's ISBlur taps per radius).
+- Double vision (ISDoubleVision): the average of two copies shifted apart by the strength
+  (texture coordinates), turning into the blurred copy towards the edges when a blur runs.
+  The shift sways with time (the Creation Kit: it "animates automatically"; TODO(M13): the
+  game's sway).
+- Radial blur (ISRadialBlur): 2 × 8 + 1 samples along the line to the centre, spaced by
+  `0.5 × (c(d, start, ramp up) − c(d, down start, ramp down))` with
+  `c(d, s, r) = strength (1 − 1 / (r max(d − s, 0) + 1))` at distance d from the centre
+  (TODO(M13): the game's step count per quality).
+- Motion blur: the previous frame's result kept by s / (1 + s) per 60th of a second
+  (TODO(M13): calibrate).
 
 ## Ambient occlusion
 

@@ -178,6 +178,11 @@ export interface WorldBridge {
   ): void;
   /** A music type added to or removed from the music stack (M6). */
   music?(type: number, add: boolean): void;
+  /**
+   * An image-space modifier applied (value: strength), removed, cross-faded in (value:
+   * seconds), the cross-fade chain's last one faded out (modifier 0, value: seconds) or popped
+   * to `other` (value: strength).
+   */
   imageSpace?(
     modifier: number,
     action: 'apply' | 'remove' | 'crossfade' | 'removeCrossfade' | 'popTo',

@@ -436,12 +436,58 @@ which reproduces the vanilla shader:
    threshold: `c += saturate(receive − c) · bloom`.
 4. Grading: `brightness · lerp(lerp(lum, c, saturation), lum · tint, tint amount)`, then
    contrast around the adapted luminance x: `lerp(x, c, contrast)`.
+5. Fade: `lerp(c, fade colour, fade amount)`, the image-space modifiers' full-screen colour
+   (ISHDR's `Fade` constant; 0 without modifiers).
 
 The directional light is multiplied by the imagespace's sunlight scale. Not documented, so
 approximated (TODO(M13)): how eye adapt speed and strength become the two rates (here
 `1 − e^(−dt · value / 10)` for x and y), how the bright pass uses threshold and scale (here
 `max(c − threshold, 0) · scale`, blurred at quarter resolution with σ = radius / 2) and what
 sky scale does (not applied).
+
+## Image-space modifiers
+
+**IMAD** (256 in the vanilla load order, `src/world/image-space-modifier.ts`; xEdit
+wbDefinitionsTES5.pas, CommonLibSSE `ImageSpaceModifierData` / `TESImageSpaceModifier`;
+`node tools/imad-info.ts [editor id]` lists them or samples one). DNAM is 0xF4 bytes:
+
+| Offset | Content                                                                                |
+| ------ | -------------------------------------------------------------------------------------- |
+| 0x00   | u32 animatable (bool in the first byte)                                                |
+| 0x04   | f32 duration (seconds)                                                                 |
+| 0x08   | 21 × (u32 mult key count, u32 add key count): channels 0–16 HDR, 17–20 cinematic       |
+| 0xB0   | u32 key counts: tint, blur radius, double vision, radial blur strength, ramp up, start |
+| 0xC8   | u32 radial blur "use target" (bool)                                                    |
+| 0xCC   | f32 radial blur centre x, y (vanilla 0.5, 0.5)                                         |
+| 0xD4   | u32 key counts: depth of field strength, distance, range                               |
+| 0xE0   | u8 depth of field "use target", u8 depth of field flags, 2 bytes padding               |
+| 0xE4   | u32 key counts: radial blur ramp down, down start, fade colour, motion blur strength   |
+
+The counts repeat the subrecords' sizes (equal in every vanilla record), so the keys are read
+from the subrecords. Float curves are arrays of (f32 time, f32 value): BNAM blur radius, VNAM
+double vision, RNAM/SNAM/UNAM/NAM1/NAM2 radial blur strength, ramp up, start, ramp down, down
+start, WNAM/XNAM/YNAM depth of field strength, distance, range, NAM4 full-screen motion blur.
+Colour curves are arrays of (f32 time, f32 r, g, b, a): TNAM tint (alpha: the amount), NAM3
+fade colour. The multiply/add channels are curves too, under the signatures `chr(i) + "IAD"`
+(mult) and `chr(0x40 + i) + "IAD"` (add) for channel i: `\0IAD`/`@IAD` .. `\x14IAD`/`TIAD`.
+Channels: 0 eye adapt speed, 1 bloom blur radius, 2 bloom threshold, 3 bloom scale, 4 and 5
+"target lum min/max" (Fallout's names; read as receive bloom threshold and white, which sit
+there in IMGS HNAM), 6 sunlight scale, 7 sky scale, 8–16 unused (8 read as eye adapt
+strength by its HNAM position; only ISMExterior keys 8 and 11–13), 17 saturation, 18
+brightness, 19 contrast, 20 unused. TODO(M13): check channels 4, 5 and 8 in the game.
+
+Depth of field flags: bits 0–1 the mode (CommonLibSSE `DepthOfFieldMode`: 0 front and back,
+1 front, 2 back, 3 none), bit 2 "no sky", bits 3–5 (xEdit: unknown) read as the blur radius
+0–7 of the Creation Kit's form (vanilla 0x00, 0x01, 0x02, 0x0A, 0x20, 0x38; TODO(M13)).
+
+Key times are shares of the duration (0–1): the Creation Kit keeps keys in proportion when
+the duration changes (some static records hold stray keys at times 3, 5 or 10). An animatable
+modifier plays its keys over its duration; one that is not animatable ignores the duration
+(Creation Kit) and stays at its keys at time 0 until removed: ISMTween (`0x434BB`, behind the
+menus) is brightness + −0.15, FadeToBlackHoldImod (`0xF756E`) a black fade at alpha 1, while
+FadeToBlackImod (animated, 3 s) fades to black and FadeToBlackBackImod (2 s) back. Between
+keys the values are linear and held past the ends. LowHealthImod (`0x10C445`): animated, 1 s,
+a red tint, blur and radial blur peaking at 0.36.
 
 ## Add-on nodes
 

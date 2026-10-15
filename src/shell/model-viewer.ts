@@ -1088,12 +1088,15 @@ export class ModelViewer {
     }
     const scene = this.#renderer.scene.createScene(instances);
     const shownCount = this.#refreshEnabled();
-    // The imagespace's Sunlight Scale brightens the cell's directional light (HDR).
-    const scale = cell.imageSpace?.hdr.sunlightScale ?? 1;
+    // The cell's imagespace with the image-space modifiers on the screen over it.
+    const imageSpace = (): ImageSpace | undefined =>
+      this.#session?.imageSpaceModifiers.imageSpace(cell.imageSpace) ?? cell.imageSpace;
     this.#present(scene, undefined, {
       camera: 'fly',
       lighting: () => {
         const lighting = this.#cellLighting ?? cellSceneLighting(cell.data, this.#isEnabled);
+        // The imagespace's Sunlight Scale brightens the cell's directional light (HDR).
+        const scale = imageSpace()?.hdr.sunlightScale ?? 1;
         return {
           ...lighting,
           sunColor: [
@@ -1103,7 +1106,7 @@ export class ModelViewer {
           ],
         };
       },
-      imageSpace: cell.imageSpace,
+      imageSpace,
       lights: cell.data.lights,
       decals: cell.decals,
     });
@@ -1424,7 +1427,8 @@ export class ModelViewer {
       | {
           camera: 'fly';
           lighting: () => ReturnType<typeof cellSceneLighting>;
-          imageSpace: ImageSpace | undefined;
+          /** The imagespace of each frame (the image-space modifiers change it). */
+          imageSpace: () => ImageSpace | undefined;
           /** Placed lights, flickering and pulsing per frame. */
           lights: readonly CellLight[];
           decals: GpuDecals | undefined;
@@ -1476,7 +1480,7 @@ export class ModelViewer {
             this.#session?.ini.number('Display', 'fLightLODStartFade'),
           ),
         }),
-        imageSpace: () => imageSpace,
+        imageSpace,
         decals: () => (decals ? [decals] : []),
         backdrop: false,
         update: (seconds) => {

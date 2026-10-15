@@ -68,6 +68,7 @@ import { ScriptLibrary } from '../scripting/script-library.ts';
 import { PapyrusScheduler } from '../scripting/scheduler.ts';
 import { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ScriptWorld } from './script-world.ts';
+import { ScreenModifiers } from './screen-modifiers.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
 import { PluginIndexer } from '../workers/plugin-indexer.ts';
 import { ActorPlacer } from './actors.ts';
@@ -168,6 +169,11 @@ export class GameSession {
   readonly lines: WorldLines;
   /** What the game tells its HUD (Play's hudmenu.swf listens). */
   readonly hud = new HudSignals();
+  /**
+   * The image-space modifiers on the screen (scripts', the menus', low health's), laid over
+   * the viewers' imagespace each frame.
+   */
+  readonly imageSpaceModifiers: ScreenModifiers;
   #settings: Promise<GameSettings> | undefined;
   readonly #waterTypes = new Map<string, Promise<GpuWaterType | undefined>>();
   readonly #waterRecords = new Map<number, Promise<WaterType | undefined>>();
@@ -260,6 +266,8 @@ export class GameSession {
       );
       return db;
     });
+    this.imageSpaceModifiers = new ScreenModifiers(this.db, terminal);
+    this.scriptWorld.modifiers = this.imageSpaceModifiers;
     void this.db.then(async (db) => {
       this.timeScale = await readTimeScale(db);
       this.#startDate = await readStartDate(db);
