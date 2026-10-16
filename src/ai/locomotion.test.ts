@@ -120,6 +120,21 @@ describe('Locomotion', () => {
     expect(graph.events).toEqual(['moveStart', 'moveStop']);
   });
 
+  it('drives graphs given once by a generator (the player body and first-person graphs)', () => {
+    const body = recorder();
+    const first = recorder();
+    function* graphs(): Iterable<LocomotionGraph> {
+      yield body;
+      yield first;
+    }
+    const locomotion = new Locomotion();
+    locomotion.drive(graphs(), frame({}));
+    locomotion.drive(graphs(), frame({ velocity: [0, 300] }));
+    expect(body.events).toEqual(['moveStart']);
+    expect(first.events).toEqual(['moveStart']);
+    expect(first.values.get('Direction')).toBe(0);
+  });
+
   it('gives the turn rate in degrees per second and lands from the air', () => {
     const graph = recorder();
     const locomotion = new Locomotion();
