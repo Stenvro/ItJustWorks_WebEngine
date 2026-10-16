@@ -7,10 +7,12 @@ your own machine. Like [OpenMW](https://openmw.org) for Morrowind, it is a reimp
 the engine only, and needs a legitimately owned copy of Skyrim Special Edition. It runs on
 `localhost` only: nothing is uploaded anywhere.
 
-> **Status: early development.** The worlds can be walked through — interior cells and the
-> exterior worldspaces with their landscape, water, sky, weather, lighting, sound and music —
-> with their people and creatures standing in them, animated by the game's own behavior
-> graphs. There are no quests, scripts, AI or game menus yet. See [Milestones](#milestones).
+> **Status: early development.** The game starts as the original does — its launcher, the
+> intro, the main menu, a new game — and its quests and scripts run in the engine's own Papyrus
+> virtual machine, with the game's own menus (HUD, inventory, map, journal, dialogue, ...).
+> The worlds can be walked through with their people and creatures standing in them, animated
+> by the game's own behavior graphs. They do not act yet: AI (packages, combat) is next, so the
+> opening's cart does not drive to Helgen. See [Milestones](#milestones).
 
 ## What works
 
@@ -31,6 +33,16 @@ the engine only, and needs a legitimately owned copy of Skyrim Special Edition. 
   player's own body in third person; ragdolls and hinged objects held by their constraints, the
   dead lying as ragdolls; actors where their AI packages have them as their cells load (on
   their posts, in their ambush alcoves, away when asleep elsewhere).
+- **Scripts and quests:** the game's compiled Papyrus scripts (PEX) in the engine's own virtual
+  machine, with its threads, events and the game's native functions; quests with their stages,
+  objectives, aliases and scenes, dialogue with its conditions, the story manager, the game's
+  clock and globals.
+- **Menus:** the game's own Scaleform menus (`interface\*.swf`) played in
+  [Ruffle](https://ruffle.rs), the engine standing in for Scaleform: the main menu with its
+  intro, the loading screens, the HUD, the tween menu, inventory, magic, favorites, containers,
+  barter, the map and local map, the journal with its settings and controls, dialogue, books,
+  crafting, lockpicking, skills and levelling up, training, sleeping and waiting, message boxes,
+  tutorials, character creation and the console, with the game's keyboard and mouse controls.
 
 ## Milestones
 
@@ -44,16 +56,17 @@ the engine only, and needs a legitimately owned copy of Skyrim Special Edition. 
 | M5        | The player: first and third person, collision, physics                    | done  |
 | M6        | Audio: xWMA, 3D sound, the music system                                   | done  |
 | M7        | Actors: skinning, Havok animations and behavior graphs, faces, lip sync   | done  |
-| M8        | The Papyrus virtual machine: quests and scripts as in the original        | next  |
-| M9        | The game's own menus (Scaleform through Ruffle)                           |       |
-| M10       | AI: packages, navigation meshes, combat, detection, schedules             |       |
+| M8        | The Papyrus virtual machine: quests and scripts as in the original        | done  |
+| M9        | The game's own menus (Scaleform through Ruffle)                           | done  |
+| M10       | AI: packages, navigation meshes, combat, detection, schedules             | next  |
 | M11       | Gameplay: skills, perks, magic, shouts, crafting, crime, factions         |       |
 | M12       | Savegames (own format, then importing `.ess` saves), mod load order       |       |
 | M13       | Polish: performance, memory, edge cases, the main quest from start to end |       |
 
 How the engine reads each format and why it behaves as it does is written down in
 [`docs/`](docs): [file formats](docs/formats), [rendering](docs/rendering.md),
-[physics](docs/physics.md), [audio](docs/audio.md) and [animation](docs/animation.md).
+[physics](docs/physics.md), [audio](docs/audio.md), [animation](docs/animation.md),
+[AI](docs/ai.md), [scripting](docs/scripting.md) and [the menus](docs/ui.md).
 
 ## Requirements
 
@@ -73,9 +86,22 @@ npm run dev
 
 Open http://localhost:5173 and choose the game's installation folder (choosing its `Data`
 folder also works, without Creation Club content). The browser keeps access to the folder for
-the next visit. From the main menu, **Sandbox** opens any model, interior cell or worldspace.
-Click the scene to play: WASD to move, the mouse to look, space to jump, Alt to sprint, Ctrl to
-sneak, Shift to walk, F for the camera, Esc to release the mouse; H hides the panels.
+the next visit.
+
+- **Play** is the game itself: its launcher (Options: windowed or full screen), the intro and
+  the game's main menu. **New** starts the opening, which waits for AI (M10): the cart does not
+  drive yet. To play freely, open the console at the main menu (`~`) and type
+  `coc Riverwood` (or any cell): as in the original, a new game starts there without the
+  opening. The brand in the top left corner leaves the game.
+- **Sandbox** opens any model, interior cell or worldspace, with a developer panel (time,
+  weather, quest and scene states). Click the scene to play; H hides the panels.
+
+The controls are the game's PC defaults (the control map, remappable on the journal's Controls
+page): WASD to move, the mouse to look, Space to jump, Shift held to walk, Alt to sprint, Caps
+Lock to always run, Ctrl to sneak, E to activate, F for the camera, Tab for the tween menu, I,
+P, M and J for inventory, magic, map and journal, Q for favorites, T to wait, Esc to pause and
+`~` for the console. In full screen the page keeps the game's keys (Keyboard Lock); in a
+window the browser releases the mouse on Esc, which pauses the game.
 
 To start over from the folder picker (a first run), clear the site's data: in Chrome or Edge,
 open the developer tools (F12) → Application → Storage → **Clear site data**, then reload.
@@ -113,6 +139,12 @@ never in a build).
 | `node tools/actor-info.ts <npc>`        | An actor's look, skeleton and behavior graph                  |
 | `node tools/package-info.ts <actor>`    | An actor's AI packages and where they have it                 |
 | `node tools/music-info.ts [type]`       | Music types and tracks of the load order                      |
+| `node tools/pex-dump.ts --verify`       | Parses every compiled script; disassembles one                |
+| `node tools/papyrus-run.ts`             | Runs a new game's scripts in Node and reports what they did   |
+| `node tools/quest-info.ts <quest>`      | A quest's stages, objectives and aliases                      |
+| `node tools/dialogue-info.ts <quest>`   | A quest's dialogue topics, responses and voice files          |
+| `node tools/swf-info.ts [movie]`        | The interface movies: stage, exports, imports, fonts          |
+| `node tools/controlmap-info.ts --all`   | The control map's contexts and bindings                       |
 | `node tools/spawn-audit.ts [filter]`    | Arrives through every load door; walks through doors          |
 | `node tools/stairs-audit.ts [filter]`   | Walks the player up and down every staircase of the interiors |
 
@@ -130,9 +162,11 @@ src/
   physics/    Rapier: collision from the Havok data, the character controller
   audio/      Web Audio: 3D sound, reverb, music
   animation/  skeletons, the Havok Behavior runtime, faces and lip sync, tree sway
-  scripting/  the Papyrus virtual machine
+  scripting/  the Papyrus virtual machine and the game's native functions
   ai/         AI packages: where they put actors
-  shell/      the web shell: main menu, sandbox, viewers, the player
+  gameplay/   inventory, crafting, character creation, fast travel and other game rules
+  ui/         Ruffle and the Scaleform bridge: the game's menus, their keys and mouse
+  shell/      the web shell, Play (the game's menus in play) and the sandbox viewers
   workers/    parsing off the main thread
 tools/        command-line tools over the local game files
 tests/        integration tests against the local game files
