@@ -144,11 +144,14 @@ export class Locomotion {
 
   /** Drives the graphs; returns whether it landed from the air in this frame. */
   drive(graphs: Iterable<LocomotionGraph>, frame: LocomotionFrame): boolean {
+    // Gone through once (a generator's graphs are there for the first round only: the player's
+    // body would get its Speed and none of its events, and stand still while it moves).
+    const list = [...graphs];
     const set = (name: string, value: number): void => {
-      for (const graph of graphs) graph.setVariable(name, value);
+      for (const graph of list) graph.setVariable(name, value);
     };
     const send = (event: string): void => {
-      for (const graph of graphs) graph.sendEvent(event);
+      for (const graph of list) graph.sendEvent(event);
     };
     const [vx, vy] = frame.velocity;
     const speed = Math.hypot(vx, vy);

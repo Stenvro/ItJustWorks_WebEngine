@@ -766,8 +766,15 @@ export class PlayMode {
    * mouse let go while the game plays is the game's Pause (the journal's system page), as Esc
    * is in the game.
    */
+  /** A conversation runs (from its start, while its menu loads, until it ends). */
+  #talking = false;
+
   readonly #pointerLockChanged = (): void => {
-    if (document.pointerLockElement || this.#session.menuMode || !this.#menus) return;
+    // A conversation lets go of the mouse itself (its menu takes it; it is in no menu mode and
+    // its menu loads a moment): that is no pause.
+    if (document.pointerLockElement || this.#session.menuMode || this.#talking || !this.#menus) {
+      return;
+    }
     if (this.#menus.isOpen) return;
     this.#menus.openMenu('Pause');
   };
@@ -780,17 +787,20 @@ export class PlayMode {
     if (dialogue.isOpen || menus.isOpen || this.#session.menuMode) return;
     const hud = this.#session.hud;
     hud.mode('DialogueMode', true);
+    this.#talking = true;
     this.#world.capturePointer(false);
     dialogue
       .talk(
         speaker,
         () => {
+          this.#talking = false;
           hud.mode('DialogueMode', false);
           this.#world.capturePointer(true);
         },
         opening,
       )
       .catch((error: unknown) => {
+        this.#talking = false;
         this.#terminal.log(
           'ui',
           `the conversation does not start: ${error instanceof Error ? error.message : String(error)}`,

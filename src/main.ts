@@ -204,6 +204,9 @@ const LOCKED_KEYS: readonly string[] = [
 
 /** `memory`: GPU bytes of the session's models and textures (none without a session). */
 
+/** The game's clock moves at most this much from one frame to the next (seconds). */
+const MAX_FRAME_SECONDS = 0.25;
+
 function startRenderLoop(
   renderer: Renderer,
   memory: () => number | undefined,
@@ -219,7 +222,10 @@ function startRenderLoop(
   let gameTime = 0;
   let last: number | undefined;
   const frame = (now: number): void => {
-    if (last !== undefined && !paused()) gameTime += (now - last) / 1000;
+    // A hidden tab draws no frames: back, the game goes on where it was (the time away is not
+    // played at once; the scripts' clock is held the same way).
+    if (last !== undefined && !paused())
+      gameTime += Math.min(MAX_FRAME_SECONDS, (now - last) / 1000);
     last = now;
     renderer.render(reducedMotion ? 30 : gameTime, devicePixelRatio);
     everyFrame();

@@ -92,6 +92,9 @@ export class SoundInstance {
     this.#source = this.#start(0, descriptor.looping !== 'none');
   }
 
+  /** The distance gain was set once (later updates ease towards theirs). */
+  #placed = false;
+
   /** The point the sound is at now (undefined: 2D). */
   get position(): Vec3 | undefined {
     const place = this.#place;
@@ -111,7 +114,11 @@ export class SoundInstance {
     const gain = this.model?.attenuatesWithDistance
       ? distanceGain(this.model.attenuation, distance)
       : 1;
-    this.#distance.gain.setTargetAtTime(gain, time, SMOOTHING);
+    // Its first update sets the gain at once: smoothed from the node's 1, a distant footstep
+    // would start at full volume (a thump each, a drumming of the far actors' steps).
+    if (this.#placed) this.#distance.gain.setTargetAtTime(gain, time, SMOOTHING);
+    else this.#distance.gain.setValueAtTime(gain, time);
+    this.#placed = true;
     if (this.#panner) {
       this.#panner.positionX.setValueAtTime(position[0], time);
       this.#panner.positionY.setValueAtTime(position[1], time);

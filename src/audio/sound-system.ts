@@ -55,6 +55,7 @@ import { materialId, parseMaterialType, type MaterialType } from '../world/mater
 import { WebMusicOutput } from './music-output.ts';
 import type { AudioLoader } from './audio-loader.ts';
 import { AudioEngine } from './audio-engine.ts';
+import { distanceGain } from './attenuation.ts';
 import { SoundInstance, type SoundBuffer, type SoundPlace } from './sound-instance.ts';
 
 /** Decoded sound files kept for reuse (bytes of float samples). */
@@ -918,6 +919,9 @@ export class SoundSystem {
   ): Promise<SoundInstance | undefined> {
     const files = descriptor.files;
     if (files.length === 0) return undefined;
+    // A one-shot sound beyond its output model's reach is not heard: it is not started (the
+    // footsteps of actors far off; each would cost a panner and a voice).
+    if (descriptor.looping === 'none' && !this.#audible(model, place)) return undefined;
     const path = files[Math.floor(this.#next() * files.length)] ?? files[0] ?? '';
     const sound = await this.buffer(path);
     if (!sound) return undefined;
@@ -933,6 +937,17 @@ export class SoundSystem {
     instance.update(this.#listener);
     this.#playing.add(instance);
     return instance;
+  }
+
+  /** Whether a sound at a place is heard at the listener (within its model's attenuation). */
+  #audible(model: SoundOutputModel | undefined, place: SoundPlace | undefined): boolean {
+    if (!model?.attenuatesWithDistance || !model.uses3d || place === undefined) {
+      return true;
+    }
+    const at = typeof place === 'function' ? place() : place;
+    const listener = this.#listener;
+    const distance = Math.hypot(at[0] - listener[0], at[1] - listener[1], at[2] - listener[2]);
+    return distanceGain(model.attenuation, distance) > 0;
   }
 
   /** The acoustic space around the listener: an area holding it, else the interior's. */
