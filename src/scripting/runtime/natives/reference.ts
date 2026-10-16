@@ -364,13 +364,8 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   });
   n('objectreference.lock', async (call) => {
     const reference = self(call);
-    if (reference === undefined) return null;
-    const before = await runtime.lock(reference);
-    const entry = state.reference(reference);
-    entry.locked = bool(call.args[0], true);
-    // Locking what has no lock gives it a novice one. TODO(M11): abAsOwner (no crime).
-    if (entry.locked && !before.locked && before.level === 0) entry.lockLevel = 1;
-    world.lockChanged?.(reference);
+    // TODO(M11): abAsOwner (no crime).
+    if (reference !== undefined) await runtime.setLocked(reference, bool(call.args[0], true));
     return null;
   });
   n('objectreference.islocked', async (call) => {

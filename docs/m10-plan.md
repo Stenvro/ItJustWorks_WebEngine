@@ -109,17 +109,22 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
 
 ## Phase 3: packages
 
-- [ ] **3.1 The package stack:** alias packages by quest priority, override lists (spectator,
-      observe dead, guard warn, combat), the actor's own, the default; schedules and conditions
-      on the live game; evaluation when the engine does it (EvaluatePackage, the hour, cell
-      attach, a package's end, interrupts), must complete, once per day; OnPackageStart /
-      Change / End; begin, end and change actions (idles, topics, fragments).
-- [ ] **3.2 Procedures:** all 30 of the data (Travel, Sandbox, HoldPosition, Wait, Guard, Sit,
-      Patrol, UnlockDoors, Find, Follow, Activate, Sleep, Shout, Say, UseWeapon, Hover, Eat,
-      LockDoors, Acquire, Flee, Orbit, ForceGreet, Escort, Wander, UseIdleMarker, UseMagic,
-      FlightGrab, KeepAnEyeOn, FollowTo, DialogueActivate) and the engine's own (alarm, flee,
-      observe combat, react to the dead, get up, search for an attacker, avoid the player,
-      movement blocked, landing, mount and dismount, in-game dialogue).
+- [x] **3.1 The package stack:** alias packages by quest priority, the actor's own, the default
+      list (DPLT); schedules and conditions on the live game; evaluation when the engine does
+      it (EvaluatePackage, the hour, cell attach, a package's end), must complete, once per
+      day; OnPackageStart / Change / End; begin, end and change actions (idles, topics,
+      fragments); the package's idle list; places near the package start and alias
+      references; the in-game dialogue package (the actor waits and faces the player). Moved
+      on: the override lists (spectator, observe dead, guard warn, combat) and interrupts to
+      4.1–4.3 and 5.2, where the situations they answer exist.
+- [x] **3.2 Procedures:** the 24 that need no combat (Travel, Sandbox, HoldPosition, Wait,
+      Guard, Sit, Patrol, UnlockDoors, Find, Follow, Activate, Sleep, Say, Eat, LockDoors,
+      Acquire, Flee, ForceGreet, Escort, Wander, UseIdleMarker, KeepAnEyeOn, FollowTo,
+      DialogueActivate), searches by object and object type with ownership, object lists.
+      Moved on: UseWeapon, UseMagic, Shout to 5.1–5.3; Hover, Orbit, FlightGrab to 5.4; the
+      engine's own alarm, flee, observe combat, react to the dead, search for an attacker to
+      4.1 and 5.2; avoid the player and movement blocked to 2.3; landing to 5.4; mount and
+      dismount to 3.5.
 - [x] **3.3 Furniture and idle markers:** entry points, entering and leaving through the idle
       tree, sit and sleep states, OnSit / OnGetUp, GetSitState; idle markers' idles; sandbox
       idles; the player sits, sleeps in the bed and stands at workbenches the same way.
@@ -133,7 +138,9 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
 
 ## Phase 4: senses and the social layer
 
-- [ ] **4.1 Detection:** line of sight (eye to eye and body against the world), view cone,
+- [ ] **4.1 Detection:** the spectator, observe-dead and guard-warn override lists (NPC\_
+      SPOR, OCOR, GWOR) and the engine's alarm and react-to-the-dead packages;
+      line of sight (eye to eye and body against the world), view cone,
       the light on the target, distance, sound (movement, armour weight, sneaking, impacts'
       detection levels, combat), the sneak skill; detection states per observer and target, NPC
       against NPC; the stealth meter on the HUD; OnGainLOS / OnLostLOS and the detection
@@ -142,8 +149,10 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       GetDetected, GetSitting, GetCurrentAIPackage, IsWeaponOut, ...); an unknown function is an
       error in the audit, not a pass.
 - [ ] **4.3 Talking:** greetings as the player passes, idle chatter, actors talking to each
-      other, barks by subtype, ForceGreet, the speaker turning to the player, the dialogue
-      camera, emotions on the face, creatures' jaw lines.
+      other (DialogueActivate between actors, Sandbox's conversations), barks by subtype (a
+      package's topic subtype), LockDoors' warning, Say's own line length and forced
+      subtitles, the dialogue camera, emotions on the face, creatures' jaw lines; the
+      packages' hello and chatter interrupts.
 - [ ] **4.4 Scenes:** phases, actions, the actors' behaviour flags, fragments, the Scene
       natives, IsInScene, IsScenePackageRunning.
 
@@ -159,7 +168,8 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       attacked, detection), target choice and threat, combat groups, the combat style's
       movement (circling, flanking, fallback, stalking, strafing), equipment choice by score,
       dodging threats, fleeing (confidence), searching for a lost target, yielding, the end of
-      combat, spectators, guards, followers.
+      combat, spectators, guards, followers; the combat override package list (NPC\_ ECOR) and
+      the packages' combat interrupts (aggro radius, observe combat, friendly fire comments).
 - [ ] **5.3 Magic and shouts in combat:** casting (hands, concentration, fire and forget,
       delivery), projectiles, the effects the magic system has, staffs, potions, summons,
       shouts and their recovery. M11 completes the effect archetypes and perks behind it.

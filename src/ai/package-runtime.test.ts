@@ -81,6 +81,10 @@ function setup(packages: PackageRecord[], runners: Record<string, ProcedureRunne
     linked: () => Promise.resolve(undefined),
     around: () => Promise.resolve([]),
     idleMarker: () => Promise.resolve(undefined),
+    search: () => Promise.resolve([]),
+    carried: () => Promise.resolve(undefined),
+    fakeFood: () => Promise.resolve(undefined),
+    lockDoors: () => Promise.resolve(),
     packageEvent: (_actor, event, record) => {
       events.push(`${event} ${record.editorId}`);
     },
@@ -97,6 +101,12 @@ function setup(packages: PackageRecord[], runners: Record<string, ProcedureRunne
     takeIdleMarker: () => true,
     leaveIdleMarker: () => undefined,
     playIdle: () => Promise.resolve(true),
+    say: () => undefined,
+    activate: () => Promise.resolve(true),
+    take: () => Promise.resolve(true),
+    useItem: () => Promise.resolve(true),
+    greet: () => true,
+    standing: () => true,
   };
   const packages_ = new ActorPackages(1, mind, body, runners, () => 0);
   return {
@@ -244,5 +254,35 @@ describe('ActorPackages', () => {
     setHour(10);
     await tick(actor);
     expect(actor.current?.id).toBe(2);
+  });
+
+  it('ends a simultaneous branch as its first child ends, stopping those beside it', async () => {
+    const ran: string[] = [];
+    const runners: Record<string, ProcedureRunner> = {
+      find: () => {
+        ran.push('find');
+        return Promise.resolve('success');
+      },
+      sandbox: async (run) => {
+        ran.push('sandbox');
+        while (!run.stopped()) await run.wait(1);
+        ran.push('sandbox stopped');
+        return 'failure';
+      },
+      sleep: async (run) => {
+        ran.push('sleep');
+        while (!run.stopped()) await run.wait(1);
+        return 'failure';
+      },
+    };
+    const tree = branch('Sequence', [
+      branch('Simultaneous', [procedure('find'), procedure('sandbox')]),
+      procedure('sleep'),
+    ]);
+    const { actor } = setup([pack(1, tree)], runners);
+    await tick(actor);
+    await tick(actor, 1);
+    expect(ran).toEqual(['find', 'sandbox', 'sleep', 'sandbox stopped']);
+    expect(actor.current?.procedure).toBe('sleep');
   });
 });

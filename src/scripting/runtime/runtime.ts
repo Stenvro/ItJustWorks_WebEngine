@@ -1087,6 +1087,15 @@ export class ScriptRuntime implements VmHost {
     };
   }
 
+  /** Locks or unlocks a reference (Lock, a package's LockDoors): what has no lock gets a novice one. */
+  async setLocked(reference: number, locked: boolean): Promise<void> {
+    const before = await this.lock(reference);
+    const entry = this.state.reference(reference);
+    entry.locked = locked;
+    if (locked && !before.locked && before.level === 0) entry.lockLevel = 1;
+    this.world.lockChanged?.(reference);
+  }
+
   /** XOWN: its owner (an actor base or a faction), as scripts left it. */
   async owner(
     reference: number,
@@ -1606,6 +1615,29 @@ export class ScriptRuntime implements VmHost {
       actor: type === 'NPC_' ? owner : undefined,
       faction: type === 'FACT' ? owner : undefined,
     };
+  }
+
+  /**
+   * Whether an actor may use a reference without stealing it (UESP, "Crime"): one its owner
+   * (XOWN; else its cell's) is the actor, or a faction the actor is in at the owner's rank or
+   * above (XRNK), or that no one owns. TODO(M11): crime and stolen items.
+   */
+  async mayUse(actor: number, reference: number): Promise<boolean> {
+    const rankOf = async (form: number): Promise<number> => {
+      const data = (await this.forms.record(form))?.fields.first('XRNK');
+      return data && data.length >= 4 ? view(data).getInt32(0, true) : 0;
+    };
+    let owner = await this.owner(reference);
+    let rank = await rankOf(reference);
+    if (owner.actor === undefined && owner.faction === undefined) {
+      const cell = (await this.placement(reference))?.cell;
+      if (cell === undefined) return true;
+      owner = await this.cellOwner(cell);
+      rank = await rankOf(cell);
+    }
+    if (owner.actor !== undefined) return owner.actor === (await this.baseOf(actor));
+    if (owner.faction === undefined) return true;
+    return (await this.actors.factionRank(actor, owner.faction)) >= Math.max(0, rank);
   }
 
   // --- Active magic effects (TODO(M11): the magic system starts and ends them) --------------

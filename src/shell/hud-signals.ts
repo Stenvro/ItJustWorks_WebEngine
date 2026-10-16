@@ -59,7 +59,11 @@ export interface MenuSink {
   /** A gameplay user event the player pressed (the tween menu's Tab, the journal's J). */
   userEvent(name: string): void;
   /** The player talks to an actor (the dialogue menu). */
-  talk(speaker: PlacedActor): void;
+  /**
+   * A conversation with an actor; `opening`: it begins with that topic's line (a package's
+   * ForceGreet) instead of its greeting.
+   */
+  talk(speaker: PlacedActor, opening?: number): void;
   /** A container's menu (a chest, a corpse searched); `closed` once it has closed. */
   container(reference: number, closed: () => void): void;
   /** A menu a script opens; resolves once it has closed, with what it returns. */

@@ -84,7 +84,7 @@ import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-s
 import { talkTargets, type PlacedActor } from './actors.ts';
 import { ActorStage } from './actor-stage.ts';
 import { PlayerFurniture } from './player-furniture.ts';
-import type { StageObject } from './actor-furniture.ts';
+import { stageObject, type StageObject } from './actor-furniture.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { matches, renderResults } from './finder.ts';
@@ -466,16 +466,20 @@ export class ModelViewer {
     await this.#stage?.lookChanged(reference);
   }
 
-  /** The enabled furniture and markers of the cell on screen (sandboxing actors use them). */
-  *#furnishings(): Iterable<StageObject> {
+  /**
+   * The enabled objects and markers of the cell on screen, and those the scripts created
+   * (what actors use and search for).
+   */
+  *#stageObjects(): Iterable<StageObject> {
     const data = this.#cell?.data;
     if (!data) return;
     for (const object of data.objects) {
-      if (object.baseType !== 'FURN' || !this.#isEnabled(object.reference)) continue;
-      const { world } = object;
-      yield { ...object, position: [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] };
+      if (this.#isEnabled(object.reference)) yield stageObject(object);
     }
     for (const marker of data.markers) if (this.#isEnabled(marker.reference)) yield marker;
+    for (const entry of this.#created?.all ?? []) {
+      if (!entry.visibility.hidden) yield stageObject(entry.object);
+    }
   }
 
   /**
@@ -787,7 +791,7 @@ export class ModelViewer {
       cellOf: (at) =>
         at.cell !== undefined && at.cell === this.#stageCell ? String(at.cell) : undefined,
       navmeshes: () => this.#navmeshes,
-      furnishings: () => this.#furnishings(),
+      objects: () => this.#stageObjects(),
       openDoor: (door) => {
         this.#actorOpensDoor(door);
       },

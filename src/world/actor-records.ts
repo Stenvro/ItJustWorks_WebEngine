@@ -117,6 +117,8 @@ export interface NpcRecord {
   readonly items: readonly InventoryItem[];
   /** PKID: its AI packages, in order (the first that may run runs). */
   readonly packages: readonly number[];
+  /** DPLT: its default package list (FLST of packages tried after its own). */
+  readonly defaultPackages: number | undefined;
   /** SNAM: its factions and its rank in each (−1: listed but not a member). */
   readonly factions: ReadonlyMap<number, number>;
 }
@@ -334,6 +336,7 @@ export function parseNpc(record: RecordSource): NpcRecord {
       .all('PKID')
       .map((data) => formOf(record, data))
       .filter((formId): formId is number => formId !== undefined),
+    defaultPackages: field(record, 'DPLT'),
     factions: new Map(
       record.fields.all('SNAM').flatMap((data): [number, number][] => {
         const faction = formOf(record, data);
