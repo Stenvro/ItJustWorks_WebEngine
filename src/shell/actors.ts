@@ -20,6 +20,7 @@ import {
   partitionVisible,
   seededRandom,
   type ActorLook,
+  type ActorMind,
   type HeadPartLook,
   type LookOverrides,
 } from '../world/actors.ts';
@@ -35,7 +36,7 @@ import { parseReference } from '../world/cell-records.ts';
 import { activeMarker, furnitureMarkers, markerPlacement } from '../world/furniture.ts';
 import { parseNif } from '../formats/nif/nif.ts';
 import type { FurniturePosition } from '../formats/nif/types.ts';
-import type { PackageStart } from '../ai/package-start.ts';
+import type { PackageStart, Space } from '../ai/package-start.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import type { CellRagdoll } from './play-session.ts';
 import { parseTextureSet } from '../world/decal.ts';
@@ -326,6 +327,8 @@ export class ActorPlacer {
   readonly #db: RecordDatabase;
   readonly #terminal: Terminal;
   readonly #resolver: ActorResolver;
+  /** What each actor away chooses its packages by (whereNow), by base and reference. */
+  readonly #minds = new Map<string, Promise<ActorMind | undefined>>();
   readonly #rigs = new Map<string, Promise<RigData | undefined>>();
   readonly #textureSets = new Map<number, Promise<readonly string[] | undefined>>();
   readonly #furniture = new Map<number, Promise<FurniturePosition | undefined>>();
@@ -517,6 +520,23 @@ export class ActorPlacer {
     }
     if (actor.reference === PLAYER_REF) return { outfit: null, equipped };
     return { ...(outfit !== undefined && { outfit }), equipped };
+  }
+
+  /**
+   * Where an actor's package has it now (src/ai/package-start.ts), by what it chooses its
+   * packages by (kept: its records do not change), no look or 3D made: what the actors away
+   * follow (src/shell/actors-away.ts).
+   */
+  async whereNow(placedInCell: CellActor, space?: Space): Promise<PackageStart | undefined> {
+    if (placedInCell.startsDead) return undefined;
+    const key = `${String(placedInCell.base)}:${String(placedInCell.reference)}`;
+    let mind = this.#minds.get(key);
+    if (!mind) {
+      mind = this.#resolver.mind(placedInCell.base, placedInCell.reference);
+      this.#minds.set(key, mind);
+    }
+    const resolved = await mind;
+    return resolved ? this.#session.packageStart(placedInCell, resolved, space) : undefined;
   }
 
   async place(

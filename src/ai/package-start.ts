@@ -95,7 +95,13 @@ export interface PackageWorld {
 
 export type PackageStart =
   /** It stays where it was placed (its package keeps it near, or none runs). */
-  | { readonly kind: 'here'; readonly package?: number; readonly procedure?: string }
+  | {
+      readonly kind: 'here';
+      readonly package?: number;
+      readonly procedure?: string;
+      /** Its place is its editor location (an actor away from it goes back there). */
+      readonly editor?: boolean;
+    }
   /** At a reference in its space: furniture it uses, a marker it starts at. */
   | {
       readonly kind: 'at';
@@ -110,8 +116,17 @@ export type PackageStart =
        */
       readonly radius: number;
     }
-  /** Its package has it in another cell or world. */
-  | { readonly kind: 'elsewhere'; readonly package: number; readonly procedure: string }
+  /**
+   * Its package has it in another cell or world: at a reference there (where one is named; a
+   * cell alone names none).
+   */
+  | {
+      readonly kind: 'elsewhere';
+      readonly package: number;
+      readonly procedure: string;
+      readonly reference?: number;
+      readonly radius?: number;
+    }
   /**
    * Not known yet (TODO(M10): running the packages; or, before the game's scripts run, held by
    * a quest alias): it stays where it was placed.
@@ -432,8 +447,9 @@ async function locationPlace(
         ? { kind: 'here', package: id, procedure }
         : { kind: 'elsewhere', package: id, procedure };
     }
-    case LocationType.nearPackageStart:
     case LocationType.nearEditorLocation:
+      return { kind: 'here', package: id, procedure, editor: true };
+    case LocationType.nearPackageStart:
     case LocationType.nearSelf:
       return { kind: 'here', package: id, procedure };
     default:
@@ -481,7 +497,9 @@ async function referencePlace(
   if (placed.baseType === 'NPC_' || placed.baseType === 'LVLN') {
     return { kind: 'here', package: id, procedure };
   }
-  if (!sameSpace(placed.space, actor.space)) return { kind: 'elsewhere', package: id, procedure };
+  if (!sameSpace(placed.space, actor.space)) {
+    return { kind: 'elsewhere', package: id, procedure, reference, radius };
+  }
   const furniture = placed.baseType === 'FURN' && FURNITURE_PROCEDURES.has(procedure.toLowerCase());
   // An area round the reference that the actor is placed in already: it stays.
   const at = actor.position;

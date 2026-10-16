@@ -162,6 +162,12 @@ export interface ActorLook {
   readonly factions: ReadonlyMap<number, number>;
 }
 
+/** What an actor's packages are chosen by: its look's packages, factions, race and sex. */
+export type ActorMind = Pick<
+  ActorLook,
+  'base' | 'npc' | 'female' | 'race' | 'packages' | 'defaultPackages' | 'factions'
+>;
+
 /** The footstep set of what an actor wears: on its feet first, else any with one. */
 function footstepSetOf(worn: readonly WornAddon[]): number | undefined {
   const feet = 2 ** (BipedSlot.feet - 30);
@@ -396,6 +402,35 @@ export class ActorResolver {
         },
       ];
     });
+  }
+
+  /**
+   * What an actor placed with `base` by `reference` chooses its packages by, without its look
+   * (none of its outfit, head or face read): what the actors away ask (src/shell/actors-away.ts).
+   */
+  async mind(base: number, reference: number, level = 1): Promise<ActorMind | undefined> {
+    const templates = await resolveActorTemplates((id) => this.#db.get(id), base, reference, level);
+    if (!templates) return undefined;
+    const npc = async (formId: number): Promise<NpcRecord | undefined> => {
+      const record = await this.#db.get(formId);
+      return record?.type === 'NPC_' ? parseNpc(record) : undefined;
+    };
+    const [traits, ai, defaults, factions] = await Promise.all([
+      npc(templates.part(TemplateFlag.traits)),
+      npc(templates.part(TemplateFlag.aiPackages)),
+      npc(templates.part(TemplateFlag.defaultPackages)),
+      npc(templates.part(TemplateFlag.factions)),
+    ]);
+    if (traits?.race === undefined) return undefined;
+    return {
+      base,
+      npc: traits.formId,
+      female: (traits.flags & NpcFlag.female) !== 0,
+      race: traits.race,
+      packages: ai?.packages ?? [],
+      defaultPackages: defaults?.defaultPackages,
+      factions: factions?.factions ?? new Map<number, number>(),
+    };
   }
 
   /**

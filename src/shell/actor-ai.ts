@@ -5,7 +5,12 @@
 // sends it. The scripts hear of it (OnPackageStart, OnPackageChange, OnPackageEnd and the
 // packages' own fragments) and ask after it (GetCurrentPackage, EvaluatePackage).
 
-import { ActorPackages, type PackageBody, type PackageMind } from '../ai/package-runtime.ts';
+import {
+  ActorPackages,
+  type PackageBody,
+  type PackageMind,
+  type PackagePlace,
+} from '../ai/package-runtime.ts';
 import { LocationType, TargetType, type PackageRecord } from '../ai/package-records.ts';
 import { PROCEDURES } from '../ai/procedure-runs.ts';
 import { isOfObjectType, ObjectType } from '../ai/object-types.ts';
@@ -19,21 +24,24 @@ import type { Vec3 } from '../render/math.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { ActorFurniture, FurnitureUser } from './actor-furniture.ts';
 import type { ActorSearch } from './actor-search.ts';
+import { spaceOf, type AwayPlace } from './actors-away.ts';
+import { findRoute, type RouteDoor } from '../ai/routes.ts';
+import type { NavmeshSet } from '../ai/pathfinding.ts';
+import type { Gait } from '../ai/locomotion.ts';
+import type { Space } from '../ai/package-start.ts';
 import type { ActorMovers } from './actor-movers.ts';
 import type { GameSession } from './game-session.ts';
-
-/** Whether two placements are in one space: one worldspace, or one interior cell. */
-function sameSpace(
-  a: { readonly cell: number | undefined; readonly world: number | undefined },
-  b: { readonly cell: number | undefined; readonly world: number | undefined },
-): boolean {
-  return a.world !== undefined || b.world !== undefined ? a.world === b.world : a.cell === b.cell;
-}
 
 /** An "in cell" place reaches this far round where the actor is (game units). */
 const IN_CELL_RADIUS = 1024;
 /** A target named by object or object type is the nearest within this of the actor. */
 const TARGET_SEARCH_RADIUS = 4096;
+/** The size of an exterior cell (units). */
+const CELL_SIZE = 4096;
+/** A way to another space that failed holds its package this long (milliseconds). */
+const ACROSS_FAILED_MS = 1000;
+/** An actor goes through a load door within this of it (units). */
+const DOOR_REACH = 96;
 /** LockDoors and UnlockDoors reach doors this far round a place without a radius. */
 const DOOR_RADIUS = 256;
 
@@ -46,6 +54,12 @@ export class ActorAi {
   readonly #furniture: ActorFurniture;
   readonly #search: ActorSearch;
   readonly #userOf: (staged: StagedActor) => FurnitureUser;
+  readonly #leaveThrough: (
+    staged: StagedActor,
+    door: RouteDoor,
+    destination: AwayPlace,
+  ) => Promise<void>;
+  readonly #navmeshes: (() => NavmeshSet | undefined) | undefined;
   /** The actors talking with the player now (their packages wait). */
   readonly #talking = new Set<number>();
   /** A food for meals made up (Eat's Create Fake Food): the first in the load order. */
@@ -59,12 +73,22 @@ export class ActorAi {
     readonly furniture: ActorFurniture;
     readonly search: ActorSearch;
     readonly userOf: (staged: StagedActor) => FurnitureUser;
+    /** An actor goes through a load door on its way to a place (it leaves the stage). */
+    readonly leaveThrough: (
+      staged: StagedActor,
+      door: RouteDoor,
+      destination: AwayPlace,
+    ) => Promise<void>;
+    /** The navigation meshes of the loaded area. */
+    readonly navmeshes?: () => NavmeshSet | undefined;
   }) {
     this.#session = options.session;
     this.#movers = options.movers;
     this.#furniture = options.furniture;
     this.#search = options.search;
     this.#userOf = options.userOf;
+    this.#leaveThrough = options.leaveThrough;
+    this.#navmeshes = options.navmeshes;
     this.#mind = this.#makeMind();
   }
 
@@ -95,7 +119,7 @@ export class ActorAi {
     const live = new Set<number>();
     const speaker = runtime?.dialogueSpeaker;
     for (const staged of actors) {
-      if (!runtime || staged.dead || !this.#movers.inHighProcess(staged.reference)) continue;
+      if (!runtime || staged.dead || !this.#movers.runsAi(staged.reference)) continue;
       live.add(staged.reference);
       let entry = this.#actors.get(staged.reference);
       if (entry?.staged !== staged) {
@@ -159,8 +183,15 @@ export class ActorAi {
       reference,
       position: () => staged.position,
       heading: () => staged.heading,
-      travel: async (to, gait, arrive) => {
+      travel: async (to, gait, arrive, space) => {
         await furniture.leave(user);
+        if (space && !(await this.#inSpace(reference, space))) {
+          if (await this.#across(staged, { space, position: to }, gait)) return true;
+          // No way there (or it went through a door): a moment before its package goes on, so
+          // nothing that asks again at once runs round without end.
+          await new Promise((resolve) => setTimeout(resolve, ACROSS_FAILED_MS));
+          return false;
+        }
         return movers.travel(reference, to, gait, arrive);
       },
       stop: () => {
@@ -229,25 +260,77 @@ export class ActorAi {
     };
   }
 
+  /** A place in a cell: an exterior cell's middle, an interior's navmeshes. */
+  async #cellPlace(cell: number, radius: number): Promise<PackagePlace | undefined> {
+    const scripts = this.#session.scriptsReady;
+    if (!scripts) return undefined;
+    const world = scripts.forms.db.worldOfCell(cell);
+    if (world !== undefined) {
+      const xclc = (await scripts.forms.record(cell))?.fields.first('XCLC');
+      if (!xclc || xclc.length < 8) return undefined;
+      const grid = new DataView(xclc.buffer, xclc.byteOffset, xclc.byteLength);
+      const x = (grid.getInt32(0, true) + 0.5) * CELL_SIZE;
+      const y = (grid.getInt32(4, true) + 0.5) * CELL_SIZE;
+      return { position: [x, y, 0], radius, space: { kind: 'world', world } };
+    }
+    const routes = await this.#session.routeMap();
+    const space: Space = { kind: 'interior', cell };
+    const navmesh = routes.nearestNavmesh(space, [0, 0, 0]);
+    const position = navmesh === undefined ? undefined : routes.location(navmesh);
+    return position && { position, radius, space };
+  }
+
+  /** Whether an actor is in a space now. */
+  async #inSpace(actor: number, space: Space): Promise<boolean> {
+    const at = await this.#session.scriptsReady?.placement(actor);
+    if (!at) return true;
+    const here = spaceOf(at);
+    return here.kind === 'world'
+      ? space.kind === 'world' && here.world === space.world
+      : space.kind === 'interior' && here.cell === space.cell;
+  }
+
+  /**
+   * To a place in another cell or worldspace: along its route (src/ai/routes.ts) to the first
+   * load door, through it (src/shell/actor-stage.ts: it leaves the stage; the low process or
+   * the other side's stage goes on). False: no way there, or it left (its package goes on
+   * where it comes out).
+   */
+  async #across(staged: StagedActor, destination: AwayPlace, gait: Gait): Promise<boolean> {
+    const session = this.#session;
+    const runtime = session.scriptsReady;
+    const at = await runtime?.placement(staged.reference);
+    if (!runtime || !at) return false;
+    const routes = await session.routeMap();
+    const here = spaceOf(at);
+    const start =
+      this.#navmeshes?.()?.locate(staged.position)?.navmesh.formId ??
+      routes.nearestNavmesh(here, staged.position);
+    const end = routes.nearestNavmesh(destination.space, destination.position);
+    if (start === undefined || end === undefined) return false;
+    const route = findRoute(
+      routes,
+      { space: here, position: staged.position, navmesh: start },
+      { ...destination, navmesh: end },
+    );
+    const door = route?.doors[0];
+    if (!door) return false;
+    const arrived = await this.#movers.travel(staged.reference, door.position, gait, DOOR_REACH);
+    if (!arrived) return false;
+    await this.#leaveThrough(staged, door, destination);
+    return false;
+  }
+
   /** What the packages ask of the game: the running game's scripts and records. */
   #makeMind(): PackageMind {
     const session = this.#session;
     const runtime = (): ScriptRuntime | undefined => session.scriptsReady;
-    /**
-     * Where a reference is, if it is in the loaded area's space (the player's worldspace, or
-     * cell inside): a place in another cell or worldspace is not reached by walking here.
-     * TODO(M10) 2.2, 3.4: the way there through doors; actors away.
-     */
+    /** Where a reference is, in its cell or worldspace (the way there may be through doors). */
     const placementOf = async (
       reference: number,
-    ): Promise<{ position: Vec3; heading: number } | undefined> => {
-      const scripts = runtime();
-      const [at, player] = await Promise.all([
-        scripts?.placement(reference),
-        scripts?.placement(PLAYER_REF),
-      ]);
-      if (!at || (player && !sameSpace(at, player))) return undefined;
-      return { position: [...at.position], heading: at.rotation[2] };
+    ): Promise<{ position: Vec3; heading: number; space: Space } | undefined> => {
+      const at = await runtime()?.placement(reference);
+      return at && { position: [...at.position], heading: at.rotation[2], space: spaceOf(at) };
     };
     const staged = (actor: number): StagedActor | undefined => this.#actors.get(actor)?.staged;
     /** The reference an alias of a quest holds now. */
@@ -312,27 +395,27 @@ export class ActorAi {
           }
           case LocationType.nearEditorLocation: {
             const at = await scripts?.editorPlacement(actor);
-            // Its editor location in another space (its home, while it is at the inn): not here.
+            // Its editor location may be in another space (its home, while it is at the inn).
             const db = scripts?.forms.db;
             const cell = db?.cellOfReference(actor);
             const world = cell === undefined ? undefined : db?.worldOfCell(cell);
-            const player = await scripts?.placement(PLAYER_REF);
-            if (player && cell !== undefined && !sameSpace({ cell, world }, player))
-              return undefined;
             return (
               at && {
                 position: [...at.position],
                 radius: location.radius,
                 heading: at.rotation[2],
+                ...(cell !== undefined && { space: spaceOf({ cell, world }) }),
               }
             );
           }
           case LocationType.inCell: {
             // Anywhere in the cell: round the actor, if it is in that cell.
             const at = await scripts?.placement(actor);
-            return self && at?.cell === location.form
-              ? { position: self.position, radius: Math.max(location.radius, IN_CELL_RADIUS) }
-              : undefined;
+            if (self && at?.cell === location.form) {
+              return { position: self.position, radius: Math.max(location.radius, IN_CELL_RADIUS) };
+            }
+            // Another cell: into it (an exterior cell's middle; inside, where its navmeshes are).
+            return this.#cellPlace(location.form, Math.max(location.radius, IN_CELL_RADIUS));
           }
           // Where it was as the package began.
           case LocationType.nearPackageStart: {

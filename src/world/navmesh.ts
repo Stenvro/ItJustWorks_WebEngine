@@ -342,6 +342,8 @@ export class NavmeshSurface {
     reach: number,
     tolerance: number,
   ): { readonly point: [number, number, number]; readonly distance: number } | undefined {
+    // A point not on any map (not finite, or beyond where its bins count up) is near nothing.
+    if (!(Math.abs(x) + Math.abs(y) + reach < MAX_COORDINATE)) return undefined;
     let best: { point: [number, number, number]; distance: number } | undefined;
     const seen = new Set<string>();
     for (let bx = binOf(x - reach); bx <= binOf(x + reach); bx++) {
@@ -410,3 +412,5 @@ function closestOnTriangle(
 }
 
 const binOf = (v: number): number => Math.floor(v / SURFACE_BIN);
+/** Farther out than any worldspace reaches (units): a coordinate past it is a fault. */
+const MAX_COORDINATE = 1e7;

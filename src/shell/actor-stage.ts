@@ -26,6 +26,8 @@ import { Layer } from '../physics/collision-layers.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import { ActorAi } from './actor-ai.ts';
 import { ActorSearch } from './actor-search.ts';
+import { ActorsAway, type AwayPlace } from './actors-away.ts';
+import type { RouteDoor } from '../ai/routes.ts';
 import { ActorBodies } from './actor-bodies.ts';
 import { ActorFurniture, type FurnitureUser, type StageObject } from './actor-furniture.ts';
 import { ActorMovers, type MoverWorld } from './actor-movers.ts';
@@ -113,6 +115,8 @@ export class ActorStage {
   readonly furniture: ActorFurniture;
   /** What the actors' packages search the loaded area for. */
   readonly search: ActorSearch;
+  /** The actors away: the low process (src/shell/actors-away.ts). */
+  readonly away: ActorsAway;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -142,12 +146,20 @@ export class ActorStage {
       objects: () => options.objects?.() ?? [],
       actors: () => this.#searchActors(),
     });
+    this.away = new ActorsAway({
+      session: options.session,
+      terminal: options.terminal,
+      loaded: (place) => this.#loaded(place),
+      staged: (actor) => this.#actors.has(actor),
+    });
     this.ai = new ActorAi({
       session: options.session,
       movers: this.movers,
       furniture: this.furniture,
       search: this.search,
       userOf: (staged) => this.userOf(staged),
+      leaveThrough: (staged, door, destination) => this.leaveThrough(staged, door, destination),
+      ...(options.navmeshes && { navmeshes: options.navmeshes }),
     });
   }
 
@@ -199,6 +211,34 @@ export class ActorStage {
         position: staged.position,
       };
     }
+  }
+
+  /** Whether a place is in a loaded cell of the view. */
+  #loaded(place: AwayPlace): boolean {
+    const at: StagePlace =
+      place.space.kind === 'interior'
+        ? { position: place.position, cell: place.space.cell }
+        : { position: place.position, world: place.space.world };
+    const key = this.#options.cellOf(at);
+    return key !== undefined && this.#cells.has(key);
+  }
+
+  /**
+   * An actor goes through a load door on its way to a place in another cell or worldspace: it
+   * leaves the stage and comes out on the other side, on the stage again if that is loaded,
+   * else away (the low process walks it on).
+   */
+  async leaveThrough(staged: StagedActor, door: RouteDoor, destination: AwayPlace): Promise<void> {
+    const reference = staged.reference;
+    if (this.#actors.get(reference) !== staged) return;
+    this.#remove(staged);
+    const arrival: AwayPlace = {
+      space: door.arrivalSpace,
+      position: door.arrival,
+      heading: door.arrivalHeading,
+    };
+    if (!this.#loaded(arrival)) this.away.depart(reference, arrival, destination);
+    await this.away.place(reference, arrival);
   }
 
   /** A staged actor by its reference. */
@@ -363,19 +403,28 @@ export class ActorStage {
       // Put at a reference its package names (not in its furniture): on the navmesh nearest it
       // (a sandbox's marker may lie in a hearth's fire). TODO(M13): the engine's own rule.
       const start = staged.placed.start;
-      if (start?.kind === 'at' && !start.furniture) {
-        const reach = Math.max(start.radius, SNAP_REACH);
-        const on = this.#options.navmeshes?.()?.nearest?.(staged.position, reach);
-        if (on) staged.position = [...on];
-      }
-      groundActor(staged.placed, staged.position, staged.heading, (from, length) => {
-        const hit = physics.raycast(from, [0, 0, -1], length, Layer.charController);
-        return hit && { point: hit.point, normal: hit.normal };
-      });
-      const world = staged.placed.instances[0]?.world;
-      if (world) staged.position = [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
-      staged.grounded = true;
+      const snap = start?.kind === 'at' && !start.furniture ? start.radius : undefined;
+      this.#settle(staged, physics, snap);
     }
+  }
+
+  /**
+   * An actor set down: on the navmesh near where it is (within `snap`, if given), then on the
+   * ground under it.
+   */
+  #settle(staged: StagedActor, physics: PhysicsWorld, snap?: number): void {
+    if (snap !== undefined) {
+      const reach = Math.max(snap, SNAP_REACH);
+      const on = this.#options.navmeshes?.()?.nearest?.(staged.position, reach);
+      if (on) staged.position = [...on];
+    }
+    groundActor(staged.placed, staged.position, staged.heading, (from, length) => {
+      const hit = physics.raycast(from, [0, 0, -1], length, Layer.charController);
+      return hit && { point: hit.point, normal: hit.normal };
+    });
+    const world = staged.placed.instances[0]?.world;
+    if (world) staged.position = [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
+    staged.grounded = true;
   }
 
   /**
@@ -410,9 +459,18 @@ export class ActorStage {
     if (!(await this.#isActor(runtime, reference))) return;
     const actor = await this.#cellActor(runtime, reference, now);
     if (!actor) return;
-    await this.#place([{ actor: this.#dead(actor, runtime), here: true }], key, cell, (ref) =>
-      runtime.state.created.has(ref) ? createdEnabled(runtime, ref) : cell.enabled(ref),
+    const placed = await this.#place(
+      [{ actor: this.#dead(actor, runtime), here: true }],
+      key,
+      cell,
+      (ref) => (runtime.state.created.has(ref) ? createdEnabled(runtime, ref) : cell.enabled(ref)),
     );
+    // Its cell is loaded and its collision in place: it is set down now (a living actor on the
+    // navmesh near where it came: through a door, walking in from away).
+    if (!physics) return;
+    for (const staged of placed) {
+      this.#settle(staged, physics, staged.dead || staged.placed.actor.startsDead ? undefined : 0);
+    }
   }
 
   /** A script created a reference: an actor in a loaded cell comes onto the stage. */
@@ -466,6 +524,7 @@ export class ActorStage {
       this.#clock === undefined ? 0 : Math.min(0.25, Math.max(0, seconds - this.#clock));
     this.#clock = seconds;
     this.ai.frame(this.#actors.values(), frame, this.#options.focus?.());
+    this.away.frame(frame);
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     const times = new Map<StagedActor, number | undefined>();
     for (const staged of this.#actors.values()) times.set(staged, staged.placed.time);
@@ -543,6 +602,7 @@ export class ActorStage {
         };
         this.#actors.set(reference, entry);
         staged.push(entry);
+        this.away.arrived(reference);
         // Placed in the furniture its package uses: in it at once.
         const start = actor.start;
         if (actor.inFurniture && start?.kind === 'at') {
