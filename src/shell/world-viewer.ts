@@ -45,7 +45,6 @@ import {
   loadCellData,
   type CellLight,
   type CellAcousticArea,
-  type CellActor,
   type CellData,
   referenceMatrix,
   type CellObject,
@@ -61,7 +60,12 @@ import {
   gameStartSelection,
   type CellToggle,
 } from '../world/cell-upgrades.ts';
-import { cellNavmeshes, NAVMESH_TOLERANCE, NavmeshSurface } from '../world/navmesh.ts';
+import {
+  cellNavmeshes,
+  NAVMESH_TOLERANCE,
+  NavmeshSurface,
+  NEAREST_TOLERANCE,
+} from '../world/navmesh.ts';
 import {
   CELL_SIZE,
   LAND_GRID,
@@ -78,15 +82,11 @@ import {
   animationInterval,
   type AnimatedSkeleton,
 } from '../animation/animated-skeleton.ts';
-import {
-  groundActors,
-  moveActor,
-  placeAgain,
-  ragdollsOf,
-  talkTargets,
-  withActorInstances,
-  type PlacedActor,
-} from './actors.ts';
+import { talkTargets, type PlacedActor } from './actors.ts';
+import { ActorStage } from './actor-stage.ts';
+import { PlayerFurniture } from './player-furniture.ts';
+import type { StageObject } from './actor-furniture.ts';
+import type { NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
 import { instanceNodeWorld, MOTION_KEYFRAMED, type ScriptView } from './script-world.ts';
@@ -100,7 +100,7 @@ import { cellStatesElement } from './cell-states.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import type { PlayerView } from './race-menu.ts';
 import { TreeSway } from '../animation/tree-sway.ts';
-import { groundUnder, soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
+import { groundUnder, type SoundingWorld } from './actor-sounds.ts';
 import type { GameSession } from './game-session.ts';
 import { clock, startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import { WorldLod } from './world-lod.ts';
@@ -110,6 +110,7 @@ import type { Terminal } from './terminal.ts';
 import { Player } from './player.ts';
 import type { LocalMapContent } from './local-map.ts';
 import {
+  actorOpensDoor,
   collisionGroup,
   objectActivation,
   openable,
@@ -179,9 +180,7 @@ interface LoadedCell {
   acousticAreas: readonly CellAcousticArea[];
   /** Where actors walk (its navigation meshes): the player steps onto it off the stairs too. */
   navmesh: NavmeshSurface | undefined;
-  /** Its enabled actors. */
-  actors: readonly PlacedActor[];
-  /** What animates every frame: its actors and the objects whose graph moves their nodes. */
+  /** What animates every frame: the enabled objects whose graph moves their nodes. */
   skeletons: readonly AnimatedSkeleton[];
   /** The cell's references as loaded (all of them, enabled or not). */
   data: CellData | undefined;
@@ -191,8 +190,7 @@ interface LoadedCell {
   readonly visibility: Map<number, InstanceVisibility>;
   /** The enable state each reference with collision was last given. */
   readonly enabledNow: Map<number, boolean>;
-  /** Every actor and light that can appear; the enabled ones are `actors` and `lights`. */
-  allActors: readonly PlacedActor[];
+  /** Every light that can appear; the enabled ones are `lights`. */
   allLights: readonly CellLight[];
   /** Every water activator's volumes, and every object skeleton, by reference. */
   allWaterVolumes: readonly { reference: number; volumes: WaterVolume[] }[];
@@ -235,6 +233,19 @@ const NO_SKY: Omit<SceneLighting, 'lights'> = {
 };
 
 const IDENTITY = identity();
+
+/** A cell and the eight around it (offsets), the cell itself first. */
+const NEIGHBOURHOOD: readonly (readonly [number, number])[] = [
+  [0, 0],
+  [-1, 0],
+  [1, 0],
+  [0, -1],
+  [0, 1],
+  [-1, -1],
+  [1, -1],
+  [-1, 1],
+  [1, 1],
+];
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -422,17 +433,98 @@ export class WorldViewer {
     return this.#destinations.get(teleport.door);
   }
 
-  /** What activating a reference does: load doors take the player to their destination. */
-  /** The actors of the loaded cells. */
-  /** A placed actor shown now, by its reference. */
-  placedActor(reference: number): PlacedActor | undefined {
-    for (const actor of this.readyActors()) if (actor.actor.reference === reference) return actor;
-    return undefined;
+  /** The actors of the loaded area (src/shell/actor-stage.ts). */
+  #stage: ActorStage | undefined;
+
+  /** The player in furniture (made with their body, for the stage's furniture). */
+  #seat: PlayerFurniture | undefined;
+
+  #makeSeat(play: PlaySession, avatar: PlayerAvatar): PlayerFurniture | undefined {
+    const stage = this.#stage;
+    if (!stage) return undefined;
+    return new PlayerFurniture({
+      furniture: stage.furniture,
+      play,
+      avatar,
+      hasKeyword: async (reference, keyword) =>
+        (await this.#session?.scriptsReady?.hasKeyword(reference, keyword)) ?? false,
+      menuOpen: () => this.#session?.menuMode === true,
+    });
   }
 
-  /** The actors shown now (of the cells loaded and ready). */
-  *readyActors(): Iterable<PlacedActor> {
-    for (const cell of this.#cells.values()) if (cell.ready) yield* cell.actors;
+  /** The player in furniture (development checks). */
+  get playerFurniture(): PlayerFurniture | undefined {
+    return this.#seat;
+  }
+
+  /** The actors of the loaded area (development checks drive them). */
+  get actorStage(): ActorStage | undefined {
+    return this.#stage;
+  }
+
+  /** A placed actor shown now, by its reference. */
+  placedActor(reference: number): PlacedActor | undefined {
+    const staged = this.#stage?.get(reference);
+    return staged && !staged.visibility.hidden ? staged.placed : undefined;
+  }
+
+  /** The actors shown now (enabled, in the loaded area). */
+  readyActors(): Iterable<PlacedActor> {
+    return this.#stage?.shown() ?? [];
+  }
+
+  /** The navigation meshes of the loaded cells (actors' paths). */
+  readonly #navmeshes: NavmeshSet = {
+    navmesh: (formId) => {
+      for (const cell of this.#cells.values()) {
+        for (const mesh of cell.navmesh?.meshes ?? []) if (mesh.formId === formId) return mesh;
+      }
+      return undefined;
+    },
+    locate: ([x, y, z]) => {
+      const cx = Math.floor(x / CELL_SIZE);
+      const cy = Math.floor(y / CELL_SIZE);
+      // The cell the point is in, else a neighbour's mesh reaching over its edge.
+      for (const [dx, dy] of NEIGHBOURHOOD) {
+        const found = this.#cells
+          .get(cellKey(cx + dx, cy + dy))
+          ?.navmesh?.near(x, y, z, NAVMESH_TOLERANCE);
+        if (found) return found;
+      }
+      return undefined;
+    },
+    nearest: ([x, y, z], reach) => {
+      const cx = Math.floor(x / CELL_SIZE);
+      const cy = Math.floor(y / CELL_SIZE);
+      let best: { point: [number, number, number]; distance: number } | undefined;
+      for (const [dx, dy] of NEIGHBOURHOOD) {
+        const found = this.#cells
+          .get(cellKey(cx + dx, cy + dy))
+          ?.navmesh?.nearest(x, y, z, reach, NEAREST_TOLERANCE);
+        if (found && (!best || found.distance < best.distance)) best = found;
+      }
+      return best?.point;
+    },
+  };
+
+  /** An actor on its way opens a door of a loaded cell (not a load door). */
+  #actorOpensDoor(reference: number): void {
+    for (const cell of this.#cells.values()) {
+      const placed = cell.placed.find((entry) => entry.object.reference === reference);
+      if (!placed) continue;
+      const lock = this.#session?.hud.uses?.lockOf(placed.object);
+      actorOpensDoor(placed.object, placed.instance, lock !== undefined, (descriptor, at) => {
+        void this.#session?.soundSystem?.play(descriptor, at);
+      });
+      return;
+    }
+  }
+
+  /** The loaded cell of this world a place is in (the actor stage's key), if any. */
+  #stageCellOf(at: { position: Vec3; world?: number | undefined }): string | undefined {
+    const world = this.#world?.record.formId;
+    if (world === undefined || (at.world !== undefined && at.world !== world)) return undefined;
+    return cellKey(Math.floor(at.position[0] / CELL_SIZE), Math.floor(at.position[1] / CELL_SIZE));
   }
 
   /**
@@ -476,6 +568,7 @@ export class WorldViewer {
       ),
     created: (reference) => {
       void this.#showCreated(reference);
+      void this.#stage?.created(reference, this.#play?.physics);
     },
     livePlacement: (reference) => {
       const player = this.#play?.player;
@@ -491,13 +584,12 @@ export class WorldViewer {
       }
       const created = this.#created?.get(reference)?.instance?.world;
       if (created) return { position: [created[12] ?? 0, created[13] ?? 0, created[14] ?? 0] };
+      const actor = this.#stage?.livePlacement(reference);
+      if (actor) return actor;
       for (const cell of this.#cells.values()) {
         if (!cell.ready) continue;
-        const actor = cell.actors.find((placed) => placed.actor.reference === reference);
         const placed = cell.placed.find((entry) => entry.object.reference === reference);
-        const world =
-          actor?.instances[0]?.world ??
-          (placed?.instance.motion ? placed.instance.world : undefined);
+        const world = placed?.instance.motion ? placed.instance.world : undefined;
         if (world) return { position: [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] };
       }
       return undefined;
@@ -517,10 +609,8 @@ export class WorldViewer {
         const skeleton = cell.objectSkeletons.find((entry) => entry.reference === reference);
         const graph = placedScriptGraph(placed?.instance.graph, skeleton?.skeleton.behavior, clock);
         if (graph) return graph;
-        const actor = cell.actors.find((entry) => entry.actor.reference === reference);
-        if (actor?.behavior) return actorScriptGraph(actor.behavior);
       }
-      return undefined;
+      return actorScriptGraph(this.#stage?.get(reference)?.placed.behavior);
     },
     motionTypeChanged: (reference, motionType) => {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
@@ -535,7 +625,9 @@ export class WorldViewer {
     activate: (reference) => {
       this.#defaultActivation(reference)?.activate();
     },
-    triggerCount: (reference) => this.#play?.triggerCount(reference) ?? 0,
+    triggerCount: (reference) =>
+      (this.#play?.triggerCount(reference) ?? 0) +
+      (this.#stage?.movers.triggerCount(reference) ?? 0),
     nodeWorld: (reference, node) => {
       for (const cell of this.#cells.values()) {
         const placed = cell.placed.find((entry) => entry.object.reference === reference);
@@ -544,41 +636,35 @@ export class WorldViewer {
       return undefined;
     },
     lookChanged: (reference) => this.#lookChanged(reference),
+    killed: (reference) => {
+      this.#stage?.killed(reference);
+    },
+    currentPackage: (reference) => this.#stage?.ai.current(reference)?.id,
+    interaction: (reference) => this.#stage?.furniture.interaction(reference),
+    playIdle: (actor, idle, target) => {
+      const staged = this.#stage?.get(actor);
+      if (!staged) return false;
+      void this.#stage?.furniture.playIdle(this.#stage.userOf(staged), idle, target);
+      return true;
+    },
+    motion: (reference) =>
+      reference === PLAYER_REF ? this.#play?.playerMotion() : this.#stage?.movers.motion(reference),
+    furnitureInUse: (reference, marker) => this.#stage?.furniture.inUse(reference, marker) ?? false,
+    evaluatePackage: (reference) => {
+      this.#stage?.ai.evaluate(reference);
+    },
   };
 
   /**
    * An actor's look changed: the player's body is made again (its appearance, its race); an
-   * actor of a loaded cell is placed again in its new race where it stands, its cell's scene
-   * built again with it. TODO(M13): a dead actor's ragdoll keeps its old skeleton's bodies.
+   * actor of the loaded area is placed again in its new race where it stands.
    */
   async #lookChanged(reference: number): Promise<void> {
     if (reference === PLAYER_REF) {
       await this.#avatar?.rebuild();
       return;
     }
-    const session = this.#session;
-    if (!session) return;
-    for (const cell of this.#cells.values()) {
-      const old = cell.allActors.find((placed) => placed.actor.reference === reference);
-      if (!old || !cell.ready) continue;
-      const source = cell.data?.actors.find((actor) => actor.reference === reference) ?? old.actor;
-      const placed = await placeAgain(session, old, source);
-      // The cell went meanwhile, or the actor cannot be made in its new race.
-      if (!placed || !cell.allActors.includes(old)) return;
-      soundPlacedActors([placed], this.#soundingWorld);
-      cell.allActors = cell.allActors.map((actor) => (actor === old ? placed : actor));
-      cell.sceneInstances = withActorInstances(
-        cell.sceneInstances,
-        old,
-        placed,
-        cell.visibility.get(reference),
-      );
-      const previous = cell.scene;
-      cell.scene = this.#renderer.scene.createScene(cell.sceneInstances);
-      previous?.destroy();
-      this.#refreshCell(cell);
-      return;
-    }
+    await this.#stage?.lookChanged(reference);
   }
 
   /** A script moved a reference of a loaded cell: its instance and its collision follow. */
@@ -617,12 +703,11 @@ export class WorldViewer {
       }
       return;
     }
+    if (this.#stage?.get(reference)) {
+      await this.#stage.moved(reference, this.#play?.physics);
+      return;
+    }
     for (const cell of this.#cells.values()) {
-      const actor = cell.allActors.find((placed) => placed.actor.reference === reference);
-      if (actor) {
-        moveActor(actor, at.position, at.rotation[2], this.#play?.physics);
-        return;
-      }
       const placed = cell.placed.find((entry) => entry.object.reference === reference);
       if (!placed) continue;
       const world = referenceMatrix({
@@ -646,6 +731,8 @@ export class WorldViewer {
       }
       return;
     }
+    // An actor from elsewhere moved into the loaded area.
+    await this.#stage?.moved(reference, this.#play?.physics);
   }
 
   /** An enabled object of the loaded cells (or one the scripts created). */
@@ -684,6 +771,7 @@ export class WorldViewer {
       },
       (descriptor, at) => void this.#session?.soundSystem?.play(descriptor, at),
       this.#session?.hud.uses,
+      this.#seat,
     );
   }
 
@@ -773,6 +861,24 @@ export class WorldViewer {
     this.#detachScripts?.();
     this.#detachScripts = session.scriptWorld.attach(this.#scriptView);
     this.#created = new CreatedObjects(session, this.#renderer);
+    this.#stage = new ActorStage({
+      session,
+      renderer: this.#renderer,
+      terminal: this.#terminal,
+      sounding: this.#soundingWorld,
+      cellOf: (at) => this.#stageCellOf(at),
+      cellShown: (key) => this.#cells.get(key)?.ready === true,
+      navmeshes: () => this.#navmeshes,
+      openDoor: (door) => {
+        this.#actorOpensDoor(door);
+      },
+      furnishings: () => this.#furnishings(),
+      focus: () => this.#play?.player.feet,
+      // Actors walking into trigger volumes tell their scripts.
+      onTrigger: (trigger, actor, entered) => {
+        this.#session?.scriptsReady?.triggered(trigger, actor, entered);
+      },
+    });
     this.#landTextures.clear();
     const db = await session.db;
     this.#db = db;
@@ -927,6 +1033,8 @@ export class WorldViewer {
       this.#ui.freeCamera.checked = free;
     };
     this.#play = play;
+    // The actors near the player move in its physics world.
+    this.#stage?.attachPlay(play);
     // The player walking into trigger volumes tells their scripts.
     play.onTrigger = (reference, entered) => {
       this.#session?.scriptsReady?.triggered(reference, PLAYER_REF, entered);
@@ -940,8 +1048,10 @@ export class WorldViewer {
     // The player's body (third person) and first-person camera animation.
     PlayerAvatar.create(session, this.#renderer, player, this.#soundingWorld).then(
       (avatar) => {
-        if (this.#play === play) this.#avatar = avatar;
-        else avatar?.destroy();
+        if (this.#play === play) {
+          this.#avatar = avatar;
+          this.#seat = avatar && this.#makeSeat(play, avatar);
+        } else avatar?.destroy();
       },
       (error: unknown) => {
         this.#terminal.log('actor', `player: ${describe(error)}`, 'warn');
@@ -974,12 +1084,14 @@ export class WorldViewer {
       shadows: true,
       update: (seconds) => {
         this.#avatar?.update(seconds);
+        if (this.#avatar) this.#seat?.frame(this.#avatar.stepped);
         // Pines' branches sway with the weather's wind.
         const wind = this.#sky?.lighting()?.wind ?? 0;
         for (const sway of this.#treeSways.values()) sway?.update(seconds, wind);
         const interval = this.#animationInterval();
         for (const cell of this.#cells.values())
           if (cell.ready) animateSkeletons(cell.skeletons, seconds, interval);
+        this.#stage?.animate(seconds);
       },
     });
     document.body.classList.add('has-scene', 'content-scene');
@@ -1064,6 +1176,7 @@ export class WorldViewer {
     const references = [
       ...data.objects.map((object) => object.reference),
       ...data.primitives.map((primitive) => primitive.reference),
+      // The dead's ragdolls.
       ...data.actors.map((actor) => actor.reference),
     ];
     for (const reference of references) {
@@ -1075,13 +1188,9 @@ export class WorldViewer {
     }
     const objects = data.objects.filter((object) => isEnabled(object.reference));
     cell.objects = new Map(objects.map((object) => [object.reference, object]));
-    cell.actors = cell.allActors.filter((actor) => isEnabled(actor.actor.reference));
-    cell.skeletons = [
-      ...cell.actors,
-      ...cell.objectSkeletons
-        .filter((entry) => isEnabled(entry.reference))
-        .map((entry) => entry.skeleton),
-    ];
+    cell.skeletons = cell.objectSkeletons
+      .filter((entry) => isEnabled(entry.reference))
+      .map((entry) => entry.skeleton);
     cell.lights = cell.allLights.filter((light) => isEnabled(light.reference));
     cell.waterAreas = data.waterAreas.filter((area) => isEnabled(area.reference));
     cell.waterVolumes = cell.allWaterVolumes
@@ -1090,6 +1199,7 @@ export class WorldViewer {
     cell.emitters = data.emitters.filter((emitter) => isEnabled(emitter.reference));
     cell.acousticAreas = data.acousticAreas.filter((area) => isEnabled(area.reference));
     cell.decals?.select(isEnabled);
+    this.#stage?.refresh();
   }
 
   /** A loaded cell's references meet the running game's scripts (once their game started). */
@@ -1107,7 +1217,7 @@ export class WorldViewer {
       const scripted = await runtime.cellAttached(
         [
           ...data.objects.map((object) => object.reference),
-          ...data.actors.map((actor) => actor.reference),
+          ...(this.#stage?.referencesIn(cellKey(cell.x, cell.y)) ?? []),
         ],
         (reference) => loaded.has(reference),
       );
@@ -1126,13 +1236,30 @@ export class WorldViewer {
   }
 
   /** A cell's references whose 3D is loaded (its enabled drawn objects and actors). */
+  /** The enabled furniture and markers of the loaded cells (sandboxing actors use them). */
+  *#furnishings(): Iterable<StageObject> {
+    for (const cell of this.#cells.values()) {
+      if (!cell.ready || !cell.data) continue;
+      for (const object of cell.data.objects) {
+        if (object.baseType !== 'FURN' || !cell.isEnabled(object.reference)) continue;
+        const { world } = object;
+        yield { ...object, position: [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] };
+      }
+      for (const marker of cell.data.markers) if (cell.isEnabled(marker.reference)) yield marker;
+    }
+  }
+
   #cellLoadedReferences(cell: LoadedCell): number[] {
     if (!cell.ready) return [];
     return [
       ...cell.placed
         .map(({ object }) => object.reference)
         .filter((reference) => cell.isEnabled(reference)),
-      ...cell.actors.map((actor) => actor.actor.reference),
+      ...(cell.data?.markers ?? [])
+        .map((marker) => marker.reference)
+        .filter((reference) => cell.isEnabled(reference)),
+      ...(this.#stage?.shownIn(cellKey(cell.x, cell.y)).map((actor) => actor.actor.reference) ??
+        []),
       ...[...(this.#created?.all ?? [])]
         .filter(
           (entry) => !entry.visibility.hidden && this.#cellOfCreated(entry.object.world) === cell,
@@ -1171,9 +1298,7 @@ export class WorldViewer {
     const camera = this.#renderer.view?.camera;
     if (!camera) return undefined;
     return (animated) => {
-      const world =
-        this.#skeletonPlaces.get(animated) ??
-        (animated as Partial<PlacedActor>).instances?.[0]?.world;
+      const world = this.#skeletonPlaces.get(animated);
       return world
         ? animationInterval(
             [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0],
@@ -1197,6 +1322,7 @@ export class WorldViewer {
     if (this.#world) this.#renderer.setView(undefined);
     for (const cell of this.#cells.values()) this.#free(cell);
     this.#cells.clear();
+    this.#stage?.clear();
     this.#queue.length = 0;
     for (const large of this.#largeCells.values()) large.scene?.destroy();
     this.#largeCells.clear();
@@ -1214,6 +1340,8 @@ export class WorldViewer {
     this.#lod = undefined;
     this.#avatar?.destroy();
     this.#avatar = undefined;
+    this.#seat = undefined;
+    this.#stage?.attachPlay(undefined);
     this.#play?.dispose();
     this.#play = undefined;
     if (this.#session?.soundSystem) this.#session.soundSystem.landMaterialAt = undefined;
@@ -1347,13 +1475,11 @@ export class WorldViewer {
         emitters: [],
         acousticAreas: [],
         navmesh: undefined,
-        actors: [],
         skeletons: [],
         data: undefined,
         isEnabled: () => true,
         visibility: new Map(),
         enabledNow: new Map(),
-        allActors: [],
         allLights: [],
         allWaterVolumes: [],
         objectSkeletons: [],
@@ -1425,11 +1551,11 @@ export class WorldViewer {
     const flow = this.#flowMap(world, cell.x, cell.y);
     const placed = await this.#place(session, objects, flow, true, shownBy);
     const instances = placed.map(({ instance }) => instance);
-    const actors = await this.#placeActors(session, data.actors);
-    for (const actor of actors) {
-      const shown = shownBy(actor.actor.reference);
-      for (const instance of actor.instances) instances.push({ ...instance, visibility: shown });
-    }
+    // Its actors (those in it now) come onto the stage; the dead lie as ragdolls.
+    const ragdolls =
+      (await this.#stage?.attachCell(cellKey(cell.x, cell.y), data.actors, (reference) =>
+        cell.isEnabled(reference),
+      )) ?? [];
     // The cell's water plane (lakes, rivers and the sea are cell water at a height).
     const water = cellWater(data.cell, {
       height: world.defaultWaterHeight,
@@ -1462,7 +1588,6 @@ export class WorldViewer {
     cell.data = data;
     cell.allLights = data.lights;
     cell.placed = placed;
-    cell.allActors = actors;
     cell.objectSkeletons = placed.flatMap(({ object, skeleton }) =>
       skeleton ? [{ reference: object.reference, skeleton }] : [],
     );
@@ -1499,14 +1624,13 @@ export class WorldViewer {
       const collisions = await Promise.all(
         objects.map(async (object) => session.collision(object.model)),
       );
-      const ragdolls = await ragdollsOf(cell.allActors, (path) => session.collision(path));
       if (play !== this.#play) return;
       const entries = new Map(placed.map((entry) => [entry.object, entry]));
       play.add(cell.collision, {
         ...(land && { land: { data: land, x: cell.x, y: cell.y } }),
         // Its actors stand on the ground once it is in place.
         whenComplete: () => {
-          groundActors(cell.actors, play.physics);
+          this.#stage?.ground(cellKey(cell.x, cell.y), play.physics);
         },
         objects: objects.map((object, i) => {
           const entry = entries.get(object);
@@ -1611,27 +1735,6 @@ export class WorldViewer {
       });
     });
     return placed;
-  }
-
-  /** Actors ready to draw (those that cannot be made are left out, logged). */
-  async #placeActors(session: GameSession, actors: readonly CellActor[]): Promise<PlacedActor[]> {
-    if (actors.length === 0) return [];
-    const placer = await session.actors();
-    const placed = await Promise.all(
-      actors.map((actor) =>
-        placer.place(actor).catch((error: unknown) => {
-          this.#terminal.log(
-            'actor',
-            `${actor.editorId || String(actor.reference)}: ${describe(error)}`,
-            'warn',
-          );
-          return undefined;
-        }),
-      ),
-    );
-    const placedActors = placed.filter((actor): actor is PlacedActor => actor !== undefined);
-    soundPlacedActors(placedActors, this.#soundingWorld);
-    return placedActors;
   }
 
   /** What actors' animations sound with: the session's sounds, the play's collision. */
@@ -1887,6 +1990,7 @@ export class WorldViewer {
 
   #free(cell: LoadedCell): void {
     const runtime = this.#session?.scriptsReady;
+    const key = cellKey(cell.x, cell.y);
     if (cell.scriptsAttached && cell.data && runtime) {
       const loaded = new Set(this.#cellLoadedReferences(cell));
       const data = cell.data;
@@ -1894,13 +1998,15 @@ export class WorldViewer {
         runtime.cellDetached(
           [
             ...data.objects.map((object) => object.reference),
-            ...data.actors.map((actor) => actor.reference),
+            ...(this.#stage?.referencesIn(key) ?? []),
           ],
           (reference) => loaded.has(reference),
         ),
       );
     }
     cell.scriptsAttached = false;
+    // A cell being replaced by a new load of the same place keeps the new one's actors.
+    if (this.#cells.get(key) === cell || !this.#cells.has(key)) this.#stage?.detachCell(key);
     for (const entry of [...(this.#created?.all ?? [])]) {
       const at = entry.object.world;
       const key = cellKey(
@@ -1929,6 +2035,7 @@ export class WorldViewer {
     if (play && avatar && play.bodyShown) yield avatar.scene;
     if (this.#lod) yield* this.#lod.scenes();
     for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
+    if (this.#stage) yield* this.#stage.scenes();
     if (this.#created) yield* this.#created.scenes();
     for (const [key, large] of this.#largeCells) {
       // The full cell shows them once it is ready.

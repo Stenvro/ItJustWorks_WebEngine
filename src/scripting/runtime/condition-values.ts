@@ -17,6 +17,34 @@ import type { StoryEventData } from './story-manager.ts';
 
 /** UESP's function indices of the conditions valued here. */
 export const Fn = {
+  isMoving: 25,
+  isTorchOut: 102,
+  isSwimming: 185,
+  getIsUsedItemType: 247,
+  isSneaking: 286,
+  isRidingHorse: 327,
+  getIsObjectType: 432,
+  getGraphVariableFloat: 447,
+  isCarryable: 487,
+  isSprinting: 568,
+  getMovementSpeed: 623,
+  isExitingInstant: 637,
+  getGraphVariableInt: 675,
+  getActivationHeight: 680,
+  isPathing: 704,
+  isOnFlyingMount: 730,
+  getSleeping: 49,
+  getSitting: 159,
+  getFurnitureMarkerId: 160,
+  isCurrentFurnitureRef: 162,
+  isCurrentFurnitureObj: 163,
+  isFurnitureAnimType: 613,
+  isFurnitureEntryType: 614,
+  isEnteringInteractionQuick: 631,
+  isInFurnitureState: 644,
+  isExitingInteractionQuick: 703,
+  isNullPackageData: 611,
+  getNumericPackageData: 612,
   getDistance: 1,
   getInSameCell: 32,
   getTalkedToPC: 50,
@@ -113,6 +141,14 @@ export const Fn = {
 export interface ConditionContext {
   readonly event?: StoryEventData;
   readonly quest?: number;
+  /**
+   * The running package's data inputs by id (GetNumericPackageData, IsNullPackageData: their
+   * parameter is an input's id): a number (bool, int, float), or 'none' for an input without a
+   * value (no reference); undefined where the package has no such input.
+   */
+  readonly packageData?: (input: number) => number | 'none' | undefined;
+  /** What the subject acts on (the object it activates: GetActivationHeight, IsCarryable). */
+  readonly target?: ObjectHandle;
 }
 
 /** GetEventData's event functions (its first parameter's low 16 bits). */
@@ -166,6 +202,55 @@ const OPERATORS = [
   (a: number, b: number) => a < b,
   (a: number, b: number) => a <= b,
 ] as const;
+
+/** LIGH DATA flags (its 13th byte on): the light can be carried. */
+const LIGHT_CARRIED = 0x2;
+
+/**
+ * The form types GetIsObjectType and GetIsUsedItemType number, by record signature (xEdit
+ * wbDefinitionsTES5 wbFormTypeEnum; those a reference's base or an item can be).
+ */
+const FORM_TYPES: Readonly<Record<string, number>> = {
+  ACTI: 0,
+  ARMO: 1,
+  BOOK: 2,
+  CONT: 3,
+  DOOR: 4,
+  INGR: 5,
+  LIGH: 6,
+  MISC: 7,
+  STAT: 8,
+  GRAS: 9,
+  TREE: 10,
+  WEAP: 12,
+  NPC_: 13,
+  LVLN: 14,
+  SPEL: 15,
+  ENCH: 16,
+  ALCH: 17,
+  LVLI: 18,
+  KEYM: 19,
+  AMMO: 20,
+  FLOR: 21,
+  FURN: 22,
+  SOUN: 23,
+  ANIO: 28,
+  IDLM: 30,
+  PROJ: 32,
+  TACT: 33,
+  EXPL: 34,
+  TXST: 35,
+  FLST: 38,
+  PERK: 39,
+  ADDN: 41,
+  MSTT: 42,
+  SCOL: 69,
+  ARTO: 84,
+  APPA: 90,
+  HAZD: 92,
+  SLGM: 97,
+  SCRL: 100,
+};
 
 const number = (value: Value): number =>
   typeof value === 'number' ? value : typeof value === 'boolean' ? Number(value) : 0;
@@ -589,6 +674,127 @@ async function conditionValue(
     }
     case Fn.getOffersServicesNow:
       return reference === undefined ? undefined : flag(await actors.offersServicesNow(reference));
+    // How it moves (the player's input, an actor's controller and its AI's travel).
+    case Fn.isMoving:
+    case Fn.isSneaking:
+    case Fn.isSwimming:
+    case Fn.isSprinting:
+    case Fn.isPathing:
+    case Fn.getMovementSpeed: {
+      if (reference === undefined) return undefined;
+      const motion = runtime.world.motion?.(reference);
+      if (condition.function === Fn.getMovementSpeed) return motion?.speed ?? 0;
+      const pick =
+        condition.function === Fn.isMoving
+          ? motion?.moving
+          : condition.function === Fn.isSneaking
+            ? motion?.sneaking
+            : condition.function === Fn.isSwimming
+              ? motion?.swimming
+              : condition.function === Fn.isSprinting
+                ? motion?.sprinting
+                : motion?.pathing;
+      return flag(pick === true);
+    }
+    // Its behavior graph's variables (bInJumpState, iState, ...).
+    case Fn.getGraphVariableInt:
+    case Fn.getGraphVariableFloat: {
+      const name = condition.strings[0];
+      if (reference === undefined || name === undefined) return undefined;
+      const value = runtime.world.animationVariable?.(reference, name) ?? 0;
+      return condition.function === Fn.getGraphVariableInt ? Math.trunc(value) : value;
+    }
+    // What it is (the activated object, the used item): its base's form type, as the
+    // functions' parameter numbers them (xEdit wbFormTypeEnum).
+    case Fn.getIsObjectType:
+    case Fn.getIsUsedItemType: {
+      const own = await base();
+      if (own === undefined) return 0;
+      const type = runtime.forms.db.locate(own);
+      const signature = type && runtime.forms.db.typeAt(type);
+      return flag(signature !== undefined && FORM_TYPES[signature] === condition.raw1);
+    }
+    // A light that can be carried (LIGH DATA flag 0x2: a torch), of the reference it runs on
+    // or, run on an actor, of what it activates.
+    case Fn.isCarryable: {
+      const actor =
+        reference !== undefined &&
+        (await runtime.formType(runtime.referenceHandle(reference))) === 'actor';
+      const object = actor ? context.target && runtime.reference(context.target) : reference;
+      const own = object === undefined ? undefined : await runtime.baseOf(object);
+      const record = own === undefined ? undefined : await runtime.forms.record(own);
+      if (record?.type !== 'LIGH') return 0;
+      return flag(((record.fields.first('DATA')?.[12] ?? 0) & LIGHT_CARRIED) !== 0);
+    }
+    // How high what it activates is above its feet (picking up from high or low). TODO(M13):
+    // the engine's own measure is not documented.
+    case Fn.getActivationHeight: {
+      const object = context.target && runtime.reference(context.target);
+      if (reference === undefined || object === undefined) return 0;
+      const [self, other] = await Promise.all([
+        runtime.placement(reference),
+        runtime.placement(object),
+      ]);
+      return self && other ? other.position[2] - self.position[2] : 0;
+    }
+    // Torches, mounts: TODO(M10) 4.2 (an actor's torch at night), 3.5 (mounts, riding).
+    case Fn.isTorchOut:
+    case Fn.isRidingHorse:
+    case Fn.isOnFlyingMount:
+      return 0;
+    // What the actor uses (its furniture: src/shell/actor-furniture.ts).
+    case Fn.getSitting:
+    case Fn.getSleeping: {
+      if (reference === undefined) return undefined;
+      const using = runtime.world.interaction?.(reference);
+      const sleeping = using?.animationType === 2;
+      if (!using || sleeping !== (condition.function === Fn.getSleeping)) return 0;
+      return using.state;
+    }
+    case Fn.getFurnitureMarkerId: {
+      const using = reference === undefined ? undefined : runtime.world.interaction?.(reference);
+      return using ? using.marker : -1;
+    }
+    case Fn.isCurrentFurnitureRef: {
+      const using = reference === undefined ? undefined : runtime.world.interaction?.(reference);
+      return flag(using?.furniture === form);
+    }
+    case Fn.isCurrentFurnitureObj: {
+      const using = reference === undefined ? undefined : runtime.world.interaction?.(reference);
+      return flag(using?.base === form);
+    }
+    case Fn.isFurnitureAnimType: {
+      const using = reference === undefined ? undefined : runtime.world.interaction?.(reference);
+      return flag(using?.animationType === condition.raw1);
+    }
+    case Fn.isFurnitureEntryType: {
+      const using = reference === undefined ? undefined : runtime.world.interaction?.(reference);
+      return flag(((using?.entry ?? 0) & condition.raw1) !== 0);
+    }
+    case Fn.isEnteringInteractionQuick: {
+      const using = reference === undefined ? undefined : runtime.world.interaction?.(reference);
+      return flag(using?.quickEnter === true);
+    }
+    case Fn.isExitingInteractionQuick:
+    case Fn.isExitingInstant: {
+      // IsExitingInstant: read as the quick exit too. TODO(M13): what tells the two apart.
+      const using = reference === undefined ? undefined : runtime.world.interaction?.(reference);
+      return flag(using?.quickExit === true);
+    }
+    case Fn.isInFurnitureState: {
+      // Its parameter: the furniture's animation type (1 sit, 2 sleep, 4 lean).
+      const using = reference === undefined ? undefined : runtime.world.interaction?.(reference);
+      return flag(using?.state === 3 && using.animationType === condition.raw1);
+    }
+    // The running package's data inputs (by id: the condition's first parameter).
+    case Fn.getNumericPackageData: {
+      const value = context.packageData?.(form);
+      return typeof value === 'number' ? value : undefined;
+    }
+    case Fn.isNullPackageData: {
+      const value = context.packageData?.(form);
+      return value === undefined ? undefined : flag(value === 'none');
+    }
     default:
       return undefined;
   }

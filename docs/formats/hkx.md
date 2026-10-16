@@ -190,8 +190,8 @@ clip). Reader: `src/formats/hkx/animation.ts`; check against every clip of the l
 | hkaDefaultAnimatedReferenceFrame | up 16, forward 32, duration 48, referenceFrameSamples 56 (xyz + turn)                                                                                                                                                                                                                                              |
 | hkaAnimationBinding              | originalSkeletonName 16, animation 24, transformTrackToBoneIndices 32 (empty: track i is bone i), floatTrackToFloatSlotIndices 48, blendHint 64 (1 additive)                                                                                                                                                       |
 
-Vanilla clips carry no extracted motion: root motion comes from the behavior project's
-animation data (`meshes\animationdata`), read with the behavior runtime (M7).
+Vanilla clips carry no extracted motion: root motion comes from the behavior projects'
+animation data ([Animation data](#animation-data)).
 
 The float slots of the human skeleton are `hkFade:AnimObjectA/B/L/R` (an anim object's fade)
 and `hkVis:Shield`, `hkVis:… MagicNode`, `hkVis:Weapon` (whether the object in that node is
@@ -250,3 +250,138 @@ component changes stay close (mean 0.06–0.2 rad over 600 000 pairs), and every
 
 The layout and the quaternion encodings were worked out with PredatorCZ's HavokLib
 (spline decompressor) as documentation; float tracks from the vanilla data.
+
+## Animation data
+
+What the behavior projects say about their clips beside the Havok files: text files in
+`Skyrim - Animations.bsa` (one binary). Readers: `src/formats/animdata/`; the lookups the runtime
+uses (by a race's behavior project and a clip generator's name, by an equip state):
+`src/animation/animation-data-library.ts`. Every block of every file, compared with the graphs
+and clips: `node tools/animdata-info.ts --parse`; one clip's keys: `--project DefaultMale --clip
+MT_WalkForward`; attack sets: `--sets DefaultMale [--equip iLeftHandType=10,iRightHandType=1]`;
+speed tables: `--speed DefaultMale [--state 0]`. Sources: the readers of Pandora Behaviour
+Engine (`Pandora.Skyrim/AnimData` and `AnimSetData`; Pandora, like FNIS and Nemesis, rewrites
+these files) for the block layouts and field names; the speed data and the responses from the
+vanilla data alone.
+
+The engine reads the **single files** (`meshes\animationdatasinglefile.txt`,
+`animationsetdatasinglefile.txt`, `speeddatasinglefile.txt`): they hold the DLC projects too.
+The per-project copies are the base game's: `meshes\animationdata\<project>.txt` (323, a project
+block as below without its line count), `animationdata\boundanims\anims_<project>.txt` (39, the
+motion block) and `meshes\animationsetdata\<project>data\` (39 folders: the set list without a
+count, one file per set; `dirlist.txt` lists the folders). 11 character projects and 209 of the
+813 set files differ from the single files.
+
+A project is named by its behavior project file without the extension: `DefaultMale` is
+`meshes\actors\character\defaultmale.hkx` (the race's `Actors\Character\DefaultMale.hkx`),
+`FirstPerson` `actors\character\_1stperson\firstperson.hkx`, `WolfProject`
+`actors\canine\wolfproject.hkx`; for each of the 49 character projects a file of that name
+exists whose listed files lie next to it.
+
+### animationdatasinglefile.txt
+
+CRLF lines: the project count (429) and the names (`DefaultMale.txt`; 419 different: ten object
+projects such as `Autoplay` and `Moth` are listed twice with different files, the first is
+used); then per project its line count and block and, when the block's flag is 1, the line
+count and lines of its motion block. A count covers every line of the block, the empty line
+after each entry included (in vanilla every count matches). The 49 character projects come
+first, in the order of the set and speed data; the 380 object projects have no clips.
+
+| Project block line | Meaning                                                                                             |
+| ------------------ | --------------------------------------------------------------------------------------------------- |
+| `1`                | 1 in every project (Pandora: LeadInt)                                                               |
+| file count, files  | the project's files from its folder: `Behaviors\0_Master.hkx`, `Characters\…`, the skeleton         |
+| `1` or `0`         | whether clip data and motion data follow                                                            |
+| clip blocks        | name, clip id, playback speed, crop start, crop end, event count, events `name:time`; an empty line |
+
+A **clip block** is an hkbClipGenerator by name: its playback speed and crop
+(cropStartAmountLocalTime, cropEndAmountLocalTime) equal the graph's in every generator found,
+its events (`FootLeft:0.2`, `SoundPlay.NPCChickenScratch:0.333333`) carry the local time after
+the last colon. Several generators share a clip (mirrored ones, slow and fast variants). The
+**clip id** only keys the motion: it is the index of the clip's animation in the character's
+animationNames in 44 projects but not in WerewolfBeast (none: the list moved by a few), Horse
+(34 of 65) or the humans (DefaultMale 2486 of 2520), so generators are matched by name.
+
+A **motion block** per clip id: clip id; duration; translation count, `time x y z` lines;
+rotation count, `time x y z w` lines; an empty line. The keys are where the clip has moved the
+actor since its start, in the frame it started in: x right, y forward, z up, game units
+(1HM_AttackPowerFwdUncropped ends at y +484.5, the left power attack at x −123.7, the right one
+at x +153.3). No key is written for time 0 (the start is zero and the identity), the last key
+lies at the duration, times rise, and every rotation turns about z only (12 308 translation and
+9681 rotation keys in 6725 entries). The duration is the clip file's (6631 of the 6675 entries
+whose clip was found): keys are in the clip's own time, before crop and playback speed. Between
+keys the translation is read linearly and the rotation spherically (not documented). 241
+generators have no motion entry (DefaultMale and DefaultFemale 102 each, FirstPerson 29, Dragon
+8): they do not move the actor. `Crossbow_IdleHeld` is listed twice with two clips in the three
+human projects; the first is used.
+
+**Plausibility.** MT_WalkForward moves 93.4 units in 1.133 s (82.45 u/s) and MT_RunForward 222.2
+in 0.633 s (350.9 u/s): the child weights of MT_ForwardBlend (82.4541 and 350.987 on its
+SpeedSampled axis). Over all parametric blenders on a speed variable, 2327 of 3578 children that
+are clips sit within 1 % of the clip's speed times its playback speed (the others are round
+authored values such as 5, 50 and 200). The MOVT speeds (NPC_Default_MT walk forward 80.1, run
+370; [esm.md](esm.md)) lie on these axes; MT_SprintForward runs at 370.4. Chair_FrontEnterVar1
+walks 63.5 units forward while it turns 180° to sit down.
+
+### animationsetdatasinglefile.txt
+
+The project count (49) and the paths (`DefaultMaleData\DefaultMale.txt`); per project the set
+count, the set file names (`1HMShield.txt`), then the sets in that order. No line counts. A set
+is an equip state of the character:
+
+| Set lines                        | Meaning                                                                     |
+| -------------------------------- | --------------------------------------------------------------------------- |
+| `V3`                             | version (every set)                                                         |
+| count, events                    | trigger events (weapEquip, swimForceEquip, WeapOutLeftReplaceForceEquip, …) |
+| count, (variable, min, max)      | graph variables the state needs inside the range (both ends included)       |
+| count, attacks                   | attack event, a flag (0 or 1), clip count, the clip generators it plays     |
+| count, (folder, file, extension) | the clips the set uses, three u32 lines each                                |
+
+Conditions test iLeftHandType (148), iRightHandType (149), iWantMountedWeaponAnims (84) and
+bWantMountedWeaponAnims (5): 1HMShield is iLeftHandType 10, iRightHandType 1–4,
+iWantMountedWeaponAnims 0. A variable the runtime does not name counts as 0. Most creatures have
+one set (`FullBody`) without conditions; the humans have 374 (42 with conditions, the others
+furniture and idle sets), FirstPerson 109, Draugr 25 (990 sets, 737 attacks). The lookup takes
+an equip state's attacks from its sets with conditions first, then from those without.
+Attack clips are clip generators of the animation data (776 of 793). The attack flag is 1 on 124
+attacks, the plain and sprint ones (attackStart, attackStartLeftHand, attackStartSprint,
+attackPowerStart_Sprint, AttackStartH2HRight, some bashes), and 0 on the directional power
+attacks; its meaning is unknown (Pandora: Unk).
+
+A clip is named by hashes: the BSCRC32 (reflected 0xEDB88320, start 0, no final inversion, as
+the material ids) of its lower-case folder (`meshes\actors\character\animations`) and of its
+lower-case file name without extension, and the extension's characters as a little-endian u32
+(`hkx`: 7891816). 20 336 of the 20 807 are animations of the character's list (all of them in 36
+of the 49 projects).
+
+### speeddatasinglefile.txt
+
+Not documented anywhere found; the layout and the meaning follow from the data and the graphs.
+A text head, the project count (49) and `DefaultMaleData\DefaultMale.spd` lines, then binary,
+little-endian, to the last byte: per project u32 1, u32 table count; per table i32 state, u32
+curve count; per curve f32 direction, u32 point count and (f32 x, f32 y) points.
+
+88 tables (two of Falmer's are empty, with states 0x80000000 and 0x626F7272: uninitialised
+memory), 1634 curves, 18 302 points. Every other table has 19 curves, directions 0 to 0.9 in
+steps of 0.05. The humans have states 0–10 and 15–17 (14 tables), FirstPerson and most creatures
+one (state 0, or one of their own: 30 dog, 40 goat, 60 horse, 100 wolf), a few several (Draugr 0
+and 3–7, Giant 0–2, Deer 20 and 21).
+
+They are the tables of **BSSpeedSamplerModifier**, which `0_master.hkx` binds to iState (state),
+Direction (direction), Speed (goalSpeed) and SpeedSampled (speedOut); the locomotion blenders
+blend on SpeedSampled. A curve's x is that blend parameter, its y the speed the synchronised
+blend then moves the actor at: DefaultMale state 0 direction 0 has (48.5, 16.10) and (324.5,
+306.38), and the root motion of MT_WalkForwardSlow and MT_WalkForward, and of MT_WalkForwardFast
+and MT_RunForward, blended at those weights (stride over the blended cycle duration), gives
+16.11 and 306.42. State 1 is flat at 370.37, the sprint clip's speed. The sampler so inverts the
+curve: the parameter at which the blend moves at the goal speed (walk 80.1 → 82.24). 1556 curves
+rise in both x and y. Beyond a curve's last point (state 0 forward: 306.4, short of the run's 370) the lookup holds it: TODO(M10) whether the engine extrapolates.
+
+### Responses
+
+`meshes\responses\actorresponse.txt` (88 events) and `playercharacterresponse.txt` (13):
+`event : Handler` lines naming the engine handler that answers an animation event of an actor's
+graph (weaponSwing → WeaponRightSwingHandler, HitFrame → HitFrameHandler, idleChairSitting →
+ChairEnterHandler, AddRagdollToWorld → AddRagdollHandler). The player's file starts with
+`BackupResponse : ActorResponse`: an event it does not name falls back to the actors' list
+(idleChairSitting → PlayerChairEnterHandler, HitFrame → HitFrameHandler).

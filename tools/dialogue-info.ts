@@ -1,11 +1,13 @@
 // Shows the game's dialogue as the engine looks it up (src/world/dialogue.ts): a quest's
 // topics with their infos in order, each response's text and voice file name, and the voice
-// types that have that file.
+// types that have that file; or the topics by subtype against the subtype table.
 //
 //   node tools/dialogue-info.ts MQ101                       a quest's topics and infos
 //   node tools/dialogue-info.ts MQ101 MaleNord FemaleNord   ...counting only these voice types
+//   node tools/dialogue-info.ts --subtypes                  topics per subtype and category
 
 import { DialogueIndex, voiceFileName } from '../src/world/dialogue.ts';
+import { DIALOGUE_SUBTYPES, dialogueSubtype } from '../src/world/dialogue-subtypes.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { openGameFolder } from './gamedata-path.ts';
@@ -15,6 +17,50 @@ const vfs = await Vfs.mount(openGameFolder());
 const db = await RecordDatabase.open(vfs);
 const dialogue = new DialogueIndex(db);
 await dialogue.build();
+
+/** Every subtype's topics, the codes not in the table, the topics under another tab. */
+async function subtypes(): Promise<void> {
+  let topics = 0;
+  const unknown = new Map<string, number>();
+  const otherTab = new Map<string, number>();
+  const counts: string[] = [];
+  for (const subtype of DIALOGUE_SUBTYPES) {
+    const ofSubtype = dialogue.topicsOfSubtype(subtype.code);
+    topics += ofSubtype.length;
+    if (ofSubtype.length > 0) counts.push(`${subtype.code} ${String(ofSubtype.length)}`);
+    for (const formId of ofSubtype) {
+      const topic = await dialogue.topic(formId);
+      if (topic && topic.category !== subtype.category) {
+        otherTab.set(subtype.code, (otherTab.get(subtype.code) ?? 0) + 1);
+      }
+    }
+  }
+  for (const formId of db.formIdsOfType('DIAL')) {
+    const topic = await dialogue.topic(formId);
+    if (topic && !dialogueSubtype(topic.subtypeName)) {
+      unknown.set(topic.subtypeName, (unknown.get(topic.subtypeName) ?? 0) + 1);
+    }
+  }
+  const used = counts.length;
+  console.log(
+    `${String(topics)} topics of ${String(used)} of the ${String(DIALOGUE_SUBTYPES.length)} subtypes: ${counts.join(', ')}`,
+  );
+  console.log(`codes not in the table: ${JSON.stringify(Object.fromEntries(unknown))}`);
+  console.log(
+    `under another tab than their subtype's: ${JSON.stringify(Object.fromEntries(otherTab))}`,
+  );
+  const branches = dialogue.branches;
+  console.log(
+    `${String(branches.length)} branches, ${String(branches.filter((b) => b.category !== 0).length)} of them favor dialogue`,
+  );
+}
+
+if (questId === '--subtypes') {
+  await subtypes();
+  await vfs.close();
+  process.exit(0);
+}
+
 let quest: number | undefined;
 for (const formId of db.formIdsOfType('QUST')) {
   if ((await db.get(formId))?.editorId?.toLowerCase() === questId.toLowerCase()) quest = formId;

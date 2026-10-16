@@ -69,8 +69,15 @@ export interface CellObject {
   readonly lock?: ObjectLock;
   /** ACTI / FLOR RNAM: the verb its activation prompt shows instead of the default. */
   readonly activateText?: string;
-  /** Furniture: whether it is slept in (a sleep marker), its workbench (WBDT type; 0 none). */
-  readonly furniture?: { readonly sleep: boolean; readonly workbench: number };
+  /**
+   * Furniture: whether it is slept in (a sleep marker), sat or leant on (a sit or lean marker),
+   * its workbench (WBDT type; 0 none).
+   */
+  readonly furniture?: {
+    readonly sleep: boolean;
+    readonly sit: boolean;
+    readonly workbench: number;
+  };
 }
 
 /** A placed lock: its level (1 Novice .. 100 Master, 255 a key only) and its key. */
@@ -86,12 +93,16 @@ export interface ObjectLock {
  */
 export function furnitureOf(base: Pick<GameRecord, 'fields'>): {
   readonly sleep: boolean;
+  readonly sit: boolean;
   readonly workbench: number;
 } {
+  const types = base.fields
+    .all('FNPR')
+    .filter((data) => data.length >= 2)
+    .map((data) => view(data).getUint16(0, true));
   return {
-    sleep: base.fields
-      .all('FNPR')
-      .some((data) => data.length >= 2 && (view(data).getUint16(0, true) & 0x2) !== 0),
+    sleep: types.some((type) => (type & 0x2) !== 0),
+    sit: types.some((type) => (type & 0x5) !== 0),
     workbench: base.fields.first('WBDT')?.[0] ?? 0,
   };
 }
@@ -150,6 +161,20 @@ export interface CellAcousticArea {
   /** The base's object bounds (OBND), in its own frame. */
   readonly min: readonly [number, number, number];
   readonly max: readonly [number, number, number];
+}
+
+/**
+ * A marker placed in the cell: an idle marker (IDLM), or a reference of a base the editor
+ * marks as a marker (furniture markers such as a counter to lean on, heading markers). They
+ * are not drawn; actors use them and scripts find them.
+ */
+export interface CellMarker {
+  readonly reference: number;
+  readonly base: number;
+  readonly baseType: string;
+  readonly position: readonly [number, number, number];
+  /** Its heading (radians about z). */
+  readonly heading: number;
 }
 
 /**
@@ -301,6 +326,8 @@ export interface CellData {
   readonly primitives: readonly CellPrimitive[];
   /** Looping sound sources; filter with `enabledReferences`. */
   readonly emitters: readonly CellSoundEmitter[];
+  /** Markers (not drawn: idle markers, furniture markers); filter with `enabledReferences`. */
+  readonly markers: readonly CellMarker[];
   /** Placed acoustic spaces; filter with `enabledReferences`. */
   readonly acousticAreas: readonly CellAcousticArea[];
   /** Water activators' surfaces (ACTI WNAM; their bounds), for the sound of water. */
@@ -491,6 +518,7 @@ export async function loadCellData(
   const decals: CellDecal[] = [];
   const primitives: CellPrimitive[] = [];
   const emitters: CellSoundEmitter[] = [];
+  const markers: CellMarker[] = [];
   const acousticAreas: CellAcousticArea[] = [];
   const waterAreas: CellWaterArea[] = [];
   const skipped = new Map<string, number>();
@@ -575,7 +603,16 @@ export async function loadCellData(
       if (primitive) primitives.push(primitive);
       continue;
     }
-    if ((base.flags & RecordFlag.isMarker) !== 0) continue;
+    if ((base.flags & RecordFlag.isMarker) !== 0 || base.type === 'IDLM') {
+      markers.push({
+        reference: ref.formId,
+        base: ref.base,
+        baseType: base.type,
+        position: [ref.position[0], ref.position[1], ref.position[2]],
+        heading: ref.rotation[2],
+      });
+      continue;
+    }
 
     const loopingSound = loopingSoundOf(base);
     if (loopingSound !== undefined) {
@@ -682,6 +719,7 @@ export async function loadCellData(
     decals,
     primitives,
     emitters,
+    markers,
     acousticAreas,
     waterAreas,
     references,

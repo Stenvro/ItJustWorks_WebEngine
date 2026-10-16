@@ -51,6 +51,8 @@ export class CreatedObjects {
     const record = base === undefined ? undefined : await runtime.forms.record(base);
     const at = await runtime.placement(reference);
     if (!record || !at || this.#entries.has(reference)) return;
+    // Created actors are the actor stage's (src/shell/actor-stage.ts).
+    if (record.type === 'NPC_' || record.type === 'LVLN') return;
     const world = referenceMatrix({
       position: at.position,
       rotation: at.rotation,
@@ -156,7 +158,7 @@ export class CreatedObjects {
 }
 
 /** A created reference is enabled unless a script disabled or deleted it. */
-function createdEnabled(runtime: ScriptRuntime, reference: number): boolean {
+export function createdEnabled(runtime: ScriptRuntime, reference: number): boolean {
   const state = runtime.state.references.get(reference);
   return state?.deleted !== true && state?.container === undefined && state?.enabled !== false;
 }

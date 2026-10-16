@@ -420,14 +420,21 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   ]) {
     act(name, () => undefined);
   }
-  ask('isrunning', false, () => false);
-  ask('issprinting', false, () => false);
-  ask('issneaking', false, () => false);
+  ask('isrunning', false, (actor) => world.motion?.(actor)?.running ?? false);
+  ask('issprinting', false, (actor) => world.motion?.(actor)?.sprinting ?? false);
+  ask('issneaking', false, (actor) => world.motion?.(actor)?.sneaking ?? false);
   act('startsneaking', () => undefined);
   ask('isweapondrawn', false, () => false);
   act('drawweapon', () => undefined);
-  ask('getsitstate', 0, () => 0);
-  ask('getsleepstate', 0, () => 0);
+  // What it uses: 0 not, 2 wants to (on its way), 3 in it, 4 wants to leave.
+  ask('getsitstate', 0, (actor) => {
+    const using = world.interaction?.(actor);
+    return using && using.animationType !== 2 ? using.state : 0;
+  });
+  ask('getsleepstate', 0, (actor) => {
+    const using = world.interaction?.(actor);
+    return using?.animationType === 2 ? using.state : 0;
+  });
   ask('isinkillmove', false, () => false);
   ask('getlightlevel', 0, (actor) => world.lightLevel?.(actor) ?? 0);
   // Flying and riding.

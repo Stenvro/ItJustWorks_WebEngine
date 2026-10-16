@@ -131,13 +131,19 @@ export interface WorldBridge {
   criticalStage?(actor: number, stage: number): void;
   ashPile?(actor: number, pile: number | undefined): void;
   aiEnabled?(actor: number, enabled: boolean): void;
-  /** EvaluatePackage: the actor picks its package again (TODO(M10)). */
+  /** EvaluatePackage: the actor picks its package again (its AI: src/shell/actor-ai.ts). */
   evaluatePackage?(actor: number): void;
   currentPackage?(actor: number): number | undefined;
   moveToPackageLocation?(actor: number): void;
   startCombat?(actor: number, target: number): void;
   stopCombat?(actor: number): void;
   lightLevel?(actor: number): number;
+  /** What an actor is using now (a chair, a bed, a lean): src/shell/actor-furniture.ts. */
+  interaction?(actor: number): ActorInteraction | undefined;
+  /** How an actor moves now (the player's input, an actor's controller), if it is loaded. */
+  motion?(actor: number): ActorMotion | undefined;
+  /** Whether a furniture's marker (any marker, without one) is in use by an actor. */
+  furnitureInUse?(furniture: number, marker?: number): boolean;
   /** An idle played (PlayIdle): false if it could not play. */
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
   setAlpha?(actor: number, alpha: number, fade: boolean): void;
@@ -244,6 +250,48 @@ export interface PersistentIndex {
 }
 
 /** Where the plugin places a reference: DATA position and rotation (radians), XSCL scale. */
+/**
+ * An actor's use of furniture, as the engine keeps it: what its conditions (GetSitting,
+ * IsFurnitureEntryType, ...) and natives (GetSitState, ...) read.
+ */
+export interface ActorInteraction {
+  /** The furniture reference and its base (IsCurrentFurnitureRef, IsCurrentFurnitureObj). */
+  readonly furniture: number;
+  readonly base: number;
+  /** The marker used (GetFurnitureMarkerID). */
+  readonly marker: number;
+  /** The marker's animation type: 1 sit, 2 sleep, 4 lean (IsFurnitureAnimType). */
+  readonly animationType: number;
+  /** The entry point used, as IsFurnitureEntryType names it: 0x10000 front, 0x20000 behind,
+   * 0x40000 right, 0x80000 left, 0x100000 up. */
+  readonly entry: number;
+  /**
+   * GetSitting / GetSitState for sitting and leaning, GetSleeping / GetSleepState for beds:
+   * 0 not, 2 wants to (on its way, about to enter), 3 in it, 4 wants to leave.
+   */
+  readonly state: number;
+  /** Entered or left at once (placed in it as its cell loads; IsEnteringInteractionQuick). */
+  readonly quickEnter: boolean;
+  readonly quickExit: boolean;
+}
+
+/**
+ * How an actor moves now, as its conditions (IsMoving, IsSneaking, IsSwimming, IsPathing,
+ * GetMovementSpeed, ...) and natives (IsRunning, IsSprinting, IsSneaking) read it.
+ */
+export interface ActorMotion {
+  /** It moves of itself (the player's input; a direction its AI asks of it). */
+  readonly moving: boolean;
+  readonly running: boolean;
+  readonly sprinting: boolean;
+  readonly sneaking: boolean;
+  readonly swimming: boolean;
+  /** How fast it goes over the ground now (units per second). */
+  readonly speed: number;
+  /** It is on its way along a path (its package's travel). */
+  readonly pathing: boolean;
+}
+
 export interface EditorPlacement {
   readonly position: Vec3;
   readonly rotation: Vec3;
@@ -1084,6 +1132,11 @@ export class ScriptRuntime implements VmHost {
     };
   }
 
+  /** Where the plugin places a reference (its editor location: packages near it). */
+  editorPlacement(reference: number): Promise<EditorPlacement | undefined> {
+    return this.#editorPlacement(reference);
+  }
+
   /** Where the plugin places a reference (DATA, XSCL): a persistent one's from the index. */
   async #editorPlacement(reference: number): Promise<EditorPlacement | undefined> {
     const indexed = this.#index?.placement.get(reference);
@@ -1901,7 +1954,13 @@ export class ScriptRuntime implements VmHost {
     conditions: readonly Condition[],
     subject: ObjectHandle,
     event?: StoryEventData,
-    context: { readonly target?: ObjectHandle; readonly quest?: number } = {},
+    context: {
+      readonly target?: ObjectHandle;
+      readonly quest?: number;
+      /** The running package (its data inputs; conditions run on its data). */
+      readonly packageData?: (input: number) => number | 'none' | undefined;
+      readonly packageTarget?: (input: number) => number | undefined;
+    } = {},
   ): Promise<boolean> {
     let result = true;
     let group: boolean | undefined;
@@ -1915,7 +1974,14 @@ export class ScriptRuntime implements VmHost {
         holds = true;
       } else {
         const quest = context.quest ?? (subject.type === 'quest' ? subject.formId : undefined);
-        holds = on !== 'none' && (await evaluateCondition(this, condition, on, { event, quest }));
+        holds =
+          on !== 'none' &&
+          (await evaluateCondition(this, condition, on, {
+            event,
+            quest,
+            ...(context.packageData && { packageData: context.packageData }),
+            ...(context.target && { target: context.target }),
+          }));
       }
       if (condition.or) group = (group ?? false) || holds;
       else {
@@ -1931,7 +1997,11 @@ export class ScriptRuntime implements VmHost {
     condition: Condition,
     subject: ObjectHandle,
     event: StoryEventData | undefined,
-    context: { readonly target?: ObjectHandle; readonly quest?: number },
+    context: {
+      readonly target?: ObjectHandle;
+      readonly quest?: number;
+      readonly packageTarget?: (input: number) => number | undefined;
+    },
   ): Promise<ObjectHandle | 'none' | 'unknown'> {
     switch (condition.runOn) {
       case ConditionRunOn.subject:
@@ -1956,8 +2026,14 @@ export class ScriptRuntime implements VmHost {
         const member = event?.forms.get(condition.eventMember);
         return member === undefined ? 'none' : this.referenceHandle(member);
       }
+      case ConditionRunOn.packageData: {
+        // The reference a data input of the running package names (its index: param 3).
+        if (!context.packageTarget) return 'unknown';
+        const reference = context.packageTarget(condition.param3);
+        return reference === undefined ? 'none' : this.referenceHandle(reference);
+      }
       default:
-        // Combat targets (TODO(M10)), package data (TODO(M10)).
+        // Combat targets (TODO(M10)).
         return 'unknown';
     }
   }

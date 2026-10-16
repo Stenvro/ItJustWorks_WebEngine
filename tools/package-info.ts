@@ -4,13 +4,17 @@
 //
 //   node tools/package-info.ts 37058 [--hour 10] [--days 0]   one actor (reference id, hex)
 //   node tools/package-info.ts --parse                        every PACK: trees, inputs, procedures
+//   node tools/package-info.ts --procedures                   each procedure's parameters, as the
+//                                                             templates name and type its slots
 //   node tools/package-info.ts --audit 1a26f -10 15 -10 10    the actors of a worldspace's cells
 //   node tools/package-info.ts --audit interiors [prefix]     the actors of interior cells
 
 import { PackageData } from '../src/ai/package-data.ts';
-import { parsePackage, type ProcedureBranch } from '../src/ai/package-records.ts';
+import { BranchFlag, parsePackage, type ProcedureBranch } from '../src/ai/package-records.ts';
+import { PROCEDURE_PARAMETERS } from '../src/ai/procedures.ts';
 import { packageStart, type GameTime, type PackageStart } from '../src/ai/package-start.ts';
 import { RecordFlag } from '../src/formats/esm/record.ts';
+import { parseVmad } from '../src/formats/esm/vmad.ts';
 import { ActorResolver } from '../src/world/actors.ts';
 import { loadCellData, type CellActor } from '../src/world/cell-loader.ts';
 import { linkedReferences, parseReference } from '../src/world/cell-records.ts';
@@ -138,10 +142,15 @@ async function showActor(reference: number): Promise<void> {
         `      condition ${String(condition.function)} ${await name(condition.form)} ${String(condition.param2)} op ${String(condition.operator)} ${JSON.stringify(condition.comparand)}`,
       );
     }
-    for (const input of pack.inputs) {
-      console.log(`      input ${String(input.id)} ${input.type} ${JSON.stringify(input.value)}`);
-    }
     const template = pack.template === undefined ? pack : await data.package(pack.template);
+    // The template's names of its inputs (BNAM), as the Creation Kit shows them.
+    const inputName = (id: number): string =>
+      template?.inputNames.find((entry) => entry.id === id)?.name ?? '';
+    for (const input of pack.inputs) {
+      console.log(
+        `      input ${String(input.id)} "${inputName(input.id)}" ${input.type} ${JSON.stringify(input.value)}`,
+      );
+    }
     for (const line of tree(template?.tree ?? pack.tree)) console.log(line);
   }
   console.log(`  starts: ${await describeStart(await startOf(actor))}`);
@@ -150,13 +159,22 @@ async function showActor(reference: number): Promise<void> {
 async function parseAll(): Promise<void> {
   const procedures = new Map<string, number>();
   const inputTypes = new Map<string, number>();
+  const locations = new Map<string, number>();
+  const used = new Map<string, number>();
+  const fragments = new Map<string, number>();
+  const add = (map: Map<string, number>, key: string): void => {
+    map.set(key, (map.get(key) ?? 0) + 1);
+  };
   let count = 0;
   let trees = 0;
   let missingValues = 0;
   const walk = (branch: ProcedureBranch | undefined): void => {
     if (!branch) return;
-    if (branch.procedure)
-      procedures.set(branch.procedure, (procedures.get(branch.procedure) ?? 0) + 1);
+    if (branch.procedure) add(procedures, branch.procedure);
+    if ((branch.branchFlags & BranchFlag.repeatWhenComplete) !== 0) add(used, 'repeating branches');
+    if (branch.flagOverride) {
+      add(used, branch.flagOverride.preferredSpeed === undefined ? 'PFOR' : 'PFO2');
+    }
     branch.children.forEach(walk);
   };
   for (const formId of db.formIdsOfType('PACK')) {
@@ -167,8 +185,33 @@ async function parseAll(): Promise<void> {
     if (pack.tree) trees++;
     walk(pack.tree);
     for (const input of pack.inputs) {
-      inputTypes.set(input.type, (inputTypes.get(input.type) ?? 0) + 1);
+      add(inputTypes, input.type);
       if (!input.value && input.type !== 'Topic') missingValues++;
+      if (input.value?.kind === 'location') add(locations, String(input.value.location.type));
+    }
+    if (pack.idles) add(used, `idle lists (${String(pack.idles.idles.length)} idles)`);
+    if (pack.combatStyle !== undefined) add(used, 'combat styles');
+    if ((record.fields.first('PKDT')?.subarray(10, 12) ?? []).some((byte) => byte !== 0)) {
+      add(used, 'PKDT garbage after the interrupt flags');
+    }
+    if (pack.inputCount !== pack.inputs.length) add(used, 'PKCU input count other than the inputs');
+    for (const [name, event] of [
+      ['begin', pack.onBegin],
+      ['end', pack.onEnd],
+      ['change', pack.onChange],
+    ] as const) {
+      if (event.idle !== undefined) add(used, `${name} idles`);
+      if (event.topic !== undefined) add(used, `${name} topics`);
+    }
+    const vmad = record.fields.first('VMAD');
+    if (vmad) {
+      try {
+        const scripts = parseVmad(vmad, 'PACK');
+        if (scripts.fragmentScript) add(fragments, 'packages with a fragment script');
+        for (const fragment of scripts.fragments) add(fragments, String(fragment.stage));
+      } catch {
+        add(fragments, 'unreadable');
+      }
     }
   }
   const list = (map: Map<string, number>): string =>
@@ -179,6 +222,9 @@ async function parseAll(): Promise<void> {
   console.log(`${String(count)} packages, ${String(trees)} with their own procedure tree`);
   console.log(`procedures: ${list(procedures)}`);
   console.log(`inputs: ${list(inputTypes)}; ${String(missingValues)} without a value`);
+  console.log(`location types: ${list(locations)}`);
+  console.log(`used: ${list(used)}`);
+  console.log(`fragments: ${list(fragments)}`);
 }
 
 async function audit(actors: readonly CellActor[]): Promise<void> {
@@ -216,8 +262,61 @@ async function enabledActors(
   return cellData.actors.filter((actor) => enabled(actor.reference));
 }
 
+/**
+ * Each procedure's slots as the templates fill them: the names (BNAM) and types of the inputs
+ * they give each slot, over every package with a tree, against src/ai/procedures.ts's table.
+ */
+async function procedureParameters(db: RecordDatabase): Promise<void> {
+  const slots = new Map<string, Map<number, Map<string, number>>>();
+  let mismatches = 0;
+  for (const id of db.formIdsOfType('PACK')) {
+    const record = await db.get(id);
+    if (!record || record.deleted) continue;
+    const pack = parsePackage(record);
+    const visit = (branch: ProcedureBranch): void => {
+      const name = branch.procedure?.toLowerCase();
+      if (name) {
+        const bySlot = slots.get(name) ?? new Map<number, Map<string, number>>();
+        slots.set(name, bySlot);
+        branch.inputs.forEach((input, slot) => {
+          if (input === 255) return;
+          const type = pack.inputs.find((entry) => entry.id === input)?.type ?? '?';
+          const named = pack.inputNames.find((entry) => entry.id === input)?.name ?? '?';
+          const names = bySlot.get(slot) ?? new Map<string, number>();
+          bySlot.set(slot, names);
+          const key = `${type} ${named}`;
+          names.set(key, (names.get(key) ?? 0) + 1);
+          const expected = PROCEDURE_PARAMETERS[name]?.[slot]?.types;
+          if (expected !== undefined && !expected.includes(type)) {
+            mismatches++;
+            console.log(`  ${pack.editorId}: ${name} slot ${String(slot)} takes ${type}`);
+          }
+        });
+      }
+      branch.children.forEach(visit);
+    };
+    if (pack.tree) visit(pack.tree);
+  }
+  for (const [name, bySlot] of [...slots].sort((a, b) => a[0].localeCompare(b[0]))) {
+    console.log(name);
+    for (const [slot, names] of [...bySlot].sort((a, b) => a[0] - b[0])) {
+      const known = PROCEDURE_PARAMETERS[name]?.[slot];
+      const top = [...names]
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3)
+        .map(([key, count]) => `${key} (${String(count)})`)
+        .join('; ');
+      console.log(
+        `  ${String(slot)} ${known ? `${known.name}: ${known.types.join(' or ')}` : '?'}  <-  ${top}`,
+      );
+    }
+  }
+  console.log(`${String(mismatches)} slots whose input type differs from the table`);
+}
+
 async function main(db: RecordDatabase): Promise<void> {
   if (args[0] === '--parse') return parseAll();
+  if (args[0] === '--procedures') return procedureParameters(db);
   if (args[0] === '--audit') {
     const actors: CellActor[] = [];
     if (args[1] === 'interiors') {

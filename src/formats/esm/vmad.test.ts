@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseVmad, referencedForms } from './vmad.ts';
+import { parseVmad, PhaseFragmentFlag, referencedForms } from './vmad.ts';
 
 /** Little-endian byte builder for synthetic VMAD fields. */
 class Bytes {
@@ -144,6 +144,56 @@ describe('VMAD', () => {
         ],
       },
     ]);
+  });
+
+  it("reads a scene's end fragment and its phases' fragments", () => {
+    let bytes = new Bytes().u16(5).u16(2).u16(1);
+    bytes = script(bytes, 'SF_MQ101Scene1_000BECD4', (b) => {
+      b.wstring('Cart').u8(1).u8(1).object(0x44);
+      return 1;
+    });
+    bytes.u8(2).u8(0b10).wstring('SF_MQ101Scene1_000BECD4');
+    bytes.u8(1).wstring('SF_MQ101Scene1_000BECD4').wstring('Fragment_9');
+    bytes.u16(2);
+    bytes.u8(0x2).u32(3).u8(1).wstring('SF_MQ101Scene1_000BECD4').wstring('Fragment_2');
+    bytes.u8(0x1).u32(14).u8(1).wstring('SF_MQ101Scene1_000BECD4').wstring('Fragment_5');
+    const vmad = parseVmad(bytes.data, 'SCEN');
+    expect(vmad.fragmentScript).toBe('SF_MQ101Scene1_000BECD4');
+    expect(vmad.fragments).toEqual([
+      { stage: 'end', logEntry: 0, script: 'SF_MQ101Scene1_000BECD4', function: 'Fragment_9' },
+    ]);
+    expect(vmad.phaseFragments).toEqual([
+      {
+        phase: 3,
+        when: PhaseFragmentFlag.onCompletion,
+        script: 'SF_MQ101Scene1_000BECD4',
+        function: 'Fragment_2',
+      },
+      {
+        phase: 14,
+        when: PhaseFragmentFlag.onStart,
+        script: 'SF_MQ101Scene1_000BECD4',
+        function: 'Fragment_5',
+      },
+    ]);
+  });
+
+  it("reads a package's begin, end and change fragments in their flags' order", () => {
+    let bytes = new Bytes().u16(5).u16(2).u16(1);
+    bytes = script(bytes, 'PF_Travel_000A1B2C', () => 0);
+    bytes.u8(2).u8(0b101).wstring('PF_Travel_000A1B2C');
+    bytes.u8(1).wstring('PF_Travel_000A1B2C').wstring('Fragment_0');
+    bytes.u8(1).wstring('PF_Travel_000A1B2C').wstring('Fragment_1');
+    const vmad = parseVmad(bytes.data, 'PACK');
+    expect(vmad.fragments.map((fragment) => [fragment.stage, fragment.function])).toEqual([
+      ['begin', 'Fragment_0'],
+      ['change', 'Fragment_1'],
+    ]);
+    expect(vmad.phaseFragments).toEqual([]);
+    // Without a fragment section: only scripts.
+    const plain = parseVmad(script(new Bytes().u16(5).u16(2).u16(1), 'S', () => 0).data, 'PACK');
+    expect(plain.fragmentScript).toBeUndefined();
+    expect(plain.fragments).toEqual([]);
   });
 
   it('rejects unknown versions and property types', () => {

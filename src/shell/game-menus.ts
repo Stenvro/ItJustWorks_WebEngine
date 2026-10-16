@@ -609,11 +609,14 @@ export class GameMenus {
   }
 
   /**
-   * A workbench used (the crafting menu), the HUD hidden. TODO(M10): the player sits at it
-   * (its furniture markers) first and gets up after.
+   * A workbench used (the crafting menu), the HUD hidden; `done` once it is closed (the player
+   * gets up from the workbench: src/shell/player-furniture.ts).
    */
-  craft(reference: number, base: number): void {
-    if (this.#open || this.#reading || this.#session.menuMode) return;
+  craft(reference: number, base: number, done?: () => void): void {
+    if (this.#open || this.#reading || this.#session.menuMode) {
+      done?.();
+      return;
+    }
     const hud = this.#session.hud;
     hud.shown(false);
     const leave = this.#enterMenuMode();
@@ -622,6 +625,7 @@ export class GameMenus {
       if (this.#open === open) this.#open = undefined;
       hud.shown(true);
       leave();
+      done?.();
     };
     open.leave = closed;
     this.#open = open;

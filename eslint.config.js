@@ -11,7 +11,8 @@ const nodeApis = {
 };
 
 export default defineConfig(
-  globalIgnores(['dist/', 'coverage/']),
+  // Hidden folders hold local working copies of the repository.
+  globalIgnores(['dist/', 'coverage/', '.*/']),
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,

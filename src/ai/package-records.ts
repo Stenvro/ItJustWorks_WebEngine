@@ -3,7 +3,7 @@
 // procedures: Travel, Sit, Sleep, Patrol, Sandbox, ...) from a template package (PKCU) and
 // fill its public data inputs (a sit target, a patrol start, a sleep location). Packages
 // without a template carry their own tree. Platform-independent.
-// Layout: docs/formats/esm.md ("AI packages"), after UESP's PACK page.
+// Layout: docs/formats/esm.md ("AI packages"), after UESP's PACK page and xEdit's definition.
 
 import { view } from '../formats/esm/fields.ts';
 import { conditionAt, type Condition } from '../scripting/conditions.ts';
@@ -42,6 +42,25 @@ export const LocationType = {
   aliasLocation: 9,
   nearSelf: 12,
 } as const;
+
+/** PKDT interrupt flags (u16; xEdit names bits 0–9). */
+export const InterruptFlag = {
+  hellosToPlayer: 0x1,
+  randomConversations: 0x2,
+  observeCombatBehavior: 0x4,
+  greetCorpseBehavior: 0x8,
+  reactionToPlayerActions: 0x10,
+  friendlyFireComments: 0x20,
+  aggroRadiusBehavior: 0x40,
+  allowIdleChatter: 0x80,
+  worldInteractions: 0x200,
+} as const;
+
+/** IDLF flags of a package's idles (0x8, undocumented, is set in 109 of 110 vanilla lists). */
+export const PackageIdleFlag = { runInSequence: 0x1, doOnce: 0x4 } as const;
+
+/** PRCB flags of a branch. */
+export const BranchFlag = { repeatWhenComplete: 0x1 } as const;
 
 /** PTDA target types. */
 export const TargetType = {
@@ -103,18 +122,55 @@ export interface PackageInput {
   readonly value: PackageValue | undefined;
 }
 
+/**
+ * PFO2 (PFOR in older packages): the package flags a procedure sets and clears while it runs,
+ * and the speed it moves at.
+ */
+export interface PackageFlagOverride {
+  /** PackageFlag bits set and cleared. */
+  readonly setFlags: number;
+  readonly clearFlags: number;
+  /** InterruptFlag bits set and cleared. */
+  readonly setInterruptFlags: number;
+  readonly clearInterruptFlags: number;
+  /** 0 walk, 1 jog, 2 run, 3 fast walk (with PackageFlag.preferredSpeed set); PFOR: none. */
+  readonly preferredSpeed: number | undefined;
+}
+
 /** A branch of the procedure tree. */
 export interface ProcedureBranch {
   /** ANAM: Procedure, Sequence, Simultaneous, Random, Stacked. */
   readonly type: string;
   readonly conditions: readonly Condition[];
+  /** PRCB: BranchFlag. */
+  readonly branchFlags: number;
   /** PNAM: the procedure (Procedure branches): Travel, Sit, Sleep, Patrol, Sandbox, ... */
   readonly procedure: string | undefined;
   /** FNAM: 0x1 its success completes the package. */
   readonly flags: number;
   /** PKC2: the ids of the data inputs it uses, in order (255: none). */
   readonly inputs: readonly number[];
+  /** PFO2 / PFOR: how it changes the package's flags and speed while it runs. */
+  readonly flagOverride: PackageFlagOverride | undefined;
   readonly children: readonly ProcedureBranch[];
+}
+
+/** IDLF / IDLC / IDLT / IDLA: idles an actor plays while the package runs. */
+export interface PackageIdles {
+  /** IDLF: PackageIdleFlag. */
+  readonly flags: number;
+  /** IDLT: the idle timer setting (seconds; 0 in 95 of 110 vanilla lists). */
+  readonly timer: number;
+  /** IDLA: the idles (IDLE). */
+  readonly idles: readonly number[];
+}
+
+/** POBA / POEA / POCA: what happens as the package begins, ends or changes. */
+export interface PackageEvent {
+  /** INAM: the idle played. */
+  readonly idle: number | undefined;
+  /** PDTO: the topic said: a topic (DIAL) or a topic subtype (four characters). */
+  readonly topic: number | string | undefined;
 }
 
 /** A template's name for one of its data inputs (procedure data). */
@@ -131,28 +187,37 @@ export interface PackageRecord {
   readonly editorId: string;
   /** PKDT misc flags (PackageFlag). */
   readonly flags: number;
-  /** PKDT package type: 0x1 a template. */
+  /** PKDT package type: 18 a package, 19 a template. */
   readonly type: number;
+  /** 0 none, 1 spectator, 2 observe dead, 3 guard warn, 4 combat. */
   readonly interruptOverride: number;
   /** 0 walk, 1 jog, 2 run, 3 fast walk (with PackageFlag.preferredSpeed). */
   readonly preferredSpeed: number;
+  /** PKDT u16 InterruptFlag. */
   readonly interruptFlags: number;
   readonly schedule: PackageSchedule | undefined;
   /** CTDA before the data: when it may run. */
   readonly conditions: readonly Condition[];
+  /** The idles it plays, if it has a list. */
+  readonly idles: PackageIdles | undefined;
+  /** CNAM: the combat style its actor fights with while it runs. */
+  readonly combatStyle: number | undefined;
   /** QNAM: the quest that owns it. */
   readonly ownerQuest: number | undefined;
   /** PKCU: the template package whose tree it runs. */
   readonly template: number | undefined;
+  /** PKCU: its data input count and the Creation Kit's version counter. */
+  readonly inputCount: number;
+  readonly version: number;
   /** Public data inputs (ANAM and value, then UNAM ids in the same order). */
   readonly inputs: readonly PackageInput[];
   /** Its own procedure tree (templates, and packages without one). */
   readonly tree: ProcedureBranch | undefined;
   readonly inputNames: readonly PackageInputName[];
-  /** POBA / POEA / POCA: the idle played on begin, end and change (INAM). */
-  readonly onBegin: number | undefined;
-  readonly onEnd: number | undefined;
-  readonly onChange: number | undefined;
+  /** POBA / POEA / POCA: the idle played and the topic said on begin, end and change. */
+  readonly onBegin: PackageEvent;
+  readonly onEnd: PackageEvent;
+  readonly onChange: PackageEvent;
 }
 
 const decodeName = (data: Uint8Array): string => {
@@ -160,13 +225,15 @@ const decodeName = (data: Uint8Array): string => {
   return String.fromCharCode(...data.subarray(0, end < 0 ? data.length : end));
 };
 
-/** Types of PLDT whose value is a form id. */
+/**
+ * Types of PLDT whose value is a form id (near a linked reference: the keyword); an alias
+ * reference's or alias location's is an alias id of the package's quest.
+ */
 const LOCATION_FORMS: ReadonlySet<number> = new Set([
   LocationType.nearReference,
   LocationType.inCell,
   LocationType.objectId,
   LocationType.nearLinkedReference,
-  LocationType.aliasLocation,
 ]);
 /** Types of PTDA whose value is a form id. */
 const TARGET_FORMS: ReadonlySet<number> = new Set([
@@ -199,6 +266,27 @@ function readTarget(record: RecordSource, data: Uint8Array): PackageTarget | und
   };
 }
 
+/** PDTO: u32 0 a topic (DIAL form id), 1 a topic subtype (four characters). */
+function readTopic(record: RecordSource, data: Uint8Array): number | string | undefined {
+  if (data.length < 8) return undefined;
+  return view(data).getUint32(0, true) === 0
+    ? record.formIdAt(data, 4)
+    : decodeName(data.subarray(4, 8));
+}
+
+/** PFO2 (16 bytes) and PFOR (12, without the speed). */
+function readFlagOverride(data: Uint8Array): PackageFlagOverride | undefined {
+  if (data.length < 12) return undefined;
+  const v = view(data);
+  return {
+    setFlags: v.getUint32(0, true),
+    clearFlags: v.getUint32(4, true),
+    setInterruptFlags: v.getUint16(8, true),
+    clearInterruptFlags: v.getUint16(10, true),
+    preferredSpeed: data.length >= 13 ? data[12] : undefined,
+  };
+}
+
 /** The value of an input of type `type` from its field (CNAM, PLDT, PTDA, PDTO, TPIC). */
 function readValue(
   record: RecordSource,
@@ -227,12 +315,8 @@ function readValue(
         ? { kind: 'targetSelector', target }
         : { kind: 'singleRef', target };
     }
-    case 'PDTO': {
-      if (data.length < 8) return undefined;
-      const kind = view(data).getUint32(0, true);
-      const topic = kind === 0 ? record.formIdAt(data, 4) : decodeName(data.subarray(4, 8));
-      return { kind: 'topic', topic };
-    }
+    case 'PDTO':
+      return data.length >= 8 ? { kind: 'topic', topic: readTopic(record, data) } : undefined;
     case 'TPIC':
       return data.length >= 4 ? { kind: 'topic', topic: record.formIdAt(data, 0) } : undefined;
     default:
@@ -263,14 +347,19 @@ export function parsePackage(record: RecordSource): PackageRecord {
       : undefined;
   const conditions: Condition[] = [];
   let ownerQuest: number | undefined;
+  let combatStyle: number | undefined;
+  let idles: { flags: number; timer: number; idles: number[] } | undefined;
   const types: string[] = [];
   const values: (PackageValue | undefined)[] = [];
   const ids: number[] = [];
   const inputNames: PackageInputName[] = [];
-  const events: Record<'POBA' | 'POEA' | 'POCA', number | undefined> = {
-    POBA: undefined,
-    POEA: undefined,
-    POCA: undefined,
+  const events: Record<
+    'POBA' | 'POEA' | 'POCA',
+    { idle: number | undefined; topic: number | string | undefined }
+  > = {
+    POBA: { idle: undefined, topic: undefined },
+    POEA: { idle: undefined, topic: undefined },
+    POCA: { idle: undefined, topic: undefined },
   };
   let event: 'POBA' | 'POEA' | 'POCA' | undefined;
   // The tree's branches in order, each with how many children it still takes.
@@ -281,9 +370,11 @@ export function parsePackage(record: RecordSource): PackageRecord {
         type: string;
         conditions: Condition[];
         childCount: number;
+        branchFlags: number;
         procedure: string | undefined;
         flags: number;
         inputs: number[];
+        flagOverride: PackageFlagOverride | undefined;
       }
     | undefined;
   const closeBranch = (): void => {
@@ -291,9 +382,11 @@ export function parsePackage(record: RecordSource): PackageRecord {
     const done: ProcedureBranch & { children: ProcedureBranch[] } = {
       type: branch.type,
       conditions: branch.conditions,
+      branchFlags: branch.branchFlags,
       procedure: branch.procedure,
       flags: branch.flags,
       inputs: branch.inputs,
+      flagOverride: branch.flagOverride,
       children: [],
     };
     const parent = open[open.length - 1];
@@ -326,6 +419,17 @@ export function parsePackage(record: RecordSource): PackageRecord {
         if (type === 'CTDA') {
           const condition = conditionAt(fields, i, record);
           if (condition) conditions.push(condition);
+        } else if (type === 'IDLF') {
+          idles = { flags: data[0] ?? 0, timer: 0, idles: [] };
+        } else if (type === 'IDLT' && idles && data.length >= 4) {
+          idles.timer = view(data).getFloat32(0, true);
+        } else if (type === 'IDLA' && idles) {
+          // IDLC counts them.
+          for (let at = 0; at + 4 <= data.length; at += 4) {
+            idles.idles.push(record.formIdAt(data, at));
+          }
+        } else if (type === 'CNAM' && data.length >= 4) {
+          combatStyle = record.formIdAt(data, 0) || undefined;
         } else if (type === 'QNAM' && data.length >= 4) {
           ownerQuest = record.formIdAt(data, 0);
         } else if (type === 'ANAM') {
@@ -355,23 +459,30 @@ export function parsePackage(record: RecordSource): PackageRecord {
             type: decodeName(data),
             conditions: [],
             childCount: 0,
+            branchFlags: 0,
             procedure: undefined,
             flags: 0,
             inputs: [],
+            flagOverride: undefined,
           };
         } else if (branch && type === 'CTDA') {
           // CITC before them counts them.
           const condition = conditionAt(fields, i, record);
           if (condition) branch.conditions.push(condition);
         } else if (branch && type === 'PRCB') {
-          // Two u32s, undocumented: the first is the branch's child count in every package.
+          // The branch's child count, its flags.
           branch.childCount = u32(data) ?? 0;
+          branch.branchFlags = u32(data, 4) ?? 0;
         } else if (branch && type === 'PNAM') {
           branch.procedure = decodeName(data);
         } else if (branch && type === 'FNAM') {
           branch.flags = u32(data) ?? 0;
         } else if (branch && type === 'PKC2') {
           branch.inputs.push(data[0] ?? 0);
+        } else if (branch && (type === 'PFO2' || type === 'PFOR')) {
+          // One per procedure; the last counts (PatrolAndHunt has two different PFO2 on one,
+          // three templates two equal PFOR).
+          branch.flagOverride = readFlagOverride(data) ?? branch.flagOverride;
         } else if (type === 'UNAM') {
           closeBranch();
           section = 'names';
@@ -389,9 +500,12 @@ export function parsePackage(record: RecordSource): PackageRecord {
         }
         break;
       case 'events':
+        // SCHR, SCDA, SCTX, QNAM, TNAM: leftovers of earlier Creation Kit versions.
         if (type === 'INAM' && event && data.length >= 4) {
-          const idle = record.formIdAt(data, 0);
-          events[event] = idle === 0 ? undefined : idle;
+          events[event].idle = record.formIdAt(data, 0) || undefined;
+        } else if (type === 'PDTO' && event) {
+          const topic = readTopic(record, data);
+          events[event].topic = topic === 0 || topic === '' ? undefined : topic;
         }
         break;
     }
@@ -411,11 +525,16 @@ export function parsePackage(record: RecordSource): PackageRecord {
     type: v?.getUint8(4) ?? 0,
     interruptOverride: v?.getUint8(5) ?? 0,
     preferredSpeed: v?.getUint8(6) ?? 0,
-    interruptFlags: v?.getUint32(8, true) ?? 0,
+    // u16, then 2 bytes that are not zero in 96 vanilla packages (garbage: 0x0004, 0x2C65, ...).
+    interruptFlags: v?.getUint16(8, true) ?? 0,
     schedule,
     conditions,
+    idles,
+    combatStyle,
     ownerQuest,
     template: template === 0 ? undefined : template,
+    inputCount: u32(pkcu, 0) ?? 0,
+    version: u32(pkcu, 8) ?? 0,
     inputs,
     tree: roots[0],
     inputNames,

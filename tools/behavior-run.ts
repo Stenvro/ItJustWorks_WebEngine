@@ -96,6 +96,15 @@ for (let time = 0, frame = 0; time <= total; time += step, frame++) {
     }
     const raised = runtime.takeRaised();
     if (raised.length > 0) console.log(`  raised ${raised.slice(0, 12).join(', ')}`);
+    // The state the graph tags: the movement type whose iState_<name> variable holds it.
+    const tagged = runtime.taggedState();
+    if (tagged !== undefined) {
+      const named = runtime
+        .variablesNamed('iState_')
+        .filter((variable) => variable.value === tagged)
+        .map((variable) => variable.name.slice('iState_'.length));
+      console.log(`  state ${String(tagged)}${named.length > 0 ? ` (${named.join(', ')})` : ''}`);
+    }
   }
 }
 await vfs.close();

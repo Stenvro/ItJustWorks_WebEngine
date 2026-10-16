@@ -2,6 +2,10 @@
 // (their character and every behavior file), Havok skeletons, clips (each read once), and the
 // hosts through which running graphs get their clips.
 
+import {
+  AnimationDataLibrary,
+  type ProjectAnimationData,
+} from '../animation/animation-data-library.ts';
 import type { BehaviorHost, SkeletalGraph } from '../animation/behavior-runtime.ts';
 import {
   readAnimationContainer,
@@ -41,6 +45,8 @@ export class ClipHost implements BehaviorHost {
   readonly #has: (path: string) => boolean;
   readonly #clips = new Map<string, AnimationBinding | undefined>();
   readonly #pending = new Set<Promise<unknown>>();
+  /** The project's animation data (its clips' root motion), once read. */
+  data: ProjectAnimationData | undefined;
 
   constructor(
     behaviors: Behaviors,
@@ -70,6 +76,14 @@ export class ClipHost implements BehaviorHost {
 
   behavior(name: string): BehaviorGraph | undefined {
     return this.#behaviors.files.get(projectRelative(this.#behaviors.project, name));
+  }
+
+  rootMotion(
+    generator: string,
+    from: number,
+    to: number,
+  ): ReturnType<ProjectAnimationData['rootMotionDelta']> {
+    return this.data?.rootMotionDelta(generator, from, to);
   }
 
   /** Waits for the clips asked for so far. */
@@ -132,6 +146,7 @@ export class AnimationAssets {
   readonly #behaviors = new Map<string, Promise<Behaviors | undefined>>();
   readonly #skeletal = new Map<string, Promise<SkeletalGraph | undefined>>();
   readonly #hosts = new Map<string, ClipHost>();
+  #animationData: Promise<AnimationDataLibrary> | undefined;
 
   constructor(vfs: Vfs, terminal: Terminal) {
     this.#vfs = vfs;
@@ -189,17 +204,32 @@ export class AnimationAssets {
     });
   }
 
-  /** The clips of a project for one sex. */
+  /** The behavior projects' animation data (root motion, attack sets, speeds), read once. */
+  animationData(): Promise<AnimationDataLibrary> {
+    this.#animationData ??= AnimationDataLibrary.load((path) => this.#vfs.read(path)).then(
+      (library) => {
+        for (const failure of library.failures) this.#terminal.log('hkx', failure, 'warn');
+        return library;
+      },
+    );
+    return this.#animationData;
+  }
+
+  /** The clips of a project for one sex (and its animation data, once read). */
   host(behaviors: Behaviors, female: boolean): ClipHost {
     const key = `${behaviors.project}|${female ? 'f' : 'm'}`;
     let host = this.#hosts.get(key);
     if (!host) {
-      host = new ClipHost(
+      const made = new ClipHost(
         behaviors,
         female,
         (path) => this.#vfs.has(path),
         (path) => this.clip(path),
       );
+      void this.animationData().then((library) => {
+        made.data = library.project(behaviors.project);
+      });
+      host = made;
       this.#hosts.set(key, host);
     }
     return host;

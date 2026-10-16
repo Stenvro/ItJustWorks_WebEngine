@@ -1,7 +1,8 @@
 // Dialogue: topics (DIAL), the branches that start them (DLBR) and their infos (INFO: what an
 // actor says, when, and what comes after). Layouts after UESP's "Skyrim Mod:Mod File Format"
-// DIAL, DLBR and INFO pages. An info's responses are its lines: each TRDT with its text (NAM1),
-// its emotion and its number (the voice file's _1, _2, ...). Platform-independent.
+// DIAL, DLBR and INFO pages and xEdit's definitions. An info's responses are its lines: each
+// TRDT with its text (NAM1), its emotion and its number (the voice file's _1, _2, ...).
+// Platform-independent.
 // Notes: docs/formats/esm.md ("Dialogue").
 
 import { view } from '../formats/esm/fields.ts';
@@ -37,8 +38,10 @@ export interface TopicRecord {
   readonly flags: number;
   readonly category: number;
   readonly subtype: number;
-  /** SNAM: the subtype's code ("CUST", "HELO", "GBYE", ...). */
+  /** SNAM: the subtype's code ("CUST", "HELO", "GBYE", ...; src/world/dialogue-subtypes.ts). */
   readonly subtypeName: string;
+  /** TIFC: how many infos the Creation Kit counted (the plugin's own and its overrides'). */
+  readonly infoCount: number;
 }
 
 /** DLBR DNAM flags. */
@@ -48,6 +51,8 @@ export interface BranchRecord {
   readonly formId: number;
   readonly editorId: string;
   readonly quest: number | undefined;
+  /** TNAM: 0 player dialogue, 1 favor dialogue (TopicCategory). */
+  readonly category: number;
   readonly flags: number;
   /** SNAM: the topic it starts with. */
   readonly startingTopic: number | undefined;
@@ -102,6 +107,12 @@ export interface InfoRecord {
   readonly prompt: string | undefined;
   /** ANAM: the actor who says it (else whoever the conditions pick). */
   readonly speaker: number | undefined;
+  /** CNAM: the favor level (0 none, 1 small, 2 medium, 3 large). */
+  readonly favorLevel: number;
+  /** TWAT: the topic said when the player walks away from it. */
+  readonly walkAwayTopic: number | undefined;
+  /** ONAM: the sound output model (SOPM) it is played through instead of the voice's. */
+  readonly audioOutputOverride: number | undefined;
   readonly responses: readonly InfoResponse[];
   readonly conditions: readonly Condition[];
 }
@@ -129,6 +140,7 @@ export function parseTopic(record: RecordSource): TopicRecord {
     category: data?.[1] ?? 0,
     subtype: data && data.length >= 4 ? view(data).getUint16(2, true) : 0,
     subtypeName: fourCC(record.fields.first('SNAM')),
+    infoCount: record.fields.u32('TIFC') ?? 0,
   };
 }
 
@@ -141,6 +153,7 @@ export function parseBranch(record: RecordSource): BranchRecord {
     formId: record.formId,
     editorId: record.editorId ?? '',
     quest: form('QNAM'),
+    category: u32(record.fields.first('TNAM'), 0),
     flags: u32(record.fields.first('DNAM'), 0),
     startingTopic: form('SNAM'),
   };
@@ -156,6 +169,9 @@ export function parseInfo(record: RecordSource): InfoRecord {
   let sharedInfo: number | undefined;
   let prompt: string | undefined;
   let speaker: number | undefined;
+  let favorLevel = 0;
+  let walkAwayTopic: number | undefined;
+  let audioOutputOverride: number | undefined;
   let response:
     | {
         number: number;
@@ -219,6 +235,15 @@ export function parseInfo(record: RecordSource): InfoRecord {
       case 'ANAM':
         speaker = form;
         break;
+      case 'CNAM':
+        favorLevel = data[0] ?? 0;
+        break;
+      case 'TWAT':
+        walkAwayTopic = form === 0 ? undefined : form;
+        break;
+      case 'ONAM':
+        audioOutputOverride = form === 0 ? undefined : form;
+        break;
       default:
         break;
     }
@@ -233,6 +258,9 @@ export function parseInfo(record: RecordSource): InfoRecord {
     sharedInfo,
     prompt,
     speaker,
+    favorLevel,
+    walkAwayTopic,
+    audioOutputOverride,
     responses,
     conditions,
   };

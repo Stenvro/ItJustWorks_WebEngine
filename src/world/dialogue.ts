@@ -12,6 +12,7 @@ import {
   type InfoRecord,
   type TopicRecord,
 } from './dialogue-records.ts';
+import { DIALOGUE_SUBTYPES } from './dialogue-subtypes.ts';
 import type { RecordDatabase } from './record-db.ts';
 
 export class DialogueIndex {
@@ -59,13 +60,13 @@ export class DialogueIndex {
       );
       for (const topic of topics) {
         this.#topics.set(topic.formId, Promise.resolve(topic));
+        const ofSubtype = this.#bySubtype.get(topic.subtypeName) ?? [];
+        ofSubtype.push(topic.formId);
+        this.#bySubtype.set(topic.subtypeName, ofSubtype);
         if (topic.quest === undefined) continue;
         const list = this.#byQuest.get(topic.quest) ?? [];
         list.push(topic.formId);
         this.#byQuest.set(topic.quest, list);
-        const ofSubtype = this.#bySubtype.get(topic.subtypeName) ?? [];
-        ofSubtype.push(topic.formId);
-        this.#bySubtype.set(topic.subtypeName, ofSubtype);
       }
     })();
     return this.#built;
@@ -94,9 +95,22 @@ export class DialogueIndex {
     return this.#branches;
   }
 
-  /** The topics of a subtype ("HELO", ...) (after build). */
+  /**
+   * The topics of a subtype ("HELO", "IDLE", "ATCK", ...; src/world/dialogue-subtypes.ts) of
+   * every quest (after build).
+   */
   topicsOfSubtype(subtype: string): readonly number[] {
     return this.#bySubtype.get(subtype) ?? [];
+  }
+
+  /**
+   * The topics of a category's subtypes (TopicCategory: combat barks, detection lines,
+   * services, ...; by the subtype table, not each topic's own DATA category) (after build).
+   */
+  topicsOfCategory(category: number): number[] {
+    return DIALOGUE_SUBTYPES.filter((subtype) => subtype.category === category).flatMap((subtype) =>
+      this.topicsOfSubtype(subtype.code),
+    );
   }
 
   /** Every quest with topics (after build). */

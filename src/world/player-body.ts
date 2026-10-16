@@ -51,7 +51,7 @@ export function skeletonInfo(file: NifFile): {
 }
 
 /** The bound of the vanilla human skeleton, if a skeleton has none. */
-const HUMAN_BOUND = { center: [0, 0, 64] as Vec3, halfExtents: [22, 14, 64] as Vec3 };
+export const HUMAN_BOUND = { center: [0, 0, 64] as Vec3, halfExtents: [22, 14, 64] as Vec3 };
 
 /**
  * The player's body: of the Player record's race and sex, or of `as` (the race and sex the
