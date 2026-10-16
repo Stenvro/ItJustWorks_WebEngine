@@ -29,6 +29,7 @@ import { ActorSearch } from './actor-search.ts';
 import { ActorsAway, type AwayPlace } from './actors-away.ts';
 import type { RouteDoor } from '../ai/routes.ts';
 import { ActorBodies } from './actor-bodies.ts';
+import { ActorDoors, type DoorObject } from './actor-doors.ts';
 import { ActorFurniture, type FurnitureUser, type StageObject } from './actor-furniture.ts';
 import { ActorMovers, type MoverWorld } from './actor-movers.ts';
 
@@ -72,14 +73,19 @@ export interface ActorStageOptions {
   readonly cellOf: (at: StagePlace) => string | undefined;
   /** Whether a loaded cell is shown yet (its actors appear with it); all are without. */
   readonly cellShown?: (cell: string) => boolean;
+  /**
+   * Whether the view's cell of a key has its collision all in place (undefined: the view does
+   * not hold or load that cell). Without it, the cells of the stage tell.
+   */
+  readonly collided?: (cell: string) => boolean | undefined;
   /** Where the player is (the actors near it move by themselves: src/shell/actor-movers.ts). */
   readonly focus?: () => Vec3 | undefined;
   /** An actor walked into (true) or out of a trigger volume of a reference. */
   readonly onTrigger?: (trigger: number, actor: number, entered: boolean) => void;
   /** The navigation meshes of the loaded area (actors' paths). */
   readonly navmeshes?: () => NavmeshSet | undefined;
-  /** An actor on its way comes to a door: the view opens it if it can. */
-  readonly openDoor?: (door: number, actor: number) => void;
+  /** A door of the loaded area by its reference, for the actors going through it. */
+  readonly door?: (reference: number) => DoorObject | undefined;
   /** The enabled objects and markers of the loaded area (what actors use and search for). */
   readonly objects?: () => Iterable<StageObject>;
 }
@@ -89,12 +95,19 @@ const describe = (error: unknown): string =>
 
 /** An actor put at a reference off the navmesh moves this far at most to stand on it. */
 const SNAP_REACH = 512;
+/** The collision this near an actor (its cell and the neighbours there) must be in place to set it down (units). */
+const GROUND_REACH = 1024;
 
 /** A loaded cell as the stage knows it. */
 interface StageCell {
   /** Bumped when it goes: actors still being placed for it are dropped. */
   readonly generation: number;
   readonly enabled: (reference: number) => boolean;
+  /**
+   * Its collision is all in place (ground ran): actors coming into it are set down at once;
+   * before, they wait for it (its objects' floors may still be missing over its landscape).
+   */
+  grounded: boolean;
 }
 
 export class ActorStage {
@@ -117,6 +130,8 @@ export class ActorStage {
   readonly search: ActorSearch;
   /** The actors away: the low process (src/shell/actors-away.ts). */
   readonly away: ActorsAway;
+  /** The doors the actors go through (src/shell/actor-doors.ts). */
+  readonly doors: ActorDoors;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -124,6 +139,11 @@ export class ActorStage {
 
   constructor(options: ActorStageOptions) {
     this.#options = options;
+    this.doors = new ActorDoors({
+      session: options.session,
+      find: (reference) => options.door?.(reference),
+      unlocks: (actor) => this.ai.unlocksDoors(actor),
+    });
     this.furniture = new ActorFurniture({
       session: options.session,
       terminal: options.terminal,
@@ -137,8 +157,16 @@ export class ActorStage {
       terminal: options.terminal,
       ...(options.onTrigger && { onTrigger: options.onTrigger }),
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
-      ...(options.openDoor && { openDoor: options.openDoor }),
+      openDoor: (door, actor) => this.doors.passage(door, actor),
+      shutTo: (actor) => this.doors.shutTo(actor),
+      shutPlaces: (actor) => this.doors.shutPlaces(actor),
       held: (actor) => this.furniture.holds(actor),
+      // The player walked into an actor: it flinches by where they came from (ActionBumpedInto's
+      // idles by GetLastBumpDirection). TODO(M10) 4.3: its ActorCollidewithActor line.
+      onBump: (actor) => {
+        const staged = this.#actors.get(actor);
+        if (staged) void this.furniture.playAction(this.userOf(staged), 'ActionBumpedInto');
+      },
     });
     this.bodies = new ActorBodies(options.session);
     this.search = new ActorSearch({
@@ -151,6 +179,7 @@ export class ActorStage {
       terminal: options.terminal,
       loaded: (place) => this.#loaded(place),
       staged: (actor) => this.#actors.has(actor),
+      doors: this.doors,
     });
     this.ai = new ActorAi({
       session: options.session,
@@ -159,6 +188,7 @@ export class ActorStage {
       search: this.search,
       userOf: (staged) => this.userOf(staged),
       leaveThrough: (staged, door, destination) => this.leaveThrough(staged, door, destination),
+      doors: this.doors,
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
     });
   }
@@ -237,7 +267,8 @@ export class ActorStage {
       position: door.arrival,
       heading: door.arrivalHeading,
     };
-    if (!this.#loaded(arrival)) this.away.depart(reference, arrival, destination);
+    if (this.#loaded(arrival)) this.doors.arrive(door.destination);
+    else this.away.depart(reference, arrival, destination);
     await this.away.place(reference, arrival);
   }
 
@@ -331,7 +362,7 @@ export class ActorStage {
     actors: readonly CellActor[],
     enabled: (reference: number) => boolean,
   ): Promise<CellRagdoll[]> {
-    const cell: StageCell = { generation: ++this.#generation, enabled };
+    const cell: StageCell = { generation: ++this.#generation, enabled, grounded: false };
     this.#cells.set(key, cell);
     const runtime = this.#options.session.scriptsReady;
     const own = new Set(actors.map((actor) => actor.reference));
@@ -398,14 +429,39 @@ export class ActorStage {
    * set yet: an actor that walked or was moved since stays where it is).
    */
   ground(key: string, physics: PhysicsWorld): void {
+    const cell = this.#cells.get(key);
+    if (cell) cell.grounded = true;
+    // Those of this cell, and those near it that waited for it (a floor reaching over the
+    // border: Whiterun's market stalls).
     for (const staged of this.#actors.values()) {
-      if (staged.cell !== key || staged.grounded) continue;
+      if (staged.grounded || !this.#groundReady(staged)) continue;
       // Put at a reference its package names (not in its furniture): on the navmesh nearest it
       // (a sandbox's marker may lie in a hearth's fire). TODO(M13): the engine's own rule.
       const start = staged.placed.start;
       const snap = start?.kind === 'at' && !start.furniture ? start.radius : undefined;
       this.#settle(staged, physics, snap);
     }
+  }
+
+  /**
+   * Whether the collision an actor stands on is all in place: its cell's, and that of the
+   * loaded cells within GROUND_REACH of it (an object of the cell next door may reach over the
+   * border under it; before it is there, the landscape under it would be found).
+   */
+  #groundReady(staged: StagedActor): boolean {
+    if (this.#cells.get(staged.cell)?.grounded !== true) return false;
+    const [x, y, z] = staged.position;
+    for (const dx of [-GROUND_REACH, 0, GROUND_REACH]) {
+      for (const dy of [-GROUND_REACH, 0, GROUND_REACH]) {
+        const key = this.#options.cellOf({ position: [x + dx, y + dy, z] });
+        if (key === undefined) continue;
+        const collided = this.#options.collided
+          ? this.#options.collided(key)
+          : this.#cells.get(key)?.grounded;
+        if (collided === false) return false;
+      }
+    }
+    return true;
   }
 
   /**
@@ -447,11 +503,13 @@ export class ActorStage {
       staged.cell = key;
       staged.position = [...now.position];
       staged.heading = now.rotation[2];
-      moveActor(staged.placed, staged.position, staged.heading, physics);
+      // Set on the ground there once the collision there is in place (else ground does it).
+      const ready = this.#groundReady(staged);
+      moveActor(staged.placed, staged.position, staged.heading, ready ? physics : undefined);
       this.movers.teleport(staged);
       const world = staged.placed.instances[0]?.world;
-      if (world) staged.position = [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
-      staged.grounded = physics !== undefined;
+      if (world && ready) staged.position = [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
+      staged.grounded = physics !== undefined && ready;
       return;
     }
     const cell = key === undefined ? undefined : this.#cells.get(key);
@@ -465,10 +523,11 @@ export class ActorStage {
       cell,
       (ref) => (runtime.state.created.has(ref) ? createdEnabled(runtime, ref) : cell.enabled(ref)),
     );
-    // Its cell is loaded and its collision in place: it is set down now (a living actor on the
-    // navmesh near where it came: through a door, walking in from away).
+    // Its cell's collision in place: it is set down now (a living actor on the navmesh near
+    // where it came: through a door, walking in from away); else once it is (ground).
     if (!physics) return;
     for (const staged of placed) {
+      if (!this.#groundReady(staged)) continue;
       this.#settle(staged, physics, staged.dead || staged.placed.actor.startsDead ? undefined : 0);
     }
   }

@@ -59,6 +59,8 @@ export const Fn = {
   isOnFlyingMount: 730,
   getSleeping: 49,
   getSitting: 159,
+  isSmallBump: 274,
+  getLastBumpDirection: 642,
   getFurnitureMarkerId: 160,
   isCurrentFurnitureRef: 162,
   isCurrentFurnitureObj: 163,
@@ -800,6 +802,15 @@ async function conditionValue(
     // The type of what it holds (0 its hands). TODO(M11): its equipped weapons and spells.
     case Fn.getEquippedItemType:
       return 0;
+    // The last time the player bumped into it (src/shell/actor-movers.ts): where from,
+    // clockwise from its facing (degrees), and whether it was a small bump. None: 0.
+    case Fn.getLastBumpDirection:
+    case Fn.isSmallBump: {
+      const bump = reference === undefined ? undefined : runtime.world.motion?.(reference)?.bump;
+      if (!bump) return 0;
+      if (condition.function === Fn.isSmallBump) return bump.small ? 1 : 0;
+      return bump.direction;
+    }
     // What the actor uses (its furniture: src/shell/actor-furniture.ts).
     case Fn.getSitting:
     case Fn.getSleeping: {

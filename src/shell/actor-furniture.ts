@@ -279,16 +279,27 @@ export class ActorFurniture {
    * EatingRoot's GetIsUsedItemType(Potion), then idleEatingStandingStart or ChairEatingStart);
    * whether one played.
    */
-  async useItem(user: FurnitureUser, item: number, action = 'ActionIdle'): Promise<boolean> {
+  useItem(user: FurnitureUser, item: number, action = 'ActionIdle'): Promise<boolean> {
+    return this.playAction(user, action, new ObjectHandle(item, 'form'));
+  }
+
+  /**
+   * Plays the idle an action (AACT) gives an actor now: the first of its idle tree for the
+   * actor's graph whose conditions hold, on the actor and `target` (ActionBumpedInto: the
+   * bump's direction). Whether one played.
+   */
+  async playAction(user: FurnitureUser, action: string, target?: ObjectHandle): Promise<boolean> {
     const runtime = this.#options.session.scriptsReady;
     const tree = await this.#tree();
     const parent = tree.action(action);
     const graph = await this.#graphKey(user);
-    if (!runtime || !parent || graph === undefined) return false;
+    if (!runtime || !parent || graph === undefined || this.#uses.has(user.reference)) {
+      return false;
+    }
     const subject = new ObjectHandle(user.reference, 'actor');
-    const target = new ObjectHandle(item, 'form');
+    const context = target === undefined ? {} : { target };
     const idle = await tree.resolveAsync(parent.formId, graph, (candidate) =>
-      runtime.conditionsHold(candidate.conditions, subject, undefined, { target }),
+      runtime.conditionsHold(candidate.conditions, subject, undefined, context),
     );
     return idle?.event !== undefined && user.send(idle.event);
   }

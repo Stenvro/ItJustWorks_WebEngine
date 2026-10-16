@@ -86,41 +86,11 @@ export interface ObjectUses {
 }
 
 /**
- * An actor on its way opens a door (not a load door) that is shut and not locked: it plays its
- * open sequence and sound, and shuts again after `closeAfter` seconds (unless it was open
- * before). TODO(M13): when the engine shuts doors actors opened is not documented. Returns
- * whether the door is open (or opening) now.
- */
-export function actorOpensDoor(
-  object: CellObject,
-  instance: ModelInstance | undefined,
-  locked: boolean,
-  sound?: (descriptor: number, at: Vec3) => void,
-  closeAfter = 3,
-): boolean {
-  const playback = instance?.playback;
-  if (object.baseType !== 'DOOR' || object.teleport || !playback) return false;
-  if (playback.sequence === 'open') return true;
-  if (locked) return false;
-  const at: Vec3 = [object.world[12] ?? 0, object.world[13] ?? 0, object.world[14] ?? 0];
-  if (object.sounds?.open !== undefined) sound?.(object.sounds.open, at);
-  playback.sequence = 'open';
-  playback.start = clock();
-  setTimeout(() => {
-    if (playback.sequence !== 'open') return;
-    if (object.sounds?.close !== undefined) sound?.(object.sounds.close, at);
-    playback.sequence = 'close';
-    playback.start = clock();
-  }, closeAfter * 1000);
-  return true;
-}
-
-/**
  * What activating a placed object does: load doors take the player to their destination;
  * other doors open and close. In a running game (`uses`) containers open their menu (their
  * lid opening meanwhile), books read, other items taken, beds slept in. TODO(M11): flora harvested (FLOR
  * PFIG), owned objects stolen (sSteal, sStealFrom) and locked ones picked (the lockpicking
- * menu). TODO(M10): sitting (sSit). Workbenches open the crafting menu.
+ * menu). Furniture is sat in (sSit) and workbenches open the crafting menu.
  */
 export function objectActivation(
   object: CellObject,

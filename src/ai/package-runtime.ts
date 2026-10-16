@@ -283,9 +283,11 @@ export class ActorPackages {
   }
 
   /** The package that runs now and its procedure (development checks, GetCurrentPackage). */
-  get current(): { readonly id: number; readonly procedure: string | undefined } | undefined {
+  get current():
+    | { readonly id: number; readonly procedure: string | undefined; readonly flags: number }
+    | undefined {
     const running = this.#running;
-    return running && { id: running.id, procedure: running.procedure };
+    return running && { id: running.id, procedure: running.procedure, flags: running.pack.flags };
   }
 
   /** Every frame (real seconds): the package is chosen again when it is time to. */

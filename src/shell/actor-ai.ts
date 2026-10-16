@@ -11,7 +11,12 @@ import {
   type PackageMind,
   type PackagePlace,
 } from '../ai/package-runtime.ts';
-import { LocationType, TargetType, type PackageRecord } from '../ai/package-records.ts';
+import {
+  LocationType,
+  PackageFlag,
+  TargetType,
+  type PackageRecord,
+} from '../ai/package-records.ts';
 import { PROCEDURES } from '../ai/procedure-runs.ts';
 import { isOfObjectType, ObjectType } from '../ai/object-types.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -29,6 +34,7 @@ import { findRoute, type RouteDoor } from '../ai/routes.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import type { Gait } from '../ai/locomotion.ts';
 import type { Space } from '../ai/package-start.ts';
+import type { ActorDoors } from './actor-doors.ts';
 import type { ActorMovers } from './actor-movers.ts';
 import type { GameSession } from './game-session.ts';
 
@@ -60,6 +66,7 @@ export class ActorAi {
     destination: AwayPlace,
   ) => Promise<void>;
   readonly #navmeshes: (() => NavmeshSet | undefined) | undefined;
+  readonly #doors: ActorDoors | undefined;
   /** The actors talking with the player now (their packages wait). */
   readonly #talking = new Set<number>();
   /** A food for meals made up (Eat's Create Fake Food): the first in the load order. */
@@ -81,6 +88,8 @@ export class ActorAi {
     ) => Promise<void>;
     /** The navigation meshes of the loaded area. */
     readonly navmeshes?: () => NavmeshSet | undefined;
+    /** The doors the actors go through (locked ones, load doors). */
+    readonly doors?: ActorDoors;
   }) {
     this.#session = options.session;
     this.#movers = options.movers;
@@ -89,12 +98,25 @@ export class ActorAi {
     this.#userOf = options.userOf;
     this.#leaveThrough = options.leaveThrough;
     this.#navmeshes = options.navmeshes;
+    this.#doors = options.doors;
     this.#mind = this.#makeMind();
   }
 
   /** The package running for an actor now (GetCurrentPackage), if its AI runs. */
-  current(reference: number): { id: number; procedure: string | undefined } | undefined {
+  current(
+    reference: number,
+  ): { id: number; procedure: string | undefined; flags: number } | undefined {
     return this.#actors.get(reference)?.packages.current;
+  }
+
+  /**
+   * Whether the package an actor runs unlocks the doors on its way (PKDT "Unlock doors at
+   * package start" and "at package end"). TODO(M13): which doors the engine unlocks (those where
+   * the package starts and where it ends) is not documented: here any on its way.
+   */
+  unlocksDoors(reference: number): boolean {
+    const flags = this.current(reference)?.flags ?? 0;
+    return (flags & (PackageFlag.unlockDoorsAtStart | PackageFlag.unlockDoorsOnChange)) !== 0;
   }
 
   /** EvaluatePackage: the actor chooses its package again. */
@@ -308,15 +330,19 @@ export class ActorAi {
       routes.nearestNavmesh(here, staged.position);
     const end = routes.nearestNavmesh(destination.space, destination.position);
     if (start === undefined || end === undefined) return false;
-    const route = findRoute(
-      routes,
-      { space: here, position: staged.position, navmesh: start },
-      { ...destination, navmesh: end },
-    );
+    const from = { space: here, position: staged.position, navmesh: start };
+    const to = { ...destination, navmesh: end };
+    // Through the load doors it may pass (locked ones only with their key, its own lock, its
+    // package unlocking them).
+    const route = this.#doors
+      ? await this.#doors.route(routes, from, to, staged.reference)
+      : findRoute(routes, from, to);
     const door = route?.doors[0];
     if (!door) return false;
     const arrived = await this.#movers.travel(staged.reference, door.position, gait, DOOR_REACH);
     if (!arrived) return false;
+    // The door swings open with its sound; it is through a moment later.
+    await this.#doors?.through(door.door);
     await this.#leaveThrough(staged, door, destination);
     return false;
   }

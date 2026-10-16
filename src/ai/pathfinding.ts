@@ -35,14 +35,21 @@ export interface PathOptions {
   readonly swims?: boolean;
   /** At most this many triangles are searched (a path to the nearest one reached instead). */
   readonly limit?: number;
+  /** Doors it cannot pass (locked to it): their triangles are closed. */
+  readonly closedDoors?: ReadonlySet<number>;
+  /**
+   * Places it cannot pass (a door the navmesh does not mark, locked to it): the triangles whose
+   * middle lies within each place's radius are closed.
+   */
+  readonly blocked?: readonly { readonly at: Vec3; readonly radius: number }[];
 }
 
 /** A path over the navmeshes. */
 export interface NavPath {
   /** From the start to the goal (or the nearest reachable point), pulled tight. */
   readonly points: readonly Vec3[];
-  /** The doors (references) on the way, with the point after which each is passed. */
-  readonly doors: readonly { readonly door: number; readonly after: number }[];
+  /** The doors (references) on the way, each where the way comes into its triangles. */
+  readonly doors: readonly { readonly door: number; readonly at: Vec3 }[];
   /** Whether it reaches the goal's triangle (else it ends nearest the goal it could reach). */
   readonly complete: boolean;
 }
@@ -168,6 +175,28 @@ const middle = (a: Vec3, b: Vec3): Vec3 => [
   (a[2] + b[2]) / 2,
 ];
 
+/** Each navmesh's door triangles: triangle → door reference (read once a navmesh). */
+const doorTriangles = new WeakMap<Navmesh, ReadonlyMap<number, number>>();
+
+function doorOf(navmesh: Navmesh, triangle: number): number | undefined {
+  let doors = doorTriangles.get(navmesh);
+  if (!doors) {
+    doors = new Map(navmesh.doors.map((entry) => [entry.triangle, entry.door]));
+    doorTriangles.set(navmesh, doors);
+  }
+  return doors.get(triangle);
+}
+
+/** Whether a triangle's middle lies in one of the places closed to the actor. */
+function isBlocked(
+  navmesh: Navmesh,
+  triangle: number,
+  places: readonly { readonly at: Vec3; readonly radius: number }[],
+): boolean {
+  const [x, y] = triangleCentre(navmesh, triangle);
+  return places.some((place) => Math.hypot(place.at[0] - x, place.at[1] - y) <= place.radius);
+}
+
 /** What it costs to enter a triangle along `length` (its flags against the actor). */
 function enterCost(flags: number, length: number, options: PathOptions): number {
   if (options.large === true && (flags & NavmeshFlag.noLargeCreatures) !== 0) return Infinity;
@@ -248,6 +277,10 @@ export function findPath(
       }
       const target = navmesh.triangles[triangle];
       if (!target || (target.flags & NavmeshFlag.deleted) !== 0) continue;
+      // A door it cannot pass closes its triangles.
+      const door = options.closedDoors?.size ? doorOf(navmesh, triangle) : undefined;
+      if (door !== undefined && options.closedDoors?.has(door) === true) continue;
+      if (options.blocked?.length && isBlocked(navmesh, triangle, options.blocked)) continue;
       const neighbourKey = keyOf(navmesh.formId, triangle);
       const existing = nodes.get(neighbourKey);
       if (existing?.closed) continue;
@@ -292,17 +325,16 @@ export function findPath(
   };
 }
 
-/** The doors of the triangles a path crosses, with the index of the point before each. */
-function doorsOn(chain: readonly Node[]): { door: number; after: number }[] {
-  const doors: { door: number; after: number }[] = [];
+/** The doors of the triangles a path crosses, each where the path comes into its triangles. */
+function doorsOn(chain: readonly Node[]): { door: number; at: Vec3 }[] {
+  const doors: { door: number; at: Vec3 }[] = [];
   const seen = new Set<number>();
-  chain.forEach((node, index) => {
-    for (const entry of node.navmesh.doors) {
-      if (entry.triangle !== node.triangle || seen.has(entry.door)) continue;
-      seen.add(entry.door);
-      doors.push({ door: entry.door, after: Math.max(0, index - 1) });
-    }
-  });
+  for (const node of chain) {
+    const door = doorOf(node.navmesh, node.triangle);
+    if (door === undefined || seen.has(door)) continue;
+    seen.add(door);
+    doors.push({ door, at: node.at });
+  }
   return doors;
 }
 

@@ -2,8 +2,9 @@
 // point is passed once the actor is near it or beyond it (along the way to the one after), and
 // the path ends when the actor is within its arrival radius of the last point. An actor that
 // makes no headway towards its next point for a while is stuck (the caller searches again, or
-// gives up). The doors on the way are announced as the actor comes near them, once each.
-// Platform-independent.
+// gives up). The doors on the way are asked for as the actor comes near them, every step until
+// it is through (which keeps them open): one still opening it waits before, one it cannot open
+// blocks its way (the caller searches again without it). Platform-independent.
 
 import type { Gait, MoveRequest } from './locomotion.ts';
 import type { NavPath } from './pathfinding.ts';
@@ -14,11 +15,14 @@ export interface FollowOptions {
   readonly gait: Gait;
   /** Within this of the last point it has arrived (game units, horizontal). */
   readonly arrive: number;
-  /** A door this near is announced (opened by the caller). */
+  /** A door this near is asked for (opened by the caller). */
   readonly doorReach?: number;
 }
 
-export type FollowState = 'moving' | 'arrived' | 'stuck';
+export type FollowState = 'moving' | 'arrived' | 'stuck' | 'blocked';
+
+/** A door on the way as the actor comes to it: open, opening (it waits) or shut to it (locked). */
+export type DoorPassage = 'open' | 'opening' | 'shut';
 
 /** A point is passed within this (game units, horizontal). */
 const PASS_RADIUS = 24;
@@ -26,8 +30,10 @@ const PASS_RADIUS = 24;
 const STUCK_HEADWAY = 8;
 /** ... in this long (seconds). */
 const STUCK_SECONDS = 1.5;
-/** Doors are announced this near by default (game units). */
+/** Doors are asked for this near by default (game units). */
 const DOOR_REACH = 160;
+/** Before a door still opening, or shut to it, it stops this near (game units). */
+const DOOR_WAIT = 96;
 
 export class PathFollower {
   readonly path: NavPath;
@@ -36,11 +42,18 @@ export class PathFollower {
   #next = 1;
   #closest = Infinity;
   #since = 0;
-  readonly #announced = new Set<number>();
+  /** The doors it went through. */
+  readonly #through = new Set<number>();
 
   constructor(path: NavPath, options: FollowOptions) {
     this.path = path;
     this.#options = options;
+  }
+
+  /** It waits a moment by choice (a door before it opening): no headway is asked meanwhile. */
+  hold(): void {
+    this.#since = 0;
+    this.#closest = Infinity;
   }
 
   /** The point it goes to now (undefined: none left). */
@@ -50,13 +63,18 @@ export class PathFollower {
 
   /**
    * One step for an actor at `position`: what it wants now, and whether it is on its way, has
-   * arrived or is stuck. `door` is told of a door on the way as it comes near.
+   * arrived, is stuck or is blocked by a door shut to it (`door`). `door` is asked for each door
+   * on the way while the actor is near it and not yet through.
    */
   step(
     position: Vec3,
     seconds: number,
-    door?: (reference: number) => void,
-  ): { readonly request: MoveRequest | undefined; readonly state: FollowState } {
+    door?: (reference: number) => DoorPassage | undefined,
+  ): {
+    readonly request: MoveRequest | undefined;
+    readonly state: FollowState;
+    readonly door?: number;
+  } {
     const points = this.path.points;
     const last = points[points.length - 1];
     if (!last) return { request: undefined, state: 'arrived' };
@@ -74,14 +92,33 @@ export class PathFollower {
       this.#since = 0;
     }
     const target = points[this.#next] ?? last;
-    // The doors on the way, as it comes near them.
+    const wayX = target[0] - position[0];
+    const wayY = target[1] - position[1];
+    // The doors on the way, as it comes near them: through one once it is behind it.
     const reach = this.#options.doorReach ?? DOOR_REACH;
+    let waits = false;
     for (const entry of this.path.doors) {
-      if (this.#announced.has(entry.door) || entry.after > this.#next) continue;
-      const at = points[entry.after + 1] ?? target;
-      if (horizontal(position, at) > reach) continue;
-      this.#announced.add(entry.door);
-      door?.(entry.door);
+      if (this.#through.has(entry.door)) continue;
+      const away = horizontal(position, entry.at);
+      if (away > reach) continue;
+      const ahead = (entry.at[0] - position[0]) * wayX + (entry.at[1] - position[1]) * wayY > 0;
+      if (!ahead && away > PASS_RADIUS) {
+        this.#through.add(entry.door);
+        continue;
+      }
+      const passage = door?.(entry.door) ?? 'open';
+      if (away > DOOR_WAIT || !ahead) continue;
+      if (passage === 'shut') return { request: undefined, state: 'blocked', door: entry.door };
+      if (passage === 'opening') waits = true;
+    }
+    if (waits) {
+      // Before the door while it opens, facing its way (no headway asked meanwhile).
+      this.#since = 0;
+      this.#closest = Infinity;
+      return {
+        request: { gait: this.#options.gait, face: Math.atan2(wayX, wayY) },
+        state: 'moving',
+      };
     }
     // Headway towards the point it goes to.
     const away = horizontal(position, target);

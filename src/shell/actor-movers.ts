@@ -15,8 +15,9 @@ import {
   type Gait,
   type MoveRequest,
 } from '../ai/locomotion.ts';
-import { PathFollower } from '../ai/path-follower.ts';
-import { findPath, type NavmeshSet } from '../ai/pathfinding.ts';
+import { avoid, type Neighbour } from '../ai/avoidance.ts';
+import { PathFollower, type DoorPassage } from '../ai/path-follower.ts';
+import { findPath, type NavmeshSet, type NavPath } from '../ai/pathfinding.ts';
 import { RaceSize } from '../ai/race-combat-records.ts';
 import type { MovementTypes } from '../ai/locomotion.ts';
 import { MovementCatalog, type RaceMovement } from '../ai/movement-types.ts';
@@ -39,6 +40,8 @@ import type { Terminal } from './terminal.ts';
 export interface MoverWorld {
   readonly physics: PhysicsWorld;
   readonly stepHooks: Set<(step: number) => void>;
+  /** The player: actors go round them and react when they bump into them. */
+  readonly player?: { readonly character: CharacterBody };
 }
 
 /**
@@ -83,13 +86,23 @@ interface Mover {
 
 export interface ActorMoversOptions {
   readonly session: GameSession;
+  /** The player bumped into an actor (its idle, its line). */
+  readonly onBump?: (actor: number, bump: Bump) => void;
   readonly terminal: Terminal;
   /** An actor walked into (true) or out of a trigger volume of a reference. */
   readonly onTrigger?: (trigger: number, actor: number, entered: boolean) => void;
   /** The navigation meshes of the loaded area (paths are searched over them). */
   readonly navmeshes?: () => NavmeshSet | undefined;
-  /** An actor on its way comes to a door (it opens it if it can). */
-  readonly openDoor?: (door: number, actor: number) => void;
+  /**
+   * An actor on its way comes to a door (asked every step until it is through): it opens it if
+   * it may; open, still opening (it waits) or shut to it (locked).
+   */
+  readonly openDoor?: (door: number, actor: number) => DoorPassage | undefined;
+  /** The doors found shut to an actor lately (its paths keep off them), and where they are. */
+  readonly shutTo?: (actor: number) => ReadonlySet<number>;
+  readonly shutPlaces?: (
+    actor: number,
+  ) => readonly { readonly at: Vec3; readonly radius: number }[];
   /** Whether something else holds an actor now (furniture): it has no controller meanwhile. */
   readonly held?: (actor: number) => boolean;
 }
@@ -102,6 +115,9 @@ interface Travel {
   follower: PathFollower | undefined;
   /** Searches made (a stuck actor searches again, a few times). */
   searches: number;
+  /** Doors found shut to it on the way (its searches keep off them), and where they are. */
+  readonly closed: Set<number>;
+  readonly blocked: { readonly at: Vec3; readonly radius: number }[];
   readonly done: (arrived: boolean) => void;
 }
 
@@ -111,8 +127,61 @@ const SEARCHES = 3;
 const WALKER_RADIUS = 20;
 /** It keeps to the navmesh within this of where it steps (units). */
 const WALKER_GROUND = 96;
+/**
+ * The player bumped into an actor (ActionBumpedInto; the conditions GetLastBumpDirection and
+ * IsSmallBump read it).
+ */
+export interface Bump {
+  /** Where the player came from, clockwise from the actor's facing (degrees, 0 to 360). */
+  readonly direction: number;
+  /** A small bump: the player walked into it. TODO(M13): the engine's rule is not documented. */
+  readonly small: boolean;
+}
+
+/**
+ * How a bumped actor reacts (the game settings fBumpReaction*): it flinches for the delay,
+ * standing it steps off the player's way (ideally so far, at least the minimum), then waits.
+ */
+interface BumpTiming {
+  readonly delay: number;
+  readonly wait: number;
+  readonly ideal: number;
+  readonly min: number;
+}
+
+/** The vanilla values (Skyrim.esm). */
+const BUMP_TIMING: BumpTiming = { delay: 1, wait: 3, ideal: 125, min: 75 };
+
+/** An actor reacting to a bump: its package's way waits meanwhile. */
+interface Reaction {
+  phase: 'flinch' | 'aside' | 'wait';
+  /** Physics seconds left in the phase (flinch, wait). */
+  left: number;
+  /** The player's way as they bumped into it (it steps off it). */
+  readonly way: readonly [number, number];
+  /** It stood when bumped (one on its way only flinches and goes on). */
+  readonly stood: boolean;
+  follower: PathFollower | undefined;
+}
+
+/** The player bumps into an actor going at least this fast towards it (units per second). */
+const BUMP_SPEED = 40;
+/** A bump while the player goes slower than this is a small one (a walk; units per second). */
+const SMALL_BUMP_SPEED = 200;
+/** A place off the player's way counts within this of the navmesh (units). */
+const ASIDE_REACH = 48;
+/** An actor going round others takes itself to go at least this fast (a walk, units/s). */
+const AVOID_SPEED = 80;
+/** A door this far ahead of an actor's shape is opened as it comes (units). */
+const DOOR_LOOKAHEAD = 96;
+/** ... seen at this height over its feet (its chest; units). */
+const DOOR_RAY_HEIGHT = 64;
+/** The triangles within this of a door shut to an actor are closed to it (units). */
+const DOOR_BLOCKED = 64;
 /** A stuck actor is set on its path's next point within this of it (units). */
 const UNSTICK_REACH = 64;
+/** ... on a floor within this over or under that point (units). */
+const UNSTICK_FLOOR = 48;
 /** A controller is set on the floor found from this far above its feet (units). */
 const FLOOR_ABOVE = 24;
 
@@ -139,6 +208,10 @@ export class ActorMovers {
   readonly #high = new Set<number>();
   /** The actors of the loaded area beyond it that walk without a controller. */
   readonly #walkers = new Map<number, Walker>();
+  /** The last bump of each actor (its conditions), and those reacting to one now. */
+  readonly #bumps = new Map<number, Bump>();
+  readonly #reactions = new Map<number, Reaction>();
+  #bumpTiming: BumpTiming | undefined;
   readonly #bounds = new Map<string, Promise<{ center: Vec3; halfExtents: Vec3 } | undefined>>();
   #world: MoverWorld | undefined;
   #catalog: Promise<MovementCatalog> | undefined;
@@ -179,6 +252,8 @@ export class ActorMovers {
         arrive,
         follower: undefined,
         searches: 0,
+        closed: new Set(),
+        blocked: [],
         done: (arrived) => {
           if (this.#travels.get(reference) !== travel) return;
           this.#travels.delete(reference);
@@ -216,12 +291,32 @@ export class ActorMovers {
         // again. TODO(M13): the engine's own way out (not documented).
         radius: mover.character.shape.radius * travel.searches,
         large: (mover.race?.size ?? RaceSize.medium) >= RaceSize.large,
+        closedDoors: this.#closedFor(reference, travel),
+        blocked: this.#blockedFor(reference, travel),
       });
       if (!path || path.points.length < 2) {
         travel.done(false);
         return;
       }
       travel.follower = new PathFollower(path, { gait: travel.gait, arrive: travel.arrive });
+    }
+    // A door in its way (the navmesh marks only load doors): it opens it and waits, or the door
+    // is shut to it and it goes round.
+    const ahead = this.#doorAhead(mover);
+    if (ahead?.passage === 'opening') {
+      travel.follower.hold();
+      const target = travel.follower.target;
+      const [x, y] = mover.staged.position;
+      this.#requests.set(reference, {
+        gait: travel.gait,
+        ...(target && { face: Math.atan2(target[0] - x, target[1] - y) }),
+      });
+      return;
+    }
+    if (ahead?.passage === 'shut') {
+      travel.blocked.push({ at: ahead.at, radius: DOOR_BLOCKED });
+      this.#blocked(reference, travel, ahead.door);
+      return;
     }
     const step = travel.follower.step(mover.staged.position, seconds, (door) =>
       this.#options.openDoor?.(door, reference),
@@ -231,12 +326,16 @@ export class ActorMovers {
       travel.done(travel.follower.path.complete);
       return;
     }
+    if (step.state === 'blocked') {
+      this.#blocked(reference, travel, step.door);
+      return;
+    }
     if (step.state === 'stuck') {
       const target = travel.follower.target;
       travel.follower = undefined;
       this.#requests.delete(reference);
-      // Still stuck on a path searched wider (wedged where the collision and the navmesh part,
-      // under the navmesh's surface): set on the navmesh at the point it went to, if near.
+      // Still stuck on a path searched wider (wedged where seeking a way round does not get it
+      // out): set on the point it went to, if that is near and has a floor.
       // TODO(M13): the engine's own way out (not documented).
       const staged = mover.staged;
       if (
@@ -244,16 +343,99 @@ export class ActorMovers {
         target &&
         Math.hypot(target[0] - staged.position[0], target[1] - staged.position[1]) <= UNSTICK_REACH
       ) {
-        staged.position = [target[0], target[1], target[2]];
-        mover.character.teleport(staged.position);
-        if (this.#world?.physics.queriesCurrent) mover.character.recover();
-        mover.drawn = [...mover.character.feet];
-        staged.position = [...mover.character.feet];
+        this.#unstick(mover, target);
       }
       if (travel.searches >= SEARCHES) travel.done(false);
       return;
     }
     if (step.request) this.#requests.set(reference, step.request);
+  }
+
+  /**
+   * A stuck actor set on a point of its path: on the floor just over or under it (none: it
+   * stays), out of what it stands in there; back where it was if that took it off that floor
+   * (into a counter, through the ground).
+   */
+  #unstick(mover: Mover, target: Vec3): void {
+    const physics = this.#world?.physics;
+    if (!physics?.queriesCurrent) return;
+    const own = mover.character.collider;
+    const [x, y, z] = target;
+    const floor = physics.raycast(
+      [x, y, z + UNSTICK_FLOOR],
+      [0, 0, -1],
+      UNSTICK_FLOOR * 2,
+      Layer.charController,
+      own,
+    );
+    if (!floor) return;
+    const staged = mover.staged;
+    const before = mover.character.feet;
+    mover.character.teleport([x, y, floor.point[2]]);
+    mover.character.recover();
+    const feet = mover.character.feet;
+    if (Math.abs(feet[2] - floor.point[2]) > UNSTICK_FLOOR / 2) {
+      mover.character.teleport(before);
+      return;
+    }
+    mover.drawn = [...feet];
+    staged.position = [...feet];
+    this.#options.terminal.log(
+      'actor',
+      `${staged.placed.actor.editorId || staged.reference.toString(16)} was stuck on its way: set on ` +
+        `its path at ${feet.map((value) => Math.round(value)).join(', ')}`,
+      'info',
+    );
+  }
+
+  /**
+   * A door just ahead of an actor on its way (a ray at its chest along the way it goes): opened
+   * if it may open it (the door's passage), and where it is.
+   */
+  #doorAhead(
+    mover: Mover,
+  ): { readonly door: number; readonly passage: DoorPassage; readonly at: Vec3 } | undefined {
+    const physics = this.#world?.physics;
+    const direction = this.#requests.get(mover.staged.reference)?.direction;
+    if (!physics?.queriesCurrent || !direction) return undefined;
+    const length = Math.hypot(direction[0], direction[1]);
+    if (length < 1e-6) return undefined;
+    const [x, y, z] = mover.character.feet;
+    const hit = physics.raycast(
+      [x, y, z + DOOR_RAY_HEIGHT],
+      [direction[0] / length, direction[1] / length, 0],
+      mover.character.shape.radius + DOOR_LOOKAHEAD,
+      Layer.charController,
+      mover.character.collider,
+    );
+    const door = hit?.owner?.kind === 'object' ? hit.owner.reference : undefined;
+    if (door === undefined || !hit) return undefined;
+    const passage = this.#options.openDoor?.(door, mover.staged.reference);
+    return passage && { door, passage, at: hit.point };
+  }
+
+  /** The places an actor's search keeps off: doors the navmesh does not mark, shut to it. */
+  #blockedFor(
+    reference: number,
+    travel: Travel,
+  ): readonly { readonly at: Vec3; readonly radius: number }[] {
+    const lately = this.#options.shutPlaces?.(reference) ?? [];
+    return lately.length === 0 ? travel.blocked : [...travel.blocked, ...lately];
+  }
+
+  /** The doors an actor's search keeps off: those shut to it on this way and lately. */
+  #closedFor(reference: number, travel: Travel): ReadonlySet<number> {
+    const lately = this.#options.shutTo?.(reference);
+    if (!lately || lately.size === 0) return travel.closed;
+    return new Set([...travel.closed, ...lately]);
+  }
+
+  /** A door on the way is shut to the actor: it searches again round it (a few times). */
+  #blocked(reference: number, travel: Travel, door: number | undefined): void {
+    if (door !== undefined) travel.closed.add(door);
+    travel.follower = undefined;
+    this.#requests.delete(reference);
+    if (travel.searches >= SEARCHES) travel.done(false);
   }
 
   /** What an actor's AI wants now (undefined: it stands). */
@@ -308,6 +490,7 @@ export class ActorMovers {
       swimming: mover.character.swimming,
       speed: Math.hypot(mover.velocity[0], mover.velocity[1]),
       pathing: this.#travels.has(reference),
+      bump: this.#bumps.get(reference),
     };
   }
 
@@ -321,6 +504,7 @@ export class ActorMovers {
   /** An actor left the stage: its controller goes, and what it was asked to do. */
   remove(reference: number): void {
     this.#walkers.delete(reference);
+    this.#reactions.delete(reference);
     const mover = this.#movers.get(reference);
     if (mover) this.#free(mover);
     this.#travels.get(reference)?.done(false);
@@ -375,17 +559,143 @@ export class ActorMovers {
         if (near && !held && this.#moves(staged)) void this.#add(staged);
         continue;
       }
-      if (!near || staged.visibility.hidden || held) {
+      // Not set down (moved into a cell whose collision is not in place yet): it waits, standing.
+      if (!near || staged.visibility.hidden || held || !staged.grounded) {
         this.#free(mover);
         continue;
       }
       this.#draw(mover, world.physics, seconds);
+      const reaction = this.#reactions.get(staged.reference);
+      if (reaction) {
+        this.#react(mover, reaction, seconds);
+        continue;
+      }
       const travel = this.#travels.get(staged.reference);
       if (travel) this.#travelFrame(mover, travel, seconds);
     }
     for (const reference of [...this.#walkers.keys()]) {
       if (!seen.has(reference)) this.#walkers.delete(reference);
     }
+  }
+
+  /** The last time the player bumped into an actor: where from, how (its conditions). */
+  bumpOf(reference: number): Bump | undefined {
+    return this.#bumps.get(reference);
+  }
+
+  /**
+   * The actors the player walked into in the last step (their controllers touched): each
+   * that stands on its own and is not reacting yet flinches, then steps aside. Actors go round
+   * one another (avoidance). TODO(M13): whether the engine has actors bumping each other react.
+   */
+  #bumped(world: MoverWorld): void {
+    const player = world.player?.character;
+    if (!player || player.touched.length === 0) return;
+    const [px, py] = player.feet;
+    const [vx, vy] = player.velocity;
+    const speed = Math.hypot(vx, vy);
+    if (speed < BUMP_SPEED) return;
+    for (const collider of player.touched) {
+      const owner = world.physics.ownerOf(collider);
+      if (owner?.kind !== 'actor' || owner.reference === player.owner.reference) continue;
+      const mover = this.#movers.get(owner.reference);
+      if (!mover || this.#reactions.has(owner.reference)) continue;
+      const staged = mover.staged;
+      const dx = staged.position[0] - px;
+      const dy = staged.position[1] - py;
+      // Walking into it, not away from it.
+      if (dx * vx + dy * vy <= 0) continue;
+      // Where the player is from it, clockwise from its facing (compass headings).
+      const from = Math.atan2(-dx, -dy) - staged.heading;
+      const direction = ((((from * 180) / Math.PI) % 360) + 360) % 360;
+      const bump: Bump = { direction, small: speed < SMALL_BUMP_SPEED };
+      this.#bumps.set(owner.reference, bump);
+      this.#reactions.set(owner.reference, {
+        phase: 'flinch',
+        left: this.#timing().delay,
+        way: [vx / speed, vy / speed],
+        stood: !this.#travels.has(owner.reference),
+        follower: undefined,
+      });
+      this.#requests.delete(owner.reference);
+      this.#options.onBump?.(owner.reference, bump);
+    }
+  }
+
+  /** The bump reaction's timing, from the game settings once read (vanilla until then). */
+  #timing(): BumpTiming {
+    if (!this.#bumpTiming) {
+      this.#bumpTiming = BUMP_TIMING;
+      void this.#options.session.settings().then((settings) => {
+        this.#bumpTiming = {
+          delay: settings.number('fBumpReactionSmallDelayTime') ?? BUMP_TIMING.delay,
+          wait: settings.number('fBumpReactionSmallWaitTimer') ?? BUMP_TIMING.wait,
+          ideal: settings.number('fBumpReactionIdealMoveDist') ?? BUMP_TIMING.ideal,
+          min: settings.number('fBumpReactionMinMoveDist') ?? BUMP_TIMING.min,
+        };
+      });
+    }
+    return this.#bumpTiming;
+  }
+
+  /**
+   * One frame of a bump reaction: it flinches (stands), then one that stood steps off the
+   * player's way (fBumpReactionIdealMoveDist, at least the minimum, where the navmesh has
+   * room), waits, and its package goes on (its way searched again from where it is now).
+   */
+  #react(mover: Mover, reaction: Reaction, seconds: number): void {
+    const reference = mover.staged.reference;
+    const timing = this.#timing();
+    if (reaction.phase === 'flinch') {
+      reaction.left -= seconds;
+      if (reaction.left > 0) return;
+      const aside = reaction.stood ? this.#aside(mover, reaction.way, timing) : undefined;
+      if (aside) {
+        reaction.phase = 'aside';
+        reaction.follower = new PathFollower(aside, { gait: 'walk', arrive: 16 });
+        return;
+      }
+      reaction.phase = 'wait';
+      reaction.left = reaction.stood ? timing.wait : 0;
+      return;
+    }
+    if (reaction.phase === 'aside') {
+      const step = reaction.follower?.step(mover.staged.position, seconds);
+      if (step?.state === 'moving') {
+        if (step.request) this.#requests.set(reference, step.request);
+        return;
+      }
+      this.#requests.delete(reference);
+      reaction.phase = 'wait';
+      reaction.left = timing.wait;
+      return;
+    }
+    reaction.left -= seconds;
+    if (reaction.left > 0) return;
+    this.#reactions.delete(reference);
+    // Its package's way, from where it stands now.
+    const travel = this.#travels.get(reference);
+    if (travel) travel.follower = undefined;
+  }
+
+  /** A path off the player's way (to the side the actor stands on), if the navmesh has room. */
+  #aside(mover: Mover, way: readonly [number, number], timing: BumpTiming): NavPath | undefined {
+    const set = this.#options.navmeshes?.();
+    const player = this.#world?.player?.character;
+    if (!set || !player) return undefined;
+    const [x, y, z] = mover.staged.position;
+    // Which side of the player's way it stands on: it steps further that way.
+    const side = Math.sign(way[0] * (y - player.feet[1]) - way[1] * (x - player.feet[0])) || 1;
+    const left: [number, number] = [-way[1] * side, way[0] * side];
+    for (const distance of [timing.ideal, timing.min]) {
+      const to = set.nearest?.([x + left[0] * distance, y + left[1] * distance, z], ASIDE_REACH);
+      if (!to) continue;
+      const path = findPath(set, mover.staged.position, to, {
+        radius: mover.character.shape.radius,
+      });
+      if (path?.complete && path.points.length >= 2) return path;
+    }
+    return undefined;
   }
 
   /** Whether an actor's AI runs: in the high process, or walking beyond it. */
@@ -453,6 +763,8 @@ export class ActorMovers {
       const path = findPath(set, staged.position, travel.destination, {
         radius: WALKER_RADIUS * travel.searches,
         large: (walker.race?.size ?? RaceSize.medium) >= RaceSize.large,
+        closedDoors: this.#closedFor(reference, travel),
+        blocked: this.#blockedFor(reference, travel),
       });
       if (!path || path.points.length < 2) {
         travel.done(false);
@@ -465,6 +777,10 @@ export class ActorMovers {
     );
     if (step.state === 'arrived') {
       travel.done(travel.follower.path.complete);
+      return false;
+    }
+    if (step.state === 'blocked') {
+      this.#blocked(reference, travel, step.door);
       return false;
     }
     if (step.state === 'stuck') {
@@ -567,6 +883,8 @@ export class ActorMovers {
         staged.position,
         { reference, kind: 'actor' },
       );
+      // Blocked on its way, it seeks a way round (a crease, a corner).
+      character.seeksAround = true;
       // Out of what it stands in (set on the floor, its shape may touch it), as the player.
       if (world.physics.queriesCurrent) character.recover();
       this.#movers.set(reference, {
@@ -628,9 +946,28 @@ export class ActorMovers {
   /** One physics step of every moved actor: what it wants, then its controller's movement. */
   #stepAll(step: number): void {
     this.#stepped += step;
+    // What the player walked into in this step (each step's contacts are its own).
+    if (this.#world) this.#bumped(this.#world);
+    const others = this.#neighbours();
     for (const mover of this.#movers.values()) {
       const staged = mover.staged;
-      const request = this.#requests.get(staged.reference);
+      const wanted = this.#requests.get(staged.reference);
+      // On its way it goes round the others and the player in it.
+      const request =
+        wanted?.direction && others.length > 1
+          ? {
+              ...wanted,
+              direction: avoid(
+                {
+                  position: [mover.character.feet[0], mover.character.feet[1]],
+                  radius: mover.character.shape.radius,
+                  speed: Math.max(Math.hypot(...mover.velocity), AVOID_SPEED),
+                  direction: wanted.direction,
+                },
+                others.filter((other) => other.mover !== mover),
+              ),
+            }
+          : wanted;
       const types = this.#types(mover);
       const root = mover.root;
       // Animation-driven (bAnimationDriven: furniture, staggers, dialogue), or standing while
@@ -652,6 +989,30 @@ export class ActorMovers {
       }
       mover.character.step(step);
     }
+  }
+
+  /** The actors with controllers and the player, as those on their way go round them. */
+  #neighbours(): (Neighbour & { readonly mover: Mover | undefined })[] {
+    const list: (Neighbour & { readonly mover: Mover | undefined })[] = [];
+    for (const mover of this.#movers.values()) {
+      const [x, y] = mover.character.feet;
+      list.push({
+        position: [x, y],
+        velocity: mover.velocity,
+        radius: mover.character.shape.radius,
+        mover,
+      });
+    }
+    const player = this.#world?.player?.character;
+    if (player) {
+      list.push({
+        position: [player.feet[0], player.feet[1]],
+        velocity: player.velocity,
+        radius: player.shape.radius,
+        mover: undefined,
+      });
+    }
+    return list;
   }
 
   /** Its movement types for the state its graph tags now. */

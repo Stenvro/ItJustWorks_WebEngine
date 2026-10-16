@@ -12,13 +12,21 @@
 
 import type { PackageStart, Space } from '../ai/package-start.ts';
 import { MovementCatalog } from '../ai/movement-types.ts';
-import { findRoute, polylineLength, type RouteDoor, type RouteMap } from '../ai/routes.ts';
+import {
+  findRoute,
+  polylineLength,
+  type Route,
+  type RouteDoor,
+  type RouteEnd,
+  type RouteMap,
+} from '../ai/routes.ts';
 import type { Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { linkedReferences, parseReference } from '../world/cell-records.ts';
 import type { CellActor } from '../world/cell-loader.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
+import type { ActorDoors } from './actor-doors.ts';
 import type { ActorPlacer } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -37,6 +45,8 @@ export interface ActorsAwayOptions {
   readonly loaded: (place: AwayPlace) => boolean;
   /** Whether an actor is on the stage now (its AI is the high process's). */
   readonly staged: (actor: number) => boolean;
+  /** The doors actors go through: locked load doors, those of the loaded area swinging. */
+  readonly doors?: ActorDoors;
 }
 
 /** A stretch of a trip: points in one space, ending at a load door (or at the place). */
@@ -364,10 +374,11 @@ export class ActorsAway {
       const route =
         start === undefined || end === undefined
           ? undefined
-          : findRoute(
+          : await this.#route(
               routes,
               { space: from.space, position: from.position, navmesh: start },
               { ...trip.destination, navmesh: end },
+              actor,
             );
       if (this.#trips.get(actor) !== trip) return;
       if (!route) {
@@ -424,8 +435,9 @@ export class ActorsAway {
         heading: door.arrivalHeading,
       };
       if (this.#options.loaded(arrival)) {
-        // Through a door into the loaded area: it comes out of it there.
+        // Through a door into the loaded area: it comes out of it there (the door swings).
         this.#trips.delete(actor);
+        this.#options.doors?.arrive(door.destination);
         void this.#moveTo(runtime, actor, arrival);
         return;
       }
@@ -433,6 +445,12 @@ export class ActorsAway {
       // its cell or worldspace gets that one). TODO(M13): its place along the way between.
       void this.#moveTo(runtime, actor, arrival);
     }
+  }
+
+  /** A route through the load doors an actor may pass (locked ones it may open). */
+  #route(map: RouteMap, from: RouteEnd, to: RouteEnd, actor: number): Promise<Route | undefined> {
+    const doors = this.#options.doors;
+    return doors ? doors.route(map, from, to, actor) : Promise.resolve(findRoute(map, from, to));
   }
 
   /** Puts an actor at a place (the game state; the views show it if they hold the place). */

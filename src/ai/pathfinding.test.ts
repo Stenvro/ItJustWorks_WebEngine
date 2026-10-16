@@ -168,5 +168,44 @@ describe('findPath', () => {
     };
     const path = findPath(setOf([withDoor]), [10, 50, 0], [250, 290, 0], { radius: 10 });
     expect(path?.doors.map((entry) => entry.door)).toEqual([0xabc]);
+    // Where the way comes into the door's square (on its southern edge, y = 100).
+    expect(path?.doors[0]?.at[1]).toBe(100);
+  });
+
+  it('keeps off the triangles of doors it cannot pass', () => {
+    const mesh = gridMesh(1, L_SQUARES);
+    const withDoor: Navmesh = {
+      ...mesh,
+      doors: [
+        { triangle: 6, type: 0, door: 0xabc },
+        { triangle: 7, type: 0, door: 0xabc },
+      ],
+    };
+    const set = setOf([withDoor]);
+    const open = findPath(set, [10, 50, 0], [250, 290, 0], { radius: 10 });
+    const locked = findPath(set, [10, 50, 0], [250, 290, 0], {
+      radius: 10,
+      closedDoors: new Set([0xabc]),
+    });
+    expect(open?.complete).toBe(true);
+    // The only way north is through the door: closed, the path ends short of it.
+    expect(locked?.complete).toBe(false);
+    expect(locked?.doors).toEqual([]);
+  });
+
+  it('keeps off places closed to it (a door the navmesh does not mark)', () => {
+    const set = setOf([gridMesh(1, L_SQUARES)]);
+    // A door in the square north of the corner (250, 150): its triangles' middles are near it.
+    const blocked = findPath(set, [10, 50, 0], [250, 290, 0], {
+      radius: 10,
+      blocked: [{ at: [250, 150, 0], radius: 40 }],
+    });
+    expect(blocked?.complete).toBe(false);
+    // Elsewhere it does not matter.
+    const elsewhere = findPath(set, [10, 50, 0], [250, 290, 0], {
+      radius: 10,
+      blocked: [{ at: [50, 250, 0], radius: 40 }],
+    });
+    expect(elsewhere?.complete).toBe(true);
   });
 });

@@ -115,6 +115,16 @@ describe('routes', () => {
     expect(town().nearestNavmesh(TOWN, [1900, 0, 0])).toBe(21);
   });
 
+  it('find none through a load door shut to the one going', () => {
+    const from = { space: HOUSE, position: [0, 0, 0] as [number, number, number], navmesh: 10 };
+    const to = { space: SHOP, position: [0, 0, 0] as [number, number, number], navmesh: 30 };
+    // The shop's street door is locked to it: no other way in.
+    expect(findRoute(town(), from, to, new Set([103]))).toBeUndefined();
+    expect(findRoute(town(), from, to, new Set([104]))?.doors.map((step) => step.door)).toEqual([
+      100, 103,
+    ]);
+  });
+
   it('follow a road where it is not far round', () => {
     const navmeshes = new Map<number, RouteNavmesh>([
       [50, navmesh(TOWN, [0, 0, 0])],

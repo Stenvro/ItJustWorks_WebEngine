@@ -284,6 +284,75 @@ describe('the character controller', () => {
     expect(climb(() => false)).toBeLessThan(5);
     expect(climb(() => true)).toBeGreaterThan(19);
   });
+
+  it('seeks a way out of a crease when it is an actor on its way', () => {
+    // A foundation's wall turned 35 degrees (its face towards the south-west) and a road's
+    // embankment rising 45 degrees to the south: the crease Mila Valentia walked into at
+    // Whiterun's market (WRDrayGoodsBase, WRMainRoadPlains02).
+    const turned = (x: number, y: number, z: number): number[] => {
+      const angle = (35 * Math.PI) / 180;
+      return [
+        x * Math.cos(angle) - y * Math.sin(angle),
+        x * Math.sin(angle) + y * Math.cos(angle),
+        z,
+      ];
+    };
+    const hull = (points: number[][]): CollisionBody['shapes'][number] => ({
+      type: 'convex',
+      layer: Layer.static,
+      material: 0,
+      points: Float32Array.from(points.flat()),
+      radius: 0,
+    });
+    const wallPoints: number[][] = [];
+    for (const x of [0, 40]) {
+      for (const y of [-200, 200]) for (const z of [-20, 200]) wallPoints.push(turned(x, y, z));
+    }
+    const embankment = hull([
+      [-300, -60, 0],
+      [300, -60, 0],
+      [-300, -60, 60],
+      [300, -60, 60],
+      [-300, 0, 0],
+      [300, 0, 0],
+    ]);
+    const walked = (seeks: boolean): { away: number; up: number } => {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      physics.addObject(
+        collision(
+          body(box([-300, -300, -20], [300, 300, 0])),
+          body(hull(wallPoints)),
+          body(embankment),
+        ),
+        IDENTITY,
+        { reference: 1, kind: 'object' },
+      );
+      physics.step(1 / 60);
+      const character = new CharacterBody(
+        physics,
+        { radius: 11.2, height: 102.4 },
+        settings(new Set()),
+        [-20, 14, 0],
+        { reference: 0x1a676, kind: 'actor' },
+      );
+      character.seeksAround = seeks;
+      // Two seconds east, a little south: into the wall and the embankment's foot.
+      for (let i = 0; i < 120; i++) {
+        character.velocity = [78, -19];
+        character.step(1 / 60);
+        physics.step(1 / 60);
+      }
+      const [x, y, z] = character.feet;
+      character.free();
+      physics.free();
+      return { away: Math.hypot(x + 20, y - 14), up: z };
+    };
+    // Pressing on it stays in the crease; seeking it climbs out, up the embankment along the wall.
+    expect(walked(false).away).toBeLessThan(15);
+    const out = walked(true);
+    expect(out.away).toBeGreaterThan(60);
+    expect(out.up).toBeGreaterThan(40);
+  });
 });
 
 describe('physics constraints', () => {
@@ -503,6 +572,64 @@ describe('settling placed objects', () => {
     for (let i = 0; i < 60; i++) physics.step(1 / 60);
     // It fell through the hook as through nothing.
     expect((placed.bodies[1]?.body.translation().z ?? 0) * 69.99125).toBeLessThan(-200);
+    physics.free();
+  });
+});
+
+describe('two character controllers', () => {
+  it('block each other: one walking into another standing stops at it and touches it', () => {
+    const both = new CollisionMatrix([
+      {
+        formId: 1,
+        editorId: 'L_STATIC',
+        index: Layer.static,
+        name: '',
+        flags: 0,
+        collidesWith: [2],
+      },
+      {
+        formId: 2,
+        editorId: 'L_CHARCONTROLLER',
+        index: Layer.charController,
+        name: '',
+        flags: 0,
+        collidesWith: [1, 2],
+      },
+    ]);
+    const physics = new PhysicsWorld(both, GRAVITY);
+    physics.addObject(collision(body(box([-300, -300, -20], [300, 300, 0]))), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    physics.step(1 / 60);
+    const shape = { radius: 14.42, height: 131.84 };
+    const player = new CharacterBody(physics, shape, settings(new Set()), [0, -100, 0], {
+      reference: 0x14,
+      kind: 'actor',
+    });
+    const actor = new CharacterBody(physics, shape, settings(new Set()), [0, 0, 0], {
+      reference: 0x1a6a4,
+      kind: 'actor',
+    });
+    // As in play: steps off the stairs onto walkable ground (the navmesh).
+    player.walkable = () => true;
+    let touched = false;
+    for (let i = 0; i < 60; i++) {
+      player.velocity = [0, 300];
+      player.step(1 / 60);
+      actor.step(1 / 60);
+      physics.step(1 / 60);
+      if (player.touched.some((collider) => physics.ownerOf(collider)?.reference === 0x1a6a4)) {
+        touched = true;
+      }
+    }
+    expect(touched).toBe(true);
+    // Stopped against it, short of it (36.5 units: both shapes and their shells), not through it.
+    const [x, y] = player.feet;
+    expect(y).toBeLessThan(-30);
+    expect(Math.abs(x)).toBeLessThan(5);
+    player.free();
+    actor.free();
     physics.free();
   });
 });

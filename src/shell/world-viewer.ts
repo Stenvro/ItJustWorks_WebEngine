@@ -84,6 +84,7 @@ import {
 } from '../animation/animated-skeleton.ts';
 import { talkTargets, type PlacedActor } from './actors.ts';
 import { ActorStage } from './actor-stage.ts';
+import type { DoorObject } from './actor-doors.ts';
 import { PlayerFurniture } from './player-furniture.ts';
 import { stageObject, type StageObject } from './actor-furniture.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
@@ -110,7 +111,6 @@ import type { Terminal } from './terminal.ts';
 import { Player } from './player.ts';
 import type { LocalMapContent } from './local-map.ts';
 import {
-  actorOpensDoor,
   collisionGroup,
   objectActivation,
   openable,
@@ -150,6 +150,8 @@ export interface WorldElements extends SkyElements {
 interface LoadedCell {
   readonly x: number;
   readonly y: number;
+  /** Its collision is all in the physics world (its actors are set down on it). */
+  collided: boolean;
   terrain: GpuTerrainCell | undefined;
   scene: GpuScene | undefined;
   /** Models made for this cell only (its water plane). */
@@ -507,17 +509,26 @@ export class WorldViewer {
     },
   };
 
-  /** An actor on its way opens a door of a loaded cell (not a load door). */
-  #actorOpensDoor(reference: number): void {
+  /** Doors of the loaded cells found for the actors (by reference), with the cell they are in. */
+  readonly #doorsFound = new Map<
+    number,
+    { readonly cell: LoadedCell; readonly door: DoorObject }
+  >();
+
+  /** A door of a loaded cell, for the actors going through it (src/shell/actor-doors.ts). */
+  #doorOf(reference: number): DoorObject | undefined {
+    const found = this.#doorsFound.get(reference);
+    if (found && this.#cells.get(cellKey(found.cell.x, found.cell.y)) === found.cell)
+      return found.door;
+    this.#doorsFound.delete(reference);
     for (const cell of this.#cells.values()) {
       const placed = cell.placed.find((entry) => entry.object.reference === reference);
       if (!placed) continue;
-      const lock = this.#session?.hud.uses?.lockOf(placed.object);
-      actorOpensDoor(placed.object, placed.instance, lock !== undefined, (descriptor, at) => {
-        void this.#session?.soundSystem?.play(descriptor, at);
-      });
-      return;
+      const door: DoorObject = { object: placed.object, instance: placed.instance };
+      this.#doorsFound.set(reference, { cell, door });
+      return door;
     }
+    return undefined;
   }
 
   /** The loaded cell of this world a place is in (the actor stage's key), if any. */
@@ -874,10 +885,9 @@ export class WorldViewer {
       sounding: this.#soundingWorld,
       cellOf: (at) => this.#stageCellOf(at),
       cellShown: (key) => this.#cells.get(key)?.ready === true,
+      collided: (key) => this.#cells.get(key)?.collided,
       navmeshes: () => this.#navmeshes,
-      openDoor: (door) => {
-        this.#actorOpensDoor(door);
-      },
+      door: (reference) => this.#doorOf(reference),
       objects: () => this.#stageObjects(),
       focus: () => this.#play?.player.feet,
       // Actors walking into trigger volumes tell their scripts.
@@ -1497,6 +1507,7 @@ export class WorldViewer {
         sceneInstances: [],
         exists: false,
         ready: false,
+        collided: false,
       };
       this.#cells.set(key, cell);
       this.#loading++;
@@ -1636,10 +1647,12 @@ export class WorldViewer {
       );
       if (play !== this.#play) return;
       const entries = new Map(placed.map((entry) => [entry.object, entry]));
+      cell.collided = false;
       play.add(cell.collision, {
         ...(land && { land: { data: land, x: cell.x, y: cell.y } }),
         // Its actors stand on the ground once it is in place.
         whenComplete: () => {
+          cell.collided = true;
           this.#stage?.ground(cellKey(cell.x, cell.y), play.physics);
         },
         objects: objects.map((object, i) => {
