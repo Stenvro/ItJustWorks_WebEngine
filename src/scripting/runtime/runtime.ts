@@ -290,6 +290,11 @@ export interface ActorMotion {
   readonly speed: number;
   /** It is on its way along a path (its package's travel). */
   readonly pathing: boolean;
+  /**
+   * The last time the player bumped into it: where from, clockwise from its facing (degrees),
+   * and whether it was a small bump (GetLastBumpDirection, IsSmallBump).
+   */
+  readonly bump?: { readonly direction: number; readonly small: boolean } | undefined;
 }
 
 export interface EditorPlacement {
@@ -1622,6 +1627,25 @@ export class ScriptRuntime implements VmHost {
    * (XOWN; else its cell's) is the actor, or a faction the actor is in at the owner's rank or
    * above (XRNK), or that no one owns. TODO(M11): crime and stolen items.
    */
+  /**
+   * Whether an actor opens a locked door or container without picking its lock: it carries the
+   * key (XLOC), or the lock is its own (the reference's owner, else its cell's: the actor's
+   * base, or a faction it has the rank in); what nobody owns stays locked to it. Unlocked: true.
+   * TODO(M13): the engine's rule for actors and locks is not documented.
+   */
+  async mayUnlock(actor: number, reference: number): Promise<boolean> {
+    const lock = await this.lock(reference);
+    if (!lock.locked) return true;
+    if (lock.key !== undefined && (await this.itemCount(actor, lock.key)) > 0) return true;
+    let owner = await this.owner(reference);
+    if (owner.actor === undefined && owner.faction === undefined) {
+      const cell = (await this.placement(reference))?.cell;
+      if (cell !== undefined) owner = await this.cellOwner(cell);
+    }
+    if (owner.actor === undefined && owner.faction === undefined) return false;
+    return this.mayUse(actor, reference);
+  }
+
   async mayUse(actor: number, reference: number): Promise<boolean> {
     const rankOf = async (form: number): Promise<number> => {
       const data = (await this.forms.record(form))?.fields.first('XRNK');

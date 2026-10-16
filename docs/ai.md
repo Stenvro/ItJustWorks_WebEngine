@@ -104,14 +104,49 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   passed within 24 units or once the actor is beyond it towards the next; it arrives within its
   arrival radius of the last. With less than 8 units of headway towards the next point in 1.5
   seconds it is stuck and searches again, three times at most, each time farther from the
-  edges (its radius times the search's number). Still stuck on the second search, it is set on
-  its path's next point if that lies within 64 units: where the collision and the navmesh part,
-  an actor can slide into a crease under the navmesh's surface and not out again (Mila Valentia
-  on her way to the market, between a foundation, WRDrayGoodsBase, and the road's embankment,
-  WRMainRoadPlains02). TODO(M13): the engine's own way out is not documented. Doors on the way (the triangles the
-  Creation Kit marks in front of them) are opened as it comes within 160 units: a door that is
-  shut and not locked plays its open sequence and sound and shuts again after 3 seconds
-  (TODO(M13): when the engine shuts them is not documented).
+  edges (its radius times the search's number).
+- **Blocked** (`src/physics/character.ts`): an actor's controller that gets less than 60% of
+  its way tries the way turned 30, 55 and 80 degrees right and left and takes the first that
+  gets it on (at least 30% of that way, still forward). Where the collision and the navmesh
+  part, an actor slides into creases it would press into for ever: Mila Valentia on her way to
+  the market, between a foundation (WRDrayGoodsBase) and the road's embankment
+  (WRMainRoadPlains02), now walks out along the embankment. Still stuck on its second search,
+  it is set on its path's next point if that lies within 64 units and has a floor within 48 of
+  it (logged; back where it was if that took it off the floor). TODO(M13): the engine's own
+  way out is not documented.
+- **Others in the way** (`src/ai/avoidance.ts`): an actor on its way goes round the actors
+  with controllers and the player that its way would bring within reach (both radii and 8
+  units) in the next 1.5 seconds, the first it would meet: on the side away from it (right of
+  one straight ahead), two that meet head-on both keeping right, turning just as far as passing
+  needs (at most 1.2 radians). TODO(M13): the engine's avoidance is not documented.
+- **Bumped** (`src/shell/actor-movers.ts`): the player walking into an actor's controller (at
+  40 units a second or more, towards it) is a bump: where the player came from, clockwise from
+  the actor's facing (GetLastBumpDirection), and whether it was small (IsSmallBump: walking).
+  The actor plays ActionBumpedInto's idle (NPC_BumpFromFront, _BumpedFromLeft, ...: its tree
+  picks by the direction), then, if it stood, steps off the player's way to the side it is on
+  after the game's fBumpReactionSmallDelayTime (1 s), fBumpReactionIdealMoveDist (125) away or
+  at least fBumpReactionMinMoveDist (75) where the navmesh has room, waits
+  fBumpReactionSmallWaitTimer (3 s), and its package goes on. TODO(M10) 4.3: its
+  ActorCollidewithActor line; TODO(M13): when the engine counts a bump small, and whether
+  actors bumping each other react too.
+- **Doors** (`src/shell/actor-doors.ts`): the navmeshes mark only load doors (all 1,220 door
+  triangles of the interiors' navmeshes are load doors), so an actor finds a door in its way by
+  a ray at its chest along its way, 96 units beyond its shape. A door that is shut opens with
+  its open sequence and sound and stays open while actors come to it, shutting 3 seconds after
+  the last (its close sequence and sound; TODO(M13): when the engine shuts them is not
+  documented); one the player opened stays open. The actor waits before it, facing its way,
+  until it has opened. A locked door opens to an actor that carries its key or owns its lock
+  (the door's owner, else its cell's: the actor's base, or a faction it has the rank in), or
+  whose package unlocks the doors on its way (PKDT "Unlock doors at package start" / "at
+  package end"; it is left unlocked; TODO(M13): which doors the engine unlocks). To the others
+  it is shut: their way is blocked there and they search again with the triangles within 64
+  units of it closed, remembering the door for 30 seconds. In the Bannered Mare Saadia (the
+  inn's faction) walks through a locked room door; Sinmir stops before it.
+- **Load doors**: an actor whose way leads through one walks to it; it swings open with its
+  sound (its sequences, where it has them), and the actor is through it after the game's
+  fTeleportDoorActivateDelayTimer (0.6 s); the door on the other side swings as it comes out
+  there, if that side is loaded. Routes (below) go only through load doors the actor may pass
+  (locked ones as above).
 - Measured: Orgnar walks from behind the Sleeping Giant's bar round its end to the player, 1,500
   units in 18.8 seconds at 80 units per second.
 

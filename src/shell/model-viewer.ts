@@ -15,7 +15,6 @@ import { articulatedPose } from '../physics/articulation.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
 import { Player } from './player.ts';
 import {
-  actorOpensDoor,
   collisionGroup,
   objectActivation,
   openable,
@@ -83,6 +82,7 @@ import type { InteriorCell, RecordDatabase } from '../world/record-db.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { talkTargets, type PlacedActor } from './actors.ts';
 import { ActorStage } from './actor-stage.ts';
+import type { DoorObject } from './actor-doors.ts';
 import { PlayerFurniture } from './player-furniture.ts';
 import { stageObject, type StageObject } from './actor-furniture.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
@@ -601,14 +601,10 @@ export class ModelViewer {
       this.#cell?.navmesh.nearest(x, y, z, reach, NEAREST_TOLERANCE)?.point,
   };
 
-  /** An actor on its way opens a door of the cell on screen (not a load door). */
-  #actorOpensDoor(reference: number): void {
+  /** A door of the cell on screen, for the actors going through it (src/shell/actor-doors.ts). */
+  #doorOf(reference: number): DoorObject | undefined {
     const object = this.#cell?.data.objects.find((candidate) => candidate.reference === reference);
-    if (!object) return;
-    const lock = this.#session?.hud.uses?.lockOf(object);
-    actorOpensDoor(object, this.#instances.get(reference), lock !== undefined, (descriptor, at) => {
-      void this.#session?.soundSystem?.play(descriptor, at);
-    });
+    return object && { object, instance: this.#instances.get(reference) };
   }
 
   /** The actors of the cell on screen (src/shell/actor-stage.ts). */
@@ -792,9 +788,7 @@ export class ModelViewer {
         at.cell !== undefined && at.cell === this.#stageCell ? String(at.cell) : undefined,
       navmeshes: () => this.#navmeshes,
       objects: () => this.#stageObjects(),
-      openDoor: (door) => {
-        this.#actorOpensDoor(door);
-      },
+      door: (reference) => this.#doorOf(reference),
     });
     const { vfs, loader } = session;
     this.#meshes = vfs.list('meshes').filter((path) => path.endsWith('.nif'));

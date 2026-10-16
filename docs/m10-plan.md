@@ -102,9 +102,12 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       the exteriors' audit (door to door across cells). docs/ai.md, "Routes";
       `tools/route-info.ts` (`--audit`). Actors of the loaded area take load doors their
       packages' ways lead through; the door's open animation and sound for them: 2.3.
-- [ ] **2.3 Following a path:** steering, avoidance of other actors and the player, stuck
+- [x] **2.3 Following a path:** steering, avoidance of other actors and the player, stuck
       detection and new paths, doors on the way (opened, waited for, locked ones avoided or
       unlocked by package), load doors taken (the actor leaves the loaded area or arrives).
+      With it the engine's movement blocked and avoid-the-player behaviour: blocked controllers
+      seek a way round; the player bumping into an actor (ActionBumpedInto, fBumpReaction*).
+      docs/ai.md, "Paths". Moved on: the bumped actor's ActorCollidewithActor line to 4.3.
 - [x] **2.4 Audit:** `tools/path-audit.ts`: a path between every two doors of every interior,
       checked against the triangles' connections; what does not connect is listed (exteriors:
       2.2).
@@ -155,7 +158,7 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       other (DialogueActivate between actors, Sandbox's conversations), barks by subtype (a
       package's topic subtype), LockDoors' warning, Say's own line length and forced
       subtitles, the dialogue camera, emotions on the face, creatures' jaw lines; the
-      packages' hello and chatter interrupts.
+      packages' hello and chatter interrupts; a bumped actor's ActorCollidewithActor line.
 - [ ] **4.4 Scenes:** phases, actions, the actors' behaviour flags, fragments, the Scene
       natives, IsInScene, IsScenePackageRunning.
 

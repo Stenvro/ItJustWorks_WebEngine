@@ -77,6 +77,14 @@ const SLIDE_MIN = 0.2;
 /** Coming down onto a step, away from a wall at the shape's side by this much (Havok units). */
 const STEP_AWAY = 0.03;
 const STEP_AWAY_TRIES = 3;
+/**
+ * A blocked actor tries these turns of its way (radians, nearest first, right and left) and
+ * takes the first that gets it on: wedged in a crease between a wall and a slope (where the
+ * navmesh and the collision part) or against a corner, it slides out instead of pressing on.
+ */
+const SEEK_TURNS = [0.52, -0.52, 0.96, -0.96, 1.4, -1.4];
+/** A turned way is taken when it gets this share of its own length. */
+const SEEK_MADE = 0.3;
 
 /** The way along a surface (its normal) that is left of a horizontal direction, if enough. */
 function along(
@@ -128,6 +136,11 @@ export class CharacterBody {
    * TODO(M13): how far the engine's TryStep goes off the stairs is not documented.
    */
   walkable: ((x: number, y: number, z: number) => boolean) | undefined;
+  /**
+   * Blocked, it seeks a way round (SEEK_TURNS): actors on their paths. The player's controller
+   * goes only where it is steered. TODO(M13): the engine's own controller for NPCs.
+   */
+  seeksAround = false;
   /** Standing on something too steep to walk on (sliding off). */
   #unsupported = false;
   /** Something below the shape touched it in the last step (ground, a slope, a step). */
@@ -345,6 +358,42 @@ export class CharacterBody {
     return { x: over.x - at.x, y: over.y - at.y, z: landed - at.z };
   }
 
+  /** The first turn of a blocked way that gets on (SEEK_TURNS), its movement and grounding. */
+  #seekAround(
+    desired: RAPIER.Vector,
+    predicate: (collider: RAPIER.Collider) => boolean,
+  ): { moved: RAPIER.Vector; grounded: boolean } | undefined {
+    for (const turn of SEEK_TURNS) {
+      const cos = Math.cos(turn);
+      const sin = Math.sin(turn);
+      const way = {
+        x: desired.x * cos - desired.y * sin,
+        y: desired.x * sin + desired.y * cos,
+        z: desired.z,
+      };
+      this.#controller.computeColliderMovement(
+        this.#collider,
+        way,
+        RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+        undefined,
+        predicate,
+      );
+      const moved = this.#controller.computedMovement();
+      const made = moved.x * way.x + moved.y * way.y;
+      // On along the turned way, and still forward on the way it wanted.
+      if (
+        made >= (way.x * way.x + way.y * way.y) * SEEK_MADE &&
+        moved.x * desired.x + moved.y * desired.y > 0
+      ) {
+        return {
+          moved: { x: moved.x, y: moved.y, z: moved.z },
+          grounded: this.#controller.computedGrounded(),
+        };
+      }
+    }
+    return undefined;
+  }
+
   /** Jumps with this upward speed (game units per second) at the next step, if grounded. */
   jump(speed: number): boolean {
     if (!this.#grounded) return false;
@@ -441,6 +490,21 @@ export class CharacterBody {
       this.touched.push(collision.collider);
       // normal1: the surface touched, facing the character (up for ground below).
       if (collision.normal1.z > 0.05) below = true;
+    }
+    // Still blocked: an actor seeks a way round, its way turned a little, then more.
+    if (
+      this.seeksAround &&
+      wasGrounded &&
+      !rising &&
+      !this.swimming &&
+      wanted > 0 &&
+      moved.x * desired.x + moved.y * desired.y < wanted * STEP_BLOCKED
+    ) {
+      const round = this.#seekAround(desired, predicate);
+      if (round) {
+        moved = round.moved;
+        this.#grounded = round.grounded;
+      }
     }
     this.#unsupported = !this.#grounded && !this.swimming && below;
     this.#below = below;

@@ -233,7 +233,13 @@ const spaceKey = (space: Space): string =>
  * The cheapest route from one point to another: the load doors taken in order (none where
  * both are in one area), or undefined where no chain of doors joins their areas.
  */
-export function findRoute(map: RouteMap, from: RouteEnd, to: RouteEnd): Route | undefined {
+export function findRoute(
+  map: RouteMap,
+  from: RouteEnd,
+  to: RouteEnd,
+  /** Load doors shut to the one going (locked to it): no way through them. */
+  closed?: ReadonlySet<number>,
+): Route | undefined {
   const start = map.areaOf(from.navmesh);
   const goal = map.areaOf(to.navmesh);
   if (start === undefined || goal === undefined) return undefined;
@@ -274,7 +280,7 @@ export function findRoute(map: RouteMap, from: RouteEnd, to: RouteEnd): Route | 
       continue;
     }
     for (const door of map.doorsIn(node.area)) {
-      if (done.has(door.door)) continue;
+      if (done.has(door.door) || closed?.has(door.door) === true) continue;
       const area = door.arrivalNavmeshes
         .map((navmesh) => map.areaOf(navmesh))
         .find((found) => found !== undefined);
