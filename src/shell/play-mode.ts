@@ -453,8 +453,8 @@ export class PlayMode {
       userEvent: (name) => {
         if (!dialogue.isOpen) menus.userEvent(name);
       },
-      talk: (speaker) => {
-        this.#talk(dialogue, menus, speaker);
+      talk: (speaker, opening) => {
+        this.#talk(dialogue, menus, speaker, opening);
       },
       container: (reference, closed) => {
         if (dialogue.isOpen) closed();
@@ -776,16 +776,20 @@ export class PlayMode {
    * A conversation: the dialogue menu over the game, which goes on (no menu mode); the HUD in
    * its dialogue mode and the mouse on the menu until it ends.
    */
-  #talk(dialogue: DialogueMenu, menus: GameMenus, speaker: PlacedActor): void {
+  #talk(dialogue: DialogueMenu, menus: GameMenus, speaker: PlacedActor, opening?: number): void {
     if (dialogue.isOpen || menus.isOpen || this.#session.menuMode) return;
     const hud = this.#session.hud;
     hud.mode('DialogueMode', true);
     this.#world.capturePointer(false);
     dialogue
-      .talk(speaker, () => {
-        hud.mode('DialogueMode', false);
-        this.#world.capturePointer(true);
-      })
+      .talk(
+        speaker,
+        () => {
+          hud.mode('DialogueMode', false);
+          this.#world.capturePointer(true);
+        },
+        opening,
+      )
       .catch((error: unknown) => {
         this.#terminal.log(
           'ui',

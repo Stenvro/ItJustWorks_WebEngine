@@ -85,7 +85,7 @@ import {
 import { talkTargets, type PlacedActor } from './actors.ts';
 import { ActorStage } from './actor-stage.ts';
 import { PlayerFurniture } from './player-furniture.ts';
-import type { StageObject } from './actor-furniture.ts';
+import { stageObject, type StageObject } from './actor-furniture.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement } from '../scripting/runtime/runtime.ts';
@@ -872,7 +872,7 @@ export class WorldViewer {
       openDoor: (door) => {
         this.#actorOpensDoor(door);
       },
-      furnishings: () => this.#furnishings(),
+      objects: () => this.#stageObjects(),
       focus: () => this.#play?.player.feet,
       // Actors walking into trigger volumes tell their scripts.
       onTrigger: (trigger, actor, entered) => {
@@ -1235,20 +1235,24 @@ export class WorldViewer {
     }
   }
 
-  /** A cell's references whose 3D is loaded (its enabled drawn objects and actors). */
-  /** The enabled furniture and markers of the loaded cells (sandboxing actors use them). */
-  *#furnishings(): Iterable<StageObject> {
+  /**
+   * The enabled objects and markers of the loaded cells, and those the scripts created (what
+   * actors use and search for).
+   */
+  *#stageObjects(): Iterable<StageObject> {
     for (const cell of this.#cells.values()) {
       if (!cell.ready || !cell.data) continue;
       for (const object of cell.data.objects) {
-        if (object.baseType !== 'FURN' || !cell.isEnabled(object.reference)) continue;
-        const { world } = object;
-        yield { ...object, position: [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] };
+        if (cell.isEnabled(object.reference)) yield stageObject(object);
       }
       for (const marker of cell.data.markers) if (cell.isEnabled(marker.reference)) yield marker;
     }
+    for (const entry of this.#created?.all ?? []) {
+      if (!entry.visibility.hidden) yield stageObject(entry.object);
+    }
   }
 
+  /** A cell's references whose 3D is loaded (its enabled drawn objects and actors). */
   #cellLoadedReferences(cell: LoadedCell): number[] {
     if (!cell.ready) return [];
     return [

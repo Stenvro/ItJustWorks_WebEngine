@@ -17,7 +17,31 @@ import type { StoryEventData } from './story-manager.ts';
 
 /** UESP's function indices of the conditions valued here. */
 export const Fn = {
+  getWantBlocking: 0,
   isMoving: 25,
+  getIsAlerted: 91,
+  isWeaponMagicOut: 101,
+  isShieldOut: 103,
+  getVampireFeed: 226,
+  getCannibal: 227,
+  isWeaponOut: 263,
+  isInCombat: 289,
+  getCombatState: 323,
+  isFleeing: 329,
+  isBlocking: 569,
+  getAttackState: 574,
+  isBleedingOut: 580,
+  isInScene: 590,
+  getEquippedItemType: 597,
+  isDualCasting: 627,
+  isCasting: 632,
+  isAttacking: 672,
+  isPowerAttacking: 673,
+  isCommandedActor: 700,
+  isStaggered: 701,
+  isRecoiling: 702,
+  isBeingRidden: 714,
+  getKnockStateEnum: 725,
   isTorchOut: 102,
   isSwimming: 185,
   getIsUsedItemType: 247,
@@ -708,7 +732,8 @@ async function conditionValue(
     // functions' parameter numbers them (xEdit wbFormTypeEnum).
     case Fn.getIsObjectType:
     case Fn.getIsUsedItemType: {
-      const own = await base();
+      // A reference's base, or the form itself (an item used from an inventory).
+      const own = (await base()) ?? reference;
       if (own === undefined) return 0;
       const type = runtime.forms.db.locate(own);
       const signature = type && runtime.forms.db.typeAt(type);
@@ -741,6 +766,39 @@ async function conditionValue(
     case Fn.isTorchOut:
     case Fn.isRidingHorse:
     case Fn.isOnFlyingMount:
+    case Fn.isBeingRidden:
+      return 0;
+    // In a scene that plays.
+    case Fn.isInScene:
+      return reference === undefined ? undefined : flag(runtime.sceneOf(reference) !== undefined);
+    // Combat, weapons and magic out, bleeding out, staggers, knock-downs, alarms: no actor is
+    // in any of these until combat and detection run (TODO(M10) 4.1, 5.1–5.3), as the
+    // natives answer (IsInCombat, IsWeaponDrawn, IsBleedingOut). Being fed on, eaten and
+    // commanded are the player's powers (TODO(M11)).
+    case Fn.getWantBlocking:
+    case Fn.getIsAlerted:
+    case Fn.isWeaponMagicOut:
+    case Fn.isShieldOut:
+    case Fn.isWeaponOut:
+    case Fn.isInCombat:
+    case Fn.getCombatState:
+    case Fn.isFleeing:
+    case Fn.isBlocking:
+    case Fn.getAttackState:
+    case Fn.isBleedingOut:
+    case Fn.isDualCasting:
+    case Fn.isCasting:
+    case Fn.isAttacking:
+    case Fn.isPowerAttacking:
+    case Fn.isStaggered:
+    case Fn.isRecoiling:
+    case Fn.getKnockStateEnum:
+    case Fn.getVampireFeed:
+    case Fn.getCannibal:
+    case Fn.isCommandedActor:
+      return 0;
+    // The type of what it holds (0 its hands). TODO(M11): its equipped weapons and spells.
+    case Fn.getEquippedItemType:
       return 0;
     // What the actor uses (its furniture: src/shell/actor-furniture.ts).
     case Fn.getSitting:

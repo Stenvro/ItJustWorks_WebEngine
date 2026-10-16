@@ -4,6 +4,7 @@
 // where the engine's own rule is not known it is marked TODO(M13). Platform-independent.
 
 import { IdleCollectionFlag } from './idle-records.ts';
+import { TargetType } from './package-records.ts';
 import type {
   PackagePlace,
   ProcedureResult,
@@ -18,6 +19,14 @@ type Vec3 = readonly [number, number, number];
 const AT_PLACE = 64;
 /** Standing actors look round for something to do this often (seconds). */
 const IDLE_SECONDS = 1;
+/** The player's reference. */
+const PLAYER = 0x14;
+/** An actor reaches what it picks up, activates or talks to from this far. */
+const REACH = 96;
+const GREET_DISTANCE = 128;
+/** A meal and a line said take this long (seconds). TODO(M13): the idle's and line's own. */
+const EAT_SECONDS = 6;
+const SAY_SECONDS = 3;
 /** An actor is at an idle marker within this of it. */
 const ARRIVE_AT_MARKER = 24;
 /** At an idle marker, an idle at least this long apart (its timer when longer; seconds). */
@@ -44,12 +53,41 @@ async function hold(run: ProcedureRun): Promise<ProcedureResult> {
 /** The place in a slot: a location input, or a reference a target input names. */
 async function placeIn(run: ProcedureRun, slot: number): Promise<PackagePlace | undefined> {
   const location = run.inputs.location(slot);
-  if (location) return run.mind.place(location, run.actor);
+  if (location) return run.mind.place(location, run.actor, run.context);
   const target = run.inputs.target(slot);
-  const reference = target && (await run.mind.target(target, run.actor));
+  const reference = target && (await run.mind.target(target, run.actor, run.context));
   if (reference === undefined) return undefined;
   const at = await run.mind.placement(reference);
   return at && { position: at.position, radius: 0, reference, heading: at.heading };
+}
+
+/** The references a slot names: its object list's (what a Find found), else its one target. */
+async function targetsIn(run: ProcedureRun, slot: number): Promise<number[]> {
+  const found = run.found(slot);
+  if (found.length > 0) return [...found];
+  const target = run.inputs.target(slot);
+  const reference = target && (await run.mind.target(target, run.actor, run.context));
+  return reference === undefined ? [] : [reference];
+}
+
+/** Goes to a reference (within reach); whether it got there. */
+async function goToReference(
+  run: ProcedureRun,
+  reference: number,
+  reach: number,
+): Promise<boolean> {
+  const at = await run.mind.placement(reference);
+  return at !== undefined && (await goTo(run, { position: at.position, radius: 0 }, reach));
+}
+
+/** Turns to a reference for a moment. */
+async function faceReference(run: ProcedureRun, reference: number): Promise<void> {
+  const at = await run.mind.placement(reference);
+  const here = run.body.position();
+  if (!at || !here) return;
+  run.body.face(Math.atan2(at.position[0] - here[0], at.position[1] - here[1]));
+  await run.wait(0.5);
+  run.body.face(undefined);
 }
 
 /** Goes to a place (within its radius); whether it got there. */
@@ -107,7 +145,7 @@ const guard: ProcedureRunner = async (run) => {
  */
 const patrol: ProcedureRunner = async (run) => {
   const target = run.inputs.target(0);
-  const start = target && (await run.mind.target(target, run.actor));
+  const start = target && (await run.mind.target(target, run.actor, run.context));
   if (start === undefined) return hold(run);
   const radius = run.inputs.number(1, AT_PLACE) || AT_PLACE;
   const repeatable = run.inputs.bool(2);
@@ -154,7 +192,7 @@ const patrol: ProcedureRunner = async (run) => {
  */
 const follow: ProcedureRunner = async (run) => {
   const target = run.inputs.target(0);
-  const leader = target && (await run.mind.target(target, run.actor));
+  const leader = target && (await run.mind.target(target, run.actor, run.context));
   if (leader === undefined) return hold(run);
   const min = Math.max(run.inputs.number(1, 128), 64);
   const max = Math.max(run.inputs.number(2, 256), min);
@@ -311,19 +349,23 @@ const sandbox: ProcedureRunner = async (run) => {
 const useFurniture =
   (types: number): ProcedureRunner =>
   async (run) => {
-    const place = await placeIn(run, 0);
-    if (!place) return hold(run);
-    const reference = place.reference;
-    if (reference !== undefined && (await run.body.useFurniture(reference, types))) {
-      return hold(run);
+    // Its target, or the first it may use of those a Find found ("Found Bed", "Found Chair").
+    const candidates = await targetsIn(run, 0);
+    for (const reference of candidates) {
+      if (run.stopped()) return 'failure';
+      if (await run.body.useFurniture(reference, types)) return hold(run);
     }
-    if (reference !== undefined && (await run.mind.idleMarker(reference))) {
-      await atIdleMarker(run, reference);
+    const first = candidates[0];
+    if (first !== undefined && (await run.mind.idleMarker(first))) {
+      await atIdleMarker(run, first);
       return run.stopped() ? 'failure' : hold(run);
     }
     if (run.stopped()) return 'failure';
-    await goTo(run, place, AT_PLACE);
-    if (place.heading !== undefined) run.body.face(place.heading);
+    const at = first === undefined ? undefined : await run.mind.placement(first);
+    if (at) {
+      await goTo(run, { position: at.position, radius: 0 }, AT_PLACE);
+      run.body.face(at.heading);
+    }
     return hold(run);
   };
 
@@ -335,12 +377,250 @@ const standing =
     return run.stopped() ? 'failure' : runner(run);
   };
 
-/** UnlockDoors, LockDoors: done at once. TODO(M10) 3.2: the doors of its place locked. */
-const doors: ProcedureRunner = () => Promise.resolve('success');
+/**
+ * LockDoors, UnlockDoors: the load doors within its place are locked (a door without a lock
+ * gets a novice one) or unlocked; done at once. TODO(M10) 4.3: LockDoors' Warn Before Locking
+ * (the player inside).
+ */
+const doors =
+  (locked: boolean): ProcedureRunner =>
+  async (run) => {
+    const place = await placeIn(run, 0);
+    if (!place) return 'failure';
+    await run.mind.lockDoors(place, locked);
+    return 'success';
+  };
+
+/**
+ * Find: the references its search criteria name within its place, nearest first, kept in its
+ * object list for the procedures after it (Sit and Sleep use the first free one, Acquire picks
+ * them up); succeeds if it found any. Criteria that name one reference (specific, linked, an
+ * alias) find that one. Without Allow Stealing only what the actor may use. TODO(M13): Allow
+ * Already Held (items others carry).
+ */
+const find: ProcedureRunner = async (run) => {
+  const place = await placeIn(run, 0);
+  const criteria = run.inputs.target(1);
+  if (!place || !criteria) return 'failure';
+  let found: readonly number[];
+  if (criteria.type === TargetType.objectId || criteria.type === TargetType.objectType) {
+    found = await run.mind.search(criteria, place, run.actor, run.inputs.bool(4));
+  } else {
+    const one = await run.mind.target(criteria, run.actor, run.context);
+    found = one === undefined ? [] : [one];
+  }
+  run.keep(2, found);
+  return found.length > 0 ? 'success' : 'failure';
+};
+
+/**
+ * Acquire: picks up what its object list holds, nearest first, until it has as many as it was
+ * to. TODO(M11): Allow Pickpocketing; TODO(M10) 5.1: Allow Killing.
+ */
+const acquire: ProcedureRunner = async (run) => {
+  const wanted = Math.max(1, run.inputs.number(1, 1));
+  let taken = 0;
+  for (const reference of await targetsIn(run, 0)) {
+    if (run.stopped() || taken >= wanted) break;
+    if (!(await goToReference(run, reference, REACH))) continue;
+    if (await run.body.take(reference)) taken++;
+  }
+  return taken > 0 ? 'success' : 'failure';
+};
+
+/** Activate: goes to its target (or those its object list holds) and activates it. */
+const activate: ProcedureRunner = async (run) => {
+  const count = Math.max(1, run.inputs.number(1, 1));
+  let done = 0;
+  for (const reference of await targetsIn(run, 0)) {
+    if (run.stopped() || done >= count) break;
+    if (!(await goToReference(run, reference, REACH))) continue;
+    await faceReference(run, reference);
+    if (await run.body.activate(reference)) done++;
+  }
+  return done > 0 ? 'success' : 'failure';
+};
+
+/**
+ * Eat: food its criteria name that it carries (one used up), else, if it may (Create Fake
+ * Food), food made for the meal: its eating idle plays.
+ */
+const eat: ProcedureRunner = async (run) => {
+  const criteria = run.inputs.target(0);
+  const carried = criteria && (await run.mind.carried(run.actor, criteria));
+  const food = carried ?? (run.inputs.bool(1) ? await run.mind.fakeFood() : undefined);
+  if (food === undefined || run.stopped()) return 'failure';
+  if (!(await run.body.useItem(food, carried !== undefined))) return 'failure';
+  await waitFor(run, EAT_SECONDS);
+  return 'success';
+};
+
+/**
+ * Say: says its topic, facing its target if it should; with Finish Speaking it waits for the
+ * line. TODO(M13): the line's own length (here: a few seconds); TODO(M10) 4.3: Force
+ * Subtitle.
+ */
+const say: ProcedureRunner = async (run) => {
+  const topic = run.inputs.topic(0);
+  if (topic === undefined) return 'failure';
+  const target = (await targetsIn(run, 1))[0];
+  if (target !== undefined && run.inputs.bool(3, true)) await faceReference(run, target);
+  run.body.say(topic);
+  if (run.inputs.bool(2, true)) await waitFor(run, SAY_SECONDS);
+  return 'success';
+};
+
+/**
+ * ForceGreet: waits at its wait location until the player comes into its trigger location,
+ * then goes to the player and opens the conversation with its topic.
+ */
+const forceGreet: ProcedureRunner = async (run) => {
+  const topic = run.inputs.topic(0);
+  const waitAt = await placeIn(run, 1);
+  const trigger = await placeIn(run, 2);
+  if (waitAt) await goTo(run, waitAt);
+  while (!run.stopped()) {
+    const player = await run.mind.placement(PLAYER);
+    const reach = Math.max(trigger?.radius ?? 0, AT_PLACE);
+    const inside = player && (!trigger || horizontal(player.position, trigger.position) <= reach);
+    if (player && inside) {
+      const here = run.body.position();
+      const near = here !== undefined && horizontal(here, player.position) <= GREET_DISTANCE;
+      if (near || (await run.body.travel(player.position, run.gait, GREET_DISTANCE))) {
+        if (run.body.greet(typeof topic === 'number' ? topic : undefined)) return 'success';
+      }
+    }
+    await run.wait(IDLE_SECONDS);
+  }
+  return 'failure';
+};
+
+/**
+ * DialogueActivate: from where it talks (else beside its target), it talks to its target: the
+ * player gets the conversation. TODO(M10) 4.3: conversations between actors.
+ */
+const dialogueActivate: ProcedureRunner = async (run) => {
+  const target = (await targetsIn(run, 0))[0];
+  if (target === undefined) return hold(run);
+  const from = await placeIn(run, 1);
+  if (from) await goTo(run, from);
+  else await goToReference(run, target, GREET_DISTANCE);
+  if (run.inputs.bool(2, true)) await faceReference(run, target);
+  if (target === PLAYER && run.body.greet(undefined)) return 'success';
+  return hold(run);
+};
+
+/**
+ * KeepAnEyeOn: watches its target while it is in the observation area, pursues it while it is
+ * in the end pursuit area, and is done when it has left that.
+ */
+const keepAnEyeOn: ProcedureRunner = async (run) => {
+  const target = (await targetsIn(run, 0))[0];
+  if (target === undefined) return hold(run);
+  const area = await placeIn(run, 1);
+  const pursuit = await placeIn(run, 2);
+  const within = (place: PackagePlace | undefined, at: Vec3): boolean =>
+    !place || horizontal(place.position, at) <= Math.max(place.radius, AT_PLACE);
+  while (!run.stopped()) {
+    const at = await run.mind.placement(target);
+    if (!at) {
+      await run.wait(IDLE_SECONDS);
+      continue;
+    }
+    if (within(area, at.position)) {
+      await faceReference(run, target);
+    } else if (within(pursuit, at.position)) {
+      await run.body.travel(at.position, run.gait, AT_PLACE * 2);
+    } else {
+      return 'success';
+    }
+  }
+  return 'failure';
+};
+
+/**
+ * Escort: leads its target to the destination; where it falls behind (farther than the
+ * distance to wait for followers) it stops and waits for it, facing it.
+ */
+const escort: ProcedureRunner = async (run) => {
+  const follower = (await targetsIn(run, 0))[0];
+  const destination = await placeIn(run, 2);
+  if (!destination) return hold(run);
+  const waitDistance = Math.max(run.inputs.number(3, 512), AT_PLACE * 2);
+  const reach = Math.max(destination.radius, AT_PLACE);
+  let going: Promise<boolean> | undefined;
+  while (!run.stopped()) {
+    const here = run.body.position();
+    if (here && horizontal(here, destination.position) <= reach) return 'success';
+    const at = follower === undefined ? undefined : await run.mind.placement(follower);
+    if (at && here && horizontal(at.position, here) > waitDistance) {
+      if (going) run.body.stop();
+      going = undefined;
+      run.body.face(Math.atan2(at.position[0] - here[0], at.position[1] - here[1]));
+    } else if (!going) {
+      run.body.face(undefined);
+      going = run.body.travel(destination.position, run.gait, reach).finally(() => {
+        going = undefined;
+      });
+    }
+    await run.wait(IDLE_SECONDS);
+  }
+  return 'failure';
+};
+
+/** FollowTo: follows its target (between its radii) until one of them reaches the destination. */
+const followTo: ProcedureRunner = async (run) => {
+  const leader = (await targetsIn(run, 0))[0];
+  if (leader === undefined) return hold(run);
+  const destination = await placeIn(run, 1);
+  const min = Math.max(run.inputs.number(2, 128), 64);
+  const max = Math.max(run.inputs.number(3, 256), min);
+  while (!run.stopped()) {
+    const at = await run.mind.placement(leader);
+    const here = run.body.position();
+    const reach = Math.max(destination?.radius ?? 0, AT_PLACE);
+    if (
+      destination &&
+      ((here && horizontal(here, destination.position) <= reach) ||
+        (at && horizontal(at.position, destination.position) <= reach))
+    ) {
+      return 'success';
+    }
+    if (at && here && horizontal(here, at.position) > max) {
+      await run.body.travel(at.position, 'run', min);
+    } else {
+      await run.wait(IDLE_SECONDS / 2);
+    }
+  }
+  return 'failure';
+};
+
+/**
+ * Flee (not in combat): runs to its flee-to place, else away from what it flees from by its
+ * flee distance. TODO(M10) 5.1: Counts As Fleeing (IsFleeing), fleeing in combat.
+ */
+const flee: ProcedureRunner = async (run) => {
+  const to = await placeIn(run, 1);
+  const here = run.body.position();
+  let goal: Vec3 | undefined = to?.position;
+  if (!goal && here) {
+    const threat = (await targetsIn(run, 0))[0];
+    const from = threat === undefined ? undefined : await run.mind.placement(threat);
+    const distance = Math.max(run.inputs.number(5, 1024), AT_PLACE);
+    const dx = from ? here[0] - from.position[0] : 0;
+    const dy = from ? here[1] - from.position[1] : 1;
+    const length = Math.hypot(dx, dy) || 1;
+    goal = [here[0] + (dx / length) * distance, here[1] + (dy / length) * distance, here[2]];
+  }
+  if (!goal) return 'failure';
+  const arrived = await run.body.travel(goal, 'run', Math.max(to?.radius ?? 0, AT_PLACE));
+  return arrived ? 'success' : 'failure';
+};
 
 /**
  * The procedures run, by lower-case name; the others hold the actor where it is (standing up
- * from furniture first).
+ * from furniture first): UseWeapon, UseMagic and Shout (TODO(M10) 5.1–5.3: combat), Hover,
+ * Orbit and FlightGrab (TODO(M10) 5.3: dragons' flight).
  */
 export const PROCEDURES: Readonly<Record<string, ProcedureRunner>> = {
   travel: standing(travel),
@@ -354,6 +634,17 @@ export const PROCEDURES: Readonly<Record<string, ProcedureRunner>> = {
   sit: useFurniture(SIT | LEAN),
   sleep: useFurniture(SLEEP),
   useidlemarker: useFurniture(SIT | SLEEP | LEAN),
-  unlockdoors: doors,
-  lockdoors: doors,
+  unlockdoors: doors(false),
+  lockdoors: doors(true),
+  find,
+  acquire: standing(acquire),
+  activate: standing(activate),
+  eat,
+  say,
+  forcegreet: standing(forceGreet),
+  dialogueactivate: standing(dialogueActivate),
+  keepaneyeon: standing(keepAnEyeOn),
+  escort: standing(escort),
+  followto: standing(followTo),
+  flee: standing(flee),
 };

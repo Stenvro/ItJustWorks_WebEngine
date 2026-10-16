@@ -62,7 +62,11 @@ export class DialogueMenu {
   }
 
   /** Talks to an actor: the menu opens with its greeting; `closed` once the menu has gone. */
-  async talk(speaker: PlacedActor, closed: () => void): Promise<void> {
+  /**
+   * A conversation: the actor's greeting (or the line of `opening`, a topic it starts with),
+   * then the topics to choose.
+   */
+  async talk(speaker: PlacedActor, closed: () => void, opening?: number): Promise<void> {
     const engine = this.#engine();
     const runtime = this.#session.scriptsReady;
     if (!engine || !runtime || this.#menu) return;
@@ -70,7 +74,10 @@ export class DialogueMenu {
     this.#speaker = speaker;
     this.#closed = closed;
     runtime.dialogueSpeaker = reference;
-    const greeting = await engine.greeting(reference);
+    const greeting =
+      opening === undefined
+        ? await engine.greeting(reference)
+        : await engine.topicLine(opening, reference);
     this.#menu = await this.#host.open('dialoguemenu.swf', {
       depth: DIALOGUE_DEPTH,
       interactive: true,

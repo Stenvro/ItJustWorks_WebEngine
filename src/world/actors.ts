@@ -156,6 +156,8 @@ export interface ActorLook {
   readonly footstepSet: number | undefined;
   /** Its AI packages (PACK), of the NPC_ its templates give them from. */
   readonly packages: readonly number[];
+  /** Its default package list (FLST), of the NPC_ its templates give it from. */
+  readonly defaultPackages: number | undefined;
   /** Its factions and ranks, of the NPC_ its templates give them from. */
   readonly factions: ReadonlyMap<number, number>;
 }
@@ -463,6 +465,7 @@ export class ActorResolver {
     const name = (await this.#db.get(templates.part(TemplateFlag.baseData)))?.text('FULL') ?? '';
     const voice = traits.voiceType === undefined ? undefined : await this.#db.get(traits.voiceType);
     const ai = await npc(templates.part(TemplateFlag.aiPackages));
+    const defaults = await npc(templates.part(TemplateFlag.defaultPackages));
     const factions = await npc(templates.part(TemplateFlag.factions));
     return {
       base,
@@ -493,6 +496,7 @@ export class ActorResolver {
           ?.weaponAdjust ?? 0,
       footstepSet: footstepSetOf([...shown, ...bare]),
       packages: ai?.packages ?? [],
+      defaultPackages: defaults?.defaultPackages,
       factions: factions?.factions ?? new Map<number, number>(),
     };
   }

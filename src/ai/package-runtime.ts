@@ -54,6 +54,15 @@ export interface IdleMarkerPlace extends IdleCollection {
   readonly heading: number;
 }
 
+/**
+ * What a running package's places and targets are relative to: where the actor was as it
+ * began (near the package start), the quest whose aliases it names (its owner quest, QNAM).
+ */
+export interface PackageContext {
+  readonly start?: Vec3 | undefined;
+  readonly quest?: number | undefined;
+}
+
 /** A running package's data, for its conditions (GetNumericPackageData, run on package data). */
 export interface PackageData {
   readonly inputs: ReadonlyMap<number, PackageInput>;
@@ -73,9 +82,17 @@ export interface PackageMind {
     data: PackageData,
   ): Promise<boolean>;
   /** Where a location input is for the actor (undefined: not known, not near). */
-  place(location: PackageLocation, actor: number): Promise<PackagePlace | undefined>;
+  place(
+    location: PackageLocation,
+    actor: number,
+    context: PackageContext,
+  ): Promise<PackagePlace | undefined>;
   /** The reference a target input names (undefined: none). */
-  target(target: PackageTarget, actor: number): Promise<number | undefined>;
+  target(
+    target: PackageTarget,
+    actor: number,
+    context: PackageContext,
+  ): Promise<number | undefined>;
   /** Where a reference is now and which way it faces. */
   placement(reference: number): Promise<{ position: Vec3; heading: number } | undefined>;
   /** A reference's linked reference by keyword (0: none). */
@@ -87,6 +104,23 @@ export interface PackageMind {
   around(center: Vec3, radius: number, actor: number): Promise<readonly SandboxSpot[]>;
   /** An idle marker's idles and place (undefined: no idle marker). */
   idleMarker(reference: number): Promise<IdleMarkerPlace | undefined>;
+  /**
+   * The references a criterion names by object or object type (Find's search criteria, the
+   * food an actor eats) within a place, nearest to the actor first; with `steal`, also those
+   * it may not use.
+   */
+  search(
+    criteria: PackageTarget,
+    place: PackagePlace,
+    actor: number,
+    steal: boolean,
+  ): Promise<readonly number[]>;
+  /** An item the actor carries that a criterion names (food it eats), if any. */
+  carried(actor: number, criteria: PackageTarget): Promise<number | undefined>;
+  /** A food to eat where the package makes one (Eat's Create Fake Food). */
+  fakeFood(): Promise<number | undefined>;
+  /** Locks or unlocks the doors within a place (LockDoors, UnlockDoors). */
+  lockDoors(place: PackagePlace, locked: boolean): Promise<void>;
   /** OnPackageStart / OnPackageChange / OnPackageEnd and the package's own begin, change and end. */
   packageEvent(
     actor: number,
@@ -121,6 +155,18 @@ export interface PackageBody {
   leaveIdleMarker(): void;
   /** Plays an idle (IDLE: its event, or the first of its children whose conditions hold). */
   playIdle(idle: number): Promise<boolean>;
+  /** Says a topic (DIAL), or a line of a topic subtype (four characters). */
+  say(topic: number | string): void;
+  /** Activates a reference (its OnActivate; furniture it uses); whether it did. */
+  activate(reference: number): Promise<boolean>;
+  /** Picks up an item lying in the world; whether it did. */
+  take(reference: number): Promise<boolean>;
+  /** Uses an item (eats food: its idle), using one of those it carries up with `consume`. */
+  useItem(item: number, consume: boolean): Promise<boolean>;
+  /** Talks to the player (ForceGreet): the conversation opens, with a topic's line first. */
+  greet(topic: number | undefined): boolean;
+  /** Whether it stands still on its own (not on its way, not in furniture, not turning). */
+  standing(): boolean;
 }
 
 export type ProcedureResult = 'success' | 'failure';
@@ -132,8 +178,14 @@ export interface ProcedureRun {
   readonly mind: PackageMind;
   readonly inputs: ProcedureInputs;
   readonly pack: PackageRecord;
+  /** Where the package began, the quest whose aliases it names. */
+  readonly context: PackageContext;
   /** The gait it goes at (the package's preferred speed). */
   readonly gait: Gait;
+  /** The references an object list input holds (what a Find found), by slot. */
+  found(slot: number): readonly number[];
+  /** Fills an object list input (Find), by slot. */
+  keep(slot: number, references: readonly number[]): void;
   /** Whether the package was left: a procedure ends at once. */
   stopped(): boolean;
   /** Waits real seconds (shorter if the package is left meanwhile). */
@@ -144,11 +196,17 @@ export interface ProcedureRun {
 /** A procedure, by its lower-case name. */
 export type ProcedureRunner = (run: ProcedureRun) => Promise<ProcedureResult>;
 
-/** Whether a running package was left (read after awaits: it may change meanwhile). */
-const isStopped = (running: { readonly stopped: boolean }): boolean => running.stopped;
+/**
+ * Whether a running package (or a branch of it that ran beside another) was left (read after
+ * awaits: it may change meanwhile).
+ */
+const isStopped = (running: Running): boolean =>
+  running.stopped || running.cut || (running.parent !== undefined && isStopped(running.parent));
 
 /** The package chosen again this often (real seconds). TODO(M13): the engine's rate. */
 const EVALUATE_SECONDS = 2;
+/** A package's idles at least this long apart (seconds). */
+const IDLE_PAUSE = 8;
 
 /** PKDT preferred speed: walk, jog, run, fast walk. */
 function gaitOf(pack: PackageRecord): Gait {
@@ -162,8 +220,18 @@ interface Running {
   readonly pack: PackageRecord;
   readonly tree: ProcedureBranch;
   readonly data: PackageData;
+  /** Where the actor was as it began, the quest whose aliases it names. */
+  readonly context: PackageContext;
+  /** Its object lists (what a Find found), by input id. */
+  readonly found: Map<number, readonly number[]>;
   /** Set when it is left: its tree stops. */
   stopped: boolean;
+  /**
+   * A branch beside another in a Simultaneous branch runs on a view of its package: set when
+   * the branch it ran beside ended (it stops then), and the package it views.
+   */
+  cut: boolean;
+  readonly parent?: Running | undefined;
   /** Its tree ran to its end (or a procedure's success completed it). */
   completed: boolean;
   /** The procedure running now (development checks). */
@@ -260,8 +328,13 @@ export class ActorPackages {
     if (current) {
       current.stopped = true;
       this.#release();
-      if (current.completed) this.#mind.packageEvent(this.actor, 'end', current.pack);
-      else if (chosen) this.#mind.packageEvent(this.actor, 'change', current.pack, chosen.pack);
+      if (current.completed) {
+        this.#mind.packageEvent(this.actor, 'end', current.pack);
+        this.#act(current.pack.onEnd);
+      } else if (chosen) {
+        this.#mind.packageEvent(this.actor, 'change', current.pack, chosen.pack);
+        this.#act(current.pack.onChange);
+      }
     }
     this.#running = chosen;
     this.#body.stop();
@@ -271,7 +344,42 @@ export class ActorPackages {
       this.#ranOn.set(chosen.id, this.#mind.day());
     }
     this.#mind.packageEvent(this.actor, 'begin', chosen.pack, current?.pack);
+    this.#act(chosen.pack.onBegin);
     void this.#runTree(chosen);
+    void this.#playIdles(chosen);
+  }
+
+  /** A package's begin, end or change action: its idle played, its topic said. */
+  #act(event: PackageRecord['onBegin']): void {
+    if (event.idle !== undefined) void this.#body.playIdle(event.idle);
+    if (event.topic !== undefined) this.#body.say(event.topic);
+  }
+
+  /**
+   * The package's idles (its own list, else its template's), played while the actor stands
+   * still in it: in order or one picked each time (IDLF 0x1), one each time their timer runs
+   * out. TODO(M13): the engine's pause when the timer is 0 (most vanilla lists).
+   */
+  async #playIdles(running: Running): Promise<void> {
+    const list = running.pack.idles ?? (await this.#template(running.pack))?.idles;
+    if (!list || list.idles.length === 0) return;
+    const sequence = (list.flags & 0x1) !== 0;
+    let played = 0;
+    while (!isStopped(running)) {
+      await this.#wait(running, Math.max(list.timer, IDLE_PAUSE));
+      if (isStopped(running) || !this.#body.standing()) continue;
+      const idle = sequence
+        ? list.idles[played % list.idles.length]
+        : list.idles[Math.floor(this.#random() * list.idles.length)];
+      played++;
+      if (idle !== undefined) await this.#body.playIdle(idle);
+    }
+  }
+
+  #template(pack: PackageRecord): Promise<PackageRecord | undefined> {
+    return pack.template === undefined
+      ? Promise.resolve(undefined)
+      : this.#mind.package(pack.template);
   }
 
   /** The package that runs now (`completed`: one that just ended, not taken again at once). */
@@ -295,7 +403,11 @@ export class ActorPackages {
         pack,
         tree,
         data,
+        // Where it began: as it is chosen (it starts at once).
+        context: { start: this.#body.position(), quest: pack.ownerQuest ?? template?.ownerQuest },
+        found: new Map(),
         stopped: false,
+        cut: false,
         completed: false,
         procedure: undefined,
       };
@@ -307,10 +419,10 @@ export class ActorPackages {
   async #runTree(running: Running): Promise<void> {
     try {
       const result = await this.#branch(running, running.tree);
-      if (!running.stopped && result !== 'stopped') running.completed = true;
+      if (!isStopped(running) && result !== 'stopped') running.completed = true;
     } catch {
       // A procedure that throws ends the package as failed (it is chosen again).
-      if (!running.stopped) running.completed = true;
+      if (!isStopped(running)) running.completed = true;
     }
   }
 
@@ -323,7 +435,7 @@ export class ActorPackages {
     running: Running,
     branch: ProcedureBranch,
   ): Promise<ProcedureResult | 'skipped' | 'complete' | 'stopped'> {
-    if (running.stopped) return 'stopped';
+    if (isStopped(running)) return 'stopped';
     if (!(await this.#mind.conditionsHold(branch.conditions, this.actor, running.data))) {
       return 'skipped';
     }
@@ -361,12 +473,26 @@ export class ActorPackages {
         return 'skipped';
       }
       case 'simultaneous': {
-        const results = await Promise.all(
-          branch.children.map((child) => this.#branch(running, child)),
-        );
-        if (results.includes('stopped')) return 'stopped';
-        if (results.includes('complete')) return 'complete';
-        return results.every((result) => result === 'skipped') ? 'skipped' : 'success';
+        // Its children all at once; it ends as its first ends, and those beside it stop then
+        // (the Sleep template finds a bed while it sandboxes, then sleeps). Where the first does
+        // not run (its conditions), it ends as they all have. TODO(M13): the engine's rule.
+        const views: Running[] = branch.children.map(() => ({
+          ...running,
+          stopped: false,
+          cut: false,
+          parent: running,
+        }));
+        const runs = branch.children.map((child, i) => this.#branch(views[i] ?? running, child));
+        const first = await runs[0];
+        if (first === undefined) return 'skipped';
+        if (first === 'skipped') {
+          const results = await Promise.all(runs.slice(1));
+          if (results.includes('stopped')) return 'stopped';
+          if (results.includes('complete')) return 'complete';
+          return results.every((result) => result === 'skipped') ? 'skipped' : 'success';
+        }
+        for (const view of views.slice(1)) view.cut = true;
+        return first;
       }
       case 'random': {
         const open: ProcedureBranch[] = [];
@@ -390,6 +516,7 @@ export class ActorPackages {
     const name = (branch.procedure ?? '').toLowerCase();
     const runner = this.#runners[name];
     running.procedure = branch.procedure;
+    if (running.parent) running.parent.procedure = branch.procedure;
     if (!runner) {
       // A procedure not run yet holds the actor where it is while its package runs (standing:
       // up from furniture first).
@@ -397,18 +524,28 @@ export class ActorPackages {
       await this.#until(running);
       return 'stopped';
     }
+    const inputOf = (slot: number): number | undefined => branch.inputs[slot];
     const result = await runner({
       actor: this.actor,
       body: this.#body,
       mind: this.#mind,
       inputs: new ProcedureInputs(branch, running.data.inputs),
       pack: running.pack,
+      context: running.context,
       gait: gaitOf(running.pack),
-      stopped: () => running.stopped,
+      found: (slot) => {
+        const input = inputOf(slot);
+        return input === undefined ? [] : (running.found.get(input) ?? []);
+      },
+      keep: (slot, references) => {
+        const input = inputOf(slot);
+        if (input !== undefined) running.found.set(input, references);
+      },
+      stopped: () => isStopped(running),
       wait: (seconds) => this.#wait(running, seconds),
       random: this.#random,
     });
-    if (running.stopped) return 'stopped';
+    if (isStopped(running)) return 'stopped';
     // FNAM 0x1: its success completes the package.
     if (result === 'success' && (branch.flags & 0x1) !== 0) return 'complete';
     return result;
@@ -416,7 +553,7 @@ export class ActorPackages {
 
   /** Waits real seconds (on update's clock), or until the package is left. */
   #wait(running: Running, seconds: number): Promise<void> {
-    if (running.stopped) return Promise.resolve();
+    if (isStopped(running)) return Promise.resolve();
     return new Promise((resolve) => {
       this.#waiting.push({ until: this.#clock + Math.max(0, seconds), resolve });
     });
@@ -431,6 +568,6 @@ export class ActorPackages {
 
   /** Waits until the package is left. */
   async #until(running: Running): Promise<void> {
-    while (!running.stopped) await this.#wait(running, 1);
+    while (!isStopped(running)) await this.#wait(running, 1);
   }
 }

@@ -122,17 +122,25 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   (as at the start, below), that has not run today if it runs once a day, and whose conditions
   hold on the running game (`ScriptRuntime.conditionsHold`, with the package's data inputs for
   GetNumericPackageData, IsNullPackageData and conditions run on package data): the packages of
-  the quest aliases that hold it first (by quest priority), then its own. TODO(M10) 3.1: its
-  default package list (NPC\_ DPLT), the engine's own packages, interrupts.
+  the quest aliases that hold it first (by quest priority), then its own, then its default
+  package list (NPC\_ DPLT, a form list; its template's with the Use Def Pack List flag). While
+  it talks with the player (the engine's in-game dialogue package) its package waits: it stops
+  where it is and faces the player (in furniture it stays seated). TODO(M10) 4.1–4.3, 5.2: the
+  override lists (SPOR, OCOR, GWOR, ECOR) and interrupts.
 - **When:** as the hour changes, every 2 seconds (TODO(M13): the engine's rate), when its package
   ends, and when a script asks (EvaluatePackage). One that must complete (PKDT flag 0x4) is not
   left before it has. Its scripts hear of it: OnPackageStart (the new package), OnPackageChange
   (the one left), OnPackageEnd (one that ended), and the package's own fragments (begin, change,
-  end) run. GetCurrentPackage and GetIsCurrentPackage answer from it.
+  end) run, and its begin, change and end actions: an idle played, a topic said. While it
+  runs, the actor plays the package's idles (its IDLA list, else its template's) whenever it
+  stands still, one each timer (at least 8 seconds apart). GetCurrentPackage and
+  GetIsCurrentPackage answer from it.
 - **Its tree** runs from the root (Creation Kit: Procedure Tree; the engine's rules are not
   documented, these are its names'): a Sequence runs its children in order, one whose conditions
   do not hold skipped; a Stacked branch the first child that may run; a Simultaneous branch all
-  of them at once; a Random branch one that may run, at random. A procedure runs until it
+  of them at once, ending as its first ends (those beside it stop then: the Sleep template
+  finds a bed while it sandboxes, then sleeps; TODO(M13)); a Random branch one that may run,
+  at random. A procedure runs until it
   succeeds or fails; one whose success completes the package (FNAM 0x1) ends it; a branch that
   repeats when complete (PRCB 0x1) starts over. The package's preferred speed (PKDT, with its
   flag) is its gait: jog and run run, walk and fast walk walk.
@@ -150,16 +158,40 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   the nearest point if so set; Follow keeps within its maximum radius of its target, closing to
   its minimum; Wander goes from one random point of its place to another between pauses;
   Sandbox passes the time in its place (below); Sit, Sleep and UseIdleMarker use their furniture
-  (sitting and leaning, sleeping, any marker) or idle marker and stay while the package runs. A
-  procedure that does not use furniture gets the actor up first. TODO(M10) 3.2: the rest of the
-  procedures, sandboxing's eating; 4.3: its conversations.
+  (their target, or the first free one a Find found) or idle marker and stay while the package
+  runs. Find keeps what its criteria name within its place in its object list (nearest first;
+  without Allow Stealing only what the actor may use: below); Acquire picks those up; Activate
+  goes to its target and activates it (furniture: uses it); Eat plays its eating idle with food
+  it carries (one used up) or, with Create Fake Food, food made for the meal (ActionIdle's
+  EatingRoot or DrinkingRoot by GetIsUsedItemType); LockDoors and UnlockDoors lock and unlock
+  the load doors of their place (a door without a lock gets a novice one); Say says its topic,
+  facing its target; ForceGreet waits at its place until the player comes into its trigger
+  area, goes to them and opens the conversation with its topic; DialogueActivate talks to the
+  player from its place; KeepAnEyeOn watches its target in its observation area and pursues it
+  in its pursuit area; Escort leads its target to the destination, waiting for it where it
+  falls behind; FollowTo follows until one of them reaches the destination; Flee runs to its
+  place, else away from what it flees. A procedure that does not use furniture gets the actor
+  up first. TODO(M10) 5.1–5.4: UseWeapon, UseMagic, Shout, Hover, Orbit, FlightGrab (they hold
+  the actor until combat runs); 4.3: Sandbox's conversations and eating.
+- **Searching** (`src/shell/actor-search.ts`): a criterion names references by object (a base
+  object, a form list of them, a faction's members) or by object type
+  (`src/ai/object-types.ts`, xEdit's object type enum: food is ALCH with the food flag, beds and
+  chairs furniture with sleep or sit markers, melee and ranged weapons by their animation
+  type, ...) among the enabled objects, markers and actors of the loaded area. An actor may use
+  what it, or a faction it belongs to at the owner's rank (XRNK), owns, or what no one owns: the
+  reference's owner (XOWN), else its cell's (UESP, "Crime"). A target named by object or type
+  is the nearest within 4096 units.
 - **Places:** near a reference (its placement and the radius), near the linked reference of a
-  keyword, near the editor location, in a cell (round the actor while it is in it), near self.
-  TODO(M10) 3.2: alias references and locations, objects found by searching, the package start.
-  A place outside the loaded area: the actor stays while its package runs (TODO(M10) 2.2, 3.4).
+  keyword, near the editor location, in a cell (round the actor while it is in it), near self,
+  near where the package began, near the reference an alias of the package's quest (QNAM)
+  holds; targets also by an alias. TODO(M10) 3.2: an alias's location, objects and object types
+  as places (no vanilla package names either). A place outside the loaded area: the actor stays
+  while its package runs (TODO(M10) 2.2, 3.4).
 - Measured: at 8:00 in Whiterun the Imperial guards walk their patrols (600–800 units in ten
   seconds), the gate guard goes to his chair; in the Bannered Mare Hulda, Mikael and Sinmir run
-  their sandbox packages.
+  their sandbox packages, and Saadia hers from her default list. At 2:00 in Carlotta Valentia's
+  house Mila runs her Sleep package: Find finds her bed, she gets into it and sleeps, and the
+  house's door is locked.
 
 ## Furniture and idle markers
 
@@ -194,7 +226,10 @@ Actors use furniture as the engine's furniture handling does, as far as the data
 - **States and events:** GetSitState / GetSleepState and the conditions above answer from it;
   IsFurnitureInUse and IsFurnitureMarkerInUse; the actor's scripts hear OnSit once it is in and
   OnGetUp once it stands. An actor placed in furniture as its cell loads is in it at once by the
-  instant idle (IdleChairEnterInstant, ...).
+  instant idle (IdleChairEnterInstant, ...), sent after the enter it would have had: the graphs
+  take an instant idle only within the furniture's own state, which the enters lead to
+  (MT_RootBehavior goes to ChairRoot_State on IdleChairFrontEnter, whose IdleChairEnterInstant
+  goes on to ChairIdleState). Its exit is measured after the same events.
 - **Idle markers** (IDLM, not drawn; with the furniture markers they are the cells' markers:
   `CellData.markers`): the actor goes to it, faces its way and plays its idles (IDLA), in order or
   one picked each time (IDLF 0x1), once through if so set (0x4), one each time its timer (IDLT)

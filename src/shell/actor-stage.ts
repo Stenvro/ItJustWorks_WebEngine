@@ -25,6 +25,7 @@ import type { Terminal } from './terminal.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import { ActorAi } from './actor-ai.ts';
+import { ActorSearch } from './actor-search.ts';
 import { ActorBodies } from './actor-bodies.ts';
 import { ActorFurniture, type FurnitureUser, type StageObject } from './actor-furniture.ts';
 import { ActorMovers, type MoverWorld } from './actor-movers.ts';
@@ -77,8 +78,8 @@ export interface ActorStageOptions {
   readonly navmeshes?: () => NavmeshSet | undefined;
   /** An actor on its way comes to a door: the view opens it if it can. */
   readonly openDoor?: (door: number, actor: number) => void;
-  /** The enabled furniture and markers of the loaded area (what sandboxing actors use). */
-  readonly furnishings?: () => Iterable<StageObject>;
+  /** The enabled objects and markers of the loaded area (what actors use and search for). */
+  readonly objects?: () => Iterable<StageObject>;
 }
 
 const describe = (error: unknown): string =>
@@ -110,6 +111,8 @@ export class ActorStage {
   readonly ai: ActorAi;
   /** The furniture the actors use (chairs, beds, leans). */
   readonly furniture: ActorFurniture;
+  /** What the actors' packages search the loaded area for. */
+  readonly search: ActorSearch;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -123,7 +126,7 @@ export class ActorStage {
       release: (actor) => {
         this.movers.release(actor);
       },
-      ...(options.furnishings && { furnishings: options.furnishings }),
+      ...(options.objects && { objects: options.objects }),
     });
     this.movers = new ActorMovers({
       session: options.session,
@@ -134,9 +137,18 @@ export class ActorStage {
       held: (actor) => this.furniture.holds(actor),
     });
     this.bodies = new ActorBodies(options.session);
-    this.ai = new ActorAi(options.session, this.movers, this.furniture, (staged) =>
-      this.userOf(staged),
-    );
+    this.search = new ActorSearch({
+      session: options.session,
+      objects: () => options.objects?.() ?? [],
+      actors: () => this.#searchActors(),
+    });
+    this.ai = new ActorAi({
+      session: options.session,
+      movers: this.movers,
+      furniture: this.furniture,
+      search: this.search,
+      userOf: (staged) => this.userOf(staged),
+    });
   }
 
   /** An actor as a user of furniture: placed by it while it is in it (no controller). */
@@ -174,6 +186,19 @@ export class ActorStage {
       this.#users.set(staged, user);
     }
     return user;
+  }
+
+  /** The enabled living actors as searches see them. */
+  *#searchActors(): Iterable<{ reference: number; bases: readonly number[]; position: Vec3 }> {
+    for (const staged of this.#actors.values()) {
+      if (staged.visibility.hidden || staged.dead) continue;
+      const { actor, look } = staged.placed;
+      yield {
+        reference: staged.reference,
+        bases: [actor.base, look.npc],
+        position: staged.position,
+      };
+    }
   }
 
   /** A staged actor by its reference. */
@@ -440,7 +465,7 @@ export class ActorStage {
     const frame =
       this.#clock === undefined ? 0 : Math.min(0.25, Math.max(0, seconds - this.#clock));
     this.#clock = seconds;
-    this.ai.frame(this.#actors.values(), frame);
+    this.ai.frame(this.#actors.values(), frame, this.#options.focus?.());
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     const times = new Map<StagedActor, number | undefined>();
     for (const staged of this.#actors.values()) times.set(staged, staged.placed.time);

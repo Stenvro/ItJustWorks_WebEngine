@@ -38,6 +38,7 @@ import {
   markerData,
   parseFurniture,
 } from '../world/furniture-records.ts';
+import type { CellObject } from '../world/cell-loader.ts';
 import type { PlacedActor } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -88,6 +89,7 @@ interface EventMotion {
 /** An actor in, entering or leaving furniture. */
 interface Use extends ActorInteraction {
   state: number;
+  quickEnter: boolean;
   quickExit: boolean;
   readonly worldMarker: WorldMarker;
   /**
@@ -100,8 +102,8 @@ interface Use extends ActorInteraction {
   duration: number;
   /** The height of the floor it entered from (it leaves to it). */
   floor: number;
-  /** The animation event it entered or leaves by (development checks). */
-  event: string | undefined;
+  /** The animation events it entered by, in order (an instant enter: two). */
+  events: readonly string[];
 }
 
 export interface ActorFurnitureOptions {
@@ -109,8 +111,8 @@ export interface ActorFurnitureOptions {
   readonly terminal: Terminal;
   /** An actor enters: its controller goes (its graph moves it until it stands again). */
   readonly release: (actor: number) => void;
-  /** The enabled furniture and markers of the loaded area (what sandboxing actors use). */
-  readonly furnishings?: () => Iterable<StageObject>;
+  /** The enabled objects and markers of the loaded area (sandboxing actors use some). */
+  readonly objects?: () => Iterable<StageObject>;
 }
 
 /** A placed object of the loaded area, as the view knows it. */
@@ -119,6 +121,17 @@ export interface StageObject {
   readonly base: number;
   readonly baseType: string;
   readonly position: readonly [number, number, number];
+}
+
+/** A cell's object as the stage knows it. */
+export function stageObject(object: CellObject): StageObject {
+  const { world } = object;
+  return {
+    reference: object.reference,
+    base: object.base,
+    baseType: object.baseType,
+    position: [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0],
+  };
 }
 
 /** What sandboxing makes of a base object (undefined: not used in a sandbox). */
@@ -130,7 +143,7 @@ interface SpotKind {
 /** KYWD FurnitureSpecial (Skyrim.esm): workbenches, forges, the wood chopping block, ... */
 const FURNITURE_SPECIAL = 0x6e9c7;
 /** Spots this far above or below a sandbox's centre are on another floor (units). */
-const SPOT_HEIGHT = 256;
+const SPOT_HEIGHT = 160;
 /** The event that ends an idle and returns the graph to its default state. */
 const FORCE_DEFAULT_STATE = 'IdleForceDefaultState';
 
@@ -203,7 +216,7 @@ export class ActorFurniture {
   async spots(center: Vec3, radius: number, child: boolean): Promise<SandboxSpot[]> {
     const found: SandboxSpot[] = [];
     const taken = new Set(this.#markers.values());
-    for (const object of this.#options.furnishings?.() ?? []) {
+    for (const object of this.#options.objects?.() ?? []) {
       const [x, y, z] = object.position;
       if (Math.hypot(x - center[0], y - center[1]) > radius) continue;
       if (Math.abs(z - center[2]) > SPOT_HEIGHT) continue;
@@ -259,6 +272,25 @@ export class ActorFurniture {
     }
     if (event === undefined || this.#uses.has(user.reference)) return false;
     return user.send(event);
+  }
+
+  /**
+   * Plays the idle an action gives with an item in use (ActionIdle and the food an actor eats:
+   * EatingRoot's GetIsUsedItemType(Potion), then idleEatingStandingStart or ChairEatingStart);
+   * whether one played.
+   */
+  async useItem(user: FurnitureUser, item: number, action = 'ActionIdle'): Promise<boolean> {
+    const runtime = this.#options.session.scriptsReady;
+    const tree = await this.#tree();
+    const parent = tree.action(action);
+    const graph = await this.#graphKey(user);
+    if (!runtime || !parent || graph === undefined) return false;
+    const subject = new ObjectHandle(user.reference, 'actor');
+    const target = new ObjectHandle(item, 'form');
+    const idle = await tree.resolveAsync(parent.formId, graph, (candidate) =>
+      runtime.conditionsHold(candidate.conditions, subject, undefined, { target }),
+    );
+    return idle?.event !== undefined && user.send(idle.event);
   }
 
   /** What sandboxing makes of a base object, read once per base. */
@@ -352,20 +384,27 @@ export class ActorFurniture {
         left: 0,
         duration: 0,
         floor: user.position[2],
-        event: undefined,
+        events: [],
       };
       this.#uses.set(actor, use);
       const event = await this.#idleEvent(user, furniture);
-      use.event = event;
+      use.events = event === undefined ? [] : [event];
       if (this.#uses.get(actor) !== use) return false;
       if (event === undefined) {
         this.#uses.delete(actor);
         return false;
       }
       if (quick) {
-        // In it at once: at the marker, facing its way, its graph in the seated state.
+        // In it at once: at the marker, facing its way, its graph in the seated state. The
+        // graphs take an instant idle (IdleChairEnterInstant) only within the furniture's own
+        // state, which an enter takes them to: the enter it would have had goes first.
+        use.quickEnter = false;
+        const enter = await this.#idleEvent(user, furniture);
+        use.quickEnter = true;
+        if (this.#uses.get(actor) !== use) return false;
+        use.events = enter === undefined || enter === event ? [event] : [enter, event];
         user.moveTo(marker.position, marker.heading);
-        user.send(event);
+        for (const sent of use.events) user.send(sent);
         this.#in(user, use);
         return true;
       }
@@ -435,7 +474,7 @@ export class ActorFurniture {
     const event = await this.#idleEvent(user, use.furniture).catch(() => undefined);
     if (this.#uses.get(actor) !== use) return;
     const motion =
-      event === undefined || quick ? undefined : await this.#motion(user, event, use.event);
+      event === undefined || quick ? undefined : await this.#motion(user, event, use.events);
     if (this.#uses.get(actor) !== use) return;
     if (event !== undefined) user.send(event);
     if (!motion) {
@@ -618,15 +657,19 @@ export class ActorFurniture {
 
   /**
    * How an actor's graph moves it after an event: a run of a fresh copy of its graph (no pose)
-   * from its start, the event sent once it stands (after `after` has played: an exit's enter),
-   * its root motion added up until it is still again. Read once per behavior project, sex and
-   * events.
+   * from its start, the event sent once it stands (after those of `after` have played: an
+   * exit's enter), its root motion added up until it is still again. Read once per behavior
+   * project, sex and events.
    */
-  #motion(user: FurnitureUser, event: string, after?: string): Promise<EventMotion | undefined> {
+  #motion(
+    user: FurnitureUser,
+    event: string,
+    after: readonly string[] = [],
+  ): Promise<EventMotion | undefined> {
     const look = user.placed.look;
     const project = look.behavior;
     if (project === undefined) return Promise.resolve(undefined);
-    const events = after === undefined ? [event] : [after, event];
+    const events = [...after, event];
     const key = `${project}|${look.female ? 'f' : 'm'}|${events.join('>').toLowerCase()}`;
     let entry = this.#motions.get(key);
     if (!entry) {

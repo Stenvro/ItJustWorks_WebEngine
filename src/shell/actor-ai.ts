@@ -8,6 +8,8 @@
 import { ActorPackages, type PackageBody, type PackageMind } from '../ai/package-runtime.ts';
 import { LocationType, TargetType, type PackageRecord } from '../ai/package-records.ts';
 import { PROCEDURES } from '../ai/procedure-runs.ts';
+import { isOfObjectType, ObjectType } from '../ai/object-types.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { parseIdleMarker } from '../ai/idle-records.ts';
 import { RaceFlag } from '../world/actor-records.ts';
 import { ObjectHandle } from '../scripting/values.ts';
@@ -16,11 +18,24 @@ import { seededRandom } from '../world/actors.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { ActorFurniture, FurnitureUser } from './actor-furniture.ts';
+import type { ActorSearch } from './actor-search.ts';
 import type { ActorMovers } from './actor-movers.ts';
 import type { GameSession } from './game-session.ts';
 
+/** Whether two placements are in one space: one worldspace, or one interior cell. */
+function sameSpace(
+  a: { readonly cell: number | undefined; readonly world: number | undefined },
+  b: { readonly cell: number | undefined; readonly world: number | undefined },
+): boolean {
+  return a.world !== undefined || b.world !== undefined ? a.world === b.world : a.cell === b.cell;
+}
+
 /** An "in cell" place reaches this far round where the actor is (game units). */
 const IN_CELL_RADIUS = 1024;
+/** A target named by object or object type is the nearest within this of the actor. */
+const TARGET_SEARCH_RADIUS = 4096;
+/** LockDoors and UnlockDoors reach doors this far round a place without a radius. */
+const DOOR_RADIUS = 256;
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -29,20 +44,27 @@ export class ActorAi {
   readonly #session: GameSession;
   readonly #movers: ActorMovers;
   readonly #furniture: ActorFurniture;
+  readonly #search: ActorSearch;
   readonly #userOf: (staged: StagedActor) => FurnitureUser;
+  /** The actors talking with the player now (their packages wait). */
+  readonly #talking = new Set<number>();
+  /** A food for meals made up (Eat's Create Fake Food): the first in the load order. */
+  #fakeFood: Promise<number | undefined> | undefined;
   readonly #actors = new Map<number, { packages: ActorPackages; staged: StagedActor }>();
   readonly #mind: PackageMind;
 
-  constructor(
-    session: GameSession,
-    movers: ActorMovers,
-    furniture: ActorFurniture,
-    userOf: (staged: StagedActor) => FurnitureUser,
-  ) {
-    this.#session = session;
-    this.#movers = movers;
-    this.#furniture = furniture;
-    this.#userOf = userOf;
+  constructor(options: {
+    readonly session: GameSession;
+    readonly movers: ActorMovers;
+    readonly furniture: ActorFurniture;
+    readonly search: ActorSearch;
+    readonly userOf: (staged: StagedActor) => FurnitureUser;
+  }) {
+    this.#session = options.session;
+    this.#movers = options.movers;
+    this.#furniture = options.furniture;
+    this.#search = options.search;
+    this.#userOf = options.userOf;
     this.#mind = this.#makeMind();
   }
 
@@ -68,9 +90,10 @@ export class ActorAi {
    * Every frame (real seconds): the actors of the high process run their packages; those that
    * no longer are (far, dead, gone) leave them.
    */
-  frame(actors: Iterable<StagedActor>, seconds: number): void {
+  frame(actors: Iterable<StagedActor>, seconds: number, player?: Vec3): void {
     const runtime = this.#session.scriptsReady;
     const live = new Set<number>();
+    const speaker = runtime?.dialogueSpeaker;
     for (const staged of actors) {
       if (!runtime || staged.dead || !this.#movers.inHighProcess(staged.reference)) continue;
       live.add(staged.reference);
@@ -88,6 +111,27 @@ export class ActorAi {
           ),
         };
         this.#actors.set(staged.reference, entry);
+      }
+      // Talking with the player (the engine's in-game dialogue package): its package waits; it
+      // stops where it is and faces the player (sitting, it stays seated).
+      const reference = staged.reference;
+      if (speaker === reference) {
+        if (!this.#talking.has(reference)) {
+          this.#talking.add(reference);
+          this.#movers.stop(reference);
+        }
+        if (player && !this.#furniture.holds(reference)) {
+          const heading = Math.atan2(
+            player[0] - staged.position[0],
+            player[1] - staged.position[1],
+          );
+          this.#movers.request(reference, { gait: 'walk', face: heading });
+        }
+        continue;
+      }
+      if (this.#talking.delete(reference)) {
+        this.#movers.request(reference, undefined);
+        entry.packages.evaluate();
       }
       entry.packages.update(seconds);
     }
@@ -137,6 +181,51 @@ export class ActorAi {
         furniture.leaveMarker(user);
       },
       playIdle: (idle) => furniture.playIdle(user, idle),
+      say: (topic) => {
+        // TODO(M10) 4.3: a topic subtype's line (the dialogue engine picks among its topics).
+        if (typeof topic === 'number')
+          this.#session.scriptsReady?.say(reference, topic, undefined, false);
+      },
+      standing: () =>
+        movers.moves(reference) &&
+        movers.travelOf(reference) === undefined &&
+        movers.requestOf(reference) === undefined &&
+        !furniture.holds(reference),
+      activate: async (target) => {
+        const scripts = this.#session.scriptsReady;
+        if (!scripts) return false;
+        // Furniture activated is furniture used.
+        const base = await scripts.baseOf(target);
+        const record = base === undefined ? undefined : await scripts.forms.record(base);
+        if (record?.type === 'FURN') {
+          return furniture.use(
+            user,
+            target,
+            (to, arrive) => movers.travel(reference, to, 'walk', arrive),
+            face,
+          );
+        }
+        return scripts.activate(target, reference, false);
+      },
+      take: async (target) => {
+        const scripts = this.#session.scriptsReady;
+        if (!scripts) return false;
+        await scripts.pickUp(target, reference);
+        return true;
+      },
+      useItem: async (item, consume) => {
+        const scripts = this.#session.scriptsReady;
+        if (!(await furniture.useItem(user, item))) return false;
+        if (consume) await scripts?.removeItem(reference, item, 1, true, undefined);
+        return true;
+      },
+      greet: (topic) => {
+        const scripts = this.#session.scriptsReady;
+        const menus = this.#session.hud.menus;
+        if (!scripts || !menus || scripts.dialogueSpeaker !== undefined) return false;
+        menus.talk(staged.placed, topic);
+        return true;
+      },
     };
   }
 
@@ -144,13 +233,26 @@ export class ActorAi {
   #makeMind(): PackageMind {
     const session = this.#session;
     const runtime = (): ScriptRuntime | undefined => session.scriptsReady;
+    /**
+     * Where a reference is, if it is in the loaded area's space (the player's worldspace, or
+     * cell inside): a place in another cell or worldspace is not reached by walking here.
+     * TODO(M10) 2.2, 3.4: the way there through doors; actors away.
+     */
     const placementOf = async (
       reference: number,
     ): Promise<{ position: Vec3; heading: number } | undefined> => {
-      const at = await runtime()?.placement(reference);
-      return at && { position: [...at.position], heading: at.rotation[2] };
+      const scripts = runtime();
+      const [at, player] = await Promise.all([
+        scripts?.placement(reference),
+        scripts?.placement(PLAYER_REF),
+      ]);
+      if (!at || (player && !sameSpace(at, player))) return undefined;
+      return { position: [...at.position], heading: at.rotation[2] };
     };
     const staged = (actor: number): StagedActor | undefined => this.#actors.get(actor)?.staged;
+    /** The reference an alias of a quest holds now. */
+    const aliasReference = (quest: number | undefined, alias: number): number | undefined =>
+      quest === undefined ? undefined : runtime()?.state.quests.get(quest)?.aliases.get(alias);
     return {
       time: () => session.gameTime(),
       day: () => Math.floor(session.gameDaysPassed),
@@ -158,8 +260,7 @@ export class ActorAi {
       packagesOf: async (actor) => {
         const data = await session.packageData();
         const own = staged(actor)?.placed.look.packages ?? [];
-        // The packages of the quest aliases that hold it first, by quest priority. TODO(M10)
-        // 3.1: its default package list (NPC_ DPLT) after its own.
+        // The packages of the quest aliases that hold it first, by quest priority.
         const aliases = runtime()
           ? await data.aliasPackages({
               reference: actor,
@@ -173,7 +274,10 @@ export class ActorAi {
               linked: () => undefined,
             })
           : [];
-        return [...(aliases ?? []), ...own];
+        // Its default package list (NPC_ DPLT: a form list of packages) after its own.
+        const list = staged(actor)?.placed.look.defaultPackages;
+        const defaults = list === undefined ? [] : ((await runtime()?.formList(list)) ?? []);
+        return [...(aliases ?? []), ...own, ...defaults];
       },
       conditionsHold: async (conditions, actor, data) => {
         const scripts = runtime();
@@ -193,7 +297,7 @@ export class ActorAi {
           },
         });
       },
-      place: async (location, actor) => {
+      place: async (location, actor, context) => {
         const scripts = runtime();
         const self = staged(actor);
         switch (location.type) {
@@ -208,6 +312,13 @@ export class ActorAi {
           }
           case LocationType.nearEditorLocation: {
             const at = await scripts?.editorPlacement(actor);
+            // Its editor location in another space (its home, while it is at the inn): not here.
+            const db = scripts?.forms.db;
+            const cell = db?.cellOfReference(actor);
+            const world = cell === undefined ? undefined : db?.worldOfCell(cell);
+            const player = await scripts?.placement(PLAYER_REF);
+            if (player && cell !== undefined && !sameSpace({ cell, world }, player))
+              return undefined;
             return (
               at && {
                 position: [...at.position],
@@ -223,28 +334,112 @@ export class ActorAi {
               ? { position: self.position, radius: Math.max(location.radius, IN_CELL_RADIUS) }
               : undefined;
           }
-          // TODO(M10) 3.1: where the package started (here: where it is).
-          case LocationType.nearPackageStart:
+          // Where it was as the package began.
+          case LocationType.nearPackageStart: {
+            const start = context.start ?? self?.position;
+            return start && { position: [...start], radius: location.radius };
+          }
           case LocationType.nearSelf:
             return self && { position: self.position, radius: location.radius };
+          // The reference an alias of the package's quest holds.
+          case LocationType.aliasReference: {
+            const held = aliasReference(context.quest, location.form);
+            const at = held === undefined ? undefined : await placementOf(held);
+            return at && { ...at, radius: location.radius, reference: held };
+          }
           default:
-            // Alias references and locations, objects found by searching: TODO(M10) 3.2.
+            // TODO(M10) 3.2: an alias's location (LCTN: where in it), and objects or object
+            // types as places (no vanilla package uses either).
             return undefined;
         }
       },
-      target: async (target, actor) => {
+      target: async (target, actor, context) => {
         const scripts = runtime();
         switch (target.type) {
           case TargetType.specificReference:
             return target.value === 0 ? undefined : target.value;
           case TargetType.linkedReference:
             return scripts?.linkedReference(actor, target.value);
+          case TargetType.referenceAlias:
+            return aliasReference(context.quest, target.value);
           case TargetType.self:
             return actor;
+          case TargetType.objectId:
+          case TargetType.objectType: {
+            // The nearest of them round the actor.
+            const self = staged(actor);
+            if (!self) return undefined;
+            const found = await this.#search.find(target, {
+              actor,
+              from: self.position,
+              center: self.position,
+              radius: TARGET_SEARCH_RADIUS,
+            });
+            return found[0];
+          }
           default:
-            // Objects and types found by searching, alias references: TODO(M10) 3.2.
             return undefined;
         }
+      },
+      carried: async (actor, criteria) => {
+        const scripts = runtime();
+        if (!scripts) return undefined;
+        const db = scripts.forms.db;
+        const listed =
+          criteria.type === TargetType.objectId
+            ? new Set(await scripts.formList(criteria.value))
+            : undefined;
+        for (const [item, count] of await scripts.inventory(actor)) {
+          if (count <= 0) continue;
+          if (criteria.type === TargetType.objectId) {
+            if (item === criteria.value || listed?.has(item)) return item;
+          } else if (criteria.type === TargetType.objectType) {
+            const record = await db.get(item);
+            if (record && isOfObjectType(criteria.value, record)) return item;
+          }
+        }
+        return undefined;
+      },
+      fakeFood: () => {
+        this.#fakeFood ??= session.db.then(async (db) => {
+          for (const formId of db.formIdsOfType('ALCH')) {
+            const record = await db.get(formId);
+            if (record && isOfObjectType(ObjectType.food, record)) return formId;
+          }
+          return undefined;
+        });
+        return this.#fakeFood;
+      },
+      lockDoors: async (place, locked) => {
+        const scripts = runtime();
+        if (!scripts) return;
+        const doors = await this.#search.find(
+          { type: TargetType.objectType, value: ObjectType.doors, count: 0 },
+          {
+            actor: PLAYER_REF,
+            from: place.position,
+            center: place.position,
+            radius: Math.max(place.radius, DOOR_RADIUS),
+            steal: true,
+          },
+        );
+        // Its load doors (XTEL): an actor locks its home, not the doors within it. TODO(M13):
+        // the engine's choice of doors.
+        for (const door of doors) {
+          if ((await scripts.forms.record(door))?.fields.has('XTEL')) {
+            await scripts.setLocked(door, locked);
+          }
+        }
+      },
+      search: (criteria, place, actor, steal) => {
+        const self = staged(actor);
+        return this.#search.find(criteria, {
+          actor,
+          from: self?.position ?? place.position,
+          center: place.position,
+          radius: place.radius,
+          steal,
+        });
       },
       placement: placementOf,
       linked: async (reference, keyword) => runtime()?.linkedReference(reference, keyword),
