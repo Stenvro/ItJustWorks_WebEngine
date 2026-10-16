@@ -97,9 +97,11 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
 - [x] **2.1 Paths in the loaded area:** point → triangle (the NVNM search grid), A\* over
       triangles across linked meshes, string pulling, the actor's radius, triangle flags (no
       large creatures, water for swimmers, preferred), door triangles.
-- [ ] **2.2 Paths across cells:** the NAVI graph through load doors and between interiors and
+- [x] **2.2 Paths across cells:** the NAVI graph through load doors and between interiors and
       worldspaces; precomputed paths for roads; low-process travel along them by game time;
-      the exteriors' audit (door to door across cells).
+      the exteriors' audit (door to door across cells). docs/ai.md, "Routes";
+      `tools/route-info.ts` (`--audit`). Actors of the loaded area take load doors their
+      packages' ways lead through; the door's open animation and sound for them: 2.3.
 - [ ] **2.3 Following a path:** steering, avoidance of other actors and the player, stuck
       detection and new paths, doors on the way (opened, waited for, locked ones avoided or
       unlocked by package), load doors taken (the actor leaves the loaded area or arrives).
@@ -129,10 +131,11 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       tree, sit and sleep states, OnSit / OnGetUp, GetSitState; idle markers' idles; sandbox
       idles; the player sits, sleeps in the bed and stands at workbenches the same way.
       docs/ai.md, "Furniture and idle markers".
-- [ ] **3.4 Actors away:** low process: persistent actors keep their schedules in unloaded
+- [x] **3.4 Actors away:** low process: persistent actors keep their schedules in unloaded
       cells, come into the loaded area through doors, and after waiting, sleeping and fast
       travel are where their packages have them (`package-start.ts` becomes the low-process
-      placement).
+      placement). With it the middle-high process: actors of the loaded area beyond the high
+      process run their AI and walk without a controller. docs/ai.md, "Actors away".
 - [ ] **3.5 Followers, horses, carts:** following through doors, teammates, mounts and
       riding, the carts of the opening (horse, cart, seated passengers).
 

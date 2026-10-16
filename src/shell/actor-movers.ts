@@ -107,6 +107,27 @@ interface Travel {
 
 /** A stuck actor searches its way again this many times before it gives up. */
 const SEARCHES = 3;
+/** An actor beyond the high process walks its paths this wide (units; a human's radius). */
+const WALKER_RADIUS = 20;
+/** It keeps to the navmesh within this of where it steps (units). */
+const WALKER_GROUND = 96;
+/** A stuck actor is set on its path's next point within this of it (units). */
+const UNSTICK_REACH = 64;
+/** A controller is set on the floor found from this far above its feet (units). */
+const FLOOR_ABOVE = 24;
+
+/**
+ * An actor of the loaded area beyond the high process (the middle-high process): its AI runs,
+ * and it walks its paths without a controller, kept on the navmesh, its graph driven.
+ * TODO(M13): the engine's own middle process (how often it moves them, collision).
+ */
+interface Walker {
+  readonly staged: StagedActor;
+  readonly locomotion: Locomotion;
+  race: RaceMovement | undefined;
+  /** It moved last frame (its graph is told when it stops). */
+  moving: boolean;
+}
 
 export class ActorMovers {
   readonly #options: ActorMoversOptions;
@@ -116,6 +137,8 @@ export class ActorMovers {
   readonly #adding = new Set<number>();
   /** The actors in the high process at the last frame (moved, being given a controller, held). */
   readonly #high = new Set<number>();
+  /** The actors of the loaded area beyond it that walk without a controller. */
+  readonly #walkers = new Map<number, Walker>();
   readonly #bounds = new Map<string, Promise<{ center: Vec3; halfExtents: Vec3 } | undefined>>();
   #world: MoverWorld | undefined;
   #catalog: Promise<MovementCatalog> | undefined;
@@ -189,7 +212,9 @@ export class ActorMovers {
       if (!set) return;
       travel.searches++;
       const path = findPath(set, mover.staged.position, travel.destination, {
-        radius: mover.character.shape.radius,
+        // Stuck on its way (a corner its path grazed): wider of the edges each time it searches
+        // again. TODO(M13): the engine's own way out (not documented).
+        radius: mover.character.shape.radius * travel.searches,
         large: (mover.race?.size ?? RaceSize.medium) >= RaceSize.large,
       });
       if (!path || path.points.length < 2) {
@@ -207,8 +232,24 @@ export class ActorMovers {
       return;
     }
     if (step.state === 'stuck') {
+      const target = travel.follower.target;
       travel.follower = undefined;
       this.#requests.delete(reference);
+      // Still stuck on a path searched wider (wedged where the collision and the navmesh part,
+      // under the navmesh's surface): set on the navmesh at the point it went to, if near.
+      // TODO(M13): the engine's own way out (not documented).
+      const staged = mover.staged;
+      if (
+        travel.searches >= 2 &&
+        target &&
+        Math.hypot(target[0] - staged.position[0], target[1] - staged.position[1]) <= UNSTICK_REACH
+      ) {
+        staged.position = [target[0], target[1], target[2]];
+        mover.character.teleport(staged.position);
+        if (this.#world?.physics.queriesCurrent) mover.character.recover();
+        mover.drawn = [...mover.character.feet];
+        staged.position = [...mover.character.feet];
+      }
       if (travel.searches >= SEARCHES) travel.done(false);
       return;
     }
@@ -279,6 +320,7 @@ export class ActorMovers {
 
   /** An actor left the stage: its controller goes, and what it was asked to do. */
   remove(reference: number): void {
+    this.#walkers.delete(reference);
     const mover = this.#movers.get(reference);
     if (mover) this.#free(mover);
     this.#travels.get(reference)?.done(false);
@@ -312,8 +354,10 @@ export class ActorMovers {
     const seconds = this.#stepped;
     this.#stepped = 0;
     this.#high.clear();
+    const seen = new Set<number>();
     for (const staged of actors) {
       const reference = staged.reference;
+      seen.add(reference);
       const mover = this.#movers.get(reference);
       const distance = focus
         ? Math.hypot(staged.position[0] - focus[0], staged.position[1] - focus[1])
@@ -321,6 +365,12 @@ export class ActorMovers {
       const held = this.#options.held?.(reference) === true;
       const near = distance < (mover || held ? LEAVE_HIGH_DISTANCE : HIGH_PROCESS_DISTANCE);
       if (near && this.#lives(staged)) this.#high.add(reference);
+      // Beyond the high process: it walks without a controller.
+      if (!near && !mover && this.#moves(staged)) {
+        this.#walk(staged, seconds);
+        continue;
+      }
+      this.#walkers.delete(reference);
       if (!mover) {
         if (near && !held && this.#moves(staged)) void this.#add(staged);
         continue;
@@ -333,6 +383,113 @@ export class ActorMovers {
       const travel = this.#travels.get(staged.reference);
       if (travel) this.#travelFrame(mover, travel, seconds);
     }
+    for (const reference of [...this.#walkers.keys()]) {
+      if (!seen.has(reference)) this.#walkers.delete(reference);
+    }
+  }
+
+  /** Whether an actor's AI runs: in the high process, or walking beyond it. */
+  runsAi(reference: number): boolean {
+    return this.#high.has(reference) || this.#walkers.has(reference);
+  }
+
+  /** One frame of an actor beyond the high process: its travel, its turning, its graph. */
+  #walk(staged: StagedActor, seconds: number): void {
+    const reference = staged.reference;
+    let walker = this.#walkers.get(reference);
+    if (!walker) {
+      walker = { staged, locomotion: new Locomotion(), race: undefined, moving: false };
+      this.#walkers.set(reference, walker);
+      const created = walker;
+      void Promise.all([this.#movementCatalog(), this.#options.session.db]).then(
+        async ([catalog, db]) => {
+          created.race = await catalog.race(db, staged.placed.look.race);
+        },
+      );
+    }
+    const travel = this.#travels.get(reference);
+    if (travel && !this.#walkerTravel(walker, travel, seconds)) return;
+    const request = this.#requests.get(reference);
+    const types = this.#catalogRead?.forActor(walker.race, undefined);
+    let velocity: [number, number] = [0, 0];
+    if (request && types && seconds > 0) {
+      const steering = steer(request, staged.heading, types, seconds);
+      velocity = [steering.velocity[0], steering.velocity[1]];
+      staged.heading = steering.heading;
+      const [x, y, z] = staged.position;
+      const next: Vec3 = [x + velocity[0] * seconds, y + velocity[1] * seconds, z];
+      // On the navmesh: its height there (it does not step off it).
+      const on = this.#options.navmeshes?.()?.nearest?.(next, WALKER_GROUND);
+      if (on) staged.position = [on[0], on[1], on[2]];
+    }
+    const moving = Math.hypot(velocity[0], velocity[1]) > 1;
+    if (moving || walker.moving || request) {
+      this.#placeWalker(staged);
+      const behavior = staged.placed.behavior;
+      if (behavior) {
+        walker.locomotion.drive([behavior], {
+          velocity,
+          heading: staged.heading,
+          seconds: Math.max(seconds, 1e-3),
+          grounded: true,
+          swimming: false,
+          verticalSpeed: 0,
+          sprinting: moving && request?.gait === 'sprint',
+          sneaking: false,
+        });
+      }
+    }
+    walker.moving = moving;
+  }
+
+  /** A walker's travel: its path searched and followed (false: it ended). */
+  #walkerTravel(walker: Walker, travel: Travel, seconds: number): boolean {
+    const staged = walker.staged;
+    const reference = staged.reference;
+    if (!travel.follower) {
+      const set = this.#options.navmeshes?.();
+      if (!set) return true;
+      travel.searches++;
+      const path = findPath(set, staged.position, travel.destination, {
+        radius: WALKER_RADIUS * travel.searches,
+        large: (walker.race?.size ?? RaceSize.medium) >= RaceSize.large,
+      });
+      if (!path || path.points.length < 2) {
+        travel.done(false);
+        return false;
+      }
+      travel.follower = new PathFollower(path, { gait: travel.gait, arrive: travel.arrive });
+    }
+    const step = travel.follower.step(staged.position, seconds, (door) =>
+      this.#options.openDoor?.(door, reference),
+    );
+    if (step.state === 'arrived') {
+      travel.done(travel.follower.path.complete);
+      return false;
+    }
+    if (step.state === 'stuck') {
+      travel.follower = undefined;
+      this.#requests.delete(reference);
+      if (travel.searches >= SEARCHES) travel.done(false);
+      return false;
+    }
+    if (step.request) this.#requests.set(reference, step.request);
+    return true;
+  }
+
+  /** A walker drawn where it is, upright. */
+  #placeWalker(staged: StagedActor): void {
+    const placed = staged.placed;
+    const instance = placed.instances[0];
+    if (!instance?.motion) return;
+    instance.world.set(
+      referenceMatrix({
+        position: staged.position,
+        rotation: [0, 0, staged.heading],
+        scale: placed.actor.scale * placed.look.scale,
+      }),
+    );
+    instance.motion.version++;
   }
 
   /**
@@ -383,6 +540,19 @@ export class ActorMovers {
       if (!this.#moves(staged)) return;
       const scale = look.scale * staged.placed.actor.scale;
       const sized = bound ?? HUMAN_BOUND;
+      // On the floor first (the collision just under or over its feet), so its shape is not in
+      // it: one that walked beyond the high process stood on its navmesh, which may lie a
+      // little under the floor.
+      if (world.physics.queriesCurrent) {
+        const [x, y, z] = staged.position;
+        const hit = world.physics.raycast(
+          [x, y, z + FLOOR_ABOVE],
+          [0, 0, -1],
+          FLOOR_ABOVE * 3,
+          Layer.charController,
+        );
+        if (hit) staged.position = [x, y, hit.point[2]];
+      }
       const character = new CharacterBody(
         world.physics,
         controllerShape({

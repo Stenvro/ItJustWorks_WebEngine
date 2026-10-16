@@ -521,9 +521,15 @@ export class WorldViewer {
   }
 
   /** The loaded cell of this world a place is in (the actor stage's key), if any. */
-  #stageCellOf(at: { position: Vec3; world?: number | undefined }): string | undefined {
+  #stageCellOf(at: {
+    position: Vec3;
+    cell?: number | undefined;
+    world?: number | undefined;
+  }): string | undefined {
     const world = this.#world?.record.formId;
     if (world === undefined || (at.world !== undefined && at.world !== world)) return undefined;
+    // In an interior cell (a cell and no worldspace): none of the view's.
+    if (at.world === undefined && at.cell !== undefined) return undefined;
     return cellKey(Math.floor(at.position[0] / CELL_SIZE), Math.floor(at.position[1] / CELL_SIZE));
   }
 

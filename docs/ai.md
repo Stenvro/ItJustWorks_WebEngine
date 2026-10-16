@@ -34,8 +34,12 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   bound "BBX" scaled by its race's height and its own scale, set where it stands once its
   ground is in place (and out of what it stands in, as the player's). Nearer than one exterior
   cell (4096 units) it is in the engine's high process; beyond 1.25 times that it loses its
-  controller and stands. TODO(M13): the engine's process levels (CommonLibSSE `ProcessLists`:
-  high, middle-high, middle-low, low) are not documented. The controllers are in the world the
+  controller. Beyond it, in the loaded area, it is in the middle-high process: its AI runs and
+  it walks its paths without a controller, kept on the navmesh (its height there), its graph
+  driven as a controlled one's; coming near it gets its controller where it stands (on the
+  floor just under or over its feet). TODO(M13): the engine's process levels (CommonLibSSE
+  `ProcessLists`: high, middle-high, middle-low, low) and how often each moves its actors are
+  not documented. The controllers are in the world the
   player moves in: the player bumps into actors and they into each other; activation and
   line-of-sight rays still take actors by their body's line (TODO(M10) 1.2).
 - **What it wants** is a move request: a way to go (horizontal), a gait (walk, run, sprint) and
@@ -99,7 +103,12 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
 - **Following it** (`src/ai/path-follower.ts`): the actor goes to the next point; a point is
   passed within 24 units or once the actor is beyond it towards the next; it arrives within its
   arrival radius of the last. With less than 8 units of headway towards the next point in 1.5
-  seconds it is stuck and searches again, three times at most. Doors on the way (the triangles the
+  seconds it is stuck and searches again, three times at most, each time farther from the
+  edges (its radius times the search's number). Still stuck on the second search, it is set on
+  its path's next point if that lies within 64 units: where the collision and the navmesh part,
+  an actor can slide into a crease under the navmesh's surface and not out again (Mila Valentia
+  on her way to the market, between a foundation, WRDrayGoodsBase, and the road's embankment,
+  WRMainRoadPlains02). TODO(M13): the engine's own way out is not documented. Doors on the way (the triangles the
   Creation Kit marks in front of them) are opened as it comes within 160 units: a door that is
   shut and not locked plays its open sequence and sound and shuts again after 3 seconds
   (TODO(M13): when the engine shuts them is not documented).
@@ -112,6 +121,26 @@ the 331 interiors with two doors or more, 972 connect (300 cells connect every p
 that the triangles connect is missed; 0.19 ms a search on average, 5.7 ms the longest. The pairs
 that do not connect lie on islands of their own: Apocrypha's moving books, Dwemer ruins' lifts and
 gates (Bthardamz, Nchuand-Zel), Blackreach's elevators, and the like.
+
+## Routes
+
+Beyond the loaded area an actor's way runs from navmesh to navmesh through load doors
+(`src/ai/routes.ts`, read by `src/ai/route-map.ts`):
+
+- **Areas:** navmeshes joined by their edge links within one worldspace or interior make one
+  area (the NAVI's NVMI records hold the same graph; it is built here from the navmeshes). An
+  exterior's area spans the cells its navmeshes link.
+- **Load doors** (XTEL) lead from the area of the navmesh nearest the door to the area of the
+  navmesh nearest its arrival point. A route is the cheapest chain of doors (Dijkstra over the
+  doors, 256 units a door on top of the walk between them, straight lines within an area).
+- **Roads:** between two points of an exterior the actor follows the NAVI's precomputed paths
+  (NVPP) where that is at most 1.5 times the straight way.
+- `node tools/route-info.ts <from> <to>` prints the route between two references (Mila Valentia
+  from her house to her market stall: 1 door, 4,713 units); `--audit` routes from 40 load doors'
+  arrivals to every other door: of the 2,153 load doors 1,334 of 1,560 routes are found, 3.2
+  doors a route, 13 ms a search. Those not found start or end where no door leads on: scripted
+  places reached by a quest's teleport (Skuldafn, Sovngarde, Japhet's Folly, Blackreach's
+  elevators).
 
 ## Packages
 
@@ -310,9 +339,40 @@ enabled at a new game, 1088 start on a reference (912 of them in ambush furnitur
 alcoves, Dwemer pipes, dragon priests' coffins, Falmer wall pods), 169 are elsewhere, 2180
 stay, 498 are not decided and 938 are dead.
 
-Once the cell is loaded the packages run (above). TODO(M10) 3.4: actors coming into a cell
-from another and keeping their schedules while away (this placement becomes the low process's);
-3.2: objects found by searching. With the running game's scripts, quest state and
+Once the cell is loaded the packages run (above); the actors away follow this placement (below).
+With the running game's scripts, quest state and
 globals are theirs, and the packages of the aliases that hold an actor come before its own
 (by quest priority, as the Creation Kit stacks them); without them an actor an alias may hold
 is not decided.
+
+## Actors away
+
+Actors that are not in the loaded area keep their schedules (the low process,
+`src/shell/actors-away.ts`). Their schedules are asked for the actors of the player's space and
+of the spaces one load door from it: those placed there (an interior's actors, a worldspace's
+persistent ones) and those the game state has there, living and enabled; each where its package
+has it now (the placement above, from its packages, factions, race and sex, read once).
+
+- **When the hour changes** an actor its package wants elsewhere sets out from where it is. Its
+  trip follows the route (above) door to door at its walk speed (the default movement type's,
+  MOVT), along the roads where they serve. The game state has it in each space it comes into
+  through a door (a script asking for its cell or worldspace gets that one; TODO(M13): its
+  place along the way between). On a cell that is loaded it comes onto the
+  stage there and walks on with its package (it comes out of a load door into the loaded area,
+  or walks into it).
+- **When the game's time jumps** (waiting, sleeping, fast travel, a console `set gamehour`: more
+  than 10 game minutes beyond what the clock ran) trips end at once and every actor asked is
+  put where its package has it. So too when the player comes into another worldspace or
+  interior: what is there is where it should be as it loads.
+- An actor of the loaded area on its way through a load door its package takes leaves the stage
+  through it, and its trip goes on from the door's arrival point.
+- Asked 16 at a time: at Whiterun's plains district 449 actors in 38 spaces in 8 seconds at the
+  start (the jump as the game loads), 0.6 seconds at an hour's change. At 9:00 Mila Valentia
+  steps out of her house's door and walks to her stall at the market; set to 10:00 she stands
+  there at once. TODO(M13): the engine's rule for who keeps a schedule while away (persistent
+  references, the low process's reach) and its pace are not documented.
+
+A procedure that would go round without ever waiting (each step ending at once: a patrol of
+one point the actor stands on was one) is stopped after 100,000 rounds within one update: its
+package ends as failed and is chosen again later, so a fault in one actor's AI does not hang
+the game.

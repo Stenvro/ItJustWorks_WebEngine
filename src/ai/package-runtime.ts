@@ -21,7 +21,7 @@ import {
   type PackageTarget,
   type ProcedureBranch,
 } from './package-records.ts';
-import { mergedInputs, scheduleFits, type GameTime } from './package-start.ts';
+import { mergedInputs, scheduleFits, type GameTime, type Space } from './package-start.ts';
 import type { IdleCollection } from './idle-records.ts';
 import { ProcedureInputs } from './procedures.ts';
 
@@ -34,6 +34,8 @@ export interface PackagePlace {
   /** The reference it is at (a marker, furniture) and its heading, if any. */
   readonly reference?: number | undefined;
   readonly heading?: number | undefined;
+  /** The cell or worldspace it is in (undefined: the actor's own). */
+  readonly space?: Space | undefined;
 }
 
 /**
@@ -94,7 +96,9 @@ export interface PackageMind {
     context: PackageContext,
   ): Promise<number | undefined>;
   /** Where a reference is now and which way it faces. */
-  placement(reference: number): Promise<{ position: Vec3; heading: number } | undefined>;
+  placement(
+    reference: number,
+  ): Promise<{ position: Vec3; heading: number; space?: Space | undefined } | undefined>;
   /** A reference's linked reference by keyword (0: none). */
   linked(reference: number, keyword: number): Promise<number | undefined>;
   /**
@@ -136,7 +140,7 @@ export interface PackageBody {
   position(): Vec3 | undefined;
   heading(): number;
   /** Goes to a place over the navmeshes; resolves whether it arrived. */
-  travel(to: Vec3, gait: Gait, arrive: number): Promise<boolean>;
+  travel(to: Vec3, gait: Gait, arrive: number, space?: Space): Promise<boolean>;
   /** Stops going (its travel resolves false) and stands. */
   stop(): void;
   /** Turns to a heading, standing (undefined: stops turning). */
@@ -207,6 +211,12 @@ const isStopped = (running: Running): boolean =>
 const EVALUATE_SECONDS = 2;
 /** A package's idles at least this long apart (seconds). */
 const IDLE_PAUSE = 8;
+/**
+ * A procedure that asks this often whether it stopped while its clock stands still goes round
+ * without ever waiting (a step that ends at once each time): its package ends as failed rather
+ * than the page hanging, and is chosen again later.
+ */
+const LOOP_LIMIT = 100_000;
 
 /** PKDT preferred speed: walk, jog, run, fast walk. */
 function gaitOf(pack: PackageRecord): Gait {
@@ -254,6 +264,9 @@ export class ActorPackages {
   /** Its own clock (real seconds, moved by update) and what waits on it. */
   #clock = 0;
   #waiting: { readonly until: number; readonly resolve: () => void }[] = [];
+  /** Asked whether its procedure stopped this often since its clock last moved (LOOP_LIMIT). */
+  #checks = 0;
+  #checkedAt = -1;
 
   constructor(
     actor: number,
@@ -541,7 +554,7 @@ export class ActorPackages {
         const input = inputOf(slot);
         if (input !== undefined) running.found.set(input, references);
       },
-      stopped: () => isStopped(running),
+      stopped: () => this.#looping(running) || isStopped(running),
       wait: (seconds) => this.#wait(running, seconds),
       random: this.#random,
     });
@@ -549,6 +562,20 @@ export class ActorPackages {
     // FNAM 0x1: its success completes the package.
     if (result === 'success' && (branch.flags & 0x1) !== 0) return 'complete';
     return result;
+  }
+
+  /** Whether a procedure goes round without end (LOOP_LIMIT): its package then ends, failed. */
+  #looping(running: Running): boolean {
+    if (this.#checkedAt !== this.#clock) {
+      this.#checkedAt = this.#clock;
+      this.#checks = 0;
+    }
+    if (++this.#checks < LOOP_LIMIT) return false;
+    let root = running;
+    while (root.parent) root = root.parent;
+    root.cut = true;
+    root.completed = true;
+    return true;
   }
 
   /** Waits real seconds (on update's clock), or until the package is left. */

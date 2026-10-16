@@ -58,7 +58,9 @@ async function placeIn(run: ProcedureRun, slot: number): Promise<PackagePlace | 
   const reference = target && (await run.mind.target(target, run.actor, run.context));
   if (reference === undefined) return undefined;
   const at = await run.mind.placement(reference);
-  return at && { position: at.position, radius: 0, reference, heading: at.heading };
+  return (
+    at && { position: at.position, radius: 0, reference, heading: at.heading, space: at.space }
+  );
 }
 
 /** The references a slot names: its object list's (what a Find found), else its one target. */
@@ -77,7 +79,10 @@ async function goToReference(
   reach: number,
 ): Promise<boolean> {
   const at = await run.mind.placement(reference);
-  return at !== undefined && (await goTo(run, { position: at.position, radius: 0 }, reach));
+  return (
+    at !== undefined &&
+    (await goTo(run, { position: at.position, radius: 0, space: at.space }, reach))
+  );
 }
 
 /** Turns to a reference for a moment. */
@@ -95,7 +100,7 @@ async function goTo(run: ProcedureRun, place: PackagePlace, arrive?: number): Pr
   const here = run.body.position();
   const reach = arrive ?? Math.max(AT_PLACE, place.radius);
   if (here && horizontal(here, place.position) <= reach) return true;
-  return run.body.travel(place.position, run.gait, reach);
+  return run.body.travel(place.position, run.gait, reach, place.space);
 }
 
 /**
@@ -140,8 +145,9 @@ const guard: ProcedureRunner = async (run) => {
 /**
  * Patrol: from its start along the references each links to (XLKR without a keyword), going to
  * each within the point radius; with "repeatable" it goes round again from its start, else it
- * succeeds at the end. "Start at nearest": it begins at the point of the patrol nearest it.
- * TODO(M10) 3.3: the idles at idle markers on the way (their timers).
+ * succeeds at the end. "Start at nearest": it begins at the point of the patrol nearest it. At
+ * an idle marker on the way it stays for the marker's timer, playing its idles. TODO(M13): the
+ * engine's own stay at a patrol's idle marker (its timer once, or each idle's length).
  */
 const patrol: ProcedureRunner = async (run) => {
   const target = run.inputs.target(0);
@@ -171,17 +177,32 @@ const patrol: ProcedureRunner = async (run) => {
     }
   }
   for (;;) {
+    // Whether the round took its time (it walked, idled or waited somewhere): one that did not
+    // (each point within reach where it stands, or none placed) waits before it goes round again.
+    let spent = false;
     for (; index < points.length; index++) {
       if (run.stopped()) return 'failure';
       const point = points[index];
       const at = point === undefined ? undefined : await run.mind.placement(point);
       if (!at) continue;
-      if (!(await goTo(run, { position: at.position, radius }, radius))) {
+      const here = run.body.position();
+      if (!here || horizontal(here, at.position) > radius) spent = true;
+      if (!(await goTo(run, { position: at.position, radius, space: at.space }, radius))) {
         // Not reached (blocked): a moment, then on to the next.
         await run.wait(IDLE_SECONDS);
+        spent = true;
+        continue;
+      }
+      // An idle marker on the way: it stays there for the marker's timer, playing its idles (a
+      // marker taken by another: it walks on).
+      if (point === undefined || run.stopped()) continue;
+      const marker = await run.mind.idleMarker(point);
+      if (marker && (await atIdleMarker(run, point, Math.max(marker.timer, MARKER_PAUSE)))) {
+        spent = true;
       }
     }
     if (!repeatable) return 'success';
+    if (!spent) await run.wait(IDLE_SECONDS);
     index = 0;
   }
 };
@@ -200,7 +221,7 @@ const follow: ProcedureRunner = async (run) => {
     const at = await run.mind.placement(leader);
     const here = run.body.position();
     if (at && here && horizontal(here, at.position) > max) {
-      await run.body.travel(at.position, 'run', min);
+      if (!(await run.body.travel(at.position, 'run', min, at.space))) await run.wait(IDLE_SECONDS);
     } else if (at && here) {
       run.body.face(Math.atan2(at.position[0] - here[0], at.position[1] - here[1]));
       await run.wait(IDLE_SECONDS / 2);
@@ -486,7 +507,10 @@ const forceGreet: ProcedureRunner = async (run) => {
     if (player && inside) {
       const here = run.body.position();
       const near = here !== undefined && horizontal(here, player.position) <= GREET_DISTANCE;
-      if (near || (await run.body.travel(player.position, run.gait, GREET_DISTANCE))) {
+      if (
+        near ||
+        (await run.body.travel(player.position, run.gait, GREET_DISTANCE, player.space))
+      ) {
         if (run.body.greet(typeof topic === 'number' ? topic : undefined)) return 'success';
       }
     }
@@ -530,7 +554,9 @@ const keepAnEyeOn: ProcedureRunner = async (run) => {
     if (within(area, at.position)) {
       await faceReference(run, target);
     } else if (within(pursuit, at.position)) {
-      await run.body.travel(at.position, run.gait, AT_PLACE * 2);
+      if (!(await run.body.travel(at.position, run.gait, AT_PLACE * 2, at.space))) {
+        await run.wait(IDLE_SECONDS);
+      }
     } else {
       return 'success';
     }
@@ -559,9 +585,11 @@ const escort: ProcedureRunner = async (run) => {
       run.body.face(Math.atan2(at.position[0] - here[0], at.position[1] - here[1]));
     } else if (!going) {
       run.body.face(undefined);
-      going = run.body.travel(destination.position, run.gait, reach).finally(() => {
-        going = undefined;
-      });
+      going = run.body
+        .travel(destination.position, run.gait, reach, destination.space)
+        .finally(() => {
+          going = undefined;
+        });
     }
     await run.wait(IDLE_SECONDS);
   }
@@ -587,7 +615,7 @@ const followTo: ProcedureRunner = async (run) => {
       return 'success';
     }
     if (at && here && horizontal(here, at.position) > max) {
-      await run.body.travel(at.position, 'run', min);
+      if (!(await run.body.travel(at.position, 'run', min, at.space))) await run.wait(IDLE_SECONDS);
     } else {
       await run.wait(IDLE_SECONDS / 2);
     }
@@ -613,7 +641,12 @@ const flee: ProcedureRunner = async (run) => {
     goal = [here[0] + (dx / length) * distance, here[1] + (dy / length) * distance, here[2]];
   }
   if (!goal) return 'failure';
-  const arrived = await run.body.travel(goal, 'run', Math.max(to?.radius ?? 0, AT_PLACE));
+  const arrived = await run.body.travel(
+    goal,
+    'run',
+    Math.max(to?.radius ?? 0, AT_PLACE),
+    to?.space,
+  );
   return arrived ? 'success' : 'failure';
 };
 

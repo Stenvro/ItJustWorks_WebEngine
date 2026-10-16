@@ -45,10 +45,14 @@ const FOUND_BED: PackageInput = {
 };
 const STEAL: PackageInput = { id: 3, type: 'Bool', value: { kind: 'bool', value: false } };
 
-/** A run of a procedure with fakes that record what it does; its object lists shared. */
-function harness(found = new Map<number, readonly number[]>()) {
+/**
+ * A run of a procedure with fakes that record what it does; its object lists shared. With
+ * `waits`, its waits are recorded too, and it is stopped after that many.
+ */
+function harness(found = new Map<number, readonly number[]>(), waits?: number) {
   const done: string[] = [];
   let stopped = false;
+  let waited = 0;
   const body = {
     reference: 1,
     position: () => [0, 0, 0],
@@ -130,7 +134,13 @@ function harness(found = new Map<number, readonly number[]>()) {
         found.set(procedureBranch.inputs[slot] ?? -1, references);
       },
       stopped: () => stopped,
-      wait: () => Promise.resolve(),
+      wait: (seconds) => {
+        if (waits !== undefined) {
+          done.push(`wait ${String(seconds)}`);
+          if (++waited >= waits) stopped = true;
+        }
+        return Promise.resolve();
+      },
       random: () => 0,
     };
     return runner(procedureRun);
@@ -169,6 +179,26 @@ describe('procedures', () => {
       'success',
     );
     expect(done).toEqual(['eat 700', 'eat 710 carried']);
+  });
+
+  it('patrols round a point it stands at: each round waits a moment', async () => {
+    const { run, done } = harness(undefined, 3);
+    const start: PackageInput = {
+      id: 0,
+      type: 'SingleRef',
+      value: {
+        kind: 'singleRef',
+        target: { type: TargetType.specificReference, value: 0x800, count: 0 },
+      },
+    };
+    const repeatable: PackageInput = { id: 1, type: 'Bool', value: { kind: 'bool', value: true } };
+    const overrides: Partial<PackageMind> = {
+      target: () => Promise.resolve(0x800),
+      linked: () => Promise.resolve(undefined),
+    };
+    // Without the wait it would go round at once without end (the page hung).
+    expect(await run('Patrol', [0, 255, 1], [start, repeatable], overrides)).toBe('failure');
+    expect(done).toEqual(['wait 1', 'wait 1', 'wait 1']);
   });
 
   it('locks and unlocks the doors of its place', async () => {

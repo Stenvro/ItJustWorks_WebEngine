@@ -197,6 +197,29 @@ describe('ActorPackages', () => {
     expect(ran).toEqual(['a']);
   });
 
+  it('ends a package whose procedure goes round without ever waiting', async () => {
+    let ended: (turns: number) => void = () => undefined;
+    const done = new Promise<number>((resolve) => {
+      ended = resolve;
+    });
+    const { actor, events } = setup([pack(1, procedure('spin'))], {
+      spin: async (run) => {
+        let turns = 0;
+        while (!run.stopped()) {
+          turns++;
+          await Promise.resolve();
+        }
+        ended(turns);
+        return 'success';
+      },
+    });
+    actor.update(0.1);
+    // Without the guard this never ends (a hung page).
+    expect(await done).toBeLessThan(200_000);
+    await tick(actor);
+    expect(events.slice(0, 2)).toEqual(['begin Pack1', 'end Pack1']);
+  });
+
   it('runs the first child of a stacked branch that may run', async () => {
     const ran: string[] = [];
     const runner =

@@ -2,6 +2,9 @@
 // VFS, the asset workers, texture and model caches, the record database and the Papyrus
 // environment. Disposed when another folder is mounted.
 
+import { loadRouteMap } from '../ai/route-map.ts';
+import type { Space } from '../ai/package-start.ts';
+import type { RouteMap } from '../ai/routes.ts';
 import { AudioLoader } from '../audio/audio-loader.ts';
 import { SoundSystem } from '../audio/sound-system.ts';
 import { loadBehaviorGraph, type BehaviorGraph } from '../formats/hkx/behavior.ts';
@@ -62,7 +65,7 @@ import {
 } from '../world/game-time.ts';
 import { PackageData } from '../ai/package-data.ts';
 import { packageStart, type GameTime, type PackageStart } from '../ai/package-start.ts';
-import type { ActorLook } from '../world/actors.ts';
+import type { ActorMind } from '../world/actors.ts';
 import type { CellActor } from '../world/cell-loader.ts';
 import { ScriptLibrary } from '../scripting/script-library.ts';
 import { PapyrusScheduler } from '../scripting/scheduler.ts';
@@ -191,6 +194,7 @@ export class GameSession {
   /** The date a new game starts on (the GameYear, GameMonth and GameDay globals). */
   #startDate: GameDate = DEFAULT_START_DATE;
   #packages: Promise<PackageData> | undefined;
+  #routes: Promise<RouteMap> | undefined;
   /** Game seconds per real second: the plugins' TimeScale global (Skyrim.esm: 20). */
   timeScale = DEFAULT_TIME_SCALE;
   /**
@@ -293,6 +297,12 @@ export class GameSession {
     this.gameHour = ((next % 24) + 24) % 24;
   }
 
+  /** The route map of the load order: navmeshes and load doors (src/ai/routes.ts), read once. */
+  routeMap(): Promise<RouteMap> {
+    this.#routes ??= this.db.then((db) => loadRouteMap(db));
+    return this.#routes;
+  }
+
   /** The AI packages and what they read (read once, shared by the actors' AI). */
   packageData(): Promise<PackageData> {
     this.#packages ??= this.db.then(async (db) => {
@@ -304,9 +314,9 @@ export class GameSession {
   }
 
   /** Where an actor's AI package has it now, as its cell loads (src/ai/package-start.ts). */
-  async packageStart(actor: CellActor, look: ActorLook): Promise<PackageStart> {
+  async packageStart(actor: CellActor, look: ActorMind, space?: Space): Promise<PackageStart> {
     const data = await this.packageData();
-    const placed = await data.reference(actor.reference);
+    const placed = space ? { space } : await data.reference(actor.reference);
     if (!placed) return { kind: 'undecided', reason: 'its cell is not known' };
     return packageStart(
       {
