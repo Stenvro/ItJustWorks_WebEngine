@@ -497,8 +497,8 @@ export class PlayMode {
       sleep: () => {
         menus.sleep();
       },
-      craft: (object) => {
-        menus.craft(object.reference, object.base);
+      craft: (object, closed) => {
+        menus.craft(object.reference, object.base, closed);
       },
       loadDoor: (text) => {
         session.hud.loadDoor(text);

@@ -105,7 +105,8 @@ their look: [formats/esm.md](formats/esm.md#actors)).
   the clips its start states play loaded, then run on by a moment its reference picks (actors
   placed together do not breathe together); clips load as the graph first asks for them (the
   female clip for women where one exists). Actors stand where they were placed (set on the
-  ground: [physics.md](physics.md#actors-on-the-ground)) until their AI packages move them (M10).
+  ground: [physics.md](physics.md#actors-on-the-ground)); near the player their movement drives
+  their graph and their clips' root motion moves them ([ai.md](ai.md#movement)).
 - **What they wear plays too:** a worn model with a behavior graph of its own runs it (the
   Dwemer centurion's `FXSteamCenturionFogSkin.nif`: Autoplay plays its AutoPlay, then loops
   AutoLoop, scrolling the steam's texture along its skin; without it the steam stood still

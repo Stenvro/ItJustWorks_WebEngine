@@ -10,7 +10,11 @@ import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '..
 import { parseControlMap, SCAN_CODES, type ControlMap } from '../formats/controlmap/controlmap.ts';
 import type { NifFile } from '../formats/nif/nif.ts';
 import { decodeWindows1252 } from '../formats/text.ts';
-import { CharacterBody } from '../physics/character.ts';
+import {
+  CharacterBody,
+  type CharacterSettings,
+  type CharacterShape,
+} from '../physics/character.ts';
 import { HAVOK_SCALE } from '../physics/collision-data.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { GRAB_DEFAULTS, type GrabSettings } from '../physics/grab.ts';
@@ -143,6 +147,33 @@ const SWIM_SUBMERSION = 0.69;
  * 32 (about forty): stairs the game lets one climb.
  */
 const STAIR_HEIGHT = 32;
+/**
+ * An actor's character controller shape, as the engine makes it from its skeleton's collision
+ * bound "BBX" (scaled): rings of the bound's narrow half extent, its full height.
+ */
+export function controllerShape(bound: {
+  readonly center: Vec3;
+  readonly halfExtents: Vec3;
+}): CharacterShape {
+  return {
+    radius: Math.min(bound.halfExtents[0], bound.halfExtents[1]),
+    height: bound.center[2] + bound.halfExtents[2],
+  };
+}
+
+/** How actors' character controllers move: the INI's gravity, the stair materials. */
+export function controllerSettings(
+  data: Pick<PlayerData, 'ini' | 'stairMaterials'>,
+): CharacterSettings {
+  return {
+    maxSlope: MAX_SLOPE,
+    fallingGravity: data.ini.number('HAVOK', 'fInAirFallingCharGravityMult'),
+    unsupportedGravity: data.ini.number('HAVOK', 'fUnsupportedGravMult'),
+    stairMaterials: data.stairMaterials,
+    stairHeight: STAIR_HEIGHT,
+  };
+}
+
 /** A door's arrival point may lie this far above its floor (game units). */
 const ARRIVAL_FLOOR_BELOW = 96;
 /** Rays around the edge of the controller's footprint, for a floor below it. */
@@ -184,6 +215,8 @@ export class Player implements Camera {
   yaw = 0;
   pitch = 0;
   pov: Pov = 'first';
+  /** The camera stays as it is (furniture that forces one: src/shell/player-furniture.ts). */
+  povLocked = false;
   /** Third-person zoom (0 = fVanityModeMinDist, 1 = fVanityModeMaxDist). */
   #zoom = 0;
   #zoomTarget = 0;
@@ -232,18 +265,8 @@ export class Player implements Camera {
     this.#body = body;
     this.character = new CharacterBody(
       setup.physics,
-      {
-        // The engine makes the controller from the skeleton's bound: its narrow side.
-        radius: Math.min(body.bound.halfExtents[0], body.bound.halfExtents[1]),
-        height: body.bound.center[2] + body.bound.halfExtents[2],
-      },
-      {
-        maxSlope: MAX_SLOPE,
-        fallingGravity: ini.number('HAVOK', 'fInAirFallingCharGravityMult'),
-        unsupportedGravity: ini.number('HAVOK', 'fUnsupportedGravMult'),
-        stairMaterials: setup.stairMaterials,
-        stairHeight: STAIR_HEIGHT,
-      },
+      controllerShape(body.bound),
+      controllerSettings(setup),
       feet,
       { reference: 0x14, kind: 'actor' },
     );
@@ -446,7 +469,9 @@ export class Player implements Camera {
   /** Every frame; `held`: the ground is not there yet, the player stays where they are. */
   update(deltaSeconds: number, held = false): void {
     const { physics, ini } = this.#setup;
-    if (this.#take('Toggle POV')) this.#setPov(this.pov === 'first' ? 'third' : 'first');
+    if (this.#take('Toggle POV') && !this.povLocked) {
+      this.setPov(this.pov === 'first' ? 'third' : 'first');
+    }
     if (this.#take('Toggle Always Run')) this.#alwaysRun = !this.#alwaysRun;
     if (this.#take('Auto-Move')) this.#autoMove = !this.#autoMove;
     if (this.#take('Sneak') && !this.character.swimming) this.sneaking = !this.sneaking;
@@ -543,7 +568,8 @@ export class Player implements Camera {
     }
   }
 
-  #setPov(pov: Pov): void {
+  /** First or third person (third: zoomed out at least to the shoulder). */
+  setPov(pov: Pov): void {
     this.pov = pov;
     if (pov === 'third') this.#zoomTarget = Math.max(this.#zoomTarget, 0);
   }
@@ -682,13 +708,15 @@ export class Player implements Camera {
     if (zoomIn) {
       if (this.pov === 'third') {
         const lowest = ini.number('Camera', 'fMinCurrentZoom');
-        if (this.#zoomTarget <= lowest + 1e-6) this.#setPov('first');
-        else this.#zoomTarget = Math.max(lowest, this.#zoomTarget - step);
+        if (this.#zoomTarget <= lowest + 1e-6) {
+          if (!this.povLocked) this.setPov('first');
+        } else this.#zoomTarget = Math.max(lowest, this.#zoomTarget - step);
       }
     } else if (this.pov === 'first') {
+      if (this.povLocked) return;
       this.#zoomTarget = ini.number('Camera', 'fMinCurrentZoom');
       this.#zoom = this.#zoomTarget;
-      this.#setPov('third');
+      this.setPov('third');
     } else {
       this.#zoomTarget = Math.min(1, this.#zoomTarget + step);
     }

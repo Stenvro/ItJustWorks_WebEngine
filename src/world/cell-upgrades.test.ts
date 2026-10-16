@@ -75,6 +75,7 @@ const data: CellData = {
   decals: [],
   primitives: [],
   emitters: [],
+  markers: [],
   acousticAreas: [],
   waterAreas: [],
   references,

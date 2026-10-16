@@ -22,6 +22,7 @@ import {
   NAVMESH_TOLERANCE,
   NavmeshSurface,
   parseNavmesh,
+  triangleNeighbour,
   type Navmesh,
 } from '../src/world/navmesh.ts';
 import { PlayWorld } from './play-world.ts';
@@ -78,6 +79,14 @@ interface Flight {
   readonly at: Vec3;
 }
 
+/** The triangles of the same mesh across a triangle's three edges (undefined: none, or a link). */
+function localNeighbours(navmesh: Navmesh, index: number): (number | undefined)[] {
+  return [0, 1, 2].map((edge) => {
+    const across = triangleNeighbour(navmesh, index, edge);
+    return typeof across === 'number' ? across : undefined;
+  });
+}
+
 /** The way up a triangle slopes (unit, horizontal), if it slopes enough to be part of a flight. */
 function slopeOf(navmesh: Navmesh, index: number): Vec3 | undefined {
   const triangle = navmesh.triangles[index];
@@ -110,9 +119,10 @@ function flightsOf(navmesh: Navmesh): Flight[] {
     while (queue.length > 0) {
       const i = queue.pop() ?? 0;
       members.push(i);
-      for (const next of navmesh.triangles[i]?.edges ?? []) {
+      for (const next of localNeighbours(navmesh, i)) {
+        if (next === undefined) continue;
         const nextWay = ways[next];
-        if (next < 0 || seen[next] || !nextWay) continue;
+        if (seen[next] || !nextWay) continue;
         if (nextWay[0] * way[0] + nextWay[1] * way[1] < SAME_WAY) continue;
         seen[next] = 1;
         queue.push(next);
@@ -155,8 +165,8 @@ function flightOf(
   const top: Landing[] = [];
   for (const i of members) {
     const corners = navmeshTriangle(navmesh, i);
-    navmesh.triangles[i]?.edges.forEach((next, edge) => {
-      if (next < 0 || inFlight.has(next) || ways[next]) return;
+    localNeighbours(navmesh, i).forEach((next, edge) => {
+      if (next === undefined || inFlight.has(next) || ways[next]) return;
       const a = corners[edge];
       const b = corners[(edge + 1) % 3];
       if (!a || !b) return;
@@ -198,8 +208,8 @@ function waypoints(flight: Flight, from: number, to: number): Vec3[] {
   const queue = [from];
   while (queue.length > 0 && !previous.has(to)) {
     const i = queue.shift() ?? 0;
-    for (const next of navmesh.triangles[i]?.edges ?? []) {
-      if (next < 0 || !members.has(next) || previous.has(next)) continue;
+    for (const next of localNeighbours(navmesh, i)) {
+      if (next === undefined || !members.has(next) || previous.has(next)) continue;
       previous.set(next, i);
       queue.push(next);
     }
@@ -211,7 +221,7 @@ function waypoints(flight: Flight, from: number, to: number): Vec3[] {
   for (let k = 1; k < path.length; k++) {
     const a = path[k - 1] ?? 0;
     const b = path[k] ?? 0;
-    const edge = navmesh.triangles[a]?.edges.indexOf(b) ?? -1;
+    const edge = localNeighbours(navmesh, a).indexOf(b);
     if (edge < 0) continue;
     const corners = navmeshTriangle(navmesh, a);
     const p = corners[edge];

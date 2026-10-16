@@ -1,5 +1,7 @@
 // VMAD: the Papyrus scripts attached to a record and their property values, plus the
-// fragment section of dialogue (INFO) and quest (QUST) records. Layout: docs/formats/esm.md
+// fragment section of dialogue (INFO), quest (QUST), scene (SCEN) and package (PACK) records.
+// Layout: docs/formats/esm.md ("Scripts and conditions", "Scenes", "AI packages"), after
+// xEdit's wbVMADFragmented* definitions.
 
 import { BinaryReader, FormatError } from '../binary-reader.ts';
 import { decodeGameText } from '../text.ts';
@@ -44,28 +46,51 @@ export interface ScriptAttachments {
   readonly version: number;
   readonly scripts: readonly AttachedScript[];
   /**
-   * Script holding the record's fragments (TIF__… for dialogue, QF_… for quest stages), if
-   * the record has a fragment section. Its properties are in `scripts`.
+   * Script holding the record's fragments (TIF__… for dialogue, QF_… for quest stages, SF_…
+   * for scenes, PF_… for packages), if the record has a fragment section. Its properties are
+   * in `scripts`.
    */
   readonly fragmentScript: string | undefined;
   /**
-   * The fragments: for dialogue, `begin`/`end` (run when the response starts / ends); for
-   * quests, one per stage log entry.
+   * The fragments: for dialogue and scenes, `begin`/`end` (run when the response or the scene
+   * starts / ends); for packages also `change`; for quests, one per stage log entry.
    */
   readonly fragments: readonly Fragment[];
+  /** A scene's phase fragments (SCEN only): run as a phase starts or completes. */
+  readonly phaseFragments: readonly PhaseFragment[];
   /** Scripts on quest aliases (QUST only). */
   readonly aliases: readonly QuestAliasScripts[];
 }
 
 export interface Fragment {
-  /** Dialogue: 'begin' or 'end'. Quest: the stage index. */
-  readonly stage: number | 'begin' | 'end';
-  /** Quest: the stage's log entry index; 0 for dialogue. */
+  /** Dialogue and scenes: 'begin' or 'end'; packages also 'change'. Quest: the stage index. */
+  readonly stage: number | 'begin' | 'end' | 'change';
+  /** Quest: the stage's log entry index; 0 otherwise. */
   readonly logEntry: number;
   readonly script: string;
   /** Function in the script, e.g. "Fragment_0". */
   readonly function: string;
 }
+
+/** When a scene phase's fragment runs (PhaseFragment.when). */
+export const PhaseFragmentFlag = { onStart: 0x1, onCompletion: 0x2 } as const;
+
+/** A scene phase's fragment. */
+export interface PhaseFragment {
+  /** The phase's index (0: the scene's first). */
+  readonly phase: number;
+  /**
+   * PhaseFragmentFlag: as the phase starts or completes. 7 vanilla fragments have neither,
+   * 6 of them on phases their scene no longer has (MQ102ATimerScene's SetStage 35 on its
+   * second phase of one): TODO(M10) whether the game runs any.
+   */
+  readonly when: number;
+  readonly script: string;
+  readonly function: string;
+}
+
+/** The order of the flagged fragments of INFO and SCEN (begin, end) and PACK (+ change). */
+const EVENT_FRAGMENTS = ['begin', 'end', 'change'] as const;
 
 const PropertyType = {
   object: 1,
@@ -164,7 +189,7 @@ class VmadReader {
 
 /**
  * Parses a VMAD field. `recordType` selects the fragment section that follows the scripts
- * (INFO and QUST; other records' fragments are not read).
+ * (INFO, QUST, SCEN and PACK; PERK fragments are not read).
  */
 export function parseVmad(data: Uint8Array, recordType: string): ScriptAttachments {
   const reader = new BinaryReader(data);
@@ -177,18 +202,35 @@ export function parseVmad(data: Uint8Array, recordType: string): ScriptAttachmen
   const scripts = vmad.scripts();
   let fragmentScript: string | undefined;
   const fragments: Fragment[] = [];
+  const phaseFragments: PhaseFragment[] = [];
   const aliases: QuestAliasScripts[] = [];
+  const flagged = recordType === 'INFO' || recordType === 'SCEN' || recordType === 'PACK';
 
-  if (reader.remaining > 0 && recordType === 'INFO') {
-    reader.skip(1); // unknown, always 2
+  if (reader.remaining > 0 && flagged) {
+    // One fragment per flag, in the flags' order (begin, end; packages also change).
+    reader.skip(1); // extra bind data version, always 2
     const flags = reader.u8();
     fragmentScript = vmad.wstring();
-    for (let bit = 0; bit < 2; bit++) {
+    const events = recordType === 'PACK' ? 3 : 2;
+    for (let bit = 0; bit < events; bit++) {
       if ((flags & (1 << bit)) === 0) continue;
-      reader.skip(1);
+      reader.skip(1); // unknown, always 1
       const script = vmad.wstring();
       const fn = vmad.wstring();
-      fragments.push({ stage: bit === 0 ? 'begin' : 'end', logEntry: 0, script, function: fn });
+      const stage = EVENT_FRAGMENTS[bit] ?? 'begin';
+      fragments.push({ stage, logEntry: 0, script, function: fn });
+    }
+    if (recordType === 'SCEN') {
+      // Then the phases' fragments: u8 when, u32 the phase.
+      const count = reader.u16();
+      for (let i = 0; i < count; i++) {
+        const when = reader.u8();
+        const phase = reader.u32();
+        reader.skip(1); // unknown, always 1
+        const script = vmad.wstring();
+        const fn = vmad.wstring();
+        phaseFragments.push({ phase, when, script, function: fn });
+      }
     }
   } else if (reader.remaining > 0 && recordType === 'QUST') {
     reader.skip(1); // unknown, always 2
@@ -213,7 +255,7 @@ export function parseVmad(data: Uint8Array, recordType: string): ScriptAttachmen
     }
   }
   if (fragmentScript === '') fragmentScript = undefined;
-  return { version, scripts, fragmentScript, fragments, aliases };
+  return { version, scripts, fragmentScript, fragments, phaseFragments, aliases };
 }
 
 /** Every form id (as stored in the plugin) that a script's properties refer to. */

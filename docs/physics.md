@@ -62,11 +62,12 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
 
 ## Actors on the ground
 
-Until actors get their own character controllers (TODO(M10)), placed actors are set on the
-ground as a controller puts them when their cell loads (`src/world/actor-ground.ts`): once the
-cell's collision is complete, a ray straight down from 16 units above where the actor is (its
-reference, or where its package has it: [ai.md](ai.md#where-packages-put-actors)), on what
-the character controller collides with, gives the feet's height. The controller falls, so the
+Actors are set on the ground as a controller puts them when their cell loads
+(`src/world/actor-ground.ts`; near the player they then get a character controller of their own:
+[ai.md](ai.md#movement)): once the cell's collision is complete, a ray straight down from 16
+units above where the actor stands (its reference, where a script moved it, or where its package
+has it: [ai.md](ai.md#where-packages-put-actors)), on what the character controller collides
+with, gives the feet's height. The controller falls, so the
 ground may be any distance below: leveled animals and bandits in the wilderness are placed up
 to 120 units above it. Races that tilt lean with the ground's normal there: RACE DATA flag 0x8
 "tilt front/back" (four-legged animals) about their sideways axis, 0x10 "tilt left/right"
@@ -274,7 +275,9 @@ and fall where they lie as their cell settles. 43 of the 49 race skeletons with 
 to rest on a floor; the mammoth's, sabre cat's, steam centurion's, netch's and riekling boar's
 keep stirring without the constraints' friction (TODO(M13), as above). TODO(M13): the pose a
 dead actor's ragdoll starts from when its cell first loads is not documented; here the
-skeleton's rest pose.
+skeleton's rest pose. Those the running game kills lie the same way when their cell loads again;
+one that dies in sight falls from the pose it had (its living bodies, keyframed to its pose, are
+let go: [ai.md](ai.md#movement)).
 
 **Border regions:** in a worldspace with border regions (see
 [esm.md](formats/esm.md#border-regions)) movement that would leave them stops at the edge, and

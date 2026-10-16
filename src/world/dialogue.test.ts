@@ -11,6 +11,9 @@ const info = (formId: number, previous?: number): InfoRecord => ({
   sharedInfo: undefined,
   prompt: undefined,
   speaker: undefined,
+  favorLevel: 0,
+  walkAwayTopic: undefined,
+  audioOutputOverride: undefined,
   responses: [],
   conditions: [],
 });

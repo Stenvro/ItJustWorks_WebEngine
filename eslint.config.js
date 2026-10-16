@@ -11,7 +11,8 @@ const nodeApis = {
 };
 
 export default defineConfig(
-  globalIgnores(['dist/', 'coverage/']),
+  // .claude/ holds local worktrees (copies of the repository).
+  globalIgnores(['dist/', 'coverage/', '.claude/']),
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
   tseslint.configs.stylisticTypeChecked,

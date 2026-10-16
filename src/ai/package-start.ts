@@ -48,6 +48,8 @@ export interface PackageReference {
   readonly space: Space;
   /** Its base's record type (FURN, IDLM, ACHR, STAT, ...). */
   readonly baseType: string;
+  /** Where it is placed. */
+  readonly position: readonly [number, number, number];
 }
 
 /** The actor whose package is asked for. */
@@ -63,6 +65,8 @@ export interface PackageActor {
   /** Its packages in order (PKID of the NPC_ its AI packages come from). */
   readonly packages: readonly number[];
   readonly space: Space;
+  /** Where it is placed (an area its package names keeps it there when it is within it). */
+  readonly position?: readonly [number, number, number];
   /** Its linked reference by keyword (0: none), XLKR. */
   linked(keyword: number): number | undefined;
 }
@@ -100,6 +104,11 @@ export type PackageStart =
       readonly reference: number;
       /** It is in the furniture (Sit, Sleep, ...): the furniture holds it, not the ground. */
       readonly furniture: boolean;
+      /**
+       * How far round the reference the place reaches (a sandbox's area): the actor stands on
+       * the navmesh near the reference, not on it (a marker in a hearth's fire).
+       */
+      readonly radius: number;
     }
   /** Its package has it in another cell or world. */
   | { readonly kind: 'elsewhere'; readonly package: number; readonly procedure: string }
@@ -366,7 +375,7 @@ function firstProcedure(
 }
 
 /** The package's inputs over its template's (the template's values are defaults). */
-function mergedInputs(
+export function mergedInputs(
   pack: PackageRecord,
   template: PackageRecord | undefined,
 ): Map<number, PackageInput> {
@@ -408,13 +417,13 @@ async function locationPlace(
 ): Promise<PackageStart> {
   switch (location.type) {
     case LocationType.nearReference:
-      return referencePlace(id, procedure, location.form, actor, world);
+      return referencePlace(id, procedure, location.form, actor, world, location.radius);
     case LocationType.nearLinkedReference: {
       const linked = actor.linked(location.form);
       // Without the link (scripts link some actors as they need them) the place is not known.
       return linked === undefined
         ? { kind: 'undecided', package: id, reason: 'its linked reference is missing' }
-        : referencePlace(id, procedure, linked, actor, world);
+        : referencePlace(id, procedure, linked, actor, world, location.radius);
     }
     case LocationType.inCell: {
       const space = await world.cellSpace(location.form);
@@ -465,6 +474,7 @@ async function referencePlace(
   reference: number,
   actor: PackageActor,
   world: PackageWorld,
+  radius = 0,
 ): Promise<PackageStart> {
   const placed = await world.reference(reference);
   if (!placed) return { kind: 'undecided', package: id, reason: 'its reference is not placed' };
@@ -472,11 +482,16 @@ async function referencePlace(
     return { kind: 'here', package: id, procedure };
   }
   if (!sameSpace(placed.space, actor.space)) return { kind: 'elsewhere', package: id, procedure };
-  return {
-    kind: 'at',
-    package: id,
-    procedure,
-    reference,
-    furniture: placed.baseType === 'FURN' && FURNITURE_PROCEDURES.has(procedure.toLowerCase()),
-  };
+  const furniture = placed.baseType === 'FURN' && FURNITURE_PROCEDURES.has(procedure.toLowerCase());
+  // An area round the reference that the actor is placed in already: it stays.
+  const at = actor.position;
+  if (
+    !furniture &&
+    at &&
+    radius > 0 &&
+    Math.hypot(at[0] - placed.position[0], at[1] - placed.position[1]) <= radius
+  ) {
+    return { kind: 'here', package: id, procedure };
+  }
+  return { kind: 'at', package: id, procedure, reference, furniture, radius };
 }

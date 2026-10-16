@@ -186,11 +186,14 @@ export type BehaviorGenerator =
       readonly selectedGeneratorIndex: Bindable;
     }
   | {
-      /** BSiStateTaggingGenerator: plays its generator, tagging the actor's state. */
+      /**
+       * BSiStateTaggingGenerator: plays its generator, tagging the actor's state (iStateToSetAs,
+       * bound to an iState_<movement type> variable: the engine's movement type while active).
+       */
       readonly kind: 'state-tagging';
       readonly name: string;
       readonly generator: BehaviorGenerator | undefined;
-      readonly iState: number;
+      readonly iState: Bindable;
       readonly priority: number;
     }
   | {
@@ -649,7 +652,7 @@ class GraphReader {
           kind: 'state-tagging',
           name,
           generator: child(80),
-          iState: file.i32(at + 88),
+          iState: bindable('iStateToSetAs', file.i32(at + 88)),
           priority: file.i32(at + 92),
         };
       case 'BSCyclicBlendTransitionGenerator':

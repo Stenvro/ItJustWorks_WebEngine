@@ -4,6 +4,8 @@
 // Platform-independent.
 // Notes: docs/formats/esm.md ("Material types").
 
+import { bsCrc32 } from '../formats/crc32.ts';
+
 /** The record fields a material type is read from. */
 interface RecordSource {
   readonly formId: number;
@@ -33,23 +35,9 @@ export interface MaterialType {
   readonly impactDataSet: number | undefined;
 }
 
-const CRC_TABLE = (() => {
-  const table = new Uint32Array(256);
-  for (let i = 0; i < 256; i++) {
-    let c = i;
-    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    table[i] = c >>> 0;
-  }
-  return table;
-})();
-
 /** The engine's material id of a name: CRC-32 (start 0, no final inversion) of its ASCII. */
 export function materialId(name: string): number {
-  let crc = 0;
-  for (const char of name.toLowerCase()) {
-    crc = ((CRC_TABLE[(crc ^ (char.charCodeAt(0) & 0xff)) & 0xff] ?? 0) ^ (crc >>> 8)) >>> 0;
-  }
-  return crc;
+  return bsCrc32(name.toLowerCase());
 }
 
 export function parseMaterialType(record: RecordSource): MaterialType {

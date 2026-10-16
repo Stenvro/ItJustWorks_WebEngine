@@ -627,8 +627,16 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     const reference = self(call);
     return reference === undefined ? 0 : (world.triggerCount?.(reference) ?? 0);
   });
-  n('objectreference.isfurnitureinuse', () => false);
-  n('objectreference.isfurnituremarkerinuse', () => false);
+  n('objectreference.isfurnitureinuse', (call) => {
+    const reference = self(call);
+    return reference !== undefined && (world.furnitureInUse?.(reference) ?? false);
+  });
+  n('objectreference.isfurnituremarkerinuse', (call) => {
+    const reference = self(call);
+    return (
+      reference !== undefined && (world.furnitureInUse?.(reference, int(call.args[0])) ?? false)
+    );
+  });
   n('objectreference.calculateencounterlevel', () => 1);
   n('objectreference.reset', async (call) => {
     const reference = self(call);

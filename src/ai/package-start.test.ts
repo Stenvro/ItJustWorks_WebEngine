@@ -47,19 +47,24 @@ const procedure = (
 ): ProcedureBranch => ({
   type: 'Procedure',
   conditions,
+  branchFlags: 0,
   procedure: name,
   flags: 0,
   inputs,
+  flagOverride: undefined,
   children: [],
 });
 const sequence = (...children: ProcedureBranch[]): ProcedureBranch => ({
   type: 'Sequence',
   conditions: [],
+  branchFlags: 0,
   procedure: undefined,
   flags: 0,
   inputs: [],
+  flagOverride: undefined,
   children,
 });
+const NO_EVENT = { idle: undefined, topic: undefined };
 
 const pack = (
   formId: number,
@@ -74,14 +79,18 @@ const pack = (
   interruptFlags: 0,
   schedule: undefined,
   conditions: [],
+  idles: undefined,
+  combatStyle: undefined,
   ownerQuest: undefined,
   template: undefined,
+  inputCount: 0,
+  version: 0,
   inputs: [],
   tree: undefined,
   inputNames: [],
-  onBegin: undefined,
-  onEnd: undefined,
-  onChange: undefined,
+  onBegin: NO_EVENT,
+  onEnd: NO_EVENT,
+  onChange: NO_EVENT,
   ...fields,
 });
 
@@ -93,10 +102,12 @@ const TEMPLATES = [
 ];
 
 const REFERENCES = new Map<number, PackageReference>([
-  [0x2c934, { space: TAMRIEL, baseType: 'IDLM' }],
-  [0xf50d5, { space: TAMRIEL, baseType: 'FURN' }],
-  [0xd46b7, { space: { kind: 'interior', cell: 0x36ed6 }, baseType: 'FURN' }],
-  [0x14, { space: TAMRIEL, baseType: 'NPC_' }],
+  [0x2c934, { space: TAMRIEL, baseType: 'IDLM', position: [0, 0, 0] }],
+  [0xf50d5, { space: TAMRIEL, baseType: 'FURN', position: [0, 0, 0] }],
+  [0xd46b7, { space: { kind: 'interior', cell: 0x36ed6 }, baseType: 'FURN', position: [0, 0, 0] }],
+  [0x14, { space: TAMRIEL, baseType: 'NPC_', position: [0, 0, 0] }],
+  // A sandbox's marker (in a hearth).
+  [0xdddc9, { space: TAMRIEL, baseType: 'STAT', position: [-118, -374, 64] }],
 ]);
 
 function world(packages: PackageRecord[], aliases: number[] | 'unknown' = []): PackageWorld {
@@ -252,6 +263,37 @@ describe('where packages put actors', () => {
     // An actor target (the player) moves: the actor stays where it was placed.
     expect(await packageStart(actor([0x102]), world([sit(0x14)]), at(10))).toMatchObject({
       kind: 'here',
+    });
+  });
+
+  it('keeps an actor placed within the area round a reference, else puts it near the reference', async () => {
+    const sandbox = pack(0x106, {
+      tree: procedure('Sandbox', [0]),
+      inputs: [
+        {
+          id: 0,
+          type: 'Location',
+          value: {
+            kind: 'location',
+            location: { type: LocationType.nearReference, form: 0xdddc9, radius: 300 },
+          },
+        },
+      ],
+    });
+    const data = world([sandbox]);
+    const placedAt = (position: [number, number, number]) => ({
+      ...actor([0x106]),
+      position,
+    });
+    expect(await packageStart(placedAt([66, -580, 68]), data, at(10))).toMatchObject({
+      kind: 'here',
+      procedure: 'Sandbox',
+    });
+    expect(await packageStart(placedAt([900, -580, 68]), data, at(10))).toMatchObject({
+      kind: 'at',
+      reference: 0xdddc9,
+      furniture: false,
+      radius: 300,
     });
   });
 

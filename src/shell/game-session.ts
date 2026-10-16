@@ -293,14 +293,19 @@ export class GameSession {
     this.gameHour = ((next % 24) + 24) % 24;
   }
 
-  /** Where an actor's AI package has it now, as its cell loads (src/ai/package-start.ts). */
-  async packageStart(actor: CellActor, look: ActorLook): Promise<PackageStart> {
+  /** The AI packages and what they read (read once, shared by the actors' AI). */
+  packageData(): Promise<PackageData> {
     this.#packages ??= this.db.then(async (db) => {
       const data = new PackageData(db, undefined, () => this.scriptsReady);
       await data.ready();
       return data;
     });
-    const data = await this.#packages;
+    return this.#packages;
+  }
+
+  /** Where an actor's AI package has it now, as its cell loads (src/ai/package-start.ts). */
+  async packageStart(actor: CellActor, look: ActorLook): Promise<PackageStart> {
+    const data = await this.packageData();
     const placed = await data.reference(actor.reference);
     if (!placed) return { kind: 'undecided', reason: 'its cell is not known' };
     return packageStart(
@@ -313,6 +318,7 @@ export class GameSession {
         factions: look.factions,
         packages: look.packages,
         space: placed.space,
+        position: actor.position,
         linked: (keyword) => actor.links.get(keyword),
       },
       data,

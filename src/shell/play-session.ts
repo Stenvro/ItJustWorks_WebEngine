@@ -26,6 +26,7 @@ import type { InstanceMotion, ModelInstance, PointLight } from '../render/scene-
 import type { CellObject, CellPrimitive, ObjectLock, Teleport } from '../world/cell-loader.ts';
 import { lockDifficulty, lockLevelSetting } from '../gameplay/lockpicking.ts';
 import type { LandData } from '../world/land.ts';
+import type { ActorMotion } from '../scripting/runtime/runtime.ts';
 import type { Player } from './player.ts';
 import { attachPlayerInput } from './player-input.ts';
 import type { HudSignals } from './hud-signals.ts';
@@ -69,10 +70,10 @@ export interface ObjectUses {
   take(object: CellObject): void;
   /** The player reads a book lying in the world (the book menu; it can be taken from there). */
   read(object: CellObject): void;
-  /** The player sleeps in a bed (the sleep menu). TODO(M10): getting into the bed first. */
+  /** The player sleeps in a bed (the sleep menu; as in the game they do not lie down). */
   sleep(object: CellObject): void;
-  /** The player uses a workbench (the crafting menu). */
-  craft(object: CellObject): void;
+  /** The player uses a workbench (the crafting menu); `closed` once its menu is closed. */
+  craft(object: CellObject, closed?: () => void): void;
   /** A load door was opened: its prompt stays while its place loads. */
   loadDoor(text: string): void;
   /** Its lock now, if it is locked (scripts lock and unlock: the state, else as placed). */
@@ -82,6 +83,36 @@ export interface ObjectUses {
    * `then` once it is open by its key (activating it goes on).
    */
   unlock(object: CellObject, then: () => void): void;
+}
+
+/**
+ * An actor on its way opens a door (not a load door) that is shut and not locked: it plays its
+ * open sequence and sound, and shuts again after `closeAfter` seconds (unless it was open
+ * before). TODO(M13): when the engine shuts doors actors opened is not documented. Returns
+ * whether the door is open (or opening) now.
+ */
+export function actorOpensDoor(
+  object: CellObject,
+  instance: ModelInstance | undefined,
+  locked: boolean,
+  sound?: (descriptor: number, at: Vec3) => void,
+  closeAfter = 3,
+): boolean {
+  const playback = instance?.playback;
+  if (object.baseType !== 'DOOR' || object.teleport || !playback) return false;
+  if (playback.sequence === 'open') return true;
+  if (locked) return false;
+  const at: Vec3 = [object.world[12] ?? 0, object.world[13] ?? 0, object.world[14] ?? 0];
+  if (object.sounds?.open !== undefined) sound?.(object.sounds.open, at);
+  playback.sequence = 'open';
+  playback.start = clock();
+  setTimeout(() => {
+    if (playback.sequence !== 'open') return;
+    if (object.sounds?.close !== undefined) sound?.(object.sounds.close, at);
+    playback.sequence = 'close';
+    playback.start = clock();
+  }, closeAfter * 1000);
+  return true;
 }
 
 /**
@@ -101,6 +132,10 @@ export function objectActivation(
   /** Plays a sound (SNDR) at the object. */
   sound?: (descriptor: number, at: Vec3) => void,
   uses?: ObjectUses,
+  /** The player gets into furniture (src/shell/player-furniture.ts). */
+  seat?: {
+    use(object: CellObject, then?: (leave: () => void) => void): Promise<boolean>;
+  },
 ): Activatable | undefined {
   const at: Vec3 = [object.world[12] ?? 0, object.world[13] ?? 0, object.world[14] ?? 0];
   const play = (descriptor: number | undefined): void => {
@@ -117,7 +152,7 @@ export function objectActivation(
       name: `${name} (${uses.text(lockLevelSetting(lockDifficulty(lock.level)))})`,
       activate: () => {
         uses.unlock(object, () => {
-          objectActivation(object, instance, travel, sound, uses)?.activate();
+          objectActivation(object, instance, travel, sound, uses, seat)?.activate();
         });
       },
     };
@@ -180,7 +215,14 @@ ${name}`);
       verb: verb('sCraft', 'Craft'),
       name: object.name,
       activate: () => {
-        uses.craft(object);
+        // At the workbench first (its idle), its menu then; closing it gets the player up.
+        if (!seat || !object.furniture?.sit) {
+          uses.craft(object);
+          return;
+        }
+        void seat.use(object, (leave) => {
+          uses.craft(object, leave);
+        });
       },
     };
   }
@@ -190,6 +232,15 @@ ${name}`);
       name: object.name,
       activate: () => {
         uses.sleep(object);
+      },
+    };
+  }
+  if (seat && object.furniture?.sit) {
+    return {
+      verb: verb('sSit', 'Sit'),
+      name: object.name,
+      activate: () => {
+        void seat.use(object);
       },
     };
   }
@@ -447,6 +498,8 @@ export class PlaySession {
    * face), while it is set.
    */
   cameraOverride: Camera | undefined;
+  /** Furniture holds the player (src/shell/player-furniture.ts): they do not move. */
+  seated = false;
 
   /** Lights a menu adds to the world while it is open (the race menu's two). */
   extraLights: readonly PointLight[] = [];
@@ -463,6 +516,23 @@ export class PlaySession {
 
   get freeCamera(): boolean {
     return this.#freeCamera;
+  }
+
+  /** How the player moves now (its conditions and natives read it). */
+  playerMotion(): ActorMotion {
+    const player = this.player;
+    const { moving, running, sprinting } = player.motion;
+    const free = this.#freeCamera || this.#spawnPending;
+    const [vx, vy] = player.character.velocity;
+    return {
+      moving: !free && moving,
+      running: !free && moving && running,
+      sprinting: !free && sprinting,
+      sneaking: player.sneaking,
+      swimming: player.character.swimming,
+      speed: free ? 0 : Math.hypot(vx, vy),
+      pathing: false,
+    };
   }
 
   /** Where the player (or the free camera) looks along. */
@@ -522,19 +592,25 @@ export class PlaySession {
     this.#moveKeyframed();
     if (this.#freeCamera || this.#spawnPending) {
       this.camera.update(deltaSeconds);
-      this.physics.step(deltaSeconds);
+      this.physics.step(deltaSeconds, (step) => {
+        for (const hook of this.stepHooks) hook(step);
+      });
       this.#setTarget(undefined);
     } else {
       this.player.onStep = (step) => {
         this.#holdGrabbed(step);
+        for (const hook of this.stepHooks) hook(step);
       };
       // Where the ground has not loaded yet (streaming ahead of a fast player), the player
       // waits instead of falling through.
-      this.player.update(deltaSeconds, !this.#groundReady(this.player.feet));
+      this.player.update(deltaSeconds, this.seated || !this.#groundReady(this.player.feet));
       // What the player walked into moves from now on (held objects wait for a touch).
       for (const collider of this.player.character.touched) this.physics.touch(collider);
-      // An actor nearer than what the physics pick found is the target.
-      const picked = this.#pick();
+      // An actor nearer than what the physics pick found is the target. The pick meets actors'
+      // character controllers (L_ITEMPICKER collides with L_CHARCONTROLLER): an actor in the
+      // way is found by its body (actorAt), and hides what is behind it.
+      const pickedAny = this.#pick();
+      const picked = pickedAny?.owner?.kind === 'actor' ? undefined : pickedAny;
       const ray = this.#pickRay();
       const actor = this.#actorAt?.(ray.origin, ray.direction, ray.length, ray.radius);
       const actorFirst = actor !== undefined && (!picked || actor.distance < picked.distance);
@@ -608,6 +684,11 @@ export class PlaySession {
    */
   #activate(hit: PickHit | undefined): void {
     const player = this.player;
+    // In furniture the player activates nothing (a movement key gets them up).
+    if (this.seated) {
+      player.takePressed('Activate');
+      return;
+    }
     if (player.takePressed('Activate') && !this.#grab) {
       const body = hit && this.physics.grabbable(hit.collider);
       if (hit && body) {
@@ -758,6 +839,11 @@ export class PlaySession {
 
   /** The player entered (true) or left a trigger volume of a reference. */
   onTrigger: ((reference: number, entered: boolean) => void) | undefined;
+  /**
+   * What runs on every physics step, before the world steps, after the player moved: the
+   * actors' character controllers (src/shell/actor-stage.ts).
+   */
+  readonly stepHooks = new Set<(step: number) => void>();
   #inTriggers = new Set<number>();
 
   /** A cell's collision is complete: the warm start lets its loose objects settle. */

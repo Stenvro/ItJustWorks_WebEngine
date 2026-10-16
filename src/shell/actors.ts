@@ -13,12 +13,7 @@ import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { thinModelPath, type ModelTextureSwaps } from '../render/actor-model.ts';
 import { transformPoint, type Vec3 } from '../render/math.ts';
-import type {
-  GpuModel,
-  GpuMorphs,
-  InstanceVisibility,
-  ModelInstance,
-} from '../render/scene-renderer.ts';
+import type { GpuModel, GpuMorphs, ModelInstance } from '../render/scene-renderer.ts';
 import {
   ActorResolver,
   meshPath,
@@ -93,22 +88,26 @@ export function actorFeet(placed: PlacedActor): Vec3 {
 }
 
 /**
- * Sets an actor on the ground under its reference (src/world/actor-ground.ts); `cast` finds
+ * Sets an actor on the ground under where it stands (src/world/actor-ground.ts); `cast` finds
  * what a ray straight down from a point meets within a length (what character controllers
- * stand on). Its instances share one placement, which moves with them.
+ * stand on). Its instances share one placement, which moves with them. The dead (their
+ * ragdolls fall), actors in furniture and races that do not walk stay as they are.
  */
 export function groundActor(
   placed: PlacedActor,
+  position: Vec3,
+  heading: number,
   cast: (from: Vec3, length: number) => GroundHit | undefined,
 ): void {
   const instance = placed.instances[0];
-  if (!instance?.motion || placed.inFurniture || !standsOnGround(placed.look.raceFlags)) return;
-  const [x, y, z] = placed.actor.position;
+  if (!instance?.motion || placed.actor.startsDead || placed.inFurniture) return;
+  if (!standsOnGround(placed.look.raceFlags)) return;
+  const [x, y, z] = position;
   const hit = cast([x, y, z + GROUND_ABOVE], GROUND_ABOVE + GROUND_BELOW);
   if (!hit) return;
   const upright = referenceMatrix({
-    position: placed.actor.position,
-    rotation: [0, 0, placed.actor.rotation[2]],
+    position,
+    rotation: [0, 0, heading],
     scale: placed.actor.scale * placed.look.scale,
   });
   instance.world.set(groundedPlacement(upright, placed.look.raceFlags, hit));
@@ -134,7 +133,10 @@ export function moveActor(
   });
   const [x, y, z] = position;
   const hit =
-    physics && !placed.inFurniture && standsOnGround(placed.look.raceFlags)
+    physics &&
+    !placed.inFurniture &&
+    !placed.actor.startsDead &&
+    standsOnGround(placed.look.raceFlags)
       ? physics.raycast(
           [x, y, z + GROUND_ABOVE],
           [0, 0, -1],
@@ -148,52 +150,6 @@ export function moveActor(
       : upright,
   );
   instance.motion.version++;
-}
-
-/**
- * An actor made again in the race Actor.SetRace gave it (its look, skeleton and graph that
- * race's), standing where it stands now; undefined if it cannot be made.
- */
-export async function placeAgain(
-  session: GameSession,
-  old: PlacedActor,
-  placedInCell: CellActor,
-): Promise<PlacedActor | undefined> {
-  const race = session.scriptsReady?.state.actors.get(old.actor.reference)?.race;
-  const placer = await session.actors();
-  const placed = await placer.place(placedInCell, undefined, race);
-  const instance = placed?.instances[0];
-  const from = old.instances[0]?.world;
-  if (instance && from) {
-    instance.world.set(from);
-    if (instance.motion) instance.motion.version++;
-  }
-  return placed;
-}
-
-/**
- * A scene's instances with an actor's replaced by those of the actor made again (drawn with
- * its reference's visibility).
- */
-export function withActorInstances(
-  instances: readonly ModelInstance[],
-  old: PlacedActor,
-  placed: PlacedActor,
-  visibility: InstanceVisibility | undefined,
-): ModelInstance[] {
-  return [
-    ...instances.filter((instance) => instance.pose !== old.pose),
-    ...placed.instances.map((instance) => ({ ...instance, ...(visibility && { visibility }) })),
-  ];
-}
-
-/** Sets placed actors on what character controllers stand on in a physics world. */
-export function groundActors(actors: readonly PlacedActor[], physics: PhysicsWorld): void {
-  const cast = (from: Vec3, length: number): GroundHit | undefined => {
-    const hit = physics.raycast(from, [0, 0, -1], length, Layer.charController);
-    return hit && { point: hit.point, normal: hit.normal };
-  };
-  for (const placed of actors) groundActor(placed, cast);
 }
 
 /**
@@ -406,9 +362,9 @@ export class ActorPlacer {
 
   /**
    * An actor moved to a reference its package names: on it, facing its way; in furniture, at
-   * its first active marker (FURN MNAM), facing the marker's heading. TODO(M10): the
-   * furniture's idle, which puts the actor's root at the marker's height (a bed's surface, an
-   * alcove's 114 units); until then the feet stay at the furniture's.
+   * its first active marker (FURN MNAM), facing the marker's heading, its root at the
+   * furniture's height (the furniture's idles put the body on the seat: src/shell/actor-
+   * furniture.ts, which takes it from here).
    */
   async #atReference(actor: CellActor, reference: number, furniture: boolean): Promise<CellActor> {
     const record = await this.#db.get(reference);
@@ -567,6 +523,13 @@ export class ActorPlacer {
     placedInCell: CellActor,
     made?: MadeLook,
     race?: number,
+    options?: {
+      /**
+       * It stands where `placedInCell` says (a script moved it, it is made again where it
+       * stands): its package does not place it.
+       */
+      readonly here?: boolean;
+    },
   ): Promise<PlacedActor | undefined> {
     const overrides: LookOverrides = {
       ...made?.overrides,
@@ -582,9 +545,10 @@ export class ActorPlacer {
     if (!look?.skeleton) return undefined;
     const session = this.#session;
     // The dead run no packages.
-    const start = placedInCell.startsDead
-      ? undefined
-      : await session.packageStart(placedInCell, look);
+    const start =
+      placedInCell.startsDead || options?.here === true
+        ? undefined
+        : await session.packageStart(placedInCell, look);
     if (start?.kind === 'elsewhere') return undefined;
     const actor =
       start?.kind === 'at'
@@ -688,16 +652,16 @@ export class ActorPlacer {
       ...(look.skinTone && { skin: look.skinTone }),
       ...(look.hairColor && { hair: look.hairColor }),
     };
-    // Actors that stand on the ground are moved onto it once their cell's collision is in; the
-    // dead's ragdolls fall (ragdollsOf).
-    const motion = !dead && standsOnGround(look.raceFlags) ? { version: 0 } : undefined;
+    // Every actor can move (its feet set on the ground, a script's MoveTo, its AI); the
+    // dead's ragdolls pose them where they lie (ragdollsOf).
+    const motion = { version: 0 };
     const instances = models.map(({ model, addon }, i): ModelInstance => {
       // What it wears plays its own graph (the steam that flows around automatons' joints).
       const graph = startObjectGraph(model, actor.reference);
       return {
         model,
         world,
-        ...(motion && { motion }),
+        motion,
         ...(graph && { graph }),
         pose,
         ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),

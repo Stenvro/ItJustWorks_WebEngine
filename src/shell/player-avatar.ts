@@ -7,6 +7,7 @@
 // choices), made again whenever that changes or a script changes the player's race.
 // Notes: docs/animation.md ("The player").
 
+import { Locomotion, type LocomotionGraph } from '../ai/locomotion.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { ActorPose, ActorSkeleton } from '../animation/skeleton.ts';
@@ -28,25 +29,6 @@ const FIRST_PERSON_PROJECT = 'meshes\\actors\\character\\_1stperson\\firstperson
 const CAMERA_NODE = 'Camera1st [Cam1]';
 /** A frame longer than this (a hitch, a hidden tab) moves the avatar by this much (s). */
 const MAX_STEP = 0.1;
-
-/** The flags the graphs were last told, so events go out when they change. */
-interface Told {
-  moving: boolean;
-  sprinting: boolean;
-  sneaking: boolean;
-  swimming: boolean;
-  airborne: boolean;
-  falling: boolean;
-}
-
-const NOT_TOLD: Told = {
-  moving: false,
-  sprinting: false,
-  sneaking: false,
-  swimming: false,
-  airborne: false,
-  falling: false,
-};
 
 /** A body made for the player: the placed actor and the scene that draws it. */
 interface Made {
@@ -78,7 +60,8 @@ export class PlayerAvatar {
   /** The avatar's own clock (s): the game's, and real time while it animates in a menu. */
   #clock = 0;
   #last: { readonly seconds: number; readonly real: number } | undefined;
-  #told: Told = { ...NOT_TOLD };
+  /** Its movement, as the graphs' variables and events (shared with the NPCs). */
+  readonly #locomotion = new Locomotion();
   /** A jump's animation started: the graph's JumpUp pushes off. */
   #jumping = false;
   /** An idle the body holds (the race menu's pose): sent again to a body made again. */
@@ -115,7 +98,7 @@ export class PlayerAvatar {
     this.#bodyYaw = player.yaw;
     player.jumpTrigger = (moving) => {
       this.#jumping = true;
-      this.#send(moving ? 'JumpDirectionalStart' : 'JumpStandingStart');
+      this.send(moving ? 'JumpDirectionalStart' : 'JumpStandingStart');
     };
     player.cameraOffset = () => this.#cameraOffset();
     this.#listen(made.body);
@@ -134,6 +117,11 @@ export class PlayerAvatar {
   get firstPerson(): AnimatedSkeleton | undefined {
     return this.#firstPerson;
   }
+
+  /** Furniture holds the player: its graphs are moved by the furniture's idles, not its walk. */
+  seated = false;
+  /** The seconds its graphs moved in the last update (the furniture's root motion). */
+  stepped = 0;
 
   /** Which way the body faces (radians, compass heading); the race menu turns it. */
   get bodyYaw(): number {
@@ -280,7 +268,7 @@ export class PlayerAvatar {
     const old = this.#made;
     this.#made = made;
     this.#listen(made.body);
-    this.#told = { ...NOT_TOLD };
+    this.#locomotion.reset();
     if (this.#pose !== undefined) made.body.behavior?.sendEvent(this.#pose);
     old.body.onEvents = undefined;
     old.scene.destroy();
@@ -334,7 +322,8 @@ export class PlayerAvatar {
     const step = !last ? 0 : this.animatesInMenus ? real - last.real : seconds - last.seconds;
     const dt = Math.min(MAX_STEP, Math.max(0, step));
     this.#clock += dt;
-    this.#drive(dt);
+    this.stepped = dt;
+    if (!this.seated) this.#drive(dt);
     const body = this.#made.body;
     const skeletons: AnimatedSkeleton[] = [body];
     if (this.#firstPerson) skeletons.push(this.#firstPerson);
@@ -371,50 +360,29 @@ export class PlayerAvatar {
   /** What the player does, as the graphs' variables and events; the body's facing. */
   #drive(dt: number): void {
     const player = this.#player;
-    const motion = player.motion;
     const character = player.character;
-    const [vx, vy] = character.velocity;
-    const speed = Math.hypot(vx, vy);
-    const swimming = character.swimming;
-    const airborne = !character.grounded && !swimming;
     // Third person: the body turns to the way it moves (weapons sheathed); first person it
     // faces where the camera looks. A menu that shows the player turns it itself (bodyYaw).
     if (!this.animatesInMenus) this.#face(dt);
-    // The direction of the movement against the facing: 0 ahead, 0.25 right, 0.5 behind.
-    const relative = Math.atan2(vx, vy) - this.#bodyYaw;
-    const direction = speed > 1 ? (((relative / (2 * Math.PI)) % 1) + 1) % 1 : 0;
-    this.#set('Speed', speed);
-    this.#set('Direction', direction);
-    this.#set('IsSprinting', motion.sprinting ? 1 : 0);
-    this.#set('IsSneaking', player.sneaking ? 1 : 0);
-    const told = this.#told;
-    const moving = speed > 5;
-    // The engine keeps iSyncIdleLocomotion with the movement (its name is in the executable;
-    // no graph writes it outside blocking): 38 state machines start from it, leaving state 0 on
-    // moveStart and state 1 on moveStop, so a graph that comes back (landing from a jump)
-    // starts moving while the player moves.
-    this.#set('iSyncIdleLocomotion', moving ? 1 : 0);
-    if (moving !== told.moving) this.#send(moving ? 'moveStart' : 'moveStop');
-    if (motion.sprinting !== told.sprinting) {
-      this.#send(motion.sprinting ? 'SprintStart' : 'SprintStop');
-    }
-    if (player.sneaking !== told.sneaking) this.#send(player.sneaking ? 'SneakStart' : 'SneakStop');
-    if (swimming !== told.swimming) this.#send(swimming ? 'SwimStart' : 'SwimStop');
-    // In the air: falling once it comes down; landing when it stands again.
-    const falling = airborne && character.verticalSpeed < 0;
-    if (falling && !told.falling) this.#send('JumpFall');
-    if (!airborne && told.airborne) {
-      this.#jumping = false;
-      this.#send(moving ? 'JumpLandDirectional' : 'JumpLand');
-    }
-    this.#told = {
-      moving,
-      sprinting: motion.sprinting,
+    const landed = this.#locomotion.drive(this.#graphs(), {
+      velocity: character.velocity,
+      heading: this.#bodyYaw,
+      seconds: dt,
+      grounded: character.grounded,
+      swimming: character.swimming,
+      verticalSpeed: character.verticalSpeed,
+      sprinting: player.motion.sprinting,
       sneaking: player.sneaking,
-      swimming,
-      airborne,
-      falling,
-    };
+    });
+    if (landed) this.#jumping = false;
+  }
+
+  /** The graphs the player's movement drives: the body's and the first-person one. */
+  *#graphs(): Iterable<LocomotionGraph> {
+    const body = this.#made.body.behavior;
+    if (body) yield body;
+    const first = this.#firstPerson?.behavior;
+    if (first) yield first;
   }
 
   /** The body's facing: the camera's in first person, the way it moves in third. */
@@ -433,14 +401,11 @@ export class PlayerAvatar {
     }
   }
 
-  #set(name: string, value: number): void {
-    this.#made.body.behavior?.setVariable(name, value);
-    this.#firstPerson?.behavior?.setVariable(name, value);
-  }
-
-  #send(event: string): void {
-    this.#made.body.behavior?.sendEvent(event);
-    this.#firstPerson?.behavior?.sendEvent(event);
+  /** Sends an animation event to its graphs (the body's and the first-person one). */
+  send(event: string): boolean {
+    let taken = false;
+    for (const graph of this.#graphs()) taken = graph.sendEvent(event) || taken;
+    return taken;
   }
 
   /** The animated Camera1st node in the player's frame (x right, y forward), scaled. */

@@ -6,6 +6,8 @@
 
 import type { Vec3 } from '../scripting/runtime/game-state.ts';
 import type {
+  ActorInteraction,
+  ActorMotion,
   LivePlacement,
   MenuRequest,
   QuestUpdate,
@@ -49,6 +51,20 @@ export interface ScriptView {
    * view makes its 3D again; resolves once it shows the new look.
    */
   lookChanged?(reference: number): Promise<void>;
+  /** An actor died: the view lays it down as its ragdoll (its pose follows its bodies). */
+  killed?(reference: number): void;
+  /** The package an actor of the view runs now (its AI), if any. */
+  currentPackage?(reference: number): number | undefined;
+  /** EvaluatePackage: the actor chooses its package again. */
+  evaluatePackage?(reference: number): void;
+  /** What an actor of the view uses now (its furniture), if anything. */
+  interaction?(reference: number): ActorInteraction | undefined;
+  /** How an actor of the view (the player too) moves now. */
+  motion?(reference: number): ActorMotion | undefined;
+  /** PlayIdle: an actor of the view plays an idle (false: the view does not hold it). */
+  playIdle?(actor: number, idle: number, target: number | undefined): boolean;
+  /** Whether a furniture's marker (any marker, without one) is used by an actor of the view. */
+  furnitureInUse?(reference: number, marker?: number): boolean;
 }
 
 /** SetMotionType's keyframed motion. */
@@ -213,6 +229,50 @@ export class ScriptWorld implements WorldBridge {
    * An actor's look changed (its race; the player's appearance): the views showing it make it
    * again; resolves once they have.
    */
+  killed(actor: number): void {
+    for (const view of this.#views) view.killed?.(actor);
+  }
+
+  currentPackage(actor: number): number | undefined {
+    for (const view of this.#views) {
+      const running = view.currentPackage?.(actor);
+      if (running !== undefined) return running;
+    }
+    return undefined;
+  }
+
+  evaluatePackage(actor: number): void {
+    for (const view of this.#views) view.evaluatePackage?.(actor);
+  }
+
+  interaction(actor: number): ActorInteraction | undefined {
+    for (const view of this.#views) {
+      const using = view.interaction?.(actor);
+      if (using) return using;
+    }
+    return undefined;
+  }
+
+  playIdle(actor: number, idle: number, target: number | undefined): boolean {
+    let played = false;
+    for (const view of this.#views)
+      played = (view.playIdle?.(actor, idle, target) ?? false) || played;
+    return played;
+  }
+
+  motion(actor: number): ActorMotion | undefined {
+    for (const view of this.#views) {
+      const motion = view.motion?.(actor);
+      if (motion) return motion;
+    }
+    return undefined;
+  }
+
+  furnitureInUse(furniture: number, marker?: number): boolean {
+    for (const view of this.#views) if (view.furnitureInUse?.(furniture, marker)) return true;
+    return false;
+  }
+
   async lookChanged(actor: number): Promise<void> {
     const changing: Promise<void>[] = [];
     for (const view of this.#views) {

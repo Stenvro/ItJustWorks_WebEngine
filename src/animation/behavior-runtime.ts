@@ -37,7 +37,33 @@ export interface BehaviorHost {
   clip(animation: string): AnimationBinding | undefined;
   /** A referenced behavior file by its name (relative to the project's folder). */
   behavior(name: string): BehaviorGraph | undefined;
+  /**
+   * How a clip generator (by its name) moves the actor between two local times of its clip
+   * (seconds, uncropped; `to` < `from`: it looped), in the actor's frame at `from` (x right,
+   * y forward, z up): the behavior project's animation data (src/animation/
+   * animation-data-library.ts). Undefined: it does not move the actor.
+   */
+  rootMotion?(
+    generator: string,
+    from: number,
+    to: number,
+  ):
+    | {
+        readonly translation: readonly [number, number, number];
+        readonly rotation: readonly [number, number, number, number];
+      }
+    | undefined;
 }
+
+/** How the graph moved the actor in an update: its clips' root motion, weighted. */
+export interface RootMotion {
+  /** In the actor's frame at the update's start (x right, y forward, z up), game units. */
+  readonly translation: readonly [number, number, number];
+  /** The turn about z (radians, counter-clockwise seen from above: to the left). */
+  readonly yaw: number;
+}
+
+const NO_MOTION: RootMotion = { translation: [0, 0, 0], yaw: 0 };
 
 /**
  * A behavior project that plays skeletal clips, ready to run on a model: its root file, the
@@ -76,6 +102,11 @@ interface Scope {
 
 interface ClipState {
   time: number;
+  /** Its time before the last update that moved it, and whether it looped then. */
+  previous: number;
+  wrapped: boolean;
+  /** The update (BehaviorRuntime's count) that last moved it. */
+  updated: number;
   backward: boolean;
   /** Set by a syncing blender: the phase (0..1) the clip is at this frame. */
   phase: number | undefined;
@@ -175,6 +206,10 @@ export class BehaviorRuntime {
   readonly #modifiers = new WeakMap<object, ModifierState>();
   readonly #expressions = new Map<string, Expression | null>();
   #active = new Set<object>();
+  /** Updates run (a clip moved in the current one counts for its root motion). */
+  #updates = 0;
+  /** How the last update moved the actor. */
+  #motion: RootMotion = NO_MOTION;
   /** Pose buffers by depth of the generation. */
   readonly #buffers: Float32Array[] = [];
   readonly #boneCount: number;
@@ -316,9 +351,11 @@ export class BehaviorRuntime {
 
   /**
    * Runs the graph for `dt` seconds: handles the events sent, updates the active nodes and
-   * generates the pose into `pose`.
+   * generates the pose into `pose` (unless `pose` is false: a run that only asks where the
+   * graph goes and how it moves the actor).
    */
-  update(dt: number): void {
+  update(dt: number, pose = true): void {
+    this.#updates++;
     // Events raised while handling others are handled in the same frame, a few rounds deep.
     for (let round = 0; round < 4 && this.#queue.length > 0; round++) {
       const events = this.#queue;
@@ -332,6 +369,8 @@ export class BehaviorRuntime {
       if (!active.has(node)) this.#deactivate(node);
     }
     this.#active = active;
+    this.#motion = this.#host.rootMotion ? this.#rootMotion() : NO_MOTION;
+    if (!pose) return;
     const generated = this.#generate(this.#root, 0);
     const reference = this.skeleton.referencePose;
     if (!generated) {
@@ -344,6 +383,101 @@ export class BehaviorRuntime {
     }
   }
 
+  /**
+   * How the last update moved the actor: the root motion of the clips that played in it, each
+   * by its weight in the pose (blends, transitions). The engine moves an animation-driven
+   * actor by it (bAnimationDriven: furniture, staggers, canned turns).
+   */
+  rootMotion(): RootMotion {
+    return this.#motion;
+  }
+
+  #rootMotion(): RootMotion {
+    const sum = { x: 0, y: 0, z: 0, yaw: 0 };
+    this.#collectMotion(this.#root, 1, 0, sum);
+    if (sum.x === 0 && sum.y === 0 && sum.z === 0 && sum.yaw === 0) return NO_MOTION;
+    return { translation: [sum.x, sum.y, sum.z], yaw: sum.yaw };
+  }
+
+  /** Adds a node's clips' root motion of this update, by the node's weight in the pose. */
+  #collectMotion(
+    node: BehaviorGenerator | undefined,
+    weight: number,
+    depth: number,
+    sum: { x: number; y: number; z: number; yaw: number },
+  ): void {
+    if (!node || weight <= 0 || depth > 64) return;
+    const scope = this.#scopeOf(node);
+    switch (node.kind) {
+      case 'clip': {
+        const state = this.#clips.get(node);
+        if (state?.updated !== this.#updates) return;
+        if (state.time === state.previous && !state.wrapped) return;
+        const crop = node.cropStart ?? 0;
+        const backward = state.time < state.previous && !state.wrapped;
+        const from = (backward ? state.time : state.previous) + crop;
+        const to = (backward ? state.previous : state.time) + crop;
+        const moved = this.#host.rootMotion?.(node.name, from, to);
+        if (!moved) return;
+        const sign = backward ? -1 : 1;
+        const [x, y, z] = moved.translation;
+        const [, , qz, qw] = moved.rotation;
+        sum.x += sign * weight * x;
+        sum.y += sign * weight * y;
+        sum.z += sign * weight * z;
+        sum.yaw += sign * weight * 2 * Math.atan2(qz, qw);
+        return;
+      }
+      case 'state-machine': {
+        const machine = this.#machine(node);
+        const transition = machine.transition;
+        if (!transition) {
+          this.#collectMotion(machine.current?.generator, weight, depth + 1, sum);
+          return;
+        }
+        const t = blendCurve(transition.curve, transition.elapsed / transition.duration);
+        this.#collectMotion(machine.current?.generator, weight * t, depth + 1, sum);
+        this.#collectMotion(transition.from.generator, weight * (1 - t), depth + 1, sum);
+        return;
+      }
+      case 'blender': {
+        // The root moves by the children that move the root bone (bone 0), by their weight on
+        // it: camera bobs and other partial poses (bone weights) leave it alone.
+        const weighted = activeChildren(node, this.#blenderRead(node, scope)).map(
+          ([child, w]) => [child, Math.max(0, w) * (child.boneWeights?.[0] ?? 1)] as const,
+        );
+        const total = weighted.reduce((all, [, w]) => all + w, 0);
+        if (total <= 0) return;
+        for (const [child, w] of weighted) {
+          if (w > 0) this.#collectMotion(child.generator, (weight * w) / total, depth + 1, sum);
+        }
+        return;
+      }
+      case 'manual-selector':
+        this.#collectMotion(
+          node.generators[this.#read(node.selectedGeneratorIndex, scope)],
+          weight,
+          depth + 1,
+          sum,
+        );
+        return;
+      case 'behavior-reference':
+        this.#collectMotion(this.#reference(node), weight, depth + 1, sum);
+        return;
+      case 'bone-switch':
+      case 'offset-animation':
+      case 'cyclic-blend':
+      case 'modifier-generator':
+      case 'state-tagging':
+      case 'synchronized-clip':
+        // The root follows the generator below (a bone switch's default, the offset's base).
+        this.#collectMotion(node.generator, weight, depth + 1, sum);
+        return;
+      default:
+        return;
+    }
+  }
+
   /** The clips playing and their weights in the pose (development, tools). */
   playing(): { animation: string; time: number }[] {
     const clips: { animation: string; time: number }[] = [];
@@ -353,6 +487,31 @@ export class BehaviorRuntime {
         clips.push({ animation: clip.animation, time: this.#clips.get(clip)?.time ?? 0 });
     }
     return clips;
+  }
+
+  /**
+   * The state the active BSiStateTaggingGenerators tag (the highest priority's iStateToSetAs;
+   * the first of equal priority), or undefined if none is active: the engine reads it as the
+   * actor's state (its movement type: src/ai/locomotion.ts).
+   */
+  taggedState(): number | undefined {
+    let best: { priority: number; value: number } | undefined;
+    for (const node of this.#active) {
+      const tag = node as BehaviorGenerator;
+      if (tag.kind !== 'state-tagging' || (best && tag.priority <= best.priority)) continue;
+      best = { priority: tag.priority, value: this.#read(tag.iState, this.#scopeOf(tag)) };
+    }
+    return best?.value;
+  }
+
+  /** The character variables whose names start with `prefix` (any case), with their values. */
+  variablesNamed(prefix: string): { readonly name: string; readonly value: number }[] {
+    const key = prefix.toLowerCase();
+    const found: { name: string; value: number }[] = [];
+    this.#variableNames.forEach((name, i) => {
+      if (name.toLowerCase().startsWith(key)) found.push({ name, value: this.#values[i] ?? 0 });
+    });
+    return found;
   }
 
   /** The current state of every active state machine (development, tools). */
@@ -801,6 +960,9 @@ export class BehaviorRuntime {
       const animation = this.#host.clip(node.animation)?.animation;
       if (animation)
         this.#clips.set(node, {
+          previous: 0,
+          wrapped: false,
+          updated: -1,
           time: fraction * animation.duration,
           backward: false,
           phase: undefined,
@@ -949,7 +1111,14 @@ export class BehaviorRuntime {
     const phase0 = first ? (this.#clips.get(first)?.phase ?? 0) : 0;
     const phase = (phase0 + dt / duration) % 1;
     for (const [clip] of clips) {
-      const state = this.#clips.get(clip) ?? { time: 0, backward: false, phase: undefined };
+      const state = this.#clips.get(clip) ?? {
+        time: 0,
+        previous: 0,
+        wrapped: false,
+        updated: -1,
+        backward: false,
+        phase: undefined,
+      };
       state.phase = phase;
       this.#clips.set(clip, state);
     }
@@ -961,7 +1130,14 @@ export class BehaviorRuntime {
     let state = this.#clips.get(node);
     if (!state) {
       const start = this.#read(node.startTime ?? { value: 0 }, scope);
-      state = { time: Math.max(0, start), backward: false, phase: undefined };
+      state = {
+        time: Math.max(0, start),
+        previous: Math.max(0, start),
+        wrapped: false,
+        updated: -1,
+        backward: false,
+        phase: undefined,
+      };
       this.#clips.set(node, state);
     }
     if (!animation) return;
@@ -1016,6 +1192,9 @@ export class BehaviorRuntime {
           break;
       }
     }
+    state.previous = previous;
+    state.wrapped = wrapped;
+    state.updated = this.#updates;
     // Triggers (and the animation's annotations) passed in this step raise their events.
     const passed = (time: number): boolean =>
       wrapped ? time > previous || time <= state.time : time > previous && time <= state.time;

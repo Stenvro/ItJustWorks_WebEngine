@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
-import { LocationType, parsePackage, TargetType } from './package-records.ts';
+import {
+  BranchFlag,
+  InterruptFlag,
+  LocationType,
+  PackageFlag,
+  PackageIdleFlag,
+  parsePackage,
+  TargetType,
+} from './package-records.ts';
 
 const bytes = (...values: number[]): Uint8Array => Uint8Array.from(values);
 const u32s = (...values: number[]): Uint8Array => new Uint8Array(Uint32Array.from(values).buffer);
 const i32s = (...values: number[]): Uint8Array => new Uint8Array(Int32Array.from(values).buffer);
+const u16s = (...values: number[]): Uint8Array => new Uint8Array(Uint16Array.from(values).buffer);
+const f32s = (...values: number[]): Uint8Array => new Uint8Array(Float32Array.from(values).buffer);
 const text = (value: string): Uint8Array => new TextEncoder().encode(`${value}\0`);
 const record = (fields: [string, Uint8Array][]) => ({
   formId: 0x100,
@@ -57,7 +67,8 @@ describe('AI packages', () => {
       type: 0x12,
       schedule: { month: -1, dayOfWeek: -1, date: 0, hour: 7, minute: 0, duration: 720 },
       template: 0x17723,
-      onBegin: 0x99,
+      inputCount: 6,
+      onBegin: { idle: 0x99, topic: undefined },
     });
     expect(pack.conditions).toHaveLength(1);
     expect(pack.conditions[0]).toMatchObject({ function: 59, form: 0x50, param2: 10 });
@@ -133,7 +144,7 @@ describe('AI packages', () => {
       { id: 3, name: 'Wait Time', public: false },
       { id: 16, name: 'Target', public: true },
     ]);
-    expect(pack.onBegin).toBeUndefined();
+    expect(pack.onBegin).toEqual({ idle: undefined, topic: undefined });
   });
 
   it('read a package with its own single procedure', () => {
@@ -156,5 +167,121 @@ describe('AI packages', () => {
     expect(pack.tree).toMatchObject({ type: 'Procedure', procedure: 'Sleep', inputs: [22] });
     expect(pack.inputs.map((input) => input.id)).toEqual([22]);
     expect(pack.template).toBeUndefined();
+  });
+
+  it('read idles, combat style, interrupt flags, flag overrides and the events’ topics', () => {
+    // A plugin's record: its form ids are remapped by the load order, alias ids are not.
+    const plugin = (fields: [string, Uint8Array][]) => ({
+      ...record(fields),
+      formIdAt: (data: Uint8Array, offset = 0) => {
+        const raw = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(
+          offset,
+          true,
+        );
+        return raw === 0 ? 0 : raw + 0x01000000;
+      },
+    });
+    const pdto = (kind: number, value: Uint8Array): Uint8Array => bytes(...u32s(kind), ...value);
+    const pack = parsePackage(
+      plugin([
+        // Interrupt flags u16 0x16d; the 2 bytes after them are garbage.
+        ['PKDT', bytes(...u32s(0), 19, 0, 2, 0x63, ...u16s(0x16d, 0x2c65))],
+        ['IDLF', bytes(PackageIdleFlag.runInSequence | 0x8)],
+        ['IDLC', bytes(2)],
+        ['IDLT', f32s(3)],
+        ['IDLA', u32s(0xefc64, 0xf3a99)],
+        ['CNAM', u32s(0x10ff34)],
+        ['QNAM', u32s(0x2610a)],
+        ['PKCU', u32s(2, 0, 10)],
+        ['ANAM', text('Location')],
+        ['PLDT', i32s(LocationType.aliasLocation, 3, 0)],
+        ['ANAM', text('Topic')],
+        ['PDTO', pdto(1, text('HELO').subarray(0, 4))],
+        ['UNAM', bytes(0)],
+        ['UNAM', bytes(1)],
+        ['XNAM', bytes(2)],
+        ['ANAM', text('Sequence')],
+        ['CITC', u32s(0)],
+        ['PRCB', u32s(2, BranchFlag.repeatWhenComplete)],
+        ['ANAM', text('Procedure')],
+        ['CITC', u32s(0)],
+        ['PNAM', text('Travel')],
+        ['FNAM', u32s(0)],
+        ['PKC2', bytes(0)],
+        // Run while it travels, with the aggro radius off.
+        [
+          'PFO2',
+          bytes(
+            ...u32s(PackageFlag.preferredSpeed, 0),
+            ...u16s(0, InterruptFlag.aggroRadiusBehavior),
+            2,
+            0x74,
+            0x42,
+            0x24,
+          ),
+        ],
+        ['ANAM', text('Procedure')],
+        ['CITC', u32s(0)],
+        ['PNAM', text('Wait')],
+        ['FNAM', u32s(1)],
+        ['PFOR', bytes(...u32s(PackageFlag.ignoreCombat, 0), ...u16s(0, 0))],
+        ['UNAM', bytes(0)],
+        ['BNAM', text('Place to Travel')],
+        ['PNAM', u32s(1)],
+        ['POBA', new Uint8Array(0)],
+        ['INAM', u32s(0)],
+        ['SCHR', new Uint8Array(20)],
+        ['SCTX', new Uint8Array(0)],
+        ['PDTO', pdto(0, u32s(0xddcf4))],
+        ['POEA', new Uint8Array(0)],
+        ['INAM', u32s(0xbe2b1)],
+        ['PDTO', pdto(0, u32s(0))],
+        ['POCA', new Uint8Array(0)],
+        ['INAM', u32s(0)],
+        ['QNAM', u32s(0x2610a)],
+        ['TNAM', u32s(0)],
+        ['PDTO', pdto(1, text('GBYE').subarray(0, 4))],
+      ]),
+    );
+    expect(pack).toMatchObject({
+      type: 19,
+      preferredSpeed: 2,
+      interruptFlags: 0x16d,
+      idles: {
+        flags: PackageIdleFlag.runInSequence | 0x8,
+        timer: 3,
+        idles: [0x010efc64, 0x010f3a99],
+      },
+      combatStyle: 0x0110ff34,
+      ownerQuest: 0x0102610a,
+      template: undefined,
+      inputCount: 2,
+      version: 10,
+      onBegin: { idle: undefined, topic: 0x010ddcf4 },
+      onEnd: { idle: 0x010be2b1, topic: undefined },
+      onChange: { idle: undefined, topic: 'GBYE' },
+    });
+    expect(pack.inputs.map((input) => input.value)).toEqual([
+      // An alias location's value is the alias id, not a form.
+      { kind: 'location', location: { type: LocationType.aliasLocation, form: 3, radius: 0 } },
+      { kind: 'topic', topic: 'HELO' },
+    ]);
+    expect(pack.tree?.branchFlags).toBe(BranchFlag.repeatWhenComplete);
+    expect(pack.tree?.children.map((child) => child.flagOverride)).toEqual([
+      {
+        setFlags: PackageFlag.preferredSpeed,
+        clearFlags: 0,
+        setInterruptFlags: 0,
+        clearInterruptFlags: InterruptFlag.aggroRadiusBehavior,
+        preferredSpeed: 2,
+      },
+      {
+        setFlags: PackageFlag.ignoreCombat,
+        clearFlags: 0,
+        setInterruptFlags: 0,
+        clearInterruptFlags: 0,
+        preferredSpeed: undefined,
+      },
+    ]);
   });
 });
