@@ -508,6 +508,11 @@ export class SoundSystem {
     return entry;
   }
 
+  /** The records impacts resolve through (combat's hits: src/shell/combat-impacts.ts). */
+  get impactRecords(): ImpactRecords {
+    return this.#impactSources;
+  }
+
   /** A physics collision: the impact sound of the materials that met. */
   impact(hit: ImpactHit, sounded?: (impact: Impact) => void): void {
     // `sounded` hears the impact that sounded: its IPCT sound level is a noise for detection.

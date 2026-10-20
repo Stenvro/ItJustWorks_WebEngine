@@ -693,6 +693,7 @@ export class WorldViewer {
     evaluatePackage: (reference) => {
       this.#stage?.ai.evaluate(reference);
     },
+    combat: () => this.#stage?.combat,
   };
 
   /**
@@ -1138,6 +1139,7 @@ export class WorldViewer {
         if (this.#play === play) {
           this.#avatar = avatar;
           this.#seat = avatar && this.#makeSeat(play, avatar);
+          this.#stage?.combat.attachPlayer(play, avatar);
         } else avatar?.destroy();
       },
       (error: unknown) => {
@@ -1432,6 +1434,7 @@ export class WorldViewer {
     this.#avatar?.destroy();
     this.#avatar = undefined;
     this.#seat = undefined;
+    this.#stage?.combat.attachPlayer(undefined, undefined);
     this.#stage?.attachPlay(undefined);
     this.#play?.dispose();
     this.#play = undefined;
@@ -2142,6 +2145,8 @@ export class WorldViewer {
 
   *#readyDecals(): Iterable<GpuDecals> {
     for (const cell of this.#cells.values()) if (cell.ready && cell.decals) yield cell.decals;
+    // The hits' blood (src/shell/combat-impacts.ts).
+    if (this.#stage) yield* this.#stage.combat.decals();
   }
 
   *#readyGrass(): Iterable<GpuGrassField> {

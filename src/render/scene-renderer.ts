@@ -512,6 +512,11 @@ export interface ModelInstance {
   /** An actor's equipment: whether a body part's partitions of the model are drawn. */
   readonly partitionVisible?: (bodyPart: number) => boolean;
   /**
+   * The parts of the model this instance draws (all without): a weapon's blade in the hand
+   * while its scabbard ("Scb") stays at the sheath (src/shell/actor-weapons.ts).
+   */
+  readonly partShown?: (part: ModelPart) => boolean;
+  /**
    * An actor's face: its morph weights and the expression morphs of the model's skinned
    * shapes by lower-case name (FaceGen head parts).
    */
@@ -1785,6 +1790,7 @@ export class SceneRenderer {
       const directional = instance.directional;
       const material = directional?.material;
       for (const [partIndex, part] of instance.model.parts.entries()) {
+        if (instance.partShown && !instance.partShown(part.part)) continue;
         const offset = slot++ * DRAW_STRIDE;
         // Sky scenes follow the camera: their placement changes every frame.
         const sequences = instance.model.sequences;

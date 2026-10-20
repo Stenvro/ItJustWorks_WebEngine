@@ -28,9 +28,9 @@ export function isPaired(binding: AnimationBinding): boolean {
 
 /**
  * The side of a pair a skeleton plays: the one more of whose bones the clip names (the human
- * takes its 99 bones unprefixed, the horse its 55 prefixed). TODO(M10) 5.1: two actors of one
- * skeleton (a human killing a human) name the same bones on both sides; the engine gives the
- * victim the second side, here the first is taken.
+ * takes its 99 bones unprefixed, the horse its 55 prefixed). Two actors of one skeleton (a
+ * human killing a human) name the same bones on both sides: here the first is taken, and a
+ * killmove sets its victim's graph to the second (BehaviorRuntime.pairedSide, set by combat).
  */
 export function pairedSide(trackNames: readonly string[], bones: readonly string[]): PairedSide {
   const own = new Set(bones.map((bone) => bone.toLowerCase()));

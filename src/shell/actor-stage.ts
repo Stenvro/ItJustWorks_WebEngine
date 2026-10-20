@@ -41,6 +41,7 @@ import type { PlayerView } from './race-menu.ts';
 import type { LightProbe } from '../ai/light-level.ts';
 import { ActorTalk } from './actor-talk.ts';
 import { ActorLooks } from './actor-looks.ts';
+import { ActorCombat } from './actor-combat.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -163,6 +164,8 @@ export class ActorStage {
   readonly followers: ActorFollowers;
   /** Where they look (head tracking) and the world their procedural animation sees. */
   readonly looks: ActorLooks;
+  /** Their fights and the player's (src/shell/actor-combat.ts). */
+  readonly combat: ActorCombat;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -202,6 +205,17 @@ export class ActorStage {
       },
     });
     this.bodies = new ActorBodies(options.session);
+    this.combat = new ActorCombat({
+      session: options.session,
+      renderer: options.renderer,
+      terminal: options.terminal,
+      movers: this.movers,
+      bodies: this.bodies,
+      actors: () => this.#actors.values(),
+      get: (reference) => this.#actors.get(reference),
+      talk: () => this.talk,
+      senses: () => this.senses,
+    });
     this.search = new ActorSearch({
       session: options.session,
       objects: () => options.objects?.() ?? [],
@@ -224,6 +238,8 @@ export class ActorStage {
       doors: this.doors,
       talk: () => this.talk,
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
+      // Fighting, bleeding out or in a killmove, its packages wait.
+      engaged: (reference) => this.combat.engaged(reference),
       overrides: (actor) => this.senses.overridePackages(actor),
       transport: {
         ready: async (staged, ride) => {
@@ -429,11 +445,12 @@ export class ActorStage {
     this.mounts.attach(world?.stepHooks);
     this.senses.attach(world);
     this.looks.attach(world);
+    if (!world) this.combat.clear();
   }
 
   /**
    * An actor died (Kill, killed in combat): it stops moving and acting, its ragdoll falls
-   * from the pose it has. TODO(M10): bleedout first for essential and protected actors (5.1).
+   * from the pose it has (essential and protected actors bleed out first: actor-combat.ts).
    */
   killed(reference: number): void {
     const staged = this.#actors.get(reference);
@@ -476,6 +493,8 @@ export class ActorStage {
     }
     // The carts horses pull (taken out of their cells).
     yield* this.vehicles.scenes();
+    // The weapons they and the player hold, the arrows in the air.
+    yield* this.combat.scenes();
   }
 
   /** Where a staged actor stands now (scripts' live placement). */
@@ -727,6 +746,7 @@ export class ActorStage {
     this.actorScenes.frame(this.#actors.values());
     this.talk.frame(this.#actors.values(), frame, this.#options.focus?.());
     this.away.frame(frame);
+    this.combat.frame(frame, this.#options.focus?.());
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     const times = new Map<StagedActor, number | undefined>();
     for (const staged of this.#actors.values()) times.set(staged, staged.placed.time);
@@ -850,6 +870,7 @@ export class ActorStage {
   #remove(staged: StagedActor): void {
     this.looks.remove(staged.reference);
     this.#options.session.scriptsReady?.magic.unloaded(staged.reference);
+    this.combat.remove(staged.reference);
     this.ai.remove(staged.reference);
     this.senses.remove(staged.reference);
     this.talk.remove(staged.reference);

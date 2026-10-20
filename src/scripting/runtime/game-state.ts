@@ -214,7 +214,7 @@ export interface ActiveEffectState {
 
 /** What the magic system keeps of an actor besides the effects on it. */
 export interface ActorMagicState {
-  /** The poison on its weapon, for its next hits (TODO(M10) 5.1: hits deliver it). */
+  /** The poison on its weapon, for its next hits (hits deliver it: src/shell/actor-combat.ts). */
   poison?: { readonly weapon: number | undefined; readonly poison: number; charges: number };
 }
 

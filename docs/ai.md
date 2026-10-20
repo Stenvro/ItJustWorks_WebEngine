@@ -759,3 +759,120 @@ package may do all.
 - `node tools/talk-info.ts HuldaREF`: after a new game in Node, an actor's line of each subtype
   to the player and the time it took to find; `--survey`: the subtypes' infos and what names
   their speakers.
+
+## Combat
+
+What actors and the player do in a fight (`src/gameplay/combat/`, `src/shell/actor-combat.ts`;
+the plan: [m10-plan.md](m10-plan.md) 5.1; the records: `node tools/weapon-info.ts <filter>`).
+Who fights whom is the combat AI's (5.2): until it runs, an actor fights what a script set it
+on (StartCombat) or what hit it, closing to its reach and striking, drawing its bow at range;
+its packages wait meanwhile.
+
+- **Actions** go through the idle tree as the engine's do: ActionDraw, ActionSheath,
+  ActionRightAttack, ActionLeftAttack, ActionRightPowerAttack, ActionLeftPowerAttack,
+  ActionDualAttack, ActionDualPowerAttack, ActionRightRelease, ActionLeftRelease,
+  ActionStaggerStart, ActionRecoil(Large), ActionBlockHit, ActionBleedoutStart / Stop: the first
+  idle under the action whose conditions hold (run on the actor, its combat target the
+  conditions' Target) sends its event to the actor's graphs (the player's first-person graph
+  too). A sheathed weapon is drawn by the attack's own tree (DrawWeapon: WeapEquip). The engine
+  sets the graphs' iRightHandType / iLeftHandType (GetEquippedItemType's codes),
+  iRightHandEquipped, iLeftHandEquipped, weaponSpeedMult and leftWeaponSpeedMult from the equip
+  system, and IsAttacking, IsBlocking, IsBashing, iWantBlock, IsEquipping and IsUnequipping as
+  the actor acts; the graphs set IsStaggering and IsRecoiling themselves.
+- **States** (`combat-state.ts`, CommonLibSSE ActorState): WEAPON_STATE (sheathed, drawing,
+  drawn, sheathing), ATTACK_STATE_ENUM (draw; swing at preHitFrame; hit at HitFrame; next
+  attack at AttackWinStart; follow-through at AttackWinEnd; bash; for bows draw, attached at
+  arrowAttach, drawn at bowDrawn, releasing, released at arrowRelease), staggered, recoiling,
+  bleeding out, the knock state and paired animations, moved by the graphs' annotations
+  (`tools/behavior-run.ts`: 1HM_Equip raises weaponDraw at 0.6 s and WeapEquip_Out at its end;
+  attackStart preHitFrame, weaponSwing, HitFrame, AttackWinStart, attackStop; a bow
+  arrowAttach, bowDrawn and, on attackRelease, arrowRelease). The conditions IsWeaponOut,
+  IsWeaponMagicOut, IsShieldOut, GetAttackState, IsAttacking, IsPowerAttacking, IsBlocking,
+  GetWantBlocking, IsStaggered, IsRecoiling, IsBleedingOut, GetKnockStateEnum, GetKnockedState,
+  GetPairedAnimation, GetMovementDirection, GetLastHitCritical, ShouldAttackKill,
+  GetTargetHeight, IsLastHostileActor, IsInCombat, GetCombatState, IsPC1stPerson and the
+  conditions run on the combat target read it, as do the natives IsWeaponDrawn, DrawWeapon,
+  SheatheWeapon, IsBleedingOut, IsInKillMove, IsInCombat, GetCombatState and GetCombatTarget.
+- **Weapons on the body** (`src/shell/actor-weapons.ts`): the right hand's weapon model hangs on
+  its sheath node (the equip system's: the models' "Prn", WeaponSword, WeaponDagger,
+  WeaponAxe, WeaponMace, WeaponBack, WeaponBow) and goes to WEAPON at weaponDraw, back at
+  weaponSheathe; its scabbard ("Scb") stays at the sheath; a left-hand weapon is shown drawn
+  only, in SHIELD (vanilla's skeleton has no left sheaths); the ammunition hangs in QUIVER (its
+  single "Arrow:0" left out) and an arrow is on the bow from arrowAttach to its release. The bow
+  animations move the Weapon bone into the left hand (Bow_DrawLight: 19 units beyond it). The
+  weapon's sounds: NAM9 at weaponDraw, NAM8 at weaponSheathe, TNAM at weaponSwing (every vanilla
+  melee weapon's swing, WPNSwingBladeMediumSD; xEdit names it the attack fail sound), SNAM at
+  a shot.
+- **Hits** (`hit-test.ts`): at HitFrame the strike reaches fCombatDistance (141) × the weapon's
+  reach (fists: the race's unarmed reach, RACE DATA @100; a bash fCombatBashReach) × the
+  attacker's size, from its feet to the target's shape, inside the attack data's strike angle
+  (ATKD: 50° for attackStart, 35° for power attacks, 85° about ±90° for mounted side swings); it
+  hits the nearest such actor (every one with Sweep), each once an attack. With nothing to hit
+  but a wall in reach (a ray at the chest on L_WEAPON) the attacker recoils. TODO(M13): the
+  engine measures from bounds; its cone's exact shape is not documented.
+- **Damage** (`damage.ts`; UESP "Damage", "Block", "Sneak", "Difficulty"): the equip system's
+  weapon damage (skill, perks, tempering) × the attack data's damage mult (power attacks 2,
+  bashes 0.5; a bash on the weapon's base damage or the shield's base rating × fWeaponBash{PC}
+  Min..Max or fShieldBash{PC}Min..Max by Block); a sneak attack × the kind's fCombatSneak*Mult
+  (one-handed 3, two-handed and fists 2, bows 2) × fDamageSneakAttackMult; × (1 − the target's
+  armour reduction: the equip system's 0.12% a point and 3% a piece, at most fMaxArmorRating);
+  critical damage (CRDT; the perks' chance) passes the armour; × (1 − the share blocked);
+  × fDiffMultHPByPC<level> for the player's hits, fDiffMultHPToPC<level> for hits on the player
+  (Novice 2 / 0.5 .. Legendary 0.25 / 3; [GamePlay] iDifficulty). The perk entry points
+  (critical chance, sneak, block, stagger, Sweep, incoming damage) are hooks the perk system
+  replaces (`combat-hooks.ts`, TODO(M11)).
+- **Blocking**: held, the block covers fCombatHitConeAngle (35°) either side of the blocker's
+  facing: a shield blocks fShieldBaseFactor + fShieldScalingFactor × its base rating × (1 + 1.5
+  × Block / 100) %, a weapon fBlockWeaponBase + fBlockWeaponScaling × the attacker's weapon
+  damage × (1 + 1.5 × Block / 100) %, × fBlockPowerAttackMult against a power attack, at most
+  85% (UESP; the plugins' fBlockMax 0.7: TODO(M13)). The blocker's stamina pays (the skill
+  progression's blockCost) and its Block skill is used by the damage blocked (a shield's
+  twice). A blocked plain attack recoils its attacker (recoilStart; a heavy shield's
+  recoilLargeStart); a blocked power attack staggers the blocker by fStaggerBlockBase + the
+  damage blocked × fStaggerBlockMult.
+- **Staggers** (`stagger.ts`): the weapon's stagger (DNAM: swords 0.75 .. warhammers 1.25;
+  bashes and fists 1) × the attack's (ATKD: plain attacks 0, power attacks 1, bashes 0.5),
+  weighed against the target's mass (RACE DATA: humans 1, trolls 3.5, giants 4) as
+  fStaggerMassOffsetBase / (fStaggerMassOffsetBase + mass − 1), the player's mass ×
+  fStaggerPlayerMassMult; the graph gets staggerMagnitude (its blend plays the smallest to the
+  largest stagger) and staggerDirection (where the blow came from, clockwise from the facing in
+  turns: 0 StaggerBack, 0.5 StaggerForward). TODO(M13): the engine's formula is not documented.
+- **Power attacks**: the player's attack button held [Controls] fInitialPowerAttackDelay (0.3 s)
+  is a power attack (both buttons: the dual ones); without stamina it is a plain one (the HUD's
+  meter blinks). Power attacks and bashes cost the skill progression's powerAttackCost and
+  bashCost.
+- **Bows** (`projectile.ts`, `src/shell/combat-projectiles.ts`): the bow draws while the button is
+  held and looses at arrowRelease; the shot's damage is the equip system's (bow and arrow) × the
+  draw (UESP "Archery": 35% before the draw, then linear from 50% to full). The arrow flies at
+  its PROJ's speed (iron arrows 3600) × the draw, tilted up by f1PArrowTiltUpAngle (2°) or
+  f3PArrowTiltUpAngle (2.5°), under 9.8 m/s² × its gravity (0.35), against what L_PROJECTILE
+  meets (actors' bodies; the player's shape), until its range. An actor hit takes the shot;
+  hitting the world the arrow sticks fCombatMissileStickDepth deep, a reference of its
+  ammunition to pick up (kept still), at most 15 of them. NPCs aim at their target's chest,
+  straying fBowNPCSpreadAngle (4°). TODO(M13): how much slower a partly drawn arrow flies.
+- **Impacts** (`src/shell/combat-impacts.ts`): the weapon's impact data set (INAM; bashes and
+  blocks BIDS; fists the race's NAM5; arrows the bow's) against the target's flesh (its race's
+  NAM4: MaterialSkin, MaterialBoneActor, ...) gives the impact: its sound (heavy for power
+  attacks) and its decal (DODT and the texture set DNAM: blood) on the floor or wall behind.
+  TODO(M13): its effect model (the spray's particles).
+- **Health**: a hit takes health (DamageActorValue with its attacker), tells the target's
+  scripts (OnHit: aggressor, weapon, projectile, power, sneak, bash, blocked), uses the
+  attacker's weapon skill by the weapon's base damage (Sneak by fSneakAttackSkillUsageMelee for
+  a sneak attack), and shows the target on the HUD's enemy bar (its name and health) for the
+  player's hits. Health run out kills (the ragdoll pushed by fDeathForce{Ranged}Min..Max by the
+  damage); an essential actor, and a protected one unless the player dealt the blow, bleeds out
+  instead (`bleedout.ts`: bleedOutStart, its enemies leave it, it regains fBleedoutRecover of its
+  health a second and gets up (bleedOutStop) at fBleedoutDefault after fBleedoutMin seconds;
+  SetNoBleedoutRecovery keeps it down).
+- **Killmoves**: an attack whose idle is a paired one (the tree's killmove branches: their
+  conditions ShouldAttackKill, GetGlobalValue(KillMove), the target's race, the weapon, random
+  chances) plays "pa_<name>" on the attacker and "<name>" on the target, each its part of the
+  paired clip (its tracks named by bone, the target's prefixed "2_": src/animation/paired-clips.ts, the victim's side set by combat as both share a skeleton); the
+  target stands 72.8 units before the attacker facing it (Paired_1HMKillMoveB's start;
+  TODO(M13): each clip's own offset) and dies at its clip's KillActor. Seen by the player in
+  third person, the kill cameras' tree shows it (`src/shell/killmove-camera.ts`: from
+  PairedKillTest the first path whose conditions hold, the VATS areas by rays beside the target,
+  its shots' ExportCam in the attacker's frame looking at the target). TODO(M13): the shots'
+  time multipliers (slow motion) and image-space modifiers.
+- **Combat music**: while anyone fights the player the default battle music (DOBJ BTMS) plays,
+  ending with its finale as the fight does.
