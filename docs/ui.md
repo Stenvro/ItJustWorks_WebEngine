@@ -252,6 +252,9 @@ property, a load screen model, the image space it replaces). `src/shell/mist-men
   (1.7.104, a screenshot of its main menu): the logo 69% of the screen's height, its middle at
   36% of the width and 47% of the height, lit from the upper left and the front; the field of
   view is the INI's `fUIMistMenu_CameraFOV_G` (75, horizontal of a 4:3 frame).
+  A loading screen's camera path looks at its model from the -Y side, so its light is the same
+  one mirrored to that side (still the viewer's upper left and front): the main menu's would
+  light the models from behind (a flat one, the war map of `SkyrimHolds`, black).
 - The Anniversary Edition's logo (`logo01ae_animated.nif`, silver to gold) when the load order
   has Creations beyond the free ones (Fish, Survival Mode, Rare Curios, Saints & Seducers and
   their resource pack): inferred, as the upgrade installs them. TODO(M13): the image space the
