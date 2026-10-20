@@ -306,7 +306,7 @@ export class MagicEngine {
     return multiplier;
   }
 
-  /** The poison on an actor's weapon, if any (TODO(M10) 5.1: its hits deliver it). */
+  /** The poison on an actor's weapon, if any (its hits deliver it: src/shell/actor-combat.ts). */
   poisonOf(actor: number): ActorMagicState['poison'] {
     return this.#runtime.state.actorMagic.get(actor)?.poison;
   }
@@ -1268,7 +1268,7 @@ export class MagicEngine {
   }
 
   /**
-   * A weapon's hit on a target (TODO(M10) 5.1: called by the hit): its enchantment's effects
+   * A weapon's hit on a target (src/shell/actor-combat.ts): its enchantment's effects
    * (fire and forget, from the attacker; TODO(M11): the charge it uses) and the poison on it.
    */
   async weaponHit(attacker: number, target: number, weapon: number | undefined): Promise<void> {
@@ -1297,7 +1297,7 @@ export class MagicEngine {
   }
 
   /**
-   * A disease caught (a diseased creature's hit: TODO(M10) 5.1): unless the target's Disease
+   * A disease caught (a diseased creature's hit: src/shell/actor-combat.ts): unless the target's Disease
    * Resistance resists it (its percentage as a chance), it has the disease from now on (a
    * spell it has, until cured). True if it caught it.
    */

@@ -104,6 +104,8 @@ import type { CombatBridge } from './script-world.ts';
 import type { Terminal } from './terminal.ts';
 import { KillmoveCamera } from './killmove-camera.ts';
 import { PlayerCombat } from './player-combat.ts';
+import type { ActorTalk } from './actor-talk.ts';
+import type { ActorSenses } from './actor-senses.ts';
 
 /** A human's shape for hits (its controller's radius and height at scale 1; game units). */
 const BODY_RADIUS = 20;
@@ -173,6 +175,10 @@ export interface ActorCombatOptions {
   readonly bodies: ActorBodies;
   readonly actors: () => Iterable<StagedActor>;
   readonly get: (reference: number) => StagedActor | undefined;
+  /** What the actors say (their combat lines: Attack, Hit, Block, BleedOut, Death, ...). */
+  readonly talk?: () => ActorTalk | undefined;
+  /** What they notice (an attack heard, the attacked searching, sneak attacks' awareness). */
+  readonly senses?: () => ActorSenses | undefined;
 }
 
 const describe = (error: unknown): string =>
@@ -341,6 +347,7 @@ export class ActorCombat implements CombatBridge {
     }
     if (fighter.target === source) fighter.target = undefined;
     void this.#act(fighter, 'ActionBleedoutStart');
+    this.#bark(fighter.reference, 'BleedOut', source);
   }
 
   firstPerson(): boolean {
@@ -439,6 +446,11 @@ export class ActorCombat implements CombatBridge {
     this.#setVariable(fighter, 'IsAttacking', 1);
     if (kind.bash) this.#setVariable(fighter, 'IsBashing', 1);
     void this.#spendFor(fighter, data ?? DEFAULT_ATTACK, kind.power, kind.bash, dual);
+    // Attacking ends its invisibility (the magic system); its combat line (an NPC's).
+    runtime.magic.acted(reference);
+    if (!fighter.player) {
+      this.#bark(reference, kind.bash ? 'Bash' : kind.power ? 'PowerAttack' : 'Attack', target);
+    }
     // A paired killmove: the one it is done to plays its part.
     if (lower.startsWith('pa_') && target !== undefined) this.#pair(fighter, target, event);
     return true;
@@ -887,6 +899,9 @@ export class ActorCombat implements CombatBridge {
         const record =
           fighter.state.current?.hand === 'left' ? gear?.leftRecord : gear?.rightRecord;
         this.#playSound(record?.sounds.swing, fighter);
+        // The swing is heard (its weapon's sound level, VNAM) and, the player's, commented on.
+        this.#options.senses?.()?.action(fighter.reference, record?.soundLevel ?? 1);
+        if (fighter.player) void this.#options.talk?.()?.playerAction('SWMW');
         break;
       }
       case 'strike':
@@ -1045,12 +1060,14 @@ export class ActorCombat implements CombatBridge {
           (stats?.weapon === undefined ? settings.unarmedCritDamageMult : 1)
         : 0;
     attacker.lastCritical = critical > 0;
-    // A sneak attack: the attacker sneaks on one not fighting it. TODO(M10) 4.1: detection
-    // decides whether the target is aware of it.
+    // A sneak attack: the attacker sneaks and the target does not detect it (detection:
+    // src/shell/actor-senses.ts; without it, one that does not fight the attacker).
     const sneaking = attacker.player
       ? this.#play?.player.sneaking === true
       : this.#options.movers.motion(attackerRef)?.sneaking === true;
-    const sneak = sneaking && target.target !== attackerRef && !hit.bash;
+    const senses = this.#options.senses?.();
+    const aware = senses ? senses.detects(targetRef, attackerRef) : target.target === attackerRef;
+    const sneak = sneaking && !aware && !hit.bash;
     const equipped =
       stats?.weaponType === WeaponType.crossbow
         ? EquippedItemType.crossbow
@@ -1100,6 +1117,7 @@ export class ActorCombat implements CombatBridge {
     // a power attack staggers the blocker; the blocker's stamina pays for it.
     if (blocks) {
       void this.#act(target, 'ActionBlockHit');
+      this.#bark(targetRef, 'Block', attackerRef);
       const recoil = recoilOf(
         hit,
         'block',
@@ -1180,11 +1198,34 @@ export class ActorCombat implements CombatBridge {
       this.#enemy = { reference: targetRef, until: this.#clock + ENEMY_BAR_SECONDS };
     if (target.player && !attacker.player && attacker.target === undefined)
       attacker.target = targetRef;
-    // TODO(M10) 4.3: the combat lines (bark(actor, Hit, attacker); bark(attacker, Attack, ...)).
-    // Its health; the killing blow pushes its ragdoll (fDeathForce*).
+    // Detection: the one attacked searches for its attacker; those near watch the fight.
+    senses?.attackedBy(targetRef, attackerRef);
+    // The weapon's enchantment and the poison on it (not a bash: the magic system); a diseased
+    // creature's attack (its attack data's spell) may pass its disease on.
+    if (!hit.bash && !blocks) await runtime.magic.weaponHit(attackerRef, targetRef, stats?.weapon);
+    if (!hit.shot && !blocks && data.spell !== undefined) {
+      await runtime.magic.contractDisease(targetRef, data.spell);
+    }
+    // Its health; the killing blow pushes its ragdoll (fDeathForce*). The one hit says its
+    // line (Hit), or its death cry.
     if (result.total <= 0) return;
     await runtime.actors.damage(targetRef, ActorValue.health, result.total, attackerRef);
-    if (await runtime.actors.isDead(targetRef)) this.#deathPush(target, result.total, hit);
+    if (await runtime.actors.isDead(targetRef)) {
+      this.#bark(targetRef, 'Death', attackerRef, true);
+      this.#deathPush(target, result.total, hit);
+    } else if (!target.player) {
+      this.#bark(targetRef, 'Hit', attackerRef);
+    }
+  }
+
+  /** A combat line (src/shell/actor-talk.ts bark): an actor's, by its topic subtype. */
+  #bark(actor: number, subtype: string, target?: number, interrupt = false): void {
+    if (actor === PLAYER_REF) return;
+    const talk = this.#options.talk?.();
+    if (!talk) return;
+    talk.bark(actor, subtype, target ?? PLAYER_REF, { interrupt }).catch((error: unknown) => {
+      this.#warn(`a combat line: ${describe(error)}`);
+    });
   }
 
   /** The blow that killed pushes the ragdoll by its damage (fDeathForce{Ranged}*). */
@@ -1287,6 +1328,9 @@ export class ActorCombat implements CombatBridge {
       payload,
     });
     this.#playSound(gear.rightRecord?.sounds.attack, fighter);
+    // The shot is heard; the player's commented on (ShootBow).
+    this.#options.senses?.()?.action(fighter.reference, gear.rightRecord?.soundLevel ?? 1);
+    if (fighter.player) void this.#options.talk?.()?.playerAction('FIWE');
     // An arrow used (the equip system's count; the player's quiver empties).
     void runtime.removeItem(fighter.reference, runtime.formHandle(ammo), 1, true, undefined);
     fighter.state.drawnFor = 0;
