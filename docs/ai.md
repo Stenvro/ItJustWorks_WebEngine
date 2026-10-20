@@ -287,8 +287,9 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   the body on the seat or the bed themselves: seated on a chair the pelvis is 39 above the root,
   on a bar stool 55, lying in a bed 53, in a bedroll 21, and the feet stay 6 above it; their
   marker heights (34, 49, 37, 7) are the seats the clips were made for, and no clip moves the
-  root up or down. TODO(M10) 3.5: furniture whose markers are high above its origin (the carts'
-  seats, 59 and 132; the prisoner carriage, 135; creature alcoves, 114).
+  root up or down. The opening's prisoner carriage is no furniture: its riders stand at its root
+  (below, "Followers, mounts and vehicles"). TODO(M13): furniture whose markers are high above
+  its origin (the carts' seats, 59 and 132; creature alcoves, 114).
 - **States and events:** GetSitState / GetSleepState and the conditions above answer from it;
   IsFurnitureInUse and IsFurnitureMarkerInUse; the actor's scripts hear OnSit once it is in and
   OnGetUp once it stands. An actor placed in furniture as its cell loads is in it at once by the
@@ -381,6 +382,66 @@ With the running game's scripts, quest state and
 globals are theirs, and the packages of the aliases that hold an actor come before its own
 (by quest priority, as the Creation Kit stacks them); without them an actor an alias may hold
 is not decided.
+
+## Followers, mounts and vehicles
+
+Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.ts`,
+`vehicles.ts`; the stage: `src/shell/actor-followers.ts`, `actor-mounts.ts`,
+`actor-vehicles.ts`):
+
+- **Followers:** an actor whose package follows a leader (Follow, FollowTo) keeps within its
+  maximum radius, closing to its minimum plus fFollowSpaceBetweenFollowers (192) for each of
+  the leader's followers nearer it, so they go one behind another; it runs when more than twice
+  its radius behind or when the leader runs. The player's followers (DialogueFollower's
+  FollowerPackageTemplate follows while WaitingForPlayer is 0 and waits while it is 1: waiting
+  is the scripts') come along through load doors and on fast travel: they are put beside the
+  player's arrival (one spacing apart, row behind row) in the game state, and show as that place
+  loads; on fast travel to an exterior the player's last ridden horse comes too. Teammates
+  (SetPlayerTeammate) sneak while the player sneaks. One more than 2048 units behind and out of
+  the player's sight (beyond 55° of their view) for 3 seconds is put 512 units behind them on
+  the navmesh. TODO(M13): the engine's catch-up rule, where it puts those coming along, Need
+  LOS and Accompany. GetPlayerTeammate and GetPlayerTeammateCount answer from the game state.
+- **Mounting** goes through the idle tree as furniture does: under ActionActivate, HorseEvents
+  (the horse HasKeyword ActorTypeHorse) gives Mount (HorseEnter) and Dismount (HorseExit,
+  HorseExitSwim). Both are paired animations: rider and horse stand at the horse's root while
+  they play, the horse's graph gets the event with "pa\_" before it; the rider's graph raises
+  NPCpairedStop and NPCHorseExitOut at their end, and is sent pairedStop and HorseExitOut (the
+  horse PairEnd). The rider starts at the race's mount offset (HorseRace DATA: 63.5 units to
+  the horse's left, facing it: the clip's "NPC" track says the same) and gets off 111.6 units
+  to its left (the dismount's end). Riding, its root is on the horse's SaddleBone (its
+  HorseRider_State poses its pelvis at the root), its graphs driven by the horse's movement;
+  the horse's own AI waits. GetSitting answers 2, 3 and 4 for a rider mounting, riding and
+  getting off; IsRidingHorse, IsBeingRidden, IsOnMount, Dismount and IsPlayersLastRiddenHorse
+  answer from it.
+- **The player** rides a horse by activating it: "Ride" (sRide), "Steal Horse" (sStealHorse)
+  for one owned (XOWN) by another that is neither bought (PlayerHorseFaction) nor the last they
+  rode (TODO(M11): the crime). Mounted, the movement keys send the horse the way the camera
+  looks (it turns as it goes; back alone it backs up), Run and Sprint walk, run and gallop it;
+  Activate gets them off. They are carried on the saddle in the physics steps (their shape out
+  of the world), so their camera rides with the horse. TODO(M13): the engine's horse controls,
+  the path tweener to the mount place, mounting from the right.
+- **Actors riding:** a procedure that lets an actor ride ("Ride Horse If Possible": Travel,
+  Patrol, Follow, ...) mounts its horse (its ACHR's XHOR: General Tullius' MQ101TulliusHorse)
+  within 2048 units before it sets out, and its travel moves the horse; one that does not gets
+  it off first, as do using furniture, taking and activating, and load doors
+  (sNotAllowedToUseAutoDoorsWhileonHorse).
+- **Carts:** TetherToHorse hitches a cart to a horse; a horse standing off the cart's shafts is
+  put in them, 210.6 units ahead of its front axle (the opening's first cart stands so in the
+  editor, the second 411 behind its horse). The cart is taken out of its cell and towed on every
+  physics step: the prisoner carriage's front axle pivot (its model's origin) trails the horse at
+  that length, its rear axle (214.85 behind) trails the pivot, on the navmesh's height; the
+  FrontBar turns towards the horse within its hinge (±40°) and the wheels roll (49.5 and 59.4
+  units). Its bodies are keyframed there. TODO(M13): the engine pulls the simulated bodies by a
+  constraint. The cart's travel is its horse's packages (the opening's PatrolStaticPathing along
+  58 markers, 29,000 units to Helgen: towed along them its front axle turns at most 25°);
+  `ActorVehicles.startTravel` has the horse choose its package again, as the opening's stage 15
+  and a scene's package action do.
+- **Riding a vehicle** (SetVehicle): the actor's root is the vehicle's (its position, heading and
+  pitch); its riding idles seat it there (IdleCartPrisonerASway: the pelvis 200 units behind and
+  139 above the cart's origin; the driver's 11 behind) and its exit idle's root motion takes it
+  out (CartPrisonerAExit: 380 units out of the back). The idles reach the cart state through
+  Master_Behavior's global wildcards. The player rides so too, carried in the physics steps;
+  their PlayIdle plays as an actor's. An actor's AI that goes somewhere lets it off.
 
 ## Actors away
 

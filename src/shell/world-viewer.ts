@@ -87,6 +87,7 @@ import { talkTargets, type PlacedActor } from './actors.ts';
 import { ActorStage } from './actor-stage.ts';
 import type { DoorObject } from './actor-doors.ts';
 import { PlayerFurniture } from './player-furniture.ts';
+import type { AdoptedVehicle } from './actor-vehicles.ts';
 import { stageObject, type StageObject } from './actor-furniture.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -413,6 +414,14 @@ export class WorldViewer {
     return this.#play !== undefined;
   }
 
+  /**
+   * The player goes to a place elsewhere: their followers (and on fast travel, `horse`, their
+   * horse) come along (src/shell/actor-followers.ts).
+   */
+  bringFollowers(at: Placement, horse: boolean): Promise<void> {
+    return this.#stage?.followers.comeAlong(at, horse) ?? Promise.resolve();
+  }
+
   /** Puts the player at a place in the worldspace on screen: false if it is not in it. */
   sendPlayer(at: Placement): boolean {
     if (!this.#play || at.world === undefined || at.world !== this.#world?.record.formId) {
@@ -658,13 +667,26 @@ export class WorldViewer {
       this.#stage?.killed(reference);
     },
     currentPackage: (reference) => this.#stage?.ai.current(reference)?.id,
-    interaction: (reference) => this.#stage?.furniture.interaction(reference),
+    interaction: (reference) =>
+      this.#stage?.furniture.interaction(reference) ?? this.#stage?.mounts.interaction(reference),
     playIdle: (actor, idle, target) => {
+      // The player's idles too (the opening's IdleCartPrisonerCIdle in the cart).
       const staged = this.#stage?.get(actor);
-      if (!staged) return false;
-      void this.#stage?.furniture.playIdle(this.#stage.userOf(staged), idle, target);
+      const user = actor === PLAYER_REF ? this.#seat?.user : staged && this.#stage?.userOf(staged);
+      if (!user) return false;
+      void this.#stage?.furniture.playIdle(user, idle, target);
       return true;
     },
+    // Carts and their riders, horses and theirs (src/shell/actor-vehicles.ts, actor-mounts.ts).
+    vehicleChanged: (actor) => {
+      this.#stage?.vehicles.changed(actor);
+    },
+    tether: (cart, horse) => {
+      void this.#stage?.vehicles.tether(cart, horse);
+    },
+    mountOf: (actor) => this.#stage?.mounts.horseOf(actor),
+    riderOf: (horse) => this.#stage?.mounts.riderOf(horse),
+    dismount: (actor) => this.#stage?.mounts.dismount(actor) ?? false,
     motion: (reference) =>
       reference === PLAYER_REF ? this.#play?.playerMotion() : this.#stage?.movers.motion(reference),
     furnitureInUse: (reference, marker) => this.#stage?.furniture.inUse(reference, marker) ?? false,
@@ -683,6 +705,36 @@ export class WorldViewer {
       return;
     }
     await this.#stage?.lookChanged(reference);
+  }
+
+  /**
+   * A cart its horse pulls (src/shell/actor-vehicles.ts): out of its cell, its draws and
+   * collision (the vehicles show and collide it wherever it goes).
+   */
+  #adoptVehicle(reference: number): AdoptedVehicle | undefined {
+    for (const cell of this.#cells.values()) {
+      const entry = cell.placed.find((placed) => placed.object.reference === reference);
+      if (!entry || !cell.ready) continue;
+      cell.placed = cell.placed.filter((placed) => placed !== entry);
+      cell.sceneInstances = cell.sceneInstances.filter((instance) => instance !== entry.instance);
+      const previous = cell.scene;
+      cell.scene = this.#renderer.scene.createScene(cell.sceneInstances);
+      previous?.destroy();
+      const group = cell.collision;
+      const pose = entry.instance.pose;
+      for (let i = group.articulated.length - 1; i >= 0; i--) {
+        if (pose && group.articulated[i]?.pose === pose) group.articulated.splice(i, 1);
+      }
+      for (const placed of this.#play?.placementsOf(reference) ?? []) {
+        const at = group.collision.indexOf(placed);
+        if (at >= 0) group.collision.splice(at, 1);
+        const settle = group.settle.indexOf(placed);
+        if (settle >= 0) group.settle.splice(settle, 1);
+        this.#play?.physics.remove(placed);
+      }
+      return { object: entry.object, instance: entry.instance };
+    }
+    return undefined;
   }
 
   /** A script moved a reference of a loaded cell: its instance and its collision follow. */
@@ -896,6 +948,8 @@ export class WorldViewer {
       onTrigger: (trigger, actor, entered) => {
         this.#session?.scriptsReady?.triggered(trigger, actor, entered);
       },
+      player: () => this.playerView,
+      adoptVehicle: (reference) => this.#adoptVehicle(reference),
     });
     this.#landTextures.clear();
     const db = await session.db;
@@ -1032,6 +1086,8 @@ export class WorldViewer {
         () => this.readyActors(),
         () => this.#session,
         this.#terminal,
+        // A horse is ridden (src/shell/actor-mounts.ts).
+        (placed) => this.#stage?.mounts.activation(placed),
       ),
       prompt: this.#ui.prompt,
       hud: session.hud,
@@ -1570,7 +1626,10 @@ export class WorldViewer {
     const isEnabled = this.#enableState(session, data, cellId, toggles);
     cell.isEnabled = isEnabled;
     // Every reference that can appear (a script may enable it), drawn while enabled.
-    const objects = data.objects;
+    // A cart its horse pulls is not its cell's any more (src/shell/actor-vehicles.ts).
+    const objects = data.objects.filter(
+      (object) => this.#stage?.vehicles.owns(object.reference) !== true,
+    );
     const shownBy = (reference: number): InstanceVisibility => {
       let entry = cell.visibility.get(reference);
       if (!entry) {

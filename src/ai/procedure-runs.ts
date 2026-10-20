@@ -3,6 +3,7 @@
 // Kit's names and its parameters; what they do here follows the names and parameters, and
 // where the engine's own rule is not known it is marked TODO(M13). Platform-independent.
 
+import { followGait } from './followers.ts';
 import { IdleCollectionFlag } from './idle-records.ts';
 import { TargetType } from './package-records.ts';
 import type {
@@ -209,7 +210,11 @@ const patrol: ProcedureRunner = async (run) => {
 
 /**
  * Follow: keeps within its maximum radius of its target, closing to the minimum when it falls
- * behind; stands, facing it, between. TODO(M10) 3.5: through doors, riding, Need LOS.
+ * behind (one fFollowSpaceBetweenFollowers farther for each of the leader's followers nearer
+ * it), running when far behind or when the leader runs; stands, facing it, between. Through
+ * load doors and on fast travel the player's followers come along (src/shell/actor-followers.ts);
+ * its horse it rides where the package lets it (body.ride). TODO(M13): Need LOS (it follows
+ * the leader whether it sees it or not) and Accompany are not documented.
  */
 const follow: ProcedureRunner = async (run) => {
   const target = run.inputs.target(0);
@@ -217,17 +222,27 @@ const follow: ProcedureRunner = async (run) => {
   if (leader === undefined) return hold(run);
   const min = Math.max(run.inputs.number(1, 128), 64);
   const max = Math.max(run.inputs.number(2, 256), min);
-  while (!run.stopped()) {
-    const at = await run.mind.placement(leader);
-    const here = run.body.position();
-    if (at && here && horizontal(here, at.position) > max) {
-      if (!(await run.body.travel(at.position, 'run', min, at.space))) await run.wait(IDLE_SECONDS);
-    } else if (at && here) {
-      run.body.face(Math.atan2(at.position[0] - here[0], at.position[1] - here[1]));
-      await run.wait(IDLE_SECONDS / 2);
-    } else {
-      await run.wait(IDLE_SECONDS);
+  try {
+    while (!run.stopped()) {
+      const near = min + (run.body.following?.(leader) ?? 0);
+      const far = Math.max(max, near);
+      const at = await run.mind.placement(leader);
+      const here = run.body.position();
+      const distance = at && here ? horizontal(here, at.position) : 0;
+      if (at && here && distance > far) {
+        const gait = followGait(distance, far, run.gait, run.mind.running?.(leader) === true);
+        if (!(await run.body.travel(at.position, gait, near, at.space))) {
+          await run.wait(IDLE_SECONDS);
+        }
+      } else if (at && here) {
+        run.body.face(Math.atan2(at.position[0] - here[0], at.position[1] - here[1]));
+        await run.wait(IDLE_SECONDS / 2);
+      } else {
+        await run.wait(IDLE_SECONDS);
+      }
     }
+  } finally {
+    run.body.following?.(undefined);
   }
   return 'failure';
 };
@@ -596,29 +611,42 @@ const escort: ProcedureRunner = async (run) => {
   return 'failure';
 };
 
-/** FollowTo: follows its target (between its radii) until one of them reaches the destination. */
+/**
+ * FollowTo: follows its target (between its radii, kept apart from the leader's other
+ * followers as Follow does) until one of them reaches the destination.
+ */
 const followTo: ProcedureRunner = async (run) => {
   const leader = (await targetsIn(run, 0))[0];
   if (leader === undefined) return hold(run);
   const destination = await placeIn(run, 1);
   const min = Math.max(run.inputs.number(2, 128), 64);
   const max = Math.max(run.inputs.number(3, 256), min);
-  while (!run.stopped()) {
-    const at = await run.mind.placement(leader);
-    const here = run.body.position();
-    const reach = Math.max(destination?.radius ?? 0, AT_PLACE);
-    if (
-      destination &&
-      ((here && horizontal(here, destination.position) <= reach) ||
-        (at && horizontal(at.position, destination.position) <= reach))
-    ) {
-      return 'success';
+  try {
+    while (!run.stopped()) {
+      const near = min + (run.body.following?.(leader) ?? 0);
+      const far = Math.max(max, near);
+      const at = await run.mind.placement(leader);
+      const here = run.body.position();
+      const reach = Math.max(destination?.radius ?? 0, AT_PLACE);
+      if (
+        destination &&
+        ((here && horizontal(here, destination.position) <= reach) ||
+          (at && horizontal(at.position, destination.position) <= reach))
+      ) {
+        return 'success';
+      }
+      const distance = at && here ? horizontal(here, at.position) : 0;
+      if (at && here && distance > far) {
+        const gait = followGait(distance, far, run.gait, run.mind.running?.(leader) === true);
+        if (!(await run.body.travel(at.position, gait, near, at.space))) {
+          await run.wait(IDLE_SECONDS);
+        }
+      } else {
+        await run.wait(IDLE_SECONDS / 2);
+      }
     }
-    if (at && here && horizontal(here, at.position) > max) {
-      if (!(await run.body.travel(at.position, 'run', min, at.space))) await run.wait(IDLE_SECONDS);
-    } else {
-      await run.wait(IDLE_SECONDS / 2);
-    }
+  } finally {
+    run.body.following?.(undefined);
   }
   return 'failure';
 };

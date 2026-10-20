@@ -231,6 +231,25 @@ export class CharacterBody {
   }
 
   /**
+   * Carries the character along (a rider on its horse, a passenger on a cart): its feet after
+   * this step and the one before, as what carries it moved them (it is drawn between them).
+   */
+  carry(previous: Vec3, feet: Vec3): void {
+    this.#previous = [...previous];
+    this.#feet = [...feet];
+    this.verticalSpeed = 0;
+    this.#body.setNextKinematicTranslation(this.#center(feet));
+  }
+
+  /**
+   * Whether the shape is in the world (it collides, is touched, blocks): off while riding, so
+   * the horse's own shape is not stopped by its rider's.
+   */
+  set solid(on: boolean) {
+    this.#collider.setEnabled(on);
+  }
+
+  /**
    * Moves the character out of what its shape overlaps, as Havok's character proxy recovers
    * from penetration: along each contact's normal by its depth, for a few rounds. A door's
    * arrival point may lie in the door (KatariahWorld's balcony door: 25 units in front of it,

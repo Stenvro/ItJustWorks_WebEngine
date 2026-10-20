@@ -67,6 +67,12 @@ export interface ScriptView {
   motion?(reference: number): ActorMotion | undefined;
   /** PlayIdle: an actor of the view plays an idle (false: the view does not hold it). */
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
+  /** Vehicles and mounts of the view (src/shell/actor-vehicles.ts, actor-mounts.ts). */
+  vehicleChanged?(actor: number): void;
+  tether?(cart: number, horse: number): void;
+  mountOf?(actor: number): number | undefined;
+  riderOf?(horse: number): number | undefined;
+  dismount?(actor: number): boolean;
   /** Whether a furniture's marker (any marker, without one) is used by an actor of the view. */
   furnitureInUse?(reference: number, marker?: number): boolean;
 }
@@ -288,6 +294,36 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views)
       played = (view.playIdle?.(actor, idle, target) ?? false) || played;
     return played;
+  }
+
+  vehicleChanged(actor: number): void {
+    for (const view of this.#views) view.vehicleChanged?.(actor);
+  }
+
+  tether(cart: number, horse: number): void {
+    for (const view of this.#views) view.tether?.(cart, horse);
+  }
+
+  mountOf(actor: number): number | undefined {
+    for (const view of this.#views) {
+      const horse = view.mountOf?.(actor);
+      if (horse !== undefined) return horse;
+    }
+    return undefined;
+  }
+
+  riderOf(horse: number): number | undefined {
+    for (const view of this.#views) {
+      const rider = view.riderOf?.(horse);
+      if (rider !== undefined) return rider;
+    }
+    return undefined;
+  }
+
+  dismount(actor: number): boolean {
+    let done = false;
+    for (const view of this.#views) done = (view.dismount?.(actor) ?? false) || done;
+    return done;
   }
 
   motion(actor: number): ActorMotion | undefined {

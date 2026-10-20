@@ -303,6 +303,14 @@ export class ModelViewer {
     return this.#play !== undefined;
   }
 
+  /**
+   * The player goes to a place elsewhere: their followers (and on fast travel, `horse`, their
+   * horse) come along (src/shell/actor-followers.ts).
+   */
+  bringFollowers(at: Placement, horse: boolean): Promise<void> {
+    return this.#stage?.followers.comeAlong(at, horse) ?? Promise.resolve();
+  }
+
   /** Puts the player at a place in the scene on screen: false if it is not in this cell. */
   sendPlayer(at: Placement): boolean {
     if (!this.#play || at.world !== undefined || at.cell !== this.#cell?.data.cell.formId) {
@@ -435,13 +443,26 @@ export class ModelViewer {
       this.#stage?.killed(reference);
     },
     currentPackage: (reference) => this.#stage?.ai.current(reference)?.id,
-    interaction: (reference) => this.#stage?.furniture.interaction(reference),
+    interaction: (reference) =>
+      this.#stage?.furniture.interaction(reference) ?? this.#stage?.mounts.interaction(reference),
     playIdle: (actor, idle, target) => {
+      // The player's idles too (the opening's IdleCartPrisonerCIdle in the cart).
       const staged = this.#stage?.get(actor);
-      if (!staged) return false;
-      void this.#stage?.furniture.playIdle(this.#stage.userOf(staged), idle, target);
+      const user = actor === PLAYER_REF ? this.#seat?.user : staged && this.#stage?.userOf(staged);
+      if (!user) return false;
+      void this.#stage?.furniture.playIdle(user, idle, target);
       return true;
     },
+    // Carts and their riders, horses and theirs (src/shell/actor-vehicles.ts, actor-mounts.ts).
+    vehicleChanged: (actor) => {
+      this.#stage?.vehicles.changed(actor);
+    },
+    tether: (cart, horse) => {
+      void this.#stage?.vehicles.tether(cart, horse);
+    },
+    mountOf: (actor) => this.#stage?.mounts.horseOf(actor),
+    riderOf: (horse) => this.#stage?.mounts.riderOf(horse),
+    dismount: (actor) => this.#stage?.mounts.dismount(actor) ?? false,
     motion: (reference) =>
       reference === PLAYER_REF ? this.#play?.playerMotion() : this.#stage?.movers.motion(reference),
     furnitureInUse: (reference, marker) => this.#stage?.furniture.inUse(reference, marker) ?? false,
@@ -696,6 +717,8 @@ export class ModelViewer {
         () => this.#stage?.shown() ?? [],
         () => this.#session,
         this.#terminal,
+        // A horse is ridden (src/shell/actor-mounts.ts).
+        (placed) => this.#stage?.mounts.activation(placed),
       ),
       prompt: this.#ui.prompt,
       hud: session.hud,
@@ -818,6 +841,7 @@ export class ModelViewer {
       door: (reference) => this.#doorOf(reference),
       interior: true,
       light: (at) => this.#lightProbe(at),
+      player: () => this.playerView,
     });
     const { vfs, loader } = session;
     this.#meshes = vfs.list('meshes').filter((path) => path.endsWith('.nif'));
