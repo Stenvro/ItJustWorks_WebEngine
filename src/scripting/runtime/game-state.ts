@@ -102,6 +102,8 @@ export interface ActorState {
   dontMove?: boolean;
   aiEnabled?: boolean;
   noBleedoutRecovery?: boolean;
+  /** Others attack it on sight (SetAttackActorOnSight: the combat AI). */
+  attackOnSight?: boolean;
   /** Its own outfits (Actor.SetOutfit), over its base's. */
   outfit?: number;
   sleepOutfit?: number;

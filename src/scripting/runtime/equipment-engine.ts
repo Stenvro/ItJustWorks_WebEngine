@@ -444,7 +444,8 @@ export class EquipmentEngine {
    * damage with its skill, a shield beside a one-handed weapon, the best ammunition for its bow
    * or crossbow. Items scripts locked stay, items it must not equip are left. TODO(M13): the
    * engine's own choice is undocumented (UESP, followers: they wear what has a higher rating
-   * than what they wear in its slots); combat chooses by its combat style (TODO(M10) 5.2).
+   * than what they wear in its slots); in combat it chooses by its combat style
+   * (src/shell/actor-combat-ai.ts).
    */
   async #takeUpBest(actor: number, items: Map<number, number>, quiet: boolean): Promise<void> {
     const state = this.#runtime.state.actor(actor).equipment;

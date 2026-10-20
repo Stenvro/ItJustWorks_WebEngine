@@ -97,7 +97,7 @@ export interface ApplyOptions {
   readonly effects?: readonly number[];
 }
 
-/** What the AI reads of the effects on an actor (TODO(M10) 5.2: combat AI acts on them). */
+/** What the AI reads of the effects on an actor (src/shell/actor-combat-ai.ts acts on them). */
 export interface MagicAiState {
   /** Calm: it will not fight. Frenzy: it attacks anyone. */
   readonly calmed: boolean;
@@ -264,7 +264,7 @@ export class MagicEngine {
     );
   }
 
-  /** What the AI reads of an actor's effects (TODO(M10) 5.2: combat AI acts on them). */
+  /** What the AI reads of an actor's effects (the combat AI acts on them). */
   aiState(actor: number): MagicAiState {
     const has = (archetype: number): boolean => this.#archetypeOn(actor, archetype).length > 0;
     return {

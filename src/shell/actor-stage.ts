@@ -215,6 +215,10 @@ export class ActorStage {
       get: (reference) => this.#actors.get(reference),
       talk: () => this.talk,
       senses: () => this.senses,
+      ai: () => this.ai,
+      interior: () => options.interior === true,
+      dismount: (actor) => this.mounts.getOff(actor),
+      ridden: (actor) => this.mounts.ridden(actor),
     });
     this.search = new ActorSearch({
       session: options.session,

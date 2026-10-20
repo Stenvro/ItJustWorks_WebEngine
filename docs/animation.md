@@ -339,7 +339,7 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   states; the movers make that turn already, so the graph's root motion leaves it out.
 - Not run, by milestone (behavior.ts): the ragdoll's controls, get-up and contact listener
   (TODO(M10) 5.1), the dragon's flight (BSTweenerModifier, BSLimbIKModifier and others: 5.4)
-  and BSIStateManagerModifier (5.2).
+  and BSIStateManagerModifier (M11, with the beast forms).
 
 ## Head tracking
 

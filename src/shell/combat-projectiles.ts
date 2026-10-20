@@ -130,6 +130,23 @@ export class CombatProjectiles {
   }
 
   /** A frame: every shot flies on and meets what it meets. */
+  /** The shots in flight (each the same `key` from frame to frame): who dodges them. */
+  *flying(): Iterable<{
+    readonly key: object;
+    readonly shooter: number;
+    readonly position: Vec3;
+    readonly velocity: Vec3;
+  }> {
+    for (const shot of this.#shots) {
+      yield {
+        key: shot,
+        shooter: shot.shooter,
+        position: shot.flight.position,
+        velocity: shot.flight.velocity,
+      };
+    }
+  }
+
   frame(seconds: number, physics: PhysicsWorld | undefined): void {
     if (seconds <= 0) return;
     for (const shot of [...this.#shots]) {
