@@ -318,11 +318,21 @@ export class ActorEngine {
   async value(reference: number, index: number): Promise<ActorValueNow> {
     const own = this.#runtime.state.actors.get(reference)?.values.get(index);
     const base = own?.base ?? (await this.#recordBase(reference, index));
-    const max = base + (own?.modifier ?? 0);
+    // The base with the permanent (ModActorValue) and temporary (magic effects) modifiers.
+    const max = base + (own?.modifier ?? 0) + (own?.temporary ?? 0);
     return { base, max, current: max - (own?.damage ?? 0) };
   }
 
-  #own(reference: number, index: number): { base?: number; modifier: number; damage: number } {
+  /** A magic effect's temporary modifier (taken back as it ends: modifyTemporary(−amount)). */
+  modifyTemporary(reference: number, index: number, amount: number): void {
+    const own = this.#own(reference, index);
+    own.temporary = (own.temporary ?? 0) + amount;
+  }
+
+  #own(
+    reference: number,
+    index: number,
+  ): { base?: number; modifier: number; temporary?: number; damage: number } {
     const values = this.#runtime.state.actor(reference).values;
     let own = values.get(index);
     if (!own) {
@@ -342,13 +352,16 @@ export class ActorEngine {
     this.#own(reference, index).modifier += amount;
   }
 
-  /** DamageActorValue: damage (health at 0 is death, unless essential: TODO(M11) bleedout). */
-  async damage(reference: number, index: number, amount: number): Promise<void> {
+  /**
+   * DamageActorValue: damage (health at 0 is death, unless essential: TODO(M11) bleedout); a
+   * magic effect's damage names its caster as the killer.
+   */
+  async damage(reference: number, index: number, amount: number, killer?: number): Promise<void> {
     if (amount <= 0) return;
     const own = this.#own(reference, index);
     own.damage += amount;
     if (index === ActorValue.health && (await this.value(reference, index)).current <= 0) {
-      if (!(await this.isEssential(reference))) await this.kill(reference, undefined);
+      if (!(await this.isEssential(reference))) await this.kill(reference, killer);
     }
   }
 
@@ -627,6 +640,8 @@ export class ActorEngine {
     ).max;
     // Silent: no death cry or alarm (TODO(M10): detection and crime).
     this.#runtime.world.killed?.(reference, killer, silent);
+    // Its magic: souls trapped, effects dispelled, its summons gone (magic-engine.ts).
+    await this.#runtime.magic.died(reference);
     const by = killer === undefined ? null : this.#runtime.actorHandle(killer);
     await this.#runtime.sendEvent(reference, 'OnDying', [by]);
     await this.#runtime.sendEvent(reference, 'OnDeath', [by]);
