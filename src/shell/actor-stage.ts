@@ -31,7 +31,9 @@ import type { RouteDoor } from '../ai/routes.ts';
 import { ActorBodies } from './actor-bodies.ts';
 import { ActorDoors, type DoorObject } from './actor-doors.ts';
 import { ActorFurniture, type FurnitureUser, type StageObject } from './actor-furniture.ts';
-import { ActorMovers, type MoverWorld } from './actor-movers.ts';
+import { ActorMovers } from './actor-movers.ts';
+import { ActorSenses, type SensesWorld } from './actor-senses.ts';
+import type { LightProbe } from '../ai/light-level.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -88,6 +90,10 @@ export interface ActorStageOptions {
   readonly door?: (reference: number) => DoorObject | undefined;
   /** The enabled objects and markers of the loaded area (what actors use and search for). */
   readonly objects?: () => Iterable<StageObject>;
+  /** The view's lighting near a place (the light on actors: src/shell/actor-senses.ts). */
+  readonly light?: (at: Vec3) => LightProbe | undefined;
+  /** The view shows an interior (detection's reach and light inside). */
+  readonly interior?: boolean;
 }
 
 const describe = (error: unknown): string =>
@@ -132,6 +138,8 @@ export class ActorStage {
   readonly away: ActorsAway;
   /** The doors the actors go through (src/shell/actor-doors.ts). */
   readonly doors: ActorDoors;
+  /** What the actors notice: detection, their reactions (src/shell/actor-senses.ts). */
+  readonly senses: ActorSenses;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -190,6 +198,18 @@ export class ActorStage {
       leaveThrough: (staged, door, destination) => this.leaveThrough(staged, door, destination),
       doors: this.doors,
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
+      overrides: (actor) => this.senses.overridePackages(actor),
+    });
+    this.senses = new ActorSenses({
+      session: options.session,
+      movers: this.movers,
+      furniture: this.furniture,
+      ai: this.ai,
+      actors: () => this.#actors.values(),
+      get: (reference) => this.#actors.get(reference),
+      interior: options.interior === true,
+      ...(options.light && { light: options.light }),
+      camera: () => options.renderer.view?.camera,
     });
   }
 
@@ -295,9 +315,10 @@ export class ActorStage {
   }
 
   /** The physics world the actors move and are hit in (undefined: the play ended). */
-  attachPlay(world: MoverWorld | undefined): void {
+  attachPlay(world: SensesWorld | undefined): void {
     this.movers.attach(world);
     this.bodies.attach(world?.physics);
+    this.senses.attach(world);
   }
 
   /**
@@ -309,6 +330,7 @@ export class ActorStage {
     if (!staged || staged.dead) return;
     staged.dead = true;
     this.ai.remove(reference);
+    this.senses.killed(reference);
     this.furniture.remove(reference);
     this.movers.request(reference, undefined);
     this.movers.release(reference);
@@ -583,6 +605,8 @@ export class ActorStage {
       this.#clock === undefined ? 0 : Math.min(0.25, Math.max(0, seconds - this.#clock));
     this.#clock = seconds;
     this.ai.frame(this.#actors.values(), frame, this.#options.focus?.());
+    // What they notice (detection), and how they react.
+    this.senses.frame(frame);
     this.away.frame(frame);
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     const times = new Map<StagedActor, number | undefined>();
@@ -693,6 +717,7 @@ export class ActorStage {
 
   #remove(staged: StagedActor): void {
     this.ai.remove(staged.reference);
+    this.senses.remove(staged.reference);
     this.furniture.remove(staged.reference);
     this.movers.remove(staged.reference);
     this.bodies.remove(staged.reference);

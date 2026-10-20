@@ -7,7 +7,8 @@ import { cellStatesElement, checkboxRow } from './cell-states.ts';
 import { InteriorSkyControls } from './interior-sky.ts';
 import type { SkyElements } from './world-sky.ts';
 import { FlyCamera } from '../render/fly-camera.ts';
-import { identity } from '../render/math.ts';
+import { identity, type Vec3 } from '../render/math.ts';
+import type { LightProbe } from '../ai/light-level.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
@@ -698,7 +699,10 @@ export class ModelViewer {
       prompt: this.#ui.prompt,
       hud: session.hud,
       onImpact: (impact) => {
-        this.#session?.soundSystem?.impact(impact);
+        // Its sound is a noise the actors may hear (the impact's sound level).
+        this.#session?.soundSystem?.impact(impact, (sounded) => {
+          this.#stage?.senses.noise(impact.position, undefined, sounded.soundLevel);
+        });
       },
     });
     play.lensShift = this.#fly.lensShift;
@@ -767,6 +771,28 @@ export class ModelViewer {
     return this.#cells;
   }
 
+  /** The cell's lighting near a place (the light on actors: src/shell/actor-senses.ts). */
+  #lightProbe(at: Vec3): LightProbe | undefined {
+    const cell = this.#cell;
+    if (!cell) return undefined;
+    const lighting = this.#cellLighting ?? cellSceneLighting(cell.data, this.#isEnabled);
+    return {
+      ambient: lighting.ambient,
+      sunColor: lighting.sunColor,
+      sunDirection: lighting.sunDirection,
+      lights: pointLights(
+        [
+          ...cell.data.lights.filter((light) => this.#isEnabled(light.reference)),
+          ...(this.#created?.lights() ?? []),
+        ],
+        this.#tickClock(),
+        at,
+        (id) => this.#emittanceRgb(id),
+      ),
+      interior: true,
+    };
+  }
+
   /** Starts using a (new) game session: lists its meshes and cells. */
   async connect(session: GameSession): Promise<void> {
     this.#reset();
@@ -789,6 +815,8 @@ export class ModelViewer {
       navmeshes: () => this.#navmeshes,
       objects: () => this.#stageObjects(),
       door: (reference) => this.#doorOf(reference),
+      interior: true,
+      light: (at) => this.#lightProbe(at),
     });
     const { vfs, loader } = session;
     this.#meshes = vfs.list('meshes').filter((path) => path.endsWith('.nif'));

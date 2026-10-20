@@ -357,7 +357,7 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   flag('setdontmove', 'dontMove');
   ask('isalerted', false, (actor) => state.actors.get(actor)?.alerted ?? false);
   flag('setalert', 'alerted');
-  ask('isalarmed', false, () => false);
+  ask('isalarmed', false, (actor) => world.alarmed?.(actor) ?? false);
   ask('isplayerslastriddenhorse', false, (actor) => runtime.lastHorse === actor);
   ask('getplayercontrols', false, (actor) => actor === PLAYER_REF);
   act('setplayercontrols', () => undefined);
@@ -385,12 +385,22 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     if (target !== undefined) world.startCombat?.(actor, target);
   });
   act('stopcombat', (actor) => world.stopCombat?.(actor));
-  act('stopcombatalarm', (actor) => world.stopCombat?.(actor));
+  act('stopcombatalarm', (actor) => {
+    world.stopCombat?.(actor);
+    world.alarm?.(actor, undefined, 'stop');
+  });
   ask('isincombat', false, () => false);
   ask('getcombatstate', 0, () => 0);
   ask('getcombattarget', null, () => null);
-  ask('isdetectedby', false, () => false);
-  ask('haslos', false, () => false);
+  // Detection (src/shell/actor-senses.ts): this actor detected by the other; its sight of one.
+  ask('isdetectedby', false, (actor, call) => {
+    const other = ref(call.args[0]);
+    return other !== undefined && (world.detects?.(other, actor) ?? false);
+  });
+  ask('haslos', false, (actor, call) => {
+    const other = ref(call.args[0]);
+    return other !== undefined && (world.lineOfSight?.(actor, other) ?? false);
+  });
   ask('ishostiletoactor', false, () => false);
   ask('isguard', false, () => false);
   ask('istrespassing', false, () => false);
@@ -398,10 +408,15 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   ask('isarrestingtarget', false, () => false);
   act('cleararrested', () => undefined);
   act('setplayerresistingarrest', () => undefined);
-  act('sendassaultalarm', () => undefined);
-  act('sendtrespassalarm', () => undefined);
+  // Alarms: the actor, attacked by the player, raises one; or against a trespasser. What the
+  // actors that hear it do is crime's (TODO(M11)).
+  act('sendassaultalarm', (actor) => world.alarm?.(actor, PLAYER_REF, 'attack'));
+  act('sendtrespassalarm', (actor, call) => world.alarm?.(actor, ref(call.args[0]), 'trespass'));
+  // TODO(M10) 5.2: an actor attacks this one on sight.
   act('setattackactoronsight', () => undefined);
-  act('setnotshowonstealthmeter', () => undefined);
+  act('setnotshowonstealthmeter', (actor, call) =>
+    world.hideFromStealthMeter?.(actor, bool(call.args[0], true)),
+  );
   act('allowpcdialogue', () => undefined);
   ask('getdialoguetarget', null, () => null);
   act('keepoffsetfromactor', () => undefined);
@@ -423,7 +438,7 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   ask('isrunning', false, (actor) => world.motion?.(actor)?.running ?? false);
   ask('issprinting', false, (actor) => world.motion?.(actor)?.sprinting ?? false);
   ask('issneaking', false, (actor) => world.motion?.(actor)?.sneaking ?? false);
-  act('startsneaking', () => undefined);
+  act('startsneaking', (actor) => world.startSneaking?.(actor));
   ask('isweapondrawn', false, () => false);
   act('drawweapon', () => undefined);
   // What it uses: 0 not, 2 wants to (on its way), 3 in it, 4 wants to leave.
