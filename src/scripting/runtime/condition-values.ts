@@ -4,7 +4,8 @@
 // dead, disabled, destroyed or locked, relationships, locations (keywords, reference types,
 // keyword data, cleared), the time, and the story manager event's data. Functions not valued
 // yet hold (and are reported once), as conditions.ts does. Indices: UESP "Skyrim Mod:Function
-// Indices". TODO(M10)/(M11): combat, detection, magic and crime functions.
+// Indices"; magic's in magic-conditions.ts. TODO(M10)/(M11): combat, detection and crime
+// functions.
 
 import { NpcFlag, RaceFlag } from '../../world/actor-records.ts';
 import { ActorValue } from '../../world/actor-values.ts';
@@ -12,6 +13,7 @@ import { conditionFunctionName } from '../condition-functions.ts';
 import type { Condition } from '../conditions.ts';
 import { ObjectHandle, type Value } from '../values.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
+import { magicConditionValue } from './magic-conditions.ts';
 import type { ScriptRuntime } from './runtime.ts';
 import type { StoryEventData } from './story-manager.ts';
 
@@ -186,6 +188,8 @@ export interface ConditionContext {
   readonly packageData?: (input: number) => number | 'none' | undefined;
   /** What the subject acts on (the object it activates: GetActivationHeight, IsCarryable). */
   readonly target?: ObjectHandle;
+  /** The active magic effect whose conditions these are (magic-conditions.ts). */
+  readonly effectKey?: string;
 }
 
 /** GetEventData's event functions (its first parameter's low 16 bits). */
@@ -835,10 +839,15 @@ async function conditionValue(
     // In a scene that plays.
     case Fn.isInScene:
       return reference === undefined ? undefined : flag(runtime.sceneOf(reference) !== undefined);
+    // Summoned, reanimated or commanded by an effect (magic-engine.ts).
+    case Fn.isCommandedActor:
+      return reference === undefined
+        ? undefined
+        : flag(runtime.magic.commander(reference) !== undefined);
     // Combat, weapons and magic out, bleeding out, staggers, knock-downs, alarms: no actor is
     // in any of these until combat and detection run (TODO(M10) 4.1, 5.1–5.3), as the
-    // natives answer (IsInCombat, IsWeaponDrawn, IsBleedingOut). Being fed on, eaten and
-    // commanded are the player's powers (TODO(M11)).
+    // natives answer (IsInCombat, IsWeaponDrawn, IsBleedingOut). Being fed on and eaten are
+    // the player's powers (TODO(M11)).
     case Fn.getWantBlocking:
     case Fn.getIsAlerted:
     case Fn.isWeaponMagicOut:
@@ -859,7 +868,6 @@ async function conditionValue(
     case Fn.getKnockStateEnum:
     case Fn.getVampireFeed:
     case Fn.getCannibal:
-    case Fn.isCommandedActor:
       return 0;
     // The type of what a hand holds (its casting source: 0 left, 1 right; Actor's codes).
     case Fn.getEquippedItemType:
@@ -929,6 +937,7 @@ async function conditionValue(
       return value === undefined ? undefined : flag(value === 'none');
     }
     default:
-      return undefined;
+      // Magic: the effects on an actor, and an effect's own (magic-conditions.ts).
+      return magicConditionValue(runtime, condition, reference, context.effectKey);
   }
 }

@@ -4,8 +4,9 @@
 // skills, effects, a book's description, a soul gem's soul), and the player's carried weight,
 // gold, armor rating, damage and meters. Selecting equips or takes off (the equip system:
 // armor, weapons and spells to the hand asked for, ammunition, torches), uses potions, food and
-// ingredients, reads books (`read`: the book menu, or a spell tome's spell learned); dropping
-// removes the items. Notes: docs/ui.md ("The item menus"), docs/gameplay.md ("Equipment").
+// ingredients (their effects: the magic system), puts poisons on the weapon, reads books
+// (`read`: the book menu, or a spell tome's spell learned); dropping removes the items.
+// Notes: docs/ui.md ("The item menus"), docs/gameplay.md ("Equipment", "Magic effects").
 
 import {
   armorSkill,
@@ -98,6 +99,11 @@ export function inventoryModel(
         // A book read from the inventory is equipped as far as scripts hear (its OnEquipped).
         await equipment.used(PLAYER_REF, formId);
         await read(formId);
+        return;
+      }
+      // A poison goes on the weapon (the magic system asks first).
+      if (record.type === 'ALCH' && (await game.magic.item(formId))?.kind === 'poison') {
+        await game.magic.applyPoison(PLAYER_REF, formId);
         return;
       }
       const sounds = session.soundSystem;
@@ -215,7 +221,7 @@ export async function itemCard(
           : (item.ammoDamage ?? 0),
       );
       card.effects = await effectsText(runtime, enchantment);
-      card.poisoned = false;
+      card.poisoned = runtime.magic.poisonOf(PLAYER_REF)?.weapon === row.formId;
       break;
     case CardType.book:
       card.description = item.book?.description ?? '';
@@ -229,10 +235,19 @@ export async function itemCard(
       card.effects = await effectsText(runtime, item.effects);
       card.spellCost = 0;
       break;
-    case CardType.ingredient:
-      // TODO(M11): the effects the player has found out (by eating, by alchemy).
+    case CardType.ingredient: {
+      // The effects the player has found out (by eating, by alchemy) by name (itemEffect0..3);
+      // the others show $UNKNOWN.
       card.numItemEffects = item.effects.length;
+      const known = runtime.state.ingredientEffects.get(row.formId);
+      for (const [slot, effect] of item.effects.entries()) {
+        if (!known?.has(slot)) continue;
+        const record = await runtime.forms.record(effect.effect);
+        card[`itemEffect${String(slot)}`] =
+          record?.type === 'MGEF' ? (record.text('FULL') ?? '') : '';
+      }
       break;
+    }
     case CardType.soulGem: {
       const soul = SOUL_LEVEL_SETTINGS[item.soul?.current ?? 0];
       card.soulLVL = soul ? (settings.string(soul) ?? '') : '';

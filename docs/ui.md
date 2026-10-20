@@ -701,9 +701,10 @@ and keeps the mouse.
 
 TODO(M11): the
 Haggling, Allure, Merchant and Investor perks, Fortify Barter, fences and stolen goods, the
-chest's restock (every 48 hours), favor points. TODO(M11): the active effects, favorites'
-hotkeys, the quantity of a drop, perks in armor, damage and spell costs, ingredients' known
-effects found by alchemy.
+chest's restock (every 48 hours), favor points. Potions, food and ingredients are used, poisons put on
+the weapon and the magic menu's Active Effects listed through the magic system (docs/gameplay.md,
+"Magic effects"). TODO(M11): favorites' hotkeys, the quantity of a drop, perks in armor, damage and
+spell costs, ingredients' known effects found by alchemy.
 
 ## The menus' 3D
 

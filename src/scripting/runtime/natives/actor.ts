@@ -117,11 +117,13 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   // --- Level, race, sex ---------------------------------------------------------------------
   ask('getlevel', 1, (actor) => actors.level(actor));
   ask('getrace', null, async (actor) => object(await actors.raceOf(actor), 'race'));
-  act('setrace', (actor, call) => {
+  act('setrace', async (actor, call) => {
     // The actor's own race (its base keeps its own); its 3D is made again in it (the player's
     // with the face chosen in the race menu: a werewolf and back keeps it).
     state.actor(actor).race = formOf(call.args[0]);
     world.raceChanged?.(actor);
+    // The new race's abilities act, the old one's end.
+    await runtime.magic.syncLasting(actor);
   });
   ask('getleveledactorbase', null, async (actor) =>
     object((await actors.info(actor))?.leveled, 'actorbase'),
@@ -202,11 +204,16 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     if (added && actor === PLAYER_REF && bool(call.args[1], true)) {
       runtime.detach(runtime.spellMessage(spell));
     }
+    // An ability, a disease: its effects act from now on.
+    if (added) await runtime.magic.syncLasting(actor);
     return added;
   });
-  ask('removespell', false, (actor, call) => {
+  ask('removespell', false, async (actor, call) => {
     const spell = formOf(call.args[0]);
-    return spell === undefined ? false : actors.removeSpell(actor, spell);
+    if (spell === undefined) return false;
+    const removed = await actors.removeSpell(actor, spell);
+    if (removed) await runtime.magic.syncLasting(actor);
+    return removed;
   });
   ask('hasspell', false, (actor, call) => {
     const spell = formOf(call.args[0]);
@@ -232,21 +239,38 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     const perk = formOf(call.args[0]);
     return perk === undefined ? false : actors.hasPerk(actor, perk);
   });
-  // Active magic (TODO(M11): the magic system casts, applies and dispels effects).
-  ask('dispelspell', false, () => false);
-  act('dispelallspells', () => undefined);
-  ask('hasmagiceffect', false, () => false);
-  ask('hasmagiceffectwithkeyword', false, () => false);
-  act('docombatspellapply', (actor, call) => {
+  // Active magic (the magic system: magic-engine.ts).
+  ask('dispelspell', false, (actor, call) => {
     const spell = formOf(call.args[0]);
-    if (spell !== undefined) world.castSpell?.(spell, actor, ref(call.args[1]));
+    return spell === undefined ? false : runtime.magic.dispelSpell(actor, spell);
+  });
+  act('dispelallspells', (actor) => runtime.magic.dispelAll(actor));
+  ask('hasmagiceffect', false, (actor, call) => {
+    const effect = formOf(call.args[0]);
+    return effect !== undefined && runtime.magic.hasEffect(actor, effect);
+  });
+  ask('hasmagiceffectwithkeyword', false, (actor, call) => {
+    const keyword = formOf(call.args[0]);
+    return keyword === undefined ? false : runtime.magic.hasEffectKeyword(actor, keyword);
+  });
+  // The spell applied to the target as from this actor's attack (at once; TODO(M10) 5.1).
+  act('docombatspellapply', async (actor, call) => {
+    const spell = formOf(call.args[0]);
+    const target = ref(call.args[1]);
+    if (spell === undefined || target === undefined) return;
+    const item = await runtime.magic.item(spell);
+    if (item) await runtime.magic.apply(item, target, { caster: actor });
   });
   // Equipping spells and shouts: natives/equipment.ts.
   act('setvoicerecoverytime', (actor, call) => {
     state.actor(actor).voiceRecoveryTime = num(call.args[0]);
   });
   ask('getvoicerecoverytime', 0, (actor) => state.actors.get(actor)?.voiceRecoveryTime ?? 0);
-  ask('trapsoul', false, () => false);
+  // The dead target's soul into this actor's soul gems (Soul Trap's scripts call it).
+  ask('trapsoul', false, async (actor, call) => {
+    const victim = ref(call.args[0]);
+    return victim !== undefined && runtime.magic.trapSoul(actor, victim);
+  });
 
   // --- Equipment (natives/equipment.ts: the equip system) ------------------------------------
   ask('getgoldamount', 0, (actor) => runtime.itemCount(actor, GOLD));

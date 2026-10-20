@@ -38,6 +38,7 @@ import { GameState, type Vec3 } from './game-state.ts';
 import { registerNatives } from './natives/index.ts';
 import { ActorEngine } from './actor-engine.ts';
 import { EquipmentEngine } from './equipment-engine.ts';
+import { MagicEngine, type MagicEffectShown } from './magic-engine.ts';
 import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
@@ -127,8 +128,13 @@ export interface WorldBridge {
   /** Actor.SetRace: the actor's 3D is made again in its new race (the player's keeps its face). */
   raceChanged?(actor: number): void;
   equipmentChanged?(actor: number): void;
-  /** A spell cast by a source at a target (TODO(M11): the magic system). */
+  /**
+   * A spell cast by a source at a target: its casting's visuals (the magic system has applied
+   * it at once; TODO(M10) 5.3: the projectile and its impact).
+   */
   castSpell?(spell: number, source: number, target: number | undefined): void;
+  /** A magic effect begins or ends on an actor: its sound, shader, art, light (magic-engine.ts). */
+  magicEffect?(shown: MagicEffectShown): void;
   criticalStage?(actor: number, stage: number): void;
   ashPile?(actor: number, pile: number | undefined): void;
   aiEnabled?(actor: number, enabled: boolean): void;
@@ -392,6 +398,8 @@ export class ScriptRuntime implements VmHost {
   readonly actors: ActorEngine;
   /** What actors hold and wear, and its stats (the equip system). */
   readonly equipment: EquipmentEngine;
+  /** The magic system: effects on actors, items used (magic-engine.ts). */
+  readonly magic: MagicEngine;
   /** While a new game starts its quests (their aliases may take reserved references). */
   startingNewGame = false;
   /** Game seconds per real second (the TimeScale global; scripts may set it). */
@@ -485,13 +493,15 @@ export class ScriptRuntime implements VmHost {
     this.storyManager = new StoryManager(this);
     this.actors = new ActorEngine(this);
     this.equipment = new EquipmentEngine(this);
+    this.magic = new MagicEngine(this);
+    this.magic.listen();
     registerNatives(this.#natives, this);
   }
 
   // --- VmHost --------------------------------------------------------------------------------
 
   async formType(target: ObjectHandle): Promise<string | undefined> {
-    if (this.state.activeEffects.has(target.key)) return 'activemagiceffect';
+    if (this.magic.scriptEffect(target.key)) return 'activemagiceffect';
     const created = target.alias < 0 ? this.state.created.get(target.formId) : undefined;
     if (created) {
       const base = await this.forms.record(created.base);
@@ -506,7 +516,7 @@ export class ScriptRuntime implements VmHost {
 
   async attachedScripts(target: ObjectHandle): Promise<readonly AttachedScriptInfo[]> {
     // An active magic effect runs its base effect's scripts.
-    const effect = this.state.activeEffects.get(target.key);
+    const effect = this.magic.scriptEffect(target.key);
     if (effect) return this.forms.attachedScripts(new ObjectHandle(effect.effect, 'form'));
     const created = target.alias < 0 ? this.state.created.get(target.formId) : undefined;
     // A created reference runs its base object's scripts.
@@ -587,6 +597,10 @@ export class ScriptRuntime implements VmHost {
   /** An event to a form's scripts, and for a reference to the aliases that hold it. */
   async sendEvent(target: number, event: string, args: readonly Value[] = []): Promise<void> {
     const sends = [this.vm.sendEvent(new ObjectHandle(target, 'form'), event, args)];
+    // An actor's events reach the scripts of the magic effects on it too (OnObjectEquipped,
+    // OnHit, OnDeath, ...: Creation Kit "ActiveMagicEffect Script").
+    for (const effect of this.magic.scriptedOn(target))
+      sends.push(this.vm.sendEvent(effect, event, args));
     for (const key of this.#aliasesOf.get(target) ?? []) {
       const [quest = 0, alias = 0] = key.split(':').map(Number);
       sends.push(this.vm.sendEvent(new ObjectHandle(quest, 'form', alias), event, args));
@@ -646,6 +660,8 @@ export class ScriptRuntime implements VmHost {
    * door, take an item): not while a script blocks its activation.
    */
   playerActivated(reference: number): boolean {
+    // Activating ends the player's invisibility.
+    this.magic.acted(PLAYER_REF);
     this.detach(this.sendEvent(reference, 'OnActivate', [this.actorHandle(PLAYER_REF)]));
     return this.state.references.get(reference)?.activationBlocked !== true;
   }
@@ -1343,6 +1359,7 @@ export class ScriptRuntime implements VmHost {
     if (!defaultOnly) {
       await this.sendEvent(reference, 'OnActivate', [this.referenceHandleOrNone(activator)]);
     }
+    if (activator !== undefined) this.magic.acted(activator);
     if (!this.state.references.get(reference)?.activationBlocked)
       this.world.activate?.(reference, activator);
     return true;
@@ -1679,9 +1696,12 @@ export class ScriptRuntime implements VmHost {
     return (await this.actors.factionRank(actor, owner.faction)) >= Math.max(0, rank);
   }
 
-  // --- Active magic effects (TODO(M11): the magic system starts and ends them) --------------
+  // --- Active magic effects (the magic system: magic-engine.ts) ----------------------------
 
-  /** An effect begins on an actor: its scripts start (OnInit) and get OnEffectStart. */
+  /**
+   * An effect begins on an actor without a magic item (a script's own): its scripts start
+   * (OnInit) and get OnEffectStart; it lasts `duration` seconds (0: until dispelled).
+   */
   async startEffect(
     effect: number,
     target: number,
@@ -1697,6 +1717,7 @@ export class ScriptRuntime implements VmHost {
       elapsed: 0,
       duration,
       magnitude,
+      ...(duration === 0 && { lasting: true }),
     });
     await this.vm.startInitialize(handle);
     this.detach(
@@ -1708,18 +1729,9 @@ export class ScriptRuntime implements VmHost {
     return handle;
   }
 
-  /** An effect ends (dispelled or run out): OnEffectFinish, then it is gone. */
-  async endEffect(key: string): Promise<void> {
-    const effect = this.state.activeEffects.get(key);
-    if (!effect) return;
-    const [formId = '0'] = key.split(':');
-    const handle = new ObjectHandle(Number.parseInt(formId, 16), 'activemagiceffect');
-    await this.vm.sendEvent(handle, 'OnEffectFinish', [
-      this.actorHandle(effect.target),
-      this.actorHandleOrNone(effect.caster),
-    ]);
-    this.state.activeEffects.delete(key);
-    this.vm.reset(handle);
+  /** An effect ends (dispelled or run out): what it did is taken back, OnEffectFinish. */
+  endEffect(key: string): Promise<void> {
+    return this.magic.end(key);
   }
 
   /**
@@ -1842,6 +1854,11 @@ export class ScriptRuntime implements VmHost {
     this.state.realTime += realSeconds;
     this.state.gameDaysPassed += gameDays;
     this.vm.scheduler.advance(realSeconds, gameDays);
+    // Magic effects count real seconds; a wait's game time counts as the real time it stands
+    // for (TODO(M13): the engine's rule for effects while waiting and sleeping).
+    this.magic.update(
+      realSeconds > 0 ? realSeconds : (Math.max(0, gameDays) * 86400) / Math.max(1, this.timeScale),
+    );
   }
 
   /** A frame in a menu (menu mode): only the wall clock moves on (WaitMenuMode). */
@@ -2031,6 +2048,8 @@ export class ScriptRuntime implements VmHost {
       /** The running package (its data inputs; conditions run on its data). */
       readonly packageData?: (input: number) => number | 'none' | undefined;
       readonly packageTarget?: (input: number) => number | undefined;
+      /** The magic effect whose conditions these are (EffectWasDualCast, ...). */
+      readonly effectKey?: string;
     } = {},
   ): Promise<boolean> {
     let result = true;
@@ -2052,6 +2071,7 @@ export class ScriptRuntime implements VmHost {
             quest,
             ...(context.packageData && { packageData: context.packageData }),
             ...(context.target && { target: context.target }),
+            ...(context.effectKey !== undefined && { effectKey: context.effectKey }),
           }));
       }
       if (condition.or) group = (group ?? false) || holds;
@@ -2183,6 +2203,8 @@ export class ScriptRuntime implements VmHost {
     // begins (UESP: "this quest starts automatically when you begin a new game").
     const unbound = opening ? db.formIdOf('Skyrim.esm', OPENING_QUEST) : undefined;
     if (unbound !== undefined) await this.quests.start(unbound);
+    // The player's abilities, diseases and worn enchantments act (magic-engine.ts).
+    await this.magic.prepare(PLAYER_REF);
     await this.vm.idle();
   }
 

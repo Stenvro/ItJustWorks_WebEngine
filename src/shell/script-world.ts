@@ -5,6 +5,8 @@
 // runtime's WorldBridge.
 
 import type { Vec3 } from '../scripting/runtime/game-state.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import type { MagicEffectShown } from '../scripting/runtime/magic-engine.ts';
 import type {
   ActorInteraction,
   ActorMotion,
@@ -17,6 +19,7 @@ import { multiply, type Mat4 } from '../render/math.ts';
 import type { ModelInstance } from '../render/scene-renderer.ts';
 import { matrixPlacement } from '../world/cell-loader.ts';
 import type { SoundSystem } from '../audio/sound-system.ts';
+import type { SoundInstance } from '../audio/sound-instance.ts';
 import type { ScriptGraph } from '../animation/script-graphs.ts';
 import type { ScreenModifiers } from './screen-modifiers.ts';
 import type { Terminal } from './terminal.ts';
@@ -284,6 +287,45 @@ export class ScriptWorld implements WorldBridge {
 
   /** The session's sound system (music types scripts add and remove). */
   sounds: (() => SoundSystem | undefined) | undefined;
+
+  readonly #playing = new Map<number, Promise<SoundInstance | undefined>>();
+  #nextSound = 1;
+
+  /**
+   * A sound (SNDR) at a reference where the world shows it (Sound.Play, a magic effect's): it
+   * follows the reference as it moves. Its instance id (0: it did not play).
+   */
+  playSound(sound: number, source: number): number {
+    const system = this.sounds?.();
+    if (!system || !this.livePlacement(source)) return 0;
+    const id = this.#nextSound++;
+    let last: Vec3 | undefined;
+    const playing = system.play(sound, () => {
+      last = this.livePlacement(source)?.position ?? last;
+      return last ?? [0, 0, 0];
+    });
+    this.#playing.set(id, playing);
+    void playing.then((instance) => {
+      if (!instance) this.#playing.delete(id);
+    });
+    return id;
+  }
+
+  stopSound(id: number): void {
+    const playing = this.#playing.get(id);
+    this.#playing.delete(id);
+    void playing?.then((instance) => instance?.stop());
+  }
+
+  /**
+   * A magic effect begins or ends on an actor: its sound plays (magic-engine.ts plays it); its
+   * hit shader (EFSH), art (ARTO), visuals (RFCT) and light are not drawn yet. TODO(M11)
+   * visuals: effect shaders and art objects on actors, lights that follow them.
+   */
+  magicEffect(shown: MagicEffectShown): void {
+    if (shown.event === 'start' && shown.target === PLAYER_REF)
+      this.#terminal.log('magic', `effect ${shown.effect.toString(16)} on the player`);
+  }
 
   music(type: number, add: boolean): void {
     const music = this.sounds?.()?.music;

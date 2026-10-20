@@ -269,7 +269,11 @@ export class ActorAi {
       useItem: async (item, consume) => {
         const scripts = this.#session.scriptsReady;
         if (!(await furniture.useItem(user, item))) return false;
-        if (consume) await scripts?.removeItem(reference, item, 1, true, undefined);
+        // Eaten or drunk: its effects on the actor (the magic system), used up if carried.
+        if (!scripts) return true;
+        const used = await scripts.magic.useItem(reference, item, { remove: consume });
+        if (used === 'not used' && consume)
+          await scripts.removeItem(reference, scripts.formHandle(item), 1, true, undefined);
         return true;
       },
       greet: (topic) => {
