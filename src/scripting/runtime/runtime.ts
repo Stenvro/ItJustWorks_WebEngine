@@ -148,6 +148,14 @@ export interface WorldBridge {
   moveToPackageLocation?(actor: number): void;
   startCombat?(actor: number, target: number): void;
   stopCombat?(actor: number): void;
+  /** An actor's combat state now (src/shell/actor-combat.ts), if it is loaded. */
+  combat?(actor: number): ActorCombatState | undefined;
+  /** Whether the player looks through their own eyes (first person). */
+  firstPerson?(): boolean;
+  /** Actor.DrawWeapon (true) and SheatheWeapon (false). */
+  drawWeapon?(actor: number, draw: boolean): void;
+  /** An essential (or protected) actor's health ran out: it bleeds out instead of dying. */
+  bleedout?(actor: number, source: number | undefined): void;
   /** The light level on an actor (GetLightLevel; src/ai/light-level.ts). */
   lightLevel?(actor: number): number;
   /** Detection (src/shell/actor-senses.ts): whether an observer detects a target now. */
@@ -341,6 +349,42 @@ export interface ActorInteraction {
   /** Entered or left at once (placed in it as its cell loads; IsEnteringInteractionQuick). */
   readonly quickEnter: boolean;
   readonly quickExit: boolean;
+}
+
+/**
+ * An actor's combat state as its conditions (IsWeaponOut, GetAttackState, IsBlocking,
+ * IsBleedingOut, GetKnockStateEnum, ShouldAttackKill, ...) and natives (IsWeaponDrawn,
+ * IsInCombat, GetCombatTarget, IsInKillMove) read it (CommonLibSSE ActorState).
+ */
+export interface ActorCombatState {
+  /** WEAPON_STATE: 0 sheathed, 1 wants to draw, 2 drawing, 3 drawn, 4/5 sheathing. */
+  readonly weaponState: number;
+  /** ATTACK_STATE_ENUM (GetAttackState). */
+  readonly attackState: number;
+  readonly attacking: boolean;
+  readonly powerAttacking: boolean;
+  readonly wantBlocking: boolean;
+  readonly blocking: boolean;
+  readonly staggered: boolean;
+  readonly recoiling: boolean;
+  readonly bleedingOut: boolean;
+  /** KNOCK_STATE_ENUM (GetKnockStateEnum; GetKnockedState: not 0). */
+  readonly knockState: number;
+  /** In a paired animation (GetPairedAnimation), a killmove (IsInKillMove). */
+  readonly paired: boolean;
+  readonly killMove: boolean;
+  /** GetMovementDirection: 0 none, 1 forward, 2 right, 3 back, 4 left. */
+  readonly movementDirection: number;
+  readonly lastHitCritical: boolean;
+  /** In combat, with whom (TODO(M10) 5.2: the combat AI's own state). */
+  readonly inCombat: boolean;
+  readonly combatTarget: number | undefined;
+  /** Its next attack would kill its combat target (ShouldAttackKill). */
+  readonly shouldAttackKill: boolean;
+  /** Its combat target's height against its own (GetTargetHeight, game units). */
+  readonly targetHeight: number;
+  /** Its combat target is the last actor hostile to it (IsLastHostileActor). */
+  readonly lastHostile: boolean;
 }
 
 /**
@@ -2219,8 +2263,16 @@ export class ScriptRuntime implements VmHost {
         const reference = context.packageTarget(condition.param3);
         return reference === undefined ? 'none' : this.referenceHandle(reference);
       }
+      case ConditionRunOn.combatTarget: {
+        // Its combat target now (src/shell/actor-combat.ts).
+        const reference = this.reference(subject);
+        const target = reference === undefined ? undefined : this.world.combat?.(reference);
+        if (!target) return 'unknown';
+        return target.combatTarget === undefined
+          ? 'none'
+          : this.referenceHandle(target.combatTarget);
+      }
       default:
-        // Combat targets (TODO(M10)).
         return 'unknown';
     }
   }

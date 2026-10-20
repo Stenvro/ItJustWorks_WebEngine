@@ -9,6 +9,7 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { MagicEffectShown } from '../scripting/runtime/magic-engine.ts';
 import type { SceneSpeech } from '../scripting/runtime/scene-host.ts';
 import type {
+  ActorCombatState,
   ActorInteraction,
   ActorMotion,
   LivePlacement,
@@ -77,6 +78,18 @@ export interface ScriptView {
   dismount?(actor: number): boolean;
   /** Whether a furniture's marker (any marker, without one) is used by an actor of the view. */
   furnitureInUse?(reference: number, marker?: number): boolean;
+  /** The view's fights (src/shell/actor-combat.ts): its actors' and the player's. */
+  combat?(): CombatBridge | undefined;
+}
+
+/** What scripts ask of and tell combat (ActorCombat). */
+export interface CombatBridge {
+  state(actor: number): ActorCombatState | undefined;
+  startCombat(actor: number, target: number): void;
+  stopCombat(actor: number): void;
+  drawWeapon(actor: number, draw: boolean): void;
+  bleedout(actor: number, source: number | undefined): void;
+  firstPerson(): boolean;
 }
 
 /**
@@ -399,6 +412,43 @@ export class ScriptWorld implements WorldBridge {
 
   hideFromStealthMeter(actor: number, hidden: boolean): void {
     this.senses?.hideFromStealthMeter(actor, hidden);
+  }
+
+  /** The fights of the views (their combat). */
+  *#fights(): Iterable<CombatBridge> {
+    for (const view of this.#views) {
+      const fights = view.combat?.();
+      if (fights) yield fights;
+    }
+  }
+
+  combat(actor: number): ActorCombatState | undefined {
+    for (const fights of this.#fights()) {
+      const state = fights.state(actor);
+      if (state) return state;
+    }
+    return undefined;
+  }
+
+  startCombat(actor: number, target: number): void {
+    for (const fights of this.#fights()) fights.startCombat(actor, target);
+  }
+
+  stopCombat(actor: number): void {
+    for (const fights of this.#fights()) fights.stopCombat(actor);
+  }
+
+  drawWeapon(actor: number, draw: boolean): void {
+    for (const fights of this.#fights()) fights.drawWeapon(actor, draw);
+  }
+
+  bleedout(actor: number, source: number | undefined): void {
+    for (const fights of this.#fights()) fights.bleedout(actor, source);
+  }
+
+  firstPerson(): boolean {
+    for (const fights of this.#fights()) if (fights.firstPerson()) return true;
+    return false;
   }
 
   furnitureInUse(furniture: number, marker?: number): boolean {

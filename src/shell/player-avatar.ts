@@ -116,6 +116,17 @@ export class PlayerAvatar {
     return this.#made.scene;
   }
 
+  /** The body's placement in the world, which its instances share (its weapons hang on it). */
+  get placement(): { readonly world: Float32Array; readonly motion: InstanceMotion } {
+    return { world: this.#world, motion: this.#motion };
+  }
+
+  /**
+   * Its weapon is out (src/shell/actor-combat.ts): in third person the body faces where the
+   * camera looks, as the game's combat stance does, not the way it moves.
+   */
+  facesAim = false;
+
   /** The first-person skeleton and its graph (its Camera1st node is the camera). */
   get firstPerson(): AnimatedSkeleton | undefined {
     return this.#firstPerson;
@@ -445,7 +456,7 @@ export class PlayerAvatar {
   #face(dt: number): void {
     const player = this.#player;
     const motion = player.motion;
-    if (player.pov === 'first') {
+    if (player.pov === 'first' || this.facesAim) {
       this.#bodyYaw = player.yaw;
     } else if (motion.moving) {
       const heading = player.yaw + Math.atan2(motion.inputX, motion.inputY);
