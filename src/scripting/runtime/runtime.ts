@@ -180,6 +180,19 @@ export interface WorldBridge {
   furnitureInUse?(furniture: number, marker?: number): boolean;
   /** An idle played (PlayIdle): false if it could not play. */
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
+  /**
+   * Actor.SetVehicle: an actor rides a vehicle now (its root at the vehicle's) or no longer
+   * (the game state's vehicle): src/shell/actor-vehicles.ts.
+   */
+  vehicleChanged?(actor: number): void;
+  /** ObjectReference.TetherToHorse: a cart is hitched to a horse, which pulls it from now on. */
+  tether?(cart: number, horse: number): void;
+  /** The horse an actor rides now (Actor.IsOnMount, IsRidingHorse), if any. */
+  mountOf?(actor: number): number | undefined;
+  /** The actor riding a horse now (IsBeingRidden), if any. */
+  riderOf?(horse: number): number | undefined;
+  /** Actor.Dismount: an actor riding gets off; whether it was riding. */
+  dismount?(actor: number): boolean;
   setAlpha?(actor: number, alpha: number, fade: boolean): void;
   lookAt?(actor: number, target: number | undefined): void;
   expression?(actor: number, mood: number | undefined, strength: number): void;

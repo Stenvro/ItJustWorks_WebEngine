@@ -434,4 +434,53 @@ describe('the behavior runtime', () => {
     attack.update(0.1);
     expect(attack.states()[0]?.state).toBe('Attack');
   });
+
+  it("takes a nested machine's global wildcard from the machine above it", () => {
+    // Master_Behavior's Root has no way into Cart_State; its Cart machine's IdleCartPrisonerASway
+    // is a global wildcard (0xd00), its IdleCartPrisonerAIdle a local one (0x900).
+    const state = (id: number, name: string, generator: BehaviorGenerator) => ({
+      id,
+      name,
+      probability: 1,
+      enable: true,
+      generator,
+      transitions: [],
+    });
+    const cart: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Cart',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [state(0, 'Idle', clip('idle')), state(1, 'Sway', clip('sway'))],
+      wildcardTransitions: [transition(0, 0, { flags: 0x900 }), transition(1, 1, { flags: 0xd00 })],
+    };
+    const master: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Master',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [state(0, 'Root', clip('root')), state(1, 'Cart_State', cart)],
+      wildcardTransitions: [],
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(master, ['IdleCartIdle', 'IdleCartSway']),
+      host: host({ root: animation(0), idle: animation(10), sway: animation(20) }),
+      skeleton,
+    });
+    runtime.update(0);
+    // A local wildcard of a machine that does not run: nothing.
+    runtime.sendEvent('IdleCartIdle');
+    runtime.update(0.1);
+    expect(runtime.states()).toEqual([{ machine: 'Master', state: 'Root' }]);
+    runtime.sendEvent('IdleCartSway');
+    runtime.update(0.1);
+    expect(runtime.states()).toEqual([
+      { machine: 'Master', state: 'Cart_State' },
+      { machine: 'Cart', state: 'Sway' },
+    ]);
+    // Within it its local wildcard goes on.
+    runtime.sendEvent('IdleCartIdle');
+    runtime.update(0.1);
+    expect(runtime.states()[1]).toEqual({ machine: 'Cart', state: 'Idle' });
+  });
 });

@@ -517,6 +517,17 @@ async function main(): Promise<void> {
       return;
     }
     const arrival = { position: teleport.position, heading: teleport.rotation[2] };
+    // The player's followers come through the door with them.
+    await (worldViewer.playing ? worldViewer : modelViewer).bringFollowers(
+      {
+        position: [...teleport.position],
+        rotation: [...teleport.rotation],
+        cell: destination.world === undefined ? destination.cell : undefined,
+        world: destination.world,
+        scale: 1,
+      },
+      false,
+    );
     terminal.log('door', `to ${destination.name || hexId(destination.cell)}`);
     if (destination.world === undefined) {
       await modelViewer.showCell(destination.cell, arrival);
@@ -579,6 +590,8 @@ async function main(): Promise<void> {
   const playWorld: PlayWorld = {
     enter: async (at) => {
       const arrival = { position: at.position, heading: at.rotation[2] };
+      // Fast travel and journeys: the followers, and the player's horse, come along.
+      await (worldViewer.playing ? worldViewer : modelViewer).bringFollowers(at, true);
       if (at.world !== undefined) {
         await worldViewer.open(
           at.world,

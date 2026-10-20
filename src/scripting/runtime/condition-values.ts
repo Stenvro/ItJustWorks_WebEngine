@@ -65,6 +65,8 @@ export const Fn = {
   getActivationHeight: 680,
   isPathing: 704,
   isOnFlyingMount: 730,
+  isPlayersLastRiddenHorse: 339,
+  getPlayerTeammateCount: 454,
   getSleeping: 49,
   getSitting: 159,
   isSmallBump: 274,
@@ -523,6 +525,14 @@ async function conditionValue(
       return flag(
         reference !== undefined && (state.actors.get(reference)?.playerTeammate ?? false),
       );
+    // How many actors are the player's teammates (SetPlayerTeammate), living.
+    case Fn.getPlayerTeammateCount: {
+      let count = 0;
+      for (const actor of state.actors.values()) {
+        if (actor.playerTeammate === true && actor.dead !== true) count++;
+      }
+      return count;
+    }
     // What it holds and wears (the equip system).
     case Fn.getEquipped:
       return flag(reference !== undefined && (await runtime.equipment.isEquipped(reference, form)));
@@ -843,11 +853,15 @@ async function conditionValue(
       ]);
       return self && other ? other.position[2] - self.position[2] : 0;
     }
-    // Mounts: TODO(M10) 3.5 (mounts, riding).
+    // Riding (src/shell/actor-mounts.ts). TODO(M10) 5.4: flying mounts (Dragonborn's dragons).
     case Fn.isRidingHorse:
-    case Fn.isOnFlyingMount:
+      return flag(reference !== undefined && runtime.world.mountOf?.(reference) !== undefined);
     case Fn.isBeingRidden:
+      return flag(reference !== undefined && runtime.world.riderOf?.(reference) !== undefined);
+    case Fn.isOnFlyingMount:
       return 0;
+    case Fn.isPlayersLastRiddenHorse:
+      return flag(reference !== undefined && runtime.lastHorse === reference);
     // In a scene that plays.
     case Fn.isInScene:
       return reference === undefined

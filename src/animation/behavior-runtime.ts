@@ -730,12 +730,63 @@ export class BehaviorRuntime {
       if (next) this.#change(node, machine, next, undefined);
       return;
     }
-    const chosen = this.#choose(
-      node,
-      machine,
-      (transition) => this.#globalEvent(transition.eventId, scope) === event,
-    );
+    const chosen =
+      this.#choose(
+        node,
+        machine,
+        (transition) => this.#globalEvent(transition.eventId, scope) === event,
+      ) ?? this.#chooseGlobal(node, machine, event);
     if (chosen) this.#initiate(node, machine, chosen);
+  }
+
+  /**
+   * A global wildcard (TRANSITION_FLAGS.isGlobalWildcard) of a machine nested in another of
+   * this machine's states, whose event it is: Havok makes it a transition of the machines above
+   * it too, to the state that holds the nested machine, which starts in the wildcard's state.
+   * The opening's cart idles go so (IdleCartPrisonerASway: Master_Behavior's Root to Cart_State,
+   * its Cart machine to CartPrisonerASway); the nearest machine below a state is looked in.
+   */
+  #chooseGlobal(
+    node: StateMachine,
+    machine: MachineState,
+    event: number,
+  ): { transition: StateTransition; to: StateMachineState } | undefined {
+    const current = machine.current;
+    let best: { transition: StateTransition; to: StateMachineState } | undefined;
+    for (const state of node.states) {
+      if (state === current || !state.enable) continue;
+      const nested = nestedMachine(state.generator);
+      if (!nested) continue;
+      const scope = this.#scopeOf(nested);
+      for (const wildcard of nested.wildcardTransitions) {
+        const flags = wildcard.flags;
+        if ((flags & TRANSITION_FLAGS.isGlobalWildcard) === 0) continue;
+        if ((flags & TRANSITION_FLAGS.disabled) !== 0) continue;
+        if (this.#globalEvent(wildcard.eventId, scope) !== event) continue;
+        if (
+          (flags & TRANSITION_FLAGS.disableCondition) === 0 &&
+          wildcard.condition !== undefined &&
+          !this.#condition(wildcard.condition)
+        ) {
+          continue;
+        }
+        if (best && wildcard.priority <= best.transition.priority) continue;
+        const local =
+          TRANSITION_FLAGS.useTriggerInterval |
+          TRANSITION_FLAGS.useInitiateInterval |
+          TRANSITION_FLAGS.fromNestedStateIdIsValid;
+        best = {
+          to: state,
+          transition: {
+            ...wildcard,
+            toStateId: state.id,
+            flags: (flags & ~local) | TRANSITION_FLAGS.toNestedStateIdIsValid,
+            toNestedStateId: wildcard.toStateId,
+          },
+        };
+      }
+    }
+    return best;
   }
 
   /**
@@ -1649,6 +1700,16 @@ export class BehaviorRuntime {
 }
 
 /** The generators below a generator (all of them, active or not). */
+/** The nearest state machine below a generator, through the nodes that pass one generator on. */
+function nestedMachine(generator: BehaviorGenerator | undefined): StateMachine | undefined {
+  let node = generator;
+  for (let depth = 0; node && depth < 16; depth++) {
+    if (node.kind === 'state-machine') return node;
+    node = 'generator' in node ? node.generator : undefined;
+  }
+  return undefined;
+}
+
 function children(node: BehaviorGenerator): (BehaviorGenerator | undefined)[] {
   switch (node.kind) {
     case 'state-machine':

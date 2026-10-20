@@ -48,6 +48,12 @@ export interface HkxAnimation {
   readonly floatTrackCount: number;
   /** Every annotation of every track, by time. */
   readonly annotations: readonly AnimationAnnotation[];
+  /**
+   * The bone each transform track animates, by name (hkaAnnotationTrack trackName), where the
+   * file names them: the paired animations' tracks (PairedRoot, the first actor's bones, the
+   * second's prefixed "2_") are known only by these names (src/animation/paired-clips.ts).
+   */
+  readonly trackNames?: readonly string[];
   readonly motion: ExtractedMotion | undefined;
   /**
    * The tracks' transforms at a time (seconds), TRANSFORM_FLOATS per track, into `out`, and the
@@ -237,6 +243,24 @@ export function readAnimation(pack: Packfile, object: HkxObject): HkxAnimation {
     motionObject?.className === 'hkaDefaultAnimatedReferenceFrame'
       ? readMotion(pack, motionObject)
       : undefined,
+    readTrackNames(pack, at + ANIMATION.annotationTracks, header.trackCount),
+  );
+}
+
+/**
+ * The annotation tracks' names (hkaAnnotationTrack: trackName at 0), one per transform track
+ * where the file has as many; undefined otherwise.
+ */
+function readTrackNames(
+  pack: Packfile,
+  offset: number,
+  trackCount: number,
+): readonly string[] | undefined {
+  const tracks = pack.array(offset);
+  if (tracks.size !== trackCount || trackCount === 0) return undefined;
+  return Array.from(
+    { length: tracks.size },
+    (_, t) => pack.string(tracks.data + t * ANNOTATION_TRACK_SIZE) ?? '',
   );
 }
 
@@ -397,6 +421,7 @@ class SplineAnimation implements HkxAnimation {
   readonly trackCount: number;
   readonly floatTrackCount: number;
   readonly annotations: readonly AnimationAnnotation[];
+  readonly trackNames: readonly string[] | undefined;
   readonly motion: ExtractedMotion | undefined;
   readonly #header: SplineHeader;
   readonly #data: Uint8Array;
@@ -407,6 +432,7 @@ class SplineAnimation implements HkxAnimation {
     data: Uint8Array,
     annotations: readonly AnimationAnnotation[],
     motion: ExtractedMotion | undefined,
+    trackNames?: readonly string[],
   ) {
     this.#header = header;
     this.#data = data;
@@ -414,6 +440,7 @@ class SplineAnimation implements HkxAnimation {
     this.trackCount = header.trackCount;
     this.floatTrackCount = header.floatTrackCount;
     this.annotations = annotations;
+    this.trackNames = trackNames;
     this.motion = motion;
     this.#blocks = Array.from({ length: header.numBlocks }, () => undefined);
   }

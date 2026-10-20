@@ -218,6 +218,8 @@ export function talkTargets(
   actors: () => Iterable<PlacedActor>,
   session: () => GameSession | undefined,
   terminal: Terminal,
+  /** What activating an actor does instead of talking (a horse: riding it), if anything. */
+  other?: (placed: PlacedActor) => Activatable | undefined,
 ): (
   origin: Vec3,
   direction: Vec3,
@@ -228,6 +230,8 @@ export function talkTargets(
     const hit = actorOnRay(actors(), origin, direction, length, radius);
     if (!hit) return undefined;
     const placed = hit.actor;
+    const instead = session()?.hud.uses ? other?.(placed) : undefined;
+    if (instead) return { distance: hit.distance, target: instead };
     const look = placed.look;
     const name = look.name !== '' ? look.name : look.editorId;
     const hud = session()?.hud;

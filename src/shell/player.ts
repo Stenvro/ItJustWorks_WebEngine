@@ -221,6 +221,10 @@ export class Player implements Camera {
   #zoom = 0;
   #zoomTarget = 0;
   #alwaysRun: boolean;
+  /** Whether the player runs now without the Run key (bAlwaysRunByDefault, toggled): riding. */
+  get alwaysRun(): boolean {
+    return this.#alwaysRun;
+  }
   #autoMove = false;
   sneaking = false;
   #jumpRequested = false;
