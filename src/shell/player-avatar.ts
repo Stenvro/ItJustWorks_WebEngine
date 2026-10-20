@@ -366,9 +366,9 @@ export class PlayerAvatar {
 
   /**
    * Where the player's body looks: what a script, scene or dialogue asks (ScriptWorld.lookTargets),
-   * the actor it talks with, else in third person where the camera looks (far ahead); the graph's
-   * BSLookAtModifier turns its head (TODO(M13): the engine's own player head tracking is not
-   * documented). Its world for the procedural modifiers: its placement, the ground under it.
+   * the actor it talks with; nothing else (the human graph tracks only with IsNPC set, which the
+   * game's player has not: its head does not follow the camera). The graph's BSLookAtModifier
+   * turns its head. Its world for the procedural modifiers: its placement, the ground under it.
    */
   #look(body: PlacedActor, dt: number): void {
     const behavior = body.behavior;
@@ -402,10 +402,6 @@ export class PlayerAvatar {
       point = other ? headPosition(other) : session.scriptWorld.livePlacement(toward)?.position;
     } else if (toward) {
       point = toward;
-    } else if (player.pov !== 'first' && !this.animatesInMenus) {
-      const eye = player.eye;
-      const forward = player.forward;
-      point = [eye[0] + forward[0] * 1024, eye[1] + forward[1] * 1024, eye[2] + forward[2] * 1024];
     }
     const head = headPosition(body);
     const facing: LookPoint = [Math.sin(this.#bodyYaw), Math.cos(this.#bodyYaw), 0];
