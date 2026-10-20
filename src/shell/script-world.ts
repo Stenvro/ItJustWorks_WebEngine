@@ -26,6 +26,7 @@ import type { ScreenModifiers } from './screen-modifiers.ts';
 import type { Terminal } from './terminal.ts';
 import type { HudSignals } from './hud-signals.ts';
 import type { Talking } from './world-lines.ts';
+import { LookRequests, type HeadTrackKind } from '../ai/head-tracking.ts';
 
 /** A viewer that shows references to the scripts (the interior or the world viewer). */
 export interface ScriptView {
@@ -102,6 +103,21 @@ export class ScriptWorld implements WorldBridge {
 
   /** The HUD the notifications go to in Play. */
   readonly hud: HudSignals;
+
+  /**
+   * Where actors are asked to look, by kind (src/ai/head-tracking.ts): scripts' SetLookAt and
+   * scenes through lookAt; dialogue, combat and AI ask it directly (lookTargets.lookAt). The
+   * actors' views read it every frame (src/shell/actor-looks.ts); it outlives them.
+   */
+  readonly lookTargets = new LookRequests();
+
+  lookAt(actor: number, target: number | undefined, kind: HeadTrackKind = 'script'): void {
+    this.lookTargets.lookAt(actor, target, kind);
+  }
+
+  headTracking(actor: number, on: boolean): void {
+    this.lookTargets.setHeadTracking(actor, on);
+  }
 
   /** What an actor says now (the session's lines answer: IsTalking, GetDialogueEmotion, ...). */
   talking: ((actor: number) => Talking | undefined) | undefined;

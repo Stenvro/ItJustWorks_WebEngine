@@ -6,6 +6,7 @@
 // Notes: docs/scripting.md.
 
 import { RecordFlag } from '../../formats/esm/record.ts';
+import type { HeadTrackKind } from '../../ai/head-tracking.ts';
 import { view } from '../../formats/esm/fields.ts';
 import { LeveledFlag, parseLeveledList, type LeveledList } from '../../world/actor-records.ts';
 import { pickLeveled, seededRandom } from '../../world/actors.ts';
@@ -181,7 +182,13 @@ export interface WorldBridge {
   /** An idle played (PlayIdle): false if it could not play. */
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
   setAlpha?(actor: number, alpha: number, fade: boolean): void;
-  lookAt?(actor: number, target: number | undefined): void;
+  /**
+   * Where an actor's head tracks (Actor.SetLookAt and ClearLookAt: kind 'script'; scenes and
+   * dialogue: 'dialogue'), undefined: it stops looking at what that kind asked.
+   */
+  lookAt?(actor: number, target: number | undefined, kind?: HeadTrackKind): void;
+  /** Actor.SetHeadTracking: whether the actor head-tracks at all. */
+  headTracking?(actor: number, on: boolean): void;
   expression?(actor: number, mood: number | undefined, strength: number): void;
   /** Jail (Faction.SendPlayerToJail, PlayerPayCrimeGold). TODO(M11): crime. */
   jail?(faction: number, removeInventory: boolean, realJail: boolean): void;

@@ -136,16 +136,16 @@ export class RuntimeSceneHost implements SceneHost {
   /**
    * Where a scene has an actor look: its head turns to the target (the world's look-at, as
    * SetLookAt's); a scene's look let go clears only what a scene set. The world's actors turn
-   * to face it themselves (ScriptRuntime.scenes.lookOf). TODO(M13): a script's SetLookAt over
-   * a scene's head tracking.
+   * to face it themselves (ScriptRuntime.scenes.lookOf). A scene's look is a dialogue
+   * head track, over a script's SetLookAt (src/ai/head-tracking.ts).
    */
   look(actor: number, look: SceneLook | undefined): void {
     const world = this.#runtime.world;
     if (look?.target !== undefined) {
       this.#looking.add(actor);
-      world.lookAt?.(actor, look.target);
+      world.lookAt?.(actor, look.target, 'dialogue');
     } else if (this.#looking.delete(actor)) {
-      world.lookAt?.(actor, undefined);
+      world.lookAt?.(actor, undefined, 'dialogue');
     }
   }
 

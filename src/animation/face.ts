@@ -4,7 +4,8 @@
 // holds at a strength, a response's emotion shows over it while it is said; a spoken line
 // moves the mouth, brows, eyes and lids by its lip-sync curves (src/formats/audio/lip.ts), a
 // creature's line its graph's mouth (creatureSink). Morph names are FaceGen's (as the TRI files
-// and the mfg console commands name them). Platform-independent.
+// and the mfg console commands name them). The eyes look where the head's look-at turns the eye
+// bone, by the look morphs, wandering a little by the emotion. Platform-independent.
 
 import {
   LIP_MODIFIERS,
@@ -47,6 +48,53 @@ const MODIFIER_BASE = FACE_EXPRESSIONS.length;
 const PHONEME_BASE = MODIFIER_BASE + LIP_MODIFIERS.length;
 const BLINK_LEFT = MODIFIER_BASE + LIP_MODIFIERS.indexOf('BlinkLeft');
 const BLINK_RIGHT = MODIFIER_BASE + LIP_MODIFIERS.indexOf('BlinkRight');
+const LOOK_LEFT = MODIFIER_BASE + LIP_MODIFIERS.indexOf('LookLeft');
+const LOOK_RIGHT = MODIFIER_BASE + LIP_MODIFIERS.indexOf('LookRight');
+const LOOK_UP = MODIFIER_BASE + LIP_MODIFIERS.indexOf('LookUp');
+const LOOK_DOWN = MODIFIER_BASE + LIP_MODIFIERS.indexOf('LookDown');
+
+/**
+ * How far the eyes turn at a look morph's full weight (radians): measured on the eyes' TRI
+ * (eyesmale.tri, eyesfemale.tri: LookLeft and LookRight turn the eyeballs about 29° about
+ * their centres, LookUp and LookDown about 16°). The engine turns the eyes by these morphs
+ * (BSFaceGenAnimationData eyesHeading, eyesPitch); TODO(M13): its own scale is not documented.
+ */
+export const EYE_MORPH_HEADING = (29 * Math.PI) / 180;
+export const EYE_MORPH_PITCH = (16 * Math.PI) / 180;
+
+/** The emotions the eyes' random offsets are given for (fEye*OffsetEmotion<name>). */
+export const EYE_EMOTIONS = ['Neutral', 'Angry', 'Fear', 'Happy', 'Sad'] as const;
+export type EyeEmotion = (typeof EYE_EMOTIONS)[number];
+
+/** The eyes' random offset range of an emotion (radians), the fEye*OffsetEmotion* settings. */
+export interface EyeOffsets {
+  readonly headingMin: number;
+  readonly headingMax: number;
+  readonly pitchMin: number;
+  readonly pitchMax: number;
+}
+
+/**
+ * Skyrim.esm's values; those it does not set (pitch min of anger and happiness, pitch max of
+ * sadness) are the engine's built-in ones: TODO(M13), taken as 0.
+ */
+export const VANILLA_EYES: Readonly<Record<EyeEmotion, EyeOffsets>> = {
+  Neutral: { headingMin: -0.05, headingMax: 0.1, pitchMin: -0.025, pitchMax: 0.1 },
+  Angry: { headingMin: -0.05, headingMax: 0.05, pitchMin: 0, pitchMax: 0.1 },
+  Fear: { headingMin: -0.05, headingMax: 0.1, pitchMin: 0.01, pitchMax: 0.01 },
+  Happy: { headingMin: -0.05, headingMax: 0.1, pitchMin: 0, pitchMax: 0.1 },
+  Sad: { headingMin: -0.05, headingMax: 0.1, pitchMin: -0.015, pitchMax: 0 },
+};
+
+/** The emotion of an expression (FACE_EXPRESSIONS index) for the eyes' offsets. */
+function eyeEmotion(expression: number | undefined): EyeEmotion {
+  const name = expression === undefined ? '' : (FACE_EXPRESSIONS[expression] ?? '');
+  if (name.endsWith('Anger') || name === 'CombatShout') return 'Angry';
+  if (name.endsWith('Fear')) return 'Fear';
+  if (name.endsWith('Happy')) return 'Happy';
+  if (name.endsWith('Sad')) return 'Sad';
+  return 'Neutral';
+}
 
 /** Blink timing (seconds), the game settings of the same names. */
 export interface BlinkSettings {
@@ -140,11 +188,51 @@ export class FaceAnimation implements FaceWeights {
    */
   creatureSink: ((curves: Float32Array) => void) | undefined;
   #creatureSpeaking = false;
+  readonly #eyeOffsets: Readonly<Record<EyeEmotion, EyeOffsets>>;
+  /** Where the head's look turns the eyes (radians: right and up +), from the eye bone. */
+  #eyesBase = { heading: 0, pitch: 0 };
+  /** The eyes' random offset (eyesHeadingOffset, eyesPitchOffset) and the seconds it holds. */
+  #eyesOffset = { heading: 0, pitch: 0 };
+  #eyesOffsetTimer = 0;
 
-  constructor(random: () => number, blink: BlinkSettings = VANILLA_BLINK) {
+  constructor(
+    random: () => number,
+    blink: BlinkSettings = VANILLA_BLINK,
+    eyes: Readonly<Record<EyeEmotion, EyeOffsets>> = VANILLA_EYES,
+  ) {
     this.#random = random;
     this.#blink = blink;
+    this.#eyeOffsets = eyes;
     this.#untilBlink = this.#blinkDelay();
+  }
+
+  /**
+   * Where the head's look-at turned the eye bone (BehaviorRuntime.eyes): the eyes follow it by
+   * their look morphs; undefined: they look ahead.
+   */
+  lookWith(eyes: { readonly heading: number; readonly pitch: number } | undefined): void {
+    this.#eyesBase = eyes ? { heading: eyes.heading, pitch: eyes.pitch } : { heading: 0, pitch: 0 };
+  }
+
+  /**
+   * The eyes' heading and pitch now: the look's, and a random offset within the range of the
+   * face's emotion (fEyeHeading/PitchMin/MaxOffsetEmotion*), a new one now and then.
+   * TODO(M13): how often the engine picks a new offset is not documented (1 to 3 seconds).
+   */
+  #eyes(dt: number): { heading: number; pitch: number } {
+    this.#eyesOffsetTimer -= dt;
+    if (this.#eyesOffsetTimer <= 0) {
+      const range = this.#eyeOffsets[eyeEmotion((this.#emotion ?? this.#expression)?.index)];
+      this.#eyesOffset = {
+        heading: range.headingMin + (range.headingMax - range.headingMin) * this.#random(),
+        pitch: range.pitchMin + (range.pitchMax - range.pitchMin) * this.#random(),
+      };
+      this.#eyesOffsetTimer = 1 + 2 * this.#random();
+    }
+    return {
+      heading: this.#eyesBase.heading + this.#eyesOffset.heading,
+      pitch: this.#eyesBase.pitch + this.#eyesOffset.pitch,
+    };
   }
 
   #blinkDelay(): number {
@@ -264,6 +352,16 @@ export class FaceAnimation implements FaceWeights {
     this.#creatureSpeaking = creature;
     weights[BLINK_LEFT] = Math.max(weights[BLINK_LEFT] ?? 0, blink);
     weights[BLINK_RIGHT] = Math.max(weights[BLINK_RIGHT] ?? 0, blink);
+
+    // The eyes: where the look turns them, by the look morphs (a line's own looks join them).
+    const eyes = this.#eyes(dt);
+    const look = (index: number, amount: number): void => {
+      weights[index] = Math.max(weights[index] ?? 0, Math.min(1, Math.max(0, amount)));
+    };
+    look(LOOK_RIGHT, eyes.heading / EYE_MORPH_HEADING);
+    look(LOOK_LEFT, -eyes.heading / EYE_MORPH_HEADING);
+    look(LOOK_UP, eyes.pitch / EYE_MORPH_PITCH);
+    look(LOOK_DOWN, -eyes.pitch / EYE_MORPH_PITCH);
 
     for (let i = 0; i < weights.length; i++) {
       if (Math.abs((weights[i] ?? 0) - (before[i] ?? 0)) > 1 / 1024) {

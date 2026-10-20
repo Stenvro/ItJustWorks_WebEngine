@@ -476,6 +476,11 @@ export class ActorMovers {
     return this.#movers.has(reference);
   }
 
+  /** An actor's controller's collider (its own rays leave it out: foot IK), if it has one. */
+  colliderOf(reference: number): CharacterBody['collider'] | undefined {
+    return this.#movers.get(reference)?.character.collider;
+  }
+
   /** How a moved actor moves now (its conditions and natives read it). */
   motion(reference: number): ActorMotion | undefined {
     const mover = this.#movers.get(reference);

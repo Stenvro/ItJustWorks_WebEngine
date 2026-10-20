@@ -50,7 +50,7 @@ export interface ActorTalkOptions {
   readonly detects?: (actor: number) => boolean;
   /**
    * Where an actor looks while it speaks to someone (its head tracking of dialogue; undefined:
-   * it stops). TODO(M10) 1.5: the procedural animation's look-at.
+   * it stops): the actor stage makes it a dialogue head track (src/shell/actor-looks.ts).
    */
   readonly lookAt?: (actor: number, target: number | undefined) => void;
 }
