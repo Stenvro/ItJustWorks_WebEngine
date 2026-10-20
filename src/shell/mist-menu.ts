@@ -52,6 +52,12 @@ const FITTED_CAMERA: Vec3 = [-2.5, 108.4, -2.7];
 const FITTED_LOOK_AT: Vec3 = [-2.5, 0, -2.7];
 /** Towards the light: from the upper left (+X is screen left) and the front (+Y). */
 const FITTED_LIGHT: Vec3 = [0.55, 0.6, 0.58];
+/**
+ * The same light for a loading screen seen along its camera path, which stands on the model's -Y
+ * side looking along +Y (src/render/camera-path.ts): from the viewer's upper left and front
+ * again (screen left is -X there). The main menu's light would light the models from behind.
+ */
+const PATH_LIGHT: Vec3 = [-FITTED_LIGHT[0], -FITTED_LIGHT[1], FITTED_LIGHT[2]];
 
 /** The light the mist menu's models are seen in (fitted, see above; ambient 0 as the INI's). */
 function mistLighting(direction: Vec3): SceneLighting {
@@ -302,11 +308,11 @@ export class MistMenu {
       };
       window.addEventListener('pointermove', this.#mouseMoved, { passive: true });
     }
-    // Without a path: the main menu's camera.
+    // Without a path: the main menu's camera and light.
     const camera: Camera = cameraPath
       ? new PathCamera(cameraPath)
       : new FixedCamera(FITTED_CAMERA, FITTED_LOOK_AT, 75);
-    this.#present(scene, camera, skeletons, mistLighting(FITTED_LIGHT));
+    this.#present(scene, camera, skeletons, mistLighting(cameraPath ? PATH_LIGHT : FITTED_LIGHT));
   }
 
   /** Only the mist (a loading screen not chosen yet). */
