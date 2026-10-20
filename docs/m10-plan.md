@@ -164,8 +164,10 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       package's topic subtype), LockDoors' warning, Say's own line length and forced
       subtitles, the dialogue camera, emotions on the face, creatures' jaw lines; the
       packages' hello and chatter interrupts; a bumped actor's ActorCollidewithActor line.
-- [ ] **4.4 Scenes:** phases, actions, the actors' behaviour flags, fragments, the Scene
-      natives, IsInScene, IsScenePackageRunning.
+- [x] **4.4 Scenes:** phases, actions, the actors' behaviour flags, fragments, the Scene
+      natives, IsInScene, IsScenePackageRunning. docs/ai.md, "Scenes"; `tools/scene-info.ts`
+      (`--play`). Moved on: combat and watching combat pausing or ending a scene to 5.2, the
+      head's turn to 1.5, the responses' speaker and listener idles to 4.3.
 
 ## Phase 5: combat
 

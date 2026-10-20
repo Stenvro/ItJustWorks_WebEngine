@@ -912,7 +912,8 @@ export class ActorSenses implements ScriptSenses {
     const runtime = session.scriptsReady;
     if (!runtime || this.reacting(actor) !== undefined) return false;
     if (!movers.runsAi(actor) || furniture.holds(actor)) return false;
-    if (runtime.dialogueSpeaker === actor || runtime.sceneOf(actor) !== undefined) return false;
+    if (runtime.dialogueSpeaker === actor || runtime.scenes.sceneOf(actor) !== undefined)
+      return false;
     const running = ai.current(actor);
     const pack = running && this.#package(running.id);
     if (kind !== 'warn') {

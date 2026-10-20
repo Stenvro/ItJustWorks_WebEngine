@@ -82,7 +82,8 @@ export interface PhaseFragment {
   /**
    * PhaseFragmentFlag: as the phase starts or completes. 7 vanilla fragments have neither,
    * 6 of them on phases their scene no longer has (MQ102ATimerScene's SetStage 35 on its
-   * second phase of one): TODO(M10) whether the game runs any.
+   * second phase of one): the scene runtime runs none (src/ai/scene-runtime.ts). TODO(M13):
+   * whether the game runs any.
    */
   readonly when: number;
   readonly script: string;

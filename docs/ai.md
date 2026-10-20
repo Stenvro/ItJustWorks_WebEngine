@@ -522,3 +522,91 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   detectors, known, lastKnown, listen), `noise`, `action`, `attackedBy`, `fight`, `warn`, the
   hooks `inCombat` and `hostile`, and `Detections.witness` / `offence` (the observers that
   detect an actor seeing it steal, attack, trespass: 'witnessed').
+
+## Scenes
+
+A quest's scenes (SCEN, [formats/esm.md](formats/esm.md#scenes)) play as the running game's
+scripts start them (`src/ai/scene-runtime.ts`; the game it asks: `src/scripting/runtime/scene-host.ts`).
+The Creation Kit names the fields and CommonLibSSE the structures (BGSScene, BGSSceneAction\*);
+how the engine plays them is not documented, so the rules here are read from the 2,131 vanilla
+scenes. `node tools/scene-info.ts <scene>` shows what each phase waits for, `--play <scene>`
+plays one on a clock (its conditions taken to hold, lines as long as their text, packages done
+after `--package-seconds`).
+
+- **Starting:** Scene.Start and ForceStart, and a quest's start for its scenes that begin on
+  quest start (a stage fragment or the story manager starting the quest starts them). A scene
+  starts if its quest runs, its conditions hold (run on the player) and every actor that is not
+  optional is there: the reference its alias holds, alive. Its actors are in it until it ends
+  (IsInScene, GetCurrentScene). An actor that plays in another scene leaves that one for a
+  forced start or for a start against an interruptible scene (that scene ends, unless the actor
+  was optional there); otherwise the start waits until its actors are free: MQ101's stage
+  fragment starts Scene4, the execution, before it stops Scene1, the cart ride, whose actors
+  Scene4 needs. TODO(M13): whether the engine queues such a start.
+- **Phases** run in order. One whose start conditions do not hold is skipped (the actions that
+  start in it do not run). A phase that runs starts its actions, then completes when its
+  completion conditions hold, whether or not its actions are done: 907 vanilla completion
+  conditions are IsSceneActionComplete of an action that ends in that very phase (593 beside
+  other actions ending there, often a timer beside packages that never complete), which would
+  say nothing if the phase waited for its actions; MQ101Scene1's first phase waits on the
+  player's 3D while its look-only lines run. Without completion conditions it completes when the
+  actions that end in it are done (1,768 package actions whose package completes end in such
+  phases: the actor's walk is waited for); with none ending in it, at once. Its actions that end there
+  end with it. Phase conditions run on the scene's first actor (IsInDialogueWithPlayer in
+  MS13ArvelStuck, GetDistance in MS14ThonnirFindLaelette: scenes of one actor), else the
+  player. TODO(M13): the engine's subject.
+- **Lines** (dialogue actions): the actor says the topic's first info whose conditions hold for
+  it, run on whom it speaks to (its look target, else the player): the info's begin fragment,
+  each response in its voice with its lips moving, the response's emotion (a neutral one takes
+  the action's, DEMO / DEVA) on its face, the subtitle with General Subtitles or the info's
+  Force Subtitle (`src/shell/scene-lines.ts`), the end fragment. A speaker that is not loaded
+  says it silently, as long as its text takes (fAIDefaultSpeechMult a character). Lines of one
+  phase are said at once. A line without a topic (3,110: the actor only looks) is done at once:
+  31 phases end with only such lines and no completion conditions. A looping line (116) is
+  said again every DMIN to DMAX seconds until it ends and is done once said: DLC2WE05Scene's
+  second phase, a looping line beside a package and no conditions, would never end otherwise.
+  TODO(M13): the engine's rule; Show All Text (FNAM 0x4, 1,394 scenes) is read as the scene
+  editor's display and does nothing. TODO(M10) 4.3: the responses' speaker and listener idles.
+- **Looks:** while a dialogue action runs its actor looks at the actor it names (HTID), else,
+  with Headtrack Player, at the player (MQ302's council looks at Arngeir, who names himself
+  and so looks at the player); a later action of the same actor takes over, and one that names
+  nobody clears its head tracking (MS13CamillaEscortPlayerScene's "Clear headtracking" phase).
+  The head turns through the world's look-at (WorldBridge.lookAt, as SetLookAt; TODO(M10) 1.5);
+  with Face Target the actor turns to its target while it stands (`src/shell/actor-scenes.ts`),
+  its package's own facing coming back after.
+- **Packages:** while a package action runs, its actor's package stack is that action's
+  packages alone (`ActorAi`'s stack asks the scene first); one whose package completes is done,
+  and its actor stands where it got to until the action ends: MQ101Scene1's Imperial soldier
+  waits at the cart's greeting marker while his action spans six more phases. As the action
+  ends, the actor's own packages come back. An actor with Run Only Scene Packages (CommonLibSSE;
+  no vanilla actor) runs only scene packages for the whole scene. IsScenePackageRunning,
+  GetIsCurrentPackage and GetCurrentPackage answer from it (the scene's package where the
+  actor's AI does not run). TODO(M13): the engine's stack during a scene; an actor that is not
+  loaded does not run its scene package (the low process: TODO(M13)).
+- **Timers** are done after their seconds of the scene's clock (real seconds outside menus, not
+  while the scene is paused).
+- **Fragments:** the scene's begin and end, each phase's start and completion (a phase
+  fragment with neither bit runs never). The scene waits for a fragment up to half a second, so
+  a stage it sets is seen by the next phase's conditions while one that waits (Utility.Wait)
+  does not hold the scene. TODO(M13): the engine queues them to the Papyrus VM.
+- **Behaviour flags** (DNAM): an actor's death, its combat, its conversation with the player
+  and a fight it watches end the scene or pause it while they last (its clock, phases and next
+  lines wait). A dead actor whose death does not end it is done with. With No Player Activation
+  the player cannot talk to the actor while the scene plays: the game says
+  sSceneBlockingActorActivation, "This person is busy.". TODO(M10) 5.2: combat and watching
+  combat.
+- **Ending:** Scene.Stop, its quest stopping, its last phase completing, an actor's behaviour.
+  Its actions end (looks and packages let go), its actors leave it, its end fragment runs; then
+  its quest stops if the scene stops it on its end (851 scenes: MS13LucanCamillaScene ends with
+  Lucan's "Oh, a customer"), or, having played to its end, it starts again while its conditions
+  hold (Repeat Conditions While True: Heimskr's sermon). TODO(M13): a pause before the repeat
+  (fRandomSceneAgainMinTime / MaxTime may be it).
+
+Measured with `--play`: Lucan and Camilla argue in the Riverwood Trader (MS13LucanCamillaSceneView)
+in four lines, Lucan turns to the player for "Oh, a customer. Sorry you had to hear that." if
+they see the player, Camilla goes back to work and the quest stops after 39 seconds of text;
+MQ101Scene1 says the cart ride's lines in the game's order, from Ralof's "Hey, you. You're
+finally awake." to "And it looks like the Thalmor are with him." After a new game in Node
+(`node tools/papyrus-run.ts --new-game`) 8 scenes play: MQ101Scene1 waiting for the player's
+3D, and scenes that begin with their quests, whose first phase waits for the player to come near
+(MorthalInitialScene, RJBanditScene; in Node, without the player's place, GetDistance is not
+valued and holds: TODO(M10) 4.2) or for a script (IvarsteadSSScene).

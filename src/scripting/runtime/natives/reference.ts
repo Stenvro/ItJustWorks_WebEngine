@@ -628,7 +628,7 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   n('objectreference.haseffectkeyword', () => false);
   n('objectreference.getcurrentscene', (call) => {
     const reference = self(call);
-    return reference === undefined ? null : object(runtime.sceneOf(reference), 'scene');
+    return reference === undefined ? null : object(runtime.scenes.sceneOf(reference), 'scene');
   });
   n('objectreference.gettriggerobjectcount', (call) => {
     const reference = self(call);

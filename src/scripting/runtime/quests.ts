@@ -84,6 +84,8 @@ export class QuestEngine {
     const startUp = record.stages.find((stage) => (stage.flags & StageFlag.startUp) !== 0);
     // The start-up stage is set as it starts; its fragment runs on a thread of its own.
     if (startUp) await this.#setStageRunning(record, startUp.index, false);
+    // Its scenes that begin on quest start start (src/ai/scene-runtime.ts).
+    runtime.detach(runtime.scenes.questStarted(quest));
     return true;
   }
 
@@ -96,6 +98,8 @@ export class QuestEngine {
     const shutDown = record.stages.find((stage) => (stage.flags & StageFlag.shutDown) !== 0);
     if (shutDown) await this.#setStageRunning(record, shutDown.index);
     state.running = false;
+    // Its scenes end with it.
+    runtime.scenes.questStopped(quest);
     this.#clearAliases(quest);
   }
 

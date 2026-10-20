@@ -318,7 +318,7 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
 
   // --- AI, combat, detection (TODO(M10): packages, combat and detection run) ------------------
   act('evaluatepackage', (actor) => world.evaluatePackage?.(actor));
-  ask('getcurrentpackage', null, (actor) => object(world.currentPackage?.(actor), 'package'));
+  ask('getcurrentpackage', null, (actor) => object(runtime.currentPackage(actor), 'package'));
   act('movetopackagelocation', (actor) => world.moveToPackageLocation?.(actor));
   ask('pathtoreference', false, () => false);
   act('startcombat', (actor, call) => {
