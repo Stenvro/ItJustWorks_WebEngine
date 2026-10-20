@@ -40,6 +40,7 @@ import { ActorFollowers } from './actor-followers.ts';
 import type { PlayerView } from './race-menu.ts';
 import type { LightProbe } from '../ai/light-level.ts';
 import { ActorTalk } from './actor-talk.ts';
+import { ActorLooks } from './actor-looks.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -160,6 +161,8 @@ export class ActorStage {
   readonly vehicles: ActorVehicles;
   /** The player's followers (src/shell/actor-followers.ts). */
   readonly followers: ActorFollowers;
+  /** Where they look (head tracking) and the world their procedural animation sees. */
+  readonly looks: ActorLooks;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -287,8 +290,14 @@ export class ActorStage {
       movers: this.movers,
       furniture: this.furniture,
     });
-    // Who greets and chatters: those that detect the player. TODO(M10) 1.5: where a speaker
-    // looks (the procedural animation's look-at).
+    this.looks = new ActorLooks({
+      session: options.session,
+      movers: this.movers,
+      camera: () => options.renderer.view?.camera,
+      actor: (reference) => this.#actors.get(reference),
+    });
+    // Who greets and chatters: those that detect the player; a speaker looks at whom it
+    // speaks to (a dialogue head track).
     this.talk = new ActorTalk({
       session: options.session,
       terminal: options.terminal,
@@ -296,6 +305,9 @@ export class ActorStage {
       ai: this.ai,
       furniture: this.furniture,
       detects: (actor) => this.senses.detections.detects(actor, PLAYER_REF),
+      lookAt: (actor, target) => {
+        options.session.scriptWorld.lookAt(actor, target, 'dialogue');
+      },
     });
   }
 
@@ -416,6 +428,7 @@ export class ActorStage {
     this.vehicles.attach(world);
     this.mounts.attach(world?.stepHooks);
     this.senses.attach(world);
+    this.looks.attach(world);
   }
 
   /**
@@ -717,6 +730,8 @@ export class ActorStage {
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     const times = new Map<StagedActor, number | undefined>();
     for (const staged of this.#actors.values()) times.set(staged, staged.placed.time);
+    // Where they look, and the world their procedural animation sees.
+    this.looks.frame(this.#actors.values(), frame);
     const camera = this.#options.renderer.view?.camera;
     animateSkeletons(
       this.#living(),
@@ -833,6 +848,7 @@ export class ActorStage {
   }
 
   #remove(staged: StagedActor): void {
+    this.looks.remove(staged.reference);
     this.#options.session.scriptsReady?.magic.unloaded(staged.reference);
     this.ai.remove(staged.reference);
     this.senses.remove(staged.reference);

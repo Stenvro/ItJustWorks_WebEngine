@@ -5,13 +5,25 @@
 //   node tools/behavior-run.ts meshes\actors\character\defaultmale.hkx
 //   node tools/behavior-run.ts <project> --set Speed=150 --event moveStart --time 3 --every 5
 //   node tools/behavior-run.ts <project> --at 0.5:SneakStart --set-at 0.5:IsSneaking=1 //     --set-at 1:Speed=100 --at 1:moveStart --time 2      events and variables at times
+//   node tools/behavior-run.ts <project> --set IsNPC=1 --look 60,150,120 --time 1
+//       the character stands at the origin facing +y; bHeadTracking and TargetLocation (a world
+//       point) make its look-at turn the spine, head and eyes: shown each printed step
+//   node tools/behavior-run.ts <project> --set bHumanoidFootIKEnable=1 --slope 20 --time 1
+//       foot IK on ground rising to the right (degrees; --ground z: a floor at z): the feet's
+//       and the pelvis's heights
+//   node tools/behavior-run.ts --modifiers      the modifiers of every vanilla behavior file: how
+//       many there are by class, and which the runtime runs
 
 import { BehaviorRuntime, type BehaviorHost } from '../src/animation/behavior-runtime.ts';
+import { ModelSpace } from '../src/animation/procedural.ts';
 import { readAnimationContainer, type AnimationBinding } from '../src/formats/hkx/animation.ts';
 import {
   loadBehaviorFiles,
   loadCharacterInfo,
+  parseBehaviorGraph,
   projectRelative,
+  type BehaviorGenerator,
+  type BehaviorModifier,
 } from '../src/formats/hkx/behavior.ts';
 import { Packfile } from '../src/formats/hkx/packfile.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -23,6 +35,85 @@ const option = (name: string): string[] =>
   args.flatMap((arg, i) => (arg === name && args[i + 1] !== undefined ? [args[i + 1] ?? ''] : []));
 const vfs = await Vfs.mount(openGameFolder());
 const read = (path: string): Promise<Uint8Array> => vfs.read(path);
+
+if (args.includes('--modifiers')) {
+  // Every modifier of every behavior file, by class: those the parser reads as a kind of
+  // their own run in the runtime; the others ('other') are named in behavior.ts.
+  const counts = new Map<string, { kind: string; count: number; files: Set<string> }>();
+  let graphs = 0;
+  for (const path of vfs.list('meshes')) {
+    if (!path.endsWith('.hkx') || !/behavior/i.test(path)) continue;
+    let file: Packfile;
+    try {
+      file = Packfile.parse(await read(path));
+    } catch {
+      continue;
+    }
+    if (file.objectsOf('hkbBehaviorGraph').length === 0) continue;
+    graphs++;
+    const graph = parseBehaviorGraph(file);
+    const seen = new Set<object>();
+    const count = (modifier: BehaviorModifier | undefined): void => {
+      if (!modifier || seen.has(modifier)) return;
+      seen.add(modifier);
+      const name = modifier.kind === 'other' ? modifier.className : modifier.kind;
+      const entry = counts.get(name) ?? { kind: modifier.kind, count: 0, files: new Set() };
+      entry.count++;
+      entry.files.add(path);
+      counts.set(name, entry);
+      if (modifier.kind === 'list') for (const child of modifier.modifiers) count(child);
+      if (modifier.kind === 'event-driven') count(modifier.modifier);
+      if (modifier.kind === 'modify-once') {
+        count(modifier.onActivate);
+        count(modifier.onDeactivate);
+      }
+    };
+    const walk = (node: BehaviorGenerator | undefined): void => {
+      if (!node || seen.has(node)) return;
+      seen.add(node);
+      switch (node.kind) {
+        case 'state-machine':
+          for (const state of node.states) walk(state.generator);
+          return;
+        case 'blender':
+          for (const child of node.children) walk(child.generator);
+          return;
+        case 'manual-selector':
+          for (const child of node.generators) walk(child);
+          return;
+        case 'bone-switch':
+          walk(node.generator);
+          for (const child of node.children) walk(child.generator);
+          return;
+        case 'offset-animation':
+          walk(node.generator);
+          walk(node.offsetGenerator);
+          return;
+        case 'modifier-generator':
+          count(node.modifier);
+          walk(node.generator);
+          return;
+        case 'state-tagging':
+        case 'cyclic-blend':
+        case 'synchronized-clip':
+          walk(node.generator);
+          return;
+        default:
+          return;
+      }
+    };
+    walk(graph.root);
+  }
+  console.log(`${String(graphs)} behavior files`);
+  for (const [name, entry] of [...counts].sort((a, b) => b[1].count - a[1].count)) {
+    const runs = entry.kind === 'other' ? 'not run (behavior.ts names its milestone)' : 'runs';
+    console.log(
+      `  ${name.padEnd(36)} ${String(entry.count).padStart(5)} in ${String(entry.files.size).padStart(3)} files: ${runs}`,
+    );
+  }
+  await vfs.close();
+  process.exit(0);
+}
 
 const character = await loadCharacterInfo(project, read);
 if (!character.behavior || !character.rig) throw new Error('character without behavior or rig');
@@ -52,11 +143,70 @@ const host: BehaviorHost = {
   behavior: (name) => files.get(projectRelative(project, name)),
 };
 
-const runtime = new BehaviorRuntime({ root, host, skeleton, random: () => 0.5 });
+const runtime = new BehaviorRuntime({
+  root,
+  host,
+  skeleton,
+  random: () => 0.5,
+  ...(character.footIk && { footIk: character.footIk }),
+});
 for (const assignment of option('--set')) {
   const [name = '', value = '0'] = assignment.split('=');
   runtime.setVariable(name, Number(value));
 }
+
+// The world the procedural modifiers see: the character at the origin facing +y, a look
+// target, the ground (flat at --ground, rising to the right at --slope degrees).
+const look = option('--look')[0]?.split(',').map(Number);
+const slope = (Number(option('--slope')[0] ?? 0) * Math.PI) / 180;
+const floor = Number(option('--ground')[0] ?? 0);
+const worldMatrix = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+runtime.world = {
+  worldFromModel: worldMatrix,
+  ground: (from, length) => {
+    const z = floor + Math.tan(slope) * from[0];
+    if (z > from[2] || z < from[2] - length) return undefined;
+    return { point: [from[0], from[1], z], normal: [-Math.sin(slope), 0, Math.cos(slope)] };
+  },
+};
+if (look?.length === 3) {
+  runtime.setVariable('bHeadTracking', 1);
+  runtime.setVector('TargetLocation', [look[0] ?? 0, look[1] ?? 0, look[2] ?? 0, 0]);
+}
+const space = new ModelSpace(skeleton.parents);
+const boneNamed = (pattern: RegExp): number =>
+  skeleton.bones.findIndex((b) => pattern.test(b.name));
+const head = boneNamed(/head \[head\]/i);
+const feet = [boneNamed(/l foot/i), boneNamed(/r foot/i)];
+const pelvis = boneNamed(/pelvis/i);
+/** Where the procedural modifiers left the head, eyes and feet. */
+const procedural = (): string => {
+  space.update(runtime.pose);
+  const parts: string[] = [];
+  if (look && head >= 0) {
+    const [x, y, z, w] = space.rotation(head);
+    // The head's forward (its local y) in model space.
+    const fx = 2 * (x * y - z * w);
+    const fy = 1 - 2 * (x * x + z * z);
+    const fz = 2 * (y * z + x * w);
+    const degrees = (r: number): string => ((r * 180) / Math.PI).toFixed(1);
+    parts.push(`head heading ${degrees(Math.atan2(fx, fy))} pitch ${degrees(Math.asin(fz))}`);
+    const eyes = runtime.eyes();
+    if (eyes) parts.push(`eyes ${degrees(eyes.heading)} / ${degrees(eyes.pitch)}`);
+  }
+  if (option('--slope').length > 0 || option('--ground').length > 0) {
+    for (const foot of feet) {
+      if (foot < 0) continue;
+      const [fx, , fz] = space.position(foot);
+      const ground = floor + Math.tan(slope) * fx;
+      parts.push(
+        `${skeleton.bones[foot]?.name ?? ''} z ${fz.toFixed(1)} (ground ${ground.toFixed(1)}, x ${fx.toFixed(1)})`,
+      );
+    }
+    if (pelvis >= 0) parts.push(`pelvis z ${space.position(pelvis)[2].toFixed(1)}`);
+  }
+  return parts.join('; ');
+};
 const total = Number(option('--time')[0] ?? 2);
 const every = Number(option('--every')[0] ?? 30);
 const events = option('--event');
@@ -96,6 +246,8 @@ for (let time = 0, frame = 0; time <= total; time += step, frame++) {
     }
     const raised = runtime.takeRaised();
     if (raised.length > 0) console.log(`  raised ${raised.slice(0, 12).join(', ')}`);
+    const shown = procedural();
+    if (shown) console.log(`  ${shown}`);
     // The state the graph tags: the movement type whose iState_<name> variable holds it.
     const tagged = runtime.taggedState();
     if (tagged !== undefined) {
