@@ -179,14 +179,17 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   lids close over fBlinkDownTime (0.04 s) and open over fBlinkUpTime (0.14 s); each face has
   its own random sequence (seeded by the reference).
 - **Expression:** one of the 17 (MoodHappy, DialogueAnger, CombatShout, ...) held at a
-  strength. TODO(M10): moods from AI and combat, dialogue emotions from the responses (INFO
-  TRDT emotion type and value).
+  strength. A response's emotion (INFO TRDT emotion type and value: anger, disgust, fear,
+  sad, happy, surprise, puzzled as the Dialogue* expressions; neutral none) shows over it while
+  it is said, eased in and out over 0.3 s (TODO(M13): the engine's blend). TODO(M10): moods
+  from AI and combat.
 - **Speech:** a line's lip-sync curves (formats/audio.md, LIP) drive the phonemes and the
   modifiers (blinks join the face's own, the strongest wins; brows, eye looks). The curves
   start with their lead-in frames, the audio after them, at the head through the 3D dialogue
   output model (DOBJ DOP2) in the dialogue category (DDSC). The lines' head pitch, roll and
   yaw are kept for head tracking (TODO(M10), which moves the same bone); creature lines
-  (8 curves) move jaws (TODO(M10)).
+  (8 curves) set the creature's behavior graph's lip variables, which move its mouth
+  (ai.md, Talking).
 - **Sandbox (debug only), Talk:** in the sandbox, the crosshair finds an actor along the
   activation ray (within fActivatePickRadius of the line from its feet to its head; TODO(M10):
   actors' own collision) and "Talk" makes it say a random line of its voice type (NPC VTCK,

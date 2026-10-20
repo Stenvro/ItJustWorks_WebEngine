@@ -4,6 +4,7 @@
 // where the engine's own rule is not known it is marked TODO(M13). Platform-independent.
 
 import { IdleCollectionFlag } from './idle-records.ts';
+import { sameSpace } from './package-start.ts';
 import { TargetType } from './package-records.ts';
 import type {
   PackagePlace,
@@ -27,6 +28,11 @@ const GREET_DISTANCE = 128;
 /** A meal and a line said take this long (seconds). TODO(M13): the idle's and line's own. */
 const EAT_SECONDS = 6;
 const SAY_SECONDS = 3;
+/** LockDoors' warning: the TimeToGo subtype, then the game's fAITrespassWarningTimer (s). */
+const TIME_TO_GO = 'TITG';
+const TRESPASS_WARNING_SECONDS = 5;
+/** DialogueActivate tries again this often while its target is busy (seconds). TODO(M13). */
+const CONVERSE_AGAIN_SECONDS = 5;
 /** An actor is at an idle marker within this of it. */
 const ARRIVE_AT_MARKER = 24;
 /** At an idle marker, an idle at least this long apart (its timer when longer; seconds). */
@@ -315,10 +321,20 @@ const SPOT_MARKERS: Readonly<Record<SandboxSpot['kind'], number>> = {
  * sleeps (Allow Sleeping), works at special furniture (Allow Special Furniture), stands at idle
  * markers playing their idles (Allow Idle Markers) and wanders (Allow Wandering), one thing at a
  * time, each for a while that its Energy shortens. TODO(M13): the engine's own choice and
- * timing are not documented (here: a free spot or a walk, picked at random). TODO(M10) 3.2:
- * eating (Allow Eating); 4.3: conversations (Allow Conversation).
+ * timing are not documented (here: a free spot or a walk, picked at random). With Allow
+ * Conversation it talks with the actors near it meanwhile (src/ai/talk.ts: the social timers
+ * start them). TODO(M10) 3.2: eating (Allow Eating).
  */
 const sandbox: ProcedureRunner = async (run) => {
+  run.body.allowConversation?.(run.inputs.bool(3, true));
+  try {
+    return await sandboxing(run);
+  } finally {
+    run.body.allowConversation?.(false);
+  }
+};
+
+const sandboxing: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
   if (!place) return hold(run);
   await goTo(run, place);
@@ -400,17 +416,39 @@ const standing =
 
 /**
  * LockDoors, UnlockDoors: the load doors within its place are locked (a door without a lock
- * gets a novice one) or unlocked; done at once. TODO(M10) 4.3: LockDoors' Warn Before Locking
- * (the player inside).
+ * gets a novice one) or unlocked; done at once. With Warn Before Locking and the player within
+ * the place, the actor first tells them to go (its TimeToGo line, to them) and locks after the
+ * game's fAITrespassWarningTimer (5 s). TODO(M11): trespass for a player who stays
+ * (GetTrespassWarningLevel, the Trespass lines, the crime).
  */
 const doors =
   (locked: boolean): ProcedureRunner =>
   async (run) => {
     const place = await placeIn(run, 0);
     if (!place) return 'failure';
+    if (locked && run.inputs.bool(1) && (await playerWithin(run, place))) {
+      await run.body.say(TIME_TO_GO, { target: PLAYER });
+      await waitFor(run, TRESPASS_WARNING_SECONDS);
+      if (run.stopped()) return 'failure';
+    }
     await run.mind.lockDoors(place, locked);
     return 'success';
   };
+
+/**
+ * Whether the player is within a place: in its cell or worldspace (the actor's, for a place
+ * without one) and within its radius (at least AT_PLACE).
+ */
+async function playerWithin(run: ProcedureRun, place: PackagePlace): Promise<boolean> {
+  const [player, self] = await Promise.all([
+    run.mind.placement(PLAYER),
+    run.mind.placement(run.actor),
+  ]);
+  if (!player) return false;
+  const space = place.space ?? self?.space;
+  if (space && player.space && !sameSpace(space, player.space)) return false;
+  return horizontal(player.position, place.position) <= Math.max(place.radius, AT_PLACE);
+}
 
 /**
  * Find: the references its search criteria name within its place, nearest first, kept in its
@@ -477,17 +515,20 @@ const eat: ProcedureRunner = async (run) => {
 };
 
 /**
- * Say: says its topic, facing its target if it should; with Finish Speaking it waits for the
- * line. TODO(M13): the line's own length (here: a few seconds); TODO(M10) 4.3: Force
- * Subtitle.
+ * Say: says its topic (or a line of a topic subtype) to its target, facing it if it should,
+ * its subtitle shown whatever the setting with Force Subtitle; with Finish Speaking it waits
+ * for the line (its own length; SAY_SECONDS where the body does not tell).
  */
 const say: ProcedureRunner = async (run) => {
   const topic = run.inputs.topic(0);
   if (topic === undefined) return 'failure';
   const target = (await targetsIn(run, 1))[0];
   if (target !== undefined && run.inputs.bool(3, true)) await faceReference(run, target);
-  run.body.say(topic);
-  if (run.inputs.bool(2, true)) await waitFor(run, SAY_SECONDS);
+  const said = run.body.say(topic, { target, forceSubtitle: run.inputs.bool(4) });
+  if (run.inputs.bool(2, true)) {
+    if (said) await said;
+    else await waitFor(run, SAY_SECONDS);
+  }
   return 'success';
 };
 
@@ -521,7 +562,8 @@ const forceGreet: ProcedureRunner = async (run) => {
 
 /**
  * DialogueActivate: from where it talks (else beside its target), it talks to its target: the
- * player gets the conversation. TODO(M10) 4.3: conversations between actors.
+ * player gets the conversation; another actor talks with it (src/ai/talk.ts, converse), once
+ * it is free to.
  */
 const dialogueActivate: ProcedureRunner = async (run) => {
   const target = (await targetsIn(run, 0))[0];
@@ -530,8 +572,14 @@ const dialogueActivate: ProcedureRunner = async (run) => {
   if (from) await goTo(run, from);
   else await goToReference(run, target, GREET_DISTANCE);
   if (run.inputs.bool(2, true)) await faceReference(run, target);
-  if (target === PLAYER && run.body.greet(undefined)) return 'success';
-  return hold(run);
+  if (target === PLAYER) return run.body.greet(undefined) ? 'success' : hold(run);
+  const converse = run.body.converse?.bind(run.body);
+  if (!converse) return hold(run);
+  while (!run.stopped()) {
+    if (await converse(target)) return 'success';
+    await run.wait(CONVERSE_AGAIN_SECONDS);
+  }
+  return 'failure';
 };
 
 /**

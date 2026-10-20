@@ -1,9 +1,10 @@
 // The animated face of an actor: the weights of its head parts' expression morphs (TRI:
 // src/formats/nif/tri.ts) every frame. Eyes blink on their own (delay, close and open times:
-// the game settings fBlinkDelayMin/Max, fBlinkDownTime, fBlinkUpTime); an expression (a mood
-// or a dialogue emotion) holds at a strength; a spoken line moves the mouth, brows, eyes and
-// lids by its lip-sync curves (src/formats/audio/lip.ts). Morph names are FaceGen's (as the
-// TRI files and the mfg console commands name them). Platform-independent.
+// the game settings fBlinkDelayMin/Max, fBlinkDownTime, fBlinkUpTime); an expression (a mood)
+// holds at a strength, a response's emotion shows over it while it is said; a spoken line
+// moves the mouth, brows, eyes and lids by its lip-sync curves (src/formats/audio/lip.ts), a
+// creature's line its graph's mouth (creatureSink). Morph names are FaceGen's (as the TRI files
+// and the mfg console commands name them). Platform-independent.
 
 import {
   LIP_MODIFIERS,
@@ -68,6 +69,45 @@ export function lipLeadIn(lip: LipFile): number {
   return Math.max(0, -lip.first) / LIP_RATE;
 }
 
+/**
+ * The expression of a dialogue response's emotion (INFO TRDT emotion type; CommonLibSSE
+ * EmotionType: neutral, anger, disgust, fear, sad, happy, surprise, puzzled). Neutral has none
+ * of its own: the face keeps its mood.
+ */
+export const EMOTION_EXPRESSIONS: readonly (string | undefined)[] = [
+  undefined,
+  'DialogueAnger',
+  'DialogueDisgusted',
+  'DialogueFear',
+  'DialogueSad',
+  'DialogueHappy',
+  'DialogueSurprise',
+  'DialoguePuzzled',
+];
+
+/** Seconds a dialogue emotion takes to show and to go. TODO(M13): the engine's blend. */
+const EMOTION_BLEND = 0.3;
+
+/** The phoneme curves of a creature line (dragons, hagravens, rieklings). */
+export const CREATURE_LIP_CURVES = 8;
+
+/**
+ * The behavior graph variables a creature's lines move, in curve order: its graph's own
+ * phoneme variables (dragons' and hagravens' LipBigAah, LipDST, LipEee, LipFV, LipK, LipL,
+ * LipR, LipTh; rieklings' LipAA ... LipTH), which blend its mouth's phoneme poses — not its
+ * damped copies or its settings (LipAcc, LipGain). Undefined: the graph has no lip-sync. The
+ * curves' order is taken to be the variables' (both list the same eight phonemes; TODO(M13):
+ * not documented).
+ */
+export function creatureLipVariables(
+  variables: readonly { readonly name: string }[],
+): string[] | undefined {
+  const names = variables
+    .map((variable) => variable.name)
+    .filter((name) => /^Lip/i.test(name) && !/Damped$|^LipAcc$|^LipGain$/i.test(name));
+  return names.length === CREATURE_LIP_CURVES ? names : undefined;
+}
+
 /** What a face shows, for the renderer: FACE_MORPHS weights, bumped `version` on change. */
 export interface FaceWeights {
   readonly weights: Float32Array;
@@ -89,6 +129,17 @@ export class FaceAnimation implements FaceWeights {
   #line: { lip: LipFile; time: number } | undefined;
   readonly #curves = new Float32Array(64);
   readonly #previous = new Float32Array(FACE_MORPHS.length);
+  /** The emotion of the response being said (its expression and strength), and as shown. */
+  #emotion: { index: number; strength: number } | undefined;
+  readonly #emotionShown = new Float32Array(FACE_EXPRESSIONS.length);
+  /** A creature line's phoneme curves now (CREATURE_LIP_CURVES). */
+  readonly creature = new Float32Array(CREATURE_LIP_CURVES);
+  /**
+   * Where a creature's line goes: its behavior graph's lip variables (creatureLipVariables),
+   * set every update while it speaks and once more, at rest, when it stops.
+   */
+  creatureSink: ((curves: Float32Array) => void) | undefined;
+  #creatureSpeaking = false;
 
   constructor(random: () => number, blink: BlinkSettings = VANILLA_BLINK) {
     this.#random = random;
@@ -126,6 +177,17 @@ export class FaceAnimation implements FaceWeights {
     return this.#line !== undefined;
   }
 
+  /**
+   * Shows a response's emotion (its type, EMOTION_EXPRESSIONS, and value 0..100) over the
+   * face's mood while it is said, eased in; `undefined` lets it go (eased out).
+   */
+  showEmotion(emotion: number | undefined, value = 50): void {
+    const name = emotion === undefined ? undefined : EMOTION_EXPRESSIONS[emotion];
+    const index = name === undefined ? -1 : (FACE_EXPRESSIONS as readonly string[]).indexOf(name);
+    this.#emotion =
+      index >= 0 ? { index, strength: Math.min(1, Math.max(0, value / 100)) } : undefined;
+  }
+
   stopSpeaking(): void {
     this.#line = undefined;
   }
@@ -153,12 +215,29 @@ export class FaceAnimation implements FaceWeights {
       if (this.#untilBlink <= 0) this.#blinking = 0;
     }
 
+    // The emotion of the response said, eased in and out; the mood gives way to it.
+    const emotion = this.#emotion;
+    const ease = Math.min(1, dt / EMOTION_BLEND);
+    let shown = 0;
+    for (let i = 0; i < this.#emotionShown.length; i++) {
+      const target = emotion?.index === i ? emotion.strength : 0;
+      const now = this.#emotionShown[i] ?? 0;
+      const next = Math.abs(target - now) <= ease ? target : now + Math.sign(target - now) * ease;
+      this.#emotionShown[i] = next;
+      shown = Math.max(shown, next);
+    }
     const expression = this.#expression;
-    if (expression) weights[expression.index] = expression.strength;
+    if (expression) weights[expression.index] = expression.strength * (1 - shown);
+    for (let i = 0; i < this.#emotionShown.length; i++) {
+      const value = this.#emotionShown[i] ?? 0;
+      if (value > 0) weights[i] = Math.max(weights[i] ?? 0, value);
+    }
 
     // The line: phonemes, then the modifiers it moves (its blinks join the face's own).
     this.headRotation.fill(0);
+    this.creature.fill(0);
     const line = this.#line;
+    let creature = false;
     if (line) {
       line.time += dt;
       const lip = line.lip;
@@ -174,10 +253,15 @@ export class FaceAnimation implements FaceWeights {
           }
           const head = LIP_PHONEMES.length + LIP_MODIFIERS.length;
           for (let k = 0; k < 3; k++) this.headRotation[k] = curves[head + k] ?? 0;
+        } else if (lip.curves === CREATURE_LIP_CURVES) {
+          // A creature line moves its graph's mouth (creatureSink), not FaceGen morphs.
+          for (let c = 0; c < CREATURE_LIP_CURVES; c++) this.creature[c] = curves[c] ?? 0;
+          creature = true;
         }
-        // TODO(M10): creature lines (8 curves: dragons, rieklings) move jaws, not FaceGen.
       }
     }
+    if (creature || this.#creatureSpeaking) this.creatureSink?.(this.creature);
+    this.#creatureSpeaking = creature;
     weights[BLINK_LEFT] = Math.max(weights[BLINK_LEFT] ?? 0, blink);
     weights[BLINK_RIGHT] = Math.max(weights[BLINK_RIGHT] ?? 0, blink);
 

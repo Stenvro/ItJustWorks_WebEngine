@@ -184,8 +184,15 @@ export class DialogueMenu {
           ? undefined
           : await engine.voiceFile(spoken, response.number, voiceType);
       const line: SpokenLine | undefined = path ? await placer.say(speaker, path) : undefined;
-      // Its text shows with the setting Dialogue Subtitles (off by default, as in the game).
-      if (this.#session.ini.bool('Interface', 'bDialogueSubtitles')) {
+      // Its face shows the response's emotion (src/animation/face.ts).
+      speaker.face?.showEmotion(response.emotion, response.emotionValue);
+      this.#session.lines.responseBegins(reference, spoken, response, undefined);
+      // Its text shows with the setting Dialogue Subtitles (off by default, as in the game), or
+      // when the info forces it (INFO flag Force Subtitle).
+      if (
+        this.#session.ini.bool('Interface', 'bDialogueSubtitles') ||
+        (spoken.info.flags & InfoFlag.forceSubtitle) !== 0
+      ) {
         this.#menu.call('ShowDialogueText', response.text);
       }
       // The menu lets the player skip once the voice is ready.
@@ -211,6 +218,8 @@ export class DialogueMenu {
       const after: Menu | undefined = this.#openMenu();
       after?.call('HideDialogueText');
     }
+    speaker.face?.showEmotion(undefined);
+    this.#session.lines.lineEnds(reference);
     engine.said(spoken.info);
     await this.#fragment(engine, spoken, 'end', reference);
   }

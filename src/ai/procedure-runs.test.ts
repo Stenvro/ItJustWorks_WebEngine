@@ -7,7 +7,7 @@ import {
   type PackageRecord,
   type ProcedureBranch,
 } from './package-records.ts';
-import type { PackageBody, PackageMind, ProcedureRun } from './package-runtime.ts';
+import type { PackageBody, PackageMind, ProcedureRun, SayOptions } from './package-runtime.ts';
 import { PROCEDURES } from './procedure-runs.ts';
 import { ProcedureInputs } from './procedures.ts';
 
@@ -71,8 +71,13 @@ function harness(found = new Map<number, readonly number[]>(), waits?: number) {
     takeIdleMarker: () => true,
     leaveIdleMarker: () => undefined,
     playIdle: () => Promise.resolve(true),
-    say: (topic: number | string) => {
-      done.push(`say ${String(topic)}`);
+    say: (topic: number | string, options?: SayOptions) => {
+      const to = options?.target === undefined ? '' : ` to ${options.target.toString(16)}`;
+      done.push(`say ${String(topic)}${to}${options?.forceSubtitle === true ? ' subtitled' : ''}`);
+    },
+    converse: (target: number) => {
+      done.push(`converse ${target.toString(16)}`);
+      return Promise.resolve(true);
     },
     standing: () => true,
     activate: () => Promise.resolve(true),
@@ -206,5 +211,52 @@ describe('procedures', () => {
     expect(await run('LockDoors', [0], [NEAR_HOME])).toBe('success');
     expect(await run('UnlockDoors', [0], [NEAR_HOME])).toBe('success');
     expect(done).toEqual(['doors locked', 'doors unlocked']);
+  });
+
+  it('warns the player inside before it locks (Warn Before Locking: TimeToGo)', async () => {
+    const { run, done } = harness();
+    const warn: PackageInput = { id: 1, type: 'Bool', value: { kind: 'bool', value: true } };
+    expect(await run('LockDoors', [0, 1], [NEAR_HOME, warn])).toBe('success');
+    expect(done).toEqual(['say TITG to 14', 'doors locked']);
+  });
+
+  it('says its topic to its target, its subtitle forced', async () => {
+    const { run, done } = harness();
+    const topic: PackageInput = { id: 0, type: 'Topic', value: { kind: 'topic', topic: 0x123 } };
+    const target: PackageInput = {
+      id: 1,
+      type: 'SingleRef',
+      value: {
+        kind: 'singleRef',
+        target: { type: TargetType.specificReference, value: 0x900, count: 0 },
+      },
+    };
+    const no: PackageInput = { id: 3, type: 'Bool', value: { kind: 'bool', value: false } };
+    const forced: PackageInput = { id: 4, type: 'Bool', value: { kind: 'bool', value: true } };
+    expect(
+      await run('Say', [0, 1, 3, 3, 4], [topic, target, no, forced], {
+        target: () => Promise.resolve(0x900),
+      }),
+    ).toBe('success');
+    expect(done).toEqual(['say 291 to 900 subtitled']);
+  });
+
+  it('talks with another actor (DialogueActivate between actors)', async () => {
+    const { run, done } = harness();
+    const target: PackageInput = {
+      id: 0,
+      type: 'SingleRef',
+      value: {
+        kind: 'singleRef',
+        target: { type: TargetType.specificReference, value: 0x900, count: 0 },
+      },
+    };
+    const no: PackageInput = { id: 2, type: 'Bool', value: { kind: 'bool', value: false } };
+    expect(
+      await run('DialogueActivate', [0, 255, 2], [target, no], {
+        target: () => Promise.resolve(0x900),
+      }),
+    ).toBe('success');
+    expect(done).toEqual(['converse 900']);
   });
 });
