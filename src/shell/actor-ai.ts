@@ -401,6 +401,9 @@ export class ActorAi {
       day: () => Math.floor(session.gameDaysPassed),
       package: async (formId) => (await session.packageData()).package(formId),
       packagesOf: async (actor) => {
+        // While a scene's package action holds it, that action's packages (src/ai/scene-runtime.ts).
+        const scene = runtime()?.scenes.packagesOf(actor);
+        if (scene) return scene;
         const data = await session.packageData();
         const own = staged(actor)?.placed.look.packages ?? [];
         // The packages of the quest aliases that hold it first, by quest priority.
@@ -603,6 +606,8 @@ export class ActorAi {
         return { ...parseIdleMarker(record), reference, ...at };
       },
       packageEvent: (actor, event, pack) => {
+        // A scene's package action is done when its package completes.
+        if (event === 'end') runtime()?.scenes.packageEnded(actor, pack.formId);
         void this.#packageEvent(actor, event, pack);
       },
     };

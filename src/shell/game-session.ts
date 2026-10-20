@@ -79,6 +79,7 @@ import { AnimationAssets } from './animation-assets.ts';
 import { audioSettingKey, Preferences } from './preferences.ts';
 import { ControlSettings } from './control-settings.ts';
 import { WorldLines } from './world-lines.ts';
+import { SceneLines } from './scene-lines.ts';
 import { PlayerLook } from './player-look.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { PlacedActor } from './actors.ts';
@@ -171,6 +172,8 @@ export class GameSession {
   placedActor: ((reference: number) => PlacedActor | undefined) | undefined;
   /** Lines actors say outside conversations (Say). */
   readonly lines: WorldLines;
+  /** Lines actors say in scenes (src/shell/scene-lines.ts). */
+  readonly sceneLines: SceneLines;
   /** What the game tells its HUD (Play's hudmenu.swf listens). */
   readonly hud = new HudSignals();
   /**
@@ -242,6 +245,8 @@ export class GameSession {
     this.#terminal = terminal;
     this.scriptWorld = new ScriptWorld(terminal, this.hud);
     this.lines = new WorldLines(this, terminal);
+    this.sceneLines = new SceneLines(this, terminal);
+    this.scriptWorld.sceneLine = (speech) => this.sceneLines.speak(speech);
     this.scriptWorld.say = (speaker, topic, speakAs) => {
       if (topic === undefined) return;
       this.lines.say(speaker, topic, speakAs).catch((error: unknown) => {

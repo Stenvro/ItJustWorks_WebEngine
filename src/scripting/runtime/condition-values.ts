@@ -87,6 +87,8 @@ export const Fn = {
   getPCIsSex: 131,
   getIsCurrentPackage: 161,
   isScenePlaying: 248,
+  isScenePackageRunning: 429,
+  isSceneActionComplete: 550,
   isInDialogueWithPlayer: 249,
   getOffersServicesNow: 255,
   hasSpell: 264,
@@ -740,12 +742,16 @@ async function conditionValue(
     case Fn.isInDialogueWithPlayer:
       return flag(reference !== undefined && runtime.dialogueSpeaker === reference);
     case Fn.getIsCurrentPackage:
-      // The package the world runs it on (none while it runs none).
-      return reference === undefined
-        ? undefined
-        : flag(runtime.world.currentPackage?.(reference) === form);
+      // The package its AI runs (a scene's while a package action holds it; none: none).
+      return reference === undefined ? undefined : flag(runtime.currentPackage(reference) === form);
+    // Scenes (src/ai/scene-runtime.ts): one playing, an action of it done (its index: the
+    // second parameter), the actor running a scene action's package.
     case Fn.isScenePlaying:
-      return flag(runtime.scenePlaying(form));
+      return flag(runtime.scenes.isPlaying(form));
+    case Fn.isSceneActionComplete:
+      return flag(runtime.scenes.actionComplete(form, condition.param2));
+    case Fn.isScenePackageRunning:
+      return reference === undefined ? undefined : flag(runtime.scenes.packageRunning(reference));
     case Fn.hasSpell:
       return reference === undefined ? undefined : flag(await actors.hasSpell(reference, form));
     case Fn.isBribedByPlayer:
@@ -844,7 +850,9 @@ async function conditionValue(
       return 0;
     // In a scene that plays.
     case Fn.isInScene:
-      return reference === undefined ? undefined : flag(runtime.sceneOf(reference) !== undefined);
+      return reference === undefined
+        ? undefined
+        : flag(runtime.scenes.sceneOf(reference) !== undefined);
     // Detection (src/shell/actor-senses.ts): whether the subject detects the target, sees it,
     // the light on it; alarmed (an alarm raised or heard), attacked lately, alerted (by a
     // script's SetAlert, or by what it heard).

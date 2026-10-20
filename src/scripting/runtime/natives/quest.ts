@@ -222,22 +222,24 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     return pkcu && record && pkcu.length >= 8 ? object(record.formIdAt(pkcu, 4), 'package') : null;
   });
 
-  // --- Scenes (TODO(M10): scenes play: their actors' packages and dialogue) -------------
+  // --- Scenes (they play: src/ai/scene-runtime.ts) ----------------------------------------
   n('scene.start', ({ self }) => {
-    if (self) runtime.sceneStart(self.formId);
+    if (self) runtime.scenes.start(self.formId);
     return null;
   });
-  // TODO(M10): ForceStart takes its actors out of the scenes they play in.
+  // ForceStart takes its actors out of the scenes they play in.
   n('scene.forcestart', ({ self }) => {
-    if (self) runtime.sceneStart(self.formId);
+    if (self) runtime.scenes.start(self.formId, true);
     return null;
   });
   n('scene.stop', ({ self }) => {
-    if (self) runtime.sceneStop(self.formId);
+    if (self) runtime.scenes.stop(self.formId);
     return null;
   });
-  n('scene.isplaying', ({ self }) => (self ? runtime.scenePlaying(self.formId) : false));
-  n('scene.isactioncomplete', () => false);
+  n('scene.isplaying', ({ self }) => (self ? runtime.scenes.isPlaying(self.formId) : false));
+  n('scene.isactioncomplete', ({ self, args }) =>
+    self ? runtime.scenes.actionComplete(self.formId, int(args[0])) : false,
+  );
   // Topic.Add: Skyrim keeps no list of known topics (DIAL and INFO have nothing that gates on
   // one; one vanilla call, MQ204), so there is nothing to do.
   n('topic.add', () => null);

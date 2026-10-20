@@ -1,11 +1,19 @@
 // Scenes (SCEN) against the real files (src/ai/scene-records.ts): one scene's phases, actors
-// and actions, a quest's scenes, or every scene parsed with a summary.
+// and actions (and what each phase waits for), a quest's scenes, every scene parsed with a
+// summary, or a scene played by the scene runtime (src/ai/scene-runtime.ts) on a clock.
 //
 //   node tools/scene-info.ts MQ101Scene1        one scene (editor id or hex form id)
 //   node tools/scene-info.ts --quest MQ101      the scenes of a quest
 //   node tools/scene-info.ts --parse            every SCEN: counts, flags, fragments
+//   node tools/scene-info.ts --play MS13LucanCamillaSceneView [--package-seconds 5]
+//       the scene as it plays: its phases, lines (the topic's first info, as long as its text
+//       takes), looks, timers and packages (one that can complete does after the seconds
+//       given) in time; conditions other than the scene's own (IsSceneActionComplete,
+//       IsScenePlaying) are taken to hold, and listed
 
+import { parseArgs } from 'node:util';
 import { PhaseFragmentFlag } from '../src/formats/esm/vmad.ts';
+import { parsePackage, type ProcedureBranch } from '../src/ai/package-records.ts';
 import {
   parseScene,
   SceneActionFlag,
@@ -15,8 +23,12 @@ import {
   type SceneAction,
   type SceneRecord,
 } from '../src/ai/scene-records.ts';
+import { SceneDirector, type SceneHost } from '../src/ai/scene-runtime.ts';
 import { conditionFunctionName } from '../src/scripting/condition-functions.ts';
 import { ConditionRunOn, type Condition } from '../src/scripting/conditions.ts';
+import { PLAYER_REF } from '../src/scripting/runtime/forms.ts';
+import { DialogueIndex } from '../src/world/dialogue.ts';
+import { GameSettings } from '../src/world/game-settings.ts';
 import { parseQuest, type QuestRecord } from '../src/world/quest-records.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -150,7 +162,193 @@ async function show(scene: SceneRecord, quest: QuestRecord | undefined): Promise
       if (action.startPhase !== index) continue;
       console.log(`    ${await actionText(action, alias)}`);
     }
+    const ending = scene.actions.filter(
+      (action) => action.startPhase < index && action.endPhase === index,
+    );
+    if (ending.length > 0) {
+      console.log(`    ends ${ending.map((action) => `#${String(action.index)}`).join(', ')}`);
+    }
+    console.log(`    ${waitsFor(scene, index)}`);
   }
+}
+
+/** What a phase waits for as the scene runtime plays it (src/ai/scene-runtime.ts). */
+function waitsFor(scene: SceneRecord, index: number): string {
+  const phase = scene.phases[index];
+  if (!phase) return '';
+  if (phase.completionConditions.length > 0) return '-> completes when its conditions hold';
+  const waits = scene.actions.filter(
+    (action) =>
+      Math.max(action.startPhase, action.endPhase) === index &&
+      !(action.type === 'dialogue' && action.topic === undefined),
+  );
+  if (waits.length === 0) return '-> completes at once';
+  const what = (action: SceneAction): string =>
+    action.type === 'dialogue'
+      ? (action.flags & SceneActionFlag.looping) !== 0
+        ? 'its first line'
+        : 'line'
+      : action.type;
+  return `-> completes when ${waits.map((action) => `#${String(action.index)} (${what(action)})`).join(', ')} done`;
+}
+
+/**
+ * The tool's game for --play: aliases hold placeholders named by the alias, conditions other
+ * than the scenes' own hold, lines last as long as their text takes, packages that can
+ * complete (a procedure whose success completes it) do after `packageSeconds`.
+ */
+async function play(scene: SceneRecord, quest: QuestRecord | undefined): Promise<void> {
+  const { values } = parseArgs({
+    args: process.argv.slice(2),
+    options: {
+      play: { type: 'boolean', default: false },
+      'package-seconds': { type: 'string', default: '5' },
+    },
+    allowPositionals: true,
+  });
+  const packageSeconds = Number(values['package-seconds']);
+  const index = new DialogueIndex(db);
+  await index.build();
+  const settings = await GameSettings.read(db);
+  const perCharacter = settings.number('fAIDefaultSpeechMult') ?? 0.15;
+  /** Placeholder references: 0x7f000000 + the alias. */
+  const PLACEHOLDER = 0x7f000000;
+  const aliasNames = new Map(quest?.aliases.map((entry) => [entry.id, entry.name]) ?? []);
+  const who = (reference: number | undefined): string =>
+    reference === undefined
+      ? 'nobody'
+      : reference === PLAYER_REF
+        ? 'the player'
+        : reference >= PLACEHOLDER
+          ? (aliasNames.get(reference - PLACEHOLDER) ?? `alias ${String(reference - PLACEHOLDER)}`)
+          : hex(reference);
+  let clock = 0;
+  const timers: { at: number; resolve: () => void }[] = [];
+  const after = (seconds: number): Promise<void> =>
+    new Promise((resolve) => timers.push({ at: clock + seconds, resolve }));
+  const assumed = new Set<string>();
+  const running = new Map<number, number>();
+  const completes = new Map<number, boolean>();
+  /** Whether a package can complete: a procedure of its tree whose success completes it. */
+  const canComplete = async (pack: number): Promise<boolean> => {
+    let known = completes.get(pack);
+    if (known !== undefined) return known;
+    const record = await db.get(pack);
+    const parsed = record && parsePackage(record);
+    const template = parsed?.template === undefined ? undefined : await db.get(parsed.template);
+    const tree = parsed?.tree ?? (template ? parsePackage(template).tree : undefined);
+    const any = (branch: ProcedureBranch | undefined): boolean =>
+      branch !== undefined && ((branch.flags & 0x1) !== 0 || branch.children.some(any));
+    known = any(tree);
+    completes.set(pack, known);
+    return known;
+  };
+  const log = (text: string): void => {
+    console.log(`${clock.toFixed(1).padStart(6)} s  ${text}`);
+  };
+  const made: { director?: SceneDirector } = {};
+  const host: SceneHost = {
+    scene: async (formId) => {
+      const record = await db.get(formId);
+      return record?.type === 'SCEN' ? parseScene(record) : undefined;
+    },
+    scenesOf: () => Promise.resolve([]),
+    questRunning: () => true,
+    aliasReference: (_quest, alias) => PLACEHOLDER + alias,
+    actor: () => ({ dead: false, combat: false, observingCombat: false, talking: false }),
+    alive: () => Promise.resolve(true),
+    conditionsHold: async (conditions) => {
+      for (const condition of conditions) {
+        const name = conditionFunctionName(condition.function);
+        const director = made.director;
+        if (name === 'IsSceneActionComplete' && director) {
+          if (!director.actionComplete(condition.form, condition.param2)) return false;
+        } else if (name === 'IsScenePlaying' && director) {
+          if (!director.isPlaying(condition.form)) return false;
+        } else {
+          const text = await conditionText(condition, (id) => aliasNames.get(id) ?? String(id));
+          if (!assumed.has(text)) log(`  (assumed to hold: ${text})`);
+          assumed.add(text);
+        }
+      }
+      return true;
+    },
+    fragment: () => Promise.resolve(),
+    say: async (line) => {
+      const topic = await index.topic(line.topic);
+      const infos = await index.infos(line.topic);
+      const info = infos[0];
+      if (!topic || !info) {
+        log(`${who(line.speaker)}: nothing to say (${hex(line.topic)})`);
+        return;
+      }
+      for (const response of info.responses) {
+        log(`${who(line.speaker)} to ${who(line.target)}: "${response.text}"`);
+        await after(Math.max(1, response.text.length * perCharacter));
+      }
+      if (info.responses.length === 0) log(`${who(line.speaker)}: (a shared info's lines)`);
+    },
+    look: (actor, look) => {
+      log(
+        look?.target === undefined
+          ? `${who(actor)} looks ahead`
+          : `${who(actor)} ${look.face ? 'turns to' : 'looks at'} ${who(look.target)}`,
+      );
+    },
+    packagesChanged: (actor) => {
+      void (async () => {
+        const director = made.director;
+        const pack = director?.packagesOf(actor)?.[0];
+        if (pack === undefined) {
+          if (running.delete(actor)) log(`${who(actor)} runs its own packages again`);
+          return;
+        }
+        if (running.get(actor) === pack) return;
+        running.set(actor, pack);
+        const completing = await canComplete(pack);
+        log(
+          `${who(actor)} runs ${await editorId(pack)}${completing ? '' : ' (it does not complete)'}`,
+        );
+        if (!completing) return;
+        await after(packageSeconds);
+        if (running.get(actor) !== pack) return;
+        running.delete(actor);
+        director?.packageEnded(actor, pack);
+      })();
+    },
+    currentPackage: (actor) => running.get(actor),
+    stopQuest: (formId) => {
+      log(`its quest ${hex(formId)} stops`);
+    },
+    random: () => 0.5,
+    warn: (message) => {
+      log(`warning: ${message}`);
+    },
+    trace: (text) => {
+      // The placeholders by their aliases' names.
+      log(
+        text
+          .slice(text.indexOf(':') + 2)
+          .replace(/\b7f([0-9a-f]{6})\b/g, (_all, alias: string) =>
+            who(PLACEHOLDER + parseInt(alias, 16)),
+          ),
+      );
+    },
+  };
+  const director = new SceneDirector(host);
+  made.director = director;
+  director.start(scene.formId);
+  const step = 0.1;
+  for (let ticks = 0; ticks < 36_000 && director.isPlaying(scene.formId); ticks++) {
+    clock += step;
+    const due = timers.filter((timer) => timer.at <= clock);
+    for (const timer of due) timers.splice(timers.indexOf(timer), 1);
+    for (const timer of due) timer.resolve();
+    director.update(step);
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  if (director.isPlaying(scene.formId)) log('still playing after an hour: stopped');
+  director.stop(scene.formId);
 }
 
 async function questOf(scene: SceneRecord): Promise<QuestRecord | undefined> {
@@ -252,6 +450,22 @@ const names = (arg: string, formId: number, own: string): boolean =>
   (/^(0x)?[0-9a-f]+$/i.test(arg) && parseInt(arg, 16) === formId);
 if (args[0] === '--parse') {
   await parseAll();
+} else if (args[0] === '--play') {
+  const wanted = args[1] ?? '';
+  let found: SceneRecord | undefined;
+  for (const formId of db.formIdsOfType('SCEN')) {
+    const record = await db.get(formId);
+    if (record && !record.deleted && names(wanted, formId, record.editorId ?? '')) {
+      found = parseScene(record);
+    }
+  }
+  if (found) {
+    await show(found, await questOf(found));
+    console.log('');
+    await play(found, await questOf(found));
+  } else {
+    console.log(`no scene ${wanted}`);
+  }
 } else if (args[0] === '--quest') {
   const wanted = args[1] ?? '';
   const ofQuest: SceneRecord[] = [];
