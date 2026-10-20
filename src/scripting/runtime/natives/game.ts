@@ -230,17 +230,34 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     return null;
   });
   n('game.setbeastform', () => null);
-  n('game.sendwerewolftransformation', () => null);
+  // SendWereWolfTransformation: the player changed into a werewolf: a crime where it is seen
+  // (iCrimeGoldWerewolf, the WereTransformCrime lines: crime-engine.ts werewolf).
+  n('game.sendwerewolftransformation', async () => {
+    await runtime.crime.werewolf(PLAYER_REF);
+    return null;
+  });
   n('game.sethudcartmode', ({ args }) => {
     runtime.hudCartMode = bool(args[0], true);
     return null;
   });
   n('game.setallowflyingmountlandingrequests', () => null);
   n('game.setsittingrotation', () => null);
-  n('game.clearprison', () => null);
-  n('game.servetime', () => null);
+  // ClearPrison: the player is no longer held in jail.
+  n('game.clearprison', () => {
+    delete runtime.state.crime.jail;
+    return null;
+  });
+  // ServeTime: the player serves their jail time (the jail's bed: JailBedScript).
+  n('game.servetime', async () => {
+    await runtime.crime.serveTime();
+    return null;
+  });
   n('game.cleartempeffects', () => null);
-  n('game.setplayerreportcrime', () => null);
+  // SetPlayerReportCrime(abReportCrime): whether crimes against the player are reported.
+  n('game.setplayerreportcrime', ({ args }) => {
+    runtime.state.crime.reportCrimeAgainstPlayer = bool(args[0], true);
+    return null;
+  });
   n('game.precachechargen', () => null);
   n('game.precachechargenclear', () => null);
   n('game.requestmodel', () => null);

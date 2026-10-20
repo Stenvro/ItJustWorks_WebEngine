@@ -349,6 +349,9 @@ export class MagicEngine {
           false,
         ]),
       );
+      // On one not hostile to the caster it is an assault (crime-engine.ts). TODO(M10) 5.3: the
+      // projectile's impact tells crime instead, as combat's hits do (actor-combat.ts).
+      this.#runtime.detach(this.#runtime.crime.assault(caster, on));
     }
     return applied > 0;
   }

@@ -34,7 +34,7 @@ import {
   type InstanceVisibility,
   type ModelInstance,
 } from '../render/scene-renderer.ts';
-import { PLAYER_BASE, PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
@@ -367,12 +367,9 @@ class Reading {
     const { read, canTake, runtime } = this.#setup;
     let steal = false;
     if (canTake && read.reference !== undefined) {
-      // TODO(M11): the cell's ownership, and the crime of taking it.
-      const owner = await runtime.owner(read.reference);
-      steal =
-        (owner.actor !== undefined && owner.actor !== PLAYER_BASE) ||
-        (owner.faction !== undefined &&
-          (await runtime.actors.factionRank(PLAYER_REF, owner.faction)) < 0);
+      // Its owner's, else its cell's (taking it is then a theft: the take goes through the
+      // crime engine's steal).
+      steal = !(await runtime.crime.mayTake(PLAYER_REF, read.reference));
     }
     menu.call('ShowTakeButton', canTake, steal);
   }

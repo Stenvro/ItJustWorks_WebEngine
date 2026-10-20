@@ -433,8 +433,9 @@ const standing =
  * LockDoors, UnlockDoors: the load doors within its place are locked (a door without a lock
  * gets a novice one) or unlocked; done at once. With Warn Before Locking and the player within
  * the place, the actor first tells them to go (its TimeToGo line, to them) and locks after the
- * game's fAITrespassWarningTimer (5 s). TODO(M11): trespass for a player who stays
- * (GetTrespassWarningLevel, the Trespass lines, the crime).
+ * game's fAITrespassWarningTimer (5 s). A player who stays is trespassing: the home is off
+ * limits to them (crime-engine.ts doorsLocked), those who see them warn them (the Trespass
+ * lines, GetTrespassWarningLevel) and then report it (src/shell/actor-crime.ts).
  */
 const doors =
   (locked: boolean): ProcedureRunner =>

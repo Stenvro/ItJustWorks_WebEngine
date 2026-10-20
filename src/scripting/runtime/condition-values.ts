@@ -5,8 +5,8 @@
 // keyword data, cleared), the time, and the story manager event's data. Functions not valued
 // yet hold (and are reported once), as conditions.ts does. Indices: UESP "Skyrim Mod:Function
 // Indices"; magic's in magic-conditions.ts. Detection's (GetDetected, GetLineOfSight,
-// GetLightLevel, ...) ask the world (src/shell/actor-senses.ts). TODO(M10)/(M11): combat and
-// crime functions.
+// GetLightLevel, ...) ask the world (src/shell/actor-senses.ts); crime's and factions' are in
+// crime-conditions.ts. TODO(M10) 5.2: combat functions.
 
 import { NpcFlag, RaceFlag } from '../../world/actor-records.ts';
 import { ActorValue } from '../../world/actor-values.ts';
@@ -14,6 +14,7 @@ import { conditionFunctionName } from '../condition-functions.ts';
 import type { Condition } from '../conditions.ts';
 import { ObjectHandle, type Value } from '../values.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
+import { crimeConditionValue } from './crime-conditions.ts';
 import { magicConditionValue } from './magic-conditions.ts';
 import type { ScriptRuntime } from './runtime.ts';
 import type { StoryEventData } from './story-manager.ts';
@@ -150,7 +151,6 @@ export const Fn = {
   getInCurrentLocFormList: 444,
   hasPerk: 448,
   getPlayerTeammate: 453,
-  getCrimeGold: 459,
   getDestructionStage: 470,
   getMapMarkerVisible: 491,
   playerKnows: 493,
@@ -447,10 +447,6 @@ async function conditionValue(
       return state.realTime / 3600;
     case Fn.playerKnows:
       return flag(runtime.playerKnows(form));
-    case Fn.getCrimeGold: {
-      const crime = state.factions.get(form);
-      return crime ? crime.crimeGold + crime.crimeGoldViolent : 0;
-    }
 
     // --- What a reference is --------------------------------------------------------------
     case Fn.getIsReference:
@@ -1089,7 +1085,11 @@ async function conditionValue(
       return value === undefined ? undefined : flag(value === 'none');
     }
     default:
-      // Magic: the effects on an actor, and an effect's own (magic-conditions.ts).
-      return magicConditionValue(runtime, condition, reference, context.effectKey);
+      // Magic: the effects on an actor, and an effect's own (magic-conditions.ts); crime and
+      // factions (crime-conditions.ts).
+      return (
+        (await magicConditionValue(runtime, condition, reference, context.effectKey)) ??
+        crimeConditionValue(runtime, condition, reference, context.quest)
+      );
   }
 }

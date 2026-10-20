@@ -236,8 +236,30 @@ export class GameMenus {
   }
 
   /**
+   * An actor's pockets (sneaking, its activation): the container menu in pickpocket mode;
+   * `closed` once it has closed.
+   */
+  pickpocket(actor: number, closed: () => void = () => undefined): void {
+    if (this.#open || this.#session.menuMode) {
+      closed();
+      return;
+    }
+    this.#openItems(
+      containerModel(this.#session, actor, this.#inventory, false, true),
+      closed,
+    ).catch((error: unknown) => {
+      this.#terminal.log(
+        'ui',
+        `the pickpocket menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+        'error',
+      );
+      this.#closeOpen();
+    });
+  }
+
+  /**
    * A menu a script opens (OpenInventory, ShowBarterMenu, ShowGiftMenu, ShowRaceMenu); resolves
-   * once it has closed, with what it returns (ShowGiftMenu's favor points: TODO(M11), 0).
+   * once it has closed, with what it returns (ShowGiftMenu's favor points).
    */
   async openScripted(request: MenuRequest): Promise<number> {
     if (this.#open || this.#session.menuMode) return 0;
@@ -265,7 +287,7 @@ export class GameMenus {
     const opened = model;
     return new Promise((resolve) => {
       this.#openItems(opened, () => {
-        resolve(0);
+        resolve(opened.result?.() ?? 0);
       }).catch((error: unknown) => {
         this.#terminal.log(
           'ui',
@@ -476,6 +498,8 @@ export class GameMenus {
     const reason = noWaitReason(sleeping, {
       waitingDisabled: session.scriptsReady?.chargen.noWaiting === true,
       inAir: this.#world.inAir(),
+      pursued: session.crimeWatch?.pursued === true,
+      trespassing: session.crimeWatch?.trespassing === true,
     });
     if (reason) {
       const settings = await session.settings();

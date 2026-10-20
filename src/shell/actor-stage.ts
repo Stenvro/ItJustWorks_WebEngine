@@ -33,6 +33,7 @@ import { ActorBodies } from './actor-bodies.ts';
 import { ActorDoors, type DoorObject } from './actor-doors.ts';
 import { ActorFurniture, type FurnitureUser, type StageObject } from './actor-furniture.ts';
 import { ActorMovers } from './actor-movers.ts';
+import { ActorCrime } from './actor-crime.ts';
 import { ActorSenses, type SensesWorld } from './actor-senses.ts';
 import { ActorMounts } from './actor-mounts.ts';
 import { ActorVehicles, type AdoptedVehicle } from './actor-vehicles.ts';
@@ -166,6 +167,8 @@ export class ActorStage {
   readonly looks: ActorLooks;
   /** Their fights and the player's (src/shell/actor-combat.ts). */
   readonly combat: ActorCombat;
+  /** Crime on the stage: witnesses, guards arresting, trespass warnings, jail. */
+  readonly crime: ActorCrime;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -324,6 +327,15 @@ export class ActorStage {
       lookAt: (actor, target) => {
         options.session.scriptWorld.lookAt(actor, target, 'dialogue');
       },
+    });
+    this.crime = new ActorCrime({
+      session: options.session,
+      senses: this.senses,
+      movers: this.movers,
+      ai: this.ai,
+      actors: () => this.#actors.values(),
+      get: (reference) => this.#actors.get(reference),
+      bark: (actor, subtype, target) => this.talk.bark(actor, subtype, target),
     });
   }
 
@@ -742,6 +754,7 @@ export class ActorStage {
     this.ai.frame(this.#actors.values(), frame, this.#options.focus?.());
     // What they notice (detection), and how they react.
     this.senses.frame(frame);
+    this.crime.frame(frame);
     this.followers.frame(frame);
     this.actorScenes.frame(this.#actors.values());
     this.talk.frame(this.#actors.values(), frame, this.#options.focus?.());
@@ -873,6 +886,7 @@ export class ActorStage {
     this.combat.remove(staged.reference);
     this.ai.remove(staged.reference);
     this.senses.remove(staged.reference);
+    this.crime.remove(staged.reference);
     this.talk.remove(staged.reference);
     this.mounts.remove(staged.reference);
     this.vehicles.remove(staged.reference);

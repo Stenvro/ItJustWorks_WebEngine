@@ -4,9 +4,10 @@
 // itself or one of its keywords in it). The engine tells the menu which way it goes
 // (SetMenuInfo(abGivingGifts, abUseFavorPoints): "GIVE GIFT" or "TAKE GIFT"); ItemSelect
 // (amount) moves them. ShowGiftMenu is latent: it returns once the menu closes, with the favor
-// points spent or gained (Creation Kit: "ShowGiftMenu - Actor"). TODO(M11): favor points (what
-// a gift is worth to the actor, UpdatePlayerInfo's points; 0 until then), stolen items
-// (abShowStolenItems).
+// points spent or gained (Creation Kit: "ShowGiftMenu - Actor"): with abUseFavorPoints a gift's
+// worth to the actor, its value (TODO(M13): the engine's worth of a gift), which raises the
+// actor's relationship with the player (crime-engine.ts favor; FavorDialogueScript caps the
+// points at 100 for its Speech uses). Stolen items are listed only with abShowStolenItems.
 
 import { INVENTORY_CATEGORIES } from '../gameplay/inventory.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -21,6 +22,8 @@ export interface GiftOptions {
   /** FLST: the items, or the keywords, that may be given; undefined: all. */
   readonly filter: number | undefined;
   readonly useFavorPoints: boolean;
+  /** abShowStolenItems: the player's stolen items may be given too. */
+  readonly showStolen?: boolean;
 }
 
 export async function giftModel(
@@ -34,6 +37,8 @@ export async function giftModel(
     options.filter === undefined ? undefined : new Set(await game.formList(options.filter));
   const [from, to] = options.giving ? [PLAYER_REF, actor] : [actor, PLAYER_REF];
   const settings = await session.settings();
+  /** The favor points the gifts given so far are worth. */
+  let points = 0;
   return {
     movie: 'giftmenu.swf',
     depth: 6,
@@ -50,23 +55,35 @@ export async function giftModel(
       menu.call('SetMenuInfo', options.giving, options.useFavorPoints);
     },
     view: async () => {
-      const rows = (await shelf.rows(from)).filter(
-        (row) =>
-          !allowed ||
-          allowed.has(row.formId) ||
-          row.item.keywords.some((keyword) => allowed.has(keyword)),
-      );
+      const rows = (await shelf.rows(from)).flatMap((row) => {
+        if (
+          allowed &&
+          !allowed.has(row.formId) &&
+          !row.item.keywords.some((keyword) => allowed.has(keyword))
+        ) {
+          return [];
+        }
+        // Without abShowStolenItems the player's stolen ones are not offered.
+        if (options.showStolen || from !== PLAYER_REF) return [row];
+        const count = row.count - game.crime.stolenCount(PLAYER_REF, row.formId);
+        return count > 0 ? [{ ...row, count }] : [];
+      });
       return {
         entries: rows.map(itemEntry),
         cards: await shelf.cards(rows),
-        player: [0],
+        player: [points],
       };
     },
     // ItemSelect(amount).
     trade: async (entry, args) => {
       const amount = typeof args[0] === 'number' ? args[0] : 1;
       await shelf.move(entry.formId, amount, from, to);
+      if (!options.giving || !options.useFavorPoints) return;
+      const worth = ((await shelf.item(entry.formId))?.value ?? 0) * amount;
+      points += worth;
+      await game.crime.favor(actor, worth);
     },
+    result: () => points,
     select: () => Promise.resolve(),
     favorite: () => undefined,
   };

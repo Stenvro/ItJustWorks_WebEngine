@@ -41,6 +41,7 @@ import { ActorEngine } from './actor-engine.ts';
 import { EquipmentEngine } from './equipment-engine.ts';
 import { ProgressionEngine } from './progression-engine.ts';
 import { MagicEngine, type MagicEffectShown } from './magic-engine.ts';
+import { CrimeEngine } from './crime-engine.ts';
 import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
@@ -211,8 +212,11 @@ export interface WorldBridge {
   /** Actor.SetHeadTracking: whether the actor head-tracks at all. */
   headTracking?(actor: number, on: boolean): void;
   expression?(actor: number, mood: number | undefined, strength: number): void;
-  /** Jail (Faction.SendPlayerToJail, PlayerPayCrimeGold). TODO(M11): crime. */
-  jail?(faction: number, removeInventory: boolean, realJail: boolean): void;
+  /**
+   * Game hours pass at once (Game.ServeTime: the days in jail): the clock, the scripts' timers
+   * and the actors' values regenerating over them, as the sleep menu passes them.
+   */
+  passTime?(hours: number): Promise<void> | void;
   cellAttached?(cell: number): boolean;
   resetCell?(cell: number): void;
   fog?(
@@ -507,6 +511,8 @@ export class ScriptRuntime implements VmHost {
   readonly progression: ProgressionEngine;
   /** The magic system: effects on actors, items used (magic-engine.ts). */
   readonly magic: MagicEngine;
+  /** Crime and factions: bounties, stolen items, jail, guards, reactions (crime-engine.ts). */
+  readonly crime: CrimeEngine;
   /** While a new game starts its quests (their aliases may take reserved references). */
   startingNewGame = false;
   /** Game seconds per real second (the TimeScale global; scripts may set it). */
@@ -601,6 +607,7 @@ export class ScriptRuntime implements VmHost {
     this.progression = new ProgressionEngine(this);
     this.magic = new MagicEngine(this);
     this.magic.listen();
+    this.crime = new CrimeEngine(this);
     this.sceneHost = new RuntimeSceneHost(this);
     this.scenes = new SceneDirector(this.sceneHost);
     registerNatives(this.#natives, this);
@@ -1687,6 +1694,8 @@ export class ScriptRuntime implements VmHost {
       const moved = Math.min(have, count);
       if (moved <= 0) continue;
       items.set(item, have - moved);
+      // Stolen items leave last and stay stolen where they go (crime-engine.ts).
+      this.crime.itemsMoved(container, to, item, moved, have);
       // What it no longer has enough of comes off (the equip system).
       await this.equipment.itemsLeft(container, item);
       if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(item, moved, false));
@@ -1798,11 +1807,6 @@ export class ScriptRuntime implements VmHost {
   }
 
   /**
-   * Whether an actor may use a reference without stealing it (UESP, "Crime"): one its owner
-   * (XOWN; else its cell's) is the actor, or a faction the actor is in at the owner's rank or
-   * above (XRNK), or that no one owns. TODO(M11): crime and stolen items.
-   */
-  /**
    * Whether an actor opens a locked door or container without picking its lock: it carries the
    * key (XLOC), or the lock is its own (the reference's owner, else its cell's: the actor's
    * base, or a faction it has the rank in); what nobody owns stays locked to it. Unlocked: true.
@@ -1821,6 +1825,11 @@ export class ScriptRuntime implements VmHost {
     return this.mayUse(actor, reference);
   }
 
+  /**
+   * Whether an actor may use a reference without stealing it (UESP, "Crime"): one its owner
+   * (XOWN; else its cell's) is the actor, or a faction the actor is in at the owner's rank or
+   * above (XRNK), or that no one owns. Taking it otherwise is a theft (crime-engine.ts steal).
+   */
   async mayUse(actor: number, reference: number): Promise<boolean> {
     const rankOf = async (form: number): Promise<number> => {
       const data = (await this.forms.record(form))?.fields.first('XRNK');
@@ -2354,6 +2363,12 @@ export class ScriptRuntime implements VmHost {
     // The player's abilities, diseases and worn enchantments act (magic-engine.ts).
     await this.magic.prepare(PLAYER_REF);
     await this.vm.idle();
+  }
+
+  /** A global's value now by its editor id (as scripts left it, else its record's). */
+  async globalNamed(name: string): Promise<number | undefined> {
+    const entry = (await this.#globals()).get(name.toLowerCase());
+    return entry === undefined ? undefined : globalValue(this, entry.formId);
   }
 
   async #globalByName(name: string): Promise<number | undefined> {

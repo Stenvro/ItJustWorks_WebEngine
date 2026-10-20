@@ -105,42 +105,57 @@ export function registerForms(n: Register, runtime: ScriptRuntime): void {
     0,
     (faction) => state.factions.get(faction)?.crimeGoldViolent ?? 0,
   );
+  // Crime gold set or changed by scripts counts as crime gold earned (the stats, infamy).
   on('faction.setcrimegold', (faction, call) => {
-    state.faction(faction).crimeGold = Math.max(0, int(call.args[0]));
+    const entry = state.faction(faction);
+    runtime.crime.addBounty(faction, Math.max(0, int(call.args[0])) - entry.crimeGold, false);
   });
   on('faction.setcrimegoldviolent', (faction, call) => {
-    state.faction(faction).crimeGoldViolent = Math.max(0, int(call.args[0]));
+    const entry = state.faction(faction);
+    runtime.crime.addBounty(faction, Math.max(0, int(call.args[0])) - entry.crimeGoldViolent, true);
   });
   on('faction.modcrimegold', (faction, call) => {
-    const entry = state.faction(faction);
-    if (bool(call.args[1]))
-      entry.crimeGoldViolent = Math.max(0, entry.crimeGoldViolent + int(call.args[0]));
-    else entry.crimeGold = Math.max(0, entry.crimeGold + int(call.args[0]));
+    runtime.crime.addBounty(faction, int(call.args[0]), bool(call.args[1]));
   });
   ask('faction.canpaycrimegold', false, async (faction) => {
     const entry = state.factions.get(faction);
     const owed = entry ? entry.crimeGold + entry.crimeGoldViolent : 0;
     return (await runtime.itemCount(PLAYER_REF, GOLD)) >= owed;
   });
-  on('faction.playerpaycrimegold', async (faction, call) => {
-    const entry = state.faction(faction);
-    const owed = entry.crimeGold + entry.crimeGoldViolent;
-    await runtime.removeItem(PLAYER_REF, runtime.formHandle(GOLD), owed, true, undefined);
-    entry.crimeGold = 0;
-    entry.crimeGoldViolent = 0;
-    // TODO(M11): stolen items taken (abRemoveStolenItems) and jail (abGoToJail).
-    if (bool(call.args[1], true)) world.jail?.(faction, bool(call.args[0], true), true);
-  });
-  on('faction.sendplayertojail', (faction, call) =>
-    world.jail?.(faction, bool(call.args[0], true), bool(call.args[1], true)),
+  // PlayerPayCrimeGold(abRemoveStolenItems = true, abGoToJail = true).
+  on('faction.playerpaycrimegold', (faction, call) =>
+    runtime.crime.payFine(faction, bool(call.args[0], true), bool(call.args[1], true)),
   );
-  on('faction.sendassaultalarm', () => undefined);
-  ask('faction.getinfamy', 0, () => 0);
-  ask('faction.getinfamyviolent', 0, () => 0);
-  ask('faction.getinfamynonviolent', 0, () => 0);
-  ask('faction.getstolenitemvaluecrime', 0, () => 0);
-  ask('faction.getstolenitemvaluenocrime', 0, () => 0);
-  ask('faction.isfactionincrimegroup', false, () => false);
+  // SendPlayerToJail(abRemoveInventory = true, abRealJail = true).
+  on('faction.sendplayertojail', (faction, call) =>
+    runtime.crime.jail(faction, bool(call.args[0], true), bool(call.args[1], true)),
+  );
+  // SendAssaultAlarm: the faction's members near the player are alarmed against them.
+  on('faction.sendassaultalarm', async (faction) => {
+    for (const actor of world.loadedReferences?.() ?? []) {
+      if ((await runtime.actors.factionRank(actor, faction)) >= 0)
+        world.alarm?.(actor, PLAYER_REF, 'attack');
+    }
+  });
+  ask('faction.getinfamy', 0, (faction) => {
+    const entry = state.factions.get(faction);
+    return (entry?.infamy ?? 0) + (entry?.infamyViolent ?? 0);
+  });
+  ask('faction.getinfamyviolent', 0, (faction) => state.factions.get(faction)?.infamyViolent ?? 0);
+  ask('faction.getinfamynonviolent', 0, (faction) => state.factions.get(faction)?.infamy ?? 0);
+  // The value of the stolen items the player carries from the faction, seen being stolen or not.
+  ask('faction.getstolenitemvaluecrime', 0, (faction) =>
+    runtime.crime.stolenValue(PLAYER_REF, faction, true),
+  );
+  ask('faction.getstolenitemvaluenocrime', 0, (faction) =>
+    runtime.crime.stolenValue(PLAYER_REF, faction, false),
+  );
+  // IsFactionInCrimeGroup(akOther): the other is in this faction's shared crime factions.
+  ask('faction.isfactionincrimegroup', false, async (faction, call) => {
+    const other = formOf(call.args[0]);
+    return other !== undefined && (await runtime.crime.crimeGroup(faction)).includes(other);
+  });
+  // SetPlayerEnemy: its members are hostile to the player (crime-engine.ts reaction).
   on('faction.setplayerenemy', (faction, call) => {
     state.faction(faction).playerEnemy = bool(call.args[0], true);
   });

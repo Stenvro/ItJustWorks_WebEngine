@@ -79,6 +79,8 @@ function mainMenuProperties(hasSaves: boolean): unknown[] {
 /** The game's menu depths (higher over lower). */
 /** The console's depth: over every other menu. */
 const CONSOLE_DEPTH = 12;
+/** Ownership read for the activation prompt is read again after this long (ms). */
+const OWNERSHIP_MS = 5000;
 
 const DEPTH = {
   hud: 2,
@@ -494,8 +496,19 @@ export class PlayMode {
       openContainer: (reference, closed) => {
         session.hud.menus?.container(reference, closed);
       },
-      sleep: () => {
-        menus.sleep();
+      // Not in another's bed (sNoSleepInOwnedBed).
+      sleep: (object) => {
+        const runtime = session.scriptsReady;
+        if (!runtime) return;
+        void runtime.crime.mayTake(PLAYER_REF, object.reference).then((may) => {
+          if (may) menus.sleep();
+          else session.hud.notification(settings.string('sNoSleepInOwnedBed') ?? '');
+        });
+      },
+      owned: (object) => this.#owned(object.reference),
+      sneaking: () => this.#world.player()?.play.player.sneaking === true,
+      pickpocket: (actor) => {
+        menus.pickpocket(actor);
       },
       craft: (object, closed) => {
         menus.craft(object.reference, object.base, closed);
@@ -566,6 +579,7 @@ export class PlayMode {
       inAir: this.#world.inAir(),
       carried: await carriedWeight(runtime, PLAYER_REF),
       carryWeight: (await runtime.actors.value(PLAYER_REF, ActorValue.carryWeight)).current,
+      pursued: session.crimeWatch?.pursued === true,
     });
   }
 
@@ -818,7 +832,7 @@ export class PlayMode {
   /**
    * A lock the player opens: with its key if they carry it (sOpenWithKey; then it opens), else
    * by picking it, unless only its key opens it (sImpossibleLock) or they have no lockpick
-   * (sOutOfLockpicks; the Skeleton Key is one). TODO(M11): not while guards pursue the player
+   * (sOutOfLockpicks; the Skeleton Key is one), nor while guards pursue the player
    * (sNoLockPickIfCrimeAlert).
    */
   async #unlock(reference: number, then: () => void): Promise<void> {
@@ -846,6 +860,10 @@ export class PlayMode {
       say('sImpossibleLock');
       return;
     }
+    if (session.crimeWatch?.pursued === true) {
+      say('sNoLockPickIfCrimeAlert');
+      return;
+    }
     const picks =
       (await runtime.itemCount(PLAYER_REF, LOCKPICK)) +
       (await runtime.itemCount(PLAYER_REF, SKELETON_KEY));
@@ -858,11 +876,38 @@ export class PlayMode {
     this.#menus?.pickLock(reference);
   }
 
-  /** The player takes an item lying in the world: it joins their items, its sound playing. */
+  /** Whose objects are (stolen if taken): references → owned by another, and when read. */
+  readonly #ownership = new Map<number, { owned: boolean; at: number }>();
+
+  /**
+   * Whether taking a reference is stealing (the crime engine's mayTake), as last read; read
+   * again every few seconds (owners and the player's factions change). False until known.
+   */
+  #owned(reference: number): boolean {
+    const runtime = this.#session.scriptsReady;
+    if (!runtime) return false;
+    const kept = this.#ownership.get(reference);
+    const now = performance.now();
+    if (!kept || now - kept.at > OWNERSHIP_MS) {
+      this.#ownership.set(reference, { owned: kept?.owned ?? false, at: now });
+      void runtime.crime.mayTake(PLAYER_REF, reference).then((may) => {
+        this.#ownership.set(reference, { owned: !may, at: performance.now() });
+      });
+    }
+    return kept?.owned ?? false;
+  }
+
+  /**
+   * The player takes an item lying in the world: it joins their items, its sound playing; one
+   * another owns is stolen (crime-engine.ts steal: marked stolen, the theft reported if seen).
+   */
   async #take(object: CellObject): Promise<void> {
     const runtime = this.#session.scriptsReady;
     if (!runtime) return;
+    const stealing = !(await runtime.crime.mayTake(PLAYER_REF, object.reference));
     await runtime.pickUp(object.reference, PLAYER_REF);
+    const taken = runtime.state.references.get(object.reference)?.container?.count ?? 1;
+    if (stealing) await runtime.crime.steal(PLAYER_REF, object.base, taken, object.reference);
     const record = await runtime.forms.record(object.base);
     const item = record && parseItem(record);
     const sounds = this.#session.soundSystem;

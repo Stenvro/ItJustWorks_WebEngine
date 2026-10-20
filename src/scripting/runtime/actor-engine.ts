@@ -10,6 +10,7 @@ import {
   parseNpcStats,
   parseRaceStats,
   parseRelationship,
+  type Relationship,
   type FactionRecord,
   type FactionVendor,
   type NpcStats,
@@ -61,6 +62,8 @@ export class ActorEngine {
   readonly #races = new Map<number, Promise<RaceStats | undefined>>();
   readonly #factions = new Map<number, Promise<FactionRecord | undefined>>();
   #relationships: Promise<Map<string, number>> | undefined;
+  /** The RELA records by pair, with their association types (ASTP). */
+  readonly #relationRecords = new Map<string, Relationship>();
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
@@ -471,8 +474,11 @@ export class ActorEngine {
       for (const formId of this.#runtime.forms.db.formIdsOfType('RELA')) {
         const record = await this.#runtime.forms.record(formId);
         const relationship = record && !record.deleted ? parseRelationship(record) : undefined;
-        if (relationship)
-          ranks.set(pairKey(relationship.parent, relationship.child), relationship.rank);
+        if (relationship) {
+          const key = pairKey(relationship.parent, relationship.child);
+          ranks.set(key, relationship.rank);
+          this.#relationRecords.set(key, relationship);
+        }
       }
       return ranks;
     })();
@@ -505,6 +511,25 @@ export class ActorEngine {
     ]);
     if (first !== undefined && second !== undefined)
       this.#runtime.state.relationships.set(pairKey(first, second), rank);
+  }
+
+  /**
+   * The RELA between two actors (either way round), with its association type (ASTP: parent,
+   * sibling, spouse, ...), if any.
+   */
+  async relationshipRecord(a: number, b: number): Promise<Relationship | undefined> {
+    const [first, second] = await Promise.all([
+      this.#relationshipBase(a),
+      this.#relationshipBase(b),
+    ]);
+    if (first === undefined || second === undefined) return undefined;
+    await this.#loadRelationships();
+    return this.#relationRecords.get(pairKey(first, second));
+  }
+
+  /** The NPC_ an actor's relationships are kept for (its leveled base; the player's 0x7). */
+  relationshipBase(reference: number): Promise<number | undefined> {
+    return this.#relationshipBase(reference);
   }
 
   /** The highest or lowest rank it has with anyone (RELA and scripts'). */
@@ -650,7 +675,8 @@ export class ActorEngine {
     const by = killer === undefined ? null : this.#runtime.actorHandle(killer);
     await this.#runtime.sendEvent(reference, 'OnDying', [by]);
     await this.#runtime.sendEvent(reference, 'OnDeath', [by]);
-    // TODO(M11): the story manager's kill event (crime status, relationship rank).
+    // Crime: a witness gone, a murder, the story manager's Kill Actor event (crime-engine.ts).
+    await this.#runtime.crime.killed(reference, killer);
   }
 
   async resurrect(reference: number): Promise<void> {
