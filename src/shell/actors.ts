@@ -3,7 +3,6 @@
 // FaceGen head are skinned to it, and its race's behavior graph moves it every frame
 // (src/animation/behavior-runtime.ts).
 
-import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { FaceAnimation, lipLeadIn, VANILLA_BLINK, type BlinkSettings } from '../animation/face.ts';
@@ -505,21 +504,14 @@ export class ActorPlacer {
    * (the player's); `race`: the race Actor.SetRace gave it.
    */
   /**
-   * What the game changed of what an actor wears: its outfit (Actor.SetOutfit, its own or its
-   * base's) and the armor equipped (EquipItem, the inventory). The player wears only what is
-   * equipped (outfits are the NPCs').
+   * What an actor wears in the game: the armor and clothing the equip system has it wear (its
+   * outfit's, what it took up, what scripts and the menus equipped); without the game's scripts
+   * (the viewers), its record's outfit.
    */
   async #wornInGame(actor: CellActor): Promise<LookOverrides> {
     const runtime = this.#session.scriptsReady;
     if (!runtime) return {};
-    const own = runtime.state.actors.get(actor.reference);
-    const outfit = own?.outfit ?? runtime.state.actorBases.get(actor.base)?.outfit;
-    const equipped: number[] = [];
-    for (const item of own?.equipped ?? []) {
-      if ((await runtime.forms.record(item))?.type === 'ARMO') equipped.push(item);
-    }
-    if (actor.reference === PLAYER_REF) return { outfit: null, equipped };
-    return { ...(outfit !== undefined && { outfit }), equipped };
+    return { outfit: null, equipped: await runtime.equipment.worn(actor.reference) };
   }
 
   /**

@@ -101,19 +101,13 @@ export class ItemShelf {
   }
 
   /**
-   * Moves items from one inventory to another: what the player no longer has is no longer
-   * worn; the item's sound plays (picked up as the player gets it, else put down).
+   * Moves items from one inventory to another (what one no longer has enough of comes off, an
+   * NPC takes up what suits it: the equip system); the item's sound plays (picked up as the
+   * player gets it, else put down).
    */
   async move(formId: number, amount: number, from: number, to: number, audible = true) {
     const game = this.runtime;
     await game.removeItem(from, game.formHandle(formId), amount, true, to);
-    if (from === PLAYER_REF) {
-      const actor = game.state.actor(PLAYER_REF);
-      if ((await game.itemCount(PLAYER_REF, formId)) <= 0 && actor.equipped.delete(formId)) {
-        game.world.equipmentChanged?.(PLAYER_REF);
-        await game.sendEvent(PLAYER_REF, 'OnObjectUnequipped', [game.formHandle(formId), null]);
-      }
-    }
     if (!audible) return;
     const record = await this.item(formId);
     const sounds = this.#session.soundSystem;

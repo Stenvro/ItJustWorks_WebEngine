@@ -241,76 +241,17 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     const spell = formOf(call.args[0]);
     if (spell !== undefined) world.castSpell?.(spell, actor, ref(call.args[1]));
   });
-  ask('getequippedspell', null, () => null);
-  act('equipspell', (actor, call) => {
-    const spell = formOf(call.args[0]);
-    if (spell !== undefined) state.actor(actor).equipped.add(spell);
-  });
-  act('unequipspell', (actor, call) => {
-    const spell = formOf(call.args[0]);
-    if (spell !== undefined) state.actor(actor).equipped.delete(spell);
-  });
-  ask('getequippedshout', null, () => null);
-  act('equipshout', (actor, call) => {
-    const shout = formOf(call.args[0]);
-    if (shout !== undefined) state.actor(actor).equipped.add(shout);
-  });
-  act('unequipshout', (actor, call) => {
-    const shout = formOf(call.args[0]);
-    if (shout !== undefined) state.actor(actor).equipped.delete(shout);
-  });
+  // Equipping spells and shouts: natives/equipment.ts.
   act('setvoicerecoverytime', (actor, call) => {
     state.actor(actor).voiceRecoveryTime = num(call.args[0]);
   });
   ask('getvoicerecoverytime', 0, (actor) => state.actors.get(actor)?.voiceRecoveryTime ?? 0);
   ask('trapsoul', false, () => false);
 
-  // --- Equipment (TODO(M11): the equip system, slots and what is shown) ---------------------
-  act('equipitem', async (actor, call) => {
-    const item = formOf(call.args[0]);
-    if (item === undefined) return;
-    // Equipping an item the actor does not have gives it one (Creation Kit: EquipItem).
-    if ((await runtime.itemCount(actor, item)) === 0)
-      await runtime.addItem(actor, call.args[0] ?? null, 1, true);
-    state.actor(actor).equipped.add(item);
-    world.equipmentChanged?.(actor);
-  });
-  act('unequipitem', (actor, call) => {
-    const item = formOf(call.args[0]);
-    if (item !== undefined && state.actor(actor).equipped.delete(item))
-      world.equipmentChanged?.(actor);
-  });
-  act('unequipall', (actor) => {
-    state.actor(actor).equipped.clear();
-    world.equipmentChanged?.(actor);
-  });
-  act('unequipitemslot', () => undefined);
-  ask('isequipped', false, (actor, call) => {
-    const item = formOf(call.args[0]);
-    return item !== undefined && (state.actors.get(actor)?.equipped.has(item) ?? false);
-  });
-  // What it wears: what scripts equipped and its outfit's armor (TODO(M11): the equip system).
-  ask('wornhaskeyword', false, async (actor, call) => {
-    const keyword = formOf(call.args[0]);
-    if (keyword === undefined) return false;
-    for (const item of await runtime.actors.worn(actor)) {
-      if (await runtime.hasKeyword(item, keyword)) return true;
-    }
-    return false;
-  });
-  ask('getequippedweapon', null, () => null);
-  ask('getequippedshield', null, () => null);
-  ask('getequippedarmorinslot', null, () => null);
-  ask('getequippeditemtype', 0, () => 0);
-  act('setoutfit', (actor, call) => {
-    const outfit = formOf(call.args[0]);
-    if (bool(call.args[1])) state.actor(actor).sleepOutfit = outfit;
-    else state.actor(actor).outfit = outfit;
-    world.equipmentChanged?.(actor);
-  });
+  // --- Equipment (natives/equipment.ts: the equip system) ------------------------------------
   ask('getgoldamount', 0, (actor) => runtime.itemCount(actor, GOLD));
+  // TODO(M11): warmth (Survival Mode) of what it wears.
   ask('getwarmthrating', 0, () => 0);
-  ask('isoverencumbered', false, () => false);
 
   // --- Life and death ---------------------------------------------------------------------
   ask('isdead', false, (actor) => actors.isDead(actor));
@@ -554,12 +495,5 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     const formId = base(call);
     return formId === undefined ? 0 : runtime.deadCount(formId);
   });
-  n('actorbase.setoutfit', (call) => {
-    const formId = base(call);
-    if (formId === undefined) return null;
-    const outfit = formOf(call.args[0]);
-    if (bool(call.args[1])) state.actorBase(formId).sleepOutfit = outfit;
-    else state.actorBase(formId).outfit = outfit;
-    return null;
-  });
+  // ActorBase.SetOutfit: natives/equipment.ts.
 }

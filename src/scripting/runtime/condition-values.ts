@@ -161,6 +161,17 @@ export const Fn = {
   isUnique: 641,
   getKeywordDataForCurrentLocation: 651,
   getRealHoursPassed: 716,
+  getClothingValue: 41,
+  getWeaponAnimType: 108,
+  isWeaponSkillType: 109,
+  isActorUsingATorch: 306,
+  isWeaponInList: 398,
+  hasEquippedSpell: 570,
+  getEquippedShout: 579,
+  hasTwoHandedWeaponEquipped: 636,
+  wornHasKeyword: 682,
+  hasBoundWeaponEquipped: 706,
+  wornApparelHasKeywordCount: 722,
 } as const;
 
 /** What a condition is evaluated in: the story manager event, the quest that owns it. */
@@ -500,10 +511,62 @@ async function conditionValue(
       return flag(
         reference !== undefined && (state.actors.get(reference)?.playerTeammate ?? false),
       );
+    // What it holds and wears (the equip system).
     case Fn.getEquipped:
+      return flag(reference !== undefined && (await runtime.equipment.isEquipped(reference, form)));
+    case Fn.getEquippedShout:
+      return flag(reference !== undefined && (await runtime.equipment.shout(reference)) === form);
+    // Its casting source: 0 the left hand, 1 the right, 2 the voice.
+    case Fn.hasEquippedSpell:
       return flag(
-        reference !== undefined && (state.actors.get(reference)?.equipped.has(form) ?? false),
+        reference !== undefined &&
+          (await runtime.equipment.spell(reference, condition.raw1)) !== undefined,
       );
+    case Fn.wornHasKeyword:
+    case Fn.wornApparelHasKeywordCount: {
+      if (reference === undefined) return undefined;
+      let count = 0;
+      for (const item of await runtime.equipment.worn(reference))
+        if (await runtime.hasKeyword(item, form)) count++;
+      return condition.function === Fn.wornHasKeyword ? flag(count > 0) : count;
+    }
+    // The gold value of what it wears (MQ201: dressed for the Thalmor party).
+    case Fn.getClothingValue: {
+      if (reference === undefined) return undefined;
+      let value = 0;
+      for (const item of await runtime.equipment.worn(reference))
+        value += (await runtime.equipment.item(item))?.value ?? 0;
+      return value;
+    }
+    case Fn.isTorchOut:
+    case Fn.isActorUsingATorch:
+      return flag(
+        reference !== undefined && (await runtime.equipment.torch(reference)) !== undefined,
+      );
+    // The weapon in its right hand: its animation type, skill, list, being two-handed.
+    case Fn.getWeaponAnimType:
+    case Fn.isWeaponSkillType:
+    case Fn.isWeaponInList:
+    case Fn.hasTwoHandedWeaponEquipped: {
+      if (reference === undefined) return undefined;
+      const weapon = await runtime.equipment.weapon(reference, 'right');
+      const item = weapon === undefined ? undefined : await runtime.equipment.item(weapon);
+      if (condition.function === Fn.getWeaponAnimType) return item?.weapon?.weaponType ?? 0;
+      if (condition.function === Fn.isWeaponSkillType)
+        return flag(item?.weapon?.skill === condition.raw1);
+      if (condition.function === Fn.isWeaponInList)
+        return flag(weapon !== undefined && (await runtime.formList(form)).includes(weapon));
+      return flag(
+        weapon !== undefined && (await runtime.equipment.describe(weapon))?.place === 'both',
+      );
+    }
+    // A bound weapon in the hand (its casting source: 0 left, 1 right).
+    case Fn.hasBoundWeaponEquipped: {
+      if (reference === undefined) return undefined;
+      const hand = condition.raw1 === 0 ? 'left' : 'right';
+      const stats = await runtime.equipment.weaponStats(reference, hand);
+      return flag(stats.weapon !== undefined && stats.bound);
+    }
 
     // --- Its state -----------------------------------------------------------------------
     case Fn.getDead:
@@ -764,8 +827,7 @@ async function conditionValue(
       ]);
       return self && other ? other.position[2] - self.position[2] : 0;
     }
-    // Torches, mounts: TODO(M10) 4.2 (an actor's torch at night), 3.5 (mounts, riding).
-    case Fn.isTorchOut:
+    // Mounts: TODO(M10) 3.5 (mounts, riding).
     case Fn.isRidingHorse:
     case Fn.isOnFlyingMount:
     case Fn.isBeingRidden:
@@ -799,9 +861,11 @@ async function conditionValue(
     case Fn.getCannibal:
     case Fn.isCommandedActor:
       return 0;
-    // The type of what it holds (0 its hands). TODO(M11): its equipped weapons and spells.
+    // The type of what a hand holds (its casting source: 0 left, 1 right; Actor's codes).
     case Fn.getEquippedItemType:
-      return 0;
+      return reference === undefined
+        ? undefined
+        : runtime.equipment.itemType(reference, condition.raw1 === 0 ? 'left' : 'right');
     // The last time the player bumped into it (src/shell/actor-movers.ts): where from,
     // clockwise from its facing (degrees), and whether it was a small bump. None: 0.
     case Fn.getLastBumpDirection:

@@ -852,6 +852,7 @@ export class GameSession {
     }
     this.#watchLocation(runtime, realSeconds);
     this.#watchSeen(runtime, realSeconds);
+    this.#watchEncumbrance(runtime, realSeconds);
     this.timeScale = runtime.timeScale;
     const days = this.gameDaysPassed + this.gameHour / 24;
     if (runtime.clockChanged) {
@@ -869,6 +870,35 @@ export class GameSession {
     } else {
       runtime.update(realSeconds, passed);
     }
+  }
+
+  /** The player carries more than they can (the equip system): no running (src/shell/player.ts). */
+  overEncumbered = false;
+  #encumbranceWait = 0;
+  #encumbranceAsked = false;
+
+  /**
+   * What the player carries, looked at twice a second: once it is more than their carry weight
+   * they walk, and the HUD says so (sOverEncumbered); fast travel asks for itself.
+   */
+  #watchEncumbrance(runtime: ScriptRuntime, realSeconds: number): void {
+    this.#encumbranceWait -= realSeconds;
+    if (this.#encumbranceWait > 0 || this.#encumbranceAsked) return;
+    this.#encumbranceWait = 0.5;
+    this.#encumbranceAsked = true;
+    void runtime.equipment
+      .overEncumbered(PLAYER_REF)
+      .then(async (over) => {
+        if (over && !this.overEncumbered) {
+          const text = await runtime.gameSetting('sOverEncumbered');
+          if (typeof text === 'string') runtime.world.notification?.(text);
+        }
+        this.overEncumbered = over;
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        this.#encumbranceAsked = false;
+      });
   }
 
   #seenWait = 0;

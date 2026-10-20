@@ -621,7 +621,9 @@ which share its parts, alike):
   (`{type, name, count, value, weight, armor | damage | effects | description | soulLVL ...}`; the
   type is InventoryDefines' ICT_ARMOR 1, ICT_WEAPON 2, ...); effects are their magic effects'
   descriptions with the values filled in.
-- `ItemSelect` equips or takes off armor and weapons (OnObjectEquipped / OnObjectUnequipped);
+- `ItemSelect(slot)` equips or takes off (the equip system, docs/gameplay.md "Equipment": the
+  hand asked for, 0 left and 1 right; the mouse's buttons ask through the movie's
+  `AttemptEquip`), uses potions, food and ingredients, reads books;
   `ItemDrop(amount)` removes them; `ShowTweenMenu` (Left) and `CloseTweenMenu` (Tab) say where the
   player goes once the menu has faded and asked `CloseMenu`.
 - Keys the engine takes in the item menus: F (favorite), and Esc and E reach the movie as Tab and
@@ -699,9 +701,9 @@ and keeps the mouse.
 
 TODO(M11): the
 Haggling, Allure, Merchant and Investor perks, Fortify Barter, fences and stolen goods, the
-chest's restock (every 48 hours), favor points. TODO(M11): using, eating and reading items, equipping to a hand (items and
-spells) and shouts to the voice, the active effects, favorites' hotkeys, the quantity of a drop,
-skills and perks in armor, damage and spell costs, ingredients' known effects.
+chest's restock (every 48 hours), favor points. TODO(M11): the active effects, favorites'
+hotkeys, the quantity of a drop, perks in armor, damage and spell costs, ingredients' known
+effects found by alchemy.
 
 ## The menus' 3D
 

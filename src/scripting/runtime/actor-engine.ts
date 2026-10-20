@@ -4,13 +4,7 @@
 // set), spells and perks, its race and sex, being essential or protected (its base's flags,
 // or an alias's), and dying. Platform-independent. Notes: docs/scripting.md ("Actors").
 
-import {
-  NpcFlag,
-  parseLeveledList,
-  parseOutfit,
-  RaceFlag,
-  TemplateFlag,
-} from '../../world/actor-records.ts';
+import { NpcFlag, parseLeveledList, RaceFlag, TemplateFlag } from '../../world/actor-records.ts';
 import {
   parseFaction,
   parseNpcStats,
@@ -547,25 +541,11 @@ export class ActorEngine {
     this.#runtime.state.actor(reference).perks.set(perk, has);
   }
 
-  // --- What it wears (TODO(M11): the equip system) ---------------------------------------
+  // --- What it wears ----------------------------------------------------------------------------
 
-  /** What it wears: the armor of its outfit (its own, its base's, its record's) and what scripts equipped. */
-  async worn(reference: number): Promise<number[]> {
-    const runtime = this.#runtime;
-    const own = runtime.state.actors.get(reference);
-    const info = await this.info(reference);
-    const outfit =
-      own?.outfit ??
-      (info ? runtime.state.actorBases.get(info.base)?.outfit : undefined) ??
-      info?.inventory.outfit;
-    const items = new Set(own?.equipped ?? []);
-    const record = outfit === undefined ? undefined : await runtime.forms.record(outfit);
-    if (record?.type === 'OTFT') {
-      for (const item of parseOutfit(record)) {
-        if ((await runtime.forms.record(item))?.type === 'ARMO') items.add(item);
-      }
-    }
-    return [...items];
+  /** What it wears: its armor and clothing (and shield), as the equip system has dressed it. */
+  worn(reference: number): Promise<number[]> {
+    return this.#runtime.equipment.worn(reference);
   }
 
   // --- Essential, protected, dead -----------------------------------------------------------

@@ -1009,6 +1009,7 @@ export class WorldViewer {
       this.#cells
         .get(cellKey(Math.floor(px / CELL_SIZE), Math.floor(py / CELL_SIZE)))
         ?.navmesh?.heightNear(px, py, pz, NAVMESH_TOLERANCE) !== undefined;
+    player.overEncumbered = () => this.#session?.overEncumbered === true;
     const play = new PlaySession({
       physics,
       player,

@@ -6,6 +6,7 @@
 import type { NativeRegistry, ScriptRuntime } from '../runtime.ts';
 import { registerActor } from './actor.ts';
 import { registerCore } from './core.ts';
+import { registerEquipment } from './equipment.ts';
 import { registerForms } from './forms.ts';
 import { registerMagic } from './magic.ts';
 import { registerGame } from './game.ts';
@@ -22,6 +23,7 @@ export function registerNatives(registry: NativeRegistry, runtime: ScriptRuntime
   registerReference(register, runtime);
   registerGame(register, runtime);
   registerActor(register, runtime);
+  registerEquipment(register, runtime);
   registerForms(register, runtime);
   registerMagic(register, runtime);
 }

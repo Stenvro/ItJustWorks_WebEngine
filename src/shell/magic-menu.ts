@@ -1,6 +1,7 @@
 // The player's magic (interface\magicmenu.swf), as a model of the item menus (item-menu.ts):
-// the spells by their school, the powers, the shouts with their words, and (TODO(M11): the
-// magic system) the active effects. Its categories (the settings sFavorites, sAllItems,
+// the spells by their school, the powers, the shouts with their words (equipped to a hand or
+// the voice by the equip system, their entries showing where), and (TODO(M11): the magic
+// system) the active effects. Its categories (the settings sFavorites, sAllItems,
 // sAlteration, ...) are Favorites first (its bit is the favorite button's), then All and the
 // schools, Shouts, Powers and Active Effects, whose entries show no buttons (the menu's
 // hideButtonFlag). A spell's card: its level (its effects' minimum skill: sNoviceDisplayName
@@ -8,7 +9,7 @@
 // "Magic Overview"; TODO(M11): perks and enchantments), a per-second cost for concentration
 // spells (castTime 0). Notes: docs/ui.md ("The item menus").
 
-import { CardType, EquipState } from '../gameplay/inventory.ts';
+import { CardType } from '../gameplay/inventory.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { parseMagicEffect, type MagicEffectRecord } from '../world/magic-effects.ts';
@@ -24,7 +25,7 @@ import {
 } from '../world/spell-records.ts';
 import type { GameSession } from './game-session.ts';
 import { effectsText, playerMeters } from './inventory-menu.ts';
-import type { ItemEntry, ItemMenuModel } from './item-menu.ts';
+import { slotHand, type ItemEntry, type ItemMenuModel } from './item-menu.ts';
 import type { Terminal } from './terminal.ts';
 
 /** The magic menu's category bits (the movie only tests them). */
@@ -116,7 +117,7 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
             filterFlag: MagicCategory.shouts | favoriteBit,
             favorite,
             enabled: true,
-            equipState: EquipState.none,
+            equipState: await game.equipment.menuState(PLAYER_REF, formId),
           });
           cards.push(await shoutCard(game, shout));
           continue;
@@ -134,7 +135,7 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
           filterFlag: (power ? MagicCategory.powers : school) | favoriteBit,
           favorite,
           enabled: true,
-          equipState: EquipState.none,
+          equipState: await game.equipment.menuState(PLAYER_REF, formId),
         });
         const text = await effectsText(game, spell.effects);
         if (power) {
@@ -160,10 +161,11 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
       }
       return { entries, cards, player: [await playerMeters(game)] };
     },
-    select: ({ formId }) => {
-      // TODO(M11): equipping spells to a hand and shouts to the voice (the magic system).
-      terminal.log('ui', `equipping ${formId.toString(16)} is not built yet`, 'warn');
-      return Promise.resolve();
+    // A spell to the hand asked for (a two-handed spell to both), a power or a shout to the
+    // voice (the equip system); chosen again where it is, it comes off.
+    select: async ({ formId }, slot) => {
+      if (!(await runtime().equipment.toggle(PLAYER_REF, formId, slotHand(slot))))
+        terminal.log('ui', `${formId.toString(16)} cannot be equipped`, 'info');
     },
     favorite: ({ formId }) => {
       const favorites = runtime().state.favorites;
