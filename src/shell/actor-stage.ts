@@ -210,6 +210,8 @@ export class ActorStage {
       bodies: this.bodies,
       actors: () => this.#actors.values(),
       get: (reference) => this.#actors.get(reference),
+      talk: () => this.talk,
+      senses: () => this.senses,
     });
     this.search = new ActorSearch({
       session: options.session,
