@@ -33,6 +33,8 @@ import {
   constructibleEntry,
   constructibleSkillUse,
   craftingMenuOf,
+  craftingSettings,
+  disenchantSkillUse,
   enchantingCategories,
   enchantingFilterFlag,
   enchantmentsAllowed,
@@ -57,7 +59,7 @@ import { CardType, SOUL_LEVEL_SETTINGS } from '../gameplay/inventory.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
-import { actorValueIndex, actorValueName } from '../world/actor-values.ts';
+import { actorValueIndex } from '../world/actor-values.ts';
 import {
   craftedItemInfo,
   parseWorkbench,
@@ -370,8 +372,14 @@ async function skillBar(menu: Menu, runtime: ScriptRuntime, bench: Workbench): P
   }
   const value = await runtime.actors.value(PLAYER_REF, bench.skill);
   const name = (await runtime.forms.actorValueForm(bench.skill))?.text('FULL') ?? '';
-  // TODO(M11): the progress toward the skill's next level (its experience).
-  menu.invoke(`${MENU}.BottomBarInfo.UpdateCraftingInfo`, name, Math.floor(value.current), 0);
+  // The progress toward the skill's next level (0..100).
+  const progress = await runtime.progression.skillProgress(bench.skill);
+  menu.invoke(
+    `${MENU}.BottomBarInfo.UpdateCraftingInfo`,
+    name,
+    Math.floor(value.current),
+    progress * 100,
+  );
 }
 
 interface ModelContext {
@@ -419,9 +427,10 @@ function uiSound(session: GameSession, name: string): void {
   void session.sounds().then((sounds) => sounds.playNamed(name, undefined));
 }
 
-/** The skill's experience for a use (TODO(M11): the skill's experience counts). */
+/** The workbench's skill used (its experience: the progression engine). */
 function skillUse(runtime: ScriptRuntime, bench: Workbench, use: number): void {
-  if (bench.skill !== undefined && use > 0) runtime.advanceSkill(actorValueName(bench.skill), use);
+  if (bench.skill !== undefined && use > 0)
+    runtime.detach(runtime.progression.useSkill(PLAYER_REF, bench.skill, use));
 }
 
 // --- Constructible ----------------------------------------------------------------------------
@@ -851,7 +860,16 @@ async function enchantingModel(context: ModelContext): Promise<CraftingModel> {
         uiSound(session, 'UIEnchantingLearnEffect');
         const baseName = (await enchantment(learned.base))?.name ?? learned.name;
         game.notify(text('sEnchantmentsLearned').replace('%s', baseName));
-        // TODO(M11): the skill's experience for disenchanting (disenchantSkillUse).
+        // Enchanting's experience: fDisenchantSkillUse a gold of the enchantment. TODO(M11): the
+        // enchantment's own value (its effects' costs: the magic system), the item's until then.
+        skillUse(
+          runtime,
+          context.bench,
+          disenchantSkillUse(
+            record.value,
+            craftingSettings((id) => settings.number(id)),
+          ),
+        );
         return;
       }
       if (kind === 'item') {

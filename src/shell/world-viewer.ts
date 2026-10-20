@@ -1009,6 +1009,11 @@ export class WorldViewer {
       this.#cells
         .get(cellKey(Math.floor(px / CELL_SIZE), Math.floor(py / CELL_SIZE)))
         ?.navmesh?.heightNear(px, py, pz, NAVMESH_TOLERANCE) !== undefined;
+    // Sprinting takes stamina (src/scripting/runtime/progression-engine.ts).
+    player.canSprint = () => this.#session?.scriptsReady?.progression.canSprint(PLAYER_REF) ?? true;
+    player.onSprintRefused = () => {
+      this.#session?.scriptsReady?.progression.refused(PLAYER_REF, 'stamina');
+    };
     const play = new PlaySession({
       physics,
       player,

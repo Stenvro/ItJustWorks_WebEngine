@@ -3,11 +3,12 @@
 // in it, the trainer's tier (Journeyman 50, Expert 75, Master 90: the skill level names), the
 // sessions had at this player level of five, the cost and the player's gold. The movie has no
 // keys of its own: the engine takes Accept (E, Enter) to train and Cancel (Tab, Esc) to leave,
-// as its buttons (Train, Exit) do when clicked. A session raises the skill by one, its gold
-// going to the trainer (UESP, "Trainers"); the game's message says why one cannot be had
-// (sCanNotTrainAnymore, sCanNotTrainHigher, sInsufficientGoldToTrain). TODO(M11): the skill's
-// progress (the meter) and the experience a session gives toward the player's level, the
-// skill increase notice and sound.
+// as its buttons (Train, Exit) do when clicked. A session raises the skill by one as if earned
+// (the progression engine's incrementSkill: the experience it lacked, the player's level
+// experience, the HUD's skill increase notice), its gold going to the trainer (UESP,
+// "Trainers"); the game's message says why one cannot be had (sCanNotTrainAnymore,
+// sCanNotTrainHigher, sInsufficientGoldToTrain). The card's meter shows the skill's progress;
+// a session fills it (the movie empties a full meter of itself) to the new level's.
 
 import { TRAININGS_PER_LEVEL, trainingCost } from '../gameplay/training.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -100,6 +101,8 @@ export class TrainingMenu {
         await menu.waitFor(`${CARD}.SetPlatform`);
         menu.invoke(`${CARD}.SetPlatform`, 0, false);
         await this.#show(menu, runtime, settings, teaches);
+        const progress = await runtime.progression.skillProgress(TrainingMenu.#skill(teaches));
+        menu.invoke(`${CARD}.SkillMeter.SetPercent`, progress * 100);
       },
     });
   }
@@ -172,8 +175,10 @@ export class TrainingMenu {
       return;
     }
     await runtime.removeItem(PLAYER_REF, runtime.formHandle(GOLD), cost, true, trainer);
-    runtime.actors.setBase(PLAYER_REF, skill, value.base + 1);
+    await runtime.progression.incrementSkill(skill);
     runtime.state.training = { level: playerLevel, sessions: sessions + 1 };
+    // The meter fills (and the movie empties it again).
+    menu.invoke(`${CARD}.SkillMeter.SetTargetPercent`, 100);
     await this.#show(menu, runtime, settings, teaches);
   }
 }

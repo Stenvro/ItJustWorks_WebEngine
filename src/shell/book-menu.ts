@@ -217,18 +217,11 @@ export class BookMenu {
     runtime.state.booksRead.add(read.book);
     if (read.reference !== undefined) await runtime.sendEvent(read.reference, 'OnRead');
     if (!first || (book.flags & BookFlag.teachesSkill) === 0 || book.teaches < 0) return;
-    // TODO(M11): the skill's experience to its next level (UESP), Scholar's Insight.
+    // The experience the skill lacks to its next level (UESP "Skill Books"); the HUD announces
+    // it (sSkillIncreased). TODO(M11): Scholar's Insight's second level (the magic system).
     const skill = book.teaches;
     if (skill < ActorValue.firstSkill || skill >= ActorValue.firstSkill + SKILLS) return;
-    const value = await runtime.actors.value(PLAYER_REF, skill);
-    const level = Math.floor(value.base) + 1;
-    runtime.actors.setBase(PLAYER_REF, skill, level);
-    const settings = await this.#session.settings();
-    const name = (await runtime.forms.actorValueForm(skill))?.text('FULL') ?? '';
-    const message = (settings.string('sSkillIncreased') ?? '%s Increased to %i')
-      .replace('%s', name)
-      .replace('%i', String(level));
-    this.#session.hud.notification(message);
+    await runtime.progression.incrementSkill(skill);
   }
 }
 

@@ -108,9 +108,19 @@ export class ConsoleCommands {
       case 'forceav':
       case 'forceactorvalue':
         return this.#actorValue(command, self, args);
+      // player.AdvLevel: the experience to the next level-up; player.AdvSkill <skill> <uses>:
+      // skill uses' experience; IncPCS <skill>: one level as if earned (UESP "Console").
       case 'advlevel':
-        runtime.state.levelUps++;
+        await runtime.progression.advanceLevel();
         return [];
+      case 'advskill':
+      case 'incpcs': {
+        if (runtime.progression.skillIndex(args[0] ?? '') === undefined)
+          return [`Item '${args[0] ?? ''}' not found for parameter Actor Value.`];
+        if (command === 'incpcs') await runtime.progression.incrementSkill(args[0] ?? '', 1);
+        else await runtime.progression.useSkill(PLAYER_REF, args[0] ?? '', Number(args[1]) || 0);
+        return [];
+      }
       case 'tm':
       case 'togglemenus':
         this.#context.toggleMenus();

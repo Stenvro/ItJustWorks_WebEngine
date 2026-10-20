@@ -37,6 +37,7 @@ import { FormIndex, PLAYER_BASE, PLAYER_REF } from './forms.ts';
 import { GameState, type Vec3 } from './game-state.ts';
 import { registerNatives } from './natives/index.ts';
 import { ActorEngine } from './actor-engine.ts';
+import { ProgressionEngine } from './progression-engine.ts';
 import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
@@ -389,6 +390,8 @@ export class ScriptRuntime implements VmHost {
   #dialogue: DialogueEngine | undefined;
   readonly storyManager: StoryManager;
   readonly actors: ActorEngine;
+  /** Skills, levels, perks, leveled actors and actor values over time. */
+  readonly progression: ProgressionEngine;
   /** While a new game starts its quests (their aliases may take reserved references). */
   startingNewGame = false;
   /** Game seconds per real second (the TimeScale global; scripts may set it). */
@@ -445,9 +448,6 @@ export class ScriptRuntime implements VmHost {
     string,
     { target: ObjectHandle; viewer: number; seen: number; mode: 'both' | 'gain' | 'lost' }
   >();
-  /** Skill uses (AdvanceSkill) and levels (IncrementSkill) scripts gave (TODO(M11): skills). */
-  readonly skillUses = new Map<string, number>();
-  readonly skillIncrements = new Map<string, number>();
   readonly #mapMarkers = new Map<number, { visible: boolean; travel: boolean }>();
   readonly #seeded = new Set<number>();
   readonly #locations = new Map<number, Promise<LocationRecord | undefined>>();
@@ -481,6 +481,7 @@ export class ScriptRuntime implements VmHost {
     this.quests = new QuestEngine(this);
     this.storyManager = new StoryManager(this);
     this.actors = new ActorEngine(this);
+    this.progression = new ProgressionEngine(this);
     registerNatives(this.#natives, this);
   }
 
@@ -1405,19 +1406,34 @@ export class ScriptRuntime implements VmHost {
     this.#seeded.add(container);
     const random = seededRandom(container ^ 0x5bd1e995);
     const base = await this.baseOf(container);
+    let level: number | undefined;
     for (const formId of [container, base]) {
       const record = formId === undefined ? undefined : await this.forms.record(formId);
       for (const cnto of record?.fields.all('CNTO') ?? []) {
         if (!record || cnto.length < 8) continue;
+        level ??= await this.#itemLevel(container);
         await this.#addResolved(
           items,
           record.formIdAt(cnto, 0),
           view(cnto).getInt32(4, true),
           random,
+          level,
         );
       }
     }
     return items;
+  }
+
+  /**
+   * The level a container's leveled items are picked at: an actor's own level, a container's
+   * encounter level (its zone's, else the player's), the player's for the player. TODO(M13): an
+   * actor's own level for its items is the most plausible reading; it is not documented.
+   */
+  async #itemLevel(container: number): Promise<number> {
+    if (container === PLAYER_REF) return this.actors.playerLevel();
+    if (await this.actors.isActor(container))
+      return Math.max(1, await this.actors.level(container));
+    return this.progression.encounterLevel(container);
   }
 
   /**
@@ -1442,24 +1458,38 @@ export class ScriptRuntime implements VmHost {
     form: number,
     count: number,
     random: () => number,
+    level: number,
     depth = 0,
   ): Promise<void> {
     const record = await this.forms.record(form);
     if (record?.type === 'LVLI' && depth < 8) {
       const list = await this.leveledList(form);
       if (!list) return;
-      // Containers' leveled items are at the player's level (TODO(M11): encounter zones).
-      const level = await this.actors.playerLevel();
+      // At the container's level (#itemLevel).
       if ((list.flags & LeveledFlag.useAll) !== 0) {
         for (const entry of list.entries) {
           if (entry.level <= level)
-            await this.#addResolved(items, entry.formId, entry.count * count, random, depth + 1);
+            await this.#addResolved(
+              items,
+              entry.formId,
+              entry.count * count,
+              random,
+              level,
+              depth + 1,
+            );
         }
       } else {
         const picked = pickLeveled(list, level, random);
         const entry = list.entries.find((e) => e.formId === picked);
         if (picked !== undefined)
-          await this.#addResolved(items, picked, (entry?.count ?? 1) * count, random, depth + 1);
+          await this.#addResolved(
+            items,
+            picked,
+            (entry?.count ?? 1) * count,
+            random,
+            level,
+            depth + 1,
+          );
       }
       return;
     }
@@ -1491,7 +1521,13 @@ export class ScriptRuntime implements VmHost {
     for (const item of await this.#expand(form)) {
       const record = await this.forms.record(item);
       if (record?.type === 'LVLI') {
-        await this.#addResolved(items, item, count, seededRandom(Date.now() & 0xffffffff));
+        await this.#addResolved(
+          items,
+          item,
+          count,
+          seededRandom(Date.now() & 0xffffffff),
+          await this.#itemLevel(container),
+        );
       } else {
         items.set(item, (items.get(item) ?? 0) + count);
       }
@@ -1572,7 +1608,7 @@ export class ScriptRuntime implements VmHost {
     }
   }
 
-  // --- Actors (the state natives and conditions read; TODO(M11): stats from records) ------
+  // --- Actors (actor-engine.ts; their levels and stats over time: progression-engine.ts) ----
 
   // --- Locations and cells ------------------------------------------------------------------
 
@@ -1827,6 +1863,8 @@ export class ScriptRuntime implements VmHost {
     this.state.realTime += realSeconds;
     this.state.gameDaysPassed += gameDays;
     this.vm.scheduler.advance(realSeconds, gameDays);
+    // Health, magicka and stamina regenerate (and the player's stamina drains sprinting).
+    if (!this.retired) this.progression.update(realSeconds);
   }
 
   /** A frame in a menu (menu mode): only the wall clock moves on (WaitMenuMode). */
@@ -1927,16 +1965,18 @@ export class ScriptRuntime implements VmHost {
     return this.sceneActors.get(reference);
   }
 
-  // --- Skills (their experience: TODO(M11)), story events, finding references --------------
+  // --- Skills (src/scripting/runtime/progression-engine.ts), story events, finding references --
 
-  advanceSkill(skill: string, magnitude: number): void {
-    const key = skill.toLowerCase();
-    this.skillUses.set(key, (this.skillUses.get(key) ?? 0) + magnitude);
+  /** Game.AdvanceSkill: the player used a skill `magnitude` times (its experience). */
+  advanceSkill(skill: string, magnitude: number): Promise<void> {
+    if (this.progression.skillIndex(skill) === undefined) this.warn(`unknown skill "${skill}"`);
+    return this.progression.useSkill(PLAYER_REF, skill, magnitude);
   }
 
-  incrementSkill(skill: string, count: number): void {
-    const key = skill.toLowerCase();
-    this.skillIncrements.set(key, (this.skillIncrements.get(key) ?? 0) + count);
+  /** Game.IncrementSkill(By): the player's skill rises `count` levels as if earned. */
+  incrementSkill(skill: string, count: number): Promise<void> {
+    if (this.progression.skillIndex(skill) === undefined) this.warn(`unknown skill "${skill}"`);
+    return this.progression.incrementSkill(skill, count);
   }
 
   /** Keyword.SendStoryEvent(akLoc, akRef1, akRef2, aiValue1, aiValue2): the script event. */

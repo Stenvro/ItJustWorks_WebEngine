@@ -232,6 +232,11 @@ export class Player implements Camera {
   onStep: ((step: number) => void) | undefined;
   /** How the player moved in the last step. */
   motion: PlayerMotion = { inputX: 0, inputY: 0, moving: false, running: false, sprinting: false };
+  /** Whether the player may sprint now (stamina left: the progression engine); none: always. */
+  canSprint: (() => boolean) | undefined;
+  /** The player tried to sprint without stamina (the HUD's stamina meter blinks). */
+  onSprintRefused: (() => void) | undefined;
+  #sprintRefused = false;
   /**
    * Starts a jump's animation instead of jumping at once (the avatar: the graph's JumpUp
    * then calls launchJump); `moving`: a directional jump.
@@ -512,8 +517,13 @@ export class Player implements Camera {
     if (swimming) this.sneaking = false;
     // "Run" walks while always-run is on, runs while it is off.
     const running = this.#alwaysRun !== this.#event('Run');
-    const sprinting =
+    const wantsSprint =
       this.#event('Sprint') && y > 0 && !this.sneaking && !swimming && character.grounded;
+    // Without stamina there is no sprinting (the stamina meter blinks as it is tried).
+    const allowed = !wantsSprint || (this.canSprint?.() ?? true);
+    if (wantsSprint && !allowed && !this.#sprintRefused) this.onSprintRefused?.();
+    this.#sprintRefused = wantsSprint && !allowed;
+    const sprinting = wantsSprint && allowed;
     const type = swimming
       ? movement.swim
       : sprinting
