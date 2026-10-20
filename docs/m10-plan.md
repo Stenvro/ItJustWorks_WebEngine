@@ -144,13 +144,18 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
 
 ## Phase 4: senses and the social layer
 
-- [ ] **4.1 Detection:** the spectator, observe-dead and guard-warn override lists (NPC\_
+- [x] **4.1 Detection:** the spectator, observe-dead and guard-warn override lists (NPC\_
       SPOR, OCOR, GWOR) and the engine's alarm and react-to-the-dead packages;
       line of sight (eye to eye and body against the world), view cone,
       the light on the target, distance, sound (movement, armour weight, sneaking, impacts'
       detection levels, combat), the sneak skill; detection states per observer and target, NPC
       against NPC; the stealth meter on the HUD; OnGainLOS / OnLostLOS and the detection
-      natives and conditions.
+      natives and conditions. docs/ai.md, "Detection"; `tools/detection-info.ts`. Moved on:
+      the reactions' lines to 4.3; attacks' and spells' noises (`action`), being attacked,
+      the fights spectators watch (`fight`), hostility and combat's detection to 5.1–5.3;
+      flying targets' reach to 5.4; what alarmed actors do, guards' warnings and witnesses
+      (`warn`, `witness`, `offence`), the Stealth perks, Muffle, torches and spells' glow to
+      M11.
 - [ ] **4.2 Every AI condition and native valued:** the full list from the recon (IsInCombat,
       GetDetected, GetSitting, GetCurrentAIPackage, IsWeaponOut, ...); an unknown function is an
       error in the audit, not a pass.

@@ -4,7 +4,8 @@
 // dead, disabled, destroyed or locked, relationships, locations (keywords, reference types,
 // keyword data, cleared), the time, and the story manager event's data. Functions not valued
 // yet hold (and are reported once), as conditions.ts does. Indices: UESP "Skyrim Mod:Function
-// Indices". TODO(M10)/(M11): combat, detection, magic and crime functions.
+// Indices". Detection's (GetDetected, GetLineOfSight, GetLightLevel, ...) ask the world
+// (src/shell/actor-senses.ts). TODO(M10)/(M11): combat, magic and crime functions.
 
 import { NpcFlag, RaceFlag } from '../../world/actor-records.ts';
 import { ActorValue } from '../../world/actor-values.ts';
@@ -17,6 +18,11 @@ import type { StoryEventData } from './story-manager.ts';
 
 /** UESP's function indices of the conditions valued here. */
 export const Fn = {
+  getLineOfSight: 27,
+  getDetected: 45,
+  getAlarmed: 61,
+  getAttacked: 63,
+  getLightLevel: 711,
   getWantBlocking: 0,
   isMoving: 25,
   getIsAlerted: 91,
@@ -835,12 +841,36 @@ async function conditionValue(
     // In a scene that plays.
     case Fn.isInScene:
       return reference === undefined ? undefined : flag(runtime.sceneOf(reference) !== undefined);
-    // Combat, weapons and magic out, bleeding out, staggers, knock-downs, alarms: no actor is
-    // in any of these until combat and detection run (TODO(M10) 4.1, 5.1–5.3), as the
-    // natives answer (IsInCombat, IsWeaponDrawn, IsBleedingOut). Being fed on, eaten and
-    // commanded are the player's powers (TODO(M11)).
-    case Fn.getWantBlocking:
+    // Detection (src/shell/actor-senses.ts): whether the subject detects the target, sees it,
+    // the light on it; alarmed (an alarm raised or heard), attacked lately, alerted (by a
+    // script's SetAlert, or by what it heard).
+    case Fn.getDetected:
+    case Fn.getLineOfSight: {
+      const target = form === 0 ? undefined : form;
+      if (reference === undefined || target === undefined) return 0;
+      return flag(
+        condition.function === Fn.getDetected
+          ? (runtime.world.detects?.(reference, target) ?? false)
+          : (runtime.world.lineOfSight?.(reference, target) ?? false),
+      );
+    }
+    case Fn.getLightLevel:
+      return reference === undefined ? 0 : (runtime.world.lightLevel?.(reference) ?? 0);
+    case Fn.getAlarmed:
+      return flag(reference !== undefined && (runtime.world.alarmed?.(reference) ?? false));
+    case Fn.getAttacked:
+      return flag(reference !== undefined && (runtime.world.attacked?.(reference) ?? false));
     case Fn.getIsAlerted:
+      return flag(
+        reference !== undefined &&
+          (state.actors.get(reference)?.alerted === true ||
+            (runtime.world.alerted?.(reference) ?? false)),
+      );
+    // Combat, weapons and magic out, bleeding out, staggers, knock-downs: no actor is in any of
+    // these until combat runs (TODO(M10) 5.1–5.3), as the natives answer (IsInCombat,
+    // IsWeaponDrawn, IsBleedingOut). Being fed on, eaten and commanded are the player's powers
+    // (TODO(M11)).
+    case Fn.getWantBlocking:
     case Fn.isWeaponMagicOut:
     case Fn.isShieldOut:
     case Fn.isWeaponOut:
