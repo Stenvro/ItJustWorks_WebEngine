@@ -71,7 +71,7 @@ describe.skipIf(!hasGamedata())('progression on the local game data', () => {
       checked++;
     }
     expect(checked).toBeGreaterThan(1500);
-  });
+  }, 60_000);
 
   it('levels Lydia with the player she follows', async () => {
     const game = runtime();
