@@ -289,7 +289,12 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     if (reference !== undefined) await runtime.removeAllItems(reference, ref(call.args[0]));
     return null;
   });
-  n('objectreference.removeallstolenitems', () => null);
+  // RemoveAllStolenItems(akTransferTo): its stolen items go (to the other container).
+  n('objectreference.removeallstolenitems', async (call) => {
+    const reference = self(call);
+    if (reference !== undefined) await runtime.crime.confiscate(reference, ref(call.args[0]));
+    return null;
+  });
   n('objectreference.dropobject', async (call) => {
     const reference = self(call);
     const item = formOf(call.args[0]);
@@ -618,10 +623,14 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
       world.detectionEvent?.(reference, ref(call.args[0]), int(call.args[1], 0));
     return null;
   });
-  // SendStealAlarm(akThief): an alarm as if the thief stole this. TODO(M11): crime.
-  n('objectreference.sendstealalarm', (call) => {
+  // SendStealAlarm(akThief): as if the thief stole this: an alarm, and the theft reported by
+  // those who see the thief (crime-engine.ts).
+  n('objectreference.sendstealalarm', async (call) => {
     const reference = self(call);
-    if (reference !== undefined) world.alarm?.(reference, ref(call.args[0]), 'steal');
+    const thief = ref(call.args[0]);
+    if (reference === undefined) return null;
+    world.alarm?.(reference, thief, 'steal');
+    if (thief !== undefined) await runtime.crime.stealAlarm(thief, reference);
     return null;
   });
   n('objectreference.knockareaeffect', () => null);

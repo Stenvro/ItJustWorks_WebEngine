@@ -24,7 +24,8 @@ const group = (category: StatCategory, names: readonly string[]): MiscStat[] =>
 
 /**
  * Every stat the journal lists. A hold's bounty ("<Hold> Bounty", "Tribal Orcs Bounty") shows
- * in the crime category only once there is one (TODO(M11): crime and bounties).
+ * in the crime category only once there is one (the crime engine's bounties, named by
+ * sBountyStatString: src/shell/journal-menu.ts).
  */
 export const MISC_STATS: readonly MiscStat[] = [
   ...group(StatCategory.general, [

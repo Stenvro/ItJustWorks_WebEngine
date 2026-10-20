@@ -168,6 +168,11 @@ export class GameSession {
   scriptsProgress = '';
   /** What the scripts do to the world on screen (the viewers attach to it). */
   readonly scriptWorld: ScriptWorld;
+  /**
+   * Crime on the stage now (src/shell/actor-crime.ts): guards pursue the player, the player
+   * trespasses. The menus that refuse then read it (waiting, fast travel, lockpicking).
+   */
+  crimeWatch: { readonly pursued: boolean; readonly trespassing: boolean } | undefined;
   /** The actor a reference shows as on screen, if it does (the viewers answer: main.ts). */
   placedActor: ((reference: number) => PlacedActor | undefined) | undefined;
   /** An actor of the loaded area plays the idle an action gives it (ActionTalking as it talks). */
@@ -254,6 +259,14 @@ export class GameSession {
       this.lines.say(speaker, topic, speakAs).catch((error: unknown) => {
         terminal.log('papyrus', `Say: ${describe(error)}`, 'warn');
       });
+    };
+    // Hours passing at once (jail): the clock, the scripts' clock, the actors' values over them.
+    this.scriptWorld.passTime = async (hours) => {
+      this.advanceClock(hours);
+      const runtime = this.scriptsReady;
+      if (!runtime) return;
+      runtime.update(0, hours / 24);
+      await runtime.progression.passTime(hours);
     };
     this.scriptWorld.sounds = () => this.soundSystem;
     this.scriptWorld.talking = (actor) => this.lines.talking(actor);

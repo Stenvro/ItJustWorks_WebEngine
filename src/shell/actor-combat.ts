@@ -1203,6 +1203,9 @@ export class ActorCombat implements CombatBridge {
       attacker.target = targetRef;
     // Detection: the one attacked searches for its attacker; those near watch the fight.
     senses?.attackedBy(targetRef, attackerRef);
+    // Crime: a blow on one that was not hostile to its attacker is an assault, reported by the
+    // one hit and those who saw it (crime-engine.ts assault; the player's: TODO(M13) NPCs').
+    void runtime.crime.assault(attackerRef, targetRef);
     // The weapon's enchantment and the poison on it (not a bash: the magic system); a diseased
     // creature's attack (its attack data's spell) may pass its disease on.
     if (!hit.bash && !blocks) await runtime.magic.weaponHit(attackerRef, targetRef, stats?.weapon);

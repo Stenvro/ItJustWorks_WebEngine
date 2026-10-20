@@ -12,8 +12,9 @@
 // lock's sweet spot stays where it is until the game is loaded again. The bar shows the skill,
 // its progress to the next level, the lock's level and the lockpicks left (SetLockInfo). A lock
 // opened is fSkillUsageLockPick<level> uses of Lockpicking, a broken pick
-// fSkillUsageLockPickBroken (the progression engine). Cancel (Tab, Esc) leaves.
-// TODO(M11): the crime of picking an owned lock (crime), Wax Key (the perk system).
+// fSkillUsageLockPickBroken (the progression engine). Cancel (Tab, Esc) leaves. An owned lock
+// picked where someone sees it is trespassing (crime-engine.ts lockPicked).
+// TODO(M11): Wax Key (the perk system).
 // Notes: docs/ui.md ("Lockpicking").
 
 import {
@@ -446,6 +447,10 @@ class Picking {
     this.#runtime.state.reference(reference).locked = false;
     void this.#runtime.sendEvent(reference, 'OnLockStateChanged');
     void this.#runtime.progression.useSkill(PLAYER_REF, LOCKPICKING, this.#setup.skillUses.opened);
+    // An owned lock picked in sight is a crime (crime-engine.ts lockPicked); Locks Picked.
+    const stats = this.#runtime.stats;
+    stats.set('locks picked', (stats.get('locks picked') ?? 0) + 1);
+    void this.#runtime.crime.lockPicked(PLAYER_REF, reference);
     setTimeout(() => {
       this.close(true);
     }, OPENED_SECONDS * 1000);

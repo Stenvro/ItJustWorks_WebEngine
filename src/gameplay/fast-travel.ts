@@ -8,8 +8,9 @@
 // horse's or their running): the distance at the walk speed (MOVT NPCDefault, forward), times
 // fFastTravelSpeedMult (1 unless a plugin sets it), at the timescale. TODO(M13): the game's own
 // rounding of the hours (unknown, UESP). TODO(M10): in combat (sNoFastTravelCombat), enemies
-// near (sNoFastTravelHostileActorsNear); followers and the horse coming along. TODO(M11): guards
-// pursuing (sNoFastTravelAlarm), taking health damage (sFastTravelNoTravelHealthDamage).
+// near (sNoFastTravelHostileActorsNear); followers and the horse coming along. Not while guards
+// pursue the player (sNoFastTravelAlarm: crime). TODO(M11): taking health damage
+// (sFastTravelNoTravelHealthDamage).
 // Platform-independent. Notes: docs/ui.md ("The map").
 
 /** WRLD DATA: the world forbids fast travel. */
@@ -25,6 +26,8 @@ export interface FastTravelState {
   readonly inAir: boolean;
   readonly carried: number;
   readonly carryWeight: number;
+  /** Guards pursue the player (crime: src/shell/actor-crime.ts). */
+  readonly pursued?: boolean;
 }
 
 /** Why the player may not fast travel now (the game setting of its message), if not. */
@@ -33,6 +36,7 @@ export function noFastTravelReason(state: FastTravelState): string | undefined {
   if (state.placeForbids) return 'sNoFastTravelCell';
   if (state.inAir) return 'sNoFastTravelInAir';
   if (state.carried > state.carryWeight) return 'sNoFastTravelOverencumbered';
+  if (state.pursued === true) return 'sNoFastTravelAlarm';
   return undefined;
 }
 

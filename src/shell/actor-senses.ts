@@ -815,7 +815,11 @@ export class ActorSenses implements ScriptSenses {
     });
   }
 
-  /** An actor was attacked by another (combat: 5.1): it searches for the attacker. */
+  /**
+   * An actor was attacked by another (combat: 5.1): it searches for the attacker. Combat's
+   * hits tell crime as well (ScriptRuntime.crime.assault in actor-combat.ts); kills reach it
+   * through ActorEngine.kill (murder).
+   */
   attackedBy(victim: number, attacker: number): void {
     const at = this.#bodies().get(attacker)?.feet;
     if (at) this.detections.attack(victim, attacker, at, this.#clock);

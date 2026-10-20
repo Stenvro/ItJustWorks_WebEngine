@@ -1,7 +1,7 @@
 // Actors riding horses (docs/ai.md, "Followers, mounts and vehicles"; the rules:
 // src/ai/mounts.ts). The player mounts a horse by activating it ("Ride", sRide; another's horse
-// "Steal Horse", sStealHorse), an actor whose procedure lets it ride ("Ride Horse If Possible")
-// mounts its horse (its ACHR's XHOR) before it sets out. Mounting and dismounting are paired
+// is stolen: "Steal", sStealHorse asks first, then the crime), an actor whose procedure lets it
+// ride ("Ride Horse If Possible") mounts its horse (its ACHR's XHOR) before it sets out. Mounting and dismounting are paired
 // animations: rider and horse stand at the horse's root while they play; riding, the rider's
 // root is on the horse's SaddleBone. A ridden horse's own AI waits: the player's controls drive
 // it (src/ai/mounts.ts riddenRequest), an actor's AI sends it where it goes. While riding, the
@@ -149,22 +149,35 @@ export class ActorMounts {
   }
 
   /**
-   * What activating an actor does when it is a horse: the player rides it ("Ride"; another's
-   * horse "Steal Horse": TODO(M11) the crime); undefined for others and for a horse ridden.
+   * What activating an actor does when it is a horse: the player rides it ("Ride"); another's
+   * horse is stolen (the red "Steal"; the game asks first, sStealHorse "Do you want to steal
+   * this horse?", then it is the crime: crime-engine.ts horseTheft); undefined for others and
+   * for a horse ridden.
    */
   activation(placed: PlacedActor): Activatable | undefined {
     const horse = placed.actor.reference;
     if (!this.#isHorse(placed.look.race) || this.ridden(horse)) return undefined;
-    const uses = this.#options.session.hud.uses;
+    const session = this.#options.session;
+    const uses = session.hud.uses;
     const name = placed.look.name !== '' ? placed.look.name : placed.look.editorId;
     const stealing = this.#stealing(horse);
     return {
-      verb: stealing
-        ? (uses?.text('sStealHorse') ?? 'Steal Horse')
-        : (uses?.text('sRide') ?? 'Ride'),
+      verb: stealing ? (uses?.text('sSteal') ?? 'Steal') : (uses?.text('sRide') ?? 'Ride'),
       name,
       activate: () => {
-        void this.mountPlayer(horse);
+        if (!stealing) {
+          void this.mountPlayer(horse);
+          return;
+        }
+        const ask = session.hud.menus?.messageBox(uses?.text('sStealHorse') ?? '', [
+          uses?.text('sYes') ?? 'Yes',
+          uses?.text('sNo') ?? 'No',
+        ]);
+        void (ask ?? Promise.resolve(0)).then(async (button) => {
+          if (button !== 0) return;
+          await session.scriptsReady?.crime.horseTheft(PLAYER_REF, horse);
+          await this.mountPlayer(horse);
+        });
       },
     };
   }

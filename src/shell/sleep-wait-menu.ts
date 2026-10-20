@@ -9,8 +9,9 @@
 // the game's message says why (sNoWaitDefault while scripts disable waiting, SetInChargen;
 // sNoWaitInAir; the sleep versions). TODO(M10): enemies near (sNoWaitHostileActorsNear) and
 // actors' places after the hours (their packages), the wait broken off by an attack.
-// TODO(M11): guards pursuing, trespassing, taking health damage, owned beds (crime), the
-// rested bonuses (the magic system).
+// Nor while guards pursue the player (sNoWaitWhileAlarm) or they trespass (sNoWaitTrespass;
+// the sleep versions); an owned bed is not slept in (sNoSleepInOwnedBed: play-mode.ts).
+// TODO(M11): taking health damage, the rested bonuses (the magic system).
 
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { formatGameDate } from '../world/game-time.ts';
@@ -33,11 +34,20 @@ const wait = (ms: number): Promise<void> =>
 /** Why the player may not wait (or sleep) now: the setting of the game's message, if any. */
 export function noWaitReason(
   sleeping: boolean,
-  state: { readonly waitingDisabled: boolean; readonly inAir: boolean },
+  state: {
+    readonly waitingDisabled: boolean;
+    readonly inAir: boolean;
+    /** Guards pursue the player (crime). */
+    readonly pursued?: boolean;
+    /** The player trespasses where they are. */
+    readonly trespassing?: boolean;
+  },
 ): string | undefined {
   const kind = sleeping ? 'Sleep' : 'Wait';
   if (state.waitingDisabled) return `sNo${kind}Default`;
   if (state.inAir) return `sNo${kind}InAir`;
+  if (state.pursued === true) return `sNo${kind}WhileAlarm`;
+  if (state.trespassing === true) return `sNo${kind}Trespass`;
   return undefined;
 }
 

@@ -707,11 +707,18 @@ export class ActorAi {
         );
         // Its load doors (XTEL): an actor locks its home, not the doors within it. TODO(M13):
         // the engine's choice of doors.
+        const cells = new Set<number>();
         for (const door of doors) {
           if ((await scripts.forms.record(door))?.fields.has('XTEL')) {
             await scripts.setLocked(door, locked);
+            const cell = scripts.forms.db.cellOfReference(door);
+            if (cell !== undefined) cells.add(cell);
           }
         }
+        // A home locked with the player in it is off limits to them: they trespass staying
+        // (src/shell/actor-crime.ts warns them); unlocked, it is open again.
+        const playerCell = session.scriptWorld.livePlacement(PLAYER_REF)?.cell;
+        scripts.crime.doorsLocked(cells, locked, playerCell);
       },
       search: (criteria, place, actor, steal) => {
         const self = staged(actor);
