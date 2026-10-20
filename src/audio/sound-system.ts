@@ -521,6 +521,31 @@ export class SoundSystem {
     });
   }
 
+  /**
+   * A spell's or a projectile's impact on a surface: its impact data set's (MGEF, EXPL IPDS)
+   * impact for the material hit (its collision id; 0 and the landscape: the land's), whose light
+   * sound plays there. Resolves to the impact (its decal, model and sound level), if any.
+   */
+  async impactOfSet(
+    set: number,
+    against: number,
+    kind: 'object' | 'landscape' | 'actor' | undefined,
+    position: Vec3,
+  ): Promise<Impact | undefined> {
+    const records = this.#impactSources;
+    const data = await records.impactDataSet(set);
+    if (!data) return undefined;
+    const material =
+      against !== 0
+        ? await records.materialById(against)
+        : kind === 'landscape'
+          ? await landMaterial(records, position)
+          : undefined;
+    const impact = await impactAgainst(records, data, material);
+    if (impact?.sound !== undefined) void this.play(impact.sound, position);
+    return impact;
+  }
+
   /** The material types (MATT) by collision id and by form id, read once. */
   #materialTypes(): Promise<{
     byId: Map<number, MaterialType>;

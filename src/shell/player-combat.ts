@@ -5,7 +5,8 @@
 // go before [Controls] fInitialPowerAttackDelay (0.3 s) is a plain attack; held that long, a
 // power attack (fInitialPowerBashDelay for a power bash; both buttons: the dual attacks). A bow
 // draws while Right Attack is held and looses when it is let go. Through the same actions as the
-// NPCs' (src/shell/actor-combat.ts).
+// NPCs' (src/shell/actor-combat.ts). A drawn hand holding something to cast (a spell, a staff, a
+// scroll) casts instead: its button goes to the player's casting (src/shell/player-casting.ts).
 
 import { POWER_ATTACK_TIMING } from '../gameplay/combat/combat-settings.ts';
 import { AttackState, WeaponState } from '../gameplay/combat/combat-state.ts';
@@ -17,6 +18,14 @@ import type { Player } from './player.ts';
 const RIGHT = 'Right Attack/Block';
 const LEFT = 'Left Attack/Block';
 const READY = 'Ready Weapon';
+
+/** The player's casting: the hands holding magic take their buttons (0 left, 1 right). */
+export interface CastingButtons {
+  /** Whether a hand holds something to cast now (a spell, a staff, a scroll). */
+  casts(source: number): boolean;
+  /** Its button went down (with the magic drawn); its casting watches it let go. */
+  press(source: number): void;
+}
 
 /** A button held: since when, and whether its power attack went. */
 interface Hold {
@@ -34,10 +43,19 @@ export class PlayerCombat {
   #left: Hold | undefined;
   #blocking = false;
 
-  constructor(combat: ActorCombat, player: Player, free: () => boolean) {
+  /** The player's casting, if any. */
+  readonly #casting: () => CastingButtons | undefined;
+
+  constructor(
+    combat: ActorCombat,
+    player: Player,
+    free: () => boolean,
+    casting: () => CastingButtons | undefined = () => undefined,
+  ) {
     this.#combat = combat;
     this.#player = player;
     this.#free = free;
+    this.#casting = casting;
   }
 
   /** Every frame: the buttons pressed, held and let go. */
@@ -46,8 +64,8 @@ export class PlayerCombat {
     const player = this.#player;
     const combat = this.#combat;
     const ready = player.takePressed(READY);
-    const rightPressed = player.takePressed(RIGHT);
-    const leftPressed = player.takePressed(LEFT);
+    let rightPressed = player.takePressed(RIGHT);
+    let leftPressed = player.takePressed(LEFT);
     if (!this.#free()) {
       this.#right = undefined;
       this.#left = undefined;
@@ -67,10 +85,24 @@ export class PlayerCombat {
       return;
     }
     if (state.weapon !== WeaponState.drawn) return;
+    // A hand holding magic casts (its button is the casting's, not an attack or a block).
+    const casting = this.#casting();
+    const castsLeft = casting?.casts(0) === true;
+    const castsRight = casting?.casts(1) === true;
+    if (castsLeft) {
+      if (leftPressed) casting.press(0);
+      leftPressed = false;
+      this.#left = undefined;
+    }
+    if (castsRight) {
+      if (rightPressed) casting.press(1);
+      rightPressed = false;
+      this.#right = undefined;
+    }
     const bow = hands.right === WeaponType.bow || hands.right === WeaponType.crossbow;
     const leftAttacks = hands.left !== undefined && hands.left <= WeaponType.oneHandMace;
     const fistsOnly = hands.right === undefined && hands.left === undefined && !hands.shield;
-    const blocks = !leftAttacks && !fistsOnly;
+    const blocks = !leftAttacks && !fistsOnly && !castsLeft;
     const delay = POWER_ATTACK_TIMING.initialPowerAttackDelay;
     // The left button: a left attack, or a block held (a bow's: its zoom, the tree's).
     if (leftPressed) {

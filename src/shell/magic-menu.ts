@@ -6,12 +6,14 @@
 // button's), then All and the
 // schools, Shouts, Powers and Active Effects, whose entries show no buttons (the menu's
 // hideButtonFlag). A spell's card: its level (its effects' minimum skill: sNoviceDisplayName
-// .. sMasterDisplayName), its effects, its cost (spellBaseCost × 1 − (skill / 400)^0.65, UESP
-// "Magic Overview"; TODO(M11): perks and enchantments), a per-second cost for concentration
-// spells (castTime 0). Notes: docs/ui.md ("The item menus").
+// .. sMasterDisplayName), its effects, its cost (the casting engine's: the base cost × 1 −
+// (skill / 400)^0.65, UESP "Magic Overview"; TODO(M11): perks and enchantments), a per-second
+// cost for concentration spells (castTime 0). A shout's card offers Unlock (R) while a learned
+// word is locked: a dragon soul spent on it. Notes: docs/ui.md ("The item menus").
 
 import { CardType, EquipState } from '../gameplay/inventory.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { ActorValue } from '../world/actor-values.ts';
 import type { ActiveEffectState } from '../scripting/runtime/game-state.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import {
@@ -25,7 +27,6 @@ import {
   parseShout,
   parseSpell,
   parseWord,
-  spellBaseCost,
   SpellType,
   type ShoutRecord,
   type SpellRecord,
@@ -154,8 +155,6 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
           });
           continue;
         }
-        const skill = main ? (await game.actors.value(PLAYER_REF, main.skill)).current : 0;
-        const base = spellBaseCost(spell, (id) => effects.get(id)?.baseCost ?? 0);
         const level = LEVELS.find(([minimum]) => (main?.minimumSkill ?? 0) >= minimum)?.[1];
         cards.push({
           type: CardType.spell,
@@ -163,7 +162,8 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
           effects: text,
           castLevel: level ? (settings.string(level) ?? '') : '',
           castTime: spell.castType === CastType.concentration ? 0 : spell.chargeTime,
-          spellCost: Math.round(base * (1 - (Math.max(0, skill) / 400) ** 0.65)),
+          // The casting engine's cost by the school's skill (casting.ts magickaCost).
+          spellCost: await game.casting.menuCost(formId),
         });
       }
       for (const active of await activeEffects(game)) {
@@ -191,6 +191,29 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
     select: async ({ formId }, slot) => {
       if (!(await runtime().equipment.toggle(PLAYER_REF, formId, slotHand(slot))))
         terminal.log('ui', `${formId.toString(16)} cannot be equipped`, 'info');
+    },
+    // Unlock (R): a dragon soul on the shout's first learned and locked word, once the player
+    // confirms (sConfirmSpendSoul); without one, sFailSpendSoul.
+    unlock: async ({ formId }) => {
+      const game = runtime();
+      if ((await game.forms.record(formId))?.type !== 'SHOU') return false;
+      const settings = await session.settings();
+      const menus = session.hud.menus;
+      if ((await game.actors.value(PLAYER_REF, ActorValue.dragonSouls)).current < 1) {
+        const fail = settings.string('sFailSpendSoul');
+        if (fail && (await game.casting.unlockWord(formId, { dryRun: true })) === 'noSoul')
+          session.hud.notification(fail);
+        return false;
+      }
+      if ((await game.casting.unlockWord(formId, { dryRun: true })) !== 'unlocked') return false;
+      if (menus) {
+        const chosen = await menus.messageBox(settings.string('sConfirmSpendSoul') ?? '', [
+          settings.string('sYes') ?? 'Yes',
+          settings.string('sNo') ?? 'No',
+        ]);
+        if (chosen !== 0) return false;
+      }
+      return (await game.casting.unlockWord(formId)) === 'unlocked';
     },
     favorite: ({ formId }) => {
       const favorites = runtime().state.favorites;
@@ -303,5 +326,7 @@ async function shoutCard(
   }
   const unlocked = shout.words.filter((entry) => game.wordsLearned.get(entry.word) === true);
   card.spellCost = String(Math.round(unlocked[unlocked.length - 1]?.recovery ?? 0));
+  // The bottom bar's Unlock while a learned word is locked (casting-engine.ts unlockWord).
+  card.showUnlocked = (await game.casting.unlockWord(shout.formId, { dryRun: true })) !== 'none';
   return card;
 }

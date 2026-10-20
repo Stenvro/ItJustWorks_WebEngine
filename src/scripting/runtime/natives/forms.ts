@@ -302,8 +302,8 @@ export function registerForms(n: Register, runtime: ScriptRuntime): void {
   };
   for (const kind of ['spell', 'potion', 'enchantment', 'ingredient'])
     ask(`${kind}.ishostile`, false, (formId) => hostile(formId));
-  // Cast(akSource, akTarget), RemoteCast(akSource, akBlameActor, akTarget): applied at once
-  // (the magic system; TODO(M10) 5.3: the projectile's flight).
+  // Cast(akSource, akTarget), RemoteCast(akSource, akBlameActor, akTarget): the spell flies from
+  // the source, or is delivered at once (the magic system's cast: casting-engine.ts).
   for (const kind of ['spell', 'scroll']) {
     on(`${kind}.cast`, async (spell, call) => {
       const source = ref(call.args[0]);

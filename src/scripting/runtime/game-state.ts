@@ -191,7 +191,8 @@ export interface ActiveEffectState {
   readonly caster: number | undefined;
   /** Seconds it has lasted, and lasts in all (0: at once, or until dispelled when lasting). */
   elapsed: number;
-  readonly duration: number;
+  /** (A concentration spell's held effects last on while it is held: casting-engine.ts.) */
+  duration: number;
   readonly magnitude: number;
   /** The magic item (SPEL, SCRL, ENCH, ALCH, INGR) it is an effect of, and the effect item's index. */
   readonly item?: number;
@@ -204,6 +205,8 @@ export interface ActiveEffectState {
   readonly lasting?: boolean;
   /** It was dual cast. */
   readonly dual?: boolean;
+  /** Where a Target Location spell landed (what it makes stands there). */
+  readonly at?: Vec3;
   /** Its conditions do not hold: it does nothing (its scripts finished) until they do. */
   inactive?: boolean;
   /** What it put on actor values that is taken back as it ends (actor, actor value, amount). */
@@ -216,6 +219,24 @@ export interface ActiveEffectState {
 export interface ActorMagicState {
   /** The poison on its weapon, for its next hits (hits deliver it: src/shell/actor-combat.ts). */
   poison?: { readonly weapon: number | undefined; readonly poison: number; charges: number };
+}
+
+/**
+ * What casting keeps of an actor (src/scripting/runtime/casting-engine.ts). TODO(M12): in the
+ * save.
+ */
+export interface ActorCastingState {
+  /** Powers it used, by spell: the game day (GameDaysPassed) of the last use. */
+  readonly powersUsed: Map<number, number>;
+  /**
+   * Its staffs' charge left, by weapon base (TODO(M11): per item, as the game keeps it on each
+   * one: ExtraCharge; the inventory's stacks do not tell them apart yet).
+   */
+  readonly charge: Map<number, number>;
+  /** The voice's recovery it began with (seconds; the shout meter's whole). */
+  voiceRecoveryTotal?: number;
+  /** Words of its last shout less one (GetCurrentShoutVariation). */
+  shoutVariation?: number;
 }
 
 /** A reference a script created (PlaceAtMe, alias Create Reference). */
@@ -245,6 +266,8 @@ export class GameState {
   readonly activeEffects = new Map<string, ActiveEffectState>();
   /** What the magic system keeps of actors (a poisoned weapon), by actor. */
   readonly actorMagic = new Map<number, ActorMagicState>();
+  /** What casting keeps of actors (powers used, staffs' charge, the voice), by actor. */
+  readonly actorCasting = new Map<number, ActorCastingState>();
   /** Item counts per container (reference), by base form; filled from the records on first use. */
   readonly inventories = new Map<number, Map<number, number>>();
   readonly created = new Map<number, CreatedReference>();

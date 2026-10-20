@@ -375,8 +375,9 @@ export class ActorTalk {
    * "DEOB" DestroyObject, "STOF" StandonFurniture, "LOOB" LockedObject, "PICT" PickpocketTopic,
    * "PIRN" PlayerinIronSights, "PCSH" PlayerShout, ...): the nearest who may comments
    * (src/ai/talk.ts, commenter). Resolves whether one did. Told now: JUMP, ZKEY, LOOB (the
-   * player's, play-mode's); SWMW and FIWE (src/shell/actor-combat.ts). TODO(M10) 5.3: magic its
-   * own (PIRN, PCSH, ...); TODO(M13): KNOO and STOF (the physics does not tell who knocked what).
+   * player's, play-mode's); SWMW and FIWE (src/shell/actor-combat.ts); PCPS, PCSS and PCSH (the
+   * player's casts and shouts: src/shell/actor-stage.ts). TODO(M10) 5.1: PIRN; TODO(M13): KNOO
+   * and STOF (the physics does not tell who knocked what).
    */
   async playerAction(subtype: string): Promise<boolean> {
     const planner = this.#planner;

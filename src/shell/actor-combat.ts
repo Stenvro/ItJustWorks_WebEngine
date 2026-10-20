@@ -103,7 +103,7 @@ import type { PlayerAvatar } from './player-avatar.ts';
 import type { CombatBridge } from './script-world.ts';
 import type { Terminal } from './terminal.ts';
 import { KillmoveCamera } from './killmove-camera.ts';
-import { PlayerCombat } from './player-combat.ts';
+import { PlayerCombat, type CastingButtons } from './player-combat.ts';
 import type { ActorTalk } from './actor-talk.ts';
 import type { ActorSenses } from './actor-senses.ts';
 
@@ -179,6 +179,8 @@ export interface ActorCombatOptions {
   readonly talk?: () => ActorTalk | undefined;
   /** What they notice (an attack heard, the attacked searching, sneak attacks' awareness). */
   readonly senses?: () => ActorSenses | undefined;
+  /** The player's casting: drawn hands holding magic cast (src/shell/player-casting.ts). */
+  readonly casting?: () => CastingButtons | undefined;
 }
 
 const describe = (error: unknown): string =>
@@ -254,6 +256,7 @@ export class ActorCombat implements CombatBridge {
         this,
         play.player,
         () => !play.seated && !this.#options.session.menuMode,
+        () => this.#options.casting?.(),
       );
     }
     if (!play) {
@@ -1678,7 +1681,7 @@ export class ActorCombat implements CombatBridge {
     this.#setMusic(false);
   }
 
-  /** Knocked down (a ragdoll that gets up: Unrelenting Force; TODO(M10) 5.3). */
+  /** Knocked down (a ragdoll that gets up: Unrelenting Force; TODO(M11): the Stagger effects'). */
   knockState(reference: number): number {
     return this.#fighters.get(reference)?.state.knock ?? KnockState.normal;
   }

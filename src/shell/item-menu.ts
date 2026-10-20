@@ -74,6 +74,8 @@ export interface ItemMenuModel {
    */
   select(entry: ItemEntry, slot: number | undefined): Promise<void>;
   drop?(entry: ItemEntry, amount: number): Promise<void>;
+  /** The magic menu's Unlock (R): a dragon soul spent on the entry's shout; whether it was. */
+  unlock?(entry: ItemEntry): Promise<boolean>;
   favorite(entry: ItemEntry): void;
   /** The container menu's ItemTransfer: take from the container, or put into it. */
   transfer?(entry: ItemEntry, amount: number, fromContainer: boolean): Promise<void>;
@@ -175,6 +177,15 @@ export class ItemMenu {
         if (event.code === 'KeyR' && model.drop) {
           // The menu's DropItem: the quantity slider for a stack, then ItemDrop.
           menu.call('DropItem');
+          return true;
+        }
+        if (event.code === 'KeyR' && model.unlock) {
+          // The magic menu's Unlock: a dragon soul spent on a shout's word (DragonSoulSpent).
+          void model.unlock(chosen).then((spent) => {
+            if (!spent) return;
+            menu.call('DragonSoulSpent');
+            void refresh(menu);
+          });
           return true;
         }
         return false;
