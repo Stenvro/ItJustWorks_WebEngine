@@ -2,15 +2,14 @@
 // engine calls _root.InitExtensions(); the menu calls addHealth, addMagicka or addStamina as a
 // button is pressed (and plays its own sounds). The choice raises that attribute by
 // iAVDhmsLevelUp (stamina also the carry weight by fLevelUpCarryWeightMod), the player's level
-// by one and gives a perk point (UESP, "Leveling"); then the menu closes. Its buttons take keys
-// through GFx's own arrow-key focus (Selection.alwaysEnableArrowKeys), which a Flash player
-// lacks: the engine moves the focus between them left and right (the first arrow focuses the
-// one at that end) and Accept presses the one focused. It opens while a
-// level-up waits (GameState.levelUps), before the skills menu. TODO(M11): the experience that
-// makes a level up wait (skills' progress, fXPLevelUpBase, fXPLevelUpMult) and the HUD's
-// "Level up available".
+// by one and gives a perk point (UESP, "Leveling"; the progression engine's levelUp); then the
+// menu closes. Its buttons take keys through GFx's own arrow-key focus
+// (Selection.alwaysEnableArrowKeys), which a Flash player lacks: the engine moves the focus
+// between them left and right (the first arrow focuses the one at that end) and Accept presses
+// the one focused. It opens while a level-up waits (GameState.levelUps: the experience skills'
+// levels gave covers the level's threshold, fXPLevelUpBase + fXPLevelUpMult × level), before
+// the skills menu.
 
-import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import type { GameSession } from './game-session.ts';
@@ -104,19 +103,7 @@ export class LevelUpMenu {
 
   async #levelUp(attribute: number): Promise<void> {
     const runtime = this.#session.scriptsReady;
-    if (!runtime) return;
-    const settings = await this.#session.settings();
-    const actors = runtime.actors;
-    const raise = async (index: number, amount: number): Promise<void> => {
-      actors.setBase(PLAYER_REF, index, (await actors.value(PLAYER_REF, index)).base + amount);
-    };
-    await raise(attribute, settings.number('iAVDhmsLevelUp') ?? 10);
-    if (attribute === ActorValue.stamina) {
-      await raise(ActorValue.carryWeight, settings.number('fLevelUpCarryWeightMod') ?? 5);
-    }
-    const player = runtime.state.actor(PLAYER_REF);
-    player.level = (await actors.level(PLAYER_REF)) + 1;
-    runtime.perkPoints++;
-    runtime.state.levelUps = Math.max(0, runtime.state.levelUps - 1);
+    if (runtime && !(await runtime.progression.levelUp(attribute)))
+      this.#terminal.log('ui', 'no level-up waits', 'warn');
   }
 }

@@ -28,7 +28,8 @@ export const actorSeed = (reference: number): number => (reference ^ 0x9e3779b9)
 
 /**
  * Resolves the templates of an actor placed with `base` (NPC_ or LVLN) by `reference`, at
- * `level` (the encounter's level; TODO(M11): encounter zones and the player's level).
+ * `level` (the level its leveled lists are picked at: its encounter zone's or the player's, by
+ * its level modifier; the progression engine's leveledLevel).
  */
 export async function resolveActorTemplates(
   get: (formId: number) => Promise<RecordSource | undefined>,

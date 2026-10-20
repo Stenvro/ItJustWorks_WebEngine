@@ -151,8 +151,8 @@ through the edges' middles, a player walks around it); and a few steps higher th
   author of "Wade In Water".
 - **The body and its camera** are the player's avatar (animation.md, The player): the
   first-person camera rides the animated Camera1st node (sneaking lowers it), a jump pushes off
-  when its animation raises JumpUp. **TODO(M11):** fall damage (fJumpFallHeight*), stamina for
-  sprinting.
+  when its animation raises JumpUp. Sprinting drains stamina (docs/gameplay.md). **TODO(M11):** fall damage
+  (fJumpFallHeight*: combat).
 
 ## Cameras and input
 

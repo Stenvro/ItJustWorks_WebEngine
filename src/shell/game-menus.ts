@@ -834,6 +834,7 @@ export class GameMenus {
         )
       : '';
     const level = runtime ? await runtime.actors.level(PLAYER_REF) : 1;
+    const progress = runtime ? (await runtime.progression.levelProgress()) * 100 : 0;
     const levelUp = (runtime?.state.levelUps ?? 0) > 0;
     let chosen: TweenChoice | undefined;
     open.menu = await this.#host.open('tweenmenu.swf', {
@@ -869,8 +870,7 @@ export class GameMenus {
         menu.invoke('_root.InitExtensions');
         menu.invoke('_root.SetPlatform', 0, false);
         // (abLevelUp, the date, the level, the progress to the next level 0..100).
-        // TODO(M11): the progress (the experience toward the next level).
-        menu.call('StartOpenMenuAnim', levelUp, date, String(level), 0);
+        menu.call('StartOpenMenuAnim', levelUp, date, String(level), progress);
       },
     });
     if (this.#open !== open) this.#host.close(open.menu);

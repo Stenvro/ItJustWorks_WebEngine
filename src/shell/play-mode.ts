@@ -943,6 +943,7 @@ export class PlayMode {
     void this.#session.sounds().then((sounds) => sounds.playNamed('UILoadscreenMist', undefined));
     const runtime = this.#session.scriptsReady;
     const level = runtime ? await runtime.actors.level(PLAYER_REF) : 1;
+    const progress = runtime ? (await runtime.progression.levelProgress()) * 100 : 0;
     this.#loadingMenu = await this.#host.open('loadingmenu.swf', {
       depth: DEPTH.loadingMenu,
       interactive: false,
@@ -950,10 +951,10 @@ export class PlayMode {
         RequestLoadingText: (menu, args) => {
           menu.respond(args[0], this.#loadingText);
         },
-        // The player's level and progress (a new game's: level 1); the meter shows in a
-        // game (not before a new game's first save). TODO(M11): the progress to the next level.
+        // The player's level and progress to the next (0..100; a new game's: level 1); the
+        // meter shows in a game (not before a new game's first save).
         RequestPlayerInfo: (menu, args) => {
-          menu.respond(args[0], level, 0, this.#hud !== undefined);
+          menu.respond(args[0], level, progress, this.#hud !== undefined);
         },
       },
       setup: async (menu) => {

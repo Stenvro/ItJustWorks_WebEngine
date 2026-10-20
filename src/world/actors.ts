@@ -435,8 +435,8 @@ export class ActorResolver {
 
   /**
    * The look of an actor placed with `base` (NPC_ or LVLN) by `reference` (whose form id
-   * seeds the leveled choices), at `level` (the encounter's level; TODO(M11): encounter
-   * zones and the player's level), with `overrides` over its base's traits.
+   * seeds the leveled choices), at `level` (the level its leveled lists are picked at: the
+   * progression engine's leveledLevel), with `overrides` over its base's traits.
    */
   async resolve(
     base: number,

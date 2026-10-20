@@ -13,13 +13,14 @@
 //
 // Prices (UESP, "Speech"): the factor fBarterMax − (fBarterMax − fBarterMin) × min(Speech,
 // 100) / 100; buying costs value × factor, selling gets value / factor, at least 1.05 × value
-// and at most the value. TODO(M11): the Haggling and Allure perks, Fortify Barter, stolen
-// goods (fences), the Merchant and Investor perks, the chest's restock every 48 hours.
+// and at most the value. A trade is the item's value in Speech uses (the progression engine).
+// TODO(M11): the Haggling and Allure perks, Fortify Barter, stolen goods (fences), the Merchant
+// and Investor perks, the chest's restock every 48 hours.
 
 import { barterMultipliers, vendorBuys } from '../gameplay/barter.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { actorValueIndex } from '../world/actor-values.ts';
-import type { ItemRecord } from '../world/item-records.ts';
+import { parseItem, type ItemRecord } from '../world/item-records.ts';
 import { GOLD } from './inventory-menu.ts';
 import type { GameSession } from './game-session.ts';
 import type { ItemMenuModel } from './item-menu.ts';
@@ -57,6 +58,15 @@ export async function barterModel(
   let shownGold = await vendorGold();
   const sellable = (rowItem: ItemRecord): boolean =>
     vendor !== undefined && vendorBuys(rowItem, vendor, list);
+  /**
+   * Speech's experience of a trade: the item's value as uses, once a trade however many go
+   * (UESP "Speech": "based on the actual value of the item", several at once count as one).
+   */
+  const speechUse = async (item: number): Promise<void> => {
+    const record = await game.forms.record(item);
+    const value = record ? (parseItem(record)?.value ?? 0) : 0;
+    await game.progression.useSkill(PLAYER_REF, speech, value);
+  };
   return {
     movie: 'bartermenu.swf',
     depth: 6,
@@ -92,6 +102,7 @@ export async function barterModel(
         }
         await shelf.move(GOLD, total, PLAYER_REF, chest, false);
         await shelf.move(entry.formId, amount, chest, PLAYER_REF);
+        await speechUse(entry.formId);
         return;
       }
       // The vendor pays what it has: from the chest, then its own gold.
@@ -101,6 +112,7 @@ export async function barterModel(
       owed -= fromChest;
       if (owed > 0) await shelf.move(GOLD, owed, vendorActor, PLAYER_REF, false);
       await shelf.move(entry.formId, amount, PLAYER_REF, chest);
+      await speechUse(entry.formId);
     },
     handlers: {
       // (price): sNotEnoughVendorGold, "Transaction value: %d gold. Vendor only has %d gold."
