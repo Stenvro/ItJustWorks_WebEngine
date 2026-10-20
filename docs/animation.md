@@ -217,7 +217,13 @@ them by name (a variable keeps the first file's initial value). Each frame:
    exit events, entering one its enter events and the machine's change event; a transition
    with a blending effect (duration, curve) plays both states and blends them, an instant one
    switches; a self transition starts the state over (unless its effect continues); a
-   transition into a nested state sets that machine's start. A machine with a sync variable writes the id
+   transition into a nested state sets that machine's start. A global wildcard (flag 0x400) of
+   a machine nested in another state of a machine is that machine's too: taken, it goes to the
+   state holding the nested machine, which starts in the wildcard's state (Master_Behavior has
+   no way into Cart_State but its Cart machine's IdleCartPrisonerASway). Paired animations
+   (Paired_Mount.hkx, killmoves) name their tracks: "PairedRoot", the first actor's bones and the
+   second's prefixed "2_"; each actor's graph takes its own bones' tracks by name
+   (`src/animation/paired-clips.ts`). A machine with a sync variable writes the id
    of the state it enters into it, and one whose start mode is SYNC starts from it (sneaking
    locomotion and the idle turns share iIsInSneak that way).
 2. **Update** of the active nodes: transitions without an event whose condition holds are

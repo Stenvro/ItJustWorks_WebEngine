@@ -34,6 +34,10 @@ import { ActorDoors, type DoorObject } from './actor-doors.ts';
 import { ActorFurniture, type FurnitureUser, type StageObject } from './actor-furniture.ts';
 import { ActorMovers } from './actor-movers.ts';
 import { ActorSenses, type SensesWorld } from './actor-senses.ts';
+import { ActorMounts } from './actor-mounts.ts';
+import { ActorVehicles, type AdoptedVehicle } from './actor-vehicles.ts';
+import { ActorFollowers } from './actor-followers.ts';
+import type { PlayerView } from './race-menu.ts';
 import type { LightProbe } from '../ai/light-level.ts';
 import { ActorTalk } from './actor-talk.ts';
 
@@ -96,6 +100,10 @@ export interface ActorStageOptions {
   readonly light?: (at: Vec3) => LightProbe | undefined;
   /** The view shows an interior (detection's reach and light inside). */
   readonly interior?: boolean;
+  /** The player being played (they ride horses and carts, their followers come along). */
+  readonly player?: () => PlayerView | undefined;
+  /** The view gives up a cart of its cells to be pulled (src/shell/actor-vehicles.ts). */
+  readonly adoptVehicle?: (reference: number) => AdoptedVehicle | undefined;
 }
 
 const describe = (error: unknown): string =>
@@ -146,6 +154,12 @@ export class ActorStage {
   readonly doors: ActorDoors;
   /** What the actors notice: detection, their reactions (src/shell/actor-senses.ts). */
   readonly senses: ActorSenses;
+  /** The actors riding horses, the player too (src/shell/actor-mounts.ts). */
+  readonly mounts: ActorMounts;
+  /** The carts horses pull and those riding them (src/shell/actor-vehicles.ts). */
+  readonly vehicles: ActorVehicles;
+  /** The player's followers (src/shell/actor-followers.ts). */
+  readonly followers: ActorFollowers;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -174,7 +188,8 @@ export class ActorStage {
       openDoor: (door, actor) => this.doors.passage(door, actor),
       shutTo: (actor) => this.doors.shutTo(actor),
       shutPlaces: (actor) => this.doors.shutPlaces(actor),
-      held: (actor) => this.furniture.holds(actor),
+      held: (actor) =>
+        this.furniture.holds(actor) || this.mounts.holds(actor) || this.vehicles.holds(actor),
       // The player walked into an actor: it flinches by where they came from (ActionBumpedInto's
       // idles by GetLastBumpDirection) and says its ActorCollidewithActor line.
       onBump: (actor) => {
@@ -207,6 +222,53 @@ export class ActorStage {
       talk: () => this.talk,
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
       overrides: (actor) => this.senses.overridePackages(actor),
+      transport: {
+        ready: async (staged, ride) => {
+          this.vehicles.release(staged.reference);
+          return this.mounts.ready(staged, ride);
+        },
+        mover: (actor) => this.mounts.horseOf(actor) ?? actor,
+        alight: async (staged) => {
+          this.vehicles.release(staged.reference);
+          await this.mounts.getOff(staged.reference);
+        },
+        paused: (actor) => this.mounts.ridden(actor),
+      },
+    });
+    this.mounts = new ActorMounts({
+      session: options.session,
+      terminal: options.terminal,
+      movers: this.movers,
+      get: (reference) => this.#actors.get(reference),
+      ...(options.player && { player: options.player }),
+    });
+    this.vehicles = new ActorVehicles({
+      session: options.session,
+      terminal: options.terminal,
+      renderer: options.renderer,
+      movers: this.movers,
+      get: (reference) => this.#actors.get(reference),
+      ...(options.navmeshes && { navmeshes: options.navmeshes }),
+      ...(options.adoptVehicle && { adopt: options.adoptVehicle }),
+      ...(options.player && { player: options.player }),
+      evaluate: (actor) => {
+        this.ai.evaluate(actor);
+      },
+    });
+    this.followers = new ActorFollowers({
+      session: options.session,
+      terminal: options.terminal,
+      ai: this.ai,
+      movers: this.movers,
+      actors: () => this.#actors.values(),
+      ...(options.player && { player: options.player }),
+      ...(options.navmeshes && { navmeshes: options.navmeshes }),
+      teleport: (staged, position, heading) => {
+        staged.position = [...position];
+        staged.heading = heading;
+        this.userOf(staged).moveTo(position, heading);
+        this.movers.teleport(staged);
+      },
     });
     this.senses = new ActorSenses({
       session: options.session,
@@ -350,6 +412,9 @@ export class ActorStage {
   attachPlay(world: SensesWorld | undefined): void {
     this.movers.attach(world);
     this.bodies.attach(world?.physics);
+    // After the movers' step hook: the cart towed and the player carried after the horse moved.
+    this.vehicles.attach(world);
+    this.mounts.attach(world?.stepHooks);
     this.senses.attach(world);
   }
 
@@ -364,6 +429,8 @@ export class ActorStage {
     this.ai.remove(reference);
     this.senses.killed(reference);
     this.talk.remove(reference);
+    this.mounts.remove(reference);
+    this.vehicles.remove(reference);
     this.furniture.remove(reference);
     this.movers.request(reference, undefined);
     this.movers.release(reference);
@@ -394,6 +461,8 @@ export class ActorStage {
     for (const staged of this.#actors.values()) {
       if (staged.scene && (!shown || shown(staged.cell))) yield staged.scene;
     }
+    // The carts horses pull (taken out of their cells).
+    yield* this.vehicles.scenes();
   }
 
   /** Where a staged actor stands now (scripts' live placement). */
@@ -468,6 +537,7 @@ export class ActorStage {
 
   /** Every cell goes (the view closes). */
   clear(): void {
+    this.vehicles.clear();
     this.#cells.clear();
     for (const staged of [...this.#actors.values()]) this.#remove(staged);
   }
@@ -640,6 +710,7 @@ export class ActorStage {
     this.ai.frame(this.#actors.values(), frame, this.#options.focus?.());
     // What they notice (detection), and how they react.
     this.senses.frame(frame);
+    this.followers.frame(frame);
     this.actorScenes.frame(this.#actors.values());
     this.talk.frame(this.#actors.values(), frame, this.#options.focus?.());
     this.away.frame(frame);
@@ -671,8 +742,16 @@ export class ActorStage {
       if (before !== undefined && after !== undefined && after > before) {
         this.movers.animated(staged, after - before);
         this.furniture.animated(this.userOf(staged), after - before);
+        this.vehicles.animated(
+          staged.reference,
+          after - before,
+          staged.placed.behavior?.rootMotion(),
+        );
       }
     }
+    // Riders on their horses, carts behind theirs and those riding them (drawn where they are).
+    this.mounts.frame(frame);
+    this.vehicles.frame();
   }
 
   /** Places actors for a cell and puts them on the stage (unless the cell went meanwhile). */
@@ -758,6 +837,8 @@ export class ActorStage {
     this.ai.remove(staged.reference);
     this.senses.remove(staged.reference);
     this.talk.remove(staged.reference);
+    this.mounts.remove(staged.reference);
+    this.vehicles.remove(staged.reference);
     this.furniture.remove(staged.reference);
     this.movers.remove(staged.reference);
     this.bodies.remove(staged.reference);

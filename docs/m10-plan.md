@@ -139,8 +139,9 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       travel are where their packages have them (`package-start.ts` becomes the low-process
       placement). With it the middle-high process: actors of the loaded area beyond the high
       process run their AI and walk without a controller. docs/ai.md, "Actors away".
-- [ ] **3.5 Followers, horses, carts:** following through doors, teammates, mounts and
-      riding, the carts of the opening (horse, cart, seated passengers).
+- [x] **3.5 Followers, horses, carts:** following through doors, teammates, mounts and
+      riding, the carts of the opening (horse, cart, seated passengers). docs/ai.md,
+      "Followers, mounts and vehicles". Moved on: horses fleeing and fighting to 5.2.
 
 ## Phase 4: senses and the social layer
 

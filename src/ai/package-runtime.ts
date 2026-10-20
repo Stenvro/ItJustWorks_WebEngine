@@ -23,7 +23,10 @@ import {
 } from './package-records.ts';
 import { mergedInputs, scheduleFits, type GameTime, type Space } from './package-start.ts';
 import type { IdleCollection } from './idle-records.ts';
-import { ProcedureInputs } from './procedures.ts';
+import { PROCEDURE_PARAMETERS, ProcedureInputs } from './procedures.ts';
+
+/** The procedures' parameter that lets an actor ride its horse. */
+const RIDE_HORSE = 'Ride Horse If Possible';
 
 type Vec3 = readonly [number, number, number];
 
@@ -125,6 +128,8 @@ export interface PackageMind {
   fakeFood(): Promise<number | undefined>;
   /** Locks or unlocks the doors within a place (LockDoors, UnlockDoors). */
   lockDoors(place: PackagePlace, locked: boolean): Promise<void>;
+  /** Whether a reference runs now (the player's input, an actor's controller), if known. */
+  running?(reference: number): boolean;
   /** OnPackageStart / OnPackageChange / OnPackageEnd and the package's own begin, change and end. */
   packageEvent(
     actor: number,
@@ -189,6 +194,18 @@ export interface PackageBody {
   greet(topic: number | undefined): boolean;
   /** Whether it stands still on its own (not on its way, not in furniture, not turning). */
   standing(): boolean;
+  /**
+   * Whether the procedure running now lets it ride its horse ("Ride Horse If Possible"; false
+   * for procedures without the parameter): told as each procedure starts (src/shell/actor-ai.ts
+   * mounts and dismounts it on its way).
+   */
+  ride?(allowed: boolean): void;
+  /**
+   * It follows a leader now (Follow, FollowTo; undefined: no longer). Returns how much farther
+   * than its minimum radius it keeps from the leader: fFollowSpaceBetweenFollowers for each of
+   * the leader's followers nearer it (src/ai/followers.ts).
+   */
+  following?(leader: number | undefined): number;
 }
 
 export type ProcedureResult = 'success' | 'failure';
@@ -573,11 +590,17 @@ export class ActorPackages {
       return 'stopped';
     }
     const inputOf = (slot: number): number | undefined => branch.inputs[slot];
+    const inputs = new ProcedureInputs(branch, running.data.inputs);
+    // "Ride Horse If Possible" (Travel, Patrol, Follow, Escort, ...): the actor's horse.
+    const rideSlot = PROCEDURE_PARAMETERS[name]?.findIndex(
+      (parameter) => parameter.name === RIDE_HORSE,
+    );
+    this.#body.ride?.(rideSlot !== undefined && rideSlot >= 0 && inputs.bool(rideSlot));
     const result = await runner({
       actor: this.actor,
       body: this.#body,
       mind: this.#mind,
-      inputs: new ProcedureInputs(branch, running.data.inputs),
+      inputs,
       pack: running.pack,
       context: running.context,
       gait: gaitOf(running.pack),
