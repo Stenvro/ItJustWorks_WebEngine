@@ -721,6 +721,8 @@ export class ActorPlacer {
         skeleton: havok,
         random,
         properties: { IsFemale: look.female ? 1 : 0, IsMale: look.female ? 0 : 1, IsNPC: 1 },
+        // Its feet on the ground (hkbCharacterData's foot IK: src/animation/procedural.ts).
+        ...(behaviors.character.footIk && { footIk: behaviors.character.footIk }),
       });
       behavior.setVariable('IsNPC', 1);
       // Its cuirass pushes its sheathed weapons out (BSOffsetAnimationGenerator).

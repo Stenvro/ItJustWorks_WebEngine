@@ -42,7 +42,11 @@ export function animateSkeletons(
     animated.face?.update(dt);
     const behavior = animated.behavior;
     if (!behavior) continue;
+    // A spoken line turns the head (its LIP's head curves) over the graph's pose; the eyes
+    // follow where the graph's look-at turned the eye bone (by the face's look morphs).
+    if (animated.face) behavior.headTurn = animated.face.headRotation;
     behavior.update(dt);
+    animated.face?.lookWith(behavior.eyes());
     // Footsteps and SoundPlay events sound through onEvents (src/shell/actor-sounds.ts);
     // TODO(M10): the events AI reacts to (attacks, weapon draws, dialogue).
     const raised = behavior.takeRaised();

@@ -22,12 +22,97 @@ export interface Bindable {
   readonly property?: number;
 }
 
+/** A vector or quaternion (x, y, z, w). */
+export type Vec4 = readonly [number, number, number, number];
+
+/**
+ * A vector member a variable binding may override: bound to a vector variable (TargetLocation,
+ * the engine's look-at target) or an output the modifier writes.
+ */
+export interface VectorBindable {
+  readonly value: Vec4;
+  readonly variable?: number;
+}
+
 export interface BehaviorVariable {
   readonly name: string;
-  /** hkbVariableInfo type: 0 bool, 1 int8, 2 int16, 3 int32, 4 real, 5 pointer, 6+ vectors. */
+  /**
+   * hkbVariableInfo type: 0 bool, 1 int8, 2 int16, 3 int32, 4 real, 5 pointer, 6 vector3,
+   * 7 vector4, 8 quaternion.
+   */
   readonly type: number;
   /** Initial value (reals as floats, the others as integers). */
   readonly initial: number;
+  /** Vector and quaternion variables (types 6–8): their initial value. */
+  readonly vector?: Vec4;
+}
+
+/** A bone a look-at turns (BSLookAtModifierBoneData). */
+export interface LookAtBone {
+  /** The Havok bone. */
+  readonly index: number;
+  /** The bone's forward axis in its own space (fwdAxisLS). */
+  readonly forwardAxis: readonly [number, number, number];
+  readonly limitAngleDegrees: Bindable;
+  readonly onGain: Bindable;
+  readonly offGain: Bindable;
+  readonly enabled: Bindable;
+}
+
+/** hkbFootIkGains: how fast foot IK follows (each a fraction per step, 0..1). */
+export interface FootIkGains {
+  readonly onOffGain: Bindable;
+  readonly groundAscendingGain: Bindable;
+  readonly groundDescendingGain: Bindable;
+  readonly footPlantedGain: Bindable;
+  readonly footRaisedGain: Bindable;
+  readonly footUnlockGain: Bindable;
+  readonly worldFromModelFeedbackGain: Bindable;
+  readonly errorUpDownBias: Bindable;
+  readonly alignWorldFromModelGain: Bindable;
+  readonly hipOrientationGain: Bindable;
+  readonly maxKneeAngleDifference: Bindable;
+  readonly ankleOrientationGain: Bindable;
+}
+
+/** A leg foot IK places (hkbFootIkDriverInfoLeg, hkbFootIkModifierLeg); heights in model space. */
+export interface FootIkLeg {
+  readonly hipIndex: number;
+  readonly kneeIndex: number;
+  readonly ankleIndex: number;
+  /** The knee's hinge axis in the knee bone's space. */
+  readonly kneeAxis: readonly [number, number, number];
+  /** Where the foot ends (the toes) in the ankle bone's space. */
+  readonly footEnd: readonly [number, number, number];
+  /** Below this ankle height the foot is planted, above the raised height it is in the air. */
+  readonly footPlantedAnkleHeight: number;
+  readonly footRaisedAnkleHeight: number;
+  readonly maxAnkleHeight: number;
+  readonly minAnkleHeight: number;
+  readonly maxKneeAngleDegrees: number;
+  readonly minKneeAngleDegrees: number;
+  readonly maxAnkleAngleDegrees: number;
+  /** Raised when the ray under the foot finds nothing (hkbFootIkModifier's legs). */
+  readonly ungroundedEvent?: BehaviorEvent;
+}
+
+/** How foot IK looks for the ground (hkbFootIkDriverInfo, hkbFootIkModifier). */
+export interface FootIkSetup {
+  readonly legs: readonly FootIkLeg[];
+  /** The ray under each ankle starts this far above it and ends this far below. */
+  readonly raycastDistanceUp: number;
+  readonly raycastDistanceDown: number;
+  /** The ground's height in model space when the character stands on flat ground. */
+  readonly originalGroundHeightMS: number;
+  readonly verticalOffset: number;
+  /** The rays' collision filter (its low 7 bits: the layer). */
+  readonly collisionFilterInfo: number;
+  readonly forwardAlignFraction: number;
+  readonly sidewaysAlignFraction: number;
+  readonly sidewaysSampleWidth: number;
+  readonly useTrackData: boolean;
+  readonly lockFeetWhenPlanted: boolean;
+  readonly useCharacterUpVector: boolean;
 }
 
 /** An event with its payload (hkbEventProperty): −1 for none. */
@@ -133,6 +218,11 @@ export type BehaviorGenerator =
       readonly maxSimultaneousTransitions?: number;
       /** 0 no transition, 1 to the start state if a transition exists, 2 always. */
       readonly selfTransitionMode?: number;
+      /**
+       * Output: 1 while the machine is active (bound to a flag: Swim_Behavior and
+       * KillMove_Behavior set bHumanoidFootIKDisable that way).
+       */
+      readonly isActive?: Bindable;
     }
   | {
       readonly kind: 'blender';
@@ -328,8 +418,137 @@ export type BehaviorModifier = { readonly name: string; readonly enable: Bindabl
     }
   | {
       /**
-       * Procedural modifiers that move bones (look-at, IK, twist, keyframed bones) or drive
-       * the ragdoll: TODO(M10) with head tracking, foot IK and ragdolls.
+       * BSLookAtModifier: turns a chain of bones (spine, neck, head), each within its own
+       * limit, and the eyes towards a target (targetLocation, bound to the engine's
+       * TargetLocation) while lookAtTarget (bHeadTracking) holds; gains ease it on and off.
+       * src/animation/procedural.ts.
+       */
+      readonly kind: 'look-at';
+      readonly lookAtTarget: Bindable;
+      readonly bones: readonly LookAtBone[];
+      readonly eyeBones: readonly LookAtBone[];
+      /** Beyond this angle from the character's forward the target is outside its limits. */
+      readonly limitAngleDegrees: Bindable;
+      /** Back inside only this much within the limit (hysteresis). */
+      readonly limitAngleThresholdDegrees: Bindable;
+      readonly continueLookOutsideOfLimit: Bindable;
+      readonly onGain: Bindable;
+      readonly offGain: Bindable;
+      /** The bones' own gains rather than the modifier's. */
+      readonly useBoneGains: Bindable;
+      readonly targetLocation: VectorBindable;
+      /** Output: the target is outside the limits (LookAtOutOfRange). */
+      readonly targetOutsideLimits: Bindable;
+      readonly targetOutOfLimitEvent: BehaviorEvent;
+      /** Look at the camera (camerafromx/y/z) instead. */
+      readonly lookAtCamera: Bindable;
+      readonly lookAtCameraX: Bindable;
+      readonly lookAtCameraY: Bindable;
+      readonly lookAtCameraZ: Bindable;
+    }
+  | {
+      /**
+       * BSDirectAtModifier: turns the bones from start to end so that the source bone points
+       * at a target (bows and spells aimed at the combat target, the dragon rider's head),
+       * heading and pitch each within a limit; its outputs say how far it turned.
+       */
+      readonly kind: 'direct-at';
+      readonly directAtTarget: Bindable;
+      readonly sourceBoneIndex: number;
+      readonly startBoneIndex: number;
+      readonly endBoneIndex: number;
+      readonly limitHeadingDegrees: Bindable;
+      readonly limitPitchDegrees: Bindable;
+      readonly offsetHeadingDegrees: Bindable;
+      readonly offsetPitchDegrees: Bindable;
+      readonly onGain: Bindable;
+      readonly offGain: Bindable;
+      readonly targetLocation: VectorBindable;
+      /** Which aim the engine gives it (2 bows, 3 the dragon rider; 0 none). */
+      readonly userInfo: number;
+      readonly directAtCamera: Bindable;
+      readonly directAtCameraX: Bindable;
+      readonly directAtCameraY: Bindable;
+      readonly directAtCameraZ: Bindable;
+      /** Outputs: whether it is on, and the heading and pitch it turned (degrees). */
+      readonly active: Bindable;
+      readonly currentHeadingOffset: Bindable;
+      readonly currentPitchOffset: Bindable;
+    }
+  | {
+      /**
+       * hkbFootIkControlsModifier: while active, the character's foot IK (its
+       * hkbFootIkDriverInfo) runs with these gains; per leg a ground position may be given
+       * and the error found is written back.
+       */
+      readonly kind: 'foot-ik-controls';
+      readonly gains: FootIkGains;
+      readonly legs: readonly {
+        readonly groundPosition: VectorBindable;
+        readonly ungroundedEvent: BehaviorEvent;
+        readonly verticalError: Bindable;
+        readonly hitSomething: Bindable;
+        readonly isPlantedMS: Bindable;
+      }[];
+      readonly errorOutTranslation: VectorBindable;
+      readonly alignWithGroundRotation: VectorBindable;
+    }
+  | {
+      /** hkbFootIkModifier: foot IK with legs of its own (the dragon's four). */
+      readonly kind: 'foot-ik';
+      readonly gains: FootIkGains;
+      readonly setup: FootIkSetup;
+      readonly errorOutTranslation: VectorBindable;
+      readonly alignWithGroundRotation: VectorBindable;
+    }
+  | {
+      /**
+       * hkbTwistModifier: turns the chain of bones from start to end about an axis by an
+       * angle (degrees) shared among them (the first-person body's pitch and lean, a bow
+       * draw's spine, a netch's lean, a tail's turn).
+       */
+      readonly kind: 'twist';
+      readonly axis: readonly [number, number, number];
+      readonly twistAngle: Bindable;
+      readonly startBoneIndex: number;
+      readonly endBoneIndex: number;
+      /** SetAngleMethod: 0 linear (equal shares), 1 ramped. */
+      readonly setAngleMethod: number;
+      /** RotationAxisCoordinates: 0 model space, 1 the parent's, 2 the bone's own. */
+      readonly rotationAxisCoordinates: number;
+      readonly isAdditive: boolean;
+    }
+  | {
+      /**
+       * hkbKeyframeBonesModifier: the ragdoll bones (indices of the ragdoll skeleton) kept
+       * keyframed to the animation while it is active, and bones put at given transforms.
+       */
+      readonly kind: 'keyframe-bones';
+      readonly keyframeInfo: readonly {
+        readonly position: Vec4;
+        readonly rotation: Vec4;
+        readonly boneIndex: number;
+        readonly isValid: boolean;
+      }[];
+      readonly keyframedBones: Int16Array;
+    }
+  | {
+      /** hkbRotateCharacterModifier: turns the character about an axis at a rate. */
+      readonly kind: 'rotate-character';
+      readonly degreesPerSecond: Bindable;
+      readonly speedMultiplier: Bindable;
+      readonly axis: readonly [number, number, number];
+    }
+  | {
+      /**
+       * The others the vanilla graphs use: the ragdoll's (hkbPoweredRagdollControlsModifier,
+       * hkbRigidBodyRagdollControlsModifier, hkbGetUpModifier,
+       * BSRagdollContactListenerModifier: TODO(M10) 5.1 with hits, knockdowns and getting
+       * up), the dragon's flight (BSTweenerModifier, BSLimbIKModifier,
+       * BSPassByTargetTriggerModifier, BSDecomposeVectorModifier, hkbTransformVectorModifier,
+       * BSTimerModifier, BSGetTimeStepModifier: TODO(M10) 5.4) and BSIStateManagerModifier
+       * (the iState of werewolves, vampire lords and spriggans: TODO(M10) 5.2 with their
+       * combat movement). `node tools/behavior-run.ts --modifiers` lists them.
        */
       readonly kind: 'other';
       readonly className: string;
@@ -397,6 +616,13 @@ const BINDING_TYPE_CHARACTER_PROPERTY = 1;
 /** hkbVariableInfo: role (4 bytes) + type (int8), 6 bytes each. */
 const VARIABLE_INFO_SIZE = 6;
 const VARIABLE_TYPE_REAL = 4;
+/** Types 6..8 (vector3, vector4, quaternion) hold their value in the quad values. */
+const VARIABLE_TYPE_VECTOR3 = 6;
+const LOOK_AT_BONE_SIZE = 64;
+const KEYFRAME_INFO_SIZE = 48;
+const FOOT_IK_CONTROLS_LEG_SIZE = 48;
+const FOOT_IK_MODIFIER_LEG_SIZE = 160;
+const FOOT_IK_DRIVER_LEG_SIZE = 96;
 const TRANSITION_SIZE = 72;
 const CLIP_TRIGGER_SIZE = 32;
 const EVENT_PROPERTY_SIZE = 16;
@@ -445,12 +671,20 @@ export function parseBehaviorGraph(file: Packfile): BehaviorGraph {
       characterProperties = file.stringArray(strings.offset + 64);
     }
     const words = values ? file.array(values.offset + 16) : { data: 0, size: 0 };
+    // Vector variables' words index hkbVariableValueSet.quadVariableValues (at 32).
+    const quads = values ? file.array(values.offset + 32) : { data: 0, size: 0 };
     for (let i = 0; i < infos.size; i++) {
       const type = file.i8(infos.data + i * VARIABLE_INFO_SIZE + 4);
       const at = words.data + i * 4;
       const initial =
         i >= words.size ? 0 : type === VARIABLE_TYPE_REAL ? file.f32(at) : file.i32(at);
-      variables.push({ name: names[i] ?? '', type, initial });
+      const quad = type >= VARIABLE_TYPE_VECTOR3 && initial >= 0 && initial < quads.size;
+      variables.push({
+        name: names[i] ?? '',
+        type,
+        initial,
+        ...(quad && { vector: vec4(file, quads.data + initial * 16) }),
+      });
     }
   }
   const reader = new GraphReader(file);
@@ -532,10 +766,12 @@ class GraphReader {
     const child = (offset: number): BehaviorGenerator | undefined =>
       this.generator(file.object(at + offset));
     switch (object.className) {
-      case 'hkbStateMachine':
+      case 'hkbStateMachine': {
+        const isActive = bindable('isActive', 0);
         return {
           kind: 'state-machine',
           name,
+          ...(isActive.variable !== undefined && { isActive }),
           eventToSendWhenStateOrTransitionChanges: this.event(at + 72),
           startStateId: bindable('startStateId', file.i32(at + 104)),
           returnToPreviousStateEventId: file.i32(at + 108),
@@ -565,6 +801,7 @@ class GraphReader {
           }),
           wildcardTransitions: this.#transitions(file.object(at + 160)),
         };
+      }
       case 'hkbBlenderGenerator':
       case 'hkbPoseMatchingGenerator':
         return {
@@ -708,6 +945,7 @@ class GraphReader {
     const at = object.offset;
     const name = file.string(at + NODE_NAME) ?? '';
     const bindable = bindableReader(file, at);
+    const vector = vectorReader(file, at);
     const base = { name, enable: bindable('enable', file.bool(at + MODIFIER_ENABLE) ? 1 : 0) };
     const sub = (offset: number): BehaviorModifier | undefined =>
       this.modifier(file.object(at + offset));
@@ -835,6 +1073,174 @@ class GraphReader {
           goalSpeed: bindable('goalSpeed', file.f32(at + 88)),
           speedOut: bindable('speedOut', file.f32(at + 92)),
         };
+      case 'BSLookAtModifier': {
+        const bones = (offset: number, path: string): LookAtBone[] => {
+          const { data, size } = file.array(at + offset);
+          return Array.from({ length: size }, (_, i): LookAtBone => {
+            const b = data + i * LOOK_AT_BONE_SIZE;
+            const member = (name: string): string => `${path}:${String(i)}/${name}`;
+            return {
+              index: file.i16(b),
+              forwardAxis: vec3(file, b + 16),
+              limitAngleDegrees: bindable(member('limitAngleDegrees'), file.f32(b + 32)),
+              onGain: bindable(member('onGain'), file.f32(b + 36)),
+              offGain: bindable(member('offGain'), file.f32(b + 40)),
+              enabled: bindable(member('enabled'), file.bool(b + 44) ? 1 : 0),
+            };
+          });
+        };
+        return {
+          ...base,
+          kind: 'look-at',
+          lookAtTarget: bindable('lookAtTarget', file.bool(at + 80) ? 1 : 0),
+          bones: bones(88, 'bones'),
+          eyeBones: bones(104, 'eyeBones'),
+          limitAngleDegrees: bindable('limitAngleDegrees', file.f32(at + 120)),
+          limitAngleThresholdDegrees: bindable('limitAngleThresholdDegrees', file.f32(at + 124)),
+          continueLookOutsideOfLimit: bindable(
+            'continueLookOutsideOfLimit',
+            file.bool(at + 128) ? 1 : 0,
+          ),
+          onGain: bindable('onGain', file.f32(at + 132)),
+          offGain: bindable('offGain', file.f32(at + 136)),
+          useBoneGains: bindable('useBoneGains', file.bool(at + 140) ? 1 : 0),
+          targetLocation: vector('targetLocation', vec4(file, at + 144)),
+          targetOutsideLimits: bindable('targetOutsideLimits', file.bool(at + 160) ? 1 : 0),
+          targetOutOfLimitEvent: this.event(at + 168),
+          lookAtCamera: bindable('lookAtCamera', file.bool(at + 184) ? 1 : 0),
+          lookAtCameraX: bindable('lookAtCameraX', file.f32(at + 188)),
+          lookAtCameraY: bindable('lookAtCameraY', file.f32(at + 192)),
+          lookAtCameraZ: bindable('lookAtCameraZ', file.f32(at + 196)),
+        };
+      }
+      case 'BSDirectAtModifier':
+        return {
+          ...base,
+          kind: 'direct-at',
+          directAtTarget: bindable('directAtTarget', file.bool(at + 80) ? 1 : 0),
+          sourceBoneIndex: file.i16(at + 82),
+          startBoneIndex: file.i16(at + 84),
+          endBoneIndex: file.i16(at + 86),
+          limitHeadingDegrees: bindable('limitHeadingDegrees', file.f32(at + 88)),
+          limitPitchDegrees: bindable('limitPitchDegrees', file.f32(at + 92)),
+          offsetHeadingDegrees: bindable('offsetHeadingDegrees', file.f32(at + 96)),
+          offsetPitchDegrees: bindable('offsetPitchDegrees', file.f32(at + 100)),
+          onGain: bindable('onGain', file.f32(at + 104)),
+          offGain: bindable('offGain', file.f32(at + 108)),
+          targetLocation: vector('targetLocation', vec4(file, at + 112)),
+          userInfo: file.u32(at + 128),
+          directAtCamera: bindable('directAtCamera', file.bool(at + 132) ? 1 : 0),
+          directAtCameraX: bindable('directAtCameraX', file.f32(at + 136)),
+          directAtCameraY: bindable('directAtCameraY', file.f32(at + 140)),
+          directAtCameraZ: bindable('directAtCameraZ', file.f32(at + 144)),
+          active: bindable('active', file.bool(at + 148) ? 1 : 0),
+          currentHeadingOffset: bindable('currentHeadingOffset', file.f32(at + 152)),
+          currentPitchOffset: bindable('currentPitchOffset', file.f32(at + 156)),
+        };
+      case 'hkbFootIkControlsModifier': {
+        const { data, size } = file.array(at + 128);
+        return {
+          ...base,
+          kind: 'foot-ik-controls',
+          gains: footIkGains(file, at + 80, 'controlData/gains/', bindable),
+          legs: Array.from({ length: size }, (_, i) => {
+            const leg = data + i * FOOT_IK_CONTROLS_LEG_SIZE;
+            const member = (name: string): string => `legs:${String(i)}/${name}`;
+            return {
+              groundPosition: vector(member('groundPosition'), vec4(file, leg)),
+              ungroundedEvent: this.event(leg + 16),
+              verticalError: bindable(member('verticalError'), file.f32(leg + 32)),
+              hitSomething: bindable(member('hitSomething'), file.bool(leg + 36) ? 1 : 0),
+              isPlantedMS: bindable(member('isPlantedMS'), file.bool(leg + 37) ? 1 : 0),
+            };
+          }),
+          errorOutTranslation: vector('errorOutTranslation', vec4(file, at + 144)),
+          alignWithGroundRotation: vector('alignWithGroundRotation', vec4(file, at + 160)),
+        };
+      }
+      case 'hkbFootIkModifier': {
+        const { data, size } = file.array(at + 128);
+        const legs = Array.from({ length: size }, (_, i): FootIkLeg => {
+          const leg = data + i * FOOT_IK_MODIFIER_LEG_SIZE;
+          return {
+            kneeAxis: vec3(file, leg + 64),
+            footEnd: vec3(file, leg + 80),
+            ungroundedEvent: this.event(leg + 96),
+            footPlantedAnkleHeight: file.f32(leg + 112),
+            footRaisedAnkleHeight: file.f32(leg + 116),
+            maxAnkleHeight: file.f32(leg + 120),
+            minAnkleHeight: file.f32(leg + 124),
+            maxKneeAngleDegrees: file.f32(leg + 128),
+            minKneeAngleDegrees: file.f32(leg + 132),
+            maxAnkleAngleDegrees: file.f32(leg + 140),
+            hipIndex: file.i16(leg + 144),
+            kneeIndex: file.i16(leg + 146),
+            ankleIndex: file.i16(leg + 148),
+          };
+        });
+        return {
+          ...base,
+          kind: 'foot-ik',
+          gains: footIkGains(file, at + 80, 'gains/', bindable),
+          setup: {
+            legs,
+            raycastDistanceUp: file.f32(at + 144),
+            raycastDistanceDown: file.f32(at + 148),
+            originalGroundHeightMS: file.f32(at + 152),
+            verticalOffset: file.f32(at + 192),
+            collisionFilterInfo: file.u32(at + 196),
+            forwardAlignFraction: file.f32(at + 200),
+            sidewaysAlignFraction: file.f32(at + 204),
+            sidewaysSampleWidth: file.f32(at + 208),
+            useTrackData: file.bool(at + 212),
+            lockFeetWhenPlanted: file.bool(at + 213),
+            useCharacterUpVector: file.bool(at + 214),
+          },
+          errorOutTranslation: vector('errorOutTranslation', vec4(file, at + 160)),
+          alignWithGroundRotation: vector('alignWithGroundRotation', vec4(file, at + 176)),
+        };
+      }
+      case 'hkbTwistModifier':
+        return {
+          ...base,
+          kind: 'twist',
+          axis: vec3(file, at + 80),
+          twistAngle: bindable('twistAngle', file.f32(at + 96)),
+          startBoneIndex: file.i16(at + 100),
+          endBoneIndex: file.i16(at + 102),
+          setAngleMethod: file.i8(at + 104),
+          rotationAxisCoordinates: file.i8(at + 105),
+          isAdditive: file.bool(at + 106),
+        };
+      case 'hkbKeyframeBonesModifier': {
+        const { data, size } = file.array(at + 80);
+        const list = file.object(at + 96);
+        return {
+          ...base,
+          kind: 'keyframe-bones',
+          keyframeInfo: Array.from({ length: size }, (_, i) => {
+            const info = data + i * KEYFRAME_INFO_SIZE;
+            return {
+              position: vec4(file, info),
+              rotation: vec4(file, info + 16),
+              boneIndex: file.i16(info + 32),
+              isValid: file.bool(info + 34),
+            };
+          }),
+          keyframedBones:
+            list?.className === 'hkbBoneIndexArray'
+              ? i16Array(file, list.offset + 48)
+              : new Int16Array(0),
+        };
+      }
+      case 'hkbRotateCharacterModifier':
+        return {
+          ...base,
+          kind: 'rotate-character',
+          degreesPerSecond: bindable('degreesPerSecond', file.f32(at + 80)),
+          speedMultiplier: bindable('speedMultiplier', file.f32(at + 84)),
+          axis: vec3(file, at + 96),
+        };
       default:
         return { ...base, kind: 'other', className: object.className };
     }
@@ -899,6 +1305,96 @@ function bindableReader(file: Packfile, at: number): (member: string, value: num
     return binding.type === BINDING_TYPE_CHARACTER_PROPERTY
       ? { value, property: binding.index }
       : { value, variable: binding.index };
+  };
+}
+
+/** Reads vector members of a bindable object, with the vector variable bound to each. */
+function vectorReader(file: Packfile, at: number): (member: string, value: Vec4) => VectorBindable {
+  const bindings = readBindings(file, at);
+  return (member, value) => {
+    const binding = bindings.get(member);
+    return binding?.type === BINDING_TYPE_VARIABLE ? { value, variable: binding.index } : { value };
+  };
+}
+
+/** An hkVector4 (or hkQuaternion) member. */
+function vec4(file: Packfile, at: number): Vec4 {
+  return [file.f32(at), file.f32(at + 4), file.f32(at + 8), file.f32(at + 12)];
+}
+
+function vec3(file: Packfile, at: number): readonly [number, number, number] {
+  return [file.f32(at), file.f32(at + 4), file.f32(at + 8)];
+}
+
+/** An hkArray<hkInt16> member. */
+function i16Array(file: Packfile, at: number): Int16Array {
+  const { data, size } = file.array(at);
+  return Int16Array.from({ length: size }, (_, i) => file.i16(data + i * 2));
+}
+
+/** An hkbFootIkGains struct at `at`, its members bound under `path` ("controlData/gains/"). */
+function footIkGains(
+  file: Packfile,
+  at: number,
+  path: string,
+  bindable: (member: string, value: number) => Bindable,
+): FootIkGains {
+  const gain = (name: string, offset: number): Bindable =>
+    bindable(`${path}${name}`, file.f32(at + offset));
+  return {
+    onOffGain: gain('onOffGain', 0),
+    groundAscendingGain: gain('groundAscendingGain', 4),
+    groundDescendingGain: gain('groundDescendingGain', 8),
+    footPlantedGain: gain('footPlantedGain', 12),
+    footRaisedGain: gain('footRaisedGain', 16),
+    footUnlockGain: gain('footUnlockGain', 20),
+    worldFromModelFeedbackGain: gain('worldFromModelFeedbackGain', 24),
+    errorUpDownBias: gain('errorUpDownBias', 28),
+    alignWorldFromModelGain: gain('alignWorldFromModelGain', 32),
+    hipOrientationGain: gain('hipOrientationGain', 36),
+    maxKneeAngleDifference: gain('maxKneeAngleDifference', 40),
+    ankleOrientationGain: gain('ankleOrientationGain', 44),
+  };
+}
+
+/**
+ * A character's foot IK (hkbCharacterData.footIkDriverInfo, an hkbFootIkDriverInfo): its legs
+ * and how it looks for the ground; undefined for characters without one.
+ */
+function readFootIkDriverInfo(file: Packfile, data: HkxObject): FootIkSetup | undefined {
+  const info = file.object(data.offset + 136);
+  if (info?.className !== 'hkbFootIkDriverInfo') return undefined;
+  const at = info.offset;
+  const { data: legs, size } = file.array(at + 16);
+  return {
+    legs: Array.from({ length: size }, (_, i): FootIkLeg => {
+      const leg = legs + i * FOOT_IK_DRIVER_LEG_SIZE;
+      return {
+        kneeAxis: vec3(file, leg + 16),
+        footEnd: vec3(file, leg + 32),
+        footPlantedAnkleHeight: file.f32(leg + 48),
+        footRaisedAnkleHeight: file.f32(leg + 52),
+        maxAnkleHeight: file.f32(leg + 56),
+        minAnkleHeight: file.f32(leg + 60),
+        maxKneeAngleDegrees: file.f32(leg + 64),
+        minKneeAngleDegrees: file.f32(leg + 68),
+        maxAnkleAngleDegrees: file.f32(leg + 72),
+        hipIndex: file.i16(leg + 76),
+        kneeIndex: file.i16(leg + 78),
+        ankleIndex: file.i16(leg + 80),
+      };
+    }),
+    raycastDistanceUp: file.f32(at + 32),
+    raycastDistanceDown: file.f32(at + 36),
+    originalGroundHeightMS: file.f32(at + 40),
+    verticalOffset: file.f32(at + 44),
+    collisionFilterInfo: file.u32(at + 48),
+    forwardAlignFraction: file.f32(at + 52),
+    sidewaysAlignFraction: file.f32(at + 56),
+    sidewaysSampleWidth: file.f32(at + 60),
+    useTrackData: file.bool(at + 64),
+    lockFeetWhenPlanted: file.bool(at + 65),
+    useCharacterUpVector: file.bool(at + 66),
   };
 }
 
@@ -1178,6 +1674,8 @@ export interface CharacterInfo {
   readonly animations: readonly string[];
   /** The character properties its graphs may read (characterPropertyNames). */
   readonly properties: readonly string[];
+  /** Its foot IK (hkbCharacterData.footIkDriverInfo at 136), if it has one. */
+  readonly footIk?: FootIkSetup;
 }
 
 /** Reads a behavior project's character: its skeleton, behavior and animations. */
@@ -1198,6 +1696,7 @@ export async function loadCharacterInfo(
     const name = character.string(strings.offset + offset);
     return name ? projectRelative(path, name) : undefined;
   };
+  const footIk = readFootIkDriverInfo(character, data);
   return {
     name: character.string(strings.offset + 160) ?? '',
     rig: file(168),
@@ -1207,5 +1706,6 @@ export async function loadCharacterInfo(
       .stringArray(strings.offset + 48)
       .map((name) => projectRelative(path, name)),
     properties: character.stringArray(strings.offset + 80),
+    ...(footIk && { footIk }),
   };
 }

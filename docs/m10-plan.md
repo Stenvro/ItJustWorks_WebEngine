@@ -89,8 +89,10 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       root motion from the animation data, measured speed for the graph.
 - [x] **1.4 Death at run time:** Kill and death in combat switch the actor to its ragdoll from
       the pose it has; the dead stay dead when their cell loads again. (Bleedout: 5.1.)
-- [ ] **1.5 Procedural animation:** look-at and head tracking (BSLookAtModifier), eyes, foot
-      IK, twists, keyframed bones; SetLookAt, the player looked at when near.
+- [x] **1.5 Procedural animation:** look-at and head tracking (BSLookAtModifier), eyes, foot
+      IK, twists, keyframed bones; SetLookAt, the player looked at when near. docs/animation.md,
+      "Procedural modifiers" and "Head tracking". Moved on: the ragdoll controls to 5.1, the
+      dragon's flight modifiers to 5.4.
 
 ## Phase 2: navigation
 

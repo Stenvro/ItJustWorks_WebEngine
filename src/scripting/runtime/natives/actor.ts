@@ -446,9 +446,9 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     world.setAnimationVariable?.(actor, str(call.args[0]), num(call.args[1]));
   });
   act('setalpha', (actor, call) => world.setAlpha?.(actor, num(call.args[0]), bool(call.args[1])));
-  act('setheadtracking', () => undefined);
-  act('setlookat', (actor, call) => world.lookAt?.(actor, ref(call.args[0])));
-  act('clearlookat', (actor) => world.lookAt?.(actor, undefined));
+  act('setheadtracking', (actor, call) => world.headTracking?.(actor, bool(call.args[0])));
+  act('setlookat', (actor, call) => world.lookAt?.(actor, ref(call.args[0]), 'script'));
+  act('clearlookat', (actor) => world.lookAt?.(actor, undefined, 'script'));
   act('setexpressionoverride', (actor, call) =>
     world.expression?.(actor, int(call.args[0]), int(call.args[1])),
   );

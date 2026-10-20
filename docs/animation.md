@@ -187,7 +187,8 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   modifiers (blinks join the face's own, the strongest wins; brows, eye looks). The curves
   start with their lead-in frames, the audio after them, at the head through the 3D dialogue
   output model (DOBJ DOP2) in the dialogue category (DDSC). The lines' head pitch, roll and
-  yaw are kept for head tracking (TODO(M10), which moves the same bone); creature lines
+  yaw turn the head bone over the graph's pose (BehaviorRuntime.headTurn; TODO(M13): the
+  signs of FaceFX's head curves); creature lines
   (8 curves) set the creature's behavior graph's lip variables, which move its mouth
   (ai.md, Talking).
 - **Sandbox (debug only), Talk:** in the sandbox, the crosshair finds an actor along the
@@ -195,9 +196,12 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   actors' own collision) and "Talk" makes it say a random line of its voice type (NPC VTCK,
   `sound\voice\<plugin>\<voice type>\`).
 - Not applied: the TRI's SkinnyMorph (FaceGen heads are baked with the actor's weight:
-  formats/esm.md, Actors) and the Races / CharGen morphs (baked by the Creation Kit). Idle eye
-  movement by emotion (fEyeHeading/PitchMin/MaxOffsetEmotion*) and looking at things: TODO(M10)
-  with head tracking.
+  formats/esm.md, Actors) and the Races / CharGen morphs (baked by the Creation Kit).
+- **Eyes:** they look where the graph's look-at turned the eye bone (Head tracking, below),
+  by the look morphs (LookLeft/Right at 29°, LookUp/Down at 16°: measured on eyesmale.tri and
+  eyesfemale.tri; the engine's BSFaceGenAnimationData eyesHeading and eyesPitch), wandering by
+  a random offset in the range of the face's emotion (fEyeHeading/PitchMin/MaxOffsetEmotion*;
+  a new one every 1–3 s, TODO(M13)); a line's own looks join them.
 
 ## Behavior runtime
 
@@ -253,9 +257,8 @@ blended by speed in step, raising FootLeft / FootRight. All 53 skeletons of the 
 start their graph and play idles (`tools/actor-info.ts --audit --deep`); some creatures start
 in a combat idle (dragons, rieklings) or a transform (vampire lords, werewolves) until the
 engine sets the variables of their state (TODO(M10)). The dead run no graph: their ragdolls pose them
-(physics.md, Constraints and ragdolls). Not yet: procedural modifiers (look-at,
-foot IK, twists, keyframed bones, ragdoll controls: TODO(M10)), the engine's events and
-variables of movement and combat (M10, M11).
+(physics.md, Constraints and ragdolls). Procedural modifiers: below. Not yet: the engine's
+events and variables of combat (M10 5.x, M11).
 
 **Intervals:** a transition with a trigger interval (flag 0x1) is taken only within it, one
 with an initiate interval (0x2) is kept until it begins when triggered before (unless one kept
@@ -276,3 +279,83 @@ weapAdj picks how far `weaponAdjustment.hkx` pushes the sheathed weapons out; th
 it from the armour (ARMA DNAM weapon adjust, f32 at 8): only body pieces vary it in the data
 (0.1–0.65; helmets and the rest are 0 or 1), so it is the cuirass's (slot 32; TODO(M13): not
 documented).
+
+## Procedural modifiers
+
+What the graphs' procedural modifiers do to the pose the clips gave
+(`src/animation/procedural.ts`, run by the behavior runtime where the graph has them: an
+hkbModifierGenerator lays its modifier on its generator's pose, a list's in order). Members:
+the Havok 2010.2 headers (Project Anarchy), CommonLibSSE's BSLookAtModifier; member offsets:
+`src/formats/hkx/layouts.ts` (checked against the vanilla files). The census of every vanilla
+behavior file: `node tools/behavior-run.ts --modifiers`; one graph with a target or a slope:
+`node tools/behavior-run.ts <project> --set IsNPC=1 --look 100,150,120`,
+`--set bHumanoidFootIKEnable=1 --slope 20`. Gains are fractions per step of the Behavior
+Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
+
+- **BSLookAtModifier** (128 in 36 files; the humans' in the root modifier list, enabled by
+  IsNPC): its bones (Spine1, Spine2, Neck, Head: 5°, 20°, 20°, 30°) each turn their forward
+  axis towards the target within their own limit, each taking its turn from the pose the last
+  left, then the eye bone (70°). Each bone's look eases by its gains (LookAtOnGain 0.12,
+  LookAtOffGain 0.015; the eyes' 1). The target is TargetLocation (a world point, the engine's)
+  while bHeadTracking holds, or the camera (camerafromx/y/z) with lookAtCamera; it is outside
+  the limits beyond 85° from the character's forward (seen from the head), inside again within
+  the threshold (10°): LookAtOutOfRange, and the event once; with continueLookOutsideOfLimit
+  the bones keep looking. TODO(M13): Bethesda's class is not documented; this reading of its
+  members turns a standing NPC's head about 50° and its eyes the rest to a target 80° to its
+  right.
+- **BSDirectAtModifier** (23: bows, spells, the dragon rider): the chain from start to end
+  bone turns by the heading and pitch from the source bone to the target (within the limits,
+  plus the offsets), eased by its gains; its outputs (active, current heading and pitch) go
+  to their variables. The target: a bound vector, the camera, or the aim the engine gives its
+  kind (BehaviorRuntime.setDirectAtTarget by userInfo: 2 bows and spells, 3 the dragon rider).
+  TODO(M10) 5.1, 5.3: combat gives the aim.
+- **hkbTwistModifier** (19: the first-person body's pitch and lean, bow draws, a netch's lean,
+  a tail's turn): the chain from start to end bone turns about the axis (in model space in
+  every vanilla one) by the angle (degrees: 1stPRot = sin(Direction · 360) · RotMax, RotMax 5),
+  shared equally (linear) or growing along the chain (ramped).
+- **Foot IK** (hkbFootIkDriver on the character's hkbFootIkDriverInfo while the graph's
+  hkbFootIkControlsModifier is active and enabled; hkbFootIkModifier with legs of its own, the
+  dragon's): under each ankle a ray (from raycastDistanceUp above, 40, to raycastDistanceDown
+  below, 32) finds the ground; the leg's error is its height over the model's ground, eased by
+  the ground gains. Quadrupeds lean to the plane of their feet's ground
+  (alignWorldFromModelGain); the body goes down by the worldFromModel feedback
+  (m_worldFromModelFeedbackGain 0.35 for humans; errorUpDownBias 1: as far as the lowest foot
+  needs). Each ankle then goes to its animated height over its own ground (within its min and
+  max heights), the knee turned about its hinge (its interior angle within its limits), the hip
+  swinging the leg onto it, the foot keeping its animated turn, tilted to the slope where
+  planted (ankleOrientationGain, maxAnkleAngleDegrees). It eases on and off by onOffGain,
+  keeping what it found while off. The engine turns humans' on (bHumanoidFootIKEnable 1; the
+  graph turns it off in furniture; TODO(M13): when the engine sets it); bHumanoidFootIKDisable
+  (set by state machines' isActive outputs and BSIsActiveModifiers: swimming, killmoves,
+  bleedout, jumps, mounts) turns it off. The rays see what character controllers stand on,
+  the actor's own controller left out (TODO(M13): the driver's own filter, L_TRANSPARENT, would
+  see its ragdoll). TODO(M13): locking planted feet and the planted and raised gains are not
+  documented.
+- **hkbKeyframeBonesModifier** (91): the ragdoll bones it keeps keyframed
+  (BehaviorRuntime.keyframedRagdollBones: the living's lower body; the whole ragdoll on its way
+  to ragdolling). The living's bodies all follow the pose now (actor-bodies.ts); TODO(M10) 5.1:
+  hits push the others, driven by the rigid body ragdoll controls.
+- **hkbRotateCharacterModifier** (6): turns the character at TurnDelta in the equip and unequip
+  states; the movers make that turn already, so the graph's root motion leaves it out.
+- Not run, by milestone (behavior.ts): the ragdoll's controls, get-up and contact listener
+  (TODO(M10) 5.1), the dragon's flight (BSTweenerModifier, BSLimbIKModifier and others: 5.4)
+  and BSIStateManagerModifier (5.2).
+
+## Head tracking
+
+Where actors look (`src/ai/head-tracking.ts`, `src/shell/actor-looks.ts`): an actor has a
+head track target of each kind (CommonLibSSE HEAD_TRACK_TYPE: default, action, script, combat,
+dialogue, procedure); the highest set is looked at (TODO(M13): the order is the enum's).
+Scripts' Actor.SetLookAt and ClearLookAt are 'script'; scenes' looks, speakers talking to
+someone and the actor talking with the player are 'dialogue'; other code asks through
+`session.scriptWorld.lookTargets.lookAt(actor, target, kind)` (a reference or a world point;
+undefined lets go). Without any, an actor looks at the player within 512 units in front of it
+(TODO(M13): the engine's rule; TODO(M10) 4.1: once it detects them). Actor.SetHeadTracking(false)
+and the graph's HeadTrackingOff (graphs' and clips' events; actorresponse.txt's
+HeadTrackingOffHandler; HeadTrackingOn again) stop it. The point looked at turns towards the
+target at fHeadTrackSpeedMax (200° a second) when more than fHeadTrackSpeedMaxAngle (10°) off,
+fHeadTrackSpeedMin (60°) within fHeadTrackSpeedMinAngle (5°), now and then off it by
+fAIHeadTrack*'s random offset (0 in Skyrim.esm); it reaches the graph as bHeadTracking and
+TargetLocation, the camera as camerafromx/y/z. The player's body looks the same way at what
+scripts, scenes and dialogue ask and else, in third person, where the camera looks
+(TODO(M13): the engine's own player head tracking is not documented).

@@ -3,9 +3,11 @@
 // events sent to it, updates its active nodes (state machines take their transitions, clips
 // advance and raise their triggers, modifiers set variables and raise events), then
 // generates the pose: clips sampled, blenders and transitions blending them, bone switches
-// taking some bones from other generators. Variables and events are the character's: graphs
-// share them by name. Semantics: the Havok class documentation (Project Anarchy headers),
-// what the vanilla graphs show; notes in docs/animation.md ("Behavior runtime").
+// taking some bones from other generators, procedural modifiers turning bones where the graph
+// has them (look-at, direct-at, twists, foot IK: src/animation/procedural.ts), the
+// character's foot IK last. Variables and events are the character's: graphs share them by
+// name. Semantics: the Havok class documentation (Project Anarchy headers), what the vanilla
+// graphs show; notes in docs/animation.md ("Behavior runtime", "Procedural modifiers").
 // Platform-independent.
 
 import {
@@ -22,11 +24,33 @@ import {
   type BehaviorGraph,
   type BehaviorModifier,
   type Bindable,
+  type FootIkGains,
+  type FootIkSetup,
+  type LookAtBone,
   type StateMachineState,
   type StateTransition,
+  type Vec4,
+  type VectorBindable,
 } from '../formats/hkx/behavior.ts';
 import { evaluateNode, parseExpression, type Expression } from './behavior-expression.ts';
 import { addPose, blendPoses, PoseAccumulator } from './pose.ts';
+import {
+  directAt,
+  footIk,
+  footIkState,
+  lookAt,
+  lookAtState,
+  ModelSpace,
+  turnHead,
+  twist,
+  type DirectAtState,
+  type FootIkGainValues,
+  type FootIkResult,
+  type FootIkState,
+  type GroundProbe,
+  type LookAtBoneValues,
+  type LookAtState,
+} from './procedural.ts';
 
 /** What a running graph needs from outside: its clips and referenced behavior files. */
 export interface BehaviorHost {
@@ -64,6 +88,99 @@ export interface RootMotion {
 }
 
 const NO_MOTION: RootMotion = { translation: [0, 0, 0], yaw: 0 };
+
+type Point = readonly [number, number, number];
+
+/**
+ * Where the character is in the world, for the procedural modifiers: the engine's look-at
+ * target and camera are world points, foot IK casts its rays into the world.
+ */
+export interface ProceduralWorld {
+  /** The character's world-from-model matrix (column-major 4×4: its placement and scale). */
+  readonly worldFromModel: Float32Array;
+  /**
+   * What a ray straight down from a world point meets within `length` units (what the
+   * character's feet stand on), or undefined.
+   */
+  ground?(
+    from: Point,
+    length: number,
+  ): { readonly point: Point; readonly normal: Point } | undefined;
+}
+
+/** What a look-at did to the eyes this update: their turn (radians, right and up +). */
+export interface EyeLook {
+  readonly heading: number;
+  readonly pitch: number;
+}
+
+/** Per pose-moving modifier: what it keeps between updates. */
+interface ProceduralModifierState {
+  /** The update that last advanced its easing (generated twice in one: once). */
+  stepped: number;
+  lookAt?: LookAtState;
+  directAt?: DirectAtState;
+  footIk?: FootIkState;
+  /** Legs whose rays found nothing (their ungrounded events went out). */
+  ungrounded?: boolean[];
+}
+
+const DEGREES = Math.PI / 180;
+
+/** Foot IK's gains while it eases off after its controls are gone (only onOffGain counts). */
+const EASING_OFF: FootIkGainValues = {
+  onOffGain: 0.2,
+  groundAscendingGain: 1,
+  groundDescendingGain: 1,
+  footPlantedGain: 1,
+  footRaisedGain: 1,
+  worldFromModelFeedbackGain: 1,
+  errorUpDownBias: 1,
+  alignWorldFromModelGain: 0,
+  ankleOrientationGain: 1,
+};
+
+/** A world point in a model's space (`matrix`: world-from-model, rotation and uniform scale). */
+function toModel(matrix: Float32Array, point: Point): [number, number, number] {
+  const dx = point[0] - (matrix[12] ?? 0);
+  const dy = point[1] - (matrix[13] ?? 0);
+  const dz = point[2] - (matrix[14] ?? 0);
+  const out: [number, number, number] = [0, 0, 0];
+  for (let axis = 0; axis < 3; axis++) {
+    const x = matrix[axis * 4] ?? 0;
+    const y = matrix[axis * 4 + 1] ?? 0;
+    const z = matrix[axis * 4 + 2] ?? 0;
+    const squared = x * x + y * y + z * z || 1;
+    out[axis] = (dx * x + dy * y + dz * z) / squared;
+  }
+  return out;
+}
+
+/** A model point in the world. */
+function toWorld(matrix: Float32Array, point: Point): [number, number, number] {
+  const out: [number, number, number] = [0, 0, 0];
+  for (let row = 0; row < 3; row++) {
+    out[row] =
+      (matrix[row] ?? 0) * point[0] +
+      (matrix[4 + row] ?? 0) * point[1] +
+      (matrix[8 + row] ?? 0) * point[2] +
+      (matrix[12 + row] ?? 0);
+  }
+  return out;
+}
+
+/** A world direction in a model's space (unit length). */
+function directionToModel(matrix: Float32Array, direction: Point): [number, number, number] {
+  const out: [number, number, number] = [0, 0, 0];
+  for (let axis = 0; axis < 3; axis++) {
+    out[axis] =
+      direction[0] * (matrix[axis * 4] ?? 0) +
+      direction[1] * (matrix[axis * 4 + 1] ?? 0) +
+      direction[2] * (matrix[axis * 4 + 2] ?? 0);
+  }
+  const length = Math.hypot(out[0], out[1], out[2]) || 1;
+  return [out[0] / length, out[1] / length, out[2] / length];
+}
 
 /**
  * A behavior project that plays skeletal clips, ready to run on a model: its root file, the
@@ -213,6 +330,40 @@ export class BehaviorRuntime {
   /** Pose buffers by depth of the generation. */
   readonly #buffers: Float32Array[] = [];
   readonly #boneCount: number;
+  /** Vector variables' values (TargetLocation), by the character's variable index. */
+  readonly #vectors = new Map<number, Vec4>();
+  /** The last update's step (the procedural modifiers ease by it). */
+  #dt = 0;
+  /** The pose's bones in model space, for the procedural modifiers. */
+  readonly #space: ModelSpace;
+  readonly #procedural = new WeakMap<object, ProceduralModifierState>();
+  /** Modifiers that move bones, or hold ones that do (decided once each). */
+  readonly #movesBones = new WeakMap<object, boolean>();
+  /** The character's foot IK (hkbCharacterData.footIkDriverInfo) and what it keeps. */
+  readonly #footIk: FootIkSetup | undefined;
+  #footIkState: FootIkState | undefined;
+  /** The foot IK controls the graph gives this update (an active hkbFootIkControlsModifier). */
+  #footIkControls: Extract<BehaviorModifier, { kind: 'foot-ik-controls' }> | undefined;
+  /** The eyes' turn the last update's look-at gave (undefined: none ran). */
+  #eyes: EyeLook | undefined;
+  /** The ragdoll bones the active hkbKeyframeBonesModifiers keep keyframed. */
+  #keyframed = new Set<number>();
+  /** The aims the engine gives BSDirectAtModifiers, by their userInfo (world points). */
+  readonly #directAtTargets = new Map<number, Point>();
+
+  /**
+   * Where the character is (its world matrix, the ground under it): the look-at's target and
+   * foot IK need it; without it they rest.
+   */
+  world: ProceduralWorld | undefined;
+
+  /**
+   * A spoken line's head turn (the LIP's head pitch, roll and yaw, radians: FaceAnimation's
+   * headRotation), laid on the head bone after the graph's pose; undefined or zero: none.
+   */
+  headTurn: ArrayLike<number> | undefined;
+  /** The head bone the line's turn goes to (−1: none). */
+  #headBone: number | undefined;
 
   constructor(options: {
     readonly root: BehaviorGraph;
@@ -221,6 +372,8 @@ export class BehaviorRuntime {
     readonly random?: () => number;
     /** Character properties (IsFemale, IsNPC, ...) by name. */
     readonly properties?: Record<string, number>;
+    /** The character's foot IK (CharacterInfo.footIk). */
+    readonly footIk?: FootIkSetup;
   }) {
     this.skeleton = options.skeleton;
     this.#host = options.host;
@@ -228,6 +381,8 @@ export class BehaviorRuntime {
     this.#properties = options.properties ?? {};
     this.#boneCount = options.skeleton.bones.length;
     this.pose = options.skeleton.referencePose.slice();
+    this.#space = new ModelSpace(options.skeleton.parents);
+    this.#footIk = options.footIk;
     this.#rootScope = this.#scope(options.root);
     this.#root = options.root.root;
   }
@@ -246,6 +401,7 @@ export class BehaviorRuntime {
         this.#variableIndex.set(key, index);
         this.#variableNames.push(variable.name);
         this.#values.push(variable.initial);
+        if (variable.vector) this.#vectors.set(index, variable.vector);
       }
       return index;
     });
@@ -311,6 +467,22 @@ export class BehaviorRuntime {
     return id < 0 ? -1 : (scope.events[id] ?? -1);
   }
 
+  /** A vector member's value now: its vector variable's, else its own. */
+  #readVector(bindable: VectorBindable, scope: Scope): Vec4 {
+    if (bindable.variable === undefined) return bindable.value;
+    const index = scope.variables[bindable.variable];
+    return (
+      (index !== undefined && index >= 0 ? this.#vectors.get(index) : undefined) ?? bindable.value
+    );
+  }
+
+  /** Writes a vector output to the vector variable bound to it. */
+  #writeVector(bindable: VectorBindable, scope: Scope, value: Vec4): void {
+    if (bindable.variable === undefined) return;
+    const index = scope.variables[bindable.variable];
+    if (index !== undefined && index >= 0) this.#vectors.set(index, value);
+  }
+
   // --- Outside ---------------------------------------------------------------------------------
 
   /** The value of a character variable, or undefined if no graph has it. */
@@ -322,6 +494,43 @@ export class BehaviorRuntime {
   setVariable(name: string, value: number): void {
     const index = this.#variableIndex.get(name.toLowerCase());
     if (index !== undefined) this.#values[index] = value;
+  }
+
+  /** A vector variable's value (TargetLocation), or undefined if no graph has one so named. */
+  vector(name: string): Vec4 | undefined {
+    const index = this.#variableIndex.get(name.toLowerCase());
+    return index === undefined ? undefined : this.#vectors.get(index);
+  }
+
+  /** Sets a vector variable (the engine's TargetLocation: the look-at's world target). */
+  setVector(name: string, value: readonly number[]): void {
+    const index = this.#variableIndex.get(name.toLowerCase());
+    if (index === undefined) return;
+    this.#vectors.set(index, [value[0] ?? 0, value[1] ?? 0, value[2] ?? 0, value[3] ?? 0]);
+  }
+
+  /** Where the last update's look-at turned the eyes (undefined: no look-at with eyes ran). */
+  eyes(): EyeLook | undefined {
+    return this.#eyes;
+  }
+
+  /**
+   * The ragdoll bones (indices of the character's ragdoll skeleton) the active
+   * hkbKeyframeBonesModifiers keep keyframed to the animation (the living's lower body; the
+   * whole ragdoll on its way to ragdolling). The others follow the animation by the rigid body
+   * ragdoll controls (TODO(M10) 5.1: hits push them).
+   */
+  keyframedRagdollBones(): ReadonlySet<number> {
+    return this.#keyframed;
+  }
+
+  /**
+   * The engine's aim for the BSDirectAtModifiers of one kind (userInfo: 2 bows and spells, 3
+   * the dragon rider), a world point; undefined: none (they turn back).
+   */
+  setDirectAtTarget(userInfo: number, target: Point | undefined): void {
+    if (target) this.#directAtTargets.set(userInfo, [target[0], target[1], target[2]]);
+    else this.#directAtTargets.delete(userInfo);
   }
 
   /** Sends an event to the graph (handled at the next update): false if it knows none so named. */
@@ -344,7 +553,27 @@ export class BehaviorRuntime {
     const global = this.#globalEvent(id, scope);
     if (global < 0) return;
     this.#queue.push(global);
-    this.#raised.push(this.#eventNames[global] ?? '');
+    this.#emit(this.#eventNames[global] ?? '');
+  }
+
+  /**
+   * An event the graph raised goes to the engine (takeRaised). HeadTrackingOff and
+   * HeadTrackingOn (raised by graphs and clips' annotations: idles that look elsewhere) turn
+   * the character's head tracking off and on: meshes\responses\actorresponse.txt names their
+   * handlers (HeadTrackingOffHandler, HeadTrackingOnHandler).
+   */
+  #emit(name: string): void {
+    this.#raised.push(name);
+    const key = name.toLowerCase();
+    if (key === 'headtrackingoff') this.#headTracking = false;
+    else if (key === 'headtrackingon') this.#headTracking = true;
+  }
+
+  #headTracking = true;
+
+  /** Whether the graph lets the character head-track (HeadTrackingOff / HeadTrackingOn). */
+  get headTrackingAllowed(): boolean {
+    return this.#headTracking;
   }
 
   // --- Frame ---------------------------------------------------------------------------------
@@ -356,6 +585,7 @@ export class BehaviorRuntime {
    */
   update(dt: number, pose = true): void {
     this.#updates++;
+    this.#dt = dt;
     // Events raised while handling others are handled in the same frame, a few rounds deep.
     for (let round = 0; round < 4 && this.#queue.length > 0; round++) {
       const events = this.#queue;
@@ -363,6 +593,7 @@ export class BehaviorRuntime {
       for (const event of events) this.#handle(this.#root, event, new Set());
     }
     const active = new Set<object>();
+    this.#keyframed = new Set();
     this.#updateNode(this.#root, dt, active);
     // Nodes no longer active are deactivated (their state reset, their exit events raised).
     for (const node of this.#active) {
@@ -371,6 +602,8 @@ export class BehaviorRuntime {
     this.#active = active;
     this.#motion = this.#host.rootMotion ? this.#rootMotion() : NO_MOTION;
     if (!pose) return;
+    this.#footIkControls = undefined;
+    this.#eyes = undefined;
     const generated = this.#generate(this.#root, 0);
     const reference = this.skeleton.referencePose;
     if (!generated) {
@@ -381,6 +614,20 @@ export class BehaviorRuntime {
     } else {
       this.pose.set(generated.pose);
     }
+    this.#turnHead();
+    this.#driveFootIk();
+  }
+
+  /** The line's head turn on the head bone ("NPC Head [Head]", else a bone named Head). */
+  #turnHead(): void {
+    const turn = this.headTurn;
+    if (!turn) return;
+    const [pitch = 0, roll = 0, yaw = 0] = Array.from(turn);
+    if (Math.abs(pitch) + Math.abs(roll) + Math.abs(yaw) < 1e-6) return;
+    this.#headBone ??= headBoneOf(this.skeleton);
+    if (this.#headBone < 0) return;
+    this.#space.update(this.pose);
+    turnHead(this.pose, this.#space, this.#headBone, pitch, roll, yaw);
   }
 
   /**
@@ -537,10 +784,11 @@ export class BehaviorRuntime {
     switch (generator.kind) {
       case 'state-machine': {
         const state = this.#machines.get(generator);
+        const scope = this.#scopeOf(generator);
         if (state?.current) {
-          const scope = this.#scopeOf(generator);
           for (const event of state.current.exitNotifyEvents ?? []) this.#raise(event, scope);
         }
+        if (generator.isActive) this.#write(generator.isActive, scope, 0);
         this.#machines.delete(generator);
         return;
       }
@@ -1085,6 +1333,7 @@ export class BehaviorRuntime {
     switch (node.kind) {
       case 'state-machine': {
         const machine = this.#machine(node);
+        if (node.isActive) this.#write(node.isActive, scope, 1);
         machine.timeInState += dt;
         // Transitions without an event take place as soon as their condition holds.
         if (!machine.transition) {
@@ -1257,7 +1506,7 @@ export class BehaviorRuntime {
     if (((node.flags ?? 0) & CLIP_FLAGS.dontConvertAnnotationsToTriggers) === 0) {
       for (const annotation of animation.annotations) {
         if (!passed(annotation.time - (node.cropStart ?? 0))) continue;
-        this.#raised.push(annotation.text);
+        this.#emit(annotation.text);
         const id = this.#eventIndex.get(annotation.text.toLowerCase());
         if (id !== undefined) this.#queue.push(id);
       }
@@ -1314,6 +1563,8 @@ export class BehaviorRuntime {
   #modifierDeactivated(modifier: BehaviorModifier): void {
     if (!this.#modifiers.has(modifier)) return;
     this.#modifiers.delete(modifier);
+    // A procedural modifier starts over from the animation when it is active again.
+    this.#procedural.delete(modifier);
     const scope = this.#scopeOf(modifier);
     switch (modifier.kind) {
       case 'is-active':
@@ -1418,6 +1669,21 @@ export class BehaviorRuntime {
         // TODO(M10): the actor's measured speed; until then its goal speed.
         this.#write(modifier.speedOut, scope, this.#read(modifier.goalSpeed, scope));
         return;
+      case 'keyframe-bones':
+        for (const bone of modifier.keyframedBones) this.#keyframed.add(bone);
+        return;
+      case 'look-at':
+      case 'direct-at':
+      case 'foot-ik-controls':
+      case 'foot-ik':
+      case 'twist':
+        // They move bones: the pose they are laid on is generated after the update (#modify).
+        return;
+      case 'rotate-character':
+        // It turns the character at degreesPerSecond (bound to TurnDelta: the turn the engine
+        // makes it anyway, in the equip and unequip states it wraps): the movers turn the actor
+        // (src/ai/locomotion.ts), so the graph's root motion leaves it out, not to turn twice.
+        return;
       case 'is-active':
       case 'event-on-deactivate':
       case 'every-n-events':
@@ -1488,10 +1754,330 @@ export class BehaviorRuntime {
             : now || state.values[firedKey] === 1;
     if (send) {
       state.values[firedKey] = 1;
-      this.#raised.push(expression.event);
+      this.#emit(expression.event);
       if (id !== undefined) this.#queue.push(id);
     }
   }
+
+  // --- Procedural modifiers ------------------------------------------------------------------
+
+  /** Whether a modifier moves bones, or holds one that does (decided once). */
+  #movesBonesOf(modifier: BehaviorModifier): boolean {
+    let moves = this.#movesBones.get(modifier);
+    if (moves !== undefined) return moves;
+    switch (modifier.kind) {
+      case 'look-at':
+      case 'direct-at':
+      case 'twist':
+      case 'foot-ik':
+      case 'foot-ik-controls':
+        moves = true;
+        break;
+      case 'list':
+      case 'event-driven':
+      case 'modify-once':
+        this.#movesBones.set(modifier, false);
+        moves = modifierChildren(modifier).some((child) => this.#movesBonesOf(child));
+        break;
+      default:
+        moves = false;
+    }
+    this.#movesBones.set(modifier, moves);
+    return moves;
+  }
+
+  /** The state a pose-moving modifier keeps, and whether this update advances it (once). */
+  #proceduralState(modifier: BehaviorModifier): {
+    state: ProceduralModifierState;
+    advance: boolean;
+  } {
+    let state = this.#procedural.get(modifier);
+    if (!state) {
+      state = { stepped: -1 };
+      this.#procedural.set(modifier, state);
+    }
+    const advance = state.stepped !== this.#updates;
+    state.stepped = this.#updates;
+    return { state, advance };
+  }
+
+  /** Lays an active, enabled modifier (and those it holds) on a pose (bone-local, solid). */
+  #modify(modifier: BehaviorModifier, pose: Float32Array): void {
+    if (!this.#active.has(modifier)) return;
+    const scope = this.#scopeOf(modifier);
+    if (this.#read(modifier.enable, scope) === 0) return;
+    switch (modifier.kind) {
+      case 'list':
+        for (const child of modifier.modifiers) this.#modify(child, pose);
+        return;
+      case 'event-driven':
+        if (this.#modifiers.get(modifier)?.active === true && modifier.modifier)
+          this.#modify(modifier.modifier, pose);
+        return;
+      case 'look-at':
+        this.#lookAt(modifier, pose, scope);
+        return;
+      case 'direct-at':
+        this.#directAt(modifier, pose, scope);
+        return;
+      case 'twist':
+        this.#space.update(pose);
+        twist(
+          {
+            axis: modifier.axis,
+            angle: this.#read(modifier.twistAngle, scope) * DEGREES,
+            startBone: modifier.startBoneIndex,
+            endBone: modifier.endBoneIndex,
+            setAngleMethod: modifier.setAngleMethod,
+            rotationAxisCoordinates: modifier.rotationAxisCoordinates,
+            isAdditive: modifier.isAdditive,
+          },
+          pose,
+          this.#space,
+          this.skeleton.referencePose,
+        );
+        return;
+      case 'foot-ik-controls':
+        // The character's foot IK runs once the pose is whole (#driveFootIk), with these.
+        this.#footIkControls = modifier;
+        return;
+      case 'foot-ik': {
+        const { state, advance } = this.#proceduralState(modifier);
+        state.footIk ??= footIkState(modifier.setup.legs.length);
+        this.#space.update(pose);
+        const result = footIk(
+          modifier.setup,
+          this.#footIkGains(modifier.gains, scope),
+          true,
+          state.footIk,
+          pose,
+          this.#space,
+          this.#groundProbe(),
+          this.#dt,
+          advance,
+        );
+        if (advance) {
+          this.#ungrounded(
+            state,
+            result,
+            modifier.setup.legs.map((leg) => leg.ungroundedEvent),
+            scope,
+          );
+          this.#writeVector(modifier.errorOutTranslation, scope, [0, 0, result.offset, 0]);
+        }
+        return;
+      }
+      default:
+        return;
+    }
+  }
+
+  /** The look-at's values now (its bindings read; angles in radians). */
+  #lookAtBone(bone: LookAtBone, scope: Scope): LookAtBoneValues {
+    return {
+      index: bone.index,
+      forwardAxis: bone.forwardAxis,
+      limit: this.#read(bone.limitAngleDegrees, scope) * DEGREES,
+      onGain: this.#read(bone.onGain, scope),
+      offGain: this.#read(bone.offGain, scope),
+      enabled: this.#read(bone.enabled, scope) !== 0,
+    };
+  }
+
+  /**
+   * BSLookAtModifier: its target is the engine's TargetLocation (a world point, bound to
+   * targetLocation) while lookAtTarget (bHeadTracking) holds, or the camera (camerafromx/y/z)
+   * with lookAtCamera; both are in the world, so it rests without the character's place.
+   */
+  #lookAt(
+    modifier: Extract<BehaviorModifier, { kind: 'look-at' }>,
+    pose: Float32Array,
+    scope: Scope,
+  ): void {
+    const camera = this.#read(modifier.lookAtCamera, scope) !== 0;
+    const on = camera || this.#read(modifier.lookAtTarget, scope) !== 0;
+    const [x, y, z] = this.#readVector(modifier.targetLocation, scope);
+    const world: Point = camera
+      ? [
+          this.#read(modifier.lookAtCameraX, scope),
+          this.#read(modifier.lookAtCameraY, scope),
+          this.#read(modifier.lookAtCameraZ, scope),
+        ]
+      : [x, y, z];
+    const target = this.world ? toModel(this.world.worldFromModel, world) : undefined;
+    const values = {
+      bones: modifier.bones.map((bone) => this.#lookAtBone(bone, scope)),
+      eyeBones: modifier.eyeBones.map((bone) => this.#lookAtBone(bone, scope)),
+      limit: this.#read(modifier.limitAngleDegrees, scope) * DEGREES,
+      threshold: this.#read(modifier.limitAngleThresholdDegrees, scope) * DEGREES,
+      continueOutsideLimit: this.#read(modifier.continueLookOutsideOfLimit, scope) !== 0,
+      onGain: this.#read(modifier.onGain, scope),
+      offGain: this.#read(modifier.offGain, scope),
+      useBoneGains: this.#read(modifier.useBoneGains, scope) !== 0,
+    };
+    const { state, advance } = this.#proceduralState(modifier);
+    state.lookAt ??= lookAtState(values);
+    this.#space.update(pose);
+    const result = lookAt(values, state.lookAt, pose, this.#space, target, on, this.#dt, advance);
+    if (result.eyes) this.#eyes = result.eyes;
+    if (!advance) return;
+    this.#write(modifier.targetOutsideLimits, scope, result.outside ? 1 : 0);
+    if (result.wentOutside) this.#raise(modifier.targetOutOfLimitEvent, scope);
+  }
+
+  /**
+   * BSDirectAtModifier: aimed at its target (bound to a vector variable), the camera, or the
+   * aim the engine gives its kind (setDirectAtTarget by userInfo); its outputs say how far it
+   * turned (degrees).
+   */
+  #directAt(
+    modifier: Extract<BehaviorModifier, { kind: 'direct-at' }>,
+    pose: Float32Array,
+    scope: Scope,
+  ): void {
+    const camera = this.#read(modifier.directAtCamera, scope) !== 0;
+    const wanted = camera || this.#read(modifier.directAtTarget, scope) !== 0;
+    let world: Point | undefined;
+    if (camera) {
+      world = [
+        this.#read(modifier.directAtCameraX, scope),
+        this.#read(modifier.directAtCameraY, scope),
+        this.#read(modifier.directAtCameraZ, scope),
+      ];
+    } else if (modifier.targetLocation.variable !== undefined) {
+      const [x, y, z] = this.#readVector(modifier.targetLocation, scope);
+      world = [x, y, z];
+    } else {
+      world = this.#directAtTargets.get(modifier.userInfo);
+    }
+    const target = world && this.world ? toModel(this.world.worldFromModel, world) : undefined;
+    const { state, advance } = this.#proceduralState(modifier);
+    state.directAt ??= { heading: 0, pitch: 0 };
+    this.#space.update(pose);
+    const turned = directAt(
+      {
+        sourceBone: modifier.sourceBoneIndex,
+        startBone: modifier.startBoneIndex,
+        endBone: modifier.endBoneIndex,
+        limitHeading: this.#read(modifier.limitHeadingDegrees, scope) * DEGREES,
+        limitPitch: this.#read(modifier.limitPitchDegrees, scope) * DEGREES,
+        offsetHeading: this.#read(modifier.offsetHeadingDegrees, scope) * DEGREES,
+        offsetPitch: this.#read(modifier.offsetPitchDegrees, scope) * DEGREES,
+        onGain: this.#read(modifier.onGain, scope),
+        offGain: this.#read(modifier.offGain, scope),
+      },
+      state.directAt,
+      pose,
+      this.#space,
+      target,
+      wanted,
+      this.#dt,
+      advance,
+    );
+    if (!advance) return;
+    this.#write(modifier.active, scope, wanted && target ? 1 : 0);
+    this.#write(modifier.currentHeadingOffset, scope, turned.heading / DEGREES);
+    this.#write(modifier.currentPitchOffset, scope, turned.pitch / DEGREES);
+  }
+
+  #footIkGains(gains: FootIkGains, scope: Scope): FootIkGainValues {
+    const read = (bindable: Bindable): number => this.#read(bindable, scope);
+    return {
+      onOffGain: read(gains.onOffGain),
+      groundAscendingGain: read(gains.groundAscendingGain),
+      groundDescendingGain: read(gains.groundDescendingGain),
+      footPlantedGain: read(gains.footPlantedGain),
+      footRaisedGain: read(gains.footRaisedGain),
+      worldFromModelFeedbackGain: read(gains.worldFromModelFeedbackGain),
+      errorUpDownBias: read(gains.errorUpDownBias),
+      alignWorldFromModelGain: read(gains.alignWorldFromModelGain),
+      ankleOrientationGain: read(gains.ankleOrientationGain),
+    };
+  }
+
+  /**
+   * The ground under model-space points, through the world's rays (undefined without the
+   * world). TODO(M13): the rays see what character controllers stand on; the driver's own
+   * filter (collisionFilterInfo, layer 3: L_TRANSPARENT) would see the actor's own ragdoll.
+   */
+  #groundProbe(): GroundProbe | undefined {
+    const world = this.world;
+    const ground = world?.ground?.bind(world);
+    if (!world || !ground) return undefined;
+    const matrix = world.worldFromModel;
+    const scale = Math.hypot(matrix[0] ?? 0, matrix[1] ?? 0, matrix[2] ?? 0) || 1;
+    return (from, length) => {
+      const hit = ground(toWorld(matrix, from), length * scale);
+      if (!hit) return undefined;
+      return {
+        height: toModel(matrix, hit.point)[2],
+        normal: directionToModel(matrix, hit.normal),
+      };
+    };
+  }
+
+  /** Raises the ungrounded events of legs whose rays just found nothing. */
+  #ungrounded(
+    state: ProceduralModifierState,
+    result: FootIkResult,
+    events: readonly (BehaviorEvent | undefined)[],
+    scope: Scope,
+  ): void {
+    const was = state.ungrounded ?? [];
+    state.ungrounded = result.legs.map((leg, i) => {
+      const event = events[i];
+      if (!leg.hit && was[i] !== true && event && event.id >= 0) this.#raise(event, scope);
+      return !leg.hit;
+    });
+  }
+
+  /**
+   * The character's foot IK (hkbFootIkDriver on its hkbFootIkDriverInfo), on the whole pose:
+   * on while the graph's hkbFootIkControlsModifier is active and enabled (the human graph binds
+   * it to bHumanoidFootIKEnable) and bHumanoidFootIKDisable does not hold (the graph sets it
+   * in swimming, jumps, killmoves, bleedout, mounts), easing off otherwise.
+   */
+  #driveFootIk(): void {
+    const setup = this.#footIk;
+    if (!setup || setup.legs.length === 0) return;
+    const controls = this.#footIkControls;
+    if (!controls && !this.#footIkState) return;
+    const disabled = (this.variable('bHumanoidFootIKDisable') ?? 0) !== 0;
+    const scope = controls ? this.#scopeOf(controls) : this.#rootScope;
+    this.#footIkState ??= footIkState(setup.legs.length);
+    // Without controls it only eases off (by the last on/off gain), keeping what it found.
+    const gains = controls
+      ? this.#footIkGains(controls.gains, scope)
+      : { ...EASING_OFF, onOffGain: this.#lastOnOffGain };
+    if (controls) this.#lastOnOffGain = gains.onOffGain;
+    this.#space.update(this.pose);
+    const result = footIk(
+      setup,
+      gains,
+      controls !== undefined && !disabled,
+      this.#footIkState,
+      this.pose,
+      this.#space,
+      this.#groundProbe(),
+      this.#dt,
+      true,
+    );
+    if (!controls) {
+      if (this.#footIkState.weight < 1e-3) this.#footIkState = undefined;
+      return;
+    }
+    controls.legs.forEach((leg, i) => {
+      const found = result.legs[i];
+      if (!found) return;
+      this.#write(leg.verticalError, scope, found.error);
+      this.#write(leg.hitSomething, scope, found.hit ? 1 : 0);
+      this.#write(leg.isPlantedMS, scope, found.planted ? 1 : 0);
+    });
+    this.#writeVector(controls.errorOutTranslation, scope, [0, 0, result.offset, 0]);
+  }
+
+  /** The controls' on/off gain, for easing off once they are gone. */
+  #lastOnOffGain = 0.2;
 
   // --- Pose ----------------------------------------------------------------------------------
 
@@ -1550,7 +2136,16 @@ export class BehaviorRuntime {
         return this.#generateOffset(node, depth, scope);
       case 'cyclic-blend':
         return this.#generateCyclic(node, depth);
-      case 'modifier-generator':
+      case 'modifier-generator': {
+        // hkbModifierGenerator: its generator's pose, then its modifier on it.
+        const generated = this.#pass(node.generator, depth);
+        const modifier = node.modifier;
+        if (!generated || !modifier || !this.#movesBonesOf(modifier)) return generated;
+        const out = this.#buffer(depth);
+        if (generated.additive) out.set(this.#solid(generated, depth + 1));
+        this.#modify(modifier, out);
+        return { pose: out, additive: false };
+      }
       case 'state-tagging':
       case 'synchronized-clip':
         return this.#pass(node.generator, depth);
@@ -1762,4 +2357,13 @@ function leafClip(node: BehaviorGenerator | undefined): Clip | undefined {
     return undefined;
   }
   return undefined;
+}
+
+/** The head bone of a skeleton: "NPC Head [Head]", else the first named Head (−1: none). */
+function headBoneOf(skeleton: HkxSkeleton): number {
+  const exact = skeleton.bones.findIndex((bone) => /^npc head \[head\]$/i.test(bone.name));
+  if (exact >= 0) return exact;
+  return skeleton.bones.findIndex(
+    (bone) => /\bhead\b/i.test(bone.name) && !/magic/i.test(bone.name),
+  );
 }
