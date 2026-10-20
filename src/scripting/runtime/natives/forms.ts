@@ -302,15 +302,18 @@ export function registerForms(n: Register, runtime: ScriptRuntime): void {
   };
   for (const kind of ['spell', 'potion', 'enchantment', 'ingredient'])
     ask(`${kind}.ishostile`, false, (formId) => hostile(formId));
+  // Cast(akSource, akTarget), RemoteCast(akSource, akBlameActor, akTarget): applied at once
+  // (the magic system; TODO(M10) 5.3: the projectile's flight).
   for (const kind of ['spell', 'scroll']) {
-    on(`${kind}.cast`, (spell, call) => {
+    on(`${kind}.cast`, async (spell, call) => {
       const source = ref(call.args[0]);
-      if (source !== undefined) world.castSpell?.(spell, source, ref(call.args[1]));
+      if (source !== undefined) await runtime.magic.cast(spell, source, ref(call.args[1]));
     });
   }
-  on('spell.remotecast', (spell, call) => {
+  on('spell.remotecast', async (spell, call) => {
     const source = ref(call.args[0]);
-    if (source !== undefined) world.castSpell?.(spell, source, ref(call.args[2]));
+    if (source !== undefined)
+      await runtime.magic.cast(spell, source, ref(call.args[2]), ref(call.args[1]));
   });
   on('spell.preload', () => undefined);
   on('spell.unload', () => undefined);
@@ -318,10 +321,36 @@ export function registerForms(n: Register, runtime: ScriptRuntime): void {
     const source = ref(call.args[0]);
     if (source !== undefined) world.fireWeapon?.(weapon, source, formOf(call.args[1]));
   });
-  // TODO(M11): learned ingredient effects (the alchemy menu).
-  on('ingredient.learneffect', () => undefined);
-  ask('ingredient.learnnexteffect', -1, () => -1);
-  on('ingredient.learnalleffects', () => undefined);
+  // The effects the player knows of an ingredient (GameState.ingredientEffects: the alchemy
+  // and inventory menus show them).
+  const learn = (ingredient: number, slots: readonly number[]): void => {
+    const known = new Set(state.ingredientEffects.get(ingredient) ?? []);
+    for (const slot of slots) known.add(slot);
+    state.ingredientEffects.set(ingredient, known);
+  };
+  const effectCount = async (ingredient: number): Promise<number> =>
+    (await forms.record(ingredient))?.fields.all('EFID').length ?? 0;
+  on('ingredient.learneffect', async (ingredient, call) => {
+    const slot = int(call.args[0]);
+    if (slot >= 0 && slot < (await effectCount(ingredient))) learn(ingredient, [slot]);
+  });
+  // The first effect not known yet, learned: its index (−1 when all are known).
+  ask('ingredient.learnnexteffect', -1, async (ingredient) => {
+    const known = state.ingredientEffects.get(ingredient);
+    const count = await effectCount(ingredient);
+    for (let slot = 0; slot < count; slot++) {
+      if (known?.has(slot)) continue;
+      learn(ingredient, [slot]);
+      return slot;
+    }
+    return -1;
+  });
+  on('ingredient.learnalleffects', async (ingredient) => {
+    learn(
+      ingredient,
+      Array.from({ length: await effectCount(ingredient) }, (_, slot) => slot),
+    );
+  });
   ask('magiceffect.getassociatedskill', '', async (effect) => {
     const data = (await forms.record(effect))?.fields.first('DATA');
     // DATA: flags u32, base cost f32, related form, magic skill (actor value index, −1 none).

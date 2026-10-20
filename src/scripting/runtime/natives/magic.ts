@@ -6,9 +6,9 @@ import type { ScriptRuntime } from '../runtime.ts';
 import { formOf, num, object, str, type Register } from './args.ts';
 
 export function registerMagic(n: Register, runtime: ScriptRuntime): void {
-  const { state } = runtime;
+  // The effect as its scripts see it: on its actor, or ending while OnEffectFinish runs.
   const effect = (self: { key: string } | null) =>
-    self ? state.activeEffects.get(self.key) : undefined;
+    self ? runtime.magic.scriptEffect(self.key) : undefined;
   n('activemagiceffect.getbaseobject', ({ self }) => object(effect(self)?.effect, 'magiceffect'));
   n('activemagiceffect.gettargetactor', ({ self }) =>
     runtime.actorHandleOrNone(effect(self)?.target),
@@ -17,7 +17,7 @@ export function registerMagic(n: Register, runtime: ScriptRuntime): void {
     runtime.actorHandleOrNone(effect(self)?.caster),
   );
   n('activemagiceffect.dispel', ({ self }) => {
-    if (self) runtime.detach(runtime.endEffect(self.key));
+    if (self) runtime.detach(runtime.magic.dispel(self.key));
     return null;
   });
   n('activemagiceffect.registerforupdate', ({ self, args }) =>

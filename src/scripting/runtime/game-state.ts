@@ -73,6 +73,11 @@ export interface ActorValueState {
   base?: number;
   /** Permanent modifiers (ModActorValue). */
   modifier: number;
+  /**
+   * Temporary modifiers: magic effects that are taken back as they end (Fortify, abilities,
+   * worn enchantments; CommonLibSSE ACTOR_VALUE_MODIFIER::kTemporary).
+   */
+  temporary?: number;
   /** Damage restored over time (DamageActorValue / RestoreActorValue). */
   damage: number;
 }
@@ -174,16 +179,43 @@ export interface CellState {
   public?: boolean;
 }
 
-/** A magic effect active on an actor (TODO(M11): the magic system applies and ends them). */
+/**
+ * A magic effect on an actor (the magic system's: src/scripting/runtime/magic-engine.ts): an
+ * effect item of a magic item on its target, from its caster, as strong as it was cast and
+ * resisted. Keyed by its ActiveMagicEffect script object's handle.
+ */
 export interface ActiveEffectState {
   /** MGEF. */
   readonly effect: number;
   readonly target: number;
   readonly caster: number | undefined;
-  /** Seconds it has lasted, and lasts in all (0: until dispelled). */
+  /** Seconds it has lasted, and lasts in all (0: at once, or until dispelled when lasting). */
   elapsed: number;
   readonly duration: number;
   readonly magnitude: number;
+  /** The magic item (SPEL, SCRL, ENCH, ALCH, INGR) it is an effect of, and the effect item's index. */
+  readonly item?: number;
+  readonly index?: number;
+  /** The worn or wielded object whose enchantment it is (or whose equip ability). */
+  readonly source?: number;
+  /** Feet. */
+  readonly area?: number;
+  /** It lasts until it is taken away: abilities, diseases, worn enchantments. */
+  readonly lasting?: boolean;
+  /** It was dual cast. */
+  readonly dual?: boolean;
+  /** Its conditions do not hold: it does nothing (its scripts finished) until they do. */
+  inactive?: boolean;
+  /** What it put on actor values that is taken back as it ends (actor, actor value, amount). */
+  applied?: { readonly actor: number; readonly value: number; amount: number }[];
+  /** What it made or raised: a summoned or reanimated actor, a bound weapon, a hazard. */
+  made?: number;
+}
+
+/** What the magic system keeps of an actor besides the effects on it. */
+export interface ActorMagicState {
+  /** The poison on its weapon, for its next hits (TODO(M10) 5.1: hits deliver it). */
+  poison?: { readonly weapon: number | undefined; readonly poison: number; charges: number };
 }
 
 /** A reference a script created (PlaceAtMe, alias Create Reference). */
@@ -209,8 +241,10 @@ export class GameState {
   readonly relationships = new Map<string, number>();
   /** Entries scripts added to leveled lists (LeveledItem.AddForm, ...), by list. */
   readonly leveledAdditions = new Map<number, { level: number; formId: number; count: number }[]>();
-  /** Magic effects active on actors (ActiveMagicEffect scripts): by handle key. */
+  /** Magic effects on actors (ActiveMagicEffect scripts): by handle key. */
   readonly activeEffects = new Map<string, ActiveEffectState>();
+  /** What the magic system keeps of actors (a poisoned weapon), by actor. */
+  readonly actorMagic = new Map<number, ActorMagicState>();
   /** Item counts per container (reference), by base form; filled from the records on first use. */
   readonly inventories = new Map<number, Map<number, number>>();
   readonly created = new Map<number, CreatedReference>();

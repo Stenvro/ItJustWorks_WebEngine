@@ -136,3 +136,117 @@ IsWeaponSkillType, IsWeaponInList, HasTwoHandedWeaponEquipped; HasBoundWeaponEqu
 IsShieldOut and IsWeaponOut need the weapon drawn (TODO(M10) 5.1).
 
 TODO(M11): warmth (Survival Mode); TODO(M12): the loadout in the save.
+
+## Magic effects
+
+The magic system (`src/scripting/runtime/magic-engine.ts`, the rules in
+`src/gameplay/magic/effect-rules.ts`, the records in `src/world/magic-records.ts` and
+`src/world/magic-effects.ts`; `node tools/magic-info.ts <item>` prints an item and applies it to
+the player in a runtime on the game data, `--audit` reads every record).
+
+### Records
+
+- Magic items: SPEL (spell, disease, power, lesser power, ability, poison, addiction, voice by
+  SPIT's type), SCRL, ENCH (ENIT: cost, flags, cast type, charge, delivery, enchant type 0x06
+  or 0x0C staff, charge time, base enchantment, worn restrictions), ALCH (ENIT: value, flags
+  0x2 food / 0x20000 poison, addiction and its chance, use sound), INGR. Each has effect items:
+  EFID, EFIT (magnitude, area in feet, duration in seconds), CTDA.
+- MGEF DATA (152 bytes, xEdit; CommonLibSSE EffectSettingData): flags (hostile, recover,
+  detrimental, dispel with keywords, no duration / magnitude / area, FX persist, hidden in the
+  interface, no recast, power affects magnitude / duration, painless, no hit effect, no death
+  dispel), base cost, associated form @8 (a summon's NPC_, a bound weapon, a cloak's SPEL, a
+  light, a hazard), magic skill @12, resist value @16, light @24, hit and enchant shaders @32,
+  @36, minimum skill @40, taper @28/@52/@56, second value weight @60, archetype @64, actor value
+  @68, projectile @72, explosion @76, casting type @80, delivery @84, second actor value @88,
+  casting / hit / enchant art @92/@96/@116, impact data @100, dual cast art and scale
+  @108/@112, hit and enchant visuals (RFCT) @120/@124, equip ability @128, image-space
+  modifier @132, perk @136; KWDA, ESCE (counter effects), SNDD (sound type: 0 draw, 1 charge,
+  2 ready, 3 release, 4 concentration loop, 5 on hit; SNDR), its own CTDA, VMAD.
+- SLGM: SOUL, SLCP, NAM0 the filled version, record flag 0x20000 holds NPC souls.
+
+### Applying an effect
+
+- Strength: the effect item's magnitude and duration; dual casting's power
+  (fMagicDualCastingEffectivenessBase, 2.2) scales what Power Affects Magnitude / Duration say
+  (unless the spell's 0x800000 flag); No Magnitude / No Duration effects have none (UESP
+  "Skyrim:Dual Casting"). TODO(M11): perks' entry points.
+- Targets: objects get OnMagicEffectApply, and Open / Lock work on their locks (a lock up to the
+  magnitude's level). The dead take nothing but Reanimate. The ethereal take no hostile effect.
+- Level caps: Calm, Fear, Frenzy, Rally, Turn Undead, Banish, Reanimate, Command and Disarm
+  reach actors up to the magnitude's level; above it the player's spell tells
+  sMagicEffectResisted.
+- Resistances (hostile or detrimental effects, not abilities and diseases): × (1 − resist / 100)
+  of the effect's resist value (FireResist, FrostResist, ElectricResist, PoisonResist,
+  MagicResist, ...), and of Magic Resistance on spells, shouts, scrolls and enchantments
+  (not potions, poisons, food, ingredients; not spells that ignore resistance); the player's
+  capped at fPlayerMaxResistance (85); negative resistance is a weakness. An effect without a
+  magnitude is resisted whole by chance (UESP "Skyrim:Resistances", "Skyrim:Magic
+  Resistance"). A disease is caught unless Disease Resistance's percentage resists it, and
+  only by its effects' chance (their GetRandomPercent conditions).
+- Stacking: the same effect item of the same item from the same caster and source replaces
+  the one there (No Recast: it is not applied again); different items stack, but of a Peak
+  Value Modifier only the strongest instance of one magic effect counts. An effect dispels
+  those it counters (ESCE) and, with Dispel with Keywords, those sharing a keyword.
+- Conditions: the effect item's and the magic effect's, on the target ("target" runs on the
+  caster), evaluated as it is applied and about each second (TODO(M13): the engine's interval):
+  while they fail the effect is inactive (it does nothing, its scripts finished; again active,
+  they start anew). An effect at once whose conditions fail does nothing. A disease's
+  GetRandomPercent conditions are its chance of being caught, not checked while it lasts.
+- Scripts: a magic effect with scripts runs them as an ActiveMagicEffect (OnInit,
+  OnEffectStart, OnEffectFinish; its natives read it until OnEffectFinish has run); the target
+  gets OnMagicEffectApply; a hostile spell cast at another gets OnHit (TODO(M10) 5.3: on the
+  projectile's impact).
+
+### What effects do
+
+- Value effects (Value Modifier, Peak Value Modifier, Dual Value Modifier, Absorb, Accumulate
+  Magnitude, Value and Parts, Enhance Weapon, Invisibility, Night Eye, Darkness, Paralysis,
+  Grab Actor): Recover effects (and Peak Value Modifiers, whose class undoes them as they are
+  removed) are temporary modifiers (`ActorValueState.temporary`) while they act; others damage
+  or restore at once (no duration, No Duration, or lasting) or by their magnitude each second
+  of their duration (Creation Kit "Magic Effect"). Detrimental effects take away. Dual Value
+  Modifier changes its second actor value by the weight's share; Absorb's caster gains what
+  its target loses; damage to Health names the caster the killer; the invulnerable take none.
+  Effects without a magnitude set their value as a flag (1): Paralysis, Invisibility.
+- Calm, Frenzy, Demoralize, Rally, Turn Undead, Banish move Aggression or Confidence to a
+  target value (0 unaggressive, 3 frenzied; 0 cowardly, 4 foolhardy: TODO(M13) inferred) while
+  they last; `MagicEngine.aiState` is what the combat AI reads (TODO(M10) 5.2).
+- Cure Disease / Poison / Paralysis / Addiction end those effects (a disease leaves the
+  actor's spells). Dispel ends spells' effects up to its magnitude (TODO(M13): Oblivion's rule).
+- Summon Creature places its NPC_ before the summoner (one at a time: TODO(M11) Twin Souls),
+  gone as the effect ends or the summoner dies; Reanimate raises a corpse (it falls again as it
+  ends); Banish ends a summoning; Bound Weapon puts its weapon in the hand; Spawn Hazard and
+  Spawn Scripted Ref place their form; Disarm takes the weapons out of the hands
+  (sPlayerDisarmedMessage); Soul Trap and Actor.TrapSoul put a dead actor's soul (by level:
+  iLesserSoulActorLevel 4 .. iGrandSoulActorLevel 38; NPCs black) into the smallest empty gem
+  that holds it (its NAM0 form), with the Soul Captured sound (DOBJ SCSD).
+- Cloaks put their spell on actors within the magnitude in feet each second (TODO(M13): the
+  radius read as the magnitude). Slow Time's magnitude is the world's time
+  (`timeMultiplier`, TODO(M11): the frame's clock). Invisibility ends as its actor activates.
+  An actor's effects end as it dies but No Death Dispel ones.
+- TODO(M10) 5.1/5.3, TODO(M11) visuals: staggers, telekinesis, grabs, Clairvoyance's path,
+  lights, Detect Life's shader, effect shaders (EFSH) and art (ARTO) on actors; their data goes
+  to `WorldBridge.magicEffect`, the image-space modifier is applied while an effect acts on the
+  player, the On Hit sound plays at the target.
+
+### Lasting effects and items
+
+- Abilities, diseases and addictions an actor has, the constant enchantments of what it wears
+  and their equip abilities last while it has them (`prepare`: actors as they load, the player
+  at a new game; re-checked each second and as spells or races change).
+- Using items (`useItem`: the inventory and favorites menus, NPCs' Eat procedure): a potion or
+  food applies its effects (its use sound, its addiction by chance); an ingredient its first
+  effect, which the player then knows; a poison goes on the equipped weapon after the player
+  confirms (sPoisonConfirmMessage, sPoisonBowConfirmMessage; sPoisonNoWeaponMessage,
+  sPoisonAlreadyPoisonedMessage), one dose for its next hit (`weaponHit`, TODO(M10) 5.1;
+  sPoisoned when it hits the player). The equip system uses an item up and tells its scripts
+  (EquipmentEngine.use: OnObjectEquipped), then the magic system applies it (`consumed`; the
+  world shows the casting through castSpell). Worn enchantments follow the equip system's
+  changes at once (its listeners).
+- An actor's events (OnObjectEquipped, OnHit, OnDeath, ...) reach the scripts of the active
+  magic effects on it too (Creation Kit: ActiveMagicEffect Script).
+- Waiting: game time passing counts as the real seconds it stands for (TODO(M13)).
+- The magic menu's Active Effects: one entry per magic item (and worn object) on the player,
+  named after the object, the item or its effect; its effects' descriptions with the values
+  they act with; the longest time left (ICT_ACTIVE_EFFECT's timeRemaining); detrimental or
+  hostile ones in red (negativeEffect).

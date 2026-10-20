@@ -747,7 +747,8 @@ export class EquipmentEngine {
       runtime.state.ingredientEffects.set(formId, known);
     }
     await this.#tell(actor, [formId], [], false);
-    runtime.world.castSpell?.(formId, actor, actor);
+    // Its effects on the actor (the magic system; the world shows the casting: castSpell).
+    await runtime.magic.consumed(actor, formId);
     return true;
   }
 
