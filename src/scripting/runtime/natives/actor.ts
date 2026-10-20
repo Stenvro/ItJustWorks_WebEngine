@@ -4,6 +4,8 @@
 // combat, idles, equipment shown, look-at) goes to the engine through the WorldBridge.
 // Platform-independent. Notes: docs/scripting.md ("Actors").
 
+import { hostileTo } from '../../../ai/combat-ai.ts';
+import { isGuardClass } from '../../../ai/combat-reactions.ts';
 import { NpcFlag } from '../../../world/actor-records.ts';
 import { ActorValue } from '../../../world/actor-values.ts';
 import type { NativeCall } from '../../papyrus-vm.ts';
@@ -52,7 +54,8 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
       | 'bribed'
       | 'intimidated'
       | 'dontMove'
-      | 'noBleedoutRecovery',
+      | 'noBleedoutRecovery'
+      | 'attackOnSight',
   ): void => {
     act(name, (actor, call) => {
       state.actor(actor)[key] = bool(call.args[0], true);
@@ -355,9 +358,9 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     world.stopCombat?.(actor);
     world.alarm?.(actor, undefined, 'stop');
   });
-  // In combat as combat has it (src/shell/actor-combat.ts; TODO(M10) 5.2: the combat AI).
+  // In combat as the combat AI has it (src/shell/actor-combat-ai.ts): 1 fighting, 2 searching.
   ask('isincombat', false, (actor) => world.combat?.(actor)?.inCombat ?? false);
-  ask('getcombatstate', 0, (actor) => (world.combat?.(actor)?.inCombat === true ? 1 : 0));
+  ask('getcombatstate', 0, (actor) => world.combat?.(actor)?.combatState ?? 0);
   ask('getcombattarget', null, (actor) =>
     runtime.actorHandleOrNone(world.combat?.(actor)?.combatTarget),
   );
@@ -370,8 +373,17 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     const other = ref(call.args[0]);
     return other !== undefined && (world.lineOfSight?.(actor, other) ?? false);
   });
-  ask('ishostiletoactor', false, () => false);
-  ask('isguard', false, () => false);
+  // Hostile: it fights the other or would attack it on sight (src/ai/combat-ai.ts); a guard's
+  // class has the guard flag (CLAS DATA).
+  ask('ishostiletoactor', false, async (actor, call) => {
+    const other = ref(call.args[0]);
+    return other !== undefined && (await hostileTo(runtime, actor, other));
+  });
+  ask('isguard', false, async (actor) => {
+    const type = (await runtime.actors.info(actor))?.stats.class;
+    const record = type === undefined ? undefined : await runtime.forms.record(type);
+    return record?.type === 'CLAS' && isGuardClass(record.fields.first('DATA'));
+  });
   ask('istrespassing', false, () => false);
   ask('isarrested', false, () => false);
   ask('isarrestingtarget', false, () => false);
@@ -381,8 +393,8 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   // actors that hear it do is crime's (TODO(M11)).
   act('sendassaultalarm', (actor) => world.alarm?.(actor, PLAYER_REF, 'attack'));
   act('sendtrespassalarm', (actor, call) => world.alarm?.(actor, ref(call.args[0]), 'trespass'));
-  // TODO(M10) 5.2: an actor attacks this one on sight.
-  act('setattackactoronsight', () => undefined);
+  // Others attack this one on sight (src/ai/combat-reactions.ts: everyone's enemy).
+  flag('setattackactoronsight', 'attackOnSight');
   act('setnotshowonstealthmeter', (actor, call) =>
     world.hideFromStealthMeter?.(actor, bool(call.args[0], true)),
   );

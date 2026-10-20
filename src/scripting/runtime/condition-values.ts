@@ -5,9 +5,11 @@
 // keyword data, cleared), the time, and the story manager event's data. Functions not valued
 // yet hold (and are reported once), as conditions.ts does. Indices: UESP "Skyrim Mod:Function
 // Indices"; magic's in magic-conditions.ts. Detection's (GetDetected, GetLineOfSight,
-// GetLightLevel, ...) ask the world (src/shell/actor-senses.ts). TODO(M10)/(M11): combat and
-// crime functions.
+// GetLightLevel, ...) ask the world (src/shell/actor-senses.ts); combat's the combat AI
+// (src/shell/actor-combat-ai.ts, src/ai/combat-ai.ts). TODO(M11): crime functions.
 
+import { hostileTo, shouldAttack } from '../../ai/combat-ai.ts';
+import { isGuardClass, reactionOf } from '../../ai/combat-reactions.ts';
 import { NpcFlag, RaceFlag } from '../../world/actor-records.ts';
 import { ActorValue } from '../../world/actor-values.ts';
 import { conditionFunctionName } from '../condition-functions.ts';
@@ -36,6 +38,14 @@ export const Fn = {
   isInCombat: 289,
   getCombatState: 323,
   isFleeing: 329,
+  getShouldAttack: 66,
+  isGuard: 125,
+  getFriendHit: 288,
+  getFactionRelation: 449,
+  isCombatTarget: 513,
+  getCombatTargetHasKeyword: 707,
+  getCombatGroupMemberCount: 709,
+  isHostileToActor: 719,
   isBlocking: 569,
   getAttackState: 574,
   isBleedingOut: 580,
@@ -976,8 +986,8 @@ async function conditionValue(
         case Fn.isInCombat:
           return flag(now.inCombat);
         case Fn.getCombatState:
-          // 0 not in combat, 1 in combat (2 searching: TODO(M10) 5.2).
-          return now.inCombat ? 1 : 0;
+          // 0 not in combat, 1 in combat, 2 searching (src/shell/actor-combat-ai.ts).
+          return now.combatState;
         case Fn.isBlocking:
           return flag(now.blocking);
         case Fn.getAttackState:
@@ -1013,9 +1023,61 @@ async function conditionValue(
     // The player looks through their own eyes.
     case Fn.isPC1stPerson:
       return flag(runtime.world.firstPerson?.() === true);
-    // Fleeing is the combat AI's (TODO(M10) 5.2); casting the magic system's (TODO(M10) 5.3);
-    // being fed on and eaten are the player's powers (TODO(M11)).
+    // The combat AI (src/shell/actor-combat-ai.ts, src/ai/combat-ai.ts): fleeing (or fear has
+    // it flee), the blows from friends it let pass, its combat group's size, whether another's
+    // target is it, its target's keywords.
     case Fn.isFleeing:
+      return reference === undefined
+        ? undefined
+        : flag(
+            runtime.world.combat?.(reference)?.fleeing === true ||
+              runtime.magic.aiState(reference).fleeing,
+          );
+    case Fn.getFriendHit:
+      return reference === undefined
+        ? undefined
+        : (runtime.world.combat?.(reference)?.friendHits ?? 0);
+    case Fn.getCombatGroupMemberCount:
+      return reference === undefined
+        ? undefined
+        : (runtime.world.combat?.(reference)?.groupSize ?? 0);
+    case Fn.isCombatTarget: {
+      // Whether the subject is the combat target of the actor its parameter names.
+      // TODO(M13): which of the two is whose target is not documented.
+      if (reference === undefined || form === 0) return 0;
+      const other = runtime.world.combat?.(form);
+      return flag(other?.inCombat === true && other.combatTarget === reference);
+    }
+    case Fn.getCombatTargetHasKeyword: {
+      const target = reference === undefined ? undefined : runtime.world.combat?.(reference);
+      return flag(
+        target?.combatTarget !== undefined && (await runtime.hasKeyword(target.combatTarget, form)),
+      );
+    }
+    // Whom it would attack, its reaction to another (src/ai/combat-reactions.ts), whether it is
+    // hostile to another: the other its parameter, else (dialogue) the player. TODO(M13): what a
+    // condition without the parameter means.
+    case Fn.getShouldAttack:
+    case Fn.isHostileToActor:
+    case Fn.getFactionRelation: {
+      if (reference === undefined) return undefined;
+      const other = form === 0 ? PLAYER_REF : form;
+      if (condition.function === Fn.getShouldAttack) {
+        return flag(await shouldAttack(runtime, reference, other));
+      }
+      if (condition.function === Fn.isHostileToActor) {
+        return flag(await hostileTo(runtime, reference, other));
+      }
+      return reactionOf(runtime, reference, other);
+    }
+    case Fn.isGuard: {
+      if (reference === undefined) return undefined;
+      const type = (await actors.info(reference))?.stats.class;
+      const record = type === undefined ? undefined : await runtime.forms.record(type);
+      return flag(record?.type === 'CLAS' && isGuardClass(record.fields.first('DATA')));
+    }
+    // Casting is the magic system's (TODO(M10) 5.3); being fed on and eaten are the player's
+    // powers (TODO(M11)).
     case Fn.isDualCasting:
     case Fn.isCasting:
     case Fn.getVampireFeed:

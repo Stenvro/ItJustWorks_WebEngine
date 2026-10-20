@@ -186,12 +186,16 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       StartCombat and being hit); the first-person arms and weapon to M11 (with the arms); the
       perk entry points to M11; sneak attacks' awareness to 4.1; combat lines to 4.3; the kill
       cameras' slow motion and the impacts' effect models to M13.
-- [ ] **5.2 Combat AI:** entering combat (aggression and relationships, assistance, being
+- [x] **5.2 Combat AI:** entering combat (aggression and relationships, assistance, being
       attacked, detection), target choice and threat, combat groups, the combat style's
       movement (circling, flanking, fallback, stalking, strafing), equipment choice by score,
       dodging threats, fleeing (confidence), searching for a lost target, yielding, the end of
       combat, spectators, guards, followers; the combat override package list (NPC\_ ECOR) and
       the packages' combat interrupts (aggro radius, observe combat, friendly fire comments).
+      docs/ai.md, "Combat AI"; `tools/combat-ai-info.ts`. Moved on: spells, staffs and shouts
+      as equipment and their casting to 5.3 (`CombatCasting`), spells' and breath's threats to
+      5.3 and 5.4, the reactions to crime's `reaction(actor, other)` and guards' hostility to
+      criminals to M11, mounted combat and the engine's undocumented values to M13.
 - [ ] **5.3 Magic and shouts in combat:** casting (hands, concentration, fire and forget,
       delivery), projectiles, the effects the magic system has, staffs, potions, summons,
       shouts and their recovery. M11 completes the effect archetypes and perks behind it.
