@@ -324,6 +324,18 @@ aWeight, aCost, aFieldValue, aFieldText)` for what the crosshair is on (the play
 activation target, through `HudSignals`), and `ShowMessage` for Debug.Notification (the
 messages at the top left). The engine's own prompt, notice and loading screen stay out of Play.
 
+The stealth meter (`src/shell/hud-stealth.ts`): `RegisterHUDComponents` hands the engine the
+clips it drives itself, among them `StealthMeterInstance` (frames `FadeIn` 1, `FadeOut` 6,
+`FadedOut` 10), its eye `SneakAnimInstance` (120 frames: 1 `invisible`, shut, to 100 `visible`,
+open, where it stops; 101–120 play back to `visible`) and its text
+`SneakTextHolder.SneakTextClip.SneakTextInstance` (the holder plays 45 frames from `Start`).
+While the player sneaks the HUD is in `ShowElements("StealthMode", true)` (every element but
+the crosshair) and the meter plays `FadeIn` (`FadeOut` as they stand); the eye is set to the
+frame of how far it is open (the actor that knows the player best:
+[ai.md](ai.md#detection)), easing a quarter of a second from shut to open; the text flashes
+`sSneakDetected` ("[DETECTED]") as an actor comes to detect the player and `sSneakHidden`
+("[HIDDEN]") as the last one aware of them loses them.
+
 Every menu's `PlaySound(id)` plays a UI sound by editor id at no place: a sound descriptor's
 (`UIObjectiveNew`, `UIMenuFocus`: SNDR) or a sound's (`UIMenuOK`: SOUN, through its SDSC).
 

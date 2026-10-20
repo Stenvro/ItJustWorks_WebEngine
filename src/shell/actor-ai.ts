@@ -69,6 +69,13 @@ export class ActorAi {
   readonly #doors: ActorDoors | undefined;
   /** The actors talking with the player now (their packages wait). */
   readonly #talking = new Set<number>();
+  /**
+   * The actors the engine's own reactions hold now (searching, the dead: src/shell/
+   * actor-reactions.ts): their packages wait.
+   */
+  readonly #held = new Set<number>();
+  /** The override package list (FLST) an actor's situation runs before its packages, if any. */
+  readonly #overrides: ((actor: number) => number | undefined) | undefined;
   /** A food for meals made up (Eat's Create Fake Food): the first in the load order. */
   #fakeFood: Promise<number | undefined> | undefined;
   readonly #actors = new Map<number, { packages: ActorPackages; staged: StagedActor }>();
@@ -90,6 +97,11 @@ export class ActorAi {
     readonly navmeshes?: () => NavmeshSet | undefined;
     /** The doors the actors go through (locked ones, load doors). */
     readonly doors?: ActorDoors;
+    /**
+     * The override package list (FLST: spectator, observe corpse, guard warn) an actor's
+     * situation has it run first (src/shell/actor-reactions.ts), if any.
+     */
+    readonly overrides?: (actor: number) => number | undefined;
   }) {
     this.#session = options.session;
     this.#movers = options.movers;
@@ -99,7 +111,22 @@ export class ActorAi {
     this.#leaveThrough = options.leaveThrough;
     this.#navmeshes = options.navmeshes;
     this.#doors = options.doors;
+    this.#overrides = options.overrides;
     this.#mind = this.#makeMind();
+  }
+
+  /**
+   * The engine's own reaction holds an actor (true: its package stops and waits; it moves as
+   * the reaction has it) or lets it go (its package is chosen again).
+   */
+  hold(reference: number, held: boolean): void {
+    if (held) {
+      if (this.#held.has(reference)) return;
+      this.#held.add(reference);
+      this.#actors.get(reference)?.packages.stop();
+      return;
+    }
+    if (this.#held.delete(reference)) this.#actors.get(reference)?.packages.evaluate();
   }
 
   /** The package running for an actor now (GetCurrentPackage), if its AI runs. */
@@ -126,6 +153,7 @@ export class ActorAi {
 
   /** The actor leaves its AI (it left the stage, died). */
   remove(reference: number): void {
+    this.#held.delete(reference);
     const entry = this.#actors.get(reference);
     if (!entry) return;
     entry.packages.stop();
@@ -179,6 +207,8 @@ export class ActorAi {
         this.#movers.request(reference, undefined);
         entry.packages.evaluate();
       }
+      // A reaction of the engine's holds it (src/shell/actor-reactions.ts): its package waits.
+      if (this.#held.has(reference)) continue;
       entry.packages.update(seconds);
     }
     for (const reference of [...this.#actors.keys()]) {
@@ -386,7 +416,11 @@ export class ActorAi {
         // Its default package list (NPC_ DPLT: a form list of packages) after its own.
         const list = staged(actor)?.placed.look.defaultPackages;
         const defaults = list === undefined ? [] : ((await runtime()?.formList(list)) ?? []);
-        return [...(aliases ?? []), ...own, ...defaults];
+        // An override list its situation names (spectator, observe corpse, guard warn) first.
+        const override = this.#overrides?.(actor);
+        const overrides =
+          override === undefined ? [] : ((await runtime()?.formList(override)) ?? []);
+        return [...overrides, ...(aliases ?? []), ...own, ...defaults];
       },
       conditionsHold: async (conditions, actor, data) => {
         const scripts = runtime();

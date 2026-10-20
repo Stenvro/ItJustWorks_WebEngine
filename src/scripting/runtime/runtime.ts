@@ -139,7 +139,31 @@ export interface WorldBridge {
   moveToPackageLocation?(actor: number): void;
   startCombat?(actor: number, target: number): void;
   stopCombat?(actor: number): void;
+  /** The light level on an actor (GetLightLevel; src/ai/light-level.ts). */
   lightLevel?(actor: number): number;
+  /** Detection (src/shell/actor-senses.ts): whether an observer detects a target now. */
+  detects?(observer: number, target: number): boolean;
+  /** Whether a viewer sees a reference (GetLineOfSight, HasLOS). */
+  lineOfSight?(viewer: number, target: number): boolean;
+  /** Whether an actor is alarmed (GetAlarmed, IsAlarmed), attacked lately, alerted. */
+  alarmed?(actor: number): boolean;
+  attacked?(actor: number): boolean;
+  alerted?(actor: number): boolean;
+  /** CreateDetectionEvent: a noise at a reference, of an owner, at a sound level (0 loud ..). */
+  detectionEvent?(at: number, owner: number | undefined, soundLevel: number): void;
+  /**
+   * An alarm raised at a reference (SendAssaultAlarm by its victim, SendTrespassAlarm,
+   * SendStealAlarm at the stolen object) against a criminal; `stop`: StopCombatAlarm.
+   */
+  alarm?(
+    source: number,
+    criminal: number | undefined,
+    act: 'attack' | 'trespass' | 'steal' | 'stop',
+  ): void;
+  /** StartSneaking: the actor sneaks. */
+  startSneaking?(actor: number): void;
+  /** SetNotShowOnStealthMeter: the actor does not open the stealth eye. */
+  hideFromStealthMeter?(actor: number, hidden: boolean): void;
   /** What an actor is using now (a chair, a bed, a lean): src/shell/actor-furniture.ts. */
   interaction?(actor: number): ActorInteraction | undefined;
   /** How an actor moves now (the player's input, an actor's controller), if it is loaded. */

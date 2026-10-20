@@ -189,8 +189,10 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   the quest aliases that hold it first (by quest priority), then its own, then its default
   package list (NPC\_ DPLT, a form list; its template's with the Use Def Pack List flag). While
   it talks with the player (the engine's in-game dialogue package) its package waits: it stops
-  where it is and faces the player (in furniture it stays seated). TODO(M10) 4.1–4.3, 5.2: the
-  override lists (SPOR, OCOR, GWOR, ECOR) and interrupts.
+  where it is and faces the player (in furniture it stays seated). An override list its
+  situation names (spectator, observe corpse, guard warn: [Detection](#detection)) comes before
+  them all; the engine's own reactions hold its package while they run. TODO(M10) 4.3, 5.2:
+  the combat list (ECOR) and the talking interrupts.
 - **When:** as the hour changes, every 2 seconds (TODO(M13): the engine's rate), when its package
   ends, and when a script asks (EvaluatePackage). One that must complete (PKDT flag 0x4) is not
   left before it has. Its scripts hear of it: OnPackageStart (the new package), OnPackageChange
@@ -411,3 +413,112 @@ A procedure that would go round without ever waiting (each step ending at once: 
 one point the actor stands on was one) is stopped after 100,000 rounds within one update: its
 package ends as failed and is chosen again later, so a fault in one actor's AI does not hang
 the game.
+
+## Detection
+
+What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
+`src/ai/light-level.ts`, `src/ai/reactions.ts`, wired in `src/shell/actor-senses.ts`; check:
+`node tools/detection-info.ts --settings | --records | --level ...`).
+
+- **Who tests whom:** every living actor of the high process tests the player and the other
+  actors of the high process, each every fDetectionUpdateTimeMin (1 s) near the player to
+  fDetectionUpdateTimeMax (2 s) at detection's reach; scripts' questions (GetDetected,
+  IsDetectedBy) test anew when the last test is older than a second (the Construction Set
+  wiki: GetDetected runs the formula). Beyond the reach (fSneakMaxDistance 2500, times
+  fSneakExteriorDistanceMult 2.1 outside; fSneakFlyingDistanceMult 3 for fliers: TODO(M10)
+  5.4) a target is not tested.
+- **The formula** (UESP "Skyrim:Sneak" for its terms; the predecessor engine's documented
+  formula, The Fallout Wiki "Detection Formula" and the Construction Set wiki "Detection", for
+  those UESP leaves open):
+
+  level = fSneakBaseValue + A × (sound + visual) + fSneakSkillMult × (perception × A − the
+  target's Sneak while it sneaks out of combat), A = ((reach − distance) / reach) ^
+  fSneakDistanceAttenuationExponent;
+
+  sound = fSneakSoundsMult × (moving: (fSneakEquippedWeightBase + fSneakEquippedWeightMult ×
+  the weight of the armour worn) × fSneakRunningMult running or sprinting × MovementNoiseMult;
+  plus its action's loudness (iSoundLevel\* of the sound level) × fSneakActionMult for
+  fDetectionActionTimer), × fSneakSoundLosMult without line of sight, none swimming;
+
+  visual (seen and awake) = fSneakLightMult (× fSneakLightExteriorMult outside) ×
+  (fDetectionSneakLightMod + light, × fDetectionNightEyeBonus with night eye) × (1 +
+  fSneakLightMoveMult moving + fSneakLightRunMult running) × fSneakDetectionSize\* of its
+  race's size × (1 − Blindness / 100), × fSneakStealthBoyMult invisible;
+
+  perception = the observer's Sneak within fSneakPerceptionSkillMin and Max, × (1 +
+  fSneakAlertMod alerted + fSneakSleepBonus asleep + fSneakCombatMod in combat with the
+  target).
+
+  UESP writes the observer's skill twice (attenuated, and unattenuated against the target's);
+  with that an observer of middling skill detects a sneaking target in the dark, unseen and
+  unheard, anywhere in reach, so the predecessor's single attenuated term is taken
+  (TODO(M13)). Skyrim.esm stores 18 fSneak\* settings and fDetectionSneakLightMod; the others
+  are the engine's built-in values (BeermotorWB's "All Skyrim Game Settings", linked from AFK
+  Mods): fSneakEquippedWeightBase 12, Mult 0.5, fSneakLightMoveMult 0.01, fSneakLightRunMult
+  0.2, fSneakNoticeMin −20, iAICombatMinDetection −50, fDetectionViewCone 190, iSoundLevelLoud
+  100, Normal 50, VeryLoud 200 (Silent 10 is Skyrim.esm's), ... TODO(M11): the Stealth perks
+  and Muffle. `node tools/detection-info.ts --level sneak=15 light=40 distance=500`: −2.9,
+  noticed; Sneak 100 in light 10 at 300: −48.9, unseen.
+
+- **Sight:** a ray on the line-of-sight layer (L_LINEOFSIGHT: static, clutter, props, trees,
+  terrain, the actors' BIPED bodies, ...; not the character controllers, not transparent
+  collision) from the observer's eyes (92% of its controller's height standing, 62% sitting,
+  20% lying) to the target's head or chest, past the observer's own bodies. Seen: in line of
+  sight within its sight's reach: the full reach within fDetectionLOSDistanceAngle (60°, 30°
+  either side) of its facing, fDetectionLOSDistanceMultInterior 0.75 / Exterior 0.5 of it to
+  the edge of the view cone (fDetectionViewCone 190°), none behind. TODO(M13): how the engine
+  reads the angles.
+- **The light on the target** (GetLightLevel): the luminance of the view's lighting at its
+  chest times 100: the mean of the six directional ambients, the directional light where a ray
+  to the sun is clear (inside always), each point light within its radius with the renderer's
+  falloff 1 − (d / r)²; plus iLightLevelInteriorMod (25) inside or iLightLevelExteriorMod (0),
+  at most iLightLevelMax (300). TODO(M13): the engine's own sum (players read 0 to 150 and
+  more). TODO(M11): torches carried and spells in hand.
+- **States** per observer and target: detected above 0 (in combat with the target above
+  iAICombatMinDetection), noticed above fSneakNoticeMin, searching once a noticed or detected
+  target is lost (or a noise heard) for fDetectionStateExpireTime (30 s), else unseen. Each
+  change is told (`Detections.listen`: detected, noticed, searching, lost; heard, witnessed,
+  alarm, attacked, corpse).
+- **Noises** (detection events: CreateDetectionEvent, the sound level of an impact that
+  sounded, `ActorSenses.noise`): heard by the actors within fDetectEventDistancePlayer (1536)
+  of the player's, fDetectEventDistanceNPC (512) of others' (fDetectEventDistanceVeryLoudMult
+  2 very loud, fDetectEventSneakDistanceVeryLoud 3072 very loud while sneaking), at
+  fSneakBaseValue + the loudness attenuated over that reach (× fSneakSoundLosMult unseen) +
+  the attenuated perception; above fSneakNoticeMin the hearer is alerted there (GetIsAlerted)
+  and searches. The data: IPCT sound levels normal 659, loud 1, silent 3; every footstep impact
+  (10,686) is normal; WEAP VNAM loud 888, normal 1702, silent 738 (`action`: an attack's noise,
+  5.1); MGEF casting loud 1307, normal 163, silent 170, very loud 91 (5.3).
+- **Reactions:** an actor whose package allows it (PKDT interrupt flags: reactions to the
+  player's actions, greeting corpses, observing combat) and that is not talking, in a scene or
+  in furniture reacts. Its override list for the situation (the quest aliases' that hold it,
+  else its NPC\_'s under template flag 0x400: SPOR spectator, OCOR observe corpse, GWOR guard
+  warn) comes before its packages for fDetectionStateExpireTime; vanilla has SPOR on 2 NPC\_
+  (Fellglow's prisoners) and 3 aliases, OCOR and GWOR on 2 aliases, and no package of those
+  interrupt overrides. Else the engine's reaction holds its package: searching (one sneaking
+  it noticed, a noise it heard, one it lost that it is hostile to: 5.2): it turns to the place
+  (fCombatSearchLookTime), walks to within fCombatSearchLocationInvestigateDistance (256),
+  looks round three times (fCombatSearchInvestigateTime 2.5 s); observing the dead: every
+  fCheckDeadBodyTimer (20 s) it looks for one that died within iHoursToClearCorpses (24 game
+  hours) in its sight, walks to the body and looks at it for 5 s; spectating (`fight`, 5.2):
+  it keeps fAIInteriorSpectatorDistance (200) / Exterior (450) from the fight, facing it, until
+  its last blow is fAISpectatorRememberThreatTimer old; a guard's warning (`warn`, M11) goes to
+  the one warned and faces them. TODO(M10) 4.3: their lines (NormalToAlert, AlertToNormal,
+  NoticeCorpse, the warning). TODO(M13): the engine's steps.
+- **Sneaking:** the player's Sneak key; an actor sneaks while its package says Always Sneak
+  (PKDT 0x20000, 52 vanilla packages) or after StartSneaking (until its package changes): its
+  graph's IsSneaking, its sneaking movement type, IsSneaking.
+- **The stealth eye** ([ui.md](ui.md#the-hud)): shut unseen, slightly open noticed (opening as
+  the level nears 0), half open searching, open detected, for the actor that knows the player
+  best (not teammates, not those SetNotShowOnStealthMeter hides). TODO(M13): the engine's
+  mapping.
+- **Scripts:** the conditions GetDetected, GetLineOfSight, GetLightLevel, GetAlarmed,
+  GetAttacked, GetIsAlerted, IsSneaking; the natives IsDetectedBy, HasLOS, GetLightLevel,
+  IsAlarmed, StartSneaking, SetNotShowOnStealthMeter, SendAssaultAlarm, SendTrespassAlarm,
+  SendStealAlarm (the actors within iCrimeAlarmRecDistance are alarmed; TODO(M11): what they
+  do), StopCombatAlarm, CreateDetectionEvent; OnGainLOS / OnLostLOS for the pairs scripts
+  register (every quarter second; the player sees what is on screen with nothing between the
+  camera and it; the first look tells how it is).
+- **For combat (5.2) and crime (M11):** `ActorSenses.detections` (state, level, detects,
+  detectors, known, lastKnown, listen), `noise`, `action`, `attackedBy`, `fight`, `warn`, the
+  hooks `inCombat` and `hostile`, and `Detections.witness` / `offence` (the observers that
+  detect an actor seeing it steal, attack, trespass: 'witnessed').

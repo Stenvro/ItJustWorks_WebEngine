@@ -933,7 +933,9 @@ override data, damage 3), the override package lists (FLST) SPOR spectator, OCOR
 corpse, GWOR guard warn, ECOR combat (2, 0, 0 and 235 NPC\_; 59 combat lists) and DPLT the
 default package list (3220 NPC\_, 15 lists, DefaultMasterPackageList on 2618). With a template,
 ATKR and ATKD come from it under template flag 0x800, the package lists under 0x400, ZNAM under
-0x10 (UESP).
+0x10 (UESP). Quest aliases carry their own SPOR / OCOR / GWOR / ECOR after their ALST (3, 2, 2 and 265
+vanilla); WEAP VNAM is the weapon's detection sound level (0 loud, 1 normal, 2 silent) and MGEF
+DATA at 140 the casting sound level (3 very loud) (`src/ai/detection-records.ts`).
 
 **ARMO:** BOD2 (slots u32, armor type u32) or the older BODT (slots u32, flags u8 + 3 unused,
 armor type u32), MODL armor addons (ARMA, repeated), TNAM template armor. **ARMA:** BODT /
