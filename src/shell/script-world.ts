@@ -80,6 +80,13 @@ export interface ScriptView {
   furnitureInUse?(reference: number, marker?: number): boolean;
   /** The view's fights (src/shell/actor-combat.ts): its actors' and the player's. */
   combat?(): CombatBridge | undefined;
+  /** A script's cast the view flies (src/shell/actor-stage.ts launchSpell); false: it cannot. */
+  launchSpell?(
+    spell: number,
+    source: number,
+    target: number | undefined,
+    blame: number | undefined,
+  ): boolean;
 }
 
 /** What scripts ask of and tell combat (ActorCombat). */
@@ -320,6 +327,21 @@ export class ScriptWorld implements WorldBridge {
       if (using) return using;
     }
     return undefined;
+  }
+
+  /** Spell.Cast's projectile, flown by the view that shows its source (the first that can). */
+  launchSpell(
+    spell: number,
+    source: number,
+    target: number | undefined,
+    blame: number | undefined,
+  ): boolean {
+    for (const view of this.#views) {
+      if (view.loaded(source) || view.livePlacement?.(source) !== undefined) {
+        if (view.launchSpell?.(spell, source, target, blame) === true) return true;
+      }
+    }
+    return false;
   }
 
   playIdle(actor: number, idle: number, target: number | undefined): boolean {

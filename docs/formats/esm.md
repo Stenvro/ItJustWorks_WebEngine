@@ -1380,6 +1380,38 @@ i32 @68; DNAM: the description, with `<mag>`, `<dur>`, `<area>` for the values.
 - SHOU: FULL, DESC, and per word an SNAM (WOOP u32, its spell u32, recovery seconds f32).
 - WOOP: FULL the word in the dragon tongue, TNAM its translation.
 - A magic effect's minimum skill (u32 @40 of DATA) is its spells' level.
+- The SPIT cost the plugins store is the Creation Kit's calculation when it was saved: it matches
+  the calculation for 380 of the 418 vanilla fire and forget spells and 97 of the 118
+  concentration spells without 0x1; the engine calculates (Flames stores 14 against its
+  effect's 2.5 × 8^1.1 = 24.6; TODO(M13): the menu's figure against the game).
+
+## Projectiles and explosions
+
+`src/world/projectile-data.ts`, after xEdit (wbDefinitionsTES5 PROJ, EXPL) and CommonLibSSE
+(BGSProjectileData, BGSExplosionData); check: `node tools/casting-info.ts <spell|shout>`,
+`--audit`. The load order has 247 PROJ (missile 103, arrow 48, cone 47, flame 24, beam 15,
+lobber 10) and 279 EXPL (86 with an enchantment).
+
+- **PROJ DATA** (92 bytes): flags u16 @0 (0x1 hitscan, 0x2 explosion, 0x4 alternative trigger,
+  0x8 muzzle flash, 0x20 can be disabled, 0x40 can be picked up, 0x80 supersonic, 0x100 pins
+  limbs, 0x200 pass through small transparent, 0x400 disable combat aim correction), type u16
+  @2 (1 missile, 2 lobber, 4 beam, 8 flame, 0x10 cone, 0x20 barrier, 0x40 arrow), gravity f32
+  @4 (× the world's), speed @8 (units/s), range @12, light @16, muzzle flash light @20, tracer
+  chance @24, the alternative trigger's proximity @28 and timer @32, explosion @36, sound @40,
+  muzzle flash duration @44, fade duration @48, impact force @52, countdown sound @56, disable
+  sound @60, default weapon source @64, cone spread @68 (degrees), collision radius @72,
+  lifetime @76, relaunch interval @80 (a held concentration spell's sprays), decal (TXST) @84,
+  collision layer @88. MODL its model, NAM1 the muzzle flash's, VNAM its sound level.
+  FireboltProjectile01: missile, 2500 units/s, range 10000, radius 10; FlamesProjectile: flame,
+  1000, range 768, relaunch 0.175 s; VoicePushProjectile01..03 (Unrelenting Force): cones of
+  15°, 15°, 10° reaching 1000, 2000, 10000; arrows fall at 0.35 of the world's gravity.
+- **EXPL DATA** (52 bytes): light @0, sound @4, second sound @8, impact data set @12, placed
+  object @16, spawn projectile @20, force f32 @24, damage @28, radius @32, image-space radius
+  @36, vertical offset mult @40, flags u32 @44 (0x2 always world orientation, 0x4 knock down
+  always, 0x8 knock down by formula, 0x10 ignore line of sight, 0x20 push the source only, 0x40
+  ignore the image-space swap, 0x80 chain, 0x100 no controller vibration), sound level @48.
+  EITM the enchantment or spell it applies, MNAM its image-space modifier, MODL its model.
+  Fireball01ImpactExplosion: radius 320, force 60, damage 2.
 
 ## Idles and actions
 

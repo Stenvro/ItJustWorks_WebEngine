@@ -322,7 +322,11 @@ show)` (the heading in degrees, 0 north, 90 east; the compass strip is placed by
 `SetCrosshairTarget(abActivate, aName, abShowButton, abTextOnly, abFavorMode, abShowCrosshair,
 aWeight, aCost, aFieldValue, aFieldText)` for what the crosshair is on (the play session's
 activation target, through `HudSignals`), and `ShowMessage` for Debug.Notification (the
-messages at the top left). The engine's own prompt, notice and loading screen stay out of Play.
+messages at the top left). The shout meter: `SetShoutMeterPercent(aPercent, abForce)` (0..100:
+full once the voice has recovered; the casting engine's `voiceMeter`, sent as it changes by a
+whole percent) and `FlashShoutMeter()` as the player shouts before it has recovered
+(docs/gameplay.md, "Casting and shouts"). The engine's own prompt, notice and loading screen stay
+out of Play.
 
 The stealth meter (`src/shell/hud-stealth.ts`): `RegisterHUDComponents` hands the engine the
 clips it drives itself, among them `StealthMeterInstance` (frames `FadeIn` 1, `FadeOut` 6,
@@ -654,10 +658,13 @@ it lists and what its entries do):
 - A spell's school is its costliest effect's magic skill; its card (ICT_SPELL 7) has `castLevel`
   (that effect's minimum skill: sNoviceDisplayName below 25 .. sMasterDisplayName at 100),
   `castTime` (SPIT's charge time; 0 for concentration spells, whose cost the card shows per
-  second), `spellCost`: the base cost (`spellBaseCost`, docs/formats/esm.md) × (1 −
-  (skill / 400)^0.65) (UESP, "Magic Overview"). Powers have ICT_SPELL_DEFAULT 13, shouts
-  ICT_SHOUT 10 with `word0..2` (translation), `dragonWord0..2` and `unlocked0..2`, and the
-  recovery of the last unlocked word as their cost.
+  second), `spellCost`: the casting engine's magicka cost (`CastingEngine.menuCost`: the base
+  cost × (1 − (skill / 400)^0.65), UESP "Magic Overview"; docs/gameplay.md, "Casting and
+  shouts"). Powers have ICT_SPELL_DEFAULT 13, shouts ICT_SHOUT 10 with `word0..2`
+  (translation), `dragonWord0..2` and `unlocked0..2`, and the recovery of the last unlocked word
+  as their cost; `showUnlocked` while a learned word is locked puts Unlock on the bottom bar
+  (`$Unlock`): R asks sConfirmSpendSoul, spends a dragon soul on it (sFailSpendSoul without one)
+  and tells the movie `DragonSoulSpent()`.
 
 The favorites menu (`favoritesmenu.swf`, `src/shell/favorites-menu.ts`; Q) lists the items,
 spells and shouts marked with F. Its own `PopulateItems` names a function the movie does not

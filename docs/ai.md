@@ -744,11 +744,11 @@ package may do all.
 - **The player's actions:** `ActorTalk.playerAction(subtype)`: the nearest actor within 1,024
   units that detects them and whose package allows reactions comments, each at most every
   fCommentOnPlayerActionsTimer (20 s; knocking things over fCommentOnPlayerKnockingThings,
-  40 s). Jumping (Jump), grabbing an object (ZKeyObject) and picking a lock (LockedObject) are
-  told; swinging a weapon, shooting, aiming, casting and shouting are combat's and magic's
-  (SwingMeleeWeapon, ShootBow, PlayerinIronSights, PlayerCastProjectileSpell, PlayerShout:
-  TODO(M10) 5.1, 5.3), knocking things over and standing on furniture TODO(M13) (the physics
-  does not tell who knocked an object).
+  40 s). Jumping (Jump), grabbing an object (ZKeyObject), picking a lock (LockedObject),
+  casting (PlayerCastProjectileSpell, PlayerCastSelfSpell) and shouting (PlayerShout: "Magic in
+  combat") are told; swinging a weapon, shooting and aiming are combat's (SwingMeleeWeapon,
+  ShootBow, PlayerinIronSights: TODO(M10) 5.1), knocking things over and standing on furniture
+  TODO(M13) (the physics does not tell who knocked an object).
 - **Creatures' lines** (dragons, hagravens, rieklings: 8 lip curves) move the creature's mouth
   through its behavior graph's own lip variables (LipBigAah, LipDST, LipEee, LipFV, LipK, LipL,
   LipR, LipTh; rieklings LipAA ... LipTH), which blend its phoneme poses; the curves are taken
@@ -876,3 +876,70 @@ its packages wait meanwhile.
   time multipliers (slow motion) and image-space modifiers.
 - **Combat music**: while anyone fights the player the default battle music (DOBJ BTMS) plays,
   ending with its finale as the fight does.
+
+## Magic in combat
+
+Casting in the world, the player's and the NPCs' alike (m10-plan 5.3). The casting engine keeps
+the casts, their costs and the voice (docs/gameplay.md, "Casting and shouts"); the stage shows
+them: `src/shell/actor-casting.ts` (`ActorStage.casting`) animates casts and sends them on their
+way, `src/shell/player-casting.ts` reads the player's buttons, `src/shell/magic-projectiles.ts`
+(`ActorStage.projectiles`) flies what they send. `node tools/casting-info.ts <spell|shout>` prints
+the projectile and explosion a spell sends.
+
+- **The graph:** a cast begun plays its start as the idle tree's ActionRightAttack /
+  ActionLeftAttack leaves pick it by the hand's GetCurrentCastingType, GetCurrentDeliveryType
+  and SpellHasKeyword (MRh_SpellAimedStart, MRh_SpellSelfStart, MRh_SpellAimedConcentrationStart,
+  MRh_SpellSelfConcentrationStart, MRh_WardStart, MRh_SpellTelekinesisStart; MLh_ for the
+  left; a dual cast both); a staff's or a scroll's, or where the tree plays none, the event it
+  would pick is sent. Magic is drawn as weapons are ("Combat": ActionDraw plays Magic_Equip,
+  whose clip raises weaponDraw and Magic_Equip_Out; put away Magic_Unequip_Out), and with it
+  drawn the player's attack buttons whose hands hold a spell, staff or scroll cast
+  (`PlayerCombat` hands them to `PlayerCasting`: CastingButtons); IsWeaponMagicOut is any drawn
+  state, IsWeaponOut not when the hands hold only magic. An NPC's castAt draws first. While an
+  aimed cast lasts its arms aim (the graphs' BSDirectAtModifiers of bows and spells:
+  `setDirectAtTarget(2, point)` along the aim). Ready:
+  ActionRightReady (MRh_SpellReady_Event); fired or stopped: ActionRightRelease
+  (MRh_SpellRelease_Event); let go early: ActionRightInterrupt (MRh_Equipped_Event). Shouts:
+  ActionVoice (shoutStart), ActionVoiceRelease as the words go (the Whirlwind Sprint variants by
+  GetCurrentShoutVariation), ActionVoiceInterrupt. A ward hit: ActionWardHit (wardAbsorb,
+  WardBreak by IsWardState). TODO(M13): the dual-cast animations.
+- **Sounds and art:** the costliest effect's sounds (MGEF SNDD) from the hand's magic node (NPC R
+  / L MagicNode): charge as it charges, ready once it is, the concentration loop while a
+  concentration spell is held, release as it fires (a shout's thu'um); its casting art (MGEF
+  casting art, ARTO) drawn on the magic node while the cast lasts. TODO(M11) visuals: the
+  dual-cast art and its scale, the hit art and shaders on the target.
+- **Projectiles** (the costliest effect's PROJ; docs/formats/esm.md, "Projectiles and
+  explosions"): from the source's node (the voice: the head) along the aim — the player's
+  camera, an NPC's target's chest, else its facing. Missiles, lobbers and arrow-like bolts fly
+  through the frames at their speed, falling by gravity × the world's (9.8 m/s²), drawn as their
+  model with their flight sound, until their path (as thick as their collision radius) meets a
+  surface (a ray of the spell layer: the caster's own bodies passed through), an actor (its
+  ragdoll bodies' owner, or an upright capsule of its controller's height, 24 units wide: the
+  player too), their range or lifetime, or with an alternative trigger an actor within their
+  proximity or their timer. Beams (and hitscan) reach their range at once; flames are a
+  concentration spell's sprays, one every relaunch interval (each carrying that share of the
+  spell); cones (Unrelenting Force) sweep every actor within their range and spread that their
+  apex can see. Self and Touch spells, and those without a projectile, reach their target at
+  once; a held Self spell acts every 0.25 s.
+- **Impacts:** the actor hit takes the spell (`deliver`: absorption, the ward if it faces the
+  projectile, OnHit, the school's use); a hostile one that took hold makes it search for its
+  attacker (detection's `attackedBy`; TODO(M10) 5.2: combat begins). A Target Location spell
+  makes its summons and hazards where it landed. The explosion bursts (its sounds, `explode`:
+  its enchantment, damage and force within its radius), the area reaches those near (`area`),
+  the effect's impact data set sounds on the surface hit; both are noises for detection by their
+  sound levels. TODO(M11) visuals: projectile lights and muzzle flashes, explosion and impact
+  models and decals, beams and cones drawn.
+- **Noise and comments:** a cast or a shout is an action noise as loud as its effect's casting
+  sound level (detection's `action`); the player's are commented on (PlayerCastProjectileSpell,
+  PlayerCastSelfSpell, PlayerShout).
+- **The AI's API** (5.2's combat AI calls it): `castAt(actor, hand, target, {spell, purpose})`
+  casts from a hand ('both': dual cast) the given spell (equipped first), what the hand holds,
+  or the spell the casting engine chooses for the purpose (`chooseSpell`: attack, heal, summon,
+  ward, buff: of its spells and what its hands hold, the costliest it has the magicka for;
+  TODO(M10) 5.2: the combat style's magic score); `healSelf(actor)`, `summon(actor, target?)`,
+  `drinkPotion(actor, value)` (the carried potion restoring the value most);
+  `shoutAt(actor, target, words?)` (Greybeards, draugr; dragons in 5.4): the voice's shout, its
+  words let out after their hold time. NPCs release a fire and forget spell once ready and hold
+  a concentration spell 2.5 s. An actor that dies or leaves the stage stops casting.
+- **Scripts' casts** (Spell.Cast, RemoteCast: WorldBridge.launchSpell) fly the same way from the
+  source's right hand or its place; without a play they are delivered at once.

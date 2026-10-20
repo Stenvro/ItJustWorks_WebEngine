@@ -184,7 +184,9 @@ export function graphEvent(state: CombatState, event: string): CombatEffect[] {
     case 'weapondraw':
       effects.push({ kind: 'hand' });
       break;
+    // Magic drawn: MRh_and_MLh_Equip raises weaponDraw, then Magic_Equip_Out (0_master.hkx).
     case 'weapequip_out':
+    case 'magic_equip_out':
       if (state.weapon === WeaponState.drawing || state.weapon === WeaponState.wantToDraw) {
         state.weapon = WeaponState.drawn;
       }
@@ -192,7 +194,9 @@ export function graphEvent(state: CombatState, event: string): CombatEffect[] {
     case 'weaponsheathe':
       effects.push({ kind: 'sheath' });
       break;
+    // Magic put away: weaponSheathe, then Magic_Unequip_Out.
     case 'unequip_out':
+    case 'magic_unequip_out':
       if (state.weapon === WeaponState.sheathing || state.weapon === WeaponState.wantToSheathe) {
         state.weapon = WeaponState.sheathed;
       }

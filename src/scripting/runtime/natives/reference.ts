@@ -626,7 +626,12 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   });
   n('objectreference.knockareaeffect', () => null);
   n('objectreference.processtraphit', () => null);
-  n('objectreference.interruptcast', () => null);
+  // InterruptCast: what this reference (an actor, a trap's caster) casts stops (casting-engine.ts).
+  n('objectreference.interruptcast', (call) => {
+    const reference = self(call);
+    if (reference !== undefined) runtime.casting.interrupt(reference);
+    return null;
+  });
   n('objectreference.ignorefriendlyhits', () => null);
   n('objectreference.isignoringfriendlyhits', () => false);
   n('objectreference.setnofavorallowed', () => null);

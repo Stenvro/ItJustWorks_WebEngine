@@ -253,17 +253,23 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     const keyword = formOf(call.args[0]);
     return keyword === undefined ? false : runtime.magic.hasEffectKeyword(actor, keyword);
   });
-  // The spell applied to the target as from this actor's attack (at once; TODO(M10) 5.1).
+  // The spell applied to the target as from this actor's attack: delivered at once (its ward,
+  // absorption, OnHit: casting-engine.ts), free.
   act('docombatspellapply', async (actor, call) => {
     const spell = formOf(call.args[0]);
     const target = ref(call.args[1]);
     if (spell === undefined || target === undefined) return;
     const item = await runtime.magic.item(spell);
-    if (item) await runtime.magic.apply(item, target, { caster: actor });
+    if (item) await runtime.casting.deliver(await runtime.casting.scripted(actor, item), target);
   });
-  // Equipping spells and shouts: natives/equipment.ts.
+  // Equipping spells and shouts: natives/equipment.ts. The voice's recovery (the shout meter
+  // counts it down from what it was set to).
   act('setvoicerecoverytime', (actor, call) => {
-    state.actor(actor).voiceRecoveryTime = num(call.args[0]);
+    const seconds = Math.max(0, num(call.args[0]));
+    state.actor(actor).voiceRecoveryTime = seconds;
+    const casting = runtime.casting.state(actor);
+    if (seconds > 0) casting.voiceRecoveryTotal = seconds;
+    else delete casting.voiceRecoveryTotal;
   });
   ask('getvoicerecoverytime', 0, (actor) => state.actors.get(actor)?.voiceRecoveryTime ?? 0);
   // The dead target's soul into this actor's soul gems (Soul Trap's scripts call it).

@@ -125,6 +125,14 @@ export function valueMode(
   return 'perSecond';
 }
 
+/**
+ * Whether an effect without a duration acts at once (damage or a restore: a concentration spell's
+ * Flames, Healing), not by lasting (wards, Recover effects, Calm, Telekinesis, ...).
+ */
+export function actsAtOnce(effect: Effect): boolean {
+  return isValueEffect(effect) && valueMode(effect, 0, false) === 'once';
+}
+
 /** The sign of a value effect's change: detrimental effects take the magnitude away. */
 export function valueSign(effect: Pick<MagicEffectRecord, 'flags'>): number {
   return (effect.flags & EffectFlag.detrimental) !== 0 ? -1 : 1;

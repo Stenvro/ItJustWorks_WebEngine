@@ -266,9 +266,9 @@ Sources: UESP "Skyrim:Health", "Skyrim:Magicka", "Skyrim:Stamina", the game sett
 TODO(M13): the zones of parent locations, the very hard modifier's "at least the next entry
 up", how much of a capped skill's excess goes on, the rounding of PC level mult and level
 modifiers, the dual-wield factor, how fCombatHealthRegenRateMult and CombatHealthRegenMult
-combine. TODO(M11): combat sets `inCombat` and spends stamina, the magic system gives
-SkillAdvance effects, magicka costs and holds magicka regeneration while casting, detection
-gives Sneak's uses, the perk system the perks' effects.
+combine. Casting spends magicka and holds its regeneration while it lasts ("Casting and
+shouts"). TODO(M11): combat sets `inCombat` and spends stamina, the magic system gives
+SkillAdvance effects, detection gives Sneak's uses, the perk system the perks' effects.
 
 ## Magic effects
 
@@ -327,8 +327,8 @@ the player in a runtime on the game data, `--audit` reads every record).
   GetRandomPercent conditions are its chance of being caught, not checked while it lasts.
 - Scripts: a magic effect with scripts runs them as an ActiveMagicEffect (OnInit,
   OnEffectStart, OnEffectFinish; its natives read it until OnEffectFinish has run); the target
-  gets OnMagicEffectApply; a hostile spell cast at another gets OnHit (TODO(M10) 5.3: on the
-  projectile's impact).
+  gets OnMagicEffectApply; a hostile spell that reaches another (its projectile's impact, a
+  script's cast delivered at once) gets OnHit ("Casting and shouts").
 
 ### What effects do
 
@@ -357,7 +357,7 @@ the player in a runtime on the game data, `--audit` reads every record).
   radius read as the magnitude). Slow Time's magnitude is the world's time
   (`timeMultiplier`, TODO(M11): the frame's clock). Invisibility ends as its actor activates.
   An actor's effects end as it dies but No Death Dispel ones.
-- TODO(M10) 5.1/5.3, TODO(M11) visuals: staggers, telekinesis, grabs, Clairvoyance's path,
+- TODO(M11) (the archetypes) and visuals: staggers, telekinesis, grabs, Clairvoyance's path,
   lights, Detect Life's shader, effect shaders (EFSH) and art (ARTO) on actors; their data goes
   to `WorldBridge.magicEffect`, the image-space modifier is applied while an effect acts on the
   player, the On Hit sound plays at the target.
@@ -383,3 +383,125 @@ the player in a runtime on the game data, `--audit` reads every record).
   named after the object, the item or its effect; its effects' descriptions with the values
   they act with; the longest time left (ICT_ACTIVE_EFFECT's timeRemaining); detrimental or
   hostile ones in red (negativeEffect).
+
+## Casting and shouts
+
+The rules are platform-free in `src/gameplay/magic/casting.ts` (costs, a hand's cast, staffs,
+powers), `src/gameplay/magic/shouts.ts` (words, recovery, the shout meter) and
+`src/gameplay/magic/projectile-flight.ts` (what flies and what it reaches); the running game
+keeps the casts in `src/scripting/runtime/casting-engine.ts` (`ScriptRuntime.casting`), the world
+animates them and flies what they send (docs/ai.md, "Magic in combat"). `node
+tools/casting-info.ts <spell|scroll|staff|shout>` prints a spell's cost by skill, its sounds, art,
+projectile and explosion, a shout's words, spells and recovery; `--audit` reads every PROJ and
+EXPL.
+
+### What a source casts
+
+- Casting sources (CommonLibSSE MagicSystem::CastingSource): 0 the left hand, 1 the right, 2 the
+  voice, 3 instant. A hand casts its spell (magicka), its staff (a weapon whose EITM is a staff
+  enchantment, ENCH 0x0C: its charge) or its scroll (used up as it is read); the voice its power
+  (once a day), lesser power (whenever) or shout. Constant effect spells are not cast.
+- A cast is refused without the magicka (a fire and forget spell: its cost; a concentration
+  spell: any, TODO(M13)), the staff's charge (sMagicCastInsufficientItemCharge), the day's power
+  (sMagicCastPowerUsed) or while shouting (sMagicCastCastWhileShouting); a shout while casting
+  (sMagicCastShoutWhileCasting) or while the voice recovers (the shout meter flashes). Without
+  the magicka the HUD's magicka meter blinks (`progression.refused`). Casting ends invisibility.
+
+### Cost
+
+Sources: UESP "Skyrim:Magic Overview", "Skyrim:Magicka", "Skyrim:Dual Casting", "Mod File
+Format/SPEL"; the game settings.
+
+- The base cost is SPIT's own with 0x1 (an enchantment's with ENIT 0x1, no auto calc), else the
+  sum of its effects': base cost × (magnitude × duration / 10)^1.1, a magnitude under 1 counted
+  as 1, a duration of 0 (and any for concentration spells) as 10, × (1 + fMagicAreaBaseCostMult
+  × area) (0: areas cost nothing). Firebolt 41.39, Flames 24.6 a second.
+- The player pays base × (1 − (fMagicCasterPCSkillCostBase × skill)^fMagicPCSkillCostScale)
+  (0.0025, 0.65: Firebolt 36.5 at 15, 24.6 at 100); NPCs base × (1 − fMagicCasterSkillCostMult
+  × (skill / 100)^fMagicSkillCostScale) (0.5, 0.5; TODO(M13): inferred from the settings). The
+  skill is the school of the costliest effect (base cost × magnitude), with its
+  fortifications; TODO(M11): the perks' cost entry points and Fortify <School>. Dual cast:
+  × fMagicDualCastingCostMult (2.8). The magic menu shows this cost.
+- A fire and forget spell is paid as it fires (released when ready), a concentration spell for
+  the time it is held (its cost a second); regeneration waits while a cast lasts.
+- A staff spends its enchantment's cost from its charge (WEAP EAMT at first; Staff of Fireball
+  2000, 133 a cast: 15 casts); the charge is kept per staff (TODO(M11): per item). A scroll is
+  used up. Neither, nor powers or shouts, trains a skill.
+
+### A hand's cast
+
+- Charging: fire and forget spells are ready after their charge time (SPIT @12, dual cast ×
+  fMagicDualCastingTimeMult, 1); released before, they go without effect; released ready, they
+  fire. Concentration spells cast from their charge time on until let go or out of magicka.
+  NPCs release a ready spell at once and hold a concentration spell 2.5 s (TODO(M10) 5.2: the
+  combat AI decides).
+- Dual casting: both attack buttons pressed within 0.15 s with one spell in both hands
+  (TODO(M13): the window; TODO(M11): the school's Dual Casting perk); its effects are cast with
+  fMagicDualCastingEffectivenessBase (2.2: "Magic effects", EffectWasDualCast).
+- Skill use: a spell that takes effect on a target gives its school its base cost in uses (dual
+  cast × 2.8, TODO(M13)); a concentration spell's hit the share of the time it stands for.
+
+### Delivery
+
+- Self: on the caster at once. Touch: the actor aimed at (TODO(M10) 5.2: the reach). Aimed,
+  target actor and target location fly the costliest effect's projectile (docs/ai.md, "Magic in
+  combat"); without one they reach the actor aimed at at once.
+- What reaches an actor (`deliver`): a hostile spell, scroll or staff's (not a power's or a
+  shout's, nor a spell with 0x200000) is absorbed by the target's AbsorbChance percent (Spell
+  Absorption: it does nothing, the target gains its magicka cost; TODO(M13): the cap); else a
+  ward (WardPower, grown by a ward spell held: Accumulate Magnitude) meets a hostile spell from
+  the front: its damage (its hostile effects' magnitudes on Health, Magicka, Stamina) up to the
+  ward's strength is absorbed and taken off it (IsWardState 1, ActionWardHit: wardAbsorb), more
+  breaks it (IsWardState 2, WardBreak) and the rest passes (UESP "Skyrim:Ward"). Then the magic
+  system applies it (resistances, dual casting: "Magic effects"); a hostile spell's target hears
+  OnHit (the caster, the spell or staff) and is attacked (detection: it searches for the caster).
+- A concentration spell's hit (a spray of Flames, a held Healing): its effects at once act by the
+  time the hit stands for (`ApplyOptions.scale`); those that last while it is held (wards,
+  Recover effects, Calm, Telekinesis: `hold`) last on with each hit (`extendHeld`) rather than
+  anew (a ward keeps what it has grown).
+- Areas: an effect with an area (feet) reaches the actors within it of where the spell landed
+  (each the effects whose area reaches it; TODO(M13): line of sight and SPIT 0x80000).
+  Explosions (the projectile's with its Explosion flag, else the effect's): their enchantment on
+  the actors within their radius, their damage on Health less with distance (linear, TODO(M13)),
+  their force pushing what is there.
+- Target Location: what it makes (summons, hazards, scripted references) stands where it landed
+  (`ApplyOptions.at`: the summon facing the summoner); its other effects reach those near by its
+  explosion and area.
+- Scripts' casts (Spell.Cast, RemoteCast) fly from the source's right hand (an object's place)
+  toward the target's chest, or along its facing (WorldBridge.launchSpell); free.
+  DoCombatSpellApply delivers at once.
+
+### Shouts and powers
+
+Sources: UESP "Skyrim:Shouts", "Skyrim:Dragon Souls", "Skyrim:Powers"; SHOU and WOOP.
+
+- A shout has up to three words (SNAM: the word, the spell of that many words, the voice's
+  recovery). An actor shouts the words it knows in a row from the first: the player those
+  learned (Game.TeachWord: word walls' scripts) and unlocked (Game.UnlockWord; the magic menu's
+  Unlock, a dragon soul each: the DragonSouls actor value, sConfirmSpendSoul, sFailSpendSoul),
+  NPCs all.
+- The voice key (Shout, Z) tapped shouts the first word, held from fShoutTime1 (0.2 s) two, from
+  fShoutTime2 (0.9 s) three (TODO(M13): the settings read as hold times). The word's spell is
+  cast (most are cones: Unrelenting Force; some Self: Whirlwind Sprint), its release sound is the
+  thu'um (MGEF release sound); the player's shakes the view as the controller would rumble
+  (fShoutRumbleBigMotorFrequencyV<n>, ...DurationV<n>: WorldBridge.shakeCamera, TODO(M13)).
+- The voice then recovers for that word's recovery × (1 − ShoutRecoveryMult) (the Blessing of
+  Talos's 0.2 is "20 % less"; TODO(M13): inferred from its text): Unrelenting Force 15, 20, 45 s.
+  ActorState.voiceRecoveryTime counts down (Get/SetVoiceRecoveryTime); the HUD's shout meter
+  shows it (SetShoutMeterPercent) and flashes (FlashShoutMeter) at a shout before it has
+  recovered. GetCurrentShoutVariation is the last shout's words less one (the idle tree's
+  Whirlwind Sprint variants).
+- Powers in the voice are cast as they are ready (the key need not be held), once a game day
+  (24 hours since the last use); lesser powers whenever. They share the voice key, not its
+  recovery.
+
+### Conditions and natives
+
+IsCasting, IsDualCasting; by casting source GetCurrentCastingType and GetCurrentDeliveryType (what
+the source casts now, else what it holds: the idle tree asks before a cast begins), SpellHasKeyword,
+IsCurrentSpell; IsWardState; GetCurrentShoutVariation; HasShout; GetEquippedShout (the equip
+system). SpellHasCastingPerk is 0 until the perk system (TODO(M11)). Natives: InterruptCast,
+DoCombatSpellApply, Get/SetVoiceRecoveryTime (the meter counts down from what it is set to),
+Game.TeachWord, UnlockWord, IsWordUnlocked; Spell.Cast and RemoteCast fly.
+
+TODO(M12): the powers used, the staffs' charge, the words learned and the voice in the save.
