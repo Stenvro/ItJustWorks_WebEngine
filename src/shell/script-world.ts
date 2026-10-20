@@ -67,6 +67,26 @@ export interface ScriptView {
   furnitureInUse?(reference: number, marker?: number): boolean;
 }
 
+/**
+ * What the actors of the play on screen notice (src/shell/actor-senses.ts): detection's answers
+ * to the scripts, and what the scripts tell it.
+ */
+export type ScriptSenses = Required<
+  Pick<
+    WorldBridge,
+    | 'lightLevel'
+    | 'detects'
+    | 'lineOfSight'
+    | 'alarmed'
+    | 'attacked'
+    | 'alerted'
+    | 'detectionEvent'
+    | 'alarm'
+    | 'startSneaking'
+    | 'hideFromStealthMeter'
+  >
+>;
+
 /** SetMotionType's keyframed motion. */
 export const MOTION_KEYFRAMED = 4;
 
@@ -266,6 +286,53 @@ export class ScriptWorld implements WorldBridge {
       if (motion) return motion;
     }
     return undefined;
+  }
+
+  /** The senses of the play on screen (its actors' detection), while one runs. */
+  senses: ScriptSenses | undefined;
+
+  lightLevel(actor: number): number {
+    return this.senses?.lightLevel(actor) ?? 0;
+  }
+
+  detects(observer: number, target: number): boolean {
+    return this.senses?.detects(observer, target) ?? false;
+  }
+
+  lineOfSight(viewer: number, target: number): boolean {
+    return this.senses?.lineOfSight(viewer, target) ?? false;
+  }
+
+  alarmed(actor: number): boolean {
+    return this.senses?.alarmed(actor) ?? false;
+  }
+
+  attacked(actor: number): boolean {
+    return this.senses?.attacked(actor) ?? false;
+  }
+
+  alerted(actor: number): boolean {
+    return this.senses?.alerted(actor) ?? false;
+  }
+
+  detectionEvent(at: number, owner: number | undefined, soundLevel: number): void {
+    this.senses?.detectionEvent(at, owner, soundLevel);
+  }
+
+  alarm(
+    source: number,
+    criminal: number | undefined,
+    act: 'attack' | 'trespass' | 'steal' | 'stop',
+  ): void {
+    this.senses?.alarm(source, criminal, act);
+  }
+
+  startSneaking(actor: number): void {
+    this.senses?.startSneaking(actor);
+  }
+
+  hideFromStealthMeter(actor: number, hidden: boolean): void {
+    this.senses?.hideFromStealthMeter(actor, hidden);
   }
 
   furnitureInUse(furniture: number, marker?: number): boolean {

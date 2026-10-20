@@ -604,8 +604,20 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     const reference = self(call);
     return reference !== undefined && reference === runtime.dialogueSpeaker;
   });
-  n('objectreference.createdetectionevent', () => null);
-  n('objectreference.sendstealalarm', () => null);
+  // A noise here (detection: src/shell/actor-senses.ts): CreateDetectionEvent(akOwner,
+  // aiSoundLevel: 0 loud, 1 normal, 2 silent, 3 very loud).
+  n('objectreference.createdetectionevent', (call) => {
+    const reference = self(call);
+    if (reference !== undefined)
+      world.detectionEvent?.(reference, ref(call.args[0]), int(call.args[1], 0));
+    return null;
+  });
+  // SendStealAlarm(akThief): an alarm as if the thief stole this. TODO(M11): crime.
+  n('objectreference.sendstealalarm', (call) => {
+    const reference = self(call);
+    if (reference !== undefined) world.alarm?.(reference, ref(call.args[0]), 'steal');
+    return null;
+  });
   n('objectreference.knockareaeffect', () => null);
   n('objectreference.processtraphit', () => null);
   n('objectreference.interruptcast', () => null);

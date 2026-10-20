@@ -40,6 +40,7 @@ import {
   DEFAULT_LAND_TEXTURE,
 } from '../render/terrain-data.ts';
 import { pointLights } from '../world/cell-lighting.ts';
+import type { LightProbe } from '../ai/light-level.ts';
 import {
   doorDestination,
   loadCellData,
@@ -889,6 +890,7 @@ export class WorldViewer {
       navmeshes: () => this.#navmeshes,
       door: (reference) => this.#doorOf(reference),
       objects: () => this.#stageObjects(),
+      light: (at) => this.#lightProbe(at),
       focus: () => this.#play?.player.feet,
       // Actors walking into trigger volumes tell their scripts.
       onTrigger: (trigger, actor, entered) => {
@@ -1029,7 +1031,10 @@ export class WorldViewer {
       hud: session.hud,
       notice: this.#ui.notice,
       onImpact: (impact) => {
-        this.#session?.soundSystem?.impact(impact);
+        // Its sound is a noise the actors may hear (the impact's sound level).
+        this.#session?.soundSystem?.impact(impact, (sounded) => {
+          this.#stage?.senses.noise(impact.position, undefined, sounded.soundLevel);
+        });
       },
     });
     // bBorderRegionsEnabled: the worldspace's border regions stop the player.
@@ -2141,6 +2146,29 @@ export class WorldViewer {
   /** The current colour of an emittance source (lights with REFR XEMI). */
   readonly #emittanceRgb = (formId: number): Rgb =>
     this.#session?.emittance(formId).rgb ?? [0, 0, 0];
+
+  /**
+   * The lighting near a place (the light on actors: src/shell/actor-senses.ts): the sky's, and
+   * the lights of the loaded cells round it.
+   */
+  #lightProbe(at: Vec3): LightProbe | undefined {
+    const sky = this.#sky?.lighting();
+    if (!sky) return undefined;
+    const x = Math.floor(at[0] / CELL_SIZE);
+    const y = Math.floor(at[1] / CELL_SIZE);
+    const lights: PointLight[] = [];
+    for (const cell of this.#cells.values()) {
+      if (!cell.ready || Math.abs(cell.x - x) > 1 || Math.abs(cell.y - y) > 1) continue;
+      lights.push(...pointLights(cell.lights, performance.now() / 1000, at, this.#emittanceRgb));
+    }
+    return {
+      ambient: sky.ambient,
+      sunColor: sky.sunColor,
+      sunDirection: sky.sunDirection,
+      lights,
+      interior: false,
+    };
+  }
 
   /** The sky's light (time of day and weather) plus the nearest point lights. */
   #lighting(camera: Vec3): SceneLighting {

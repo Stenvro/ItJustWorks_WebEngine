@@ -509,8 +509,11 @@ export class SoundSystem {
   }
 
   /** A physics collision: the impact sound of the materials that met. */
-  impact(hit: ImpactHit): void {
-    void this.#impacts.hit(hit, performance.now() / 1000);
+  impact(hit: ImpactHit, sounded?: (impact: Impact) => void): void {
+    // `sounded` hears the impact that sounded: its IPCT sound level is a noise for detection.
+    void this.#impacts.hit(hit, performance.now() / 1000).then((impact) => {
+      if (impact) sounded?.(impact);
+    });
   }
 
   /** The material types (MATT) by collision id and by form id, read once. */

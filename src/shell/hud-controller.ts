@@ -6,9 +6,9 @@
 // activate button), the messages scripts post (ShowMessage: Debug.Notification's list at the
 // top left), quest updates (ShowNotification, one at a time as the HUD says it can show one),
 // and help messages (ShowTutorialHintText, their "[Event]" keys as button art).
-// Notes: docs/ui.md.
-// TODO(M10): enemy health, the stealth meter (through the clips the HUD registers), the
-// sneaking and riding HUD modes. TODO(M11): the shout meter, weapon charge, meters blinking.
+// The stealth meter and the sneaking HUD mode: hud-stealth.ts. Notes: docs/ui.md.
+// TODO(M10): enemy health (5.1), the riding HUD mode (3.5). TODO(M11): the shout meter, weapon
+// charge, meters blinking.
 
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { QuestUpdate, ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -17,6 +17,7 @@ import { ActorValue } from '../world/actor-values.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 import type { HelpMessage, HudSignals, HudSink, HudTarget } from './hud-signals.ts';
+import { StealthMeter } from './hud-stealth.ts';
 
 /** What the HUD reads of the game every frame. */
 export interface HudSource {
@@ -82,6 +83,8 @@ export class HudController implements HudSink {
   readonly #help = new Map<string, ShownHelp>();
   /** Events whose help the player has done (they are not shown again until reset). */
   readonly #helpDone = new Set<string>();
+  /** The stealth meter (hud-stealth.ts). */
+  readonly #stealth = new StealthMeter();
 
   constructor(host: MenuHost, signals: HudSignals, source: HudSource) {
     this.#host = host;
@@ -96,7 +99,8 @@ export class HudController implements HudSink {
       interactive: false,
       handlers: {
         // The HUD hands the engine its sneak text, stealth eye, enemy health and quest update
-        // clips, which the engine drives itself (TODO(M10): stealth and enemy health).
+        // clips, which the engine drives itself by their paths (the stealth meter:
+        // hud-stealth.ts; TODO(M10) 5.1: enemy health).
         RegisterHUDComponents: () => undefined,
       },
       setup: async (menu) => {
@@ -106,6 +110,7 @@ export class HudController implements HudSink {
         // Everything the HUD shows anew after a reload.
         this.#shown = { heading: Number.NaN, health: -1, magicka: -1, stamina: -1 };
         this.#cartMode = false;
+        this.#stealth.reset();
         // (The HUD is not this.#menu yet as it first opens.)
         this.#applySettings(menu);
       },
@@ -360,6 +365,10 @@ export class HudController implements HudSink {
     }
     this.#showNotice(menu);
     this.#updateCompass(menu);
+    this.#stealth.update(menu, this.#signals.stealth?.(), performance.now(), {
+      detected: this.#settings?.string('sSneakDetected') ?? '[DETECTED]',
+      hidden: this.#settings?.string('sSneakHidden') ?? '[HIDDEN]',
+    });
     if (!this.#readingMeters) {
       this.#readingMeters = true;
       void this.#updateMeters(menu).finally(() => {

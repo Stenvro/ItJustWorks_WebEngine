@@ -211,6 +211,8 @@ export class ActorMovers {
   /** The last bump of each actor (its conditions), and those reacting to one now. */
   readonly #bumps = new Map<number, Bump>();
   readonly #reactions = new Map<number, Reaction>();
+  /** The actors that sneak now (src/shell/actor-senses.ts: Always Sneak, StartSneaking). */
+  readonly #sneaking = new Set<number>();
   #bumpTiming: BumpTiming | undefined;
   readonly #bounds = new Map<string, Promise<{ center: Vec3; halfExtents: Vec3 } | undefined>>();
   #world: MoverWorld | undefined;
@@ -485,13 +487,23 @@ export class ActorMovers {
       moving,
       running: moving && request?.gait === 'run',
       sprinting: moving && request?.gait === 'sprint',
-      // TODO(M10) 4.1: actors sneak (their detection, a package's flag).
-      sneaking: false,
+      sneaking: this.#sneaking.has(reference),
       swimming: mover.character.swimming,
       speed: Math.hypot(mover.velocity[0], mover.velocity[1]),
       pathing: this.#travels.has(reference),
       bump: this.#bumps.get(reference),
     };
+  }
+
+  /** An actor sneaks (its graph's IsSneaking: it moves as its sneaking movement type) or not. */
+  sneak(reference: number, on: boolean): void {
+    if (on) this.#sneaking.add(reference);
+    else this.#sneaking.delete(reference);
+  }
+
+  /** The height of a moved actor's controller (its eyes: src/shell/actor-senses.ts). */
+  height(reference: number): number | undefined {
+    return this.#movers.get(reference)?.character.shape.height;
   }
 
   /** How many actors (not the player) are in a trigger volume of a reference. */
@@ -505,6 +517,7 @@ export class ActorMovers {
   remove(reference: number): void {
     this.#walkers.delete(reference);
     this.#reactions.delete(reference);
+    this.#sneaking.delete(reference);
     const mover = this.#movers.get(reference);
     if (mover) this.#free(mover);
     this.#travels.get(reference)?.done(false);
@@ -745,7 +758,7 @@ export class ActorMovers {
           swimming: false,
           verticalSpeed: 0,
           sprinting: moving && request?.gait === 'sprint',
-          sneaking: false,
+          sneaking: this.#sneaking.has(reference),
         });
       }
     }
@@ -1108,7 +1121,7 @@ export class ActorMovers {
         swimming: mover.character.swimming,
         verticalSpeed: mover.character.verticalSpeed,
         sprinting: moving && request?.gait === 'sprint',
-        sneaking: false,
+        sneaking: this.#sneaking.has(staged.reference),
       });
     }
     // The trigger volumes it walked into and out of.

@@ -90,16 +90,18 @@ export class ImpactSounds {
   }
 
   /** Plays the sound of an impact (`now`: seconds). */
-  async hit(hit: ImpactHit, now: number): Promise<void> {
+  async hit(hit: ImpactHit, now: number): Promise<Impact | undefined> {
     const last = this.#last.get(hit.body);
-    if (last !== undefined && now - last < this.#settings.interval) return;
+    if (last !== undefined && now - last < this.#settings.interval) return undefined;
     this.#last.set(hit.body, now);
     if (this.#last.size > 1024) this.#forget(now);
     const impact = await this.#impactOf(hit);
-    if (!impact) return;
+    if (!impact) return undefined;
     const heavy = hit.speed >= this.#settings.heavySpeed;
     const sound = (heavy ? impact.heavySound : undefined) ?? impact.sound;
     if (sound !== undefined) this.#play(sound, hit.position);
+    // The impact that sounded (its sound level is a noise for detection).
+    return impact;
   }
 
   async #impactOf(hit: ImpactHit): Promise<Impact | undefined> {

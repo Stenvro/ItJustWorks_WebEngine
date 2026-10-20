@@ -31,7 +31,7 @@ export interface Impact {
   /** Degrees. */
   readonly angleThreshold: number;
   readonly placementRadius: number;
-  /** How loud for detection: 0 loud, 1 normal, 2 silent, 3 very loud (TODO(M10)). */
+  /** How loud for detection: 0 loud, 1 normal, 2 silent, 3 very loud (a noise: actor-senses). */
   readonly soundLevel: number;
   readonly flags: number;
   /** SNAM: the sound of a light impact; NAM1: of a heavy one (SNDR). */

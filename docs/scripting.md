@@ -163,7 +163,7 @@ mass and regeneration from its race; then scripts' permanent modifiers and damag
 scripts set), spells and perks (its own, its race's, scripts'), being essential or protected
 (its base, scripts' ActorBase changes, or an alias), dead (killed, or placed dead) and dying
 (OnDying, then OnDeath). TODO(M11): stats recalculated with the player's level, bleedout,
-the magic system's effects; TODO(M10): combat, detection, packages.
+the magic system's effects; TODO(M10): combat (detection: [ai.md](ai.md#detection)).
 
 The player's race, sex and name are the race menu's choices (`GameState.playerAppearance`,
 `playerName`): ActorBase.GetRace and GetSex of the Player base (0x7), Actor.GetRace and the

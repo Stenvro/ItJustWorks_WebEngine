@@ -7,6 +7,7 @@
 
 import type { MenuRequest, QuestUpdate } from '../scripting/runtime/runtime.ts';
 import type { PlacedActor } from './actors.ts';
+import type { StealthReading } from './hud-stealth.ts';
 import type { ObjectUses } from './play-session.ts';
 
 export interface HudTarget {
@@ -91,6 +92,11 @@ export class HudSignals {
   screen: ScreenSink | undefined;
   /** What activating containers and items does (Play), if anything. */
   uses: ObjectUses | undefined;
+  /**
+   * The stealth meter's reading (the play's senses: src/shell/actor-senses.ts), read by the HUD
+   * every frame; undefined: no play.
+   */
+  stealth: (() => StealthReading) | undefined;
 
   /** Whether a HUD shows these (the sandbox's own prompt and notices then stay quiet). */
   get listening(): boolean {
