@@ -41,8 +41,6 @@ export const Fn = {
   isBleedingOut: 580,
   isInScene: 590,
   getEquippedItemType: 597,
-  isDualCasting: 627,
-  isCasting: 632,
   isAttacking: 672,
   isPowerAttacking: 673,
   isCommandedActor: 700,
@@ -966,9 +964,10 @@ async function conditionValue(
       switch (condition.function) {
         case Fn.getWantBlocking:
           return flag(now.wantBlocking);
+        // Drawn hands holding only spells (or scrolls) are magic out, not a weapon; IsWeaponMagicOut
+        // is either.
         case Fn.isWeaponOut:
-          // TODO(M10) 5.3: a spell in hand is magic out, not a weapon.
-          return flag(out);
+          return flag(out && !(await runtime.casting.magicOnly(reference)));
         case Fn.isWeaponMagicOut:
           return flag(out);
         case Fn.isShieldOut:
@@ -1013,11 +1012,9 @@ async function conditionValue(
     // The player looks through their own eyes.
     case Fn.isPC1stPerson:
       return flag(runtime.world.firstPerson?.() === true);
-    // Fleeing is the combat AI's (TODO(M10) 5.2); casting the magic system's (TODO(M10) 5.3);
-    // being fed on and eaten are the player's powers (TODO(M11)).
+    // Fleeing is the combat AI's (TODO(M10) 5.2); casting is the casting engine's
+    // (magic-conditions.ts); being fed on and eaten are the player's powers (TODO(M11)).
     case Fn.isFleeing:
-    case Fn.isDualCasting:
-    case Fn.isCasting:
     case Fn.getVampireFeed:
     case Fn.getCannibal:
       return 0;

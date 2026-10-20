@@ -10,12 +10,14 @@
 // text, UISkillIncreaseSD, the player's level and the level meter from and to its progress; the
 // movie shows its own "level up" once the meter fills); the magicka and stamina meters blink as
 // the player lacks them (StartMagickaMeterBlinking, StartStaminaMeterBlinking; health blinks
-// of itself when low). The stealth meter and the sneaking HUD mode: hud-stealth.ts.
+// of itself when low). The shout meter (SetShoutMeterPercent: 100 once the voice has recovered,
+// the casting engine's voiceMeter) flashes as the player shouts before it has
+// (FlashShoutMeter). The stealth meter and the sneaking HUD mode: hud-stealth.ts.
 // Notes: docs/ui.md.
-// The enemy health bar (enemy). TODO(M10): the riding HUD mode (3.5). TODO(M11): the shout
-// meter (SetShoutMeterPercent, FlashShoutMeter: the shout system) and weapon charge
+// The enemy health bar (enemy). TODO(M10): the riding HUD mode (3.5). TODO(M11): weapon charge
 // (SetChargeMeterPercent: the equip and magic systems).
 
+import type { CastEvent } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { SkillIncrease } from '../scripting/runtime/progression-engine.ts';
 import type { QuestUpdate, ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -84,6 +86,9 @@ export class HudController implements HudSink {
   #menu: Menu | undefined;
   #frame = 0;
   #shown = { heading: Number.NaN, health: -1, magicka: -1, stamina: -1 };
+  /** The shout meter shown (−1: not yet), and the runtime whose casts it hears. */
+  #shoutShown = -1;
+  #heard: { runtime: ScriptRuntime; stop: () => void } | undefined;
   /** The meters are read now and then (the runtime answers asynchronously). */
   #readingMeters = false;
   #settings: GameSettings | undefined;
@@ -118,6 +123,7 @@ export class HudController implements HudSink {
         menu.invoke(`${BASE}.SetPlatform`, 0, false);
         // Everything the HUD shows anew after a reload.
         this.#shown = { heading: Number.NaN, health: -1, magicka: -1, stamina: -1 };
+        this.#shoutShown = -1;
         this.#cartMode = false;
         this.#stealth.reset();
         // (The HUD is not this.#menu yet as it first opens.)
@@ -177,6 +183,8 @@ export class HudController implements HudSink {
   }
 
   close(): void {
+    this.#heard?.stop();
+    this.#heard = undefined;
     this.#stopSettings?.();
     this.#stopSettings = undefined;
     cancelAnimationFrame(this.#frame);
@@ -374,6 +382,7 @@ export class HudController implements HudSink {
     }
     this.#showNotice(menu);
     this.#updateCompass(menu);
+    this.#updateShoutMeter(menu);
     this.#stealth.update(menu, this.#signals.stealth?.(), performance.now(), {
       detected: this.#settings?.string('sSneakDetected') ?? '[DETECTED]',
       hidden: this.#settings?.string('sSneakHidden') ?? '[HIDDEN]',
@@ -418,6 +427,31 @@ export class HudController implements HudSink {
       objectives: [],
       skill: { level: increase.playerLevel, from: increase.from, to: increase.to },
     });
+  }
+
+  /**
+   * The shout meter: the voice's recovery as it counts down (whole percents); it flashes as the
+   * player shouts before it has recovered (the casting engine's refusal).
+   */
+  #updateShoutMeter(menu: Menu): void {
+    const runtime = this.#source.runtime();
+    if (this.#heard?.runtime !== runtime) {
+      this.#heard?.stop();
+      this.#heard = undefined;
+      if (runtime) {
+        const listener = (event: CastEvent): void => {
+          if (event.actor === PLAYER_REF && event.kind === 'refused' && event.reason === 'voice')
+            this.#menu?.call('FlashShoutMeter');
+        };
+        runtime.casting.listeners.add(listener);
+        this.#heard = { runtime, stop: () => runtime.casting.listeners.delete(listener) };
+      }
+    }
+    if (!runtime) return;
+    const percent = Math.round(runtime.casting.voiceMeter(PLAYER_REF));
+    if (percent === this.#shoutShown) return;
+    this.#shoutShown = percent;
+    menu.call('SetShoutMeterPercent', percent, false);
   }
 
   meterBlink(meter: 'magicka' | 'stamina'): void {
