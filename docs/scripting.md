@@ -77,7 +77,8 @@ and DLC set-up quests stop themselves at once) and MQ101 runs; no native is miss
 
 - **Start** fills the aliases in order; one that must be filled and stays empty keeps the
   quest from starting. A quest with an event type starts only from that story manager event.
-  The start-up stage is set as it starts; its fragment runs on a thread of its own.
+  The start-up stage is set as it starts; its fragment runs on a thread of its own. Its scenes
+  that begin on quest start start, and they end as it stops ([ai.md](ai.md#scenes)).
 - **SetStage** starts the quest if needed; without "allow repeated stages" a stage is set once;
   the first log entry whose conditions hold happens (completes or fails the quest, starts the
   next) and only its fragment runs; the caller waits for it. **Stop** sets the shut-down stage

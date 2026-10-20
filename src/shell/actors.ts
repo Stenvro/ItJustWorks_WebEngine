@@ -252,8 +252,14 @@ export function talkTargets(
         verb: hud?.uses?.text('sTalk') ?? 'Talk',
         name,
         activate: () => {
-          // In Play: a conversation in the game's dialogue menu.
+          // In Play: a conversation in the game's dialogue menu, unless a scene it plays in
+          // lets nobody talk to it (No Player Activation: "This person is busy.").
           const menus = session()?.hud.menus;
+          if (menus && session()?.scriptsReady?.scenes.blocksActivation(reference)) {
+            const busy = hud?.uses?.text('sSceneBlockingActorActivation');
+            if (busy) hud?.notification(busy);
+            return;
+          }
           if (menus) {
             menus.talk(placed);
             return;

@@ -43,6 +43,8 @@ import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
 import { scriptEvent, StoryManager, type StoryEventData } from './story-manager.ts';
+import { SceneDirector } from '../../ai/scene-runtime.ts';
+import { RuntimeSceneHost, type SceneSpeech } from './scene-host.ts';
 
 /** What scripts do to the world the engine shows, and what they read of it (nothing in Node). */
 /** A menu a script opens (Actor.ShowBarterMenu, Game.ShowTrainingMenu, ...). */
@@ -239,6 +241,11 @@ export interface WorldBridge {
     speakAs: number | undefined,
     inHead: boolean,
   ): void;
+  /**
+   * A response of a scene's line said by a loaded actor (its voice, lips, emotion, subtitle):
+   * resolves once said. Undefined: the speaker is not loaded (the line passes silently).
+   */
+  sceneLine?(speech: SceneSpeech): Promise<void> | undefined;
 }
 
 /** A quest's update as the HUD announces it. */
@@ -468,9 +475,10 @@ export class ScriptRuntime implements VmHost {
   readonly #registrations = new Map<string, Map<string, ObjectHandle>>();
   readonly #formListAdded = new Map<number, number[]>();
   readonly #inventoryFilters = new Map<string, Set<number>>();
-  readonly #scenes = new Set<number>();
-  /** Actors in a playing scene (TODO(M10): scenes cast their actors). */
-  readonly sceneActors = new Map<number, number>();
+  /** The quests' scenes as they play (src/ai/scene-runtime.ts). */
+  readonly scenes: SceneDirector;
+  /** The scenes' host (its trace: tools/scene-info.ts --play). */
+  readonly sceneHost: RuntimeSceneHost;
   readonly #lineOfSight = new Map<
     string,
     { target: ObjectHandle; viewer: number; seen: number; mode: 'both' | 'gain' | 'lost' }
@@ -510,6 +518,8 @@ export class ScriptRuntime implements VmHost {
     this.actors = new ActorEngine(this);
     this.equipment = new EquipmentEngine(this);
     this.progression = new ProgressionEngine(this);
+    this.sceneHost = new RuntimeSceneHost(this);
+    this.scenes = new SceneDirector(this.sceneHost);
     registerNatives(this.#natives, this);
   }
 
@@ -1904,6 +1914,7 @@ export class ScriptRuntime implements VmHost {
     this.vm.scheduler.advance(realSeconds, gameDays);
     // Health, magicka and stamina regenerate (and the player's stamina drains sprinting).
     if (!this.retired) this.progression.update(realSeconds);
+    this.scenes.update(realSeconds);
   }
 
   /** A frame in a menu (menu mode): only the wall clock moves on (WaitMenuMode). */
@@ -1986,22 +1997,14 @@ export class ScriptRuntime implements VmHost {
     this.world.say?.(speaker, topic, speakAs, inHead);
   }
 
-  // --- Scenes (TODO(M10): scenes play their phases, packages and dialogue) -------------------
+  // --- Scenes (this.scenes: src/ai/scene-runtime.ts) ------------------------------------------
 
-  sceneStart(scene: number): void {
-    this.#scenes.add(scene);
-  }
-
-  sceneStop(scene: number): void {
-    this.#scenes.delete(scene);
-  }
-
-  scenePlaying(scene: number): boolean {
-    return this.#scenes.has(scene);
-  }
-
-  sceneOf(reference: number): number | undefined {
-    return this.sceneActors.get(reference);
+  /**
+   * The package an actor runs (GetCurrentPackage, GetIsCurrentPackage): its AI's where it runs,
+   * else the package of the scene action it is in.
+   */
+  currentPackage(actor: number): number | undefined {
+    return this.world.currentPackage?.(actor) ?? this.scenes.packageOf(actor);
   }
 
   // --- Skills (src/scripting/runtime/progression-engine.ts), story events, finding references --
