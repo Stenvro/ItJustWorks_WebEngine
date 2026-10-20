@@ -4,8 +4,9 @@
 // dead, disabled, destroyed or locked, relationships, locations (keywords, reference types,
 // keyword data, cleared), the time, and the story manager event's data. Functions not valued
 // yet hold (and are reported once), as conditions.ts does. Indices: UESP "Skyrim Mod:Function
-// Indices". Detection's (GetDetected, GetLineOfSight, GetLightLevel, ...) ask the world
-// (src/shell/actor-senses.ts). TODO(M10)/(M11): combat, magic and crime functions.
+// Indices"; magic's in magic-conditions.ts. Detection's (GetDetected, GetLineOfSight,
+// GetLightLevel, ...) ask the world (src/shell/actor-senses.ts). TODO(M10)/(M11): combat and
+// crime functions.
 
 import { NpcFlag, RaceFlag } from '../../world/actor-records.ts';
 import { ActorValue } from '../../world/actor-values.ts';
@@ -13,6 +14,7 @@ import { conditionFunctionName } from '../condition-functions.ts';
 import type { Condition } from '../conditions.ts';
 import { ObjectHandle, type Value } from '../values.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
+import { magicConditionValue } from './magic-conditions.ts';
 import type { ScriptRuntime } from './runtime.ts';
 import type { StoryEventData } from './story-manager.ts';
 
@@ -192,6 +194,8 @@ export interface ConditionContext {
   readonly packageData?: (input: number) => number | 'none' | undefined;
   /** What the subject acts on (the object it activates: GetActivationHeight, IsCarryable). */
   readonly target?: ObjectHandle;
+  /** The active magic effect whose conditions these are (magic-conditions.ts). */
+  readonly effectKey?: string;
 }
 
 /** GetEventData's event functions (its first parameter's low 16 bits). */
@@ -860,6 +864,11 @@ async function conditionValue(
       return flag(reference !== undefined && (runtime.world.alarmed?.(reference) ?? false));
     case Fn.getAttacked:
       return flag(reference !== undefined && (runtime.world.attacked?.(reference) ?? false));
+    // Summoned, reanimated or commanded by an effect (magic-engine.ts).
+    case Fn.isCommandedActor:
+      return reference === undefined
+        ? undefined
+        : flag(runtime.magic.commander(reference) !== undefined);
     case Fn.getIsAlerted:
       return flag(
         reference !== undefined &&
@@ -889,7 +898,6 @@ async function conditionValue(
     case Fn.getKnockStateEnum:
     case Fn.getVampireFeed:
     case Fn.getCannibal:
-    case Fn.isCommandedActor:
       return 0;
     // The type of what a hand holds (its casting source: 0 left, 1 right; Actor's codes).
     case Fn.getEquippedItemType:
@@ -959,6 +967,7 @@ async function conditionValue(
       return value === undefined ? undefined : flag(value === 'none');
     }
     default:
-      return undefined;
+      // Magic: the effects on an actor, and an effect's own (magic-conditions.ts).
+      return magicConditionValue(runtime, condition, reference, context.effectKey);
   }
 }

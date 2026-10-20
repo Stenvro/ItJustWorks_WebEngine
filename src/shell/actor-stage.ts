@@ -686,6 +686,9 @@ export class ActorStage {
         this.#actors.set(reference, entry);
         staged.push(entry);
         this.away.arrived(reference);
+        // Its abilities, diseases and worn enchantments act while it is here.
+        const scripts = session.scriptsReady;
+        if (scripts) scripts.detach(scripts.magic.prepare(reference));
         // Placed in the furniture its package uses: in it at once.
         const start = actor.start;
         if (actor.inFurniture && start?.kind === 'at') {
@@ -716,6 +719,7 @@ export class ActorStage {
   }
 
   #remove(staged: StagedActor): void {
+    this.#options.session.scriptsReady?.magic.unloaded(staged.reference);
     this.ai.remove(staged.reference);
     this.senses.remove(staged.reference);
     this.furniture.remove(staged.reference);
