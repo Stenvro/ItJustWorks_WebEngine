@@ -5,7 +5,13 @@
 
 import type { AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { BehaviorRuntime } from '../animation/behavior-runtime.ts';
-import { FaceAnimation, lipLeadIn, VANILLA_BLINK, type BlinkSettings } from '../animation/face.ts';
+import {
+  creatureLipVariables,
+  FaceAnimation,
+  lipLeadIn,
+  VANILLA_BLINK,
+  type BlinkSettings,
+} from '../animation/face.ts';
 import { ActorPose, ActorSkeleton, wearOnRig, type RigData } from '../animation/skeleton.ts';
 import { parseLip, type LipFile } from '../formats/audio/lip.ts';
 import { Layer } from '../physics/collision-layers.ts';
@@ -723,6 +729,20 @@ export class ActorPlacer {
       behavior.takeRaised();
       pose.update(behavior.pose);
     }
+    // A creature that speaks (dragons, hagravens, rieklings) moves its mouth by its graph's own
+    // lip variables as its lines' curves go (src/animation/face.ts, creatureLipVariables).
+    const lips =
+      !face && behavior ? creatureLipVariables(behavior.variablesNamed('Lip')) : undefined;
+    const creatureFace =
+      lips && behavior ? (await this.#face(new Map(), actor)).weights : undefined;
+    if (creatureFace && lips && behavior) {
+      const graph = behavior;
+      creatureFace.creatureSink = (curves) => {
+        lips.forEach((name, i) => {
+          graph.setVariable(name, curves[i] ?? 0);
+        });
+      };
+    }
     const placed: PlacedActor = {
       actor,
       look,
@@ -732,6 +752,7 @@ export class ActorPlacer {
       instances,
       behavior,
       ...(face && { face: face.weights }),
+      ...(creatureFace && { face: creatureFace }),
       time: undefined,
     };
     return placed;

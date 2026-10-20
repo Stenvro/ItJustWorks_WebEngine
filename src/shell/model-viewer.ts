@@ -682,6 +682,10 @@ export class ModelViewer {
     player.character.walkable = (x, y, z) =>
       this.#cell?.navmesh.heightNear(x, y, z, NAVMESH_TOLERANCE) !== undefined;
     player.overEncumbered = () => this.#session?.overEncumbered === true;
+    // What the player does that the actors near comment on (src/shell/actor-talk.ts).
+    player.onAction = (subtype) => {
+      void this.#stage?.talk.playerAction(subtype);
+    };
     const play = new PlaySession({
       physics,
       player,

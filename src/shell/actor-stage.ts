@@ -35,6 +35,7 @@ import { ActorFurniture, type FurnitureUser, type StageObject } from './actor-fu
 import { ActorMovers } from './actor-movers.ts';
 import { ActorSenses, type SensesWorld } from './actor-senses.ts';
 import type { LightProbe } from '../ai/light-level.ts';
+import { ActorTalk } from './actor-talk.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -133,6 +134,8 @@ export class ActorStage {
   readonly ai: ActorAi;
   /** The actors in scenes: facing their targets (src/shell/actor-scenes.ts). */
   readonly actorScenes: ActorScenes;
+  /** What the actors say: greetings, chatter, conversations, barks (bark: combat, crime, ...). */
+  readonly talk: ActorTalk;
   /** The furniture the actors use (chairs, beds, leans). */
   readonly furniture: ActorFurniture;
   /** What the actors' packages search the loaded area for. */
@@ -173,10 +176,11 @@ export class ActorStage {
       shutPlaces: (actor) => this.doors.shutPlaces(actor),
       held: (actor) => this.furniture.holds(actor),
       // The player walked into an actor: it flinches by where they came from (ActionBumpedInto's
-      // idles by GetLastBumpDirection). TODO(M10) 4.3: its ActorCollidewithActor line.
+      // idles by GetLastBumpDirection) and says its ActorCollidewithActor line.
       onBump: (actor) => {
         const staged = this.#actors.get(actor);
         if (staged) void this.furniture.playAction(this.userOf(staged), 'ActionBumpedInto');
+        this.talk.bumped(actor);
       },
     });
     this.bodies = new ActorBodies(options.session);
@@ -200,6 +204,7 @@ export class ActorStage {
       userOf: (staged) => this.userOf(staged),
       leaveThrough: (staged, door, destination) => this.leaveThrough(staged, door, destination),
       doors: this.doors,
+      talk: () => this.talk,
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
       overrides: (actor) => this.senses.overridePackages(actor),
     });
@@ -213,11 +218,22 @@ export class ActorStage {
       interior: options.interior === true,
       ...(options.light && { light: options.light }),
       camera: () => options.renderer.view?.camera,
+      bark: (actor, subtype, target) => this.talk.bark(actor, subtype, target),
     });
     this.actorScenes = new ActorScenes({
       session: options.session,
       movers: this.movers,
       furniture: this.furniture,
+    });
+    // Who greets and chatters: those that detect the player. TODO(M10) 1.5: where a speaker
+    // looks (the procedural animation's look-at).
+    this.talk = new ActorTalk({
+      session: options.session,
+      terminal: options.terminal,
+      movers: this.movers,
+      ai: this.ai,
+      furniture: this.furniture,
+      detects: (actor) => this.senses.detections.detects(actor, PLAYER_REF),
     });
   }
 
@@ -300,6 +316,14 @@ export class ActorStage {
     await this.away.place(reference, arrival);
   }
 
+  /** An actor plays the idle an action gives it now (ActionTalking); whether it is here. */
+  act(reference: number, action: string): boolean {
+    const staged = this.#actors.get(reference);
+    if (!staged || staged.dead) return false;
+    void this.furniture.playAction(this.userOf(staged), action);
+    return true;
+  }
+
   /** A staged actor by its reference. */
   get(reference: number): StagedActor | undefined {
     return this.#actors.get(reference);
@@ -339,6 +363,7 @@ export class ActorStage {
     staged.dead = true;
     this.ai.remove(reference);
     this.senses.killed(reference);
+    this.talk.remove(reference);
     this.furniture.remove(reference);
     this.movers.request(reference, undefined);
     this.movers.release(reference);
@@ -616,6 +641,7 @@ export class ActorStage {
     // What they notice (detection), and how they react.
     this.senses.frame(frame);
     this.actorScenes.frame(this.#actors.values());
+    this.talk.frame(this.#actors.values(), frame, this.#options.focus?.());
     this.away.frame(frame);
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     const times = new Map<StagedActor, number | undefined>();
@@ -731,6 +757,7 @@ export class ActorStage {
     this.#options.session.scriptsReady?.magic.unloaded(staged.reference);
     this.ai.remove(staged.reference);
     this.senses.remove(staged.reference);
+    this.talk.remove(staged.reference);
     this.furniture.remove(staged.reference);
     this.movers.remove(staged.reference);
     this.bodies.remove(staged.reference);

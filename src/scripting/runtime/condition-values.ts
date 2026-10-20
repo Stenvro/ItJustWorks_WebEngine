@@ -182,7 +182,15 @@ export const Fn = {
   wornHasKeyword: 682,
   hasBoundWeaponEquipped: 706,
   wornApparelHasKeywordCount: 722,
+  isGreetingPlayer: 123,
+  isTalking: 141,
+  getDialogueEmotion: 434,
+  getDialogueEmotionValue: 435,
+  getAllowWorldInteractions: 503,
 } as const;
+
+/** PKDT interrupt flag World Interactions (src/ai/package-records.ts, InterruptFlag). */
+const WORLD_INTERACTIONS = 0x200;
 
 /** What a condition is evaluated in: the story manager event, the quest that owns it. */
 export interface ConditionContext {
@@ -741,6 +749,28 @@ async function conditionValue(
         : flag(state.actors.get(reference)?.talkedToPlayer ?? false);
     case Fn.isInDialogueWithPlayer:
       return flag(reference !== undefined && runtime.dialogueSpeaker === reference);
+    // What it says now (src/shell/world-lines.ts): a line, the player's greeting, the emotion of
+    // the response (its idles while talking pick by it: ActionTalking).
+    case Fn.isTalking:
+    case Fn.isGreetingPlayer:
+    case Fn.getDialogueEmotion:
+    case Fn.getDialogueEmotionValue: {
+      const talking = reference === undefined ? undefined : runtime.world.talking?.(reference);
+      if (condition.function === Fn.isTalking) return flag(talking !== undefined);
+      if (condition.function === Fn.isGreetingPlayer) return flag(talking?.greeting === true);
+      if (condition.function === Fn.getDialogueEmotion) return talking?.emotion ?? 0;
+      return talking?.emotionValue ?? 0;
+    }
+    // Its package lets it comment on the world (PKDT interrupt flag 0x200 World Interactions);
+    // one that runs none may. TODO(M13): the engine's answer without a package.
+    case Fn.getAllowWorldInteractions: {
+      if (reference === undefined) return undefined;
+      const pack = runtime.world.currentPackage?.(reference);
+      if (pack === undefined) return 1;
+      const pkdt = (await runtime.forms.record(pack))?.fields.first('PKDT');
+      const interrupts = pkdt && pkdt.length >= 10 ? (pkdt[8] ?? 0) | ((pkdt[9] ?? 0) << 8) : 0;
+      return flag((interrupts & WORLD_INTERACTIONS) !== 0);
+    }
     case Fn.getIsCurrentPackage:
       // The package its AI runs (a scene's while a package action holds it; none: none).
       return reference === undefined ? undefined : flag(runtime.currentPackage(reference) === form);

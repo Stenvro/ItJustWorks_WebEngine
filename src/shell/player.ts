@@ -4,6 +4,7 @@
 // first-person camera rides the animated Camera1st node) are the player's avatar
 // (player-avatar.ts), which hooks in here.
 
+import { DialogueCamera } from './dialogue-camera.ts';
 import { TweenCamera } from './tween-camera.ts';
 import type { Camera } from '../render/view-camera.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
@@ -266,6 +267,13 @@ export class Player implements Camera {
   overEncumbered: (() => boolean) | undefined;
   /** The tween menu's camera while it is open (it leans and zooms the view). */
   readonly tween: TweenCamera;
+  /**
+   * The player did something the actors near comment on (a topic subtype: "JUMP", "ZKEY",
+   * "LOOB", ...; the stage's talk answers: src/shell/actor-talk.ts, playerAction).
+   */
+  onAction: ((subtype: string) => void) | undefined;
+  /** The dialogue camera while the player talks with an actor (it turns to it and zooms). */
+  readonly dialogue = new DialogueCamera();
   /** The race's body (the cameras' heights). */
   #body: PlayerBody;
 
@@ -380,6 +388,7 @@ export class Player implements Camera {
   /** Jumps now, if on the ground (the avatar's jump animation pushes off). */
   launchJump(): void {
     if (!this.character.grounded || this.character.swimming) return;
+    this.onAction?.('JUMP');
     // fJumpHeightMin: the height of the jump; with constant gravity v = √(2 g h).
     const g = -this.#setup.physics.world.gravity.z * HAVOK_SCALE;
     this.character.jump(Math.sqrt(2 * g * this.#setup.jumpHeight));
@@ -643,8 +652,15 @@ export class Player implements Camera {
   }
 
   viewProjection(aspect: number, out: Mat4 = new Float32Array(16)): Mat4 {
-    let forward = this.forward;
     let fovY = this.#fovY;
+    // In a conversation the player's view turns to the speaker (they face it after) and zooms.
+    if (this.dialogue.active) {
+      const view = this.dialogue.sample(performance.now(), this.position, this.yaw, this.pitch);
+      this.yaw = view.yaw;
+      this.pitch = view.pitch;
+      fovY = verticalFov(this.#fovDegrees + view.fov);
+    }
+    let forward = this.forward;
     if (this.tween.active) {
       const added = this.tween.sample(performance.now());
       const yaw = this.yaw + added.yaw;

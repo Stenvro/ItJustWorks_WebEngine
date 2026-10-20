@@ -46,7 +46,7 @@ import { ConsoleCommands, parseConsoleLine } from './console-commands.ts';
 import { Compass } from './compass.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
-import type { PlacedActor } from './actors.ts';
+import { headPosition, type PlacedActor } from './actors.ts';
 import type { PlayerData } from './player.ts';
 import type { PlayerView } from './race-menu.ts';
 import type { Terminal } from './terminal.ts';
@@ -789,11 +789,15 @@ export class PlayMode {
     hud.mode('DialogueMode', true);
     this.#talking = true;
     this.#world.capturePointer(false);
+    // The view turns to the speaker and zooms in while they talk (src/shell/dialogue-camera.ts).
+    const camera = this.#world.player()?.play.player.dialogue;
+    camera?.open(() => headPosition(speaker));
     dialogue
       .talk(
         speaker,
         () => {
           this.#talking = false;
+          camera?.close();
           hud.mode('DialogueMode', false);
           this.#world.capturePointer(true);
         },
@@ -801,6 +805,7 @@ export class PlayMode {
       )
       .catch((error: unknown) => {
         this.#talking = false;
+        camera?.close();
         this.#terminal.log(
           'ui',
           `the conversation does not start: ${error instanceof Error ? error.message : String(error)}`,
@@ -848,6 +853,8 @@ export class PlayMode {
       say('sOutOfLockpicks');
       return;
     }
+    // Those near comment on the player at a lock (LockedObject).
+    this.#world.player()?.play.player.onAction?.('LOOB');
     this.#menus?.pickLock(reference);
   }
 
