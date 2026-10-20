@@ -115,6 +115,16 @@ export class ActorBodies {
     entry.articulation = new Articulation(entry.placed, entry.pose, entry.world);
   }
 
+  /**
+   * The blow that killed an actor pushes its ragdoll (src/shell/actor-combat.ts: fDeathForce*),
+   * once its bodies are let go (kill).
+   */
+  async push(staged: StagedActor, direction: Vec3, magnitude: number): Promise<void> {
+    await this.kill(staged);
+    const entry = this.#bodies.get(staged.reference);
+    if (entry?.articulation) this.#physics?.impulse(entry.placed, direction, magnitude);
+  }
+
   #lives(staged: StagedActor): boolean {
     const placed = staged.placed;
     return (

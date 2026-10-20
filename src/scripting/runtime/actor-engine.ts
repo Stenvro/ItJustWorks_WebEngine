@@ -353,15 +353,20 @@ export class ActorEngine {
   }
 
   /**
-   * DamageActorValue: damage (health at 0 is death, unless essential: TODO(M11) bleedout); a
-   * magic effect's damage names its caster as the killer.
+   * DamageActorValue: damage. Who dealt it (a magic effect's caster, a hit's attacker) is the
+   * killer, and the only one who kills the protected if it is the player.
    */
-  async damage(reference: number, index: number, amount: number, killer?: number): Promise<void> {
+  async damage(reference: number, index: number, amount: number, source?: number): Promise<void> {
     if (amount <= 0) return;
     const own = this.#own(reference, index);
     own.damage += amount;
     if (index === ActorValue.health && (await this.value(reference, index)).current <= 0) {
-      if (!(await this.isEssential(reference))) await this.kill(reference, killer);
+      // Essential actors, and protected ones but by the player, bleed out instead of dying
+      // (src/gameplay/combat/bleedout.ts); the engine lays them down (WorldBridge.bleedout).
+      const essential = await this.isEssential(reference);
+      const spared = essential || (source !== PLAYER_REF && (await this.isProtected(reference)));
+      if (!spared) await this.kill(reference, source);
+      else this.#runtime.world.bleedout?.(reference, source);
     }
   }
 

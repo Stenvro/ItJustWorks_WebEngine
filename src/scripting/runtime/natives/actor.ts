@@ -289,7 +289,7 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   ask('isessential', false, (actor) => actors.isEssential(actor));
   ask('isghost', false, (actor) => actors.isGhost(actor));
   flag('setghost', 'ghost');
-  ask('isbleedingout', false, () => false);
+  ask('isbleedingout', false, (actor) => world.combat?.(actor)?.bleedingOut ?? false);
   flag('setnobleedoutrecovery', 'noBleedoutRecovery');
   ask(
     'getnobleedoutrecovery',
@@ -355,9 +355,12 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     world.stopCombat?.(actor);
     world.alarm?.(actor, undefined, 'stop');
   });
-  ask('isincombat', false, () => false);
-  ask('getcombatstate', 0, () => 0);
-  ask('getcombattarget', null, () => null);
+  // In combat as combat has it (src/shell/actor-combat.ts; TODO(M10) 5.2: the combat AI).
+  ask('isincombat', false, (actor) => world.combat?.(actor)?.inCombat ?? false);
+  ask('getcombatstate', 0, (actor) => (world.combat?.(actor)?.inCombat === true ? 1 : 0));
+  ask('getcombattarget', null, (actor) =>
+    runtime.actorHandleOrNone(world.combat?.(actor)?.combatTarget),
+  );
   // Detection (src/shell/actor-senses.ts): this actor detected by the other; its sight of one.
   ask('isdetectedby', false, (actor, call) => {
     const other = ref(call.args[0]);
@@ -405,8 +408,9 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   ask('issprinting', false, (actor) => world.motion?.(actor)?.sprinting ?? false);
   ask('issneaking', false, (actor) => world.motion?.(actor)?.sneaking ?? false);
   act('startsneaking', (actor) => world.startSneaking?.(actor));
-  ask('isweapondrawn', false, () => false);
-  act('drawweapon', () => undefined);
+  ask('isweapondrawn', false, (actor) => (world.combat?.(actor)?.weaponState ?? 0) !== 0);
+  act('drawweapon', (actor) => world.drawWeapon?.(actor, true));
+  act('sheatheweapon', (actor) => world.drawWeapon?.(actor, false));
   // What it uses: 0 not, 2 wants to (on its way), 3 in it, 4 wants to leave.
   ask('getsitstate', 0, (actor) => {
     const using = world.interaction?.(actor);
@@ -416,7 +420,7 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     const using = world.interaction?.(actor);
     return using?.animationType === 2 ? using.state : 0;
   });
-  ask('isinkillmove', false, () => false);
+  ask('isinkillmove', false, (actor) => world.combat?.(actor)?.killMove ?? false);
   ask('getlightlevel', 0, (actor) => world.lightLevel?.(actor) ?? 0);
   // Flying and riding.
   ask('isflying', false, () => false);
