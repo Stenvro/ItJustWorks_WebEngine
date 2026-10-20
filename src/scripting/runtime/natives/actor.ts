@@ -190,10 +190,37 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   });
   ask('gethighestrelationshiprank', 0, (actor) => actors.extremeRelationshipRank(actor, true));
   ask('getlowestrelationshiprank', 0, (actor) => actors.extremeRelationshipRank(actor, false));
-  // TODO(M11): association types (ASTP) of relationships: family, parent, spouse, ...
-  ask('hasassociation', false, () => false);
-  ask('hasfamilyrelationship', false, () => false);
-  ask('hasparentrelationship', false, () => false);
+  // Association types (RELA's ASTP: ParentChild, Siblings, Spouse, Courting, ...): an
+  // association with the other (any, without one named); ASTP DATA 0x1 is a family one; a
+  // parent relationship is the other as the RELA's parent of a ParentChild association.
+  const association = async (actor: number, other: number | undefined) => {
+    if (other === undefined) return undefined;
+    const relation = await actors.relationshipRecord(actor, other);
+    return relation?.association === undefined
+      ? undefined
+      : { relation, association: relation.association };
+  };
+  ask('hasassociation', false, async (actor, call) => {
+    const wanted = formOf(call.args[0]);
+    const other = ref(call.args[1]);
+    if (other === undefined) return (await actors.extremeRelationshipRank(actor, true)) !== 0;
+    const found = await association(actor, other);
+    return found !== undefined && (wanted === undefined || found.association === wanted);
+  });
+  ask('hasfamilyrelationship', false, async (actor, call) => {
+    const found = await association(actor, ref(call.args[0]));
+    const data = found && (await runtime.forms.record(found.association))?.fields.first('DATA');
+    return ((data?.[0] ?? 0) & 0x1) !== 0;
+  });
+  ask('hasparentrelationship', false, async (actor, call) => {
+    const other = ref(call.args[0]);
+    const found = await association(actor, other);
+    if (!found || other === undefined) return false;
+    const editorId = (await runtime.forms.record(found.association))?.editorId ?? '';
+    return (
+      /parent/i.test(editorId) && found.relation.parent === (await actors.relationshipBase(other))
+    );
+  });
 
   // --- Spells, shouts, perks ------------------------------------------------------------------
   ask('addspell', false, async (actor, call) => {
@@ -317,7 +344,7 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   ask('isintimidated', false, (actor) => state.actors.get(actor)?.intimidated ?? false);
   flag('setintimidated', 'intimidated');
   ask('willintimidatesucceed', false, () => false);
-  ask('getbribeamount', 0, () => 0);
+  ask('getbribeamount', 0, (actor) => runtime.crime.bribeAmount(actor));
   flag('setrestrained', 'restrained');
   flag('setdontmove', 'dontMove');
   ask('isalerted', false, (actor) => state.actors.get(actor)?.alerted ?? false);
@@ -351,9 +378,11 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     if (target !== undefined) world.startCombat?.(actor, target);
   });
   act('stopcombat', (actor) => world.stopCombat?.(actor));
+  // On the player: the guards stop pursuing them (a bribe, a persuasion: CrimeGuardsScript).
   act('stopcombatalarm', (actor) => {
     world.stopCombat?.(actor);
     world.alarm?.(actor, undefined, 'stop');
+    if (actor === PLAYER_REF) runtime.crime.stopPursuit();
   });
   // In combat as combat has it (src/shell/actor-combat.ts; TODO(M10) 5.2: the combat AI).
   ask('isincombat', false, (actor) => world.combat?.(actor)?.inCombat ?? false);
@@ -370,16 +399,40 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     const other = ref(call.args[0]);
     return other !== undefined && (world.lineOfSight?.(actor, other) ?? false);
   });
-  ask('ishostiletoactor', false, () => false);
-  ask('isguard', false, () => false);
-  ask('istrespassing', false, () => false);
-  ask('isarrested', false, () => false);
-  ask('isarrestingtarget', false, () => false);
-  act('cleararrested', () => undefined);
-  act('setplayerresistingarrest', () => undefined);
-  // Alarms: the actor, attacked by the player, raises one; or against a trespasser. What the
-  // actors that hear it do is crime's (TODO(M11)).
-  act('sendassaultalarm', (actor) => world.alarm?.(actor, PLAYER_REF, 'attack'));
+  // Crime and factions (crime-engine.ts): how it regards the other, guards, arrests.
+  ask('ishostiletoactor', false, async (actor, call) => {
+    const other = ref(call.args[0]);
+    return other !== undefined && (await runtime.crime.reaction(actor, other)) === 'hostile';
+  });
+  ask('isguard', false, (actor) => runtime.crime.isGuard(actor));
+  ask('istrespassing', false, async (actor) =>
+    actor === PLAYER_REF
+      ? runtime.crime.trespassing((await runtime.placement(PLAYER_REF))?.cell)
+      : false,
+  );
+  // The player is arrested while a guard arrests them or they are in jail.
+  ask(
+    'isarrested',
+    false,
+    (actor) =>
+      actor === PLAYER_REF &&
+      (state.crime.arrestingGuard !== undefined || state.crime.jail !== undefined),
+  );
+  ask('isarrestingtarget', false, (actor) => state.crime.arrestingGuard === actor);
+  act('cleararrested', () => {
+    delete state.crime.arrestingGuard;
+  });
+  // On the guard the player resists: its crime faction's guards attack them.
+  act('setplayerresistingarrest', async (actor) => {
+    const faction = await actors.crimeFaction(actor);
+    if (faction !== undefined) runtime.crime.resistArrest(faction);
+  });
+  // Alarms: the actor, attacked by the player, raises one (an assault); or against a
+  // trespasser. Those that hear it react (src/shell/actor-crime.ts).
+  act('sendassaultalarm', async (actor) => {
+    world.alarm?.(actor, PLAYER_REF, 'attack');
+    await runtime.crime.assault(PLAYER_REF, actor);
+  });
   act('sendtrespassalarm', (actor, call) => world.alarm?.(actor, ref(call.args[0]), 'trespass'));
   // TODO(M10) 5.2: an actor attacks this one on sight.
   act('setattackactoronsight', () => undefined);
@@ -482,9 +535,30 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   // --- Lycanthropy and vampirism (their scripts listen for these) ----------------------------
   act('sendlycanthropystatechanged', () => undefined);
   act('sendvampirismstatechanged', () => undefined);
-  act('startvampirefeed', () => undefined);
-  act('startcannibal', () => undefined);
-  act('unlockowneddoorsincell', () => undefined);
+  // Feeding on a target (a vampire's bite, Namira's cannibalism): a crime where it is seen
+  // (crime-engine.ts vampireFeed). TODO(M10) 5.1: the feeding's paired animation.
+  act('startvampirefeed', async (actor, call) => {
+    const target = ref(call.args[0]);
+    if (target !== undefined) await runtime.crime.vampireFeed(actor, target);
+  });
+  act('startcannibal', async (actor, call) => {
+    const target = ref(call.args[0]);
+    if (target !== undefined) await runtime.crime.vampireFeed(actor, target);
+  });
+  // The doors of the actor's cell that it owns are unlocked (the player may come in: no longer
+  // off limits to them).
+  act('unlockowneddoorsincell', async (actor) => {
+    const cell = (await runtime.placement(actor))?.cell;
+    if (cell === undefined) return;
+    for (const door of world.loadedReferences?.() ?? []) {
+      if (runtime.forms.db.cellOfReference(door) !== cell) continue;
+      const base = await runtime.baseOf(door);
+      if (base === undefined || (await runtime.forms.record(base))?.type !== 'DOOR') continue;
+      if ((await runtime.lock(door)).locked && (await runtime.mayUse(actor, door)))
+        await runtime.setLocked(door, false);
+    }
+    runtime.crime.doorsLocked([cell], false, undefined);
+  });
 
   // --- ActorBase ------------------------------------------------------------------------------
   const base = (call: NativeCall): number | undefined =>

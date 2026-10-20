@@ -248,6 +248,34 @@ export interface FactionRecord {
   readonly ranks: readonly number[];
   /** A vendor faction's trade (DATA flag 0x4000). */
   readonly vendor?: FactionVendor;
+  /** A crime faction's jail and crime values (the Creation Kit's Crime tab), if it has them. */
+  readonly crime?: FactionCrime;
+}
+
+/**
+ * A crime faction's jail and crime gold (xEdit's FACT; CommonLibSSE TESFaction::CRIME_DATA):
+ * JAIL the exterior jail marker (where the player is let out), WAIT the follower wait marker,
+ * STOL the stolen goods container, PLCN the player inventory container (the evidence chest),
+ * CRGR the shared crime faction list, JOUT the jail outfit, CRVA the values (arrest u8, attack
+ * on sight u8, murder u16, assault u16, trespass u16, pickpocket u16, unused u16, steal
+ * multiplier f32, escape u16, werewolf u16).
+ */
+export interface FactionCrime {
+  readonly exteriorJailMarker: number | undefined;
+  readonly followerWaitMarker: number | undefined;
+  readonly stolenGoodsContainer: number | undefined;
+  readonly playerInventoryContainer: number | undefined;
+  readonly sharedCrimeFactions: number | undefined;
+  readonly jailOutfit: number | undefined;
+  readonly arrest: boolean;
+  readonly attackOnSight: boolean;
+  readonly murder: number;
+  readonly assault: number;
+  readonly trespass: number;
+  readonly pickpocket: number;
+  readonly stealMult: number;
+  readonly escape: number;
+  readonly werewolf: number;
 }
 
 /** What a vendor faction trades, where and when (UESP, xEdit's FACT). */
@@ -257,7 +285,11 @@ export interface FactionVendor {
   readonly endHour: number;
   /** VENV: how far from its location it trades. */
   readonly radius: number;
-  /** VENV: it buys only stolen items. */
+  /**
+   * VENV: xEdit's "Only Buys Stolen Items": a fence, which buys stolen items too (set on the
+   * Thieves Guild's fences, ServicesThievesGuild*, which buy everything else as well; UESP
+   * "Skyrim:Fences"). Other vendors do not buy stolen items.
+   */
   readonly onlyStolen: boolean;
   /** VENV: it buys what is not in its list (else what is). */
   readonly notInList: boolean;
@@ -306,6 +338,33 @@ export function parseFaction(record: RecordSource): FactionRecord {
       .all('RNAM')
       .map((rnam) => (rnam.length >= 4 ? view(rnam).getUint32(0, true) : 0)),
     ...vendorOf(record, data),
+    ...crimeOf(record),
+  };
+}
+
+/** The crime fields of a FACT (FactionCrime), where it has a CRVA or a jail. */
+function crimeOf(record: RecordSource): Pick<FactionRecord, 'crime'> {
+  const crva = record.fields.first('CRVA');
+  if (!crva && !record.fields.has('JAIL') && !record.fields.has('CRGR')) return {};
+  const v = crva && crva.length >= 16 ? view(crva) : undefined;
+  return {
+    crime: {
+      exteriorJailMarker: formField(record, 'JAIL'),
+      followerWaitMarker: formField(record, 'WAIT'),
+      stolenGoodsContainer: formField(record, 'STOL'),
+      playerInventoryContainer: formField(record, 'PLCN'),
+      sharedCrimeFactions: formField(record, 'CRGR'),
+      jailOutfit: formField(record, 'JOUT'),
+      arrest: (crva?.[0] ?? 0) !== 0,
+      attackOnSight: (crva?.[1] ?? 0) !== 0,
+      murder: v?.getUint16(2, true) ?? 0,
+      assault: v?.getUint16(4, true) ?? 0,
+      trespass: v?.getUint16(6, true) ?? 0,
+      pickpocket: v?.getUint16(8, true) ?? 0,
+      stealMult: v?.getFloat32(12, true) ?? 0,
+      escape: v && crva && crva.length >= 18 ? v.getUint16(16, true) : 0,
+      werewolf: v && crva && crva.length >= 20 ? v.getUint16(18, true) : 0,
+    },
   };
 }
 

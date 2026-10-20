@@ -83,14 +83,24 @@ export interface ObjectUses {
    * `then` once it is open by its key (activating it goes on).
    */
   unlock(object: CellObject, then: () => void): void;
+  /**
+   * Whether taking the object (an item, a container's contents) is stealing: another owns it
+   * (crime-engine.ts mayTake; false until known).
+   */
+  owned?(object: CellObject): boolean;
+  /** The player sneaks: activating an actor picks its pockets. */
+  sneaking?(): boolean;
+  /** Opens an actor's pockets (the container menu in pickpocket mode). */
+  pickpocket?(actor: number): void;
 }
 
 /**
  * What activating a placed object does: load doors take the player to their destination;
  * other doors open and close. In a running game (`uses`) containers open their menu (their
- * lid opening meanwhile), books read, other items taken, beds slept in. TODO(M11): flora harvested (FLOR
- * PFIG), owned objects stolen (sSteal, sStealFrom) and locked ones picked (the lockpicking
- * menu). Furniture is sat in (sSit) and workbenches open the crafting menu.
+ * lid opening meanwhile), books read, other items taken, beds slept in; owned ones are stolen
+ * (sSteal, sStealFrom: their red verbs) and locked ones picked (the lockpicking menu).
+ * TODO(M11): flora harvested (FLOR PFIG). Furniture is sat in (sSit) and workbenches open the
+ * crafting menu.
  */
 export function objectActivation(
   object: CellObject,
@@ -148,7 +158,8 @@ ${name}`);
   };
   if (uses && object.baseType === 'CONT') {
     return {
-      verb: verb('sOpen', 'Open'),
+      verb:
+        uses.owned?.(object) === true ? verb('sStealFrom', 'Steal from') : verb('sOpen', 'Open'),
       name: object.name,
       activate: () => {
         play(object.sounds?.open);
@@ -172,7 +183,7 @@ ${name}`);
   }
   if (uses && object.item) {
     return {
-      verb: verb('sTake', 'Take'),
+      verb: uses.owned?.(object) === true ? verb('sSteal', 'Steal') : verb('sTake', 'Take'),
       name: object.name,
       item: object.item,
       activate: () => {

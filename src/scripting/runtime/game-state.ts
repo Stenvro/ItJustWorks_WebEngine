@@ -159,8 +159,13 @@ export interface ActorBaseState {
 export interface FactionState {
   crimeGold: number;
   crimeGoldViolent: number;
+  /** All the crime gold the player ever owed it (GetInfamy*: CommonLibSSE CrimeGoldStruct). */
+  infamy?: number;
+  infamyViolent?: number;
   playerEnemy?: boolean;
   playerExpelled?: boolean;
+  /** The player resisted its guards' arrest (SetPlayerResistingArrest): they attack. */
+  resisting?: boolean;
   /** Combat reactions scripts set (SetAlly, SetEnemy): faction → 0 neutral .. 3 friend. */
   readonly reactions: Map<number, number>;
   /** Reaction modifiers (SetReaction / ModReaction). */
@@ -218,6 +223,43 @@ export interface ActorMagicState {
   poison?: { readonly weapon: number | undefined; readonly poison: number; charges: number };
 }
 
+/** The player in jail (Faction.SendPlayerToJail): until they serve their time or escape. */
+export interface JailState {
+  /** The crime faction that jailed them, and the bounty they serve. */
+  readonly faction: number;
+  readonly violent: number;
+  readonly nonviolent: number;
+  /** The days they are to serve. */
+  readonly days: number;
+  /** The jail's cell (leaving it unserved is an escape). */
+  readonly cell: number | undefined;
+  /** Their items went to the evidence chest (they get them back once served). */
+  readonly inventoryTaken: boolean;
+}
+
+/** What crime keeps of the player (src/scripting/runtime/crime-engine.ts). TODO(M12): saved. */
+export interface CrimeState {
+  /**
+   * Stolen items by container, then base, then whose ("faction:witnessed", the crime faction
+   * the theft was against and whether it was seen): their counts (GetStolenItemValueCrime /
+   * NoCrime; vendors that are no fences refuse them).
+   */
+  readonly stolen: Map<number, Map<number, Map<string, number>>>;
+  jail?: JailState;
+  /** Interiors the player may not be in now: picked into, or locked with them inside. */
+  readonly offLimits: Set<number>;
+  /** Favor points the player has with actors (gifts, favors): their relationship rises. */
+  readonly favor: Map<number, number>;
+  /** Game.SetPlayerReportCrime(false): crimes against the player are not reported. */
+  reportCrimeAgainstPlayer: boolean;
+  /** The guard arresting the player now (GetArrestingActor; IsArrestingTarget). */
+  arrestingGuard?: number;
+  /** Horses the player took from their owners (IsHorseStolen). */
+  readonly stolenHorses: Set<number>;
+  /** The trespass warnings the player was given where they trespass now (GetTrespassWarningLevel). */
+  trespassWarnings: number;
+}
+
 /** A reference a script created (PlaceAtMe, alias Create Reference). */
 export interface CreatedReference {
   readonly base: number;
@@ -239,6 +281,15 @@ export class GameState {
   readonly cells = new Map<number, CellState>();
   /** Relationship ranks scripts set between two NPC_ bases ("low:high" form ids). */
   readonly relationships = new Map<string, number>();
+  /** Crime: stolen items, jail, places off limits, favor (crime-engine.ts). */
+  readonly crime: CrimeState = {
+    stolen: new Map(),
+    offLimits: new Set(),
+    favor: new Map(),
+    reportCrimeAgainstPlayer: true,
+    stolenHorses: new Set(),
+    trespassWarnings: 0,
+  };
   /** Entries scripts added to leveled lists (LeveledItem.AddForm, ...), by list. */
   readonly leveledAdditions = new Map<number, { level: number; formId: number; count: number }[]>();
   /** Magic effects on actors (ActiveMagicEffect scripts): by handle key. */

@@ -92,6 +92,10 @@ export interface ItemMenuModel {
   readonly menuProperties?: Readonly<Record<string, unknown>>;
   /** Whether the list positions are kept from one opening to the next (not a container's). */
   readonly keepsIndices?: boolean;
+  /** Given the menu's close as it opens (a pickpocket caught closes the container menu). */
+  bindClose?(close: () => void): void;
+  /** What a scripted menu returns once closed (ShowGiftMenu: the favor points). */
+  result?(): number;
 }
 
 export class ItemMenu {
@@ -287,6 +291,9 @@ export class ItemMenu {
         }
         menu.call('SetCategoriesList', ...categories);
         model.start?.(menu);
+        model.bindClose?.(() => {
+          close(menu);
+        });
         show(menu);
         const indices = this.#indices.get(model.movie);
         if (indices && model.keepsIndices !== false) menu.call('RestoreIndices', ...indices);

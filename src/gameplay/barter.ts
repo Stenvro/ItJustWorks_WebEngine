@@ -1,5 +1,6 @@
 // Bartering's rules: the price factors of the player's Speech skill (UESP, "Speech") and what a
-// vendor buys (its faction's list of keywords, VEND). Platform-independent.
+// vendor buys (its faction's list of keywords, VEND; stolen items only fences buy:
+// src/shell/barter-menu.ts). Platform-independent.
 
 import type { FactionVendor } from '../world/actor-stats-records.ts';
 import type { ItemRecord } from '../world/item-records.ts';

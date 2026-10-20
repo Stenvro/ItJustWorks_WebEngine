@@ -218,7 +218,8 @@ export function actorOnRay(
 
 /**
  * What the crosshair finds among the actors shown (PlaySession's actorAt): activating one
- * talks to it (it says a line, ActorPlacer.speak).
+ * talks to it (it says a line, ActorPlacer.speak); in Play the dead are searched and, sneaking,
+ * the living pickpocketed.
  */
 export function talkTargets(
   actors: () => Iterable<PlacedActor>,
@@ -252,6 +253,21 @@ export function talkTargets(
           name,
           activate: () => {
             uses.openContainer(reference, () => undefined);
+          },
+        },
+      };
+    }
+    // Sneaking, the living are pickpocketed (sPickpocket: the container menu on their pockets).
+    const uses = hud?.uses;
+    if (uses?.pickpocket && uses.sneaking?.() === true) {
+      const pickpocket = uses.pickpocket.bind(uses);
+      return {
+        distance: hit.distance,
+        target: {
+          verb: uses.text('sPickpocket'),
+          name,
+          activate: () => {
+            pickpocket(reference);
           },
         },
       };

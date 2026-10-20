@@ -10,12 +10,15 @@
 // from the chest, sold into it); a purchase the player cannot pay shows sItemTooExpensive.
 // Selling for more than the vendor has asks first (GetRawDealWarningString(price): the setting
 // sNotEnoughVendorGold) and the vendor pays what it has.
+// Stolen items are offered only to fences (a vendor faction that buys stolen items: VENV, the
+// Thieves Guild's fences; UESP "Skyrim:Fences"); sold, they are no longer stolen (what the
+// vendor sells again is its own).
 //
 // Prices (UESP, "Speech"): the factor fBarterMax − (fBarterMax − fBarterMin) × min(Speech,
 // 100) / 100; buying costs value × factor, selling gets value / factor, at least 1.05 × value
 // and at most the value. A trade is the item's value in Speech uses (the progression engine).
-// TODO(M11): the Haggling and Allure perks, Fortify Barter, stolen goods (fences), the Merchant
-// and Investor perks, the chest's restock every 48 hours.
+// TODO(M11): the Haggling and Allure perks, Fortify Barter, the Merchant and Investor perks, the
+// chest's restock every 48 hours.
 
 import { barterMultipliers, vendorBuys } from '../gameplay/barter.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -78,7 +81,13 @@ export async function barterModel(
     view: async () => {
       const goods = (await shelf.rows(chest)).filter((row) => row.formId !== GOLD);
       const mine = await shelf.rows(PLAYER_REF);
-      const offered = mine.filter((row) => sellable(row.item));
+      // What the vendor buys; a vendor that is no fence not the stolen ones.
+      const offered = mine.flatMap((row) => {
+        if (!sellable(row.item)) return [];
+        if (vendor?.onlyStolen === true) return [row];
+        const count = row.count - game.crime.stolenCount(PLAYER_REF, row.formId);
+        return count > 0 ? [{ ...row, count }] : [];
+      });
       return {
         entries: [...goods.map(otherSideEntry), ...offered.map(itemEntry)],
         cards: await shelf.cards([...goods, ...offered]),
@@ -112,6 +121,7 @@ export async function barterModel(
       owed -= fromChest;
       if (owed > 0) await shelf.move(GOLD, owed, vendorActor, PLAYER_REF, false);
       await shelf.move(entry.formId, amount, PLAYER_REF, chest);
+      game.crime.clearStolen(chest, entry.formId);
       await speechUse(entry.formId);
     },
     handlers: {

@@ -569,7 +569,7 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   fCheckDeadBodyTimer (20 s) it looks for one that died within iHoursToClearCorpses (24 game
   hours) in its sight, walks to the body and looks at it for 5 s; spectating (`fight`, 5.2):
   it keeps fAIInteriorSpectatorDistance (200) / Exterior (450) from the fight, facing it, until
-  its last blow is fAISpectatorRememberThreatTimer old; a guard's warning (`warn`, M11) goes to
+  its last blow is fAISpectatorRememberThreatTimer old; a guard's warning (`warn`: trespass) goes to
   the one warned and faces them. Their lines (NormalToAlert, AlertToNormal, NoticeCorpse, the
   warning) are barks ([Talking](#talking)) to what they react to. TODO(M13): the engine's
   steps.
@@ -583,8 +583,8 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
 - **Scripts:** the conditions GetDetected, GetLineOfSight, GetLightLevel, GetAlarmed,
   GetAttacked, GetIsAlerted, IsSneaking; the natives IsDetectedBy, HasLOS, GetLightLevel,
   IsAlarmed, StartSneaking, SetNotShowOnStealthMeter, SendAssaultAlarm, SendTrespassAlarm,
-  SendStealAlarm (the actors within iCrimeAlarmRecDistance are alarmed; TODO(M11): what they
-  do), StopCombatAlarm, CreateDetectionEvent; OnGainLOS / OnLostLOS for the pairs scripts
+  SendStealAlarm (the actors within iCrimeAlarmRecDistance are alarmed; guards among them pursue:
+  [Crime and factions](gameplay.md#crime-and-factions)), StopCombatAlarm, CreateDetectionEvent; OnGainLOS / OnLostLOS for the pairs scripts
   register (every quarter second; the player sees what is on screen with nothing between the
   camera and it; the first look tells how it is).
 - **For combat (5.2) and crime (M11):** `ActorSenses.detections` (state, level, detects,

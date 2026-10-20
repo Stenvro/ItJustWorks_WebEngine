@@ -307,8 +307,9 @@ export class Detections {
 
   /**
    * An actor raised an alarm (SendAssaultAlarm, SendTrespassAlarm, SendStealAlarm): it and
-   * `hearers` (those within iCrimeAlarmRecDistance) are alarmed for fDetectionStateExpireTime.
-   * TODO(M11): crime keeps the alarm while guards pursue, and what each does about it.
+   * `hearers` (those within iCrimeAlarmRecDistance) are alarmed for fDetectionStateExpireTime:
+   * guards among them pursue the criminal (src/shell/actor-crime.ts: they arrest or attack).
+   * TODO(M13): the engine keeps a pursuing guard's alarm longer; its time is not documented.
    */
   alarm(
     actor: number,
