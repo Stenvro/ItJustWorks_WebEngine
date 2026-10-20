@@ -591,7 +591,13 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   n('objectreference.playterraineffect', () => null);
   n('objectreference.playsyncedanimationss', () => false);
   n('objectreference.playsyncedanimationandwaitss', () => false);
-  n('objectreference.tethertohorse', () => null);
+  // A cart hitched to a horse: the horse pulls it (src/shell/actor-vehicles.ts).
+  n('objectreference.tethertohorse', (call) => {
+    const cart = self(call);
+    const horse = ref(call.args[0]);
+    if (cart !== undefined && horse !== undefined) world.tether?.(cart, horse);
+    return null;
+  });
 
   // --- Combat, crime, dialogue (TODO(M10)/(M11)) ----------------------------------------------
   n('objectreference.say', (call) => {

@@ -332,6 +332,7 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   });
   act('setvehicle', (actor, call) => {
     state.actor(actor).vehicle = ref(call.args[0]);
+    world.vehicleChanged?.(actor);
   });
   act('setforcedlandingmarker', (actor, call) => {
     state.actor(actor).forcedLandingMarker = ref(call.args[0]);
@@ -424,9 +425,10 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   ask('canflyhere', false, () => false);
   act('setallowflying', () => undefined);
   act('setallowflyingex', () => undefined);
-  ask('isonmount', false, () => false);
-  ask('isbeingridden', false, () => false);
-  ask('dismount', false, () => false);
+  // Riding (src/shell/actor-mounts.ts).
+  ask('isonmount', false, (actor) => world.mountOf?.(actor) !== undefined);
+  ask('isbeingridden', false, (actor) => world.riderOf?.(actor) !== undefined);
+  ask('dismount', false, (actor) => world.dismount?.(actor) ?? false);
 
   // --- Animation and look -------------------------------------------------------------------
   ask('playidle', false, (actor, call) => {

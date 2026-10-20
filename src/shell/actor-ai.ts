@@ -33,6 +33,7 @@ import { spaceOf, type AwayPlace } from './actors-away.ts';
 import { findRoute, type RouteDoor } from '../ai/routes.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import type { Gait } from '../ai/locomotion.ts';
+import { followDistance, followerRanks } from '../ai/followers.ts';
 import type { Space } from '../ai/package-start.ts';
 import type { ActorDoors } from './actor-doors.ts';
 import type { ActorMovers } from './actor-movers.ts';
@@ -51,6 +52,24 @@ const ACROSS_FAILED_MS = 1000;
 const DOOR_REACH = 96;
 /** LockDoors and UnlockDoors reach doors this far round a place without a radius. */
 const DOOR_RADIUS = 256;
+
+/**
+ * What carries actors (src/shell/actor-mounts.ts, actor-vehicles.ts): their horses and the
+ * vehicles they ride.
+ */
+export interface ActorTransport {
+  /**
+   * Gets an actor ready to go somewhere: off its vehicle; onto its horse where it may ride
+   * (`ride`) and has one, else off it. Resolves the reference that moves (its horse riding).
+   */
+  ready(staged: StagedActor, ride: boolean): Promise<number>;
+  /** The reference that moves for an actor now (its horse while it rides). */
+  mover(actor: number): number;
+  /** Gets it off its horse and its vehicle (to use or take something, to go through a door). */
+  alight(staged: StagedActor): Promise<void>;
+  /** Whether an actor's own AI waits: a horse ridden (its rider moves it). */
+  paused(actor: number): boolean;
+}
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -84,6 +103,14 @@ export class ActorAi {
   readonly #held = new Set<number>();
   /** The override package list (FLST) an actor's situation runs before its packages, if any. */
   readonly #overrides: ((actor: number) => number | undefined) | undefined;
+  /** What carries the actors: their horses and vehicles (src/shell/actor-mounts.ts, ...). */
+  readonly #transport: ActorTransport | undefined;
+  /** Whether each actor's procedure lets it ride its horse now (Ride Horse If Possible). */
+  readonly #rides = new Map<number, boolean>();
+  /** The leader each actor follows now (Follow, FollowTo): src/shell/actor-followers.ts. */
+  readonly #leaders = new Map<number, number>();
+  /** The horses whose own AI waits while they are ridden. */
+  readonly #ridden = new Set<number>();
   /** A food for meals made up (Eat's Create Fake Food): the first in the load order. */
   #fakeFood: Promise<number | undefined> | undefined;
   readonly #actors = new Map<number, { packages: ActorPackages; staged: StagedActor }>();
@@ -112,6 +139,8 @@ export class ActorAi {
     readonly overrides?: (actor: number) => number | undefined;
     /** What the actors say (their packages' lines, conversations). */
     readonly talk?: () => ActorTalk | undefined;
+    /** What carries the actors: their horses and vehicles. */
+    readonly transport?: ActorTransport;
   }) {
     this.#session = options.session;
     this.#movers = options.movers;
@@ -123,6 +152,7 @@ export class ActorAi {
     this.#doors = options.doors;
     this.#overrides = options.overrides;
     this.#talk = options.talk;
+    this.#transport = options.transport;
     this.#mind = this.#makeMind();
   }
 
@@ -181,9 +211,25 @@ export class ActorAi {
     this.#talkHeld.delete(reference);
   }
 
+  /** The leader an actor follows now (its Follow or FollowTo), if any. */
+  leaderOf(reference: number): number | undefined {
+    return this.#leaders.get(reference);
+  }
+
+  /** The actors that follow a leader now. */
+  followersOf(leader: number): number[] {
+    const found: number[] = [];
+    for (const [actor, followed] of this.#leaders) if (followed === leader) found.push(actor);
+    return found;
+  }
+
   /** The actor leaves its AI (it left the stage, died). */
   remove(reference: number): void {
     this.#talkHeld.delete(reference);
+    this.#held.delete(reference);
+    this.#leaders.delete(reference);
+    this.#rides.delete(reference);
+    this.#ridden.delete(reference);
     const entry = this.#actors.get(reference);
     if (!entry) return;
     entry.packages.stop();
@@ -239,6 +285,15 @@ export class ActorAi {
       }
       // A reaction of the engine's holds it (src/shell/actor-reactions.ts): its package waits.
       if (this.#held.has(reference)) continue;
+      // A horse ridden: its rider moves it (the player's controls, the rider's AI).
+      if (this.#transport?.paused(reference) === true) {
+        if (!this.#ridden.has(reference)) {
+          this.#ridden.add(reference);
+          entry.packages.stop();
+        }
+        continue;
+      }
+      if (this.#ridden.delete(reference)) entry.packages.evaluate();
       entry.packages.update(seconds);
     }
     for (const reference of [...this.#actors.keys()]) {
@@ -255,11 +310,15 @@ export class ActorAi {
     const furniture = this.#furniture;
     const reference = staged.reference;
     const user = this.#userOf(staged);
+    const transport = this.#transport;
+    // What moves for it: its horse while it rides.
+    const mover = (): number => transport?.mover(reference) ?? reference;
     const face = (heading: number | undefined): void => {
-      movers.request(
-        reference,
-        heading === undefined ? undefined : { gait: 'walk', face: heading },
-      );
+      movers.request(mover(), heading === undefined ? undefined : { gait: 'walk', face: heading });
+    };
+    // Off its horse and its vehicle before it uses or takes something.
+    const alight = async (): Promise<void> => {
+      await transport?.alight(staged);
     };
     return {
       reference,
@@ -268,26 +327,33 @@ export class ActorAi {
       travel: async (to, gait, arrive, space) => {
         await furniture.leave(user);
         if (space && !(await this.#inSpace(reference, space))) {
+          // On foot through load doors (sNotAllowedToUseAutoDoorsWhileonHorse).
+          await alight();
           if (await this.#across(staged, { space, position: to }, gait)) return true;
           // No way there (or it went through a door): a moment before its package goes on, so
           // nothing that asks again at once runs round without end.
           await new Promise((resolve) => setTimeout(resolve, ACROSS_FAILED_MS));
           return false;
         }
-        return movers.travel(reference, to, gait, arrive);
+        // On its horse where its procedure lets it ride, else off it and off its vehicle.
+        const going =
+          (await transport?.ready(staged, this.#rides.get(reference) === true)) ?? reference;
+        return movers.travel(going, to, gait, arrive);
       },
       stop: () => {
-        movers.stop(reference);
+        movers.stop(mover());
       },
       face,
-      useFurniture: (target, types) =>
-        furniture.use(
+      useFurniture: async (target, types) => {
+        await alight();
+        return furniture.use(
           user,
           target,
           (to, arrive) => movers.travel(reference, to, 'walk', arrive),
           face,
           types === undefined ? {} : { types },
-        ),
+        );
+      },
       leaveFurniture: () => furniture.leave(user),
       takeIdleMarker: (marker) => furniture.takeMarker(reference, marker),
       leaveIdleMarker: () => {
@@ -317,6 +383,7 @@ export class ActorAi {
       activate: async (target) => {
         const scripts = this.#session.scriptsReady;
         if (!scripts) return false;
+        await alight();
         // Furniture activated is furniture used.
         const base = await scripts.baseOf(target);
         const record = base === undefined ? undefined : await scripts.forms.record(base);
@@ -333,6 +400,7 @@ export class ActorAi {
       take: async (target) => {
         const scripts = this.#session.scriptsReady;
         if (!scripts) return false;
+        await alight();
         await scripts.pickUp(target, reference);
         return true;
       },
@@ -345,6 +413,24 @@ export class ActorAi {
         if (used === 'not used' && consume)
           await scripts.removeItem(reference, scripts.formHandle(item), 1, true, undefined);
         return true;
+      },
+      ride: (allowed) => {
+        this.#rides.set(reference, allowed);
+      },
+      following: (leader) => {
+        if (leader === undefined) {
+          this.#leaders.delete(reference);
+          return 0;
+        }
+        this.#leaders.set(reference, leader);
+        // One fFollowSpaceBetweenFollowers farther for each follower nearer the leader.
+        const at = this.#session.scriptWorld.livePlacement(leader)?.position;
+        if (!at) return 0;
+        const others = this.followersOf(leader).flatMap((actor) => {
+          const other = this.#actors.get(actor)?.staged;
+          return other ? [{ reference: actor, position: other.position }] : [];
+        });
+        return followDistance(0, followerRanks(at, others).get(reference) ?? 0);
       },
       greet: (topic) => {
         const scripts = this.#session.scriptsReady;
@@ -645,6 +731,8 @@ export class ActorAi {
         if (record?.type !== 'IDLM' || !at) return undefined;
         return { ...parseIdleMarker(record), reference, ...at };
       },
+      running: (reference) =>
+        this.#session.scriptsReady?.world.motion?.(reference)?.running === true,
       packageEvent: (actor, event, pack) => {
         // A scene's package action is done when its package completes.
         if (event === 'end') runtime()?.scenes.packageEnded(actor, pack.formId);

@@ -7,6 +7,7 @@ import {
   type ProjectAnimationData,
 } from '../animation/animation-data-library.ts';
 import type { BehaviorHost, SkeletalGraph } from '../animation/behavior-runtime.ts';
+import { bindPaired, isPaired } from '../animation/paired-clips.ts';
 import {
   readAnimationContainer,
   type AnimationBinding,
@@ -215,16 +216,30 @@ export class AnimationAssets {
     return this.#animationData;
   }
 
-  /** The clips of a project for one sex (and its animation data, once read). */
+  /**
+   * The clips of a project for one sex (and its animation data, once read). A paired clip
+   * (src/animation/paired-clips.ts) is bound to the project's skeleton by its tracks' names.
+   */
   host(behaviors: Behaviors, female: boolean): ClipHost {
     const key = `${behaviors.project}|${female ? 'f' : 'm'}`;
     let host = this.#hosts.get(key);
     if (!host) {
+      const rig = behaviors.character.rig;
       const made = new ClipHost(
         behaviors,
         female,
         (path) => this.#vfs.has(path),
-        (path) => this.clip(path),
+        async (path) => {
+          const binding = await this.clip(path);
+          if (!binding || !isPaired(binding) || rig === undefined) return binding;
+          const skeleton = await this.havokSkeleton(rig);
+          return skeleton
+            ? bindPaired(
+                binding,
+                skeleton.bones.map((bone) => bone.name),
+              )
+            : binding;
+        },
       );
       void this.animationData().then((library) => {
         made.data = library.project(behaviors.project);
