@@ -607,8 +607,10 @@ voice type (`src/world/dialogue.ts`: `Sound\Voice\<plugin>\<voice type>\<quest>_
 with the face lip-syncing; without one the subtitle stays for `fAIDefaultSpeechMult` seconds a
 character. The info's fragments (TIF scripts: begin, end) run with the speaker as `akSpeakerRef`.
 The game's dialogue (20,000 topics, 41,000 infos, about 40 MB) is read in bulk once as Play
-starts. TODO(M10): the dialogue camera, scenes, the speaker turning to the player. TODO(M11):
-persuade, bribe, intimidate, favors.
+starts. Each response's emotion shows on the speaker's face and it gestures (ActionTalking);
+an info with Force Subtitle shows its text whatever the setting. The dialogue camera turns the
+player's view to the speaker's head and zooms in while they talk (ai.md, "Talking").
+TODO(M11): persuade, bribe, intimidate, favors.
 
 ## The item menus
 

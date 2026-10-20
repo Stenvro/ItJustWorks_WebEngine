@@ -25,6 +25,7 @@ import type { ScriptGraph } from '../animation/script-graphs.ts';
 import type { ScreenModifiers } from './screen-modifiers.ts';
 import type { Terminal } from './terminal.ts';
 import type { HudSignals } from './hud-signals.ts';
+import type { Talking } from './world-lines.ts';
 
 /** A viewer that shows references to the scripts (the interior or the world viewer). */
 export interface ScriptView {
@@ -101,6 +102,9 @@ export class ScriptWorld implements WorldBridge {
 
   /** The HUD the notifications go to in Play. */
   readonly hud: HudSignals;
+
+  /** What an actor says now (the session's lines answer: IsTalking, GetDialogueEmotion, ...). */
+  talking: ((actor: number) => Talking | undefined) | undefined;
 
   /** A line an actor says (Say): the session's line speaker answers. */
   say:

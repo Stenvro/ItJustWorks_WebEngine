@@ -240,6 +240,15 @@ export interface WorldBridge {
   ): void;
   particleGeometry?(geometry: number, apply: boolean, fade: number): void;
   fireWeapon?(weapon: number, source: number, ammo: number | undefined): void;
+  /**
+   * What an actor says now, if it talks (IsTalking, IsGreetingPlayer, GetDialogueEmotion,
+   * GetDialogueEmotionValue): its response's emotion and value, whether it greets the player.
+   */
+  talking?(
+    actor: number,
+  ):
+    | { readonly emotion: number; readonly emotionValue: number; readonly greeting: boolean }
+    | undefined;
   /** A line spoken (Say): the speaker's voice and the HUD's subtitle. */
   say?(
     speaker: number,

@@ -126,8 +126,8 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   picks by the direction), then, if it stood, steps off the player's way to the side it is on
   after the game's fBumpReactionSmallDelayTime (1 s), fBumpReactionIdealMoveDist (125) away or
   at least fBumpReactionMinMoveDist (75) where the navmesh has room, waits
-  fBumpReactionSmallWaitTimer (3 s), and its package goes on. TODO(M10) 4.3: its
-  ActorCollidewithActor line; TODO(M13): when the engine counts a bump small, and whether
+  fBumpReactionSmallWaitTimer (3 s), and its package goes on. It says its ActorCollidewithActor
+  line ([Talking](#talking)). TODO(M13): when the engine counts a bump small, and whether
   actors bumping each other react too.
 - **Doors** (`src/shell/actor-doors.ts`): the navmeshes mark only load doors (all 1,220 door
   triangles of the interiors' navmeshes are load doors), so an actor finds a door in its way by
@@ -191,8 +191,10 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   it talks with the player (the engine's in-game dialogue package) its package waits: it stops
   where it is and faces the player (in furniture it stays seated). An override list its
   situation names (spectator, observe corpse, guard warn: [Detection](#detection)) comes before
-  them all; the engine's own reactions hold its package while they run. TODO(M10) 4.3, 5.2:
-  the combat list (ECOR) and the talking interrupts.
+  them all; the engine's own reactions hold its package while they run, as do a conversation
+  with another actor and a greeting it stops for ([Talking](#talking)); the package's interrupt
+  flags say whether it greets, chatters, talks with others and comments. TODO(M10) 5.2: the
+  combat list (ECOR).
 - **When:** as the hour changes, every 2 seconds (TODO(M13): the engine's rate), when its package
   ends, and when a script asks (EvaluatePackage). One that must complete (PKDT flag 0x4) is not
   left before it has. Its scripts hear of it: OnPackageStart (the new package), OnPackageChange
@@ -238,7 +240,12 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   falls behind; FollowTo follows until one of them reaches the destination; Flee runs to its
   place, else away from what it flees. A procedure that does not use furniture gets the actor
   up first. TODO(M10) 5.1–5.4: UseWeapon, UseMagic, Shout, Hover, Orbit, FlightGrab (they hold
-  the actor until combat runs); 4.3: Sandbox's conversations and eating.
+  the actor until combat runs); 3.2: Sandbox's eating. Sandbox with Allow Conversation lets
+  its actor talk with others; Say says its topic (or a topic subtype's line) to its target,
+  waiting for the line itself with Finish Speaking, its subtitle forced with Force Subtitle;
+  LockDoors with Warn Before Locking first tells a player inside to go (TimeToGo) and locks
+  after fAITrespassWarningTimer (5 s; TODO(M11): trespass if they stay); DialogueActivate with
+  another actor as its target talks with it ([Talking](#talking)).
 - **Searching** (`src/shell/actor-search.ts`): a criterion names references by object (a base
   object, a form list of them, a faction's members) or by object type
   (`src/ai/object-types.ts`, xEdit's object type enum: food is ALCH with the food flag, beds and
@@ -502,8 +509,9 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   hours) in its sight, walks to the body and looks at it for 5 s; spectating (`fight`, 5.2):
   it keeps fAIInteriorSpectatorDistance (200) / Exterior (450) from the fight, facing it, until
   its last blow is fAISpectatorRememberThreatTimer old; a guard's warning (`warn`, M11) goes to
-  the one warned and faces them. TODO(M10) 4.3: their lines (NormalToAlert, AlertToNormal,
-  NoticeCorpse, the warning). TODO(M13): the engine's steps.
+  the one warned and faces them. Their lines (NormalToAlert, AlertToNormal, NoticeCorpse, the
+  warning) are barks ([Talking](#talking)) to what they react to. TODO(M13): the engine's
+  steps.
 - **Sneaking:** the player's Sneak key; an actor sneaks while its package says Always Sneak
   (PKDT 0x20000, 52 vanilla packages) or after StartSneaking (until its package changes): its
   graph's IsSneaking, its sneaking movement type, IsSneaking.
@@ -565,7 +573,8 @@ after `--package-seconds`).
   said again every DMIN to DMAX seconds until it ends and is done once said: DLC2WE05Scene's
   second phase, a looping line beside a package and no conditions, would never end otherwise.
   TODO(M13): the engine's rule; Show All Text (FNAM 0x4, 1,394 scenes) is read as the scene
-  editor's display and does nothing. TODO(M10) 4.3: the responses' speaker and listener idles.
+  editor's display and does nothing. Each response is said as the actors' other lines are
+  ([Talking](#talking)): gestures, the speaker's and listener's idles, the voice's reach.
 - **Looks:** while a dialogue action runs its actor looks at the actor it names (HTID), else,
   with Headtrack Player, at the player (MQ302's council looks at Arngeir, who names himself
   and so looks at the player); a later action of the same actor takes over, and one that names
@@ -610,3 +619,82 @@ finally awake." to "And it looks like the Thalmor are with him." After a new gam
 3D, and scenes that begin with their quests, whose first phase waits for the player to come near
 (MorthalInitialScene, RJBanditScene; in Node, without the player's place, GetDistance is not
 valued and holds: TODO(M10) 4.2) or for a script (IvarsteadSSScene).
+
+## Talking
+
+What actors say outside the dialogue menu (`src/ai/talk.ts` for who talks when,
+`src/shell/actor-talk.ts` on the stage, `src/shell/world-lines.ts` for how a line is said; the
+lines: the dialogue engine's `subtypeLine` and `topicLineTo`). What the engine keeps for it is
+CommonLibSSE's HighProcessData (greetingTimer, exclusiveTimer, idleTimer, checkToTalkTimer,
+lastSpokenToArray); how it combines them is not documented, so the rules below follow the game
+settings' names (TODO(M13) where they are ours). The running package's PKDT interrupt flags
+say what an actor may do: hellos to the player (0x1, 4,604 of 7,633 vanilla packages), random
+conversations (0x2), idle chatter (0x80), reactions to the player's actions (0x10), world
+interactions (0x200, GetAllowWorldInteractions: the WI comment quests); an actor without a
+package may do all.
+
+- **A line** of a topic subtype (Hello, Idle, a bark) is the first valid info of the subtype's
+  topics of the running quests, by quest priority, then topic priority; its quest's dialogue
+  conditions and its own run on the speaker with the one spoken to as their target (the
+  player, or another actor), Random runs and Say Once as in the menu, a topic that does all
+  before repeating (DIAL 0x1) not repeating one before the others. An info another actor says
+  (ANAM), or whose conditions name another actor, voice type or alias's reference (GetIsID,
+  GetIsVoiceType, GetIsAliasRef run on the subject), is passed over without valuing the rest
+  (`src/scripting/runtime/speaker-filter.ts`): of the 6,542 Hello infos 4,719 name their
+  speaker and 699 more their voice types. A line is found in a few milliseconds.
+- **How it is said** (`WorldLines.speak`, `sayResponse`; the scenes' lines too): each
+  response in the speaker's voice, lips moving (creatures: below), its emotion on the face
+  (TRDT emotion type and value; neutral leaves the mood), its gestures (the response's speaker
+  idle, else ActionTalking's idle tree, which picks by GetDialogueEmotion: DialogueAngry,
+  DialogueHappy, hand gestures; a dog barks) and the listener's idle (LNAM); a voice file is
+  followed by fGameplayVoiceFilePadding (0.5 s). The HUD's subtitle shows with General
+  Subtitles, or when the info (Force Subtitle) or the package's Say forces it, while the player
+  is within the voice's reach (the 3D dialogue output model, DOBJ DOP2 SOMDialogue3DDefault:
+  3000 units). One line at a time: a new one ends the one it says; talking with the player ends
+  it. IsTalking, IsGreetingPlayer, GetDialogueEmotion and GetDialogueEmotionValue answer from it.
+- **Greetings:** as the player comes within 150 units of an actor that detects them
+  (TODO(M13): no game setting of the load order gives the distance), whose package allows
+  hellos, it says its Hello line to them, the nearest first; one greets at a time
+  (fAIExclusiveGreetingTimer, 2.5 s), and it greets again only after the player left (1.25 times
+  the distance) and fAIGreetingTimer (5 s) passed. Unless the info lets it move while greeting
+  (INFO 0x400) it stops and faces them meanwhile. Not while the player talks with someone.
+- **Idle chatter:** every fIdleChatterCommentTimer to fIdleChatterCommentTimerMax (10–20 s) an
+  actor whose package allows chatter, within 1,024 units of the player and detecting them,
+  says its Idle line to them; one line of chatter at a time (TODO(M13)). The Idle infos weigh
+  chance and the player's sneaking themselves (GetRandomPercent, IsSneaking).
+- **Conversations between actors:** every fAISocialTimerForConversationsMin to Max (10–30 s)
+  an actor that may (its package's random conversations flag; sandboxing, its Allow
+  Conversation; not on its way) starts one by fAISocialchanceForConversation (10 %, inside the
+  Interior value) with the nearest within fAISocialRadiusToTriggerConversation (500) who may
+  too and with whom it has not talked within 120 s (TODO(M13)). Their packages wait; the one
+  that starts walks up to within iAISocialDistanceToTriggerEvent (200; one seated stays and
+  the other comes), they face each other and take turns: a Hello each, then Idle lines, four
+  lines at most, ending when the one whose turn it is has nothing to say (TODO(M13): the
+  engine's topics for random conversations are not documented). It breaks off when the player
+  talks to one of them, a scene takes one, or one leaves or dies. DialogueActivate between
+  actors starts one the same way. `node tools/talk-info.ts HuldaREF SaadiaREF` plays one after
+  a new game in Node.
+- **Barks:** `ActorTalk.bark(actor, subtype, target?)` says a topic subtype's line (by code or
+  name: ObserveCombat, NoticeCorpse, NormalToAlert, Steal, Trespass, PickpocketTopic, TimeToGo,
+  ...) to a target (the player without one); the reactions of [Detection](#detection) call
+  it, combat and crime do. A package's begin, change and end topics and its Say say theirs.
+  The player walking into an actor gets its ActorCollidewithActor line (its infos weigh
+  IsSmallBump and a 25 % chance) if its package allows reactions to the player's actions.
+- **The player's actions:** `ActorTalk.playerAction(subtype)`: the nearest actor within 1,024
+  units that detects them and whose package allows reactions comments, each at most every
+  fCommentOnPlayerActionsTimer (20 s; knocking things over fCommentOnPlayerKnockingThings,
+  40 s). Jumping (Jump), grabbing an object (ZKeyObject) and picking a lock (LockedObject) are
+  told; swinging a weapon, shooting, aiming, casting and shouting are combat's and magic's
+  (SwingMeleeWeapon, ShootBow, PlayerinIronSights, PlayerCastProjectileSpell, PlayerShout:
+  TODO(M10) 5.1, 5.3), knocking things over and standing on furniture TODO(M13) (the physics
+  does not tell who knocked an object).
+- **Creatures' lines** (dragons, hagravens, rieklings: 8 lip curves) move the creature's mouth
+  through its behavior graph's own lip variables (LipBigAah, LipDST, LipEee, LipFV, LipK, LipL,
+  LipR, LipTh; rieklings LipAA ... LipTH), which blend its phoneme poses; the curves are taken
+  in the variables' order (TODO(M13)).
+- **The dialogue camera** (`src/shell/dialogue-camera.ts`): as the player talks with an actor
+  their view turns to its head and zooms in 10 degrees, back as it ends; no game setting
+  describes it (TODO(M13)).
+- `node tools/talk-info.ts HuldaREF`: after a new game in Node, an actor's line of each subtype
+  to the player and the time it took to find; `--survey`: the subtypes' infos and what names
+  their speakers.

@@ -159,11 +159,13 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
 - [ ] **4.2 Every AI condition and native valued:** the full list from the recon (IsInCombat,
       GetDetected, GetSitting, GetCurrentAIPackage, IsWeaponOut, ...); an unknown function is an
       error in the audit, not a pass.
-- [ ] **4.3 Talking:** greetings as the player passes, idle chatter, actors talking to each
+- [x] **4.3 Talking:** greetings as the player passes, idle chatter, actors talking to each
       other (DialogueActivate between actors, Sandbox's conversations), barks by subtype (a
       package's topic subtype), LockDoors' warning, Say's own line length and forced
       subtitles, the dialogue camera, emotions on the face, creatures' jaw lines; the
       packages' hello and chatter interrupts; a bumped actor's ActorCollidewithActor line.
+      docs/ai.md, "Talking"; `tools/talk-info.ts`. Moved on: the player's combat and magic
+      actions' comments to 5.1 and 5.3, the speaker's head turning to 1.5.
 - [x] **4.4 Scenes:** phases, actions, the actors' behaviour flags, fragments, the Scene
       natives, IsInScene, IsScenePackageRunning. docs/ai.md, "Scenes"; `tools/scene-info.ts`
       (`--play`). Moved on: combat and watching combat pausing or ending a scene to 5.2, the
