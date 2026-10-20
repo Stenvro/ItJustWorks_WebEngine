@@ -12,8 +12,8 @@
 // the player lacks them (StartMagickaMeterBlinking, StartStaminaMeterBlinking; health blinks
 // of itself when low). The stealth meter and the sneaking HUD mode: hud-stealth.ts.
 // Notes: docs/ui.md.
-// TODO(M10): enemy health (5.1), the riding HUD mode (3.5). TODO(M11): the shout meter
-// (SetShoutMeterPercent, FlashShoutMeter: the shout system) and weapon charge
+// The enemy health bar (enemy). TODO(M10): the riding HUD mode (3.5). TODO(M11): the shout
+// meter (SetShoutMeterPercent, FlashShoutMeter: the shout system) and weapon charge
 // (SetChargeMeterPercent: the equip and magic systems).
 
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -109,7 +109,7 @@ export class HudController implements HudSink {
       handlers: {
         // The HUD hands the engine its sneak text, stealth eye, enemy health and quest update
         // clips, which the engine drives itself by their paths (the stealth meter:
-        // hud-stealth.ts; TODO(M10) 5.1: enemy health).
+        // hud-stealth.ts; the enemy health bar: enemy).
         RegisterHUDComponents: () => undefined,
       },
       setup: async (menu) => {
@@ -424,6 +424,27 @@ export class HudController implements HudSink {
     this.#menu?.call(
       meter === 'magicka' ? 'StartMagickaMeterBlinking' : 'StartStaminaMeterBlinking',
     );
+  }
+
+  /**
+   * The enemy's health (src/shell/actor-combat.ts): the clips the HUD hands the engine
+   * (RegisterHUDComponents): EnemyHealth_mc shown, its brackets' RolloverNameInstance named,
+   * its meter set through SetEnemyHealthPercent / SetEnemyHealthTargetPercent (0..100).
+   * TODO(M13): how the engine fades the bar in and out is not documented: it is shown or not.
+   */
+  enemy(enemy: { readonly name: string; readonly health: number } | undefined): void {
+    const menu = this.#menu;
+    if (!menu) return;
+    const clip = `${BASE}.EnemyHealth_mc`;
+    if (!enemy) {
+      menu.set(`${clip}._alpha`, 0);
+      return;
+    }
+    menu.set(`${clip}._alpha`, 100);
+    menu.set(`${clip}.BracketsInstance.RolloverNameInstance.text`, enemy.name);
+    const percent = Math.max(0, Math.min(100, enemy.health));
+    menu.call('SetEnemyHealthPercent', percent);
+    menu.call('SetEnemyHealthTargetPercent', percent);
   }
 
   async #updateMeters(menu: Menu): Promise<void> {

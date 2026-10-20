@@ -32,41 +32,6 @@ const formAt = (
 const formField = (record: RecordSource, type: string): number | undefined =>
   formAt(record, record.fields.first(type));
 
-/**
- * What an actor holds, as GetEquippedItemType and the graphs' iRightHandType / iLeftHandType
- * number it (UESP "GetEquippedItemType"; the idle tree's conditions: 7 a bow, 10 a shield, 12 a
- * crossbow).
- */
-export const EquippedType = {
-  handToHand: 0,
-  oneHandSword: 1,
-  oneHandDagger: 2,
-  oneHandAxe: 3,
-  oneHandMace: 4,
-  twoHandSword: 5,
-  twoHandAxe: 6,
-  bow: 7,
-  staff: 8,
-  magic: 9,
-  shield: 10,
-  torch: 11,
-  crossbow: 12,
-} as const;
-
-/** WEAP DNAM animation types (xEdit wbWeaponAnimTypeEnum). */
-export const WeaponAnimType = {
-  handToHand: 0,
-  oneHandSword: 1,
-  oneHandDagger: 2,
-  oneHandAxe: 3,
-  oneHandMace: 4,
-  twoHandSword: 5,
-  twoHandAxe: 6,
-  bow: 7,
-  staff: 8,
-  crossbow: 9,
-} as const;
-
 /** WEAP DNAM flags. */
 export const WeaponFlag = {
   ignoresNormalWeaponResistance: 0x1,
@@ -107,10 +72,8 @@ export interface WeaponSounds {
 export interface WeaponCombat {
   readonly formId: number;
   readonly editorId: string;
-  /** DNAM animation type (WeaponAnimType). */
+  /** DNAM animation type (WeaponType, src/world/item-records.ts). */
   readonly animType: number;
-  /** What GetEquippedItemType gives for it (EquippedType). */
-  readonly equippedType: number;
   /** DATA: base damage, weight, value. */
   readonly damage: number;
   readonly weight: number;
@@ -151,18 +114,6 @@ export interface WeaponCombat {
   readonly template: number | undefined;
 }
 
-/** The type GetEquippedItemType gives a weapon of an animation type. */
-export function equippedTypeOf(animType: number): number {
-  switch (animType) {
-    case WeaponAnimType.staff:
-      return EquippedType.staff;
-    case WeaponAnimType.crossbow:
-      return EquippedType.crossbow;
-    default:
-      return Math.min(Math.max(0, animType), EquippedType.bow);
-  }
-}
-
 const keywordsOf = (record: Pick<RecordSource, 'fields' | 'formIdAt'>): number[] =>
   record.fields
     .all('KWDA')
@@ -179,7 +130,6 @@ export function parseWeaponCombat(record: RecordSource): WeaponCombat {
     formId: record.formId,
     editorId: record.editorId ?? '',
     animType,
-    equippedType: equippedTypeOf(animType),
     value: u32(data, 0),
     weight: f32(data, 4),
     damage: u16(data, 8),

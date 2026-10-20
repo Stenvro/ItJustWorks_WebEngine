@@ -469,6 +469,7 @@ export class ModelViewer {
     evaluatePackage: (reference) => {
       this.#stage?.ai.evaluate(reference);
     },
+    combat: () => this.#stage?.combat,
     nodeWorld: (reference, node) =>
       instanceNodeWorld(
         this.#instances.get(reference) ?? this.#created?.get(reference)?.instance,
@@ -752,6 +753,7 @@ export class ModelViewer {
         if (this.#play === play) {
           this.#avatar = avatar;
           this.#seat = avatar && this.#makeSeat(play, avatar);
+          this.#stage?.combat.attachPlayer(play, avatar);
         } else avatar?.destroy();
       },
       (error: unknown) => {
@@ -764,6 +766,7 @@ export class ModelViewer {
     this.#avatar?.destroy();
     this.#avatar = undefined;
     this.#seat = undefined;
+    this.#stage?.combat.attachPlayer(undefined, undefined);
     this.#stage?.attachPlay(undefined);
     this.#play?.dispose();
     this.#play = undefined;
@@ -1652,7 +1655,8 @@ export class ModelViewer {
           ],
         }),
         imageSpace,
-        decals: () => (decals ? [decals] : []),
+        // The cell's decals and the hits' blood (src/shell/combat-impacts.ts).
+        decals: () => [...(decals ? [decals] : []), ...(this.#stage?.combat.decals() ?? [])],
         backdrop: false,
         update: (seconds) => {
           this.#avatar?.update(seconds);

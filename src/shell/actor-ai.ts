@@ -94,6 +94,8 @@ export class ActorAi {
    * packages wait as with the player; where each faces (undefined: it is left to move).
    */
   readonly #talkHeld = new Map<number, () => Vec3 | undefined>();
+  /** Whether an actor fights now (its packages wait meanwhile: src/shell/actor-combat.ts). */
+  readonly #engaged: ((reference: number) => boolean) | undefined;
   /** The actors talking with the player now (their packages wait). */
   readonly #talking = new Set<number>();
   /**
@@ -141,6 +143,8 @@ export class ActorAi {
     readonly talk?: () => ActorTalk | undefined;
     /** What carries the actors: their horses and vehicles. */
     readonly transport?: ActorTransport;
+    /** Whether an actor fights (TODO(M10) 5.2: the combat override packages, ECOR). */
+    readonly engaged?: (reference: number) => boolean;
   }) {
     this.#session = options.session;
     this.#movers = options.movers;
@@ -153,6 +157,7 @@ export class ActorAi {
     this.#overrides = options.overrides;
     this.#talk = options.talk;
     this.#transport = options.transport;
+    this.#engaged = options.engaged;
     this.#mind = this.#makeMind();
   }
 
@@ -279,6 +284,7 @@ export class ActorAi {
         }
         continue;
       }
+      if (this.#engaged?.(reference) === true) continue;
       if (this.#talking.delete(reference)) {
         this.#movers.request(reference, undefined);
         entry.packages.evaluate();

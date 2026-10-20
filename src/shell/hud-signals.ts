@@ -60,6 +60,8 @@ export interface HudSink {
   skillIncreased?(increase: SkillIncrease): void;
   /** The magicka or stamina meter blinks (the player lacked it). */
   meterBlink?(meter: 'magicka' | 'stamina'): void;
+  /** The enemy the player fights: its name and health (0..100); undefined: none shown. */
+  enemy?(enemy: { readonly name: string; readonly health: number } | undefined): void;
 }
 
 /** What shows the game's menus that scripts open (Play). */
@@ -162,6 +164,10 @@ export class HudSignals implements ProgressionListener {
 
   meterBlink(meter: 'magicka' | 'stamina'): void {
     this.sink?.meterBlink?.(meter);
+  }
+
+  enemy(enemy: { readonly name: string; readonly health: number } | undefined): void {
+    this.sink?.enemy?.(enemy);
   }
 
   userEvent(name: string): void {

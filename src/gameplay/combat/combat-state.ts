@@ -149,7 +149,11 @@ export type CombatEffect =
 const lower = (event: string): string => event.toLowerCase();
 
 /** The attack data events of ranged attacks. */
-const RANGED_STARTS = new Set(['bowattackstart', 'crossbowattackstart', 'crossbowdwarvenattackstart']);
+const RANGED_STARTS = new Set([
+  'bowattackstart',
+  'crossbowattackstart',
+  'crossbowdwarvenattackstart',
+]);
 
 /** An attack starts (its event sent to the graph). */
 export function startAttack(
@@ -164,11 +168,7 @@ export function startAttack(
     killMove: event.startsWith('pa_'),
     struck: new Set(),
   };
-  state.attack = ranged
-    ? AttackState.bowDraw
-    : attack.bash
-      ? AttackState.bash
-      : AttackState.draw;
+  state.attack = ranged ? AttackState.bowDraw : attack.bash ? AttackState.bash : AttackState.draw;
   state.blocking = attack.bash ? state.blocking : false;
 }
 

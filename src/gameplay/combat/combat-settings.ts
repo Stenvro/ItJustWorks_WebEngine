@@ -1,4 +1,5 @@
-// The game settings combat reads (GMST; docs/ai.md, "Combat"). Where the load order sets one,
+// The game settings combat reads (GMST; docs/ai.md, "Combat"; the equip system reads those of
+// weapon damage and armour, the skill progression those of stamina). Where the load order sets one,
 // its value counts; the others keep the engine's built-in value, which the plugins do not hold:
 // those below come from UESP's pages ("Damage", "Block", "Archery", "Difficulty") where it
 // gives them, else they are inferred from what the game does and marked so. Platform-independent.
@@ -18,25 +19,6 @@ export interface CombatSettings {
    */
   readonly combatHitConeAngle: number;
   // --- Damage --------------------------------------------------------------------------------
-  /**
-   * The weapon skill's damage factor at skill 0 and 100, the player's (fDamagePCSkillMin/Max)
-   * and the NPCs' (fDamageSkillMin/Max). UESP "Damage": +0.5% a skill point for the player,
-   * +2% for NPCs: 1..1.5 and 1..3 (only fDamagePCSkillMax is in the plugins).
-   */
-  readonly damagePCSkillMin: number;
-  readonly damagePCSkillMax: number;
-  readonly damageSkillMin: number;
-  readonly damageSkillMax: number;
-  /** fArmorScalingFactor: damage reduction (%) per point of armour rating. */
-  readonly armorScalingFactor: number;
-  /** fArmorBaseFactor: the hidden reduction each piece worn adds (0.03: 3%). */
-  readonly armorBaseFactor: number;
-  /** fMaxArmorRating: the most armour takes off (%). */
-  readonly maxArmorRating: number;
-  /** fArmorRatingBase, fArmorRatingMax, fArmorRatingPCMax: the armour skill's factor. */
-  readonly armorRatingBase: number;
-  readonly armorRatingMax: number;
-  readonly armorRatingPCMax: number;
   /** fDamageSneakAttackMult: times the sneak attack multiplier (1). */
   readonly damageSneakAttackMult: number;
   /** fCombatSneak*Mult: the sneak attack multiplier of each kind of weapon. */
@@ -80,17 +62,6 @@ export interface CombatSettings {
   readonly shieldBashMax: number;
   readonly shieldBashPCMin: number;
   readonly shieldBashPCMax: number;
-  // --- Stamina -------------------------------------------------------------------------------
-  /** fStaminaAttackWeaponBase + weight × fStaminaAttackWeaponMult: a power attack's cost... */
-  readonly staminaAttackWeaponBase: number;
-  readonly staminaAttackWeaponMult: number;
-  /** ... times fPowerAttackStaminaPenalty (UESP: (40 + 2 × weight) × the attack's mult). */
-  readonly powerAttackStaminaPenalty: number;
-  readonly staminaBashBase: number;
-  readonly staminaPowerBashBase: number;
-  readonly staminaBlockBase: number;
-  /** fStaminaBlockDmgMult: stamina a block costs per point of damage blocked. */
-  readonly staminaBlockDamageMult: number;
   // --- Staggers ------------------------------------------------------------------------------
   readonly staggerMin: number;
   readonly staggerMassOffsetBase: number;
@@ -133,13 +104,6 @@ export interface CombatSettings {
   readonly deathForceRangedDamageMax: number;
   readonly deathForceRangedForceMin: number;
   readonly deathForceRangedForceMax: number;
-  // --- Regeneration ----------------------------------------------------------------------------
-  /** fCombatHealthRegenRateMult, fCombatStaminaRegenRateMult: regeneration in combat. */
-  readonly combatHealthRegenRateMult: number;
-  readonly combatStaminaRegenRateMult: number;
-  /** fDamagedHealthRegenDelay, fDamagedStaminaRegenDelay: regeneration waits after damage. */
-  readonly damagedHealthRegenDelay: number;
-  readonly damagedStaminaRegenDelay: number;
 }
 
 /** The engine's values where the plugins have none (Skyrim.esm and Update.esm otherwise). */
@@ -147,16 +111,6 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   combatDistance: 141,
   combatBashReach: 141,
   combatHitConeAngle: 35,
-  damagePCSkillMin: 1,
-  damagePCSkillMax: 1.5,
-  damageSkillMin: 1,
-  damageSkillMax: 3,
-  armorScalingFactor: 0.12,
-  armorBaseFactor: 0.03,
-  maxArmorRating: 80,
-  armorRatingBase: 1,
-  armorRatingMax: 2.5,
-  armorRatingPCMax: 1.4,
   damageSneakAttackMult: 1,
   sneakMult: {
     hand: 2,
@@ -185,13 +139,6 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   shieldBashMax: 0.25,
   shieldBashPCMin: 0.1,
   shieldBashPCMax: 0.25,
-  staminaAttackWeaponBase: 20,
-  staminaAttackWeaponMult: 1,
-  powerAttackStaminaPenalty: 2,
-  staminaBashBase: 35,
-  staminaPowerBashBase: 55,
-  staminaBlockBase: 0,
-  staminaBlockDamageMult: 0.25,
   staggerMin: 0,
   staggerMassOffsetBase: 2.1,
   staggerPlayerMassMult: 2.5,
@@ -219,10 +166,6 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   deathForceRangedDamageMax: 50,
   deathForceRangedForceMin: 10,
   deathForceRangedForceMax: 30,
-  combatHealthRegenRateMult: 0,
-  combatStaminaRegenRateMult: 0.35,
-  damagedHealthRegenDelay: 0.5,
-  damagedStaminaRegenDelay: 0.5,
 };
 
 /** Each number setting's game setting (its editor id). */
@@ -230,16 +173,6 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   combatDistance: 'fCombatDistance',
   combatBashReach: 'fCombatBashReach',
   combatHitConeAngle: 'fCombatHitConeAngle',
-  damagePCSkillMin: 'fDamagePCSkillMin',
-  damagePCSkillMax: 'fDamagePCSkillMax',
-  damageSkillMin: 'fDamageSkillMin',
-  damageSkillMax: 'fDamageSkillMax',
-  armorScalingFactor: 'fArmorScalingFactor',
-  armorBaseFactor: 'fArmorBaseFactor',
-  maxArmorRating: 'fMaxArmorRating',
-  armorRatingBase: 'fArmorRatingBase',
-  armorRatingMax: 'fArmorRatingMax',
-  armorRatingPCMax: 'fArmorRatingPCMax',
   damageSneakAttackMult: 'fDamageSneakAttackMult',
   unarmedCritDamageMult: 'fCombatUnarmedCritDamageMult',
   blockWeaponBase: 'fBlockWeaponBase',
@@ -255,13 +188,6 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   shieldBashMax: 'fShieldBashMax',
   shieldBashPCMin: 'fShieldBashPCMin',
   shieldBashPCMax: 'fShieldBashPCMax',
-  staminaAttackWeaponBase: 'fStaminaAttackWeaponBase',
-  staminaAttackWeaponMult: 'fStaminaAttackWeaponMult',
-  powerAttackStaminaPenalty: 'fPowerAttackStaminaPenalty',
-  staminaBashBase: 'fStaminaBashBase',
-  staminaPowerBashBase: 'fStaminaPowerBashBase',
-  staminaBlockBase: 'fStaminaBlockBase',
-  staminaBlockDamageMult: 'fStaminaBlockDmgMult',
   staggerMin: 'fStaggerMin',
   staggerMassOffsetBase: 'fStaggerMassOffsetBase',
   staggerPlayerMassMult: 'fStaggerPlayerMassMult',
@@ -289,10 +215,6 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   deathForceRangedDamageMax: 'fDeathForceRangedDamageMax',
   deathForceRangedForceMin: 'fDeathForceRangedForceMin',
   deathForceRangedForceMax: 'fDeathForceRangedForceMax',
-  combatHealthRegenRateMult: 'fCombatHealthRegenRateMult',
-  combatStaminaRegenRateMult: 'fCombatStaminaRegenRateMult',
-  damagedHealthRegenDelay: 'fDamagedHealthRegenDelay',
-  damagedStaminaRegenDelay: 'fDamagedStaminaRegenDelay',
 };
 
 /** The sneak multipliers' settings. */

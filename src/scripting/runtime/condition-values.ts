@@ -46,6 +46,14 @@ export const Fn = {
   isAttacking: 672,
   isPowerAttacking: 673,
   isCommandedActor: 700,
+  getKnockedState: 107,
+  getPairedAnimation: 313,
+  isPC1stPerson: 391,
+  getLastHitCritical: 508,
+  getMovementDirection: 589,
+  isLastHostileActor: 674,
+  shouldAttackKill: 678,
+  getTargetHeight: 720,
   isStaggered: 701,
   isRecoiling: 702,
   isBeingRidden: 714,
@@ -927,27 +935,89 @@ async function conditionValue(
           (state.actors.get(reference)?.alerted === true ||
             (runtime.world.alerted?.(reference) ?? false)),
       );
-    // Combat, weapons and magic out, bleeding out, staggers, knock-downs: no actor is in any of
-    // these until combat runs (TODO(M10) 5.1–5.3), as the natives answer (IsInCombat,
-    // IsWeaponDrawn, IsBleedingOut). Being fed on, eaten and commanded are the player's powers
-    // (TODO(M11)).
+    // Its combat state (src/shell/actor-combat.ts, CommonLibSSE ActorState): weapons out, the
+    // attack under way, blocking, staggers, recoils, bleeding out, knock-downs, paired
+    // animations, its combat target. An actor not loaded is in none of them.
     case Fn.getWantBlocking:
+    case Fn.isWeaponOut:
     case Fn.isWeaponMagicOut:
     case Fn.isShieldOut:
-    case Fn.isWeaponOut:
     case Fn.isInCombat:
     case Fn.getCombatState:
-    case Fn.isFleeing:
     case Fn.isBlocking:
     case Fn.getAttackState:
     case Fn.isBleedingOut:
-    case Fn.isDualCasting:
-    case Fn.isCasting:
     case Fn.isAttacking:
     case Fn.isPowerAttacking:
     case Fn.isStaggered:
     case Fn.isRecoiling:
     case Fn.getKnockStateEnum:
+    case Fn.getKnockedState:
+    case Fn.getPairedAnimation:
+    case Fn.getLastHitCritical:
+    case Fn.getMovementDirection:
+    case Fn.isLastHostileActor:
+    case Fn.shouldAttackKill:
+    case Fn.getTargetHeight: {
+      if (reference === undefined) return undefined;
+      const now = runtime.world.combat?.(reference);
+      if (!now) return 0;
+      const out = now.weaponState !== 0;
+      switch (condition.function) {
+        case Fn.getWantBlocking:
+          return flag(now.wantBlocking);
+        case Fn.isWeaponOut:
+          // TODO(M10) 5.3: a spell in hand is magic out, not a weapon.
+          return flag(out);
+        case Fn.isWeaponMagicOut:
+          return flag(out);
+        case Fn.isShieldOut:
+          return flag(out && (await runtime.equipment.shield(reference)) !== undefined);
+        case Fn.isInCombat:
+          return flag(now.inCombat);
+        case Fn.getCombatState:
+          // 0 not in combat, 1 in combat (2 searching: TODO(M10) 5.2).
+          return now.inCombat ? 1 : 0;
+        case Fn.isBlocking:
+          return flag(now.blocking);
+        case Fn.getAttackState:
+          return now.attackState;
+        case Fn.isBleedingOut:
+          return flag(now.bleedingOut);
+        case Fn.isAttacking:
+          return flag(now.attacking);
+        case Fn.isPowerAttacking:
+          return flag(now.powerAttacking);
+        case Fn.isStaggered:
+          return flag(now.staggered);
+        case Fn.isRecoiling:
+          return flag(now.recoiling);
+        case Fn.getKnockStateEnum:
+          return now.knockState;
+        case Fn.getKnockedState:
+          return flag(now.knockState !== 0);
+        case Fn.getPairedAnimation:
+          return flag(now.paired);
+        case Fn.getLastHitCritical:
+          return flag(now.lastHitCritical);
+        case Fn.getMovementDirection:
+          return now.movementDirection;
+        case Fn.isLastHostileActor:
+          return flag(now.lastHostile);
+        case Fn.shouldAttackKill:
+          return flag(now.shouldAttackKill);
+        default:
+          return now.targetHeight;
+      }
+    }
+    // The player looks through their own eyes.
+    case Fn.isPC1stPerson:
+      return flag(runtime.world.firstPerson?.() === true);
+    // Fleeing is the combat AI's (TODO(M10) 5.2); casting the magic system's (TODO(M10) 5.3);
+    // being fed on and eaten are the player's powers (TODO(M11)).
+    case Fn.isFleeing:
+    case Fn.isDualCasting:
+    case Fn.isCasting:
     case Fn.getVampireFeed:
     case Fn.getCannibal:
       return 0;

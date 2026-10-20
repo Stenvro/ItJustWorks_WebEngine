@@ -27,6 +27,7 @@ import {
 } from '../formats/hkx/behavior.ts';
 import { evaluateNode, parseExpression, type Expression } from './behavior-expression.ts';
 import { addPose, blendPoses, PoseAccumulator } from './pose.ts';
+import { isPaired, pairedTrackBones, type PairedSide } from './paired-clips.ts';
 
 /** What a running graph needs from outside: its clips and referenced behavior files. */
 export interface BehaviorHost {
@@ -206,6 +207,17 @@ export class BehaviorRuntime {
   readonly #modifiers = new WeakMap<object, ModifierState>();
   readonly #expressions = new Map<string, Expression | null>();
   #active = new Set<object>();
+  /**
+   * Its side of the paired clips it plays now, where the one who sets it knows it (a killmove's
+   * leader and victim: src/shell/actor-combat.ts; two actors of one skeleton name the same
+   * bones on both sides); undefined: the side its binding chose by its bones
+   * (src/animation/paired-clips.ts).
+   */
+  pairedSide: PairedSide | undefined = undefined;
+  /** The paired clips' track maps for a side set, by binding and side. */
+  readonly #pairedMaps = new WeakMap<AnimationBinding, Map<PairedSide, Int16Array>>();
+  /** A buffer as long as a clip's tracks, where they are more than its bones (paired clips). */
+  #trackBuffer = new Float32Array(0);
   /** Updates run (a clip moved in the current one counts for its root motion). */
   #updates = 0;
   /** How the last update moved the actor. */
@@ -1635,7 +1647,8 @@ export class BehaviorRuntime {
     const out = this.#buffer(depth);
     const reference = this.skeleton.referencePose;
     const animation = binding.animation;
-    const trackToBone = binding.trackToBone;
+    const paired = this.#pairedMap(binding);
+    const trackToBone = paired ?? binding.trackToBone;
     if (binding.additive) {
       // Additive clips hold the difference to the pose below: no turn, no move by default.
       for (let bone = 0; bone < this.#boneCount; bone++) {
@@ -1647,7 +1660,10 @@ export class BehaviorRuntime {
     if (!trackToBone) {
       animation.sample(time, out);
     } else {
-      const tracks = this.#buffer(depth + 1);
+      const size = animation.trackCount * TRANSFORM_FLOATS;
+      const long = animation.trackCount > this.#boneCount;
+      if (long && this.#trackBuffer.length < size) this.#trackBuffer = new Float32Array(size);
+      const tracks = long ? this.#trackBuffer : this.#buffer(depth + 1);
       for (let t = 0; t < animation.trackCount; t++) {
         const bone = trackToBone[t] ?? -1;
         if (bone >= 0)
@@ -1668,6 +1684,28 @@ export class BehaviorRuntime {
       }
     }
     return { pose: out, additive: binding.additive };
+  }
+
+  /** A paired clip's track map for the side set (undefined: its binding's own). */
+  #pairedMap(binding: AnimationBinding): Int16Array | undefined {
+    const side = this.pairedSide;
+    const names = binding.animation.trackNames;
+    if (side === undefined || !names || !isPaired(binding)) return undefined;
+    let maps = this.#pairedMaps.get(binding);
+    if (!maps) {
+      maps = new Map();
+      this.#pairedMaps.set(binding, maps);
+    }
+    let map = maps.get(side);
+    if (!map) {
+      map = pairedTrackBones(
+        names,
+        this.skeleton.bones.map((bone) => bone.name),
+        side,
+      );
+      maps.set(side, map);
+    }
+    return map;
   }
 
   #generateBlender(node: Blender, depth: number, scope: Scope): Generated | undefined {

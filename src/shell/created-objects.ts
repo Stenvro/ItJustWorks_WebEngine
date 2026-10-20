@@ -75,13 +75,19 @@ export class CreatedObjects {
     const [model, collision] = path
       ? await Promise.all([this.#session.model(path), this.#session.collision(path)])
       : [undefined, undefined];
+    // A loose arrow is the ammunition model's single arrow (its quiver is what is worn); one
+    // stuck where it hit (src/shell/combat-projectiles.ts: keyframed) stays there.
+    const keyframed = runtime.state.references.get(reference)?.motionType === 4;
     const moves =
+      !keyframed &&
       collision?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom) === true;
+    const arrow = record.type === 'AMMO';
     const instance: ModelInstance | undefined = model && {
       model,
       world: moves ? new Float32Array(world) : world,
       ...(moves && { motion: { version: 0 } }),
       visibility,
+      ...(arrow && { partShown: (part) => part.name.toLowerCase() === 'arrow:0' }),
     };
     const scene = instance && this.#renderer.scene.createScene([instance]);
     let light: CellLight | undefined;
@@ -113,6 +119,11 @@ export class CreatedObjects {
     };
     this.#entries.set(reference, entry);
     if (play && collision) {
+      if (keyframed) {
+        group.whenComplete.push(() => {
+          for (const placed of group.collision) play.physics.setMotion(placed, true);
+        });
+      }
       play.add(group, {
         objects: [{ object, collision, instance }],
         primitives: [],
