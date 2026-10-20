@@ -515,6 +515,14 @@ export class ActorPlacer {
   }
 
   /**
+   * The level an actor's leveled lists are picked at: the running game's (its encounter's, kept
+   * for it: its scripts see the same picks), 1 without a game running.
+   */
+  #leveledLevel(reference: number): Promise<number> {
+    return this.#session.scriptsReady?.progression.leveledLevel(reference) ?? Promise.resolve(1);
+  }
+
+  /**
    * Where an actor's package has it now (src/ai/package-start.ts), by what it chooses its
    * packages by (kept: its records do not change), no look or 3D made: what the actors away
    * follow (src/shell/actors-away.ts).
@@ -524,7 +532,9 @@ export class ActorPlacer {
     const key = `${String(placedInCell.base)}:${String(placedInCell.reference)}`;
     let mind = this.#minds.get(key);
     if (!mind) {
-      mind = this.#resolver.mind(placedInCell.base, placedInCell.reference);
+      mind = this.#leveledLevel(placedInCell.reference).then((level) =>
+        this.#resolver.mind(placedInCell.base, placedInCell.reference, level),
+      );
       this.#minds.set(key, mind);
     }
     const resolved = await mind;
@@ -551,7 +561,7 @@ export class ActorPlacer {
     const look = await this.#resolver.resolve(
       placedInCell.base,
       placedInCell.reference,
-      1,
+      await this.#leveledLevel(placedInCell.reference),
       overrides,
     );
     if (!look?.skeleton) return undefined;

@@ -41,8 +41,12 @@ export async function playerBarInfo(
   const date = formatGameDate(runtime.date, runtime.dayOfWeek, runtime.gameHour, (name) =>
     settings.string(name),
   );
-  // TODO(M11): the progress to the next level (the player's experience).
-  return { date, level: await runtime.actors.level(PLAYER_REF), progress: 0 };
+  // The progress to the next level (the player's experience; 0..100).
+  return {
+    date,
+    level: await runtime.actors.level(PLAYER_REF),
+    progress: (await runtime.progression.levelProgress()) * 100,
+  };
 }
 
 export class JournalMenu {

@@ -11,7 +11,8 @@
 //                      + fLockpickSkillPartialPickMult × skill), on each side
 //   break time (s)   = (2, 1, 0.75, 0.5, 0.25 by difficulty) × (1 + 0.5 × skill / 100)
 //
-// Platform-independent.
+// Opening a lock is fSkillUsageLockPick<level> uses of Lockpicking, a broken pick
+// fSkillUsageLockPickBroken. Platform-independent.
 
 /** The Lockpick (MISC) and the Skeleton Key (TG08SkeletonKey), which never breaks. */
 export const LOCKPICK = 0xa;
@@ -68,6 +69,18 @@ export const LOCKPICK_DEFAULTS: LockpickSettings = {
 /** The partial pick settings' names, by difficulty. */
 export function partialPickSetting(difficulty: number): string {
   return `fPartialPick${LEVEL_NAMES[clampDifficulty(difficulty) - 1] ?? 'VeryEasy'}`;
+}
+
+/**
+ * The Lockpicking skill uses of opening a lock (fSkillUsageLockPickVeryEasy .. VeryHard: 2, 3,
+ * 5, 8, 13) and of a pick breaking (fSkillUsageLockPickBroken: 0.25); UESP "Lockpicking".
+ */
+export const LOCKPICK_SKILL_USES = [2, 3, 5, 8, 13] as const;
+export const BROKEN_PICK_SKILL_USE = 0.25;
+
+/** The skill use setting of opening a lock of a difficulty: fSkillUsageLockPick<level>. */
+export function lockpickSkillUseSetting(difficulty: number): string {
+  return `fSkillUsageLockPick${LEVEL_NAMES[clampDifficulty(difficulty) - 1] ?? 'VeryEasy'}`;
 }
 
 /** The lock being picked: where its sweet spot is and how wide it and the zones beside it are. */

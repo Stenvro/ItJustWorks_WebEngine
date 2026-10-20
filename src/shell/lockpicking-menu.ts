@@ -10,14 +10,18 @@
 // after the lock level's time (one lockpick fewer; Unbreakable and the Skeleton Key never
 // break); turned all the way, the lock opens. Locksmith starts the pick near the sweet spot. A
 // lock's sweet spot stays where it is until the game is loaded again. The bar shows the skill,
-// the lock's level and the lockpicks left (SetLockInfo). Cancel (Tab, Esc) leaves.
-// TODO(M11): the skill's experience (fSkillUsageLockPick*, fSkillUsageLockPickBroken), the
-// crime of picking an owned lock, Wax Key; the bar's progress to the next level.
+// its progress to the next level, the lock's level and the lockpicks left (SetLockInfo). A lock
+// opened is fSkillUsageLockPick<level> uses of Lockpicking, a broken pick
+// fSkillUsageLockPickBroken (the progression engine). Cancel (Tab, Esc) leaves.
+// TODO(M11): the crime of picking an owned lock (crime), Wax Key (the perk system).
 // Notes: docs/ui.md ("Lockpicking").
 
 import {
+  BROKEN_PICK_SKILL_USE,
   lockDifficulty,
   lockLevelSetting,
+  LOCKPICK_SKILL_USES,
+  lockpickSkillUseSetting,
   lockShape,
   lockTurnLimit,
   LOCK_OPEN_ANGLE,
@@ -148,13 +152,14 @@ export class LockpickingMenu {
       pickModel,
       unbreakable: skeletonKey || (await runtime.actors.hasPerk(PLAYER_REF, UNBREAKABLE)),
       locksmith: await runtime.actors.hasPerk(PLAYER_REF, LOCKSMITH),
-      info: [
-        String(Math.floor(skill)),
-        String(Math.floor(skill) + 1),
-        // TODO(M11): the progress to the next level.
-        0,
-        settings.string(lockLevelSetting(difficulty)) ?? '',
-      ],
+      levelName: settings.string(lockLevelSetting(difficulty)) ?? '',
+      skillUses: {
+        opened:
+          settings.number(lockpickSkillUseSetting(difficulty)) ??
+          LOCKPICK_SKILL_USES[difficulty - 1] ??
+          0,
+        broken: settings.number('fSkillUsageLockPickBroken') ?? BROKEN_PICK_SKILL_USE,
+      },
       closed,
     });
     const menu = await picking.start();
@@ -174,8 +179,10 @@ interface PickingSetup {
   readonly pickModel: GpuModel;
   readonly unbreakable: boolean;
   readonly locksmith: boolean;
-  /** SetLockInfo's skill now, next, progress and the lock's level name (the picks follow). */
-  readonly info: readonly unknown[];
+  /** The lock's level name (SetLockInfo's after the skill, the next level and the progress). */
+  readonly levelName: string;
+  /** Lockpicking skill uses of opening the lock and of a pick breaking. */
+  readonly skillUses: { readonly opened: number; readonly broken: number };
   readonly closed: (unlocked: boolean) => void;
 }
 
@@ -284,9 +291,20 @@ class Picking {
     return this.#menu;
   }
 
+  /** The bar: the skill now and next, its progress (0..100), the lock's level, the picks left. */
   async #showInfo(menu: Menu): Promise<void> {
-    const picks = await this.#runtime.itemCount(PLAYER_REF, LOCKPICK);
-    menu.call('SetLockInfo', ...this.#setup.info, picks);
+    const runtime = this.#runtime;
+    const skill = Math.floor((await runtime.actors.value(PLAYER_REF, LOCKPICKING)).current);
+    const progress = await runtime.progression.skillProgress(LOCKPICKING);
+    const picks = await runtime.itemCount(PLAYER_REF, LOCKPICK);
+    menu.call(
+      'SetLockInfo',
+      String(skill),
+      String(skill + 1),
+      progress * 100,
+      this.#setup.levelName,
+      picks,
+    );
   }
 
   /** The control map's Lockpicking context: RotateLock (the movement keys), Cancel. */
@@ -399,6 +417,7 @@ class Picking {
     this.#sound('UILockpickingPickBreak');
     const runtime = this.#runtime;
     await runtime.removeItem(PLAYER_REF, runtime.formHandle(LOCKPICK), 1, true, undefined);
+    await runtime.progression.useSkill(PLAYER_REF, LOCKPICKING, this.#setup.skillUses.broken);
     const left = await runtime.itemCount(PLAYER_REF, LOCKPICK);
     if (this.#menu) await this.#showInfo(this.#menu);
     if (left <= 0) {
@@ -426,6 +445,7 @@ class Picking {
     const { reference } = this.#setup;
     this.#runtime.state.reference(reference).locked = false;
     void this.#runtime.sendEvent(reference, 'OnLockStateChanged');
+    void this.#runtime.progression.useSkill(PLAYER_REF, LOCKPICKING, this.#setup.skillUses.opened);
     setTimeout(() => {
       this.close(true);
     }, OPENED_SECONDS * 1000);

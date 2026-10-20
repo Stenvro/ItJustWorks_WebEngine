@@ -125,8 +125,9 @@ export class ActorEngine {
     if (base === undefined) return undefined;
     const type = (await runtime.forms.record(base))?.type;
     if (type !== 'NPC_' && type !== 'LVLN') return undefined;
-    // TODO(M11): the encounter zone's level; leveled actors are picked at the player's level.
-    const level = reference === PLAYER_REF ? 1 : await this.playerLevel();
+    // Leveled actors are picked at their encounter's level by their level modifier, kept for
+    // the reference (its look picks the same: src/shell/actors.ts).
+    const level = reference === PLAYER_REF ? 1 : await runtime.progression.leveledLevel(reference);
     const templates = await resolveActorTemplates(
       (id) => runtime.forms.record(id),
       base,
@@ -176,17 +177,16 @@ export class ActorEngine {
     return (await this.#npc(PLAYER_BASE))?.level ?? 1;
   }
 
-  /** Its level: fixed, or the player's times its multiplier within its calc min and max. */
+  /**
+   * Its level: fixed, or the level it follows (its encounter's, a follower's the player's)
+   * times its multiplier within its calc min and max (progression-engine.ts).
+   */
   async level(reference: number): Promise<number> {
     const set = this.#runtime.state.actors.get(reference)?.level;
     if (set !== undefined) return set;
     if (reference === PLAYER_REF) return this.playerLevel();
-    const stats = (await this.info(reference))?.stats;
-    if (!stats) return 1;
-    if ((stats.flags & NpcFlag.pcLevelMult) === 0) return stats.level;
-    const level = Math.max(1, Math.round((await this.playerLevel()) * (stats.level / 1000)));
-    const min = Math.max(1, stats.calcMinLevel);
-    return Math.max(min, stats.calcMaxLevel > 0 ? Math.min(stats.calcMaxLevel, level) : level);
+    const info = await this.info(reference);
+    return info ? this.#runtime.progression.levelOf(reference, info) : 1;
   }
 
   // --- Race and sex ---------------------------------------------------------------------------
@@ -254,10 +254,19 @@ export class ActorEngine {
     if (!info) return 0;
     const ai = info.ai.aiData;
     const race = await this.race((await this.raceOf(reference)) ?? 0);
+    // Auto-calculated actors' skills and attributes follow their level, class and race.
+    const stat = index >= ActorValue.firstSkill && index <= ActorValue.stamina;
+    const auto = stat ? await this.#runtime.progression.autoCalculated(reference, info) : undefined;
     if (index >= ActorValue.firstSkill && index < ActorValue.firstSkill + SKILL_COUNT) {
       const skill = index - ActorValue.firstSkill;
-      return (info.stats.skills[skill] ?? 0) + (info.stats.skillOffsets[skill] ?? 0);
+      return (
+        (auto?.skills[skill] ?? info.stats.skills[skill] ?? 0) +
+        (info.stats.skillOffsets[skill] ?? 0)
+      );
     }
+    if (auto && index === ActorValue.health) return auto.health;
+    if (auto && index === ActorValue.magicka) return auto.magicka;
+    if (auto && index === ActorValue.stamina) return auto.stamina;
     switch (index) {
       case ActorValue.aggression:
         return ai.aggression;
@@ -271,8 +280,7 @@ export class ActorEngine {
         return ai.mood;
       case ActorValue.assistance:
         return ai.assistance;
-      // The Creation Kit's calculated values (base from race, class and level, plus the
-      // offset). TODO(M11): recalculated for actors whose level follows the player's.
+      // Not auto-calculated: the Creation Kit's values (DNAM), else the race's and the offset.
       case ActorValue.health:
         return calculated(info.stats.health, race?.startingHealth, info.stats.healthOffset);
       case ActorValue.magicka:

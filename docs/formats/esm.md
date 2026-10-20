@@ -955,7 +955,7 @@ NPC\_ its base data comes from, template flag 0x80).
 
 **Resolving a look:** a leveled base picks one entry: of those up to the actor's level, the
 highest level's (or any, with flag 0x1), at random (seeded by the reference, so a reference
-always looks the same; TODO(M11): the level from encounter zones and the player). Each leveled
+always looks the same; at the level of its encounter zone or the player, by its level modifier: docs/gameplay.md). Each leveled
 list on the template chain is picked once per actor (`src/world/actor-templates.ts`), so its
 look and what its scripts see (stats, factions, spells) come from the same picks. Traits
 (race, sex, head, skin, colours, size) come from the end of the template chain while the

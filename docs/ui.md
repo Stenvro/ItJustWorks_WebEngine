@@ -472,8 +472,8 @@ A session (UESP, "Trainers") raises the skill by one, five a player level, and c
 fTrainingMultCost × (1, iTrainingExpertCost above 50, iTrainingMasterCost above 75) × skill +
 50 gold, which goes to the trainer; sCanNotTrainAnymore, sCanNotTrainHigher and
 sInsufficientGoldToTrain say why one cannot be had. An actor value's name is its AVIF record's,
-the one named "AV" + the value's name. TODO(M11): the skill's progress, the experience a session
-gives, the skill increase notice.
+the one named "AV" + the value's name. A session raises the skill as if earned (the
+experience it lacked: docs/gameplay.md); the card's `SkillMeter` shows its progress.
 
 ## Levelling up
 
@@ -482,7 +482,7 @@ gives, the skill increase notice.
 attribute by iAVDhmsLevelUp (stamina also the carry weight by fLevelUpCarryWeightMod), the level
 by one, and gives a perk point (UESP, "Leveling"). It opens instead of the skills menu while a
 level-up waits (`GameState.levelUps`; the tween menu's `StartOpenMenuAnim(abLevelUp, ...)` shows
-it), the skills menu after it. TODO(M11): the experience that makes a level up wait.
+it), the skills menu after it. A level-up waits as the experience skills give covers the level's threshold (docs/gameplay.md).
 
 ## The console
 

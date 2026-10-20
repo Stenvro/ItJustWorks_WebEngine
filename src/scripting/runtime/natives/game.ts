@@ -93,23 +93,26 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     return null;
   });
 
-  // --- Stats, skills, perks, shouts (TODO(M11): the systems they feed) ------------------------
+  // --- Stats, skills, perks, shouts ---------------------------------------------------------
+  // Skills and perk points: the progression engine (progression-engine.ts).
   n('game.incrementstat', ({ args }) => {
     const stat = str(args[0]).toLowerCase();
     runtime.stats.set(stat, (runtime.stats.get(stat) ?? 0) + int(args[1], 1));
     return null;
   });
   n('game.querystat', ({ args }) => runtime.stats.get(str(args[0]).toLowerCase()) ?? 0);
-  n('game.advanceskill', ({ args }) => {
-    runtime.advanceSkill(str(args[0]), num(args[1]));
+  // AdvanceSkill(asSkillName, afMagnitude): skill uses (the experience the use gives).
+  n('game.advanceskill', async ({ args }) => {
+    await runtime.advanceSkill(str(args[0]), num(args[1]));
     return null;
   });
-  n('game.incrementskill', ({ args }) => {
-    runtime.incrementSkill(str(args[0]), 1);
+  // IncrementSkill(asSkillName) / IncrementSkillBy(asSkillName, aiCount): levels as if earned.
+  n('game.incrementskill', async ({ args }) => {
+    await runtime.incrementSkill(str(args[0]), 1);
     return null;
   });
-  n('game.incrementskillby', ({ args }) => {
-    runtime.incrementSkill(str(args[0]), int(args[1], 1));
+  n('game.incrementskillby', async ({ args }) => {
+    await runtime.incrementSkill(str(args[0]), int(args[1], 1));
     return null;
   });
   n('game.addperkpoints', ({ args }) => {

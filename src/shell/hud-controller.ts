@@ -5,12 +5,20 @@
 // crosshair is on (SetCrosshairTarget: whether it can be activated, the verb and name, the
 // activate button), the messages scripts post (ShowMessage: Debug.Notification's list at the
 // top left), quest updates (ShowNotification, one at a time as the HUD says it can show one),
-// and help messages (ShowTutorialHintText, their "[Event]" keys as button art).
+// and help messages (ShowTutorialHintText, their "[Event]" keys as button art); a skill
+// increase comes as a notification of its own (ShowNotification's SKILL_LEVEL_UPDATE: the
+// text, UISkillIncreaseSD, the player's level and the level meter from and to its progress; the
+// movie shows its own "level up" once the meter fills); the magicka and stamina meters blink as
+// the player lacks them (StartMagickaMeterBlinking, StartStaminaMeterBlinking; health blinks
+// of itself when low).
 // Notes: docs/ui.md.
 // TODO(M10): enemy health, the stealth meter (through the clips the HUD registers), the
-// sneaking and riding HUD modes. TODO(M11): the shout meter, weapon charge, meters blinking.
+// sneaking and riding HUD modes. TODO(M11): the shout meter (SetShoutMeterPercent,
+// FlashShoutMeter: the shout system) and weapon charge (SetChargeMeterPercent: the equip and
+// magic systems).
 
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import type { SkillIncrease } from '../scripting/runtime/progression-engine.ts';
 import type { QuestUpdate, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { ActorValue } from '../world/actor-values.ts';
@@ -42,8 +50,8 @@ const COMPASS_INTERVAL_MS = 250;
 /** The quest notifications (the HUD's QuestNotification). */
 const QUESTS = `${BASE}.QuestUpdateBaseInstance`;
 
-/** QuestNotification's notification types. */
-const NotificationType = { quest: 0 } as const;
+/** QuestNotification's notification types (QUEST_UPDATE, SKILL_LEVEL_UPDATE, ...). */
+const NotificationType = { quest: 0, skill: 1 } as const;
 
 /** Quest type: miscellaneous objectives (no quest of their own is announced). */
 const MISC_QUEST = 6;
@@ -58,6 +66,8 @@ interface QuestNotice {
   readonly sound: string;
   /** Pairs: an objective's text, its status ("" new, "Completed", "Failed"). */
   readonly objectives: string[];
+  /** A skill increase: the player's level and the level meter's progress from and to (0..1). */
+  readonly skill?: { readonly level: number; readonly from: number; readonly to: number };
 }
 
 /** A help message being shown: its timers. */
@@ -375,18 +385,36 @@ export class HudController implements HudSink {
     this.#notices.shift();
     menu.set(`${QUESTS}.ObjectivesA`, notice.objectives);
     // (aNotificationText, aStatus, aSoundID, aObjectiveCount, aNotificationType, aLevel,
-    // aStartPercent, aEndPercent, aDragonText)
+    // aStartPercent, aEndPercent, aDragonText); the percents 0..1.
     menu.call(
       'ShowNotification',
       notice.text,
       notice.status,
       notice.sound,
       notice.objectives.length / 2,
-      NotificationType.quest,
-      0,
-      0,
-      0,
+      notice.skill ? NotificationType.skill : NotificationType.quest,
+      notice.skill?.level ?? 0,
+      notice.skill?.from ?? 0,
+      notice.skill?.to ?? 0,
       '',
+    );
+  }
+
+  /** A skill increase, after the notices before it: "<Skill> Increased to <n>" and the meter. */
+  skillIncreased(increase: SkillIncrease): void {
+    this.#notices.push({
+      quest: -1,
+      text: increase.text,
+      status: '',
+      sound: 'UISkillIncreaseSD',
+      objectives: [],
+      skill: { level: increase.playerLevel, from: increase.from, to: increase.to },
+    });
+  }
+
+  meterBlink(meter: 'magicka' | 'stamina'): void {
+    this.#menu?.call(
+      meter === 'magicka' ? 'StartMagickaMeterBlinking' : 'StartStaminaMeterBlinking',
     );
   }
 
