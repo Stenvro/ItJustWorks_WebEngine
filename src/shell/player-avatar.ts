@@ -7,6 +7,7 @@
 // choices), made again whenever that changes or a script changes the player's race.
 // Notes: docs/animation.md ("The player").
 
+import { HeadTracker, VANILLA_HEAD_TRACK, type Vec3 as LookPoint } from '../ai/head-tracking.ts';
 import { Locomotion, type LocomotionGraph } from '../ai/locomotion.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { BehaviorRuntime } from '../animation/behavior-runtime.ts';
@@ -19,6 +20,8 @@ import { seededRandom } from '../world/actors.ts';
 import { FIRST_PERSON_SKELETON, PLAYER_ACTOR } from '../world/player-body.ts';
 import type { PlacedActor } from './actors.ts';
 import { actorSounds, type SoundingWorld } from './actor-sounds.ts';
+import { headPosition } from './actors.ts';
+import { Layer } from '../physics/collision-layers.ts';
 import type { GameSession } from './game-session.ts';
 import type { Player } from './player.ts';
 
@@ -327,6 +330,7 @@ export class PlayerAvatar {
     const body = this.#made.body;
     const skeletons: AnimatedSkeleton[] = [body];
     if (this.#firstPerson) skeletons.push(this.#firstPerson);
+    this.#look(body, dt);
     animateSkeletons(skeletons, this.#clock);
     // The body stands on the player's feet, facing its own way: where the camera has them
     // between physics steps (the last step's feet put the body up to a step off the camera).
@@ -355,6 +359,62 @@ export class PlayerAvatar {
       1,
     ]);
     this.#motion.version++;
+  }
+
+  /** The body's head tracking (bHeadTracking, TargetLocation) and its world. */
+  readonly #tracker = new HeadTracker(seededRandom(PLAYER_REFERENCE ^ 0x1b873593));
+
+  /**
+   * Where the player's body looks: what a script, scene or dialogue asks (ScriptWorld.lookTargets),
+   * the actor it talks with, else in third person where the camera looks (far ahead); the graph's
+   * BSLookAtModifier turns its head (TODO(M13): the engine's own player head tracking is not
+   * documented). Its world for the procedural modifiers: its placement, the ground under it.
+   */
+  #look(body: PlacedActor, dt: number): void {
+    const behavior = body.behavior;
+    if (!behavior) return;
+    const player = this.#player;
+    if (behavior.world?.worldFromModel !== this.#world) {
+      behavior.setVariable('bHumanoidFootIKEnable', 1);
+      behavior.world = {
+        worldFromModel: this.#world,
+        ground: (from, length) => {
+          const physics = player.character.physics;
+          if (!physics.queriesCurrent) return undefined;
+          const hit = physics.raycast(
+            [from[0], from[1], from[2]],
+            [0, 0, -1],
+            length,
+            Layer.charController,
+            player.character.collider,
+          );
+          return hit && { point: hit.point, normal: hit.normal };
+        },
+      };
+    }
+    const session = this.#session;
+    const asked = session.scriptWorld.lookTargets.target(PLAYER_REF)?.target;
+    const speaker = session.scriptsReady?.dialogueSpeaker;
+    const toward = asked ?? speaker;
+    let point: LookPoint | undefined;
+    if (typeof toward === 'number') {
+      const other = session.placedActor?.(toward);
+      point = other ? headPosition(other) : session.scriptWorld.livePlacement(toward)?.position;
+    } else if (toward) {
+      point = toward;
+    } else if (player.pov !== 'first' && !this.animatesInMenus) {
+      const eye = player.eye;
+      const forward = player.forward;
+      point = [eye[0] + forward[0] * 1024, eye[1] + forward[1] * 1024, eye[2] + forward[2] * 1024];
+    }
+    const head = headPosition(body);
+    const facing: LookPoint = [Math.sin(this.#bodyYaw), Math.cos(this.#bodyYaw), 0];
+    const aim =
+      session.scriptWorld.lookTargets.headTracking(PLAYER_REF) && behavior.headTrackingAllowed
+        ? this.#tracker.update(dt, head, facing, point, VANILLA_HEAD_TRACK, toward !== undefined)
+        : undefined;
+    behavior.setVariable('bHeadTracking', aim ? 1 : 0);
+    if (aim) behavior.setVector('TargetLocation', [aim[0], aim[1], aim[2], 0]);
   }
 
   /** What the player does, as the graphs' variables and events; the body's facing. */
