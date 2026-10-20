@@ -135,6 +135,19 @@ for (const formId of shouldRun) {
     : 'not started';
   console.log(`  not running: ${record.editorId} [${hex(formId)}]: ${why}`);
 }
+// The scenes playing (src/ai/scene-runtime.ts) and those waiting for their actors.
+const playing = [...runtime.scenes.playing()];
+console.log(`\n${String(playing.length)} scenes playing:`);
+for (const scene of playing) {
+  const record = await runtime.sceneHost.scene(scene.scene);
+  const done = scene.actions.filter((action) => action.complete).length;
+  console.log(
+    `  ${record?.editorId ?? hex(scene.scene)} phase ${String(scene.phase)}${scene.paused ? ' (paused)' : ''}, ${String(done)} of ${String(scene.actions.length)} actions done`,
+  );
+}
+for (const scene of runtime.scenes.waiting) {
+  console.log(`  waiting: ${(await runtime.sceneHost.scene(scene))?.editorId ?? hex(scene)}`);
+}
 const threads = runtime.vm.threads;
 console.log(`\nthreads: ${String(threads.running)} running, ${String(threads.waiting)} waiting`);
 console.log(

@@ -7,6 +7,7 @@
 import type { Vec3 } from '../scripting/runtime/game-state.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { MagicEffectShown } from '../scripting/runtime/magic-engine.ts';
+import type { SceneSpeech } from '../scripting/runtime/scene-host.ts';
 import type {
   ActorInteraction,
   ActorMotion,
@@ -111,6 +112,9 @@ export class ScriptWorld implements WorldBridge {
       ) => void)
     | undefined;
 
+  /** A response of a scene's line (src/shell/scene-lines.ts answers). */
+  sceneLine: ((speech: SceneSpeech) => Promise<void> | undefined) | undefined;
+
   constructor(terminal: Terminal, hud: HudSignals) {
     this.#terminal = terminal;
     this.hud = hud;
@@ -142,6 +146,9 @@ export class ScriptWorld implements WorldBridge {
   }
 
   loaded(reference: number): boolean {
+    // The player's 3D is loaded where a view has the player (HasLoaded3D: MQ101Scene1 waits
+    // for it).
+    if (reference === PLAYER_REF) return this.livePlacement(PLAYER_REF) !== undefined;
     for (const view of this.#views) if (view.loaded(reference)) return true;
     return false;
   }

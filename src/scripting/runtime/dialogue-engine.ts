@@ -132,11 +132,18 @@ export class DialogueEngine {
     return info && (await this.#spoken(info, choice.topic, choice.quest));
   }
 
-  /** What an actor says of a topic (ObjectReference.Say): its first valid info. */
-  async topicLine(topic: number, speaker: number): Promise<SpokenInfo | undefined> {
+  /**
+   * What an actor says of a topic (ObjectReference.Say): its first valid info. `target`: whom
+   * it is said to (a scene line's look target; the player by default).
+   */
+  async topicLine(
+    topic: number,
+    speaker: number,
+    target: number = PLAYER_REF,
+  ): Promise<SpokenInfo | undefined> {
     const record = await this.index.topic(topic);
     if (record?.quest === undefined) return undefined;
-    const info = await this.#validInfo(record, record.quest, speaker);
+    const info = await this.#validInfo(record, record.quest, speaker, target);
     return info && (await this.#spoken(info, record, record.quest));
   }
 
@@ -229,13 +236,14 @@ export class DialogueEngine {
     topic: TopicRecord,
     quest: number,
     speaker: number,
+    target: number = PLAYER_REF,
   ): Promise<InfoRecord | undefined> {
     const runtime = this.#runtime;
     const infos = await this.index.infos(topic.formId);
     const holds = async (info: InfoRecord): Promise<boolean> =>
       !this.#saidOnce.has(info.formId) &&
       (await runtime.conditionsHold(info.conditions, runtime.referenceHandle(speaker), undefined, {
-        target: runtime.referenceHandle(PLAYER_REF),
+        target: runtime.referenceHandle(target),
         quest,
       }));
     for (let i = 0; i < infos.length; i++) {

@@ -25,6 +25,7 @@ import type { Terminal } from './terminal.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import { ActorAi } from './actor-ai.ts';
+import { ActorScenes } from './actor-scenes.ts';
 import { ActorSearch } from './actor-search.ts';
 import { ActorsAway, type AwayPlace } from './actors-away.ts';
 import type { RouteDoor } from '../ai/routes.ts';
@@ -130,6 +131,8 @@ export class ActorStage {
   readonly bodies: ActorBodies;
   /** The actors' AI: their packages. */
   readonly ai: ActorAi;
+  /** The actors in scenes: facing their targets (src/shell/actor-scenes.ts). */
+  readonly actorScenes: ActorScenes;
   /** The furniture the actors use (chairs, beds, leans). */
   readonly furniture: ActorFurniture;
   /** What the actors' packages search the loaded area for. */
@@ -210,6 +213,11 @@ export class ActorStage {
       interior: options.interior === true,
       ...(options.light && { light: options.light }),
       camera: () => options.renderer.view?.camera,
+    });
+    this.actorScenes = new ActorScenes({
+      session: options.session,
+      movers: this.movers,
+      furniture: this.furniture,
     });
   }
 
@@ -607,6 +615,7 @@ export class ActorStage {
     this.ai.frame(this.#actors.values(), frame, this.#options.focus?.());
     // What they notice (detection), and how they react.
     this.senses.frame(frame);
+    this.actorScenes.frame(this.#actors.values());
     this.away.frame(frame);
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     const times = new Map<StagedActor, number | undefined>();
