@@ -30,6 +30,16 @@ describe('the combat state', () => {
     expect(state.weapon).toBe(WeaponState.sheathed);
   });
 
+  it('draws magic (MRh_and_MLh_Equip: Magic_Equip_Out) and puts it away (Magic_Unequip_Out)', () => {
+    const state = newCombatState();
+    state.weapon = WeaponState.drawing;
+    expect(kinds(['weaponDraw', 'Magic_Equip_Out'], state)).toEqual(['hand']);
+    expect(state.weapon).toBe(WeaponState.drawn);
+    state.weapon = WeaponState.sheathing;
+    expect(kinds(['weaponSheathe', 'Magic_Unequip_Out'], state)).toEqual(['sheath']);
+    expect(state.weapon).toBe(WeaponState.sheathed);
+  });
+
   it('goes through an attack as its annotations come (GetAttackState)', () => {
     const state = newCombatState();
     startAttack(state, { event: 'attackStart', hand: 'right', power: false, bash: false });

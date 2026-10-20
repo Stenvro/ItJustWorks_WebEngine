@@ -42,6 +42,12 @@ import type { LightProbe } from '../ai/light-level.ts';
 import { ActorTalk } from './actor-talk.ts';
 import { ActorLooks } from './actor-looks.ts';
 import { ActorCombat } from './actor-combat.ts';
+import { WeaponState } from '../gameplay/combat/combat-state.ts';
+import { ActorCasting } from './actor-casting.ts';
+import { actorShape, MagicProjectiles, type ProjectileTarget } from './magic-projectiles.ts';
+import { PlayerCasting } from './player-casting.ts';
+import { CastingSource } from '../scripting/runtime/casting-engine.ts';
+import { aimDirection } from '../gameplay/magic/projectile-flight.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -166,6 +172,12 @@ export class ActorStage {
   readonly looks: ActorLooks;
   /** Their fights and the player's (src/shell/actor-combat.ts). */
   readonly combat: ActorCombat;
+  /** What spells, staffs and shouts send flying (src/shell/magic-projectiles.ts). */
+  readonly projectiles: MagicProjectiles;
+  /** Casting and shouting, the player's and the NPCs' (src/shell/actor-casting.ts). */
+  readonly casting: ActorCasting;
+  /** The player's attack buttons and voice key casting (src/shell/player-casting.ts). */
+  readonly playerCasting: PlayerCasting | undefined;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -215,6 +227,7 @@ export class ActorStage {
       get: (reference) => this.#actors.get(reference),
       talk: () => this.talk,
       senses: () => this.senses,
+      casting: () => this.playerCasting,
     });
     this.search = new ActorSearch({
       session: options.session,
@@ -325,6 +338,115 @@ export class ActorStage {
         options.session.scriptWorld.lookAt(actor, target, 'dialogue');
       },
     });
+    this.projectiles = new MagicProjectiles({
+      session: options.session,
+      renderer: options.renderer,
+      terminal: options.terminal,
+      targets: () => this.#projectileTargets(),
+      noise: (at, owner, soundLevel) => {
+        this.senses.noise(at, owner, soundLevel);
+      },
+      // A hostile spell's hit: the victim searches for its attacker (TODO(M10) 5.2: combat).
+      hit: (target, caster) => {
+        if (target !== caster && target !== PLAYER_REF) this.senses.attackedBy(target, caster);
+      },
+    });
+    this.casting = new ActorCasting({
+      session: options.session,
+      renderer: options.renderer,
+      terminal: options.terminal,
+      furniture: this.furniture,
+      projectiles: this.projectiles,
+      get: (reference) => this.#actors.get(reference),
+      userOf: (staged) => this.userOf(staged),
+      height: (reference) => this.movers.height(reference),
+      drawn: (reference) => this.combat.weaponState(reference) === WeaponState.drawn,
+      draw: (reference) => this.combat.draw(reference),
+      ...(options.player && { player: options.player }),
+      // A cast or a shout is heard (detection's action noise); the player's is commented on.
+      acted: (actor, kind, soundLevel) => {
+        this.senses.action(actor, soundLevel);
+        if (actor !== PLAYER_REF) return;
+        const subtype =
+          kind === 'shout'
+            ? 'PlayerShout'
+            : kind === 'self'
+              ? 'PlayerCastSelfSpell'
+              : 'PlayerCastProjectileSpell';
+        void this.talk.playerAction(subtype);
+      },
+    });
+    this.playerCasting =
+      options.player &&
+      new PlayerCasting({
+        session: options.session,
+        casting: this.casting,
+        player: options.player,
+      });
+  }
+
+  /** The living actors projectiles can meet, the player too. */
+  *#projectileTargets(): Iterable<ProjectileTarget> {
+    for (const staged of this.#actors.values()) {
+      if (staged.visibility.hidden || staged.dead) continue;
+      yield {
+        reference: staged.reference,
+        heading: staged.heading,
+        shape: actorShape(
+          staged.position,
+          this.movers.height(staged.reference),
+          staged.placed.actor.scale * staged.placed.look.scale,
+        ),
+      };
+    }
+    const player = this.#options.player?.()?.play.player;
+    if (player) {
+      yield {
+        reference: PLAYER_REF,
+        heading: player.yaw,
+        shape: {
+          feet: player.feet,
+          height: player.character.shape.height,
+          radius: player.character.shape.radius,
+        },
+      };
+    }
+  }
+
+  /**
+   * A script's cast the world flies (WorldBridge.launchSpell: Spell.Cast, RemoteCast): from a
+   * staged actor's right hand (the player's too) or an object's place, toward the target's chest
+   * or along the source's facing. False without a play (it is then delivered at once).
+   */
+  launchSpell(
+    spell: number,
+    source: number,
+    target: number | undefined,
+    blame: number | undefined,
+  ): boolean {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime || !this.#playing) return false;
+    void (async () => {
+      const item = await runtime.magic.item(spell);
+      if (!item) return;
+      const delivered = await runtime.casting.scripted(blame ?? source, item);
+      const at = await runtime.placement(source);
+      const origin: Vec3 | undefined =
+        this.casting.origin(source, CastingSource.right) ?? at?.position;
+      if (!origin) return;
+      const aimed = target === undefined ? undefined : await runtime.placement(target);
+      const direction: Vec3 = aimed
+        ? [
+            aimed.position[0] - origin[0],
+            aimed.position[1] - origin[1],
+            aimed.position[2] + 90 - origin[2],
+          ]
+        : aimDirection(at?.rotation[2] ?? 0, 0);
+      await this.projectiles.launch(delivered, origin, direction, { target });
+    })().catch((error: unknown) => {
+      this.#options.terminal.log('magic', `cast ${spell.toString(16)}: ${describe(error)}`, 'warn');
+    });
+    return true;
   }
 
   /** An actor as a user of furniture: placed by it while it is in it (no controller). */
@@ -446,7 +568,17 @@ export class ActorStage {
     this.senses.attach(world);
     this.looks.attach(world);
     if (!world) this.combat.clear();
+    // Projectiles fly in its physics world; casts stop with the play.
+    this.#playing = world !== undefined;
+    this.projectiles.attach(world?.physics);
+    if (!world) {
+      this.playerCasting?.clear();
+      this.casting.clear();
+    }
   }
+
+  /** A play runs (its physics world: projectiles fly). */
+  #playing = false;
 
   /**
    * An actor died (Kill, killed in combat): it stops moving and acting, its ragdoll falls
@@ -458,6 +590,7 @@ export class ActorStage {
     staged.dead = true;
     this.ai.remove(reference);
     this.senses.killed(reference);
+    this.casting.remove(reference);
     this.talk.remove(reference);
     this.mounts.remove(reference);
     this.vehicles.remove(reference);
@@ -495,6 +628,9 @@ export class ActorStage {
     yield* this.vehicles.scenes();
     // The weapons they and the player hold, the arrows in the air.
     yield* this.combat.scenes();
+    // What casts send flying and the casting art in the hands.
+    yield* this.projectiles.scenes();
+    yield* this.casting.scenes();
   }
 
   /** Where a staged actor stands now (scripts' live placement). */
@@ -570,6 +706,7 @@ export class ActorStage {
   /** Every cell goes (the view closes). */
   clear(): void {
     this.vehicles.clear();
+    this.projectiles.clear();
     this.#cells.clear();
     for (const staged of [...this.#actors.values()]) this.#remove(staged);
   }
@@ -745,6 +882,10 @@ export class ActorStage {
     this.followers.frame(frame);
     this.actorScenes.frame(this.#actors.values());
     this.talk.frame(this.#actors.values(), frame, this.#options.focus?.());
+    // Casting: the player's buttons, the casts' sprays and art, what flies.
+    this.playerCasting?.frame(frame);
+    this.casting.frame(frame);
+    this.projectiles.frame(frame);
     this.away.frame(frame);
     this.combat.frame(frame, this.#options.focus?.());
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
@@ -873,6 +1014,7 @@ export class ActorStage {
     this.combat.remove(staged.reference);
     this.ai.remove(staged.reference);
     this.senses.remove(staged.reference);
+    this.casting.remove(staged.reference);
     this.talk.remove(staged.reference);
     this.mounts.remove(staged.reference);
     this.vehicles.remove(staged.reference);

@@ -470,6 +470,8 @@ export class ModelViewer {
       this.#stage?.ai.evaluate(reference);
     },
     combat: () => this.#stage?.combat,
+    launchSpell: (spell, source, target, blame) =>
+      this.#stage?.launchSpell(spell, source, target, blame) ?? false,
     nodeWorld: (reference, node) =>
       instanceNodeWorld(
         this.#instances.get(reference) ?? this.#created?.get(reference)?.instance,

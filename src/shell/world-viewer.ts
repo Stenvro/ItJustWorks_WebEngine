@@ -694,6 +694,8 @@ export class WorldViewer {
       this.#stage?.ai.evaluate(reference);
     },
     combat: () => this.#stage?.combat,
+    launchSpell: (spell, source, target, blame) =>
+      this.#stage?.launchSpell(spell, source, target, blame) ?? false,
   };
 
   /**

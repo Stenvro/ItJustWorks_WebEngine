@@ -19,6 +19,7 @@
 // `useItem`. Platform-independent.
 
 import {
+  actsAtOnce,
   castStrength,
   DUAL_CASTING_POWER,
   isLastingKind,
@@ -95,6 +96,19 @@ export interface ApplyOptions {
   readonly lasting?: boolean;
   /** Only these effect items, by index (an ingredient eaten: its first). */
   readonly effects?: readonly number[];
+  /**
+   * The share of the magnitude its effects at once (no duration) give: a concentration spell's
+   * hit between two sprays, what passes a ward (src/scripting/runtime/casting-engine.ts).
+   */
+  readonly scale?: number;
+  /**
+   * A concentration spell held: its effects without a duration that do not act at once (wards,
+   * Recover effects, Calm, ...) last this many seconds (kept on by `extendHeld` while it is
+   * held), its effects at once act by `scale`.
+   */
+  readonly hold?: number;
+  /** Where a Target Location spell landed: what it makes (summons, hazards) stands there. */
+  readonly at?: Vec3 | undefined;
 }
 
 /** What the AI reads of the effects on an actor (TODO(M10) 5.2: combat AI acts on them). */
@@ -127,7 +141,7 @@ const GET_RANDOM_PERCENT = 77;
 
 /**
  * A summon stands this far in front of who summons it (units). TODO(M13): the engine's
- * placement (SummonPlacementEffect); TODO(M10) 5.3: the aimed point of a Target Location spell.
+ * placement (SummonPlacementEffect). A Target Location spell's summon stands where it landed.
  */
 const SUMMON_DISTANCE = 128;
 
@@ -315,10 +329,12 @@ export class MagicEngine {
 
   /**
    * Spell.Cast, Scroll.Cast, RemoteCast, DoCombatSpellApply: a spell cast by a source at a
-   * target, applied at once (TODO(M10) 5.3: aiming, the projectile, its flight and impact,
-   * areas, the caster's magicka and the casting's animation). A Self spell is on its caster;
-   * without a target a Target Location spell is cast at the caster's feet, an aimed one only
-   * flies (the world's castSpell). Scripts' casts cost no magicka (Creation Kit: Cast).
+   * target. An aimed, target actor or target location spell the world can fly leaves the source
+   * as its projectile (WorldBridge.launchSpell; its impact delivers it:
+   * src/scripting/runtime/casting-engine.ts); else it is delivered at once: a Self spell on its
+   * caster, a Target Location spell without a target at the caster's feet, an aimed one without
+   * a target only flies (the world's castSpell). Scripts' casts cost no magicka (Creation Kit:
+   * Cast); the target's wards and Spell Absorption, its OnHit, the caster's skill: deliver.
    */
   async cast(
     spell: number,
@@ -326,8 +342,17 @@ export class MagicEngine {
     target: number | undefined,
     blame?: number,
   ): Promise<boolean> {
+    const runtime = this.#runtime;
     const item = await this.item(spell);
-    this.#runtime.world.castSpell?.(spell, source, target);
+    if (
+      item &&
+      item.delivery !== Delivery.self &&
+      item.delivery !== Delivery.touch &&
+      runtime.world.launchSpell?.(spell, source, target, blame) === true
+    ) {
+      return true;
+    }
+    runtime.world.castSpell?.(spell, source, target);
     if (!item) return false;
     const on =
       item.delivery === Delivery.self
@@ -335,29 +360,32 @@ export class MagicEngine {
         : (target ?? (item.delivery === Delivery.targetLocation ? source : undefined));
     if (on === undefined) return false;
     const caster = blame ?? source;
-    const applied = await this.apply(item, on, { caster });
-    // A hostile spell that hits someone else is a hit (TODO(M10) 5.3: sent on the impact).
-    if (applied > 0 && on !== caster && (await this.#hostile(item))) {
-      this.#runtime.detach(
-        this.#runtime.sendEvent(on, 'OnHit', [
-          this.#runtime.referenceHandle(caster),
-          this.#runtime.formHandle(spell),
-          null,
-          false,
-          false,
-          false,
-          false,
-        ]),
-      );
-    }
-    return applied > 0;
+    const delivered = await runtime.casting.scripted(caster, item);
+    return (await runtime.casting.deliver(delivered, on)) > 0;
   }
 
-  async #hostile(item: MagicItemRecord): Promise<boolean> {
+  /** Whether a magic item has a hostile effect (its hits are hits: OnHit, wards). */
+  async hostile(item: MagicItemRecord): Promise<boolean> {
     for (const entry of item.effects) {
       if (((await this.effect(entry.effect))?.flags ?? 0) & EffectFlag.hostile) return true;
     }
     return false;
+  }
+
+  /**
+   * A concentration spell still held: its effects on a target from the caster that last while
+   * it is held (ApplyOptions.hold) last `seconds` more. Returns the effect items kept on (by
+   * index), which are not applied again (a ward keeps what it has grown).
+   */
+  extendHeld(target: number, item: number, caster: number, seconds: number): Set<number> {
+    const kept = new Set<number>();
+    for (const [, entry] of this.effectsOn(target)) {
+      if (entry.item !== item || entry.caster !== caster || entry.index === undefined) continue;
+      if (entry.lasting || entry.duration <= 0) continue;
+      entry.duration = Math.max(entry.duration, entry.elapsed + seconds);
+      kept.add(entry.index);
+    }
+    return kept;
   }
 
   /**
@@ -412,6 +440,9 @@ export class MagicEngine {
     // AdjustForPerks) and the spell's skill.
     let { magnitude, duration } = castStrength(itemEffect, effect, power);
     if (lasting) duration = 0;
+    if (options.hold !== undefined && duration === 0 && !lasting && !actsAtOnce(effect))
+      duration = options.hold;
+    if (options.scale !== undefined && duration === 0) magnitude *= Math.max(0, options.scale);
 
     // Objects: their scripts hear of it; locks open or close (Lock, Open).
     if (!(await runtime.actors.isActor(target))) {
@@ -500,6 +531,7 @@ export class MagicEngine {
       area: itemEffect.area,
       ...(lasting && { lasting }),
       ...(dual && { dual }),
+      ...(options.at && { at: options.at }),
     };
     runtime.state.activeEffects.set(key, entry);
     const holds = await this.#conditionsHold(key, entry);
@@ -897,10 +929,13 @@ export class MagicEngine {
       }
       case EffectArchetype.spawnHazard:
       case EffectArchetype.spawnScriptedRef: {
-        // A hazard (HAZD) or an object at the target while it lasts. TODO(M10) 5.3: at the
-        // aimed point; the hazard's damage and visuals.
+        // A hazard (HAZD) or an object at the target, or where a Target Location spell landed,
+        // while it lasts. TODO(M11) visuals: the hazard's damage and visuals.
         const made = effect.associatedItem;
-        if (made !== undefined) entry.made = await runtime.placeAt(made, target, 1);
+        if (made !== undefined) {
+          entry.made = await runtime.placeAt(made, target, 1);
+          if (entry.at) runtime.move(entry.made, [...entry.at]);
+        }
         break;
       }
       case EffectArchetype.disarm: {
@@ -998,7 +1033,11 @@ export class MagicEngine {
       await this.end(key);
     const made = await runtime.placeAt(creature, summoner, 1);
     const at = await runtime.placement(summoner);
-    if (at) {
+    if (at && entry.at) {
+      // Where its Target Location spell landed, facing the summoner.
+      const heading = Math.atan2(at.position[0] - entry.at[0], at.position[1] - entry.at[1]);
+      runtime.move(made, [...entry.at], [0, 0, heading], at.cell, at.world);
+    } else if (at) {
       const heading = at.rotation[2];
       const position: Vec3 = [
         at.position[0] + Math.sin(heading) * SUMMON_DISTANCE,

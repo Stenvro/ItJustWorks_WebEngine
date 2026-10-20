@@ -40,6 +40,7 @@ import { registerNatives } from './natives/index.ts';
 import { ActorEngine } from './actor-engine.ts';
 import { EquipmentEngine } from './equipment-engine.ts';
 import { ProgressionEngine } from './progression-engine.ts';
+import { CastingEngine } from './casting-engine.ts';
 import { MagicEngine, type MagicEffectShown } from './magic-engine.ts';
 import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
@@ -133,10 +134,21 @@ export interface WorldBridge {
   raceChanged?(actor: number): void;
   equipmentChanged?(actor: number): void;
   /**
-   * A spell cast by a source at a target: its casting's visuals (the magic system has applied
-   * it at once; TODO(M10) 5.3: the projectile and its impact).
+   * A spell cast by a source at a target that is delivered at once (a Self or Touch spell, a
+   * potion drunk, or one the world could not fly): its casting's visuals.
    */
   castSpell?(spell: number, source: number, target: number | undefined): void;
+  /**
+   * A script's cast (Spell.Cast, RemoteCast) the world flies: the spell's projectile leaves the
+   * source toward the target (or along the source's facing), its impact delivers it
+   * (ScriptRuntime.casting). False: the world does not hold the source (delivered at once).
+   */
+  launchSpell?(
+    spell: number,
+    source: number,
+    target: number | undefined,
+    blame: number | undefined,
+  ): boolean;
   /** A magic effect begins or ends on an actor: its sound, shader, art, light (magic-engine.ts). */
   magicEffect?(shown: MagicEffectShown): void;
   criticalStage?(actor: number, stage: number): void;
@@ -507,6 +519,8 @@ export class ScriptRuntime implements VmHost {
   readonly progression: ProgressionEngine;
   /** The magic system: effects on actors, items used (magic-engine.ts). */
   readonly magic: MagicEngine;
+  /** Casting: hands, costs, staffs, scrolls, powers, shouts, delivery (casting-engine.ts). */
+  readonly casting: CastingEngine;
   /** While a new game starts its quests (their aliases may take reserved references). */
   startingNewGame = false;
   /** Game seconds per real second (the TimeScale global; scripts may set it). */
@@ -601,6 +615,7 @@ export class ScriptRuntime implements VmHost {
     this.progression = new ProgressionEngine(this);
     this.magic = new MagicEngine(this);
     this.magic.listen();
+    this.casting = new CastingEngine(this);
     this.sceneHost = new RuntimeSceneHost(this);
     this.scenes = new SceneDirector(this.sceneHost);
     registerNatives(this.#natives, this);
@@ -2004,6 +2019,8 @@ export class ScriptRuntime implements VmHost {
     this.magic.update(
       realSeconds > 0 ? realSeconds : (Math.max(0, gameDays) * 86400) / Math.max(1, this.timeScale),
     );
+    // Casts charge and concentrate; voices recover.
+    if (!this.retired) this.casting.update(realSeconds);
     this.scenes.update(realSeconds);
   }
 

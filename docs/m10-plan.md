@@ -192,9 +192,15 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       dodging threats, fleeing (confidence), searching for a lost target, yielding, the end of
       combat, spectators, guards, followers; the combat override package list (NPC\_ ECOR) and
       the packages' combat interrupts (aggro radius, observe combat, friendly fire comments).
-- [ ] **5.3 Magic and shouts in combat:** casting (hands, concentration, fire and forget,
-      delivery), projectiles, the effects the magic system has, staffs, potions, summons,
-      shouts and their recovery. M11 completes the effect archetypes and perks behind it.
+- [x] **5.3 Magic and shouts in combat:** casting (hands, concentration, fire and forget,
+      dual casting, delivery, magicka cost, skill use), projectiles (missiles, lobbers, beams,
+      flames, cones), explosions and areas, wards and Spell Absorption, staffs, scrolls,
+      powers, summons, potions, shouts (words, dragon souls, recovery, the shout meter), the
+      AI's castAt / healSelf / summon / drinkPotion / shoutAt. docs/ai.md, "Magic in combat";
+      docs/gameplay.md, "Casting and shouts"; `tools/casting-info.ts`. Moved on: when NPCs
+      cast, drink and shout (the combat style's magic) to 5.2, IsWeaponMagicOut and the draw
+      state to 5.1, dragons' breath to 5.4, the visuals (lights, explosion models, beams, hit
+      art) and perks to M11. M11 completes the effect archetypes and perks behind it.
 - [ ] **5.4 Flying combat:** dragons' hover, orbit, dive, perch, landing, flight grab and
       breath; other fliers.
 
