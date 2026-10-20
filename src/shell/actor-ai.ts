@@ -36,6 +36,7 @@ import type { Gait } from '../ai/locomotion.ts';
 import type { Space } from '../ai/package-start.ts';
 import type { ActorDoors } from './actor-doors.ts';
 import type { ActorMovers } from './actor-movers.ts';
+import type { ActorTalk } from './actor-talk.ts';
 import type { GameSession } from './game-session.ts';
 
 /** An "in cell" place reaches this far round where the actor is (game units). */
@@ -67,6 +68,13 @@ export class ActorAi {
   ) => Promise<void>;
   readonly #navmeshes: (() => NavmeshSet | undefined) | undefined;
   readonly #doors: ActorDoors | undefined;
+  /** What the actors say and their conversations (src/shell/actor-talk.ts). */
+  readonly #talk: (() => ActorTalk | undefined) | undefined;
+  /**
+   * Actors something else has for a while (a conversation, a greeting they stop for): their
+   * packages wait as with the player; where each faces (undefined: it is left to move).
+   */
+  readonly #talkHeld = new Map<number, () => Vec3 | undefined>();
   /** The actors talking with the player now (their packages wait). */
   readonly #talking = new Set<number>();
   /**
@@ -102,6 +110,8 @@ export class ActorAi {
      * situation has it run first (src/shell/actor-reactions.ts), if any.
      */
     readonly overrides?: (actor: number) => number | undefined;
+    /** What the actors say (their packages' lines, conversations). */
+    readonly talk?: () => ActorTalk | undefined;
   }) {
     this.#session = options.session;
     this.#movers = options.movers;
@@ -112,6 +122,7 @@ export class ActorAi {
     this.#navmeshes = options.navmeshes;
     this.#doors = options.doors;
     this.#overrides = options.overrides;
+    this.#talk = options.talk;
     this.#mind = this.#makeMind();
   }
 
@@ -132,7 +143,7 @@ export class ActorAi {
   /** The package running for an actor now (GetCurrentPackage), if its AI runs. */
   current(
     reference: number,
-  ): { id: number; procedure: string | undefined; flags: number } | undefined {
+  ): { id: number; procedure: string | undefined; flags: number; interrupts: number } | undefined {
     return this.#actors.get(reference)?.packages.current;
   }
 
@@ -151,9 +162,28 @@ export class ActorAi {
     this.#actors.get(reference)?.packages.evaluate();
   }
 
+  /**
+   * Something else has an actor for a while (a conversation with another actor, a greeting it
+   * stops for): its package waits as while it talks with the player; it stops where it is and
+   * faces where `face` says (undefined: it is left to go where it is sent, as to whom it
+   * talks to), until released.
+   */
+  holdToTalk(reference: number, face: () => Vec3 | undefined): void {
+    this.#talkHeld.set(reference, face);
+    if (this.#actors.has(reference) && !this.#talking.has(reference)) {
+      this.#talking.add(reference);
+      this.#movers.stop(reference);
+    }
+  }
+
+  /** The actor's package goes on (chosen again). */
+  releaseFromTalk(reference: number): void {
+    this.#talkHeld.delete(reference);
+  }
+
   /** The actor leaves its AI (it left the stage, died). */
   remove(reference: number): void {
-    this.#held.delete(reference);
+    this.#talkHeld.delete(reference);
     const entry = this.#actors.get(reference);
     if (!entry) return;
     entry.packages.stop();
@@ -187,18 +217,18 @@ export class ActorAi {
         this.#actors.set(staged.reference, entry);
       }
       // Talking with the player (the engine's in-game dialogue package): its package waits; it
-      // stops where it is and faces the player (sitting, it stays seated).
+      // stops where it is and faces the player (sitting, it stays seated). So too while it talks
+      // with another actor or stops to greet (hold), facing whom it talks to.
       const reference = staged.reference;
-      if (speaker === reference) {
+      const held = this.#talkHeld.get(reference);
+      if (speaker === reference || held) {
         if (!this.#talking.has(reference)) {
           this.#talking.add(reference);
           this.#movers.stop(reference);
         }
-        if (player && !this.#furniture.holds(reference)) {
-          const heading = Math.atan2(
-            player[0] - staged.position[0],
-            player[1] - staged.position[1],
-          );
+        const at = speaker === reference ? player : held?.();
+        if (at && !this.#furniture.holds(reference)) {
+          const heading = Math.atan2(at[0] - staged.position[0], at[1] - staged.position[1]);
           this.#movers.request(reference, { gait: 'walk', face: heading });
         }
         continue;
@@ -264,11 +294,21 @@ export class ActorAi {
         furniture.leaveMarker(user);
       },
       playIdle: (idle) => furniture.playIdle(user, idle),
-      say: (topic) => {
-        // TODO(M10) 4.3: a topic subtype's line (the dialogue engine picks among its topics).
-        if (typeof topic === 'number')
+      // Its lines (a topic, or a topic subtype's line) and conversations: src/shell/actor-talk.ts.
+      say: (topic, options) => {
+        const talk = this.#talk?.();
+        if (talk) {
+          return talk.say(reference, topic, options).then(() => undefined);
+        }
+        if (typeof topic === 'number') {
           this.#session.scriptsReady?.say(reference, topic, undefined, false);
+        }
+        return undefined;
       },
+      allowConversation: (allowed) => {
+        this.#talk?.()?.allowConversation(reference, allowed);
+      },
+      converse: (target) => this.#talk?.()?.converse(reference, target) ?? Promise.resolve(false),
       standing: () =>
         movers.moves(reference) &&
         movers.travelOf(reference) === undefined &&

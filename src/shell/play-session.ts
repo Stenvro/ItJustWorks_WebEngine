@@ -677,6 +677,8 @@ export class PlaySession {
         const camera = player.position;
         // Taken hold of: it moves from now on, even if it was placed asleep.
         this.physics.release(hold.body);
+        // Those near comment on it (ZKeyObject).
+        this.player.onAction?.('ZKEY');
         this.#grab = {
           spring: new GrabSpring(hold.body, hold.point, player.grab),
           distance: Math.hypot(

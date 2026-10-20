@@ -81,6 +81,11 @@ export interface ActorSensesOptions {
   readonly light?: (at: Vec3) => LightProbe | undefined;
   /** The view shows an interior (detection's reach and light inside). */
   readonly interior: boolean;
+  /**
+   * An actor says a line of a topic subtype (by name or code) to a target (src/shell/actor-talk.ts,
+   * bark).
+   */
+  readonly bark?: (actor: number, subtype: string, target: number | undefined) => Promise<boolean>;
   /** The camera (the player's sight for OnGainLOS: what is on screen). */
   readonly camera?: () =>
     { readonly position: Vec3; readonly forward?: Vec3; readonly fovY?: number } | undefined;
@@ -963,8 +968,10 @@ export class ActorSenses implements ScriptSenses {
         stop: () => {
           movers.stop(actor);
         },
-        // TODO(M10) 4.3: the line of the topic subtype (barks).
-        say: () => undefined,
+        // The topic subtype's line (src/shell/actor-talk.ts, bark), to what it reacts to.
+        say: (subtype) => {
+          void this.#options.bark?.(actor, subtype, subject);
+        },
       },
       {
         ...this.#settings,

@@ -170,6 +170,8 @@ export class GameSession {
   readonly scriptWorld: ScriptWorld;
   /** The actor a reference shows as on screen, if it does (the viewers answer: main.ts). */
   placedActor: ((reference: number) => PlacedActor | undefined) | undefined;
+  /** An actor of the loaded area plays the idle an action gives it (ActionTalking as it talks). */
+  actorAction: ((reference: number, action: string) => boolean) | undefined;
   /** Lines actors say outside conversations (Say). */
   readonly lines: WorldLines;
   /** Lines actors say in scenes (src/shell/scene-lines.ts). */
@@ -254,6 +256,7 @@ export class GameSession {
       });
     };
     this.scriptWorld.sounds = () => this.soundSystem;
+    this.scriptWorld.talking = (actor) => this.lines.talking(actor);
     const loader = new AssetLoader(vfs);
     this.loader = loader;
     this.textures = new TextureCache(device, (path) => loader.loadTexture(path));

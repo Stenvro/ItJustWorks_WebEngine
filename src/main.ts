@@ -681,6 +681,9 @@ async function main(): Promise<void> {
     session = new GameSession(gpu.device, renderer, vfs, terminal);
     session.placedActor = (reference) =>
       worldViewer.placedActor(reference) ?? modelViewer.placedActor(reference);
+    session.actorAction = (reference, action) =>
+      worldViewer.actorStage?.act(reference, action) === true ||
+      modelViewer.actorStage?.act(reference, action) === true;
     await Promise.all([modelViewer.connect(session), worldViewer.connect(session)]);
     setEntriesReady(true);
   };

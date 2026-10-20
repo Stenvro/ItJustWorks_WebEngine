@@ -1017,6 +1017,10 @@ export class WorldViewer {
     player.onSprintRefused = () => {
       this.#session?.scriptsReady?.progression.refused(PLAYER_REF, 'stamina');
     };
+    // What the player does that the actors near comment on (src/shell/actor-talk.ts).
+    player.onAction = (subtype) => {
+      void this.#stage?.talk.playerAction(subtype);
+    };
     const play = new PlaySession({
       physics,
       player,

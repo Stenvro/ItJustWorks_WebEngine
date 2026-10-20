@@ -12,14 +12,16 @@ import {
   BranchFlag,
   InfoFlag,
   TopicCategory,
+  TopicFlag,
   type BranchRecord,
   type InfoRecord,
   type TopicRecord,
 } from '../../world/dialogue-records.ts';
 import { DialogueIndex, voiceFileName } from '../../world/dialogue.ts';
 import { ObjectHandle } from '../values.ts';
-import { PLAYER_REF } from './forms.ts';
+import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
+import { failsForSpeaker, type SpeakerFacts } from './speaker-filter.ts';
 
 /** A topic the player may choose. */
 export interface TopicChoice {
@@ -291,4 +293,207 @@ export class DialogueEngine {
     await this.index.build();
     return this.index.branches.filter((branch) => (branch.flags & BranchFlag.topLevel) !== 0);
   }
+
+  // --- Lines outside the dialogue menu (docs/ai.md, "Talking") ------------------------------
+
+  /** The topics of a subtype with their quests, higher quest priority first, then topic priority. */
+  readonly #bySubtype = new Map<
+    string,
+    Promise<readonly { topic: TopicRecord; quest: number }[]>
+  >();
+  /** A topic that says all its infos before repeating: those said since it last started over. */
+  readonly #saidInTopic = new Map<number, Set<number>>();
+  /** Form lists of voice types (GetIsVoiceType of a list), read once. */
+  readonly #voiceLists = new Map<number, readonly number[] | null>();
+
+  /**
+   * What an actor says of a topic subtype (a greeting "HELO", idle chatter "IDLE", a bark:
+   * "ACAC", "TITG", "OBCO", ...; src/world/dialogue-subtypes.ts) to a target (the player,
+   * another actor): the first valid info of the subtype's topics of the running quests, by
+   * quest priority, then topic priority. Its conditions (and its quest's dialogue conditions)
+   * run on the speaker with the target as their target. An info another actor says (ANAM), or
+   * whose conditions name another actor, voice type or alias's reference, is passed over
+   * without valuing the rest (speaker-filter.ts).
+   */
+  async subtypeLine(
+    speaker: number,
+    subtype: string,
+    target: number = PLAYER_REF,
+  ): Promise<SpokenInfo | undefined> {
+    const runtime = this.#runtime;
+    const facts = await this.#speakerFacts(speaker);
+    const speaks = new Map<number, boolean>();
+    for (const { topic, quest } of await this.#topicsOfSubtype(subtype)) {
+      if (!runtime.quests.isRunning(quest)) continue;
+      let questSpeaks = speaks.get(quest);
+      if (questSpeaks === undefined) {
+        questSpeaks = await this.#questSpeaksTo(quest, speaker, target);
+        speaks.set(quest, questSpeaks);
+      }
+      if (!questSpeaks) continue;
+      const info = await this.#infoFor(topic, quest, speaker, target, facts);
+      if (info) return this.#spoken(info, topic, quest);
+    }
+    return undefined;
+  }
+
+  /**
+   * What an actor says of a topic to a target (a package's Say at its target, a scene's line,
+   * ObjectReference.Say): its first valid info, its conditions run with the target as theirs.
+   */
+  async topicLineTo(
+    topic: number,
+    speaker: number,
+    target: number = PLAYER_REF,
+  ): Promise<SpokenInfo | undefined> {
+    const record = await this.index.topic(topic);
+    if (record?.quest === undefined) return undefined;
+    const facts = await this.#speakerFacts(speaker);
+    const info = await this.#infoFor(record, record.quest, speaker, target, facts);
+    return info && (await this.#spoken(info, record, record.quest));
+  }
+
+  #topicsOfSubtype(subtype: string): Promise<readonly { topic: TopicRecord; quest: number }[]> {
+    let pending = this.#bySubtype.get(subtype);
+    if (!pending) {
+      pending = (async () => {
+        await this.index.build();
+        const topics: { topic: TopicRecord; quest: number; priority: number }[] = [];
+        for (const formId of this.index.topicsOfSubtype(subtype)) {
+          const topic = await this.index.topic(formId);
+          const quest = topic?.quest;
+          if (!topic || quest === undefined) continue;
+          const priority = (await this.#runtime.forms.quest(quest))?.priority ?? 0;
+          topics.push({ topic, quest, priority });
+        }
+        topics.sort((x, y) => y.priority - x.priority || y.topic.priority - x.topic.priority);
+        return topics.map(({ topic, quest }) => ({ topic, quest }));
+      })();
+      this.#bySubtype.set(subtype, pending);
+    }
+    return pending;
+  }
+
+  /** What tells a speaker's infos apart before their conditions run. */
+  async #speakerFacts(speaker: number): Promise<SpeakerFacts & { readonly voice?: number }> {
+    const runtime = this.#runtime;
+    const [base, voice] = await Promise.all([
+      speaker === PLAYER_REF ? Promise.resolve(PLAYER_BASE) : runtime.baseOf(speaker),
+      runtime.voiceType(speaker),
+    ]);
+    // The form lists of voice types the infos name, read as they come up.
+    const lists = this.#voiceLists;
+    return {
+      reference: speaker,
+      base,
+      ...(voice !== undefined && { voice }),
+      voiceIs: (form) => {
+        if (voice === undefined) return false;
+        if (form === voice) return true;
+        const list = lists.get(form);
+        if (list === undefined) return undefined;
+        return list === null ? false : list.includes(voice);
+      },
+    };
+  }
+
+  /** Reads the voice type form lists conditions name (once each). */
+  async #readVoiceLists(conditions: readonly InfoRecord['conditions'][number][]): Promise<void> {
+    const runtime = this.#runtime;
+    for (const condition of conditions) {
+      if (condition.function !== GET_IS_VOICE_TYPE || this.#voiceLists.has(condition.form)) {
+        continue;
+      }
+      const record = await runtime.forms.record(condition.form);
+      this.#voiceLists.set(
+        condition.form,
+        record?.type === 'FLST' ? await runtime.formList(condition.form) : null,
+      );
+    }
+  }
+
+  /** A quest's dialogue conditions hold for the speaker and its target. */
+  #questSpeaksTo(quest: number, speaker: number, target: number): Promise<boolean> {
+    const runtime = this.#runtime;
+    return runtime.forms
+      .quest(quest)
+      .then(
+        (record) =>
+          record !== undefined &&
+          runtime.conditionsHold(
+            record.dialogueConditions,
+            runtime.referenceHandle(speaker),
+            undefined,
+            { target: runtime.referenceHandle(target), quest },
+          ),
+      );
+  }
+
+  /**
+   * A topic's first info the speaker says to the target (its conditions hold; not said once
+   * already; ANAM, if any, names it); where it starts a run of Random infos, one of the valid
+   * ones of the run at random, one not said since the topic started over if the topic says all
+   * before repeating (DIAL DATA flag 0x1).
+   */
+  async #infoFor(
+    topic: TopicRecord,
+    quest: number,
+    speaker: number,
+    target: number,
+    facts: SpeakerFacts,
+  ): Promise<InfoRecord | undefined> {
+    const runtime = this.#runtime;
+    const infos = await this.index.infos(topic.formId);
+    const aliases = runtime.state.quests.get(quest)?.aliases;
+    const questFacts: SpeakerFacts = {
+      ...facts,
+      aliasIs: (alias) => aliases?.get(alias) === speaker,
+    };
+    const holds = async (info: InfoRecord): Promise<boolean> => {
+      if (this.#saidOnce.has(info.formId)) return false;
+      if (info.speaker !== undefined && info.speaker !== 0) {
+        if (info.speaker !== speaker && info.speaker !== facts.base) return false;
+      }
+      await this.#readVoiceLists(info.conditions);
+      if (failsForSpeaker(info.conditions, questFacts)) return false;
+      return runtime.conditionsHold(info.conditions, runtime.referenceHandle(speaker), undefined, {
+        target: runtime.referenceHandle(target),
+        quest,
+      });
+    };
+    for (let i = 0; i < infos.length; i++) {
+      const info = infos[i];
+      if (!info || !(await holds(info))) continue;
+      if ((info.flags & InfoFlag.random) === 0) return info;
+      const run: InfoRecord[] = [info];
+      for (let j = i + 1; j < infos.length; j++) {
+        const next = infos[j];
+        if (!next || (next.flags & InfoFlag.random) === 0) break;
+        if (await holds(next)) run.push(next);
+        if ((next.flags & InfoFlag.randomEnd) !== 0) break;
+      }
+      return this.#pick(topic, run);
+    }
+    return undefined;
+  }
+
+  /** One of a run of Random infos; a topic that says all before repeating one not said since. */
+  #pick(topic: TopicRecord, run: readonly InfoRecord[]): InfoRecord | undefined {
+    if ((topic.flags & TopicFlag.doAllBeforeRepeating) === 0) {
+      return run[Math.floor(Math.random() * run.length)];
+    }
+    let said = this.#saidInTopic.get(topic.formId);
+    if (!said) this.#saidInTopic.set(topic.formId, (said = new Set()));
+    let fresh = run.filter((info) => !said.has(info.formId));
+    if (fresh.length === 0) {
+      said.clear();
+      fresh = [...run];
+    }
+    const info = fresh[Math.floor(Math.random() * fresh.length)];
+    if (info) said.add(info.formId);
+    return info;
+  }
 }
+
+/** GetIsVoiceType (UESP "Skyrim Mod:Function Indices"). */
+const GET_IS_VOICE_TYPE = 426;

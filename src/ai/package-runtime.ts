@@ -134,6 +134,14 @@ export interface PackageMind {
   ): void;
 }
 
+/** How a package's line is said (the Say procedure's inputs). */
+export interface SayOptions {
+  /** Whom it is said to (its conditions' target); the player without one. */
+  readonly target?: number | undefined;
+  /** Its subtitle shows whatever the setting (Force Subtitle). */
+  readonly forceSubtitle?: boolean | undefined;
+}
+
 /** What packages make the actor do. */
 export interface PackageBody {
   readonly reference: number;
@@ -159,8 +167,18 @@ export interface PackageBody {
   leaveIdleMarker(): void;
   /** Plays an idle (IDLE: its event, or the first of its children whose conditions hold). */
   playIdle(idle: number): Promise<boolean>;
-  /** Says a topic (DIAL), or a line of a topic subtype (four characters). */
-  say(topic: number | string): void;
+  /**
+   * Says a topic (DIAL), or a line of a topic subtype (four characters), to a target (else the
+   * player); may resolve once it is said (its own length).
+   */
+  say(topic: number | string, options?: SayOptions): Promise<void> | void;
+  /**
+   * Whether it may talk with other actors while its procedure runs (Sandbox's Allow
+   * Conversation; src/shell/actor-talk.ts).
+   */
+  allowConversation?(allowed: boolean): void;
+  /** Talks with another actor (DialogueActivate between actors): resolves once they have. */
+  converse?(target: number): Promise<boolean>;
   /** Activates a reference (its OnActivate; furniture it uses); whether it did. */
   activate(reference: number): Promise<boolean>;
   /** Picks up an item lying in the world; whether it did. */
@@ -282,12 +300,27 @@ export class ActorPackages {
     this.#random = random;
   }
 
-  /** The package that runs now and its procedure (development checks, GetCurrentPackage). */
+  /**
+   * The package that runs now and its procedure (development checks, GetCurrentPackage), its
+   * flags and its interrupt flags (what it lets the actor do: greet, talk, chatter, ...).
+   */
   get current():
-    | { readonly id: number; readonly procedure: string | undefined; readonly flags: number }
+    | {
+        readonly id: number;
+        readonly procedure: string | undefined;
+        readonly flags: number;
+        readonly interrupts: number;
+      }
     | undefined {
     const running = this.#running;
-    return running && { id: running.id, procedure: running.procedure, flags: running.pack.flags };
+    return (
+      running && {
+        id: running.id,
+        procedure: running.procedure,
+        flags: running.pack.flags,
+        interrupts: running.pack.interruptFlags,
+      }
+    );
   }
 
   /** Every frame (real seconds): the package is chosen again when it is time to. */
@@ -367,7 +400,7 @@ export class ActorPackages {
   /** A package's begin, end or change action: its idle played, its topic said. */
   #act(event: PackageRecord['onBegin']): void {
     if (event.idle !== undefined) void this.#body.playIdle(event.idle);
-    if (event.topic !== undefined) this.#body.say(event.topic);
+    if (event.topic !== undefined) void this.#body.say(event.topic);
   }
 
   /**
