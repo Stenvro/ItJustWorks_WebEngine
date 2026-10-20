@@ -65,6 +65,8 @@ describe.skipIf(!hasGamedata())('the magic system on the local game data', () =>
     expect(await value('Health')).toBe(75);
     await use(FORTIFY_HEALTH);
     expect(await value('Health')).toBe(95);
+    // Health regenerates meanwhile (the progression engine): held, the Fortify's end shows alone.
+    runtime.progression.holdRegeneration(PLAYER_REF, HEALTH, 120);
     await run(61);
     expect(await value('Health')).toBe(75);
     runtime.actors.restore(PLAYER_REF, HEALTH, 100);
