@@ -162,7 +162,7 @@ mass and regeneration from its race; then scripts' permanent modifiers and damag
 (GetFactionRank: −2 not a member, −1 listed but not yet one), relationships (RELA, and those
 scripts set), spells and perks (its own, its race's, scripts'), being essential or protected
 (its base, scripts' ActorBase changes, or an alias), dead (killed, or placed dead) and dying
-(OnDying, then OnDeath). TODO(M11): stats recalculated with the player's level, bleedout,
+(OnDying, then OnDeath). Auto-calculated stats follow the level (docs/gameplay.md). TODO(M11): bleedout,
 the magic system's effects; TODO(M10): combat, detection, packages.
 
 The player's race, sex and name are the race menu's choices (`GameState.playerAppearance`,

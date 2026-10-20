@@ -774,6 +774,8 @@ export class GameSession {
         },
       });
       this.scriptsStarting = runtime;
+      // Skill increases and blinking meters go to the HUD.
+      runtime.progression.listener = this.hud;
       await runtime.newGame((what) => {
         if (runtime.retired) return;
         this.scriptsProgress = what;

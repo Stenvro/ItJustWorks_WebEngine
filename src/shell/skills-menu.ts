@@ -14,15 +14,18 @@
 // The control map's Stats context: Left / Right (A, D, the mouse) turn to the next skill, Up (W)
 // or Accept (E) looks up into its perk tree (the camera pitching to the tree), Cancel (Tab, Esc)
 // back down, and out of the menu. In a tree the arrows move to the nearest star that way, the
-// mouse to the one under it; Accept or a click takes the perk if it can be had (its conditions,
-// a perk point; the movie asks sStatsPerkConfirm first). A skill at 100 can be made Legendary
-// (Space; sLegendaryResetConfirm, sLegendaryResetSecondConfirm): back to 15, its perks' points
-// returned. The camera's field of view is fStatsCameraFOV (50, of a 4:3 frame).
-// TODO(M11): the skills' and the level's progress (experience), skill colours for fortified
-// and damaged skills, the perks' effects.
+// mouse to the one under it; Accept or a click takes the perk if it can be had (its tree, its
+// conditions, a perk point: the progression engine's perkAvailability; the movie asks
+// sStatsPerkConfirm first). A skill at 100 can be made Legendary (Space;
+// sLegendaryResetConfirm, sLegendaryResetSecondConfirm): back to 15, its perks' points
+// returned. The skills' and the level's meters show their progress (their experience). The
+// camera's field of view is fStatsCameraFOV (50, of a 4:3 frame).
+// TODO(M11): skill colours for fortified and damaged skills (the magic system's effects), the
+// perks' effects (the perk system).
 // Notes: docs/ui.md ("The skills menu").
 
 import type { ObjectGraph } from '../animation/object-graph.ts';
+import { SKILL_CAP } from '../gameplay/actor-leveling.ts';
 import {
   nearestRing,
   RING_SKILLS,
@@ -74,9 +77,7 @@ const PITCH_SECONDS = 0.5;
 const TURN_SPEED = 120;
 /** Degrees the view turns per pixel the mouse moves. */
 const MOUSE_DEGREES = 0.15;
-/** A skill made Legendary goes back to this (UESP, "Legendary skills"). */
-const LEGENDARY_LEVEL = 15;
-/** The skill names' colour (TODO(M11): fortified green, damaged red). */
+/** The skill names' colour (TODO(M11): fortified green, damaged red: the magic system). */
 const WHITE = '#FFFFFF';
 /** The menus' depth among the game's menus. */
 const STATS_DEPTH = 6;
@@ -497,8 +498,8 @@ class Viewing {
       'SetPlayerInfo',
       name,
       String(level),
-      // TODO(M11): the progress to the next level.
-      0,
+      // The progress to the next level (0..100).
+      (await runtime.progression.levelProgress()) * 100,
       raceName,
       ...(await meter(ActorValue.magicka)),
       ...(await meter(ActorValue.health)),
@@ -513,8 +514,8 @@ class Viewing {
       data.push(
         Math.floor(value.current),
         tree.record.name,
-        // TODO(M11): the skill's progress to its next level.
-        0,
+        // The skill's progress to its next level (0..100).
+        (await this.#runtime.progression.skillProgress(tree.skill)) * 100,
         WHITE,
         this.#runtime.state.legendary.get(tree.skill) ?? 0,
       );
@@ -530,16 +531,20 @@ class Viewing {
     const menu = this.#menu;
     const tree = this.#tree ?? this.#facedTree();
     if (!menu || !tree) return;
-    void this.#runtime.actors.value(PLAYER_REF, tree.skill).then((value) => {
+    const runtime = this.#runtime;
+    void Promise.all([
+      runtime.actors.value(PLAYER_REF, tree.skill),
+      runtime.progression.skillProgress(tree.skill),
+    ]).then(([value, progress]) => {
       const level = Math.floor(value.current);
-      const legendary = this.#runtime.state.legendary.get(tree.skill) ?? 0;
+      const legendary = runtime.state.legendary.get(tree.skill) ?? 0;
       const star = this.#tree ? this.#selected : undefined;
       if (!star) {
         menu.call(
           'SetDescriptionCard',
           false,
           tree.record.name,
-          0,
+          progress * 100,
           tree.description,
           '',
           level,
@@ -555,7 +560,7 @@ class Viewing {
         'SetDescriptionCard',
         true,
         rank?.name ?? '',
-        0,
+        progress * 100,
         rank?.description ?? '',
         this.#requirements(star),
         level,
@@ -823,18 +828,16 @@ class Viewing {
     else if (direction[1] < 0) this.#leaveTree();
   }
 
-  /** Takes the selected perk (its next rank), if it can be had and a perk point is there. */
+  /**
+   * Takes the selected perk (its next rank) for a perk point, if it can be had (the progression
+   * engine's perkAvailability: its tree, its previous rank, its requirements).
+   */
   async #take(): Promise<void> {
     const star = this.#selected;
     const runtime = this.#runtime;
     if (!star || star.owned >= star.ranks.length) return;
     const next = star.ranks[star.owned];
-    if (!next || runtime.perkPoints <= 0) return;
-    const available =
-      star.state === 'unlocked' ||
-      (star.state === 'owned' &&
-        (await runtime.conditionsHold(next.conditions, runtime.referenceHandle(PLAYER_REF))));
-    if (!available) return;
+    if (!next || (await runtime.progression.perkAvailability(next.formId)) !== 'available') return;
     this.#asking = true;
     const answer = await this.#setup
       .confirm(this.#settings.string('sStatsPerkConfirm') ?? '', [
@@ -844,9 +847,7 @@ class Viewing {
       .finally(() => {
         this.#asking = false;
       });
-    if (answer !== 0 || this.#done) return;
-    runtime.actors.setPerk(PLAYER_REF, next.formId, true);
-    runtime.perkPoints = Math.max(0, runtime.perkPoints - 1);
+    if (answer !== 0 || this.#done || !(await runtime.progression.takePerk(next.formId))) return;
     star.graph?.send('Own', clock());
     this.#sound('UISkillsPerkSelect2D');
     await this.#updateOwnership();
@@ -862,7 +863,7 @@ class Viewing {
     const runtime = this.#runtime;
     if (!tree) return;
     const value = await runtime.actors.value(PLAYER_REF, tree.skill);
-    if (value.base < 100) return;
+    if (value.base < SKILL_CAP) return;
     this.#asking = true;
     const yes = this.#settings.string('sYesText') ?? 'Yes';
     const no = this.#settings.string('sNoText') ?? 'No';
@@ -884,16 +885,7 @@ class Viewing {
     } finally {
       this.#asking = false;
     }
-    let returned = 0;
-    for (const star of tree.stars) {
-      for (const rank of star.ranks.slice(0, star.owned)) {
-        runtime.actors.setPerk(PLAYER_REF, rank.formId, false);
-        returned++;
-      }
-    }
-    runtime.perkPoints += returned;
-    runtime.actors.setBase(PLAYER_REF, tree.skill, LEGENDARY_LEVEL);
-    runtime.state.legendary.set(tree.skill, (runtime.state.legendary.get(tree.skill) ?? 0) + 1);
+    if ((await runtime.progression.makeLegendary(tree.skill)) === undefined) return;
     await this.#updateOwnership();
     this.#refreshStates();
     if (this.#menu) await this.#showSkills(this.#menu);

@@ -1,10 +1,15 @@
 // What the game tells its HUD as it plays: the activation target under the crosshair, the
-// notifications scripts post (Debug.Notification), quest updates, help messages, and the user
+// notifications scripts post (Debug.Notification), quest updates, help messages, skill
+// increases and the meters blinking (the progression engine's listener), and the user
 // events the player presses (a help message waits for one); and the message boxes scripts
 // show. The play session and the scripts' world send here; in Play the HUD (the game's
 // hudmenu.swf, hud-controller.ts) and the message boxes (message-boxes.ts) listen, and the
 // sandbox shows them its own way (the prompt, the terminal).
 
+import type {
+  ProgressionListener,
+  SkillIncrease,
+} from '../scripting/runtime/progression-engine.ts';
 import type { MenuRequest, QuestUpdate } from '../scripting/runtime/runtime.ts';
 import type { PlacedActor } from './actors.ts';
 import type { ObjectUses } from './play-session.ts';
@@ -50,6 +55,10 @@ export interface HudSink {
   discovered(name: string, status: string): void;
   /** A load door's prompt kept while its place loads (undefined: the load is done). */
   loadDoor(text: string | undefined): void;
+  /** A skill of the player rose: its notice with the level meter. */
+  skillIncreased?(increase: SkillIncrease): void;
+  /** The magicka or stamina meter blinks (the player lacked it). */
+  meterBlink?(meter: 'magicka' | 'stamina'): void;
 }
 
 /** What shows the game's menus that scripts open (Play). */
@@ -82,7 +91,7 @@ export interface ScreenSink {
   video(file: string): void;
 }
 
-export class HudSignals {
+export class HudSignals implements ProgressionListener {
   /** The HUD listening (Play), if any. */
   sink: HudSink | undefined;
   /** The menus (Play), if any. */
@@ -139,6 +148,14 @@ export class HudSignals {
 
   loadDoor(text: string | undefined): void {
     this.sink?.loadDoor(text);
+  }
+
+  skillIncreased(increase: SkillIncrease): void {
+    this.sink?.skillIncreased?.(increase);
+  }
+
+  meterBlink(meter: 'magicka' | 'stamina'): void {
+    this.sink?.meterBlink?.(meter);
   }
 
   userEvent(name: string): void {

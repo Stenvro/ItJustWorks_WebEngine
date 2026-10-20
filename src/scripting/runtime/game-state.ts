@@ -239,6 +239,17 @@ export class GameState {
   /** Level-ups waiting for the player to choose (the level-up menu). */
   levelUps = 0;
   /**
+   * The player's experience (src/scripting/runtime/progression-engine.ts): each skill's toward
+   * its next level (by actor value), and the character's toward its next level-up (UESP
+   * "Leveling"). TODO(M12): in the save.
+   */
+  readonly skillExperience = new Map<number, number>();
+  playerExperience = 0;
+  /** Encounter zones' levels, set as first met (ECZN). TODO(M12): in the save. */
+  readonly zoneLevels = new Map<number, number>();
+  /** The level each reference's leveled lists were picked at (it keeps its picks). */
+  readonly leveledLevels = new Map<number, number>();
+  /**
    * What the player looks like (the race menu's choices; its race is the Player base's race,
    * ActorBase.GetRace, while Actor.SetRace changes the actor's own: ActorState.race). Made from
    * the Player record (NPC_ 0x7) when first needed; undefined until then. TODO(M12): in the

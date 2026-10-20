@@ -4,11 +4,13 @@
 // shows it); OK(hours) passes the time an hour at a time (the menu's time and hours counting
 // down) and closes the menu, Cancel closes it. A sleep tells the scripts registered for it
 // (RegisterForSleep): OnSleepStart(start, desired end) and OnSleepStop(interrupted), in game
-// days. Where the player may not wait the menu does not open and the game's message says why
-// (sNoWaitDefault while scripts disable waiting, SetInChargen; sNoWaitInAir; the sleep
-// versions). TODO(M10): enemies near (sNoWaitHostileActorsNear) and actors' places after the
-// hours (their packages), the wait broken off by an attack. TODO(M11): guards pursuing,
-// trespassing, taking health damage, owned beds; health and magicka restored by the hours.
+// days. Each hour health, magicka and stamina regenerate as over the real seconds it stands for
+// (the progression engine's passTime). Where the player may not wait the menu does not open and
+// the game's message says why (sNoWaitDefault while scripts disable waiting, SetInChargen;
+// sNoWaitInAir; the sleep versions). TODO(M10): enemies near (sNoWaitHostileActorsNear) and
+// actors' places after the hours (their packages), the wait broken off by an attack.
+// TODO(M11): guards pursuing, trespassing, taking health damage, owned beds (crime), the
+// rested bonuses (the magic system).
 
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { formatGameDate } from '../world/game-time.ts';
@@ -119,6 +121,8 @@ export class SleepWaitMenu {
       await wait(HOUR_MS);
       session.advanceClock(1);
       runtime.update(0, 1 / 24);
+      // Health, magicka and stamina regenerate over the hour (its real seconds).
+      await runtime.progression.passTime(1);
       menu.set(`${ROOT}.HoursSlider.value`, left - 1);
       menu.set(`${ROOT}.HoursText.text`, String(left - 1));
       menu.invoke(`${ROOT}.SetCurrentTime`, await this.#now());
