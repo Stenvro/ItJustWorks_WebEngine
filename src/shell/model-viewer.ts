@@ -680,6 +680,7 @@ export class ModelViewer {
     );
     player.character.walkable = (x, y, z) =>
       this.#cell?.navmesh.heightNear(x, y, z, NAVMESH_TOLERANCE) !== undefined;
+    player.overEncumbered = () => this.#session?.overEncumbered === true;
     const play = new PlaySession({
       physics,
       player,

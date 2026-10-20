@@ -254,6 +254,11 @@ export class Player implements Camera {
   readonly #fovY: number;
   /** fDefaultWorldFOV: degrees across a 4:3 frame. */
   readonly #fovDegrees: number;
+  /**
+   * Whether the player carries more than they can (the equip system: GameSession's
+   * overEncumbered): they walk, and neither run nor sprint (UESP "Skyrim:Carry Weight").
+   */
+  overEncumbered: (() => boolean) | undefined;
   /** The tween menu's camera while it is open (it leans and zooms the view). */
   readonly tween: TweenCamera;
   /** The race's body (the cameras' heights). */
@@ -510,10 +515,16 @@ export class Player implements Camera {
       depth >= SWIM_SUBMERSION || (character.swimming && depth > SWIM_SUBMERSION - 0.05);
     character.swimming = swimming;
     if (swimming) this.sneaking = false;
-    // "Run" walks while always-run is on, runs while it is off.
-    const running = this.#alwaysRun !== this.#event('Run');
+    // "Run" walks while always-run is on, runs while it is off; over-encumbered, one walks.
+    const burdened = this.overEncumbered?.() ?? false;
+    const running = !burdened && this.#alwaysRun !== this.#event('Run');
     const sprinting =
-      this.#event('Sprint') && y > 0 && !this.sneaking && !swimming && character.grounded;
+      !burdened &&
+      this.#event('Sprint') &&
+      y > 0 &&
+      !this.sneaking &&
+      !swimming &&
+      character.grounded;
     const type = swimming
       ? movement.swim
       : sprinting

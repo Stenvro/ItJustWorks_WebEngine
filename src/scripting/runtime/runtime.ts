@@ -37,6 +37,7 @@ import { FormIndex, PLAYER_BASE, PLAYER_REF } from './forms.ts';
 import { GameState, type Vec3 } from './game-state.ts';
 import { registerNatives } from './natives/index.ts';
 import { ActorEngine } from './actor-engine.ts';
+import { EquipmentEngine } from './equipment-engine.ts';
 import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
@@ -389,6 +390,8 @@ export class ScriptRuntime implements VmHost {
   #dialogue: DialogueEngine | undefined;
   readonly storyManager: StoryManager;
   readonly actors: ActorEngine;
+  /** What actors hold and wear, and its stats (the equip system). */
+  readonly equipment: EquipmentEngine;
   /** While a new game starts its quests (their aliases may take reserved references). */
   startingNewGame = false;
   /** Game seconds per real second (the TimeScale global; scripts may set it). */
@@ -481,6 +484,7 @@ export class ScriptRuntime implements VmHost {
     this.quests = new QuestEngine(this);
     this.storyManager = new StoryManager(this);
     this.actors = new ActorEngine(this);
+    this.equipment = new EquipmentEngine(this);
     registerNatives(this.#natives, this);
   }
 
@@ -1397,14 +1401,20 @@ export class ScriptRuntime implements VmHost {
 
   // --- Inventories ------------------------------------------------------------------------
 
-  /** A container's items: its own and its base's (CNTO, leveled lists picked), then changes. */
+  /**
+   * A container's items: its own and its base's (CNTO, leveled lists picked), then changes. An
+   * actor's base items are those of the NPC_ its templates take its inventory from (template
+   * flag Use Inventory), and it is dressed as they are first read (its outfit's pieces join
+   * them: the equip system).
+   */
   async inventory(container: number): Promise<Map<number, number>> {
     const items = this.state.inventories.get(container) ?? new Map<number, number>();
     this.state.inventories.set(container, items);
     if (this.#seeded.has(container)) return items;
     this.#seeded.add(container);
     const random = seededRandom(container ^ 0x5bd1e995);
-    const base = await this.baseOf(container);
+    const actor = await this.actors.info(container);
+    const base = actor ? actor.inventory.formId : await this.baseOf(container);
     for (const formId of [container, base]) {
       const record = formId === undefined ? undefined : await this.forms.record(formId);
       for (const cnto of record?.fields.all('CNTO') ?? []) {
@@ -1417,6 +1427,7 @@ export class ScriptRuntime implements VmHost {
         );
       }
     }
+    if (actor) await this.equipment.initialize(container, items);
     return items;
   }
 
@@ -1499,6 +1510,7 @@ export class ScriptRuntime implements VmHost {
       this.detach(
         this.sendEvent(container, 'OnItemAdded', [this.formHandle(item), count, null, null]),
       );
+      await this.equipment.itemsGiven(container, item);
     }
   }
 
@@ -1515,6 +1527,8 @@ export class ScriptRuntime implements VmHost {
       const moved = Math.min(have, count);
       if (moved <= 0) continue;
       items.set(item, have - moved);
+      // What it no longer has enough of comes off (the equip system).
+      await this.equipment.itemsLeft(container, item);
       if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(item, moved, false));
       this.detach(
         this.sendEvent(container, 'OnItemRemoved', [
@@ -1535,6 +1549,7 @@ export class ScriptRuntime implements VmHost {
             this.referenceHandle(container),
           ]),
         );
+        await this.equipment.itemsGiven(to, item);
       }
     }
   }

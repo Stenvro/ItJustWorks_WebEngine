@@ -56,6 +56,16 @@ export const WeaponType = {
   crossbow: 9,
 } as const;
 
+/** WEAP DNAM flags (xEdit). */
+export const WeaponFlag = {
+  ignoresNormalResistance: 0x1,
+  cantDrop: 0x8,
+  nonPlayable: 0x80,
+} as const;
+
+/** WEAP DNAM Flags2 (xEdit). */
+export const WeaponFlag2 = { playerOnly: 0x1, npcsUseAmmo: 0x2, boundWeapon: 0x2000 } as const;
+
 export interface WeaponData {
   readonly damage: number;
   /** DNAM: animation type (WeaponType). */
@@ -66,7 +76,20 @@ export interface WeaponData {
   readonly skill: number;
   readonly critDamage: number;
   readonly stagger: number;
+  /** DNAM flags (WeaponFlag) and Flags2 (WeaponFlag2). */
+  readonly flags: number;
+  readonly flags2: number;
+  /** CRDT: the critical hit's damage multiplier. */
+  readonly critMult: number;
+  /** WNAM: the first-person model (a STAT). */
+  readonly firstPersonModel: number | undefined;
+  /** NAM9 / NAM8: the sounds of equipping and unequipping it (SNDR). */
+  readonly equipSound: number | undefined;
+  readonly unequipSound: number | undefined;
 }
+
+/** AMMO DATA flags (xEdit). */
+export const AmmoFlag = { ignoresNormalResistance: 0x1, nonPlayable: 0x2, nonBolt: 0x4 } as const;
 
 /** BOD2 armor types. */
 export const ArmorType = { light: 0, heavy: 1, clothing: 2 } as const;
@@ -134,6 +157,11 @@ export interface ItemRecord {
   readonly soul?: { readonly current: number; readonly capacity: number };
   /** AMMO DATA: its damage. */
   readonly ammoDamage?: number;
+  /** AMMO DATA: its flags (AmmoFlag: an arrow is a non-bolt) and projectile (PROJ). */
+  readonly ammoFlags?: number;
+  readonly projectile?: number | undefined;
+  /** ETYP: the equip slot it takes (EQUP: a hand, both, the voice); none for armor's body slots. */
+  readonly equipType: number | undefined;
 }
 
 const f32 = (data: Uint8Array | undefined, at: number): number =>
@@ -201,6 +229,7 @@ export function parseItem(record: RecordSource): ItemRecord | undefined {
     pickUpSound: record.formIdField('YNAM'),
     putDownSound: record.formIdField('ZNAM'),
     effects: parseEffects(record),
+    equipType: record.formIdField('ETYP'),
   };
   switch (type) {
     case 'WEAP': {
@@ -219,6 +248,13 @@ export function parseItem(record: RecordSource): ItemRecord | undefined {
           skill: dnam && dnam.length >= 80 ? i32(dnam, 76) : -1,
           critDamage: u16(crdt, 0),
           stagger: f32(dnam, 96),
+          // DNAM: flags u16 at 12, Flags2 u32 at 40 (xEdit); CRDT: % mult f32 at 4.
+          flags: u16(dnam, 12),
+          flags2: u32(dnam, 40),
+          critMult: f32(crdt, 4),
+          firstPersonModel: record.formIdField('WNAM'),
+          equipSound: record.formIdField('NAM9'),
+          unequipSound: record.formIdField('NAM8'),
         },
       };
     }
@@ -242,8 +278,11 @@ export function parseItem(record: RecordSource): ItemRecord | undefined {
         ...base,
         value: u32(data, 12),
         weight: f32(data, 16),
-        nonPlayable: (u32(data, 4) & 0x2) !== 0,
+        nonPlayable: (u32(data, 4) & AmmoFlag.nonPlayable) !== 0,
         ammoDamage: f32(data, 8),
+        ammoFlags: u32(data, 4),
+        projectile:
+          data && data.length >= 4 && u32(data, 0) !== 0 ? record.formIdAt(data, 0) : undefined,
       };
     case 'ALCH': {
       const enit = record.fields.first('ENIT');

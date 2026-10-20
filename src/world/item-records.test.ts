@@ -1,7 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
-import { ArmorType, parseItem, PotionFlag, WeaponType } from './item-records.ts';
+import {
+  AmmoFlag,
+  ArmorType,
+  parseItem,
+  PotionFlag,
+  WeaponFlag,
+  WeaponFlag2,
+  WeaponType,
+} from './item-records.ts';
 
 /** A field's bytes: values written at offsets (u8, u16, u32, i32, f32). */
 type Put = readonly ['u8' | 'u16' | 'u32' | 'i32' | 'f32', number, number];
@@ -75,6 +83,64 @@ describe('parseItem', () => {
         critDamage: 3,
         stagger: 0.75,
       },
+    });
+  });
+
+  it('reads what equipping a weapon needs: its equip slot, flags, first-person model, sounds', () => {
+    const item = parseItem(
+      record('WEAP', [
+        ['ETYP', bytes(4, ['u32', 0, 0x13f45])],
+        ['WNAM', bytes(4, ['u32', 0, 0x500])],
+        ['NAM9', bytes(4, ['u32', 0, 0x600])],
+        ['NAM8', bytes(4, ['u32', 0, 0x601])],
+        ['DATA', bytes(10, ['u16', 8, 18])],
+        [
+          'DNAM',
+          bytes(
+            100,
+            ['u8', 0, WeaponType.twoHandSword],
+            ['u16', 12, WeaponFlag.cantDrop],
+            ['u32', 40, WeaponFlag2.boundWeapon],
+          ),
+        ],
+        ['CRDT', bytes(24, ['u16', 0, 9], ['f32', 4, 1.5])],
+      ]),
+    );
+    expect(item).toMatchObject({
+      equipType: 0x13f45,
+      weapon: {
+        weaponType: WeaponType.twoHandSword,
+        flags: WeaponFlag.cantDrop,
+        flags2: WeaponFlag2.boundWeapon,
+        critMult: 1.5,
+        firstPersonModel: 0x500,
+        equipSound: 0x600,
+        unequipSound: 0x601,
+      },
+    });
+  });
+
+  it('reads ammunition: its damage, flags (arrows are non-bolts) and projectile', () => {
+    const item = parseItem(
+      record('AMMO', [
+        [
+          'DATA',
+          bytes(
+            20,
+            ['u32', 0, 0x3be11],
+            ['u32', 4, AmmoFlag.nonBolt],
+            ['f32', 8, 8],
+            ['u32', 12, 1],
+          ),
+        ],
+      ]),
+    );
+    expect(item).toMatchObject({
+      ammoDamage: 8,
+      ammoFlags: AmmoFlag.nonBolt,
+      projectile: 0x3be11,
+      value: 1,
+      equipType: undefined,
     });
   });
 

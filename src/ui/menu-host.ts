@@ -53,6 +53,11 @@ export interface MenuOptions {
    */
   readonly onKey?: (menu: Menu, event: KeyboardEvent) => boolean;
   /**
+   * A mouse button pressed while this is the topmost menu, after the movie has had it (the item
+   * menus' LeftEquip and RightEquip: the control map's mouse buttons in the item menu context).
+   */
+  readonly onPointer?: (menu: Menu, event: PointerEvent) => void;
+  /**
    * Keys the movie gets as other keys, by KeyboardEvent.code, besides those every menu does
    * (Esc as Tab, E as Enter: the control map's menu contexts).
    */
@@ -801,11 +806,12 @@ export class MenuHost {
   }
 
   /** A click in the game: the keys go to the topmost menu again. */
-  readonly #pointed = (): void => {
+  readonly #pointed = (event: PointerEvent): void => {
     // A click on the topmost menu itself leaves it alone: focusing it again mid-click (a blur,
     // then focus) would lose the press (its buttons' onRelease never comes).
     const top = this.#topInteractive();
     if (top && document.activeElement !== top.element) top.focus();
+    top?.options.onPointer?.(top, event);
   };
 
   readonly #dispatch = (menu: string, name: string, ...args: unknown[]): unknown => {

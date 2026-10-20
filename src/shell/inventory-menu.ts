@@ -1,9 +1,11 @@
 // The player's inventory (interface\inventorymenu.swf), as a model of the item menus
-// (item-menu.ts): the player's items with their counts, what is worn and what is a favorite,
-// each item's card (its type's fields: damage, armor, effects, a book's description, a soul
-// gem's soul), and the player's carried weight, gold and meters. Selecting wears or takes off
-// armor and weapons (OnObjectEquipped / OnObjectUnequipped; TODO(M11): using, eating,
-// equipping to a hand), reads books (`read`: the book menu, or a spell tome's spell learned), dropping removes the items. Notes: docs/ui.md ("The item menus").
+// (item-menu.ts): the player's items with their counts, what is equipped (in which hand) and
+// what is a favorite, each item's card (its type's fields: damage and armor with the player's
+// skills, effects, a book's description, a soul gem's soul), and the player's carried weight,
+// gold, armor rating, damage and meters. Selecting equips or takes off (the equip system:
+// armor, weapons and spells to the hand asked for, ammunition, torches), uses potions, food and
+// ingredients, reads books (`read`: the book menu, or a spell tome's spell learned); dropping
+// removes the items. Notes: docs/ui.md ("The item menus"), docs/gameplay.md ("Equipment").
 
 import {
   armorSkill,
@@ -27,7 +29,7 @@ import {
 } from '../world/item-records.ts';
 import { effectText, EffectFlag, parseMagicEffect } from '../world/magic-effects.ts';
 import type { GameSession } from './game-session.ts';
-import type { ItemEntry, ItemMenuModel, ItemMenuView } from './item-menu.ts';
+import { slotHand, type ItemEntry, type ItemMenuModel, type ItemMenuView } from './item-menu.ts';
 import type { Terminal } from './terminal.ts';
 
 /** Gold (Gold001): its count is the player's gold. */
@@ -38,7 +40,10 @@ export interface Row {
   readonly formId: number;
   readonly item: ItemRecord;
   readonly count: number;
+  /** Equipped (worn, held, the ammo). */
   readonly worn: boolean;
+  /** How it is equipped: the menus' equip state (worn, a hand, both); else by `worn`. */
+  readonly equipState?: number;
   readonly favorite: boolean;
 }
 
@@ -84,30 +89,33 @@ export function inventoryModel(
         player: [await playerInfo(game, rows, inventory.get(GOLD) ?? 0)],
       };
     },
-    select: async ({ formId }) => {
+    select: async ({ formId }, slot) => {
       const game = runtime();
       const record = await item(formId);
       if (!record) return;
+      const equipment = game.equipment;
       if (record.type === 'BOOK') {
+        // A book read from the inventory is equipped as far as scripts hear (its OnEquipped).
+        await equipment.used(PLAYER_REF, formId);
         await read(formId);
         return;
       }
-      if (record.type !== 'ARMO' && record.type !== 'WEAP' && record.type !== 'AMMO') {
-        terminal.log('ui', `using ${record.name} is not built yet`, 'warn');
+      const sounds = session.soundSystem;
+      if (record.type === 'ALCH' || record.type === 'INGR') {
+        if (!(await equipment.use(PLAYER_REF, formId))) return;
+        const sound = await equipment.consumeSound(formId);
+        if (sound !== undefined) void sounds?.play(sound);
         return;
       }
-      const actor = game.state.actor(PLAYER_REF);
-      const worn = new Set([...(await game.actors.worn(PLAYER_REF)), ...actor.equipped]);
-      const handle = game.formHandle(formId);
-      if (worn.has(formId)) {
-        actor.equipped.delete(formId);
-        game.world.equipmentChanged?.(PLAYER_REF);
-        await game.sendEvent(PLAYER_REF, 'OnObjectUnequipped', [handle, null]);
-      } else {
-        actor.equipped.add(formId);
-        game.world.equipmentChanged?.(PLAYER_REF);
-        await game.sendEvent(PLAYER_REF, 'OnObjectEquipped', [handle, null]);
+      const wasEquipped = await equipment.isEquipped(PLAYER_REF, formId);
+      if (!(await equipment.toggle(PLAYER_REF, formId, slotHand(slot)))) {
+        if ((await equipment.describe(formId)) === undefined)
+          terminal.log('ui', `${record.name} cannot be equipped`, 'info');
+        return;
       }
+      const on = !wasEquipped || (await equipment.isEquipped(PLAYER_REF, formId));
+      const sound = sounds && (await equipment.equipSound(formId, on, sounds.defaults));
+      if (sound !== undefined) void sounds?.play(sound);
     },
     // TODO(M11): the dropped items placed in the world at the player's feet.
     drop: async ({ formId }, amount) => {
@@ -133,32 +141,34 @@ export async function itemRows(
   inventory: ReadonlyMap<number, number>,
   item: (formId: number) => Promise<ItemRecord | undefined>,
 ): Promise<Row[]> {
-  const worn = new Set([
-    ...(await runtime.actors.worn(container)),
-    ...(runtime.state.actors.get(container)?.equipped ?? []),
-  ]);
+  // An actor's (the equip system's); a container's items are not equipped.
+  const actor = await runtime.actors.isActor(container);
   const rows: Row[] = [];
   for (const [formId, count] of inventory) {
     if (count <= 0 || (formId === GOLD && container === PLAYER_REF)) continue;
     const record = await item(formId);
     if (!record || record.nonPlayable || record.name === '') continue;
+    const equipState = actor
+      ? await runtime.equipment.menuState(container, formId)
+      : EquipState.none;
     rows.push({
       formId,
       item: record,
       count,
-      worn: worn.has(formId),
+      worn: equipState !== EquipState.none,
+      equipState,
       favorite: container === PLAYER_REF && runtime.state.favorites.has(formId),
     });
   }
   return rows;
 }
 
-/** A row's entry: name, count, worn, favorite, its category's bits. */
+/** A row's entry: name, count, how it is equipped, favorite, its category's bits. */
 export function itemEntry(row: Row): ItemEntry {
   return {
     text: row.item.name,
     count: row.count,
-    equipState: row.worn ? EquipState.equipped : EquipState.none,
+    equipState: row.equipState ?? (row.worn ? EquipState.equipped : EquipState.none),
     favorite: row.favorite,
     filterFlag: itemCategory(row.item) | (row.favorite ? ItemCategory.favorites : 0),
     enabled: true,
@@ -185,9 +195,11 @@ export async function itemCard(
   };
   const enchantment =
     item.enchantment === undefined ? [] : await enchantmentEffects(runtime, item.enchantment);
+  // Armor and damage as they would be for the player: with their skills, perks and the item's
+  // improvement (UESP "Skyrim:Armor", "Skyrim:Weapons").
   switch (type) {
     case CardType.armor: {
-      card.armor = Math.floor(item.armor?.rating ?? 0);
+      card.armor = Math.floor(await runtime.equipment.pieceRating(PLAYER_REF, row.formId));
       card.effects = await effectsText(runtime, enchantment);
       const skill = armorSkill(item);
       card.skillText =
@@ -197,7 +209,11 @@ export async function itemCard(
       break;
     }
     case CardType.weapon:
-      card.damage = Math.floor(item.weapon?.damage ?? item.ammoDamage ?? 0);
+      card.damage = Math.floor(
+        item.weapon
+          ? await runtime.equipment.weaponDamage(PLAYER_REF, row.formId)
+          : (item.ammoDamage ?? 0),
+      );
       card.effects = await effectsText(runtime, enchantment);
       card.poisoned = false;
       break;
@@ -250,38 +266,28 @@ export async function effectsText(
 }
 
 /** What an actor carries, in weight (its items' WEIGHT times their counts). */
-export async function carriedWeight(runtime: ScriptRuntime, actor: number): Promise<number> {
-  let total = 0;
-  for (const [base, count] of await runtime.inventory(actor)) {
-    const record = await runtime.forms.record(base);
-    const item = record && parseItem(record);
-    if (item && count > 0) total += item.weight * count;
-  }
-  return total;
+export function carriedWeight(runtime: ScriptRuntime, actor: number): Promise<number> {
+  return runtime.equipment.carried(actor);
 }
 
-/** UpdatePlayerInfo: carried weight and its limit, gold, armor, damage, the meters. */
+/**
+ * UpdatePlayerInfo: carried weight and its limit (CarryWeight), gold, the armor rating and the
+ * damage of the weapon in hand (the equip system's: with skills, perks and improvements), the
+ * meters. `rows`: the player's, as listed.
+ */
 export async function playerInfo(
   runtime: ScriptRuntime,
-  rows: readonly Row[],
+  _rows: readonly Row[],
   gold: number,
 ): Promise<Record<string, unknown>> {
-  let encumbrance = 0;
-  let armor = 0;
-  let damage = 0;
-  for (const row of rows) {
-    encumbrance += row.item.weight * row.count;
-    if (row.worn && row.item.armor) armor += row.item.armor.rating;
-    if (row.worn && row.item.weapon) damage = Math.max(damage, row.item.weapon.damage);
-  }
-  // TODO(M11): armor and damage with the player's skills and perks.
+  const equipment = runtime.equipment;
   return {
     ...(await playerMeters(runtime)),
-    encumbrance,
-    maxEncumbrance: (await runtime.actors.value(PLAYER_REF, ActorValue.carryWeight)).current,
+    encumbrance: await equipment.carried(PLAYER_REF),
+    maxEncumbrance: await equipment.carryWeight(PLAYER_REF),
     gold,
-    armor: Math.floor(armor),
-    damage: Math.floor(damage),
+    armor: Math.floor((await equipment.armorRating(PLAYER_REF)).rating),
+    damage: Math.floor(await equipment.shownDamage(PLAYER_REF)),
   };
 }
 

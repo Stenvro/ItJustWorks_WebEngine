@@ -19,6 +19,27 @@ import type { GameSession } from './game-session.ts';
 /** The items list (InventoryLists_mc.ItemsList). */
 const LIST = '_root.Menu_mc.InventoryLists_mc.ItemsListHolder.List_mc';
 
+/**
+ * The hands the menus' slots name (AttemptEquip's and ItemSelect's aiSlot, which the engine
+ * chooses: the game's own order, Actor.GetEquippedItemType's 0 left and 1 right).
+ */
+export const EQUIP_SLOTS = { left: 0, right: 1 } as const;
+
+/**
+ * The slot a mouse button equips to (the control map's item menu context: LeftEquip is the
+ * right button, RightEquip the left, as Left and Right Attack/Block are); undefined: neither.
+ */
+export function mouseEquipSlot(button: number): number | undefined {
+  if (button === 0) return EQUIP_SLOTS.right;
+  if (button === 2) return EQUIP_SLOTS.left;
+  return undefined;
+}
+
+/** A menu slot's hand. */
+export function slotHand(slot: number | undefined): 'left' | 'right' | undefined {
+  return slot === EQUIP_SLOTS.left ? 'left' : slot === EQUIP_SLOTS.right ? 'right' : undefined;
+}
+
 /** An entry of a menu's list: the movie's fields, its form id, and the model's own. */
 export interface ItemEntry {
   readonly formId: number;
@@ -47,7 +68,10 @@ export interface ItemMenuModel {
   /** SetCategoriesList's arguments: text, bits, listed when empty, for each category. */
   categories(): Promise<unknown[]>;
   view(): Promise<ItemMenuView>;
-  /** ItemSelect / EquipItem: equip, use, cast (`slot`: 0 right hand, 1 left, when given). */
+  /**
+   * ItemSelect / EquipItem: equip, use, read (`slot`: the hand, 0 left and 1 right, as the
+   * engine's AttemptEquip asks: EQUIP_SLOTS; none: keys, the item's own place).
+   */
   select(entry: ItemEntry, slot: number | undefined): Promise<void>;
   drop?(entry: ItemEntry, amount: number): Promise<void>;
   favorite(entry: ItemEntry): void;
@@ -155,6 +179,12 @@ export class ItemMenu {
         }
         return false;
       },
+      // The mouse's equip buttons: the menu equips its highlighted entry to that hand if the
+      // mouse is over its list (AttemptEquip; the trading menus' clicks are their own).
+      onPointer: (menu, event) => {
+        const slot = mouseEquipSlot(event.button);
+        if (slot !== undefined && !model.trade) menu.invoke('_root.Menu_mc.AttemptEquip', slot);
+      },
       handlers: {
         RequestItemCardInfo: (menu, args) => {
           const itemId = selected(menu);
@@ -235,7 +265,12 @@ export class ItemMenu {
         ZoomItemModel: (_menu, args) => {
           item3d.zoom(typeof args[1] === 'number' ? args[1] : 0);
         },
-        CheckForMouseEquip: () => undefined,
+        // A quick click on the item's 3D (aiMouseButton): answered with the slot, which the
+        // menu equips to (its AttemptEquip).
+        CheckForMouseEquip: (menu, args) => {
+          // aiMouseButton: 0 the left button, 1 the right.
+          menu.respond(args[0], args[1] === 1 ? EQUIP_SLOTS.left : EQUIP_SLOTS.right);
+        },
         QuantitySliderOpen: () => undefined,
         // TODO(M11): recharging with soul gems, a shout's failure, entries that cannot be used.
         ShowSoulGemList: () => undefined,

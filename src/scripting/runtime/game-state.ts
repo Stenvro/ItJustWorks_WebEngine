@@ -5,6 +5,7 @@
 // Notes: docs/scripting.md ("Game state").
 
 import type { PlayerAppearance } from '../../gameplay/chargen.ts';
+import { emptyLoadout, type Loadout } from '../../gameplay/equipment.ts';
 import type { StoryEventData } from './story-manager.ts';
 
 export type Vec3 = [number, number, number];
@@ -106,14 +107,38 @@ export interface ActorState {
   readonly perks: Map<number, boolean>;
   /** It has talked to the player (GetTalkedToPC). */
   talkedToPlayer?: boolean;
-  /** Items equipped by scripts (TODO(M11): the equip system). */
-  readonly equipped: Set<number>;
+  /**
+   * Everything it has equipped now (its hands, voice, ammo, what it wears): a mirror of
+   * `equipment` kept by the equip system (ScriptRuntime.equipment), for readers of a set.
+   */
+  readonly equipped: ReadonlySet<number>;
+  /** What it holds and wears, by place (the equip system). */
+  readonly equipment: EquipmentState;
   crimeFaction?: number | null;
   level?: number;
   voiceRecoveryTime?: number;
   forcedLandingMarker?: number;
   /** SetVehicle: what it rides along on. */
   vehicle?: number;
+}
+
+/**
+ * What an actor holds and wears (src/scripting/runtime/equipment-engine.ts; the rules:
+ * src/gameplay/equipment.ts).
+ */
+export interface EquipmentState extends Loadout {
+  /** Filled from its records (its outfit, the best it carries) as its inventory was first read. */
+  ready: boolean;
+  /** The outfit it wears now (OTFT: its outfit, or its sleep outfit while it sleeps). */
+  outfit: number | undefined;
+  /** It wears its sleep outfit. */
+  asleep: boolean;
+  /** Items in its inventory that came with its outfit (base → count): a new outfit takes them. */
+  readonly outfitItems: Map<number, number>;
+  /** Items scripts equipped to stay (EquipItem's abPreventRemoval): only scripts take them off. */
+  readonly locked: Set<number>;
+  /** Items it must not equip again by itself (UnequipItem's abPreventEquip). */
+  readonly prevented: Set<number>;
 }
 
 /** What scripts changed on an actor base (ActorBase natives): it holds for all its actors. */
@@ -278,6 +303,15 @@ export class GameState {
         spells: new Map(),
         perks: new Map(),
         equipped: new Set(),
+        equipment: {
+          ...emptyLoadout(),
+          ready: false,
+          outfit: undefined,
+          asleep: false,
+          outfitItems: new Map(),
+          locked: new Set(),
+          prevented: new Set(),
+        },
       };
       this.actors.set(formId, state);
     }
