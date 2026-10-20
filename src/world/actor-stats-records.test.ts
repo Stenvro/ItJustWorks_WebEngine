@@ -170,6 +170,49 @@ describe('actor stats', () => {
     expect(parseFaction(record('FACT', [['VENV', venv]])).vendor).toBeUndefined();
   });
 
+  it("read a crime faction's jail, chests and crime values (CRVA)", () => {
+    const crva = new DataView(new ArrayBuffer(20));
+    crva.setUint8(0, 1); // arrest
+    crva.setUint8(1, 1); // attack on sight
+    crva.setUint16(2, 1000, true);
+    crva.setUint16(4, 40, true);
+    crva.setUint16(6, 5, true);
+    crva.setUint16(8, 25, true);
+    crva.setFloat32(12, 0.5, true);
+    crva.setUint16(16, 100, true);
+    crva.setUint16(18, 1000, true);
+    const faction = parseFaction(
+      record('FACT', [
+        ['DATA', u32s(0x9040)],
+        ['JAIL', u32s(0x267e5)],
+        ['WAIT', u32s(0x267e6)],
+        ['STOL', u32s(0x9dc64)],
+        ['PLCN', u32s(0x267e8)],
+        ['CRGR', u32s(0x26953)],
+        ['JOUT', u32s(0x28b60)],
+        ['CRVA', new Uint8Array(crva.buffer)],
+      ]),
+    );
+    expect(faction.crime).toEqual({
+      exteriorJailMarker: 0x267e5,
+      followerWaitMarker: 0x267e6,
+      stolenGoodsContainer: 0x9dc64,
+      playerInventoryContainer: 0x267e8,
+      sharedCrimeFactions: 0x26953,
+      jailOutfit: 0x28b60,
+      arrest: true,
+      attackOnSight: true,
+      murder: 1000,
+      assault: 40,
+      trespass: 5,
+      pickpocket: 25,
+      stealMult: 0.5,
+      escape: 100,
+      werewolf: 1000,
+    });
+    expect(parseFaction(record('FACT', [['DATA', u32s(0)]])).crime).toBeUndefined();
+  });
+
   it("merge a location's reference lists: the master's, then added and removed ones", () => {
     const special = (type: number, reference: number): Uint8Array => u32s(type, reference, 0x3c, 0);
     const master = record('LCTN', [

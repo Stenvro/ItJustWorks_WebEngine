@@ -54,6 +54,11 @@ export interface Condition {
   readonly param3: number;
   /** The event member it runs on ("R1", "L1", ...) when `runOn` is event data. */
   readonly eventMember: string;
+  /**
+   * The CTDA's "Use aliases" flag (0x02, xEdit): its reference parameters are aliases of the
+   * condition's quest (by id), not forms.
+   */
+  readonly useAliases?: boolean;
 }
 
 /** CTDA run-on values. */
@@ -113,6 +118,7 @@ export function conditionAt(
       runOn === ConditionRunOn.eventData && field.data.length >= 30
         ? String.fromCharCode(field.data[28] ?? 0, field.data[29] ?? 0)
         : '',
+    ...((flags & 0x02) !== 0 && { useAliases: true }),
   };
 }
 

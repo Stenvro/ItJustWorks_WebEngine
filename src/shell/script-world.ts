@@ -158,6 +158,9 @@ export class ScriptWorld implements WorldBridge {
       ) => void)
     | undefined;
 
+  /** Game hours pass at once (Game.ServeTime's days in jail): the session answers. */
+  passTime: ((hours: number) => Promise<void>) | undefined;
+
   /** A response of a scene's line (src/shell/scene-lines.ts answers). */
   sceneLine: ((speech: SceneSpeech) => Promise<void> | undefined) | undefined;
 

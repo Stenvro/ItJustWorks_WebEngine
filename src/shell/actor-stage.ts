@@ -33,6 +33,7 @@ import { ActorBodies } from './actor-bodies.ts';
 import { ActorDoors, type DoorObject } from './actor-doors.ts';
 import { ActorFurniture, type FurnitureUser, type StageObject } from './actor-furniture.ts';
 import { ActorMovers } from './actor-movers.ts';
+import { ActorCrime } from './actor-crime.ts';
 import { ActorSenses, type SensesWorld } from './actor-senses.ts';
 import { ActorMounts } from './actor-mounts.ts';
 import { ActorVehicles, type AdoptedVehicle } from './actor-vehicles.ts';
@@ -178,6 +179,8 @@ export class ActorStage {
   readonly casting: ActorCasting;
   /** The player's attack buttons and voice key casting (src/shell/player-casting.ts). */
   readonly playerCasting: PlayerCasting | undefined;
+  /** Crime on the stage: witnesses, guards arresting, trespass warnings, jail. */
+  readonly crime: ActorCrime;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -349,6 +352,9 @@ export class ActorStage {
       // A hostile spell's hit: the victim searches for its attacker (TODO(M10) 5.2: combat).
       hit: (target, caster) => {
         if (target !== caster && target !== PLAYER_REF) this.senses.attackedBy(target, caster);
+        // On one not hostile to the caster it is an assault (crime-engine.ts), as a weapon's is.
+        const crime = options.session.scriptsReady?.crime;
+        if (target !== caster && crime) void crime.assault(caster, target);
       },
     });
     this.casting = new ActorCasting({
@@ -383,6 +389,15 @@ export class ActorStage {
         casting: this.casting,
         player: options.player,
       });
+    this.crime = new ActorCrime({
+      session: options.session,
+      senses: this.senses,
+      movers: this.movers,
+      ai: this.ai,
+      actors: () => this.#actors.values(),
+      get: (reference) => this.#actors.get(reference),
+      bark: (actor, subtype, target) => this.talk.bark(actor, subtype, target),
+    });
   }
 
   /** The living actors projectiles can meet, the player too. */
@@ -879,6 +894,7 @@ export class ActorStage {
     this.ai.frame(this.#actors.values(), frame, this.#options.focus?.());
     // What they notice (detection), and how they react.
     this.senses.frame(frame);
+    this.crime.frame(frame);
     this.followers.frame(frame);
     this.actorScenes.frame(this.#actors.values());
     this.talk.frame(this.#actors.values(), frame, this.#options.focus?.());
@@ -1015,6 +1031,7 @@ export class ActorStage {
     this.ai.remove(staged.reference);
     this.senses.remove(staged.reference);
     this.casting.remove(staged.reference);
+    this.crime.remove(staged.reference);
     this.talk.remove(staged.reference);
     this.mounts.remove(staged.reference);
     this.vehicles.remove(staged.reference);

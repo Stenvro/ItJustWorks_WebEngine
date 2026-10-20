@@ -6,8 +6,11 @@
 // storing (R on the player's side) move items (ItemTransfer: the amount, from the container);
 // R on the container's side takes everything (TakeAllItems); equipping a container's item
 // takes it first. The items' pick-up and put-down sounds play as they move. The barter and
-// gift menus list the same way (sideCategories, ItemShelf). TODO(M11): stealing (owned
-// containers: sStealFrom, the steal chance), quest items that cannot be stored.
+// gift menus list the same way (sideCategories, ItemShelf). An owned container's items are
+// stolen as they are taken (its entries red: isStealing; crime-engine.ts steal). In pickpocket
+// mode (an actor's pockets, sneaking) each card shows the chance to take or place it
+// (pickpocketChance: "TO STEAL", "TO PLACE"); each move is an attempt, and one that fails
+// closes the menu (crime-engine.ts pickpocket). TODO(M11): quest items that cannot be stored.
 // Notes: docs/ui.md ("The item menus").
 
 import { INVENTORY_CATEGORIES, ItemCategory, itemSound } from '../gameplay/inventory.ts';
@@ -123,23 +126,79 @@ export function containerModel(
   inventory: ItemMenuModel,
   /** An actor's inventory opened for trading (OpenInventory): give, no take all. */
   npcMode = false,
+  /** An actor's pockets picked (sneaking): every move an attempt by its chance. */
+  pickpocket = false,
 ): ItemMenuModel {
   const shelf = new ItemShelf(session);
-  const move = (formId: number, amount: number, fromContainer: boolean, audible = true) =>
-    fromContainer
-      ? shelf.move(formId, amount, container, PLAYER_REF, audible)
-      : shelf.move(formId, amount, PLAYER_REF, container, audible);
+  let close: (() => void) | undefined;
+  /** Taking from it is stealing: an owned container (not an actor's: a corpse, a follower). */
+  let owned: Promise<boolean> | undefined;
+  const stealing = (): Promise<boolean> => {
+    owned ??= (async () => {
+      if (npcMode || pickpocket) return false;
+      const game = shelf.runtime;
+      if (await game.actors.isActor(container)) return false;
+      return !(await game.crime.mayTake(PLAYER_REF, container));
+    })();
+    return owned;
+  };
+  const move = async (
+    formId: number,
+    amount: number,
+    fromContainer: boolean,
+    audible = true,
+  ): Promise<void> => {
+    const crime = shelf.runtime.crime;
+    if (pickpocket) {
+      const done = await crime.pickpocket(PLAYER_REF, container, formId, amount, !fromContainer);
+      if (!done) close?.();
+      return;
+    }
+    if (!fromContainer) {
+      await shelf.move(formId, amount, PLAYER_REF, container, audible);
+      return;
+    }
+    await shelf.move(formId, amount, container, PLAYER_REF, audible);
+    if (await stealing()) await crime.steal(PLAYER_REF, formId, amount, container);
+  };
+  /** A card with its pickpocket chance (to take one, or to place one). */
+  const withChance = async (
+    card: Record<string, unknown>,
+    formId: number,
+  ): Promise<Record<string, unknown>> =>
+    pickpocket
+      ? {
+          ...card,
+          pickpocketChance: await shelf.runtime.crime.pickpocketChance(
+            PLAYER_REF,
+            container,
+            formId,
+            1,
+          ),
+        }
+      : card;
   return {
     movie: 'containermenu.swf',
     depth: 6,
     keepsIndices: false,
     ...(npcMode && { menuProperties: { bNPCMode: true } }),
     categories: async () => sideCategories(await session.settings()),
+    bindClose: (closeMenu) => {
+      close = closeMenu;
+    },
     view: async () => {
       const [theirs, mine] = await Promise.all([shelf.rows(container), shelf.rows(PLAYER_REF)]);
+      const red = pickpocket || (await stealing());
+      const rows = [...theirs, ...mine];
+      const cards = await shelf.cards(rows);
       return {
-        entries: [...theirs.map(otherSideEntry), ...mine.map(itemEntry)],
-        cards: await shelf.cards([...theirs, ...mine]),
+        entries: [
+          ...theirs.map((row) => ({ ...otherSideEntry(row), ...(red && { isStealing: true }) })),
+          ...mine.map(itemEntry),
+        ],
+        cards: await Promise.all(
+          cards.map((card, index) => withChance(card, rows[index]?.formId ?? 0)),
+        ),
         player: [await shelf.playerInfo(mine)],
       };
     },
@@ -156,7 +215,7 @@ export function containerModel(
     transfer: (entry, amount, fromContainer) => move(entry.formId, amount, fromContainer),
     // One sound for all of them: the first item's.
     takeAll: async () => {
-      if (npcMode) return;
+      if (npcMode || pickpocket) return;
       let first = true;
       for (const [formId, count] of [...(await shelf.runtime.inventory(container))]) {
         const record = await shelf.item(formId);

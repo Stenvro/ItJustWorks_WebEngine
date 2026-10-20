@@ -505,3 +505,153 @@ DoCombatSpellApply, Get/SetVoiceRecoveryTime (the meter counts down from what it
 Game.TeachWord, UnlockWord, IsWordUnlocked; Spell.Cast and RemoteCast fly.
 
 TODO(M12): the powers used, the staffs' charge, the words learned and the voice in the save.
+
+## Crime and factions
+
+Crime's rules are platform-free in `src/gameplay/crime.ts` (bounties, the pickpocket chance,
+jail, guards' responses, trespass warnings, the witness ledger) and `src/gameplay/factions.ts`
+(reactions, favor); the running game keeps them in `src/scripting/runtime/crime-engine.ts`
+(`ScriptRuntime.crime`), its conditions in `crime-conditions.ts`; the stage (witnesses' lines,
+alarms, guards arresting, trespass warnings, jail escapes) is `src/shell/actor-crime.ts`. The
+records: FACT's crime fields (`FactionCrime`, `src/world/actor-stats-records.ts`). `node
+tools/crime-info.ts` lists the crime factions with their values, jails and chests (`--all`,
+`--settings`, `--pickpocket` a chance table, `--fences`, `--guards`).
+
+### Crime factions
+
+- A crime faction (FACT, xEdit; CommonLibSSE `TESFaction::CRIME_DATA`): DATA flags (Track Crime
+  0x40, Ignore Murder / Assault / Stealing / Trespass / Pickpocket / Werewolf, Do Not Report
+  Crimes Against Members 0x800, Crime Gold: Use Defaults 0x1000), JAIL the exterior jail marker
+  (where the player is let out), WAIT the follower wait marker, STOL the stolen goods chest,
+  PLCN the evidence chest, CRGR the shared crime factions (CrimeFactionsList: the holds), JOUT
+  the jail outfit, CRVA (arrest, attack on sight, murder, assault, trespass, pickpocket, steal
+  multiplier, escape, werewolf). With Use Defaults the game settings stand for the values:
+  iCrimeGoldMurder 1000, iCrimeGoldAttack 40, iCrimeGoldTrespass 5, iCrimeGoldPickpocket 25,
+  iCrimeGoldEscape 100, iCrimeGoldWerewolf 1000 (the engine's built-in values where Skyrim.esm
+  stores none; every hold's CRVA stores the same), theft half the value (DEFAULT_STEAL_MULT;
+  UESP "Skyrim:Crime"); a stolen horse iCrimeGoldStealHorse (100).
+- The faction a crime goes to: the victim's crime faction (`Actor.GetCrimeFaction`, NPC\_ CRIF),
+  else an owner's (an NPC\_'s CRIF, an owning faction that tracks crime), else the place's (its
+  location's or the nearest parent's LCTN FNAM).
+- The interior jail: the prison marker (PrisonMarker, 0x4) in the evidence chest's cell, else in
+  an interior the faction owns, else in the jail of a faction of its crime group sharing its
+  exterior marker (the Dark Brotherhood's targets), else whose interior's location lies up the
+  exterior marker's locations (Winterhold). All 32 crime factions with a jail find one
+  (TODO(M13): the engine's way is not documented).
+
+### Crimes and witnesses
+
+- The player's crimes: stealing (taking an item, or from a container, that another owns:
+  `ScriptRuntime.mayUse`, the reference's XOWN else its cell's; the crosshair's red sSteal and
+  sStealFrom; the container menu's entries red, `isStealing`), pickpocketing, trespassing,
+  picking an owned lock in sight (a trespass), assault, murder, a stolen horse ("Do you want to
+  steal this horse?", sStealHorse), escaping jail, a werewolf changing
+  (SendWereWolfTransformation) and feeding (StartVampireFeed, StartCannibal: an assault,
+  TODO(M13)).
+- A crime is reported only if seen: its witnesses are detection's (`Detections.witness`: those
+  that detect the criminal now), of them the victim and those whose crime faction is the
+  crime's or in its crime group; not the player's followers, nor friends of the player
+  (relationship friend or better overlooks theft, trespass and pickpocketing; an ally assault
+  too; murder no one; `overlooksCrime`). Unseen, there is no bounty (stolen items are marked
+  stolen all the same).
+- Seen, the bounty goes to the faction at once (violent for assault, murder and the werewolf:
+  GetCrimeGoldViolent), its infamy and the stats (Total Lifetime Bounty, Largest Bounty, Items
+  Stolen, Assaults, Murders, ...) with it; the story manager's Crime Gold event
+  (OnStoryCrimeGold), Assault Actor, Trespass, Pick Lock and Kill Actor (crime status 0 none, 1
+  unseen, 2 seen) events. Each witness says its line to the criminal (Steal, Assault, Murder,
+  Trespass, PickpocketCombat; the NC lines, StealFromNC, AssaultNC, ..., for those that are no
+  guards; WereTransformCrime) and raises an alarm (those within iCrimeAlarmRecDistance).
+- Killing the last witness before the crime is reported takes its bounty back
+  (sWitnessKilled, "Last witness killed."). A crime is reported once a guard saw it or after
+  REPORT_HOURS (a game day; TODO(M13): the engine's report rule). GetCrimeKnown answers from the
+  crimes recorded.
+- Assaults and murders: an attack on, or the killing of, one that does not regard the attacker
+  as hostile (`reaction`). Kills reach crime through `ActorEngine.kill`; combat's hits
+  (`src/shell/actor-combat.ts`) and hostile spells call `crime.assault(attacker, victim)`, the
+  one hit always among the witnesses (TODO(M10) 5.3: from the projectile's impact).
+
+### Stolen items
+
+- Items taken without the right are stolen, per stack and whose (`CrimeState.stolen`: by
+  container, base, the crime faction and whether it was seen: GetStolenItemValue /
+  ...NoCrime). Moving items, the ones that are not stolen leave first; the stolen ones stay
+  stolen where they go.
+- Vendors buy stolen items only as fences (the vendor faction's VENV "buys stolen items": the
+  Thieves Guild's ServicesThievesGuild\* factions, which the TGFences quest gives the fences);
+  sold, they are no longer stolen. A gift menu without abShowStolenItems does not offer them.
+- A fine paid with abRemoveStolenItems, and jail, take them to the faction's stolen goods chest.
+
+### Pickpocketing
+
+- Sneaking, activating a living actor is "Pickpocket" (sPickpocket): the container menu on its
+  pockets, each card showing the chance (pickpocketChance: "% TO STEAL", "TO PLACE" on the
+  player's side). The chance: (fPickPocketActorSkillBase + fPickPocketActorSkillMult × the
+  thief's Pickpocket) + fPickPocketTargetSkillMult × (fPickPocketTargetSkillBase + the
+  target's Pickpocket) + fPickPocketWeightMult × weight + fPickPocketAmountMult × value, times
+  the perks (TODO(M11)), within fPickPocketMinChance and fPickPocketMaxChance (0, 90). At
+  Pickpocket 15 against 15 a coin is 26 %, a 200-gold amulet 2 %; at 100 they are 90 % and 87 %
+  (TODO(M13): how the engine combines the terms).
+- Each take (or placing) is an attempt: succeeding, the item moves, stolen, with Pickpocket uses
+  (value ^ fPickpocketSkillUsesCurve; TODO(M13)), Pockets Picked and Items Pickpocketed;
+  failing, the menu closes (sPickpocketFail) and the target reports the pickpocket crime.
+
+### Trespassing
+
+- An interior is off limits to the player once they picked the lock of its load door, or its
+  owner locked its doors with them inside (the LockDoors procedure; UnlockDoors and
+  UnlockOwnedDoorsInCell open it again). There, in a cell owned by another and not public
+  (CELL DATA 0x20), they trespass (IsTrespassing).
+- Those who see a trespasser warn them (the senses' guard warning: they come up, their Trespass
+  line) every fAITrespassWarningTimer (5 s), iGuardWarnings (2) times (GetTrespassWarningLevel);
+  staying, it is the trespass crime. No waiting or sleeping meanwhile (sNoWaitTrespass,
+  sNoSleepTrespass); nor sleeping in an owned bed (sNoSleepInOwnedBed).
+
+### Guards, fines and jail
+
+- Guards (IsGuard: a guard class, CLAS DATA flag 0x1, or IsGuardFaction) that see the player
+  answer `guardResponse`: an enemy of their faction or one resisting its arrest they attack; a
+  bounty they pursue when a crime alarmed them, or on sight at
+  CrimeArrestOnSightViolentThreshold (999) / ...NonViolentThreshold (1000): they arrest where
+  the faction arrests (CRVA), else attack where it attacks on sight. A guard told to let it go
+  (SetLastArrestTime: its Variable03) waits a day.
+- An arrest: the guard runs up and force-greets with DialogueCrimeGuards' ForceGreet topic; its
+  lines' scripts do the rest: PlayerPayCrimeGold (the gold and stolen items taken; with
+  abGoToJail the player is let out at the exterior jail marker; Fines Paid, the Pay Fine
+  event), SendPlayerToJail, SetPlayerResistingArrest (its guards attack: `hostileGuards`, the
+  combat AI's reaction), the Thieves Guild's bribe, payoff and persuasion (CrimeGuardsScript,
+  FavorDialogueScript: GetBribeAmount; StopCombatAlarm on the player ends the pursuit).
+  GetCrimeGold, ...Violent, ...Nonviolent, CanPayCrimeGold, GetArrestingActor, GetBribeSuccess
+  answer them. TODO(M13): the engine's arrest package and pursuit lines (PursueIdleTopic).
+- While guards pursue: no waiting or sleeping (sNoWaitWhileAlarm), fast travel
+  (sNoFastTravelAlarm) or lockpicking (sNoLockPickIfCrimeAlert).
+- Jail (UESP "Skyrim:Jail"): the stolen items go to the stolen goods chest, with
+  abRemoveInventory the rest to the evidence chest and the jail outfit is worn; the bounty is
+  set aside for one day per iCrimeDaysInPrisonMod (100) gold, at least one; the player is taken
+  to the jail's prison marker (the Jail event, Times Jailed). Serving (Game.ServeTime: the jail
+  bed's JailBedScript): the days pass (`WorldBridge.passTime`), each a skill's progress towards
+  its next level lost (since patch 1.9 no level is lost; TODO(M13): the engine's choice of
+  skills), the items come back, the player is let out at the exterior jail marker (Days Jailed,
+  the Served Time event). Leaving the jail's cell unserved is an escape: the bounty comes back
+  with iCrimeGoldEscape (Jail Escapes, the Escape Jail event: EscapeJailQuest).
+- The journal's stats list each bounty ("Whiterun Bounty", sBountyStatString).
+
+### Factions and reactions
+
+- `reaction(actor, other)` (the combat AI's, 5.2; IsHostileToActor, GetFactionRelation): itself
+  a friend; frenzied (Aggression 3), a crime against the player (a faction that made them its
+  enemy, SetPlayerEnemy; guards to attack them) or a relationship of enemy or worse: hostile;
+  else a friend (a friend combat reaction, a relationship of friend or better), an ally (an
+  ally reaction, a shared faction without Special Combat), hostile (an enemy reaction), or
+  neutral. The combat reactions are the factions' XNAM, as scripts set them (SetAlly,
+  SetEnemy). `attacksOnSight(aggression, reaction)`: aggressive actors attack enemies, very
+  aggressive neutrals too, frenzied anyone. TODO(M13): the engine's precedence.
+- Relationships (RELA) and their association types (ASTP: HasAssociationType,
+  HasFamilyRelationship by ASTP DATA 0x1, HasParentRelationship).
+- Favor: a gift's worth (its value; TODO(M13)) is ShowGiftMenu's favor points, which raise the
+  actor's relationship with the player at iFavorFriendValue (25), iFavorConfidantValue (50) and
+  iFavorAllyValue (100) points, never lowering it (the Relationship Change event).
+- The player's memberships are their factions' ranks (scripts join and expel them:
+  GetPCExpelled, SetPlayerExpelled, GetPCEnemyofFaction, GetPCInFaction).
+
+TODO(M12): crime's state in the save. TODO(M11): the perks' pickpocket and bribe effects
+(Light Fingers, Cutpurse, Bribery's cost), NPCs' Acquire with Allow Pickpocketing.

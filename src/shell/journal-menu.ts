@@ -5,7 +5,7 @@
 // the system page. What it asks of the engine (GameDelegate calls) is answered here.
 // Notes: docs/ui.md ("The journal").
 
-import { MISC_STATS } from '../gameplay/misc-stats.ts';
+import { MISC_STATS, StatCategory } from '../gameplay/misc-stats.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { journalQuests, MISC_QUEST_TYPE, type JournalQuest } from '../scripting/runtime/journal.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -66,10 +66,16 @@ export class JournalMenu {
   /** The objectives' targets on the map ("quest:objective" → the first target's reference). */
   #targets = new Map<string, number>();
 
+  /** How a hold's bounty is named on the stats page (sBountyStatString, "%s Bounty"). */
+  #bountyFormat = '%s Bounty';
+
   constructor(host: MenuHost, session: GameSession, terminal: Terminal) {
     this.#host = host;
     this.#session = session;
     this.#terminal = terminal;
+    void session.settings().then((settings) => {
+      this.#bountyFormat = settings.string('sBountyStatString') ?? this.#bountyFormat;
+    });
   }
 
   /**
@@ -305,6 +311,13 @@ export class JournalMenu {
       // TODO(M11): the favorite weapon, spell, school and shout (what the player uses most).
       if (key.startsWith('favorite ')) value = '';
       values.push(stat.name, value, stat.category, 0);
+    }
+    // The bounties the player owes, each crime faction's ("Whiterun Bounty"), in the crime
+    // category (UESP "Skyrim:Statistics").
+    for (const { faction, gold } of runtime?.crime.bounties() ?? []) {
+      const name = runtime?.crime.name(faction);
+      if (name === undefined) continue;
+      values.push(this.#bountyFormat.replace('%s', name), gold, StatCategory.crime, 0);
     }
     return values;
   }

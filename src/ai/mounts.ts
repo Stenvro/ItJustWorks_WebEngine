@@ -130,7 +130,7 @@ export function riddenRequest(
  * Whether a horse may be ridden by an actor without stealing it: the player may ride their
  * own (bought: the PlayerHorseFaction's, or the last they rode) and those no one owns; an
  * actor its own (the ACHR's XHOR) and those of its factions. Riding another's is stealing
- * (sStealHorse: iCrimeGoldStealHorse). TODO(M11): the crime itself.
+ * (sStealHorse: iCrimeGoldStealHorse; src/scripting/runtime/crime-engine.ts horseTheft).
  */
 export function ownsHorse(
   owner: { readonly actor?: number | undefined; readonly faction?: number | undefined },
