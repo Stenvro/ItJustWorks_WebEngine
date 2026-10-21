@@ -233,7 +233,8 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   its minimum; Wander goes from one random point of its place to another between pauses;
   Sandbox passes the time in its place (below); Sit, Sleep and UseIdleMarker use their furniture
   (their target, or the first free one a Find found) or idle marker and stay while the package
-  runs. Find keeps what its criteria name within its place in its object list (nearest first;
+  runs (Sit succeeds once the actor sits, which MQ101's execution waits for; it stays seated). A
+  Patrol point it was blocked from is tried again a few times before it goes on. Find keeps what its criteria name within its place in its object list (nearest first;
   without Allow Stealing only what the actor may use: below); Acquire picks those up; Activate
   goes to its target and activates it (furniture: uses it); Eat plays its eating idle with food
   it carries (one used up) or, with Create Fake Food, food made for the meal (ActionIdle's
