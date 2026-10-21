@@ -136,4 +136,26 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     expect(health.max).toBeGreaterThan(0);
     expect(await runtime.actors.level(PLAYER)).toBe(1);
   });
+
+  // Last: the player dies.
+  it('lets the player die of their health run out, not in god mode (Debug.SetGodMode)', async () => {
+    const killed: number[] = [];
+    runtime.world.killed = (actor) => killed.push(actor);
+    try {
+      runtime.godMode = true;
+      const health = await runtime.actors.value(PLAYER, ActorValue.health);
+      await runtime.actors.damage(PLAYER, ActorValue.health, health.max * 2, undefined);
+      expect(await runtime.actors.isDead(PLAYER)).toBe(false);
+      runtime.godMode = false;
+      // The opening's aliases do not make the player essential.
+      expect(await runtime.actors.isEssential(PLAYER)).toBe(false);
+      await runtime.actors.damage(PLAYER, ActorValue.health, health.max * 2, undefined);
+      await runtime.vm.idle();
+      expect(await runtime.actors.isDead(PLAYER)).toBe(true);
+      expect(killed).toEqual([PLAYER]);
+      expect(runtime.state.actors.get(PLAYER)?.dead).toBe(true);
+    } finally {
+      delete runtime.world.killed;
+    }
+  });
 });

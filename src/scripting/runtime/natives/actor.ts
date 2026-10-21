@@ -314,8 +314,9 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
 
   // --- Life and death ---------------------------------------------------------------------
   ask('isdead', false, (actor) => actors.isDead(actor));
-  act('kill', (actor, call) => actors.kill(actor, ref(call.args[0])));
-  act('killsilent', (actor, call) => actors.kill(actor, ref(call.args[0]), true));
+  // An essential actor bleeds out instead (KillEssential, a script, clears Essential first).
+  act('kill', (actor, call) => actors.scriptKill(actor, ref(call.args[0])));
+  act('killsilent', (actor, call) => actors.scriptKill(actor, ref(call.args[0]), true));
   act('resurrect', (actor) => actors.resurrect(actor));
   ask('getkiller', null, (actor) => runtime.actorHandleOrNone(state.actors.get(actor)?.killer));
   // Deferred kills (the actor dies when the deferral ends, if it should have): TODO(M11).

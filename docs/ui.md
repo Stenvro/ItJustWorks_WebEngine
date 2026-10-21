@@ -513,8 +513,9 @@ mode while it is open. The commands (`src/shell/console-commands.ts`): a line is
 its arguments (quotes keep spaces), optionally after a reference and a dot ("player.additem f
 100"); forms by editor id or hex form id; an unknown command prints `Script command "x" not
 found.`. Built: help, coc, additem, removeitem, setstage, getstage, startquest, stopquest,
-completequest, set ... to, getav, setav, modav, forceav, advlevel, tm, fw, epc, dpc,
-showracemenu, qqq. coc (`src/shell/cell-placement.ts`) puts the player in an interior cell at
+completequest, set ... to, getav, setav, modav, forceav, advlevel, tm, fw, epc, dpc, tgm (god
+mode: "God Mode -- ON"; the player takes no damage and cannot die), kill (as Actor.Kill;
+`player.kill` shows the player's death: [ai.md](ai.md#combat)), showracemenu, qqq. coc (`src/shell/cell-placement.ts`) puts the player in an interior cell at
 its entrance, in an exterior cell at its COC marker (COCMarkerHeading), else at its middle on
 the ground. TODO(M13): the rest of the game's commands, selecting references by clicking.
 

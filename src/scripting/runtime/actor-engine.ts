@@ -59,6 +59,13 @@ export interface ActorValueNow {
 const calculated = (stored: number, starting: number | undefined, offset: number): number =>
   stored > 0 ? stored : (starting ?? 0) + offset;
 
+/** The actor values god mode keeps whole. */
+const GOD_MODE_VALUES: ReadonlySet<number> = new Set([
+  ActorValue.health,
+  ActorValue.magicka,
+  ActorValue.stamina,
+]);
+
 const pairKey = (a: number, b: number): string =>
   a < b ? `${String(a)}:${String(b)}` : `${String(b)}:${String(a)}`;
 
@@ -368,6 +375,8 @@ export class ActorEngine {
    */
   async damage(reference: number, index: number, amount: number, source?: number): Promise<void> {
     if (amount <= 0) return;
+    // God mode: the player's health, magicka and stamina are not used up.
+    if (reference === PLAYER_REF && this.#runtime.godMode && GOD_MODE_VALUES.has(index)) return;
     const own = this.#own(reference, index);
     own.damage += amount;
     if (index === ActorValue.health && (await this.value(reference, index)).current <= 0) {
@@ -724,9 +733,28 @@ export class ActorEngine {
     return record?.type === 'ACHR' && (record.flags & RecordFlag.startsDead) !== 0;
   }
 
-  /** Kill: it dies (OnDying, then OnDeath to it and its aliases). */
+  /**
+   * Actor.Kill: it dies, but an essential actor bleeds out instead (its health taken: the
+   * game's KillEssential clears a unique base's Essential flag before it calls Kill).
+   */
+  async scriptKill(reference: number, killer: number | undefined, silent = false): Promise<void> {
+    if (await this.isDead(reference)) return;
+    if (await this.isEssential(reference)) {
+      const health = (await this.value(reference, ActorValue.health)).current;
+      await this.damage(reference, ActorValue.health, Math.max(1, health), killer);
+      return;
+    }
+    await this.kill(reference, killer, silent);
+  }
+
+  /**
+   * It dies (OnDying, then OnDeath to it, its aliases and the magic effects on it); the player
+   * too (the world shows their death: src/shell/player-death.ts), but not in god mode.
+   * TODO(M13): whether god mode keeps Kill from the player is not documented.
+   */
   async kill(reference: number, killer: number | undefined, silent = false): Promise<void> {
     if (await this.isDead(reference)) return;
+    if (reference === PLAYER_REF && this.#runtime.godMode) return;
     const state = this.#runtime.state.actor(reference);
     state.dead = true;
     if (killer !== undefined) state.killer = killer;
