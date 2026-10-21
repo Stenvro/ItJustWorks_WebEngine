@@ -75,12 +75,26 @@ export interface ActorCastingOptions {
   ) => void;
 }
 
-/** The hands' and the voice's nodes (the character skeleton's). */
-const NODES: Readonly<Record<number, string>> = {
-  [CastingSource.left]: 'NPC L MagicNode [LMag]',
-  [CastingSource.right]: 'NPC R MagicNode [RMag]',
-  [CastingSource.voice]: 'NPC Head [Head]',
+/**
+ * The hands' and the voice's nodes, the first the skeleton has: the character skeleton's, the
+ * dragon's head magic node (its breath leaves its mouth).
+ */
+const NODES: Readonly<Record<number, readonly string[]>> = {
+  [CastingSource.left]: ['NPC L MagicNode [LMag]'],
+  [CastingSource.right]: ['NPC R MagicNode [RMag]'],
+  [CastingSource.voice]: ['NPC Head [Head]', 'NPC Head MagicNode [Hmag]', 'NPC Head'],
 };
+
+/**
+ * A breath (a concentration shout: the dragons' fire and frost breath) sprays this long at
+ * most: the exhale clips' length (Shout_FlightExhaleFlame, Shout_HoverExhaleFlame: 3 s); the
+ * graph's shoutStop ends it as its exhale does.
+ */
+const BREATH_SECONDS = 3;
+/** A breath coming is a threat as wide as this (units: what the AI sidesteps). TODO(M13). */
+const BREATH_RADIUS = 96;
+/** ... and this fast while it is drawn in (its projectile's speed once it flies). */
+const BREATH_SPEED = 1000;
 
 /** The idle tree's actions by hand: attack (start), ready, release, interrupt. */
 const ACTIONS: Readonly<Record<number, { ready: string; release: string; interrupt: string }>> = {
@@ -122,6 +136,15 @@ interface Shown {
   done: boolean;
 }
 
+/** A source's node in an actor's pose (model space), the first its skeleton has. */
+function nodeOf(placed: PlacedActor, source: number): Float32Array | undefined {
+  for (const node of NODES[source] ?? []) {
+    const local = placed.pose.world(node);
+    if (local) return local;
+  }
+  return undefined;
+}
+
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -131,6 +154,16 @@ export class ActorCasting {
   readonly #shown = new Map<string, Shown>();
   /** NPCs' shouts going on: the target and the words. */
   readonly #shouts = new Map<number, { target: number | undefined; words: number; left: number }>();
+  /** Breaths sprayed (concentration shouts let out): what fired, at whom, how long left. */
+  readonly #breaths = new Map<
+    number,
+    {
+      readonly delivered: Delivered;
+      readonly target: number | undefined;
+      left: number;
+      spray: number;
+    }
+  >();
   /** The player's aim (the camera's forward), set by the player's casting. */
   playerAim: (() => Vec3) | undefined;
   #runtime: ScriptRuntime | undefined;
@@ -201,8 +234,7 @@ export class ActorCasting {
   origin(actor: number, source: number): Vec3 | undefined {
     const placed = this.#placed(actor);
     const instance = placed?.instances[0];
-    const node = NODES[source];
-    const local = node === undefined ? undefined : placed?.pose.world(node);
+    const local = placed && nodeOf(placed, source);
     if (instance && local) {
       const world = multiply(instance.world, local);
       return [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
@@ -339,8 +371,7 @@ export class ActorCasting {
 
   #placeArt(shown: Shown, instance: ModelInstance): void {
     const placed = this.#placed(shown.cast.actor);
-    const node = NODES[shown.cast.source];
-    const local = node === undefined ? undefined : placed?.pose.world(node);
+    const local = placed && nodeOf(placed, shown.cast.source);
     const world = placed?.instances[0]?.world;
     if (!local || !world) return;
     instance.world.set(multiply(world, local));
@@ -442,7 +473,25 @@ export class ActorCasting {
         play('ActionVoiceRelease');
         const shout = this.#shouts.get(actor);
         this.#shouts.delete(actor);
-        if (event.delivered) void this.#send(runtime, event.delivered, source, shout?.target);
+        const delivered = event.delivered;
+        if (!delivered) break;
+        // A concentration shout (a dragon's breath) sprays while its exhale lasts.
+        if (delivered.item.castType === CastType.concentration) {
+          this.#breaths.set(actor, {
+            delivered,
+            target: shout?.target,
+            left: BREATH_SECONDS,
+            spray: 0,
+          });
+          const main = runtime.casting.mainEffect(delivered.item);
+          void main.then((effect) => {
+            const release = effect && effectSound(effect, EffectSound.release);
+            if (release !== undefined) void this.#sound(release, actor, source);
+            this.#options.acted?.(actor, 'shout', effect?.castingSoundLevel ?? 1);
+          });
+          break;
+        }
+        void this.#send(runtime, delivered, source, shout?.target);
         break;
       }
       default:
@@ -510,6 +559,18 @@ export class ActorCasting {
       if (shown.spray > 0) continue;
       void this.#spray(runtime, shown);
     }
+    for (const [actor, breath] of [...this.#breaths]) {
+      breath.left -= seconds;
+      breath.spray -= seconds;
+      if (breath.left <= 0) {
+        this.#breaths.delete(actor);
+        continue;
+      }
+      if (breath.spray > 0) continue;
+      // Not again until this spray is on its way (it sets the next).
+      breath.spray = Infinity;
+      void this.#breathSpray(runtime, breath);
+    }
     for (const [actor, shout] of this.#shouts) {
       shout.left -= seconds;
       if (shout.left > 0) continue;
@@ -518,6 +579,66 @@ export class ActorCasting {
       void runtime.casting.releaseShout(actor, shout.words).then((delivered) => {
         if (!delivered) this.#shouts.delete(actor);
       });
+    }
+  }
+
+  /** One spray of a breath: the interval's share of its shout's spell, from the head. */
+  async #breathSpray(
+    runtime: ScriptRuntime,
+    breath: { readonly delivered: Delivered; readonly target: number | undefined; spray: number },
+  ): Promise<void> {
+    const main = await runtime.casting.mainEffect(breath.delivered.item);
+    const projectile =
+      main?.projectile === undefined
+        ? undefined
+        : await runtime.casting.projectile(main.projectile);
+    const interval =
+      projectile && projectile.relaunchInterval > 0 ? projectile.relaunchInterval : HELD_INTERVAL;
+    breath.spray = interval;
+    await this.#send(runtime, breath.delivered, CastingSource.voice, breath.target, interval);
+  }
+
+  /** The breath ends (the graph's shoutStop: its exhale is over). */
+  stopBreath(actor: number): void {
+    this.#breaths.delete(actor);
+  }
+
+  /**
+   * Breaths coming at the actors (what they sidestep: the combat AI's threats): a shout drawn in
+   * at a target, and a breath sprayed, from the head towards its target.
+   */
+  *threats(): Iterable<{
+    readonly key: object;
+    readonly position: Vec3;
+    readonly velocity: Vec3;
+    readonly radius: number;
+    readonly source: number | undefined;
+  }> {
+    const coming = (
+      key: object,
+      actor: number,
+      target: number | undefined,
+    ):
+      | { key: object; position: Vec3; velocity: Vec3; radius: number; source: number }
+      | undefined => {
+      const origin = this.origin(actor, CastingSource.voice);
+      if (!origin || target === undefined) return undefined;
+      const aim = this.#aim(actor, origin, target);
+      return {
+        key,
+        position: origin,
+        velocity: [aim[0] * BREATH_SPEED, aim[1] * BREATH_SPEED, aim[2] * BREATH_SPEED],
+        radius: BREATH_RADIUS,
+        source: actor,
+      };
+    };
+    for (const [actor, shout] of this.#shouts) {
+      const threat = coming(shout, actor, shout.target);
+      if (threat) yield threat;
+    }
+    for (const [actor, breath] of this.#breaths) {
+      const threat = coming(breath, actor, breath.target);
+      if (threat) yield threat;
     }
   }
 
@@ -659,6 +780,7 @@ export class ActorCasting {
   remove(actor: number): void {
     this.#runtime?.casting.interrupt(actor);
     this.#shouts.delete(actor);
+    this.#breaths.delete(actor);
     for (const key of [...this.#shown.keys()])
       if (key.startsWith(`${String(actor)}:`)) this.#end(key);
   }
@@ -667,6 +789,7 @@ export class ActorCasting {
   clear(): void {
     for (const key of [...this.#shown.keys()]) this.#end(key);
     this.#shouts.clear();
+    this.#breaths.clear();
     this.#stop?.();
     this.#stop = undefined;
     this.#runtime = undefined;

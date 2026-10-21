@@ -111,6 +111,7 @@ import {
   ActorCombatAi,
   type CombatAiHost,
   type CombatCasting,
+  type CombatFlight,
   type FighterView,
 } from './actor-combat-ai.ts';
 import type { Threat } from '../ai/combat-tactics.ts';
@@ -207,6 +208,10 @@ export interface ActorCombatOptions {
   readonly ridden?: (actor: number) => boolean;
   /** NPCs' spells and shouts in combat (src/shell/combat-casting.ts). */
   readonly npcCasting?: () => CombatCasting | undefined;
+  /** The fliers: dragons fighting from the air (src/shell/actor-flight.ts). */
+  readonly flight?: () => CombatFlight | undefined;
+  /** What else flies at the actors: spells and breath (magic-projectiles.ts, actor-casting.ts). */
+  readonly threats?: () => Iterable<Threat>;
 }
 
 const describe = (error: unknown): string =>
@@ -248,6 +253,7 @@ export class ActorCombat implements CombatBridge {
       ...(options.dismount && { dismount: options.dismount }),
       ...(options.ridden && { ridden: options.ridden }),
       ...(options.npcCasting && { casting: options.npcCasting }),
+      ...(options.flight && { flight: options.flight }),
     });
     this.#impacts = new CombatImpacts(options.session, options.renderer);
     this.#projectiles = new CombatProjectiles({
@@ -971,11 +977,10 @@ export class ActorCombat implements CombatBridge {
     const feet = this.#feet(fighter);
     if (!current || !feet || current.killMove) return;
     const data = this.#attackData(fighter, current.event);
-    const scale = this.#scale(fighter);
     const strike = {
       origin: feet,
       heading: this.#heading(fighter),
-      height: BODY_HEIGHT * scale,
+      height: this.#size(fighter).height,
       reach: this.#reach(fighter, current.bash),
       attackAngle: data.attackAngle,
       strikeAngle: data.strikeAngle,
@@ -992,13 +997,7 @@ export class ActorCombat implements CombatBridge {
       if (other.state.life === LifeState.dead || other.state.paired === 'support') continue;
       const at = this.#feet(other);
       if (!at) continue;
-      const size = this.#scale(other);
-      targets.push({
-        reference: other.reference,
-        feet: at,
-        radius: BODY_RADIUS * size,
-        height: BODY_HEIGHT * size,
-      });
+      targets.push({ reference: other.reference, feet: at, ...this.#size(other) });
     }
     const contacts = strikeTargets(strike, targets, combatHooks().sweeps(fighter.reference, kind));
     const physics = this.#play?.physics;
@@ -1325,7 +1324,7 @@ export class ActorCombat implements CombatBridge {
       const target = fighter.target === undefined ? undefined : this.#fighters.get(fighter.target);
       const there = target && this.#feet(target);
       if (there) {
-        const height = BODY_HEIGHT * this.#scale(target) * CHEST;
+        const height = this.#size(target).height * CHEST;
         const way: Vec3 = [there[0] - from[0], there[1] - from[1], there[2] + height - from[2]];
         // fBowNPCSpreadAngle: an NPC's aim strays this far (degrees).
         const spread = ((Math.random() - 0.5) * 4 * Math.PI) / 180;
@@ -1453,7 +1452,7 @@ export class ActorCombat implements CombatBridge {
 
   #view(fighter: Fighter): FighterView {
     const gear = fighter.gear;
-    const scale = this.#scale(fighter);
+    const size = this.#size(fighter);
     const right = gear?.right;
     const bow =
       right !== undefined &&
@@ -1479,8 +1478,8 @@ export class ActorCombat implements CombatBridge {
       feet: this.#feet(fighter),
       heading: this.#heading(fighter),
       reach: this.#reach(fighter, false),
-      radius: BODY_RADIUS * scale,
-      height: BODY_HEIGHT * scale,
+      radius: size.radius,
+      height: size.height,
       gear: gear && {
         weapon: gear.right.weapon,
         weaponType: gear.right.weaponType,
@@ -1499,7 +1498,7 @@ export class ActorCombat implements CombatBridge {
     };
   }
 
-  /** What flies at the actors now: the arrows (TODO(M10) 5.3, 5.4: spells and breath). */
+  /** What flies at the actors now: the arrows, spells and breath. */
   *#threats(): Iterable<Threat> {
     for (const shot of this.#projectiles.flying()) {
       yield {
@@ -1510,6 +1509,7 @@ export class ActorCombat implements CombatBridge {
         source: shot.shooter,
       };
     }
+    yield* this.#options.threats?.() ?? [];
   }
 
   // --- Helpers ---------------------------------------------------------------------------------
@@ -1668,6 +1668,23 @@ export class ActorCombat implements CombatBridge {
       },
       this.#settings,
     );
+  }
+
+  /**
+   * A fighter's shape for blows: its controller's (its skeleton's bound: a dragon's is a
+   * dragon's), in the air the one it had on the ground, else a human's by its scale.
+   */
+  #size(fighter: Fighter): { readonly radius: number; readonly height: number } {
+    const scale = this.#scale(fighter);
+    if (!fighter.player) {
+      const movers = this.#options.movers;
+      const radius = movers.radius(fighter.reference);
+      const height = movers.height(fighter.reference);
+      if (radius !== undefined && height !== undefined) return { radius, height };
+      const flown = this.#options.flight?.()?.shape(fighter.reference);
+      if (flown) return flown;
+    }
+    return { radius: BODY_RADIUS * scale, height: BODY_HEIGHT * scale };
   }
 
   #scale(fighter: Fighter): number {

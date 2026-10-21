@@ -45,6 +45,7 @@ import { ActorLooks } from './actor-looks.ts';
 import { ActorCombat } from './actor-combat.ts';
 import { WeaponState } from '../gameplay/combat/combat-state.ts';
 import { ActorCasting } from './actor-casting.ts';
+import { ActorFlight } from './actor-flight.ts';
 import { actorShape, MagicProjectiles, type ProjectileTarget } from './magic-projectiles.ts';
 import { PlayerCasting } from './player-casting.ts';
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
@@ -185,6 +186,8 @@ export class ActorStage {
   readonly playerCasting: PlayerCasting | undefined;
   /** Crime on the stage: witnesses, guards arresting, trespass warnings, jail. */
   readonly crime: ActorCrime;
+  /** The fliers: dragons taking off, flying, hovering, landing (src/shell/actor-flight.ts). */
+  readonly flight: ActorFlight;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -214,7 +217,10 @@ export class ActorStage {
       shutTo: (actor) => this.doors.shutTo(actor),
       shutPlaces: (actor) => this.doors.shutPlaces(actor),
       held: (actor) =>
-        this.furniture.holds(actor) || this.mounts.holds(actor) || this.vehicles.holds(actor),
+        this.furniture.holds(actor) ||
+        this.mounts.holds(actor) ||
+        this.vehicles.holds(actor) ||
+        this.flight.holds(actor),
       // The player walked into an actor: it flinches by where they came from (ActionBumpedInto's
       // idles by GetLastBumpDirection) and says its ActorCollidewithActor line.
       onBump: (actor) => {
@@ -247,6 +253,8 @@ export class ActorStage {
       dismount: (actor) => this.mounts.getOff(actor),
       ridden: (actor) => this.mounts.ridden(actor),
       npcCasting: () => combatCasting(options.session, () => this.casting),
+      flight: () => this.flight,
+      threats: () => [...this.projectiles.threats(), ...this.casting.threats()],
     });
     this.search = new ActorSearch({
       session: options.session,
@@ -272,6 +280,7 @@ export class ActorStage {
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
       // Fighting, bleeding out or in a killmove, its packages wait.
       engaged: (reference) => this.combat.engaged(reference),
+      flight: () => this.flight,
       overrides: (actor) => this.senses.overridePackages(actor),
       transport: {
         ready: async (staged, ride) => {
@@ -332,6 +341,7 @@ export class ActorStage {
       ...(options.light && { light: options.light }),
       camera: () => options.renderer.view?.camera,
       bark: (actor, subtype, target) => this.talk.bark(actor, subtype, target),
+      flying: (actor) => this.flight.isFlying(actor),
     });
     this.actorScenes = new ActorScenes({
       session: options.session,
@@ -343,6 +353,7 @@ export class ActorStage {
       movers: this.movers,
       camera: () => options.renderer.view?.camera,
       actor: (reference) => this.#actors.get(reference),
+      passByTarget: (reference) => this.flight.passByTarget(reference),
     });
     // Who greets and chatters: those that detect the player; a speaker looks at whom it
     // speaks to (a dialogue head track).
@@ -405,6 +416,18 @@ export class ActorStage {
         casting: this.casting,
         player: options.player,
       });
+    this.flight = new ActorFlight({
+      session: options.session,
+      terminal: options.terminal,
+      movers: this.movers,
+      furniture: this.furniture,
+      userOf: (staged) => this.userOf(staged),
+      get: (reference) => this.#actors.get(reference),
+      casting: () => this.casting,
+      interior: options.interior === true,
+      ...(options.navmeshes && { navmeshes: options.navmeshes }),
+      ...(options.objects && { objects: options.objects }),
+    });
     this.crime = new ActorCrime({
       session: options.session,
       senses: this.senses,
@@ -420,14 +443,20 @@ export class ActorStage {
   *#projectileTargets(): Iterable<ProjectileTarget> {
     for (const staged of this.#actors.values()) {
       if (staged.visibility.hidden || staged.dead) continue;
+      // A flier in the air: the size it had on the ground.
+      const flown =
+        this.movers.height(staged.reference) === undefined
+          ? this.flight.shape(staged.reference)
+          : undefined;
+      const shape = actorShape(
+        staged.position,
+        flown?.height ?? this.movers.height(staged.reference),
+        staged.placed.actor.scale * staged.placed.look.scale,
+      );
       yield {
         reference: staged.reference,
         heading: staged.heading,
-        shape: actorShape(
-          staged.position,
-          this.movers.height(staged.reference),
-          staged.placed.actor.scale * staged.placed.look.scale,
-        ),
+        shape: flown ? { ...shape, radius: flown.radius } : shape,
       };
     }
     const player = this.#options.player?.()?.play.player;
@@ -628,6 +657,7 @@ export class ActorStage {
     this.ai.remove(reference);
     this.senses.killed(reference);
     this.casting.remove(reference);
+    this.flight.remove(reference);
     this.talk.remove(reference);
     this.mounts.remove(reference);
     this.vehicles.remove(reference);
@@ -949,6 +979,8 @@ export class ActorStage {
     this.away.frame(frame);
     this.combat.frame(frame, this.#options.focus?.());
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
+    // The fliers: in the air they move themselves (no controller), on the ground the movers do.
+    this.flight.frame(this.#actors.values(), frame);
     const times = new Map<StagedActor, number | undefined>();
     for (const staged of this.#actors.values()) times.set(staged, staged.placed.time);
     // Where they look, and the world their procedural animation sees.
@@ -978,6 +1010,7 @@ export class ActorStage {
       const after = staged.placed.time;
       if (before !== undefined && after !== undefined && after > before) {
         this.movers.animated(staged, after - before);
+        this.flight.animated(staged, after - before);
         this.furniture.animated(this.userOf(staged), after - before);
         this.vehicles.animated(
           staged.reference,
@@ -1076,6 +1109,7 @@ export class ActorStage {
     this.ai.remove(staged.reference);
     this.senses.remove(staged.reference);
     this.casting.remove(staged.reference);
+    this.flight.remove(staged.reference);
     this.crime.remove(staged.reference);
     this.talk.remove(staged.reference);
     this.mounts.remove(staged.reference);

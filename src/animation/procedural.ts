@@ -548,6 +548,76 @@ export function twist(
   });
 }
 
+// --- Limb IK (BSLimbIKModifier) ------------------------------------------------------------
+
+/** A limb IK's values now (its bindings read). */
+export interface LimbIkValues {
+  readonly startBone: number;
+  readonly endBone: number;
+  /** Radians the chain's first bone may turn up at most. */
+  readonly limit: number;
+  /** A fraction per step (gainStep). */
+  readonly gain: number;
+  /** How far above its ground a bone of the chain keeps (game units). */
+  readonly boneRadius: number;
+  /** The rays down start this far above each bone (game units). */
+  readonly castOffset: number;
+}
+
+/** What a limb IK keeps from step to step: the chain's turn up (radians), eased. */
+export interface LimbIkState {
+  angle: number;
+}
+
+/**
+ * BSLimbIKModifier (the dragon's tail on the ground): the bones of the chain from the start
+ * bone down to the end bone are probed for their ground (rays from castOffset above them);
+ * the deepest any sinks below its ground plus the bone radius sets how far the chain's first
+ * bone turns up (about the horizontal across the chain's run), within the limit, eased by the
+ * gain. Without ground under it the chain eases back down. TODO(M13): Bethesda's solver and
+ * the members' units are not documented (game units are taken).
+ */
+export function limbIk(
+  values: LimbIkValues,
+  state: LimbIkState,
+  local: Float32Array,
+  space: ModelSpace,
+  ground: GroundProbe | undefined,
+  dt: number,
+  advance: boolean,
+): void {
+  const chain = space.chain(values.startBone, values.endBone);
+  const first = chain[0];
+  if (first === undefined || chain.length < 2) return;
+  const start = space.position(first);
+  const last = space.position(chain[chain.length - 1] ?? first);
+  const run: Vec3 = [last[0] - start[0], last[1] - start[1], 0];
+  const axis = normalize(cross(run, [0, 0, 1]));
+  if (!axis) return;
+  if (advance) {
+    let needed = 0;
+    if (ground) {
+      for (const bone of chain.slice(1)) {
+        const at = space.position(bone);
+        const hit = ground(
+          [at[0], at[1], at[2] + values.castOffset],
+          values.castOffset * 2 + values.boneRadius,
+        );
+        if (!hit) continue;
+        const sink = hit.height + values.boneRadius - at[2];
+        const reach = length(sub(at, start));
+        if (sink > 0 && reach > EPSILON)
+          needed = Math.max(needed, Math.asin(Math.min(1, sink / reach)));
+      }
+    }
+    const target = Math.min(Math.max(0, values.limit), needed);
+    state.angle += (target - state.angle) * gainStep(values.gain, dt);
+  }
+  if (Math.abs(state.angle) < 1e-6) return;
+  const turn = quatFromAxisAngle(axis, state.angle);
+  space.setRotation(first, quatMultiply(turn, space.rotation(first)), local);
+}
+
 // --- Foot IK (hkbFootIkDriver, hkbFootIkModifier) ------------------------------------------
 
 /** The gains of a foot IK now (each a fraction per step: gainStep). */

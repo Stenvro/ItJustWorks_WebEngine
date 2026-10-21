@@ -58,9 +58,10 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   graph tags nothing (NPC_Default_MT).
 - **Its graph** is driven as the engine's graph data channels do (CommonLibSSE
   `ActorSpeedChannel`, `ActorDirectionChannel`, `ActorTurnDeltaChannel`, ...): Speed (its
-  measured speed, from physics step to step), Direction, TurnDelta (degrees per second, right
-  positive: inferred from bleedoutTurnMult = |TurnDelta| / 20.5 and the horse's
-  turnSpeedMult = |TurnDelta / 112.5|), IsSprinting, IsSneaking, iSyncIdleLocomotion and the
+  measured speed, from physics step to step), Direction, TurnDelta (degrees per second, left
+  positive: the unit inferred from bleedoutTurnMult = |TurnDelta| / 20.5 and the horse's
+  turnSpeedMult = |TurnDelta / 112.5|, the sign from the graphs that turn left on
+  TurnDelta > 0.1: the dragon's, the Falmer's, the dwarven spheres' and centurions'), IsSprinting, IsSneaking, iSyncIdleLocomotion and the
   movement events (moveStart, moveStop, ...). The player's body is driven the same way. The
   graph's BSSpeedSamplerModifier turns Speed into SpeedSampled, the blend parameter of the
   locomotion blends. Measured on Orgnar: walking 80 units per second plays MT_WalkForward,
@@ -241,7 +242,8 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   in its pursuit area; Escort leads its target to the destination, waiting for it where it
   falls behind; FollowTo follows until one of them reaches the destination; Flee runs to its
   place, else away from what it flees. A procedure that does not use furniture gets the actor
-  up first. TODO(M10) 5.1–5.4: UseWeapon, UseMagic, Shout, Hover, Orbit, FlightGrab (they hold
+  up first. Hover, Orbit and FlightGrab fly a flier ([Flying combat](#flying-combat); one
+  that cannot fly holds its place). TODO(M10) 5.1–5.3: UseWeapon, UseMagic, Shout (they hold
   the actor until combat runs); 3.2: Sandbox's eating. Sandbox with Allow Conversation lets
   its actor talk with others; Say says its topic (or a topic subtype's line) to its target,
   waiting for the line itself with Finish Speaking, its subtitle forced with Force Subtitle;
@@ -495,8 +497,8 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   fDetectionUpdateTimeMax (2 s) at detection's reach; scripts' questions (GetDetected,
   IsDetectedBy) test anew when the last test is older than a second (the Construction Set
   wiki: GetDetected runs the formula). Beyond the reach (fSneakMaxDistance 2500, times
-  fSneakExteriorDistanceMult 2.1 outside; fSneakFlyingDistanceMult 3 for fliers: TODO(M10)
-  5.4) a target is not tested.
+  fSneakExteriorDistanceMult 2.1 outside; fSneakFlyingDistanceMult 3 for a target in the air:
+  [Flying combat](#flying-combat)) a target is not tested.
 - **The formula** (UESP "Skyrim:Sneak" for its terms; the predecessor engine's documented
   formula, The Fallout Wiki "Detection Formula" and the Construction Set wiki "Detection", for
   those UESP leaves open):
@@ -971,7 +973,8 @@ the projectile and explosion a spell sends.
   ward, buff: of its spells and what its hands hold, the costliest it has the magicka for;
   TODO(M10) 5.2: the combat style's magic score); `healSelf(actor)`, `summon(actor, target?)`,
   `drinkPotion(actor, value)` (the carried potion restoring the value most);
-  `shoutAt(actor, target, words?)` (Greybeards, draugr; dragons in 5.4): the voice's shout, its
+  `shoutAt(actor, target, words?)` (Greybeards, draugr; dragons' breath: [Flying
+  combat](#flying-combat)): the voice's shout, its
   words let out after their hold time. NPCs release a fire and forget spell once ready and hold
   a concentration spell 2.5 s. An actor that dies or leaves the stage stops casting.
 - **Scripts' casts** (Spell.Cast, RemoteCast: WorldBridge.launchSpell) fly the same way from the
@@ -1064,9 +1067,10 @@ the rules below read each value as its name says (TODO(M13)).
   defensive mult (× fCombatBlockChanceWeaponMult without a shield), where its left hand blocks
   (a shield, a two-handed weapon, a one-handed weapon with the left hand free); it lets go as
   the swing ends or after 1.2 s.
-- **Threats**: an arrow (spells and breath: TODO(M10) 5.3, 5.4) whose line passes through it
-  within 1.2 s it sidesteps by its style's avoid threat chance, out of the line to the side it
-  stands on, saying AvoidThreat.
+- **Threats**: an arrow, a spell's projectile (its collision radius) or a breath (a shout
+  drawn in or sprayed at a target, from the head: 96 units wide at the breath's 1000 units a
+  second; TODO(M13)) whose line passes through it within 1.2 s it sidesteps by its style's
+  avoid threat chance, out of the line to the side it stands on, saying AvoidThreat.
 - **Fleeing** (`shouldFlee`): below its confidence's share of health (cowardly at once,
   cautious fConfidenceCautious 37.5%, average fConfidenceAverage 15%, brave fConfidenceBrave
   3.75%, foolhardy never) × (1 − the odds' modifier), or with Fear or Turn Undead on it; Rally
@@ -1108,3 +1112,101 @@ the rules below read each value as its name says (TODO(M13)).
 - `node tools/combat-ai-info.ts dunFaldarsToothBetBandit01 HuldaREF C06WolfSpiritREF`: each
   actor's AI values, combat style, what it carries and fights with at 100, 400 and 1500 units,
   and the reactions between them and to the player (`--new-game`: after a new game).
+
+## Flying combat
+
+Actors of a race that flies (RACE DATA Flies: DragonRace, AlduinRace, UndeadDragonRace,
+DragonBlackRace and the DLCs': `src/ai/flight.ts`; on the stage `src/shell/actor-flight.ts`;
+the plan: [m10-plan.md](m10-plan.md) 5.4; check: `node tools/flight-info.ts`). No other vanilla
+race flies: the dragon priests and the chaurus hunters hover in their animations and move as
+walkers.
+
+- **The graph drives it**, as the engine's flight does: the idle tree's ActionFlyStart (off the
+  ground TakeOff, off a perch, its idles test GetFlyingState 5), ActionFlyStop (FlyStopDefault,
+  FlyStopInjured when hurt, FlyStopHasty and FlyStopCrash as the landing is asked for,
+  FlyStopPerch\* by the perch: GetIsID of the action's target), ActionHoverStart and
+  ActionHoverStop; a flight grab sends to_Flight_Kill_Grab_Enter and, as the enter clip ends
+  (FlightActionEntryEnd), to_Flight_Kill_Grab_Action or \_Action_Failed. The graph tells the
+  flying state as its states begin (FlightTakeOff, FlightCruising, FlightHovering,
+  FlightLanding, FlightPerching, FlightAction; LandEnd on the ground: CommonLibSSE FLY_STATE 0
+  none, 1 take-off, 2 cruising, 3 hovering, 4 landing, 5 perching, 6 action). Offline:
+  `node tools/behavior-run.ts meshes\actors\dragon\dragonproject.hkx --motion --at 0.2:TakeOff
+--vector-at 6:TweenPosition=0,9000,0,0 --at 6:FlyStopDefault --time 12` takes off (FlightTakeOff
+  at 0.67 s, FlightCruising at 5.3 s, 4116 ahead and 2068 up) and lands on the spot
+  (FlightLanded, LandEnd).
+- **What the engine sets**: TargetSpeed (its flying movement type's: Dragon_Flying_MT forward
+  2000 walking, 7400 running), TurnDelta and PitchDelta (degrees a second, left and up
+  positive: the graph's PathAngle slows it to MinSpeed at 25° a second), MovementDirection (its
+  z the climb and dive blend), DistToGoal, HasTweenSpeed and TweenSpeed near a stop (the graph
+  slows and feathers), TweenPosition, TweenRotation and TweenEntryDirection (in turns clockwise:
+  the approach blends' 0, 0.25, 0.5, 0.75) for the tweeners, Injured below its race's injured
+  health (RACE DATA: 35%). The graph flies at its own Speed: its acceleration (MaxAcc while
+  flapping), deceleration and drag.
+- **Moving**: in the air a flier has no character controller. Cruising (neither bAnimationDriven
+  nor bIsSynced) it steers for its goal (`steerFlight`: turning at its movement type's
+  rotate-while-moving rate, 90° a second; pitching at most 45°) at the graph's Speed, kept 512
+  units (ours) over the ground under it; taking off, landing, hovering and in the grab its
+  clips' root motion (the dragon project's animation data: MTTakeOff45 4096
+  ahead, 2048 up) and the graph's BSTweenerModifier carry it ([animation.md](animation.md)).
+  A landing begins where the approach clip ends on the spot (2048 ahead, 2048 up); a hover
+  within 3584 of its point (the feather-stop clips' way). Drawn level, turned to its heading:
+  its clips bank and pitch it. Placed in the air (no ground within 512 under it) it starts
+  cruising (FlyStartCruise). Landed (LandEnd) the movers give it its controller again; its size
+  for blows and projectiles in the air is its controller's on the ground (its skeleton's bound).
+- **In combat** (`ActorFlight.fight`, asked by the combat AI for a flier that may fly) its
+  combat style's flight section (CSTY CSFL) decides, each time a maneuver ends, in turn: a dive
+  bomb (dive bomb chance: low over its target, 384 over it, and on beyond), a hover (hover
+  chance: 1280 before its target, 768 above it, for fCombatHoverTimeMin 5.5 ..
+  fCombatHoverTimeMax s by its hover time), a perch attack (perch attack chance, with a free
+  perch within 6000 of its target: for fCombatPerchAttackTimeMin 4 .. Max s by its perch time),
+  a ground attack (ground attack chance, with a landing spot on the navmesh 1024 from the
+  target on its side, or its forced landing marker: it fights there for fCombatGroundAttackTimeMin
+  8 .. Max 17 s by its ground attack time, as the combat AI's melee fights, with its race's
+  bites, tail and wing attacks), else an orbit round its target at fCombatOrbitDistance (4000),
+  1536 above it, for about 8 s. Each maneuver rolls its flying attack chance: it breathes at its
+  target before it (within 36°) and within its shout's reach (the last word's projectile's
+  range: fire and frost breath 2000, fireball and ice storm 10000); hovering and perched it
+  breathes whenever its voice has recovered. Hurt below its injured health it lands to fight on
+  the ground (FlyStopInjured). TODO(M13): the engine's order and weighing of the style's
+  chances, its times' scale, the heights and distances (ours, `tools/flight-info.ts` lists
+  them); vanilla's csDragon chooses a dive bomb 36%, a hover 33%, a perch 16%, a landing 13%.
+- **Its breath** (`ActorCasting.shoutAt`): a shout it knows (its spell list's SHOU, one at
+  random) in its voice, ActionVoice (shoutStart, or shoutStartFireball for a fireball shout:
+  the neck states of its flight, hover, perch or ground), its words let out after their hold
+  time (ActionVoiceRelease: shoutRelease, the exhale); a concentration shout (the breaths)
+  sprays from its head's magic node ("NPC Head MagicNode [Hmag]") every relaunch interval of its
+  flame projectile until the graph's shoutStop or 3 s (the exhale clips' length). Those it
+  breathes at may sidestep it ([Combat AI](#combat-ai): Threats).
+- **Perches**: the furniture the idle tree's ActionFlyStop lands on (GetIsID of its target:
+  DragonPerchTower, DragonPerchWordwall, DragonPerchRockL02, DragonTowerHole01, DragonWaterDive)
+  whose interaction keyword (ActorTypeDragon) its race has, one flier each. On it (FlightPerching,
+  PerchLandEnd) it has no controller and turns to its target; ActionFlyStart takes it off.
+  TODO(M13): the perch furniture's marker offset (it lands on the reference's place).
+- **The flight grab** (the FlightGrab procedure): it flies at its victim, the talon grab's enter
+  clip tweens it there; as the enter ends it takes the victim within reach (else the grab fails:
+  Special_TalonGrabFailExitVert), which hangs from its rear talon ("NPC RLegFoot") at the
+  graph's ConstraintOffset (hkbTransformVectorModifier: 100, −7, −0.5) without a controller of
+  its own, and lets go at FlightActionRelease, dead. TODO(M13): whether the engine kills it or
+  the fall does, and the bone it hangs from.
+- **Packages**: Hover flies to its place, Height above it, and hovers facing the place's heading;
+  Orbit circles its place between its inner and outer radius (their middle), Height above it;
+  FlightGrab grabs its target; a Travel flies when the flier is in the air or its place is 4096
+  or more away (TODO(M13)), at 1536 over the ground, and lands there on the navmesh. With
+  nothing asked it circles where it began to, 2048 wide.
+- **Grounded**: SetAllowFlying(false) (and SetAllowFlyingEx's allow-flying) keeps it on the
+  ground and lands it (hastily) if it flies; Dragonrend (its DragonRend actor value above 0)
+  crash-lands it (FlyStopCrash) unless SetAllowFlyingEx forbade crashing. Interiors have no
+  flying (CanFlyHere).
+- **Against fliers**: a target in the air counts as far as it is in three dimensions (bows and
+  spells reach it, `chooseEquipment`); a blow from the ground does not reach one whose feet are
+  above the attacker's head and half its reach (`withinReach`: melee fighters wait under it);
+  observers notice it fSneakFlyingDistanceMult (3) times as far.
+- **Scripts and conditions**: IsFlying, GetFlyingState, IsAllowedToFly, CanFlyHere,
+  SetAllowFlying, SetAllowFlyingEx, SetForcedLandingMarker (where it lands to fight); the
+  conditions GetIsFlying, GetFlyingState, GetIsCrashLandRequest, GetIsHastyLandRequest,
+  IsAllowedToFly, CanFlyHere, GetIsInjured. TODO(M11): Dragonborn's dragon riding (Bend Will:
+  flying mounts, IsOnFlyingMount).
+- `node tools/flight-info.ts`: the races that fly, their movement types, speeds and attacks,
+  the flight settings; `node tools/flight-info.ts csDragon EncDragon01Fire`: a combat style's
+  flight section with its times and how often each maneuver comes, an actor's shouts and their
+  reach; `--perches`: the perch furniture.

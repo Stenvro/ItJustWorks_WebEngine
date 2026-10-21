@@ -337,9 +337,21 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   hits push the others, driven by the rigid body ragdoll controls.
 - **hkbRotateCharacterModifier** (6): turns the character at TurnDelta in the equip and unequip
   states; the movers make that turn already, so the graph's root motion leaves it out.
+- **The dragon's flight modifiers** (docs/ai.md, "Flying combat"): BSTweenerModifier carries
+  the character to the engine's TweenPosition and TweenRotation (the landing spot, the hover
+  point, the actor grabbed) over its tween duration or what was left of the clips below it as
+  it began: it overrides the clips' root motion where it tweens (linear; TODO(M13): Havok's
+  curve). BSPassByTargetTriggerModifier raises its event (DragonPassByEffect) as the
+  character, within its radius of the target (the engine's: `world.passByTarget`), has it go
+  from ahead to behind. BSTimerModifier is hkbTimerModifier with resetAlarm (its alarm again
+  and again: PickNewIdle), BSGetTimeStepModifier writes the step (TimeStep: the flight's
+  acceleration and drag expressions), BSDecomposeVectorModifier splits a vector
+  (MovementDirection into MoveDirZ), hkbTransformVectorModifier transforms one (the grabbed
+  actor's ConstraintOffset), BSLimbIKModifier bends the tail up off the ground (rays from
+  castOffset above each bone, the chain's first bone turned within its limit, eased by its
+  gain; TODO(M13): Bethesda's solver).
 - Not run, by milestone (behavior.ts): the ragdoll's controls, get-up and contact listener
-  (TODO(M10) 5.1), the dragon's flight (BSTweenerModifier, BSLimbIKModifier and others: 5.4)
-  and BSIStateManagerModifier (M11, with the beast forms).
+  (TODO(M10) 5.1) and BSIStateManagerModifier (M11, with the beast forms).
 
 ## Head tracking
 
