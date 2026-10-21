@@ -33,6 +33,7 @@ import { spaceOf, type AwayPlace } from './actors-away.ts';
 import { findRoute, type RouteDoor } from '../ai/routes.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import type { Gait } from '../ai/locomotion.ts';
+import type { FlightRequest } from '../ai/flight.ts';
 import { followDistance, followerRanks } from '../ai/followers.ts';
 import { mergedInputs, scheduleFits, type Space } from '../ai/package-start.ts';
 import type { ActorDoors } from './actor-doors.ts';
@@ -71,6 +72,21 @@ export interface ActorTransport {
   paused(actor: number): boolean;
 }
 
+/**
+ * The fliers (src/shell/actor-flight.ts): a flier's packages fly it (Hover, Orbit, FlightGrab,
+ * a Travel far or begun in the air).
+ */
+export interface PackageFlight {
+  mayFly(actor: number): boolean;
+  isFlying(actor: number): boolean;
+  request(actor: number, request: FlightRequest | undefined): void;
+  travel(actor: number, to: Vec3, arrive: number): Promise<boolean>;
+  grab(actor: number, victim: number): Promise<boolean>;
+}
+
+/** A flier flies a travel this far or farther (units; nearer it walks). TODO(M13). */
+const FLY_TRAVEL = 4096;
+
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -89,6 +105,8 @@ export class ActorAi {
   readonly #doors: ActorDoors | undefined;
   /** What the actors say and their conversations (src/shell/actor-talk.ts). */
   readonly #talk: (() => ActorTalk | undefined) | undefined;
+  /** The fliers (src/shell/actor-flight.ts). */
+  readonly #flight: (() => PackageFlight | undefined) | undefined;
   /**
    * Actors something else has for a while (a conversation, a greeting they stop for): their
    * packages wait as with the player; where each faces (undefined: it is left to move).
@@ -150,6 +168,8 @@ export class ActorAi {
      * ECOR, keeps it to its place meanwhile).
      */
     readonly engaged?: (reference: number) => boolean;
+    /** The fliers: their packages fly them. */
+    readonly flight?: () => PackageFlight | undefined;
   }) {
     this.#session = options.session;
     this.#movers = options.movers;
@@ -161,6 +181,7 @@ export class ActorAi {
     this.#doors = options.doors;
     this.#overrides = options.overrides;
     this.#talk = options.talk;
+    this.#flight = options.flight;
     this.#transport = options.transport;
     this.#engaged = options.engaged;
     this.#mind = this.#makeMind();
@@ -387,6 +408,15 @@ export class ActorAi {
           await new Promise((resolve) => setTimeout(resolve, ACROSS_FAILED_MS));
           return false;
         }
+        // A flier flies there: in the air already, or a way far off (it lands there).
+        const flight = this.#flight?.();
+        if (
+          flight?.mayFly(reference) === true &&
+          (flight.isFlying(reference) ||
+            Math.hypot(to[0] - staged.position[0], to[1] - staged.position[1]) >= FLY_TRAVEL)
+        ) {
+          return flight.travel(reference, to, arrive);
+        }
         // On its horse where its procedure lets it ride, else off it and off its vehicle.
         const going =
           (await transport?.ready(staged, this.#rides.get(reference) === true)) ?? reference;
@@ -466,6 +496,11 @@ export class ActorAi {
           await scripts.removeItem(reference, scripts.formHandle(item), 1, true, undefined);
         return true;
       },
+      flies: () => this.#flight?.()?.mayFly(reference) === true,
+      fly: (request) => {
+        this.#flight?.()?.request(reference, request);
+      },
+      flightGrab: (target) => this.#flight?.()?.grab(reference, target) ?? Promise.resolve(false),
       ride: (allowed) => {
         this.#rides.set(reference, allowed);
       },

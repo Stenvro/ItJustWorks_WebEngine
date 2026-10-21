@@ -214,6 +214,8 @@ export interface WorldBridge {
   tether?(cart: number, horse: number): void;
   /** The horse an actor rides now (Actor.IsOnMount, IsRidingHorse), if any. */
   mountOf?(actor: number): number | undefined;
+  /** How a flier flies now (src/shell/actor-flight.ts); undefined: not a flier of the view. */
+  flight?(actor: number): ActorFlightState | undefined;
   /** The actor riding a horse now (IsBeingRidden), if any. */
   riderOf?(horse: number): number | undefined;
   /** Actor.Dismount: an actor riding gets off; whether it was riding. */
@@ -434,6 +436,19 @@ export interface ActorMotion {
    * and whether it was a small bump (GetLastBumpDirection, IsSmallBump).
    */
   readonly bump?: { readonly direction: number; readonly small: boolean } | undefined;
+}
+
+/**
+ * How a flier flies now (GetFlyingState, IsFlying, GetIsCrashLandRequest,
+ * GetIsHastyLandRequest, CanFlyHere): src/shell/actor-flight.ts.
+ */
+export interface ActorFlightState {
+  /** FlyingState (src/ai/flight.ts): 0 on the ground .. 6 an action. */
+  readonly state: number;
+  /** How its landing was asked for (the idle tree's FlyStopHasty, FlyStopCrash). */
+  readonly landRequest: 'hasty' | 'crash' | undefined;
+  /** Whether it may fly where it is (outside). */
+  readonly canFlyHere: boolean;
 }
 
 export interface EditorPlacement {

@@ -41,6 +41,11 @@ export interface ActorLooksOptions {
   readonly camera: () => { readonly position: Vec3 } | undefined;
   /** A staged actor by its reference (looked at by others: its head). */
   readonly actor: (reference: number) => StagedActor | undefined;
+  /**
+   * The point an actor's graph watches it fly past (BSPassByTargetTriggerModifier: a dragon's
+   * combat target; src/shell/actor-flight.ts), if any.
+   */
+  readonly passByTarget?: (reference: number) => Vec3 | undefined;
 }
 
 export class ActorLooks {
@@ -150,8 +155,12 @@ export class ActorLooks {
     this.#prepared.add(behavior);
     behavior.setVariable('bHumanoidFootIKEnable', 1);
     const reference = staged.reference;
+    const passBy = this.#options.passByTarget;
     behavior.world = {
       worldFromModel: matrix,
+      get passByTarget() {
+        return passBy?.(reference);
+      },
       ground: (from, length) => {
         const physics = this.#world?.physics;
         if (!physics?.queriesCurrent) return undefined;

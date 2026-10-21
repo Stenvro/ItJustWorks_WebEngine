@@ -11,6 +11,7 @@
 // Platform-independent.
 
 import type { Condition } from '../scripting/conditions.ts';
+import type { FlightRequest } from './flight.ts';
 import type { Gait } from './locomotion.ts';
 import {
   BranchFlag,
@@ -208,6 +209,12 @@ export interface PackageBody {
   following?(leader: number | undefined): number;
   /** It counts as fleeing (IsFleeing) while its Flee procedure says so (Counts As Fleeing). */
   fleeing?(on: boolean): void;
+  /** Whether it flies (a flier allowed to, where flying is: src/ai/flight.ts). */
+  flies?(): boolean;
+  /** What it does in the air (Hover, Orbit); undefined: it lets go of it. */
+  fly?(request: FlightRequest | undefined): void;
+  /** FlightGrab: it grabs an actor in flight; resolves whether it took it. */
+  flightGrab?(target: number): Promise<boolean>;
 }
 
 export type ProcedureResult = 'success' | 'failure';

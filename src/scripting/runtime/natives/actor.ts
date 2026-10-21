@@ -489,13 +489,27 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   });
   ask('isinkillmove', false, (actor) => world.combat?.(actor)?.killMove ?? false);
   ask('getlightlevel', 0, (actor) => world.lightLevel?.(actor) ?? 0);
-  // Flying and riding.
-  ask('isflying', false, () => false);
-  ask('getflyingstate', 0, () => 0);
-  ask('isallowedtofly', false, () => false);
-  ask('canflyhere', false, () => false);
-  act('setallowflying', () => undefined);
-  act('setallowflyingex', () => undefined);
+  // Flying (src/shell/actor-flight.ts: the dragons): its flying state (FlyingState: 0 on the
+  // ground, 1 taking off, 2 cruising, 3 hovering, 4 landing, 5 perching, 6 an action).
+  ask('isflying', false, (actor) => {
+    const flight = world.flight?.(actor);
+    return flight !== undefined && flight.state !== 0 && flight.state !== 5;
+  });
+  ask('getflyingstate', 0, (actor) => world.flight?.(actor)?.state ?? 0);
+  ask('isallowedtofly', false, (actor) =>
+    world.flight?.(actor) !== undefined ? state.actors.get(actor)?.allowFlying !== false : false,
+  );
+  ask('canflyhere', false, (actor) => world.flight?.(actor)?.canFlyHere ?? false);
+  act('setallowflying', (actor, call) => {
+    state.actor(actor).allowFlying = bool(call.args[0], true);
+  });
+  // SetAllowFlyingEx(abAllowFlying, abAllowCrash, abAllowSearch).
+  act('setallowflyingex', (actor, call) => {
+    const own = state.actor(actor);
+    own.allowFlying = bool(call.args[0], true);
+    own.allowCrashLand = bool(call.args[1], true);
+    own.allowFlyingSearch = bool(call.args[2], true);
+  });
   // Riding (src/shell/actor-mounts.ts).
   ask('isonmount', false, (actor) => world.mountOf?.(actor) !== undefined);
   ask('isbeingridden', false, (actor) => world.riderOf?.(actor) !== undefined);

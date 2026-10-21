@@ -135,12 +135,13 @@ describe('Locomotion', () => {
     expect(first.values.get('Direction')).toBe(0);
   });
 
-  it('gives the turn rate in degrees per second and lands from the air', () => {
+  it('gives the turn rate in degrees per second (left positive) and lands from the air', () => {
     const graph = recorder();
     const locomotion = new Locomotion();
     locomotion.drive([graph], frame({}));
     locomotion.drive([graph], frame({ heading: degrees(1.5), seconds: 1 / 60 }));
-    expect(graph.values.get('TurnDelta')).toBeCloseTo(90);
+    // A turn to the right (compass headings grow clockwise).
+    expect(graph.values.get('TurnDelta')).toBeCloseTo(-90);
     locomotion.drive([graph], frame({ grounded: false, verticalSpeed: -10 }));
     expect(locomotion.drive([graph], frame({}))).toBe(true);
     expect(graph.events).toEqual(['JumpFall', 'JumpLand']);

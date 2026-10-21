@@ -81,6 +81,9 @@ interface Flying {
 const SELF_STEP = 4;
 const SELF_TRIES = 8;
 
+/** A projectile is at least this wide to those who see it coming (units). */
+const THREAT_RADIUS = 8;
+
 /** A human's capsule where a mover has none (units; TODO(M13): the race's bounds). */
 const DEFAULT_HEIGHT = 128;
 const DEFAULT_RADIUS = 24;
@@ -125,6 +128,29 @@ export class MagicProjectiles {
   attach(physics: PhysicsWorld | undefined): void {
     this.#physics = physics;
     if (!physics) this.clear();
+  }
+
+  /**
+   * What flies now, as the actors see it coming (the combat AI's threats: what they sidestep):
+   * where each is, its way, how wide (its collision radius, at least a hand's), whose.
+   */
+  *threats(): Iterable<{
+    readonly key: object;
+    readonly position: Vec3;
+    readonly velocity: Vec3;
+    readonly radius: number;
+    readonly source: number | undefined;
+  }> {
+    for (const flying of this.#flying) {
+      if (flying.done) continue;
+      yield {
+        key: flying,
+        position: flying.flight.position,
+        velocity: flying.flight.velocity,
+        radius: Math.max(THREAT_RADIUS, flying.projectile.collisionRadius),
+        source: flying.delivered.caster,
+      };
+    }
   }
 
   /** Their drawn scenes. */

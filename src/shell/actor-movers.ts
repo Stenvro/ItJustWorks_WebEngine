@@ -511,6 +511,16 @@ export class ActorMovers {
     return this.#movers.get(reference)?.character.shape.height;
   }
 
+  /** The radius of a moved actor's controller (its size for blows: src/shell/actor-combat.ts). */
+  radius(reference: number): number | undefined {
+    return this.#movers.get(reference)?.character.shape.radius;
+  }
+
+  /** The physics world the actors move in (its rays: the fliers' ground, src/shell/actor-flight.ts). */
+  get physics(): PhysicsWorld | undefined {
+    return this.#world?.physics;
+  }
+
   /** How many actors (not the player) are in a trigger volume of a reference. */
   triggerCount(trigger: number): number {
     let count = 0;

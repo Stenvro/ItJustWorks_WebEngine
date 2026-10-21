@@ -10,6 +10,7 @@
 // crime-conditions.ts.
 
 import { hostileTo, shouldAttack } from '../../ai/combat-ai.ts';
+import { parseRaceCombat } from '../../ai/race-combat-records.ts';
 import { NpcFlag, RaceFlag } from '../../world/actor-records.ts';
 import { ActorValue } from '../../world/actor-values.ts';
 import { conditionFunctionName } from '../condition-functions.ts';
@@ -82,6 +83,13 @@ export const Fn = {
   getActivationHeight: 680,
   isPathing: 704,
   isOnFlyingMount: 730,
+  getIsFlying: 594,
+  getFlyingState: 633,
+  getIsInjured: 645,
+  getIsCrashLandRequest: 646,
+  getIsHastyLandRequest: 647,
+  isAllowedToFly: 698,
+  canFlyHere: 731,
   isPlayersLastRiddenHorse: 339,
   getPlayerTeammateCount: 454,
   getSleeping: 49,
@@ -899,13 +907,49 @@ async function conditionValue(
       ]);
       return self && other ? other.position[2] - self.position[2] : 0;
     }
-    // Riding (src/shell/actor-mounts.ts). TODO(M10) 5.4: flying mounts (Dragonborn's dragons).
+    // Riding (src/shell/actor-mounts.ts). TODO(M11): flying mounts (Dragonborn's dragon riding).
     case Fn.isRidingHorse:
       return flag(reference !== undefined && runtime.world.mountOf?.(reference) !== undefined);
     case Fn.isBeingRidden:
       return flag(reference !== undefined && runtime.world.riderOf?.(reference) !== undefined);
     case Fn.isOnFlyingMount:
       return 0;
+    // Flying (src/shell/actor-flight.ts: the dragons; FlyingState 0 on the ground .. 6).
+    case Fn.getIsFlying:
+    case Fn.getFlyingState:
+    case Fn.getIsCrashLandRequest:
+    case Fn.getIsHastyLandRequest:
+    case Fn.isAllowedToFly:
+    case Fn.canFlyHere: {
+      if (reference === undefined) return undefined;
+      const flight = runtime.world.flight?.(reference);
+      switch (condition.function) {
+        case Fn.getFlyingState:
+          return flight?.state ?? 0;
+        case Fn.getIsFlying:
+          return flag(flight !== undefined && flight.state !== 0 && flight.state !== 5);
+        case Fn.getIsCrashLandRequest:
+          return flag(flight?.landRequest === 'crash');
+        case Fn.getIsHastyLandRequest:
+          return flag(flight?.landRequest === 'hasty');
+        case Fn.isAllowedToFly:
+          return flag(
+            flight !== undefined && runtime.state.actors.get(reference)?.allowFlying !== false,
+          );
+        default:
+          return flag(flight?.canFlyHere === true);
+      }
+    }
+    // Hurt: its health below its race's injured share (RACE DATA; dragons' crash landings).
+    case Fn.getIsInjured: {
+      if (reference === undefined) return undefined;
+      const race = await actors.raceOf(reference);
+      const record = race === undefined ? undefined : await runtime.forms.record(race);
+      const injured = record?.type === 'RACE' ? parseRaceCombat(record).injuredHealthPct : 0;
+      if (injured <= 0) return 0;
+      const health = await actors.value(reference, ActorValue.health);
+      return flag(health.max > 0 && health.current / health.max < injured);
+    }
     case Fn.isPlayersLastRiddenHorse:
       return flag(reference !== undefined && runtime.lastHorse === reference);
     // In a scene that plays.

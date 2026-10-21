@@ -121,15 +121,18 @@ const MOVING_SPEED = 5;
 /**
  * Drives an actor's behavior graphs from its movement, frame by frame: the variables the
  * engine keeps (Speed: the measured speed; Direction: the movement against the facing, 0 ahead,
- * 0.25 right, 0.5 behind, 0.75 left; TurnDelta: the turn rate, degrees per second, right
+ * 0.25 right, 0.5 behind, 0.75 left; TurnDelta: the turn rate, degrees per second, left
  * positive; IsSprinting, IsSneaking; iSyncIdleLocomotion with the movement) and its events
  * (moveStart, moveStop, SprintStart / Stop, SneakStart / Stop, SwimStart / Stop, JumpFall,
  * JumpLand / JumpLandDirectional). iSyncIdleLocomotion: its name is in the executable and no
  * vanilla graph writes it outside blocking, while 38 state machines start from it and leave
  * state 0 on moveStart and state 1 on moveStop; a graph that comes back (landing from a jump)
  * then starts moving while the actor moves. TurnDelta's unit is inferred from the graphs:
- * bleedoutTurnMult = |TurnDelta| / 20.5, the horse's turnSpeedMult = |TurnDelta / 112.5|
- * (TODO(M13): the engine's sign and smoothing).
+ * bleedoutTurnMult = |TurnDelta| / 20.5, the horse's turnSpeedMult = |TurnDelta / 112.5|; its
+ * sign from the graphs that read it: the dragon's, the Falmer's, the dwarven spheres' and
+ * centurions' turn left on TurnDelta > 0.1 ("turnLeft if (TurnDelta > 0.1)"), and
+ * hkbRotateCharacterModifier's degreesPerSecond bound to it turns counter-clockwise about z
+ * (TODO(M13): the engine's smoothing).
  */
 export class Locomotion {
   #told = {
@@ -165,7 +168,8 @@ export class Locomotion {
     this.#heading = frame.heading;
     set('Speed', speed);
     set('Direction', direction);
-    set('TurnDelta', (turned * 180) / Math.PI);
+    // Compass headings turn clockwise; TurnDelta is left (counter-clockwise) positive.
+    set('TurnDelta', (-turned * 180) / Math.PI);
     set('IsSprinting', frame.sprinting ? 1 : 0);
     set('IsSneaking', frame.sneaking ? 1 : 0);
     const told = this.#told;

@@ -352,7 +352,16 @@ export type BehaviorModifier = { readonly name: string; readonly enable: Bindabl
       readonly kind: 'is-active';
       readonly slots: readonly { readonly output: Bindable; readonly invert: boolean }[];
     }
-  | { readonly kind: 'timer'; readonly alarmTime: Bindable; readonly alarmEvent: BehaviorEvent }
+  | {
+      /**
+       * hkbTimerModifier and BSTimerModifier: raises its event once its alarm time passed;
+       * BSTimerModifier's resetAlarm starts it over then (an alarm every so often).
+       */
+      readonly kind: 'timer';
+      readonly alarmTime: Bindable;
+      readonly alarmEvent: BehaviorEvent;
+      readonly reset?: boolean;
+    }
   | {
       readonly kind: 'event-driven';
       readonly modifier: BehaviorModifier | undefined;
@@ -541,14 +550,81 @@ export type BehaviorModifier = { readonly name: string; readonly enable: Bindabl
     }
   | {
       /**
+       * BSTweenerModifier: while active it carries the character from where it was to a
+       * target place and rotation (the engine's TweenPosition and TweenRotation: a dragon's
+       * landing spot, the hover point, the actor it grabs) over its tween duration, or over
+       * what is left of the clips below it.
+       */
+      readonly kind: 'tweener';
+      readonly tweenPosition: boolean;
+      readonly tweenRotation: boolean;
+      readonly useTweenDuration: boolean;
+      readonly tweenDuration: Bindable;
+      /** World place and rotation (a quaternion about z). */
+      readonly targetPosition: VectorBindable;
+      readonly targetRotation: VectorBindable;
+    }
+  | {
+      /**
+       * BSPassByTargetTriggerModifier: raises its event as the character passes a target
+       * within a radius (a dragon flying past its combat target: DragonPassByEffect).
+       */
+      readonly kind: 'pass-by-target';
+      readonly targetPosition: VectorBindable;
+      readonly radius: Bindable;
+      readonly movementDirection: VectorBindable;
+      readonly triggerEvent: BehaviorEvent;
+    }
+  | {
+      /** BSGetTimeStepModifier: the update's time step into a variable (TimeStep). */
+      readonly kind: 'time-step';
+      readonly timeStep: Bindable;
+    }
+  | {
+      /** BSDecomposeVectorModifier: a vector's components into variables. */
+      readonly kind: 'decompose-vector';
+      readonly vector: VectorBindable;
+      readonly x: Bindable;
+      readonly y: Bindable;
+      readonly z: Bindable;
+      readonly w: Bindable;
+    }
+  | {
+      /**
+       * hkbTransformVectorModifier: a vector through a transform (rotation, then translation
+       * unless rotateOnly; its inverse with inverse), on activation and/or every update.
+       */
+      readonly kind: 'transform-vector';
+      readonly rotation: VectorBindable;
+      readonly translation: VectorBindable;
+      readonly vectorIn: VectorBindable;
+      readonly vectorOut: VectorBindable;
+      readonly rotateOnly: boolean;
+      readonly inverse: boolean;
+      readonly computeOnActivate: boolean;
+      readonly computeOnModify: boolean;
+    }
+  | {
+      /**
+       * BSLimbIKModifier: bends a chain of bones (the dragon's tail) up off the ground it
+       * would sink into, within a limit angle, easing by its gain.
+       */
+      readonly kind: 'limb-ik';
+      readonly limitAngleDegrees: Bindable;
+      readonly startBoneIndex: number;
+      readonly endBoneIndex: number;
+      readonly gain: Bindable;
+      readonly boneRadius: Bindable;
+      readonly castOffset: Bindable;
+    }
+  | {
+      /**
        * The others the vanilla graphs use: the ragdoll's (hkbPoweredRagdollControlsModifier,
        * hkbRigidBodyRagdollControlsModifier, hkbGetUpModifier,
        * BSRagdollContactListenerModifier: TODO(M10) 5.1 with hits, knockdowns and getting
-       * up), the dragon's flight (BSTweenerModifier, BSLimbIKModifier,
-       * BSPassByTargetTriggerModifier, BSDecomposeVectorModifier, hkbTransformVectorModifier,
-       * BSTimerModifier, BSGetTimeStepModifier: TODO(M10) 5.4) and BSIStateManagerModifier
-       * (the iState of werewolves, vampire lords and spriggans: TODO(M11) with the beast
-       * forms and their combat movement). `node tools/behavior-run.ts --modifiers` lists them.
+       * up) and BSIStateManagerModifier (the iState of werewolves, vampire lords and
+       * spriggans: TODO(M11) with the beast forms and their combat movement).
+       * `node tools/behavior-run.ts --modifiers` lists them.
        */
       readonly kind: 'other';
       readonly className: string;
@@ -1240,6 +1316,70 @@ class GraphReader {
           degreesPerSecond: bindable('degreesPerSecond', file.f32(at + 80)),
           speedMultiplier: bindable('speedMultiplier', file.f32(at + 84)),
           axis: vec3(file, at + 96),
+        };
+      case 'BSTimerModifier':
+        return {
+          ...base,
+          kind: 'timer',
+          alarmTime: bindable('alarmTimeSeconds', file.f32(at + 80)),
+          alarmEvent: this.event(at + 88),
+          reset: file.bool(at + 104),
+        };
+      case 'BSTweenerModifier':
+        return {
+          ...base,
+          kind: 'tweener',
+          tweenPosition: file.bool(at + 80),
+          tweenRotation: file.bool(at + 81),
+          useTweenDuration: file.bool(at + 82),
+          tweenDuration: bindable('tweenDuration', file.f32(at + 84)),
+          targetPosition: vector('targetPosition', vec4(file, at + 96)),
+          targetRotation: vector('targetRotation', vec4(file, at + 112)),
+        };
+      case 'BSPassByTargetTriggerModifier':
+        return {
+          ...base,
+          kind: 'pass-by-target',
+          targetPosition: vector('targetPosition', vec4(file, at + 80)),
+          radius: bindable('radius', file.f32(at + 96)),
+          movementDirection: vector('movementDirection', vec4(file, at + 112)),
+          triggerEvent: this.event(at + 128),
+        };
+      case 'BSGetTimeStepModifier':
+        return { ...base, kind: 'time-step', timeStep: bindable('timeStep', file.f32(at + 80)) };
+      case 'BSDecomposeVectorModifier':
+        return {
+          ...base,
+          kind: 'decompose-vector',
+          vector: vector('vector', vec4(file, at + 80)),
+          x: bindable('x', file.f32(at + 96)),
+          y: bindable('y', file.f32(at + 100)),
+          z: bindable('z', file.f32(at + 104)),
+          w: bindable('w', file.f32(at + 108)),
+        };
+      case 'hkbTransformVectorModifier':
+        return {
+          ...base,
+          kind: 'transform-vector',
+          rotation: vector('rotation', vec4(file, at + 80)),
+          translation: vector('translation', vec4(file, at + 96)),
+          vectorIn: vector('vectorIn', vec4(file, at + 112)),
+          vectorOut: vector('vectorOut', vec4(file, at + 128)),
+          rotateOnly: file.bool(at + 144),
+          inverse: file.bool(at + 145),
+          computeOnActivate: file.bool(at + 146),
+          computeOnModify: file.bool(at + 147),
+        };
+      case 'BSLimbIKModifier':
+        return {
+          ...base,
+          kind: 'limb-ik',
+          limitAngleDegrees: bindable('limitAngleDegrees', file.f32(at + 80)),
+          startBoneIndex: file.i16(at + 88),
+          endBoneIndex: file.i16(at + 90),
+          gain: bindable('gain', file.f32(at + 92)),
+          boneRadius: bindable('boneRadius', file.f32(at + 96)),
+          castOffset: bindable('castOffset', file.f32(at + 100)),
         };
       default:
         return { ...base, kind: 'other', className: object.className };

@@ -13,6 +13,11 @@
 //       and the pelvis's heights
 //   node tools/behavior-run.ts --modifiers      the modifiers of every vanilla behavior file: how
 //       many there are by class, and which the runtime runs
+//   node tools/behavior-run.ts meshesactorsdragondragonproject.hkx --motion
+//       --vector TweenPosition=0,8000,0,0 --at 0.2:TakeOff --at 7:FlyStopDefault --time 14
+//       the character moves by its graph (its clips' root motion from the project's animation
+//       data, the tweeners): where it is and which way it faces, at each printed step;
+//       --vector sets a vector variable at the start, --vector-at at a time (t:Name=x,y,z,w)
 
 import { BehaviorRuntime, type BehaviorHost } from '../src/animation/behavior-runtime.ts';
 import { ModelSpace } from '../src/animation/procedural.ts';
@@ -26,6 +31,7 @@ import {
   type BehaviorModifier,
 } from '../src/formats/hkx/behavior.ts';
 import { Packfile } from '../src/formats/hkx/packfile.ts';
+import { AnimationDataLibrary } from '../src/animation/animation-data-library.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { openGameFolder } from './gamedata-path.ts';
 
@@ -121,6 +127,14 @@ const skeleton = readAnimationContainer(Packfile.parse(await read(character.rig)
 if (!skeleton) throw new Error('no skeleton');
 const { root, files } = await loadBehaviorFiles(project, character.behavior, read);
 
+// --motion: the clips' root motion from the project's animation data (its name: the project
+// file's).
+const motionData = args.includes('--motion')
+  ? (await AnimationDataLibrary.load(read)).project(
+      (project.split(/[\\/]/).pop() ?? project).replace(/\.hkx$/i, ''),
+    )
+  : undefined;
+if (args.includes('--motion') && !motionData) console.log('  no animation data for the project');
 const clips = new Map<string, AnimationBinding | undefined>();
 const pending: Promise<void>[] = [];
 const host: BehaviorHost = {
@@ -141,6 +155,10 @@ const host: BehaviorHost = {
     return clips.get(path);
   },
   behavior: (name) => files.get(projectRelative(project, name)),
+  ...(motionData && {
+    rootMotion: (generator: string, from: number, to: number) =>
+      motionData.rootMotionDelta(generator, from, to),
+  }),
 };
 
 const runtime = new BehaviorRuntime({
@@ -154,6 +172,12 @@ for (const assignment of option('--set')) {
   const [name = '', value = '0'] = assignment.split('=');
   runtime.setVariable(name, Number(value));
 }
+const setVector = (assignment: string): string => {
+  const [name = '', value = '0,0,0,0'] = assignment.split('=');
+  runtime.setVector(name, value.split(',').map(Number));
+  return name;
+};
+for (const assignment of option('--vector')) setVector(assignment);
 
 // The world the procedural modifiers see: the character at the origin facing +y, a look
 // target, the ground (flat at --ground, rising to the right at --slope degrees).
@@ -218,6 +242,23 @@ const timed = (name: string): { at: number; what: string }[] =>
   });
 const timedEvents = timed('--at');
 const timedSets = timed('--set-at');
+const timedVectors = timed('--vector-at');
+// Where the character is (--motion: moved by its graph), its compass heading (0: +y).
+const place = { x: 0, y: 0, z: 0, heading: 0 };
+const moveBy = (): void => {
+  const { translation, yaw } = runtime.rootMotion();
+  const [x, y, z] = translation;
+  const sin = Math.sin(place.heading);
+  const cos = Math.cos(place.heading);
+  place.x += x * cos + y * sin;
+  place.y += -x * sin + y * cos;
+  place.z += z;
+  // Counter-clockwise turns lower the compass heading.
+  place.heading -= yaw;
+  const s = Math.sin(place.heading);
+  const c = Math.cos(place.heading);
+  worldMatrix.set([c, -s, 0, 0, s, c, 0, 0, 0, 0, 1, 0, place.x, place.y, place.z, 1]);
+};
 console.log(
   `${character.name}: ${String(files.size)} behavior files, skeleton ${String(skeleton.bones.length)} bones`,
 );
@@ -231,6 +272,9 @@ for (let time = 0, frame = 0; time <= total; time += step, frame++) {
     runtime.setVariable(name, Number(value));
     console.log(`t=${time.toFixed(2)} set ${name}=${value}`);
   }
+  for (const { at, what } of timedVectors) {
+    if (due(at)) console.log(`t=${time.toFixed(2)} vector ${setVector(what)}`);
+  }
   for (const { at, what } of timedEvents) {
     if (!due(at)) continue;
     runtime.sendEvent(what);
@@ -238,8 +282,15 @@ for (let time = 0, frame = 0; time <= total; time += step, frame++) {
   }
   runtime.update(step);
   await Promise.all(pending.splice(0));
+  if (args.includes('--motion')) moveBy();
   if (frame === 0 || Math.abs(time - total) < step / 2 || frame % every === 0) {
     console.log(`t=${time.toFixed(2)}`);
+    if (args.includes('--motion')) {
+      const degrees = (place.heading * 180) / Math.PI;
+      console.log(
+        `  at ${[place.x, place.y, place.z].map((v) => v.toFixed(0)).join(', ')} heading ${degrees.toFixed(1)}`,
+      );
+    }
     for (const { machine, state } of runtime.states()) console.log(`  ${machine}: ${state}`);
     for (const { animation, time: at } of runtime.playing()) {
       console.log(`  plays ${animation} at ${at.toFixed(2)}`);
