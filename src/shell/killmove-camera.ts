@@ -3,8 +3,10 @@
 // down, the first path whose conditions hold, the deepest with shots; its shots (CAMS) play in
 // turn, each its Max Time: the camera at its model's ExportCam node (meshes\cameras\*.nif) in
 // the frame of the shot's location (the attacker, the target), looking at its target. The
-// VATS conditions (GetVATS{Left,Right,Back,Front}AreaFree) are the free space beside the target
-// (a ray from its chest); the others are the running game's. TODO(M13): the shots' time
+// conditions run on the target (the attacker their target) with the kill (KillCameraContext):
+// GetVATSValue's weapon, action and distance, and the VATS sides' functions
+// (GetVATS{Left,Right,Back,Front}AreaFree: the free space beside one of them, a ray from its
+// chest; ...TargetVisible: how far into it the other is still seen). TODO(M13): the shots' time
 // multipliers (slow motion: the engine's time scale) and their image-space modifiers.
 
 import {
@@ -20,23 +22,22 @@ import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
 import type { Camera } from '../render/view-camera.ts';
 import type { Condition } from '../scripting/conditions.ts';
+import type { KillCameraContext } from '../scripting/runtime/condition-values.ts';
+import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ObjectHandle } from '../scripting/values.ts';
 import { meshPath } from '../world/actors.ts';
 import type { GameSession } from './game-session.ts';
 
 /** The kill cameras' root for paired animations. */
 const ROOT = 'pairedkilltest';
-/** The VATS area functions (UESP Function Indices): the free space to the right .. front. */
-const VATS_AREA: ReadonlyMap<number, number> = new Map([
-  [515, Math.PI / 2],
-  [516, -Math.PI / 2],
-  [517, Math.PI],
-  [518, 0],
-]);
 /** How far the free space is looked for (game units). */
 const AREA_REACH = 512;
 /** A chest's height over the feet (game units). */
 const CHEST = 96;
+/** The steps a camera's sight of the other is tried at beside a reference (units). */
+const VISIBLE_STEP = 10;
+/** GetVATSValue's actions (xEdit wbConditionVATSValueParameters, VATS Action). */
+const VatsAction = { unarmed: 0, oneHanded: 1, twoHanded: 2, magic: 3, ranged: 4 } as const;
 
 /** What the camera shows. */
 export interface KillmoveSubjects {
@@ -92,21 +93,12 @@ export class KillmoveCamera implements Camera {
     const root = all.find((path) => path.editorId.toLowerCase() === ROOT);
     if (!root) return undefined;
     const subject = new ObjectHandle(subjects.targetRef, 'actor');
-    const context = { target: runtime.referenceHandle(subjects.attackerRef) };
-    const holds = async (conditions: readonly Condition[]): Promise<boolean> => {
-      const rest: Condition[] = [];
-      for (const condition of conditions) {
-        const angle = VATS_AREA.get(condition.function);
-        if (angle === undefined) {
-          rest.push(condition);
-          continue;
-        }
-        const free = areaFree(subjects, angle);
-        const comparand = typeof condition.comparand === 'number' ? condition.comparand : 0;
-        if (!compare(condition.operator, free, comparand)) return false;
-      }
-      return runtime.conditionsHold(rest, subject, undefined, context);
+    const context = {
+      target: runtime.referenceHandle(subjects.attackerRef),
+      kill: await killOf(runtime, subjects),
     };
+    const holds = (conditions: readonly Condition[]): Promise<boolean> =>
+      runtime.conditionsHold(conditions, subject, undefined, context);
     // Down the tree: the first child whose conditions hold, as deep as it goes.
     let node = root;
     let shots = node.shots;
@@ -206,13 +198,74 @@ export class KillmoveCamera implements Camera {
   }
 }
 
-/** The free space beside the target, turned `angle` from the attacker's facing (units). */
-function areaFree(subjects: KillmoveSubjects, angle: number): number {
+/**
+ * The kill the camera shows, as the kill cameras' conditions ask it (KillCameraContext): the
+ * attacker's weapon and its action (a paired killmove: unarmed, one- or two-handed), the
+ * target, their distance, and the free space beside either of them.
+ */
+async function killOf(
+  runtime: ScriptRuntime,
+  subjects: KillmoveSubjects,
+): Promise<KillCameraContext> {
+  const weapon = await runtime.equipment.weapon(subjects.attackerRef, 'right');
+  const item = weapon === undefined ? undefined : await runtime.equipment.item(weapon);
+  const type = item?.weapon?.weaponType;
+  const attacker = subjects.attacker();
   const target = subjects.target();
-  if (!target || !subjects.physics.queriesCurrent) return AREA_REACH;
+  return {
+    weapon,
+    target: await runtime.baseOf(subjects.targetRef),
+    distance:
+      attacker && target
+        ? Math.hypot(attacker[0] - target[0], attacker[1] - target[1], attacker[2] - target[2])
+        : 0,
+    action: actionOf(type),
+    critical: false,
+    fatal: true,
+    weaponType: type,
+    projectileType: undefined,
+    delivery: undefined,
+    castingType: undefined,
+    areaFree: (reference, side) => areaFree(subjects, placeOf(subjects, reference), side),
+    targetVisible: (reference, side) => targetVisible(subjects, reference, side),
+  };
+}
+
+/** GetVATSValue's action of a weapon's animation type (WEAP DNAM: 0 hand to hand .. 9). */
+function actionOf(type: number | undefined): number {
+  switch (type) {
+    case 1:
+    case 2:
+    case 3:
+    case 4:
+      return VatsAction.oneHanded;
+    case 5:
+    case 6:
+      return VatsAction.twoHanded;
+    case 7:
+    case 9:
+      return VatsAction.ranged;
+    case 8:
+      return VatsAction.magic;
+    default:
+      return VatsAction.unarmed;
+  }
+}
+
+/** Where the attacker or the target is (the other: the target). */
+function placeOf(subjects: KillmoveSubjects, reference: number): Vec3 | undefined {
+  return reference === subjects.attackerRef ? subjects.attacker() : subjects.target();
+}
+
+/**
+ * The free space beside a place, turned by the angle from the attacker's facing (units): the
+ * camera's frame is the attacker's.
+ */
+function areaFree(subjects: KillmoveSubjects, from: Vec3 | undefined, angle: number): number {
+  if (!from || !subjects.physics.queriesCurrent) return AREA_REACH;
   const heading = subjects.attackerHeading() + angle;
   const hit = subjects.physics.raycast(
-    [target[0], target[1], target[2] + CHEST],
+    [from[0], from[1], from[2] + CHEST],
     [Math.sin(heading), Math.cos(heading), 0],
     AREA_REACH,
     Layer.camera,
@@ -220,20 +273,37 @@ function areaFree(subjects: KillmoveSubjects, angle: number): number {
   return hit?.distance ?? AREA_REACH;
 }
 
-/** A condition's comparison (CTDA operator: ==, !=, >, >=, <, <=). */
-function compare(operator: number, value: number, comparand: number): boolean {
-  switch (operator) {
-    case 0:
-      return value === comparand;
-    case 1:
-      return value !== comparand;
-    case 2:
-      return value > comparand;
-    case 3:
-      return value >= comparand;
-    case 4:
-      return value < comparand;
-    default:
-      return value <= comparand;
+/**
+ * How far beside a reference (the angle from the attacker's facing) a camera still sees the
+ * other of the kill: the farthest point of the free space from which a ray to the other's chest
+ * is clear (units). TODO(M13): the engine's measure is not documented (the data compares it with
+ * 60 and 110).
+ */
+function targetVisible(subjects: KillmoveSubjects, reference: number, angle: number): number {
+  const from = placeOf(subjects, reference);
+  const other = reference === subjects.attackerRef ? subjects.target() : subjects.attacker();
+  if (!from || !other || !subjects.physics.queriesCurrent) return AREA_REACH;
+  const free = areaFree(subjects, from, angle);
+  const heading = subjects.attackerHeading() + angle;
+  const to: Vec3 = [other[0], other[1], other[2] + CHEST * 0.75];
+  let seen = 0;
+  for (let step = VISIBLE_STEP; step <= free; step += VISIBLE_STEP) {
+    const at: Vec3 = [
+      from[0] + Math.sin(heading) * step,
+      from[1] + Math.cos(heading) * step,
+      from[2] + CHEST,
+    ];
+    const way: Vec3 = [to[0] - at[0], to[1] - at[1], to[2] - at[2]];
+    const length = Math.hypot(way[0], way[1], way[2]);
+    if (length < 1) continue;
+    const hit = subjects.physics.raycast(
+      at,
+      [way[0] / length, way[1] / length, way[2] / length],
+      length,
+      Layer.camera,
+    );
+    if (hit) break;
+    seen = step;
   }
+  return seen;
 }

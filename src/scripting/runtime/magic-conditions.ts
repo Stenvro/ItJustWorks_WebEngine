@@ -9,7 +9,7 @@
 // Mod:Function Indices". condition-values.ts asks here for the functions it does not value
 // itself. Platform-independent.
 
-import type { Condition } from '../conditions.ts';
+import { NOT_VALUED, type Condition } from '../conditions.ts';
 import type { ScriptRuntime } from './runtime.ts';
 
 /** UESP's function indices of the conditions valued here. */
@@ -35,7 +35,8 @@ export const MagicFn = {
 } as const;
 
 /**
- * A magic condition's value for a reference (undefined: not one valued here). `effectKey`: the
+ * A magic condition's value for a reference (undefined: none for it; NOT_VALUED: not one valued
+ * here). `effectKey`: the
  * active effect whose conditions are evaluated, if any.
  */
 export async function magicConditionValue(
@@ -43,7 +44,7 @@ export async function magicConditionValue(
   condition: Condition,
   reference: number | undefined,
   effectKey: string | undefined,
-): Promise<number | undefined> {
+): Promise<number | undefined | typeof NOT_VALUED> {
   const flag = (value: boolean): number => (value ? 1 : 0);
   const effect = effectKey === undefined ? undefined : runtime.magic.scriptEffect(effectKey);
   switch (condition.function) {
@@ -115,6 +116,6 @@ export async function magicConditionValue(
     case MagicFn.spellHasCastingPerk:
       return 0;
     default:
-      return undefined;
+      return NOT_VALUED;
   }
 }

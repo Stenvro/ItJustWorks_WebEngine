@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   bribeAmount,
+  intimidates,
   CrimeFlag,
   CrimeLedger,
   crimeBounty,
@@ -248,5 +249,20 @@ describe('bribes', () => {
     expect(bribeAmount(20, 15, 0, settings)).toBeGreaterThan(low);
     expect(bribeAmount(5, 100, 0, settings)).toBeLessThan(low);
     expect(bribeAmount(5, 15, 40, settings)).toBe(low + 40);
+  });
+
+  it('intimidates by level, Speech against Speech, and confidence (UESP)', () => {
+    const player = { level: 10, speech: 30 };
+    // An average one of the same level and Speech: as scary as the player.
+    expect(intimidates(player, { level: 10, speech: 30, confidence: 2 }, 1)).toBe(true);
+    expect(intimidates(player, { level: 12, speech: 30, confidence: 2 }, 1)).toBe(false);
+    // More Speech makes up for levels; the cowardly fold, the foolhardy never.
+    expect(
+      intimidates({ level: 10, speech: 60 }, { level: 12, speech: 30, confidence: 2 }, 1),
+    ).toBe(true);
+    expect(intimidates(player, { level: 40, speech: 30, confidence: 0 }, 1)).toBe(true);
+    expect(intimidates({ level: 80, speech: 100 }, { level: 2, speech: 0, confidence: 4 }, 1)).toBe(
+      false,
+    );
   });
 });

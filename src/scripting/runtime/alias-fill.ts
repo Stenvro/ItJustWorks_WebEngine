@@ -298,13 +298,32 @@ export class AliasFiller {
     return index.all;
   }
 
-  /** Find Matching Location: any location that meets the conditions, uncleared ones first. */
+  /**
+   * Find Matching Location: any location that meets the conditions, uncleared ones first, and
+   * that has a reference of each type the quest's later aliases must take from it (a
+   * location alias reference that is not optional). Without that look ahead a random pick
+   * could dead-end the quest: FreeformCaravansA's conditions ask for a BossContainer, but its
+   * MapMarker alias needs a map marker, which Dragonborn's Damphall Mine has not (1 of its 26
+   * matches; the quest then did not start at random). TODO(M13): whether the engine looks
+   * ahead so or tries the next match; UESP lists Damphall Mine among the amulet's places.
+   */
   async #matchLocation(alias: QuestAlias, context: FillContext): Promise<number | undefined> {
     const runtime = this.#runtime;
+    const needed = context.record.aliases.flatMap((other) =>
+      other.fill.kind === 'locationReference' &&
+      other.fill.location === alias.id &&
+      (other.flags & AliasFlag.optional) === 0
+        ? [other.fill.referenceType]
+        : [],
+    );
     const fresh: number[] = [];
     const cleared: number[] = [];
     for (const location of runtime.forms.db.formIdsOfType('LCTN')) {
       if (!(await this.#eligible(alias, location, context))) continue;
+      if (needed.length > 0) {
+        const references = (await this.location(location))?.references ?? [];
+        if (!needed.every((type) => references.some((entry) => entry.type === type))) continue;
+      }
       (runtime.state.locations.get(location)?.cleared ? cleared : fresh).push(location);
     }
     const pool = fresh.length > 0 ? fresh : cleared;

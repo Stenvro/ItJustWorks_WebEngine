@@ -327,6 +327,7 @@ export class PlayerAvatar {
                 ? 'run'
                 : 'walk',
         player: true,
+        reference: PLAYER_REF,
         collider: player.character.collider,
       },
       this.#soundWorld,

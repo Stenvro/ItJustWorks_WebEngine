@@ -54,7 +54,9 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
       | 'intimidated'
       | 'dontMove'
       | 'noBleedoutRecovery'
-      | 'attackOnSight',
+      | 'attackOnSight'
+      | 'allowPlayerDialogue'
+      | 'allowBleedoutDialogue',
   ): void => {
     act(name, (actor, call) => {
       state.actor(actor)[key] = bool(call.args[0], true);
@@ -333,7 +335,8 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     false,
     (actor) => state.actors.get(actor)?.noBleedoutRecovery ?? false,
   );
-  act('allowbleedoutdialogue', () => undefined);
+  // Whether the player may talk to it while it bleeds out (src/shell/actors.ts: Talk).
+  flag('allowbleedoutdialogue', 'allowBleedoutDialogue');
   ask('isunconscious', false, (actor) => state.actors.get(actor)?.unconscious ?? false);
   flag('setunconscious', 'unconscious');
   act('setcriticalstage', (actor, call) => world.criticalStage?.(actor, int(call.args[0])));
@@ -348,12 +351,13 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   });
   ask('isdoingfavor', false, (actor) => state.actors.get(actor)?.doingFavor ?? false);
   flag('setdoingfavor', 'doingFavor');
-  ask('iscommandedactor', false, () => false);
+  // Summoned, reanimated or commanded by an effect (magic-engine.ts).
+  ask('iscommandedactor', false, (actor) => runtime.magic.commander(actor) !== undefined);
   ask('isbribed', false, (actor) => state.actors.get(actor)?.bribed ?? false);
   flag('setbribed', 'bribed');
   ask('isintimidated', false, (actor) => state.actors.get(actor)?.intimidated ?? false);
   flag('setintimidated', 'intimidated');
-  ask('willintimidatesucceed', false, (actor) => runtime.crime.intimidateSucceeds(actor));
+  ask('willintimidatesucceed', false, (actor) => runtime.crime.intimidates(actor));
   ask('getbribeamount', 0, (actor) => runtime.crime.bribeAmount(actor));
   flag('setrestrained', 'restrained');
   flag('setdontmove', 'dontMove');
@@ -378,11 +382,16 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     runtime.referenceHandleOrNone(state.actors.get(actor)?.forcedLandingMarker),
   );
 
-  // --- AI, combat, detection (TODO(M10): packages, combat and detection run) ------------------
+  // --- AI, combat, detection (src/shell/actor-ai.ts, actor-combat-ai.ts, actor-senses.ts) -----
   act('evaluatepackage', (actor) => world.evaluatePackage?.(actor));
   ask('getcurrentpackage', null, (actor) => object(runtime.currentPackage(actor), 'package'));
   act('movetopackagelocation', (actor) => world.moveToPackageLocation?.(actor));
-  ask('pathtoreference', false, () => false);
+  // It walks (or runs) to the reference; true once there (latent: src/shell/actor-movers.ts).
+  ask('pathtoreference', false, async (actor, call) => {
+    const target = ref(call.args[0]);
+    if (target === undefined) return false;
+    return (await world.pathTo?.(actor, target, num(call.args[1], 0.5))) ?? false;
+  });
   act('startcombat', (actor, call) => {
     const target = ref(call.args[0]);
     if (target !== undefined) world.startCombat?.(actor, target);
@@ -454,8 +463,19 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   act('setnotshowonstealthmeter', (actor, call) =>
     world.hideFromStealthMeter?.(actor, bool(call.args[0], true)),
   );
-  act('allowpcdialogue', () => undefined);
-  ask('getdialoguetarget', null, () => null);
+  // Whether the player may talk to it (src/shell/actors.ts: Talk).
+  flag('allowpcdialogue', 'allowPlayerDialogue');
+  // Whom it talks with: the player in conversation with it (and the other way round), else
+  // the one its scene's lines address (whom it looks at). TODO(M13): conversations outside
+  // scenes (the actors' own chatter).
+  ask('getdialoguetarget', null, (actor) => {
+    const speaker = runtime.dialogueSpeaker;
+    if (speaker !== undefined && actor === speaker) return runtime.actorHandle(PLAYER_REF);
+    if (speaker !== undefined && actor === PLAYER_REF) return runtime.actorHandle(speaker);
+    return runtime.actorHandleOrNone(runtime.scenes.lookOf(actor)?.target);
+  });
+  // No vanilla script calls these (tools/papyrus-natives.ts --placeholders). TODO(M13): the
+  // offsets and forced movements of the engine's movement controller.
   act('keepoffsetfromactor', () => undefined);
   act('clearkeepoffsetfromactor', () => undefined);
   for (const name of [
@@ -572,7 +592,10 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   });
   act('startcannibal', async (actor, call) => {
     const target = ref(call.args[0]);
-    if (target !== undefined) await runtime.crime.vampireFeed(actor, target);
+    if (target === undefined) return;
+    // The corpse is eaten (HasBeenEaten: it is not fed on again).
+    state.actor(target).eaten = true;
+    await runtime.crime.vampireFeed(actor, target);
   });
   // The doors of the actor's cell that it owns are unlocked (the player may come in: no longer
   // off limits to them).

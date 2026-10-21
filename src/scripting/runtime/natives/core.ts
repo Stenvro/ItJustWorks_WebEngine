@@ -171,7 +171,7 @@ export function registerCore(n: Register, runtime: ScriptRuntime): void {
   n('form.unregisterfortrackedstatsevent', ({ self }) =>
     runtime.registerFor('trackedstats', self, false),
   );
-  // Line of sight (TODO(M10): detection decides when it is gained or lost).
+  // Line of sight: detection tells when it is gained or lost (src/shell/actor-senses.ts).
   for (const name of [
     'registerforlos',
     'registerforsinglelosgain',

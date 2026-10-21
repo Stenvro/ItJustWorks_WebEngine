@@ -5,6 +5,9 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ScriptLibrary } from '../src/scripting/script-library.ts';
 import { ScriptRuntime, type WorldBridge } from '../src/scripting/runtime/runtime.ts';
+import { Fn } from '../src/scripting/runtime/condition-values.ts';
+import { PLACEHOLDER_NATIVES } from '../src/scripting/runtime/natives/placeholders.ts';
+import type { Condition } from '../src/scripting/conditions.ts';
 import { QuestFlag } from '../src/world/quest-records.ts';
 import { ActorValue } from '../src/world/actor-values.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
@@ -14,6 +17,9 @@ import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 const MQ101 = 0x0003372b;
 const MQ103 = 0x000d0800;
 const PLAYER = 0x14;
+/** FreeformCaravansA (Amulet of the Moon) and its amulet (FreeformCaravansANecklace). */
+const CARAVANS_A = 0x000d9393;
+const AMULET = 0x000d9394;
 
 describe.skipIf(!hasGamedata())('the script runtime on the local game data', () => {
   let vfs: Vfs;
@@ -135,6 +141,49 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     const health = await runtime.actors.value(PLAYER, ActorValue.health);
     expect(health.max).toBeGreaterThan(0);
     expect(await runtime.actors.level(PLAYER)).toBe(1);
+  });
+
+  it('holds every placeholder native to a milestone, and has each registered', () => {
+    for (const [key, why] of PLACEHOLDER_NATIVES) {
+      const [script = '', fn = ''] = key.split('.');
+      expect(runtime.native(script, fn), key).toBeDefined();
+      expect(why, key).toMatch(/^TODO\(M1[1-3]\): /);
+    }
+  });
+
+  it('values the conditions on what quests made: an item in its container, its quest alias', async () => {
+    // Amulet of the Moon's amulet: made at its dungeon's boss container as the quest starts, put
+    // in it as Kharjo tells of it (its stage 10's AddItem with the reference: GetInContainer).
+    const aliases = runtime.state.quests.get(CARAVANS_A)?.aliases;
+    const container = aliases?.get(20);
+    const amulet = aliases?.get(26);
+    expect(container).toBeDefined();
+    expect(amulet).toBeDefined();
+    if (container === undefined || amulet === undefined) return;
+    const inContainer = (form: number): Condition => ({
+      function: Fn.getInContainer,
+      operator: 0,
+      or: false,
+      comparand: 1,
+      form,
+      param2: 0,
+      raw1: form,
+      form2: 0,
+      strings: [],
+      runOn: 0,
+      reference: 0,
+      param3: -1,
+      eventMember: '',
+    });
+    const item = runtime.referenceHandle(amulet);
+    expect(await runtime.conditionsHold([inContainer(container)], item)).toBe(false);
+    await runtime.quests.setStage(CARAVANS_A, 10);
+    await runtime.vm.idle();
+    expect(await runtime.conditionsHold([inContainer(container)], item)).toBe(true);
+    expect(await runtime.conditionsHold([inContainer(PLAYER)], item)).toBe(false);
+    // Taken by the player, it is theirs.
+    await runtime.removeItem(container, runtime.formHandle(AMULET), 1, true, PLAYER);
+    expect(await runtime.conditionsHold([inContainer(PLAYER)], item)).toBe(true);
   });
 
   // Last: the player dies.

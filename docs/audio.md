@@ -90,7 +90,12 @@ or not, and the last lightning flash.
   GetIsCurrentWeather (96), IsInInterior (38), IsRaining and GetGlobalValue (one each: the
   distant catapults of SkyrimOvercastWar while CWDistantCatapultsAMB is 1). Globals have the
   running game's values (what scripts set, the clock's), their starting value (FLTV) before
-  its scripts run.
+  its scripts run. The music tracks' add GetCombatTargetHasKeyword (the boss tracks while the
+  player fights a dragon: the player's combat target's keywords, read as it changes). A sound
+  played by a reference (an actor's SoundPlay events, its spells' and blows' sounds, a script's
+  Sound.Play) has its conditions run on it by the running game's evaluator (the draugr's
+  taunts are a draugr's, the bow's zoom the player's with Eagle Eye); without one, on the
+  player (docs/scripting.md, "Conditions").
 
 ## Music
 

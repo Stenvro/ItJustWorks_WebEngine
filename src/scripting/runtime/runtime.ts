@@ -33,9 +33,15 @@ import {
 import { PapyrusScheduler } from '../scheduler.ts';
 import type { ScriptLibrary } from '../script-library.ts';
 import { ObjectHandle, type Value } from '../values.ts';
-import { evaluateCondition, globalValue } from './condition-values.ts';
+import {
+  compareConditionValue,
+  evaluateCondition,
+  Fn,
+  globalValue,
+  type ConditionsContext,
+} from './condition-values.ts';
 import { FormIndex, PLAYER_BASE, PLAYER_REF } from './forms.ts';
-import { GameState, type Vec3 } from './game-state.ts';
+import { GameState, type ReferenceState, type Vec3 } from './game-state.ts';
 import { registerNatives } from './natives/index.ts';
 import { ActorEngine } from './actor-engine.ts';
 import { EquipmentEngine } from './equipment-engine.ts';
@@ -161,7 +167,18 @@ export interface WorldBridge {
   /** EvaluatePackage: the actor picks its package again (its AI: src/shell/actor-ai.ts). */
   evaluatePackage?(actor: number): void;
   currentPackage?(actor: number): number | undefined;
+  /** The procedure its package runs now, by name ("Travel", "Sandbox": GetCurrentAIProcedure). */
+  currentProcedure?(actor: number): string | undefined;
+  /** The player passes into another cell or worldspace now (IsPlayerMovingIntoNewSpace). */
+  changingSpace?(): boolean;
+  /** The regions (REGN) of the cell the player is in (IsPlayerInRegion). */
+  playerRegions?(): readonly number[];
   moveToPackageLocation?(actor: number): void;
+  /**
+   * Actor.PathToReference: a loaded actor walks (or runs: walkRun of 0.5 and more) to a
+   * reference; resolves with whether it got there. Undefined: not one the world moves.
+   */
+  pathTo?(actor: number, target: number, walkRun: number): Promise<boolean> | undefined;
   startCombat?(actor: number, target: number): void;
   stopCombat?(actor: number): void;
   /** An actor's combat state now (src/shell/actor-combat.ts), if it is loaded. */
@@ -291,6 +308,17 @@ export interface WorldBridge {
   ): void;
   particleGeometry?(geometry: number, apply: boolean, fade: number): void;
   fireWeapon?(weapon: number, source: number, ammo: number | undefined): void;
+  /**
+   * ObjectReference.PlayImpactEffect: an impact data set's impact where a ray from a node of a
+   * reference (none: its origin) along a direction meets a surface; false if none is met.
+   */
+  impactEffect?(
+    reference: number,
+    impactDataSet: number,
+    node: string,
+    direction: Vec3,
+    length: number,
+  ): boolean;
   /**
    * What an actor says now, if it talks (IsTalking, IsGreetingPlayer, GetDialogueEmotion,
    * GetDialogueEmotionValue): its response's emotion and value, whether it greets the player.
@@ -438,6 +466,16 @@ export interface ActorMotion {
    * and whether it was a small bump (GetLastBumpDirection, IsSmallBump).
    */
   readonly bump?: { readonly direction: number; readonly small: boolean } | undefined;
+  /** Its heading (radians, compass: 0 along +Y, π/2 along +X). */
+  readonly heading?: number;
+  /** The velocity it moves with (game units per second, z up): GetVelocity, GetPathing... */
+  readonly velocity?: Vec3;
+  /** The horizontal velocity its controller is asked to move with (GetPathingTargetSpeed). */
+  readonly wish?: readonly [number, number] | undefined;
+  /** The way its path goes on from here (GetPathingTargetAngleOffset), while it travels. */
+  readonly aim?: readonly [number, number] | undefined;
+  /** The water (WATR) it is in, if any (IsInDangerousWater). */
+  readonly water?: number | undefined;
 }
 
 /**
@@ -518,6 +556,14 @@ const CLOCK_GLOBALS: Readonly<Record<string, ClockGlobal>> = {
 
 /** Unbound (MQ101), Skyrim.esm: the opening a new game starts with. */
 const OPENING_QUEST = 0x03372b;
+
+/** CommonLibSSE ATTACK_STATE_ENUM kBash (GetPlayerAction's bash). */
+const ATTACK_STATE_BASH = 6;
+/**
+ * How long a lock's outcome is the player's action (real seconds). TODO(M13): the engine keeps
+ * it until the next action; the reactions that ask (Flinch, ReactionToPlayer) come at once.
+ */
+const PLAYER_ACTION_SECONDS = 2;
 
 /** Condition run-on names, for reports. */
 const RUN_ON = [
@@ -998,7 +1044,8 @@ export class ScriptRuntime implements VmHost {
 
   /**
    * RegisterForLOS (OnGainLOS and OnLostLOS until unregistered) and its single forms (one
-   * OnGainLOS or one OnLostLOS). Detection decides when sight changes (TODO(M10)).
+   * OnGainLOS or one OnLostLOS). Detection tells when sight changes
+   * (src/shell/actor-senses.ts: lineOfSightChanged).
    */
   registerLineOfSight(target: ObjectHandle | null, viewer: Value, seen: Value, kind: string): null {
     const from = this.reference(viewer);
@@ -1543,6 +1590,8 @@ export class ScriptRuntime implements VmHost {
     if (inside && at !== undefined) {
       const items = await this.inventory(at);
       items.set(base, (items.get(base) ?? 0) + 1);
+      // It is in that container (GetInContainer; it moves with its base's items).
+      this.state.reference(formId).container = { holder: at, base, count: 1 };
       return formId;
     }
     const placement = at === undefined ? undefined : await this.placement(at);
@@ -1705,6 +1754,56 @@ export class ScriptRuntime implements VmHost {
     return [created?.base ?? form.formId];
   }
 
+  /** Whether a form is a reference of an item (one a script made, or a placed REFR). */
+  #isItemReference(formId: number): boolean {
+    if (this.state.created.has(formId)) return true;
+    const at = this.forms.db.locate(formId);
+    return at !== undefined && this.forms.db.typeAt(at) === 'REFR';
+  }
+
+  /**
+   * AddItem with a reference: it leaves the world (or the container it was in) for the
+   * container, as its base's count (XCNT); its scripts get OnContainerChanged, the container
+   * OnItemAdded with it.
+   */
+  async #putInto(reference: number, container: number, silent: boolean): Promise<void> {
+    const base = await this.baseOf(reference);
+    if (base === undefined) return;
+    const state = this.state.reference(reference);
+    const created = this.state.created.get(reference);
+    const xcnt = created ? undefined : (await this.forms.record(reference))?.fields.first('XCNT');
+    const count = Math.max(
+      1,
+      created?.count ?? (xcnt && xcnt.length >= 4 ? view(xcnt).getInt32(0, true) : 1),
+    );
+    const from = state.container?.holder;
+    if (from === container) return;
+    if (from !== undefined) {
+      const had = await this.inventory(from);
+      had.set(base, Math.max(0, (had.get(base) ?? 0) - count));
+    }
+    state.container = { holder: container, base, count };
+    this.world.enableChanged?.(reference, false);
+    const items = await this.inventory(container);
+    items.set(base, (items.get(base) ?? 0) + count);
+    if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(base, count, true));
+    this.detach(
+      this.sendEvent(reference, 'OnContainerChanged', [
+        this.referenceHandle(container),
+        this.referenceHandleOrNone(from),
+      ]),
+    );
+    this.detach(
+      this.sendEvent(container, 'OnItemAdded', [
+        this.formHandle(base),
+        count,
+        this.referenceHandle(reference),
+        this.referenceHandleOrNone(from),
+      ]),
+    );
+    await this.equipment.itemsGiven(container, base);
+  }
+
   async itemCountOf(container: number, form: Value): Promise<number> {
     const items = await this.inventory(container);
     let count = 0;
@@ -1717,6 +1816,12 @@ export class ScriptRuntime implements VmHost {
   }
 
   async addItem(container: number, form: Value, count: number, silent: boolean): Promise<void> {
+    // A reference (an item made or placed in the world: a quest's item) goes into it itself.
+    const reference = form instanceof ObjectHandle ? this.reference(form) : undefined;
+    if (reference !== undefined && this.#isItemReference(reference)) {
+      await this.#putInto(reference, container, silent);
+      return;
+    }
     const items = await this.inventory(container);
     for (const item of await this.#expand(form)) {
       const record = await this.forms.record(item);
@@ -1756,6 +1861,7 @@ export class ScriptRuntime implements VmHost {
       // Items with data of their own leave as asked, else after the plain ones.
       this.crafting.itemsMoved(container, to, item, moved, have, stack);
       items.set(item, have - moved);
+      this.#referencesMoved(container, to, item, moved, have);
       // Stolen items leave last and stay stolen where they go (crime-engine.ts).
       this.crime.itemsMoved(container, to, item, moved, have);
       // What it no longer has enough of comes off (the equip system).
@@ -1782,6 +1888,41 @@ export class ScriptRuntime implements VmHost {
         );
         await this.equipment.itemsGiven(to, item);
       }
+    }
+  }
+
+  /**
+   * References a container holds (an item taken or made in it: a favor's letter, a quest
+   * item) go with their base's items as they leave it: the last of them when it keeps some
+   * (they are given first: TODO(M13) which the engine moves), all once it has none left; to
+   * the other container, or out of any (dropped, removed).
+   */
+  #referencesMoved(
+    container: number,
+    to: number | undefined,
+    base: number,
+    moved: number,
+    had: number,
+  ): void {
+    const held: { reference: number; state: ReferenceState }[] = [];
+    for (const [reference, state] of this.state.references) {
+      if (state.container?.holder === container && state.container.base === base)
+        held.push({ reference, state });
+    }
+    if (held.length === 0) return;
+    const leaving = had - moved <= 0 ? held.length : Math.max(0, held.length - (had - moved));
+    for (const { reference, state } of held.slice(held.length - leaving)) {
+      if (to === undefined) {
+        // Removed from the game with the items (RemoveItem without a container to go to).
+        delete state.container;
+        state.deleted = true;
+      } else state.container = { holder: to, base, count: state.container?.count ?? 1 };
+      this.detach(
+        this.sendEvent(reference, 'OnContainerChanged', [
+          this.referenceHandleOrNone(to),
+          this.referenceHandle(container),
+        ]),
+      );
     }
   }
 
@@ -2170,6 +2311,28 @@ export class ScriptRuntime implements VmHost {
     return this.world.currentPackage?.(actor) ?? this.scenes.packageOf(actor);
   }
 
+  #playerActed: { readonly action: number; readonly at: number } | undefined;
+
+  /**
+   * A lock's outcome as the player picks it (the lockpicking menu: 3 success, 4 a pick broke),
+   * which GetPlayerAction answers for a moment (PLAYER_ACTION_SECONDS).
+   */
+  playerActed(action: number): void {
+    this.#playerActed = { action, at: this.state.realTime };
+  }
+
+  /**
+   * GetPlayerAction (xEdit wbPlayerActionEnum): 1 a power attack, 2 a bash (their combat state
+   * now), 3 or 4 a lock picked or a pick broken a moment ago, else 0 (normal usage).
+   */
+  playerAction(): number {
+    const combat = this.world.combat?.(PLAYER_REF);
+    if (combat?.powerAttacking) return 1;
+    if (combat?.attackState === ATTACK_STATE_BASH) return 2;
+    const acted = this.#playerActed;
+    return acted && this.state.realTime - acted.at <= PLAYER_ACTION_SECONDS ? acted.action : 0;
+  }
+
   // --- Skills (src/scripting/runtime/progression-engine.ts), story events, finding references --
 
   /** Game.AdvanceSkill: the player used a skill `magnitude` times (its experience). */
@@ -2255,37 +2418,35 @@ export class ScriptRuntime implements VmHost {
     conditions: readonly Condition[],
     subject: ObjectHandle,
     event?: StoryEventData,
-    context: {
-      readonly target?: ObjectHandle;
-      readonly quest?: number;
-      /** The running package (its data inputs; conditions run on its data). */
-      readonly packageData?: (input: number) => number | 'none' | undefined;
-      readonly packageTarget?: (input: number) => number | undefined;
-      /** The magic effect whose conditions these are (EffectWasDualCast, ...). */
-      readonly effectKey?: string;
-    } = {},
+    context: ConditionsContext = {},
   ): Promise<boolean> {
     let result = true;
     let group: boolean | undefined;
     for (const condition of conditions) {
-      const on = await this.#runsOn(condition, subject, event, context);
+      // Swap Subject and Target: what runs on the one runs on the other.
+      const swap = condition.swapSubjectAndTarget === true ? context.target : undefined;
+      const self = swap ?? subject;
+      const around: ConditionsContext = swap ? { ...context, target: subject } : context;
+      const on = await this.#runsOn(condition, self, event, around);
       let holds: boolean;
       if (on === 'unknown') {
         this.vm.warn(
           `conditions run on ${RUN_ON[condition.runOn] ?? String(condition.runOn)} are not valued yet`,
         );
         holds = true;
-      } else {
-        const quest = context.quest ?? (subject.type === 'quest' ? subject.formId : undefined);
+      } else if (on === 'none') {
+        // Nothing to run on: it fails, but DoesNotExist (an event's member that is not there)
+        // is 1.
         holds =
-          on !== 'none' &&
-          (await evaluateCondition(this, condition, on, {
-            event,
-            quest,
-            ...(context.packageData && { packageData: context.packageData }),
-            ...(context.target && { target: context.target }),
-            ...(context.effectKey !== undefined && { effectKey: context.effectKey }),
-          }));
+          condition.function === Fn.doesNotExist &&
+          (await compareConditionValue(this, condition, 1));
+      } else {
+        const quest = around.quest ?? (subject.type === 'quest' ? subject.formId : undefined);
+        holds = await evaluateCondition(this, condition, on, {
+          ...around,
+          ...(event && { event }),
+          ...(quest !== undefined && { quest }),
+        });
       }
       if (condition.or) group = (group ?? false) || holds;
       else {
