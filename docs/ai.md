@@ -973,7 +973,9 @@ the rules below read each value as its name says (TODO(M13)).
   aggressive enemies and the neutral, frenzied anyone) it attacks on sight; its aggro radius
   (AIDT, where its package has the aggro radius interrupt) first leaves alone those beyond the
   warn radius, warns within it (ActionIdleWarn: the bear's roar, facing them) and attacks within
-  the attack radius, or within the warn-or-attack radius once it has warned 2 s (TODO(M13)). It
+  the attack radius, or within the warn-or-attack radius once it has warned 2 s (TODO(M13)). The
+  radius also has one that would not attack on sight warn and attack the neutral that come close
+  (inferred: vanilla's wolves and bears are unaggressive with an aggro radius). It
   helps by its assistance (helps allies; helps friends and allies) one that fights or is
   attacked, against the other; guards (CLAS DATA guard flag) help anyone attacked who did not
   strike first and would not attack on sight (TODO(M11): crime); the player's teammates help

@@ -120,6 +120,8 @@ const BODY_RADIUS = 20;
 const BODY_HEIGHT = 128;
 /** The chest a strike or shot comes from and aims at (of the height). */
 const CHEST = 0.75;
+/** Seconds an attack waits for its graph to answer (see ActorCombat #unanswered). */
+const ATTACK_ANSWER = 1.5;
 /** Fighters this far from the player are left alone (the high process's reach). */
 const FIGHT_REACH = 4096;
 /** The enemy bar stays this long after the last hit (seconds). TODO(M13): the engine's time. */
@@ -159,6 +161,11 @@ interface Fighter {
   killing: boolean;
   /** The last hit it dealt was critical. */
   lastCritical: boolean;
+  /** When its current attack began, while it has not got past its wind-up (see #unanswered). */
+  attackSince: number | undefined;
+  /** Attack events its graph took (past their wind-up) and those it never did (#unanswered). */
+  readonly liveAttacks: Set<string>;
+  readonly deadAttacks: Set<string>;
 }
 
 /** What a fighter's hands hold, for combat. */
@@ -469,7 +476,8 @@ export class ActorCombat implements CombatBridge {
       runtime.progression.refused(reference, 'stamina');
       action = action.replace('PowerAttack', 'Attack');
     }
-    const event = await this.#act(fighter, action, target);
+    const event =
+      (await this.#act(fighter, action, target)) ?? this.#creatureAttack(fighter, action);
     if (event === undefined) return false;
     const lower = event.toLowerCase();
     if (lower === 'weapequip') {
@@ -496,6 +504,7 @@ export class ActorCombat implements CombatBridge {
       bash: kind.bash,
     });
     this.#setVariable(fighter, 'IsAttacking', 1);
+    fighter.attackSince = this.#clock;
     if (kind.bash) this.#setVariable(fighter, 'IsBashing', 1);
     void this.#spendFor(fighter, data ?? DEFAULT_ATTACK, kind.power, kind.bash, dual);
     // Attacking ends its invisibility (the magic system); its combat line (an NPC's).
@@ -596,6 +605,7 @@ export class ActorCombat implements CombatBridge {
         this.#fighters.set(staged.reference, fighter);
       }
       this.#follow(fighter, staged.placed, runtime);
+      this.#unanswered(fighter);
     }
     const player = this.#fighters.get(PLAYER_REF);
     const avatar = this.#avatar;
@@ -861,7 +871,28 @@ export class ActorCombat implements CombatBridge {
         this.#effect(fighter, effect);
       }
       const lower = event.toLowerCase();
+      // A creature's graph (the wolf's: combatStanceStart raises weaponDraw) has no equip clip
+      // that ends with WeapEquip_Out: its weapon (its teeth and claws) is drawn at weaponDraw.
+      if (
+        lower === 'weapondraw' &&
+        (fighter.state.weapon === WeaponState.drawing ||
+          fighter.state.weapon === WeaponState.wantToDraw) &&
+        !(fighter.body?.behavior?.declares('WeapEquip_Out') ?? true)
+      ) {
+        fighter.state.weapon = WeaponState.drawn;
+        this.#setVariable(fighter, 'IsEquipping', 0);
+      }
       if (lower === 'weapequip_out') this.#setVariable(fighter, 'IsEquipping', 0);
+      // So is its sheathing at weaponSheathe (no Unequip_Out follows).
+      if (
+        lower === 'weaponsheathe' &&
+        (fighter.state.weapon === WeaponState.sheathing ||
+          fighter.state.weapon === WeaponState.wantToSheathe) &&
+        !(fighter.body?.behavior?.declares('Unequip_Out') ?? true)
+      ) {
+        fighter.state.weapon = WeaponState.sheathed;
+        this.#setVariable(fighter, 'IsUnequipping', 0);
+      }
       if (lower === 'unequip_out') this.#setVariable(fighter, 'IsUnequipping', 0);
       if (lower === 'attackstop' || lower === 'bashstop') {
         this.#setVariable(fighter, 'IsAttacking', 0);
@@ -1486,6 +1517,65 @@ export class ActorCombat implements CombatBridge {
     return taken ? event : undefined;
   }
 
+  /**
+   * An attack its graph did not take (an event it names but no state of it answers: the canine
+   * graphs' attackStart_AttackRight1, a dog's): still in its wind-up after ATTACK_ANSWER seconds,
+   * the attack ends; an event its graph never took is not chosen again, so that it fights on.
+   */
+  #unanswered(fighter: Fighter): void {
+    const since = fighter.attackSince;
+    const current = fighter.state.current;
+    if (since === undefined) return;
+    const event = current?.event.toLowerCase();
+    if (!current || event === undefined || fighter.state.attack !== AttackState.draw) {
+      if (event !== undefined) fighter.liveAttacks.add(event);
+      fighter.attackSince = undefined;
+      return;
+    }
+    if (this.#clock - since < ATTACK_ANSWER) return;
+    fighter.attackSince = undefined;
+    if (!fighter.liveAttacks.has(event)) fighter.deadAttacks.add(event);
+    graphEvent(fighter.state, 'attackStop');
+    this.#setVariable(fighter, 'IsAttacking', 0);
+    this.#setVariable(fighter, 'IsBashing', 0);
+  }
+
+  /**
+   * An attack of an actor whose idle tree has none for the action (creatures: the wolf's graph
+   * has no ActionRightAttack idles): one of its attack data (its race's ATKD / ATKE) of the
+   * action's kind (power or not; bashes for a bash) whose event its graph has (the canine race's
+   * data serves wolves and dogs: attackStart_AttackRight1 is a dog's), at random by their attack
+   * chances, its event sent to the graph. Inferred from the data: the creatures' attacks are their races'
+   * attack events. TODO(M13): how the engine picks among them (the attack angle, distance).
+   */
+  #creatureAttack(fighter: Fighter, action: string): string | undefined {
+    const attacks = fighter.gear?.attacks;
+    if (fighter.player || !attacks || !action.includes('Attack')) return undefined;
+    const power = action.includes('Power');
+    const bash = action.includes('Bash');
+    const graphs = this.#graphs(fighter);
+    const choices = [...attacks.all()].filter((attack) => {
+      const kind = attackEventKind(attack.event, attack);
+      return (
+        kind?.power === power &&
+        kind.bash === bash &&
+        !fighter.deadAttacks.has(attack.event.toLowerCase()) &&
+        graphs.some((graph) => graph.declares(attack.event))
+      );
+    });
+    let total = 0;
+    for (const attack of choices) total += Math.max(0, attack.attackChance);
+    let pick = Math.random() * total;
+    for (const attack of choices) {
+      pick -= Math.max(0, attack.attackChance);
+      if (pick > 0) continue;
+      let taken = false;
+      for (const graph of graphs) taken = graph.sendEvent(attack.event) || taken;
+      return taken ? attack.event : undefined;
+    }
+    return undefined;
+  }
+
   #graphKey(project: string | undefined): Promise<string | undefined> {
     if (project === undefined) return Promise.resolve(undefined);
     let entry = this.#graphKeys.get(project);
@@ -1789,5 +1879,8 @@ function newFighter(reference: number, player: boolean): Fighter {
     pairedFor: 0,
     killing: false,
     lastCritical: false,
+    attackSince: undefined,
+    liveAttacks: new Set(),
+    deadAttacks: new Set(),
   };
 }
