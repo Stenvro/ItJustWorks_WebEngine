@@ -50,6 +50,11 @@ export function sideCategories(settings: GameSettings): unknown[] {
   ];
 }
 
+/** An entry's stack of improved items (ItemEntry.stack), if it is one. */
+export function entryStack(entry: ItemEntry): number | undefined {
+  return typeof entry.stack === 'number' ? entry.stack : undefined;
+}
+
 /** The other side's entry for a row: its bits moved up, marked as the container's. */
 export function otherSideEntry(row: Row): ItemEntry {
   const entry = itemEntry(row);
@@ -108,9 +113,17 @@ export class ItemShelf {
    * NPC takes up what suits it: the equip system); the item's sound plays (picked up as the
    * player gets it, else put down).
    */
-  async move(formId: number, amount: number, from: number, to: number, audible = true) {
+  async move(
+    formId: number,
+    amount: number,
+    from: number,
+    to: number,
+    audible = true,
+    /** Which of the item's stacks (an improved one: an entry's `stack`) moves. */
+    stack?: number,
+  ) {
     const game = this.runtime;
-    await game.removeItem(from, game.formHandle(formId), amount, true, to);
+    await game.removeItem(from, game.formHandle(formId), amount, true, to, stack);
     if (!audible) return;
     const record = await this.item(formId);
     const sounds = this.#session.soundSystem;
@@ -147,6 +160,8 @@ export function containerModel(
     amount: number,
     fromContainer: boolean,
     audible = true,
+    /** The entry's stack (an improved item), if it is one. */
+    stack?: number,
   ): Promise<void> => {
     const crime = shelf.runtime.crime;
     if (pickpocket) {
@@ -155,10 +170,10 @@ export function containerModel(
       return;
     }
     if (!fromContainer) {
-      await shelf.move(formId, amount, PLAYER_REF, container, audible);
+      await shelf.move(formId, amount, PLAYER_REF, container, audible, stack);
       return;
     }
-    await shelf.move(formId, amount, container, PLAYER_REF, audible);
+    await shelf.move(formId, amount, container, PLAYER_REF, audible, stack);
     if (await stealing()) await crime.steal(PLAYER_REF, formId, amount, container);
   };
   /** A card with its pickpocket chance (to take one, or to place one). */
@@ -204,7 +219,7 @@ export function containerModel(
     },
     select: async (entry, slot) => {
       if (entry.container) {
-        await move(entry.formId, 1, true);
+        await move(entry.formId, 1, true, true, entryStack(entry));
         return;
       }
       await inventory.select(entry, slot);
@@ -212,7 +227,8 @@ export function containerModel(
     favorite: (entry) => {
       if (!entry.container) inventory.favorite(entry);
     },
-    transfer: (entry, amount, fromContainer) => move(entry.formId, amount, fromContainer),
+    transfer: (entry, amount, fromContainer) =>
+      move(entry.formId, amount, fromContainer, true, entryStack(entry)),
     // One sound for all of them: the first item's.
     takeAll: async () => {
       if (npcMode || pickpocket) return;

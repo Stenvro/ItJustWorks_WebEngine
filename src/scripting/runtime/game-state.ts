@@ -6,6 +6,7 @@
 
 import type { PlayerAppearance } from '../../gameplay/chargen.ts';
 import { emptyLoadout, type Loadout } from '../../gameplay/equipment.ts';
+import type { CreatedForm } from '../../world/created-forms.ts';
 import type { StoryEventData } from './story-manager.ts';
 
 export type Vec3 = [number, number, number];
@@ -236,8 +237,10 @@ export interface ActorCastingState {
   /** Powers it used, by spell: the game day (GameDaysPassed) of the last use. */
   readonly powersUsed: Map<number, number>;
   /**
-   * Its staffs' charge left, by weapon base (TODO(M11): per item, as the game keeps it on each
-   * one: ExtraCharge; the inventory's stacks do not tell them apart yet).
+   * Its staffs' and enchanted weapons' charge left, by weapon base (the crafting engine's for
+   * weapons). An enchanted weapon the player made is a form of its own, so its charge is its
+   * own; the plugins' enchanted weapons share theirs by base. TODO(M13): per item, as the game
+   * keeps it on each one (ExtraCharge).
    */
   readonly charge: Map<number, number>;
   /** The voice's recovery it began with (seconds; the shout meter's whole). */
@@ -281,6 +284,18 @@ export interface CrimeState {
   readonly stolenHorses: Set<number>;
   /** The trespass warnings the player was given where they trespass now (GetTrespassWarningLevel). */
   trespassWarnings: number;
+}
+
+/**
+ * Alike items of a container's base with data of their own (the game's extra data list on an
+ * inventory entry, with its count: ExtraHealth for an improved weapon or armor).
+ */
+export interface ItemStack {
+  count: number;
+  /** ExtraHealth: 1.1 Fine, 1.2 Superior, ... (src/gameplay/crafting.ts temperHealth). */
+  readonly health: number;
+  /** The one of its base an actor wears or wields (the game's ExtraWorn on the list). */
+  worn?: boolean;
 }
 
 /** A reference a script created (PlaceAtMe, alias Create Reference). */
@@ -371,11 +386,18 @@ export class GameState {
   /** Actors dead, by their base (GetDeadCount). */
   readonly deadCounts = new Map<number, number>();
   /**
-   * The player's improved weapons and armor (the smithing benches): their health (1 plain,
-   * 1.1 Fine, ...), by base. TODO(M11): per item (the game keeps it on each item, ExtraHealth),
-   * which the item stacks of the inventories do not tell apart yet. TODO(M12): in the save.
+   * Items of containers with data of their own (ItemStack: an improved weapon's health), by
+   * container, then base: alike items of a base in stacks; the rest of the base's count (the
+   * inventory's) is plain. Kept by the crafting engine (src/scripting/runtime/crafting-engine.ts).
+   * TODO(M12): in the save.
    */
-  readonly itemHealth = new Map<number, number>();
+  readonly itemStacks = new Map<number, Map<number, ItemStack[]>>();
+  /**
+   * Forms the game made (the player's enchantments, enchanted items, potions and poisons:
+   * src/world/created-forms.ts), by form id (the save's own range, as created references).
+   * TODO(M12): in the save (and those no inventory holds any more left out).
+   */
+  readonly createdForms = new Map<number, CreatedForm>();
   /** Enchantments the player learned by disenchanting (their base enchantments). */
   readonly knownEnchantments = new Set<number>();
   /** The effects the player found out on each ingredient, by effect slot (0..3). */
@@ -484,6 +506,13 @@ export class GameState {
   create(base: number, count = 1): number {
     const formId = this.nextCreated++;
     this.created.set(formId, { base, count });
+    return formId;
+  }
+
+  /** A new form's form id (a created form: an enchantment, a potion). */
+  createForm(form: CreatedForm): number {
+    const formId = this.nextCreated++;
+    this.createdForms.set(formId, form);
     return formId;
   }
 }

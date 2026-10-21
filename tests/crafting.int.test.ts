@@ -17,6 +17,9 @@ import {
   type RecipeIndex,
   type Workbench,
 } from '../src/world/crafting-records.ts';
+import { PLAYER_REF } from '../src/scripting/runtime/forms.ts';
+import { ScriptRuntime } from '../src/scripting/runtime/runtime.ts';
+import { ScriptLibrary } from '../src/scripting/script-library.ts';
 import { DefaultObjects } from '../src/world/default-objects.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -155,4 +158,244 @@ describe.skipIf(!hasGamedata())('crafting records in the local game data', () =>
       workbenches.get('CraftingBlacksmithSharpeningWheel')?.type,
     );
   });
+});
+
+/** Skyrim.esm forms crafted with. */
+const WHEAT = 0x4b0ba;
+const BLUE_MOUNTAIN_FLOWER = 0x77e1c;
+const NIGHTSHADE = 0x2f44c;
+const DEATHBELL = 0x516c8;
+const SALT_PILE = 0x34cdf;
+const IRON_SWORD = 0x12eb7;
+const IRON_CUIRASS = 0x12e49;
+const SOUL_GEM_GRAND_FILLED = 0x2e4ff;
+const SOUL_GEM_PETTY_FILLED = 0x2e4e3;
+const FIRE_DAMAGE_BASE = 0x10fb95;
+const FORTIFY_HEALTH_BASE = 0x10fb77;
+/** EnchIronSwordFire01, "Iron Sword of Embers". */
+const IRON_SWORD_OF_EMBERS = 0x49bb8;
+const HEALTH = 24;
+const ALCHEMY = 16;
+const ENCHANTING = 23;
+const SMITHING = 10;
+
+describe.skipIf(!hasGamedata())('crafting in a running game on the local game data', () => {
+  let vfs: Vfs;
+  let db: RecordDatabase;
+  let runtime: ScriptRuntime;
+  const count = (container: number, formId: number) => runtime.itemCount(container, formId);
+  const give = (formId: number, n = 1) =>
+    runtime.addItem(PLAYER_REF, runtime.formHandle(formId), n, true);
+  const experience = (skill: number) => runtime.state.skillExperience.get(skill) ?? 0;
+
+  beforeAll(async () => {
+    vfs = await Vfs.mount(openGameFolder());
+    db = await RecordDatabase.open(vfs);
+    const library = new ScriptLibrary(async (name) => {
+      const path = `scripts\\${name}.pex`;
+      return vfs.has(path) ? vfs.read(path) : undefined;
+    });
+    runtime = new ScriptRuntime(db, library);
+  }, 120_000);
+  afterAll(async () => {
+    await db.close();
+    await vfs.close();
+  });
+
+  it('brew a potion named after its strongest effect, the same one made again', async () => {
+    await give(WHEAT, 2);
+    await give(BLUE_MOUNTAIN_FLOWER, 2);
+    const before = experience(ALCHEMY);
+    const first = await runtime.crafting.brew(PLAYER_REF, [WHEAT, BLUE_MOUNTAIN_FLOWER]);
+    const made = first.made ?? 0;
+    expect(made >>> 24).toBe(0xff);
+    const record = await runtime.forms.record(made);
+    expect(record?.type).toBe('ALCH');
+    expect(record?.text('FULL')).toBe('Potion of Fortify Health');
+    const potion = await runtime.magic.item(made);
+    expect(potion?.kind).toBe('potion');
+    const effects = await Promise.all(
+      (potion?.effects ?? []).map(async (e) => [
+        (await runtime.magic.effect(e.effect))?.editorId,
+        e.magnitude,
+        e.duration,
+      ]),
+    );
+    // Alchemy 15: the power is 4 x (1 + 0.5 x 0.15) = 4.3.
+    expect(effects).toEqual([
+      ['AlchFortifyHealth', Math.round(4 * 4.3), 60],
+      ['AlchRestoreHealth', Math.round(5 * 4.3), 0],
+    ]);
+    expect((await runtime.equipment.item(made))?.value).toBe(first.potion?.value);
+    // The shared effects are found out on both; the ingredients are used up.
+    expect([...(runtime.state.ingredientEffects.get(WHEAT) ?? [])].sort()).toEqual([0, 1]);
+    expect([...(runtime.state.ingredientEffects.get(BLUE_MOUNTAIN_FLOWER) ?? [])].sort()).toEqual([
+      0, 2,
+    ]);
+    expect(await count(PLAYER_REF, WHEAT)).toBe(1);
+    expect(experience(ALCHEMY)).toBeGreaterThan(before);
+    // Made again it is the same potion: they stack.
+    const second = await runtime.crafting.brew(PLAYER_REF, [WHEAT, BLUE_MOUNTAIN_FLOWER]);
+    expect(second.made).toBe(made);
+    expect(await count(PLAYER_REF, made)).toBe(2);
+    // It is drunk as the plugins' potions are.
+    expect(await runtime.magic.useItem(PLAYER_REF, made)).toBe('used');
+    expect(await count(PLAYER_REF, made)).toBe(1);
+  }, 120_000);
+
+  it('brew a poison, and nothing from ingredients that share no effect', async () => {
+    await give(NIGHTSHADE, 2);
+    await give(DEATHBELL);
+    await give(SALT_PILE);
+    const poison = await runtime.crafting.brew(PLAYER_REF, [NIGHTSHADE, DEATHBELL]);
+    expect((await runtime.forms.record(poison.made ?? 0))?.text('FULL')).toBe(
+      'Poison of Damage Health',
+    );
+    expect((await runtime.magic.item(poison.made ?? 0))?.kind).toBe('poison');
+    const failed = await runtime.crafting.brew(PLAYER_REF, [NIGHTSHADE, SALT_PILE]);
+    expect(failed.made).toBeUndefined();
+    expect(await count(PLAYER_REF, NIGHTSHADE)).toBe(0);
+    expect(await count(PLAYER_REF, SALT_PILE)).toBe(0);
+  }, 60_000);
+
+  it('disenchant an item to learn its base enchantment, once', async () => {
+    await give(IRON_SWORD_OF_EMBERS, 2);
+    expect(await runtime.crafting.disenchant(PLAYER_REF, IRON_SWORD_OF_EMBERS)).toEqual({
+      kind: 'learned',
+      enchantment: FIRE_DAMAGE_BASE,
+      name: 'Fire Damage',
+    });
+    expect(runtime.state.knownEnchantments.has(FIRE_DAMAGE_BASE)).toBe(true);
+    expect(await count(PLAYER_REF, IRON_SWORD_OF_EMBERS)).toBe(1);
+    expect((await runtime.crafting.disenchant(PLAYER_REF, IRON_SWORD_OF_EMBERS)).kind).toBe(
+      'known',
+    );
+  }, 60_000);
+
+  it('enchant a weapon: an enchantment and an item made, its charge used by hits, recharged', async () => {
+    // The player's own (the Player record's items) stay.
+    const swords = await count(PLAYER_REF, IRON_SWORD);
+    await give(IRON_SWORD);
+    await give(SOUL_GEM_GRAND_FILLED);
+    const before = experience(ENCHANTING);
+    const fire = (value?: number) => [
+      { formId: FIRE_DAMAGE_BASE, ...(value !== undefined && { value }) },
+    ];
+    const half = await runtime.crafting.plan(PLAYER_REF, IRON_SWORD, fire(5), 5);
+    const full = await runtime.crafting.plan(PLAYER_REF, IRON_SWORD, fire(), 5);
+    expect(full?.weapon).toBe(true);
+    expect(full?.maxValue).toBe(10);
+    expect(full?.charge).toBe(3000);
+    // A lower magnitude gives more hits.
+    expect(half?.uses ?? 0).toBeGreaterThan(full?.uses ?? 0);
+    const made =
+      (await runtime.crafting.enchant(
+        PLAYER_REF,
+        IRON_SWORD,
+        undefined,
+        fire(),
+        SOUL_GEM_GRAND_FILLED,
+      )) ?? 0;
+    const sword = await runtime.equipment.item(made);
+    expect(sword?.name).toBe('Iron Sword of Fire Damage');
+    expect(sword?.weapon?.damage).toBe((await runtime.equipment.item(IRON_SWORD))?.weapon?.damage);
+    expect(sword?.charge).toBe(3000);
+    expect((await runtime.forms.record(made))?.formIdField('CNAM')).toBe(IRON_SWORD);
+    const enchantment = await runtime.magic.item(sword?.enchantment ?? 0);
+    expect(enchantment?.enchantment?.baseEnchantment).toBe(FIRE_DAMAGE_BASE);
+    expect(enchantment?.effects[0]?.magnitude).toBe(10);
+    expect(enchantment?.cost).toBe(full?.chargePerUse);
+    // The sword and the gem are used up, the made sword is the player's.
+    expect(await count(PLAYER_REF, IRON_SWORD)).toBe(swords);
+    expect(await count(PLAYER_REF, SOUL_GEM_GRAND_FILLED)).toBe(0);
+    expect(await count(PLAYER_REF, made)).toBe(1);
+    expect(experience(ENCHANTING)).toBeGreaterThan(before);
+    // It is wielded like any sword.
+    expect(await runtime.equipment.equip(PLAYER_REF, made)).toBe(true);
+    // Each hit uses its cost until too little is left.
+    let hits = 0;
+    while (hits < 1000 && (await runtime.crafting.useCharge(PLAYER_REF, made))) hits++;
+    expect(hits).toBe(full?.uses);
+    expect(await runtime.crafting.chargePercent(PLAYER_REF, made)).toBeLessThan(5);
+    // A petty soul recharges 250 of it.
+    await give(SOUL_GEM_PETTY_FILLED);
+    const gems = await runtime.crafting.soulGems(PLAYER_REF);
+    expect(gems.map((gem) => [gem.formId, gem.charge])).toEqual([[SOUL_GEM_PETTY_FILLED, 250]]);
+    expect(await runtime.crafting.recharge(PLAYER_REF, made, SOUL_GEM_PETTY_FILLED)).toBe(true);
+    expect((await runtime.crafting.charge(PLAYER_REF, made))?.current).toBeGreaterThanOrEqual(250);
+    expect(await count(PLAYER_REF, SOUL_GEM_PETTY_FILLED)).toBe(0);
+  }, 120_000);
+
+  it('enchant armor by the soul, and not with a weapon enchantment', async () => {
+    runtime.state.knownEnchantments.add(FORTIFY_HEALTH_BASE);
+    await give(IRON_CUIRASS, 2);
+    await give(SOUL_GEM_GRAND_FILLED, 2);
+    expect(
+      await runtime.crafting.enchant(
+        PLAYER_REF,
+        IRON_CUIRASS,
+        undefined,
+        [{ formId: FIRE_DAMAGE_BASE }],
+        SOUL_GEM_GRAND_FILLED,
+      ),
+    ).toBeUndefined();
+    const made =
+      (await runtime.crafting.enchant(
+        PLAYER_REF,
+        IRON_CUIRASS,
+        undefined,
+        [{ formId: FORTIFY_HEALTH_BASE }],
+        SOUL_GEM_GRAND_FILLED,
+        'Breezehome Cuirass',
+      )) ?? 0;
+    const armor = await runtime.equipment.item(made);
+    expect(armor?.name).toBe('Breezehome Cuirass');
+    expect(armor?.armor?.rating).toBe((await runtime.equipment.item(IRON_CUIRASS))?.armor?.rating);
+    const enchantment = await runtime.magic.item(armor?.enchantment ?? 0);
+    expect(enchantment?.castType).toBe(0);
+    // Fortify Health 20 at Enchanting 15 with a grand soul (UESP's skill multiplier: ~1).
+    expect(enchantment?.effects[0]?.magnitude).toBe(20);
+    // Worn, its enchantment fortifies the wearer (the magic system's worn enchantments).
+    const health = (await runtime.actors.value(PLAYER_REF, HEALTH)).current;
+    expect(await runtime.equipment.equip(PLAYER_REF, made)).toBe(true);
+    await runtime.magic.syncLasting(PLAYER_REF);
+    expect((await runtime.actors.value(PLAYER_REF, HEALTH)).current).toBe(health + 20);
+  }, 120_000);
+
+  it('improve an item of its own: the quality moves and is worn with it', async () => {
+    const swords = await count(PLAYER_REF, IRON_SWORD);
+    await give(IRON_SWORD, 2);
+    runtime.actors.setBase(PLAYER_REF, SMITHING, 40);
+    const before = experience(SMITHING);
+    expect(await runtime.crafting.temper(PLAYER_REF, IRON_SWORD, undefined)).toEqual({
+      kind: 'improved',
+      level: 2,
+      previous: 0,
+    });
+    expect(experience(SMITHING)).toBeGreaterThan(before);
+    expect(runtime.crafting.stacks(PLAYER_REF, IRON_SWORD)).toEqual([{ count: 1, health: 1.2 }]);
+    expect(runtime.crafting.plainCount(PLAYER_REF, IRON_SWORD)).toBe(swords + 1);
+    expect(runtime.crafting.instances(PLAYER_REF, IRON_SWORD).map((i) => i.health)).toEqual([
+      1, 1.2,
+    ]);
+    // The plain one is wielded until the improved one is chosen.
+    await runtime.equipment.equip(PLAYER_REF, IRON_SWORD);
+    expect(runtime.equipment.modifiers.temperLevel(PLAYER_REF, IRON_SWORD)).toBe(0);
+    runtime.crafting.wear(PLAYER_REF, IRON_SWORD, 0);
+    expect(runtime.equipment.modifiers.temperLevel(PLAYER_REF, IRON_SWORD)).toBe(2);
+    const plain = await runtime.equipment.weaponDamage(PLAYER_REF, IRON_SWORD, 0, 0);
+    expect(await runtime.equipment.weaponDamage(PLAYER_REF, IRON_SWORD)).toBeGreaterThan(plain);
+    // Not improved further at the same skill.
+    expect((await runtime.crafting.temper(PLAYER_REF, IRON_SWORD, 0)).kind).toBe('skill');
+    // Given away (the one asked for), it stays improved where it goes.
+    const chest = 0xff0f0001;
+    await runtime.removeItem(PLAYER_REF, runtime.formHandle(IRON_SWORD), 1, true, chest, 0);
+    expect(runtime.crafting.stacks(chest, IRON_SWORD)).toEqual([{ count: 1, health: 1.2 }]);
+    expect(runtime.crafting.stacks(PLAYER_REF, IRON_SWORD)).toEqual([]);
+    expect(await count(PLAYER_REF, IRON_SWORD)).toBe(swords + 1);
+    // Taken without saying which, the plain ones go first.
+    await runtime.addItem(chest, runtime.formHandle(IRON_SWORD), 1, true);
+    await runtime.removeItem(chest, runtime.formHandle(IRON_SWORD), 1, true, undefined);
+    expect(runtime.crafting.stacks(chest, IRON_SWORD)).toEqual([{ count: 1, health: 1.2 }]);
+  }, 120_000);
 });

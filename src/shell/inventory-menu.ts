@@ -5,7 +5,10 @@
 // gold, armor rating, damage and meters. Selecting equips or takes off (the equip system:
 // armor, weapons and spells to the hand asked for, ammunition, torches), uses potions, food and
 // ingredients (their effects: the magic system), puts poisons on the weapon, reads books
-// (`read`: the book menu, or a spell tome's spell learned); dropping removes the items.
+// (`read`: the book menu, or a spell tome's spell learned); dropping removes the items. Improved
+// weapons and armor are rows of their own ("Iron Sword (Fine)": the crafting engine's item
+// stacks); an enchanted weapon's card shows its charge, which T (Charge) refills with a soul gem
+// chosen from the card's list (ShowSoulGemList, ItemCardListCallback).
 // Notes: docs/ui.md ("The item menus"), docs/gameplay.md ("Equipment", "Magic effects").
 
 import {
@@ -18,6 +21,7 @@ import {
   itemCategory,
   SOUL_LEVEL_SETTINGS,
 } from '../gameplay/inventory.ts';
+import { temperLevelOfHealth, temperQualityName } from '../gameplay/crafting.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorValue } from '../world/actor-values.ts';
@@ -46,6 +50,11 @@ export interface Row {
   /** How it is equipped: the menus' equip state (worn, a hand, both); else by `worn`. */
   readonly equipState?: number;
   readonly favorite: boolean;
+  /** One of the base's stacks (improved items: the crafting engine's); none: the plain ones. */
+  readonly stack?: number;
+  /** Its improvement (0 none .. 6 Legendary) and the name it shows with it. */
+  readonly temper?: number;
+  readonly name?: string;
 }
 
 export function inventoryModel(
@@ -90,11 +99,12 @@ export function inventoryModel(
         player: [await playerInfo(game, rows, inventory.get(GOLD) ?? 0)],
       };
     },
-    select: async ({ formId }, slot) => {
+    select: async ({ formId, stack }, slot) => {
       const game = runtime();
       const record = await item(formId);
       if (!record) return;
       const equipment = game.equipment;
+      const instance = typeof stack === 'number' ? stack : undefined;
       if (record.type === 'BOOK') {
         // A book read from the inventory is equipped as far as scripts hear (its OnEquipped).
         await equipment.used(PLAYER_REF, formId);
@@ -114,19 +124,64 @@ export function inventoryModel(
         return;
       }
       const wasEquipped = await equipment.isEquipped(PLAYER_REF, formId);
+      const crafting = game.crafting;
+      // Another instance of what is worn (an improved one, a plain one) takes its place.
+      if (wasEquipped && !crafting.isWornInstance(PLAYER_REF, formId, instance)) {
+        crafting.wear(PLAYER_REF, formId, instance);
+        return;
+      }
       if (!(await equipment.toggle(PLAYER_REF, formId, slotHand(slot)))) {
         if ((await equipment.describe(formId)) === undefined)
           terminal.log('ui', `${record.name} cannot be equipped`, 'info');
         return;
       }
       const on = !wasEquipped || (await equipment.isEquipped(PLAYER_REF, formId));
+      if (on) crafting.wear(PLAYER_REF, formId, instance);
       const sound = sounds && (await equipment.equipSound(formId, on, sounds.defaults));
       if (sound !== undefined) void sounds?.play(sound);
     },
     // TODO(M11): the dropped items placed in the world at the player's feet.
-    drop: async ({ formId }, amount) => {
+    drop: async ({ formId, stack }, amount) => {
       const game = runtime();
-      await game.removeItem(PLAYER_REF, game.formHandle(formId), amount, false, undefined);
+      await game.removeItem(
+        PLAYER_REF,
+        game.formHandle(formId),
+        amount,
+        false,
+        undefined,
+        typeof stack === 'number' ? stack : undefined,
+      );
+    },
+    // Charge (T): the soul gems that could recharge the entry's weapon, on its card.
+    soulGemList: async ({ formId }) => {
+      const game = runtime();
+      const settings = await session.settings();
+      const current = await game.crafting.chargePercent(PLAYER_REF, formId);
+      if (current === undefined) return undefined;
+      const gems = await game.crafting.soulGems(PLAYER_REF);
+      if (gems.length === 0) {
+        game.world.notification?.(settings.string('sNoChargeItems') ?? '');
+        return undefined;
+      }
+      const listItems = [];
+      for (const gem of gems) {
+        const soul = SOUL_LEVEL_SETTINGS[gem.soul];
+        listItems.push({
+          text: gem.name,
+          soulLVL: soul ? (settings.string(soul) ?? '') : '',
+          count: gem.count,
+          chargeAdded: await game.crafting.rechargePercent(PLAYER_REF, gem, formId),
+          formId: gem.formId,
+        });
+      }
+      return { type: CardType.list, listItems, currentCharge: current };
+    },
+    chargeWith: async ({ formId }, index) => {
+      const game = runtime();
+      const gem = (await game.crafting.soulGems(PLAYER_REF))[index];
+      if (gem && (await game.crafting.recharge(PLAYER_REF, formId, gem.formId))) {
+        void session.sounds().then((sounds) => sounds.playNamed('UIEnchantRecharge', undefined));
+      }
     },
     favorite: ({ formId }) => {
       const favorites = runtime().state.favorites;
@@ -154,31 +209,54 @@ export async function itemRows(
     if (count <= 0 || (formId === GOLD && container === PLAYER_REF)) continue;
     const record = await item(formId);
     if (!record || record.nonPlayable || record.name === '') continue;
-    const equipState = actor
-      ? await runtime.equipment.menuState(container, formId)
-      : EquipState.none;
-    rows.push({
-      formId,
-      item: record,
-      count,
-      worn: equipState !== EquipState.none,
-      equipState,
-      favorite: container === PLAYER_REF && runtime.state.favorites.has(formId),
-    });
+    const equipped = actor ? await runtime.equipment.menuState(container, formId) : EquipState.none;
+    const favorite = container === PLAYER_REF && runtime.state.favorites.has(formId);
+    // Its plain ones, then each stack of improved ones (a row each).
+    for (const instance of runtime.crafting.instances(container, formId)) {
+      const equipState = runtime.crafting.isWornInstance(container, formId, instance.stack)
+        ? equipped
+        : EquipState.none;
+      const temper = temperLevelOfHealth(instance.health);
+      rows.push({
+        formId,
+        item: record,
+        count: instance.count,
+        worn: equipState !== EquipState.none,
+        equipState,
+        favorite,
+        ...(instance.stack !== undefined && {
+          stack: instance.stack,
+          temper,
+          name: await temperedName(runtime, record, temper),
+        }),
+      });
+    }
   }
   return rows;
+}
+
+/** An improved item's name: "<name> (<quality>)" (sHealthDataPrefixWeap1 "Fine", ...). */
+export async function temperedName(
+  runtime: ScriptRuntime,
+  item: ItemRecord,
+  level: number,
+): Promise<string> {
+  const setting = temperQualityName(level, item.type === 'ARMO' ? 'ARMO' : 'WEAP');
+  const quality = setting === undefined ? undefined : await runtime.gameSetting(setting);
+  return typeof quality === 'string' && quality !== '' ? `${item.name} (${quality})` : item.name;
 }
 
 /** A row's entry: name, count, how it is equipped, favorite, its category's bits. */
 export function itemEntry(row: Row): ItemEntry {
   return {
-    text: row.item.name,
+    text: row.name ?? row.item.name,
     count: row.count,
     equipState: row.equipState ?? (row.worn ? EquipState.equipped : EquipState.none),
     favorite: row.favorite,
     filterFlag: itemCategory(row.item) | (row.favorite ? ItemCategory.favorites : 0),
     enabled: true,
     formId: row.formId,
+    ...(row.stack !== undefined && { stack: row.stack }),
   };
 }
 
@@ -192,7 +270,7 @@ export async function itemCard(
   const type = itemCardType(item);
   const card: Record<string, unknown> = {
     type,
-    name: item.name,
+    name: row.name ?? item.name,
     count: row.count,
     value: item.value,
     weight: item.weight,
@@ -205,7 +283,9 @@ export async function itemCard(
   // improvement (UESP "Skyrim:Armor", "Skyrim:Weapons").
   switch (type) {
     case CardType.armor: {
-      card.armor = Math.floor(await runtime.equipment.pieceRating(PLAYER_REF, row.formId));
+      card.armor = Math.floor(
+        await runtime.equipment.pieceRating(PLAYER_REF, row.formId, row.temper ?? 0),
+      );
       card.effects = await effectsText(runtime, enchantment);
       const skill = armorSkill(item);
       card.skillText =
@@ -217,11 +297,19 @@ export async function itemCard(
     case CardType.weapon:
       card.damage = Math.floor(
         item.weapon
-          ? await runtime.equipment.weaponDamage(PLAYER_REF, row.formId)
+          ? await runtime.equipment.weaponDamage(PLAYER_REF, row.formId, 0, row.temper ?? 0)
           : (item.ammoDamage ?? 0),
       );
       card.effects = await effectsText(runtime, enchantment);
       card.poisoned = runtime.magic.poisonOf(PLAYER_REF)?.weapon === row.formId;
+      // An enchanted weapon's charge (the meter; under 100, T recharges it).
+      if (item.weapon) {
+        const charge = await runtime.crafting.chargePercent(PLAYER_REF, row.formId);
+        if (charge !== undefined) {
+          card.charge = charge;
+          card.usedCharge = charge;
+        }
+      }
       break;
     case CardType.book:
       card.description = item.book?.description ?? '';
@@ -267,7 +355,7 @@ async function enchantmentEffects(runtime: ScriptRuntime, formId: number): Promi
 /** Effects' descriptions with their values, those hidden from the interface left out. */
 export async function effectsText(
   runtime: ScriptRuntime,
-  effects: readonly ItemEffect[],
+  effects: readonly Pick<ItemEffect, 'effect' | 'magnitude' | 'duration' | 'area'>[],
 ): Promise<string> {
   const texts: string[] = [];
   for (const effect of effects) {
