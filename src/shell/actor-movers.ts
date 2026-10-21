@@ -217,6 +217,8 @@ export class ActorMovers {
   readonly #adding = new Set<number>();
   /** The actors in the high process at the last frame (moved, being given a controller, held). */
   readonly #high = new Set<number>();
+  /** Actors beyond the high process held by what carries or seats them (their AI runs). */
+  readonly #heldAway = new Set<number>();
   /** The actors of the loaded area beyond it that walk without a controller. */
   readonly #walkers = new Map<number, Walker>();
   /** The last bump of each actor (its conditions), and those reacting to one now. */
@@ -619,6 +621,7 @@ export class ActorMovers {
     const seconds = this.#stepped;
     this.#stepped = 0;
     this.#high.clear();
+    this.#heldAway.clear();
     const seen = new Set<number>();
     for (const staged of actors) {
       const reference = staged.reference;
@@ -630,6 +633,9 @@ export class ActorMovers {
       const held = this.#options.held?.(reference) === true;
       const near = distance < (mover || held ? LEAVE_HIGH_DISTANCE : HIGH_PROCESS_DISTANCE);
       if (near && this.#lives(staged)) this.#high.add(reference);
+      // Beyond it, held by what carries or seats it: its AI goes on (a rider's moves its horse,
+      // a walker: MQ101's Tullius rides on to the tower after the player's cart drew away).
+      else if (held && this.#lives(staged)) this.#heldAway.add(reference);
       // Beyond the high process: it walks without a controller.
       if (!near && !mover && this.#moves(staged)) {
         this.#walk(staged, seconds);
@@ -781,7 +787,9 @@ export class ActorMovers {
 
   /** Whether an actor's AI runs: in the high process, or walking beyond it. */
   runsAi(reference: number): boolean {
-    return this.#high.has(reference) || this.#walkers.has(reference);
+    return (
+      this.#high.has(reference) || this.#walkers.has(reference) || this.#heldAway.has(reference)
+    );
   }
 
   /** One frame of an actor beyond the high process: its travel, its turning, its graph. */
