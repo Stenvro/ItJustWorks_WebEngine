@@ -547,8 +547,8 @@ export type BehaviorModifier = { readonly name: string; readonly enable: Bindabl
        * up), the dragon's flight (BSTweenerModifier, BSLimbIKModifier,
        * BSPassByTargetTriggerModifier, BSDecomposeVectorModifier, hkbTransformVectorModifier,
        * BSTimerModifier, BSGetTimeStepModifier: TODO(M10) 5.4) and BSIStateManagerModifier
-       * (the iState of werewolves, vampire lords and spriggans: TODO(M10) 5.2 with their
-       * combat movement). `node tools/behavior-run.ts --modifiers` lists them.
+       * (the iState of werewolves, vampire lords and spriggans: TODO(M11) with the beast
+       * forms and their combat movement). `node tools/behavior-run.ts --modifiers` lists them.
        */
       readonly kind: 'other';
       readonly className: string;

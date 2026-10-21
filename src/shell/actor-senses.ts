@@ -166,8 +166,9 @@ export class ActorSenses implements ScriptSenses {
   /** Who knows of whom (the API: src/ai/detection-states.ts). */
   readonly detections: Detections;
   /**
-   * Whether an actor is in combat (its Sneak skill does not count while sneaking): combat's
-   * (5.2) to set. Whether an observer is hostile to a target (it searches for one it lost).
+   * Whether an actor is in combat (its Sneak skill does not count while sneaking), and whether
+   * an observer is hostile to a target (it searches for one it lost): set by the combat AI
+   * (src/shell/actor-combat-ai.ts).
    */
   inCombat: (actor: number) => boolean = () => false;
   hostile: (observer: number, target: number) => boolean = () => false;
@@ -878,6 +879,22 @@ export class ActorSenses implements ScriptSenses {
     return this.#overriding.get(actor)?.list;
   }
 
+  /** An actor's reaction ends at once (it went into combat): its package is chosen again. */
+  endReaction(actor: number): void {
+    const reaction = this.#reactions.get(actor);
+    if (reaction) {
+      reaction.cancel();
+      this.#reactions.delete(actor);
+      this.#options.ai.hold(actor, false);
+    }
+    if (this.#overriding.delete(actor)) this.#options.ai.evaluate(actor);
+  }
+
+  /** The combat override package list (ECOR: its aliases', else its NPC_'s) of an actor. */
+  combatOverrides(actor: number): number | undefined {
+    return this.#profiles.get(actor)?.profile.overrides?.combat;
+  }
+
   /** What an actor reacts to now (the engine's reaction or an override list), if anything. */
   reacting(actor: number): ReactionKind | undefined {
     return this.#reactions.get(actor)?.kind ?? this.#overriding.get(actor)?.kind;
@@ -919,7 +936,7 @@ export class ActorSenses implements ScriptSenses {
   #react(kind: ReactionKind, actor: number, at: Vec3, subject: number | undefined): boolean {
     const { movers, furniture, ai, session } = this.#options;
     const runtime = session.scriptsReady;
-    if (!runtime || this.reacting(actor) !== undefined) return false;
+    if (!runtime || this.reacting(actor) !== undefined || this.inCombat(actor)) return false;
     if (!movers.runsAi(actor) || furniture.holds(actor)) return false;
     if (runtime.dialogueSpeaker === actor || runtime.scenes.sceneOf(actor) !== undefined)
       return false;

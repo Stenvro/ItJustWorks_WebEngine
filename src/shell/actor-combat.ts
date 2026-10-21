@@ -14,9 +14,9 @@
 // (combat-projectiles.ts). The enemy the player fights shows on the HUD, and combat music plays
 // while anyone fights the player.
 //
-// Who fights whom is the combat AI's (TODO(M10) 5.2: aggression, target choice, the combat
-// style's movement): until it runs, an actor fights what a script set it on (StartCombat) or
-// what hit it, closing to reach and striking, drawing its bow at range.
+// Who fights whom, and how, is the combat AI's (src/shell/actor-combat-ai.ts: aggression,
+// assistance, target choice, the combat style's movement and attacks, fleeing, searching): it
+// sets each fighter's target and asks for its draws, attacks, blocks and releases here.
 
 import { parseNpcCombat, parseRaceCombat } from '../ai/race-combat-records.ts';
 import { behaviorGraphKey, readIdleTree, type IdleTree } from '../ai/idle-records.ts';
@@ -106,6 +106,14 @@ import { KillmoveCamera } from './killmove-camera.ts';
 import { PlayerCombat, type CastingButtons } from './player-combat.ts';
 import type { ActorTalk } from './actor-talk.ts';
 import type { ActorSenses } from './actor-senses.ts';
+import type { ActorAi } from './actor-ai.ts';
+import {
+  ActorCombatAi,
+  type CombatAiHost,
+  type CombatCasting,
+  type FighterView,
+} from './actor-combat-ai.ts';
+import type { Threat } from '../ai/combat-tactics.ts';
 
 /** A human's shape for hits (its controller's radius and height at scale 1; game units). */
 const BODY_RADIUS = 20;
@@ -121,6 +129,8 @@ const ENEMY_BAR_SECONDS = 4;
 const PAIRED_DISTANCE = 72.8;
 /** A paired animation lasts no longer than this (seconds; the longest vanilla ones: 10). */
 const PAIRED_LIMIT = 12;
+/** How wide a flying arrow is to those it may hit and who dodge it (units). */
+const SHOT_RADIUS = 8;
 
 /** One who fights: an actor of the stage or the player. */
 interface Fighter {
@@ -136,10 +146,8 @@ interface Fighter {
   gear: Gear | undefined;
   gearVersion: number;
   gearLoading: boolean;
-  /** Its combat target and whether it fights (TODO(M10) 5.2: the combat AI's). */
+  /** Its combat target (the combat AI's; the player's: the one they strike at). */
   target: number | undefined;
-  /** The AI's next swing, and when its bow is to be loosed (seconds of the frame clock). */
-  nextAttack: number;
   /** When its current attack's power began to be held (the player's power attacks). */
   heldSince: number | undefined;
   /** The weapon state it was in when its drawn models last followed it. */
@@ -181,6 +189,15 @@ export interface ActorCombatOptions {
   readonly senses?: () => ActorSenses | undefined;
   /** The player's casting: drawn hands holding magic cast (src/shell/player-casting.ts). */
   readonly casting?: () => CastingButtons | undefined;
+  /** Their packages (the combat override packages' places; evaluated as combat ends). */
+  readonly ai?: () => ActorAi | undefined;
+  /** Inside a cell (how far the fleeing run). */
+  readonly interior?: () => boolean;
+  /** An actor gets off its horse to fight; a horse ridden is its rider's to move. */
+  readonly dismount?: (actor: number) => Promise<void>;
+  readonly ridden?: (actor: number) => boolean;
+  /** NPCs' spells and shouts in combat (src/shell/combat-casting.ts). */
+  readonly npcCasting?: () => CombatCasting | undefined;
 }
 
 const describe = (error: unknown): string =>
@@ -205,9 +222,24 @@ export class ActorCombat implements CombatBridge {
   #equipListening: ScriptRuntime | undefined;
   #camera: KillmoveCamera | undefined;
   #input: PlayerCombat | undefined;
+  /** Who fights whom and how (src/shell/actor-combat-ai.ts). */
+  readonly #brain: ActorCombatAi;
 
   constructor(options: ActorCombatOptions) {
     this.#options = options;
+    this.#brain = new ActorCombatAi({
+      session: options.session,
+      terminal: options.terminal,
+      movers: options.movers,
+      host: this.#host(),
+      ...(options.senses && { senses: options.senses }),
+      ...(options.talk && { talk: options.talk }),
+      ...(options.ai && { ai: options.ai }),
+      ...(options.interior && { interior: options.interior }),
+      ...(options.dismount && { dismount: options.dismount }),
+      ...(options.ridden && { ridden: options.ridden }),
+      ...(options.npcCasting && { casting: options.npcCasting }),
+    });
     this.#impacts = new CombatImpacts(options.session, options.renderer);
     this.#projectiles = new CombatProjectiles({
       session: options.session,
@@ -311,7 +343,17 @@ export class ActorCombat implements CombatBridge {
       killMove: state.paired !== undefined,
       movementDirection: this.#movementDirection(fighter),
       lastHitCritical: fighter.lastCritical,
-      inCombat: fighter.target !== undefined,
+      // The player is in combat while an actor fights them.
+      inCombat: fighter.player ? this.#fightingPlayer() : this.#brain.combatState(actor) !== 0,
+      combatState: fighter.player
+        ? this.#fightingPlayer()
+          ? 1
+          : 0
+        : this.#brain.combatState(actor),
+      fleeing: this.#brain.fleeing(actor) || this.#options.ai?.()?.fleeing(actor) === true,
+      observingCombat: this.#options.senses?.()?.reacting(actor) === 'spectator',
+      friendHits: this.#brain.friendHits(actor),
+      groupSize: this.#brain.groupSize(actor),
       combatTarget: fighter.target,
       shouldAttackKill: fighter.killing,
       targetHeight: feet && targetFeet ? targetFeet[2] - feet[2] : 0,
@@ -320,14 +362,21 @@ export class ActorCombat implements CombatBridge {
   }
 
   startCombat(actor: number, target: number): void {
-    if (actor === target) return;
-    const fighter = this.#fighters.get(actor);
-    if (fighter && !fighter.player) fighter.target = target;
+    if (actor === target || !this.#fighters.has(actor)) return;
+    this.#brain.startCombat(actor, target);
   }
 
   stopCombat(actor: number): void {
     const fighter = this.#fighters.get(actor);
-    if (fighter) fighter.target = undefined;
+    if (!fighter) return;
+    if (fighter.player) fighter.target = undefined;
+    else this.#brain.stopCombat(actor);
+  }
+
+  /** Whether an actor fights another, or would attack it on sight (IsHostileToActor). */
+  hostile(actor: number, target: number): boolean {
+    const fighter = this.#fighters.get(actor);
+    return fighter?.target === target || this.#brain.hostile(actor, target);
   }
 
   drawWeapon(actor: number, draw: boolean): void {
@@ -484,7 +533,7 @@ export class ActorCombat implements CombatBridge {
     return (
       fighter !== undefined &&
       !fighter.player &&
-      (fighter.target !== undefined ||
+      (this.#brain.engaged(reference) ||
         fighter.state.paired !== undefined ||
         bleedingOut(fighter.state))
     );
@@ -564,6 +613,8 @@ export class ActorCombat implements CombatBridge {
       }
       this.#update(fighter, seconds, runtime);
     }
+    // Who fights whom, and how.
+    this.#brain.frame(seconds);
     this.#projectiles.frame(seconds, this.#play?.physics);
     this.#camera?.update(seconds);
     // The killmove camera is the player's while it plays.
@@ -747,7 +798,6 @@ export class ActorCombat implements CombatBridge {
       fighter.down += seconds;
       void this.#bleed(fighter, seconds, runtime);
     }
-    if (!fighter.player) this.#fight(fighter, runtime);
     // Its next attack would kill its target (ShouldAttackKill), valued now and then.
     if (fighter.target !== undefined && Math.random() < seconds * 4) {
       void this.#estimateKill(fighter, runtime);
@@ -773,73 +823,6 @@ export class ActorCombat implements CombatBridge {
       fighter.down = 0;
       await this.#act(fighter, 'ActionBleedoutStop');
     }
-  }
-
-  /**
-   * An actor that fights (TODO(M10) 5.2: the combat AI's movement, target choice, blocking):
-   * it draws, closes to reach and strikes when its target is before it; with a bow it keeps its
-   * distance, draws and looses once drawn.
-   */
-  #fight(fighter: Fighter, runtime: ScriptRuntime): void {
-    const target = fighter.target;
-    const movers = this.#options.movers;
-    const reference = fighter.reference;
-    if (target === undefined) return;
-    const other = this.#fighters.get(target);
-    const dead = runtime.state.actors.get(target)?.dead === true;
-    if (!other || dead || bleedingOut(other.state)) {
-      fighter.target = undefined;
-      movers.request(reference, undefined);
-      if (weaponOut(fighter.state)) void this.sheathe(reference);
-      return;
-    }
-    // Its package's way gives way to the fight.
-    if (movers.travelOf(reference)) movers.stop(reference);
-    const state = fighter.state;
-    if (!canAct(state) || bleedingOut(state)) return;
-    if (state.weapon === WeaponState.sheathed) {
-      void this.draw(reference);
-      return;
-    }
-    if (state.weapon !== WeaponState.drawn) return;
-    const feet = this.#feet(fighter);
-    const there = this.#feet(other);
-    if (!feet || !there) return;
-    const distance = Math.hypot(there[0] - feet[0], there[1] - feet[1]);
-    const facing = headingTo(feet, there);
-    const gear = fighter.gear;
-    const bow =
-      gear?.right.weaponType === WeaponType.bow || gear?.right.weaponType === WeaponType.crossbow;
-    if (bow && gear.projectile && gear.right.ammo !== undefined) {
-      // Loose once drawn; keep a little apart.
-      if (state.attack === AttackState.bowDrawn && this.#clock >= fighter.nextAttack) {
-        void this.release(reference, 'ActionRightRelease');
-        fighter.nextAttack = this.#clock + 1 + Math.random();
-      } else if (!attacking(state) && this.#clock >= fighter.nextAttack) {
-        void this.attack(reference, 'ActionRightAttack');
-        fighter.nextAttack = this.#clock + 1.5;
-      }
-      movers.request(reference, { gait: 'walk', face: facing });
-      return;
-    }
-    const reach = this.#reach(fighter, false) + BODY_RADIUS;
-    if (distance > reach * 0.85) {
-      const gait = distance > reach * 3 ? 'run' : 'walk';
-      movers.request(reference, {
-        direction: [there[0] - feet[0], there[1] - feet[1]],
-        gait,
-        face: facing,
-      });
-      return;
-    }
-    movers.request(reference, { gait: 'walk', face: facing });
-    const heading = this.#heading(fighter);
-    if (Math.abs(turnBetween(heading, facing)) > Math.PI / 6) return;
-    if (attacking(state) || this.#clock < fighter.nextAttack) return;
-    // Now and then a power attack (TODO(M10) 5.2: the combat style's power attack chance).
-    const power = Math.random() < 0.2;
-    void this.attack(reference, power ? 'ActionRightPowerAttack' : 'ActionRightAttack');
-    fighter.nextAttack = this.#clock + 0.8 + Math.random() * 1.2;
   }
 
   /** Values ShouldAttackKill: the fighter's next strike takes its target's health. */
@@ -1193,14 +1176,10 @@ export class ActorCombat implements CombatBridge {
       hit.bash,
       blocks,
     ]);
-    // It fights back (TODO(M10) 5.2: aggression, relationships, iFriendHitCombatAllowed).
-    if (!target.player && target.target === undefined && result.total > 0) {
-      target.target = attackerRef;
-    }
+    // It fights back, or lets a friend's blow pass (the combat AI: iFriendHitCombatAllowed).
+    this.#brain.hit(attackerRef, targetRef);
     if (attacker.player)
       this.#enemy = { reference: targetRef, until: this.#clock + ENEMY_BAR_SECONDS };
-    if (target.player && !attacker.player && attacker.target === undefined)
-      attacker.target = targetRef;
     // Detection: the one attacked searches for its attacker; those near watch the fight.
     senses?.attackedBy(targetRef, attackerRef);
     // Crime: a blow on one that was not hostile to its attacker is an assault, reported by the
@@ -1387,6 +1366,98 @@ export class ActorCombat implements CombatBridge {
       }).then((camera) => {
         if (camera && leader.state.paired === 'lead') this.#camera = camera;
       });
+    }
+  }
+
+  // --- The combat AI's view --------------------------------------------------------------------
+
+  /** What the combat AI sees of the fighters and asks of them. */
+  #host(): CombatAiHost {
+    return {
+      fighters: () => this.#views(),
+      fighter: (reference) => {
+        const fighter = this.#fighters.get(reference);
+        return fighter && this.#view(fighter);
+      },
+      setTarget: (reference, target) => {
+        const fighter = this.#fighters.get(reference);
+        if (fighter && !fighter.player) fighter.target = target;
+      },
+      draw: (reference) => this.draw(reference),
+      sheathe: (reference) => this.sheathe(reference),
+      attack: (reference, action) => this.attack(reference, action),
+      release: (reference, action) => this.release(reference, action),
+      block: (reference, on) => this.block(reference, on),
+      act: (reference, action, target) => {
+        const fighter = this.#fighters.get(reference);
+        return fighter ? this.#act(fighter, action, target) : Promise.resolve(undefined);
+      },
+      threats: () => this.#threats(),
+    };
+  }
+
+  *#views(): Iterable<FighterView> {
+    for (const fighter of this.#fighters.values()) yield this.#view(fighter);
+  }
+
+  #view(fighter: Fighter): FighterView {
+    const gear = fighter.gear;
+    const scale = this.#scale(fighter);
+    const right = gear?.right;
+    const bow =
+      right !== undefined &&
+      (right.weaponType === WeaponType.bow || right.weaponType === WeaponType.crossbow) &&
+      gear?.projectile !== undefined &&
+      right.ammo !== undefined;
+    const twoHanded =
+      right?.weapon !== undefined &&
+      right.weaponType >= WeaponType.twoHandSword &&
+      right.weaponType !== WeaponType.staff;
+    let powerChance = 0;
+    let canBash = false;
+    for (const attack of gear?.attacks.all() ?? []) {
+      const kind = attackEventKind(attack.event, attack);
+      if (kind?.bash) canBash = true;
+      else if (kind?.power) powerChance = Math.max(powerChance, attack.attackChance);
+    }
+    return {
+      reference: fighter.reference,
+      player: fighter.player,
+      state: fighter.state,
+      target: fighter.target,
+      feet: this.#feet(fighter),
+      heading: this.#heading(fighter),
+      reach: this.#reach(fighter, false),
+      radius: BODY_RADIUS * scale,
+      height: BODY_HEIGHT * scale,
+      gear: gear && {
+        weapon: gear.right.weapon,
+        weaponType: gear.right.weaponType,
+        bow,
+        shield: gear.shield !== undefined,
+        canBlock:
+          gear.shield !== undefined ||
+          twoHanded ||
+          (gear.right.weapon !== undefined && gear.left.weapon === undefined),
+        damage: gear.right.damage,
+        shotDamage: gear.right.shotDamage,
+        range: gear.projectile?.range ?? 0,
+        canBash,
+        powerChance,
+      },
+    };
+  }
+
+  /** What flies at the actors now: the arrows (TODO(M10) 5.3, 5.4: spells and breath). */
+  *#threats(): Iterable<Threat> {
+    for (const shot of this.#projectiles.flying()) {
+      yield {
+        key: shot.key,
+        position: shot.position,
+        velocity: shot.velocity,
+        radius: SHOT_RADIUS,
+        source: shot.shooter,
+      };
     }
   }
 
@@ -1651,12 +1722,8 @@ export class ActorCombat implements CombatBridge {
       fighter.gear = undefined;
     });
     // The skill progression's regeneration in combat.
-    runtime.progression.inCombat = (actor) => {
-      const fighter = this.#fighters.get(actor);
-      if (fighter?.target !== undefined) return true;
-      if (actor === PLAYER_REF) return this.#fightingPlayer();
-      return false;
-    };
+    runtime.progression.inCombat = (actor) =>
+      actor === PLAYER_REF ? this.#fightingPlayer() : this.#brain.combatState(actor) !== 0;
   }
 
   #drop(fighter: Fighter): void {
@@ -1675,9 +1742,11 @@ export class ActorCombat implements CombatBridge {
     for (const other of this.#fighters.values()) {
       if (other.target === reference) other.target = undefined;
     }
+    this.#brain.remove(reference);
   }
 
   clear(): void {
+    this.#brain.clear();
     for (const fighter of [...this.#fighters.values()]) this.#drop(fighter);
     this.#projectiles.clear();
     this.#impacts.clear();
@@ -1714,7 +1783,6 @@ function newFighter(reference: number, player: boolean): Fighter {
     gearVersion: 0,
     gearLoading: false,
     target: undefined,
-    nextAttack: 0,
     heldSince: undefined,
     inHand: false,
     down: 0,

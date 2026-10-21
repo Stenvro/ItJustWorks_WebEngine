@@ -77,13 +77,14 @@ export class RuntimeSceneHost implements SceneHost {
     return this.#runtime.state.quests.get(quest)?.aliases.get(alias);
   }
 
-  /** TODO(M10) 5.2: combat and watching combat (no actor fights yet). */
+  /** Dead, in combat, watching a fight (the combat AI, detection's spectators), talking. */
   actor(reference: number): SceneActorState {
     const runtime = this.#runtime;
+    const combat = runtime.world.combat?.(reference);
     return {
       dead: runtime.state.actors.get(reference)?.dead === true,
-      combat: false,
-      observingCombat: false,
+      combat: combat?.inCombat === true,
+      observingCombat: combat?.observingCombat === true,
       talking: runtime.dialogueSpeaker === reference,
     };
   }

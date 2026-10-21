@@ -34,7 +34,7 @@ import { findRoute, type RouteDoor } from '../ai/routes.ts';
 import type { NavmeshSet } from '../ai/pathfinding.ts';
 import type { Gait } from '../ai/locomotion.ts';
 import { followDistance, followerRanks } from '../ai/followers.ts';
-import type { Space } from '../ai/package-start.ts';
+import { mergedInputs, scheduleFits, type Space } from '../ai/package-start.ts';
 import type { ActorDoors } from './actor-doors.ts';
 import type { ActorMovers } from './actor-movers.ts';
 import type { ActorTalk } from './actor-talk.ts';
@@ -113,6 +113,8 @@ export class ActorAi {
   readonly #leaders = new Map<number, number>();
   /** The horses whose own AI waits while they are ridden. */
   readonly #ridden = new Set<number>();
+  /** The actors whose Flee procedure counts as fleeing now (IsFleeing). */
+  readonly #fleeing = new Set<number>();
   /** A food for meals made up (Eat's Create Fake Food): the first in the load order. */
   #fakeFood: Promise<number | undefined> | undefined;
   readonly #actors = new Map<number, { packages: ActorPackages; staged: StagedActor }>();
@@ -143,7 +145,10 @@ export class ActorAi {
     readonly talk?: () => ActorTalk | undefined;
     /** What carries the actors: their horses and vehicles. */
     readonly transport?: ActorTransport;
-    /** Whether an actor fights (TODO(M10) 5.2: the combat override packages, ECOR). */
+    /**
+     * Whether an actor fights (src/shell/actor-combat-ai.ts: its combat override package list,
+     * ECOR, keeps it to its place meanwhile).
+     */
     readonly engaged?: (reference: number) => boolean;
   }) {
     this.#session = options.session;
@@ -216,6 +221,46 @@ export class ActorAi {
     this.#talkHeld.delete(reference);
   }
 
+  /**
+   * The place a combat override package keeps an actor to while it fights (NPC_ / alias ECOR:
+   * src/shell/actor-combat-ai.ts): of the first package of the list whose schedule and
+   * conditions hold, where its first location input is (undefined: none holds, or it names no
+   * place), and its combat style (PACK CNAM).
+   */
+  async combatPlace(
+    actor: number,
+    list: number,
+  ): Promise<{ place: PackagePlace | undefined; combatStyle: number | undefined } | undefined> {
+    const runtime = this.#session.scriptsReady;
+    if (!runtime) return undefined;
+    const mind = this.#mind;
+    const time = mind.time();
+    for (const id of await runtime.formList(list)) {
+      const pack = await mind.package(id);
+      if (!pack || !scheduleFits(pack.schedule, time)) continue;
+      const template = pack.template === undefined ? pack : await mind.package(pack.template);
+      const inputs = mergedInputs(pack, template);
+      if (!(await mind.conditionsHold(pack.conditions, actor, { inputs }))) continue;
+      const context = {
+        start: this.#actors.get(actor)?.staged.position,
+        quest: pack.ownerQuest ?? template?.ownerQuest,
+      };
+      let place: PackagePlace | undefined;
+      for (const input of inputs.values()) {
+        if (input.value?.kind !== 'location') continue;
+        place = await mind.place(input.value.location, actor, context);
+        break;
+      }
+      return { place, combatStyle: pack.combatStyle ?? template?.combatStyle };
+    }
+    return undefined;
+  }
+
+  /** Whether an actor's Flee procedure counts as fleeing now (IsFleeing). */
+  fleeing(reference: number): boolean {
+    return this.#fleeing.has(reference);
+  }
+
   /** The leader an actor follows now (its Follow or FollowTo), if any. */
   leaderOf(reference: number): number | undefined {
     return this.#leaders.get(reference);
@@ -235,6 +280,7 @@ export class ActorAi {
     this.#leaders.delete(reference);
     this.#rides.delete(reference);
     this.#ridden.delete(reference);
+    this.#fleeing.delete(reference);
     const entry = this.#actors.get(reference);
     if (!entry) return;
     entry.packages.stop();
@@ -422,6 +468,10 @@ export class ActorAi {
       },
       ride: (allowed) => {
         this.#rides.set(reference, allowed);
+      },
+      fleeing: (on) => {
+        if (on) this.#fleeing.add(reference);
+        else this.#fleeing.delete(reference);
       },
       following: (leader) => {
         if (leader === undefined) {

@@ -206,6 +206,8 @@ export interface PackageBody {
    * the leader's followers nearer it (src/ai/followers.ts).
    */
   following?(leader: number | undefined): number;
+  /** It counts as fleeing (IsFleeing) while its Flee procedure says so (Counts As Fleeing). */
+  fleeing?(on: boolean): void;
 }
 
 export type ProcedureResult = 'success' | 'failure';

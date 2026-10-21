@@ -702,9 +702,20 @@ const followTo: ProcedureRunner = async (run) => {
 
 /**
  * Flee (not in combat): runs to its flee-to place, else away from what it flees from by its
- * flee distance. TODO(M10) 5.1: Counts As Fleeing (IsFleeing), fleeing in combat.
+ * flee distance; with Counts As Fleeing it is fleeing meanwhile (IsFleeing). Fleeing in combat
+ * is the combat AI's (src/shell/actor-combat-ai.ts).
  */
 const flee: ProcedureRunner = async (run) => {
+  const counts = run.inputs.bool(9);
+  if (counts) run.body.fleeing?.(true);
+  try {
+    return await fleeAway(run);
+  } finally {
+    if (counts) run.body.fleeing?.(false);
+  }
+};
+
+const fleeAway: ProcedureRunner = async (run) => {
   const to = await placeIn(run, 1);
   const here = run.body.position();
   let goal: Vec3 | undefined = to?.position;

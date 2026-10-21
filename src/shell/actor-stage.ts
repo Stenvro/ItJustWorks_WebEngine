@@ -48,6 +48,7 @@ import { ActorCasting } from './actor-casting.ts';
 import { actorShape, MagicProjectiles, type ProjectileTarget } from './magic-projectiles.ts';
 import { PlayerCasting } from './player-casting.ts';
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
+import { combatCasting } from './combat-casting.ts';
 import { aimDirection } from '../gameplay/magic/projectile-flight.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
@@ -231,6 +232,11 @@ export class ActorStage {
       talk: () => this.talk,
       senses: () => this.senses,
       casting: () => this.playerCasting,
+      ai: () => this.ai,
+      interior: () => options.interior === true,
+      dismount: (actor) => this.mounts.getOff(actor),
+      ridden: (actor) => this.mounts.ridden(actor),
+      npcCasting: () => combatCasting(options.session, () => this.casting),
     });
     this.search = new ActorSearch({
       session: options.session,
