@@ -29,7 +29,7 @@ import { ActorScenes } from './actor-scenes.ts';
 import { ActorSearch } from './actor-search.ts';
 import { ActorsAway, type AwayPlace } from './actors-away.ts';
 import type { RouteDoor } from '../ai/routes.ts';
-import { ActorBodies } from './actor-bodies.ts';
+import { ActorBodies, type BodyHolder } from './actor-bodies.ts';
 import { ActorDoors, type DoorObject } from './actor-doors.ts';
 import { ActorFurniture, type FurnitureUser, type StageObject } from './actor-furniture.ts';
 import { ActorMovers } from './actor-movers.ts';
@@ -50,6 +50,7 @@ import { PlayerCasting } from './player-casting.ts';
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import { combatCasting } from './combat-casting.ts';
 import { aimDirection } from '../gameplay/magic/projectile-flight.ts';
+import { PlayerDeath } from './player-death.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -148,6 +149,8 @@ export class ActorStage {
   readonly movers: ActorMovers;
   /** The living actors' bodies (their ragdolls, keyframed to their pose) and the dead's. */
   readonly bodies: ActorBodies;
+  /** The player's death shown: their ragdoll, the death camera, the reload's wait. */
+  readonly playerDeath: PlayerDeath;
   /** The actors' AI: their packages. */
   readonly ai: ActorAi;
   /** The actors in scenes: facing their targets (src/shell/actor-scenes.ts). */
@@ -221,6 +224,12 @@ export class ActorStage {
       },
     });
     this.bodies = new ActorBodies(options.session);
+    this.playerDeath = new PlayerDeath({
+      session: options.session,
+      terminal: options.terminal,
+      bodies: this.bodies,
+      player: () => options.player?.(),
+    });
     this.combat = new ActorCombat({
       session: options.session,
       renderer: options.renderer,
@@ -229,6 +238,7 @@ export class ActorStage {
       bodies: this.bodies,
       actors: () => this.#actors.values(),
       get: (reference) => this.#actors.get(reference),
+      playerBody: () => this.playerDeath.body,
       talk: () => this.talk,
       senses: () => this.senses,
       casting: () => this.playerCasting,
@@ -589,6 +599,8 @@ export class ActorStage {
     this.senses.attach(world);
     this.looks.attach(world);
     if (!world) this.combat.clear();
+    if (world) this.playerDeath.prepare();
+    else this.playerDeath.clear();
     // Projectiles fly in its physics world; casts stop with the play.
     this.#playing = world !== undefined;
     this.projectiles.attach(world?.physics);
@@ -606,6 +618,10 @@ export class ActorStage {
    * from the pose it has (essential and protected actors bleed out first: actor-combat.ts).
    */
   killed(reference: number): void {
+    if (reference === PLAYER_REF) {
+      this.#playerDied();
+      return;
+    }
     const staged = this.#actors.get(reference);
     if (!staged || staged.dead) return;
     staged.dead = true;
@@ -620,6 +636,28 @@ export class ActorStage {
     this.movers.release(reference);
     staged.placed.face?.stopSpeaking();
     void this.bodies.kill(staged);
+  }
+
+  /**
+   * The player died (on this stage's play): off their horse or cart and out of furniture at
+   * once, their casts and fight over, then their death shown (src/shell/player-death.ts).
+   */
+  #playerDied(): void {
+    if (!this.#options.player?.() || this.playerDeath.dead) return;
+    this.mounts.remove(PLAYER_REF);
+    this.vehicles.release(PLAYER_REF);
+    this.furniture.remove(PLAYER_REF);
+    this.casting.remove(PLAYER_REF);
+    this.playerCasting?.clear();
+    this.combat.playerDied();
+    this.playerDeath.died();
+  }
+
+  /** The staged actors' bodies, and the dead player's. */
+  *#withPlayerBody(): Iterable<BodyHolder> {
+    yield* this.#actors.values();
+    const player = this.playerDeath.body;
+    if (player) yield player;
   }
 
   /** The references of the actors standing in a loaded cell (enabled or not). */
@@ -931,8 +969,9 @@ export class ActorStage {
             : 0;
         }),
     );
-    // Their bodies follow the poses (the dead's poses their bodies).
-    this.bodies.frame(this.#actors.values(), this.#options.focus?.());
+    // Their bodies follow the poses (the dead's poses their bodies, the dead player's too).
+    this.bodies.frame(this.#withPlayerBody(), this.#options.focus?.());
+    this.playerDeath.frame(frame);
     // How their graphs moved them (root motion) moves them in the next physics steps; those
     // entering or leaving furniture it moves at once (they have no controller).
     for (const [staged, before] of times) {

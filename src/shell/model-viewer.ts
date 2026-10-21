@@ -440,6 +440,8 @@ export class ModelViewer {
       (this.#stage?.movers.triggerCount(reference) ?? 0),
     lookChanged: (reference) => this.#lookChanged(reference),
     killed: (reference) => {
+      // The dead player's furniture lets go of them first (their body falls from it).
+      if (reference === PLAYER_REF) this.#seat?.release();
       this.#stage?.killed(reference);
     },
     currentPackage: (reference) => this.#stage?.ai.current(reference)?.id,

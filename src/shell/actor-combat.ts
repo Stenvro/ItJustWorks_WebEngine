@@ -92,7 +92,7 @@ import type { GpuDecals } from '../render/decals.ts';
 import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { ActorMovers } from './actor-movers.ts';
-import type { ActorBodies } from './actor-bodies.ts';
+import type { ActorBodies, BodyHolder } from './actor-bodies.ts';
 import type { PlacedActor } from './actors.ts';
 import { HeldWeapons, type HeldModels } from './actor-weapons.ts';
 import { CombatImpacts } from './combat-impacts.ts';
@@ -190,6 +190,8 @@ export interface ActorCombatOptions {
   readonly bodies: ActorBodies;
   readonly actors: () => Iterable<StagedActor>;
   readonly get: (reference: number) => StagedActor | undefined;
+  /** The dead player's body (src/shell/player-death.ts): the killing blow pushes it. */
+  readonly playerBody?: () => BodyHolder | undefined;
   /** What the actors say (their combat lines: Attack, Hit, Block, BleedOut, Death, ...). */
   readonly talk?: () => ActorTalk | undefined;
   /** What they notice (an attack heard, the attacked searching, sneak attacks' awareness). */
@@ -294,7 +296,7 @@ export class ActorCombat implements CombatBridge {
       this.#input = new PlayerCombat(
         this,
         play.player,
-        () => !play.seated && !this.#options.session.menuMode,
+        () => !play.seated && !play.dead && !this.#options.session.menuMode,
         () => this.#options.casting?.(),
       );
     }
@@ -303,6 +305,22 @@ export class ActorCombat implements CombatBridge {
       this.#camera = undefined;
       this.#setMusic(false);
     }
+  }
+
+  /**
+   * The player died (src/shell/player-death.ts): they fight no more (what they held goes, as
+   * the dead's does), no fighter keeps them its target, and the combat AI's minds that fought
+   * them find no target in them (the dead are none: actor-combat-ai.ts) and end their fights.
+   */
+  playerDied(): void {
+    const fighter = this.#fighters.get(PLAYER_REF);
+    if (fighter) this.#drop(fighter);
+    this.#input = undefined;
+    for (const other of this.#fighters.values()) {
+      if (other.target === PLAYER_REF) other.target = undefined;
+    }
+    // A killmove on the player ends with them: the death camera takes the view.
+    this.#camera = undefined;
   }
 
   /** The killmove camera the player looks through now (undefined: theirs). */
@@ -1250,7 +1268,9 @@ export class ActorCombat implements CombatBridge {
     damage: number,
     hit: { readonly direction: Vec3; readonly shot: ShotPayload | undefined },
   ): void {
-    const staged = this.#options.get(target.reference);
+    const staged = target.player
+      ? this.#options.playerBody?.()
+      : this.#options.get(target.reference);
     if (!staged) return;
     const s = this.#settings;
     const [dMin, dMax, fMin, fMax] = hit.shot

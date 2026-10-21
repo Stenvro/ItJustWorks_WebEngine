@@ -83,7 +83,9 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
 - **Death:** an actor that dies on the stage (Kill, KillSilent, its health taken to 0) stops:
   its controller goes, its graph and face stop, and its bodies are let go from where its pose
   had them, its pose following them (it falls as a ragdoll from the pose it had). Its cell
-  lays it down dead when it loads again (the game state's dead).
+  lays it down dead when it loads again (the game state's dead). Bodies being made for it as it
+  died are made again for the dead (the killing blow's push waits for them). The player dies
+  so too ([Combat](#combat), "The player's death").
 
 ## Paths
 
@@ -863,7 +865,38 @@ meanwhile.
   damage); an essential actor, and a protected one unless the player dealt the blow, bleeds out
   instead (`bleedout.ts`: bleedOutStart, its enemies leave it, it regains fBleedoutRecover of its
   health a second and gets up (bleedOutStop) at fBleedoutDefault after fBleedoutMin seconds;
-  SetNoBleedoutRecovery keeps it down).
+  SetNoBleedoutRecovery keeps it down). Actor.Kill (KillSilent, the console's kill) bleeds an
+  essential actor out too: the game's KillEssential is a script that clears a unique base's
+  Essential flag before it calls Kill (Actor.pex).
+- **The player's death** (`player-death.ts`, `src/shell/player-death.ts`; UESP "Skyrim:Death"):
+  health run out or Actor.Kill kills the player as any actor (the runtime's dead, OnDying then
+  OnDeath to the player, their aliases and the magic effects on them), unless they are
+  essential (an alias's flag: they bleed out, as above) or in god mode (the console's tgm,
+  Debug.SetGodMode: no damage to health, magicka or stamina, no death; TODO(M13): whether god
+  mode also stops Kill, its carry weight and ammunition). The stage then shows it: off a horse
+  or a cart and out of furniture at once (no exit played), their casts and fight over (what
+  they held goes as the dead's does; a killmove's camera gives way); the avatar stops walking
+  and animating and its body gets its ragdoll as an NPC's does (ActorBodies, from the pose it
+  had, at the avatar's placement; the killing blow pushes it by fDeathForce\*); the
+  controller's shape goes (the body lies there), the player's keys do nothing (no movement,
+  activation, attacks or casts; of the menus only the journal's system page and the console
+  open; a conversation or menu open at the death closes) and the HUD stays as it was (no
+  activation prompt; the SKSE mod Enhanced Death Camera adds hiding it, so the game does not).
+  Fighters drop the dead player as their target, and the combat AI finds no target in the dead
+  (its candidates leave them out) and ends its fights. The camera is the engine's bleedout
+  camera (CommonLibSSE BleedoutCameraState, which the engine starts for the dead player; the
+  mod's hooks show it): over [Camera] iBleedoutTransitionMillis (500 ms) from where the view
+  was to behind the body as it looked, pitched down at the ragdoll's centre of mass (NPC COM,
+  else the pelvis or root), pulling back from fVanityModeMinDist (155) to
+  fDefaultAutoVanityZoom (300) and slowly going round it, kept out of walls by a sphere of
+  fCameraCasterBleedOutSize (5) on L_CAMERA that passes the body itself. TODO(M13): the
+  bleedout camera's pitch, turn speed and zoom are not documented (its state keeps a zoom, a
+  pitch, a yaw and a random heading). fPlayerDeathReloadTime (5 s) of game time after the death
+  (a menu holds it) the game loads its most recent save; TODO(M12): savegames: until then it
+  ends as the system page's Quit to main menu does. The sandbox, with no saves, leaves the
+  body lying. TODO(M13): Resurrect on the player; GMST sMiscPlayerDead\* (a message box the
+  data still has: "Reloading the most recent save game", Reload / Main Menu) is not known to
+  show.
 - **Killmoves**: an attack whose idle is a paired one (the tree's killmove branches: their
   conditions ShouldAttackKill, GetGlobalValue(KillMove), the target's race, the weapon, random
   chances) plays "pa_<name>" on the attacker and "<name>" on the target, each its part of the

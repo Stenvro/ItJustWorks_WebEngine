@@ -491,6 +491,24 @@ export class PlayMode {
           );
         });
       },
+      // Dying ends a conversation and a menu open meanwhile (a script's kill); the console and
+      // the system page stay the player's (GameMenus.userEvent).
+      playerDied: () => {
+        dialogue.close();
+        menus.close();
+      },
+      // fPlayerDeathReloadTime after the death the game loads its most recent save.
+      // TODO(M12): load the most recent save (savegames); until then the game ends as Quit to
+      // main menu does.
+      reloadAfterDeath: () => {
+        this.#quitToMainMenu().catch((error: unknown) => {
+          this.#terminal.log(
+            'ui',
+            `the main menu does not open: ${error instanceof Error ? error.message : String(error)}`,
+            'error',
+          );
+        });
+      },
     };
     const settings = await session.settings();
     session.hud.uses = {

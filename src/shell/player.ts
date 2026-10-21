@@ -340,6 +340,11 @@ export class Player implements Camera {
     }
   }
 
+  /** The vertical field of view (radians) of fDefaultWorldFOV (the death camera's too). */
+  get fovY(): number {
+    return this.#fovY;
+  }
+
   /** The INI settings the player works with. */
   get ini(): IniSettings {
     return this.#setup.ini;

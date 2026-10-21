@@ -43,6 +43,40 @@ describe('ConsoleCommands', () => {
     expect(controls.menu).toBe(false);
     expect(changed).toBe(2);
   });
+
+  it('toggles god mode with tgm', async () => {
+    const runtime = { godMode: false };
+    const commands = new ConsoleCommands({ runtime } as unknown as ConsoleContext);
+    expect(await commands.run('tgm')).toEqual(['God Mode -- ON']);
+    expect(runtime.godMode).toBe(true);
+    expect(await commands.run('ToggleGodMode')).toEqual(['God Mode -- OFF']);
+    expect(runtime.godMode).toBe(false);
+  });
+
+  it('kills an actor as Actor.Kill does with kill, the player by default', async () => {
+    const killed: [number, number | undefined][] = [];
+    const commands = new ConsoleCommands({
+      runtime: {
+        actors: {
+          isActor: (reference: number) => Promise.resolve(reference !== 0x1234),
+          scriptKill: (reference: number, killer: number | undefined) => {
+            killed.push([reference, killer]);
+            return Promise.resolve();
+          },
+        },
+      },
+    } as unknown as ConsoleContext);
+    expect(await commands.run('player.kill')).toEqual([]);
+    expect(await commands.run('kill 1a2b')).toEqual([]);
+    expect(await commands.run('1a2b.kill player')).toEqual([]);
+    // Not an actor: nothing.
+    expect(await commands.run('1234.kill')).toEqual([]);
+    expect(killed).toEqual([
+      [0x14, undefined],
+      [0x14, 0x1a2b],
+      [0x1a2b, 0x14],
+    ]);
+  });
 });
 
 describe('parseConsoleLine', () => {

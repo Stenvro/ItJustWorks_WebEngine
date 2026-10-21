@@ -181,11 +181,13 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       formula with skill and armour), blocking, bashing, staggers and recoils, power attacks,
       unarmed, bows and arrows (projectiles), killmoves (paired animations and their camera),
       hit reactions, impacts on actors, bleedout for essential and protected actors (and its
-      recovery), the enemy health bar, combat music. docs/ai.md, "Combat". Moved on: who fights
+      recovery), the enemy health bar, combat music, the player's death (ragdoll, death camera,
+      controls, the reload's wait; god mode). docs/ai.md, "Combat". Moved on: who fights
       whom and NPCs' blocking and power attack choices to 5.2 (a minimal fight stands in:
       StartCombat and being hit); the first-person arms and weapon to M11 (with the arms); the
       perk entry points to M11; sneak attacks' awareness to 4.1; combat lines to 4.3; the kill
-      cameras' slow motion and the impacts' effect models to M13.
+      cameras' slow motion and the impacts' effect models to M13; loading the most recent save
+      after the player's death to M12 (savegames; until then: the main menu).
 - [x] **5.2 Combat AI:** entering combat (aggression and relationships, assistance, being
       attacked, detection), target choice and threat, combat groups, the combat style's
       movement (circling, flanking, fallback, stalking, strafing), equipment choice by score,

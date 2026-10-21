@@ -119,6 +119,16 @@ export class PlayerFurniture {
     return true;
   }
 
+  /**
+   * The player died in the furniture: it lets go of them at once, no exit played (their body
+   * falls from it: src/shell/player-death.ts).
+   */
+  release(): void {
+    if (!this.#seated) return;
+    this.#furniture.remove(PLAYER_REF);
+    this.#stand();
+  }
+
   /** Gets up: the furniture's exit plays, then the player stands and moves again. */
   leave(): Promise<void> {
     this.#leaving ??= this.#furniture.leave(this.user).finally(() => {
