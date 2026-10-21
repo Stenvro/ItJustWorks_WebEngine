@@ -184,7 +184,9 @@ worldspaces on screen:
   through a journey as a load door: WorldViewer.followsScripts).
 - **Animation**: PlayAnimation and the animation variables reach a reference's behavior
   graph (an object's sequences and skeleton, an actor's), and the events the graph raises
-  reach OnAnimationEvent.
+  reach OnAnimationEvent: an object's, an actor's on the stage and the player's body
+  (AnimatedSkeleton.onScriptEvents; MQ101's cart riders wait for ExitCartEnd, the headsman's
+  Decapitate, the player's PlayImod).
 - **Music, sounds, packages**: MusicType.Add / Remove, the globals ambient sounds read, quest
   state and alias packages for the actors' packages come from the runtime.
 - What only the game's menus show (notifications, message boxes, help messages) goes to the
