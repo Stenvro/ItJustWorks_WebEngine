@@ -58,6 +58,8 @@ import {
   type Threat,
 } from '../ai/combat-tactics.ts';
 import { InterruptFlag, PackageFlag } from '../ai/package-records.ts';
+import type { CombatStyleFlight } from '../ai/combat-style-records.ts';
+import { withinReach } from '../ai/flight.ts';
 import type { Gait } from '../ai/locomotion.ts';
 import {
   AttackState,
@@ -80,6 +82,7 @@ import type { ActorAi } from './actor-ai.ts';
 import type { ActorMovers } from './actor-movers.ts';
 import type { ActorSenses } from './actor-senses.ts';
 import type { ActorTalk } from './actor-talk.ts';
+import type { FlightTarget } from './actor-flight.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -133,7 +136,7 @@ export interface CombatAiHost {
   block(reference: number, on: boolean): Promise<void>;
   /** Plays an action's idle (ActionIdleWarn, ActionIdle, ...); its event, if one played. */
   act(reference: number, action: string, target?: number): Promise<string | undefined>;
-  /** What flies at the actors now (arrows; spells and breath: 5.3, 5.4). */
+  /** What flies at the actors now (arrows, spells, breath). */
   threats(): Iterable<Threat>;
 }
 
@@ -152,6 +155,23 @@ export interface CombatCasting {
   ): Promise<boolean>;
 }
 
+/**
+ * The fliers' fights (src/shell/actor-flight.ts: dragons): a flier that may fly fights from the
+ * air by its combat style's flight section; those on the ground cannot strike one overhead.
+ */
+export interface CombatFlight {
+  /** Whether an actor may fly in its fight now (a flier allowed to, where flying is). */
+  mayFly(actor: number): boolean;
+  /** Whether an actor is in the air now. */
+  isFlying(actor: number): boolean;
+  /** One frame of a flier's fight: true while the flight has it (the ground fight waits). */
+  fight(actor: number, target: FlightTarget, flight: CombatStyleFlight): boolean;
+  /** Its fight ended (its packages take it on from there). */
+  endFight(actor: number): void;
+  /** The shape it had on the ground (its size for blows in the air). */
+  shape(actor: number): { readonly radius: number; readonly height: number } | undefined;
+}
+
 export interface ActorCombatAiOptions {
   readonly session: GameSession;
   readonly terminal: Terminal;
@@ -168,6 +188,8 @@ export interface ActorCombatAiOptions {
   readonly ridden?: (actor: number) => boolean;
   /** Spells, staffs and shouts in combat (M10 5.3). */
   readonly casting?: () => CombatCasting | undefined;
+  /** The fliers' fights (M10 5.4). */
+  readonly flight?: () => CombatFlight | undefined;
 }
 
 type Mode = 'idle' | 'fight' | 'search' | 'flee' | 'yield';
@@ -1076,6 +1098,7 @@ export class ActorCombatAi {
     const host = this.#options.host;
     host.setTarget(reference, undefined);
     this.#releaseBlock(mind, host.fighter(reference));
+    this.#options.flight?.()?.endFight(reference);
     this.#groups.leave(reference);
     const movers = this.#options.movers;
     movers.request(reference, undefined);
@@ -1146,7 +1169,24 @@ export class ActorCombatAi {
     const state = view.state;
     const there = target.feet ?? mind.lastKnown.get(target.reference);
     if (!there) return;
-    const distance = flat(feet, there);
+    const flight = this.#options.flight?.();
+    // A flier fights from the air while it may fly (its style's flight section); landed, it
+    // fights on the ground here until it takes off again.
+    if (
+      flight?.mayFly(reference) === true &&
+      flight.fight(
+        reference,
+        { reference: target.reference, feet: there, height: target.height },
+        profile.style.flight,
+      )
+    ) {
+      return;
+    }
+    // A target in the air is as far as it is (its height counts: bows and spells reach it).
+    const aloft = flight?.isFlying(target.reference) === true;
+    const distance = aloft
+      ? Math.hypot(feet[0] - there[0], feet[1] - there[1], feet[2] - there[2])
+      : flat(feet, there);
     const facing = headingTo(feet, there);
     // What it fights with (its style's scores), now and then.
     if (this.#clock >= mind.nextEquip && !mind.equipping) {
@@ -1252,8 +1292,17 @@ export class ActorCombatAi {
       const gait: Gait = mind.maneuver === 'advance' && distance > reach * 2 ? 'run' : 'walk';
       movers.request(reference, { direction, gait, face: facing });
     }
-    // Its attack: within reach and facing it, in its own time.
+    // Its attack: within reach and facing it, in its own time; not at one above its reach (a
+    // flier overhead: it waits for it to come down).
     if (distance > reach || Math.abs(turnBetween(view.heading, facing)) > STRIKE_ANGLE) return;
+    if (
+      !withinReach(
+        { feet, height: view.height, reach: view.reach },
+        { feet: there, height: target.height },
+      )
+    ) {
+      return;
+    }
     if (this.#clock < mind.nextAttack) return;
     const chaining =
       state.attack === AttackState.nextAttack || state.attack === AttackState.followThrough;
@@ -1429,7 +1478,7 @@ export class ActorCombatAi {
   }
 
   /**
-   * A threat coming at it (an arrow; a spell or a breath: 5.3, 5.4): by its style's avoid
+   * A threat coming at it (an arrow, a spell, a breath): by its style's avoid
    * threat chance it sidesteps out of the line (AvoidThreat). Whether it dodges now.
    */
   #dodge(mind: Mind, view: FighterView, facing: number): boolean {

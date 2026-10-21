@@ -687,6 +687,7 @@ export class WorldViewer {
       void this.#stage?.vehicles.tether(cart, horse);
     },
     mountOf: (actor) => this.#stage?.mounts.horseOf(actor),
+    flight: (actor) => this.#stage?.flight.scriptState(actor),
     riderOf: (horse) => this.#stage?.mounts.riderOf(horse),
     dismount: (actor) => this.#stage?.mounts.dismount(actor) ?? false,
     motion: (reference) =>

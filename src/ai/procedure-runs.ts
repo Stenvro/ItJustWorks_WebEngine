@@ -738,10 +738,73 @@ const fleeAway: ProcedureRunner = async (run) => {
   return arrived ? 'success' : 'failure';
 };
 
+/** An orbit without radii circles this far from its place (units). TODO(M13): the engine's. */
+const ORBIT_RADIUS = 2048;
+/** A hover faces this far ahead along its place's heading (units). */
+const HOVER_FACE = 1024;
+
+/**
+ * Hover: a flier flies to its place, Height above it, and hovers there facing the place's
+ * heading while the package runs (src/shell/actor-flight.ts); one that cannot fly holds its
+ * place.
+ */
+const hover: ProcedureRunner = async (run) => {
+  const place = await placeIn(run, 0);
+  const body = run.body;
+  if (!place || !body.fly || body.flies?.() !== true) return hold(run);
+  const height = run.inputs.number(1, 0);
+  const at: Vec3 = [place.position[0], place.position[1], place.position[2] + height];
+  const heading = place.heading ?? body.heading();
+  const face: Vec3 = [
+    at[0] + Math.sin(heading) * HOVER_FACE,
+    at[1] + Math.cos(heading) * HOVER_FACE,
+    at[2],
+  ];
+  body.fly({ kind: 'hover', at, face });
+  try {
+    return await hold(run);
+  } finally {
+    body.fly(undefined);
+  }
+};
+
+/**
+ * Orbit: a flier circles its place between the inner and outer radius (their middle), Height
+ * above it, while the package runs; one that cannot fly holds its place.
+ */
+const orbit: ProcedureRunner = async (run) => {
+  const place = await placeIn(run, 0);
+  const body = run.body;
+  if (!place || !body.fly || body.flies?.() !== true) return hold(run);
+  const inner = run.inputs.number(1, 0);
+  const outer = run.inputs.number(2, 0);
+  const radius = inner > 0 || outer > 0 ? (inner + Math.max(inner, outer)) / 2 : ORBIT_RADIUS;
+  body.fly({
+    kind: 'orbit',
+    center: place.position,
+    radius: Math.max(radius, place.radius),
+    height: run.inputs.number(3, 0),
+    clockwise: run.random() < 0.5,
+  });
+  try {
+    return await hold(run);
+  } finally {
+    body.fly(undefined);
+  }
+};
+
+/** FlightGrab: a flier flies at its target and grabs it in its talons; succeeds once it did. */
+const flightGrab: ProcedureRunner = async (run) => {
+  const victim = (await targetsIn(run, 0))[0];
+  if (victim === undefined || !run.body.flightGrab || run.body.flies?.() !== true) {
+    return 'failure';
+  }
+  return (await run.body.flightGrab(victim)) ? 'success' : 'failure';
+};
+
 /**
  * The procedures run, by lower-case name; the others hold the actor where it is (standing up
- * from furniture first): UseWeapon, UseMagic and Shout (TODO(M10) 5.1–5.3: combat), Hover,
- * Orbit and FlightGrab (TODO(M10) 5.3: dragons' flight).
+ * from furniture first): UseWeapon, UseMagic and Shout (TODO(M10) 5.1–5.3: combat).
  */
 export const PROCEDURES: Readonly<Record<string, ProcedureRunner>> = {
   travel: standing(travel),
@@ -768,4 +831,7 @@ export const PROCEDURES: Readonly<Record<string, ProcedureRunner>> = {
   escort: standing(escort),
   followto: standing(followTo),
   flee: standing(flee),
+  hover: standing(hover),
+  orbit: standing(orbit),
+  flightgrab: standing(flightGrab),
 };
