@@ -164,6 +164,9 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
           castTime: spell.castType === CastType.concentration ? 0 : spell.chargeTime,
           // The casting engine's cost by the school's skill (casting.ts magickaCost).
           spellCost: await game.casting.menuCost(formId),
+          // The bottom bar's school: its name, the player's level and progress (its MagicSkill
+          // frame: UpdateSkillBar).
+          ...(main && SCHOOLS.has(main.skill) ? await schoolInfo(game, main.skill) : undefined),
         });
       }
       for (const active of await activeEffects(game)) {
@@ -285,6 +288,23 @@ export async function activeEffects(game: ScriptRuntime): Promise<ActiveEntry[]>
     });
   }
   return shown;
+}
+
+/** A school's skill for the magic menu's bottom bar: its name, level and progress (0..100). */
+async function schoolInfo(
+  game: ScriptRuntime,
+  skill: number,
+): Promise<{ magicSchoolName: string; magicSchoolLevel: number; magicSchoolPct: number }> {
+  const [record, value, progress] = await Promise.all([
+    game.forms.actorValueForm(skill),
+    game.actors.value(PLAYER_REF, skill),
+    game.progression.skillProgress(skill),
+  ]);
+  return {
+    magicSchoolName: record?.text('FULL') ?? '',
+    magicSchoolLevel: Math.floor(value.current),
+    magicSchoolPct: progress * 100,
+  };
 }
 
 /** The effect that decides a spell's school and level: its costliest (its first with a skill). */
