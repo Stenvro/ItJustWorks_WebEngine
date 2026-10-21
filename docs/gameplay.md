@@ -65,8 +65,8 @@ from the real data (`--player`, `--base <editor id>`, `--audit` for every placed
   rated above what covers the same slots, or for free slots; a melee weapon (one-handed beside a
   shield it has), else a bow or crossbow, else a staff, the one that does the most damage with
   its skill; a shield beside a one-handed weapon; the best arrows (non-bolts) or bolts for its
-  bow or crossbow. Items given to an NPC are weighed the same way. Combat chooses its weapons by
-  its combat style (TODO(M10) 5.2).
+  bow or crossbow. Items given to an NPC are weighed the same way. In combat it chooses its
+  weapons by its combat style ([ai.md](ai.md#combat-ai)).
 
 ### The menus
 
@@ -343,7 +343,7 @@ the player in a runtime on the game data, `--audit` reads every record).
   Effects without a magnitude set their value as a flag (1): Paralysis, Invisibility.
 - Calm, Frenzy, Demoralize, Rally, Turn Undead, Banish move Aggression or Confidence to a
   target value (0 unaggressive, 3 frenzied; 0 cowardly, 4 foolhardy: TODO(M13) inferred) while
-  they last; `MagicEngine.aiState` is what the combat AI reads (TODO(M10) 5.2).
+  they last; `MagicEngine.aiState` is what the combat AI reads ([ai.md](ai.md#combat-ai)).
 - Cure Disease / Poison / Paralysis / Addiction end those effects (a disease leaves the
   actor's spells). Dispel ends spells' effects up to its magnitude (TODO(M13): Oblivion's rule).
 - Summon Creature places its NPC_ before the summoner (one at a time: TODO(M11) Twin Souls),

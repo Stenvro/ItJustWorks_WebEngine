@@ -163,6 +163,8 @@ export interface WorldBridge {
   stopCombat?(actor: number): void;
   /** An actor's combat state now (src/shell/actor-combat.ts), if it is loaded. */
   combat?(actor: number): ActorCombatState | undefined;
+  /** Whether a loaded actor fights or holds another an enemy (the combat AI). */
+  hostile?(actor: number, other: number): boolean;
   /** Whether the player looks through their own eyes (first person). */
   firstPerson?(): boolean;
   /** Actor.DrawWeapon (true) and SheatheWeapon (false). */
@@ -392,9 +394,17 @@ export interface ActorCombatState {
   /** GetMovementDirection: 0 none, 1 forward, 2 right, 3 back, 4 left. */
   readonly movementDirection: number;
   readonly lastHitCritical: boolean;
-  /** In combat, with whom (TODO(M10) 5.2: the combat AI's own state). */
+  /** In combat, with whom (the combat AI's: src/shell/actor-combat-ai.ts). */
   readonly inCombat: boolean;
   readonly combatTarget: number | undefined;
+  /** GetCombatState: 0 not in combat, 1 in combat, 2 searching. */
+  readonly combatState: number;
+  /** IsFleeing; watching a fight (the scenes' observe combat flags). */
+  readonly fleeing: boolean;
+  readonly observingCombat: boolean;
+  /** GetFriendHit: the blows from friends it let pass; GetCombatGroupMemberCount. */
+  readonly friendHits: number;
+  readonly groupSize: number;
   /** Its next attack would kill its combat target (ShouldAttackKill). */
   readonly shouldAttackKill: boolean;
   /** Its combat target's height against its own (GetTargetHeight, game units). */

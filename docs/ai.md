@@ -193,8 +193,8 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   situation names (spectator, observe corpse, guard warn: [Detection](#detection)) comes before
   them all; the engine's own reactions hold its package while they run, as do a conversation
   with another actor and a greeting it stops for ([Talking](#talking)); the package's interrupt
-  flags say whether it greets, chatters, talks with others and comments. TODO(M10) 5.2: the
-  combat list (ECOR).
+  flags say whether it greets, chatters, talks with others and comments. In combat its packages
+  wait; its combat override list (ECOR) keeps it to its package's place ([Combat AI](#combat-ai)).
 - **When:** as the hour changes, every 2 seconds (TODO(M13): the engine's rate), when its package
   ends, and when a script asks (EvaluatePackage). One that must complete (PKDT flag 0x4) is not
   left before it has. Its scripts hear of it: OnPackageStart (the new package), OnPackageChange
@@ -589,8 +589,9 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   camera and it; the first look tells how it is).
 - **For combat (5.2) and crime (M11):** `ActorSenses.detections` (state, level, detects,
   detectors, known, lastKnown, listen), `noise`, `action`, `attackedBy`, `fight`, `warn`, the
-  hooks `inCombat` and `hostile`, and `Detections.witness` / `offence` (the observers that
-  detect an actor seeing it steal, attack, trespass: 'witnessed').
+  hooks `inCombat` and `hostile` (the combat AI sets them), `combatOverrides` (ECOR),
+  `endReaction` (an actor entering combat), and `Detections.witness` / `offence` (the observers
+  that detect an actor seeing it steal, attack, trespass: 'witnessed').
 
 ## Scenes
 
@@ -662,8 +663,8 @@ after `--package-seconds`).
   and a fight it watches end the scene or pause it while they last (its clock, phases and next
   lines wait). A dead actor whose death does not end it is done with. With No Player Activation
   the player cannot talk to the actor while the scene plays: the game says
-  sSceneBlockingActorActivation, "This person is busy.". TODO(M10) 5.2: combat and watching
-  combat.
+  sSceneBlockingActorActivation, "This person is busy.". In combat and watching a fight are the
+  combat AI's and detection's spectating ([Combat AI](#combat-ai)).
 - **Ending:** Scene.Stop, its quest stopping, its last phase completing, an actor's behaviour.
   Its actions end (looks and packages let go), its actors leave it, its end fragment runs; then
   its quest stops if the scene stops it on its end (851 scenes: MS13LucanCamillaScene ends with
@@ -764,9 +765,8 @@ package may do all.
 
 What actors and the player do in a fight (`src/gameplay/combat/`, `src/shell/actor-combat.ts`;
 the plan: [m10-plan.md](m10-plan.md) 5.1; the records: `node tools/weapon-info.ts <filter>`).
-Who fights whom is the combat AI's (5.2): until it runs, an actor fights what a script set it
-on (StartCombat) or what hit it, closing to its reach and striking, drawing its bow at range;
-its packages wait meanwhile.
+Who fights whom, and how, is the combat AI's ([Combat AI](#combat-ai)); its packages wait
+meanwhile.
 
 - **Actions** go through the idle tree as the engine's do: ActionDraw, ActionSheath,
   ActionRightAttack, ActionLeftAttack, ActionRightPowerAttack, ActionLeftPowerAttack,
@@ -943,3 +943,133 @@ the projectile and explosion a spell sends.
   a concentration spell 2.5 s. An actor that dies or leaves the stage stops casting.
 - **Scripts' casts** (Spell.Cast, RemoteCast: WorldBridge.launchSpell) fly the same way from the
   source's right hand or its place; without a play they are delivered at once.
+
+## Combat AI
+
+Who fights whom, and how (`src/ai/combat-ai.ts`, `combat-tactics.ts`, `combat-groups.ts`,
+`combat-search.ts`, `combat-reactions.ts`, `combat-profile.ts`; on the stage
+`src/shell/actor-combat-ai.ts`, which drives the mechanics of [Combat](#combat); the plan:
+[m10-plan.md](m10-plan.md) 5.2; check: `node tools/combat-ai-info.ts <actors>`). The AI values
+mean what the Creation Kit says of them (UESP "Skyrim:AI Data"); the load order's game settings
+count where it has them (fConfidence\*, fCombatConfidenceModifier\*, fFleeDistance\*,
+iFriendHitCombatAllowed, fCombatAdvance\*Radius\*, fCombatBlockChanceWeaponMult,
+fCombatDialogue\*); the engine's own (fCombatSelectTargetUpdateTime, fCombatYieldTime,
+fCombatInventoryUpdateTimer, ...) are in no plugin, and their values here are ours
+(TODO(M13)). CommonLibSSE names the engine's combat behaviour trees but not their arithmetic:
+the rules below read each value as its name says (TODO(M13)).
+
+- **Reactions** (`combatReaction`; it stands in for crime's `reaction(actor, other)` until M11
+  merges): summons, reanimated and commanded actors are their commander's allies and share its
+  reactions; the player's teammates are the player's allies; one scripts set to be attacked on
+  sight (SetAttackActorOnSight) is everyone's enemy; a relationship decides next (ally and lover
+  ally, friend and confidant friend, foe and worse enemy); else the factions' combat reactions
+  (FACT XNAM, scripts' SetAlly / SetEnemy) between the factions each is a member of, the closest
+  bond winning (ally, friend, enemy, neutral), the other's view where the actor's names none; a
+  crime faction set as the player's enemy is an enemy faction to the player. Vanilla factions
+  list themselves (BanditFaction is BanditFaction's ally): faction-mates are not allies by
+  themselves. TODO(M11): bounties and guards' hostility to criminals are crime's.
+- **Entering combat**, every 0.25 s for each actor of the high process, among those it detects
+  (or its group sees): by its aggression (unaggressive never, aggressive its enemies, very
+  aggressive enemies and the neutral, frenzied anyone) it attacks on sight; its aggro radius
+  (AIDT, where its package has the aggro radius interrupt) first leaves alone those beyond the
+  warn radius, warns within it (ActionIdleWarn: the bear's roar, facing them) and attacks within
+  the attack radius, or within the warn-or-attack radius once it has warned 2 s (TODO(M13)). It
+  helps by its assistance (helps allies; helps friends and allies) one that fights or is
+  attacked, against the other; guards (CLAS DATA guard flag) help anyone attacked who did not
+  strike first and would not attack on sight (TODO(M11): crime); the player's teammates help
+  the player at least as friends and allies, and fight within fCombatTeammateFollowRadiusMult ×
+  512 of them. A blow turns its victim on the attacker: an enemy or a neutral at once, a friend
+  or ally after iFriendHitCombatAllowed (4) blows in combat (2 out of it,
+  iFriendHitNonCombatAllowed: TODO(M13)), each blow let pass a friendly fire comment (its Hit
+  line, GetFriendHit) where its package has the friendly fire interrupt; attacked by one it does
+  not detect, it searches. A package with Ignore Combat (PKDT) keeps it out of fights it would
+  pick; calm keeps it out of all; StartCombat sets it on a target whatever its reaction,
+  StopCombat and StopCombatAlarm end it. Entering, it says NormalToCombat (AlertToCombat when
+  alerted), gets off its horse (TODO(M13): mounted combat), its detection reaction or override
+  package ends, and its package's way stops.
+- **Targets** (`selectTarget`): the most threatening (health × its blow's damage), nearest
+  first (half as much at 1024 units), its current target counting 1.5 times (it does not switch
+  for a little), one attacking it 1.5 times, one it lost a quarter. The odds (its enemies'
+  strength against its group's) move its confidence between fCombatConfidenceModifierMin and
+  Max every fCombatThreatRatioUpdateTime.
+- **Combat groups**: an actor entering combat joins the group of an ally or friend fighting;
+  the group shares where its members saw their targets (one sees, all know), counts for the
+  style's group offensive mult and GetCombatGroupMemberCount; one dying, another says
+  AllyKilled.
+- **What it fights with** (`chooseEquipment`, every fCombatInventoryUpdateTimer): the weapons
+  it carries (a bow or crossbow only with ammunition) and its fists, each scored by its damage ×
+  its combat style's equipment score mult (CSGD melee, ranged, magic, staff, unarmed, shout) ×
+  its fit to the distance (melee within its reach, less beyond it to
+  fCombatAbsoluteMaxRangeMult × the reach; ranged within its range, the one in hand
+  fCombatCurrentWeaponAbsoluteMaxRangeMult farther, falling to a tenth closer than
+  fCombatAdvanceOuterRadiusMax) × 1.25 for what is in hand. Another weapon is taken up through
+  the equip system (sheathed first, then drawn again; arrows or bolts for a bow or crossbow).
+  Its combat style: its combat override package's (PACK CNAM), else its NPC\_ ZNAM (of the
+  template that gives its AI data), else DefaultCombatstyle (0x3D). With csHumanMissile
+  (ranged 3.2) an archer shoots down to about 250 units and draws its sword closer; a melee
+  style keeps its sword at 400. TODO(M10) 5.3: spells, staffs and shouts (`CombatCasting`:
+  their options and `castAt`, wired by magic in combat).
+- **Movement** (`chooseManeuver`, a maneuver for 1–3 s): more than 512 units beyond its reach
+  it chases its target over the navmeshes, running; near, dueling styles fall back (fallback
+  mult × 0.5, × (1 + defensive mult) as the target swings), circle (circle mult × 0.5) or
+  advance, flanking styles come at it from the side (flank distance; from afar too with allies
+  on the target) or stalk round it just out of reach (stalk time); at range it keeps beyond
+  fCombatAdvanceOuterRadiusMax (fallback mult), strafes (CSLR strafe mult) or holds, and closes
+  beyond its range. Its combat override package list (NPC\_ / alias ECOR: the first package
+  whose conditions hold) keeps it within that package's place: back there first, no chase of a
+  target beyond it.
+- **Attacks** (`chooseAttack`, every (0.4–1.2 s) × (1.5 − offensive)): within reach and facing
+  its target within 30°, it attacks by its offensive mult (× group offensive mult with allies on
+  the target, × attack staggered mult on a staggered target), a power attack by its attack
+  data's chance (ATKD; × power attack staggered mult on a staggered, power attack blocking mult
+  on a blocking target), chaining in the attack's window; blocking, it bashes by bash mult ×
+  0.25 (× bash attack, bash power attack, bash recoil mult as the target swings, power attacks
+  or recoils). A bow is drawn and loosed after 0.3–1.2 s held (TODO(M13): its line of fire).
+- **Blocks**: a melee swing coming at it within the swinger's reach it blocks once by its
+  defensive mult (× fCombatBlockChanceWeaponMult without a shield), where its left hand blocks
+  (a shield, a two-handed weapon, a one-handed weapon with the left hand free); it lets go as
+  the swing ends or after 1.2 s.
+- **Threats**: an arrow (spells and breath: TODO(M10) 5.3, 5.4) whose line passes through it
+  within 1.2 s it sidesteps by its style's avoid threat chance, out of the line to the side it
+  stands on, saying AvoidThreat.
+- **Fleeing** (`shouldFlee`): below its confidence's share of health (cowardly at once,
+  cautious fConfidenceCautious 37.5%, average fConfidenceAverage 15%, brave fConfidenceBrave
+  3.75%, foolhardy never) × (1 − the odds' modifier), or with Fear or Turn Undead on it; Rally
+  and frenzy keep it in the fight. It says Flee, runs fFleeDistanceExterior (5000) / Interior
+  (3000) away from its enemy over the navmeshes, cowers where it can go no farther (ActionIdle:
+  the idles IsFleeing picks), fights again cornered (within 192 units, for 10 s), and its combat
+  ends once it is that far and detects no enemy. IsFleeing: fleeing in combat, a Flee procedure
+  that counts as fleeing, or fear.
+- **Searching** (`CombatSearch`): a target no member of its group detects any more is searched
+  for (CombatToLost; GetCombatState 2): it runs to where it was last known (within
+  fCombatSearchLocationInvestigateDistance), looks round three times
+  (fCombatSearchInvestigateTime), walks to points within 768 units round the place, saying its
+  LostIdle lines (fCombatDetectionDialogueIdle\*); finding it again (LostToCombat) it fights on;
+  after fDetectionStateExpireTime it gives up (LostToNormal; detection's alert ends).
+- **Yielding**: an actor fighting the player that does not attack them on sight (the fight is
+  a quarrel or a brawl) and would flee yields instead: Yield, weapon away, out of the fight for
+  fCombatYieldTime (10 s), not again within fCombatYieldRetryTime (60 s); struck again it
+  fights on. The player yields a quarrel their blows started by sheathing and holding off 3 s:
+  AcceptYield, and it lets them be. TODO(M13): the engine's rule.
+- **The end of combat**: no enemy known (CombatToNormal; dead, bleeding out, gone or left
+  behind), StopCombat, calm or a search given up: it leaves its group, stands, sheathes 3 s
+  later (unless its package keeps its weapon drawn) and chooses its package again. Its own lines
+  in the fight: Taunt every fCombatDialogueTaunt\* (10–30 s); 5.1's Attack, Hit, Block, Death.
+- **Spectators**: those detection has watching a fight (their package's observe combat
+  interrupt, [Detection](#detection)) say ObserveCombat; a cowardly one runs from the fight
+  instead (Flee, IsFleeing) for 10 s. Scenes pause or end on an actor's combat and watching
+  (SCEN DNAM).
+- **Horses and followers**: a ridden horse is its rider's to move; others fight or flee by their
+  own AI values (horses: cowardly). Teammates fight the player's fights (above).
+- **Scripts**: IsInCombat (the player: while anyone fights them), GetCombatState (0, 1, 2
+  searching), IsFleeing, GetShouldAttack, IsHostileToActor, GetFactionRelation (the reaction;
+  without a parameter, to the player: TODO(M13)), IsCombatTarget (the subject is its
+  parameter's target: TODO(M13)), GetCombatTargetHasKeyword, GetFriendHit,
+  GetCombatGroupMemberCount, IsGuard; the natives StartCombat, StopCombat, StopCombatAlarm,
+  IsInCombat, GetCombatState, GetCombatTarget, IsHostileToActor, IsGuard,
+  SetAttackActorOnSight. Detection asks it who is in combat (Sneak not counting), who fights
+  whom (detected down to iAICombatMinDetection) and who is hostile to whom (searching for one
+  noticed or lost before combat).
+- `node tools/combat-ai-info.ts dunFaldarsToothBetBandit01 HuldaREF C06WolfSpiritREF`: each
+  actor's AI values, combat style, what it carries and fights with at 100, 400 and 1500 units,
+  and the reactions between them and to the player (`--new-game`: after a new game).

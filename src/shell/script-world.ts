@@ -94,6 +94,8 @@ export interface CombatBridge {
   state(actor: number): ActorCombatState | undefined;
   startCombat(actor: number, target: number): void;
   stopCombat(actor: number): void;
+  /** Whether an actor fights or holds another an enemy (src/shell/actor-combat-ai.ts). */
+  hostile(actor: number, other: number): boolean;
   drawWeapon(actor: number, draw: boolean): void;
   bleedout(actor: number, source: number | undefined): void;
   firstPerson(): boolean;
@@ -461,6 +463,11 @@ export class ScriptWorld implements WorldBridge {
 
   stopCombat(actor: number): void {
     for (const fights of this.#fights()) fights.stopCombat(actor);
+  }
+
+  hostile(actor: number, other: number): boolean {
+    for (const fights of this.#fights()) if (fights.hostile(actor, other)) return true;
+    return false;
   }
 
   drawWeapon(actor: number, draw: boolean): void {

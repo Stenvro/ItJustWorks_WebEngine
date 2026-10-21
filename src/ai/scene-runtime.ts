@@ -717,7 +717,8 @@ export class SceneDirector {
   /**
    * The actors' behaviour flags (SCEN DNAM): death, combat, a conversation with the player and
    * a fight watched pause the scene while they last or end it. A dead actor whose death does
-   * not end the scene is done with (its actions are). TODO(M10) 5.2: combat and watching it.
+   * not end the scene is done with (its actions are). Combat and watching a fight: the combat
+   * AI's and detection's (the host's actor state).
    */
   #watchActors(playing: Playing): void {
     const record = playing.record;
