@@ -102,7 +102,14 @@ export class TutorialMenu {
             menu.set(`${ROOT}.HelpTitle.text`, title);
             // The keys as text (the movie's ApplyButtonArt puts in pictures Ruffle cannot draw).
             const controls = (await this.#session.playerData()).controls;
-            menu.set(`${ROOT}.HelpScrollingText.textField.text`, withKeyLabels(text, controls));
+            const help = withKeyLabels(text, controls);
+            // Through the scrolling text's own text (CLIK's __set__text): the component writes
+            // its text into its field as it draws, so a field set before that came out empty
+            // (the barter menu's tutorial, its menu loading beside it); the field too, at once.
+            const scrolling = `${ROOT}.HelpScrollingText`;
+            await menu.waitFor(`${scrolling}.__set__text`, 2000);
+            menu.invoke(`${scrolling}.__set__text`, help);
+            menu.set(`${scrolling}.textField.text`, help);
           },
         })
         .catch((error: unknown) => {

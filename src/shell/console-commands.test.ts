@@ -79,6 +79,71 @@ describe('ConsoleCommands', () => {
   });
 });
 
+describe('ConsoleCommands perks and spells', () => {
+  const types = new Map([
+    [0xbabe4, 'PERK'],
+    [0x12fcd, 'SPEL'],
+  ]);
+  const setup = () => {
+    const calls: string[] = [];
+    const commands = new ConsoleCommands({
+      runtime: {
+        forms: {
+          record: (formId: number) =>
+            Promise.resolve(types.has(formId) ? { type: types.get(formId) } : undefined),
+        },
+        perks: {
+          add: (actor: number, perk: number) => {
+            calls.push(`add perk ${actor.toString(16)} ${perk.toString(16)}`);
+            return Promise.resolve();
+          },
+          remove: (actor: number, perk: number) => {
+            calls.push(`remove perk ${actor.toString(16)} ${perk.toString(16)}`);
+            return Promise.resolve();
+          },
+        },
+        actors: {
+          addSpell: (actor: number, spell: number) => {
+            calls.push(`add spell ${actor.toString(16)} ${spell.toString(16)}`);
+            return Promise.resolve(true);
+          },
+          removeSpell: (actor: number, spell: number) => {
+            calls.push(`remove spell ${actor.toString(16)} ${spell.toString(16)}`);
+            return Promise.resolve(true);
+          },
+        },
+        magic: {
+          syncLasting: () => Promise.resolve(),
+        },
+        spellMessage: () => Promise.resolve(),
+        detach: () => undefined,
+      },
+    } as unknown as ConsoleContext);
+    return { commands, calls };
+  };
+
+  it('adds and removes perks as Actor.AddPerk does, by form id', async () => {
+    const { commands, calls } = setup();
+    expect(await commands.run('player.addperk babe4')).toEqual([]);
+    expect(await commands.run('1a2b.RemovePerk babe4')).toEqual([]);
+    // A spell is no perk.
+    expect(await commands.run('player.addperk 12fcd')).toEqual([
+      "Item '12fcd' not found for parameter Perk.",
+    ]);
+    expect(calls).toEqual(['add perk 14 babe4', 'remove perk 1a2b babe4']);
+  });
+
+  it('adds and removes spells as Actor.AddSpell does', async () => {
+    const { commands, calls } = setup();
+    expect(await commands.run('player.addspell 12fcd')).toEqual([]);
+    expect(await commands.run('player.removespell 12fcd')).toEqual([]);
+    expect(await commands.run('player.addspell babe4')).toEqual([
+      "Item 'babe4' not found for parameter Spell.",
+    ]);
+    expect(calls).toEqual(['add spell 14 12fcd', 'remove spell 14 12fcd']);
+  });
+});
+
 describe('parseConsoleLine', () => {
   it('splits a command and its arguments, quotes keeping spaces', () => {
     expect(parseConsoleLine('help "iron sword" 4')).toEqual({

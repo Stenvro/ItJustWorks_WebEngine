@@ -680,6 +680,14 @@ which share its parts, alike):
   player goes once the menu has faded and asked `CloseMenu`.
 - Keys the engine takes in the item menus: F (favorite), and Esc and E reach the movie as Tab and
   Enter (the control map's menu contexts: Cancel is Tab and Esc, Accept is E).
+- A click: GFx calls an entry's `onPress(controller, keyboardOrMouse)` with 0 for the mouse,
+  Ruffle with no arguments, so the movie (whose `onItemSelect` asks ItemSelect only for a key)
+  takes the click for Enter and asks `ItemSelect()` without a hand; the engine equips the click
+  itself (`AttemptEquip(hand)`) and drops that ItemSelect when the click's own follows in the
+  same event (else a left click equipped and took off again).
+- The HUD stays in the menu's mode (`ShowElements`: InventoryMode, the barter menu's
+  BarterMode): its messages and quest updates show over the menu (sItemTooExpensive), the rest
+  hides.
 
 The magic menu (`magicmenu.swf`, `src/shell/magic-menu.ts`; P, or the tween menu's Magic) is
 driven the same way (`src/shell/item-menu.ts` holds what they share; each menu is a model of what
@@ -694,7 +702,10 @@ it lists and what its entries do):
   `castTime` (SPIT's charge time; 0 for concentration spells, whose cost the card shows per
   second), `spellCost`: the casting engine's magicka cost (`CastingEngine.menuCost`: the base
   cost × (1 − (skill / 400)^0.65), UESP "Magic Overview"; docs/gameplay.md, "Casting and
-  shouts"). Powers have ICT_SPELL_DEFAULT 13, shouts ICT_SHOUT 10 with `word0..2`
+  shouts"), and for the bottom bar's MagicSkill frame `magicSchoolName`, `magicSchoolLevel`,
+  `magicSchoolPct` (the school's skill, the player's level and its progress; without them the
+  bar shows the movie's placeholder, "Conjuration 99"). Powers have ICT_SPELL_DEFAULT 13, shouts
+  ICT_SHOUT 10 with `word0..2`
   (translation), `dragonWord0..2` and `unlocked0..2`, and the recovery of the last unlocked word
   as their cost; `showUnlocked` while a learned word is locked puts Unlock on the bottom bar
   (`$Unlock`): R asks sConfirmSpendSoul, spends a dragon soul on it (sFailSpendSoul without one)
@@ -742,8 +753,10 @@ buys:
 - `SetBarterMultipliers(buy, sell)`: the menu shows a vendor's item at value × buy and the
   player's at value × sell. The factor is fBarterMax − (fBarterMax − fBarterMin) × min(Speech, 100) / 100; buying costs at least 1.05 × value, selling gets at most the value (UESP,
   "Speech").
-- `UpdatePlayerInfo(playerGold, vendorGold, vendorName, info)`; `ItemSelect(fromVendor, price,
-amount)` trades: bought from the chest (sItemTooExpensive when the player cannot pay), sold
+- `UpdatePlayerInfo(playerGold, vendorGold, vendorName, info)`; `ItemSelect(amount, price,
+fromVendor)` trades (the movie's `[aiAmount, itemInfo.value, IsViewingVendorItems()]`: an AS2
+  array is pushed last element first, so the disassembly reads backwards; the price is the
+  card's, its multiplier applied): bought from the chest (sItemTooExpensive when the player cannot pay), sold
   into it, the vendor paying what it has. Selling for more asks first: `GetRawDealWarningString
 (total)` is answered at once with sNotEnoughVendorGold.
 
@@ -969,7 +982,14 @@ legendary count)`: a skill's card on the ring, a perk's in a tree (its rank, sRe
   sStatsNextRank with the skill levels its conditions ask), `SetPerkCount(points)`.
 - A perk can be taken when the tree leads to it (the root, or a perk before it owned) and its
   conditions (the CTDA before its effects) hold: Accept asks sStatsPerkConfirm, then it is the
-  player's (the next rank of a perk with ranks, NNAM). Space at a skill of 100 makes it Legendary
+  player's (the next rank of a perk with ranks, NNAM). The card's requirement line is
+  sRequirements or sStatsNextRank (which brings its own colon) with the skill levels.
+- TODO(M13): the camera in a tree. The executable has settings the data does not set:
+  fStatsStarCameraOffsetX/Y/Z, fStatsStarLookAtX/Y/Z, fStatsSkillsLookAtX/Y/Z,
+  fStatsStarZInitialOffset, fStatsStarScale, fStatsLineScale (their defaults are in its
+  encrypted code). Without them the camera only pitches up to the tree from the dome's middle,
+  and a narrow tree's names (One-Handed: Armsman, Fighting Stance, Bladesman, Bone Breaker
+  within a few degrees) stand over each other. Space at a skill of 100 makes it Legendary
   (sLegendaryResetConfirm, sLegendaryResetSecondConfirm): back to 15, its perks' points returned.
 
 ## The map
@@ -1168,7 +1188,10 @@ its button; `CloseMenu`).
   low. HBHJ: jail. HBFT: follower commands. HBWC: weapon charge. Dragonborn adds dragon riding's.
   CommonLib's `TutorialMenu::OpenTutorialMenu` takes such a default object.
 - **The box.** The message's name is the box's title (`Menu_mc.HelpTitle`), its text the help
-  (`Menu_mc.HelpScrollingText.textField`). `ApplyButtonArt` turns its "[Event]"s into key art.
+  (`Menu_mc.HelpScrollingText`, a CLIK text: set through its `__set__text`, which keeps it as
+  the text the component writes into its `textField` as it draws; the field set alone came out
+  empty when the component drew after it, as beside the barter menu loading). `ApplyButtonArt`
+  turns its "[Event]"s into key art.
 - Each shows once in a game, only with [Interface] bShowTutorials (TODO(M12): which were shown,
   in the save). The menus open theirs as they open: the map, the journal, the skills, the
   level-up, bartering, favorites and lockpicking. The others come with what they explain:
