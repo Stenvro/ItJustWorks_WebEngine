@@ -90,9 +90,14 @@ export class PlayerFurniture {
 
   /**
    * Uses a furniture: in it, `then` runs with what gets the player up (a workbench's menu,
-   * closed, gets them up). Resolves whether they got in.
+   * closed, gets them up). `types`: only its markers of these animation types (an AI package's,
+   * src/shell/player-pilot.ts). Resolves whether they got in.
    */
-  async use(object: CellObject, then?: (leave: () => void) => void): Promise<boolean> {
+  async use(
+    object: Pick<CellObject, 'reference'>,
+    then?: (leave: () => void) => void,
+    types?: number,
+  ): Promise<boolean> {
     if (this.#seated) return false;
     this.#hold(true);
     const forced = await this.#forcedPov(object.reference);
@@ -108,6 +113,7 @@ export class PlayerFurniture {
       (heading) => {
         this.#turnTo = heading;
       },
+      types === undefined ? {} : { types },
     );
     if (!inside) {
       this.#stand();

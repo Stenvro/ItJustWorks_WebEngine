@@ -273,6 +273,20 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   house Mila runs her Sleep package: Find finds her bed, she gets into it and sleeps, and the
   house's door is locked.
 
+### The player driven by AI
+
+While the scripts drive the player (`Game.SetPlayerAIDriven(true)`), the player runs AI packages
+as an actor does (`src/shell/player-pilot.ts`, `ActorAi.drivePlayer`): the same choice (a scene's
+package action first, then their aliases' packages), the same procedures and the same events
+(OnPackageStart/End on the player; a scene's package action completes with its package). Their
+packages move the player's own controller (`Player.pilot`, `src/shell/player.ts`): along a
+navmesh path (straight for static pathing), turning to the way they go at their movement type's
+rotation speeds (SPED: while moving, in place walking or running), at the package's gait. The
+movement keys do nothing meanwhile; without a package they stand. Furniture: they walk up to it,
+then the enter's slide takes them in as when they use it themselves. MQ101's prisoner walks up
+in line (MQ101PlayerMoveLineMarker1) and to the block (MQ101PlayerToMarker6). TODO(M13): the
+player driven through load doors (no vanilla package takes them to another cell).
+
 ## Furniture and idle markers
 
 Actors use furniture as the engine's furniture handling does, as far as the data shows it

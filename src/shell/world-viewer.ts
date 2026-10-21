@@ -966,6 +966,7 @@ export class WorldViewer {
     this.#created = new CreatedObjects(session, this.#renderer);
     this.#stage = new ActorStage({
       session,
+      seat: () => this.#seat,
       renderer: this.#renderer,
       terminal: this.#terminal,
       sounding: this.#soundingWorld,

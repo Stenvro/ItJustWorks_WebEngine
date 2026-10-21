@@ -7,6 +7,7 @@
 import { DialogueCamera } from './dialogue-camera.ts';
 import { TweenCamera } from './tween-camera.ts';
 import type { Camera } from '../render/view-camera.ts';
+import type { MoveRequest } from '../ai/locomotion.ts';
 import { lookAt, multiply, perspectiveReversedZ, type Mat4, type Vec3 } from '../render/math.ts';
 import { parseControlMap, SCAN_CODES, type ControlMap } from '../formats/controlmap/controlmap.ts';
 import type { NifFile } from '../formats/nif/nif.ts';
@@ -227,6 +228,11 @@ export class Player implements Camera {
     return this.#alwaysRun;
   }
   #autoMove = false;
+  /**
+   * The scripts drive the player (SetPlayerAIDriven: src/shell/player-pilot.ts): their packages
+   * move them as this asks, not the movement keys. Undefined: the player moves themselves.
+   */
+  pilot: MoveRequest | undefined;
   sneaking = false;
   #jumpRequested = false;
   /** The camera this frame (game units). */
@@ -529,6 +535,8 @@ export class Player implements Camera {
     if (this.#event('Strafe Right')) x += 1;
     if (this.#event('Strafe Left')) x -= 1;
     if (this.#event('Back') || this.#event('Forward')) this.#autoMove = false;
+    const pilot = this.pilot;
+    if (pilot) [x, y] = this.#piloted(pilot, seconds);
     const moving = x !== 0 || y !== 0;
     // Swimming: deep enough water lifts the body.
     const [fx, fy, fz] = character.feet;
@@ -539,11 +547,13 @@ export class Player implements Camera {
     character.swimming = swimming;
     if (swimming) this.sneaking = false;
     // "Run" walks while always-run is on, runs while it is off; over-encumbered, one walks.
+    // Piloted, the package's gait.
     const burdened = this.overEncumbered?.() ?? false;
-    const running = !burdened && this.#alwaysRun !== this.#event('Run');
+    const running =
+      !burdened && (pilot ? pilot.gait !== 'walk' : this.#alwaysRun !== this.#event('Run'));
     const wantsSprint =
       !burdened &&
-      this.#event('Sprint') &&
+      (pilot ? pilot.gait === 'sprint' : this.#event('Sprint')) &&
       y > 0 &&
       !this.sneaking &&
       !swimming &&
@@ -605,6 +615,38 @@ export class Player implements Camera {
         this.onBorder?.();
       }
     }
+  }
+
+  /**
+   * A step as the pilot asks: the player turns to the way they go (or to the heading asked) at
+   * their movement type's rotation speed and goes that way. Returns the input direction in
+   * their frame (x right, y forward).
+   */
+  #piloted(pilot: MoveRequest, seconds: number): [number, number] {
+    const direction = pilot.direction;
+    const length = direction ? Math.hypot(direction[0], direction[1]) : 0;
+    const face =
+      pilot.face ??
+      (direction && length > 1e-6 ? Math.atan2(direction[0], direction[1]) : undefined);
+    if (face !== undefined) {
+      const type = this.#setup.movement.normal;
+      const rate =
+        length > 1e-6
+          ? type.rotateWhileMoving
+          : pilot.gait === 'walk'
+            ? type.rotateInPlace.walk
+            : type.rotateInPlace.run;
+      const turn = Math.atan2(Math.sin(face - this.yaw), Math.cos(face - this.yaw));
+      const most = rate * seconds;
+      this.yaw += Math.max(-most, Math.min(most, turn));
+    }
+    if (!direction || length <= 1e-6) return [0, 0];
+    // The way to go in the player's frame: right is (cos, -sin), forward (sin, cos).
+    const sin = Math.sin(this.yaw);
+    const cos = Math.cos(this.yaw);
+    const wx = direction[0] / length;
+    const wy = direction[1] / length;
+    return [wx * cos - wy * sin, wx * sin + wy * cos];
   }
 
   /** First or third person (third: zoomed out at least to the shoulder). */
