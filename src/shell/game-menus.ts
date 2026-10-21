@@ -722,13 +722,16 @@ export class GameMenus {
   async #openItems(model: ItemMenuModel, closed?: () => void): Promise<void> {
     const leaveMenuMode = this.#enterMenuMode();
     const hud = this.#session.hud;
-    hud.shown(false);
+    // The HUD stays in its mode for the menu (InventoryMode, BarterMode): its messages show
+    // over it (sItemTooExpensive, what is added or removed), the rest hides.
+    const hudMode = model.hudMode ?? 'InventoryMode';
+    hud.mode(hudMode, true);
     const unblur = this.#blur();
     const open = {
       menu: undefined as Menu | undefined,
       leave: () => {
         unblur();
-        hud.shown(true);
+        hud.mode(hudMode, false);
         leaveMenuMode();
         closed?.();
       },

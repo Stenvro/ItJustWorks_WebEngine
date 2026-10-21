@@ -477,6 +477,9 @@ class Viewing {
       );
     }
     this.#shownYaw = Number.NaN;
+    // On the ring no perk names show (the movie's first name clip keeps its "Perk Name"
+    // placeholder until it is told).
+    if (!this.#tree) menu.invoke('_global.StatsMenu.StatsMenuInstance.UpdatePerkText', false);
     menu.call('ShowLegendaryButtonHint');
     await this.#showPlayer(menu);
     await this.#showSkills(menu);
@@ -580,15 +583,21 @@ class Viewing {
       // GetBaseActorValue (277) on a skill.
       if (condition.function === 277 && typeof condition.comparand === 'number') {
         const tree = this.#trees.find((entry) => entry.skill === condition.raw1);
-        if (tree) parts.push(`${tree.record.name} ${String(Math.round(condition.comparand))}`);
+        // A skill and its level stay on one line (a no-break space).
+        if (tree) {
+          const level = String(Math.round(condition.comparand));
+          parts.push(`${tree.record.name}${String.fromCharCode(0xa0)}${level}`);
+        }
       }
     }
     if (parts.length === 0) return '';
-    const label =
-      star.owned > 0
+    // sStatsNextRank has its colon ("Next Rank:"), sRequirements not ("Requirements").
+    const label = (
+      (star.owned > 0
         ? this.#settings.string('sStatsNextRank')
-        : this.#settings.string('sRequirements');
-    return `${label ?? ''}: ${parts.join(', ')}`;
+        : this.#settings.string('sRequirements')) ?? ''
+    ).replace(/:\s*$/, '');
+    return `${label}: ${parts.join(', ')}`;
   }
 
   #facedTree(): Tree | undefined {

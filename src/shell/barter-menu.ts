@@ -5,7 +5,7 @@
 // both sides as the container menu has them (a divider between). The engine sends the price
 // multipliers (SetBarterMultipliers: the menu shows a vendor's item at value × buy, the
 // player's at value × sell) and the gold (UpdatePlayerInfo: the player's, the vendor's, its
-// name, the player's info). ItemSelect(fromVendor, price, amount) buys or sells: gold moves
+// name, the player's info). ItemSelect(amount, price, fromVendor) buys or sells: gold moves
 // one way (into the chest, out of the chest and then the vendor), the items the other (bought
 // from the chest, sold into it); a purchase the player cannot pay shows sItemTooExpensive.
 // Selling for more than the vendor has asks first (GetRawDealWarningString(price): the setting
@@ -81,6 +81,7 @@ export async function barterModel(
   return {
     movie: 'bartermenu.swf',
     depth: 6,
+    hudMode: 'BarterMode',
     keepsIndices: false,
     categories: () => Promise.resolve(sideCategories(settings)),
     start: (menu) => {
@@ -107,10 +108,12 @@ export async function barterModel(
         ],
       };
     },
-    // ItemSelect(fromVendor, price each, amount).
+    // ItemSelect(amount, price each, fromVendor): the movie's doTransaction sends
+    // [aiAmount, itemInfo.value, IsViewingVendorItems()] (the price the card shows, the
+    // multiplier applied); the side is the entry's.
     trade: async (entry, args) => {
+      const amount = typeof args[0] === 'number' ? Math.max(1, Math.round(args[0])) : 1;
       const price = typeof args[1] === 'number' ? args[1] : 0;
-      const amount = typeof args[2] === 'number' ? args[2] : 1;
       const total = Math.round(price * amount);
       if (entry.container) {
         if ((await game.itemCount(PLAYER_REF, GOLD)) < total) {
