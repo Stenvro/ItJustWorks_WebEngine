@@ -58,9 +58,57 @@ called that is missing; `node tools/papyrus-natives.ts` lists the natives done p
 - **Natives** (`natives/`): all 686 the game's scripts declare, by script. What they change is
   game state; what the engine shows goes through the **WorldBridge** (`runtime.ts`): enable
   state, moves, animation events, sounds, weather, menus, combat, packages. Without a world (in
-  Node) the bridge does nothing and the state alone answers.
+  Node) the bridge does nothing and the state alone answers. Those that do not do all the game
+  does yet are listed in `natives/placeholders.ts`, each with the milestone that brings what
+  they lack (`node tools/papyrus-natives.ts --placeholders`, with the vanilla scripts' calls of
+  each; the integration test holds each to a milestone): 24 of them called by the vanilla
+  scripts, for the player's forms, vampirism and Survival Mode (M11), saves (M12), effects the
+  engine does not show yet, Havok constraints and controllers (M13). Natives that rightly do
+  nothing here (profiling, the console's debug helpers, achievements, preloading) are not
+  placeholders.
+- **Conditions** (`condition-values.ts`): see Conditions below.
 - Work that goes on by itself (events, waits, story events) is detached: a fault in it is
   reported, never left to stop the app.
+
+## Conditions
+
+Every condition (CTDA) of the running game is valued by `ScriptRuntime.conditionsHold`
+(`condition-values.ts`, with `magic-conditions.ts` and `crime-conditions.ts`): the run-on
+(subject, target, a reference, the combat target, the linked reference, a quest alias, a
+package data input, the event's data), the CTDA flags (xEdit: Or; Use aliases and Use packdata,
+which make a reference parameter an alias of the quest or a data input of the running package;
+Use global for the comparand; Swap Subject and Target), the function, the comparison; an
+OR-flagged condition joins the next. A function no evaluator values holds and is reported
+(`NOT_VALUED`): `node tools/condition-audit.ts` scans every record of the load order that has
+conditions (258 functions in use) and asks the evaluator for each with samples of its
+conditions on the player, and `tests/condition-audit.int.test.ts` fails on any it does not
+value. Only the perk entry points' own functions are held (`NOT_YET` in
+`tools/condition-usage.ts`: EPMagic_SpellHasKeyword, EPMagic_SpellHasSkill, IsAttackType,
+EPModSkillUsage_IsAdvanceSkill, EPAlchemyEffectHasKeyword, EPAlchemyGetMakingPoison, IsPoison:
+they ask about the entry point's spell, attack, skill or potion, the perk system's, M11).
+
+What they read: quests, globals and script variables; what a reference is and has (its base,
+race, class, keywords, factions, items, gold, keyword items, diseases, lock, being essential,
+protected, restrained, eaten); where it is (cells, worldspaces, locations and their keywords,
+reference types and keyword data, its position, the angles and distances to another, being in a
+container, linked to another, within its package's location, the player's regions, dangerous
+water); the weather (the current weather and its classification); its AI and senses through
+the WorldBridge (its package and procedure, its movement and its path's target and speeds,
+furniture, detection, combat, flight, dialogue); the player's actions (a power attack, a bash, a
+lock's outcome); persuasion (GetIntimidateSuccess: UESP's formula, the engine's confidence
+multipliers 0, 0.5, 1, 1.5, 100; fIntimidateSpeechcraftCurve 1, TODO(M13)); tempering
+(EPTemperingItemIsEnchanted on the item the smithing menu improves); the kill cameras (CPTH:
+GetVATSValue's weapon, action, distance, projectile, delivery and casting type of the kill, the
+free space beside either of its actors and how far the other is seen from there). DoesNotExist
+is 1 for an event member that is not there. GetQuestVariable reads Oblivion's compiled quest
+scripts, which no plugin has: 0.
+
+Sounds' conditions (SNDR) run on the reference that sounds them (`SoundSystem.play` with its
+source: a draugr's taunt, the player's bow zoom) through the running game's evaluator; ambient
+sounds (the regions' and weathers') and music tracks (MUST) are checked synchronously by
+`src/audio/sound-conditions.ts`, whose functions (the time, the weather, rain, interiors,
+swimming, globals, the player's combat target's keywords) cover all the data uses there (the
+audit checks it).
 
 ## A new game
 
@@ -71,7 +119,12 @@ persistent reference's with scripts, then the quests that start with the game, b
 Kit). A start resets a quest that does not run once, so its OnInit runs again. Then the
 opening: no record or script starts **Unbound** (MQ101); the game does as a new game begins
 (UESP). On the vanilla data with the DLCs and Creation Club items all 443 start (the update
-and DLC set-up quests stop themselves at once) and MQ101 runs; no native is missing.
+and DLC set-up quests stop themselves at once) and MQ101 runs; no native is missing. A matching
+location alias takes only a location that has the reference types the quest's later location
+reference aliases need: FreeformCaravansA's dungeon could be Dragonborn's Damphall Mine (1 of
+its 26 matches), which has no map marker for its MapMarker alias, and the quest then did not
+start at random (4 of 40 new games). TODO(M13): whether the engine looks ahead so or tries
+another match (UESP lists Damphall Mine among the amulet's places).
 
 ## Quests
 

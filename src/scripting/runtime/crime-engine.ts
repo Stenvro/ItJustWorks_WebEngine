@@ -17,6 +17,7 @@ import {
   crimeValues,
   guardResponse,
   ignoresCrime,
+  intimidates,
   isViolent,
   jailDays,
   jailSkillLosses,
@@ -901,6 +902,27 @@ export class CrimeEngine {
       speech,
       owed === undefined ? 0 : owed.violent + owed.nonviolent,
       await this.settings(),
+    );
+  }
+
+  /**
+   * Whether the player would intimidate an actor now (crime's intimidates).
+   * fIntimidateSpeechcraftCurve: no plugin sets it and its default is not documented: 1.
+   * TODO(M13): the engine's default. TODO(M11): the perk entry point Mod Player Intimidation.
+   */
+  async intimidates(actor: number): Promise<boolean> {
+    const actors = this.#runtime.actors;
+    const value = async (reference: number, index: number): Promise<number> =>
+      (await actors.value(reference, index)).current;
+    const curve = await this.#runtime.gameSetting('fIntimidateSpeechcraftCurve');
+    return intimidates(
+      { level: await actors.level(PLAYER_REF), speech: await value(PLAYER_REF, SPEECH) },
+      {
+        level: await actors.level(actor),
+        speech: await value(actor, SPEECH),
+        confidence: await value(actor, ActorValue.confidence),
+      },
+      typeof curve === 'number' ? curve : 1,
     );
   }
 

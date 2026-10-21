@@ -35,7 +35,7 @@ import type { NavmeshSet } from '../ai/pathfinding.ts';
 import type { Gait } from '../ai/locomotion.ts';
 import type { FlightRequest } from '../ai/flight.ts';
 import { followDistance, followerRanks } from '../ai/followers.ts';
-import { mergedInputs, scheduleFits, type Space } from '../ai/package-start.ts';
+import { mergedInputs, sameSpace, scheduleFits, type Space } from '../ai/package-start.ts';
 import type { ActorDoors } from './actor-doors.ts';
 import type { ActorMovers } from './actor-movers.ts';
 import type { ActorTalk } from './actor-talk.ts';
@@ -661,6 +661,23 @@ export class ActorAi {
             return value?.kind === 'singleRef' && value.target.type === TargetType.specificReference
               ? value.target.value
               : undefined;
+          },
+          // Within the place a location input names (GetWithinPackageLocation): its radius
+          // round it, in its space.
+          withinPackageLocation: async (input, reference) => {
+            const value = data.inputs.get(input)?.value;
+            if (value?.kind !== 'location') return undefined;
+            const place = await this.#mind.place(value.location, actor, data.context ?? {});
+            const at = await placementOf(reference);
+            if (!place || !at) return false;
+            if (place.space && !sameSpace(place.space, at.space)) return false;
+            return (
+              Math.hypot(
+                at.position[0] - place.position[0],
+                at.position[1] - place.position[1],
+                at.position[2] - place.position[2],
+              ) <= Math.max(place.radius, 1)
+            );
           },
         });
       },

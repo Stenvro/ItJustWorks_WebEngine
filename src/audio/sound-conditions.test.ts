@@ -55,4 +55,11 @@ describe('sound conditions', () => {
     const against: Condition = { ...condition(18, 2, 0), comparand: { global: 0x10de1e } };
     expect(soundConditionsHold([against], day)).toBe(true);
   });
+
+  it("reads the player's combat target's keywords (the boss music for dragons)", () => {
+    const boss = [condition(707, 0, 1, false, 0x35d59)];
+    expect(soundConditionsHold(boss, day)).toBe(false);
+    const dragon = { ...day, combatTargetHasKeyword: (keyword: number) => keyword === 0x35d59 };
+    expect(soundConditionsHold(boss, dragon)).toBe(true);
+  });
 });

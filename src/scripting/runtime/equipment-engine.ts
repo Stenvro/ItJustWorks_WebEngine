@@ -189,6 +189,11 @@ export class EquipmentEngine {
   readonly #describe = (formId: number): Equippable | undefined => this.#described.get(formId);
   /** Listeners to every change (combat's drawn weapons). */
   readonly listeners = new Set<(change: EquipmentChange) => void>();
+  /**
+   * What each actor's hands held before its last change (GetReplacedItemType: the type of
+   * what the hand let go, −1 for a hand that kept its item).
+   */
+  readonly #replaced = new Map<number, { left: number; right: number }>();
   /** What perks and smithing add (improvements: the crafting engine's item stacks). */
   modifiers: EquipmentModifiers;
 
@@ -561,6 +566,7 @@ export class EquipmentEngine {
       this.#describe,
     );
     if (!result.equipped) return false;
+    this.#handsChanged(actor, wasHeld, state);
     if (request.preventRemoval) state.locked.add(formId);
     state.prevented.delete(formId);
     for (const removed of result.removed) state.locked.delete(removed);
@@ -645,7 +651,9 @@ export class EquipmentEngine {
     if (request.byPlayer && state.locked.has(formId)) return false;
     for (const held of loadoutForms(state)) await this.describe(held);
     const wornBefore = state.worn.includes(formId);
+    const wasHeld = { left: state.left, right: state.right };
     if (!unequipItem(state, formId, this.#describe, request.hand)) return false;
+    this.#handsChanged(actor, wasHeld, state);
     if (!holds(state, formId)) {
       state.locked.delete(formId);
       if (request.preventEquip) state.prevented.add(formId);
@@ -954,6 +962,29 @@ export class EquipmentEngine {
   async itemType(actor: number, hand: Hand): Promise<number> {
     const held = await this.inHand(actor, hand);
     return equippedItemType(held === undefined ? undefined : await this.describe(held));
+  }
+
+  /**
+   * GetReplacedItemType: the type (as itemType) of what a hand held before the actor's last
+   * equip change, if that change took it from the hand (0: it was empty); −1 if it kept it.
+   */
+  replacedItemType(actor: number, hand: Hand): number {
+    const replaced = this.#replaced.get(actor);
+    return hand === 'left' ? (replaced?.left ?? -1) : (replaced?.right ?? -1);
+  }
+
+  /** Remembers what an equip change took from the hands (replacedItemType). */
+  #handsChanged(
+    actor: number,
+    before: { readonly left: number | undefined; readonly right: number | undefined },
+    after: { readonly left: number | undefined; readonly right: number | undefined },
+  ): void {
+    const type = (held: number | undefined): number =>
+      equippedItemType(held === undefined ? undefined : this.#describe(held));
+    this.#replaced.set(actor, {
+      left: before.left === after.left ? -1 : type(before.left),
+      right: before.right === after.right ? -1 : type(before.right),
+    });
   }
 
   /** The item and magic menus' equip state of a form (MenuEquipState). */

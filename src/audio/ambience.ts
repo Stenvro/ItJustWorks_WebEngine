@@ -53,6 +53,8 @@ export interface AmbientState {
   /** Water around the listener (src/audio/water-audio.ts), and whether it is under water. */
   readonly waterAt: WaterAt | undefined;
   readonly underwater: boolean;
+  /** Whether the player's combat target has a keyword (the combat music's conditions). */
+  readonly combatTargetHasKeyword?: ((keyword: number) => boolean) | undefined;
 }
 
 /** The conditions of ambient sounds and music in these surroundings. */
@@ -67,6 +69,7 @@ export function ambientConditions(
     interior: state.interior,
     swimming: state.swimming,
     global,
+    combatTargetHasKeyword: state.combatTargetHasKeyword,
   };
 }
 

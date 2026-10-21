@@ -906,9 +906,12 @@ meanwhile.
   target stands 72.8 units before the attacker facing it (Paired_1HMKillMoveB's start;
   TODO(M13): each clip's own offset) and dies at its clip's KillActor. Seen by the player in
   third person, the kill cameras' tree shows it (`src/shell/killmove-camera.ts`: from
-  PairedKillTest the first path whose conditions hold, the VATS areas by rays beside the target,
-  its shots' ExportCam in the attacker's frame looking at the target). TODO(M13): the shots'
-  time multipliers (slow motion) and image-space modifiers.
+  PairedKillTest the first path whose conditions hold, with the kill as their context: the VATS
+  sides by rays beside the target or the attacker (the condition's run-on), GetVATSValue's weapon,
+  action and distance (docs/scripting.md, "Conditions"); its shots' ExportCam in the attacker's
+  frame looking at the target). TODO(M13): the shots' time multipliers (slow motion) and
+  image-space modifiers; the ranged and magic kill cameras (the tree's MagicOrBowCams: a bow's
+  or a spell's killing blow followed; their conditions are valued).
 - **Combat music**: while anyone fights the player the default battle music (DOBJ BTMS) plays,
   ending with its finale as the fight does.
 
