@@ -84,6 +84,8 @@ interface Mover {
   tilt: { readonly at: Vec3; readonly normal: Vec3 } | undefined;
   /** The trigger volumes it is in. */
   triggers: Set<number>;
+  /** The trigger volumes its bodies reached at their last check. */
+  bodyTriggers: Set<number>;
 }
 
 export interface ActorMoversOptions {
@@ -226,6 +228,8 @@ export class ActorMovers {
   #catalogRead: MovementCatalog | undefined;
   /** Physics time stepped since the actors were last drawn (their measured speed). */
   #stepped = 0;
+  /** Frames so far (actors' body trigger checks take turns). */
+  #frames = 0;
   readonly #step = (step: number): void => {
     this.#stepAll(step);
   };
@@ -589,6 +593,7 @@ export class ActorMovers {
   frame(actors: Iterable<StagedActor>, focus: Vec3 | undefined): void {
     const world = this.#world;
     if (!world) return;
+    this.#frames++;
     // Their speed is measured over the physics time stepped (the controllers' own time).
     const seconds = this.#stepped;
     this.#stepped = 0;
@@ -955,6 +960,7 @@ export class ActorMovers {
         rooted: false,
         tilt: undefined,
         triggers: new Set(),
+        bodyTriggers: new Set(),
       });
     } catch (error) {
       this.#options.terminal.log(
@@ -1169,13 +1175,17 @@ export class ActorMovers {
     // The trigger volumes it walked into and out of.
     if (physics.queriesCurrent) {
       const inside = physics.triggersOverlapping(mover.character.collider);
-      // Moving, its body reaches in too (a horse's head before its capsule: Tullius's horse
-      // crosses MQ101SetStage20, a line across the road, as its patrol ends just short of it).
-      if (Math.hypot(velocity[0], velocity[1]) > 5) {
+      // Its body reaches in too (a horse's head before its capsule: Tullius's horse crosses
+      // MQ101SetStage20, a line across the road, as its patrol ends just short of it): every
+      // fourth frame, each actor on a frame of its own (its bodies are many shapes).
+      if ((this.#frames + staged.reference) % 4 === 0) {
+        const reached = new Set<number>();
         for (const body of this.#options.bodyColliders?.(staged.reference) ?? []) {
-          for (const trigger of physics.triggersOverlapping(body)) inside.add(trigger);
+          for (const trigger of physics.triggersOverlapping(body)) reached.add(trigger);
         }
+        mover.bodyTriggers = reached;
       }
+      for (const trigger of mover.bodyTriggers) inside.add(trigger);
       for (const trigger of inside) {
         if (!mover.triggers.has(trigger))
           this.#options.onTrigger?.(trigger, staged.reference, true);
