@@ -713,7 +713,7 @@ export class ActorCasting {
   }
 
   /**
-   * An actor shouts its voice's shout at a target (Greybeards, draugr, dragons later in 5.4):
+   * An actor shouts its voice's shout at a target (Greybeards, draugr, dragons' breath):
    * `words` (default all it knows) are let out after their hold time (fShoutTime1 / 2).
    */
   async shoutAt(actor: number, target: number | undefined, words?: number): Promise<boolean> {
