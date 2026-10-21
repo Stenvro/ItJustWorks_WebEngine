@@ -1,14 +1,15 @@
 // Executions at a chopping block (docs/ai.md, "Executions"): the block is furniture whose markers
 // take an executioner (its idle IdleExecutionerIdle), a guard behind the prisoner
 // (IdleExecutionGuardIdle) and the prisoner (IdleExecutioneeIdle), each entering by the idle tree
-// as furniture is entered (src/shell/actor-furniture.ts). Nothing in the data starts the chop:
-// the chop idles share their siblings' conditions, so the tree never picks them, and no script
-// plays them. Once all three are in, the executioner and the prisoner play their chop idles
-// together: the prisoner's clip (aoexecutioneechop.hkx, 20 s) holds the guard's pushes (its sounds
-// at 2.6 s and 4.7 s), the last words said on the block (MQ101's Scene4, phase 41) and the blow,
-// whose Decapitate event kills the prisoner (the scene waits for GetDead). Inferred from the data;
-// TODO(M13): the engine's own trigger and its kill, and the decapitation itself (the head's
-// dismemberment piece and the race's decapitation effect).
+// as furniture is entered (src/shell/actor-furniture.ts). All three graphs go from their idle to
+// their chop on one event, IdleExecutionerChop (0_master's Behavior36, Behavior78, Behavior37), and
+// their 20 s chop clips run together: the guard's pushes, the last words said on the block
+// (MQ101's Scene4, phase 41) and the blow at 11.4 s, after which its KillActor kills the prisoner (the
+// scene waits for GetDead). Nothing in the data sends that event (the chop idle shares its
+// siblings' conditions, so the tree never picks it, and no script plays it): once all three are
+// in, it goes to all three. Inferred from the graphs; TODO(M13): the engine's own trigger and its
+// kill, the player's block (IdleExecutionerChop_Player, stage 95), and the decapitation itself
+// (the head's dismemberment piece and the race's decapitation effect).
 
 import type { FurnitureUser } from './actor-furniture.ts';
 import type { StagedActor } from './actor-stage.ts';
@@ -17,6 +18,8 @@ import type { StagedActor } from './actor-stage.ts';
 const EXECUTIONER = 'idleexecutioneridle';
 const GUARD = 'idleexecutionguardidle';
 const EXECUTIONEE = 'idleexecutioneeidle';
+/** The event all three chop on. */
+const CHOP = 'IdleExecutionerChop';
 
 export interface ActorExecutionsOptions {
   /** The furniture an actor is in now and the idles it entered by. */
@@ -63,22 +66,24 @@ export class ActorExecutions {
     for (const roles of blocks.values()) {
       const executioner = roles.get(EXECUTIONER);
       const executionee = roles.get(EXECUTIONEE);
-      if (!executioner || !executionee || !roles.has(GUARD)) continue;
+      const guard = roles.get(GUARD);
+      if (!executioner || !executionee || !guard) continue;
       if (this.#running.has(executionee.reference)) continue;
       this.#running.set(executionee.reference, {
         executioner: executioner.reference,
         executionee: executionee.reference,
       });
-      this.#options.userOf(executioner).send('IdleExecutionerChop');
-      this.#options.userOf(executionee).send('IdleExecutioneeChop');
+      for (const staged of [executioner, guard, executionee]) {
+        this.#options.userOf(staged).send(CHOP);
+      }
     }
   }
 
-  /** A prisoner's graph raised events: the blow (Decapitate) kills it. */
+  /** A prisoner's graph raised events: KillActor, after the blow (Decapitate), kills it. */
   events(actor: number, events: readonly string[]): void {
     const execution = this.#running.get(actor);
     if (!execution) return;
-    if (!events.some((event) => event.toLowerCase() === 'decapitate')) return;
+    if (!events.some((event) => event.toLowerCase() === 'killactor')) return;
     this.#running.delete(actor);
     this.#options.kill(actor, execution.executioner);
   }

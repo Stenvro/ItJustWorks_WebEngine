@@ -44,12 +44,18 @@ describe('executions at a chopping block', () => {
     entered.set(0x3, 'IdleExecutionGuardIdle');
     executions.frame(actors);
     executions.frame(actors);
-    expect(sent).toEqual(['1 IdleExecutionerChop', '2 IdleExecutioneeChop']);
+    expect(sent).toEqual([
+      '1 IdleExecutionerChop',
+      '3 IdleExecutionerChop',
+      '2 IdleExecutionerChop',
+    ]);
     // The blow kills the prisoner, once.
     executions.events(0x2, ['SoundPlay.NPCHumanExecutionerPushA']);
     expect(killed).toEqual([]);
     executions.events(0x2, ['Decapitate']);
-    executions.events(0x2, ['Decapitate']);
+    expect(killed).toEqual([]);
+    executions.events(0x2, ['KillActor']);
+    executions.events(0x2, ['KillActor']);
     expect(killed).toEqual(['2 by 1']);
   });
 });
