@@ -54,7 +54,7 @@ import { aimDirection } from '../gameplay/magic/projectile-flight.ts';
 import { PlayerDeath } from './player-death.ts';
 import type { PlayerFurniture } from './player-furniture.ts';
 import { PlayerPilot } from './player-pilot.ts';
-import { ActorExecutions } from './actor-executions.ts';
+import { ActorExecutions, type ExecutionParticipant } from './actor-executions.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -308,7 +308,6 @@ export class ActorStage {
     });
     this.executions = new ActorExecutions({
       enteredBy: (reference) => this.furniture.enteredBy(reference),
-      userOf: (staged) => this.userOf(staged),
       kill: (victim, killer) => {
         void options.session.scriptsReady?.actors.kill(victim, killer);
       },
@@ -1003,6 +1002,15 @@ export class ActorStage {
     previous?.destroy();
   }
 
+  /** The actors and the player, as executions see them (src/shell/actor-executions.ts). */
+  *#participants(): Iterable<ExecutionParticipant> {
+    for (const staged of this.#actors.values()) {
+      yield { reference: staged.reference, dead: staged.dead, user: () => this.userOf(staged) };
+    }
+    const seat = this.#options.seat?.();
+    if (seat) yield { reference: PLAYER_REF, dead: this.playerDeath.dead, user: () => seat.user };
+  }
+
   /** Whether actors of the loaded cells are still being placed (their models load). */
   get placing(): boolean {
     return this.#placing.size > 0;
@@ -1021,7 +1029,7 @@ export class ActorStage {
     this.crime.frame(frame);
     this.followers.frame(frame);
     this.actorScenes.frame(this.#actors.values());
-    this.executions.frame(this.#actors.values());
+    this.executions.frame(this.#participants());
     this.talk.frame(this.#actors.values(), frame, this.#options.focus?.());
     // Casting: the player's buttons, the casts' sprays and art, what flies.
     this.playerCasting?.frame(frame);
