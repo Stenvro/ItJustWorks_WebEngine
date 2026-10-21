@@ -225,13 +225,25 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
 ## Phase 6: the game plays (acceptance)
 
 - [ ] **6.1 Whiterun's day:** 24 game hours in which every actor goes where its packages
-      have it, nobody stuck or walking through walls, at 60 fps.
+      have it, nobody stuck or walking through walls, at 60 fps. Checked 2026-10-21 at 8, 13
+      and 21 h (headless): 29–36 actors, 10–15 moving, none travelling but standing, no
+      errors; 72–101 fps by day, ~50 at night (left: the full 24 hours, fps on a real GPU).
 - [ ] **6.2 The opening (MQ101):** the cart ride, the scenes in the cart and in Helgen,
       chargen, Alduin, the escape with Ralof or Hadvar, the keep's fights, out of the cave.
+      2026-10-21: the ride plays to Helgen's gate (stages 15, 14, 20, 22, 25, 26, 27, 30, 35
+      reached in one run). Left: the column's order (Tullius's horse must stay ahead of Cart1,
+      which starts on the same patrol chain; Cart1 overtakes it and blocks the gate, so stage
+      20 waits and Cart2's next patrol begins behind it), then Helgen onwards.
 - [ ] **6.3 Fights:** Bleak Falls Barrow's draugr, bandit camps, wolves, the dragon at the
-      Western Watchtower, giants, mages.
-- [ ] **6.4 Waiting, sleeping and fast travel** with enemies near and in combat.
-- [ ] **6.5 The open observations:** an NPC standing in a fire; the carts not moving.
+      Western Watchtower, giants, mages. Checked 2026-10-21 with spawned enemies near
+      Riverwood: wolf, bandit wizard (fists, then Frostbite), draugr, giant, fire dragon (take
+      off, breath, hover, kills the player); left: the places themselves.
+- [ ] **6.4 Waiting, sleeping and fast travel** with enemies near and in combat. Waiting and
+      sleeping are refused while someone fights the player or an effect takes their health
+      (2026-10-21); left: fast travel with enemies near, actors' places after the hours.
+- [x] **6.5 The open observations:** an NPC standing in a fire (fixed 2026-10-16); the carts
+      not moving (they ride: a physics panic, the scene's quest, static pathing, triggers;
+      2026-10-21).
 
 ## What is not M10
 
