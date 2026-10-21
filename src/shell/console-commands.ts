@@ -7,10 +7,10 @@
 // Built so far: help, centeroncell (coc: where, src/shell/cell-placement.ts), additem /
 // removeitem, setstage / getstage / startquest / stopquest / completequest, set <global> to
 // <value> (TimeScale too), getav / setav / modav / forceav, advlevel, togglemenus (tm),
-// forceweather (fw), enableplayercontrols (epc) / disableplayercontrols (dpc), showracemenu,
-// quitquitquit (qqq).
-// TODO(M13): the rest of the game's console commands (tgm, tcl, tai, kill, resurrect, moveto,
-// prid by clicking, ...).
+// forceweather (fw), enableplayercontrols (epc) / disableplayercontrols (dpc), togglegodmode
+// (tgm), kill, showracemenu, quitquitquit (qqq).
+// TODO(M13): the rest of the game's console commands (tcl, tai, resurrect, moveto, prid by
+// clicking, ...).
 
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -150,6 +150,18 @@ export class ConsoleCommands {
         controls.journalTabs = enabled;
         controls.disablePov = 0;
         this.#context.controlsChanged();
+        return [];
+      }
+      // God mode: the player takes no damage and cannot die (ActorEngine).
+      case 'tgm':
+      case 'togglegodmode':
+        runtime.godMode = !runtime.godMode;
+        return [`God Mode -- ${runtime.godMode ? 'ON' : 'OFF'}`];
+      // <ref>.kill [killer]: as Actor.Kill (an essential actor bleeds out instead).
+      case 'kill': {
+        const killer = args[0] === undefined ? undefined : this.#reference(args[0]);
+        if (!(await runtime.actors.isActor(self))) return [];
+        await runtime.actors.scriptKill(self, killer);
         return [];
       }
       case 'showracemenu':

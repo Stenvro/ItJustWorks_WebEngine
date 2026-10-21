@@ -134,6 +134,21 @@ export class PlayerAvatar {
 
   /** Furniture holds the player: its graphs are moved by the furniture's idles, not its walk. */
   seated = false;
+
+  /**
+   * The player died: the body's pose is its ragdoll's from now on (src/shell/player-death.ts)
+   * and its placement stays where it fell; it no longer walks, animates or is made again.
+   */
+  get dead(): boolean {
+    return this.#dead;
+  }
+
+  die(): void {
+    this.#dead = true;
+    this.#jumping = false;
+  }
+
+  #dead = false;
   /** The seconds its graphs moved in the last update (the furniture's root motion). */
   stepped = 0;
 
@@ -247,6 +262,7 @@ export class PlayerAvatar {
    * takes its place.
    */
   rebuild(): Promise<void> {
+    if (this.#dead) return Promise.resolve();
     this.#wanted++;
     this.#rebuilding ??= this.#rebuildAll();
     return this.#rebuilding;
@@ -269,7 +285,7 @@ export class PlayerAvatar {
     });
     this.#built = target;
     if (!made) return;
-    if (this.#destroyed) {
+    if (this.#destroyed || this.#dead) {
       made.scene.destroy();
       return;
     }
@@ -327,6 +343,11 @@ export class PlayerAvatar {
 
   /** Moves the avatar with the player: its graphs, its place and its facing. */
   update(seconds: number): void {
+    // Dead: its ragdoll moves the pose (ActorBodies), where it fell.
+    if (this.#dead) {
+      this.stepped = 0;
+      return;
+    }
     const player = this.#player;
     const real = performance.now() / 1000;
     const last = this.#last;

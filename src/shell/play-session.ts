@@ -481,6 +481,11 @@ export class PlaySession {
   cameraOverride: Camera | undefined;
   /** Furniture holds the player (src/shell/player-furniture.ts): they do not move. */
   seated = false;
+  /**
+   * The player died (src/shell/player-death.ts): they neither move nor activate anything; the
+   * world goes on around their body.
+   */
+  dead = false;
 
   /** Lights a menu adds to the world while it is open (the race menu's two). */
   extraLights: readonly PointLight[] = [];
@@ -503,7 +508,8 @@ export class PlaySession {
   playerMotion(): ActorMotion {
     const player = this.player;
     const { moving, running, sprinting } = player.motion;
-    const free = this.#freeCamera || this.#spawnPending;
+    // Free camera, being placed or dead: the player does not move.
+    const free = this.#freeCamera || this.#spawnPending || this.dead;
     const [vx, vy] = player.character.velocity;
     return {
       moving: !free && moving,
@@ -573,6 +579,14 @@ export class PlaySession {
     this.#moveKeyframed();
     if (this.#freeCamera || this.#spawnPending) {
       this.camera.update(deltaSeconds);
+      this.physics.step(deltaSeconds, (step) => {
+        for (const hook of this.stepHooks) hook(step);
+      });
+      this.#setTarget(undefined);
+    } else if (this.dead) {
+      // The world steps on; the player's keys do nothing.
+      this.#grab = undefined;
+      this.#hold = undefined;
       this.physics.step(deltaSeconds, (step) => {
         for (const hook of this.stepHooks) hook(step);
       });

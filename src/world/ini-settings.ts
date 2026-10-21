@@ -32,7 +32,11 @@ export const INI_DEFAULTS = {
   },
   Camera: {
     f1st3rdSwitchDelay: 0.25,
+    // The bleedout camera, the dead player's too (src/gameplay/combat/player-death.ts).
+    fCameraCasterBleedOutSize: 5,
     fCameraCasterSize: 15,
+    fDefaultAutoVanityZoom: 300,
+    iBleedoutTransitionMillis: 500,
     fMinCurrentZoom: -0.2,
     fMouseWheelZoomIncrement: 0.075,
     fMouseWheelZoomSpeed: 0.8,

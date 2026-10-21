@@ -5,7 +5,7 @@
 import { formatValue } from '../../values.ts';
 import { globalValue } from '../condition-values.ts';
 import type { ScriptRuntime } from '../runtime.ts';
-import { formOf, int, num, object, str, type Register } from './args.ts';
+import { bool, formOf, int, num, object, str, type Register } from './args.ts';
 
 const DEG = 180 / Math.PI;
 
@@ -99,7 +99,6 @@ export function registerCore(n: Register, runtime: ScriptRuntime): void {
     'togglecollisions',
     'togglemenus',
     'toggleai',
-    'setgodmode',
     'setfootik',
     'startscriptprofiling',
     'stopscriptprofiling',
@@ -112,6 +111,11 @@ export function registerCore(n: Register, runtime: ScriptRuntime): void {
   ]) {
     n(`debug.${name}`, () => null);
   }
+  // The console's tgm (src/scripting/runtime/actor-engine.ts: the player takes no damage).
+  n('debug.setgodmode', ({ args }) => {
+    runtime.godMode = bool(args[0]);
+    return null;
+  });
   n('debug.centeroncellandwait', () => 0);
   n('debug.playermovetoandwait', () => 0);
 

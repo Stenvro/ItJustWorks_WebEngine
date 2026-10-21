@@ -168,12 +168,15 @@ export class GameMenus {
   /**
    * A gameplay user event the player pressed: the menu it opens, if any (none while open).
    * While scripts keep the menus from the player (DisablePlayerControls' abMenu) only the
-   * journal opens (its tabs the scripts' too: abJournalTabs).
+   * journal opens (its tabs the scripts' too: abJournalTabs). The dead player has the system
+   * page only (Pause: its Load and Quit), until the reload (src/shell/player-death.ts).
    */
   userEvent(name: string): void {
     const menu = EVENT_MENUS[name.toLowerCase()];
     if (menu === undefined || this.#open || this.#session.menuMode || this.#session.loading) return;
-    const controls = this.#session.scriptsReady?.controls;
+    const runtime = this.#session.scriptsReady;
+    if (runtime?.state.actors.get(PLAYER_REF)?.dead === true && menu !== 'Pause') return;
+    const controls = runtime?.controls;
     if (controls?.menu === false && menu !== 'Pause' && menu !== 'Journal') return;
     this.openMenu(menu);
   }

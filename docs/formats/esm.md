@@ -1324,7 +1324,8 @@ The engine reads `Skyrim_Default.ini` over defaults compiled into the executable
 (`src/world/ini-settings.ts`; the defaults as SSE's `saveini` writes them). Those used now:
 `[Camera]` fOverShoulderPosX 30, fOverShoulderPosZ −10, fVanityModeMinDist 155,
 fVanityModeMaxDist 600, fMinCurrentZoom −0.2, fMouseWheelZoomIncrement 0.075,
-fMouseWheelZoomSpeed 0.8, fCameraCasterSize 15; `[Controls]` bAlwaysRunByDefault 1,
+fMouseWheelZoomSpeed 0.8, fCameraCasterSize 15, and for the bleedout camera (the dead player's)
+iBleedoutTransitionMillis 500, fCameraCasterBleedOutSize 5, fDefaultAutoVanityZoom 300; `[Controls]` bAlwaysRunByDefault 1,
 fMouseHeadingSensitivity 0.0125, fMouseHeadingXScale 0.02, fMouseHeadingYScale 0.85, fZKeyDelay 0.2;
 `[General]` bBorderRegionsEnabled 1; `[Audio]` ([audio.md](../audio.md)) fASFadeInTime 3,
 fASFadeOutTime 8, fRegionLoopFadeInTime 6, fRegionLoopFadeOutTime 8,
