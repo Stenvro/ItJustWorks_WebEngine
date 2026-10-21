@@ -851,6 +851,8 @@ export class PhysicsWorld {
       shape === 'box'
         ? RAPIER.ColliderDesc.cuboid((bounds[0] / 2) * s, (bounds[1] / 2) * s, (bounds[2] / 2) * s)
         : RAPIER.ColliderDesc.ball(bounds[0] * s);
+    // A trigger's volume (a layer the data marks as one: L_TRIGGER) is felt, not solid.
+    if ((this.matrix.flags(layer) & LayerFlag.triggerVolume) !== 0) desc.setSensor(true);
     const collider = this.world.createCollider(desc, body);
     this.register(collider, layer, owner);
     this.#changed = true;

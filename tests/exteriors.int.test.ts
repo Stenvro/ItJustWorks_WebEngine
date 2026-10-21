@@ -8,6 +8,7 @@ import { parseNif } from '../src/formats/nif/nif.ts';
 import { buildModel } from '../src/render/model-data.ts';
 import { atmosphereProfile, skyShapes } from '../src/render/sky-data.ts';
 import { buildTerrainCell } from '../src/render/terrain-data.ts';
+import { loadCellData } from '../src/world/cell-loader.ts';
 import { parseCell } from '../src/world/cell-records.ts';
 import { landTexture } from '../src/world/land.ts';
 import { selectLodBlocks } from '../src/world/lod.ts';
@@ -197,5 +198,14 @@ describe.skipIf(!hasGamedata())('exteriors on the local game data', () => {
     expect(tamriel.record.defaultWaterHeight).toBeLessThan(0);
     const height = await tamriel.waterHeight(4, -3);
     expect(Number.isFinite(height)).toBe(true);
+  }, 30_000);
+
+  it("loads an activator's primitive as a trigger volume", async () => {
+    // MQ101SetStage20 at Helgen's gate: defaultSetStageTRIGSpecificActor with an XPRM box.
+    const cell = db.cellOfReference(0x00084058);
+    expect(cell).toBeDefined();
+    const data = await loadCellData(db, cell ?? 0);
+    const trigger = data.primitives.find((primitive) => primitive.reference === 0x00084058);
+    expect(trigger).toMatchObject({ shape: 'box', layer: 12 });
   }, 30_000);
 });

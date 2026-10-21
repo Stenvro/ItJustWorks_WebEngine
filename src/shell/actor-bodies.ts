@@ -6,6 +6,7 @@
 // had, as the dead placed in their cells do (src/shell/actors.ts, ragdollsOf). The dead
 // player's avatar gets its bodies so too (src/shell/player-death.ts).
 
+import type RAPIER from '@dimforge/rapier3d-compat';
 import type { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
@@ -75,6 +76,12 @@ export class ActorBodies {
   remove(reference: number): void {
     const entry = this.#bodies.get(reference);
     if (entry) this.#free(entry);
+  }
+
+  /** A living actor's bodies' colliders (none: no bodies, or dead). */
+  colliders(reference: number): readonly RAPIER.Collider[] {
+    const entry = this.#bodies.get(reference);
+    return entry && !entry.articulation ? entry.placed.colliders : [];
   }
 
   /** Whether an actor's bodies are in the world (living or dead). */

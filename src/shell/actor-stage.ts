@@ -212,6 +212,7 @@ export class ActorStage {
       session: options.session,
       terminal: options.terminal,
       ...(options.onTrigger && { onTrigger: options.onTrigger }),
+      bodyColliders: (actor) => this.bodies.colliders(actor),
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
       openDoor: (door, actor) => this.doors.passage(door, actor),
       shutTo: (actor) => this.doors.shutTo(actor),
@@ -784,6 +785,19 @@ export class ActorStage {
     );
   }
 
+  /**
+   * Actors walk (or are pulled) from cell to cell: each belongs to the loaded cell it stands in,
+   * so its old cell's unloading does not take it away (MQ101's cart and its horse left their
+   * cell behind with the player on board, and went back to it as that cell unloaded). One
+   * that walks into a cell not loaded keeps its last; it goes as that one unloads.
+   */
+  #recell(): void {
+    for (const staged of this.#actors.values()) {
+      const key = this.#options.cellOf({ position: staged.position });
+      if (key !== undefined && key !== staged.cell && this.#cells.has(key)) staged.cell = key;
+    }
+  }
+
   /** A loaded cell goes: the actors standing in it leave the stage. */
   detachCell(key: string): void {
     this.#cells.delete(key);
@@ -979,6 +993,7 @@ export class ActorStage {
     this.away.frame(frame);
     this.combat.frame(frame, this.#options.focus?.());
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
+    this.#recell();
     // The fliers: in the air they move themselves (no controller), on the ground the movers do.
     this.flight.frame(this.#actors.values(), frame);
     const times = new Map<StagedActor, number | undefined>();

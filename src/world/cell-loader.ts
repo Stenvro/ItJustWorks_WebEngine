@@ -196,6 +196,8 @@ export interface CellPrimitive {
 const DONT_HAVOK_SETTLE = 0x20000000;
 /** The engine's collision primitive marker (STAT). */
 const COLLISION_MARKER = 0x21;
+/** SkyrimLayer L_TRIGGER: the layer of triggers' primitives without XTRI. */
+const TRIGGER_LAYER = 12;
 /** SkyrimLayer L_COLLISIONBOX: the layer of collision primitives without XTRI. */
 const COLLISION_BOX_LAYER = 35;
 
@@ -247,8 +249,16 @@ export async function cellArrival(
   return fallback;
 }
 
-/** XPRM of a collision marker: type 1 box, 2 sphere (3 portal box, 4 line are not solid). */
-function primitiveOf(record: GameRecord, world: Mat4): CellPrimitive | undefined {
+/**
+ * XPRM of a collision marker or a trigger: type 1 box, 2 sphere (3 portal box, 4 line are not
+ * solid). Its layer is XTRI, else `layer` (a collision marker's L_COLLISIONBOX, a trigger's
+ * L_TRIGGER).
+ */
+function primitiveOf(
+  record: GameRecord,
+  world: Mat4,
+  layer = COLLISION_BOX_LAYER,
+): CellPrimitive | undefined {
   const xprm = record.fields.first('XPRM');
   if (!xprm || xprm.length < 32) return undefined;
   const v = view(xprm);
@@ -260,7 +270,7 @@ function primitiveOf(record: GameRecord, world: Mat4): CellPrimitive | undefined
     shape: type === 1 ? 'box' : 'sphere',
     bounds: [v.getFloat32(0, true), v.getFloat32(4, true), v.getFloat32(8, true)],
     world,
-    layer: xtri && xtri.length >= 4 ? view(xtri).getUint32(0, true) : COLLISION_BOX_LAYER,
+    layer: xtri && xtri.length >= 4 ? view(xtri).getUint32(0, true) : layer,
   };
 }
 
@@ -602,6 +612,14 @@ export async function loadCellData(
       const primitive = primitiveOf(record, referenceMatrix(ref));
       if (primitive) primitives.push(primitive);
       continue;
+    }
+    // A trigger: an activator placed with a primitive (XPRM), its volume on L_TRIGGER (XTRI
+    // aside), whose scripts hear who enters and leaves it (defaultSetStageTRIG: MQ101's carts
+    // set stage 20 at Helgen's gate). Without a model it is nothing else.
+    if (base.type === 'ACTI' && record.fields.has('XPRM')) {
+      const primitive = primitiveOf(record, referenceMatrix(ref), TRIGGER_LAYER);
+      if (primitive) primitives.push(primitive);
+      if (!base.fields.has('MODL')) continue;
     }
     if ((base.flags & RecordFlag.isMarker) !== 0 || base.type === 'IDLM') {
       markers.push({
