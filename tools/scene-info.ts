@@ -255,6 +255,8 @@ async function play(scene: SceneRecord, quest: QuestRecord | undefined): Promise
     scenesOf: () => Promise.resolve([]),
     questRunning: () => true,
     aliasReference: (_quest, alias) => PLACEHOLDER + alias,
+    // Every alias is filled here (with a placeholder), so none is left out as optional.
+    aliasOptional: () => Promise.resolve(false),
     actor: () => ({ dead: false, combat: false, observingCombat: false, talking: false }),
     alive: () => Promise.resolve(true),
     conditionsHold: async (conditions) => {

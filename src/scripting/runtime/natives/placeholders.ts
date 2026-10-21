@@ -35,14 +35,6 @@ export const PLACEHOLDER_NATIVES: ReadonlyMap<string, string> = new Map([
   ['actor.clearextraarrows', 'TODO(M13): arrows stuck in bodies (not shown yet)'],
   ['objectreference.forceaddragdolltoworld', 'TODO(M13): ragdolls a script adds and removes'],
   ['objectreference.forceremoveragdollfromworld', 'TODO(M13): ragdolls a script adds and removes'],
-  [
-    'objectreference.adddependentanimatedobjectreference',
-    'TODO(M13): animated objects moving with another',
-  ],
-  [
-    'objectreference.removedependentanimatedobjectreference',
-    'TODO(M13): animated objects moving with another',
-  ],
   ['objectreference.playterraineffect', "TODO(M13): the terrain's effects at a node"],
   ['objectreference.playsyncedanimationss', 'TODO(M13): synced animations of two references'],
   [

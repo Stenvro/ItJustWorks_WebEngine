@@ -81,6 +81,8 @@ export interface ScriptView {
   motion?(reference: number): ActorMotion | undefined;
   /** PlayIdle: an actor of the view plays an idle (false: the view does not hold it). */
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
+  /** AddDependentAnimatedObjectReference and its Remove (false: the view does not hold it). */
+  dependentAnimated?(reference: number, dependent: number, added: boolean): boolean;
   /** Vehicles and mounts of the view (src/shell/actor-vehicles.ts, actor-mounts.ts). */
   vehicleChanged?(actor: number): void;
   tether?(cart: number, horse: number): void;
@@ -409,6 +411,13 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views)
       played = (view.playIdle?.(actor, idle, target) ?? false) || played;
     return played;
+  }
+
+  dependentAnimated(reference: number, dependent: number, added: boolean): boolean {
+    let took = false;
+    for (const view of this.#views)
+      took = (view.dependentAnimated?.(reference, dependent, added) ?? false) || took;
+    return took;
   }
 
   vehicleChanged(actor: number): void {

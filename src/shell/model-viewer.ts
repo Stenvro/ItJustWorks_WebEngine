@@ -484,9 +484,15 @@ export class ModelViewer {
         return true;
       }
       if (!user) return false;
-      void this.#stage?.furniture.playIdle(user, idle, target);
+      // A script's idle plays in furniture too, and goes to the actor's dependents.
+      void this.#stage?.furniture.playIdle(user, idle, target, {
+        inFurniture: true,
+        dependents: this.#stage.dependentUsers(actor),
+      });
       return true;
     },
+    dependentAnimated: (reference, dependent, added) =>
+      this.#stage?.dependentAnimated(reference, dependent, added) ?? false,
     // Carts and their riders, horses and theirs (src/shell/actor-vehicles.ts, actor-mounts.ts).
     vehicleChanged: (actor) => {
       this.#stage?.vehicles.changed(actor);

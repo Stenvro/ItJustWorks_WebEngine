@@ -587,8 +587,20 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   });
   n('objectreference.forceaddragdolltoworld', () => null);
   n('objectreference.forceremoveragdollfromworld', () => null);
-  n('objectreference.adddependentanimatedobjectreference', () => true);
-  n('objectreference.removedependentanimatedobjectreference', () => true);
+  for (const [name, added] of [
+    ['objectreference.adddependentanimatedobjectreference', true],
+    ['objectreference.removedependentanimatedobjectreference', false],
+  ] as const) {
+    n(name, (call) => {
+      const reference = self(call);
+      const dependent = ref(call.args[0]);
+      return (
+        reference !== undefined &&
+        dependent !== undefined &&
+        (world.dependentAnimated?.(reference, dependent, added) ?? false)
+      );
+    });
+  }
   n('objectreference.hasnode', (call) => {
     const reference = self(call);
     return reference !== undefined && (world.hasNode?.(reference, str(call.args[0])) ?? false);
