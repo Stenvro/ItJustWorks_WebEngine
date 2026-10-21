@@ -70,7 +70,18 @@ export interface ActorTransport {
   alight(staged: StagedActor): Promise<void>;
   /** Whether an actor's own AI waits: a horse ridden (its rider moves it). */
   paused(actor: number): boolean;
+  /**
+   * An actor whose procedure lets it ride gets on its horse (its XHOR, near): at once if it
+   * has just come onto the stage, else it walks to it and mounts.
+   */
+  seat(staged: StagedActor, instant: boolean): Promise<void>;
 }
+
+/**
+ * An actor this new on the stage (ms) is put on its horse at once (HorseEnterInstant), as it
+ * is loaded riding. TODO(M13): the engine's own rule for actors loaded with a horse.
+ */
+const SEAT_INSTANT_MS = 3000;
 
 /**
  * The fliers (src/shell/actor-flight.ts): a flier's packages fly it (Hover, Orbit, FlightGrab,
@@ -127,6 +138,8 @@ export class ActorAi {
   readonly #transport: ActorTransport | undefined;
   /** Whether each actor's procedure lets it ride its horse now (Ride Horse If Possible). */
   readonly #rides = new Map<number, boolean>();
+  /** When each actor's packages began (performance.now ms): a new one mounts at once. */
+  readonly #joined = new Map<number, number>();
   /** The leader each actor follows now (Follow, FollowTo): src/shell/actor-followers.ts. */
   readonly #leaders = new Map<number, number>();
   /** The horses whose own AI waits while they are ridden. */
@@ -300,6 +313,7 @@ export class ActorAi {
     this.#held.delete(reference);
     this.#leaders.delete(reference);
     this.#rides.delete(reference);
+    this.#joined.delete(reference);
     this.#ridden.delete(reference);
     this.#fleeing.delete(reference);
     const entry = this.#actors.get(reference);
@@ -333,6 +347,7 @@ export class ActorAi {
           ),
         };
         this.#actors.set(staged.reference, entry);
+        this.#joined.set(staged.reference, performance.now());
       }
       // Talking with the player (the engine's in-game dialogue package): its package waits; it
       // stops where it is and faces the player (sitting, it stays seated). So too while it talks
@@ -503,6 +518,13 @@ export class ActorAi {
       flightGrab: (target) => this.#flight?.()?.grab(reference, target) ?? Promise.resolve(false),
       ride: (allowed) => {
         this.#rides.set(reference, allowed);
+        // Allowed to ride, it gets on its horse now, also where it need not go anywhere: MQ101's
+        // Tullius holds his place on horseback before the column sets off (were he to mount
+        // only as he set out, the cart behind him would take the lead).
+        if (allowed) {
+          const fresh = performance.now() - (this.#joined.get(reference) ?? -Infinity);
+          void transport?.seat(staged, fresh < SEAT_INSTANT_MS);
+        }
       },
       fleeing: (on) => {
         if (on) this.#fleeing.add(reference);

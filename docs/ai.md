@@ -436,7 +436,10 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   the path tweener to the mount place, mounting from the right.
 - **Actors riding:** a procedure that lets an actor ride ("Ride Horse If Possible": Travel,
   Patrol, Follow, ...) mounts its horse (its ACHR's XHOR: General Tullius' MQ101TulliusHorse)
-  within 2048 units before it sets out, and its travel moves the horse; one that does not gets
+  within 2048 units as it starts, also where it need not go anywhere (MQ101TulliusHoldPosition:
+  Tullius waits in the saddle, so he leads the column as it sets off); one just come onto the
+  stage (3 s) is put on at once (HorseEnterInstant; TODO(M13): the engine's rule for actors
+  loaded with a horse). Its travel moves the horse; one that does not gets
   it off first, as do using furniture, taking and activating, and load doors
   (sNotAllowedToUseAutoDoorsWhileonHorse).
 - **Carts:** TetherToHorse hitches a cart to a horse; a horse standing off the cart's shafts is
