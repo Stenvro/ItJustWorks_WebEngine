@@ -10,7 +10,8 @@
 //   for the player (0.0025, 0.65: UESP's 1 − (skill / 400)^0.65), the skill being the school's
 //   (its costliest effect's) with its fortifications; for NPCs fMagicCasterSkillCostMult and
 //   fMagicSkillCostScale (0.5, 0.5); times the cost modifiers (perks, Fortify <School>: the
-//   perk system, TODO(M11)); dual casting × fMagicDualCastingCostMult (2.8). A concentration
+//   perk system's Mod Spell Cost, applied by the casting engine to this cost); dual casting
+//   × fMagicDualCastingCostMult (2.8). A concentration
 //   spell's cost is a second's.
 // - Charging: a fire and forget spell is ready after its charge time (SPIT @12; dual cast ×
 //   fMagicDualCastingTimeMult, 1), released then it fires, before it is let go without effect;
@@ -129,7 +130,7 @@ export function magickaCost(
     readonly skill: number;
     readonly player: boolean;
     readonly dual?: boolean;
-    /** Perks' and Fortify <School>'s share left (1: none). TODO(M11): the perk system. */
+    /** A share left by other modifiers (1: none; the perks' is the casting engine's). */
     readonly costMultiplier?: number;
   },
   settings: CastingSettings = CASTING_DEFAULTS,

@@ -8,13 +8,15 @@
 // far as the pick allows (src/gameplay/lockpicking.ts), the pick turning with the cylinder; let go,
 // it turns back. Held against a pick that cannot turn it further, the pick strains and breaks
 // after the lock level's time (one lockpick fewer; Unbreakable and the Skeleton Key never
-// break); turned all the way, the lock opens. Locksmith starts the pick near the sweet spot. A
+// break); turned all the way, the lock opens. The perks widen the sweet spot (Novice .. Master
+// Locks), make picks unbreakable (Unbreakable), start the pick near the sweet spot (Locksmith),
+// give a picked lock's key (Wax Key) and keep the picking unnoticed (Quick Hands): the perk
+// system's entry points (perk-engine.ts). A
 // lock's sweet spot stays where it is until the game is loaded again. The bar shows the skill,
 // its progress to the next level, the lock's level and the lockpicks left (SetLockInfo). A lock
 // opened is fSkillUsageLockPick<level> uses of Lockpicking, a broken pick
 // fSkillUsageLockPickBroken (the progression engine). Cancel (Tab, Esc) leaves. An owned lock
 // picked where someone sees it is trespassing (crime-engine.ts lockPicked).
-// TODO(M11): Wax Key (the perk system).
 // Notes: docs/ui.md ("Lockpicking").
 
 import {
@@ -32,6 +34,7 @@ import {
   partialPickSetting,
   type LockShape,
 } from '../gameplay/lockpicking.ts';
+import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { clock } from './object-graphs.ts';
 import type { Playback } from '../render/animation.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
@@ -53,10 +56,6 @@ const SKELETON_KEY_MODEL = 'meshes\\interface\\lockpicking\\lockpickskeletonkey0
 
 /** Lockpicking's actor value. */
 const LOCKPICKING = ActorValue.firstSkill + 8;
-/** The perks: one per lock level (Novice Locks .. Master Locks), Locksmith, Unbreakable. */
-const LEVEL_PERKS = [0xf392a, 0xbe125, 0xc3680, 0xc3681, 0xc3682] as const;
-const LOCKSMITH = 0x58208;
-const UNBREAKABLE = 0x58209;
 
 /**
  * Where the models' parts turn (model space): the cylinder about its node (LockPickLockTumble
@@ -128,7 +127,14 @@ export class LockpickingMenu {
     }
     const settings = await session.settings();
     const skill = (await runtime.actors.value(PLAYER_REF, LOCKPICKING)).current;
-    const perk = await runtime.actors.hasPerk(PLAYER_REF, LEVEL_PERKS[difficulty - 1] ?? 0);
+    // The perks (Mod Lockpick Sweet Spot: the lock levels' perks by GetLockLevel on the lock,
+    // Fortify Lockpicking through the skill boost perks; Make Lockpicks Unbreakable; Set
+    // Lockpick Starting Arc: Locksmith).
+    const perks = runtime.perks;
+    const perk = await perks.apply(EntryPoint.modLockpickSweetSpot, PLAYER_REF, 1, [reference]);
+    const unbreakable =
+      (await perks.apply(EntryPoint.makeLockpicksUnbreakable, PLAYER_REF, 0)) !== 0;
+    const startArc = await perks.apply(EntryPoint.setLockpickStartingArc, PLAYER_REF, 0);
     let random = SWEET_SPOTS.get(reference);
     if (random === undefined) {
       random = Math.random();
@@ -151,8 +157,8 @@ export class LockpickingMenu {
       shape,
       lockModel,
       pickModel,
-      unbreakable: skeletonKey || (await runtime.actors.hasPerk(PLAYER_REF, UNBREAKABLE)),
-      locksmith: await runtime.actors.hasPerk(PLAYER_REF, LOCKSMITH),
+      unbreakable: skeletonKey || unbreakable,
+      startArc,
       levelName: settings.string(lockLevelSetting(difficulty)) ?? '',
       skillUses: {
         opened:
@@ -179,7 +185,8 @@ interface PickingSetup {
   readonly lockModel: GpuModel;
   readonly pickModel: GpuModel;
   readonly unbreakable: boolean;
-  readonly locksmith: boolean;
+  /** The arc (degrees) about the opening the pick starts in (0: the middle of its sweep). */
+  readonly startArc: number;
   /** The lock's level name (SetLockInfo's after the skill, the next level and the progress). */
   readonly levelName: string;
   /** Lockpicking skill uses of opening the lock and of a pick breaking. */
@@ -222,11 +229,11 @@ class Picking {
     this.#session = session;
     this.#runtime = runtime;
     this.#setup = setup;
-    if (setup.locksmith) {
-      // Near the opening position: at the edge of the partial zone towards the middle.
-      const { center, sweetSpot, partial } = setup.shape;
-      const side = center > PICK_RANGE / 2 ? -1 : 1;
-      this.#pick = clampPick(center + side * (sweetSpot / 2 + partial / 2));
+    if (setup.startArc > 0) {
+      // Near the opening position: somewhere within the arc about it (Locksmith: 45°).
+      // TODO(M13): where in the arc the engine puts it is not documented.
+      const offset = (Math.random() - 0.5) * setup.startArc;
+      this.#pick = clampPick(setup.shape.center + offset);
     }
   }
 
@@ -451,9 +458,28 @@ class Picking {
     const stats = this.#runtime.stats;
     stats.set('locks picked', (stats.get('locks picked') ?? 0) + 1);
     void this.#runtime.crime.lockPicked(PLAYER_REF, reference);
+    void this.#waxKey(reference);
     setTimeout(() => {
       this.close(true);
     }, OPENED_SECONDS * 1000);
+  }
+
+  /**
+   * A lock picked open may give its key (Mod Lockpicking Key Reward Chance, percent: Wax Key,
+   * always), if the player has none of it.
+   */
+  async #waxKey(reference: number): Promise<void> {
+    const runtime = this.#runtime;
+    const { key } = await runtime.lock(reference);
+    if (key === undefined || (await runtime.itemCount(PLAYER_REF, key)) > 0) return;
+    const chance = await runtime.perks.apply(
+      EntryPoint.modLockpickingKeyRewardChance,
+      PLAYER_REF,
+      0,
+      [reference],
+    );
+    if (Math.random() * 100 < chance)
+      await runtime.addItem(PLAYER_REF, runtime.formHandle(key), 1, false);
   }
 
   /** The pick at the end of its Intro, in the keyhole. */

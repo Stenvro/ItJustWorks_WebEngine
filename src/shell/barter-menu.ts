@@ -15,10 +15,13 @@
 // vendor sells again is its own).
 //
 // Prices (UESP, "Speech"): the factor fBarterMax − (fBarterMax − fBarterMin) × min(Speech,
-// 100) / 100; buying costs value × factor, selling gets value / factor, at least 1.05 × value
-// and at most the value. A trade is the item's value in Speech uses (the progression engine).
-// TODO(M11): the Haggling and Allure perks, Fortify Barter, the Merchant and Investor perks, the
-// chest's restock every 48 hours.
+// 100) / 100; buying costs value × factor, selling gets value / factor, each times the player's
+// perks against this vendor (Mod Buy Prices, Mod Sell Prices: Haggling, Allure, Fortify Barter),
+// at least 1.05 × value and at most the value. The Merchant perk (BypassVendorKeywordCheck) sells
+// anything to any vendor, the Fence perk (BypassVendorStolenCheck) stolen goods (TODO(M13):
+// whether the engine asks the vendor to be one the player invested in, as the perk's text
+// says; the Investor perk's investing is its dialogue's). A trade is the item's value in Speech
+// uses (the progression engine). TODO(M11): the chest's restock every 48 hours.
 
 import { barterMultipliers, vendorBuys } from '../gameplay/barter.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -52,7 +55,12 @@ export async function barterModel(
     (await game.actors.value(PLAYER_REF, speech)).current,
     settings.number('fBarterMin') ?? 2,
     settings.number('fBarterMax') ?? 3.3,
+    await game.perks.barterFactors(PLAYER_REF, vendorActor),
   );
+  const bypass = async (name: string): Promise<boolean> =>
+    (await game.actors.value(PLAYER_REF, actorValueIndex(name) ?? 0)).current > 0;
+  const anyItem = await bypass('BypassVendorKeywordCheck');
+  const anyStolen = await bypass('BypassVendorStolenCheck');
   const name = (await game.forms.record((await game.baseOf(vendorActor)) ?? 0))?.text('FULL') ?? '';
   const vendorGold = async (): Promise<number> =>
     (await game.itemCount(chest, GOLD)) +
@@ -60,7 +68,7 @@ export async function barterModel(
   /** The vendor's gold as last shown (the warning is answered at once, during the call). */
   let shownGold = await vendorGold();
   const sellable = (rowItem: ItemRecord): boolean =>
-    vendor !== undefined && vendorBuys(rowItem, vendor, list);
+    vendor !== undefined && vendorBuys(rowItem, vendor, list, anyItem);
   /**
    * Speech's experience of a trade: the item's value as uses, once a trade however many go
    * (UESP "Speech": "based on the actual value of the item", several at once count as one).
@@ -84,7 +92,7 @@ export async function barterModel(
       // What the vendor buys; a vendor that is no fence not the stolen ones.
       const offered = mine.flatMap((row) => {
         if (!sellable(row.item)) return [];
-        if (vendor?.onlyStolen === true) return [row];
+        if (vendor?.onlyStolen === true || anyStolen) return [row];
         const count = row.count - game.crime.stolenCount(PLAYER_REF, row.formId);
         return count > 0 ? [{ ...row, count }] : [];
       });

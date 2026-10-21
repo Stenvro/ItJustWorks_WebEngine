@@ -1607,7 +1607,14 @@ leads to by their INAM, INAM (u32) the node's own index. `node tools/perk-info.t
 
 A PERK: FULL, DESC, its requirements (the CTDA before its first effect, PRKE), DATA (u8 trait,
 u8 level, u8 rank count, u8 playable, u8 hidden), NNAM the next rank (Armsman00 → 20 → 40 ...);
-then its effects (PRKE, DATA, PRKC + CTDA, EPFT, EPFD, PRKF).
+then its entries, each PRKE (u8 type: 0 quest stage, 1 ability, 2 entry point; u8 rank; u8
+priority) to PRKF: DATA (a quest's form id and u16 stage; an ability's spell; an entry point's
+u8 id, u8 function, u8 tab count), then for an entry point PRKC (s8 tab) + its CTDA per tab,
+EPFT (u8 data type), EPF2 (a button label, lstring), EPF3 (u16 script flags, u16 fragment),
+EPFD (EPFT 1 float; 2 two floats, an actor value stored as a float and a factor for the actor
+value functions; 3 a leveled list; 4 / 5 a spell; 6 a string; 7 an lstring). Every tab count
+the vanilla entries store is within the entry point's tabs (`node tools/perk-info.ts --audit`).
+docs/gameplay.md ("Perks") has how the game runs them.
 
 ## Combat styles
 

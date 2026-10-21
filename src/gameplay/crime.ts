@@ -265,8 +265,9 @@ export interface PickpocketAttempt {
   readonly weight: number;
   readonly value: number;
   /**
-   * The perks' factor (the Mod Pickpocket Chance entry point: Light Fingers, Night Thief,
-   * Cutpurse, Keymaster, Misdirection, Perfect Touch). TODO(M11): the perk system gives it.
+   * A factor on the chance (1: none). The running game gives the chance itself to the perks'
+   * Mod Pickpocket Chance entry point (Light Fingers, Night Thief, Cutpurse, Keymaster; the
+   * crime engine: pickpocketBaseChance, then boundedPickpocketChance).
    */
   readonly perkMult?: number;
 }
@@ -280,6 +281,14 @@ export interface PickpocketAttempt {
  * the terms is not documented; this reads them as sums of their base and multiplier.
  */
 export function pickpocketChance(attempt: PickpocketAttempt, settings: CrimeSettings): number {
+  return boundedPickpocketChance(
+    pickpocketBaseChance(attempt, settings) * (attempt.perkMult ?? 1),
+    settings,
+  );
+}
+
+/** The chance (percent) before the perks and the limits (see pickpocketChance). */
+export function pickpocketBaseChance(attempt: PickpocketAttempt, settings: CrimeSettings): number {
   const thief =
     settings.pickpocketActorSkillBase + settings.pickpocketActorSkillMult * attempt.skill;
   const target =
@@ -287,7 +296,11 @@ export function pickpocketChance(attempt: PickpocketAttempt, settings: CrimeSett
   const load =
     settings.pickpocketWeightMult * Math.max(0, attempt.weight) +
     settings.pickpocketAmountMult * Math.max(0, attempt.value);
-  const chance = (thief + target + load) * (attempt.perkMult ?? 1);
+  return thief + target + load;
+}
+
+/** A chance (percent) within fPickPocketMinChance and fPickPocketMaxChance, rounded. */
+export function boundedPickpocketChance(chance: number, settings: CrimeSettings): number {
   return Math.round(
     Math.min(settings.pickpocketMaxChance, Math.max(settings.pickpocketMinChance, chance)),
   );

@@ -4,6 +4,7 @@
 // set), spells and perks, its race and sex, being essential or protected (its base's flags,
 // or an alias's), and dying. Platform-independent. Notes: docs/scripting.md ("Actors").
 
+import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import {
   LeveledFlag,
   NpcFlag,
@@ -770,6 +771,16 @@ export class ActorEngine {
     this.#runtime.world.killed?.(reference, killer, silent);
     // Its magic: souls trapped, effects dispelled, its summons gone (magic-engine.ts).
     await this.#runtime.magic.died(reference);
+    // The killer's perks may leave items on it (Add Leveled List On Death; no vanilla perk).
+    if (killer !== undefined) {
+      const lists = await this.#runtime.perks.leveledLists(
+        EntryPoint.addLeveledListOnDeath,
+        killer,
+        [reference],
+      );
+      for (const list of lists)
+        await this.#runtime.addItem(reference, this.#runtime.formHandle(list), 1, true);
+    }
     const by = killer === undefined ? null : this.#runtime.actorHandle(killer);
     await this.#runtime.sendEvent(reference, 'OnDying', [by]);
     await this.#runtime.sendEvent(reference, 'OnDeath', [by]);

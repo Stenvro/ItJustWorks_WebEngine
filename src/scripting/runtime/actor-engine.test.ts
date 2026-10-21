@@ -97,6 +97,7 @@ function dyingEngine(essentialAlias = false): { actors: ActorEngine; log: DeathL
       },
     },
     magic: { died: () => Promise.resolve() },
+    perks: { leveledLists: () => Promise.resolve([]) },
     crime: { killed: () => Promise.resolve() },
     // The runtime sends an actor's events to it and its aliases (ScriptRuntime.sendEvent).
     sendEvent: (target: number, event: string, args: readonly unknown[]) => {

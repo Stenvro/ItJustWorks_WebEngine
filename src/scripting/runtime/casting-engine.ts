@@ -35,6 +35,7 @@ import {
   type HandCast,
 } from '../../gameplay/magic/casting.ts';
 import { MagicValue, UNITS_PER_FOOT } from '../../gameplay/magic/effect-rules.ts';
+import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import {
   SHOUT_DEFAULTS,
   shoutMeterPercent,
@@ -307,12 +308,27 @@ export class CastingEngine {
     }
     const skill =
       school === undefined ? 0 : (await this.#runtime.actors.value(actor, school)).current;
-    // TODO(M11): the perks' Mod Spell Cost entry points and Fortify <School> (cost multiplier).
-    const magicka = magickaCost(
-      { baseCost: base, skill, player: actor === PLAYER_REF, dual },
-      casting,
+    // The perks change it (Mod Spell Cost: the schools' half-cost perks by the spell's casting
+    // perk, Fortify <school> through the skill boost perks).
+    const magicka = await this.#runtime.perks.apply(
+      EntryPoint.modSpellCost,
+      actor,
+      magickaCost({ baseCost: base, skill, player: actor === PLAYER_REF, dual }, casting),
+      [item.formId],
+      { spell: item.formId },
     );
     return { base, magicka, charge: 0, school, chargeTime: charge };
+  }
+
+  /**
+   * Whether an actor may dual cast a spell: a perk lets it (Can Dual Cast Spell: the schools'
+   * Dual Casting perks, by the spell's school).
+   */
+  async canDualCast(actor: number, spell: number): Promise<boolean> {
+    const value = await this.#runtime.perks.apply(EntryPoint.canDualCastSpell, actor, 0, [spell], {
+      spell,
+    });
+    return value !== 0;
   }
 
   /** The magic menu's cost of a spell for the player (whole magicka). */
@@ -371,7 +387,7 @@ export class CastingEngine {
    * A cast begins from a source (the attack button with a spell in the hand, the voice key
    * with a power). Refused: without magicka (a concentration spell: any; fire and forget: its
    * cost), a staff's charge, a power used today, while shouting. `dual`: both hands cast one
-   * spell (TODO(M11): the Dual Casting perk of the spell's school; EffectWasDualCast).
+   * spell, with the Dual Casting perk of its school (canDualCast; else it is cast single).
    */
   async begin(
     actor: number,
@@ -383,7 +399,10 @@ export class CastingEngine {
     if (this.#shouting.has(actor)) return this.#refuse(actor, source, 'shouting');
     const castable = await this.castable(actor, source);
     if (!castable) return 'nothing';
-    const dual = options.dual === true && castable.via === 'spell';
+    const dual =
+      options.dual === true &&
+      castable.via === 'spell' &&
+      (await this.canDualCast(actor, castable.item.formId));
     const cost = await this.cost(actor, castable, dual);
     switch (castable.via) {
       case 'spell': {
@@ -727,6 +746,16 @@ export class CastingEngine {
         damage += entry.magnitude * (options.seconds ?? 1);
     }
     const until = this.#clock + WARD_STATE_SECONDS;
+    // The ward gives magicka back for what it takes (Mod Ward Magicka Absorption Pct: Ward
+    // Absorb, a share of the damage it absorbs).
+    const absorb = await runtime.perks.apply(
+      EntryPoint.modWardMagickaAbsorptionPct,
+      target,
+      0,
+      [delivered.item.formId],
+      { spell: delivered.item.formId },
+    );
+    if (absorb > 0) runtime.actors.restore(target, MAGICKA, Math.min(damage, power) * absorb);
     if (damage <= power) {
       await runtime.actors.damage(target, MagicValue.wardPower, damage);
       this.#wards.set(target, { state: 1, until });
@@ -844,6 +873,10 @@ export class CastingEngine {
       return this.begin(actor, CastingSource.voice);
     const shout = await this.shout(voice);
     if (!shout || this.wordsKnown(actor, shout) === 0) return 'nothing';
+    // The player shouts while its perks allow it (Mod Shout OK above 0: the player's
+    // AllowShoutingPerk, the werewolf's howls). TODO(M13): whether the engine asks it of NPCs.
+    if (actor === PLAYER_REF && (await runtime.perks.apply(EntryPoint.modShoutOk, actor, 0)) <= 0)
+      return 'nothing';
     if (this.castsOf(actor).length > 0) {
       if (actor === PLAYER_REF) {
         const text = await runtime.gameSetting('sMagicCastShoutWhileCasting');

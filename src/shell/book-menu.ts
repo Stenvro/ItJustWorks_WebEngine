@@ -24,6 +24,7 @@
 // note's text is wider: NOTE_WIDTH 400 from the visible rect's left plus NOTE_X_OFFSET 20).
 // Notes: docs/ui.md ("Books").
 
+import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
 import type { OverlayView } from '../render/menu-overlay.ts';
@@ -218,10 +219,12 @@ export class BookMenu {
     if (read.reference !== undefined) await runtime.sendEvent(read.reference, 'OnRead');
     if (!first || (book.flags & BookFlag.teachesSkill) === 0 || book.teaches < 0) return;
     // The experience the skill lacks to its next level (UESP "Skill Books"); the HUD announces
-    // it (sSkillIncreased). TODO(M11): Scholar's Insight's second level (the magic system).
+    // it (sSkillIncreased); the reader's perks may add levels (Adjust Book Skill Points:
+    // Scholar's Insight's second).
     const skill = book.teaches;
     if (skill < ActorValue.firstSkill || skill >= ActorValue.firstSkill + SKILLS) return;
-    await runtime.progression.incrementSkill(skill);
+    const levels = await runtime.perks.apply(EntryPoint.adjustBookSkillPoints, PLAYER_REF, 1);
+    await runtime.progression.incrementSkill(skill, Math.max(0, Math.round(levels)));
   }
 }
 

@@ -544,7 +544,7 @@ async function conditionValue(
         : actors.relationshipRank(reference, other);
     }
     case Fn.hasPerk:
-      return reference === undefined ? undefined : flag(await actors.hasPerk(reference, form));
+      return reference === undefined ? undefined : flag(await runtime.perks.has(reference, form));
     case Fn.getPlayerTeammate:
       return flag(
         reference !== undefined && (state.actors.get(reference)?.playerTeammate ?? false),

@@ -20,7 +20,8 @@ import {
   isViolent,
   jailDays,
   jailSkillLosses,
-  pickpocketChance,
+  boundedPickpocketChance,
+  pickpocketBaseChance,
   pickpocketUses,
   readCrimeSettings,
   type Crime,
@@ -34,6 +35,7 @@ import {
   reaction as regard,
   type Reaction,
 } from '../../gameplay/factions.ts';
+import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import { ActorValue, actorValueIndex } from '../../world/actor-values.ts';
 import type { FactionCrime } from '../../world/actor-stats-records.ts';
 import { parseItem } from '../../world/item-records.ts';
@@ -537,14 +539,22 @@ export class CrimeEngine {
     const item = record && parseItem(record);
     const skill = (await runtime.actors.value(thief, PICKPOCKET)).current;
     const targetSkill = (await runtime.actors.value(target, PICKPOCKET)).current;
-    return pickpocketChance(
+    // The thief's perks change it (Mod Pickpocket Chance: Light Fingers, Night Thief on the
+    // sleeping, Cutpurse on gold, Keymaster on keys; Fortify Pickpocket through the skill boost
+    // perks), within the limits.
+    const settings = await this.settings();
+    const chance = pickpocketBaseChance(
       {
         skill,
         targetSkill,
         weight: (item?.weight ?? 0) * count,
         value: (item?.value ?? 0) * count,
       },
-      await this.settings(),
+      settings,
+    );
+    return boundedPickpocketChance(
+      await runtime.perks.apply(EntryPoint.modPickpocketChance, thief, chance, [target, base]),
+      settings,
     );
   }
 
@@ -577,6 +587,16 @@ export class CrimeEngine {
     }
     if (placing) {
       await runtime.removeItem(thief, runtime.formHandle(base), count, true, target);
+      // A poison placed may act on the target at once (Should Apply Placed Item: Poisoned).
+      const poison = await runtime.magic.item(base);
+      if (
+        poison?.kind === 'poison' &&
+        (await runtime.perks.apply(EntryPoint.shouldApplyPlacedItem, thief, 0, [target, base])) !==
+          0
+      ) {
+        await runtime.removeItem(target, runtime.formHandle(base), 1, true, undefined);
+        await runtime.magic.apply(poison, target, { caster: thief });
+      }
       return true;
     }
     await runtime.removeItem(target, runtime.formHandle(base), count, true, thief);
@@ -728,7 +748,13 @@ export class CrimeEngine {
     const destination = await this.#doorDestinationCell(reference);
     if (owned && destination !== undefined) runtime.state.crime.offLimits.add(destination);
     let crime: Crime | undefined;
-    if (owned) {
+    // Noticed by the chance the picker's perks leave (Mod Lockpicking Crime Chance, percent:
+    // Quick Hands, none).
+    const noticed =
+      owned &&
+      this.random() * 100 <
+        (await runtime.perks.apply(EntryPoint.modLockpickingCrimeChance, picker, 100, [reference]));
+    if (noticed) {
       const owner = await this.ownerOf(reference);
       const victim = await this.#ownerReference(owner.actor);
       const faction = await this.crimeFactionFor({ victim, owner, place: reference });
@@ -896,12 +922,37 @@ export class CrimeEngine {
       ? await runtime.actors.crimeFaction(actor)
       : undefined;
     const owed = faction === undefined ? undefined : this.bounty(faction);
-    return bribeAmount(
+    const amount = bribeAmount(
       level,
       speech,
       owed === undefined ? 0 : owed.violent + owed.nonviolent,
       await this.settings(),
     );
+    // The player's perks change it (Mod Bribe Amount; no vanilla perk has one).
+    const perked = await runtime.perks.apply(EntryPoint.modBribeAmount, PLAYER_REF, amount, [
+      actor,
+    ]);
+    return Math.max(1, Math.round(perked));
+  }
+
+  /**
+   * Whether the player's intimidation of an actor succeeds (GetIntimidateSuccess,
+   * WillIntimidateSucceed): the player's level, as its perks make it (Mod Player Intimidation:
+   * Intimidation doubles it), and its Speech's share (level × (1 + Speech / 100)) against the
+   * actor's level; a cowardly actor (Confidence 0) always gives in. TODO(M13): the engine's
+   * formula is not documented (UESP "Skyrim:Speech": the level and Speech decide it).
+   */
+  async intimidateSucceeds(actor: number): Promise<boolean> {
+    const runtime = this.#runtime;
+    if ((await runtime.actors.value(actor, ActorValue.confidence)).current <= 0) return true;
+    const speech = (await runtime.actors.value(PLAYER_REF, SPEECH)).current;
+    const strength = await runtime.perks.apply(
+      EntryPoint.modPlayerIntimidation,
+      PLAYER_REF,
+      (await runtime.actors.level(PLAYER_REF)) * (1 + Math.max(0, speech) / 100),
+      [actor],
+    );
+    return strength >= (await runtime.actors.level(actor));
   }
 
   // --- Paying, jail ---------------------------------------------------------------------------
@@ -1230,7 +1281,11 @@ export class CrimeEngine {
     const runtime = this.#runtime;
     if (!(points > 0)) return;
     const favor = runtime.state.crime.favor;
-    const total = (favor.get(actor) ?? 0) + points;
+    // The player's perks change what it earns (Mod Favor Points; no vanilla perk has one).
+    const earned = await runtime.perks.apply(EntryPoint.modFavorPoints, PLAYER_REF, points, [
+      actor,
+    ]);
+    const total = (favor.get(actor) ?? 0) + Math.max(0, earned);
     favor.set(actor, total);
     const before = await runtime.actors.relationshipRank(actor, PLAYER_REF);
     const after = rankFromFavor(total, before, await this.settings());
