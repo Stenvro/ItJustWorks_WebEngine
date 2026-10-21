@@ -50,7 +50,11 @@ const STEAL: PackageInput = { id: 3, type: 'Bool', value: { kind: 'bool', value:
  * A run of a procedure with fakes that record what it does; its object lists shared. With
  * `waits`, its waits are recorded too, and it is stopped after that many.
  */
-function harness(found = new Map<number, readonly number[]>(), waits?: number) {
+function harness(
+  found = new Map<number, readonly number[]>(),
+  waits?: number,
+  travel: (to: readonly number[]) => Promise<boolean> = () => Promise.resolve(true),
+) {
   const done: string[] = [];
   let stopped = false;
   let waited = 0;
@@ -58,7 +62,7 @@ function harness(found = new Map<number, readonly number[]>(), waits?: number) {
     reference: 1,
     position: () => [0, 0, 0],
     heading: () => 0,
-    travel: () => Promise.resolve(true),
+    travel: (to: readonly number[]) => travel(to),
     stop: () => undefined,
     face: () => undefined,
     useFurniture: (furniture: number) => {
@@ -258,6 +262,36 @@ describe('procedures', () => {
     // Without the wait it would go round at once without end (the page hung).
     expect(await run('Patrol', [0, 255, 1], [start, repeatable], overrides)).toBe('failure');
     expect(done).toEqual(['wait 1', 'wait 1', 'wait 1']);
+  });
+
+  it('tries a patrol point it was blocked from again before it goes on', async () => {
+    // The last point is blocked twice, then reached (MQ101's second cart at Helgen's gate).
+    let blocked = 2;
+    const { run, done } = harness(undefined, undefined, (to) => {
+      const last = to[0] === 200;
+      done.push(`travel ${String(to[0])}${last && blocked > 0 ? ' blocked' : ''}`);
+      return Promise.resolve(!(last && blocked-- > 0));
+    });
+    const start: PackageInput = {
+      id: 0,
+      type: 'SingleRef',
+      value: {
+        kind: 'singleRef',
+        target: { type: TargetType.specificReference, value: 0x800, count: 0 },
+      },
+    };
+    const overrides: Partial<PackageMind> = {
+      target: () => Promise.resolve(0x800),
+      linked: (reference) => Promise.resolve(reference === 0x800 ? 0x801 : undefined),
+      placement: (reference) =>
+        Promise.resolve({
+          position: [reference === 0x800 ? 100 : 200, 0, 0] as const,
+          heading: 0,
+          space: { kind: 'interior', cell: 1 },
+        }),
+    };
+    expect(await run('Patrol', [0], [start], overrides)).toBe('success');
+    expect(done).toEqual(['travel 100', 'travel 200 blocked', 'travel 200 blocked', 'travel 200']);
   });
 
   it('locks and unlocks the doors of its place', async () => {

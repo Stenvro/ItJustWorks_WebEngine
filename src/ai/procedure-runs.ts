@@ -40,6 +40,12 @@ const ARRIVE_AT_MARKER = 24;
 /** At an idle marker, an idle at least this long apart (its timer when longer; seconds). */
 const MARKER_PAUSE = 4;
 /**
+ * A patrol point not reached (blocked) is tried again this many times before the patrol goes on
+ * to the next. TODO(M13): the engine's own (not documented); one given up at once left MQ101's
+ * second cart 2000 units short of the gate when its last point was blocked a moment.
+ */
+const PATROL_TRIES = 4;
+/**
  * A sandboxing actor stays at what it does about this long (seconds), longer the lower its
  * energy (seconds per point below 100). TODO(M13): the engine's timing.
  */
@@ -196,6 +202,7 @@ const patrol: ProcedureRunner = async (run) => {
     // Whether the round took its time (it walked, idled or waited somewhere): one that did not
     // (each point within reach where it stands, or none placed) waits before it goes round again.
     let spent = false;
+    let tries = 0;
     for (; index < points.length; index++) {
       if (run.stopped()) return 'failure';
       const point = points[index];
@@ -204,11 +211,14 @@ const patrol: ProcedureRunner = async (run) => {
       const here = run.body.position();
       if (!here || horizontal(here, at.position) > radius) spent = true;
       if (!(await goTo(run, { position: at.position, radius, space: at.space }, radius, options))) {
-        // Not reached (blocked): a moment, then on to the next.
+        // Not reached (blocked): a moment, then again; given up, on to the next.
         await run.wait(IDLE_SECONDS);
         spent = true;
+        if (++tries < PATROL_TRIES) index--;
+        else tries = 0;
         continue;
       }
+      tries = 0;
       // An idle marker on the way: it stays there for the marker's timer, playing its idles (a
       // marker taken by another: it walks on).
       if (point === undefined || run.stopped()) continue;

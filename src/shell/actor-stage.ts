@@ -309,6 +309,9 @@ export class ActorStage {
       furniture: this.furniture,
       player: () => options.player?.()?.play.player,
       seat: () => options.seat?.(),
+      alight: () => {
+        this.vehicles.release(PLAYER_REF);
+      },
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
       door: (door) => this.doors.passage(door, PLAYER_REF),
     });
@@ -1051,6 +1054,11 @@ export class ActorStage {
           staged.placed.behavior?.rootMotion(),
         );
       }
+    }
+    // The player's too: their cart exit takes them out of the cart.
+    const avatar = this.#options.player?.()?.avatar;
+    if (avatar && avatar.stepped > 0) {
+      this.vehicles.animated(PLAYER_REF, avatar.stepped, avatar.body.behavior?.rootMotion());
     }
     // Riders on their horses, carts behind theirs and those riding them (drawn where they are).
     this.mounts.frame(frame);
