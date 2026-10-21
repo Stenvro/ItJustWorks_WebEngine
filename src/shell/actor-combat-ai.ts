@@ -811,6 +811,19 @@ export class ActorCombatAi {
     }
     const close = reaction === FightReaction.ally || reaction === FightReaction.friend;
     if (close) return false;
+    // The aggro radius of one that would not attack on sight: it warns those not its friends or
+    // allies that come close, then attacks them (inferred: vanilla's wolves and bears are
+    // unaggressive with an aggro radius, and attack the player who comes near; TODO(M13)). Once
+    // it attacks, the other is its enemy for the fight.
+    if (
+      profile.aggroRadius &&
+      detected &&
+      mind.mode === 'idle' &&
+      !(running && (running.interrupts & InterruptFlag.aggroRadiusBehavior) === 0) &&
+      this.#aggro(mind, view, other, profile.aggroRadius)
+    ) {
+      return this.#join(mind, reference);
+    }
     // Helping: one it helps fights `other`, or `other` fights one it helps.
     const assistance = profile.teammate
       ? Math.max(profile.assistance, Assistance.helpsFriendsAndAllies)

@@ -303,6 +303,8 @@ export class BehaviorRuntime {
   #values: number[] = [];
   readonly #eventIndex = new Map<string, number>();
   readonly #eventNames: string[] = [];
+  /** The events its graphs' files name (lower case). */
+  readonly #declared = new Set<string>();
   readonly #properties: Record<string, number>;
   /** Events waiting to be handled (global ids). */
   #queue: number[] = [];
@@ -417,7 +419,10 @@ export class BehaviorRuntime {
       }
       return index;
     });
-    const events = Int32Array.from(graph.events, (name) => this.#event(name));
+    const events = Int32Array.from(graph.events, (name) => {
+      this.#declared.add(name.toLowerCase());
+      return this.#event(name);
+    });
     scope = { graph, variables, events, properties: graph.characterProperties ?? [] };
     this.#scopes.set(graph, scope);
     this.#mark(graph.root, scope);
@@ -437,6 +442,11 @@ export class BehaviorRuntime {
     if (this.#nodeScopes.has(modifier)) return;
     this.#nodeScopes.set(modifier, scope);
     for (const child of modifierChildren(modifier)) this.#markModifier(child, scope);
+  }
+
+  /** Whether the graph's files name an event (of its graphs loaded so far). */
+  declares(event: string): boolean {
+    return this.#declared.has(event.toLowerCase());
   }
 
   #event(name: string): number {
