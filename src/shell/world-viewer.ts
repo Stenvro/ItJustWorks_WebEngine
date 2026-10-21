@@ -413,6 +413,14 @@ export class WorldViewer {
   onPlayerSent: ((at: Placement) => void) | undefined;
 
   /** Whether the player is in this view's scene (playing it). */
+  /**
+   * Play: the place is loaded but what stands in it is not yet: the player's body, the actors
+   * of its cells (a loading screen stays until they are there).
+   */
+  get populating(): boolean {
+    return this.playing && (this.#avatar === undefined || this.#stage?.placing === true);
+  }
+
   get playing(): boolean {
     return this.#play !== undefined;
   }
@@ -453,6 +461,11 @@ export class WorldViewer {
 
   /** The player in furniture (made with their body, for the stage's furniture). */
   #seat: PlayerFurniture | undefined;
+  /**
+   * An idle a script played on the player before their body was there (the opening's
+   * IdleCartPrisonerCIdle as the world loads): played once it is.
+   */
+  #playerIdle: { readonly idle: number; readonly target: number | undefined } | undefined;
 
   #makeSeat(play: PlaySession, avatar: PlayerAvatar): PlayerFurniture | undefined {
     const stage = this.#stage;
@@ -695,6 +708,10 @@ export class WorldViewer {
       // The player's idles too (the opening's IdleCartPrisonerCIdle in the cart).
       const staged = this.#stage?.get(actor);
       const user = actor === PLAYER_REF ? this.#seat?.user : staged && this.#stage?.userOf(staged);
+      if (!user && actor === PLAYER_REF) {
+        this.#playerIdle = { idle, target };
+        return true;
+      }
       if (!user) return false;
       void this.#stage?.furniture.playIdle(user, idle, target);
       return true;
@@ -1184,6 +1201,12 @@ export class WorldViewer {
             };
           }
           this.#seat = avatar && this.#makeSeat(play, avatar);
+          const pending = this.#playerIdle;
+          this.#playerIdle = undefined;
+          const seat = this.#seat;
+          if (pending && seat) {
+            void this.#stage?.furniture.playIdle(seat.user, pending.idle, pending.target);
+          }
           this.#stage?.combat.attachPlayer(play, avatar);
         } else avatar?.destroy();
       },
@@ -1481,6 +1504,7 @@ export class WorldViewer {
     this.#avatar?.destroy();
     this.#avatar = undefined;
     this.#seat = undefined;
+    this.#playerIdle = undefined;
     this.#stage?.combat.attachPlayer(undefined, undefined);
     this.#stage?.attachPlay(undefined);
     this.#play?.dispose();
