@@ -7,8 +7,9 @@
 // hits), and alchemy makes a potion or poison (a created form too, made again it is the same
 // one) and learns the ingredients' effects. Each craft gives its skill its use and counts in
 // the player's stats. Perks change crafting through hooks (CraftingPerks: the perk entry
-// points; the perk system fills them), Fortify Smithing / Enchanting / Alchemy through their
-// actor values. Platform-independent. Notes: docs/gameplay.md ("Crafting").
+// points; the perk system fills them), Fortify Smithing and Alchemy through them too (the skill
+// boost perks; without the perk system, through their actor values), Fortify Enchanting
+// through its actor values. Platform-independent. Notes: docs/gameplay.md ("Crafting").
 
 import {
   alchemyPower,
@@ -89,42 +90,47 @@ const REUSABLE_SOUL_GEM = 'RUSG';
 const DISALLOW_ENCHANTING = 'DIEN';
 
 /**
- * How perks change crafting: the perk entry points, filled by the perk system (each default
- * changes nothing).
+ * How perks change crafting: the perk entry points, filled by the perk system (perk-hooks.ts;
+ * each default changes nothing).
  */
 export interface CraftingPerks {
   /**
-   * TODO(M11): perk entry point Mod Tempering Health (the material perks, Steel Smithing ..
-   * Dragon Armor, double the improvement): the factor of the skill's share (1: none).
+   * Fortify Smithing and Fortify Alchemy (the skills' Mod and PowerMod actor values) reach
+   * smithing and alchemy through `temperingHealth` and `alchemyEffectiveness` (the skill boost
+   * perks' Multiply 1 + Actor Value Mult entries), not as factors of their own.
+   */
+  readonly skillBoostsInPerks?: boolean;
+  /**
+   * Perk entry point Mod Tempering Health (the material perks, Steel Smithing .. Dragon Armor,
+   * double the improvement): the factor of the skill's share (1: none).
    */
   temperingHealth(actor: number, item: ItemRecord): Promise<number>;
   /**
-   * TODO(M11): perk entry point Mod Enchantment Power (Enchanter, Fire / Frost / Storm,
-   * Insightful and Corpus Enchanter; Seeker of Sorcery): the power's factor for an
-   * enchantment put on an item (1: none).
-   */
-  enchantmentPower(actor: number, enchantment: MagicItemRecord, item: ItemRecord): Promise<number>;
-  /** TODO(M11): perk entry point Mod Soul Gem Enchanting: a soul's charge as enchanting reads it. */
-  soulGemEnchanting(actor: number, charge: number): Promise<number>;
-  /** TODO(M11): perk entry point Mod Soul Gem Recharge (Soul Squeezer): a soul's charge recharging. */
-  soulGemRecharge(actor: number, charge: number): Promise<number>;
-  /** TODO(M11): perk entry point # Of Applied Enchantments Allowed (Extra Effect: 2). */
-  enchantmentsAllowed(actor: number): Promise<number>;
-  /**
-   * TODO(M11): perk entry point Mod Alchemy Effectiveness (Alchemist, Physician, Benefactor,
-   * Poisoner; Seeker of Shadows): the power's factor for an effect of a potion or a poison
+   * Perk entry point Mod Enchantment Power (Enchanter, Fire / Frost / Storm, Insightful and
+   * Corpus Enchanter; Seeker of Sorcery): the power's factor for an enchantment put on an item
    * (1: none).
    */
-  alchemyEffectiveness(actor: number, effect: MagicEffectRecord, poison: boolean): Promise<number>;
-  /** TODO(M11): perk entry point Purify Alchemy Ingredients (Purity). */
-  purifyAlchemy(actor: number): Promise<boolean>;
-  /** TODO(M11): perk entry point Mod Potions Created: how many a brew makes (1). */
-  potionsCreated(actor: number): Promise<number>;
+  enchantmentPower(actor: number, enchantment: MagicItemRecord, item: ItemRecord): Promise<number>;
+  /** Perk entry point Mod Soul Gem Enchanting: a soul's charge as enchanting reads it. */
+  soulGemEnchanting(actor: number, charge: number): Promise<number>;
+  /** Perk entry point Mod Soul Gem Recharge (Soul Squeezer): a soul's charge recharging. */
+  soulGemRecharge(actor: number, charge: number): Promise<number>;
+  /** Perk entry point # Of Applied Enchantments Allowed (Extra Effect: 2). */
+  enchantmentsAllowed(actor: number): Promise<number>;
   /**
-   * TODO(M11): perk entry point Mod Initial Ingredient Effects Learned (Experimenter): the
-   * effects eating an ingredient finds out (1: its first).
+   * Perk entry point Mod Alchemy Effectiveness (Alchemist, Physician, Benefactor, Poisoner;
+   * Seeker of Shadows): the power's factor for an effect of a potion or a poison (1: none).
    */
-  ingredientEffectsLearned(actor: number): Promise<number>;
+  alchemyEffectiveness(actor: number, effect: MagicEffectRecord, poison: boolean): Promise<number>;
+  /** Perk entry point Purify Alchemy Ingredients (Purity). */
+  purifyAlchemy(actor: number): Promise<boolean>;
+  /** Perk entry point Mod Potions Created: how many a brew makes (1). */
+  potionsCreated(actor: number, potion?: number): Promise<number>;
+  /**
+   * Perk entry point Mod Initial Ingredient Effects Learned (Experimenter): the effects eating
+   * an ingredient finds out (1: its first).
+   */
+  ingredientEffectsLearned(actor: number, ingredient?: number): Promise<number>;
 }
 
 const NO_PERKS: CraftingPerks = {
@@ -561,6 +567,9 @@ export class CraftingEngine {
     const runtime = this.#runtime;
     const value = async (index: number | undefined): Promise<number> =>
       index === undefined ? 0 : (await runtime.actors.value(actor, index)).current;
+    // Smithing's and alchemy's come through the perks' entry points (CraftingPerks).
+    if (this.perks.skillBoostsInPerks === true && skill !== ENCHANTING)
+      return { skill: await value(skill), enchantments: 0, potion: 0 };
     return {
       skill: await value(skill),
       enchantments: (await value(fortify[0])) / 100,
@@ -855,7 +864,7 @@ export class CraftingEngine {
     const runtime = this.#runtime;
     const item = await runtime.equipment.item(ingredient);
     if (item?.type !== 'INGR') return;
-    const count = Math.max(1, await this.perks.ingredientEffectsLearned(actor));
+    const count = Math.max(1, await this.perks.ingredientEffectsLearned(actor, ingredient));
     const known = new Set(runtime.state.ingredientEffects.get(ingredient) ?? []);
     for (let slot = 0; slot < Math.min(count, Math.max(1, item.effects.length)); slot++)
       known.add(slot);
@@ -930,7 +939,7 @@ export class CraftingEngine {
     }
     const made = await this.#potionForm(potion);
     if (made === undefined) return { made: undefined, potion, count: 0 };
-    const count = Math.max(1, Math.round(await this.perks.potionsCreated(actor)));
+    const count = Math.max(1, Math.round(await this.perks.potionsCreated(actor, made)));
     await runtime.addItem(actor, runtime.formHandle(made), count, true);
     await runtime.progression.useSkill(actor, ALCHEMY, alchemySkillUse(potion.value));
     this.#stat(potion.poison ? 'poisons mixed' : 'potions mixed', count);

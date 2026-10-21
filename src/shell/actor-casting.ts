@@ -24,6 +24,8 @@ import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { castStartEvent } from '../gameplay/magic/casting.ts';
 import { aimDirection, normalize } from '../gameplay/magic/projectile-flight.ts';
 import { wordsByHold } from '../gameplay/magic/shouts.ts';
+import { EntryPoint } from '../gameplay/perk-entry-points.ts';
+import { SoundLevel } from '../ai/detection.ts';
 import { multiply, type Vec3 } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
@@ -520,7 +522,15 @@ export class ActorCasting {
           : delivered.item.delivery === Delivery.self
             ? 'self'
             : 'projectile';
-      this.#options.acted?.(actor, kind, main?.castingSoundLevel ?? 1);
+      // The caster's perks may silence it (Mod Spell Casting Sound Event, 0: Quiet Casting).
+      const heard = await runtime.perks.apply(EntryPoint.modSpellCastingSoundEvent, actor, 1, [
+        delivered.item.formId,
+      ]);
+      this.#options.acted?.(
+        actor,
+        kind,
+        heard === 0 ? SoundLevel.silent : (main?.castingSoundLevel ?? 1),
+      );
     }
     await this.#options.projectiles.launch(delivered, origin, this.#aim(actor, origin, target), {
       ...(target !== undefined && { target }),

@@ -29,6 +29,7 @@ import {
   type Observer,
   type Target,
 } from '../ai/detection.ts';
+import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { aliasOverrideLists } from '../ai/detection-records.ts';
 import { Detections, type DetectionEvent, type WitnessedAct } from '../ai/detection-states.ts';
 import { lightLevel, type LightProbe } from '../ai/light-level.ts';
@@ -104,6 +105,9 @@ interface Profile {
   readonly size: number;
   readonly teammate: boolean;
   readonly overrides: OverridePackageLists | undefined;
+  /** As an observer, its perks' factors on what it sees and hears (Mod Detection Light, Movement). */
+  readonly lightMult: number;
+  readonly movementMult: number;
 }
 
 const DEFAULT_PROFILE: Profile = {
@@ -116,6 +120,8 @@ const DEFAULT_PROFILE: Profile = {
   size: RaceSize.medium,
   teammate: false,
   overrides: undefined,
+  lightMult: 1,
+  movementMult: 1,
 };
 
 /** An actor as the senses see it now. */
@@ -195,6 +201,8 @@ export class ActorSenses implements ScriptSenses {
   /** Actors a script set sneaking (StartSneaking): the package they did it in. */
   readonly #sneakers = new Map<number, number | undefined>();
   readonly #sneaking = new Set<number>();
+  /** Actors seen sneaking (the start of sneaking casts the perks' spell). */
+  readonly #wasSneaking = new Set<number>();
   /** Actors that do not open the stealth eye (SetNotShowOnStealthMeter). */
   readonly #unseenOnMeter = new Set<number>();
   #detectedCount = 0;
@@ -315,8 +323,33 @@ export class ActorSenses implements ScriptSenses {
     this.detections.tick(now);
     this.#watchLineOfSight(runtime, bodies);
     this.#sneakingFrame(bodies);
+    this.#sneakSpells(runtime, bodies);
     this.#reactionsFrame(seconds);
     this.#stealthFrame();
+  }
+
+  /**
+   * An actor that begins to sneak gets its perks' spell (Apply Sneaking Spell: Shadow Warrior's
+   * moment of invisibility in combat, the Nightingale's Shadowcloak).
+   */
+  #sneakSpells(runtime: ScriptRuntime, bodies: Map<number, Body>): void {
+    for (const body of bodies.values()) {
+      const actor = body.reference;
+      const sneaking = body.motion?.sneaking === true;
+      if (sneaking === this.#wasSneaking.has(actor)) continue;
+      if (!sneaking) {
+        this.#wasSneaking.delete(actor);
+        continue;
+      }
+      this.#wasSneaking.add(actor);
+      runtime.detach(
+        (async () => {
+          const spell = await runtime.perks.selectSpell(EntryPoint.applySneakingSpell, actor);
+          const item = spell === undefined ? undefined : await runtime.magic.item(spell);
+          if (item) await runtime.magic.apply(item, actor, { caster: actor });
+        })(),
+      );
+    }
   }
 
   /** The player and the living actors of the high process, as the senses see them now. */
@@ -400,6 +433,8 @@ export class ActorSenses implements ScriptSenses {
       combatTarget: this.detections.inCombat(observer.reference, target.reference),
       blindness: watcher.blindness,
       nightEye: watcher.nightEye,
+      lightMult: watcher.lightMult,
+      movementMult: watcher.movementMult,
     };
     const targetInput: Target = {
       moving: motion?.moving === true,
@@ -536,13 +571,26 @@ export class ActorSenses implements ScriptSenses {
       value('MovementNoiseMult'),
       runtime.actors.worn(reference),
     ]);
+    // What it wears weighs what its perks make it (Mod Armor Weight: Conditioning).
+    const perks = runtime.perks;
     let armourWeight = 0;
-    for (const item of worn) armourWeight += await this.#armourWeight(runtime, item);
+    for (const item of worn) {
+      const weight = await this.#armourWeight(runtime, item);
+      armourWeight +=
+        weight > 0 ? await perks.apply(EntryPoint.modArmorWeight, reference, weight, [item]) : 0;
+    }
     const staged = this.#options.get(reference);
     // The playable races are all of medium size (RACE DATA).
     const size = staged ? await this.#raceSize(runtime, staged.placed.look.race) : RaceSize.medium;
     return {
-      sneak: sneak.current,
+      // Its Sneak as its perks make it while it sneaks (Mod Detection Sneak Skill: Stealth adds
+      // to it, Fortify Sneak through the skill boost perks). TODO(M13): whether the engine
+      // adds the Stealth perks' value to the skill or to the detection level.
+      sneak: await perks.apply(EntryPoint.modDetectionSneakSkill, reference, sneak.current),
+      // As an observer, how it sees and hears others (Mod Detection Light / Movement: the
+      // opening's Imperial soldiers). Entries with conditions on the one watched would need it.
+      lightMult: await perks.apply(EntryPoint.modDetectionLight, reference, 1),
+      movementMult: await perks.apply(EntryPoint.modDetectionMovement, reference, 1),
       blindness: blindness.current,
       nightEye: nightEye.current > 0,
       invisible: invisibility.current > 0,

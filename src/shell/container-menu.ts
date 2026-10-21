@@ -10,10 +10,13 @@
 // stolen as they are taken (its entries red: isStealing; crime-engine.ts steal). In pickpocket
 // mode (an actor's pockets, sneaking) each card shows the chance to take or place it
 // (pickpocketChance: "TO STEAL", "TO PLACE"); each move is an attempt, and one that fails
-// closes the menu (crime-engine.ts pickpocket). TODO(M11): quest items that cannot be stored.
+// closes the menu (crime-engine.ts pickpocket); what it wears or holds shows only with the
+// perks that let it be taken (Can Pickpocket Equipped Item). TODO(M11): quest items that cannot
+// be stored.
 // Notes: docs/ui.md ("The item menus").
 
 import { INVENTORY_CATEGORIES, ItemCategory, itemSound } from '../gameplay/inventory.ts';
+import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { GameSettings } from '../world/game-settings.ts';
@@ -202,7 +205,20 @@ export function containerModel(
       close = closeMenu;
     },
     view: async () => {
-      const [theirs, mine] = await Promise.all([shelf.rows(container), shelf.rows(PLAYER_REF)]);
+      const [all, mine] = await Promise.all([shelf.rows(container), shelf.rows(PLAYER_REF)]);
+      // Pockets: what it wears or holds only with the perks (Can Pickpocket Equipped Item:
+      // Misdirection its weapons, Perfect Touch anything but an essential's).
+      const theirs: typeof all = [];
+      for (const row of all) {
+        const equipped =
+          pickpocket &&
+          row.worn &&
+          (await shelf.runtime.perks.apply(EntryPoint.canPickpocketEquippedItem, PLAYER_REF, 0, [
+            container,
+            row.formId,
+          ])) === 0;
+        if (!equipped) theirs.push(row);
+      }
       const red = pickpocket || (await stealing());
       const rows = [...theirs, ...mine];
       const cards = await shelf.cards(rows);

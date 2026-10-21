@@ -19,9 +19,10 @@
 // sStatsPerkConfirm first). A skill at 100 can be made Legendary (Space;
 // sLegendaryResetConfirm, sLegendaryResetSecondConfirm): back to 15, its perks' points
 // returned. The skills' and the level's meters show their progress (their experience). The
-// camera's field of view is fStatsCameraFOV (50, of a 4:3 frame).
-// TODO(M11): skill colours for fortified and damaged skills (the magic system's effects), the
-// perks' effects (the perk system).
+// camera's field of view is fStatsCameraFOV (50, of a 4:3 frame). A perk taken is the
+// player's through the perk system (src/scripting/runtime/perk-engine.ts: its abilities, its
+// quest stages, its entry points act at once).
+// TODO(M11): skill colours for fortified and damaged skills (the magic system's effects).
 // Notes: docs/ui.md ("The skills menu").
 
 import type { ObjectGraph } from '../animation/object-graph.ts';

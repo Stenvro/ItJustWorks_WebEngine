@@ -10,6 +10,7 @@
 // Combat, magic and perks read them here. Platform-independent.
 // Notes: docs/gameplay.md ("Equipment").
 
+import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import {
   armorDamageReduction,
   armorPieceRating,
@@ -83,17 +84,27 @@ export interface UnequipRequest {
 }
 
 /**
- * What perks, smithing and the like add to the stats. TODO(M11): the perk system fills
+ * What perks, smithing and the like add to the stats: the perk system (perk-hooks.ts) fills
  * `armorPerks` (the perk entry point Mod Armor Rating: Custom Fit, Well Fitted, Matching Set,
- * Agile Defender, Juggernaut) and `weaponPerks` (Mod Attack Damage: Armsman, Barbarian,
- * Overdraw); improvements are the instance worn's (the crafting engine's item stacks). TODO(M11):
- * NPCs' improved items (the leveled lists' and merchants' tempered goods).
+ * Agile Defender, Juggernaut), `weaponPerks` (Mod Attack Damage: Armsman, Barbarian, Overdraw,
+ * and Fortify <weapon skill> through the skill boost perks: `skillBoostsInPerks`) and
+ * `wornWeight` (Mod Armor Weight: Conditioning, Unhindered); improvements are the instance
+ * worn's (the crafting engine's item stacks). TODO(M13): NPCs' improved items (the leveled
+ * lists' and merchants' tempered goods).
  */
 export interface EquipmentModifiers {
   /** A worn piece's multiplier by perks (1: none). */
   armorPerks(actor: number, armor: ItemRecord): Promise<number>;
-  /** A weapon's perk effects (the 1 + perk effects factor; 1: none). */
-  weaponPerks(actor: number, weapon: ItemRecord): Promise<number>;
+  /** A weapon's perk effects (the 1 + perk effects factor; 1: none), against a target or none. */
+  weaponPerks(actor: number, weapon: ItemRecord, target?: number): Promise<number>;
+  /**
+   * Fortify <weapon skill> (the skill's Mod and PowerMod actor values) reaches the damage
+   * through `weaponPerks` (the skill boost perks' Multiply 1 + Actor Value Mult entries), not
+   * as factors of its own.
+   */
+  readonly skillBoostsInPerks?: boolean;
+  /** A worn piece's weight (Mod Armor Weight); none: its own. */
+  wornWeight?(actor: number, item: ItemRecord): Promise<number>;
   /** How far an item is improved (0 none, 1 Fine .. 6 Legendary). */
   temperLevel(actor: number, item: number): number;
 }
@@ -1027,12 +1038,27 @@ export class EquipmentEngine {
   }
 
   /**
+   * The share of damage an armor rating takes off with this many pieces worn (combat: the
+   * rating as the attacker's perks pierce it, Mod Target Damage Resistance).
+   */
+  async armorReduction(rating: number, pieces: number): Promise<number> {
+    const { armor: settings } = await this.#readSettings();
+    return armorDamageReduction(rating, pieces, settings);
+  }
+
+  /**
    * A weapon's damage for an actor (UESP "Skyrim:Weapons"): its base and improvement by the
    * actor's skill, its perks and its skill's fortifications by items (the skill's Mod actor
    * value, percent) and potions (PowerMod). `level`: an instance's improvement (else the one
    * wielded).
    */
-  async weaponDamage(actor: number, weapon: number, extra = 0, level?: number): Promise<number> {
+  async weaponDamage(
+    actor: number,
+    weapon: number,
+    extra = 0,
+    level?: number,
+    target?: number,
+  ): Promise<number> {
     const item = await this.item(weapon);
     if (!item?.weapon) return 0;
     const { weapon: settings } = await this.#readSettings();
@@ -1040,7 +1066,7 @@ export class EquipmentEngine {
     const value = skill >= 0 ? await this.#value(actor, skill) : 0;
     const offset = skill - ActorValue.firstSkill;
     const fortified =
-      offset >= 0 && offset < 18
+      offset >= 0 && offset < 18 && this.modifiers.skillBoostsInPerks !== true
         ? (1 + (await this.#value(actor, SKILL_MOD + offset)) / 100) *
           (1 + (await this.#value(actor, SKILL_POWER_MOD + offset)) / 100)
         : 1;
@@ -1048,7 +1074,7 @@ export class EquipmentEngine {
       item.weapon.damage + extra,
       level ?? this.modifiers.temperLevel(actor, weapon),
       weaponSkillMultiplier(value, actor === PLAYER_REF, settings),
-      (await this.modifiers.weaponPerks(actor, item)) * fortified,
+      (await this.modifiers.weaponPerks(actor, item, target)) * fortified,
     );
   }
 
@@ -1107,16 +1133,23 @@ export class EquipmentEngine {
   /** What an actor carries, in weight (its items' weights times their counts). */
   async carried(actor: number): Promise<number> {
     let total = 0;
+    const worn = this.#runtime.state.actors.get(actor)?.equipped;
     for (const [base, count] of await this.#runtime.inventory(actor)) {
       if (count <= 0) continue;
-      total += ((await this.item(base))?.weight ?? 0) * count;
+      const item = await this.item(base);
+      if (!item) continue;
+      // A worn piece weighs what the perks make it (Conditioning: heavy armor nothing).
+      if (worn?.has(base) === true && item.armor && this.modifiers.wornWeight) {
+        total += (await this.modifiers.wornWeight(actor, item)) + item.weight * (count - 1);
+      } else total += item.weight * count;
     }
     return total;
   }
 
-  /** The most it can carry (the CarryWeight actor value). */
-  carryWeight(actor: number): Promise<number> {
-    return this.#value(actor, ActorValue.carryWeight);
+  /** The most it can carry (the CarryWeight actor value, as its perks make it: Get Max Carry Weight). */
+  async carryWeight(actor: number): Promise<number> {
+    const value = await this.#value(actor, ActorValue.carryWeight);
+    return this.#runtime.perks.apply(EntryPoint.getMaxCarryWeight, actor, value);
   }
 
   /** IsOverEncumbered: it carries more than it can (no running, no fast travel). */

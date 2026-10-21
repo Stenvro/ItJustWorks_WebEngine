@@ -528,8 +528,9 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   are the engine's built-in values (BeermotorWB's "All Skyrim Game Settings", linked from AFK
   Mods): fSneakEquippedWeightBase 12, Mult 0.5, fSneakLightMoveMult 0.01, fSneakLightRunMult
   0.2, fSneakNoticeMin −20, iAICombatMinDetection −50, fDetectionViewCone 190, iSoundLevelLoud
-  100, Normal 50, VeryLoud 200 (Silent 10 is Skyrim.esm's), ... TODO(M11): the Stealth perks
-  and Muffle. `node tools/detection-info.ts --level sneak=15 light=40 distance=500`: −2.9,
+  100, Normal 50, VeryLoud 200 (Silent 10 is Skyrim.esm's), ... The perks: the sneaker's Mod
+  Detection Sneak Skill (Stealth), the observer's Mod Detection Light / Movement factors, worn
+  armour's Mod Armor Weight (docs/gameplay.md, "Perks"). TODO(M11): Muffle. `node tools/detection-info.ts --level sneak=15 light=40 distance=500`: −2.9,
   noticed; Sneak 100 in light 10 at 300: −48.9, unseen.
 
 - **Sight:** a ray on the line-of-sight layer (L_LINEOFSIGHT: static, clutter, props, trees,
@@ -822,9 +823,10 @@ meanwhile.
   armour reduction: the equip system's 0.12% a point and 3% a piece, at most fMaxArmorRating);
   critical damage (CRDT; the perks' chance) passes the armour; × (1 − the share blocked);
   × fDiffMultHPByPC<level> for the player's hits, fDiffMultHPToPC<level> for hits on the player
-  (Novice 2 / 0.5 .. Legendary 0.25 / 3; [GamePlay] iDifficulty). The perk entry points
-  (critical chance, sneak, block, stagger, Sweep, incoming damage) are hooks the perk system
-  replaces (`combat-hooks.ts`, TODO(M11)).
+  (Novice 2 / 0.5 .. Legendary 0.25 / 3; [GamePlay] iDifficulty). The perks' entry points
+  (weapon, power attack and bash damage, critical chance and damage, sneak, block, deflected
+  arrows, armour piercing, incoming damage, stagger, Sweep, the spells a hit applies) are asked
+  each hit (docs/gameplay.md, "Perks").
 - **Blocking**: held, the block covers fCombatHitConeAngle (35°) either side of the blocker's
   facing: a shield blocks fShieldBaseFactor + fShieldScalingFactor × its base rating × (1 + 1.5
   × Block / 100) %, a weapon fBlockWeaponBase + fBlockWeaponScaling × the attacker's weapon

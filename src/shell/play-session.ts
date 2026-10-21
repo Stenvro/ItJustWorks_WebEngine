@@ -99,8 +99,8 @@ export interface ObjectUses {
  * other doors open and close. In a running game (`uses`) containers open their menu (their
  * lid opening meanwhile), books read, other items taken, beds slept in; owned ones are stolen
  * (sSteal, sStealFrom: their red verbs) and locked ones picked (the lockpicking menu).
- * TODO(M11): flora harvested (FLOR PFIG). Furniture is sat in (sSit) and workbenches open the
- * crafting menu.
+ * TODO(M11): flora harvested (FLOR PFIG; as many as the perks give: Mod Ingredients Harvested,
+ * Green Thumb). Furniture is sat in (sSit) and workbenches open the crafting menu.
  */
 export function objectActivation(
   object: CellObject,
@@ -247,6 +247,8 @@ export interface Activatable {
   readonly name: string;
   /** An item's weight and value (the crosshair shows them under its name). */
   readonly item?: { readonly weight: number; readonly value: number };
+  /** The reference activated (the perks may keep the player from it: Filter Activation). */
+  readonly reference?: number;
   activate(): void;
 }
 
@@ -389,6 +391,7 @@ export class PlaySession {
   #noticeTimer: ReturnType<typeof setTimeout> | undefined;
   /** What the crosshair rests on. */
   #target: Activatable | undefined;
+  readonly #mayActivate: ((reference: number) => Promise<boolean>) | undefined;
   /** Activate went down on a loose object: it is grabbed if still held after fZKeyDelay. */
   #hold:
     | {
@@ -426,6 +429,11 @@ export class PlaySession {
       length: number,
       radius: number,
     ) => { readonly distance: number; readonly target: Activatable } | undefined;
+    /**
+     * Whether the player may activate a reference (the perks' Filter Activation: a quest's
+     * blocked objects, a werewolf's doors); none: always.
+     */
+    mayActivate?: (reference: number) => Promise<boolean>;
     /** Where the activation prompt is shown. */
     prompt?: HTMLElement;
     /** The HUD's signals: the activation target goes to the game's HUD while one listens. */
@@ -444,6 +452,7 @@ export class PlaySession {
     this.#arrivesOnFloor = init.arrivesOnFloor ?? false;
     this.#activatable = init.activatable;
     this.#actorAt = init.actorAt;
+    this.#mayActivate = init.mayActivate;
     this.#prompt = init.prompt;
     this.#hud = init.hud;
     if (init.hud) {
@@ -667,9 +676,25 @@ export class PlaySession {
     };
   }
 
+  /** Activates a target unless the player may not (mayActivate: the perks' Filter Activation). */
+  #activateTarget(target: Activatable | undefined): void {
+    if (!target) return;
+    const reference = target.reference;
+    const may = this.#mayActivate;
+    if (reference === undefined || !may) {
+      target.activate();
+      return;
+    }
+    void may(reference).then((allowed) => {
+      if (allowed) target.activate();
+    });
+  }
+
   #activatableAt(hit: PickHit | undefined): Activatable | undefined {
     const owner = hit?.owner;
-    return owner?.kind === 'object' ? this.#activatable?.(owner.reference) : undefined;
+    if (owner?.kind !== 'object') return undefined;
+    const target = this.#activatable?.(owner.reference);
+    return target && { ...target, reference: owner.reference };
   }
 
   /**
@@ -689,14 +714,14 @@ export class PlaySession {
       if (hit && body) {
         this.#hold = { since: clock(), body, point: hit.point, target: this.#target };
       } else {
-        this.#target?.activate();
+        this.#activateTarget(this.#target);
       }
     }
     const hold = this.#hold;
     if (hold) {
       if (!player.isHeld('Activate')) {
         this.#hold = undefined;
-        hold.target?.activate();
+        this.#activateTarget(hold.target);
       } else if (clock() - hold.since >= player.ini.number('Controls', 'fZKeyDelay')) {
         this.#hold = undefined;
         const camera = player.position;

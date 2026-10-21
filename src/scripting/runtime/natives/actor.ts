@@ -256,17 +256,18 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     const shout = formOf(call.args[0]);
     return shout === undefined ? false : actors.removeSpell(actor, shout);
   });
-  act('addperk', (actor, call) => {
+  // Perks (the perk system: perk-engine.ts): their abilities and quest stages with them.
+  act('addperk', async (actor, call) => {
     const perk = formOf(call.args[0]);
-    if (perk !== undefined) actors.setPerk(actor, perk, true);
+    if (perk !== undefined) await runtime.perks.add(actor, perk);
   });
-  act('removeperk', (actor, call) => {
+  act('removeperk', async (actor, call) => {
     const perk = formOf(call.args[0]);
-    if (perk !== undefined) actors.setPerk(actor, perk, false);
+    if (perk !== undefined) await runtime.perks.remove(actor, perk);
   });
   ask('hasperk', false, (actor, call) => {
     const perk = formOf(call.args[0]);
-    return perk === undefined ? false : actors.hasPerk(actor, perk);
+    return perk === undefined ? false : runtime.perks.has(actor, perk);
   });
   // Active magic (the magic system: magic-engine.ts).
   ask('dispelspell', false, (actor, call) => {
@@ -352,7 +353,7 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   flag('setbribed', 'bribed');
   ask('isintimidated', false, (actor) => state.actors.get(actor)?.intimidated ?? false);
   flag('setintimidated', 'intimidated');
-  ask('willintimidatesucceed', false, () => false);
+  ask('willintimidatesucceed', false, (actor) => runtime.crime.intimidateSucceeds(actor));
   ask('getbribeamount', 0, (actor) => runtime.crime.bribeAmount(actor));
   flag('setrestrained', 'restrained');
   flag('setdontmove', 'dontMove');

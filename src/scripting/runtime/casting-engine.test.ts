@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../../formats/esm/fields.ts';
 import { ActorValue } from '../../world/actor-values.ts';
+import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import { EffectArchetype, EffectFlag } from '../../world/magic-effects.ts';
 import { Delivery, type MagicItemRecord } from '../../world/magic-records.ts';
 import { CastType } from '../../world/spell-records.ts';
@@ -90,6 +91,16 @@ function world() {
     state,
     world: {},
     wordsLearned,
+    // The perk system: no perk changes a value; the actors may dual cast (the schools' Dual
+    // Casting) and shout (AllowShoutingPerk).
+    perks: {
+      apply: (entryPoint: number, _owner: number, value: number) =>
+        Promise.resolve(
+          entryPoint === EntryPoint.canDualCastSpell || entryPoint === EntryPoint.modShoutOk
+            ? 1
+            : value,
+        ),
+    },
     gameSetting: () => Promise.resolve(undefined),
     forms: {
       record: (formId: number) =>

@@ -44,6 +44,8 @@ import { CastingEngine } from './casting-engine.ts';
 import { MagicEngine, type MagicEffectShown } from './magic-engine.ts';
 import { CraftingEngine } from './crafting-engine.ts';
 import { CrimeEngine } from './crime-engine.ts';
+import { PerkEngine } from './perk-engine.ts';
+import { installPerkHooks } from './perk-hooks.ts';
 import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
@@ -555,6 +557,8 @@ export class ScriptRuntime implements VmHost {
   readonly crime: CrimeEngine;
   /** Crafting: improved items, enchanting, charge, alchemy, the forms they make (crafting-engine.ts). */
   readonly crafting: CraftingEngine;
+  /** Perks: those actors hold and their entry points (perk-engine.ts). */
+  readonly perks: PerkEngine;
   /** While a new game starts its quests (their aliases may take reserved references). */
   startingNewGame = false;
   /** Game seconds per real second (the TimeScale global; scripts may set it). */
@@ -659,6 +663,8 @@ export class ScriptRuntime implements VmHost {
     this.casting = new CastingEngine(this);
     this.crime = new CrimeEngine(this);
     this.crafting = new CraftingEngine(this);
+    this.perks = new PerkEngine(this);
+    installPerkHooks(this);
     this.sceneHost = new RuntimeSceneHost(this);
     this.scenes = new SceneDirector(this.sceneHost);
     registerNatives(this.#natives, this);
