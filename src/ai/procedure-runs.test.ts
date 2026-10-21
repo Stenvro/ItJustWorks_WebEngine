@@ -7,6 +7,7 @@ import {
   type PackageRecord,
   type ProcedureBranch,
 } from './package-records.ts';
+import type { FlightRequest } from './flight.ts';
 import type { PackageBody, PackageMind, ProcedureRun, SayOptions } from './package-runtime.ts';
 import { PROCEDURES } from './procedure-runs.ts';
 import { ProcedureInputs } from './procedures.ts';
@@ -87,6 +88,14 @@ function harness(found = new Map<number, readonly number[]>(), waits?: number) {
       return Promise.resolve(true);
     },
     greet: () => true,
+    flies: () => true,
+    fly: (request: FlightRequest | undefined) => {
+      done.push(`fly ${request ? JSON.stringify(request) : 'nothing'}`);
+    },
+    flightGrab: (target: number) => {
+      done.push(`grab ${target.toString(16)}`);
+      return Promise.resolve(true);
+    },
   } satisfies PackageBody;
   const mind = {
     placement: () => Promise.resolve({ position: [0, 0, 0] as const, heading: 0 }),
@@ -152,6 +161,51 @@ function harness(found = new Map<number, readonly number[]>(), waits?: number) {
   };
   return { run, done, found };
 }
+
+describe('flying procedures', () => {
+  const float = (id: number, value: number): PackageInput => ({
+    id,
+    type: 'Float',
+    value: { kind: 'float', value },
+  });
+
+  it('hover flies to its place, Height above it, facing its heading, while the package runs', async () => {
+    const { run, done } = harness(undefined, 1);
+    expect(await run('Hover', [0, 1], [NEAR_HOME, float(1, 512)])).toBe('failure');
+    expect(done).toEqual([
+      'fly {"kind":"hover","at":[100,0,512],"face":[100,1024,512]}',
+      'wait 1',
+      'fly nothing',
+    ]);
+  });
+
+  it('orbit circles its place between its radii (their middle), Height above it', async () => {
+    const { run, done } = harness(undefined, 1);
+    expect(
+      await run('Orbit', [0, 1, 2, 3], [NEAR_HOME, float(1, 1000), float(2, 3000), float(3, 2000)]),
+    ).toBe('failure');
+    expect(done[0]).toBe(
+      'fly {"kind":"orbit","center":[100,0,0],"radius":2000,"height":2000,"clockwise":true}',
+    );
+    expect(done.at(-1)).toBe('fly nothing');
+  });
+
+  it('flight grab grabs its target', async () => {
+    const { run, done } = harness();
+    const victim: PackageInput = {
+      id: 0,
+      type: 'SingleRef',
+      value: {
+        kind: 'singleRef',
+        target: { type: TargetType.specificReference, value: 0x900, count: 0 },
+      },
+    };
+    expect(await run('FlightGrab', [0], [victim], { target: () => Promise.resolve(0x900) })).toBe(
+      'success',
+    );
+    expect(done).toEqual(['grab 900']);
+  });
+});
 
 describe('procedures', () => {
   it('find keeps what it found for the next procedure; sleep takes the first free bed', async () => {
