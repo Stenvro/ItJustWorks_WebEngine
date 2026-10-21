@@ -20,6 +20,7 @@ import {
 import { DialogueIndex, voiceFileName } from '../../world/dialogue.ts';
 import { ObjectHandle } from '../values.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
+import { questText } from './quest-text.ts';
 import type { ScriptRuntime } from './runtime.ts';
 import { failsForSpeaker, type SpeakerFacts } from './speaker-filter.ts';
 
@@ -31,6 +32,8 @@ export interface TopicChoice {
   /** Never chosen before (the menu marks it). */
   readonly isNew: boolean;
   readonly quest: number;
+  /** A Rumors entry: the rumor topics it stands for (one of them is said, at random). */
+  readonly rumors?: readonly TopicChoice[];
 }
 
 /** What an info says: its responses, from it or the info it shares them with. */
@@ -49,6 +52,7 @@ export interface SpokenInfo {
 /** DIAL subtype codes. */
 const HELLO = 'HELO';
 const GOODBYE = 'GBYE';
+const RUMORS = 'RUMO';
 
 export class DialogueEngine {
   readonly #runtime: ScriptRuntime;
@@ -62,14 +66,35 @@ export class DialogueEngine {
     this.index = new DialogueIndex(runtime.forms.db);
   }
 
+  /**
+   * Reads ahead what the first conversation would wait for: the game's dialogue, what its
+   * conditions read of the whole load order (the actors' relationships), and, in parallel, the
+   * starting topics and quests of the branches and the Hello and Goodbye topics (read one by one
+   * as it starts, they keep it waiting for seconds).
+   */
+  async prepare(): Promise<void> {
+    await Promise.all([this.index.build(), this.#runtime.actors.prepare()]);
+    const quests = new Set<number>();
+    const topics = new Set<number>();
+    for (const branch of this.index.branches) {
+      if (branch.quest !== undefined) quests.add(branch.quest);
+      if (branch.startingTopic !== undefined) topics.add(branch.startingTopic);
+    }
+    await Promise.all([
+      ...[...quests].map((quest) => this.#runtime.forms.quest(quest)),
+      ...[...topics].map((topic) => this.index.topic(topic)),
+    ]);
+    await Promise.all([this.#topicsOfSubtype(HELLO), this.#topicsOfSubtype(GOODBYE)]);
+  }
+
   /** The greeting an actor says as the conversation starts (its Hello topics' first valid info). */
   greeting(speaker: number): Promise<SpokenInfo | undefined> {
-    return this.#firstOfSubtype(speaker, HELLO);
+    return this.subtypeLine(speaker, HELLO);
   }
 
   /** What an actor says as the player ends the conversation (its Goodbye topics). */
   goodbye(speaker: number): Promise<SpokenInfo | undefined> {
-    return this.#firstOfSubtype(speaker, GOODBYE);
+    return this.subtypeLine(speaker, GOODBYE);
   }
 
   /**
@@ -97,7 +122,7 @@ export class DialogueEngine {
         candidates.push({ topic, blocking: (branch.flags & BranchFlag.blocking) !== 0 });
       }
     }
-    const choices: (TopicChoice & { priority: number; blocking: boolean })[] = [];
+    const choices: (TopicChoice & { priority: number; blocking: boolean; rumor: boolean })[] = [];
     const speaks = new Map<number, boolean>();
     for (const { topic, blocking } of candidates) {
       const quest = topic.quest;
@@ -111,25 +136,59 @@ export class DialogueEngine {
       const info = await this.#validInfo(topic, quest, speaker);
       if (!info) continue;
       const record = await runtime.forms.quest(quest);
+      const text = info.prompt ?? topic.text;
       choices.push({
         topic,
-        text: info.prompt ?? topic.text,
+        // Its tags filled in (<Global=RoomCost>: src/scripting/runtime/quest-text.ts).
+        text: record && text !== '' ? await questText(runtime, record, text) : text,
         isNew: !this.#chosen.has(topic.formId),
         quest,
         priority: (record?.priority ?? 0) * 1000 + topic.priority,
         blocking,
+        rumor: topic.subtypeName === RUMORS,
       });
     }
     const blocking = choices.filter((choice) => choice.blocking);
-    const shown = blocking.length > 0 ? blocking.slice(0, 1) : choices;
+    let shown = blocking.length > 0 ? blocking.slice(0, 1) : choices;
+    shown.sort((a, b) => b.priority - a.priority);
+    // The valid rumors (subtype Rumors) are one entry, with the text of the first that has one
+    // (most have none: "Give me the latest gossip." is an innkeeper's); chosen, one of them is
+    // said at random. Inferred from the data, as the game asks for rumors once.
+    // TODO(M13): check how the game picks among them.
+    const rumors = shown.filter((choice) => choice.rumor);
+    const named = rumors.find((choice) => choice.text !== '');
+    if (rumors.length > 0) {
+      shown = shown.filter((choice) => !choice.rumor || choice === named);
+    }
+    // An entry without text is never shown (the menu would list an empty line).
     return shown
-      .sort((a, b) => b.priority - a.priority)
-      .map(({ topic, text, isNew, quest }) => ({ topic, text, isNew, quest }));
+      .filter((choice) => choice.text !== '')
+      .map(({ topic, text, isNew, quest }) => ({
+        topic,
+        text,
+        isNew,
+        quest,
+        ...(rumors.length > 1 &&
+          topic === named?.topic && {
+            rumors: rumors.map((rumor) => ({
+              topic: rumor.topic,
+              text: rumor.text,
+              isNew: rumor.isNew,
+              quest: rumor.quest,
+            })),
+          }),
+      }));
   }
 
   /** The info a chosen topic says (its first whose conditions hold), marking it chosen. */
   async choose(choice: TopicChoice, speaker: number): Promise<SpokenInfo | undefined> {
     this.#chosen.add(choice.topic.formId);
+    const rumors = choice.rumors;
+    if (rumors && rumors.length > 0) {
+      const rumor = rumors[Math.floor(Math.random() * rumors.length)] ?? choice;
+      const info = await this.#validInfo(rumor.topic, rumor.quest, speaker);
+      return info && (await this.#spoken(info, rumor.topic, rumor.quest));
+    }
     const info = await this.#validInfo(choice.topic, choice.quest, speaker);
     return info && (await this.#spoken(info, choice.topic, choice.quest));
   }
@@ -186,32 +245,6 @@ export class DialogueEngine {
         runtime.referenceHandle(speaker),
       ]);
     }
-  }
-
-  async #firstOfSubtype(speaker: number, subtype: string): Promise<SpokenInfo | undefined> {
-    const runtime = this.#runtime;
-    await this.index.build();
-    // The topics of the subtype of running quests, higher quest priority first.
-    const topics: { topic: TopicRecord; quest: number; priority: number }[] = [];
-    for (const formId of this.index.topicsOfSubtype(subtype)) {
-      const topic = await this.index.topic(formId);
-      const quest = topic?.quest;
-      if (!topic || quest === undefined || !runtime.quests.isRunning(quest)) continue;
-      topics.push({ topic, quest, priority: (await runtime.forms.quest(quest))?.priority ?? 0 });
-    }
-    topics.sort((x, y) => y.priority - x.priority || y.topic.priority - x.topic.priority);
-    const speaks = new Map<number, boolean>();
-    for (const { topic, quest } of topics) {
-      let questSpeaks = speaks.get(quest);
-      if (questSpeaks === undefined) {
-        questSpeaks = await this.#questSpeaks(quest, speaker);
-        speaks.set(quest, questSpeaks);
-      }
-      if (!questSpeaks) continue;
-      const info = await this.#validInfo(topic, quest, speaker);
-      if (info) return this.#spoken(info, topic, quest);
-    }
-    return undefined;
   }
 
   /** A quest's dialogue conditions (those before its stages) hold for the speaker. */
@@ -358,14 +391,17 @@ export class DialogueEngine {
     if (!pending) {
       pending = (async () => {
         await this.index.build();
-        const topics: { topic: TopicRecord; quest: number; priority: number }[] = [];
-        for (const formId of this.index.topicsOfSubtype(subtype)) {
-          const topic = await this.index.topic(formId);
-          const quest = topic?.quest;
-          if (!topic || quest === undefined) continue;
-          const priority = (await this.#runtime.forms.quest(quest))?.priority ?? 0;
-          topics.push({ topic, quest, priority });
-        }
+        // In parallel: one record read after another takes seconds for the Hello topics.
+        const read = await Promise.all(
+          this.index.topicsOfSubtype(subtype).map(async (formId) => {
+            const topic = await this.index.topic(formId);
+            const quest = topic?.quest;
+            if (!topic || quest === undefined) return undefined;
+            const priority = (await this.#runtime.forms.quest(quest))?.priority ?? 0;
+            return { topic, quest, priority };
+          }),
+        );
+        const topics = read.filter((entry) => entry !== undefined);
         topics.sort((x, y) => y.priority - x.priority || y.topic.priority - x.topic.priority);
         return topics.map(({ topic, quest }) => ({ topic, quest }));
       })();

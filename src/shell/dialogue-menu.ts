@@ -1,9 +1,10 @@
 // A conversation in the game's dialogue menu (interface\dialoguemenu.swf): the actor greets the
 // player, the player picks topics, the actor says each info's responses (its voice file for
 // its voice type, its face lip-syncing, the line as the menu's subtitle), the info's fragments
-// run before and after, and its choices are the next topics; a Goodbye info, or Tab, ends it.
-// What is said comes from the dialogue engine (src/scripting/runtime/dialogue-engine.ts). The
-// game goes on around a conversation (no menu mode); the player stands while it lasts.
+// run before and after, and its choices are the next topics; a Goodbye info, Tab, or no topics
+// left end it. An actor with no topics only says its greeting (no menu opens). What is said
+// comes from the dialogue engine (src/scripting/runtime/dialogue-engine.ts). The game goes on
+// around a conversation (no menu mode); the player stands while it lasts.
 // Notes: docs/ui.md ("Dialogue").
 
 import {
@@ -34,6 +35,10 @@ export class DialogueMenu {
   #line: { stop(): void; skip: () => void } | undefined;
   #closed: (() => void) | undefined;
   #busy = false;
+  /** A conversation is being worked out (its greeting, its topics) before its menu opens. */
+  #starting = false;
+  /** Actors saying their greeting outside a conversation (they had no topics). */
+  readonly #greeting = new Set<number>();
 
   constructor(host: MenuHost, session: GameSession, terminal: Terminal) {
     this.#host = host;
@@ -45,10 +50,15 @@ export class DialogueMenu {
     return this.#menu !== undefined;
   }
 
-  /** The conversation steps aside while a menu it opened is open (barter, gift, training). */
+  /**
+   * The conversation steps aside while a menu it opened is open (barter, gift, training); back,
+   * it has the keys again (Tab, the topics).
+   */
   set shown(on: boolean) {
-    const element = this.#menu?.element;
+    const menu = this.#menu;
+    const element = menu?.element;
     if (element) element.style.visibility = on ? '' : 'hidden';
+    if (on) menu?.focus();
   }
 
   /** The conversation's engine for the game now running. */
@@ -56,28 +66,73 @@ export class DialogueMenu {
     return this.#session.scriptsReady?.dialogue;
   }
 
-  /** Reads the game's dialogue ahead (its topics and infos), so the first conversation starts at once. */
+  /**
+   * Reads ahead what the first conversation would wait for: the game's dialogue (its topics and
+   * infos), what its conditions read of the whole load order, the menu's movie.
+   */
   prepare(): void {
-    void this.#engine()?.index.build();
+    const engine = this.#engine();
+    if (!engine) return;
+    const start = performance.now();
+    void engine
+      .prepare()
+      .then(() => this.#host.files.read('dialoguemenu.swf'))
+      .then(() => {
+        this.#terminal.log(
+          'ui',
+          `dialogue read ahead · ${(performance.now() - start).toFixed(0)} ms`,
+          'ok',
+        );
+      });
   }
 
-  /** Talks to an actor: the menu opens with its greeting; `closed` once the menu has gone. */
   /**
    * A conversation: the actor's greeting (or the line of `opening`, a topic it starts with),
-   * then the topics to choose.
+   * then the topics to choose; `opened` as its menu opens, `closed` once the menu has gone. An
+   * actor with no topics to choose says its greeting where it stands, and no menu opens (as
+   * in the game: a guard's line as the player talks to them).
    */
-  async talk(speaker: PlacedActor, closed: () => void, opening?: number): Promise<void> {
+  async talk(
+    speaker: PlacedActor,
+    events: { readonly opened: () => void; readonly closed: () => void },
+    opening?: number,
+  ): Promise<void> {
     const engine = this.#engine();
     const runtime = this.#session.scriptsReady;
-    if (!engine || !runtime || this.#menu) return;
     const reference = speaker.actor.reference;
+    if (!engine || !runtime || this.#menu || this.#starting || this.#greeting.has(reference)) {
+      return;
+    }
+    this.#starting = true;
+    let greeting: SpokenInfo | undefined;
+    let choices: TopicChoice[];
+    try {
+      greeting =
+        opening === undefined
+          ? await engine.greeting(reference)
+          : await engine.topicLine(opening, reference);
+      choices = await engine.topics(reference, greeting?.info.choices);
+    } finally {
+      this.#starting = false;
+    }
+    if (choices.length === 0) {
+      if (!greeting) {
+        this.#terminal.log('ui', `${speaker.look.name} has nothing to say`);
+        return;
+      }
+      runtime.state.actor(reference).talkedToPlayer = true;
+      this.#greeting.add(reference);
+      try {
+        await this.#session.lines.speak(greeting, reference);
+      } finally {
+        this.#greeting.delete(reference);
+      }
+      return;
+    }
     this.#speaker = speaker;
-    this.#closed = closed;
+    this.#closed = events.closed;
     runtime.dialogueSpeaker = reference;
-    const greeting =
-      opening === undefined
-        ? await engine.greeting(reference)
-        : await engine.topicLine(opening, reference);
+    events.opened();
     this.#menu = await this.#host.open('dialoguemenu.swf', {
       depth: DIALOGUE_DEPTH,
       interactive: true,
@@ -148,13 +203,20 @@ export class DialogueMenu {
     }
   }
 
-  /** The topics the player may choose now (an info's choices, else the actor's topics). */
+  /**
+   * The topics the player may choose now (an info's choices, else the actor's topics); with
+   * none left (what was said changed the game) the conversation ends.
+   */
   async #showTopics(offered: readonly number[] | undefined): Promise<void> {
     const engine = this.#engine();
     const speaker = this.#speaker;
     const menu = this.#menu;
     if (!engine || !speaker || !menu) return;
     this.#choices = await engine.topics(speaker.actor.reference, offered);
+    if (this.#choices.length === 0) {
+      menu.call('StartHideMenu');
+      return;
+    }
     // (text, isNew, index) per topic, then the one to select (-1: none).
     const values = this.#choices.flatMap((choice, index) => [choice.text, choice.isNew, index]);
     menu.call('PopulateDialogueList', ...values, -1);

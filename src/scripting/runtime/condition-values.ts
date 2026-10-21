@@ -348,7 +348,11 @@ export async function globalValue(runtime: ScriptRuntime, formId: number): Promi
   if (clock !== undefined) return clock;
   const set = runtime.state.globals.get(formId);
   if (set !== undefined) return set;
-  return (await runtime.forms.record(formId))?.fields.f32('FLTV') ?? 0;
+  return (
+    (await runtime.pluginGlobal(formId)) ??
+    (await runtime.forms.record(formId))?.fields.f32('FLTV') ??
+    0
+  );
 }
 
 async function conditionValue(
@@ -481,10 +485,10 @@ async function conditionValue(
     case Fn.getIsVoiceType: {
       const voice = reference === undefined ? undefined : await runtime.voiceType(reference);
       if (voice === undefined) return 0;
-      const target = await runtime.forms.record(form);
-      return flag(
-        target?.type === 'FLST' ? (await runtime.formList(form)).includes(voice) : voice === form,
-      );
+      // A voice type or a list of them (its type from the index: no record read).
+      const location = runtime.forms.db.locate(form);
+      const list = location !== undefined && runtime.forms.db.typeAt(location) === 'FLST';
+      return flag(list ? (await runtime.formList(form)).includes(voice) : voice === form);
     }
     case Fn.getIsPlayableRace: {
       const race = reference === undefined ? undefined : await actors.raceOf(reference);

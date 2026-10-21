@@ -599,8 +599,23 @@ which goes on (no menu mode; the HUD in `DialogueMode`, the mouse on the menu): 
 `NotifyVoiceReady()` lets the player skip, which the menu asks with `SkipText`); then the topics:
 `PopulateDialogueList(text, isNew, index, ..., selected)` (triples, then the topic to select or -1)
 and `ShowDialogueList(slideAnim, copyVisible)`. The menu asks `TopicClicked(index)`; the actor says
-the topic's info, and its choices (or the actor's topics again) are listed; a Goodbye info ends
-it with `StartHideMenu()`. Tab: the menu fades, asks `CloseMenu`, and `FadeDone` once faded.
+the topic's info, and its choices (or the actor's topics again) are listed; a Goodbye info, or
+no topics left, ends it with `StartHideMenu()`. Tab: the menu fades, asks `CloseMenu`, and
+`FadeDone` once faded. A menu the conversation opens (barter, gift, training) hides it; back, the
+conversation's menu has the keys again. An actor with no topics to offer (Nazeem; Camilla before
+The Golden Claw) opens no menu: it says its greeting where it stands, as a line outside a
+conversation (its voice, the HUD's subtitle with General Subtitles), and the mouse stays the
+game's.
+
+The topics' texts have their tags filled in as a quest's texts do (`<Global=RoomCost>`:
+"I'd like to rent a room. (10 gold)"). The valid rumors (topic subtype Rumors, most without a
+text of their own) are one entry with the text of the first that has one ("Give me the latest
+gossip."): chosen, one of them is said at random (inferred; TODO(M13): how the game picks).
+An entry without text is not listed.
+
+The first conversation waits for nothing read once: the dialogue and the actors' relationships
+(a condition of many topics; read in one pass) are read while a new game's world loads, the
+menu's movie translated and linked once it has (`DialogueMenu.prepare`).
 
 What is said (`src/scripting/runtime/dialogue-engine.ts`, after the Creation Kit's "Dialogue" and
 "Topic Info" pages): the greeting is the first valid info of the running quests' Hello topics
@@ -613,8 +628,8 @@ responses (DNAM) are said with its voice files. Each response is the voice file 
 voice type (`src/world/dialogue.ts`: `Sound\Voice\<plugin>\<voice type>\<quest>_<topic>_<info>_<n>.fuz`)
 with the face lip-syncing; without one the subtitle stays for `fAIDefaultSpeechMult` seconds a
 character. The info's fragments (TIF scripts: begin, end) run with the speaker as `akSpeakerRef`.
-The game's dialogue (20,000 topics, 41,000 infos, about 40 MB) is read in bulk once as Play
-starts. Each response's emotion shows on the speaker's face and it gestures (ActionTalking);
+The game's dialogue (20,000 topics, 41,000 infos, about 40 MB) is read in bulk once as a new
+game starts. Each response's emotion shows on the speaker's face and it gestures (ActionTalking);
 an info with Force Subtitle shows its text whatever the setting. The dialogue camera turns the
 player's view to the speaker's head and zooms in while they talk (ai.md, "Talking").
 TODO(M11): persuade, bribe, intimidate, favors.

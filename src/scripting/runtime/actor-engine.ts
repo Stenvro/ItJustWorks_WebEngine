@@ -389,22 +389,42 @@ export class ActorEngine {
 
   // --- Factions -------------------------------------------------------------------------------
 
-  /** Its rank in a faction: −2 not a member, −1 listed but not a member yet, else the rank. */
+  /**
+   * Its rank in a faction: −2 not a member, −1 listed but not a member yet, else the rank. An
+   * alias that holds it makes it a member of the alias's factions (rank 0, if not one already).
+   */
   async factionRank(reference: number, faction: number): Promise<number> {
     const set = this.#runtime.state.actors.get(reference)?.factions.get(faction);
-    if (set !== undefined) return set;
-    const info = await this.info(reference);
-    return info?.factions.factions.get(faction) ?? -2;
+    const own = set ?? (await this.info(reference))?.factions.factions.get(faction) ?? -2;
+    if (own >= 0) return own;
+    return (await this.#aliasFactions(reference)).has(faction) ? 0 : own;
   }
 
-  /** Every faction it is in (its record's and those scripts set) with its rank. */
+  /** Every faction it is in (its record's, its aliases' and those scripts set) with its rank. */
   async factionsOf(reference: number): Promise<Map<number, number>> {
     const ranks = new Map((await this.info(reference))?.factions.factions ?? []);
     for (const [faction, rank] of this.#runtime.state.actors.get(reference)?.factions ?? []) {
       if (rank === -2) ranks.delete(faction);
       else ranks.set(faction, rank);
     }
+    for (const faction of await this.#aliasFactions(reference)) {
+      if ((ranks.get(faction) ?? -2) < 0) ranks.set(faction, 0);
+    }
     return ranks;
+  }
+
+  /**
+   * The factions of the aliases that hold it (Creation Kit: an alias's Alias Factions; the
+   * town dialogue quests make their merchants members of JobMerchantFaction so).
+   */
+  async #aliasFactions(reference: number): Promise<Set<number>> {
+    const factions = new Set<number>();
+    for (const { quest, alias } of this.#runtime.aliasesHolding(reference)) {
+      for (const faction of (await this.#runtime.forms.alias(quest, alias))?.factions ?? []) {
+        factions.add(faction);
+      }
+    }
+    return factions;
   }
 
   /**
@@ -468,21 +488,37 @@ export class ActorEngine {
 
   // --- Relationships ----------------------------------------------------------------------
 
+  /**
+   * Every relationship of the load order, read in one pass (record by record, its hundreds of
+   * records took seconds in the browser: the first conversation's conditions waited for them).
+   */
   #loadRelationships(): Promise<Map<string, number>> {
     this.#relationships ??= (async () => {
+      // By form id: a later plugin's version (or its deletion) replaces an earlier one's.
+      const byForm = new Map<number, NonNullable<ReturnType<typeof parseRelationship>>>();
+      await this.#runtime.forms.db.scan(
+        ['RELA'],
+        () => true,
+        (record) => {
+          const relationship = record.deleted ? undefined : parseRelationship(record);
+          if (relationship) byForm.set(record.formId, relationship);
+          else byForm.delete(record.formId);
+        },
+      );
       const ranks = new Map<string, number>();
-      for (const formId of this.#runtime.forms.db.formIdsOfType('RELA')) {
-        const record = await this.#runtime.forms.record(formId);
-        const relationship = record && !record.deleted ? parseRelationship(record) : undefined;
-        if (relationship) {
-          const key = pairKey(relationship.parent, relationship.child);
-          ranks.set(key, relationship.rank);
-          this.#relationRecords.set(key, relationship);
-        }
+      for (const relationship of byForm.values()) {
+        const key = pairKey(relationship.parent, relationship.child);
+        ranks.set(key, relationship.rank);
+        this.#relationRecords.set(key, relationship);
       }
       return ranks;
     })();
     return this.#relationships;
+  }
+
+  /** Reads what conditions on actors read of the whole load order (its relationships) ahead. */
+  async prepare(): Promise<void> {
+    await this.#loadRelationships();
   }
 
   /** The NPC_ relationships are kept for (the player's is 0x7). */

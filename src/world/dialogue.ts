@@ -164,9 +164,10 @@ export function orderInfos(infos: readonly InfoRecord[]): InfoRecord[] {
  * A response's voice file (SoundVoice<plugin><voice type><file>.fuz):
  * <quest>_<topic>_<info>_<n>, of the topic's quest's and the topic's editor ids, the info's form
  * id as 8 hex digits without the load order index, and the response's number. Editor ids longer
- * than 25 characters together are cut, the quest's to 10 and the topic's to 15 (a topic
- * without one leaves its part empty: "DialogueGe__00023C13_1"). Checked against every voiced
- * line of the vanilla data (tools/dialogue-info.ts; 35,580 of 35,580).
+ * than 25 characters together are cut: the quest's to 10, the topic's to what is left of the 25
+ * ("MS13_MS13LucanQuestGiveBra_...", "DialogueGe_OfferServicesTo_..."; a topic without one
+ * leaves its part empty: "DialogueGe__00023C13_1"). Checked against the voice files of the
+ * load order: 43,326 of its 44,040 responses have one.
  */
 export function voiceFileName(
   questEditorId: string,
@@ -179,7 +180,7 @@ export function voiceFileName(
   let topicPart = topic.editorId;
   if (quest.length + topicPart.length > 25) {
     quest = quest.slice(0, 10);
-    topicPart = topicPart.slice(0, 15);
+    topicPart = topicPart.slice(0, 25 - quest.length);
   }
   return `${quest}_${topicPart}_${hex8(infoFormId & 0xffffff)}_${String(response)}`;
 }

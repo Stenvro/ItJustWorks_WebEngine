@@ -383,6 +383,8 @@ export class PlayMode {
     this.#mist?.showMist();
     await this.#openLoadingMenu();
     const runtime = await this.#runtimeStarting();
+    // The dialogue is read while the world loads: the first conversation need not wait for it.
+    runtime.detach(runtime.dialogue.prepare());
     await ready;
     const at = place ?? (await this.#openingPlacement(runtime));
     if (!at) throw new Error('the opening placed no player');
@@ -795,25 +797,30 @@ export class PlayMode {
 
   /**
    * A conversation: the dialogue menu over the game, which goes on (no menu mode); the HUD in
-   * its dialogue mode and the mouse on the menu until it ends.
+   * its dialogue mode and the mouse on the menu until it ends (an actor with nothing to talk
+   * about only says its greeting: no menu, the mouse stays the game's).
    */
   #talk(dialogue: DialogueMenu, menus: GameMenus, speaker: PlacedActor, opening?: number): void {
     if (dialogue.isOpen || menus.isOpen || this.#session.menuMode) return;
     const hud = this.#session.hud;
-    hud.mode('DialogueMode', true);
-    this.#talking = true;
-    this.#world.capturePointer(false);
     // The view turns to the speaker and zooms in while they talk (src/shell/dialogue-camera.ts).
     const camera = this.#world.player()?.play.player.dialogue;
-    camera?.open(() => headPosition(speaker));
     dialogue
       .talk(
         speaker,
-        () => {
-          this.#talking = false;
-          camera?.close();
-          hud.mode('DialogueMode', false);
-          this.#world.capturePointer(true);
+        {
+          opened: () => {
+            hud.mode('DialogueMode', true);
+            this.#talking = true;
+            this.#world.capturePointer(false);
+            camera?.open(() => headPosition(speaker));
+          },
+          closed: () => {
+            this.#talking = false;
+            camera?.close();
+            hud.mode('DialogueMode', false);
+            this.#world.capturePointer(true);
+          },
         },
         opening,
       )

@@ -592,6 +592,7 @@ export class ScriptRuntime implements VmHost {
   readonly #initialized = new Set<number>();
   readonly #clockGlobals = new Map<number, ClockGlobal>();
   #globalsByName: Promise<Map<string, { formId: number; value: number | undefined }>> | undefined;
+  #globalsById: Promise<Map<number, number | undefined>> | undefined;
   #index: PersistentIndex | undefined;
   readonly #keywordCache = new Map<number, Promise<number[]>>();
   readonly #cellLocations = new Map<number, Promise<number | undefined>>();
@@ -2390,6 +2391,17 @@ export class ScriptRuntime implements VmHost {
 
   async #globalByName(name: string): Promise<number | undefined> {
     return (await this.#globals()).get(name.toLowerCase())?.value;
+  }
+
+  /**
+   * A global's value as the plugins set it (GLOB FLTV), of every global read in one pass;
+   * undefined for a form that is no global (or has no value).
+   */
+  async pluginGlobal(formId: number): Promise<number | undefined> {
+    this.#globalsById ??= this.#globals().then(
+      (globals) => new Map([...globals.values()].map(({ formId: id, value }) => [id, value])),
+    );
+    return (await this.#globalsById).get(formId);
   }
 
   /** Every global by lower-case editor id, read in one pass. */
