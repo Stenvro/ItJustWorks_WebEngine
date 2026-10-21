@@ -277,6 +277,24 @@ export class ActorVehicles {
     }
   }
 
+  /**
+   * A rider's graph raised events. A prisoner's exit clip ends with OffsetBoundStandingCartStart
+   * (its arms bound standing) where the driver's ends with CartExit, the only way out of the
+   * human graph's Cart_State, whose exit raises ExitCartEnd (MQ101's riders wait for it): the
+   * prisoner's ends it so too. Inferred from the data (0_master.hkx: nothing else leaves
+   * Cart_State). TODO(M13): what the engine itself sends.
+   */
+  riderEvents(
+    actor: number,
+    graph: { sendEvent(name: string): boolean },
+    events: readonly string[],
+  ): void {
+    if (!this.#passengers.has(actor)) return;
+    for (const event of events) {
+      if (event.toLowerCase() === 'offsetboundstandingcartstart') graph.sendEvent('CartExit');
+    }
+  }
+
   /** An actor gets off its vehicle where it is now (its AI goes somewhere, SetVehicle none). */
   release(actor: number): void {
     if (!this.#passengers.delete(actor)) return;

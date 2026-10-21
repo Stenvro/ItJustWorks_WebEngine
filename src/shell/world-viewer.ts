@@ -1175,6 +1175,13 @@ export class WorldViewer {
       (avatar) => {
         if (this.#play === play) {
           this.#avatar = avatar;
+          if (avatar) {
+            // The player as a cart's rider: its exit ends its cart state (actor-vehicles.ts).
+            avatar.onGraphEvents = (events) => {
+              const graph = avatar.body.behavior;
+              if (graph) this.#stage?.vehicles.riderEvents(PLAYER_REF, graph, events);
+            };
+          }
           this.#seat = avatar && this.#makeSeat(play, avatar);
           this.#stage?.combat.attachPlayer(play, avatar);
         } else avatar?.destroy();

@@ -1121,6 +1121,8 @@ export class ActorStage {
   #tellScripts(staged: StagedActor): void {
     const reference = staged.reference;
     staged.placed.onScriptEvents = (events) => {
+      const graph = staged.placed.behavior;
+      if (graph) this.vehicles.riderEvents(reference, graph, events);
       const runtime = this.#options.session.scriptsReady;
       if (!runtime) return;
       for (const event of events) runtime.animationEvent(reference, event);
