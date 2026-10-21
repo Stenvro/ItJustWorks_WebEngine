@@ -68,6 +68,8 @@ export interface SceneHost {
   questRunning(quest: number): boolean;
   /** The reference an alias of a quest holds now. */
   aliasReference(quest: number, alias: number): number | undefined;
+  /** Whether a quest's alias is optional (it may stay empty: QUST alias flag Optional). */
+  aliasOptional(quest: number, alias: number): Promise<boolean>;
   actor(reference: number): SceneActorState;
   /** Whether an actor lives (placed dead or killed: not), as a scene starts. */
   alive(reference: number): Promise<boolean>;
@@ -410,7 +412,12 @@ export class SceneDirector {
       const reference = host.aliasReference(quest, actor.alias);
       if (reference !== undefined && (await host.alive(reference))) {
         cast.set(actor.alias, reference);
-      } else if ((actor.flags & SceneActorFlag.optional) === 0) {
+      } else if (
+        (actor.flags & SceneActorFlag.optional) === 0 &&
+        // An empty optional alias leaves its actor out: MQ101Scene4 casts HelgenArcher03,
+        // whose reference type no reference of the load order has.
+        !(reference === undefined && (await host.aliasOptional(quest, actor.alias)))
+      ) {
         this.#drop(playing, `its actor ${String(actor.alias)} is not there`);
         return;
       }

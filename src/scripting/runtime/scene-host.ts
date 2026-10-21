@@ -11,6 +11,7 @@ import type { SceneActorState, SceneHost, SceneLine, SceneLook } from '../../ai/
 import type { InfoResponse } from '../../world/dialogue-records.ts';
 import type { Condition } from '../conditions.ts';
 import { ObjectHandle } from '../values.ts';
+import { AliasFlag } from '../../world/quest-records.ts';
 import type { SpokenInfo } from './dialogue-engine.ts';
 import type { ScriptRuntime } from './runtime.ts';
 
@@ -75,6 +76,12 @@ export class RuntimeSceneHost implements SceneHost {
 
   aliasReference(quest: number, alias: number): number | undefined {
     return this.#runtime.state.quests.get(quest)?.aliases.get(alias);
+  }
+
+  async aliasOptional(quest: number, alias: number): Promise<boolean> {
+    const record = await this.#runtime.forms.quest(quest);
+    const entry = record?.aliases.find((candidate) => candidate.id === alias);
+    return entry !== undefined && (entry.flags & AliasFlag.optional) !== 0;
   }
 
   /** Dead, in combat, watching a fight (the combat AI, detection's spectators), talking. */
