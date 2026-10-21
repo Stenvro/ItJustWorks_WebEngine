@@ -414,18 +414,27 @@ const sandboxing: ProcedureRunner = async (run) => {
 /**
  * Sit, Sleep, UseIdleMarker: uses the furniture it is given (its markers of the procedure's
  * kinds: sitting and leaning, sleeping, any) and stays in it while the package runs; at an idle
- * marker, plays its idles. Furniture it cannot use (taken, no way in): to it, facing its way.
+ * marker, plays its idles. Sit succeeds once the actor sits (`seated`; it stays seated while the
+ * package is still the one chosen): MQ101's execution scene goes on when the prisoner's Sit at
+ * the chopping block completes. Furniture it cannot use (taken, no way in from where it stood):
+ * to it, then once more from there; else it stands there facing its way.
  * TODO(M10) 3.2: furniture found by searching (ObjectList).
  */
 const useFurniture =
-  (types: number): ProcedureRunner =>
+  (types: number, seated: 'success' | 'hold' = 'hold'): ProcedureRunner =>
   async (run) => {
     // Its target, or the first it may use of those a Find found ("Found Bed", "Found Chair").
     const candidates = await targetsIn(run, 0);
-    for (const reference of candidates) {
-      if (run.stopped()) return 'failure';
-      if (await run.body.useFurniture(reference, types)) return hold(run);
-    }
+    const sit = async (): Promise<boolean> => {
+      for (const reference of candidates) {
+        if (run.stopped()) return false;
+        if (await run.body.useFurniture(reference, types)) return true;
+      }
+      return false;
+    };
+    const inIt = async (): Promise<ProcedureResult> =>
+      seated === 'success' ? 'success' : hold(run);
+    if (await sit()) return inIt();
     const first = candidates[0];
     if (first !== undefined && (await run.mind.idleMarker(first))) {
       await atIdleMarker(run, first);
@@ -435,6 +444,7 @@ const useFurniture =
     const at = first === undefined ? undefined : await run.mind.placement(first);
     if (at) {
       await goTo(run, { position: at.position, radius: 0 }, AT_PLACE);
+      if (await sit()) return inIt();
       run.body.face(at.heading);
     }
     return hold(run);
@@ -834,7 +844,7 @@ export const PROCEDURES: Readonly<Record<string, ProcedureRunner>> = {
   follow: standing(follow),
   wander: standing(wander),
   sandbox: standing(sandbox),
-  sit: useFurniture(SIT | LEAN),
+  sit: useFurniture(SIT | LEAN, 'success'),
   sleep: useFurniture(SLEEP),
   useidlemarker: useFurniture(SIT | SLEEP | LEAN),
   unlockdoors: doors(false),
