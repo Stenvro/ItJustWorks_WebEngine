@@ -110,7 +110,8 @@ export async function magicConditionValue(
         : flag(runtime.casting.wardState(reference) === condition.raw1);
     case MagicFn.getCurrentShoutVariation:
       return reference === undefined ? undefined : runtime.casting.shoutVariation(reference);
-    // TODO(M11): the perk system (a perk of the spell's school with the casting entry point).
+    // A spell's own condition (a perk entry's spell tab: the perk engine values it there); on
+    // an actor it has no spell to ask about.
     case MagicFn.spellHasCastingPerk:
       return 0;
     default:

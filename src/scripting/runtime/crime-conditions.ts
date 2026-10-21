@@ -47,6 +47,7 @@ export const CrimeFn = {
   getDaysInJail: 499,
   getInSharedCrimeFaction: 652,
   getBribeSuccess: 654,
+  getIntimidateSuccess: 655,
   getArrestingActor: 657,
 } as const;
 
@@ -108,6 +109,9 @@ export async function crimeConditionValue(
       return reference === undefined
         ? undefined
         : flag((await runtime.itemCount(PLAYER_REF, GOLD)) >= (await crime.bribeAmount(reference)));
+    // The player's intimidation of the subject succeeds (the perks: Intimidation).
+    case CrimeFn.getIntimidateSuccess:
+      return reference === undefined ? undefined : flag(await crime.intimidateSucceeds(reference));
     case CrimeFn.isTrespassing:
       return flag(
         reference === PLAYER_REF &&

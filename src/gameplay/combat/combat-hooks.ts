@@ -1,9 +1,11 @@
-// The perk effects combat asks for that no system answers yet (the perk entry points:
-// Calculate My Critical Hit Chance, Mod Sneak Attack Mult, Mod Percent Blocked, Mod Stagger,
-// Mod Incoming Damage, Sweep), as small functions combat owns: each answers as an actor without
-// perks does until the perk system points it at its entry points (setCombatHooks). Weapon
-// damage perks are the equip system's (its weapon damage), stamina costs the skill
-// progression's. TODO(M11): the perks' entry points. Platform-independent.
+// What combat's perks look at and the rules that turn the perk system's answers into combat's
+// numbers. The perks themselves are the perk system's (src/scripting/runtime/perk-engine.ts):
+// combat (src/shell/actor-combat.ts) asks its entry points for each hit (Calculate Weapon
+// Damage, Mod Attack Damage through the equip system's weapon damage, Mod Power Attack Damage,
+// Mod Bashing Damage, Calculate My Critical Hit Chance / Damage, Mod Enemy Critical Hit Chance,
+// Mod Sneak Attack Mult, Mod Percent Blocked, Mod Shield Deflect Arrow Chance, Mod Target
+// Damage Resistance, Mod Incoming Damage, Mod Target / Incoming Stagger, Set Sweep Attack, the
+// spells they apply) and for the stamina of power attacks. Platform-independent.
 
 /** How an attack is made (what perks look at). */
 export interface AttackKind {
@@ -13,41 +15,13 @@ export interface AttackKind {
   readonly ranged: boolean;
 }
 
-export interface CombatHooks {
-  /** The chance (0..1) of a critical hit: Bladesman, Deep Wounds, Critical Shot, ... */
-  criticalChance(attacker: number, weapon: number | undefined, attack: AttackKind): number;
-  /** Critical damage times this. */
-  criticalDamageMult(attacker: number, weapon: number | undefined): number;
-  /** The sneak attack multiplier times this: Backstab, Assassin's Blade, Deadly Aim. */
-  sneakPerkMult(attacker: number, equippedType: number): number;
-  /** The blocked share times this: Shield Wall, block enchantments, potions. */
-  blockPerkMult(blocker: number, shield: boolean): number;
-  /** A hit's stagger times this: Power Bash, Force Without Effort. */
-  staggerPerkMult(attacker: number, attack: AttackKind): number;
-  /** Whether the attack hits every target in its strike (Sweep). */
-  sweeps(attacker: number, attack: AttackKind): boolean;
-  /** Damage the target takes times this (its reduce-damage perks: Reduced Damage, ...). */
-  incomingDamageMult(target: number, attacker: number | undefined): number;
-}
-
-const DEFAULT_HOOKS: CombatHooks = {
-  criticalChance: () => 0,
-  criticalDamageMult: () => 1,
-  sneakPerkMult: () => 1,
-  blockPerkMult: () => 1,
-  staggerPerkMult: () => 1,
-  sweeps: () => false,
-  incomingDamageMult: () => 1,
-};
-
-let hooks: CombatHooks = DEFAULT_HOOKS;
-
-/** The hooks combat calls now. */
-export function combatHooks(): CombatHooks {
-  return hooks;
-}
-
-/** Points some of combat's hooks at the perk system's answers; undefined: the defaults. */
-export function setCombatHooks(replacement: Partial<CombatHooks> | undefined): void {
-  hooks = { ...DEFAULT_HOOKS, ...replacement };
+/**
+ * The chance (0..1) of a critical hit: the attacker's perks' chance in percent (Calculate My
+ * Critical Hit Chance: Bladesman, Critical Shot, Critical Charge; 0 without) times the
+ * weapon's critical multiplier (CRDT % Mult), times what the target's perks leave of it (Mod
+ * Enemy Critical Hit Chance; 1: all). TODO(M13): whether the engine has a base chance without
+ * perks (UESP: critical hits come from the perks).
+ */
+export function criticalHitChance(perkPercent: number, critMult: number, enemyMult = 1): number {
+  return Math.min(1, Math.max(0, (perkPercent / 100) * critMult * enemyMult));
 }

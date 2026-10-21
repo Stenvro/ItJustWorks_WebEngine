@@ -119,8 +119,13 @@ export class PlayerCasting implements CastingButtons {
     const partner = this.#held.get(other);
     if (partner && Math.abs(partner.since - entry.since) <= DUAL_WINDOW) {
       const theirs = await runtime.casting.castable(PLAYER_REF, other);
-      if (theirs?.via === 'spell' && theirs.item.formId === castable.item.formId) {
-        // TODO(M11): only with the Dual Casting perk of the spell's school.
+      // Only with the Dual Casting perk of the spell's school (Can Dual Cast Spell); without
+      // it each hand casts on its own.
+      if (
+        theirs?.via === 'spell' &&
+        theirs.item.formId === castable.item.formId &&
+        (await runtime.casting.canDualCast(PLAYER_REF, castable.item.formId))
+      ) {
         if (partner.casting) runtime.casting.interrupt(PLAYER_REF, other);
         partner.casting = false;
         const dual = await casting.start(PLAYER_REF, CastingSource.right, { dual: true });

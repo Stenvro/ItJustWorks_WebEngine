@@ -7,8 +7,8 @@
 // schools, Shouts, Powers and Active Effects, whose entries show no buttons (the menu's
 // hideButtonFlag). A spell's card: its level (its effects' minimum skill: sNoviceDisplayName
 // .. sMasterDisplayName), its effects, its cost (the casting engine's: the base cost × 1 −
-// (skill / 400)^0.65, UESP "Magic Overview"; TODO(M11): perks and enchantments), a per-second
-// cost for concentration spells (castTime 0). A shout's card offers Unlock (R) while a learned
+// (skill / 400)^0.65, UESP "Magic Overview", × the perks' Mod Spell Cost with Fortify <school>),
+// a per-second cost for concentration spells (castTime 0). A shout's card offers Unlock (R) while a learned
 // word is locked: a dragon soul spent on it. Notes: docs/ui.md ("The item menus").
 
 import { CardType, EquipState } from '../gameplay/inventory.ts';
