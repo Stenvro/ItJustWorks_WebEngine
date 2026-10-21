@@ -132,6 +132,8 @@ interface Travel {
   readonly done: (arrived: boolean) => void;
 }
 
+/** Off the navmeshes, a path begins at their nearest point within this (game units). */
+const NAVMESH_REACH = 512;
 /** A stuck actor searches its way again this many times before it gives up. */
 const SEARCHES = 3;
 /** An actor beyond the high process walks its paths this wide (units; a human's radius). */
@@ -320,14 +322,23 @@ export class ActorMovers {
       const set = this.#options.navmeshes?.();
       if (!set) return;
       travel.searches++;
-      const path = findPath(set, mover.staged.position, travel.destination, {
-        // Stuck on its way (a corner its path grazed): wider of the edges each time it searches
-        // again. TODO(M13): the engine's own way out (not documented).
-        radius: mover.character.shape.radius * travel.searches,
-        large: (mover.race?.size ?? RaceSize.medium) >= RaceSize.large,
-        closedDoors: this.#closedFor(reference, travel),
-        blocked: this.#blockedFor(reference, travel),
-      });
+      // Off the navmeshes (a straight way left it: MQ101's second cart before the hay bales in
+      // Helgen's square), the path begins at their nearest point.
+      const position = mover.staged.position;
+      const on = set.locate(position) !== undefined;
+      const start = on ? position : set.nearest?.(position, NAVMESH_REACH);
+      const found =
+        start &&
+        findPath(set, start, travel.destination, {
+          // Stuck on its way (a corner its path grazed): wider of the edges each time it searches
+          // again. TODO(M13): the engine's own way out (not documented).
+          radius: mover.character.shape.radius * travel.searches,
+          large: (mover.race?.size ?? RaceSize.medium) >= RaceSize.large,
+          closedDoors: this.#closedFor(reference, travel),
+          blocked: this.#blockedFor(reference, travel),
+        });
+      const path =
+        found && !on ? { ...found, points: [[...position] as Vec3, ...found.points] } : found;
       if (!path || path.points.length < 2) {
         travel.done(false);
         return;
