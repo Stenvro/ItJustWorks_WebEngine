@@ -136,7 +136,7 @@ export interface CombatAiHost {
   block(reference: number, on: boolean): Promise<void>;
   /** Plays an action's idle (ActionIdleWarn, ActionIdle, ...); its event, if one played. */
   act(reference: number, action: string, target?: number): Promise<string | undefined>;
-  /** What flies at the actors now (arrows; spells and breath: 5.3, 5.4). */
+  /** What flies at the actors now (arrows, spells, breath). */
   threats(): Iterable<Threat>;
 }
 
@@ -1478,7 +1478,7 @@ export class ActorCombatAi {
   }
 
   /**
-   * A threat coming at it (an arrow; a spell or a breath: 5.3, 5.4): by its style's avoid
+   * A threat coming at it (an arrow, a spell, a breath): by its style's avoid
    * threat chance it sidesteps out of the line (AvoidThreat). Whether it dodges now.
    */
   #dodge(mind: Mind, view: FighterView, facing: number): boolean {
