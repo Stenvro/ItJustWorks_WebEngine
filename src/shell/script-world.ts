@@ -63,6 +63,16 @@ export interface ScriptView {
   killed?(reference: number): void;
   /** The package an actor of the view runs now (its AI), if any. */
   currentPackage?(reference: number): number | undefined;
+  /** The procedure its package runs now, by name (GetCurrentAIProcedure). */
+  currentProcedure?(reference: number): string | undefined;
+  /** The player passes into another cell or worldspace (a loading screen is up). */
+  changingSpace?(): boolean;
+  /** The regions of the player's cell (IsPlayerInRegion). */
+  playerRegions?(): readonly number[];
+  /** An impact data set's impact where a ray from a point meets a surface of the view. */
+  impactAt?(impactDataSet: number, from: Vec3, direction: Vec3, length: number): boolean;
+  /** PathToReference: an actor of the view walks to a reference (undefined: not shown here). */
+  pathTo?(actor: number, target: number, walkRun: number): Promise<boolean> | undefined;
   /** EvaluatePackage: the actor chooses its package again. */
   evaluatePackage?(reference: number): void;
   /** What an actor of the view uses now (its furniture), if anything. */
@@ -272,6 +282,23 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) view.activate?.(reference);
   }
 
+  impactEffect(
+    reference: number,
+    impactDataSet: number,
+    node: string,
+    direction: Vec3,
+    length: number,
+  ): boolean {
+    const from =
+      (node === '' ? undefined : this.nodePlacement(reference, node)?.position) ??
+      this.livePlacement(reference)?.position;
+    if (!from) return false;
+    for (const view of this.#views) {
+      if (view.impactAt?.(impactDataSet, from, direction, length) === true) return true;
+    }
+    return false;
+  }
+
   /** Actor.SetRace: the actor is made again in its new race where it is shown. */
   /** Actors whose equipment changed, made again together once the scripts' turn is over. */
   readonly #dressing = new Set<number>();
@@ -321,6 +348,31 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) {
       const running = view.currentPackage?.(actor);
       if (running !== undefined) return running;
+    }
+    return undefined;
+  }
+
+  currentProcedure(actor: number): string | undefined {
+    for (const view of this.#views) {
+      const procedure = view.currentProcedure?.(actor);
+      if (procedure !== undefined) return procedure;
+    }
+    return undefined;
+  }
+
+  changingSpace(): boolean {
+    for (const view of this.#views) if (view.changingSpace?.() === true) return true;
+    return false;
+  }
+
+  playerRegions(): readonly number[] {
+    return [...this.#views].flatMap((view) => view.playerRegions?.() ?? []);
+  }
+
+  pathTo(actor: number, target: number, walkRun: number): Promise<boolean> | undefined {
+    for (const view of this.#views) {
+      const going = view.pathTo?.(actor, target, walkRun);
+      if (going) return going;
     }
     return undefined;
   }
@@ -523,10 +575,15 @@ export class ScriptWorld implements WorldBridge {
     if (!system || !this.livePlacement(source)) return 0;
     const id = this.#nextSound++;
     let last: Vec3 | undefined;
-    const playing = system.play(sound, () => {
-      last = this.livePlacement(source)?.position ?? last;
-      return last ?? [0, 0, 0];
-    });
+    const playing = system.play(
+      sound,
+      () => {
+        last = this.livePlacement(source)?.position ?? last;
+        return last ?? [0, 0, 0];
+      },
+      0,
+      source,
+    );
     this.#playing.set(id, playing);
     void playing.then((instance) => {
       if (!instance) this.#playing.delete(id);

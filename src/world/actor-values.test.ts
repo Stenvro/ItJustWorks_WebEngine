@@ -18,10 +18,12 @@ describe('actor values and condition functions', () => {
   });
 
   it('name the condition functions by their CTDA index', () => {
-    expect(CONDITION_FUNCTION_COUNT).toBe(734);
+    expect(CONDITION_FUNCTION_COUNT).toBe(736);
     expect(conditionFunctionName(72)).toBe('GetIsID');
     expect(conditionFunctionName(576)).toBe('GetEventData');
     expect(conditionFunctionName(629)).toBe('GetVMQuestVariable');
     expect(conditionFunctionName(733)).toBe('IsFlyingMountFastTravelling');
+    // Survival Mode's (Skyrim 1.6; xEdit).
+    expect(conditionFunctionName(734)).toBe('IsOverEncumbered');
   });
 });

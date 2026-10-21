@@ -67,6 +67,12 @@ export interface ReferenceState {
   scale?: number;
   /** Linked references a script changed (keyword 0: none). */
   links?: Map<number, number>;
+  /** IgnoreFriendlyHits: friends' and allies' blows never turn it on them. */
+  ignoreFriendlyHits?: boolean;
+  /** SetNoFavorAllowed: a follower cannot be asked to use it (favor commands). */
+  noFavor?: boolean;
+  /** SetActorCause: the actor its doings are blamed on (a trap's hits). */
+  actorCause?: number;
 }
 
 export interface ActorValueState {
@@ -93,6 +99,12 @@ export interface ActorState {
   killer?: number;
   ghost?: boolean;
   restrained?: boolean;
+  /** A cannibal fed on its corpse (StartCannibal: HasBeenEaten). */
+  eaten?: boolean;
+  /** AllowPCDialogue: false, the player cannot talk to it. */
+  allowPlayerDialogue?: boolean;
+  /** AllowBleedoutDialogue: the player may talk to it while it bleeds out. */
+  allowBleedoutDialogue?: boolean;
   doingFavor?: boolean;
   playerTeammate?: boolean;
   canDoFavor?: boolean;

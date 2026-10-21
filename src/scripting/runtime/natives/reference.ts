@@ -4,6 +4,7 @@
 // Angles are degrees in Papyrus and radians in the game state. Platform-independent.
 // Notes: docs/scripting.md ("Natives").
 
+import { ActorValue } from '../../../world/actor-values.ts';
 import { ObjectHandle, type Value } from '../../values.ts';
 import type { ScriptRuntime } from '../runtime.ts';
 import { bool, formOf, int, num, object, str, type Register } from './args.ts';
@@ -592,7 +593,23 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     const reference = self(call);
     return reference !== undefined && (world.hasNode?.(reference, str(call.args[0])) ?? false);
   });
-  n('objectreference.playimpacteffect', () => true);
+  // PlayImpactEffect(akImpactEffect, asNodeName, afPickDirX..Z, afPickLength, ...): the impact
+  // for the surface a ray from the node meets (its sound and decal). TODO(M13): the pick
+  // direction turned by the node's rotation (abApplyNodeRotation, abUseNodeLocalRotation).
+  n('objectreference.playimpacteffect', (call) => {
+    const reference = self(call);
+    const set = formOf(call.args[0]);
+    if (reference === undefined || set === undefined) return false;
+    const direction: [number, number, number] = [
+      num(call.args[2]),
+      num(call.args[3]),
+      num(call.args[4], -1),
+    ];
+    return (
+      world.impactEffect?.(reference, set, str(call.args[1]), direction, num(call.args[5], 512)) ??
+      false
+    );
+  });
   n('objectreference.playterraineffect', () => null);
   n('objectreference.playsyncedanimationss', () => false);
   n('objectreference.playsyncedanimationandwaitss', () => false);
@@ -604,7 +621,7 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     return null;
   });
 
-  // --- Combat, crime, dialogue (TODO(M10)/(M11)) ----------------------------------------------
+  // --- Combat, crime, dialogue, traps -----------------------------------------------------------
   n('objectreference.say', (call) => {
     const reference = self(call);
     if (reference !== undefined)
@@ -633,19 +650,81 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     if (thief !== undefined) await runtime.crime.stealAlarm(thief, reference);
     return null;
   });
-  n('objectreference.knockareaeffect', () => null);
-  n('objectreference.processtraphit', () => null);
+  // KnockAreaEffect(afMagnitude, afRadius): the actors within the radius are pushed away from
+  // this reference (as PushActorAway).
+  n('objectreference.knockareaeffect', async (call) => {
+    const reference = self(call);
+    const at = reference === undefined ? undefined : await runtime.placement(reference);
+    if (reference === undefined || !at) return null;
+    const radius = num(call.args[1]);
+    for (const other of world.loadedReferences?.() ?? []) {
+      if (other === reference || !(await runtime.actors.isActor(other))) continue;
+      const there = await runtime.placement(other);
+      if (!there) continue;
+      const distance = Math.hypot(
+        there.position[0] - at.position[0],
+        there.position[1] - at.position[1],
+        there.position[2] - at.position[2],
+      );
+      if (distance <= radius) world.pushAway?.(other, reference, num(call.args[0]));
+    }
+    return null;
+  });
+  // ProcessTrapHit(akTrap, afDamage, afPushback, velocity, position, material, stagger): a
+  // trap's blow on this reference: the damage to an actor's health, blamed on the actor the
+  // trap's doings are (SetActorCause), and the push away from the trap. TODO(M13): the
+  // stagger (afStagger) and the hit's material impact (aeMaterial).
+  n('objectreference.processtraphit', async (call) => {
+    const reference = self(call);
+    const trap = ref(call.args[0]);
+    if (reference === undefined) return null;
+    const cause = trap === undefined ? undefined : state.references.get(trap)?.actorCause;
+    if (await runtime.actors.isActor(reference)) {
+      await runtime.actors.damage(reference, ActorValue.health, num(call.args[1]), cause);
+    }
+    const pushback = num(call.args[2]);
+    if (pushback > 0 && trap !== undefined) world.pushAway?.(reference, trap, pushback);
+    return null;
+  });
   // InterruptCast: what this reference (an actor, a trap's caster) casts stops (casting-engine.ts).
   n('objectreference.interruptcast', (call) => {
     const reference = self(call);
     if (reference !== undefined) runtime.casting.interrupt(reference);
     return null;
   });
-  n('objectreference.ignorefriendlyhits', () => null);
-  n('objectreference.isignoringfriendlyhits', () => false);
-  n('objectreference.setnofavorallowed', () => null);
-  n('objectreference.setactorcause', () => null);
-  n('objectreference.haseffectkeyword', () => false);
+  // Friends' and allies' blows never turn it on them (src/shell/actor-combat-ai.ts).
+  n('objectreference.ignorefriendlyhits', (call) => {
+    const reference = self(call);
+    if (reference !== undefined)
+      state.reference(reference).ignoreFriendlyHits = bool(call.args[0], true);
+    return null;
+  });
+  n('objectreference.isignoringfriendlyhits', (call) => {
+    const reference = self(call);
+    return reference !== undefined && state.references.get(reference)?.ignoreFriendlyHits === true;
+  });
+  // A follower may not be asked to use it. TODO(M11): the followers' favor commands read it.
+  n('objectreference.setnofavorallowed', (call) => {
+    const reference = self(call);
+    if (reference !== undefined) state.reference(reference).noFavor = bool(call.args[0], true);
+    return null;
+  });
+  // The actor its doings are blamed on (a trap's hits: ProcessTrapHit).
+  n('objectreference.setactorcause', (call) => {
+    const reference = self(call);
+    if (reference !== undefined) state.reference(reference).actorCause = ref(call.args[0]);
+    return null;
+  });
+  // A magic effect with the keyword on it (magic-engine.ts).
+  n('objectreference.haseffectkeyword', async (call) => {
+    const reference = self(call);
+    const keyword = formOf(call.args[0]);
+    return (
+      reference !== undefined &&
+      keyword !== undefined &&
+      (await runtime.magic.hasEffectKeyword(reference, keyword))
+    );
+  });
   n('objectreference.getcurrentscene', (call) => {
     const reference = self(call);
     return reference === undefined ? null : object(runtime.scenes.sceneOf(reference), 'scene');

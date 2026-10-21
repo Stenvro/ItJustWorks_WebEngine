@@ -2,20 +2,25 @@
 // what a reference is (its id, base, race, sex, class, keywords, voice, faction ranks, level,
 // actor values), where it is (cell, worldspace, current and editor location), its items, being
 // dead, disabled, destroyed or locked, relationships, locations (keywords, reference types,
-// keyword data, cleared), the time, and the story manager event's data. Functions not valued
-// yet hold (and are reported once), as conditions.ts does. Indices: UESP "Skyrim Mod:Function
-// Indices"; magic's in magic-conditions.ts. Detection's (GetDetected, GetLineOfSight,
-// GetLightLevel, ...) ask the world (src/shell/actor-senses.ts); combat's the combat AI
-// (src/shell/actor-combat-ai.ts, src/ai/combat-ai.ts); crime's and factions' are in
-// crime-conditions.ts.
+// keyword data, cleared), the time, the weather, and the story manager event's data; where a
+// reference is against another (angles, distances, containers, links, its package's place) and
+// how it moves (its path's target and speeds), persuasion, the item a recipe tempers and the
+// kill a kill camera shows (moreConditionValue). A reference parameter is an alias or a
+// package data input where the CTDA says so. A function no evaluator values is NOT_VALUED: it
+// holds and is reported (tools/condition-audit.ts finds those the data uses). Indices: UESP
+// "Skyrim Mod:Function Indices"; magic's in magic-conditions.ts. Detection's (GetDetected,
+// GetLineOfSight, GetLightLevel, ...) ask the world (src/shell/actor-senses.ts); combat's the
+// combat AI (src/shell/actor-combat-ai.ts, src/ai/combat-ai.ts); crime's and factions' are in
+// crime-conditions.ts. Notes: docs/scripting.md ("Conditions").
 
 import { hostileTo, shouldAttack } from '../../ai/combat-ai.ts';
 import { parseRaceCombat } from '../../ai/race-combat-records.ts';
 import { NpcFlag, RaceFlag } from '../../world/actor-records.ts';
 import { ActorValue } from '../../world/actor-values.ts';
 import { conditionFunctionName } from '../condition-functions.ts';
-import type { Condition } from '../conditions.ts';
+import { floatParam2, NOT_VALUED, type Condition } from '../conditions.ts';
 import { ObjectHandle, type Value } from '../values.ts';
+import type { Vec3 } from './game-state.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
 import { crimeConditionValue } from './crime-conditions.ts';
 import { magicConditionValue } from './magic-conditions.ts';
@@ -213,7 +218,152 @@ export const Fn = {
   getDialogueEmotion: 434,
   getDialogueEmotionValue: 435,
   getAllowWorldInteractions: 503,
+  // Where it is and how it moves, against another reference or its package.
+  getPos: 6,
+  getHeadingAngle: 99,
+  getVelocity: 446,
+  getRelativeAngle: 584,
+  getWithinDistance: 639,
+  getWithinPackageLocation: 325,
+  getPathingTargetOffset: 619,
+  getPathingTargetAngleOffset: 620,
+  getPathingTargetSpeed: 621,
+  getPathingTargetSpeedAngle: 622,
+  getPathingCurrentSpeed: 683,
+  getPathingCurrentSpeedAngle: 684,
+  isPlayerMovingIntoNewSpace: 358,
+  isPlayerInRegion: 117,
+  isInDangerousWater: 332,
+  isLinkedTo: 650,
+  getInContainer: 624,
+  // The weather.
+  isRaining: 62,
+  isSnowing: 75,
+  isPleasant: 266,
+  isCloudy: 267,
+  getIsCurrentWeather: 149,
+  // What it is and has.
+  getGold: 48,
+  getKeywordItemCount: 465,
+  getDisease: 39,
+  getLockLevel: 65,
+  isUnlockedDoor: 718,
+  isProtected: 476,
+  getRestrained: 244,
+  hasBeenEaten: 127,
+  getPermanentActorValue: 494,
+  isOverEncumbered: 734,
+  getHighestRelationshipRank: 615,
+  getLowestRelationshipRank: 616,
+  getRefTypeDeadCount: 591,
+  getRefTypeAliveCount: 592,
+  getQuestVariable: 79,
+  doesNotExist: 726,
+  // Its AI, the player's actions, favors and persuasion.
+  getCurrentAIProcedure: 143,
+  getGroupMemberCount: 415,
+  getPlayerAction: 305,
+  isActorAVictim: 314,
+  isInFavorState: 635,
+  isInFriendStateWithPlayer: 638,
+  getIntimidateSuccess: 655,
+  getArrestedState: 656,
+  getReplacedItemType: 664,
+  menuMode: 36,
+  isFlyingMountPatrolQueued: 732,
+  isFlyingMountFastTravelling: 733,
+  // The item being tempered (a tempering recipe's conditions: the crafting menu).
+  epTemperingItemIsEnchanted: 659,
+  epTemperingItemHasKeyword: 660,
+  // The kill cameras (CPTH: their conditions on the kill; the VATS names are Fallout's).
+  getVatsValue: 407,
+  getVatsRightAreaFree: 515,
+  getVatsLeftAreaFree: 516,
+  getVatsBackAreaFree: 517,
+  getVatsFrontAreaFree: 518,
+  getVatsRightTargetVisible: 522,
+  getVatsLeftTargetVisible: 523,
+  getVatsBackTargetVisible: 524,
+  getVatsFrontTargetVisible: 525,
 } as const;
+
+/**
+ * The procedures the package runtime runs (src/ai/procedure-runs.ts, by lower-case name) as
+ * GetCurrentAIProcedure numbers them (CommonLibSSE PACKAGE_PROCEDURE_TYPE). TODO(M13): the
+ * Creation Kit's procedures against the engine's types are matched by name only (Sit, Use Idle
+ * Marker: Use Item At; Hold Position: Guard; Wait: Do Nothing).
+ */
+const PROCEDURE_TYPES: Readonly<Record<string, number>> = {
+  travel: 0,
+  wander: 1,
+  acquire: 3,
+  find: 3,
+  sleep: 4,
+  eat: 5,
+  follow: 6,
+  followto: 6,
+  escort: 8,
+  dialogueactivate: 10,
+  forcegreet: 13,
+  activate: 12,
+  flee: 17,
+  wait: 23,
+  accompany: 25,
+  sit: 26,
+  useidlemarker: 26,
+  ambush: 28,
+  sandbox: 35,
+  patrol: 36,
+  guard: 39,
+  holdposition: 39,
+  useweapon: 42,
+  usemagic: 42,
+};
+
+/** A side of a reference, clockwise from its facing (radians): the kill cameras' areas. */
+const SIDES: ReadonlyMap<number, number> = new Map([
+  [Fn.getVatsRightAreaFree, Math.PI / 2],
+  [Fn.getVatsLeftAreaFree, -Math.PI / 2],
+  [Fn.getVatsBackAreaFree, Math.PI],
+  [Fn.getVatsFrontAreaFree, 0],
+  [Fn.getVatsRightTargetVisible, Math.PI / 2],
+  [Fn.getVatsLeftTargetVisible, -Math.PI / 2],
+  [Fn.getVatsBackTargetVisible, Math.PI],
+  [Fn.getVatsFrontTargetVisible, 0],
+]);
+
+/**
+ * The kill a kill camera shows (the kill cameras' tree, CPTH): what GetVATSValue and the area
+ * functions ask. Its functions (xEdit wbVatsValueFunctionEnum): 0 weapon is, 1 weapon in
+ * list, 2 target is, 3 target in list, 4 target distance, 5 target part, 6 action (0 unarmed, 1
+ * one-handed, 2 two-handed, 3 magic, 4 ranged, ..., 11 the player's death), 7 success, 8
+ * critical, 9 / 10 critical effect, 11 fatal, 15 weapon type, 18 projectile type, 19 delivery,
+ * 20 casting type.
+ */
+export interface KillCameraContext {
+  readonly weapon: number | undefined;
+  /** The target's base (NPC_). */
+  readonly target: number | undefined;
+  readonly distance: number;
+  readonly action: number;
+  readonly critical: boolean;
+  readonly fatal: boolean;
+  /** WEAP animation type; the projectile's type (0 missile .. 6 arrow), delivery, casting. */
+  readonly weaponType: number | undefined;
+  readonly projectileType: number | undefined;
+  readonly delivery: number | undefined;
+  readonly castingType: number | undefined;
+  /** The free space beside a reference toward a side (radians clockwise from its facing). */
+  areaFree(reference: number, side: number): number;
+  /** How far toward a side of a reference the other of the kill is still seen (units). */
+  targetVisible(reference: number, side: number): number;
+}
+
+/** The item a tempering recipe's conditions are about (EPTemperingItem...). */
+export interface TemperedItem {
+  readonly base: number;
+  readonly enchanted: boolean;
+}
 
 /** PKDT interrupt flag World Interactions (src/ai/package-records.ts, InterruptFlag). */
 const WORLD_INTERACTIONS = 0x200;
@@ -228,11 +378,25 @@ export interface ConditionContext {
    * value (no reference); undefined where the package has no such input.
    */
   readonly packageData?: (input: number) => number | 'none' | undefined;
+  /** The reference a running package's data input names (conditions with Use packdata). */
+  readonly packageTarget?: (input: number) => number | undefined;
+  /** Whether a reference is within the place a running package's data input names. */
+  readonly withinPackageLocation?: (
+    input: number,
+    reference: number,
+  ) => Promise<boolean | undefined> | boolean | undefined;
   /** What the subject acts on (the object it activates: GetActivationHeight, IsCarryable). */
   readonly target?: ObjectHandle;
   /** The active magic effect whose conditions these are (magic-conditions.ts). */
   readonly effectKey?: string;
+  /** The item a tempering recipe would improve (EPTemperingItemIsEnchanted, ...HasKeyword). */
+  readonly item?: TemperedItem;
+  /** The kill a kill camera shows (GetVATSValue, GetVATS...AreaFree, ...TargetVisible). */
+  readonly kill?: KillCameraContext;
 }
+
+/** What ScriptRuntime.conditionsHold is given besides the story manager event. */
+export type ConditionsContext = Omit<ConditionContext, 'event'>;
 
 /** GetEventData's event functions (its first parameter's low 16 bits). */
 const EventFunction = {
@@ -338,27 +502,83 @@ const FORM_TYPES: Readonly<Record<string, number>> = {
 const number = (value: Value): number =>
   typeof value === 'number' ? value : typeof value === 'boolean' ? Number(value) : 0;
 
-/** Whether one condition holds for a subject (unknown functions hold). */
+/**
+ * Whether one condition holds for a subject. A function no evaluator values holds (and is
+ * reported: tools/condition-audit.ts lists those the data uses); so does one that has no
+ * answer for this subject (a reference's function run on a quest).
+ */
 export async function evaluateCondition(
   runtime: ScriptRuntime,
   condition: Condition,
   subject: ObjectHandle,
   context: ConditionContext = {},
 ): Promise<boolean> {
-  const value =
-    condition.function === Fn.getEventData
-      ? await eventDataValue(runtime, condition, context.event)
-      : await conditionValue(runtime, condition, subject, context);
-  if (value === undefined) {
+  const value = await conditionFunctionValue(runtime, condition, subject, context);
+  if (value === NOT_VALUED) {
     runtime.vm.warn(`condition ${conditionFunctionName(condition.function)} is not valued yet`);
     return true;
   }
+  if (value === undefined) {
+    runtime.vm.warn(
+      `condition ${conditionFunctionName(condition.function)} has no value for a ${subject.type}`,
+    );
+    return true;
+  }
+  return compareConditionValue(runtime, condition, value);
+}
+
+/** A condition's comparison of a value with its comparand (a number or a global's value). */
+export async function compareConditionValue(
+  runtime: ScriptRuntime,
+  condition: Condition,
+  value: number,
+): Promise<boolean> {
   const comparand =
     typeof condition.comparand === 'number'
       ? condition.comparand
       : await globalValue(runtime, condition.comparand.global);
   return OPERATORS[condition.operator]?.(value, comparand) ?? false;
 }
+
+/**
+ * A condition function's value for a subject: a number, undefined where it has none for this
+ * subject, or NOT_VALUED for a function no evaluator values (the audit's question).
+ */
+export async function conditionFunctionValue(
+  runtime: ScriptRuntime,
+  condition: Condition,
+  subject: ObjectHandle,
+  context: ConditionContext = {},
+): Promise<number | undefined | typeof NOT_VALUED> {
+  return condition.function === Fn.getEventData
+    ? ((await eventDataValue(runtime, condition, context.event)) ?? NOT_VALUED)
+    : conditionValue(runtime, condition, subject, context);
+}
+
+/** An angle in degrees, 0..360 (the pathing functions' and GetRelativeAngle's range). */
+const fullCircle = (radians: number): number => {
+  const degrees = (radians * 180) / Math.PI;
+  return ((degrees % 360) + 360) % 360;
+};
+
+/** An angle in degrees, −180..180 (GetHeadingAngle's range). */
+const halfCircle = (radians: number): number => {
+  const degrees = fullCircle(radians);
+  return degrees > 180 ? degrees - 360 : degrees;
+};
+
+/** The axis a ptAxis parameter names ('X', 'Y', 'Z': its character code). */
+const axisOf = (raw: number): 0 | 1 | 2 => (raw === 0x59 ? 1 : raw === 0x5a ? 2 : 0);
+
+/** WTHR DATA classification flags (byte 11: 0x1 pleasant, 0x2 cloudy, 0x4 rainy, 0x8 snow). */
+const WEATHER_FLAGS = 11;
+const WeatherClass = { pleasant: 0x1, cloudy: 0x2, rainy: 0x4, snow: 0x8 } as const;
+
+/** WATR FNAM flag Causes Damage (xEdit). */
+const WATER_CAUSES_DAMAGE = 0x1;
+
+/** The gold item (Gold001). */
+const GOLD = 0xf;
 
 /** A global's value: as a script set it, else its record's (GLOB FLTV). */
 export async function globalValue(runtime: ScriptRuntime, formId: number): Promise<number> {
@@ -378,13 +598,23 @@ async function conditionValue(
   condition: Condition,
   subject: ObjectHandle,
   context: ConditionContext,
-): Promise<number | undefined> {
+): Promise<number | undefined | typeof NOT_VALUED> {
   const { state, actors } = runtime;
   const form = condition.form;
   const flag = (value: boolean): number => (value ? 1 : 0);
   // A location subject (a location alias, an event's location) or a reference.
   const location = subject.type === 'location' ? subject.formId : undefined;
   const reference = location === undefined ? runtime.reference(subject) : undefined;
+  /**
+   * The first parameter where it names a reference or an actor (xEdit ptReference, ptActor):
+   * an alias of the condition's quest (Use aliases), the reference a data input of the running
+   * package names (Use packdata), else the form.
+   */
+  const referenceParameter = (): number | undefined => {
+    if (condition.useAliases) return alias(condition.raw1);
+    if (condition.usePackData) return context.packageTarget?.(condition.raw1);
+    return form === 0 ? undefined : runtime.reference(new ObjectHandle(form, 'form'));
+  };
   const base = async (): Promise<number | undefined> =>
     reference === undefined
       ? undefined
@@ -469,8 +699,10 @@ async function conditionValue(
       return flag(runtime.playerKnows(form));
 
     // --- What a reference is --------------------------------------------------------------
-    case Fn.getIsReference:
-      return flag(reference === form);
+    case Fn.getIsReference: {
+      const other = referenceParameter();
+      return flag(reference !== undefined && reference === other);
+    }
     case Fn.getIsId:
       return flag(reference === form || (await base()) === form);
     case Fn.isInList: {
@@ -546,7 +778,7 @@ async function conditionValue(
     case Fn.getFactionRank:
       return reference === undefined ? undefined : actors.factionRank(reference, form);
     case Fn.getRelationshipRank: {
-      const other = runtime.reference(new ObjectHandle(form, 'form'));
+      const other = referenceParameter();
       return reference === undefined || other === undefined
         ? undefined
         : actors.relationshipRank(reference, other);
@@ -650,7 +882,7 @@ async function conditionValue(
 
     // --- Where it is ------------------------------------------------------------------------
     case Fn.getDistance: {
-      const other = runtime.reference(new ObjectHandle(form, 'form'));
+      const other = referenceParameter();
       const a = reference === undefined ? undefined : await runtime.placement(reference);
       const b = other === undefined ? undefined : await runtime.placement(other);
       if (!a || !b) return undefined;
@@ -700,7 +932,7 @@ async function conditionValue(
     case Fn.hasSameEditorLocAsRefAlias: {
       const other =
         condition.function === Fn.hasSameEditorLocAsRef
-          ? runtime.reference(new ObjectHandle(form, 'form'))
+          ? referenceParameter()
           : alias(condition.raw1);
       const mine = reference === undefined ? undefined : await runtime.editorLocation(reference);
       const theirs = other === undefined ? undefined : await runtime.editorLocation(other);
@@ -710,7 +942,7 @@ async function conditionValue(
     case Fn.isInSameCurrentLocAsRefAlias: {
       const other =
         condition.function === Fn.isInSameCurrentLocAsRef
-          ? runtime.reference(new ObjectHandle(form, 'form'))
+          ? referenceParameter()
           : alias(condition.raw1);
       const mine = await currentLocation();
       const theirs = other === undefined ? undefined : await runtime.locationOf(other);
@@ -824,14 +1056,18 @@ async function conditionValue(
         : flag(state.actors.get(reference)?.bribed ?? false);
     case Fn.isKiller:
       // The calling actor killed the one given.
-      return flag(reference !== undefined && state.actors.get(form)?.killer === reference);
+      return flag(
+        reference !== undefined &&
+          state.actors.get(referenceParameter() ?? -1)?.killer === reference,
+      );
     case Fn.getDeadCount:
       return state.deadCounts.get(form) ?? 0;
     case Fn.getInSameCell: {
       if (reference === undefined) return undefined;
+      const other = referenceParameter();
       const [mine, theirs] = await Promise.all([
         runtime.placement(reference),
-        runtime.placement(form),
+        other === undefined ? undefined : runtime.placement(other),
       ]);
       if (!mine || !theirs) return 0;
       if (mine.world !== undefined || theirs.world !== undefined) {
@@ -962,7 +1198,7 @@ async function conditionValue(
     // script's SetAlert, or by what it heard).
     case Fn.getDetected:
     case Fn.getLineOfSight: {
-      const target = form === 0 ? undefined : form;
+      const target = referenceParameter();
       if (reference === undefined || target === undefined) return 0;
       return flag(
         condition.function === Fn.getDetected
@@ -1087,8 +1323,9 @@ async function conditionValue(
     case Fn.isCombatTarget: {
       // Whether the subject is the combat target of the actor its parameter names.
       // TODO(M13): which of the two is whose target is not documented.
-      if (reference === undefined || form === 0) return 0;
-      const other = runtime.world.combat?.(form);
+      const actor = referenceParameter();
+      if (reference === undefined || actor === undefined) return 0;
+      const other = runtime.world.combat?.(actor);
       return flag(other?.inCombat === true && other.combatTarget === reference);
     }
     case Fn.getCombatTargetHasKeyword: {
@@ -1103,7 +1340,7 @@ async function conditionValue(
     case Fn.getShouldAttack:
     case Fn.isHostileToActor: {
       if (reference === undefined) return undefined;
-      const other = form === 0 ? PLAYER_REF : form;
+      const other = referenceParameter() ?? PLAYER_REF;
       if (condition.function === Fn.getShouldAttack) {
         return flag(await shouldAttack(runtime, reference, other));
       }
@@ -1146,7 +1383,7 @@ async function conditionValue(
     }
     case Fn.isCurrentFurnitureRef: {
       const using = reference === undefined ? undefined : runtime.world.interaction?.(reference);
-      return flag(using?.furniture === form);
+      return flag(using !== undefined && using.furniture === referenceParameter());
     }
     case Fn.isCurrentFurnitureObj: {
       const using = reference === undefined ? undefined : runtime.world.interaction?.(reference);
@@ -1184,12 +1421,383 @@ async function conditionValue(
       const value = context.packageData?.(form);
       return value === undefined ? undefined : flag(value === 'none');
     }
-    default:
+    default: {
       // Magic: the effects on an actor, and an effect's own (magic-conditions.ts); crime and
-      // factions (crime-conditions.ts).
-      return (
-        (await magicConditionValue(runtime, condition, reference, context.effectKey)) ??
-        crimeConditionValue(runtime, condition, reference, context.quest)
+      // factions (crime-conditions.ts); then the rest (below).
+      const magic = await magicConditionValue(runtime, condition, reference, context.effectKey);
+      if (magic !== NOT_VALUED) return magic;
+      const crime = await crimeConditionValue(runtime, condition, reference, context.quest);
+      if (crime !== NOT_VALUED) return crime;
+      return moreConditionValue(runtime, condition, subject, context, referenceParameter);
+    }
+  }
+}
+
+/**
+ * The functions of where a reference is and how it moves against others, the weather, what
+ * an actor has, its AI and the player's persuasion, the tempering item and the kill cameras'
+ * kill (conditionValue asks here for the functions it does not value itself).
+ */
+async function moreConditionValue(
+  runtime: ScriptRuntime,
+  condition: Condition,
+  subject: ObjectHandle,
+  context: ConditionContext,
+  referenceParameter: () => number | undefined,
+): Promise<number | undefined | typeof NOT_VALUED> {
+  const { state, actors, world } = runtime;
+  const form = condition.form;
+  const flag = (value: boolean): number => (value ? 1 : 0);
+  const reference = subject.type === 'location' ? undefined : runtime.reference(subject);
+  /** Where a reference is and which way it faces (radians, compass), if it is placed. */
+  const placed = async (
+    of: number | undefined,
+  ): Promise<{ readonly position: Vec3; readonly heading: number } | undefined> => {
+    const at = of === undefined ? undefined : await runtime.placement(of);
+    if (!at || of === undefined) return undefined;
+    return { position: at.position, heading: world.motion?.(of)?.heading ?? at.rotation[2] };
+  };
+  /** The compass heading from one place to another. */
+  const headingTo = (from: Vec3, to: Vec3): number => Math.atan2(to[0] - from[0], to[1] - from[1]);
+  /** The current weather's classification flags (WTHR DATA). */
+  const weatherFlags = async (): Promise<number> => {
+    const weather = world.currentWeather?.();
+    const data =
+      weather === undefined
+        ? undefined
+        : (await runtime.forms.record(weather))?.fields.first('DATA');
+    return data?.[WEATHER_FLAGS] ?? 0;
+  };
+  const motion = reference === undefined ? undefined : world.motion?.(reference);
+
+  switch (condition.function) {
+    // --- Where it is, against another reference ---------------------------------------------
+    // GetPos: its position on an axis ('X', 'Y', 'Z').
+    case Fn.getPos: {
+      const at = await placed(reference);
+      return at === undefined ? undefined : at.position[axisOf(condition.raw1)];
+    }
+    // The angle from its heading to the other reference, −180..180 (clockwise positive).
+    case Fn.getHeadingAngle: {
+      const [self, other] = await Promise.all([placed(reference), placed(referenceParameter())]);
+      if (!self || !other) return 0;
+      return halfCircle(headingTo(self.position, other.position) - self.heading);
+    }
+    // GetRelativeAngle(reference, axis): where the other is from it, 0..360 clockwise from its
+    // facing (Z), or its elevation (X: pitch, Y: none in Skyrim's references). TODO(M13): the X
+    // and Y readings are inferred (the data asks Z only).
+    case Fn.getRelativeAngle: {
+      const [self, other] = await Promise.all([placed(reference), placed(referenceParameter())]);
+      if (!self || !other) return 0;
+      const axis = axisOf(condition.raw1);
+      if (axis === 2) return fullCircle(headingTo(self.position, other.position) - self.heading);
+      if (axis === 1) return 0;
+      const dz = other.position[2] - self.position[2];
+      const flat = Math.hypot(
+        other.position[0] - self.position[0],
+        other.position[1] - self.position[1],
       );
+      return fullCircle(Math.atan2(dz, flat));
+    }
+    // GetWithinDistance(reference, distance).
+    case Fn.getWithinDistance: {
+      const [self, other] = await Promise.all([placed(reference), placed(referenceParameter())]);
+      if (!self || !other) return 0;
+      const distance = Math.hypot(
+        self.position[0] - other.position[0],
+        self.position[1] - other.position[1],
+        self.position[2] - other.position[2],
+      );
+      return flag(distance <= floatParam2(condition));
+    }
+    // Within the place a data input of its running package names (xEdit ptPackdata).
+    case Fn.getWithinPackageLocation: {
+      if (reference === undefined) return undefined;
+      const within = await context.withinPackageLocation?.(condition.raw1, reference);
+      return within === undefined ? 0 : flag(within);
+    }
+    // Its velocity on an axis (game units per second; z up).
+    case Fn.getVelocity:
+      return motion?.velocity?.[axisOf(condition.raw1)] ?? 0;
+    // How its AI's travel steers it (src/shell/actor-movers.ts): the way to its path's next
+    // point and the velocity it is asked to move with (the target), the velocity it moves with
+    // (current); angles 0..360 clockwise from its facing (the idles' turns: 135..225 behind).
+    // GetPathingTargetOffset: the way to that point on an axis, against its facing (Y ahead).
+    case Fn.getPathingTargetOffset:
+    case Fn.getPathingTargetAngleOffset:
+    case Fn.getPathingTargetSpeed:
+    case Fn.getPathingTargetSpeedAngle:
+    case Fn.getPathingCurrentSpeed:
+    case Fn.getPathingCurrentSpeedAngle: {
+      if (!motion) return 0;
+      const heading = motion.heading ?? 0;
+      const [vx, vy] = motion.velocity ?? [0, 0, 0];
+      const [wx, wy] = motion.wish ?? [0, 0];
+      const aim = motion.aim;
+      switch (condition.function) {
+        case Fn.getPathingTargetOffset: {
+          if (!aim) return 0;
+          const axis = axisOf(condition.raw1);
+          if (axis === 2) return 0;
+          const sin = Math.sin(heading);
+          const cos = Math.cos(heading);
+          // Right of its facing (X) and ahead (Y).
+          return axis === 0 ? aim[0] * cos - aim[1] * sin : aim[0] * sin + aim[1] * cos;
+        }
+        case Fn.getPathingTargetAngleOffset:
+          return aim ? fullCircle(Math.atan2(aim[0], aim[1]) - heading) : 0;
+        case Fn.getPathingTargetSpeed:
+          return Math.hypot(wx, wy);
+        case Fn.getPathingTargetSpeedAngle:
+          return wx === 0 && wy === 0 ? 0 : fullCircle(Math.atan2(wx, wy) - heading);
+        case Fn.getPathingCurrentSpeed:
+          return Math.hypot(vx, vy);
+        default:
+          return vx === 0 && vy === 0 ? 0 : fullCircle(Math.atan2(vx, vy) - heading);
+      }
+    }
+    // The player passes into another cell or worldspace (a load door, fast travel) now.
+    case Fn.isPlayerMovingIntoNewSpace:
+      return flag(world.changingSpace?.() === true);
+    // The player is in a region (the regions of the cell they are in).
+    case Fn.isPlayerInRegion:
+      return flag((world.playerRegions?.() ?? []).includes(form));
+    // In water that causes damage (WATR flag: Apocrypha's).
+    case Fn.isInDangerousWater: {
+      const water = motion?.water;
+      const record = water === undefined ? undefined : await runtime.forms.record(water);
+      return flag(((record?.fields.first('FNAM')?.[0] ?? 0) & WATER_CAUSES_DAMAGE) !== 0);
+    }
+    // IsLinkedTo(reference, keyword): its linked reference of the keyword is that one.
+    case Fn.isLinkedTo: {
+      const other = referenceParameter();
+      if (reference === undefined || other === undefined) return 0;
+      return flag((await runtime.linkedReference(reference, condition.form2)) === other);
+    }
+    // In a container's inventory (an item taken or made there: the quest items of favors).
+    case Fn.getInContainer: {
+      const holder = referenceParameter();
+      return flag(
+        reference !== undefined &&
+          holder !== undefined &&
+          state.references.get(reference)?.container?.holder === holder,
+      );
+    }
+
+    // --- The weather ------------------------------------------------------------------------
+    case Fn.isRaining:
+      return flag(((await weatherFlags()) & WeatherClass.rainy) !== 0);
+    case Fn.isSnowing:
+      return flag(((await weatherFlags()) & WeatherClass.snow) !== 0);
+    case Fn.isPleasant:
+      return flag(((await weatherFlags()) & WeatherClass.pleasant) !== 0);
+    case Fn.isCloudy:
+      return flag(((await weatherFlags()) & WeatherClass.cloudy) !== 0);
+    case Fn.getIsCurrentWeather:
+      return flag(world.currentWeather?.() === form);
+
+    // --- What it is and has -------------------------------------------------------------------
+    case Fn.getGold:
+      return reference === undefined
+        ? undefined
+        : ((await runtime.inventory(reference)).get(GOLD) ?? 0);
+    // How many of its items have a keyword.
+    case Fn.getKeywordItemCount: {
+      if (reference === undefined) return undefined;
+      let count = 0;
+      for (const [item, have] of await runtime.inventory(reference)) {
+        if (have > 0 && (await runtime.hasKeyword(item, form))) count += have;
+      }
+      return count;
+    }
+    // It has a disease (a spell of type Disease on it).
+    case Fn.getDisease: {
+      if (reference === undefined) return undefined;
+      for (const spell of await actors.spells(reference)) {
+        if ((await runtime.magic.item(spell))?.kind === 'disease') return 1;
+      }
+      return 0;
+    }
+    // Its lock: its level (0 novice .. 100 master, 255 key only) and whether it is open to
+    // anyone (a door that is not locked).
+    case Fn.getLockLevel:
+      return reference === undefined ? undefined : (await runtime.lock(reference)).level;
+    case Fn.isUnlockedDoor: {
+      if (reference === undefined) return undefined;
+      const base = await runtime.baseOf(reference);
+      const at = base === undefined ? undefined : runtime.forms.db.locate(base);
+      const door = at !== undefined && runtime.forms.db.typeAt(at) === 'DOOR';
+      return flag(door && !(await runtime.lock(reference)).locked);
+    }
+    case Fn.isProtected:
+      return reference === undefined ? undefined : flag(await actors.isProtected(reference));
+    case Fn.getRestrained:
+      return flag(reference !== undefined && state.actors.get(reference)?.restrained === true);
+    // Eaten by a cannibal (the player's Cannibalism; the corpse's state).
+    case Fn.hasBeenEaten:
+      return flag(reference !== undefined && state.actors.get(reference)?.eaten === true);
+    // Its value without temporary changes (base and permanent modifiers, no damage).
+    case Fn.getPermanentActorValue: {
+      if (reference === undefined) return undefined;
+      const { base } = await actors.value(reference, condition.raw1);
+      return base + (state.actors.get(reference)?.values.get(condition.raw1)?.modifier ?? 0);
+    }
+    // Carrying more than it can (CarryWeight against its items' weight).
+    case Fn.isOverEncumbered:
+      return reference === undefined
+        ? undefined
+        : flag(await runtime.equipment.overEncumbered(reference));
+    case Fn.getHighestRelationshipRank:
+    case Fn.getLowestRelationshipRank:
+      return reference === undefined
+        ? undefined
+        : actors.extremeRelationshipRank(
+            reference,
+            condition.function === Fn.getHighestRelationshipRank,
+          );
+    // GetRefTypeAliveCount(location, type): its references of the type, living or dead.
+    case Fn.getRefTypeAliveCount:
+    case Fn.getRefTypeDeadCount: {
+      let count = 0;
+      const dead = condition.function === Fn.getRefTypeDeadCount;
+      for (const entry of (await runtime.location(form))?.references ?? []) {
+        if (entry.type === condition.form2 && (await actors.isDead(entry.reference)) === dead)
+          count++;
+      }
+      return count;
+    }
+    // A legacy quest script's variable (Oblivion's; Skyrim's quests have none: their scripts
+    // are Papyrus, read by GetVMQuestVariable): no plugin of the load order has a compiled
+    // legacy script (SCDA), so there is nothing to read.
+    case Fn.getQuestVariable:
+      return 0;
+    // Run on what is there (an event's member that is missing is valued by conditionsHold).
+    case Fn.doesNotExist:
+      return 0;
+
+    // --- Its AI, the player's actions, favors, persuasion -----------------------------------
+    case Fn.getCurrentAIProcedure: {
+      const procedure = reference === undefined ? undefined : world.currentProcedure?.(reference);
+      return procedure === undefined ? -1 : (PROCEDURE_TYPES[procedure.toLowerCase()] ?? -1);
+    }
+    // The actors of its group (its combat group: "We are routed!"). TODO(M13): whether the
+    // engine counts another group outside combat.
+    case Fn.getGroupMemberCount:
+      return reference === undefined ? undefined : (world.combat?.(reference)?.groupSize ?? 0);
+    // What the player does now (xEdit wbPlayerActionEnum: 0 normal usage, 1 power attack, 2
+    // bash, 3 lockpick success, 4 lockpick broken): their attack, or a lock's outcome a moment
+    // ago (the lockpicking menu).
+    case Fn.getPlayerAction:
+      return runtime.playerAction();
+    // The victim of a crime of the player's that is still open (the crime ledger).
+    case Fn.isActorAVictim:
+      return flag(
+        reference !== undefined &&
+          [...runtime.crime.ledger.open()].some((crime) => crime.victim === reference),
+      );
+    // A follower doing a favor (its favor state: Actor.SetDoingFavor).
+    case Fn.isInFavorState:
+      return flag(reference !== undefined && state.actors.get(reference)?.doingFavor === true);
+    // A friend of the player: its relationship with them is Friend or better, or a teammate.
+    // TODO(M13): the engine's own rule (six vanilla lines compare it with 50 and 75).
+    case Fn.isInFriendStateWithPlayer: {
+      if (reference === undefined) return undefined;
+      if (state.actors.get(reference)?.playerTeammate === true) return 1;
+      return flag((await actors.relationshipRank(reference, PLAYER_REF)) >= 1);
+    }
+    // The player would intimidate it (UESP "Skyrim:Speech"): the player's level times
+    // (1 + max(−1, (their Speech − its Speech) / 100)) ^ fIntimidateSpeechcraftCurve against its
+    // level times fIntimidateConfidenceMult of its Confidence. TODO(M11): the perk entry point
+    // Mod Player Intimidation (the perk system's).
+    case Fn.getIntimidateSuccess:
+      return reference === undefined ? undefined : flag(await runtime.crime.intimidates(reference));
+    // The player's arrest (on the player): 0 none, 1 a guard arrests them, 2 in jail.
+    // TODO(M13): the engine's values are not documented.
+    case Fn.getArrestedState:
+      return state.crime.jail !== undefined ? 2 : state.crime.arrestingGuard !== undefined ? 1 : 0;
+    // The type of the item a hand's equipping replaces (Actor.GetEquippedItemType's codes; −1
+    // none): what it held before its last equip, while the equip animation plays.
+    case Fn.getReplacedItemType:
+      return reference === undefined
+        ? undefined
+        : runtime.equipment.replacedItemType(reference, condition.raw1 === 0 ? 'left' : 'right');
+    // A menu is open (its parameter: the menu type, 0 any). TODO(M13): the menu types.
+    case Fn.menuMode:
+      return flag(runtime.inMenuMode);
+    // Dragon riding's flying mounts: TODO(M11) (Dragonborn's dragon riding, with
+    // IsOnFlyingMount): no actor rides one.
+    case Fn.isFlyingMountPatrolQueued:
+    case Fn.isFlyingMountFastTravelling:
+      return 0;
+
+    // --- The tempering item, the kill cameras' kill --------------------------------------------
+    case Fn.epTemperingItemIsEnchanted:
+      return context.item === undefined ? 0 : flag(context.item.enchanted);
+    case Fn.epTemperingItemHasKeyword:
+      return context.item === undefined
+        ? 0
+        : flag(await runtime.hasKeyword(context.item.base, form));
+    case Fn.getVatsRightAreaFree:
+    case Fn.getVatsLeftAreaFree:
+    case Fn.getVatsBackAreaFree:
+    case Fn.getVatsFrontAreaFree:
+    case Fn.getVatsRightTargetVisible:
+    case Fn.getVatsLeftTargetVisible:
+    case Fn.getVatsBackTargetVisible:
+    case Fn.getVatsFrontTargetVisible: {
+      const kill = context.kill;
+      const side = SIDES.get(condition.function) ?? 0;
+      if (!kill || reference === undefined) return 0;
+      return condition.function >= Fn.getVatsRightTargetVisible
+        ? kill.targetVisible(reference, side)
+        : kill.areaFree(reference, side);
+    }
+    case Fn.getVatsValue:
+      return context.kill ? killValue(runtime, context.kill, condition) : 0;
+    default:
+      return NOT_VALUED;
+  }
+}
+
+/** GetVATSValue(function, parameter) of a kill camera's kill. */
+async function killValue(
+  runtime: ScriptRuntime,
+  kill: KillCameraContext,
+  condition: Condition,
+): Promise<number> {
+  const flag = (value: boolean): number => (value ? 1 : 0);
+  const parameter = condition.param2;
+  const inList = async (form: number | undefined): Promise<boolean> =>
+    form !== undefined && (await runtime.formList(condition.form2)).includes(form);
+  switch (condition.raw1) {
+    case 0:
+      return flag(kill.weapon !== undefined && kill.weapon === condition.form2);
+    case 1:
+      return flag(await inList(kill.weapon));
+    case 2:
+      return flag(kill.target !== undefined && kill.target === condition.form2);
+    case 3:
+      return flag(await inList(kill.target));
+    case 4:
+      return kill.distance;
+    case 6:
+      return flag(kill.action === parameter);
+    case 7:
+      return 1;
+    case 8:
+      return flag(kill.critical);
+    case 11:
+      return flag(kill.fatal);
+    case 15:
+      return flag(kill.weaponType === parameter);
+    case 18:
+      return flag(kill.projectileType === parameter);
+    case 19:
+      return flag(kill.delivery === parameter);
+    case 20:
+      return flag(kill.castingType === parameter);
+    // Body parts and critical effects (5, 9, 10, 12–14) are Fallout's: no kill has them.
+    default:
+      return 0;
   }
 }

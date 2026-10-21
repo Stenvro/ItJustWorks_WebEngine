@@ -159,9 +159,15 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       flying targets' reach to 5.4; what alarmed actors do, guards' warnings and witnesses
       (`warn`, `witness`, `offence`), the Stealth perks, Muffle, torches and spells' glow to
       M11.
-- [ ] **4.2 Every AI condition and native valued:** the full list from the recon (IsInCombat,
+- [x] **4.2 Every AI condition and native valued:** the full list from the recon (IsInCombat,
       GetDetected, GetSitting, GetCurrentAIPackage, IsWeaponOut, ...); an unknown function is an
-      error in the audit, not a pass.
+      error in the audit, not a pass. docs/scripting.md, "Conditions"; `tools/condition-audit.ts`
+      (`tests/condition-audit.int.test.ts`: every function of every record's conditions valued,
+      the CTDA's alias, packdata and swap flags), `tools/papyrus-natives.ts --placeholders`
+      (natives/placeholders.ts). Moved on: the perk entry points' own condition functions
+      (EPMagic__, EPAlchemy_, IsAttackType, IsPoison) to M11 with the perk system; the ranged
+      and magic kill cameras (CPTH MagicOrBowCams: valued, not played yet) to M13, the natives in
+      placeholders.ts to their milestones.
 - [x] **4.3 Talking:** greetings as the player passes, idle chatter, actors talking to each
       other (DialogueActivate between actors, Sandbox's conversations), barks by subtype (a
       package's topic subtype), LockDoors' warning, Say's own line length and forced

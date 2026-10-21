@@ -339,10 +339,15 @@ export class ActorCasting {
     const system = this.#options.session.soundSystem;
     if (!system) return Promise.resolve(undefined);
     let last: Vec3 = this.origin(actor, source) ?? [0, 0, 0];
-    return system.play(sound, () => {
-      last = this.origin(actor, source) ?? last;
-      return last;
-    });
+    return system.play(
+      sound,
+      () => {
+        last = this.origin(actor, source) ?? last;
+        return last;
+      },
+      0,
+      actor,
+    );
   }
 
   /** The casting art (ARTO) in the hand while the cast lasts. */

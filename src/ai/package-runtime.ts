@@ -72,6 +72,8 @@ export interface PackageContext {
 /** A running package's data, for its conditions (GetNumericPackageData, run on package data). */
 export interface PackageData {
   readonly inputs: ReadonlyMap<number, PackageInput>;
+  /** Where it began and its quest (its location inputs: GetWithinPackageLocation). */
+  readonly context?: PackageContext;
 }
 
 /** What packages ask of the game: its time, records and scripts, and where things are. */
@@ -470,15 +472,19 @@ export class ActorPackages {
       const template = pack.template === undefined ? pack : await mind.package(pack.template);
       const tree = template?.tree ?? pack.tree;
       if (!tree) continue;
-      const data: PackageData = { inputs: mergedInputs(pack, template) };
+      // Where it began: as it is chosen (it starts at once).
+      const context = {
+        start: this.#body.position(),
+        quest: pack.ownerQuest ?? template?.ownerQuest,
+      };
+      const data: PackageData = { inputs: mergedInputs(pack, template), context };
       if (!(await mind.conditionsHold(pack.conditions, this.actor, data))) continue;
       return {
         id,
         pack,
         tree,
         data,
-        // Where it began: as it is chosen (it starts at once).
-        context: { start: this.#body.position(), quest: pack.ownerQuest ?? template?.ownerQuest },
+        context,
         found: new Map(),
         stopped: false,
         cut: false,

@@ -19,6 +19,8 @@ export interface SoundingActor {
   /** How it moves now (which of its footsteps answer). */
   gait(): FootstepGait;
   readonly player: boolean;
+  /** Its reference (its sounds' conditions run on it: a draugr's taunts). */
+  readonly reference?: number;
   /** Its own collision (the player's character controller), left out of the ground ray. */
   readonly collider?: RAPIER.Collider;
 }
@@ -32,7 +34,7 @@ export interface ActorSoundOutput {
     position: Vec3,
     ground: FootstepGround,
   ): Promise<boolean>;
-  playNamed(editorId: string, place: () => Vec3): Promise<unknown>;
+  playNamed(editorId: string, place: () => Vec3, source?: number): Promise<unknown>;
 }
 
 /** What actors' sounds need of the world. */
@@ -61,12 +63,16 @@ export function actorSounds(
     for (const event of events) {
       const lower = event.toLowerCase();
       if (lower.startsWith(SOUND_PLAY)) {
-        void sounds.playNamed(event.slice(SOUND_PLAY.length), () => actor.feet());
+        void sounds.playNamed(event.slice(SOUND_PLAY.length), () => actor.feet(), actor.reference);
         continue;
       }
       if (lower.startsWith(NPC_SOUND_PLAY)) {
         if (!actor.player)
-          void sounds.playNamed(event.slice(NPC_SOUND_PLAY.length), () => actor.feet());
+          void sounds.playNamed(
+            event.slice(NPC_SOUND_PLAY.length),
+            () => actor.feet(),
+            actor.reference,
+          );
         continue;
       }
       const set = actor.look.footstepSet;
@@ -108,7 +114,13 @@ export function groundUnder(
 export function soundPlacedActors(actors: readonly PlacedActorLike[], world: SoundingWorld): void {
   for (const placed of actors) {
     placed.onEvents = actorSounds(
-      { look: placed.look, feet: () => feetOf(placed), gait: () => 'walk', player: false },
+      {
+        look: placed.look,
+        feet: () => feetOf(placed),
+        gait: () => 'walk',
+        player: false,
+        reference: placed.actor.reference,
+      },
       world,
     );
   }
@@ -117,7 +129,7 @@ export function soundPlacedActors(actors: readonly PlacedActorLike[], world: Sou
 /** What soundPlacedActors needs of a placed actor (PlacedActor). */
 interface PlacedActorLike {
   readonly look: ActorLook;
-  readonly actor: { readonly position: Vec3 };
+  readonly actor: { readonly position: Vec3; readonly reference: number };
   /** Its placement (its feet are where it was set on the ground). */
   readonly instances: readonly { readonly world: Float32Array }[];
   onEvents?: (events: readonly string[]) => void;
