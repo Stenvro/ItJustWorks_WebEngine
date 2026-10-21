@@ -128,7 +128,11 @@ export class QuestEngine {
     const repeated = (record.flags & QuestFlag.allowRepeatedStages) !== 0;
     if (state.stagesDone.has(stage) && !repeated) return false;
     state.stagesDone.add(stage);
-    state.stage = stage;
+    // The current stage (GetStage) is the highest set: a lower stage set later is done but does
+    // not take its place. From the data: MQ101Scene1 sets stage 15 ("get everyone moving") and
+    // then 14, and the cart horses' packages hold from GetStage >= 15 to 20, so the carts would
+    // stop halfway if 14 became the current stage. TODO(M13): confirm against the engine.
+    state.stage = Math.max(state.stage, stage);
     // The first log entry whose conditions hold is the one that happens: its flags, its next
     // quest and its fragment (each log entry has its own; the others' do not run).
     const entries = record.stages.find((s) => s.index === stage)?.logEntries ?? [];

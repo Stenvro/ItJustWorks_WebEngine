@@ -18,6 +18,7 @@ import {
 import { avoid, type Neighbour } from '../ai/avoidance.ts';
 import { PathFollower, type DoorPassage } from '../ai/path-follower.ts';
 import { findPath, type NavmeshSet, type NavPath } from '../ai/pathfinding.ts';
+import type { TravelOptions } from '../ai/package-runtime.ts';
 import { RaceSize } from '../ai/race-combat-records.ts';
 import type { MovementTypes } from '../ai/locomotion.ts';
 import { MovementCatalog, type RaceMovement } from '../ai/movement-types.ts';
@@ -112,6 +113,8 @@ interface Travel {
   readonly destination: Vec3;
   readonly gait: Gait;
   readonly arrive: number;
+  /** Straight there (static pathing), not along a navmesh path. */
+  readonly direct: boolean;
   follower: PathFollower | undefined;
   /** Searches made (a stuck actor searches again, a few times). */
   searches: number;
@@ -245,13 +248,20 @@ export class ActorMovers {
    * the navmeshes; stuck however often it searched again) or is sent elsewhere or stopped.
    * Its path is searched once it has a controller.
    */
-  travel(reference: number, destination: Vec3, gait: Gait, arrive = 32): Promise<boolean> {
+  travel(
+    reference: number,
+    destination: Vec3,
+    gait: Gait,
+    arrive = 32,
+    options: TravelOptions = {},
+  ): Promise<boolean> {
     this.#travels.get(reference)?.done(false);
     return new Promise((resolve) => {
       const travel: Travel = {
         destination,
         gait,
         arrive,
+        direct: options.direct === true,
         follower: undefined,
         searches: 0,
         closed: new Set(),
@@ -284,6 +294,14 @@ export class ActorMovers {
   /** One frame of an actor's travel: its path searched (again), followed, ended. */
   #travelFrame(mover: Mover, travel: Travel, seconds: number): void {
     const reference = mover.staged.reference;
+    if (!travel.follower && travel.direct) {
+      const path: NavPath = {
+        points: [[...mover.staged.position], travel.destination],
+        doors: [],
+        complete: true,
+      };
+      travel.follower = new PathFollower(path, { gait: travel.gait, arrive: travel.arrive });
+    }
     if (!travel.follower) {
       const set = this.#options.navmeshes?.();
       if (!set) return;
