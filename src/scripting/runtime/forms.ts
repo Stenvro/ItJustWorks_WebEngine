@@ -6,6 +6,7 @@
 import { RecordFlag } from '../../formats/esm/record.ts';
 import { parseVmad, type PropertyValue, type ScriptAttachments } from '../../formats/esm/vmad.ts';
 import { actorValueEditorId } from '../../world/actor-values.ts';
+import { CreatedRecord, isCreatedFormId, type CreatedForm } from '../../world/created-forms.ts';
 import { parseQuest, type QuestAlias, type QuestRecord } from '../../world/quest-records.ts';
 import type { GameRecord, RecordDatabase } from '../../world/record-db.ts';
 import type { AttachedScriptInfo } from '../papyrus-vm.ts';
@@ -100,6 +101,12 @@ export class FormIndex {
   readonly #quests = new Map<number, Promise<QuestRecord | undefined>>();
   #unique: Promise<Map<number, number>> | undefined;
   #actorValueForms: Promise<Map<string, number>> | undefined;
+  /**
+   * The forms the running game made (GameState.createdForms: src/world/created-forms.ts), read
+   * as records before the plugins'.
+   */
+  created: ((formId: number) => CreatedForm | undefined) | undefined;
+  readonly #createdRecords = new Map<number, { form: CreatedForm; record: GameRecord }>();
 
   constructor(db: RecordDatabase) {
     this.db = db;
@@ -125,6 +132,10 @@ export class FormIndex {
   }
 
   record(formId: number): Promise<GameRecord | undefined> {
+    if (isCreatedFormId(formId)) {
+      const made = this.createdRecord(formId);
+      if (made) return Promise.resolve(made);
+    }
     let pending = this.#records.get(formId);
     if (!pending) {
       pending =
@@ -133,6 +144,17 @@ export class FormIndex {
       this.#remember(formId, pending);
     }
     return pending;
+  }
+
+  /** A form the game made, as a record (built once per form). */
+  createdRecord(formId: number): GameRecord | undefined {
+    const form = this.created?.(formId);
+    if (!form) return undefined;
+    const kept = this.#createdRecords.get(formId);
+    if (kept?.form === form) return kept.record;
+    const record = new CreatedRecord(this.db, formId, form);
+    this.#createdRecords.set(formId, { form, record });
+    return record;
   }
 
   /** A record read another way (a scan), kept as if read here. */

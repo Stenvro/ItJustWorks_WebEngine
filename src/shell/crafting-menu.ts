@@ -14,11 +14,15 @@
 //   recipes whose conditions hold for the player, in material categories; choosing one with
 //   its components makes it.
 // - Smithing (grindstone: weapons, armor workbench: armor): the player's items with a tempering
-//   recipe at the bench, with their quality; choosing one improves it as far as the skill goes.
-// - Enchanting: disenchanting an enchanted item learns its enchantment; items, enchantments
-//   and soul gems are chosen (TODO(M11): making the enchanted item, its charge slider).
-// - Alchemy: up to three ingredients are chosen; crafting learns the effects they share
-//   (TODO(M11): the potion or poison made).
+//   recipe at the bench (each improved instance its own entry), with their quality; choosing one
+//   improves it as far as the skill goes.
+// - Enchanting: disenchanting an enchanted item learns its enchantment; an item, enchantments
+//   and a soul gem are chosen (a weapon enchantment's magnitude on the card's slider: its
+//   charges), F names the item, R makes it.
+// - Alchemy: up to three ingredients are chosen; R brews them: the effects they share are
+//   learned and the potion or poison made.
+// What crafting does to the game is the crafting engine's (src/scripting/runtime/
+// crafting-engine.ts); this is the menu.
 //
 // Sources: the movie's ActionScript, CommonLibSSE-NG (CraftingSubMenus), SkyUI 5, UESP.
 // Notes: docs/ui.md ("Crafting").
@@ -33,33 +37,26 @@ import {
   constructibleEntry,
   constructibleSkillUse,
   craftingMenuOf,
-  craftingSettings,
-  disenchantSkillUse,
   enchantingCategories,
   enchantingFilterFlag,
   enchantmentsAllowed,
+  hasComponents,
   ingredientFilterFlag,
   ingredientLines,
   materialFilterIndices,
-  sharedEffects,
   temperedArmorRating,
   temperedWeaponDamage,
-  temperHealth,
   temperingCandidates,
-  temperingEffectiveSkill,
-  temperingQualityLevel,
-  temperingSkillUse,
   temperLevelOfHealth,
-  temperQualityName,
   type CraftingMenuType,
   type EnchantingEntryKind,
   type MenuCategory,
 } from '../gameplay/crafting.ts';
 import { CardType, SOUL_LEVEL_SETTINGS } from '../gameplay/inventory.ts';
+import type { ChosenEnchantment } from '../scripting/runtime/crafting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
-import { actorValueIndex } from '../world/actor-values.ts';
 import {
   craftedItemInfo,
   parseWorkbench,
@@ -70,9 +67,10 @@ import {
 import type { GameSettings } from '../world/game-settings.ts';
 import { parseEffects, parseItem, type ItemRecord } from '../world/item-records.ts';
 import { parseMagicEffect } from '../world/magic-effects.ts';
+import { CastType } from '../world/spell-records.ts';
 import type { StoryEventData } from '../scripting/runtime/story-manager.ts';
 import type { GameSession } from './game-session.ts';
-import { effectsText, itemCard } from './inventory-menu.ts';
+import { effectsText, itemCard, temperedName } from './inventory-menu.ts';
 import { Item3D } from './item-3d.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -80,8 +78,6 @@ import type { Terminal } from './terminal.ts';
 const CRAFTING_DEPTH = 6;
 const MENU = '_root.Menu';
 const LIST = `${MENU}.ItemList`;
-/** The Smithing skill (actor value). */
-const SMITHING = actorValueIndex('Smithing') ?? 10;
 /** Biped slot 32 (body): chest armor improves twice as much (UESP Smithing). */
 const BODY_SLOT = 0x4;
 
@@ -111,7 +107,7 @@ interface CraftingModel {
   /** The line under the card (UpdateIngredients), if any. */
   ingredients?(entry: Entry): IngredientsLine | undefined;
   /** ChooseItem; resolves once the menu should show the change. */
-  choose(entry: Entry): Promise<void>;
+  choose(entry: Entry, menu: Menu): Promise<void>;
   /** Whether R crafts now (bCanCraft). */
   canCraft(): boolean;
   craft?(): Promise<void>;
@@ -123,6 +119,10 @@ interface CraftingModel {
   quitQuestion?(): string | undefined;
   /** The categories changed (alchemy: effects learned). */
   categoriesChanged?(): readonly MenuCategory[] | undefined;
+  /** The card's slider moved (CalculateCharge): the card it shows now. */
+  sliderChanged?(value: number): Promise<Record<string, unknown> | undefined>;
+  /** The slider closed (SliderClose): its value kept, or not. */
+  sliderClosed?(value: number, accepted: boolean): void;
 }
 
 interface IngredientsLine {
@@ -305,13 +305,13 @@ export class CraftingMenu {
         ChooseItem: (opened, args) => {
           const index = typeof args[1] === 'number' ? args[1] : selected;
           const entry = index === undefined ? undefined : entries[index];
-          if (entry) act(opened, () => model.choose(entry));
+          if (entry) act(opened, () => model.choose(entry, opened));
         },
         // Single-panel only (no such panel in SE's movie): as ChooseItem.
         CraftSelectedItem: (opened, args) => {
           const index = typeof args[1] === 'number' ? args[1] : selected;
           const entry = index === undefined ? undefined : entries[index];
-          if (entry) act(opened, () => model.choose(entry));
+          if (entry) act(opened, () => model.choose(entry, opened));
         },
         CraftButtonPress: (opened) => {
           craft(opened);
@@ -322,11 +322,23 @@ export class CraftingMenu {
         CanFadeItemInfo: (opened, args) => {
           opened.respond(args[0], !model.canCraft());
         },
-        CalculateCharge: () => {
+        // The card's slider (a weapon enchantment's magnitude): its value, then its close.
+        CalculateCharge: (opened, args) => {
           submenu = 'slider';
+          const value = typeof args[1] === 'number' ? args[1] : undefined;
+          if (value === undefined || !model.sliderChanged) return;
+          model
+            .sliderChanged(value)
+            .then((card) => {
+              if (card) opened.invoke(`${MENU}.ItemInfo.__set__itemInfo`, card);
+            })
+            .catch(log);
         },
-        SliderClose: () => {
+        SliderClose: (opened, args) => {
           submenu = undefined;
+          const value = typeof args[1] === 'number' ? args[1] : undefined;
+          if (value !== undefined) model.sliderClosed?.(value, args[2] === true);
+          refresh(opened).catch(log);
         },
         EndItemRename: (opened, args) => {
           submenu = undefined;
@@ -531,6 +543,9 @@ async function constructibleModel(context: ModelContext): Promise<CraftingModel>
       );
       uiSound(session, 'UISmithingCreateGeneric');
       const made = await item(recipe.created);
+      const stat =
+        made?.type === 'WEAP' ? 'weapons made' : made?.type === 'ARMO' ? 'armor made' : undefined;
+      if (stat) runtime.stats.set(stat, (runtime.stats.get(stat) ?? 0) + recipe.createdCount);
       skillUse(runtime, bench, constructibleSkillUse((made?.value ?? 0) * recipe.createdCount));
       await craftEvent(context, recipe.created);
     },
@@ -559,16 +574,20 @@ async function craftEvent(context: ModelContext, created: number): Promise<void>
 
 // --- Smithing -----------------------------------------------------------------------------------
 
+/** An entry's stack of improved items (Entry.stack), if it is one. */
+const stackOf = (entry: Entry): number | undefined =>
+  typeof entry.stack === 'number' ? entry.stack : undefined;
+
 async function smithingModel(
   context: ModelContext,
   improves: 'WEAP' | 'ARMO',
 ): Promise<CraftingModel> {
   const { session, runtime, settings, text, bench, game } = context;
+  const crafting = runtime.crafting;
   const index = await recipeIndex(await session.db);
   const benchRecipes = index.forWorkbench(bench.keywords);
   const item = itemReader(runtime);
   const player = runtime.referenceHandle(PLAYER_REF);
-  const health = runtime.state.itemHealth;
   let inventory = new Map<number, number>();
   const have = (formId: number): number => inventory.get(formId) ?? 0;
   const names = new Map<number, string>();
@@ -581,11 +600,12 @@ async function smithingModel(
     return name;
   };
   const recipeFor = new Map<number, Recipe>();
-  const levelOf = (formId: number): number => temperLevelOfHealth(health.get(formId) ?? 1);
-  const named = (record: ItemRecord): string => {
-    const quality = temperQualityName(levelOf(record.formId), improves);
-    const prefix = quality === undefined ? undefined : settings.string(quality);
-    return prefix ? `${record.name} (${prefix})` : record.name;
+  /** An entry's instance: its quality (its stack's health). */
+  const levelOf = (entry: Entry): number => {
+    const stack = stackOf(entry);
+    const health =
+      stack === undefined ? 1 : (crafting.stacks(PLAYER_REF, entry.formId)[stack]?.health ?? 1);
+    return temperLevelOfHealth(health);
   };
   return {
     name: text(improves === 'WEAP' ? 'sWeaponSmithing' : 'sArmorSmithing'),
@@ -600,23 +620,44 @@ async function smithingModel(
     buttons: () => [text('sCraft'), text('sExit'), '', ''],
     entries: async () => {
       inventory = new Map(await runtime.inventory(PLAYER_REF));
-      const items: { base: number; record: ItemRecord; count: number }[] = [];
+      const items: {
+        base: number;
+        template: number | undefined;
+        record: ItemRecord;
+        stack: number | undefined;
+        count: number;
+        level: number;
+      }[] = [];
       for (const [formId, count] of inventory) {
         if (count <= 0) continue;
         const record = await item(formId);
         if (record?.type !== improves || record.nonPlayable || record.name === '') continue;
-        items.push({ base: formId, record, count });
+        // An enchanted variant is improved by its plain item's recipe (its template).
+        const template = (await runtime.forms.record(formId))?.formIdField(
+          improves === 'WEAP' ? 'CNAM' : 'TNAM',
+        );
+        for (const instance of crafting.instances(PLAYER_REF, formId)) {
+          items.push({
+            base: formId,
+            template,
+            record,
+            stack: instance.stack,
+            count: instance.count,
+            level: temperLevelOfHealth(instance.health),
+          });
+        }
       }
       const entries: Entry[] = [];
       for (const { item: candidate, recipe } of temperingCandidates(items, benchRecipes)) {
         recipeFor.set(candidate.base, recipe);
         for (const component of recipe.components) await nameOf(component.item);
         entries.push({
-          text: named(candidate.record),
+          text: await temperedName(runtime, candidate.record, candidate.level),
           count: candidate.count,
           filterFlag: 1,
           enabled: true,
           formId: candidate.base,
+          ...(candidate.stack !== undefined && { stack: candidate.stack }),
         });
       }
       return entries;
@@ -624,15 +665,17 @@ async function smithingModel(
     card: async (entry) => {
       const record = await item(entry.formId);
       if (!record) return { type: CardType.none };
+      const level = levelOf(entry);
       const card = await itemCard(runtime, settings, {
         formId: entry.formId,
         item: record,
         count: entry.count ?? 1,
         worn: false,
         favorite: false,
+        temper: level,
+        name: entry.text,
       });
-      const level = levelOf(entry.formId);
-      card.name = named(record);
+      // The bench shows the item's own rating or damage with its improvement.
       if (record.weapon)
         card.damage = Math.floor(temperedWeaponDamage(record.weapon.damage, level));
       if (record.armor) {
@@ -665,18 +708,13 @@ async function smithingModel(
         );
         return;
       }
-      if (!recipe.components.every((component) => have(component.item) >= component.count)) {
+      if (!hasComponents(recipe, have)) {
         game.notify(text('sLackRequiredToImprove'));
         return;
       }
-      const skill = await runtime.actors.value(PLAYER_REF, SMITHING);
-      // TODO(M11): the smithing perks of the item's material (doubling the improvement) and
-      // Fortify Smithing.
-      const level = temperingQualityLevel(
-        temperingEffectiveSkill({ skill: skill.current, perk: false }),
-      );
-      const current = levelOf(entry.formId);
-      if (!canImprove(current, level)) {
+      // As far as the skill reaches (the material perk, Fortify Smithing: the crafting engine).
+      const level = await crafting.temperQuality(PLAYER_REF, record);
+      if (!canImprove(levelOf(entry), level)) {
         game.notify(text('sLackRequiredSkillToImprove'));
         return;
       }
@@ -689,9 +727,9 @@ async function smithingModel(
           undefined,
         );
       }
-      health.set(entry.formId, temperHealth(level));
+      const result = await crafting.temper(PLAYER_REF, entry.formId, stackOf(entry));
+      if (result.kind !== 'improved') return;
       uiSound(session, improves === 'WEAP' ? 'UISmithingImproveWeapon' : 'UISmithingImproveArmor');
-      skillUse(runtime, bench, temperingSkillUse(record.value, level - current));
     },
     canCraft: () => false,
   };
@@ -699,54 +737,65 @@ async function smithingModel(
 
 // --- Enchanting ---------------------------------------------------------------------------------
 
-/**
- * ENCH ENIT (UESP; 36 bytes in SSE): cost, flags, cast type (u32 at 8: 0 constant effect, 1 fire
- * and forget, 2 concentration), amount, target type, enchant type, charge time, base enchantment
- * (form id at 28), worn restrictions.
- */
-const CONSTANT_EFFECT = 0;
-const ENIT_CAST_TYPE = 8;
-const ENIT_BASE_ENCHANTMENT = 28;
-
 async function enchantingModel(context: ModelContext): Promise<CraftingModel> {
   const { session, runtime, settings, text, game } = context;
+  const crafting = runtime.crafting;
   const item = itemReader(runtime);
   const defaults = await session.defaultObjects();
   /** MagicDisallowEnchanting (DOBJ DIEN): items and enchantments that cannot be learned. */
   const disallowed = defaults.get('DIEN');
   const known = runtime.state.knownEnchantments;
-  const chosen: { item?: number; gem?: number; enchantments: number[] } = { enchantments: [] };
+  /** The item (an instance of it), the soul gem and the enchantments chosen. */
+  const chosen: {
+    item?: { formId: number; stack: number | undefined };
+    gem?: number;
+    enchantments: ChosenEnchantment[];
+  } = { enchantments: [] };
+  /** The enchantment the slider is open for, and its value before. */
+  let sliding: { formId: number; before: number | undefined } | undefined;
   let name: string | undefined;
-  const enchantment = async (
-    formId: number,
-  ): Promise<{ name: string; armor: boolean; base: number; keywords: number[] } | undefined> => {
-    const record = await runtime.forms.record(formId);
-    if (record?.type !== 'ENCH') return undefined;
-    const enit = record.fields.first('ENIT');
-    const view = enit && new DataView(enit.buffer, enit.byteOffset, enit.byteLength);
-    const castType =
-      view && view.byteLength >= ENIT_CAST_TYPE + 4
-        ? view.getUint32(ENIT_CAST_TYPE, true)
-        : CONSTANT_EFFECT;
-    // The base enchantment: what disenchanting learns.
-    const base =
-      enit && enit.length >= ENIT_BASE_ENCHANTMENT + 4
-        ? record.formIdAt(enit.subarray(ENIT_BASE_ENCHANTMENT, ENIT_BASE_ENCHANTMENT + 4))
-        : 0;
-    return {
-      name: record.text('FULL') ?? '',
-      armor: castType === CONSTANT_EFFECT,
-      base: base !== 0 ? base : formId,
-      keywords: record.fields.all('KWDA').flatMap((data) => {
-        const ids: number[] = [];
-        for (let at = 0; at + 4 <= data.length; at += 4)
-          ids.push(record.formIdAt(data.subarray(at, at + 4)));
-        return ids;
-      }),
-    };
-  };
+  const allowed = await crafting.perks.enchantmentsAllowed(PLAYER_REF);
   const kindOf = (entry: Entry): EnchantingEntryKind | undefined =>
     typeof entry.kind === 'string' ? (entry.kind as EnchantingEntryKind) : undefined;
+  const chosenItem = async (): Promise<ItemRecord | undefined> =>
+    chosen.item === undefined ? undefined : item(chosen.item.formId);
+  const soulOf = async (gem: number | undefined): Promise<number> =>
+    gem === undefined ? 0 : ((await item(gem))?.soul?.current ?? 0);
+  /** Whether a learned enchantment goes on the chosen item (any, without one). */
+  const fitsChosen = async (formId: number): Promise<boolean> => {
+    const target = await chosenItem();
+    const enchantment = await runtime.magic.item(formId);
+    return !target || (enchantment !== undefined && (await crafting.fits(enchantment, target)));
+  };
+  const plan = async () =>
+    chosen.item === undefined
+      ? undefined
+      : crafting.plan(
+          PLAYER_REF,
+          chosen.item.formId,
+          chosen.enchantments,
+          await soulOf(chosen.gem),
+        );
+  /** The card of a learned enchantment: as it would be made, with the slider's charges. */
+  const enchantmentCard = async (formId: number, entryName: string) => {
+    // Chosen, with an item and a soul (or on the slider): as it would be made; else the base
+    // enchantment's.
+    const made =
+      (chosen.gem !== undefined || sliding?.formId === formId) &&
+      chosen.enchantments.some((e) => e.formId === formId)
+        ? await plan()
+        : undefined;
+    const record = await runtime.forms.record(formId);
+    const effects = made?.effects ?? (record?.type === 'ENCH' ? parseEffects(record) : []);
+    return {
+      type: CardType.craftEnchanting,
+      name: entryName,
+      effects: await effectsText(runtime, effects),
+      usedCharge: 0,
+      totalCharges: made?.weapon && Number.isFinite(made.uses) ? made.uses : 0,
+      ...(sliding?.formId === formId && { sliderShown: true }),
+    };
+  };
   return {
     name: text('sEnchanting'),
     categories: enchantingCategories(text),
@@ -765,28 +814,35 @@ async function enchantingModel(context: ModelContext): Promise<CraftingModel> {
         if (record.type === 'WEAP' || record.type === 'ARMO') {
           const armor = record.type === 'ARMO';
           if (record.enchantment !== undefined) {
-            const learned = await enchantment(record.enchantment);
+            const learned = await crafting.learnedFrom(record);
             if (!learned || (disallowed !== undefined && learned.keywords.includes(disallowed)))
               continue;
             if (disallowed !== undefined && record.keywords.includes(disallowed)) continue;
-            entries.push({
-              text: record.name,
-              count,
-              filterFlag: enchantingFilterFlag('disenchant', armor),
-              enabled: true,
-              formId,
-              kind: 'disenchant',
-            });
-          } else {
-            entries.push({
-              text: record.name,
-              count,
-              filterFlag: enchantingFilterFlag('item', armor),
-              enabled: true,
-              equipState: chosen.item === formId ? 1 : 0,
-              formId,
-              kind: 'item',
-            });
+            for (const instance of crafting.instances(PLAYER_REF, formId)) {
+              entries.push({
+                text: await temperedName(runtime, record, temperLevelOfHealth(instance.health)),
+                count: instance.count,
+                filterFlag: enchantingFilterFlag('disenchant', armor),
+                enabled: true,
+                formId,
+                kind: 'disenchant',
+                ...(instance.stack !== undefined && { stack: instance.stack }),
+              });
+            }
+          } else if (crafting.enchantable(record, disallowed)) {
+            for (const instance of crafting.instances(PLAYER_REF, formId)) {
+              const mine = chosen.item?.formId === formId && chosen.item.stack === instance.stack;
+              entries.push({
+                text: await temperedName(runtime, record, temperLevelOfHealth(instance.health)),
+                count: instance.count,
+                filterFlag: enchantingFilterFlag('item', armor),
+                enabled: true,
+                equipState: mine ? 1 : 0,
+                formId,
+                kind: 'item',
+                ...(instance.stack !== undefined && { stack: instance.stack }),
+              });
+            }
           }
         } else if (record.type === 'SLGM' && (record.soul?.current ?? 0) > 0) {
           entries.push({
@@ -802,13 +858,17 @@ async function enchantingModel(context: ModelContext): Promise<CraftingModel> {
         }
       }
       for (const formId of known) {
-        const learned = await enchantment(formId);
-        if (!learned) continue;
+        const learned = await runtime.magic.item(formId);
+        if (learned?.type !== 'ENCH') continue;
         entries.push({
           text: learned.name,
-          filterFlag: enchantingFilterFlag('enchantment', learned.armor),
-          enabled: true,
-          equipState: chosen.enchantments.includes(formId) ? 1 : 0,
+          filterFlag: enchantingFilterFlag(
+            'enchantment',
+            learned.castType === CastType.constantEffect,
+          ),
+          // Those that do not go on the chosen item are greyed.
+          enabled: await fitsChosen(formId),
+          equipState: chosen.enchantments.some((e) => e.formId === formId) ? 1 : 0,
           formId,
           kind: 'enchantment',
         });
@@ -816,86 +876,134 @@ async function enchantingModel(context: ModelContext): Promise<CraftingModel> {
       return entries;
     },
     card: async (entry) => {
-      if (kindOf(entry) === 'enchantment') {
-        const record = await runtime.forms.record(entry.formId);
-        const effects = record?.type === 'ENCH' ? parseEffects(record) : [];
-        return {
-          type: CardType.craftEnchanting,
-          name: entry.text,
-          effects: await effectsText(runtime, effects),
-          usedCharge: 0,
-          totalCharges: 0,
-        };
-      }
+      if (kindOf(entry) === 'enchantment') return enchantmentCard(entry.formId, entry.text);
       const record = await item(entry.formId);
       if (!record) return { type: CardType.none };
+      const stack = stackOf(entry);
+      const health =
+        stack === undefined ? 1 : (crafting.stacks(PLAYER_REF, entry.formId)[stack]?.health ?? 1);
       const card = await itemCard(runtime, settings, {
         formId: entry.formId,
         item: record,
         count: entry.count ?? 1,
         worn: false,
         favorite: false,
+        temper: temperLevelOfHealth(health),
+        name: entry.text,
       });
-      if (kindOf(entry) === 'item' && name !== undefined && chosen.item === entry.formId) {
-        card.name = name;
+      if (
+        kindOf(entry) === 'item' &&
+        chosen.item?.formId === entry.formId &&
+        chosen.item.stack === stack
+      ) {
+        // The item as it will be: its name, the chosen enchantments' effects.
+        if (name !== undefined) card.name = name;
+        const made = chosen.gem === undefined ? undefined : await plan();
+        if (made) card.effects = await effectsText(runtime, made.effects);
       }
       return card;
     },
-    choose: async (entry) => {
+    choose: async (entry, menu) => {
       const kind = kindOf(entry);
       if (kind === 'disenchant') {
-        const record = await item(entry.formId);
-        const learned =
-          record?.enchantment === undefined ? undefined : await enchantment(record.enchantment);
-        if (!record || !learned) return;
-        if (known.has(learned.base)) {
+        const answer = await game.confirm(text('sConfirmDisenchant'), [text('sYes'), text('sNo')]);
+        if (answer !== 0) return;
+        const result = await crafting.disenchant(PLAYER_REF, entry.formId, stackOf(entry));
+        if (result.kind === 'known') {
           game.notify(text('sEnchantmentKnown'));
           return;
         }
-        const answer = await game.confirm(text('sConfirmDisenchant'), [text('sYes'), text('sNo')]);
-        if (answer !== 0) return;
-        known.add(learned.base);
-        await runtime.removeItem(PLAYER_REF, runtime.formHandle(entry.formId), 1, true, undefined);
+        if (result.kind !== 'learned') return;
         uiSound(session, 'UIEnchantingItemDestroy');
         uiSound(session, 'UIEnchantingLearnEffect');
-        const baseName = (await enchantment(learned.base))?.name ?? learned.name;
-        game.notify(text('sEnchantmentsLearned').replace('%s', baseName));
-        // Enchanting's experience: fDisenchantSkillUse a gold of the enchantment. TODO(M11): the
-        // enchantment's own value (its effects' costs: the magic system), the item's until then.
-        skillUse(
-          runtime,
-          context.bench,
-          disenchantSkillUse(
-            record.value,
-            craftingSettings((id) => settings.number(id)),
-          ),
-        );
+        game.notify(text('sEnchantmentsLearned').replace('%s', result.name));
         return;
       }
       if (kind === 'item') {
-        chosen.item = chosen.item === entry.formId ? undefined : entry.formId;
+        const stack = stackOf(entry);
+        const same = chosen.item?.formId === entry.formId && chosen.item.stack === stack;
+        chosen.item = same ? undefined : { formId: entry.formId, stack };
         name = undefined;
+        // Enchantments that do not go on it are let go.
+        const fitting: ChosenEnchantment[] = [];
+        for (const e of chosen.enchantments) if (await fitsChosen(e.formId)) fitting.push(e);
+        chosen.enchantments = fitting;
       } else if (kind === 'soulGem') {
         chosen.gem = chosen.gem === entry.formId ? undefined : entry.formId;
       } else if (kind === 'enchantment') {
-        const at = chosen.enchantments.indexOf(entry.formId);
-        if (at >= 0) chosen.enchantments.splice(at, 1);
-        // TODO(M11): the Extra Effect perk (two enchantments).
-        else if (chosen.enchantments.length < enchantmentsAllowed(false)) {
-          chosen.enchantments.push(entry.formId);
+        const at = chosen.enchantments.findIndex((e) => e.formId === entry.formId);
+        if (at >= 0) {
+          chosen.enchantments.splice(at, 1);
+        } else if (!(await fitsChosen(entry.formId))) {
+          game.notify(text('sEnchantArmorIncompatible'));
+          return;
+        } else {
+          // One, or as many as the perks allow (Extra Effect): the first one chosen goes.
+          if (chosen.enchantments.length >= enchantmentsAllowed(allowed))
+            chosen.enchantments.shift();
+          chosen.enchantments.push({ formId: entry.formId });
+          // A weapon enchantment's magnitude on the card's slider (1 .. its largest).
+          const made = await plan();
+          const first = chosen.enchantments[0];
+          if (made?.weapon && first?.formId === entry.formId && made.maxValue > 1) {
+            sliding = { formId: entry.formId, before: undefined };
+            menu.invoke(`${MENU}.ShowSlider`, made.maxValue, 1, made.value, 1);
+          }
         }
       }
       uiSound(session, 'UIMenuFocus');
     },
+    sliderChanged: async (value) => {
+      if (!sliding) return undefined;
+      const formId = sliding.formId;
+      chosen.enchantments = chosen.enchantments.map((e) =>
+        e.formId === formId ? { formId, value } : e,
+      );
+      const learned = await runtime.magic.item(formId);
+      return enchantmentCard(formId, learned?.name ?? '');
+    },
+    sliderClosed: (value, accepted) => {
+      const open = sliding;
+      sliding = undefined;
+      if (!open) return;
+      const kept = accepted ? value : open.before;
+      chosen.enchantments = chosen.enchantments.map((e) =>
+        e.formId !== open.formId
+          ? e
+          : kept === undefined
+            ? { formId: open.formId }
+            : { formId: open.formId, value: kept },
+      );
+    },
     canCraft: () =>
       chosen.item !== undefined && chosen.gem !== undefined && chosen.enchantments.length > 0,
-    // TODO(M11): making the enchanted item (a form made in the game: its enchantment's
-    // magnitude from the skill and the soul, the weapon's charge slider, its name), the soul
-    // gem used up, the skill's experience, UIEnchantingItemCreate.
     craft: async () => {
+      const target = chosen.item;
+      const gem = chosen.gem;
+      if (!target || gem === undefined || chosen.enchantments.length === 0) {
+        game.notify(text('sEnchantMustChooseItems'));
+        return;
+      }
       const answer = await game.confirm(text('sEnchantItem'), [text('sYes'), text('sNo')]);
       if (answer !== 0) return;
-      context.log('making enchanted items is not built yet (M11)');
+      const made = await crafting.enchant(
+        PLAYER_REF,
+        target.formId,
+        target.stack,
+        chosen.enchantments,
+        gem,
+        name,
+      );
+      if (made === undefined) {
+        game.notify(text('sEnchantArmorIncompatible'));
+        return;
+      }
+      uiSound(session, 'UIEnchantingItemCreate');
+      chosen.item = undefined;
+      chosen.gem = undefined;
+      chosen.enchantments = [];
+      name = undefined;
+      await craftEvent(context, made);
     },
     aux: (menu) => {
       if (chosen.item === undefined) return false;
@@ -961,7 +1069,11 @@ async function alchemyModel(context: ModelContext): Promise<CraftingModel> {
     buttons: () => [text('sSelect'), text('sExit'), '', text('sCraft')],
     entries: async () => {
       const entries: Entry[] = [];
-      for (const [formId, count] of await runtime.inventory(PLAYER_REF)) {
+      const inventory = await runtime.inventory(PLAYER_REF);
+      // Ingredients used up are no longer chosen.
+      for (let i = chosen.length - 1; i >= 0; i--)
+        if ((inventory.get(chosen[i] ?? 0) ?? 0) <= 0) chosen.splice(i, 1);
+      for (const [formId, count] of inventory) {
         if (count <= 0) continue;
         const record = await item(formId);
         if (record?.type !== 'INGR' || record.name === '') continue;
@@ -1017,29 +1129,19 @@ async function alchemyModel(context: ModelContext): Promise<CraftingModel> {
       await Promise.resolve();
     },
     canCraft: () => chosen.length >= 2,
+    // The ingredients are used up; what they share is learned, the potion or poison made (the
+    // crafting engine).
     craft: async () => {
-      const records = await Promise.all(chosen.map((formId) => item(formId)));
-      const effects = records.map((record) => record?.effects.map((effect) => effect.effect) ?? []);
-      const shared = new Set(sharedEffects(effects));
-      if (shared.size === 0) {
+      const result = await runtime.crafting.brew(PLAYER_REF, [...chosen]);
+      chosen.length = 0;
+      if (result.made === undefined || !result.potion) {
         uiSound(session, 'UIAlchemyFail');
         game.notify(text('sPotionCreationFailed'));
-        return;
+      } else {
+        uiSound(session, 'UIAlchemyLearnEffect');
+        uiSound(session, result.potion.poison ? 'UIAlchemyCreatePoison' : 'UIAlchemyCreatePotion');
+        await craftEvent(context, result.made);
       }
-      // What they share is found out on each of them.
-      for (const [i, formId] of chosen.entries()) {
-        const slots = new Set(knownSlots(formId));
-        for (const [slot, effect] of (effects[i] ?? []).entries()) {
-          if (shared.has(effect)) slots.add(slot);
-        }
-        known.set(formId, slots);
-      }
-      uiSound(session, 'UIAlchemyLearnEffect');
-      // TODO(M11): the potion or poison made (a form made in the game: named after its
-      // strongest effect, sCreatedPotionNamePrefix / sCreatedPoisonNamePrefix; its strength
-      // from the skill and perks), the ingredients used up, UIAlchemyCreatePotion /
-      // UIAlchemyCreatePoison, the skill's experience.
-      chosen.length = 0;
       categories = await categoriesNow();
       changed = true;
     },

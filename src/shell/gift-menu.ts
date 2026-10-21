@@ -11,7 +11,7 @@
 
 import { INVENTORY_CATEGORIES } from '../gameplay/inventory.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
-import { ItemShelf } from './container-menu.ts';
+import { entryStack, ItemShelf } from './container-menu.ts';
 import type { GameSession } from './game-session.ts';
 import { itemEntry } from './inventory-menu.ts';
 import type { ItemMenuModel } from './item-menu.ts';
@@ -77,7 +77,7 @@ export async function giftModel(
     // ItemSelect(amount).
     trade: async (entry, args) => {
       const amount = typeof args[0] === 'number' ? args[0] : 1;
-      await shelf.move(entry.formId, amount, from, to);
+      await shelf.move(entry.formId, amount, from, to, true, entryStack(entry));
       if (!options.giving || !options.useFavorPoints) return;
       const worth = ((await shelf.item(entry.formId))?.value ?? 0) * amount;
       points += worth;

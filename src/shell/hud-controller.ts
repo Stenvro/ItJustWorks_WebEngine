@@ -14,8 +14,9 @@
 // the casting engine's voiceMeter) flashes as the player shouts before it has
 // (FlashShoutMeter). The stealth meter and the sneaking HUD mode: hud-stealth.ts.
 // Notes: docs/ui.md.
-// The enemy health bar (enemy). TODO(M10): the riding HUD mode (3.5). TODO(M11): weapon charge
-// (SetChargeMeterPercent: the equip and magic systems).
+// The enemy health bar (enemy). The charge meters of the enchanted weapons in the player's hands
+// (SetChargeMeterPercent(percent, force, left hand, shown): the crafting engine's charge).
+// TODO(M10): the riding HUD mode (3.5).
 
 import type { CastEvent } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -86,6 +87,8 @@ export class HudController implements HudSink {
   #menu: Menu | undefined;
   #frame = 0;
   #shown = { heading: Number.NaN, health: -1, magicka: -1, stamina: -1 };
+  /** The charge meters shown, by hand (−1: hidden; undefined: not yet). */
+  #chargeShown: { left?: number; right?: number } = {};
   /** The shout meter shown (−1: not yet), and the runtime whose casts it hears. */
   #shoutShown = -1;
   #heard: { runtime: ScriptRuntime; stop: () => void } | undefined;
@@ -124,6 +127,7 @@ export class HudController implements HudSink {
         // Everything the HUD shows anew after a reload.
         this.#shown = { heading: Number.NaN, health: -1, magicka: -1, stamina: -1 };
         this.#shoutShown = -1;
+        this.#chargeShown = {};
         this.#cartMode = false;
         this.#stealth.reset();
         // (The HUD is not this.#menu yet as it first opens.)
@@ -498,5 +502,15 @@ export class HudController implements HudSink {
     if (magicka !== this.#shown.magicka) menu.call('SetMagickaMeterPercent', magicka, false);
     if (stamina !== this.#shown.stamina) menu.call('SetStaminaMeterPercent', stamina, false);
     this.#shown = { ...this.#shown, health, magicka, stamina };
+    // Each hand's enchanted weapon: its charge (shown while it holds one).
+    for (const hand of ['left', 'right'] as const) {
+      const weapon = await runtime.equipment.weapon(PLAYER_REF, hand);
+      const charge =
+        weapon === undefined ? undefined : await runtime.crafting.chargePercent(PLAYER_REF, weapon);
+      const shown = charge === undefined ? -1 : Math.round(charge);
+      if (menu !== this.#menu || shown === this.#chargeShown[hand]) continue;
+      this.#chargeShown[hand] = shown;
+      menu.call('SetChargeMeterPercent', Math.max(0, shown), false, hand === 'left', shown >= 0);
+    }
   }
 }

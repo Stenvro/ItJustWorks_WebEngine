@@ -51,8 +51,10 @@ called that is missing; `node tools/papyrus-natives.ts` lists the natives done p
   its properties winning), parsed quests and aliases, every version of a record.
 - **Game state** (`game-state.ts`): what the running game changed on top of the plugins,
   plain data to be saved (TODO(M12)): clocks, globals, quests, references, actors, actor
-  bases, factions, locations, cells, inventories, created references, leveled list additions,
-  active magic effects.
+  bases, factions, locations, cells, inventories (with the item stacks that carry data of
+  their own: improved items), created references, the forms the game made (created forms:
+  potions, enchantments, enchanted items; docs/gameplay.md "Crafting"), leveled list
+  additions, active magic effects.
 - **Natives** (`natives/`): all 686 the game's scripts declare, by script. What they change is
   game state; what the engine shows goes through the **WorldBridge** (`runtime.ts`): enable
   state, moves, animation events, sounds, weather, menus, combat, packages. Without a world (in
