@@ -200,7 +200,10 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   wait; its combat override list (ECOR) keeps it to its package's place ([Combat AI](#combat-ai)).
 - **When:** as the hour changes, every 2 seconds (TODO(M13): the engine's rate), when its package
   ends, and when a script asks (EvaluatePackage). One that must complete (PKDT flag 0x4) is not
-  left before it has. Its scripts hear of it: OnPackageStart (the new package), OnPackageChange
+  left before it has. One that completed ends and stays, done, while it is still the one chosen:
+  it does not run again until another has run (a branch that repeats when complete is what goes
+  round; a patrol not repeatable stops at its end). TODO(M13): the fallout behaviour of one
+  without Skip Fallout Behavior (it stands). Its scripts hear of it: OnPackageStart (the new package), OnPackageChange
   (the one left), OnPackageEnd (one that ended), and the package's own fragments (begin, change,
   end) run, and its begin, change and end actions: an idle played, a topic said. While it
   runs, the actor plays the package's idles (its IDLA list, else its template's) whenever it
