@@ -22,6 +22,11 @@ import type { Player } from './player.ts';
 const SEARCHES = 3;
 /** They walk up to furniture this near before its enter's slide (game units). */
 const FURNITURE_REACH = 96;
+/**
+ * Off the navmeshes (stepped down behind a cart, on a ledge), the path begins at their nearest
+ * point within this (game units).
+ */
+const NAVMESH_REACH = 512;
 /** Standing: turned to within this of the heading asked (radians). */
 const FACED = 0.05;
 
@@ -43,6 +48,8 @@ export interface PlayerPilotOptions {
   readonly player: () => Player | undefined;
   /** The player in furniture. */
   readonly seat: () => PlayerFurniture | undefined;
+  /** The player gets off the vehicle they ride, where they are (MQ101's cart, as its riders). */
+  readonly alight?: () => void;
   /** The navigation meshes of the loaded area. */
   readonly navmeshes?: () => NavmeshSet | undefined;
   /** A door on the way as the player comes to it (opened for them). */
@@ -105,9 +112,15 @@ export class PlayerPilot {
         return;
       }
       travel.searches++;
-      const path = findPath(set, feet, travel.destination, {
-        radius: player.character.shape.radius * travel.searches,
-      });
+      const on = set.locate(feet) !== undefined;
+      const start = on ? feet : set.nearest?.(feet, NAVMESH_REACH);
+      const found =
+        start &&
+        findPath(set, start, travel.destination, {
+          radius: player.character.shape.radius * travel.searches,
+        });
+      const path =
+        found && !on ? { ...found, points: [[...feet] as Vec3, ...found.points] } : found;
       if (!path || path.points.length < 2) {
         travel.done(false);
         return;
@@ -176,7 +189,9 @@ export class PlayerPilot {
 
   #makeBody(player: Player): PackageBody {
     const { session, furniture, seat } = this.#options;
+    // Out of furniture and off their vehicle before they go anywhere.
     const leaveSeat = async (): Promise<void> => {
+      this.#options.alight?.();
       const held = seat();
       if (held?.seated) await held.leave();
     };
