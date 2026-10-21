@@ -289,6 +289,21 @@ player (MQ101 stage 0 → 10, `Fragment_4`: the player to `MQ101PlayerStartMarke
 by the cart), the loading screen is chosen, the world there loads, and the loading menu fades
 out. The engine plays UILoadscreenMist as a loading menu opens.
 
+**How long it takes** (NEW to the HUD; headless Chrome with `?devdata`, the maintainer's
+machine; the game itself takes 10–15 s). It was 91–98 s: the scripts' new game 38 s (OnInit of
+the 2,338 quests 4.2 s, the persistent references 7.4 s, the 443 quests that start with the game
+25.7 s, DA16 alone 16 s), the world 32 s and its actors and the player's body 14 s, the rest
+fades and the loading screen. Nearly all of it was waiting: 66,000 reads, most of them one
+record or one script at a time, each a round trip that the next one waited for. Now 14.5–19 s:
+the new game 8.5 s (1.2 s to the scripts, quests 0.8 s, persistent references 0.8 s, the quests
+that start 6.2 s, DA16 3.2 s of it), the world with its actors 4–7.5 s, the fades 1 s; 6,400
+reads. The plugins and archives are read through block caches
+([formats/esm.md](formats/esm.md#reading-records)), and reads whose order does not matter are
+made side by side ([scripting.md](scripting.md#a-new-game)). What is left is mostly work on the
+main thread: the quests' alias searches (conditions on every persistent reference), and while
+the world loads, its frames behind the loading screen (the world drawn, the player and actors
+stepped, so everyone stands there before the fade) and the actors' face tints.
+
 **Loading screens** (LSCR, `src/world/loading-screens.ts`): DESC the text, CTDA conditions (run
 on the player), NNAM the static whose model is shown, SNAM its scale, RNAM its rotation
 (degrees), ONAM the rotation limits, XNAM its offset, MOD2 a camera path. Of the 371 vanilla

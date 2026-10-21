@@ -12,6 +12,7 @@ import {
   parsePluginHeader,
   type PluginHeader,
 } from '../formats/esm/plugin-header.ts';
+import { BlockCache, DEFAULT_BLOCK_SIZE } from '../formats/block-cache.ts';
 import { MemoryByteSource, type ByteSource } from '../formats/byte-source.ts';
 import { parseIni, type Ini } from '../formats/ini/ini.ts';
 import { normalizePath } from '../formats/paths.ts';
@@ -69,6 +70,8 @@ function describe(error: unknown): string {
 
 const PLUGIN_FILE = /\.(esm|esp|esl)$/i;
 const ARCHIVE_FILE = /\.bsa$/i;
+/** The archives' blocks kept at most (16 MB): most of their files are read once. */
+const ARCHIVE_CACHE_BYTES = 16 * 1024 * 1024;
 const IN_SUBFOLDER = /[\\/]/;
 
 export class Vfs {
@@ -84,6 +87,11 @@ export class Vfs {
   readonly #files: ReadonlyMap<string, VfsFile>;
   /** Archives without names, high → low; these are searched by hash. */
   readonly #hashOnly: readonly MountedArchive[];
+  /**
+   * The archives' small files are read through it: files read one after another from one
+   * folder (a script's parents, a cell's meshes) mostly share a block read once.
+   */
+  readonly blocks: BlockCache;
 
   private constructor(init: {
     folder: GameFolder;
@@ -93,8 +101,10 @@ export class Vfs {
     hasCreationClubList: boolean;
     defaultIni: Ini | undefined;
     files: ReadonlyMap<string, VfsFile>;
+    blocks: BlockCache;
   }) {
     this.#folder = init.folder;
+    this.blocks = init.blocks;
     this.loadOrder = init.loadOrder;
     this.archives = init.archives;
     this.problems = init.problems;
@@ -161,9 +171,10 @@ export class Vfs {
       order.entries,
       rootFiles.filter((name) => ARCHIVE_FILE.test(name)),
     );
+    const blocks = new BlockCache(DEFAULT_BLOCK_SIZE, ARCHIVE_CACHE_BYTES);
     const opened = await Promise.allSettled(
       archiveNames.map(async (name) => {
-        const source = await folder.openDataFile(name);
+        const source = blocks.wrap(await folder.openDataFile(name));
         try {
           return await BsaArchive.open(source, { verifyHashes: options.verifyHashes ?? false });
         } catch (error) {
@@ -203,6 +214,7 @@ export class Vfs {
       hasCreationClubList: ccc !== undefined,
       defaultIni,
       files,
+      blocks,
     });
   }
 
