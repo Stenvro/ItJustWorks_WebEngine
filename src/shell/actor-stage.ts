@@ -294,6 +294,7 @@ export class ActorStage {
           await this.mounts.getOff(staged.reference);
         },
         paused: (actor) => this.mounts.ridden(actor),
+        seat: (staged, instant) => this.mounts.seat(staged, instant),
       },
     });
     this.mounts = new ActorMounts({

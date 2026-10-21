@@ -262,6 +262,25 @@ export class ActorMounts {
     return this.#pair(staged.reference, staged.placed, horse, false);
   }
 
+  /**
+   * An actor whose package lets it ride gets on its horse (its XHOR) where it is near (within
+   * HORSE_REACH) and free: at once (HorseEnterInstant), or walking to it and mounting.
+   */
+  async seat(staged: StagedActor, instant: boolean): Promise<void> {
+    const reference = staged.reference;
+    if (this.#rides.has(reference) || staged.dead) return;
+    const horse = await this.horseFor(reference);
+    const mount = horse === undefined ? undefined : this.#options.get(horse);
+    if (horse === undefined || !mount || mount.dead || this.ridden(horse)) return;
+    const away = Math.hypot(
+      mount.position[0] - staged.position[0],
+      mount.position[1] - staged.position[1],
+    );
+    if (away > HORSE_REACH || this.#rides.has(reference)) return;
+    if (instant) await this.#pair(reference, staged.placed, horse, true);
+    else await this.mount(staged, horse);
+  }
+
   /** The player mounts a horse (activating it). */
   async mountPlayer(horse: number, instant = false): Promise<boolean> {
     const view = this.#options.player?.();
