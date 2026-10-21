@@ -618,9 +618,11 @@ export class ActorCombat implements CombatBridge {
     const seen = new Set<number>();
     for (const staged of this.#options.actors()) {
       if (staged.dead || staged.visibility.hidden) continue;
+      // One fighting already fights on while it is loaded (a dragon orbits far beyond the reach).
       const near =
         !focus ||
-        Math.hypot(staged.position[0] - focus[0], staged.position[1] - focus[1]) < FIGHT_REACH;
+        Math.hypot(staged.position[0] - focus[0], staged.position[1] - focus[1]) < FIGHT_REACH ||
+        this.engaged(staged.reference);
       if (!near) continue;
       seen.add(staged.reference);
       let fighter = this.#fighters.get(staged.reference);
