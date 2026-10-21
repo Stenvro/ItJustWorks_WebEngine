@@ -132,6 +132,8 @@ export class PlayerAvatar {
     return this.#firstPerson;
   }
 
+  /** The events its body's graph raised (the view's vehicles read a rider's: actor-vehicles.ts). */
+  onGraphEvents: ((events: readonly string[]) => void) | undefined;
   /** Furniture holds the player: its graphs are moved by the furniture's idles, not its walk. */
   seated = false;
 
@@ -335,6 +337,7 @@ export class PlayerAvatar {
     // Its scripts hear its body's events (OnAnimationEvent: MQ101 waits for the player's
     // PlayImod and IdleFurnitureExit).
     body.onScriptEvents = (events) => {
+      this.onGraphEvents?.(events);
       const runtime = this.#session.scriptsReady;
       if (!runtime) return;
       for (const event of events) runtime.animationEvent(PLAYER_REFERENCE, event);
