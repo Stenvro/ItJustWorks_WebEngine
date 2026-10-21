@@ -16,6 +16,11 @@ export interface AnimatedSkeleton {
   time: number | undefined;
   /** The events its graph raised in an update (the player's avatar listens for JumpUp). */
   onEvents?: (events: readonly string[]) => void;
+  /**
+   * The same events for its scripts (OnAnimationEvent, WaitForAnimationEvent): kept apart from
+   * onEvents, which the engine's systems chain and replace.
+   */
+  onScriptEvents?: (events: readonly string[]) => void;
 }
 
 /** A frame longer than this (a hitch, a hidden tab) advances the graphs by this much. */
@@ -50,7 +55,10 @@ export function animateSkeletons(
     // Footsteps and SoundPlay events sound through onEvents (src/shell/actor-sounds.ts);
     // TODO(M10): the events AI reacts to (attacks, weapon draws, dialogue).
     const raised = behavior.takeRaised();
-    if (raised.length > 0) animated.onEvents?.(raised);
+    if (raised.length > 0) {
+      animated.onEvents?.(raised);
+      animated.onScriptEvents?.(raised);
+    }
     animated.pose.update(behavior.pose);
   }
 }

@@ -385,6 +385,8 @@ export class ActorVehicles {
         else if (name.startsWith('wheelback')) parts.push({ node, kind: 'rear' });
       }
       cart.body = { instance: moving, scene, scale, collision, bodies, parts };
+      // Its horse is hitched to it: the cart is never in the horse's way.
+      if (collision) this.#options.movers.ignore(cart.horse, collision.colliders);
     } finally {
       cart.adopting = false;
     }
@@ -487,6 +489,7 @@ export class ActorVehicles {
     cart.body = undefined;
     if (!body) return;
     body.scene.destroy();
+    if (body.collision) this.#options.movers.ignore(cart.horse, []);
     if (body.collision && this.#physics) this.#physics.remove(body.collision);
   }
 
