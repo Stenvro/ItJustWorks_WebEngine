@@ -185,14 +185,6 @@ export class ActorFurniture {
     return this.#uses.get(actor);
   }
 
-  /** The furniture an actor is in and the idles it entered by (undefined: not in any now). */
-  enteredBy(
-    actor: number,
-  ): { readonly furniture: number; readonly events: readonly string[] } | undefined {
-    const use = this.#uses.get(actor);
-    return use?.phase === 'in' ? { furniture: use.furniture, events: use.events } : undefined;
-  }
-
   /** Whether furniture holds an actor: in, entering or leaving it (it has no controller). */
   holds(actor: number): boolean {
     if (this.#holding.has(actor)) return true;
@@ -373,7 +365,12 @@ export class ActorFurniture {
     furniture: number,
     walk: (to: Vec3, arrive: number) => Promise<boolean>,
     face: (heading: number | undefined) => void,
-    options: { readonly quick?: boolean; readonly types?: number } = {},
+    options: {
+      readonly quick?: boolean;
+      readonly types?: number;
+      /** Its AI activates the furniture as it enters (its scripts get OnActivate). */
+      readonly activates?: boolean;
+    } = {},
   ): Promise<boolean> {
     const actor = user.reference;
     const quick = options.quick === true;
@@ -457,6 +454,9 @@ export class ActorFurniture {
       use.floor = user.position[2];
       use.duration = Math.max(motion?.seconds ?? 1, 0.5);
       use.left = use.duration;
+      if (options.activates === true) {
+        this.#options.session.scriptsReady?.actorActivated(furniture, actor);
+      }
       user.send(event);
       return await this.#entered(actor, use);
     } catch (error) {

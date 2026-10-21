@@ -475,7 +475,7 @@ export class ActorAi {
           target,
           (to, arrive) => movers.travel(reference, to, 'walk', arrive),
           face,
-          types === undefined ? {} : { types },
+          types === undefined ? { activates: true } : { types, activates: true },
         );
       },
       leaveFurniture: () => furniture.leave(user),
@@ -517,6 +517,7 @@ export class ActorAi {
             target,
             (to, arrive) => movers.travel(reference, to, 'walk', arrive),
             face,
+            { activates: true },
           );
         }
         return scripts.activate(target, reference, false);

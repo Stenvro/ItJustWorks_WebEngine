@@ -54,7 +54,6 @@ import { aimDirection } from '../gameplay/magic/projectile-flight.ts';
 import { PlayerDeath } from './player-death.ts';
 import type { PlayerFurniture } from './player-furniture.ts';
 import { PlayerPilot } from './player-pilot.ts';
-import { ActorExecutions, type ExecutionParticipant } from './actor-executions.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -161,8 +160,6 @@ export class ActorStage {
   readonly ai: ActorAi;
   /** The player's packages while the scripts drive them (SetPlayerAIDriven). */
   readonly pilot: PlayerPilot;
-  /** Executions at a chopping block (src/shell/actor-executions.ts). */
-  readonly executions: ActorExecutions;
   /** The actors in scenes: facing their targets (src/shell/actor-scenes.ts). */
   readonly actorScenes: ActorScenes;
   /** What the actors say: greetings, chatter, conversations, barks (bark: combat, crime, ...). */
@@ -304,12 +301,6 @@ export class ActorStage {
         },
         paused: (actor) => this.mounts.ridden(actor),
         seat: (staged, instant) => this.mounts.seat(staged, instant),
-      },
-    });
-    this.executions = new ActorExecutions({
-      enteredBy: (reference) => this.furniture.enteredBy(reference),
-      kill: (victim, killer) => {
-        void options.session.scriptsReady?.actors.kill(victim, killer);
       },
     });
     this.pilot = new PlayerPilot({
@@ -1002,15 +993,6 @@ export class ActorStage {
     previous?.destroy();
   }
 
-  /** The actors and the player, as executions see them (src/shell/actor-executions.ts). */
-  *#participants(): Iterable<ExecutionParticipant> {
-    for (const staged of this.#actors.values()) {
-      yield { reference: staged.reference, dead: staged.dead, user: () => this.userOf(staged) };
-    }
-    const seat = this.#options.seat?.();
-    if (seat) yield { reference: PLAYER_REF, dead: this.playerDeath.dead, user: () => seat.user };
-  }
-
   /** Whether actors of the loaded cells are still being placed (their models load). */
   get placing(): boolean {
     return this.#placing.size > 0;
@@ -1029,7 +1011,6 @@ export class ActorStage {
     this.crime.frame(frame);
     this.followers.frame(frame);
     this.actorScenes.frame(this.#actors.values());
-    this.executions.frame(this.#participants());
     this.talk.frame(this.#actors.values(), frame, this.#options.focus?.());
     // Casting: the player's buttons, the casts' sprays and art, what flies.
     this.playerCasting?.frame(frame);
@@ -1171,9 +1152,13 @@ export class ActorStage {
     staged.placed.onScriptEvents = (events) => {
       const graph = staged.placed.behavior;
       if (graph) this.vehicles.riderEvents(reference, graph, events);
-      this.executions.events(reference, events);
       const runtime = this.#options.session.scriptsReady;
       if (!runtime) return;
+      // A graph's KillActor kills its actor (an executed prisoner's chop: its killmoves in a
+      // fight are the combat's, src/shell/actor-combat.ts, which names the killer).
+      if (events.some((event) => event.toLowerCase() === 'killactor')) {
+        void runtime.actors.kill(reference, undefined);
+      }
       for (const event of events) runtime.animationEvent(reference, event);
     };
   }
@@ -1190,7 +1175,6 @@ export class ActorStage {
     this.#options.session.scriptsReady?.magic.unloaded(staged.reference);
     this.combat.remove(staged.reference);
     this.ai.remove(staged.reference);
-    this.executions.remove(staged.reference);
     this.senses.remove(staged.reference);
     this.casting.remove(staged.reference);
     this.flight.remove(staged.reference);
