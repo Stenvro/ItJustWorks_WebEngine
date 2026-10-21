@@ -173,6 +173,8 @@ export class GameSession {
    * trespasses. The menus that refuse then read it (waiting, fast travel, lockpicking).
    */
   crimeWatch: { readonly pursued: boolean; readonly trespassing: boolean } | undefined;
+  /** Whether someone fights the player now (src/shell/actor-combat.ts). */
+  combatWatch: { readonly fightingPlayer: boolean } | undefined;
   /** The actor a reference shows as on screen, if it does (the viewers answer: main.ts). */
   placedActor: ((reference: number) => PlacedActor | undefined) | undefined;
   /** An actor of the loaded area plays the idle an action gives it (ActionTalking as it talks). */

@@ -262,6 +262,8 @@ export class ActorCombat implements CombatBridge {
       ...(options.npcCasting && { casting: options.npcCasting }),
       ...(options.flight && { flight: options.flight }),
     });
+    // The wait menu asks whether someone fights the player.
+    options.session.combatWatch = this;
     this.#impacts = new CombatImpacts(options.session, options.renderer);
     this.#projectiles = new CombatProjectiles({
       session: options.session,
@@ -2024,6 +2026,11 @@ export class ActorCombat implements CombatBridge {
       if (other.target === fighter.reference && other.state.life !== LifeState.dead) hostile++;
     }
     return hostile <= 1;
+  }
+
+  /** Whether someone fights the player now (the wait menu's sNoWaitHostileActorsNear). */
+  get fightingPlayer(): boolean {
+    return this.#fightingPlayer();
   }
 
   #fightingPlayer(): boolean {

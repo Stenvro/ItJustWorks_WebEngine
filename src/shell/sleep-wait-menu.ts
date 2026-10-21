@@ -7,8 +7,9 @@
 // days. Each hour health, magicka and stamina regenerate as over the real seconds it stands for
 // (the progression engine's passTime). Where the player may not wait the menu does not open and
 // the game's message says why (sNoWaitDefault while scripts disable waiting, SetInChargen;
-// sNoWaitInAir; the sleep versions). TODO(M10): enemies near (sNoWaitHostileActorsNear) and
-// actors' places after the hours (their packages), the wait broken off by an attack.
+// sNoWaitInAir; the sleep versions), while someone fights the player (sNoWaitHostileActorsNear)
+// or an effect takes their health (sNoWaitTakingHealthDamage). TODO(M10): actors' places after
+// the hours (their packages), the wait broken off by an attack.
 // Nor while guards pursue the player (sNoWaitWhileAlarm) or they trespass (sNoWaitTrespass;
 // the sleep versions); an owned bed is not slept in (sNoSleepInOwnedBed: play-mode.ts).
 // TODO(M11): taking health damage, the rested bonuses (the magic system).
@@ -41,11 +42,17 @@ export function noWaitReason(
     readonly pursued?: boolean;
     /** The player trespasses where they are. */
     readonly trespassing?: boolean;
+    /** Someone fights the player (the combat AI's). */
+    readonly enemiesNear?: boolean;
+    /** An effect takes the player's health now (poison, fire over time). */
+    readonly takingHealthDamage?: boolean;
   },
 ): string | undefined {
   const kind = sleeping ? 'Sleep' : 'Wait';
   if (state.waitingDisabled) return `sNo${kind}Default`;
   if (state.inAir) return `sNo${kind}InAir`;
+  if (state.enemiesNear === true) return `sNo${kind}HostileActorsNear`;
+  if (state.takingHealthDamage === true) return `sNo${kind}TakingHealthDamage`;
   if (state.pursued === true) return `sNo${kind}WhileAlarm`;
   if (state.trespassing === true) return `sNo${kind}Trespass`;
   return undefined;

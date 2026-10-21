@@ -503,6 +503,8 @@ export class GameMenus {
       inAir: this.#world.inAir(),
       pursued: session.crimeWatch?.pursued === true,
       trespassing: session.crimeWatch?.trespassing === true,
+      enemiesNear: session.combatWatch?.fightingPlayer === true,
+      takingHealthDamage: (await session.scriptsReady?.magic.damagingHealth(PLAYER_REF)) === true,
     });
     if (reason) {
       const settings = await session.settings();
