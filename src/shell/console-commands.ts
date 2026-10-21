@@ -6,9 +6,10 @@
 //
 // Built so far: help, centeroncell (coc: where, src/shell/cell-placement.ts), additem /
 // removeitem, setstage / getstage / startquest / stopquest / completequest, set <global> to
-// <value> (TimeScale too), getav / setav / modav / forceav, advlevel, togglemenus (tm),
-// forceweather (fw), enableplayercontrols (epc) / disableplayercontrols (dpc), togglegodmode
-// (tgm), kill, showracemenu, quitquitquit (qqq).
+// <value> (TimeScale too), getav / setav / modav / forceav, advlevel, advskill / incpcs,
+// addperk / removeperk, addspell / removespell, togglemenus (tm), forceweather (fw),
+// enableplayercontrols (epc) / disableplayercontrols (dpc), togglegodmode (tgm), kill,
+// showracemenu, quitquitquit (qqq).
 // TODO(M13): the rest of the game's console commands (tcl, tai, resurrect, moveto, prid by
 // clicking, ...).
 
@@ -38,7 +39,17 @@ export interface ConsoleContext {
 }
 
 /** The types `help` searches, and those a form name is looked up in. */
-const SEARCHED = [...ITEM_TYPES, 'QUST', 'GLOB', 'NPC_', 'SPEL', 'WTHR', 'CELL', 'FACT'] as const;
+const SEARCHED = [
+  ...ITEM_TYPES,
+  'QUST',
+  'GLOB',
+  'NPC_',
+  'SPEL',
+  'PERK',
+  'WTHR',
+  'CELL',
+  'FACT',
+] as const;
 
 /** A console line split into its reference, command and arguments. */
 export function parseConsoleLine(line: string): {
@@ -119,6 +130,32 @@ export class ConsoleCommands {
           return [`Item '${args[0] ?? ''}' not found for parameter Actor Value.`];
         if (command === 'incpcs') await runtime.progression.incrementSkill(args[0] ?? '', 1);
         else await runtime.progression.useSkill(PLAYER_REF, args[0] ?? '', Number(args[1]) || 0);
+        return [];
+      }
+      // <ref>.AddPerk / RemovePerk <perk>: as Actor.AddPerk (the perk system: its abilities and
+      // quest stages with it); AddSpell / RemoveSpell <spell>: as Actor.AddSpell (an ability
+      // acts from now on; the player's new spell is announced).
+      case 'addperk':
+      case 'removeperk': {
+        const perk = await this.#form(args[0]);
+        if (perk === undefined || (await runtime.forms.record(perk))?.type !== 'PERK')
+          return [`Item '${args[0] ?? ''}' not found for parameter Perk.`];
+        if (command === 'addperk') await runtime.perks.add(self, perk);
+        else await runtime.perks.remove(self, perk);
+        return [];
+      }
+      case 'addspell':
+      case 'removespell': {
+        const spell = await this.#form(args[0]);
+        if (spell === undefined || (await runtime.forms.record(spell))?.type !== 'SPEL')
+          return [`Item '${args[0] ?? ''}' not found for parameter Spell.`];
+        const changed =
+          command === 'addspell'
+            ? await runtime.actors.addSpell(self, spell)
+            : await runtime.actors.removeSpell(self, spell);
+        if (changed && command === 'addspell' && self === PLAYER_REF)
+          runtime.detach(runtime.spellMessage(spell));
+        if (changed) await runtime.magic.syncLasting(self);
         return [];
       }
       case 'tm':

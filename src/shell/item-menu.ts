@@ -9,7 +9,11 @@
 // CloseMenu), ShowTweenMenu / CloseTweenMenu saying where the player goes. The engine's keys:
 // F favorite, R drop (the container menu: its XButtonPress, take all or store), Esc and E as Tab
 // and Enter (the control map's menu contexts). The highlighted entry shows in 3D beside the
-// list (src/shell/item-3d.ts). Notes: docs/ui.md ("The item menus").
+// list (src/shell/item-3d.ts). A click on an entry equips through the engine (AttemptEquip
+// with the button's hand): GFx calls an entry's onPress(controller, keyboardOrMouse) with 0 for
+// the mouse, Ruffle with no arguments, so the movie takes the click for Enter and asks
+// ItemSelect without a hand as well; that one is dropped when the click's own equip follows.
+// Notes: docs/ui.md ("The item menus").
 
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import type { Terminal } from './terminal.ts';
@@ -101,6 +105,11 @@ export interface ItemMenuModel {
   readonly menuProperties?: Readonly<Record<string, unknown>>;
   /** Whether the list positions are kept from one opening to the next (not a container's). */
   readonly keepsIndices?: boolean;
+  /**
+   * The HUD's mode while it is open (ShowElements: its messages and quest updates show over
+   * the menu); default InventoryMode.
+   */
+  readonly hudMode?: string;
   /** Given the menu's close as it opens (a pickpocket caught closes the container menu). */
   bindClose?(close: () => void): void;
   /** What a scripted menu returns once closed (ShowGiftMenu: the favor points). */
@@ -129,6 +138,8 @@ export class ItemMenu {
     let view = first;
     let toTween = false;
     let done = false;
+    /** An ItemSelect without a hand, waiting out the event it came in (see above). */
+    let keySelect: ReturnType<typeof setTimeout> | undefined;
     const show = (menu: Menu): void => {
       menu.set(
         `${LIST}.entryList`,
@@ -210,7 +221,11 @@ export class ItemMenu {
       // mouse is over its list (AttemptEquip; the trading menus' clicks are their own).
       onPointer: (menu, event) => {
         const slot = mouseEquipSlot(event.button);
-        if (slot !== undefined && !model.trade) menu.invoke('_root.Menu_mc.AttemptEquip', slot);
+        if (slot === undefined || model.trade) return;
+        // The movie's own ItemSelect of this click (a press it took for a key) is dropped.
+        clearTimeout(keySelect);
+        keySelect = undefined;
+        menu.invoke('_root.Menu_mc.AttemptEquip', slot);
       },
       handlers: {
         RequestItemCardInfo: (menu, args) => {
@@ -232,7 +247,17 @@ export class ItemMenu {
             act(menu, model.trade(chosen, args.slice(1)));
             return;
           }
-          act(menu, model.select(chosen, typeof args[1] === 'number' ? args[1] : undefined));
+          if (typeof args[1] === 'number') {
+            act(menu, model.select(chosen, args[1]));
+            return;
+          }
+          // Without a hand (Enter, E; or a click, whose equip comes from onPointer during the
+          // same event: then this one is dropped).
+          clearTimeout(keySelect);
+          keySelect = setTimeout(() => {
+            keySelect = undefined;
+            act(menu, model.select(chosen, undefined));
+          }, 0);
         },
         // The container menu: (slot) for the player's entry; (hand, amount) for the
         // container's, taken first.
