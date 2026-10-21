@@ -296,6 +296,8 @@ interface Running {
   readonly parent?: Running | undefined;
   /** Its tree ran to its end (or a procedure's success completed it). */
   completed: boolean;
+  /** Completed and ended (its scripts heard of it): it stays, done, while it is still chosen. */
+  ended: boolean;
   /** The procedure running now (development checks). */
   procedure: string | undefined;
 }
@@ -377,7 +379,7 @@ export class ActorPackages {
       this.#wanted ||
       this.#sinceEvaluation >= EVALUATE_SECONDS ||
       hour !== this.#hour ||
-      this.#running?.completed === true;
+      (this.#running?.completed === true && !this.#running.ended);
     if (!due || this.#evaluating) return;
     this.#hour = hour;
     this.#sinceEvaluation = 0;
@@ -410,18 +412,30 @@ export class ActorPackages {
     if (current && !current.completed && (current.pack.flags & PackageFlag.mustComplete) !== 0) {
       return;
     }
-    const chosen = await this.#choose(current?.completed === true ? current.id : undefined);
+    // A package that completed ends (its scripts and its end action hear of it) and stays, done,
+    // while it is still the one chosen: it does not run again (a branch that repeats when
+    // complete is what goes round; a patrol not repeatable stops at its end: MQ101's carts at
+    // Helgen's gate). TODO(M13): the fallout behaviour of one without Skip Fallout Behavior (it
+    // stands here).
+    if (current?.completed && !current.ended) {
+      current.ended = true;
+      this.#release();
+      this.#body.stop();
+      this.#body.face(undefined);
+      this.#mind.packageEvent(this.actor, 'end', current.pack);
+      this.#act(current.pack.onEnd);
+    }
+    const chosen = await this.#choose(undefined);
     if (this.#running !== current) return;
-    if (chosen?.id === current?.id && current && !current.completed) return;
+    if (chosen?.id === current?.id && current) return;
     if (current) {
       current.stopped = true;
-      this.#release();
-      if (current.completed) {
-        this.#mind.packageEvent(this.actor, 'end', current.pack);
-        this.#act(current.pack.onEnd);
-      } else if (chosen) {
-        this.#mind.packageEvent(this.actor, 'change', current.pack, chosen.pack);
-        this.#act(current.pack.onChange);
+      if (!current.ended) {
+        this.#release();
+        if (chosen) {
+          this.#mind.packageEvent(this.actor, 'change', current.pack, chosen.pack);
+          this.#act(current.pack.onChange);
+        }
       }
     }
     this.#running = chosen;
@@ -501,6 +515,7 @@ export class ActorPackages {
         stopped: false,
         cut: false,
         completed: false,
+        ended: false,
         procedure: undefined,
       };
     }
