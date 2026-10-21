@@ -28,6 +28,28 @@ import type { ScriptRuntime } from './runtime.ts';
 
 const key = (quest: number, alias: number): string => `${String(quest)}:${String(alias)}`;
 
+/**
+ * Candidates of a search checked at once: their records are read side by side (one by one, a
+ * search over every persistent reference waited on thousands of reads in a row).
+ */
+const SEARCH_BATCH = 256;
+
+/** The candidates `test` takes, in their order; checked a batch at a time. */
+async function filterInBatches(
+  candidates: readonly number[],
+  test: (candidate: number) => Promise<boolean>,
+): Promise<number[]> {
+  const taken: number[] = [];
+  for (let start = 0; start < candidates.length; start += SEARCH_BATCH) {
+    const batch = candidates.slice(start, start + SEARCH_BATCH);
+    const results = await Promise.all(batch.map(test));
+    batch.forEach((candidate, i) => {
+      if (results[i]) taken.push(candidate);
+    });
+  }
+  return taken;
+}
+
 interface FillContext {
   readonly record: QuestRecord;
   /** A quest that starts with a new game: every alias allows reserved references. */
@@ -235,10 +257,9 @@ export class AliasFiller {
     } else {
       candidates = await this.#persistentCandidates(alias);
     }
-    const eligible: number[] = [];
-    for (const candidate of candidates) {
-      if (await this.#eligible(alias, candidate, context)) eligible.push(candidate);
-    }
+    const eligible = await filterInBatches(candidates, (candidate) =>
+      this.#eligible(alias, candidate, context),
+    );
     if (eligible.length === 0) return undefined;
     if ((alias.flags & AliasFlag.closest) !== 0) {
       const player = await runtime.placement(PLAYER_REF);
@@ -318,12 +339,16 @@ export class AliasFiller {
     );
     const fresh: number[] = [];
     const cleared: number[] = [];
-    for (const location of runtime.forms.db.formIdsOfType('LCTN')) {
-      if (!(await this.#eligible(alias, location, context))) continue;
-      if (needed.length > 0) {
+    const matches = await filterInBatches(
+      runtime.forms.db.formIdsOfType('LCTN'),
+      async (location) => {
+        if (!(await this.#eligible(alias, location, context))) return false;
+        if (needed.length === 0) return true;
         const references = (await this.location(location))?.references ?? [];
-        if (!needed.every((type) => references.some((entry) => entry.type === type))) continue;
-      }
+        return needed.every((type) => references.some((entry) => entry.type === type));
+      },
+    );
+    for (const location of matches) {
       (runtime.state.locations.get(location)?.cleared ? cleared : fresh).push(location);
     }
     const pool = fresh.length > 0 ? fresh : cleared;

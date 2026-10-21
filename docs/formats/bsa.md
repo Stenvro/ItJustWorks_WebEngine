@@ -45,6 +45,13 @@ Archive flags: `0x1` folder names, `0x2` file names, `0x4` compressed by default
 Names are Windows-1252. Paths are looked up in lowercase (A-Z only, like
 C `tolower`) with backslashes.
 
+A folder's files lie one after another in the data, so the VFS reads the archives through a
+block cache (`src/formats/block-cache.ts`, 16 MB of 64 KB blocks): a file of 64 KB or less
+comes with its block, and the next small file of the folder is mostly in it already. A new
+game's scripts (Misc.bsa) took 3,524 reads one after another; now 285 blocks
+([esm.md](esm.md#reading-records)). Larger files (textures, most animations) are read as
+before.
+
 ## Hash
 
 64 bits; folders hash the whole path, files only the name (extension separately):

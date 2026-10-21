@@ -2,6 +2,7 @@
 // each record (the last plugin that has it wins) and localized strings.
 // Form id rules: docs/formats/esm.md
 
+import { BlockCache } from '../formats/block-cache.ts';
 import type { ByteSource } from '../formats/byte-source.ts';
 import { Fields, view, zstring } from '../formats/esm/fields.ts';
 import { parsePluginInfo, type PluginInfo } from '../formats/esm/plugin-header.ts';
@@ -150,8 +151,14 @@ export class RecordDatabase {
   readonly #subBlockCache = new Map<string, Promise<Map<string, number>>>();
   readonly #vfs: Vfs;
   readonly #scripts = new Map<string, Promise<PexScript | undefined>>();
+  /**
+   * The plugins' records are read through it: records read one by one (a cell's references, a
+   * quest's aliases) mostly share a block read once (src/formats/block-cache.ts).
+   */
+  readonly blocks: BlockCache;
 
-  private constructor(plugins: Plugin[], problems: string[], vfs: Vfs) {
+  private constructor(plugins: Plugin[], problems: string[], vfs: Vfs, blocks: BlockCache) {
+    this.blocks = blocks;
     this.plugins = plugins;
     this.problems = problems;
     this.#vfs = vfs;
@@ -178,10 +185,12 @@ export class RecordDatabase {
       vfs.loadOrder.map((entry, slot) => [asciiLowerCase(entry.name), slot]),
     );
 
+    const blocks = new BlockCache();
     const plugins = await Promise.all(
       vfs.loadOrder.map(async (entry, slot): Promise<Plugin> => {
-        const source = await vfs.openSource(entry.name);
-        const pluginIndex = await index(source, entry.name);
+        const file = await vfs.openSource(entry.name);
+        const pluginIndex = await index(file, entry.name);
+        const source = blocks.wrap(file);
         const header = await readRecord(source, pluginIndex, 0);
         if (header.header.type !== 'TES4')
           throw new Error(`${entry.name}: first record is not TES4`);
@@ -207,7 +216,7 @@ export class RecordDatabase {
         return { slot, entry, info, index: pluginIndex, source, masterSlots, strings };
       }),
     );
-    return new RecordDatabase(plugins, problems, vfs);
+    return new RecordDatabase(plugins, problems, vfs, blocks);
   }
 
   /** A compiled Papyrus script of the load order (scripts\<name>.pex), read once. */
@@ -529,8 +538,10 @@ export class RecordDatabase {
   }
 
   async #readSubBlock(world: number, subX: number, subY: number): Promise<Map<string, number>> {
-    const cells = new Map<string, number>();
     const cellType = fourCCToInt('CELL');
+    // Every plugin's cell records of the sub-block, read side by side; then taken in load order
+    // (a later plugin's version, or its deletion, wins).
+    const reads: Promise<GameRecord>[] = [];
     for (const plugin of this.plugins) {
       const group = this.#worldGroups(plugin)
         .get(world)
@@ -541,14 +552,17 @@ export class RecordDatabase {
       for (let record = index.groupFirstRecord[group] ?? 0; record < end; record++) {
         if (index.types[record] !== cellType || (index.parentGroups[record] ?? 0) - 1 !== group)
           continue;
-        const cell = await this.read({ plugin, record });
-        const xclc = cell.fields.first('XCLC');
-        if (!xclc || xclc.length < 8) continue;
-        const data = view(xclc);
-        const key = `${String(data.getInt32(0, true))},${String(data.getInt32(4, true))}`;
-        if (cell.deleted) cells.delete(key);
-        else cells.set(key, cell.formId);
+        reads.push(this.read({ plugin, record }));
       }
+    }
+    const cells = new Map<string, number>();
+    for (const cell of await Promise.all(reads)) {
+      const xclc = cell.fields.first('XCLC');
+      if (!xclc || xclc.length < 8) continue;
+      const data = view(xclc);
+      const key = `${String(data.getInt32(0, true))},${String(data.getInt32(4, true))}`;
+      if (cell.deleted) cells.delete(key);
+      else cells.set(key, cell.formId);
     }
     return cells;
   }

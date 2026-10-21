@@ -127,6 +127,19 @@ its 26 matches), which has no map marker for its MapMarker alias, and the quest 
 start at random (4 of 40 new games). TODO(M13): whether the engine looks ahead so or tries
 another match (UESP lists Damphall Mine among the amulet's places).
 
+What takes the time is reading records, not running scripts: in Node a new game takes about
+6 s. In the browser each read waits on a round trip, so the reads are made side by side where
+their order does not matter, and plugins and archives are read through block caches
+([formats/esm.md](formats/esm.md#reading-records)): the persistent references' bases'
+attachments are read at once, and a searched alias checks its candidates 256 at a time (each
+check only reads; the matches keep the candidates' order, so the one taken is the same).
+DA16's four spectator aliases search all persistent references with HasKeyword and GetInCell
+(3.2 s of the 6.2 s the 443 quests take in the browser); DA16, BYOHHouseFalkreath and
+C00JorrvaskrFight took 16, 2.7 and 0.7 s when each candidate waited on its reads. Which
+threads run first between reads depends on how long each read takes (a read from a block
+already read returns at once), as it does in the browser in any case: script-started radiant
+quests (the College's MGR quests) may come out differently from one new game to the next.
+
 ## Quests
 
 `quests.ts` and `alias-fill.ts`, after the Creation Kit's Quest pages:

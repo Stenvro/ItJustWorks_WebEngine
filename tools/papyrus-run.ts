@@ -55,6 +55,12 @@ await runtime.newGame((what) => {
   console.log(`${((performance.now() - start) / 1000).toFixed(1)} s: ${what}`);
 });
 console.log(`new game started in ${((performance.now() - start) / 1000).toFixed(1)} s`);
+// What the block caches saved (src/formats/block-cache.ts): reads of the files, and small reads
+// served from a block already read.
+console.log(
+  `reads: plugins ${String(db.blocks.reads)} (+${String(db.blocks.hits)} from blocks), ` +
+    `archives ${String(vfs.blocks.reads)} (+${String(vfs.blocks.hits)} from blocks)`,
+);
 
 // Play: real seconds pass in frames, game time at the load order's TimeScale.
 const timeScale = await readTimeScale(db);

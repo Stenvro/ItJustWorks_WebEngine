@@ -44,6 +44,21 @@ The index reads only headers, in 8 MB chunks, into typed arrays (Skyrim.esm: 869
 in ~0.9 s in Node). Each group stores the range of records it contains, so "all references of
 a cell" is a range lookup. Form ids are sorted for binary search.
 
+## Reading records
+
+`RecordDatabase` reads the plugins through a block cache (`src/formats/block-cache.ts`): a
+record of 64 KB or less is read with its whole 64 KB block, and the blocks read last (32 MB of
+them, least recently used out first) are kept. Larger reads (a scan's 8 MB chunks, the largest
+records) go to the file and are not kept; what a read returns is a copy, so a record kept for
+long does not keep its block. In the browser every read is a round trip of about the same cost
+whatever its size (a `Blob` slice, or with `?devdata` an HTTP range request): read one by one,
+the records of a cell or the persistent references a quest searches waited on one round trip
+each. Records sit in the file by group (a cell's references together, a top group's records
+together), so most reads land in a block already read: a new game (`node tools/papyrus-run.ts
+--new-game`) reads 4,413 blocks and serves 20,241 reads from them, where it read 24,654 times.
+The archives' small files go through a cache of their own the same way (16 MB: a script's
+parents and the scripts after it, a cell's small meshes; [bsa.md](bsa.md)).
+
 ## Form ids
 
 A stored form id's top byte indexes the plugin's MAST list; a value equal to the number of
