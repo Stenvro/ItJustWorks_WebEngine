@@ -358,10 +358,10 @@ A chopping block (ExecutionerChoppingBlock) is furniture with three markers: the
 behind it (IdleExecutionerIdle), a guard behind the prisoner (IdleExecutionGuardIdle) and the
 prisoner (IdleExecutioneeIdle), each entered through ActionActivate's idle tree by their keywords
 and entry points. The chop idles share their siblings' conditions and no script plays them, so
-the engine starts the chop (`src/shell/actor-executions.ts`): once all three are in, the
-executioner and the prisoner play IdleExecutionerChop and IdleExecutioneeChop together. The
-prisoner's clip (aoexecutioneechop.hkx, 20 s) holds the guard's pushes, the last words (MQ101
-Scene4 phase 41) and the blow, whose Decapitate event kills them. TODO(M13): the engine's own
+the engine starts the chop (`src/shell/actor-executions.ts`): once all three are in, all
+three get IdleExecutionerChop, the one event their graphs (0_master Behavior36, 78, 37) chop on.
+Their 20 s clips hold the guard's pushes, the last words (MQ101 Scene4 phase 41) and the blow
+(11.4 s); the prisoner's graph then raises Decapitate and KillActor, which kills them. TODO(M13): the engine's own
 trigger, and the decapitation itself (dismemberment piece, decapitation effect).
 
 ## Where packages put actors
