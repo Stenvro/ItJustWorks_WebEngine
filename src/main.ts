@@ -206,6 +206,8 @@ const LOCKED_KEYS: readonly string[] = [
 
 /** The game's clock moves at most this much from one frame to the next (seconds). */
 const MAX_FRAME_SECONDS = 0.25;
+/** A loading screen waits this long at most for the player's body and the actors around them (ms). */
+const POPULATE_MS = 20000;
 
 function startRenderLoop(
   renderer: Renderer,
@@ -571,6 +573,12 @@ async function main(): Promise<void> {
   /** Resolves once neither viewer is loading (the player stands in the place). */
   const settled = async (): Promise<void> => {
     while (worldViewer.loading !== undefined || modelViewer.loading !== undefined) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    // Then the player's body and the actors around them, for a while at most (an actor whose
+    // model never loads does not hold the game).
+    const until = performance.now() + POPULATE_MS;
+    while ((worldViewer.populating || modelViewer.populating) && performance.now() < until) {
       await new Promise((resolve) => setTimeout(resolve, 100));
     }
   };

@@ -507,12 +507,21 @@ export class PlayerAvatar {
     return taken;
   }
 
-  /** The animated Camera1st node in the player's frame (x right, y forward), scaled. */
+  /**
+   * The animated Camera1st node in the player's frame (x right, y forward, as they look), scaled.
+   * The node moves with the body: where the body faces another way than the player looks (seated
+   * in a cart or a chair, its idle putting the head over the seat), its offset turns with the body.
+   */
   #cameraOffset(): Vec3 | undefined {
     const node = this.#firstPerson?.pose.world(CAMERA_NODE);
     if (!node) return undefined;
     const scale = this.#player.height;
-    return [(node[12] ?? 0) * scale, (node[13] ?? 0) * scale, (node[14] ?? 0) * scale];
+    const x = (node[12] ?? 0) * scale;
+    const y = (node[13] ?? 0) * scale;
+    const turn = this.#bodyYaw - this.#player.yaw;
+    const sin = Math.sin(turn);
+    const cos = Math.cos(turn);
+    return [x * cos + y * sin, -x * sin + y * cos, (node[14] ?? 0) * scale];
   }
 
   destroy(): void {

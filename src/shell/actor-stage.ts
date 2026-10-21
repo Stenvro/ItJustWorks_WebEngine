@@ -993,6 +993,11 @@ export class ActorStage {
     previous?.destroy();
   }
 
+  /** Whether actors of the loaded cells are still being placed (their models load). */
+  get placing(): boolean {
+    return this.#placing.size > 0;
+  }
+
   /** Moves the enabled actors' skeletons; far or unseen ones less often (animationInterval). */
   animate(seconds: number): void {
     // Their AI first (what they want now), then their movement.
