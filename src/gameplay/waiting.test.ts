@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { noWaitReason } from './sleep-wait-menu.ts';
+import { noWaitReason } from './waiting.ts';
 
 describe('why the player may not wait', () => {
   const free = { waitingDisabled: false, inAir: false };

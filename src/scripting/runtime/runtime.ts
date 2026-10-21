@@ -225,6 +225,12 @@ export interface WorldBridge {
   /** An idle played (PlayIdle): false if it could not play. */
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
   /**
+   * AddDependentAnimatedObjectReference / RemoveDependentAnimatedObjectReference: the animation
+   * events a reference is sent go to a dependent too (MQ101's chopping block: the prisoner's chop
+   * to the executioner and the guard). Whether it took.
+   */
+  dependentAnimated?(reference: number, dependent: number, added: boolean): boolean;
+  /**
    * Actor.SetVehicle: an actor rides a vehicle now (its root at the vehicle's) or no longer
    * (the game state's vehicle): src/shell/actor-vehicles.ts.
    */

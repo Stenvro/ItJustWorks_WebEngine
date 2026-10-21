@@ -158,6 +158,7 @@ function setup(scenes: SceneRecord[]) {
       Promise.resolve(scenes.filter((entry) => entry.quest === quest).map((entry) => entry.formId)),
     questRunning: (quest) => running.has(quest),
     aliasReference: (_quest, alias) => aliases.get(alias),
+    aliasOptional: () => Promise.resolve(false),
     actor: (reference) => ({
       dead: false,
       combat: false,

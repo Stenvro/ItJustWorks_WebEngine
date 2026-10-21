@@ -251,7 +251,17 @@ export class ActorFurniture {
    * (on the actor, its target), else the first of its children whose conditions hold (their
    * first, and so on). Whether an event was sent.
    */
-  async playIdle(user: FurnitureUser, idle: number, target?: number): Promise<boolean> {
+  async playIdle(
+    user: FurnitureUser,
+    idle: number,
+    target?: number,
+    options: {
+      /** A script's PlayIdle: it plays in furniture too (its graph takes it or not). */
+      readonly inFurniture?: boolean;
+      /** Those whose graphs get its event too (AddDependentAnimatedObjectReference). */
+      readonly dependents?: readonly FurnitureUser[];
+    } = {},
+  ): Promise<boolean> {
     const runtime = this.#options.session.scriptsReady;
     const tree = await this.#tree();
     const record = tree.idles.get(idle);
@@ -270,8 +280,11 @@ export class ActorFurniture {
       );
       event = child?.event;
     }
-    if (event === undefined || this.#uses.has(user.reference)) return false;
-    return user.send(event);
+    if (event === undefined) return false;
+    if (this.#uses.has(user.reference) && options.inFurniture !== true) return false;
+    const sent = user.send(event);
+    for (const dependent of options.dependents ?? []) dependent.send(event);
+    return sent;
   }
 
   /**

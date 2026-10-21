@@ -993,6 +993,37 @@ export class ActorStage {
     previous?.destroy();
   }
 
+  /** The references whose animation events go to others too (their dependents), by reference. */
+  readonly #dependents = new Map<number, Set<number>>();
+
+  /** AddDependentAnimatedObjectReference (added) or its Remove. */
+  dependentAnimated(reference: number, dependent: number, added: boolean): boolean {
+    let set = this.#dependents.get(reference);
+    if (added) {
+      if (!set) {
+        set = new Set();
+        this.#dependents.set(reference, set);
+      }
+      set.add(dependent);
+      return true;
+    }
+    const removed = set?.delete(dependent) === true;
+    if (set?.size === 0) this.#dependents.delete(reference);
+    return removed;
+  }
+
+  /** The dependents of a reference that are here to animate (actors, the player). */
+  dependentUsers(reference: number): FurnitureUser[] {
+    const users: FurnitureUser[] = [];
+    for (const dependent of this.#dependents.get(reference) ?? []) {
+      const staged = this.#actors.get(dependent);
+      const user =
+        dependent === PLAYER_REF ? this.#options.seat?.()?.user : staged && this.userOf(staged);
+      if (user) users.push(user);
+    }
+    return users;
+  }
+
   /** Whether actors of the loaded cells are still being placed (their models load). */
   get placing(): boolean {
     return this.#placing.size > 0;
