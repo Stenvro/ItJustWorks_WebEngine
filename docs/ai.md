@@ -354,15 +354,15 @@ Actors use furniture as the engine's furniture handling does, as far as the data
 
 ### Executions
 
-A chopping block (ExecutionerChoppingBlock) is furniture with three markers: the executioner
-behind it (IdleExecutionerIdle), a guard behind the prisoner (IdleExecutionGuardIdle) and the
-prisoner (IdleExecutioneeIdle), each entered through ActionActivate's idle tree by their keywords
-and entry points. The chop idles share their siblings' conditions and no script plays them, so
-the engine starts the chop (`src/shell/actor-executions.ts`): once all three are in, all
-three get IdleExecutionerChop, the one event their graphs (0_master Behavior36, 78, 37) chop on.
-Their 20 s clips hold the guard's pushes, the last words (MQ101 Scene4 phase 41) and the blow
-(11.4 s); the prisoner's graph then raises Decapitate and KillActor, which kills them. TODO(M13): the engine's own
-trigger, and the decapitation itself (dismemberment piece, decapitation effect).
+Furniture an actor's AI goes to use (Sit, UseIdleMarker, Activate, a scene package, the player
+driven by AI) is activated as it is entered: its scripts get OnActivate with the actor, as the
+player's own activation sends it. MQ101's chopping block (ExecutionerChoppingBlock) runs on that:
+its HeadChopBlockHookupSCRIPT notes the executioner, the guard (their keywords) and the prisoner
+as each activates it, and once all three have, plays IdleExecutionerChop on the prisoner (the
+executioner's, guard's and prisoner's graphs, 0_master Behavior36, 78 and 37, all chop on it;
+the player: IdleExecutionerChop_Player, then stage 98). The prisoner's chop raises Decapitate and
+KillActor; a graph's KillActor kills its actor. TODO(M13): the decapitation itself (the head's
+dismemberment piece, the race's decapitation effect).
 
 ## Where packages put actors
 

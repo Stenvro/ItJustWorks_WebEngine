@@ -90,13 +90,16 @@ export class PlayerFurniture {
 
   /**
    * Uses a furniture: in it, `then` runs with what gets the player up (a workbench's menu,
-   * closed, gets them up). `types`: only its markers of these animation types (an AI package's,
-   * src/shell/player-pilot.ts). Resolves whether they got in.
+   * closed, gets them up). `types`: only its markers of these animation types; `activates`:
+   * the furniture's scripts get OnActivate as they enter (an AI package's use,
+   * src/shell/player-pilot.ts: the player's own activation has sent it already). Resolves whether
+   * they got in.
    */
   async use(
     object: Pick<CellObject, 'reference'>,
     then?: (leave: () => void) => void,
     types?: number,
+    activates = false,
   ): Promise<boolean> {
     if (this.#seated) return false;
     this.#hold(true);
@@ -113,7 +116,7 @@ export class PlayerFurniture {
       (heading) => {
         this.#turnTo = heading;
       },
-      types === undefined ? {} : { types },
+      types === undefined ? { activates } : { types, activates },
     );
     if (!inside) {
       this.#stand();

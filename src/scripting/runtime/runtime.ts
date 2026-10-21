@@ -884,6 +884,15 @@ export class ScriptRuntime implements VmHost {
     return this.state.references.get(reference)?.activationBlocked !== true;
   }
 
+  /**
+   * An actor's AI activated a reference (furniture it goes to use): its scripts get OnActivate
+   * with the actor (MQ101's chopping block waits for its executioner, guard and prisoner).
+   */
+  actorActivated(reference: number, actor: number): void {
+    this.magic.acted(actor);
+    this.detach(this.sendEvent(reference, 'OnActivate', [this.actorHandle(actor)]));
+  }
+
   /** Something entered or left a reference's trigger volume (OnTriggerEnter / OnTriggerLeave). */
   triggered(reference: number, actor: number, entered: boolean): void {
     this.detach(

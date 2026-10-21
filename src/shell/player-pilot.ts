@@ -202,7 +202,7 @@ export class PlayerPilot {
       await leaveSeat();
       // They walk up to it; the enter's slide takes them in (src/shell/player-furniture.ts).
       await this.#go([...at.position], 'walk', FURNITURE_REACH);
-      return held.use({ reference: target }, undefined, types);
+      return held.use({ reference: target }, undefined, types, true);
     };
     return {
       reference: PLAYER_REF,
