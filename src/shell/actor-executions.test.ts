@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { ActorExecutions } from './actor-executions.ts';
 import type { FurnitureUser } from './actor-furniture.ts';
-import type { StagedActor } from './actor-stage.ts';
 
 const BLOCK = 0xaa7cc;
 
@@ -13,21 +12,22 @@ function setup(entered: Map<number, string>) {
       const event = entered.get(reference);
       return event === undefined ? undefined : { furniture: BLOCK, events: [event] };
     },
-    userOf: (staged) =>
-      ({
-        reference: staged.reference,
-        send: (event: string) => {
-          sent.push(`${staged.reference.toString(16)} ${event}`);
-          return true;
-        },
-      }) as unknown as FurnitureUser,
     kill: (victim, killer) => {
       killed.push(`${victim.toString(16)} by ${killer.toString(16)}`);
     },
   });
-  const actors = [0x1, 0x2, 0x3].map(
-    (reference) => ({ reference, dead: false }) as unknown as StagedActor,
-  );
+  const actors = [0x1, 0x2, 0x3].map((reference) => ({
+    reference,
+    dead: false,
+    user: () =>
+      ({
+        reference,
+        send: (event: string) => {
+          sent.push(`${reference.toString(16)} ${event}`);
+          return true;
+        },
+      }) as unknown as FurnitureUser,
+  }));
   return { executions, actors, sent, killed };
 }
 
@@ -57,5 +57,30 @@ describe('executions at a chopping block', () => {
     executions.events(0x2, ['KillActor']);
     executions.events(0x2, ['KillActor']);
     expect(killed).toEqual(['2 by 1']);
+  });
+
+  it('raises the axe over the player: their own chop, the guard pushes', () => {
+    const entered = new Map([
+      [0x1, 'IdleExecutionerIdle'],
+      [0x3, 'IdleExecutionGuardIdle'],
+      [0x14, 'IdleExecutioneeIdle'],
+    ]);
+    const { executions, sent } = setup(entered);
+    const user = (reference: number) => () =>
+      ({
+        reference,
+        send: (event: string) => {
+          sent.push(`${reference.toString(16)} ${event}`);
+          return true;
+        },
+      }) as unknown as FurnitureUser;
+    executions.frame(
+      [0x1, 0x3, 0x14].map((reference) => ({ reference, dead: false, user: user(reference) })),
+    );
+    expect(sent).toEqual([
+      '1 IdleExecutionerChop_Player',
+      '3 IdleExecutionerChop',
+      '14 IdleExecutionerChop_Player',
+    ]);
   });
 });

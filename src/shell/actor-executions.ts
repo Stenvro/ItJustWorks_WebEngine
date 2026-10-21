@@ -7,26 +7,35 @@
 // (MQ101's Scene4, phase 41) and the blow at 11.4 s, after which its KillActor kills the prisoner (the
 // scene waits for GetDead). Nothing in the data sends that event (the chop idle shares its
 // siblings' conditions, so the tree never picks it, and no script plays it): once all three are
-// in, it goes to all three. Inferred from the graphs; TODO(M13): the engine's own trigger and its
-// kill, the player's block (IdleExecutionerChop_Player, stage 95), and the decapitation itself
-// (the head's dismemberment piece and the race's decapitation effect).
+// in, it goes to all three. The player on the block (MQ101 stage 95): the executioner and the
+// player get IdleExecutionerChop_Player (the axe raised, then waiting: the scripts move it on with
+// ExecutionNextClip as Alduin lands), the guard its own chop. Inferred from the graphs;
+// TODO(M13): the engine's own trigger and its kill, and the decapitation itself (the head's
+// dismemberment piece and the race's decapitation effect).
 
 import type { FurnitureUser } from './actor-furniture.ts';
-import type { StagedActor } from './actor-stage.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 
 /** The idle each role enters the block by (ActionActivate's ExecutionerRoot, ...). */
 const EXECUTIONER = 'idleexecutioneridle';
 const GUARD = 'idleexecutionguardidle';
 const EXECUTIONEE = 'idleexecutioneeidle';
-/** The event all three chop on. */
+/** The event all three chop on; the executioner's and the player's when it is the player. */
 const CHOP = 'IdleExecutionerChop';
+const CHOP_PLAYER = 'IdleExecutionerChop_Player';
+
+/** One who may be at a block: an actor of the stage, or the player. */
+export interface ExecutionParticipant {
+  readonly reference: number;
+  readonly dead: boolean;
+  readonly user: () => FurnitureUser;
+}
 
 export interface ActorExecutionsOptions {
   /** The furniture an actor is in now and the idles it entered by. */
   readonly enteredBy: (
     reference: number,
   ) => { readonly furniture: number; readonly events: readonly string[] } | undefined;
-  readonly userOf: (staged: StagedActor) => FurnitureUser;
   /** The prisoner dies, killed by the executioner. */
   readonly kill: (victim: number, killer: number) => void;
 }
@@ -46,8 +55,8 @@ export class ActorExecutions {
   }
 
   /** Every frame: a block with all three in starts its chop. */
-  frame(actors: Iterable<StagedActor>): void {
-    const blocks = new Map<number, Map<string, StagedActor>>();
+  frame(actors: Iterable<ExecutionParticipant>): void {
+    const blocks = new Map<number, Map<string, ExecutionParticipant>>();
     for (const staged of actors) {
       if (staged.dead) continue;
       const using = this.#options.enteredBy(staged.reference);
@@ -73,9 +82,10 @@ export class ActorExecutions {
         executioner: executioner.reference,
         executionee: executionee.reference,
       });
-      for (const staged of [executioner, guard, executionee]) {
-        this.#options.userOf(staged).send(CHOP);
-      }
+      const player = executionee.reference === PLAYER_REF;
+      executioner.user().send(player ? CHOP_PLAYER : CHOP);
+      guard.user().send(CHOP);
+      executionee.user().send(player ? CHOP_PLAYER : CHOP);
     }
   }
 
