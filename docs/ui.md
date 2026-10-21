@@ -742,8 +742,13 @@ TODO(M11): the
 Haggling, Allure, Merchant and Investor perks, Fortify Barter, fences and stolen goods, the
 chest's restock (every 48 hours), favor points. Potions, food and ingredients are used, poisons put on
 the weapon and the magic menu's Active Effects listed through the magic system (docs/gameplay.md,
-"Magic effects"). TODO(M11): favorites' hotkeys, the quantity of a drop, perks in armor, damage and
-spell costs, ingredients' known effects found by alchemy.
+"Magic effects"). Improved items are rows of their own ("Iron Sword (Fine)": the crafting
+engine's item stacks), moved and equipped as such. An enchanted weapon's card shows its charge
+(`charge`, `usedCharge`: percent); under 100 the inventory's T (`AttemptChargeItem`) has the
+movie ask `ShowSoulGemList`: the engine sets the card to a list (ICT_LIST: `listItems` of
+`text`, `soulLVL`, `count`, `chargeAdded`, and `currentCharge`; none: sNoChargeItems), and
+`ItemCardListCallback(index)` recharges with that gem. TODO(M11): favorites' hotkeys, the quantity of a drop, perks in armor, damage and
+spell costs.
 
 ## The menus' 3D
 
@@ -849,24 +854,34 @@ Tab then). After a change: `InvalidateListData`, `UpdateItemList(false)`, `Updat
   them, adds the made object (NAM1 of it), plays UISmithingCreateGeneric, gives the skill its
   use (fConstructibleSkillUse*) and tells the story manager (CRFT).
 - **Smithing** (the grindstone: weapons; the armor workbench: armor): the player's items with
-  a tempering recipe at the bench, named with their quality (sHealthDataPrefixWeap1.. "Fine");
-  choosing one improves it as far as the skill reaches (UESP's formula), else says why
-  (sLackRequiredPerkToImproveMagical, sLackRequiredPerksToImprove, sLackRequiredToImprove,
-  sLackRequiredSkillToImprove); UISmithingImproveWeapon / UISmithingImproveArmor.
+  a tempering recipe at the bench (an enchanted variant: its template's), each improved
+  instance an entry of its own named with its quality (sHealthDataPrefixWeap1.. "Fine");
+  choosing one improves that instance as far as the skill reaches (docs/gameplay.md
+  "Crafting"), else says why (sLackRequiredPerkToImproveMagical, sLackRequiredPerksToImprove,
+  sLackRequiredToImprove, sLackRequiredSkillToImprove); UISmithingImproveWeapon /
+  UISmithingImproveArmor.
 - **Enchanting**: enchanted items to disenchant (sConfirmDisenchant: the item goes, its base
-  enchantment is learned, sEnchantmentsLearned; known: sEnchantmentKnown), items, the learned
-  enchantments and filled soul gems to choose; F renames the chosen item (`EditItemName`,
-  `EndItemRename`). TODO(M11): making the enchanted item (a form made in the game), the
-  weapon's charge slider, the skill's experience.
+  enchantment is learned, sEnchantmentsLearned; known: sEnchantmentKnown), items (each
+  improved instance its own), the learned enchantments (greyed when they do not go on the
+  chosen item: sEnchantArmorIncompatible) and filled soul gems to choose; F renames the chosen
+  item (`EditItemName`, `EndItemRename`). A weapon enchantment chosen for a weapon opens the
+  card's slider (`Menu.ShowSlider(max, min, current, snap)`: its magnitude, 1 .. the largest);
+  the movie calls `CalculateCharge(value)` as it moves (its callback, SetChargeValues, is
+  defined nowhere: the engine sets the card, its effects at that value, `sliderShown` and
+  `totalCharges`, the hits) and `SliderClose(value, accepted)`. The chosen item's card shows
+  the name and effects it will get. R asks sEnchantItem and makes it (the crafting engine: a
+  made enchantment and enchanted item; UIEnchantingItemCreate; the story manager's craft
+  event).
 - **Alchemy**: the player's ingredients, by the effects they know (partitioned filter flags);
-  up to three chosen; crafting with no shared effect fails (sPotionCreationFailed,
-  UIAlchemyFail), else the shared effects are learned on each (UIAlchemyLearnEffect).
-  TODO(M11): the potion or poison made, the ingredients used up.
+  up to three chosen; R uses them up: with no shared effect it fails (sPotionCreationFailed,
+  UIAlchemyFail), else the shared effects are learned on each (UIAlchemyLearnEffect) and the
+  potion or poison made joins the player's items (UIAlchemyCreatePotion /
+  UIAlchemyCreatePoison; the story manager's craft event).
 
 Each bench's first use shows its tutorial (HBFG forges, HBSM the grindstone, HBSA the armor
 workbench, HBEC enchanting, HBAL alchemy, HBCO cooking pots, HBML smelters, HBTA tanning racks).
-TODO(M10): the player sits at the workbench first. TODO(M11): the smithing perks, Fortify
-Smithing and improved items kept per item (the game's ExtraHealth).
+TODO(M10): the player sits at the workbench first. TODO(M11): the crafting perks (the perk
+entry points' hooks: docs/gameplay.md "Crafting").
 
 ## Lockpicking
 

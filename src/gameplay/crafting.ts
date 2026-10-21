@@ -7,9 +7,9 @@
 // EnchantConstructMenu FilterFlag / Category, AlchemyMenu), SkyUI 5 (its crafting defines keep
 // the vanilla flags), the movie's ActionScript (ListFilterer), UESP (Skyrim:Smithing,
 // Skyrim:Enchanting Effects, Skyrim:Alchemy, Skyrim:Alchemy Effects, Skyrim:Leveling).
-// Notes: docs/formats/esm.md ("Crafting"). Platform-independent.
-// TODO(M11): perks, Fortify effects and the skill experience they feed come from the running
-// game (perk entry points, actor values); here they are inputs.
+// Notes: docs/formats/esm.md ("Crafting"), docs/gameplay.md ("Crafting"). Platform-independent.
+// Perks and Fortify effects are inputs here: the running game reads them
+// (src/scripting/runtime/crafting-engine.ts: actor values, the perk entry points' hooks).
 
 import { WorkbenchType, type CraftedItemInfo, type Recipe } from '../world/crafting-records.ts';
 
@@ -324,12 +324,13 @@ export interface TemperCandidate<T> {
 
 /**
  * The player's items a smithing bench lists: those with a recipe at the bench (`recipes`, the
- * bench's own) whose created object is the item's base. One entry per item instance.
+ * bench's own) whose created object is the item's base, else its template (WEAP CNAM, ARMO
+ * TNAM: an enchanted variant is improved by its plain item's recipe). One entry per item
+ * instance.
  */
-export function temperingCandidates<T extends { readonly base: number }>(
-  items: readonly T[],
-  recipes: readonly Recipe[],
-): TemperCandidate<T>[] {
+export function temperingCandidates<
+  T extends { readonly base: number; readonly template?: number | undefined },
+>(items: readonly T[], recipes: readonly Recipe[]): TemperCandidate<T>[] {
   const byCreated = new Map<number, Recipe>();
   for (const recipe of recipes) {
     if (recipe.created !== undefined && !byCreated.has(recipe.created))
@@ -337,7 +338,9 @@ export function temperingCandidates<T extends { readonly base: number }>(
   }
   const candidates: TemperCandidate<T>[] = [];
   for (const item of items) {
-    const recipe = byCreated.get(item.base);
+    const recipe =
+      byCreated.get(item.base) ??
+      (item.template === undefined ? undefined : byCreated.get(item.template));
     if (recipe) candidates.push({ item, recipe });
   }
   return candidates;
@@ -349,8 +352,11 @@ const TEMPER_SKILL_OFFSET = 13.29;
 export interface TemperingInputs {
   /** The Smithing skill. */
   readonly skill: number;
-  /** The item's material perk (Steel Smithing, ...) is known. */
-  readonly perk: boolean;
+  /**
+   * The item's material perk (Steel Smithing, ...) is known (doubles), or the factor of the
+   * perk entry point Mod Tempering Health (1: none).
+   */
+  readonly perk: boolean | number;
   /** Fortify Smithing of worn enchantments, as a fraction (two +29% items: 0.58). */
   readonly enchantments?: number;
   /** Fortify Smithing potion, as a fraction. */
@@ -362,9 +368,10 @@ export interface TemperingInputs {
  * + 13.29.
  */
 export function temperingEffectiveSkill(inputs: TemperingInputs): number {
+  const perk = typeof inputs.perk === 'number' ? inputs.perk : inputs.perk ? 2 : 1;
   return (
     (inputs.skill - TEMPER_SKILL_OFFSET) *
-      (inputs.perk ? 2 : 1) *
+      perk *
       (1 + (inputs.enchantments ?? 0)) *
       (1 + (inputs.potion ?? 0)) +
     TEMPER_SKILL_OFFSET
@@ -574,17 +581,54 @@ export function weaponEnchantmentMaxMagnitude(
 }
 
 /**
+ * The engine's enchanting cost settings (not in the load order: the engine's defaults,
+ * fEnchantingCostExponent, fEnchantingSkillCostBase, fEnchantingSkillCostMult,
+ * fEnchantingSkillCostScale; they give UESP's formula below).
+ */
+export interface EnchantingCostSettings {
+  readonly costExponent: number;
+  readonly skillCostBase: number;
+  readonly skillCostMult: number;
+  readonly skillCostScale: number;
+}
+
+export const ENCHANTING_COST_SETTINGS: EnchantingCostSettings = {
+  costExponent: 1.1,
+  skillCostBase: 0.005,
+  skillCostMult: 3,
+  skillCostScale: 0.5,
+};
+
+export function enchantingCostSettings(
+  number: (editorId: string) => number | undefined,
+): EnchantingCostSettings {
+  const d = ENCHANTING_COST_SETTINGS;
+  return {
+    costExponent: number('fEnchantingCostExponent') ?? d.costExponent,
+    skillCostBase: number('fEnchantingSkillCostBase') ?? d.skillCostBase,
+    skillCostMult: number('fEnchantingSkillCostMult') ?? d.skillCostMult,
+    skillCostScale: number('fEnchantingSkillCostScale') ?? d.skillCostScale,
+  };
+}
+
+/**
  * Charge a weapon enchantment uses per hit (UESP): 3 x (base cost x magnitude / max
- * magnitude)^1.1 x (1 - sqrt(skill / 200)).
+ * magnitude)^1.1 x (1 - sqrt(skill / 200)), the base cost being the base enchantment's (ENIT)
+ * and the skill the enchanter's when it is made.
  */
 export function weaponChargePerUse(
   baseCost: number,
   magnitude: number,
   maxMagnitude: number,
   skill: number,
+  settings = ENCHANTING_COST_SETTINGS,
 ): number {
   const share = maxMagnitude > 0 ? magnitude / maxMagnitude : 1;
-  return 3 * (baseCost * share) ** 1.1 * (1 - Math.sqrt(Math.max(0, skill) / 200));
+  return (
+    settings.skillCostMult *
+    (baseCost * share) ** settings.costExponent *
+    Math.max(0, 1 - (settings.skillCostBase * Math.max(0, skill)) ** settings.skillCostScale)
+  );
 }
 
 /** How many hits a weapon's charge gives (rounded down; a cost of 0: unlimited). */
@@ -592,9 +636,76 @@ export function enchantmentUses(charge: number, chargePerUse: number): number {
   return chargePerUse > 0 ? Math.floor(charge / chargePerUse + 1e-9) : Infinity;
 }
 
-/** How many enchantments an item may get: 2 with the Extra Effect perk. */
-export function enchantmentsAllowed(extraEffect: boolean): number {
+/**
+ * How many enchantments an item may get: 1, 2 with the Extra Effect perk (the perk entry point
+ * "# Of Applied Enchantments Allowed" sets it: `allowed`).
+ */
+export function enchantmentsAllowed(extraEffect: boolean | number): number {
+  if (typeof extraEffect === 'number') return Math.max(1, Math.floor(extraEffect));
   return extraEffect ? 2 : 1;
+}
+
+/** A base enchantment's effect item, as enchanting scales it. */
+export interface EnchantableEffect {
+  readonly magnitude: number;
+  readonly duration: number;
+  /** MGEF DATA flags (MagicEffectFlag: what the power scales). */
+  readonly flags: number;
+}
+
+/**
+ * The value enchanting's power scales on an effect: its duration when the power affects its
+ * duration only (Paralyze, Soul Trap), else its magnitude.
+ */
+export function scaledValueOf(effect: EnchantableEffect): 'magnitude' | 'duration' {
+  const magnitude = (effect.flags & MagicEffectFlag.powerAffectsMagnitude) !== 0;
+  const duration = (effect.flags & MagicEffectFlag.powerAffectsDuration) !== 0;
+  return duration && !magnitude ? 'duration' : 'magnitude';
+}
+
+/**
+ * An effect enchanted at a power (`strength(base)`: the scaled value from the base's, rounded
+ * down by the caller's formula): the magnitude or the duration it scales; the other stays.
+ * Effects of a magnitude of 1 or less (Waterbreathing, Muffle: on or off) are not scaled
+ * (UESP: no soul or skill changes them; TODO(M13): the engine's own rule is inferred).
+ */
+export function enchantEffect(
+  effect: EnchantableEffect,
+  strength: (base: number) => number,
+): { magnitude: number; duration: number } {
+  if (scaledValueOf(effect) === 'duration') {
+    return { magnitude: effect.magnitude, duration: Math.max(1, strength(effect.duration)) };
+  }
+  if (effect.magnitude <= 1) return { magnitude: effect.magnitude, duration: effect.duration };
+  return { magnitude: Math.max(1, strength(effect.magnitude)), duration: effect.duration };
+}
+
+/**
+ * A weapon enchantment's effect at the slider's value: each effect's largest value
+ * (`max(base)`) times the share chosen (value / largest of the first effect), rounded; the
+ * first effect gets the value itself.
+ */
+export function weaponEffectAt(
+  effect: EnchantableEffect,
+  max: (base: number) => number,
+  share: number,
+): { magnitude: number; duration: number } {
+  return enchantEffect(effect, (base) => Math.max(1, Math.round(max(base) * share)));
+}
+
+/** The name an enchanted item gets unless the player names it: "<item> of <enchantment>". */
+export function enchantedItemName(item: string, enchantment: string, of = ' of '): string {
+  return enchantment === '' ? item : `${item}${of}${enchantment}`;
+}
+
+/** A charge as the item card's meter shows it (percent of the full charge). */
+export function chargePercent(current: number, max: number): number {
+  return max > 0 ? Math.max(0, Math.min(100, (current / max) * 100)) : 0;
+}
+
+/** A weapon's charge after a soul is put into it (never above its full charge). */
+export function rechargedCharge(current: number, soulCharge: number, max: number): number {
+  return Math.min(max, Math.max(0, current) + Math.max(0, soulCharge));
 }
 
 // --- Alchemy --------------------------------------------------------------------------------
@@ -778,6 +889,104 @@ export function purityKeeps(hostile: boolean, poison: boolean): boolean {
   return hostile === poison;
 }
 
+/** An ingredient's effect item (INGR EFID / EFIT). */
+export interface IngredientEffect {
+  readonly effect: number;
+  readonly magnitude: number;
+  readonly duration: number;
+  readonly area: number;
+}
+
+/** What alchemy reads of a magic effect (MGEF DATA). */
+export interface AlchemyEffectInfo {
+  readonly baseCost: number;
+  readonly flags: number;
+}
+
+/** An effect of a potion made. */
+export interface BrewedEffect {
+  readonly effect: number;
+  readonly magnitude: number;
+  readonly duration: number;
+  readonly area: number;
+  /** Its gold value (effectGoldValue). */
+  readonly value: number;
+}
+
+export interface BrewedPotion {
+  /** Its effects, the strongest (costliest) first: it names the potion. */
+  readonly effects: readonly BrewedEffect[];
+  /** The strongest effect is hostile. */
+  readonly poison: boolean;
+  /** Its gold value: its effects' summed. */
+  readonly value: number;
+}
+
+/**
+ * The potion ingredients make (UESP "Skyrim:Alchemy"), or undefined when they share no effect:
+ * each shared effect from the ingredient whose version of it is the strongest (the costliest
+ * at the power), at the power (`power(effect)`: the skill's, Fortify Alchemy's and the perks'
+ * that apply to it; `rank` the power before effect-specific perks, which orders them); a
+ * poison when the strongest is hostile; Purity (`purify`) keeps only those of its kind.
+ */
+export function brewPotion(
+  ingredients: readonly (readonly IngredientEffect[])[],
+  info: (effect: number) => AlchemyEffectInfo | undefined,
+  power: (effect: number) => number,
+  rank: number,
+  purify = false,
+): BrewedPotion | undefined {
+  const shared = sharedEffects(ingredients.map((effects) => effects.map((e) => e.effect)));
+  if (shared.length === 0) return undefined;
+  const ranked: { effect: BrewedEffect; rank: number; hostile: boolean }[] = [];
+  for (const effect of shared) {
+    const data = info(effect);
+    if (!data) continue;
+    const strengthAt = (entry: IngredientEffect, at: number) =>
+      alchemyEffectStrength(entry.magnitude, entry.duration, data.flags, at);
+    const valueAt = (entry: IngredientEffect, at: number) => {
+      const strength = strengthAt(entry, at);
+      return effectGoldValue(data.baseCost, strength.magnitude, strength.duration);
+    };
+    // The strongest version of it among the ingredients (UESP: ingredients of a stronger
+    // effect lend it their magnitude and duration).
+    let best: IngredientEffect | undefined;
+    for (const effects of ingredients) {
+      for (const entry of effects) {
+        if (entry.effect !== effect) continue;
+        if (!best || valueAt(entry, rank) > valueAt(best, rank)) best = entry;
+      }
+    }
+    if (!best) continue;
+    const strength = strengthAt(best, power(effect));
+    ranked.push({
+      effect: {
+        effect,
+        magnitude: strength.magnitude,
+        duration: strength.duration,
+        area: best.area,
+        value: effectGoldValue(data.baseCost, strength.magnitude, strength.duration),
+      },
+      rank: valueAt(best, rank),
+      hostile: (data.flags & MagicEffectFlag.hostile) !== 0,
+    });
+  }
+  if (ranked.length === 0) return undefined;
+  // The costliest first (the first of equals stays first).
+  const sorted = ranked
+    .map((entry, i) => ({ ...entry, i }))
+    .sort((a, b) => b.rank - a.rank || a.i - b.i);
+  const poison = sorted[0]?.hostile ?? false;
+  const kept = purify ? sorted.filter((entry) => purityKeeps(entry.hostile, poison)) : sorted;
+  const effects = kept.map((entry) => entry.effect);
+  return { effects, poison, value: effects.reduce((sum, e) => sum + e.value, 0) };
+}
+
+/** A made potion's name: "Potion of " / "Poison of " (sCreated*NamePrefix) + its strongest effect. */
+export function potionName(prefix: string, effectName: string): string {
+  return `${prefix}${effectName}`;
+}
+
 // --- Skill uses -----------------------------------------------------------------------------
 
 /** Crafting GMSTs with their vanilla values (all set in the load order). */
@@ -785,6 +994,10 @@ export interface CraftingSettings {
   readonly constructibleSkillUseMult: number;
   readonly constructibleSkillUseExp: number;
   readonly constructibleSkillUseConst: number;
+  readonly temperingSkillUseMult: number;
+  readonly temperingSkillUseItemValMult: number;
+  readonly temperingSkillUseItemValExp: number;
+  readonly temperingSkillUseItemValConst: number;
   readonly disenchantSkillUse: number;
   readonly skillUsageRechargeMult: number;
   readonly wortFailSkillUseMagnitude: number;
@@ -794,6 +1007,10 @@ export const CRAFTING_SETTINGS: CraftingSettings = {
   constructibleSkillUseMult: 3,
   constructibleSkillUseExp: 0.65,
   constructibleSkillUseConst: 25,
+  temperingSkillUseMult: 1,
+  temperingSkillUseItemValMult: 8,
+  temperingSkillUseItemValExp: 0.6,
+  temperingSkillUseItemValConst: 25,
   disenchantSkillUse: 0.0025,
   skillUsageRechargeMult: 0.0002,
   wortFailSkillUseMagnitude: 5,
@@ -809,6 +1026,13 @@ export function craftingSettings(
     constructibleSkillUseExp: number('fConstructibleSkilluseExp') ?? d.constructibleSkillUseExp,
     constructibleSkillUseConst:
       number('fConstructibleSkillUseConst') ?? d.constructibleSkillUseConst,
+    temperingSkillUseMult: number('fTemperingSkillUseMult') ?? d.temperingSkillUseMult,
+    temperingSkillUseItemValMult:
+      number('fTemperingSkillUseItemValMult') ?? d.temperingSkillUseItemValMult,
+    temperingSkillUseItemValExp:
+      number('fTemperingSkillUseItemValExp') ?? d.temperingSkillUseItemValExp,
+    temperingSkillUseItemValConst:
+      number('fTemperingSkillUseItemValConst') ?? d.temperingSkillUseItemValConst,
     disenchantSkillUse: number('fDisenchantSkillUse') ?? d.disenchantSkillUse,
     skillUsageRechargeMult: number('fSkillUsageRechargeMult') ?? d.skillUsageRechargeMult,
     wortFailSkillUseMagnitude: number('fWortFailSkillUseMagnitude') ?? d.wortFailSkillUseMagnitude,
@@ -828,11 +1052,19 @@ export function constructibleSkillUse(totalValue: number, settings = CRAFTING_SE
 }
 
 /**
- * Skill use of improving an item (UESP's fit): 3.8 x sqrt(value gained x quality levels
- * gained). TODO(M11): the engine's own formula (fTemperingSkillUse* GMSTs).
+ * Skill use of improving an item (Update.esm's settings, the constructible formula's kind):
+ * fTemperingSkillUseMult x (fTemperingSkillUseItemValMult x value^fTemperingSkillUseItemValExp +
+ * fTemperingSkillUseItemValConst), the value being the item's base value (UESP: the same
+ * whatever quality it reaches). TODO(M13): whether the engine reads the value before or after
+ * the improvement.
  */
-export function temperingSkillUse(valueGained: number, levelsGained: number): number {
-  return 3.8 * Math.sqrt(Math.max(0, valueGained) * Math.max(0, levelsGained));
+export function temperingSkillUse(itemValue: number, settings = CRAFTING_SETTINGS): number {
+  return (
+    settings.temperingSkillUseMult *
+    (settings.temperingSkillUseItemValMult *
+      Math.max(0, itemValue) ** settings.temperingSkillUseItemValExp +
+      settings.temperingSkillUseItemValConst)
+  );
 }
 
 /** Skill use of enchanting an item: 1, whatever the item, enchantment or soul (UESP). */
@@ -843,17 +1075,25 @@ export function disenchantSkillUse(enchantmentValue: number, settings = CRAFTING
   return enchantmentValue * settings.disenchantSkillUse;
 }
 
-/** Skill use of recharging with a soul (Petty 0.05 .. Grand 0.6). */
-export function rechargeSkillUse(soul: number, settings = CRAFTING_SETTINGS): number {
-  return (SOUL_CAPACITY[soul] ?? 0) * settings.skillUsageRechargeMult;
+/** Skill use of recharging with a soul's charge (Petty 250: 0.05 .. Grand 3000: 0.6). */
+export function rechargeSkillUse(soulCharge: number, settings = CRAFTING_SETTINGS): number {
+  return Math.max(0, soulCharge) * settings.skillUsageRechargeMult;
 }
 
 /**
- * Skill use of making a potion (UESP Leveling): 1 per gold of its value, and 1 for the
- * potion. TODO(M11): check against the game.
+ * Skill use of making a potion (UESP Leveling): its gold value. TODO(M13): whether the
+ * alchemy perks' share of the value counts.
  */
 export function alchemySkillUse(potionValue: number): number {
-  return potionValue + 1;
+  return Math.max(0, potionValue);
+}
+
+/**
+ * Skill use of ingredients that make nothing (they are used up): fWortFailSkillUseMagnitude.
+ * TODO(M13): the setting's use is inferred from its name.
+ */
+export function failedAlchemySkillUse(settings = CRAFTING_SETTINGS): number {
+  return settings.wortFailSkillUseMagnitude;
 }
 
 /** Skill experience of a skill use (AVIF AVSK: use mult x use + offset; UESP Leveling). */

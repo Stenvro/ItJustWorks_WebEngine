@@ -35,7 +35,6 @@ import {
   type WeaponNodes,
   type WeaponSettings,
 } from '../../gameplay/equipment.ts';
-import { temperLevelOfHealth } from '../../gameplay/crafting.ts';
 import { armorSkill } from '../../gameplay/inventory.ts';
 import { EquipmentFlag, parseRaceCombat } from '../../ai/race-combat-records.ts';
 import { BipedSlot, LeveledFlag, parseOutfit, slotBit } from '../../world/actor-records.ts';
@@ -87,7 +86,8 @@ export interface UnequipRequest {
  * What perks, smithing and the like add to the stats. TODO(M11): the perk system fills
  * `armorPerks` (the perk entry point Mod Armor Rating: Custom Fit, Well Fitted, Matching Set,
  * Agile Defender, Juggernaut) and `weaponPerks` (Mod Attack Damage: Armsman, Barbarian,
- * Overdraw); NPCs' improved items (TODO(M11): the leveled lists' and merchants' tempered goods).
+ * Overdraw); improvements are the instance worn's (the crafting engine's item stacks). TODO(M11):
+ * NPCs' improved items (the leveled lists' and merchants' tempered goods).
  */
 export interface EquipmentModifiers {
   /** A worn piece's multiplier by perks (1: none). */
@@ -189,7 +189,7 @@ export class EquipmentEngine {
   readonly #describe = (formId: number): Equippable | undefined => this.#described.get(formId);
   /** Listeners to every change (combat's drawn weapons). */
   readonly listeners = new Set<(change: EquipmentChange) => void>();
-  /** What perks and smithing add (the player's improvements: GameState.itemHealth). */
+  /** What perks and smithing add (improvements: the crafting engine's item stacks). */
   modifiers: EquipmentModifiers;
 
   constructor(runtime: ScriptRuntime) {
@@ -197,9 +197,8 @@ export class EquipmentEngine {
     this.modifiers = {
       armorPerks: () => Promise.resolve(1),
       weaponPerks: () => Promise.resolve(1),
-      // TODO(M11): per item (ExtraHealth), not per base: GameState.itemHealth.
-      temperLevel: (actor, item) =>
-        actor === PLAYER_REF ? temperLevelOfHealth(runtime.state.itemHealth.get(item) ?? 1) : 0,
+      // The instance it wears or wields (ExtraHealth).
+      temperLevel: (actor, item) => runtime.crafting.temperLevel(actor, item),
     };
   }
 
@@ -742,11 +741,8 @@ export class EquipmentEngine {
     if ((await this.describe(formId))?.place !== 'potion') return false;
     if ((await runtime.itemCount(actor, formId)) <= 0) return false;
     await runtime.removeItem(actor, runtime.formHandle(formId), 1, true, undefined);
-    if (actor === PLAYER_REF && (await runtime.forms.record(formId))?.type === 'INGR') {
-      const known = new Set(runtime.state.ingredientEffects.get(formId) ?? []);
-      known.add(0);
-      runtime.state.ingredientEffects.set(formId, known);
-    }
+    if (actor === PLAYER_REF && (await runtime.forms.record(formId))?.type === 'INGR')
+      await runtime.crafting.ingredientEaten(actor, formId);
     await this.#tell(actor, [formId], [], false);
     // Its effects on the actor (the magic system; the world shows the casting: castSpell).
     await runtime.magic.consumed(actor, formId);
@@ -987,9 +983,9 @@ export class EquipmentEngine {
   /**
    * A piece's armor rating for an actor (the menus' card, the rating's sum): its base and
    * improvement by the actor's Light or Heavy Armor skill (UESP "Skyrim:Armor"), times its perks.
-   * Clothing and jewelry have none.
+   * Clothing and jewelry have none. `level`: an instance's improvement (else the one worn).
    */
-  async pieceRating(actor: number, armor: number): Promise<number> {
+  async pieceRating(actor: number, armor: number, level?: number): Promise<number> {
     const item = await this.item(armor);
     if (!item?.armor) return 0;
     const skill = armorSkill(item);
@@ -1004,7 +1000,7 @@ export class EquipmentEngine {
     const chest = (item.armor.slots & slotBit(BipedSlot.body)) !== 0;
     return armorPieceRating(
       item.armor.rating,
-      this.modifiers.temperLevel(actor, armor),
+      level ?? this.modifiers.temperLevel(actor, armor),
       chest,
       multiplier,
       await this.modifiers.armorPerks(actor, item),
@@ -1033,9 +1029,10 @@ export class EquipmentEngine {
   /**
    * A weapon's damage for an actor (UESP "Skyrim:Weapons"): its base and improvement by the
    * actor's skill, its perks and its skill's fortifications by items (the skill's Mod actor
-   * value, percent) and potions (PowerMod).
+   * value, percent) and potions (PowerMod). `level`: an instance's improvement (else the one
+   * wielded).
    */
-  async weaponDamage(actor: number, weapon: number, extra = 0): Promise<number> {
+  async weaponDamage(actor: number, weapon: number, extra = 0, level?: number): Promise<number> {
     const item = await this.item(weapon);
     if (!item?.weapon) return 0;
     const { weapon: settings } = await this.#readSettings();
@@ -1049,7 +1046,7 @@ export class EquipmentEngine {
         : 1;
     return weaponDamage(
       item.weapon.damage + extra,
-      this.modifiers.temperLevel(actor, weapon),
+      level ?? this.modifiers.temperLevel(actor, weapon),
       weaponSkillMultiplier(value, actor === PLAYER_REF, settings),
       (await this.modifiers.weaponPerks(actor, item)) * fortified,
     );

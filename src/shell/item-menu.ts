@@ -74,6 +74,13 @@ export interface ItemMenuModel {
    */
   select(entry: ItemEntry, slot: number | undefined): Promise<void>;
   drop?(entry: ItemEntry, amount: number): Promise<void>;
+  /**
+   * The inventory's Charge (T, AttemptChargeItem; the movie asks ShowSoulGemList): the card of
+   * the soul gems that could recharge the entry (ICT_LIST), or none.
+   */
+  soulGemList?(entry: ItemEntry): Promise<Record<string, unknown> | undefined>;
+  /** A soul gem of that list chosen (ItemCardListCallback): the entry is recharged with it. */
+  chargeWith?(entry: ItemEntry, index: number): Promise<void>;
   /** The magic menu's Unlock (R): a dragon soul spent on the entry's shout; whether it was. */
   unlock?(entry: ItemEntry): Promise<boolean>;
   favorite(entry: ItemEntry): void;
@@ -183,6 +190,11 @@ export class ItemMenu {
           menu.call('DropItem');
           return true;
         }
+        if (event.code === 'KeyT' && model.soulGemList) {
+          // The inventory's Charge: the movie checks the card's charge, then ShowSoulGemList.
+          menu.call('AttemptChargeItem');
+          return true;
+        }
         if (event.code === 'KeyR' && model.unlock) {
           // The magic menu's Unlock: a dragon soul spent on a shout's word (DragonSoulSpent).
           void model.unlock(chosen).then((spent) => {
@@ -287,9 +299,21 @@ export class ItemMenu {
           menu.respond(args[0], args[1] === 1 ? EQUIP_SLOTS.left : EQUIP_SLOTS.right);
         },
         QuantitySliderOpen: () => undefined,
-        // TODO(M11): recharging with soul gems, a shout's failure, entries that cannot be used.
-        ShowSoulGemList: () => undefined,
-        ItemCardListCallback: () => undefined,
+        // Charge: the card lists the soul gems (UpdateItemCardInfo), one chosen recharges.
+        ShowSoulGemList: (menu) => {
+          const chosen = entry(menu);
+          if (!chosen || !model.soulGemList) return;
+          void model.soulGemList(chosen).then((card) => {
+            if (card) menu.call('UpdateItemCardInfo', card);
+          });
+        },
+        ItemCardListCallback: (menu, args) => {
+          const chosen = entry(menu);
+          const index = typeof args[1] === 'number' ? args[1] : undefined;
+          if (!chosen || index === undefined || !model.chargeWith) return;
+          act(menu, model.chargeWith(chosen, index));
+        },
+        // TODO(M11): a shout's failure, entries that cannot be used.
         ShowShoutFail: () => undefined,
         DisabledItemSelect: () => undefined,
       },

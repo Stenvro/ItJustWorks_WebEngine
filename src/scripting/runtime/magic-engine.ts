@@ -1308,14 +1308,20 @@ export class MagicEngine {
 
   /**
    * A weapon's hit on a target (src/shell/actor-combat.ts): its enchantment's effects
-   * (fire and forget, from the attacker; TODO(M11): the charge it uses) and the poison on it.
+   * (fire and forget, from the attacker, while its charge lasts: each hit uses some, the
+   * crafting engine's) and the poison on it.
    */
   async weaponHit(attacker: number, target: number, weapon: number | undefined): Promise<void> {
     const runtime = this.#runtime;
     if (weapon !== undefined) {
       const enchantment = (await runtime.forms.record(weapon))?.formIdField('EITM');
       const item = enchantment === undefined ? undefined : await this.item(enchantment);
-      if (item?.type === 'ENCH' && item.castType !== 0)
+      if (
+        item?.type === 'ENCH' &&
+        item.kind === 'enchantment' &&
+        item.castType !== 0 &&
+        (await runtime.crafting.useCharge(attacker, weapon))
+      )
         await this.apply(item, target, { caster: attacker, source: weapon });
     }
     const magic = runtime.state.actorMagic.get(attacker);

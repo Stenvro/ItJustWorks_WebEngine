@@ -49,7 +49,20 @@ import {
   temperQualityName,
   unpackEffectCategories,
   weaponChargePerUse,
+  weaponEffectAt,
   weaponEnchantmentMaxMagnitude,
+  brewPotion,
+  chargePercent,
+  ENCHANTING_COST_SETTINGS,
+  enchantEffect,
+  enchantedItemName,
+  enchantingCostSettings,
+  enchantmentsAllowed,
+  failedAlchemySkillUse,
+  potionName,
+  rechargedCharge,
+  scaledValueOf,
+  SOUL_CAPACITY,
 } from './crafting.ts';
 
 const recipe = (formId: number, created: number, components: [number, number][]): Recipe => ({
@@ -167,6 +180,15 @@ describe('smithing', () => {
     ]);
   });
 
+  it("improve an enchanted variant by its plain item's recipe (its template)", () => {
+    const recipes = [recipe(1, 0x12eb7, [])];
+    const items = [
+      { base: 0xff000801, template: 0x12eb7 },
+      { base: 0xff000802, template: undefined },
+    ];
+    expect(temperingCandidates(items, recipes).map((c) => c.item.base)).toEqual([0xff000801]);
+  });
+
   it("reach UESP's quality thresholds, with and without the material perk", () => {
     const level = (skill: number, perk: boolean) =>
       temperingQualityLevel(temperingEffectiveSkill({ skill, perk }));
@@ -179,6 +201,10 @@ describe('smithing', () => {
       temperingQualityLevel(
         temperingEffectiveSkill({ skill: 100, perk: false, potion: 0.3, enchantments: 0.29 }),
       ),
+    );
+    // The perk entry point's factor: 2 as the perk.
+    expect(temperingEffectiveSkill({ skill: 40, perk: 2 })).toBe(
+      temperingEffectiveSkill({ skill: 40, perk: true }),
     );
     expect(canImprove(2, 2)).toBe(false);
     expect(canImprove(1, 2)).toBe(true);
@@ -246,6 +272,44 @@ describe('enchanting', () => {
     expect(weaponChargePerUse(30, 10, 10, 200)).toBe(0);
     expect(enchantmentUses(3000, perUse)).toBe(Math.floor(3000 / perUse));
     expect(enchantmentUses(3000, 0)).toBe(Infinity);
+    // The engine's cost settings give UESP's formula; a lower magnitude costs less.
+    expect(weaponChargePerUse(11, 10, 10, 15, ENCHANTING_COST_SETTINGS)).toBeCloseTo(
+      3 * 11 ** 1.1 * (1 - Math.sqrt(15 / 200)),
+    );
+    expect(weaponChargePerUse(11, 5, 10, 15)).toBeLessThan(weaponChargePerUse(11, 10, 10, 15));
+    expect(enchantingCostSettings(() => undefined)).toEqual(ENCHANTING_COST_SETTINGS);
+    expect(enchantmentsAllowed(false)).toBe(1);
+    expect(enchantmentsAllowed(true)).toBe(2);
+    expect(enchantmentsAllowed(2)).toBe(2);
+  });
+
+  it('scale magnitudes or durations as the effect says, and leave on/off effects', () => {
+    const fire = { magnitude: 10, duration: 0, flags: MagicEffectFlag.powerAffectsMagnitude };
+    const paralyze = { magnitude: 0, duration: 2, flags: MagicEffectFlag.powerAffectsDuration };
+    const waterbreathing = { magnitude: 1, duration: 0, flags: 0 };
+    expect(scaledValueOf(fire)).toBe('magnitude');
+    expect(scaledValueOf(paralyze)).toBe('duration');
+    expect(enchantEffect(fire, (b) => b * 2)).toEqual({ magnitude: 20, duration: 0 });
+    expect(enchantEffect(paralyze, (b) => b * 2)).toEqual({ magnitude: 0, duration: 4 });
+    expect(enchantEffect(waterbreathing, () => 0)).toEqual({ magnitude: 1, duration: 0 });
+    // Apparel: a petty soul's twelfth never goes below 1.
+    expect(enchantEffect({ ...fire, magnitude: 5 }, () => 0)).toEqual({
+      magnitude: 1,
+      duration: 0,
+    });
+    // A weapon's slider at half its largest value.
+    expect(weaponEffectAt(fire, (b) => b * 3, 0.5)).toEqual({ magnitude: 15, duration: 0 });
+  });
+
+  it('name an enchanted item and show and refill its charge', () => {
+    expect(enchantedItemName('Iron Sword', 'Fire Damage', ' of ')).toBe(
+      'Iron Sword of Fire Damage',
+    );
+    expect(enchantedItemName('Iron Sword', '')).toBe('Iron Sword');
+    expect(chargePercent(750, 3000)).toBe(25);
+    expect(chargePercent(1, 0)).toBe(0);
+    expect(rechargedCharge(2900, 250, 3000)).toBe(3000);
+    expect(rechargedCharge(100, 500, 3000)).toBe(600);
   });
 });
 
@@ -312,20 +376,67 @@ describe('alchemy', () => {
     expect(effectGoldValue(500, 0, 10)).toBe(500);
     expect(effectGoldValue(3, 2, 60)).toBe(Math.floor(3 * 12 ** 1.1));
   });
+
+  it('brew the shared effects, the strongest first, a poison when it is hostile', () => {
+    const restoreHealth = 1;
+    const damageHealth = 2;
+    const fortifyHealth = 3;
+    const info = (effect: number) =>
+      ({
+        [restoreHealth]: { baseCost: 0.5, flags: MagicEffectFlag.powerAffectsMagnitude },
+        [damageHealth]: {
+          baseCost: 3,
+          flags: MagicEffectFlag.hostile | MagicEffectFlag.powerAffectsMagnitude,
+        },
+        [fortifyHealth]: { baseCost: 0.35, flags: MagicEffectFlag.powerAffectsMagnitude },
+      })[effect];
+    const e = (effect: number, magnitude: number, duration = 0) => ({
+      effect,
+      magnitude,
+      duration,
+      area: 0,
+    });
+    // Restore Health shared (the stronger version, 8, lends its magnitude); Damage Health shared.
+    const ingredients = [
+      [e(restoreHealth, 5), e(damageHealth, 2, 1)],
+      [e(restoreHealth, 8), e(fortifyHealth, 4, 60)],
+      [e(damageHealth, 2, 1)],
+    ];
+    const potion = brewPotion(ingredients, info, () => 4, 4);
+    expect(potion?.effects.map((x) => [x.effect, x.magnitude])).toEqual([
+      [restoreHealth, 32],
+      [damageHealth, 8],
+    ]);
+    expect(potion?.poison).toBe(false);
+    expect(potion?.value).toBe(effectGoldValue(0.5, 32, 0) + effectGoldValue(3, 8, 1));
+    // Purity keeps a potion's beneficial effects only.
+    expect(brewPotion(ingredients, info, () => 4, 4, true)?.effects.length).toBe(1);
+    // A poison: Damage Health alone.
+    const poison = brewPotion([[e(damageHealth, 2, 1)], [e(damageHealth, 2, 1)]], info, () => 4, 4);
+    expect(poison?.poison).toBe(true);
+    expect(brewPotion([[e(restoreHealth, 5)], [e(fortifyHealth, 4)]], info, () => 4, 4)).toBe(
+      undefined,
+    );
+    expect(potionName('Potion of ', 'Restore Health')).toBe('Potion of Restore Health');
+  });
 });
 
 describe('skill uses', () => {
   it('give the GMST and UESP skill uses', () => {
     expect(constructibleSkillUse(0)).toBe(25);
     expect(constructibleSkillUse(100)).toBeCloseTo(3 * 100 ** 0.65 + 25);
-    expect(temperingSkillUse(16, 1)).toBeCloseTo(15.2);
+    // Update.esm's tempering settings: 8 x value^0.6 + 25 (an iron sword: 25 gold).
+    expect(temperingSkillUse(25)).toBeCloseTo(8 * 25 ** 0.6 + 25);
+    expect(temperingSkillUse(0)).toBe(25);
     expect(disenchantSkillUse(400)).toBeCloseTo(1);
-    expect(rechargeSkillUse(SoulLevel.petty)).toBeCloseTo(0.05);
-    expect(rechargeSkillUse(SoulLevel.grand)).toBeCloseTo(0.6);
-    expect(alchemySkillUse(50)).toBe(51);
+    expect(rechargeSkillUse(SOUL_CAPACITY[SoulLevel.petty] ?? 0)).toBeCloseTo(0.05);
+    expect(rechargeSkillUse(SOUL_CAPACITY[SoulLevel.grand] ?? 0)).toBeCloseTo(0.6);
+    expect(alchemySkillUse(50)).toBe(50);
+    expect(failedAlchemySkillUse()).toBe(5);
     const settings = craftingSettings((id) =>
-      id === 'fConstructibleSkillUseConst' ? 10 : undefined,
+      id === 'fConstructibleSkillUseConst' ? 10 : id === 'fTemperingSkillUseMult' ? 2 : undefined,
     );
     expect(constructibleSkillUse(0, settings)).toBe(10);
+    expect(temperingSkillUse(0, settings)).toBe(50);
   });
 });
