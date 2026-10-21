@@ -1011,6 +1011,26 @@ export class PlaySession {
     for (const placed of this.placementsOf(reference)) this.physics.setEnabled(placed, enabled);
   }
 
+  /**
+   * One placement leaves a cell's collision (a cart its horse now pulls): out of every list of
+   * the group (a body moved after it left the world panics the physics), its bodies out of the
+   * world.
+   */
+  removePlacement(group: CollisionGroup, placed: PlacedCollision): void {
+    const drop = <T>(list: T[], of: (entry: T) => PlacedCollision): void => {
+      for (let i = list.length - 1; i >= 0; i--) {
+        const entry = list[i];
+        if (entry !== undefined && of(entry) === placed) list.splice(i, 1);
+      }
+    };
+    drop(group.collision, (entry) => entry);
+    drop(group.settle, (entry) => entry);
+    drop(group.moving, (entry) => entry.placed);
+    drop(group.animated, (entry) => entry.placed);
+    drop(group.posed, (entry) => entry.placed);
+    this.physics.remove(placed);
+  }
+
   /** Takes a cell's collision out of the world (and out of the queue). */
   remove(group: CollisionGroup): void {
     for (let i = this.#queue.length - 1; i >= 0; i--) {
