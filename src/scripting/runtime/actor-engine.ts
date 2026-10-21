@@ -4,7 +4,14 @@
 // set), spells and perks, its race and sex, being essential or protected (its base's flags,
 // or an alias's), and dying. Platform-independent. Notes: docs/scripting.md ("Actors").
 
-import { NpcFlag, parseLeveledList, RaceFlag, TemplateFlag } from '../../world/actor-records.ts';
+import {
+  LeveledFlag,
+  NpcFlag,
+  parseLeveledList,
+  RaceFlag,
+  TemplateFlag,
+} from '../../world/actor-records.ts';
+import { pickLeveled, seededRandom } from '../../world/leveled.ts';
 import {
   parseFaction,
   parseNpcStats,
@@ -602,7 +609,34 @@ export class ActorEngine {
       if (has) all.add(spell);
       else all.delete(spell);
     }
-    return [...all];
+    const spells = new Set<number>();
+    for (const spell of all) {
+      for (const id of await this.#leveledSpell(reference, spell, 0)) spells.add(id);
+    }
+    return [...spells];
+  }
+
+  /**
+   * A spell, or a leveled spell list (LVSP: a bandit wizard's LSpellBandit01FireFrostShock) as
+   * the actor's level picks it: Use All Spells gives every entry up to its level, else one
+   * (pickLeveled), the same for the same actor.
+   */
+  async #leveledSpell(reference: number, form: number, depth: number): Promise<number[]> {
+    const db = this.#runtime.forms.db;
+    const location = db.locate(form);
+    if (location === undefined || db.typeAt(location) !== 'LVSP' || depth >= 8) return [form];
+    const list = await this.#runtime.leveledList(form);
+    if (!list) return [];
+    const level = Math.max(1, await this.level(reference));
+    const picked =
+      (list.flags & LeveledFlag.useAll) !== 0
+        ? list.entries.filter((entry) => entry.level <= level).map((entry) => entry.formId)
+        : [pickLeveled(list, level, seededRandom((reference ^ form) >>> 0))].filter(
+            (id) => id !== undefined,
+          );
+    const spells: number[] = [];
+    for (const id of picked) spells.push(...(await this.#leveledSpell(reference, id, depth + 1)));
+    return spells;
   }
 
   /** AddSpell / AddShout: false if it had it. */
