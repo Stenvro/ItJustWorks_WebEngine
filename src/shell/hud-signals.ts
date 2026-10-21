@@ -82,6 +82,10 @@ export interface MenuSink {
   open(request: MenuRequest): Promise<number>;
   /** Game.FastTravel: the player fast travels to a reference. */
   fastTravel(destination: number): void;
+  /** The player died (src/shell/player-death.ts): the menus dying ends close. */
+  playerDied?(): void;
+  /** fPlayerDeathReloadTime after the death: the game loads its most recent save. */
+  reloadAfterDeath?(): void;
 }
 
 /** What covers the screen (Play, from its main menu on: a new game's opening uses them). */

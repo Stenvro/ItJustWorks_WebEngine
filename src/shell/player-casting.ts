@@ -67,8 +67,8 @@ export class PlayerCasting implements CastingButtons {
     if (!view?.avatar || !runtime) return;
     this.#readHands();
     const player = view.play.player;
-    // In a menu, or with fighting disabled (DisablePlayerControls), nothing is cast.
-    if (session.menuMode || !runtime.controls.fighting) {
+    // In a menu, with fighting disabled (DisablePlayerControls) or dead, nothing is cast.
+    if (session.menuMode || !runtime.controls.fighting || view.play.dead) {
       this.clear();
       return;
     }

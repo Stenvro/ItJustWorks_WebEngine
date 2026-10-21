@@ -562,6 +562,11 @@ export class ScriptRuntime implements VmHost {
   chargen = { noSaving: false, noWaiting: false, controlsMessage: false };
   fastTravelEnabled = true;
   hudCartMode = false;
+  /**
+   * God mode (the console's tgm, Debug.SetGodMode): the player takes no damage and cannot die.
+   * TODO(M13): its unlimited carry weight and ammunition.
+   */
+  godMode = false;
   perkPoints = 0;
   lastHorse: number | undefined;
   inMenuMode = false;

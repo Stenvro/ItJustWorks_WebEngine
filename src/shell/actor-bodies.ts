@@ -3,7 +3,8 @@
 // skeleton.nif) in the physics world, keyframed to its animated pose, on the BIPED layer:
 // what hits it, picks it and sees it meets those bodies. When it dies its bodies are let go
 // from where they are and its pose follows them: the dead fall as ragdolls from the pose they
-// had, as the dead placed in their cells do (src/shell/actors.ts, ragdollsOf).
+// had, as the dead placed in their cells do (src/shell/actors.ts, ragdollsOf). The dead
+// player's avatar gets its bodies so too (src/shell/player-death.ts).
 
 import type { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
@@ -20,6 +21,18 @@ import type { GameSession } from './game-session.ts';
 /** Actors keep their bodies until this far (no churn at the edge). */
 const LEAVE_DISTANCE = HIGH_PROCESS_DISTANCE * 1.25;
 
+/**
+ * An actor whose bodies are kept: one of the stage, or the dead player's avatar
+ * (src/shell/player-death.ts), whose body is drawn at its own placement (`world`).
+ */
+export type BodyHolder = Pick<
+  StagedActor,
+  'reference' | 'placed' | 'position' | 'visibility' | 'dead'
+> & {
+  /** Where its body is drawn, if not at its first instance's placement. */
+  readonly world?: Mat4;
+};
+
 /** A body on a node of the actor's pose, with its place relative to the node. */
 interface PosedBody {
   readonly body: PlacedBody;
@@ -28,7 +41,7 @@ interface PosedBody {
 }
 
 interface ActorBody {
-  readonly staged: StagedActor;
+  readonly staged: BodyHolder;
   /** The body it was made for (an actor made again in another race gets new bodies). */
   readonly actor: PlacedActor;
   readonly placed: PlacedCollision;
@@ -45,7 +58,7 @@ interface ActorBody {
 export class ActorBodies {
   readonly #session: GameSession;
   readonly #bodies = new Map<number, ActorBody>();
-  readonly #adding = new Set<number>();
+  readonly #adding = new Map<number, Promise<void>>();
   #physics: PhysicsWorld | undefined;
 
   constructor(session: GameSession) {
@@ -74,7 +87,7 @@ export class ActorBodies {
    * where their bodies fell; living actors near `focus` get their bodies, far ones lose them,
    * and the bodies go where the last animated pose puts their nodes (in the next steps).
    */
-  frame(actors: Iterable<StagedActor>, focus: Vec3 | undefined): void {
+  frame(actors: Iterable<BodyHolder>, focus: Vec3 | undefined): void {
     const physics = this.#physics;
     if (!physics) return;
     for (const staged of actors) {
@@ -103,9 +116,10 @@ export class ActorBodies {
    * pose follows them from now on. Without bodies yet (far, or just placed) they are made
    * first, in its pose now.
    */
-  async kill(staged: StagedActor): Promise<void> {
+  async kill(staged: BodyHolder): Promise<void> {
     let entry = this.#bodies.get(staged.reference);
-    if (!entry) {
+    // Twice: bodies being made for it living as it died are not made (it no longer lives).
+    for (let i = 0; i < 2 && !entry; i++) {
       await this.#add(staged, true);
       entry = this.#bodies.get(staged.reference);
     }
@@ -119,13 +133,13 @@ export class ActorBodies {
    * The blow that killed an actor pushes its ragdoll (src/shell/actor-combat.ts: fDeathForce*),
    * once its bodies are let go (kill).
    */
-  async push(staged: StagedActor, direction: Vec3, magnitude: number): Promise<void> {
+  async push(staged: BodyHolder, direction: Vec3, magnitude: number): Promise<void> {
     await this.kill(staged);
     const entry = this.#bodies.get(staged.reference);
     if (entry?.articulation) this.#physics?.impulse(entry.placed, direction, magnitude);
   }
 
-  #lives(staged: StagedActor): boolean {
+  #lives(staged: BodyHolder): boolean {
     const placed = staged.placed;
     return (
       !staged.dead &&
@@ -136,37 +150,44 @@ export class ActorBodies {
     );
   }
 
-  async #add(staged: StagedActor, dying = false): Promise<void> {
+  /** Makes an actor's bodies; while they are being made, the same making (a death awaits it). */
+  #add(staged: BodyHolder, dying = false): Promise<void> {
     const reference = staged.reference;
-    if (this.#adding.has(reference) || this.#bodies.has(reference)) return;
+    const pending = this.#adding.get(reference);
+    if (pending) return pending;
+    if (this.#bodies.has(reference)) return Promise.resolve();
+    const adding = this.#make(staged, dying).finally(() => {
+      this.#adding.delete(reference);
+    });
+    this.#adding.set(reference, adding);
+    return adding;
+  }
+
+  async #make(staged: BodyHolder, dying: boolean): Promise<void> {
+    const reference = staged.reference;
     const skeleton = staged.placed.look.skeleton;
     if (skeleton === undefined) return;
-    this.#adding.add(reference);
-    try {
-      const collision = await this.#session.collision(skeleton);
-      const physics = this.#physics;
-      const placed = staged.placed;
-      const world = placed.instances[0]?.world;
-      if (!physics || !world || !collision || this.#bodies.has(reference)) return;
-      if (!dying && !this.#lives(staged)) return;
-      const bodies = this.#place(physics, collision, world, placed.pose, reference);
-      if (!bodies) return;
-      const entry: ActorBody = {
-        staged,
-        actor: placed,
-        placed: bodies.placed,
-        pose: placed.pose,
-        world,
-        bodies: bodies.posed,
-        poseVersion: -1,
-        worldVersion: -1,
-        articulation: undefined,
-      };
-      this.#bodies.set(reference, entry);
-      this.#follow(entry, physics, true);
-    } finally {
-      this.#adding.delete(reference);
-    }
+    const collision = await this.#session.collision(skeleton);
+    const physics = this.#physics;
+    const placed = staged.placed;
+    const world = staged.world ?? placed.instances[0]?.world;
+    if (!physics || !world || !collision || this.#bodies.has(reference)) return;
+    if (!dying && !this.#lives(staged)) return;
+    const bodies = this.#place(physics, collision, world, placed.pose, reference);
+    if (!bodies) return;
+    const entry: ActorBody = {
+      staged,
+      actor: placed,
+      placed: bodies.placed,
+      pose: placed.pose,
+      world,
+      bodies: bodies.posed,
+      poseVersion: -1,
+      worldVersion: -1,
+      articulation: undefined,
+    };
+    this.#bodies.set(reference, entry);
+    this.#follow(entry, physics, true);
   }
 
   /** The skeleton's bodies in the world, keyframed, each on the pose node it hangs on. */

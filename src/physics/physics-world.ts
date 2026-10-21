@@ -1273,7 +1273,8 @@ export class PhysicsWorld {
 
   /**
    * How far a sphere (game units) travels along a ray before it touches something `layer`
-   * collides with; `distance` if nothing is in the way.
+   * collides with; `distance` if nothing is in the way. `ignore`: owners passed through (the
+   * dead player's camera passes their own ragdoll).
    */
   sphereCast(
     origin: Vec3,
@@ -1282,8 +1283,11 @@ export class PhysicsWorld {
     radius: number,
     layer: number,
     exclude?: RAPIER.Collider,
+    ignore?: (owner: PhysicsOwner | undefined) => boolean,
   ): number {
-    return this.pick(origin, direction, distance, radius, layer, exclude)?.distance ?? distance;
+    return (
+      this.pick(origin, direction, distance, radius, layer, exclude, ignore)?.distance ?? distance
+    );
   }
 
   /** What a sphere (game units) moving along a ray touches first, of what `layer` hits. */
@@ -1294,7 +1298,9 @@ export class PhysicsWorld {
     radius: number,
     layer: number,
     exclude?: RAPIER.Collider,
+    ignore?: (owner: PhysicsOwner | undefined) => boolean,
   ): PickHit | undefined {
+    const filter = this.filterFor(layer);
     const length = Math.hypot(...direction) || 1;
     const hit = this.world.castShape(
       { x: toHavok(origin[0]), y: toHavok(origin[1]), z: toHavok(origin[2]) },
@@ -1308,7 +1314,9 @@ export class PhysicsWorld {
       undefined,
       exclude,
       undefined,
-      this.filterFor(layer),
+      ignore
+        ? (collider: RAPIER.Collider) => filter(collider) && !ignore(this.ownerOf(collider))
+        : filter,
     );
     if (!hit) return undefined;
     const along = Math.min(distance, hit.time_of_impact * HAVOK_SCALE);
