@@ -13,6 +13,7 @@ import type {
   ProcedureRun,
   ProcedureRunner,
   SandboxSpot,
+  TravelOptions,
 } from './package-runtime.ts';
 
 type Vec3 = readonly [number, number, number];
@@ -103,11 +104,16 @@ async function faceReference(run: ProcedureRun, reference: number): Promise<void
 }
 
 /** Goes to a place (within its radius); whether it got there. */
-async function goTo(run: ProcedureRun, place: PackagePlace, arrive?: number): Promise<boolean> {
+async function goTo(
+  run: ProcedureRun,
+  place: PackagePlace,
+  arrive?: number,
+  options?: TravelOptions,
+): Promise<boolean> {
   const here = run.body.position();
   const reach = arrive ?? Math.max(AT_PLACE, place.radius);
   if (here && horizontal(here, place.position) <= reach) return true;
-  return run.body.travel(place.position, run.gait, reach, place.space);
+  return run.body.travel(place.position, run.gait, reach, place.space, options);
 }
 
 /**
@@ -162,6 +168,9 @@ const patrol: ProcedureRunner = async (run) => {
   if (start === undefined) return hold(run);
   const radius = run.inputs.number(1, AT_PLACE) || AT_PLACE;
   const repeatable = run.inputs.bool(2);
+  // Static pathing: straight from point to point (MQ101's carts follow their road so: no
+  // navmesh joins some of its points).
+  const options: TravelOptions = { direct: run.inputs.bool(5) };
   // The patrol's points: the start, then each one's link, until it ends or comes round.
   const points: number[] = [start];
   for (let next = await run.mind.linked(start, 0); next !== undefined;) {
@@ -194,7 +203,7 @@ const patrol: ProcedureRunner = async (run) => {
       if (!at) continue;
       const here = run.body.position();
       if (!here || horizontal(here, at.position) > radius) spent = true;
-      if (!(await goTo(run, { position: at.position, radius, space: at.space }, radius))) {
+      if (!(await goTo(run, { position: at.position, radius, space: at.space }, radius, options))) {
         // Not reached (blocked): a moment, then on to the next.
         await run.wait(IDLE_SECONDS);
         spent = true;

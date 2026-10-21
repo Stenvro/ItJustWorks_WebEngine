@@ -121,7 +121,8 @@ export const PROCEDURE_PARAMETERS: Readonly<Record<string, readonly ProcedurePar
     p('Repeatable', 'Bool'),
     p('Start At Nearest', 'Bool'),
     p('Ride Horse If Possible', 'Bool'),
-    p('Unknown 5', 'Bool'),
+    // PatrolStaticPathing's "Static Pathing?": straight from point to point, not over navmeshes.
+    p('Static Pathing', 'Bool'),
   ],
   sandbox: [
     p('Location', 'Location', 'ObjectList'),

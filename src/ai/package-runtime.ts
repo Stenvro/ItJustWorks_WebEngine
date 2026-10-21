@@ -156,7 +156,13 @@ export interface PackageBody {
   position(): Vec3 | undefined;
   heading(): number;
   /** Goes to a place over the navmeshes; resolves whether it arrived. */
-  travel(to: Vec3, gait: Gait, arrive: number, space?: Space): Promise<boolean>;
+  travel(
+    to: Vec3,
+    gait: Gait,
+    arrive: number,
+    space?: Space,
+    options?: TravelOptions,
+  ): Promise<boolean>;
   /** Stops going (its travel resolves false) and stands. */
   stop(): void;
   /** Turns to a heading, standing (undefined: stops turning). */
@@ -292,6 +298,12 @@ interface Running {
   completed: boolean;
   /** The procedure running now (development checks). */
   procedure: string | undefined;
+}
+
+/** How a travel goes. */
+export interface TravelOptions {
+  /** Straight there, not along a navmesh path (a patrol's Static Pathing). */
+  readonly direct?: boolean;
 }
 
 export class ActorPackages {

@@ -397,7 +397,7 @@ export class ActorAi {
       reference,
       position: () => staged.position,
       heading: () => staged.heading,
-      travel: async (to, gait, arrive, space) => {
+      travel: async (to, gait, arrive, space, options) => {
         await furniture.leave(user);
         if (space && !(await this.#inSpace(reference, space))) {
           // On foot through load doors (sNotAllowedToUseAutoDoorsWhileonHorse).
@@ -420,7 +420,7 @@ export class ActorAi {
         // On its horse where its procedure lets it ride, else off it and off its vehicle.
         const going =
           (await transport?.ready(staged, this.#rides.get(reference) === true)) ?? reference;
-        return movers.travel(going, to, gait, arrive);
+        return movers.travel(going, to, gait, arrive, options);
       },
       stop: () => {
         movers.stop(mover());
