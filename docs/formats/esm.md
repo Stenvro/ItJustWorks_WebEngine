@@ -1588,10 +1588,12 @@ one each HIT\_, DETH, HELO). `DialogueIndex.topicsOfSubtype` finds a subtype's t
 quest, `topicsOfCategory` a tab's.
 
 A response's voice file is `Sound\Voice\<plugin>\<voice type>\<quest>_<topic>_<info>_<n>.fuz`:
-the topic's quest's and the topic's editor ids (cut to 10 and 15 characters when longer than 25
-together; a topic without one leaves its part empty), the info's form id as 8 hex digits
-without the load order index, the response's number. Checked against all 35,580 voiced
-responses of the vanilla data.
+the topic's quest's and the topic's editor ids (when longer than 25 characters together, the
+quest's cut to 10 and the topic's to the rest of the 25: `MS13_MS13LucanQuestGiveBra_...`,
+`DialogueGe_OfferServicesTo_...`; a topic without one leaves its part empty), the info's form
+id as 8 hex digits without the load order index, the response's number. Checked against the
+voice files of the load order: 43,326 of its 44,040 responses have one
+(a topic cut to 15 after a short quest id missed 8,083 of them).
 
 ## Perk trees
 

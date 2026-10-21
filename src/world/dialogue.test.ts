@@ -28,11 +28,18 @@ describe('dialogue', () => {
     expect(voiceFileName('DialogueGenericFriendlyFire', { editorId: '' }, 0x23c13, 1)).toBe(
       'DialogueGe__00023C13_1',
     );
-    expect(
-      voiceFileName('MQ101', { editorId: 'MQ101FriendPickpocketSayTopic' }, 0x0110e2d0, 2),
-    ).toBe('MQ101_MQ101FriendPick_0010E2D0_2');
-    expect(voiceFileName('MQ101', { editorId: 'MQ101SoldierBlocking' }, 0x648f4, 1)).toBe(
+    expect(voiceFileName('DialogueGeneric', { editorId: 'OfferServicesTopic' }, 0x7f6bc, 1)).toBe(
+      'DialogueGe_OfferServicesTo_0007F6BC_1',
+    );
+    // A short quest id leaves the topic's id the rest of the 25 characters.
+    expect(voiceFileName('MS13', { editorId: 'MS13LucanQuestGiveBranchTopic' }, 0x3962c, 1)).toBe(
+      'MS13_MS13LucanQuestGiveBra_0003962C_1',
+    );
+    expect(voiceFileName('MQ101', { editorId: 'MQ101SoldierBlockingTopic' }, 0x648f4, 1)).toBe(
       'MQ101_MQ101SoldierBlocking_000648F4_1',
+    );
+    expect(voiceFileName('MQ101', { editorId: 'MQ101Topic' }, 0x1234, 2)).toBe(
+      'MQ101_MQ101Topic_00001234_2',
     );
   });
 });

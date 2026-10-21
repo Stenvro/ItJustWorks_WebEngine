@@ -1,5 +1,6 @@
 // Lines actors say outside the dialogue menu (docs/ai.md, "Talking"): ObjectReference.Say from
-// a script, and what src/shell/actor-talk.ts has them say (a package's Say and its topics,
+// a script, the greeting of an actor the player talks to that has no topics, and what
+// src/shell/actor-talk.ts has them say (a package's Say and its topics,
 // greetings as the player passes, idle chatter, conversations between actors, barks). An
 // info's responses are said in turn in the speaker's voice (or another's: Say's
 // akActorToSpeakAs), lips moving and the face showing each response's emotion, the info's

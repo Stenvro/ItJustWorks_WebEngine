@@ -96,7 +96,12 @@ and DLC set-up quests stop themselves at once) and MQ101 runs; no native is miss
   held to the dead and disabled checks: 86 aliases of quests that start with the game name
   disabled references without "allow disabled" (Riften's Imperial gate guards), and those
   quests run in the game. A filled alias fills the alias it is forced into, reserves what fills
-  it if it reserves, disables it if "initially disabled", and gives it its inventory.
+  it if it reserves, disables it if "initially disabled", and gives it its inventory. While it
+  holds an actor, the actor is a member of the alias's factions (ALFC, rank 0 unless it has a
+  rank of its own): the town dialogue quests make their merchants members of
+  JobMerchantFaction so (in their records they are listed at −1, not members), which their
+  "What have you got for sale?" asks for; the follower alias does the same with
+  CurrentFollowerFaction.
 
 ## The world
 
@@ -160,8 +165,8 @@ templates per part), its level (fixed, or the player's times its multiplier with
 min and max), its actor values (the record's base: skills and offsets from DNAM, health,
 magicka and stamina as the Creation Kit calculated them, AI values from AIDT, carry weight,
 mass and regeneration from its race; then scripts' permanent modifiers and damage), factions
-(GetFactionRank: −2 not a member, −1 listed but not yet one), relationships (RELA, and those
-scripts set), spells and perks (its own, its race's, scripts'), being essential or protected
+(GetFactionRank: −2 not a member, −1 listed but not yet one; an alias's factions while it
+holds the actor), relationships (RELA, read in one pass, and those scripts set), spells and perks (its own, its race's, scripts'), being essential or protected
 (its base, scripts' ActorBase changes, or an alias), dead (killed, or placed dead) and dying
 (OnDying, then OnDeath). Auto-calculated stats follow the level (docs/gameplay.md). TODO(M11): bleedout,
 the magic system's effects; TODO(M10): combat (detection: [ai.md](ai.md#detection)).
