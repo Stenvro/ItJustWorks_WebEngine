@@ -38,9 +38,12 @@ import {
   directAt,
   footIk,
   footIkState,
+  limbIk,
   lookAt,
   lookAtState,
   ModelSpace,
+  quatConjugate,
+  quatRotate,
   turnHead,
   twist,
   type DirectAtState,
@@ -48,6 +51,7 @@ import {
   type FootIkResult,
   type FootIkState,
   type GroundProbe,
+  type LimbIkState,
   type LookAtBoneValues,
   type LookAtState,
 } from './procedural.ts';
@@ -107,6 +111,11 @@ export interface ProceduralWorld {
     from: Point,
     length: number,
   ): { readonly point: Point; readonly normal: Point } | undefined;
+  /**
+   * The world point BSPassByTargetTriggerModifiers watch the character fly past (the engine's:
+   * a dragon's combat target), if it has one.
+   */
+  readonly passByTarget?: Point | undefined;
 }
 
 /** What a look-at did to the eyes this update: their turn (radians, right and up +). */
@@ -122,6 +131,7 @@ interface ProceduralModifierState {
   lookAt?: LookAtState;
   directAt?: DirectAtState;
   footIk?: FootIkState;
+  limbIk?: LimbIkState;
   /** Legs whose rays found nothing (their ungrounded events went out). */
   ungrounded?: boolean[];
 }
@@ -324,6 +334,13 @@ export class BehaviorRuntime {
   /** Blenders a cyclic blend fades from (their frozen parameter): its children play on. */
   readonly #fadingParameters = new WeakMap<object, number>();
   readonly #modifiers = new WeakMap<object, ModifierState>();
+  /**
+   * The generator each modifier modified in its last update (its modifier generator's: a
+   * tweener's clips; one modifier may serve several modifier generators).
+   */
+  readonly #modified = new WeakMap<object, BehaviorGenerator>();
+  /** The generator of the modifier generator whose modifiers update now. */
+  #modifying: BehaviorGenerator | undefined;
   readonly #expressions = new Map<string, Expression | null>();
   #active = new Set<object>();
   /**
@@ -362,6 +379,8 @@ export class BehaviorRuntime {
   #eyes: EyeLook | undefined;
   /** The ragdoll bones the active hkbKeyframeBonesModifiers keep keyframed. */
   #keyframed = new Set<number>();
+  /** The tweeners active in this update (BSTweenerModifier: they carry the character). */
+  #tweens: Extract<BehaviorModifier, { kind: 'tweener' }>[] = [];
   /** The aims the engine gives BSDirectAtModifiers, by their userInfo (world points). */
   readonly #directAtTargets = new Map<number, Point>();
 
@@ -616,13 +635,14 @@ export class BehaviorRuntime {
     }
     const active = new Set<object>();
     this.#keyframed = new Set();
+    this.#tweens = [];
     this.#updateNode(this.#root, dt, active);
     // Nodes no longer active are deactivated (their state reset, their exit events raised).
     for (const node of this.#active) {
       if (!active.has(node)) this.#deactivate(node);
     }
     this.#active = active;
-    this.#motion = this.#host.rootMotion ? this.#rootMotion() : NO_MOTION;
+    this.#motion = this.#tween(this.#host.rootMotion ? this.#rootMotion() : NO_MOTION);
     if (!pose) return;
     this.#footIkControls = undefined;
     this.#eyes = undefined;
@@ -1397,7 +1417,11 @@ export class BehaviorRuntime {
         break;
       }
       case 'modifier-generator':
-        if (node.modifier) this.#updateModifier(node.modifier, dt, active);
+        if (node.modifier) {
+          this.#modifying = node.generator;
+          this.#updateModifier(node.modifier, dt, active);
+          this.#modifying = undefined;
+        }
         break;
       case 'blender':
         if ((node.flags & BLENDER_FLAGS.sync) !== 0) this.#sync(node, dt, scope);
@@ -1577,6 +1601,13 @@ export class BehaviorRuntime {
       case 'every-n-events':
         state.target = this.#everyN(modifier, scope);
         break;
+      case 'transform-vector':
+        if (modifier.computeOnActivate) this.#transformVector(modifier, scope);
+        break;
+      case 'tweener':
+        // Its duration: known once the clips below it play (#tween).
+        state.target = -1;
+        break;
       default:
         break;
     }
@@ -1635,7 +1666,38 @@ export class BehaviorRuntime {
         if (!state.fired && state.elapsed >= this.#read(modifier.alarmTime, scope)) {
           state.fired = true;
           this.#raise(modifier.alarmEvent, scope);
+          // BSTimerModifier's resetAlarm: it starts over (an alarm every so often).
+          if (modifier.reset === true) {
+            state.fired = false;
+            state.elapsed = 0;
+          }
         }
+        return;
+      case 'time-step':
+        this.#write(modifier.timeStep, scope, dt);
+        return;
+      case 'decompose-vector': {
+        const [x, y, z, w] = this.#readVector(modifier.vector, scope);
+        this.#write(modifier.x, scope, x);
+        this.#write(modifier.y, scope, y);
+        this.#write(modifier.z, scope, z);
+        this.#write(modifier.w, scope, w);
+        return;
+      }
+      case 'transform-vector':
+        if (modifier.computeOnModify) this.#transformVector(modifier, scope);
+        return;
+      case 'tweener':
+        // It carries the character in the update's root motion (#tween), by its clock here.
+        state.elapsed += dt;
+        if (this.#modifying) this.#modified.set(modifier, this.#modifying);
+        this.#tweens.push(modifier);
+        return;
+      case 'pass-by-target':
+        this.#passBy(modifier, state, scope);
+        return;
+      case 'limb-ik':
+        // It bends bones: the pose it is laid on is generated after the update (#modify).
         return;
       case 'event-driven':
         if (state.active && modifier.modifier) this.#updateModifier(modifier.modifier, dt, active);
@@ -1781,6 +1843,132 @@ export class BehaviorRuntime {
     }
   }
 
+  /**
+   * hkbTransformVectorModifier: vectorOut = rotation · vectorIn + translation (rotateOnly: no
+   * translation; inverse: the transform's inverse).
+   */
+  #transformVector(
+    modifier: Extract<BehaviorModifier, { kind: 'transform-vector' }>,
+    scope: Scope,
+  ): void {
+    const rotation = this.#readVector(modifier.rotation, scope);
+    const [tx, ty, tz] = this.#readVector(modifier.translation, scope);
+    const [x, y, z] = this.#readVector(modifier.vectorIn, scope);
+    const move = modifier.rotateOnly ? 0 : 1;
+    let out: readonly number[];
+    if (modifier.inverse) {
+      out = quatRotate(quatConjugate(rotation), [x - tx * move, y - ty * move, z - tz * move]);
+    } else {
+      const turned = quatRotate(rotation, [x, y, z]);
+      out = [turned[0] + tx * move, turned[1] + ty * move, turned[2] + tz * move];
+    }
+    this.#writeVector(modifier.vectorOut, scope, [out[0] ?? 0, out[1] ?? 0, out[2] ?? 0, 0]);
+  }
+
+  /**
+   * BSPassByTargetTriggerModifier: its event once each time the character, within its radius
+   * of the target (the engine's passByTarget, else its own targetPosition), goes from having
+   * it ahead to having it behind (along its movementDirection, else its facing).
+   */
+  #passBy(
+    modifier: Extract<BehaviorModifier, { kind: 'pass-by-target' }>,
+    state: ModifierState,
+    scope: Scope,
+  ): void {
+    const world = this.world;
+    if (!world) return;
+    const m = world.worldFromModel;
+    const own = this.#readVector(modifier.targetPosition, scope);
+    const target = world.passByTarget ?? [own[0], own[1], own[2]];
+    const way = this.#readVector(modifier.movementDirection, scope);
+    const moving = Math.hypot(way[0], way[1], way[2]) > 1e-6;
+    const direction: Point = moving ? [way[0], way[1], way[2]] : [m[4] ?? 0, m[5] ?? 1, m[6] ?? 0];
+    const dx = target[0] - (m[12] ?? 0);
+    const dy = target[1] - (m[13] ?? 0);
+    const dz = target[2] - (m[14] ?? 0);
+    const near = Math.hypot(dx, dy, dz) <= this.#read(modifier.radius, scope);
+    const ahead = dx * direction[0] + dy * direction[1] + dz * direction[2] > 0;
+    // values[0]: it had the target ahead within the radius last update.
+    if (near && !ahead && state.values[0] === 1) this.#raise(modifier.triggerEvent, scope);
+    state.values[0] = near && ahead ? 1 : 0;
+  }
+
+  /**
+   * The active BSTweenerModifiers carry the character (they override the clips' root motion
+   * where they tween): what is left of the way from where it is (its world matrix) to the
+   * target position, and of the turn to the target rotation (a quaternion about z), goes in
+   * this update by its share of the time left — the tween duration, or what was left of the
+   * clips below the tweener as it began. Without the character's place it rests.
+   * TODO(M13): Havok's interpolation curve (linear here).
+   */
+  #tween(motion: RootMotion): RootMotion {
+    const world = this.world;
+    if (this.#tweens.length === 0 || !world) return motion;
+    let [x, y, z] = motion.translation;
+    let yaw = motion.yaw;
+    const m = world.worldFromModel;
+    const scale = Math.hypot(m[0] ?? 0, m[1] ?? 0, m[2] ?? 0) || 1;
+    const right: Point = [(m[0] ?? 0) / scale, (m[1] ?? 0) / scale, (m[2] ?? 0) / scale];
+    const forward: Point = [(m[4] ?? 0) / scale, (m[5] ?? 0) / scale, (m[6] ?? 0) / scale];
+    const position: Point = [m[12] ?? 0, m[13] ?? 0, m[14] ?? 0];
+    for (const tween of this.#tweens) {
+      const state = this.#modifiers.get(tween);
+      if (!state) continue;
+      const scope = this.#scopeOf(tween);
+      if (state.target < 0) {
+        // What is left of its clips, once they play (a clip still loading has no length yet).
+        const remaining = tween.useTweenDuration
+          ? this.#read(tween.tweenDuration, scope)
+          : this.#remaining(this.#modified.get(tween), 0);
+        if (remaining <= 0 && !tween.useTweenDuration) continue;
+        state.target = tween.useTweenDuration ? remaining : state.elapsed + remaining;
+      }
+      const left = Math.max(0, state.target - state.elapsed);
+      const share = left <= 0 || this.#dt <= 0 ? 1 : Math.min(1, this.#dt / (left + this.#dt));
+      if (tween.tweenPosition) {
+        const [tx, ty, tz] = this.#readVector(tween.targetPosition, scope);
+        const d: Point = [
+          (tx - position[0]) * share,
+          (ty - position[1]) * share,
+          (tz - position[2]) * share,
+        ];
+        x = d[0] * right[0] + d[1] * right[1] + d[2] * right[2];
+        y = d[0] * forward[0] + d[1] * forward[1] + d[2] * forward[2];
+        z = d[2];
+      }
+      if (tween.tweenRotation) {
+        const [, , qz, qw] = this.#readVector(tween.targetRotation, scope);
+        // Counter-clockwise turns about z, as the root motion's yaw.
+        const target = 2 * Math.atan2(qz, qw);
+        const now = Math.atan2(-forward[0], forward[1]);
+        const turn = Math.atan2(Math.sin(target - now), Math.cos(target - now));
+        yaw = turn * share;
+      }
+    }
+    return { translation: [x, y, z], yaw };
+  }
+
+  /** Seconds left of the longest-playing clip active below a node (0: none). */
+  #remaining(node: BehaviorGenerator | undefined, depth: number): number {
+    if (!node || depth > 32 || !this.#active.has(node)) return 0;
+    if (node.kind === 'clip') {
+      const state = this.#clips.get(node);
+      const animation = this.#host.clip(node.animation)?.animation;
+      if (!state || !animation) return 0;
+      const duration = Math.max(
+        0,
+        animation.duration - (node.cropStart ?? 0) - (node.cropEnd ?? 0),
+      );
+      const speed = Math.abs(node.playbackSpeed) || 1;
+      return Math.max(0, duration - state.time) / speed;
+    }
+    let longest = 0;
+    for (const child of this.#activeChildren(node)) {
+      longest = Math.max(longest, this.#remaining(child, depth + 1));
+    }
+    return longest;
+  }
+
   // --- Procedural modifiers ------------------------------------------------------------------
 
   /** Whether a modifier moves bones, or holds one that does (decided once). */
@@ -1793,6 +1981,7 @@ export class BehaviorRuntime {
       case 'twist':
       case 'foot-ik':
       case 'foot-ik-controls':
+      case 'limb-ik':
         moves = true;
         break;
       case 'list':
@@ -1887,6 +2076,28 @@ export class BehaviorRuntime {
           );
           this.#writeVector(modifier.errorOutTranslation, scope, [0, 0, result.offset, 0]);
         }
+        return;
+      }
+      case 'limb-ik': {
+        const { state, advance } = this.#proceduralState(modifier);
+        state.limbIk ??= { angle: 0 };
+        this.#space.update(pose);
+        limbIk(
+          {
+            startBone: modifier.startBoneIndex,
+            endBone: modifier.endBoneIndex,
+            limit: this.#read(modifier.limitAngleDegrees, scope) * DEGREES,
+            gain: this.#read(modifier.gain, scope),
+            boneRadius: this.#read(modifier.boneRadius, scope),
+            castOffset: this.#read(modifier.castOffset, scope),
+          },
+          state.limbIk,
+          pose,
+          this.#space,
+          this.#groundProbe(),
+          this.#dt,
+          advance,
+        );
         return;
       }
       default:

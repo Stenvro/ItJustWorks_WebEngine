@@ -10,6 +10,7 @@ import type { MagicEffectShown } from '../scripting/runtime/magic-engine.ts';
 import type { SceneSpeech } from '../scripting/runtime/scene-host.ts';
 import type {
   ActorCombatState,
+  ActorFlightState,
   ActorInteraction,
   ActorMotion,
   LivePlacement,
@@ -74,6 +75,8 @@ export interface ScriptView {
   vehicleChanged?(actor: number): void;
   tether?(cart: number, horse: number): void;
   mountOf?(actor: number): number | undefined;
+  /** How a flier of the view flies (src/shell/actor-flight.ts). */
+  flight?(actor: number): ActorFlightState | undefined;
   riderOf?(horse: number): number | undefined;
   dismount?(actor: number): boolean;
   /** Whether a furniture's marker (any marker, without one) is used by an actor of the view. */
@@ -368,6 +371,14 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) {
       const horse = view.mountOf?.(actor);
       if (horse !== undefined) return horse;
+    }
+    return undefined;
+  }
+
+  flight(actor: number): ActorFlightState | undefined {
+    for (const view of this.#views) {
+      const flight = view.flight?.(actor);
+      if (flight !== undefined) return flight;
     }
     return undefined;
   }

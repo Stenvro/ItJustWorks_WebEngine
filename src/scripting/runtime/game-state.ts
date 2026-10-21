@@ -126,6 +126,11 @@ export interface ActorState {
   level?: number;
   voiceRecoveryTime?: number;
   forcedLandingMarker?: number;
+  /** SetAllowFlying: false keeps a flier on the ground (src/shell/actor-flight.ts). */
+  allowFlying?: boolean;
+  /** SetAllowFlyingEx: whether it may crash-land when hurt, and fly while it searches. */
+  allowCrashLand?: boolean;
+  allowFlyingSearch?: boolean;
   /** SetVehicle: what it rides along on. */
   vehicle?: number;
 }

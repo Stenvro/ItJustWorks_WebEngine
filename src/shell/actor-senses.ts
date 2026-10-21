@@ -89,6 +89,8 @@ export interface ActorSensesOptions {
   /** The camera (the player's sight for OnGainLOS: what is on screen). */
   readonly camera?: () =>
     { readonly position: Vec3; readonly forward?: Vec3; readonly fovY?: number } | undefined;
+  /** Whether an actor flies now (noticed fSneakFlyingDistanceMult times as far). */
+  readonly flying?: (actor: number) => boolean;
 }
 
 /** What detection weighs of an actor that is read now and then (its values, gear, race). */
@@ -377,7 +379,11 @@ export class ActorSenses implements ScriptSenses {
   #level(runtime: ScriptRuntime, observer: Body, target: Body): DetectionLevel | undefined {
     const settings = this.#settings;
     const exterior = !this.#options.interior;
-    const reach = detectionReach(settings, exterior);
+    const reach = detectionReach(
+      settings,
+      exterior,
+      this.#options.flying?.(target.reference) === true,
+    );
     const apart = distance(observer.eye, target.chest);
     if (apart >= reach) return undefined;
     const lineOfSight = this.#sight(observer, target);

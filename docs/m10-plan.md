@@ -207,8 +207,14 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
       cast, drink and shout (the combat style's magic) to 5.2, IsWeaponMagicOut and the draw
       state to 5.1, dragons' breath to 5.4, the visuals (lights, explosion models, beams, hit
       art) and perks to M11. M11 completes the effect archetypes and perks behind it.
-- [ ] **5.4 Flying combat:** dragons' hover, orbit, dive, perch, landing, flight grab and
-      breath; other fliers.
+- [x] **5.4 Flying combat:** dragons' hover, orbit, dive, perch, landing, flight grab and
+      breath; other fliers (none in vanilla: RACE Flies is the dragons'). The flight through
+      the dragon graph (the idle tree's fly and hover actions, its flying states, the tweeners
+      and the other flight modifiers), the combat style's flight section, the packages' Hover,
+      Orbit, FlightGrab and a flown Travel, breath sprays and their threats, Dragonrend and
+      SetAllowFlying, fliers' reach and detection. docs/ai.md, "Flying combat";
+      `tools/flight-info.ts`. Moved on: Dragonborn's dragon riding to M11; the engine's
+      undocumented flight values to M13.
 
 ## Phase 6: the game plays (acceptance)
 

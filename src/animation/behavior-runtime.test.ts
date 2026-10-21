@@ -5,6 +5,7 @@ import type {
   BehaviorGraph,
   BehaviorModifier,
   StateTransition,
+  Vec4,
 } from '../formats/hkx/behavior.ts';
 import { BehaviorRuntime, type BehaviorHost } from './behavior-runtime.ts';
 
@@ -482,5 +483,190 @@ describe('the behavior runtime', () => {
     runtime.sendEvent('IdleCartIdle');
     runtime.update(0.1);
     expect(runtime.states()[1]).toEqual({ machine: 'Cart', state: 'Idle' });
+  });
+});
+
+describe("the dragon's flight modifiers", () => {
+  /** A graph whose root modifies a clip (2 s) with `modifier`, with these variables. */
+  const flying = (
+    modifier: BehaviorModifier,
+    variables: { name: string; type: number; initial: number; vector?: Vec4 }[],
+    events: string[] = [],
+  ): BehaviorRuntime =>
+    new BehaviorRuntime({
+      root: {
+        name: 'flight',
+        events,
+        variables,
+        root: {
+          kind: 'modifier-generator',
+          name: 'Mods',
+          modifier,
+          generator: clip('glide', 0),
+        },
+      },
+      host: host({ glide: animation(0, 2) }),
+      skeleton,
+    });
+  /** The character's world matrix: at the origin, facing +y. */
+  const place = (runtime: BehaviorRuntime): Float32Array => {
+    const matrix = Float32Array.of(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
+    runtime.world = { worldFromModel: matrix };
+    return matrix;
+  };
+  /** Moves the character by the root motion its graph reports (it keeps facing +y). */
+  const move = (matrix: Float32Array, runtime: BehaviorRuntime): void => {
+    const [x, y, z] = runtime.rootMotion().translation;
+    matrix[12] = (matrix[12] ?? 0) + x;
+    matrix[13] = (matrix[13] ?? 0) + y;
+    matrix[14] = (matrix[14] ?? 0) + z;
+  };
+
+  it('tweens the character to its target over what is left of its clips (BSTweenerModifier)', () => {
+    const runtime = flying(
+      {
+        kind: 'tweener',
+        name: 'Tween',
+        enable: { value: 1 },
+        tweenPosition: true,
+        tweenRotation: false,
+        useTweenDuration: false,
+        tweenDuration: { value: 0 },
+        targetPosition: { value: [0, 0, 0, 0], variable: 0 },
+        targetRotation: { value: [0, 0, 0, 1] },
+      },
+      [{ name: 'TweenPosition', type: 7, initial: 0, vector: [0, 100, 50, 0] }],
+    );
+    const matrix = place(runtime);
+    const way: number[] = [];
+    for (let i = 0; i < 4; i++) {
+      runtime.update(0.5);
+      move(matrix, runtime);
+      way.push(Math.round(matrix[13] ?? 0));
+    }
+    // A quarter of the way each half second of the clip's two, there at its end.
+    expect(way).toEqual([25, 50, 75, 100]);
+    expect(matrix[14]).toBeCloseTo(50);
+  });
+
+  it('turns the character to its target rotation within its tween duration', () => {
+    const quarter = Math.sin(Math.PI / 4);
+    const runtime = flying(
+      {
+        kind: 'tweener',
+        name: 'Turn',
+        enable: { value: 1 },
+        tweenPosition: false,
+        tweenRotation: true,
+        useTweenDuration: true,
+        tweenDuration: { value: 0.5 },
+        targetPosition: { value: [0, 0, 0, 0] },
+        // A quarter turn counter-clockwise about z.
+        targetRotation: { value: [0, 0, quarter, quarter] },
+      },
+      [],
+    );
+    place(runtime);
+    runtime.update(0.25);
+    expect(runtime.rootMotion().yaw).toBeCloseTo(Math.PI / 4);
+  });
+
+  it('raises a BSTimerModifier alarm again and again (resetAlarm)', () => {
+    const runtime = flying(
+      {
+        kind: 'timer',
+        name: 'PickNewIdle',
+        enable: { value: 1 },
+        alarmTime: { value: 1 },
+        alarmEvent: { id: 0 },
+        reset: true,
+      },
+      [],
+      ['PickNewIdle'],
+    );
+    const raised: string[] = [];
+    for (let i = 0; i < 6; i++) {
+      runtime.update(0.5);
+      raised.push(...runtime.takeRaised());
+    }
+    expect(raised).toEqual(['PickNewIdle', 'PickNewIdle', 'PickNewIdle']);
+  });
+
+  it('writes the time step, splits a vector and transforms one', () => {
+    const runtime = flying(
+      {
+        kind: 'list',
+        name: 'List',
+        enable: { value: 1 },
+        modifiers: [
+          {
+            kind: 'time-step',
+            name: 'Step',
+            enable: { value: 1 },
+            timeStep: { value: 0, variable: 0 },
+          },
+          {
+            kind: 'decompose-vector',
+            name: 'Direction',
+            enable: { value: 1 },
+            vector: { value: [0, 0, 0, 0], variable: 1 },
+            x: { value: 0 },
+            y: { value: 0 },
+            z: { value: 0, variable: 2 },
+            w: { value: 0 },
+          },
+          {
+            kind: 'transform-vector',
+            name: 'Offset',
+            enable: { value: 1 },
+            // Half a turn about z, then 10 up.
+            rotation: { value: [0, 0, 1, 0] },
+            translation: { value: [0, 0, 10, 0] },
+            vectorIn: { value: [100, -7, -0.5, 0] },
+            vectorOut: { value: [0, 0, 0, 0], variable: 3 },
+            rotateOnly: false,
+            inverse: false,
+            computeOnActivate: true,
+            computeOnModify: false,
+          },
+        ],
+      },
+      [
+        { name: 'TimeStep', type: 4, initial: 0 },
+        { name: 'MovementDirection', type: 7, initial: 0, vector: [0, 0.6, 0.8, 0] },
+        { name: 'MoveDirZ', type: 4, initial: 0 },
+        { name: 'ConstraintOffset', type: 7, initial: 0, vector: [0, 0, 0, 0] },
+      ],
+    );
+    runtime.update(1 / 30);
+    expect(runtime.variable('TimeStep')).toBeCloseTo(1 / 30);
+    expect(runtime.variable('MoveDirZ')).toBeCloseTo(0.8);
+    const offset = runtime.vector('ConstraintOffset') ?? [];
+    expect(Array.from(offset, (v) => Math.round(v * 10) / 10)).toEqual([-100, 7, 9.5, 0]);
+  });
+
+  it('raises its event as the character flies past its target (BSPassByTargetTriggerModifier)', () => {
+    const runtime = flying(
+      {
+        kind: 'pass-by-target',
+        name: 'PassBy',
+        enable: { value: 1 },
+        targetPosition: { value: [0, 0, 0, 0] },
+        radius: { value: 4000 },
+        movementDirection: { value: [0, 0, 0, 0] },
+        triggerEvent: { id: 0 },
+      },
+      [],
+      ['DragonPassByEffect'],
+    );
+    const matrix = Float32Array.of(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1000, 500, 1);
+    runtime.world = { worldFromModel: matrix, passByTarget: [0, 0, 0] };
+    const raised: string[] = [];
+    for (const y of [-1000, -200, 300, 900]) {
+      matrix[13] = y;
+      runtime.update(0.1);
+      raised.push(...runtime.takeRaised());
+    }
+    expect(raised).toEqual(['DragonPassByEffect']);
   });
 });
