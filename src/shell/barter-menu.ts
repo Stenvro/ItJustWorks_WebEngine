@@ -27,7 +27,7 @@ import { parseItem, type ItemRecord } from '../world/item-records.ts';
 import { GOLD } from './inventory-menu.ts';
 import type { GameSession } from './game-session.ts';
 import type { ItemMenuModel } from './item-menu.ts';
-import { ItemShelf, otherSideEntry, sideCategories } from './container-menu.ts';
+import { entryStack, ItemShelf, otherSideEntry, sideCategories } from './container-menu.ts';
 import { itemEntry } from './inventory-menu.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -110,7 +110,7 @@ export async function barterModel(
           return;
         }
         await shelf.move(GOLD, total, PLAYER_REF, chest, false);
-        await shelf.move(entry.formId, amount, chest, PLAYER_REF);
+        await shelf.move(entry.formId, amount, chest, PLAYER_REF, true, entryStack(entry));
         await speechUse(entry.formId);
         return;
       }
@@ -120,7 +120,7 @@ export async function barterModel(
       if (fromChest > 0) await shelf.move(GOLD, fromChest, chest, PLAYER_REF, false);
       owed -= fromChest;
       if (owed > 0) await shelf.move(GOLD, owed, vendorActor, PLAYER_REF, false);
-      await shelf.move(entry.formId, amount, PLAYER_REF, chest);
+      await shelf.move(entry.formId, amount, PLAYER_REF, chest, true, entryStack(entry));
       game.crime.clearStolen(chest, entry.formId);
       await speechUse(entry.formId);
     },

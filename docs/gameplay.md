@@ -90,7 +90,7 @@ from the real data (`--player`, `--base <editor id>`, `--audit` for every placed
 - **Armor rating** of a piece (UESP "Skyrim:Armor"): ceiling((base + item quality) × skill
   multiplier) × perks. The base is DNAM / 100; the item quality what improving added
   (`temperingIncrease`, src/gameplay/crafting.ts: (3.6 × level − 1.6), half for all but chest
-  armor; the player's by `GameState.itemHealth`). The skill multiplier is fArmorRatingBase (1) at
+  armor; the instance worn's: the crafting engine's item stacks, "Crafting"). The skill multiplier is fArmorRatingBase (1) at
   skill 0 up to fArmorRatingPCMax (1.4: 1 + 0.4 × skill / 100) for the player, fArmorRatingMax
   (2.5: 1 + 1.5 × skill / 100) for NPCs, at 100; the skill is Light or Heavy Armor with its
   fortifications (the LightArmorMod / HeavyArmorMod and PowerMod actor values). Clothing has none.
@@ -655,3 +655,141 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
 
 TODO(M12): crime's state in the save. TODO(M11): the perks' pickpocket and bribe effects
 (Light Fingers, Cutpurse, Bribery's cost), NPCs' Acquire with Allow Pickpocketing.
+
+## Crafting
+
+What the workbenches do to the game (`src/scripting/runtime/crafting-engine.ts`,
+`runtime.crafting`; the formulas: `src/gameplay/crafting.ts`; the menu:
+`src/shell/crafting-menu.ts`, docs/ui.md "Crafting"). Sources: UESP "Skyrim:Smithing",
+"Skyrim:Enchanting", "Skyrim:Alchemy", "Skyrim:Leveling"; CommonLibSSE-NG
+(BGSCreatedObjectManager, ExtraHealth, ExtraEnchantment, the perk entry points); the load
+order's settings. `node tools/crafting-info.ts` crafts on the game data and prints what was
+made.
+
+### Forms the game makes
+
+The game makes forms of its own (the save's range, 0xFF......, shared with created
+references): `GameState.createdForms` holds each as plain data, a record type and its fields
+(`src/world/created-forms.ts`). A field copied from a plugin's record keeps that plugin's name,
+whose master list its form ids are read with (a template's model and keywords, an
+enchantment's conditions); the engine's own fields hold global form ids and UTF-8 strings.
+`FormIndex.record` reads them before the plugins' (`CreatedRecord`), so the inventory, the
+equip and magic systems, the item cards and scripts see them as any form. A potion or an
+enchantment made as one before is that one (they stack, as the game shares its created
+objects).
+
+- **Potions and poisons**: the default potion's or poison's fields (DOBJ BAPO DefaultPotion,
+  BAPS DefaultPoison: weight, keywords, sounds), the look (MODL, MODT, MODS) of the plugins'
+  first potion (poison) whose first effect is the made one's strongest (TODO(M13): how the
+  engine picks a made potion's model is inferred), its name sCreatedPotionNamePrefix /
+  sCreatedPoisonNamePrefix ("Potion of ", "Poison of ") and the strongest effect's name, ENIT
+  (its value, No Auto-Calc, Poison) and its effects.
+- **Enchantments**: FULL (the base enchantment's name), ENIT (its cost: a weapon's charge per
+  hit, apparel's effects' cost; No Auto-Calc; fire and forget on touch for weapons, constant
+  effect on self for apparel; the charge; the base enchantment; the worn restrictions) and the
+  effects with the base enchantment's conditions.
+- **Enchanted items**: the game keeps a player-enchanted item as its base form with its own
+  enchantment and name (ExtraEnchantment, ExtraTextDisplayData); here the item is a copy of
+  its base (every field, its scripts too) with the enchantment (EITM), a weapon's charge
+  (EAMT), its name and its template (WEAP CNAM, ARMO TNAM: the base, as the plugins' own
+  enchanted variants name theirs), so everything that reads forms reads it as enchanted.
+  TODO(M12): an .ess import turns the game's enchanted items into such copies. Scripts that
+  count the base (GetItemCount(IronSword)) do not count them, as with the plugins' variants.
+
+TODO(M12): the created forms in the save, those no container holds any more left out.
+
+### Items of their own
+
+An improved weapon or armor keeps its quality on itself (the game's ExtraHealth on an
+inventory entry's extra data list): `GameState.itemStacks` holds, per container and base,
+stacks of alike items (`ItemStack`: count, health, worn); the rest of the base's count (the
+inventory's) is plain. Removing items (`ScriptRuntime.removeItem` and its `stack`: a menu's
+row) takes the stack asked for first, then the plain ones, then the least improved; stacks
+that leave join the receiver's. Counts set without saying which (a script, a container
+emptied) take from the least improved (`stacks` keeps them within the count). The item menus
+list each stack as a row of its own ("Iron Sword (Fine)": sHealthDataPrefixWeap1..6 /
+sHealthDataPrefixArmo1..6), moved, sold and dropped as such; equipping a row marks it worn
+(`wear`), and the stats count the worn instance's quality (`EquipmentModifiers.temperLevel`:
+the marked stack, else a plain one, else the best). TODO(M13): an item dropped into the world
+loses its data (the world's references carry none yet); a tempered item's value in barter.
+
+### Smithing
+
+- Quality (UESP): effective skill = (Smithing − 13.29) × (1 + material perk) × (1 + Fortify
+  Smithing of enchantments: SmithingMod %) × (1 + of potions: SmithingPowerMod %) + 13.29;
+  level = floor((effective + 38) × 3 / 103): 1 Fine .. 6 Legendary. Improving only raises it
+  (else sLackRequiredSkillToImprove); health = 1 + level / 10 (fHealthDataValue1 1.1).
+- What it adds: (3.6 × level − 1.6), × 1 for body armor and × 0.5 for everything else (armor
+  rounded up, damage rounded).
+- An enchanted variant is improved by its template's recipe (the recipe's conditions want
+  Arcane Blacksmith for magical items: sLackRequiredPerkToImproveMagical).
+- Skill use (Update.esm's settings): fTemperingSkillUseMult × (fTemperingSkillUseItemValMult
+  (8) × value^fTemperingSkillUseItemValExp (0.6) + fTemperingSkillUseItemValConst (25)), the
+  item's base value whatever quality it reaches (TODO(M13): before or after). Constructible
+  objects: fConstructibleSkillUseMult (3) × value^0.65 + 25 of all the recipe makes.
+- Stats: Weapons / Armor Improved, Weapons / Armor Made.
+
+### Enchanting
+
+- **Disenchanting** destroys the item and learns its base enchantment (ENIT; the keyword
+  MagicDisallowEnchanting, DOBJ DIEN, on the item or the enchantment forbids it; known
+  already: sEnchantmentKnown); skill use fDisenchantSkillUse (0.0025) × the item's
+  enchantment's cost.
+- What goes on what: weapon enchantments (fire and forget) on weapons but staffs, apparel
+  enchantments (constant effect) on armor and clothing, and only on items with a keyword of
+  the enchantment's worn restrictions (a FLST of keywords: sEnchantArmorIncompatible); one
+  enchantment, more with the perks.
+- **Apparel**: magnitude = floor(base × soul share (Petty 1/12, Lesser 1/6, Common 1/3,
+  Greater 2/3, Grand 1) × skill multiplier × perks × (1 + Fortify Enchanting)); the skill
+  multiplier is 1 + (s/100)(s/100 − 0.14)/3.4 (1.25 at 100, fEnchantingSkillFactor). Effects
+  of a magnitude of 1 or less (Waterbreathing, Muffle) are not scaled (TODO(M13): inferred).
+- **Weapons**: the largest value = floor(base × skill multiplier × perks), chosen on the card's
+  slider (1 .. largest); an effect the power scales by duration (Paralyze, Soul Trap: MGEF
+  Power Affects Duration only) is chosen by its duration; the other effects follow the share.
+  The charge is the soul's (Petty 250, Lesser 500, Common 1000, Greater 2000, Grand 3000); a
+  hit costs fEnchantingSkillCostMult (3) × (base cost × value / largest)^fEnchantingCostExponent
+  (1.1) × (1 − (fEnchantingSkillCostBase (0.005) × skill)^fEnchantingSkillCostScale (0.5)) (the
+  base enchantment's ENIT cost; the engine's settings, not in the load order), stored as the
+  enchantment's cost; hits = floor(charge / cost).
+- The name: the player's (F, at most 32 characters) or "<item>" sOf "<enchantment>" ("Iron
+  Sword of Fire Damage"). The soul gem is used up; a reusable one (keyword ReusableSoulGem,
+  DOBJ RUSG: Azura's Star) leaves its empty gem (SLGM NAM0). Skill use: 1 an item
+  (Enchanting's 900 a use). Stats: Magic Items Made, Soul Gems Used.
+- **Charge**: each hit of an enchanted weapon uses its enchantment's cost
+  (`CraftingEngine.useCharge`, the magic system's weapon hit); with too little left the
+  enchantment does nothing. NPCs' weapons never run out (UESP). The charge is kept per actor
+  and weapon base (`ActorCastingState.charge`, the staffs' too: a made weapon is a form of its
+  own; TODO(M13): the plugins' enchanted weapons per item). The inventory's card shows it
+  (`charge`, `usedCharge`: percent), the HUD its meters (SetChargeMeterPercent per hand).
+- **Recharging** (the inventory's T: ShowSoulGemList, the card's list of filled soul gems with
+  the percent each adds, ItemCardListCallback): the soul's charge is added up to the full
+  charge, the gem used up (UIEnchantRecharge); skill use fSkillUsageRechargeMult (0.0002) a
+  point of charge.
+
+### Alchemy
+
+- The effects at least two ingredients share; each from the ingredient whose version of it is
+  the strongest (the costliest at the power). The power = fAlchemyIngredientInitMult (4) × (1 +
+  (fAlchemySkillFactor (1.5) − 1) × Alchemy / 100) × (1 + Fortify Alchemy: AlchemyMod +
+  AlchemyPowerMod %) × perks; it scales the magnitude (Power Affects Magnitude) and / or the
+  duration (Power Affects Duration), rounded; No Magnitude / No Duration effects have none.
+- An effect's value: floor(base cost × (magnitude × duration / 10)^1.1), magnitude 0 as 1,
+  duration 0 as 10; the potion's: its effects' summed. The effects are ordered by value, the
+  costliest first: it names the potion and makes it a poison when it is hostile (MGEF
+  Hostile). Purity keeps only the effects of the potion's kind.
+- Crafting uses one of each ingredient. The effects they share are learned on each; nothing
+  shared: sPotionCreationFailed, nothing made (skill use fWortFailSkillUseMagnitude; TODO(M13):
+  inferred from its name). Skill use: the potion's value (TODO(M13): whether the perks' share
+  counts). Stats: Potions / Poisons Mixed.
+- Eating an ingredient learns its first effect (Ingredients Eaten).
+
+### Perks
+
+Perks change crafting through `CraftingEngine.perks` (`CraftingPerks`), each a perk entry point
+the perk system fills (TODO(M11)): Mod Tempering Health (the material perks' doubling), Mod
+Enchantment Power (Enchanter, Fire / Frost / Storm, Insightful and Corpus Enchanter, Seeker of
+Sorcery), Mod Soul Gem Enchanting, Mod Soul Gem Recharge (Soul Squeezer), # Of Applied
+Enchantments Allowed (Extra Effect), Mod Alchemy Effectiveness (Alchemist, Physician,
+Benefactor, Poisoner, Seeker of Shadows), Purify Alchemy Ingredients (Purity), Mod Potions
+Created, Mod Initial Ingredient Effects Learned (Experimenter). Without them each changes
+nothing.

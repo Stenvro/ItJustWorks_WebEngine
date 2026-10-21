@@ -42,6 +42,7 @@ import { EquipmentEngine } from './equipment-engine.ts';
 import { ProgressionEngine } from './progression-engine.ts';
 import { CastingEngine } from './casting-engine.ts';
 import { MagicEngine, type MagicEffectShown } from './magic-engine.ts';
+import { CraftingEngine } from './crafting-engine.ts';
 import { CrimeEngine } from './crime-engine.ts';
 import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
@@ -537,6 +538,8 @@ export class ScriptRuntime implements VmHost {
   readonly casting: CastingEngine;
   /** Crime and factions: bounties, stolen items, jail, guards, reactions (crime-engine.ts). */
   readonly crime: CrimeEngine;
+  /** Crafting: improved items, enchanting, charge, alchemy, the forms they make (crafting-engine.ts). */
+  readonly crafting: CraftingEngine;
   /** While a new game starts its quests (their aliases may take reserved references). */
   startingNewGame = false;
   /** Game seconds per real second (the TimeScale global; scripts may set it). */
@@ -626,6 +629,7 @@ export class ScriptRuntime implements VmHost {
     } = {},
   ) {
     this.forms = new FormIndex(db);
+    this.forms.created = (formId) => this.state.createdForms.get(formId);
     this.world = options.world ?? {};
     this.#warn = options.warn ?? (() => undefined);
     this.log = options.log ?? (() => undefined);
@@ -639,6 +643,7 @@ export class ScriptRuntime implements VmHost {
     this.magic.listen();
     this.casting = new CastingEngine(this);
     this.crime = new CrimeEngine(this);
+    this.crafting = new CraftingEngine(this);
     this.sceneHost = new RuntimeSceneHost(this);
     this.scenes = new SceneDirector(this.sceneHost);
     registerNatives(this.#natives, this);
@@ -1553,6 +1558,7 @@ export class ScriptRuntime implements VmHost {
   async resetReference(reference: number, target: number | undefined): Promise<void> {
     this.state.references.delete(reference);
     this.state.inventories.delete(reference);
+    this.crafting.clear(reference);
     this.#seeded.delete(reference);
     this.vm.reset(this.referenceHandle(reference));
     if (target !== undefined) {
@@ -1718,12 +1724,16 @@ export class ScriptRuntime implements VmHost {
     count: number,
     silent: boolean,
     to: number | undefined,
+    /** Which of the item's stacks (improved ones: the crafting engine's) leaves first. */
+    stack?: number,
   ): Promise<void> {
     const items = await this.inventory(container);
     for (const item of await this.#expand(form)) {
       const have = items.get(item) ?? 0;
       const moved = Math.min(have, count);
       if (moved <= 0) continue;
+      // Items with data of their own leave as asked, else after the plain ones.
+      this.crafting.itemsMoved(container, to, item, moved, have, stack);
       items.set(item, have - moved);
       // Stolen items leave last and stay stolen where they go (crime-engine.ts).
       this.crime.itemsMoved(container, to, item, moved, have);
