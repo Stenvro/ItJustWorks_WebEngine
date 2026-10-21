@@ -52,6 +52,8 @@ import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import { combatCasting } from './combat-casting.ts';
 import { aimDirection } from '../gameplay/magic/projectile-flight.ts';
 import { PlayerDeath } from './player-death.ts';
+import type { PlayerFurniture } from './player-furniture.ts';
+import { PlayerPilot } from './player-pilot.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -114,6 +116,8 @@ export interface ActorStageOptions {
   readonly interior?: boolean;
   /** The player being played (they ride horses and carts, their followers come along). */
   readonly player?: () => PlayerView | undefined;
+  /** The player in furniture (the scripts driving them seat them: src/shell/player-pilot.ts). */
+  readonly seat?: () => PlayerFurniture | undefined;
   /** The view gives up a cart of its cells to be pulled (src/shell/actor-vehicles.ts). */
   readonly adoptVehicle?: (reference: number) => AdoptedVehicle | undefined;
 }
@@ -154,6 +158,8 @@ export class ActorStage {
   readonly playerDeath: PlayerDeath;
   /** The actors' AI: their packages. */
   readonly ai: ActorAi;
+  /** The player's packages while the scripts drive them (SetPlayerAIDriven). */
+  readonly pilot: PlayerPilot;
   /** The actors in scenes: facing their targets (src/shell/actor-scenes.ts). */
   readonly actorScenes: ActorScenes;
   /** What the actors say: greetings, chatter, conversations, barks (bark: combat, crime, ...). */
@@ -296,6 +302,15 @@ export class ActorStage {
         paused: (actor) => this.mounts.ridden(actor),
         seat: (staged, instant) => this.mounts.seat(staged, instant),
       },
+    });
+    this.pilot = new PlayerPilot({
+      session: options.session,
+      ai: this.ai,
+      furniture: this.furniture,
+      player: () => options.player?.()?.play.player,
+      seat: () => options.seat?.(),
+      ...(options.navmeshes && { navmeshes: options.navmeshes }),
+      door: (door) => this.doors.passage(door, PLAYER_REF),
     });
     this.mounts = new ActorMounts({
       session: options.session,
@@ -982,6 +997,7 @@ export class ActorStage {
       this.#clock === undefined ? 0 : Math.min(0.25, Math.max(0, seconds - this.#clock));
     this.#clock = seconds;
     this.ai.frame(this.#actors.values(), frame, this.#options.focus?.());
+    this.pilot.frame(frame);
     // What they notice (detection), and how they react.
     this.senses.frame(frame);
     this.crime.frame(frame);

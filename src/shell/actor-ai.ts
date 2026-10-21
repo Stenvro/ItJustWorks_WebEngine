@@ -149,6 +149,8 @@ export class ActorAi {
   /** A food for meals made up (Eat's Create Fake Food): the first in the load order. */
   #fakeFood: Promise<number | undefined> | undefined;
   readonly #actors = new Map<number, { packages: ActorPackages; staged: StagedActor }>();
+  /** The player's packages while the scripts drive them (SetPlayerAIDriven). */
+  #player: { packages: ActorPackages; body: PackageBody } | undefined;
   readonly #mind: PackageMind;
 
   constructor(options: {
@@ -218,6 +220,7 @@ export class ActorAi {
   current(
     reference: number,
   ): { id: number; procedure: string | undefined; flags: number; interrupts: number } | undefined {
+    if (reference === PLAYER_REF) return this.#player?.packages.current;
     return this.#actors.get(reference)?.packages.current;
   }
 
@@ -387,6 +390,30 @@ export class ActorAi {
     for (const reference of [...this.#actors.keys()]) {
       if (!live.has(reference)) this.remove(reference);
     }
+  }
+
+  /**
+   * Every frame while the scripts drive the player (SetPlayerAIDriven): their packages run as
+   * an actor's do (scene package actions, their aliases' packages), moving `body`
+   * (src/shell/player-pilot.ts). Undefined: the player is their own again, their package left.
+   */
+  drivePlayer(body: PackageBody | undefined, seconds: number): void {
+    if (this.#player && this.#player.body !== body) {
+      this.#player.packages.stop();
+      this.#player = undefined;
+    }
+    if (!body) return;
+    this.#player ??= {
+      body,
+      packages: new ActorPackages(
+        PLAYER_REF,
+        this.#mind,
+        body,
+        PROCEDURES,
+        seededRandom(PLAYER_REF ^ 0x2545f491),
+      ),
+    };
+    this.#player.packages.update(seconds);
   }
 
   /**
