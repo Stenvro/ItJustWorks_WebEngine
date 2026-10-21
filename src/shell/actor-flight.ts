@@ -1287,12 +1287,18 @@ export class ActorFlight {
     return hit?.point[2];
   }
 
-  /** Whether an actor stands high over the ground (placed in the air). */
+  /** Whether an actor stands high over the ground (placed in the air; its own controller left out). */
   #highAboveGround(staged: StagedActor): boolean {
     const physics = this.#options.movers.physics;
     if (!physics?.queriesCurrent) return false;
     const [x, y, z] = staged.position;
-    return !physics.raycast([x, y, z + 16], [0, 0, -1], AIR_START, Layer.charController);
+    return !physics.raycast(
+      [x, y, z + 16],
+      [0, 0, -1],
+      AIR_START,
+      Layer.charController,
+      this.#options.movers.colliderOf(staged.reference),
+    );
   }
 
   // --- Reading --------------------------------------------------------------------------------
