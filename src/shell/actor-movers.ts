@@ -8,6 +8,7 @@
 // drives its behavior graph (Locomotion). Its controller is in the world the player moves in:
 // the player bumps into it, it into the player and the others, and trigger volumes see it.
 
+import type RAPIER from '@dimforge/rapier3d-compat';
 import {
   Locomotion,
   steer,
@@ -92,6 +93,8 @@ export interface ActorMoversOptions {
   readonly terminal: Terminal;
   /** An actor walked into (true) or out of a trigger volume of a reference. */
   readonly onTrigger?: (trigger: number, actor: number, entered: boolean) => void;
+  /** A living actor's bodies (src/shell/actor-bodies.ts): they reach into triggers too. */
+  readonly bodyColliders?: (actor: number) => readonly RAPIER.Collider[];
   /** The navigation meshes of the loaded area (paths are searched over them). */
   readonly navmeshes?: () => NavmeshSet | undefined;
   /**
@@ -1166,6 +1169,13 @@ export class ActorMovers {
     // The trigger volumes it walked into and out of.
     if (physics.queriesCurrent) {
       const inside = physics.triggersOverlapping(mover.character.collider);
+      // Moving, its body reaches in too (a horse's head before its capsule: Tullius's horse
+      // crosses MQ101SetStage20, a line across the road, as its patrol ends just short of it).
+      if (Math.hypot(velocity[0], velocity[1]) > 5) {
+        for (const body of this.#options.bodyColliders?.(staged.reference) ?? []) {
+          for (const trigger of physics.triggersOverlapping(body)) inside.add(trigger);
+        }
+      }
       for (const trigger of inside) {
         if (!mover.triggers.has(trigger))
           this.#options.onTrigger?.(trigger, staged.reference, true);

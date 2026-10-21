@@ -1343,6 +1343,8 @@ export class WorldViewer {
       const scripted = await runtime.cellAttached(
         [
           ...data.objects.map((object) => object.reference),
+          // Triggers (activators with a primitive) hear who enters them.
+          ...data.primitives.map((primitive) => primitive.reference),
           ...(this.#stage?.referencesIn(cellKey(cell.x, cell.y)) ?? []),
         ],
         (reference) => loaded.has(reference),

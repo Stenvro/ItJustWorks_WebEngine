@@ -1796,6 +1796,8 @@ export class ModelViewer {
       this.#refreshEnabled();
       const references = [
         ...cell.data.objects.map((object) => object.reference),
+        // Triggers (activators with a primitive) hear who enters them.
+        ...cell.data.primitives.map((primitive) => primitive.reference),
         ...(this.#stage?.referencesIn(String(cell.data.cell.formId)) ?? []),
       ];
       const loaded = new Set(this.#loadedReferences());
