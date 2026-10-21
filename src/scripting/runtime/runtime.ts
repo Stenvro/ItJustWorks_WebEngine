@@ -2555,14 +2555,15 @@ export class ScriptRuntime implements VmHost {
     }
     // Persistent references with scripts (their own or their base's).
     const index = await this.persistentIndex();
-    const persistent: number[] = [];
-    for (const reference of index.all) {
-      const base = index.base.get(reference);
-      const scripted =
-        index.scripted.has(reference) ||
-        (base !== undefined && (await this.forms.attachments(base)) !== undefined);
-      if (scripted) persistent.push(reference);
-    }
+    // Their bases' attachments read side by side (one by one they took seconds in the browser).
+    const scripted = await Promise.all(
+      index.all.map(async (reference) => {
+        if (index.scripted.has(reference)) return true;
+        const base = index.base.get(reference);
+        return base !== undefined && (await this.forms.attachments(base)) !== undefined;
+      }),
+    );
+    const persistent = index.all.filter((_, i) => scripted[i]);
     progress?.(`initializing ${String(persistent.length)} persistent references with scripts`);
     for (const formId of persistent) this.#initialized.add(formId);
     await Promise.all(
