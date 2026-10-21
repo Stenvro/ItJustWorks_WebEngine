@@ -12,6 +12,7 @@ import { QuestFlag } from '../src/world/quest-records.ts';
 import { ActorValue } from '../src/world/actor-values.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
+import { ObjectHandle } from '../src/scripting/values.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
 
 const MQ101 = 0x0003372b;
@@ -206,5 +207,11 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     } finally {
       delete runtime.world.killed;
     }
+  });
+
+  it("gives a scene's quest, not one of its actions' packages", async () => {
+    // MQ101Scene1's first PNAM is a package of an action; its quest is the last.
+    const quest = await runtime.vm.call(new ObjectHandle(0x000becd4, 'Scene'), 'GetOwningQuest');
+    expect(quest).toMatchObject({ formId: 0x0003372b, type: 'quest' });
   });
 });

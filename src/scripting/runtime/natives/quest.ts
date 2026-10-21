@@ -3,6 +3,7 @@
 // event start with Start, SetStage or SetObjectiveDisplayed). Platform-independent.
 // Notes: docs/scripting.md ("Quests").
 
+import { parseScene } from '../../../ai/scene-records.ts';
 import { GroupType } from '../../../formats/esm/record.ts';
 import { ObjectHandle } from '../../values.ts';
 import type { ScriptRuntime } from '../runtime.ts';
@@ -210,9 +211,12 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     if (group?.type !== GroupType.topicChildren) return null;
     return object((await forms.record(group.label))?.formIdField('QNAM'), 'quest');
   });
-  n('scene.getowningquest', async ({ self }) =>
-    self ? object((await forms.record(self.formId))?.formIdField('PNAM'), 'quest') : null,
-  );
+  // A scene's quest is its last PNAM: its actions' packages come before it as PNAM too
+  // (MQ101Scene1's first is MQ101HelgenSoldierTravelCartGreetMarker).
+  n('scene.getowningquest', async ({ self }) => {
+    const record = self ? await forms.record(self.formId) : undefined;
+    return record?.type === 'SCEN' ? object(parseScene(record).quest, 'quest') : null;
+  });
   n('package.getowningquest', async ({ self }) =>
     self ? object((await forms.record(self.formId))?.formIdField('QNAM'), 'quest') : null,
   );

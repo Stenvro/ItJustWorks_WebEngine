@@ -763,11 +763,7 @@ export class WorldViewer {
         if (pose && group.articulated[i]?.pose === pose) group.articulated.splice(i, 1);
       }
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
-        const at = group.collision.indexOf(placed);
-        if (at >= 0) group.collision.splice(at, 1);
-        const settle = group.settle.indexOf(placed);
-        if (settle >= 0) group.settle.splice(settle, 1);
-        this.#play?.physics.remove(placed);
+        this.#play?.removePlacement(group, placed);
       }
       return { object: entry.object, instance: entry.instance };
     }
