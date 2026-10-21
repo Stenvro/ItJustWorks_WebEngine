@@ -37,6 +37,7 @@ import {
   valueMode,
   valueSign,
 } from '../../gameplay/magic/effect-rules.ts';
+import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import { ActorValue } from '../../world/actor-values.ts';
 import { DefaultObjects } from '../../world/default-objects.ts';
 import {
@@ -146,8 +147,8 @@ const GET_RANDOM_PERCENT = 77;
 const SUMMON_DISTANCE = 128;
 
 /**
- * How many creatures an actor may have summoned at once (the oldest goes when another comes).
- * TODO(M11): the Twin Souls perk's second one (perks).
+ * How many creatures an actor may have summoned at once (the oldest goes when another comes),
+ * before its perks (Mod Commanded Actor Limit: Twin Souls adds one).
  */
 const SUMMON_LIMIT = 1;
 
@@ -310,7 +311,8 @@ export class MagicEngine {
   /**
    * How fast the world's time runs (Slow Time on the player: its magnitude, the slowest).
    * TODO(M11): the frame's clock (animations, physics, AI, sounds) runs at it; the player's own
-   * pace in slowed time.
+   * pace in slowed time (the perk entry point Mod Player Magic Slowdown: Quick Reflexes keeps the
+   * player's pace, perk-engine.ts gives it).
    */
   timeMultiplier(): number {
     let multiplier = 1;
@@ -436,9 +438,37 @@ export class MagicEngine {
     const power = dual
       ? await this.#setting('fMagicDualCastingEffectivenessBase', DUAL_CASTING_POWER)
       : 1;
-    // TODO(M11): the caster's perks (Mod Spell Magnitude / Duration entry points: ActiveEffect
-    // AdjustForPerks) and the spell's skill.
     let { magnitude, duration } = castStrength(itemEffect, effect, power);
+    // The caster's perks (Mod Spell Magnitude / Duration, ActiveEffect AdjustForPerks: the
+    // spell tab the item, the target tab the one it lands on; Augmented Flames, Necromage,
+    // Fortify <school> through the skill boost perks), then the target's (Mod Incoming Spell
+    // Magnitude / Duration: Elemental Protection).
+    if (caster !== undefined) {
+      const tabs = [item.formId, target];
+      const context = { spell: item.formId };
+      const perks = runtime.perks;
+      magnitude = await perks.apply(EntryPoint.modSpellMagnitude, caster, magnitude, tabs, context);
+      duration = await perks.apply(EntryPoint.modSpellDuration, caster, duration, tabs, context);
+    }
+    if (target !== caster && (await runtime.actors.isActor(target))) {
+      const tabs = [item.formId];
+      const context = { spell: item.formId };
+      const perks = runtime.perks;
+      magnitude = await perks.apply(
+        EntryPoint.modIncomingSpellMagnitude,
+        target,
+        magnitude,
+        tabs,
+        context,
+      );
+      duration = await perks.apply(
+        EntryPoint.modIncomingSpellDuration,
+        target,
+        duration,
+        tabs,
+        context,
+      );
+    }
     if (lasting) duration = 0;
     if (options.hold !== undefined && duration === 0 && !lasting && !actsAtOnce(effect))
       duration = options.hold;
@@ -906,6 +936,19 @@ export class MagicEngine {
         if (await runtime.actors.isDead(target)) {
           await runtime.actors.resurrect(target);
           entry.made = target;
+          // The caster's perks give the risen a spell (Apply Reanimate Spell: Dark Souls).
+          const caster = entry.caster;
+          const spell =
+            caster === undefined
+              ? undefined
+              : await runtime.perks.selectSpell(
+                  EntryPoint.applyReanimateSpell,
+                  caster,
+                  [entry.item, target],
+                  entry.item === undefined ? {} : { spell: entry.item },
+                );
+          const item = spell === undefined ? undefined : await this.item(spell);
+          if (item) await this.apply(item, target, { caster: target });
         }
         break;
       case EffectArchetype.banish:
@@ -1029,7 +1072,12 @@ export class MagicEngine {
         (other.caster ?? other.target) === summoner &&
         this.#effects.get(other.effect)?.archetype === EffectArchetype.summonCreature,
     );
-    for (const [key] of summons.slice(0, Math.max(0, summons.length - SUMMON_LIMIT + 1)))
+    const limit = Math.round(
+      await runtime.perks.apply(EntryPoint.modCommandedActorLimit, summoner, SUMMON_LIMIT, [
+        entry.item,
+      ]),
+    );
+    for (const [key] of summons.slice(0, Math.max(0, summons.length - limit + 1)))
       await this.end(key);
     const made = await runtime.placeAt(creature, summoner, 1);
     const at = await runtime.placement(summoner);
@@ -1146,7 +1194,7 @@ export class MagicEngine {
 
   /**
    * An actor's lasting effects follow what it has from now on (an actor that loads, the
-   * player): its abilities, diseases and addictions, the constant enchantments of what it
+   * player): its abilities (its own and its perks'), diseases and addictions, the constant enchantments of what it
    * wears and their equip abilities.
    */
   async prepare(actor: number): Promise<void> {
@@ -1170,6 +1218,11 @@ export class MagicEngine {
     for (const spell of await runtime.actors.spells(actor)) {
       const item = await this.item(spell);
       if (item?.type === 'SPEL' && isLastingKind(item.kind)) want(item, undefined);
+    }
+    // The abilities of the perks it holds (perk-engine.ts: Merchant, Fence, Agent of Mara ...).
+    for (const { spell } of await runtime.perks.abilities(actor)) {
+      const item = await this.item(spell);
+      if (item?.type === 'SPEL') want(item, undefined);
     }
     // Everything it has equipped (the equip system: what it wears and holds).
     await runtime.equipment.of(actor);
@@ -1251,8 +1304,8 @@ export class MagicEngine {
   }
 
   /**
-   * A poison put on an actor's weapon, for its next hit (one dose; TODO(M11): Concentrated
-   * Poison's second, perks): the player is asked first (sPoisonConfirmMessage + the weapon's
+   * A poison put on an actor's weapon, for its next hits (one dose; the perks' Mod Poison Dose
+   * Count: Concentrated Poison's two): the player is asked first (sPoisonConfirmMessage + the weapon's
    * name, sPoisonBowConfirmMessage for a bow), told when no weapon is out
    * (sPoisonNoWeaponMessage) or the weapon is poisoned already (sPoisonAlreadyPoisonedMessage).
    */
@@ -1301,7 +1354,14 @@ export class MagicEngine {
       if ((await runtime.itemCount(actor, poison)) <= 0) return false;
       await runtime.removeItem(actor, runtime.formHandle(poison), 1, true, undefined);
     }
-    magic.poison = { weapon, poison, charges: 1 };
+    // As many hits as the perks give it (Mod Poison Dose Count: Concentrated Poison, two).
+    const charges = Math.max(
+      1,
+      Math.round(
+        await runtime.perks.apply(EntryPoint.modPoisonDoseCount, actor, 1, [weapon, poison]),
+      ),
+    );
+    magic.poison = { weapon, poison, charges };
     runtime.state.actorMagic.set(actor, magic);
     return true;
   }

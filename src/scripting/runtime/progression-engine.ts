@@ -24,6 +24,7 @@
 // Platform-independent. Notes: docs/gameplay.md ("Skills, levels and actor values").
 
 import { RaceAiFlag } from '../../ai/race-combat-records.ts';
+import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import {
   actorLevel,
   autoCalcStats,
@@ -240,7 +241,11 @@ export class ProgressionEngine {
     if (actor !== PLAYER_REF || index === undefined || !(use > 0)) return;
     const curve = await this.curve(index);
     if (!curve) return;
-    const experience = skillUseExperience(use, curve, await this.#advancePercent(index));
+    // The perks change it (Mod Skill Use: the Rested bonuses, Lover's Comfort).
+    const used = await this.#runtime.perks.apply(EntryPoint.modSkillUse, actor, use, [], {
+      advanceSkill: index,
+    });
+    const experience = skillUseExperience(used, curve, await this.#advancePercent(index));
     await this.#addSkillExperience(index, experience, curve);
   }
 
@@ -348,7 +353,7 @@ export class ProgressionEngine {
     let returned = 0;
     for (const [perk, place] of await this.#places()) {
       if (place.skill !== skill || !(await runtime.actors.hasPerk(PLAYER_REF, perk))) continue;
-      runtime.actors.setPerk(PLAYER_REF, perk, false);
+      await runtime.perks.remove(PLAYER_REF, perk);
       returned++;
     }
     runtime.perkPoints += returned;
@@ -507,8 +512,8 @@ export class ProgressionEngine {
   async takePerk(perk: number): Promise<boolean> {
     if ((await this.perkAvailability(perk)) !== 'available') return false;
     const runtime = this.#runtime;
-    runtime.actors.setPerk(PLAYER_REF, perk, true);
     runtime.perkPoints = Math.max(0, runtime.perkPoints - 1);
+    await runtime.perks.add(PLAYER_REF, perk);
     return true;
   }
 
@@ -807,7 +812,12 @@ export class ProgressionEngine {
     let weight = 0;
     for (const item of await this.#runtime.actors.worn(actor)) {
       const record = await this.#runtime.forms.record(item);
-      weight += (record ? parseItem(record)?.weight : undefined) ?? 0;
+      const own = (record ? parseItem(record)?.weight : undefined) ?? 0;
+      // As its perks make it (Mod Armor Weight: Conditioning).
+      weight +=
+        own > 0
+          ? await this.#runtime.perks.apply(EntryPoint.modArmorWeight, actor, own, [item])
+          : 0;
     }
     if (actor === PLAYER_REF) this.#weight = { at: now, weight };
     return weight;

@@ -748,8 +748,9 @@ engine's item stacks), moved and equipped as such. An enchanted weapon's card sh
 (`charge`, `usedCharge`: percent); under 100 the inventory's T (`AttemptChargeItem`) has the
 movie ask `ShowSoulGemList`: the engine sets the card to a list (ICT_LIST: `listItems` of
 `text`, `soulLVL`, `count`, `chargeAdded`, and `currentCharge`; none: sNoChargeItems), and
-`ItemCardListCallback(index)` recharges with that gem. TODO(M11): favorites' hotkeys, the quantity of a drop, perks in armor, damage and
-spell costs.
+`ItemCardListCallback(index)` recharges with that gem. Armor, damage and spell costs are shown
+with the player's perks (the perk system's entry points). TODO(M11): favorites' hotkeys, the
+quantity of a drop.
 
 ## The menus' 3D
 
@@ -881,8 +882,8 @@ Tab then). After a change: `InvalidateListData`, `UpdateItemList(false)`, `Updat
 
 Each bench's first use shows its tutorial (HBFG forges, HBSM the grindstone, HBSA the armor
 workbench, HBEC enchanting, HBAL alchemy, HBCO cooking pots, HBML smelters, HBTA tanning racks).
-TODO(M10): the player sits at the workbench first. TODO(M11): the crafting perks (the perk
-entry points' hooks: docs/gameplay.md "Crafting").
+TODO(M10): the player sits at the workbench first. The crafting perks are the perk system's
+entry points (docs/gameplay.md "Crafting", "Perks").
 
 ## Lockpicking
 
@@ -905,13 +906,16 @@ lockpicks)`; the rest is the menus' 3D. `meshes\interface\lockpicking\lockpicksh
   fPickMouseRotationSpeed), RotateLock (the movement keys) turns the lock at fLockRotationSpeed
   as far as the pick allows; let go, it turns back. Cancel (Tab, Esc) leaves.
 - The sizes (src/gameplay/lockpicking.ts, UESP "Lockpicking" with the game settings): sweet spot
-  60 × 2^−d × (0.82 + fLockpickSkillSweetSpotMult × skill) × (1.75 + 0.25 d with the level's
-  perk); partial zones fPartialPick<level> × (fLockpickSkillPartialPickBase +
+  60 × 2^−d × (0.82 + fLockpickSkillSweetSpotMult × skill) × the perks' Mod Lockpick Sweet Spot
+  (the level's perk: 1.75 + 0.25 d); partial zones fPartialPick<level> × (fLockpickSkillPartialPickBase +
   fLockpickSkillPartialPickMult × skill) each side; in the sweet spot the lock turns all the way
   (90°: open), in a partial zone the less the farther out, beyond not at all. Held against the
   pick the strain breaks it after 2, 1, 0.75, 0.5, 0.25 s by level × (1 + skill / 200)
-  (Unbreakable and the Skeleton Key: never). Locksmith starts the pick at the edge of the partial
-  zone. A lock's sweet spot stays where it is until the game is loaded again.
+  (Unbreakable and the Skeleton Key: never; Make Lockpicks Unbreakable). Locksmith starts the
+  pick within its starting arc (45°) about the opening (Set Lockpick Starting Arc). A lock's
+  sweet spot stays where it is until the game is loaded again. Opened, Wax Key gives its key
+  (Mod Lockpicking Key Reward Chance); Quick Hands keeps it unnoticed (Mod Lockpicking Crime
+  Chance).
 - Sounds: UILockpickingEnter, PickMovement, CylinderTurn, CylinderStop, PickTensionLPM (while
   strained), PickBreak, Unlock. The opened lock sends OnLockStateChanged.
 

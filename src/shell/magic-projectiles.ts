@@ -25,6 +25,7 @@ import {
   type ActorShape,
   type Flight,
 } from '../gameplay/magic/projectile-flight.ts';
+import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -174,8 +175,20 @@ export class MagicProjectiles {
     if (!runtime) return;
     const casting = runtime.casting;
     const effect = await casting.mainEffect(delivered.item);
-    const projectile =
+    let projectile =
       effect?.projectile === undefined ? undefined : await casting.projectile(effect.projectile);
+    // A Target Location spell reaches as far as its caster's perks let it (Mod Spell Range
+    // (Target Loc.): Rune Master, five times).
+    if (projectile && delivered.item.delivery === Delivery.targetLocation) {
+      const range = await runtime.perks.apply(
+        EntryPoint.modSpellRangeTargetLoc,
+        delivered.caster,
+        projectile.range,
+        [delivered.item.formId],
+        { spell: delivered.item.formId },
+      );
+      if (range !== projectile.range) projectile = { ...projectile, range };
+    }
     const seconds = options.seconds;
     const at = (reference: number): Promise<number> =>
       this.#reach(runtime, delivered, reference, {

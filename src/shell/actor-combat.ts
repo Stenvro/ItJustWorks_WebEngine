@@ -37,7 +37,10 @@ import {
 } from '../gameplay/combat/attacks.ts';
 import type { AttackData } from '../ai/race-combat-records.ts';
 import { bleedoutRecovered, bleedoutRegain } from '../gameplay/combat/bleedout.ts';
-import { combatHooks, type AttackKind } from '../gameplay/combat/combat-hooks.ts';
+import { criticalHitChance, type AttackKind } from '../gameplay/combat/combat-hooks.ts';
+import { SOUL_CAPACITY } from '../gameplay/crafting.ts';
+import { soulSize } from '../gameplay/magic/effect-rules.ts';
+import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import {
   parseAmmo,
   parseProjectile,
@@ -125,6 +128,8 @@ const CHEST = 0.75;
 const ATTACK_ANSWER = 1.5;
 /** Fighters this far from the player are left alone (the high process's reach). */
 const FIGHT_REACH = 4096;
+/** How often a fighter's perks' graph variables are read again (seconds). */
+const PERK_VARIABLE_SECONDS = 1;
 /** The enemy bar stays this long after the last hit (seconds). TODO(M13): the engine's time. */
 const ENEMY_BAR_SECONDS = 4;
 /** A paired killmove's victim stands this far before the leader (Paired_1HMKillMoveB's "2_"
@@ -220,6 +225,8 @@ const describe = (error: unknown): string =>
 export class ActorCombat implements CombatBridge {
   readonly #options: ActorCombatOptions;
   readonly #fighters = new Map<number, Fighter>();
+  /** The graph variables each fighter's perks set (Set Boolean Graph Variable), when read. */
+  readonly #perkVariables = new Map<number, { at: number; names: Set<string>; reading: boolean }>();
   readonly #impacts: CombatImpacts;
   readonly #projectiles: CombatProjectiles;
   #settings: CombatSettings = COMBAT_DEFAULTS;
@@ -263,6 +270,7 @@ export class ActorCombat implements CombatBridge {
       shapes: () => this.#playerShape(),
       onActorHit: (shot) => {
         const payload = shot.payload as ShotPayload;
+        void this.#arrowKept(payload.attacker, shot.target, shot.ammo);
         void this.#hit(payload.attacker, shot.target, {
           ...payload.kind,
           point: shot.point,
@@ -648,6 +656,7 @@ export class ActorCombat implements CombatBridge {
         continue;
       }
       this.#update(fighter, seconds, runtime);
+      this.#perkGraphVariables(fighter, runtime);
     }
     // Who fights whom, and how.
     this.#brain.frame(seconds);
@@ -844,9 +853,17 @@ export class ActorCombat implements CombatBridge {
   async #bleed(fighter: Fighter, seconds: number, runtime: ScriptRuntime): Promise<void> {
     const actors = runtime.actors;
     const value = await actors.value(fighter.reference, ActorValue.health);
-    const now = bleedoutRegain(value.current, value.max, seconds, this.#settings);
-    if (now > value.current)
+    let now = bleedoutRegain(value.current, value.max, seconds, this.#settings);
+    // What it regains as its perks make it (Mod Recovered Health; no vanilla perk has one).
+    if (now > value.current) {
+      const regained = await runtime.perks.apply(
+        EntryPoint.modRecoveredHealth,
+        fighter.reference,
+        now - value.current,
+      );
+      now = value.current + Math.max(0, regained);
       actors.restore(fighter.reference, ActorValue.health, now - value.current);
+    }
     const noRecovery = runtime.state.actors.get(fighter.reference)?.noBleedoutRecovery === true;
     if (
       bleedingOut(fighter.state) &&
@@ -945,6 +962,9 @@ export class ActorCombat implements CombatBridge {
         // The swing is heard (its weapon's sound level, VNAM) and, the player's, commented on.
         this.#options.senses?.()?.action(fighter.reference, record?.soundLevel ?? 1);
         if (fighter.player) void this.#options.talk?.()?.playerAction('SWMW');
+        void this.#swingSpell(fighter).catch((error: unknown) => {
+          this.#warn(`a swing's spell: ${describe(error)}`);
+        });
         break;
       }
       case 'strike':
@@ -1001,7 +1021,15 @@ export class ActorCombat implements CombatBridge {
       if (!at) continue;
       targets.push({ reference: other.reference, feet: at, ...this.#size(other) });
     }
-    const contacts = strikeTargets(strike, targets, combatHooks().sweeps(fighter.reference, kind));
+    // Sweep: a power attack hits everything in its arc (Set Sweep Attack).
+    const sweeps = await this.#options.session.scriptsReady?.perks.apply(
+      EntryPoint.setSweepAttack,
+      fighter.reference,
+      0,
+      [this.#heldWeapon(fighter)],
+      { attackType: data.attackType },
+    );
+    const contacts = strikeTargets(strike, targets, (sweeps ?? 0) !== 0);
     const physics = this.#play?.physics;
     const chest: Vec3 = [feet[0], feet[1], feet[2] + strike.height * CHEST];
     if (contacts.length === 0) {
@@ -1063,7 +1091,7 @@ export class ActorCombat implements CombatBridge {
     if (!runtime || !attacker || !target) return;
     if (target.state.life === LifeState.dead) return;
     const settings = this.#settings;
-    const hooks = combatHooks();
+    const perks = runtime.perks;
     const gear = attacker.gear;
     const current = attacker.state.current;
     const left = current?.hand === 'left';
@@ -1074,26 +1102,88 @@ export class ActorCombat implements CombatBridge {
       : current
         ? this.#attackData(attacker, current.event)
         : DEFAULT_ATTACK;
-    // The physical damage: the weapon's (the equip system's, with skill and perks) × the
-    // attack's; a bash by the weapon's base damage or the shield's rating × the Block skill;
-    // a shot its bow's and arrow's × its draw.
+    // The physical damage: the weapon's (the equip system's, with skill and perks: Mod Attack
+    // Damage against this target) × the attack's; a bash by the weapon's base damage or the
+    // shield's rating × the Block skill (Mod Bashing Damage); a shot its bow's and arrow's × its
+    // draw. Then the perks' Calculate Weapon Damage and, for a power attack, Mod Power Attack
+    // Damage (the attack's type: IsAttackType).
+    const weapon = hit.shot ? hit.shot.weapon : stats?.weapon;
+    const context = { attackType: hit.shot ? undefined : data.attackType };
     const blockSkill = (await runtime.actors.value(attackerRef, ActorValue.firstSkill + 3)).current;
     let physical: number;
     if (hit.shot) {
-      physical = hit.shot.damage * hit.shot.power;
+      const shot = hit.shot;
+      const ammoDamage =
+        shot.ammo === undefined ? 0 : ((await runtime.equipment.item(shot.ammo))?.ammoDamage ?? 0);
+      const damage =
+        shot.weapon === undefined
+          ? shot.damage
+          : await runtime.equipment.weaponDamage(
+              attackerRef,
+              shot.weapon,
+              ammoDamage,
+              undefined,
+              targetRef,
+            );
+      physical = damage * shot.power;
     } else if (hit.bash) {
       const shield = gear?.shield !== undefined && (stats?.weapon === undefined || left);
       const base = shield ? gear.shieldRating : (stats?.baseDamage ?? 0);
       physical = base * data.damageMult * bashFactor(blockSkill, shield, attacker.player, settings);
+      physical = await perks.apply(EntryPoint.modBashingDamage, attackerRef, physical, [targetRef]);
     } else {
-      physical = (stats?.damage ?? 0) * data.damageMult;
+      const damage =
+        stats?.weapon === undefined
+          ? (stats?.damage ?? 0)
+          : await runtime.equipment.weaponDamage(
+              attackerRef,
+              stats.weapon,
+              0,
+              undefined,
+              targetRef,
+            );
+      physical = damage * data.damageMult;
     }
-    // A critical hit: the perks' chance, the weapon's critical damage (fists: × the setting).
+    if (!hit.bash) {
+      physical = await perks.apply(
+        EntryPoint.calculateWeaponDamage,
+        attackerRef,
+        physical,
+        [weapon, targetRef],
+        context,
+      );
+    }
+    if (hit.power && !hit.bash) {
+      physical = await perks.apply(
+        EntryPoint.modPowerAttackDamage,
+        attackerRef,
+        physical,
+        [weapon, targetRef],
+        context,
+      );
+    }
+    // A critical hit: the perks' chance (and the target's against it), the weapon's critical
+    // damage (fists: × the setting) as the perks change it.
+    const chance = criticalHitChance(
+      await perks.apply(
+        EntryPoint.calculateMyCriticalHitChance,
+        attackerRef,
+        0,
+        [weapon, targetRef],
+        context,
+      ),
+      stats?.critMult ?? 1,
+      await perks.apply(EntryPoint.modEnemyCriticalHitChance, targetRef, 1, [weapon, attackerRef]),
+    );
     const critical =
-      Math.random() < hooks.criticalChance(attackerRef, stats?.weapon, hit)
-        ? (stats?.critDamage ?? 0) *
-          hooks.criticalDamageMult(attackerRef, stats?.weapon) *
-          (stats?.weapon === undefined ? settings.unarmedCritDamageMult : 1)
+      chance > 0 && Math.random() < chance
+        ? (await perks.apply(
+            EntryPoint.calculateMyCriticalHitDamage,
+            attackerRef,
+            stats?.critDamage ?? 0,
+            [weapon, targetRef],
+            context,
+          )) * (stats?.weapon === undefined ? settings.unarmedCritDamageMult : 1)
         : 0;
     attacker.lastCritical = critical > 0;
     // A sneak attack: the attacker sneaks and the target does not detect it (detection:
@@ -1108,8 +1198,15 @@ export class ActorCombat implements CombatBridge {
       stats?.weaponType === WeaponType.crossbow
         ? EquippedItemType.crossbow
         : (stats?.weaponType ?? EquippedItemType.handToHand);
+    // The perks multiply it (Mod Sneak Attack Mult: Backstab, Assassin's Blade, Deadly Aim).
     const sneakMult = sneak
-      ? sneakAttackMult(equipped, settings) * hooks.sneakPerkMult(attackerRef, equipped)
+      ? await perks.apply(
+          EntryPoint.modSneakAttackMult,
+          attackerRef,
+          sneakAttackMult(equipped, settings),
+          [weapon, targetRef],
+          context,
+        )
       : 1;
     // The block: the target blocks and faces the blow (fCombatHitConeAngle).
     const targetFeet = this.#feet(target) ?? hit.point;
@@ -1120,6 +1217,20 @@ export class ActorCombat implements CombatBridge {
       blockCovers(targetFeet, this.#heading(target), attackerFeet, settings.combatHitConeAngle);
     const targetGear = target.gear;
     const shielded = targetGear?.shield !== undefined;
+    // An arrow at a raised shield may glance off (Mod Shield Deflect Arrow Chance, percent:
+    // Deflect Arrows).
+    if (
+      hit.shot &&
+      shielded &&
+      target.state.blocking &&
+      blockCovers(targetFeet, this.#heading(target), attackerFeet, settings.combatHitConeAngle)
+    ) {
+      const deflect = await perks.apply(EntryPoint.modShieldDeflectArrowChance, targetRef, 0);
+      if (Math.random() * 100 < deflect) {
+        void this.#act(target, 'ActionBlockHit');
+        return;
+      }
+    }
     const targetBlockSkill = (await runtime.actors.value(targetRef, ActorValue.firstSkill + 3))
       .current;
     const blocked = blocks
@@ -1128,21 +1239,39 @@ export class ActorCombat implements CombatBridge {
             shieldRating: shielded ? targetGear.shieldRating : undefined,
             attackerWeaponDamage: stats?.baseDamage ?? 0,
             blockSkill: targetBlockSkill,
-            blockMult: hooks.blockPerkMult(targetRef, shielded),
+            // The blocker's perks (Mod Percent Blocked: Shield Wall, Fortify Block).
+            blockMult: await perks.apply(EntryPoint.modPercentBlocked, targetRef, 1),
             powerAttack: hit.power,
           },
           settings,
         )
       : 0;
+    // The target's armour, as the attacker's perks pierce it (Mod Target Damage Resistance:
+    // Bone Breaker, Skullcrusher), and what the target's perks take off the blow (Mod Incoming
+    // Damage: Fortify Heavy / Light Armor while wearing it, Dragonhide, creatures' resistances).
     const armor = await runtime.equipment.armorRating(targetRef);
+    const pierced = await perks.apply(
+      EntryPoint.modTargetDamageResistance,
+      attackerRef,
+      armor.rating,
+      [weapon, targetRef],
+      context,
+    );
+    const reduction =
+      pierced === armor.rating
+        ? armor.reduction
+        : await runtime.equipment.armorReduction(pierced, armor.pieces);
     const result = hitDamage(
       {
         physical,
         critical,
         sneakMult,
-        armorReduction: armor.reduction,
+        armorReduction: reduction,
         blocked,
-        incomingMult: hooks.incomingDamageMult(targetRef, attackerRef),
+        incomingMult: await perks.apply(EntryPoint.modIncomingDamage, targetRef, 1, [
+          attackerRef,
+          weapon,
+        ]),
         difficulty: this.#difficulty(),
         attackerIsPlayer: attacker.player,
         targetIsPlayer: target.player,
@@ -1180,7 +1309,10 @@ export class ActorCombat implements CombatBridge {
         {
           weaponStagger: hit.bash || stats?.weapon === undefined ? 1 : stats.stagger,
           attackStagger: hit.shot ? 0 : data.stagger,
-          perkMult: hooks.staggerPerkMult(attackerRef, hit),
+          // The attacker's perks (Mod Target Stagger) and the target's (Mod Incoming Stagger).
+          perkMult:
+            (await perks.apply(EntryPoint.modTargetStagger, attackerRef, 1, [targetRef])) *
+            (await perks.apply(EntryPoint.modIncomingStagger, targetRef, 1, [attackerRef])),
           targetMass: targetGear?.race?.mass ?? 1,
           targetIsPlayer: target.player,
         },
@@ -1241,6 +1373,20 @@ export class ActorCombat implements CombatBridge {
     if (!hit.shot && !blocks && data.spell !== undefined) {
       await runtime.magic.contractDisease(targetRef, data.spell);
     }
+    // The perks' spells on the one hit: a hit's (Apply Combat Hit Spell: Paralyzing Strike,
+    // the creatures' poisons), a bash's (Apply Bashing Spell: Disarming Bash).
+    if (!blocks) {
+      const spell = hit.bash
+        ? await perks.selectSpell(EntryPoint.applyBashingSpell, attackerRef, [targetRef], context)
+        : await perks.selectSpell(
+            EntryPoint.applyCombatHitSpell,
+            attackerRef,
+            [weapon, targetRef],
+            context,
+          );
+      const item = spell === undefined ? undefined : await runtime.magic.item(spell);
+      if (item) await runtime.magic.apply(item, targetRef, { caster: attackerRef, source: weapon });
+    }
     // Its health; the killing blow pushes its ragdoll (fDeathForce*). The one hit says its
     // line (Hit), or its death cry.
     if (result.total <= 0) return;
@@ -1248,9 +1394,101 @@ export class ActorCombat implements CombatBridge {
     if (await runtime.actors.isDead(targetRef)) {
       this.#bark(targetRef, 'Death', attackerRef, true);
       this.#deathPush(target, result.total, hit);
+      if (weapon !== undefined && !hit.bash) await this.#siphonSoul(attackerRef, targetRef, weapon);
     } else if (!target.player) {
       this.#bark(targetRef, 'Hit', attackerRef);
     }
+  }
+
+  /**
+   * An arrow that hits an actor may end up in its items (iArrowInventoryChance, percent, as the
+   * shooter's perks change it: Mod Recover Arrow Chance, Hunter's Discipline).
+   */
+  async #arrowKept(shooter: number, target: number, ammo: number | undefined): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime || ammo === undefined) return;
+    const chance = await runtime.perks.apply(
+      EntryPoint.modRecoverArrowChance,
+      shooter,
+      this.#settings.arrowInventoryChance,
+    );
+    if (Math.random() * 100 < chance)
+      await runtime.addItem(target, runtime.formHandle(ammo), 1, true);
+  }
+
+  /**
+   * The behavior graph variables a fighter's perks set while their conditions hold (Set
+   * Boolean Graph Variable: Quick Shot's bPerkQuickShot, Shield Charge's bPerkShieldCharge,
+   * Quickdraw's bPerkQuickdraw), read again each PERK_VARIABLE_SECONDS: 1 while they hold, 0
+   * once they no longer do.
+   */
+  #perkGraphVariables(fighter: Fighter, runtime: ScriptRuntime): void {
+    const kept = this.#perkVariables.get(fighter.reference) ?? {
+      at: -Infinity,
+      names: new Set<string>(),
+      reading: false,
+    };
+    this.#perkVariables.set(fighter.reference, kept);
+    if (kept.reading || this.#clock - kept.at < PERK_VARIABLE_SECONDS) return;
+    kept.reading = true;
+    kept.at = this.#clock;
+    void runtime.perks
+      .texts(EntryPoint.setBooleanGraphVariable, fighter.reference)
+      .then((names) => {
+        const now = new Set(names);
+        for (const name of kept.names) if (!now.has(name)) this.#setVariable(fighter, name, 0);
+        for (const name of now) this.#setVariable(fighter, name, 1);
+        kept.names = now;
+      })
+      .catch((error: unknown) => {
+        this.#warn(`a perk's graph variable: ${describe(error)}`);
+      })
+      .finally(() => {
+        kept.reading = false;
+      });
+  }
+
+  /** The weapon in the hand that attacks now (the right's unless the left attacks). */
+  #heldWeapon(fighter: Fighter): number | undefined {
+    const left = fighter.state.current?.hand === 'left';
+    return (left ? fighter.gear?.left : fighter.gear?.right)?.weapon;
+  }
+
+  /**
+   * A killing blow with an enchanted weapon takes a share of the victim's soul into its charge
+   * (Mod Soul Pct Captured to Weapon: Soul Siphon, creatures only by its conditions), the share
+   * of the soul's charge (its size by the victim's level, SOUL_CAPACITY).
+   */
+  async #siphonSoul(attacker: number, victim: number, weapon: number): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    const share = await runtime.perks.apply(EntryPoint.modSoulPctCapturedToWeapon, attacker, 0, [
+      victim,
+      weapon,
+    ]);
+    if (share <= 0) return;
+    const charge = await runtime.crafting.charge(attacker, weapon);
+    if (!charge || charge.max <= 0) return;
+    const soul = SOUL_CAPACITY[soulSize(await runtime.actors.level(victim), false)] ?? 0;
+    runtime.casting
+      .state(attacker)
+      .charge.set(weapon, Math.min(charge.max, charge.current + soul * share));
+  }
+
+  /**
+   * An attacker swings at the one it fights: that one's perks may cast a spell on it (Apply
+   * Weapon Swing Spell: Quick Reflexes slows time for a player blocking a power attack).
+   */
+  async #swingSpell(fighter: Fighter): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    const owner = fighter.target;
+    if (!runtime || owner === undefined) return;
+    const spell = await runtime.perks.selectSpell(EntryPoint.applyWeaponSwingSpell, owner, [
+      fighter.reference,
+      this.#heldWeapon(fighter),
+    ]);
+    const item = spell === undefined ? undefined : await runtime.magic.item(spell);
+    if (item) await runtime.magic.apply(item, owner, { caster: owner });
   }
 
   /** A combat line (src/shell/actor-talk.ts bark): an actor's, by its topic subtype. */
@@ -1350,6 +1588,8 @@ export class ActorCombat implements CombatBridge {
     const payload: ShotPayload = {
       attacker: fighter.reference,
       damage: gear.right.shotDamage,
+      weapon: gear.right.weapon,
+      ammo,
       power,
       impactDataSet: gear.rightRecord?.impactDataSet,
       projectile: gear.projectile.formId,
@@ -1649,12 +1889,19 @@ export class ActorCombat implements CombatBridge {
     if (!runtime || (!power && !bash)) return;
     const progression = runtime.progression;
     const weight = fighter.gear?.rightRecord?.weight ?? 0;
-    const cost = bash
+    let cost = bash
       ? await progression.bashCost(power)
       : await progression.powerAttackCost(weight, {
           dualWield: dual,
           attackStaminaMult: data.staminaMult,
         });
+    // The perks change a power attack's (Mod Power Attack Stamina: Fighting Stance, Champion's
+    // Stance).
+    if (power) {
+      cost = await runtime.perks.apply(EntryPoint.modPowerAttackStamina, fighter.reference, cost, [
+        this.#heldWeapon(fighter),
+      ]);
+    }
     await progression.spend(fighter.reference, ActorValue.stamina, cost);
   }
 
@@ -1858,6 +2105,7 @@ export class ActorCombat implements CombatBridge {
   #drop(fighter: Fighter): void {
     fighter.held?.destroy();
     this.#fighters.delete(fighter.reference);
+    this.#perkVariables.delete(fighter.reference);
   }
 
   #warn(message: string): void {
@@ -1893,6 +2141,9 @@ interface ShotPayload {
   readonly attacker: number;
   /** The bow's shot damage (bow and arrow, with skill and perks) and its draw. */
   readonly damage: number;
+  /** The bow and the arrow (the damage against the one hit: its perks). */
+  readonly weapon: number | undefined;
+  readonly ammo: number | undefined;
   readonly power: number;
   readonly impactDataSet: number | undefined;
   readonly projectile: number;

@@ -80,6 +80,8 @@ export interface MagicItemRecord {
   /** SPIT's base cost (spells, scrolls) or ENIT's enchantment cost. */
   readonly cost: number;
   readonly chargeTime: number;
+  /** SPEL / SCRL SPIT: the half-cost perk (a perk of its school and level), if any. */
+  readonly castingPerk?: number;
   /** ENCH: the charge it holds, its base enchantment and the forms it may be on. */
   readonly enchantment?: {
     readonly amount: number;
@@ -146,6 +148,8 @@ export function parseMagicItem(record: RecordSource): MagicItemRecord | undefine
         // A scroll's cast type is always Scroll (xEdit wbScrollCastAfterLoad): fire and forget.
         castType: type === 'SCRL' ? CastType.fireAndForget : u32(spit, 16),
         delivery: u32(spit, 20),
+        // The half-cost perk (SpellHasCastingPerk; the school perks' Mod Spell Cost).
+        ...(form(spit, 32) !== undefined && { castingPerk: form(spit, 32) }),
       };
     }
     case 'ENCH': {

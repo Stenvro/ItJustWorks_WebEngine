@@ -84,6 +84,8 @@ export interface NpcStats {
   readonly spells: readonly number[];
   /** PRKR: perks. */
   readonly perks: readonly number[];
+  /** PRKR's rank of each perk (u8 after the form id; 1 in every vanilla record). */
+  readonly perkRanks: ReadonlyMap<number, number>;
   /** SNAM: factions and ranks. */
   readonly factions: ReadonlyMap<number, number>;
   readonly crimeFaction: number | undefined;
@@ -130,6 +132,12 @@ export function parseNpcStats(record: RecordSource): NpcStats {
     class: formField(record, 'CNAM'),
     spells: formList(record, 'SPLO'),
     perks: formList(record, 'PRKR'),
+    perkRanks: new Map(
+      record.fields.all('PRKR').flatMap((data): [number, number][] => {
+        const perk = formAt(record, data);
+        return perk !== undefined && data.length >= 5 ? [[perk, data[4] ?? 1]] : [];
+      }),
+    ),
     factions: new Map(
       record.fields.all('SNAM').flatMap((data): [number, number][] => {
         const faction = formAt(record, data);

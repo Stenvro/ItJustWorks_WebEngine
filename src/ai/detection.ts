@@ -312,6 +312,9 @@ export interface Observer {
   readonly blindness: number;
   /** It has night eye (NightEye actor value above 0). */
   readonly nightEye: boolean;
+  /** Its perks' factors on the sight and the movement sound (Mod Detection Light, Movement). */
+  readonly lightMult?: number;
+  readonly movementMult?: number;
 }
 
 /** The target, as detection weighs it. */
@@ -397,7 +400,8 @@ export function detectionLevel(settings: DetectionSettings, input: DetectionInpu
   const movement = target.moving
     ? (settings.equippedWeightBase + settings.equippedWeightMult * target.armourWeight) *
       (target.running ? settings.runningMult : 1) *
-      target.noiseMult
+      target.noiseMult *
+      (observer.movementMult ?? 1)
     : 0;
   const action = target.actionSound * settings.actionMult;
   const sound = target.swimming
@@ -421,6 +425,7 @@ export function detectionLevel(settings: DetectionSettings, input: DetectionInpu
       motion *
       size *
       blindness *
+      (observer.lightMult ?? 1) *
       (target.invisible ? settings.stealthBoyMult : 1);
     visual = Math.max(0, visual);
   }

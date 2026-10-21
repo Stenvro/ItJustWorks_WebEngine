@@ -1099,6 +1099,11 @@ export class WorldViewer {
         // A horse is ridden (src/shell/actor-mounts.ts).
         (placed) => this.#stage?.mounts.activation(placed),
       ),
+      // The player's perks may keep them from it (Filter Activation: perk-engine.ts).
+      mayActivate: async (reference) => {
+        const perks = this.#session?.scriptsReady?.perks;
+        return !perks || !(await perks.activationFiltered(PLAYER_REF, reference));
+      },
       prompt: this.#ui.prompt,
       hud: session.hud,
       notice: this.#ui.notice,

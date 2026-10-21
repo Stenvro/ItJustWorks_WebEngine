@@ -94,8 +94,8 @@ from the real data (`--player`, `--base <editor id>`, `--audit` for every placed
   skill 0 up to fArmorRatingPCMax (1.4: 1 + 0.4 × skill / 100) for the player, fArmorRatingMax
   (2.5: 1 + 1.5 × skill / 100) for NPCs, at 100; the skill is Light or Heavy Armor with its
   fortifications (the LightArmorMod / HeavyArmorMod and PowerMod actor values). Clothing has none.
-  Perks (unison, matching set, Agile Defender / Juggernaut): `EquipmentEngine.modifiers`,
-  TODO(M11) for the perk system.
+  Perks (unison, matching set, Agile Defender / Juggernaut): `EquipmentEngine.modifiers`, the
+  perk system's Mod Armor Rating ("Perks").
 - The **total** the inventory shows: the worn pieces' plus the armor effects (the DamageResist
   actor value: Oakflesh, ...). **Damage taken off**: rating × fArmorScalingFactor (0.12) percent
   plus fArmorBaseFactor (3%) per piece of armor worn (shields too, not clothing), at most
@@ -302,7 +302,8 @@ the player in a runtime on the game data, `--audit` reads every record).
 - Strength: the effect item's magnitude and duration; dual casting's power
   (fMagicDualCastingEffectivenessBase, 2.2) scales what Power Affects Magnitude / Duration say
   (unless the spell's 0x800000 flag); No Magnitude / No Duration effects have none (UESP
-  "Skyrim:Dual Casting"). TODO(M11): perks' entry points.
+  "Skyrim:Dual Casting"); then the caster's perks (Mod Spell Magnitude / Duration) and the
+  target's (Mod Incoming Spell Magnitude / Duration): "Perks".
 - Targets: objects get OnMagicEffectApply, and Open / Lock work on their locks (a lock up to the
   magnitude's level). The dead take nothing but Reanimate. The ethereal take no hostile effect.
 - Level caps: Calm, Fear, Frenzy, Rally, Turn Undead, Banish, Reanimate, Command and Disarm
@@ -420,8 +421,10 @@ Format/SPEL"; the game settings.
   (0.0025, 0.65: Firebolt 36.5 at 15, 24.6 at 100); NPCs base × (1 − fMagicCasterSkillCostMult
   × (skill / 100)^fMagicSkillCostScale) (0.5, 0.5; TODO(M13): inferred from the settings). The
   skill is the school of the costliest effect (base cost × magnitude), with its
-  fortifications; TODO(M11): the perks' cost entry points and Fortify <School>. Dual cast:
-  × fMagicDualCastingCostMult (2.8). The magic menu shows this cost.
+  fortifications; then the perks' Mod Spell Cost (the schools' half-cost perks by the spell's
+  casting perk, Fortify <School> through the skill boost perks: "Perks"). Dual cast: ×
+  fMagicDualCastingCostMult (2.8), only with the school's Dual Casting perk (Can Dual Cast
+  Spell). The magic menu shows this cost.
 - A fire and forget spell is paid as it fires (released when ready), a concentration spell for
   the time it is held (its cost a second); regeneration waits while a cast lasts.
 - A staff spends its enchantment's cost from its charge (WEAP EAMT at first; Staff of Fireball
@@ -436,7 +439,8 @@ Format/SPEL"; the game settings.
   NPCs release a ready spell at once and hold a concentration spell 2.5 s (TODO(M10) 5.2: the
   combat AI decides).
 - Dual casting: both attack buttons pressed within 0.15 s with one spell in both hands
-  (TODO(M13): the window; TODO(M11): the school's Dual Casting perk); its effects are cast with
+  (TODO(M13): the window), with the school's Dual Casting perk (Can Dual Cast Spell; without
+  it each hand casts on its own); its effects are cast with
   fMagicDualCastingEffectivenessBase (2.2: "Magic effects", EffectWasDualCast).
 - Skill use: a spell that takes effect on a target gives its school its base cost in uses (dual
   cast × 2.8, TODO(M13)); a concentration spell's hit the share of the time it stands for.
@@ -500,7 +504,8 @@ Sources: UESP "Skyrim:Shouts", "Skyrim:Dragon Souls", "Skyrim:Powers"; SHOU and 
 IsCasting, IsDualCasting; by casting source GetCurrentCastingType and GetCurrentDeliveryType (what
 the source casts now, else what it holds: the idle tree asks before a cast begins), SpellHasKeyword,
 IsCurrentSpell; IsWardState; GetCurrentShoutVariation; HasShout; GetEquippedShout (the equip
-system). SpellHasCastingPerk is 0 until the perk system (TODO(M11)). Natives: InterruptCast,
+system). SpellHasCastingPerk is a perk entry's spell tab's (the perk engine values it: the
+spell's half-cost perk). Natives: InterruptCast,
 DoCombatSpellApply, Get/SetVoiceRecoveryTime (the meter counts down from what it is set to),
 Game.TeachWord, UnlockWord, IsWordUnlocked; Spell.Cast and RemoteCast fly.
 
@@ -587,8 +592,11 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   pockets, each card showing the chance (pickpocketChance: "% TO STEAL", "TO PLACE" on the
   player's side). The chance: (fPickPocketActorSkillBase + fPickPocketActorSkillMult × the
   thief's Pickpocket) + fPickPocketTargetSkillMult × (fPickPocketTargetSkillBase + the
-  target's Pickpocket) + fPickPocketWeightMult × weight + fPickPocketAmountMult × value, times
-  the perks (TODO(M11)), within fPickPocketMinChance and fPickPocketMaxChance (0, 90). At
+  target's Pickpocket) + fPickPocketWeightMult × weight + fPickPocketAmountMult × value, as
+  the thief's perks change it (Mod Pickpocket Chance: Light Fingers adds, Keymaster sets),
+  within fPickPocketMinChance and fPickPocketMaxChance (0, 90). What the target wears or holds
+  is listed only with Misdirection or Perfect Touch (Can Pickpocket Equipped Item); a poison
+  placed with Poisoned acts on it (Should Apply Placed Item). At
   Pickpocket 15 against 15 a coin is 26 %, a 200-gold amulet 2 %; at 100 they are 90 % and 87 %
   (TODO(M13): how the engine combines the terms).
 - Each take (or placing) is an attempt: succeeding, the item moves, stolen, with Pickpocket uses
@@ -653,8 +661,8 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
 - The player's memberships are their factions' ranks (scripts join and expel them:
   GetPCExpelled, SetPlayerExpelled, GetPCEnemyofFaction, GetPCInFaction).
 
-TODO(M12): crime's state in the save. TODO(M11): the perks' pickpocket and bribe effects
-(Light Fingers, Cutpurse, Bribery's cost), NPCs' Acquire with Allow Pickpocketing.
+TODO(M12): crime's state in the save. The perks' pickpocket, lockpicking and speech effects:
+"Perks". TODO(M11): NPCs' Acquire with Allow Pickpocketing.
 
 ## Crafting
 
@@ -786,10 +794,152 @@ loses its data (the world's references carry none yet); a tempered item's value 
 ### Perks
 
 Perks change crafting through `CraftingEngine.perks` (`CraftingPerks`), each a perk entry point
-the perk system fills (TODO(M11)): Mod Tempering Health (the material perks' doubling), Mod
-Enchantment Power (Enchanter, Fire / Frost / Storm, Insightful and Corpus Enchanter, Seeker of
+the perk system fills (src/scripting/runtime/perk-hooks.ts; "Perks" below): Mod Tempering
+Health (the material perks' doubling), Mod Enchantment Power (Enchanter, Fire / Frost / Storm, Insightful and Corpus Enchanter, Seeker of
 Sorcery), Mod Soul Gem Enchanting, Mod Soul Gem Recharge (Soul Squeezer), # Of Applied
 Enchantments Allowed (Extra Effect), Mod Alchemy Effectiveness (Alchemist, Physician,
 Benefactor, Poisoner, Seeker of Shadows), Purify Alchemy Ingredients (Purity), Mod Potions
 Created, Mod Initial Ingredient Effects Learned (Experimenter). Without them each changes
-nothing.
+nothing. Fortify Smithing and Fortify Alchemy reach the formulas through the player's skill
+boost perks (Multiply 1 + Actor Value Mult on SmithingMod / PowerMod, AlchemyMod / PowerMod:
+their `skillBoostsInPerks`), not as factors of their own.
+
+## Perks
+
+Sources: UESP "Skyrim Mod:Mod File Format/PERK" (the entry points' condition tabs), xEdit
+wbDefinitionsTES5 (PERK, wbEntryPointsEnum, the functions and their EPFT data), CommonLibSSE
+(BGSEntryPoint, BGSEntryPointFunction, BGSPerkEntry), the Creation Kit wikis (the priority);
+checked on the load order with `node tools/perk-info.ts --audit` (483 perks, 682 entries, 68 of
+the 92 entry points used). Code: `src/world/perk-records.ts` (the record),
+`src/gameplay/perk-entry-points.ts` (the entry points, functions, order),
+`src/scripting/runtime/perk-engine.ts` (perks held, entry points applied),
+`src/scripting/runtime/perk-hooks.ts` (the equip system's and crafting's hooks).
+
+### Records
+
+A PERK: its requirements (the CTDA before its first entry), DATA (trait, level, rank count,
+playable, hidden), NNAM the next rank, then its entries, each from PRKE (type, rank, priority)
+to PRKF: a **quest stage** (DATA quest, u16 stage: set as the perk is added: Master Trader,
+Investor), an **ability** (DATA a spell the actor has while it holds the perk: Merchant, Fence,
+Avoid Death), or an **entry point** (DATA u8 entry point, u8 function, u8 tab count; per tab
+PRKC and its CTDA; EPFT the data's type, EPF2 a button label, EPF3 script flags and fragment,
+EPFD the data). EPFD by EPFT: 1 a float; 2 two floats, a range (Add Range To Value) or, for
+the actor value functions, an actor value stored as a float and a factor; 3 a leveled item
+list; 4 an activation choice's spell (with EPF2, EPF3); 5 a spell; 6 a string; 7 an lstring.
+
+A multi-rank perk is one record per rank (Armsman00 → 20 → 40 ...), each rank's entries
+conditioned on the next not being held (`HasPerk Armsman20 == 0`), so only the highest acts.
+PRKE's own rank (rank n of one record) is Fallout's: every vanilla entry has rank 0, every NPC\_
+PRKR rank 1 (an entry acts when its rank is below the held rank).
+
+### Held perks
+
+An actor holds its base's perks (NPC\_ PRKR through its spell list template), those scripts and
+the skills menu added (`Actor.AddPerk`, `RemovePerk`: they win over the base), and the perks of
+the magic effects on it while they are active (MGEF DATA perk: Dragonhide's, the Rested
+bonuses', the Shrouded Gloves' Backstab). Races hold none (RACE has no perk list). The player's
+record (0x7) holds the skill boost perks: **PerkSkillBoosts** and **AlchemySkillBoosts** carry
+the Fortify <skill> effects (their Mod and PowerMod actor values) into the entry points as
+Multiply 1 + Actor Value Mult (× (1 + value / 100); the armour skills × (1 − value / 100) on Mod
+Incoming Damage while that armour is worn), AllowShoutingPerk lets the player shout (Mod Shout
+OK). The engines therefore leave out their own Fortify factors where these perks carry them
+(weapon damage, tempering, alchemy).
+
+Adding a perk sets its quest entries' stages and gives its abilities (the magic system's
+lasting effects: listed among the active effects); removing it takes them away. HasPerk
+(condition 448, `Actor.HasPerk`) asks every source.
+
+### Entry points
+
+`perks.apply(entryPoint, owner, value, targets, context)` (`applyEntryPoint(entryPoint, owner,
+value, ...targets)`) gathers the owner's entries of that entry point, orders them by priority
+(the lowest number first: the Creation Kit wikis, "lower values indicating higher priority",
+"higher priority computed before lower"; equal priorities in the order the perks were got and
+listed; TODO(M13): no vanilla value depends on it), and runs each whose conditions hold on the
+value the one before left:
+
+| Function                                | Value                                                   |
+| --------------------------------------- | ------------------------------------------------------- |
+| Set Value, Add Value, Multiply Value    | = v, + v, × v                                           |
+| Add Range To Value                      | + a random number between the two                       |
+| Add Actor Value Mult                    | + the owner's actor value × factor                      |
+| Set to / Multiply Actor Value Mult      | = / × the owner's actor value × factor                  |
+| Multiply 1 + Actor Value Mult           | × (1 + the owner's actor value × factor)                |
+| Absolute Value, Negative Absolute Value | \|v\|, −\|v\|                                           |
+| Select Spell, Select Text, Set Text     | the last that holds picks (`selectSpell`, `selectText`) |
+| Add Leveled List, Add Activate Choice   | each that holds (`leveledLists`, `activateChoices`)     |
+
+Each entry point has its condition tabs (`ENTRY_POINTS`): the perk owner first, then what the
+caller passes in order (the weapon, the target, the attacker, the attacker's weapon, the spell,
+the enchantment, the item, the locked reference). A tab's conditions run on its subject
+(references as references, the rest as base forms: HasKeyword WeapTypeSword on the weapon); a
+tab whose subject the caller has not got fails (the inventory's damage has no target: the
+target-specific entries act in combat only). The functions only perk entries use read what the
+caller is doing (`PerkContext`): EPMagic_SpellHasKeyword (the item's or its effects' keywords),
+EPMagic_SpellHasSkill (its costliest effect's school), SpellHasCastingPerk (SPIT's half-cost
+perk), EPAlchemyEffectHasKeyword and EPAlchemyGetMakingPoison (the effect being made, a poison
+or not), EPModSkillUsage_IsAdvanceSkill (the skill used), EPTemperingItemIsEnchanted /
+HasKeyword, IsAttackType (the attack data's type keyword), GetLockLevel, IsUnlockedDoor,
+HasBeenEaten, IsPoison.
+
+### Where the systems ask
+
+- **Combat** (src/shell/actor-combat.ts, each hit): the weapon's damage against the target
+  (Mod Attack Damage: Armsman, Barbarian, Overdraw, the creatures' extra damage; through the
+  equip system's weapon damage, the inventory's without a target), Calculate Weapon Damage
+  (Silver, Agent of Dibella), Mod Power Attack Damage (Devastating Blow by IsAttackType), Mod
+  Bashing Damage, Calculate My Critical Hit Chance (percent × the weapon's critical multiplier:
+  `criticalHitChance`) and Damage (Bladesman, Critical Shot), Mod Enemy Critical Hit Chance,
+  Mod Sneak Attack Mult (Backstab ×2, Assassin's Blade ×2.5, Deadly Aim ×1.5), Mod Percent
+  Blocked (Shield Wall), Mod Shield Deflect Arrow Chance (Deflect Arrows), Mod Target Damage
+  Resistance (Bone Breaker: the target's rating pierced, its reduction again), Mod Incoming
+  Damage (the target's), Mod Target / Incoming Stagger, Set Sweep Attack, Apply Combat Hit
+  Spell (Paralyzing Strike, the creatures' poisons), Apply Bashing Spell (Disarming Bash),
+  Apply Weapon Swing Spell (Quick Reflexes, for the one swung at), Mod Soul Pct Captured to
+  Weapon (Soul Siphon: that share of a creature's soul into the killing weapon's charge), Mod
+  Power Attack Stamina, Mod Recover Arrow Chance (iArrowInventoryChance: Hunter's Discipline),
+  Mod Recovered Health (bleeding out), Set Boolean Graph Variable (bPerkQuickShot,
+  bPerkQuickdraw, bPerkShieldCharge on the fighter's graphs, read each second).
+- **The equip system**: Mod Armor Rating (each worn piece: Custom Fit, Matching Set,
+  Juggernaut, Agile Defender), Mod Armor Weight (worn pieces: Conditioning; the weight carried,
+  sprinting, detection's noise), Get Max Carry Weight.
+- **Magic**: Mod Spell Cost, Can Dual Cast Spell (the player's dual cast and `begin`), Mod
+  Spell Magnitude and Duration (the caster's, each effect applied: Augmented Flames, Necromage,
+  Aspect of Terror), Mod Incoming Spell Magnitude / Duration (the target's: Elemental
+  Protection), Mod Commanded Actor Limit (Twin Souls), Mod Ward Magicka Absorption Pct (Ward
+  Absorb: magicka for what the ward absorbs), Mod Spell Range (Target Loc.) (Rune Master), Mod
+  Spell Casting Sound Event (Quiet Casting: 0 is silent to detection), Apply Reanimate Spell
+  (Dark Souls), Mod Poison Dose Count (Concentrated Poison), Mod Shout OK (the player shouts
+  above 0; TODO(M13): whether the engine asks it of NPCs).
+- **Crafting**: see Crafting, "Perks".
+- **Barter**: Mod Buy Prices and Mod Sell Prices against the vendor (Haggling, Allure, Fortify
+  Barter), the Merchant's and Fence's abilities (BypassVendorKeywordCheck,
+  BypassVendorStolenCheck: src/shell/barter-menu.ts).
+- **Crime and speech**: Mod Pickpocket Chance, Can Pickpocket Equipped Item, Should Apply
+  Placed Item, Mod Lockpicking Crime Chance (Quick Hands), Mod Bribe Amount, Mod Favor Points,
+  Mod Player Intimidation (GetIntimidateSuccess, WillIntimidateSucceed: the player's level ×
+  (1 + Speech / 100), as the perks make it, against the target's level; a cowardly target gives
+  in; TODO(M13): the engine's formula).
+- **Lockpicking**: Mod Lockpick Sweet Spot (the lock levels' perks by GetLockLevel on the
+  lock), Make Lockpicks Unbreakable, Set Lockpick Starting Arc (Locksmith: the pick starts
+  within the arc about the opening; TODO(M13): where in it), Mod Lockpicking Key Reward Chance
+  (Wax Key).
+- **Detection**: Mod Detection Sneak Skill (the sneaker's: Stealth; TODO(M13): whether the
+  engine adds to the skill or to the level), Mod Detection Light and Movement (the observer's
+  factors on sight and movement sound), Apply Sneaking Spell (cast as an actor begins to sneak:
+  Shadow Warrior).
+- **Skills**: Mod Skill Use (the Rested bonuses, by the skill used), Adjust Book Skill Points
+  (Scholar's Insight). **Death**: Add Leveled List On Death (the killer's lists into the
+  victim's items). **Activation**: Filter Activation (the player's activation is refused).
+
+Entry points waiting for their systems: the activation's choices (Activate: vampire feeding,
+Cannibalism, Harvest Blood) and the perks' script fragments they run (PERK VMAD), Set Activate
+Label (the werewolf's Feed) and Allow Mount Actor (dragon riding) with the beast forms and
+dragons (TODO(M11)); Mod Ingredients Harvested (Green Thumb) with harvesting flora (TODO(M11));
+Mod Player Magic Slowdown (Quick Reflexes) with Slow Time's clock (TODO(M11)); Mod Bow Zoom and
+the zoom's stamina (Eagle Eye: there is no bow zoom yet) and Mod Falling Damage (no falling
+damage yet) (TODO(M13)). No vanilla perk uses and no system asks Calculate Mine Explode Chance,
+Adjust Limb Damage, Get Should Attack, Mod Addiction Chance / Duration, Mod Positive Chem
+Duration, Mod Max Placeable Mines, the Telekinesis ones, Mod Secondary Value Weight, Mod Player
+Reputation, Ignore Running During Detection, Ignore Broken Lock, Mod Lockpick Level Allowed and
+Set Progression Picking (Fallout's; TODO(M13) should a mod use them).

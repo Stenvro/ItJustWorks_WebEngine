@@ -238,7 +238,9 @@ export function talkTargets(
     if (!hit) return undefined;
     const placed = hit.actor;
     const instead = session()?.hud.uses ? other?.(placed) : undefined;
-    if (instead) return { distance: hit.distance, target: instead };
+    if (instead) {
+      return { distance: hit.distance, target: { ...instead, reference: placed.actor.reference } };
+    }
     const look = placed.look;
     const name = look.name !== '' ? look.name : look.editorId;
     const hud = session()?.hud;
@@ -251,6 +253,7 @@ export function talkTargets(
         target: {
           verb: uses.text('sSearch'),
           name,
+          reference,
           activate: () => {
             uses.openContainer(reference, () => undefined);
           },
@@ -266,6 +269,7 @@ export function talkTargets(
         target: {
           verb: uses.text('sPickpocket'),
           name,
+          reference,
           activate: () => {
             pickpocket(reference);
           },
@@ -277,6 +281,7 @@ export function talkTargets(
       target: {
         verb: hud?.uses?.text('sTalk') ?? 'Talk',
         name,
+        reference,
         activate: () => {
           // In Play: a conversation in the game's dialogue menu, unless a scene it plays in
           // lets nobody talk to it (No Player Activation: "This person is busy.").

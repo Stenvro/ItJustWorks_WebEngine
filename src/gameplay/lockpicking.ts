@@ -102,14 +102,19 @@ export function lockShape(
   difficulty: number,
   skill: number,
   options: {
-    readonly perk?: boolean;
+    /**
+     * The level's perk is known (its factor below), or the factor the perks give (the perk entry
+     * point Mod Lockpick Sweet Spot: Novice Locks .. Master Locks multiply it so).
+     */
+    readonly perk?: boolean | number;
     readonly random: number;
     readonly settings?: LockpickSettings;
   },
 ): LockShape {
   const d = clampDifficulty(difficulty);
   const settings = options.settings ?? LOCKPICK_DEFAULTS;
-  const perk = options.perk === true ? 1.75 + 0.25 * d : 1;
+  const perk =
+    typeof options.perk === 'number' ? options.perk : options.perk === true ? 1.75 + 0.25 * d : 1;
   const sweetSpot = Math.min(
     PICK_RANGE,
     SWEET_SPOT_DEGREES * 2 ** -d * (SWEET_SPOT_BASE + settings.sweetSpotMult * skill) * perk,
