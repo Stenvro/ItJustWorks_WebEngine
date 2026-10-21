@@ -352,6 +352,18 @@ Actors use furniture as the engine's furniture handling does, as far as the data
 - Measured in the Bannered Mare at 8:00: Hulda leans on the bar counter, Mikael sits on a bar
   stool at it and later leans, Sinmir sits on the bench by the hearth.
 
+### Executions
+
+A chopping block (ExecutionerChoppingBlock) is furniture with three markers: the executioner
+behind it (IdleExecutionerIdle), a guard behind the prisoner (IdleExecutionGuardIdle) and the
+prisoner (IdleExecutioneeIdle), each entered through ActionActivate's idle tree by their keywords
+and entry points. The chop idles share their siblings' conditions and no script plays them, so
+the engine starts the chop (`src/shell/actor-executions.ts`): once all three are in, the
+executioner and the prisoner play IdleExecutionerChop and IdleExecutioneeChop together. The
+prisoner's clip (aoexecutioneechop.hkx, 20 s) holds the guard's pushes, the last words (MQ101
+Scene4 phase 41) and the blow, whose Decapitate event kills them. TODO(M13): the engine's own
+trigger, and the decapitation itself (dismemberment piece, decapitation effect).
+
 ## Where packages put actors
 
 An actor's editor placement is often not where the game shows it. Whiterun's Imperial guards

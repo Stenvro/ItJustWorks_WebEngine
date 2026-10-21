@@ -185,6 +185,14 @@ export class ActorFurniture {
     return this.#uses.get(actor);
   }
 
+  /** The furniture an actor is in and the idles it entered by (undefined: not in any now). */
+  enteredBy(
+    actor: number,
+  ): { readonly furniture: number; readonly events: readonly string[] } | undefined {
+    const use = this.#uses.get(actor);
+    return use?.phase === 'in' ? { furniture: use.furniture, events: use.events } : undefined;
+  }
+
   /** Whether furniture holds an actor: in, entering or leaving it (it has no controller). */
   holds(actor: number): boolean {
     if (this.#holding.has(actor)) return true;
