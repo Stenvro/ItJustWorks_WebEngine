@@ -488,6 +488,7 @@ export class ActorMovers {
     const request = this.#requests.get(reference);
     const direction = request?.direction;
     const moving = direction !== undefined && (direction[0] !== 0 || direction[1] !== 0);
+    const pathing = this.#travels.has(reference);
     return {
       moving,
       running: moving && request?.gait === 'run',
@@ -495,8 +496,13 @@ export class ActorMovers {
       sneaking: this.#sneaking.has(reference),
       swimming: mover.character.swimming,
       speed: Math.hypot(mover.velocity[0], mover.velocity[1]),
-      pathing: this.#travels.has(reference),
+      pathing,
       bump: this.#bumps.get(reference),
+      heading: mover.staged.heading,
+      velocity: [mover.velocity[0], mover.velocity[1], mover.character.verticalSpeed],
+      // What its controller is asked (the steering's velocity) and the way its path goes on.
+      wish: [mover.character.velocity[0], mover.character.velocity[1]],
+      aim: pathing && direction ? [direction[0], direction[1]] : undefined,
     };
   }
 

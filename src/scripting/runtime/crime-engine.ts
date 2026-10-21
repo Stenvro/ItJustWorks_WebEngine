@@ -17,6 +17,7 @@ import {
   crimeValues,
   guardResponse,
   ignoresCrime,
+  intimidates,
   isViolent,
   jailDays,
   jailSkillLosses,
@@ -936,23 +937,26 @@ export class CrimeEngine {
   }
 
   /**
-   * Whether the player's intimidation of an actor succeeds (GetIntimidateSuccess,
-   * WillIntimidateSucceed): the player's level, as its perks make it (Mod Player Intimidation:
-   * Intimidation doubles it), and its Speech's share (level × (1 + Speech / 100)) against the
-   * actor's level; a cowardly actor (Confidence 0) always gives in. TODO(M13): the engine's
-   * formula is not documented (UESP "Skyrim:Speech": the level and Speech decide it).
+   * Whether the player would intimidate an actor now (GetIntimidateSuccess,
+   * WillIntimidateSucceed: crime's intimidates), the perk entry point Mod Player Intimidation
+   * (Intimidation doubles it) on the player's side. fIntimidateSpeechcraftCurve: no plugin sets
+   * it and its default is not documented: 1. TODO(M13): the engine's default.
    */
-  async intimidateSucceeds(actor: number): Promise<boolean> {
-    const runtime = this.#runtime;
-    if ((await runtime.actors.value(actor, ActorValue.confidence)).current <= 0) return true;
-    const speech = (await runtime.actors.value(PLAYER_REF, SPEECH)).current;
-    const strength = await runtime.perks.apply(
-      EntryPoint.modPlayerIntimidation,
-      PLAYER_REF,
-      (await runtime.actors.level(PLAYER_REF)) * (1 + Math.max(0, speech) / 100),
-      [actor],
+  async intimidates(actor: number): Promise<boolean> {
+    const actors = this.#runtime.actors;
+    const value = async (reference: number, index: number): Promise<number> =>
+      (await actors.value(reference, index)).current;
+    const curve = await this.#runtime.gameSetting('fIntimidateSpeechcraftCurve');
+    return intimidates(
+      { level: await actors.level(PLAYER_REF), speech: await value(PLAYER_REF, SPEECH) },
+      {
+        level: await actors.level(actor),
+        speech: await value(actor, SPEECH),
+        confidence: await value(actor, ActorValue.confidence),
+      },
+      typeof curve === 'number' ? curve : 1,
+      await this.#runtime.perks.apply(EntryPoint.modPlayerIntimidation, PLAYER_REF, 1, [actor]),
     );
-    return strength >= (await runtime.actors.level(actor));
   }
 
   // --- Paying, jail ---------------------------------------------------------------------------

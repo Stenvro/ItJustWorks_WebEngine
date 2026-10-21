@@ -354,6 +354,30 @@ export class ActorCombat implements CombatBridge {
   }
 
   /** The hits' decals (blood). */
+  /**
+   * ObjectReference.PlayImpactEffect: an impact data set's impact for the surface a ray from a
+   * point finds within its length (its sound and decal for that surface's material); false if
+   * the ray finds none.
+   */
+  impactAt(impactDataSet: number, from: Vec3, direction: Vec3, length: number): boolean {
+    const physics = this.#play?.physics;
+    if (!physics?.queriesCurrent) return false;
+    const hit = physics.raycast(from, direction, Math.max(1, length), Layer.static);
+    if (!hit) return false;
+    const norm = Math.hypot(direction[0], direction[1], direction[2]) || 1;
+    void this.#impacts.hit(
+      {
+        impactDataSet,
+        materialId: hit.material,
+        position: hit.point,
+        direction: [direction[0] / norm, direction[1] / norm, direction[2] / norm],
+        heavy: false,
+      },
+      physics,
+    );
+    return true;
+  }
+
   decals(): Iterable<GpuDecals> {
     return this.#impacts.decals();
   }
@@ -2072,7 +2096,7 @@ export class ActorCombat implements CombatBridge {
       : fighter.body?.instances[0]?.world;
     const place: Vec3 =
       at && world ? transformPoint(world, [at[12] ?? 0, at[13] ?? 0, at[14] ?? 0]) : feet;
-    void sounds.play(sound, place);
+    void sounds.play(sound, place, 0, fighter.reference);
   }
 
   #difficulty(): number {

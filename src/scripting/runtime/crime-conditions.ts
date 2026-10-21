@@ -12,7 +12,7 @@
 // functions it does not value itself. Platform-independent.
 
 import type { CrimeType } from '../../gameplay/crime.ts';
-import type { Condition } from '../conditions.ts';
+import { NOT_VALUED, type Condition } from '../conditions.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
 
@@ -57,7 +57,8 @@ const RELATION_CODES = { neutral: 0, hostile: 1, ally: 2, friend: 3 } as const;
 const GOLD = 0xf;
 
 /**
- * A crime condition's value for a reference (undefined: not one valued here). `quest`: the
+ * A crime condition's value for a reference (undefined: none for it; NOT_VALUED: not one valued
+ * here). `quest`: the
  * condition's quest, for parameters that are its aliases (the CTDA's Use aliases flag).
  */
 export async function crimeConditionValue(
@@ -65,7 +66,7 @@ export async function crimeConditionValue(
   condition: Condition,
   reference: number | undefined,
   quest: number | undefined,
-): Promise<number | undefined> {
+): Promise<number | undefined | typeof NOT_VALUED> {
   const { state, actors, crime } = runtime;
   const flag = (value: boolean): number => (value ? 1 : 0);
   const form = condition.form;
@@ -111,7 +112,7 @@ export async function crimeConditionValue(
         : flag((await runtime.itemCount(PLAYER_REF, GOLD)) >= (await crime.bribeAmount(reference)));
     // The player's intimidation of the subject succeeds (the perks: Intimidation).
     case CrimeFn.getIntimidateSuccess:
-      return reference === undefined ? undefined : flag(await crime.intimidateSucceeds(reference));
+      return reference === undefined ? undefined : flag(await crime.intimidates(reference));
     case CrimeFn.isTrespassing:
       return flag(
         reference === PLAYER_REF &&
@@ -236,6 +237,6 @@ export async function crimeConditionValue(
     case CrimeFn.isPCAMurderer:
       return flag((runtime.stats.get('murders') ?? 0) > 0);
     default:
-      return undefined;
+      return NOT_VALUED;
   }
 }

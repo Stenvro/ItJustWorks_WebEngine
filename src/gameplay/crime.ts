@@ -406,6 +406,32 @@ export function bribeAmount(
   return Math.max(1, Math.round(base * (1 - discount) + Math.max(0, bounty)));
 }
 
+/**
+ * fIntimidateConfidenceMult by Confidence (0 cowardly, 1 cautious, 2 average, 3 brave, 4
+ * foolhardy): the engine's defaults (no plugin sets them; the Unofficial Skyrim Patch's notes
+ * give 0, 0.5, 1, 1.5, 100, the last making the foolhardy impossible to intimidate).
+ */
+export const INTIMIDATE_CONFIDENCE_MULT = [0, 0.5, 1, 1.5, 100] as const;
+
+/**
+ * Whether the player intimidates an actor (GetIntimidateSuccess, WillIntimidateSucceed; UESP
+ * "Skyrim:Bribe"): the player's level × (1 + max(−1, (their Speech − its Speech) / 100)) ^
+ * fIntimidateSpeechcraftCurve is at least its level × fIntimidateConfidenceMult of its
+ * Confidence. `playerBonus` multiplies the player's side (the perk entry point Mod Player
+ * Intimidation).
+ */
+export function intimidates(
+  player: { readonly level: number; readonly speech: number },
+  target: { readonly level: number; readonly speech: number; readonly confidence: number },
+  speechcraftCurve: number,
+  playerBonus = 1,
+): boolean {
+  const skill = Math.max(-1, (player.speech - target.speech) / 100);
+  const scariness = player.level * (1 + skill) ** speechcraftCurve * playerBonus;
+  const confidence = Math.min(4, Math.max(0, Math.round(target.confidence)));
+  return target.level * (INTIMIDATE_CONFIDENCE_MULT[confidence] ?? 1) <= scariness;
+}
+
 // --- Trespassing --------------------------------------------------------------------------
 
 /**

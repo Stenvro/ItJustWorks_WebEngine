@@ -28,6 +28,7 @@ import type { IniSettings } from '../world/ini-settings.ts';
 import { parseRegionAudio, type RegionAudio } from '../world/sound-records.ts';
 import { DefaultObjects, DefaultObjectUse } from '../world/default-objects.ts';
 import { Ambience, ambientConditions, type AmbientState } from './ambience.ts';
+import { soundConditionsHold } from './sound-conditions.ts';
 import { Music } from './music.ts';
 import { WaterAudio } from './water-audio.ts';
 import {
@@ -290,14 +291,21 @@ export class SoundSystem {
     };
   }
 
-  /** Plays a descriptor once (or until stopped, if it loops); undefined if it cannot. */
+  /**
+   * Plays a descriptor once (or until stopped, if it loops); undefined if it cannot, or if its
+   * conditions do not hold for the reference that sounds it (the source; none: the player): the
+   * draugr's taunts are a draugr's, the bow's zoom the player's with Eagle Eye.
+   */
   async play(
     descriptorId: number,
     place?: SoundPlace,
     fadeIn = 0,
+    source?: number,
   ): Promise<SoundInstance | undefined> {
     const descriptor = await this.descriptor(descriptorId);
     if (!descriptor) return undefined;
+    if (descriptor.conditions.length > 0 && !(await this.#holds(descriptor.conditions, source)))
+      return undefined;
     const model =
       descriptor.outputModel === undefined
         ? undefined
@@ -442,10 +450,36 @@ export class SoundSystem {
    * Plays a sound by editor id at a place (animations' SoundPlay events; the menus' PlaySound,
    * at no place): a sound descriptor's (SNDR), else a sound's (SOUN: its descriptor, SDSC).
    */
-  async playNamed(editorId: string, place: SoundPlace): Promise<SoundInstance | undefined> {
+  async playNamed(
+    editorId: string,
+    place: SoundPlace,
+    source?: number,
+  ): Promise<SoundInstance | undefined> {
     const byName = await this.#descriptorNames();
     const formId = byName.get(editorId.toLowerCase());
-    return formId === undefined ? undefined : this.play(formId, place);
+    return formId === undefined ? undefined : this.play(formId, place, 0, source);
+  }
+
+  /**
+   * The running game's conditions on a reference (ScriptRuntime.conditionsHold; none: the
+   * player), once the scripts run.
+   */
+  conditionsHold:
+    | ((conditions: readonly Condition[], source: number | undefined) => Promise<boolean>)
+    | undefined;
+
+  /** A played sound's conditions: the running game's, else the surroundings' (ambience's). */
+  async #holds(conditions: readonly Condition[], source: number | undefined): Promise<boolean> {
+    if (this.conditionsHold) return this.conditionsHold(conditions, source);
+    await this.#conditionGlobals(conditions);
+    const ambient = this.#ambient;
+    return (
+      !ambient ||
+      soundConditionsHold(
+        conditions,
+        ambientConditions(ambient, (formId) => this.#globalValue(formId)),
+      )
+    );
   }
 
   /** A Bink video (its data path) as an MP4 file; undefined if it does not exist. */

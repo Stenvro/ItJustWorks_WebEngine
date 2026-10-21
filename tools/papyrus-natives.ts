@@ -1,11 +1,14 @@
 // The native functions the game's scripts declare, against the ones the script runtime
 // provides: per script how many there are and which are missing, and how often the game's
-// own scripts call each missing one.
+// own scripts call each missing one; and the natives registered that do not do all the game
+// does yet (src/scripting/runtime/natives/placeholders.ts), with their milestones.
 //
-//   node tools/papyrus-natives.ts              per script: implemented / declared
-//   node tools/papyrus-natives.ts actor        one script's missing natives with signatures
+//   node tools/papyrus-natives.ts                  per script: implemented / declared
+//   node tools/papyrus-natives.ts actor            one script's missing natives with signatures
+//   node tools/papyrus-natives.ts --placeholders   the placeholders, by the scripts' calls
 
 import { parsePex, type PexScript } from '../src/formats/pex/pex.ts';
+import { PLACEHOLDER_NATIVES } from '../src/scripting/runtime/natives/placeholders.ts';
 import { ScriptLibrary } from '../src/scripting/script-library.ts';
 import { ScriptRuntime } from '../src/scripting/runtime/runtime.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
@@ -73,7 +76,16 @@ const implemented = (key: string): boolean => {
   return runtime.native(script, fn) !== undefined;
 };
 const wanted = process.argv[2]?.toLowerCase();
-if (wanted) {
+const callsOf = (key: string): number => calls.get(key.split('.')[1] ?? '') ?? 0;
+if (wanted === '--placeholders') {
+  for (const [key, why] of [...PLACEHOLDER_NATIVES].sort((a, b) => callsOf(b[0]) - callsOf(a[0]))) {
+    const declared = natives.has(key) ? '' : '  (not declared by the scripts)';
+    const registered = implemented(key) ? '' : '  (NOT REGISTERED)';
+    console.log(
+      `${String(callsOf(key)).padStart(6)}  ${key.padEnd(52)} ${why}${declared}${registered}`,
+    );
+  }
+} else if (wanted) {
   const missing = [...natives].filter(
     ([key, native]) => native.script.toLowerCase() === wanted && !implemented(key),
   );
@@ -102,4 +114,9 @@ if (wanted) {
     );
   }
   console.log(`\n${String(done)} of ${String(natives.size)} natives implemented`);
+  const called = [...PLACEHOLDER_NATIVES.keys()].filter((key) => callsOf(key) > 0);
+  console.log(
+    `${String(PLACEHOLDER_NATIVES.size)} placeholders held for a milestone, ` +
+      `${String(called.length)} of them called by the scripts (--placeholders)`,
+  );
 }

@@ -528,6 +528,9 @@ export class PlaySession {
       swimming: player.character.swimming,
       speed: free ? 0 : Math.hypot(vx, vy),
       pathing: false,
+      heading: Math.atan2(this.player.forward[0], this.player.forward[1]),
+      velocity: free ? [0, 0, 0] : [vx, vy, player.character.verticalSpeed],
+      wish: free ? [0, 0] : [vx, vy],
     };
   }
 

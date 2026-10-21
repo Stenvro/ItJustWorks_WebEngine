@@ -23,6 +23,7 @@ export const ConditionFunction = {
   isSwimming: 185,
   isInInterior: 300,
   getVmQuestVariable: 629,
+  getCombatTargetHasKeyword: 707,
 } as const;
 
 export interface Condition {
@@ -59,6 +60,29 @@ export interface Condition {
    * condition's quest (by id), not forms.
    */
   readonly useAliases?: boolean;
+  /**
+   * The CTDA's "Use packdata" flag (0x08, xEdit): its reference parameters are the running
+   * package's data inputs (by index), not forms.
+   */
+  readonly usePackData?: boolean;
+  /**
+   * The CTDA's "Swap Subject and Target" flag (0x10, xEdit): what runs on the subject runs on
+   * the target, and the other way round.
+   */
+  readonly swapSubjectAndTarget?: boolean;
+}
+
+/**
+ * What a function's value is when no evaluator values the function (it then holds, and is
+ * reported): tools/condition-audit.ts finds those the game data uses.
+ */
+export const NOT_VALUED: unique symbol = Symbol('not valued');
+
+/** The second parameter read as a float (GetWithinDistance's distance). */
+export function floatParam2(condition: Condition): number {
+  const bytes = new DataView(new ArrayBuffer(4));
+  bytes.setInt32(0, condition.param2, true);
+  return bytes.getFloat32(0, true);
 }
 
 /** CTDA run-on values. */
@@ -119,6 +143,8 @@ export function conditionAt(
         ? String.fromCharCode(field.data[28] ?? 0, field.data[29] ?? 0)
         : '',
     ...((flags & 0x02) !== 0 && { useAliases: true }),
+    ...((flags & 0x08) !== 0 && { usePackData: true }),
+    ...((flags & 0x10) !== 0 && { swapSubjectAndTarget: true }),
   };
 }
 

@@ -820,6 +820,9 @@ export class GameSession {
       // Sounds and music read the running game's globals from now on.
       void this.sounds().then((sounds) => {
         sounds.globals = (formId) => runtime.globalNow(formId);
+        // Sounds' conditions (SNDR) on the reference that sounds them, else the player.
+        sounds.conditionsHold = (conditions, source) =>
+          runtime.conditionsHold(conditions, runtime.referenceHandle(source ?? PLAYER_REF));
       });
       this.scriptWorld.enableChanged();
       return runtime;
@@ -843,6 +846,7 @@ export class GameSession {
     this.cellSelections.clear();
     void this.sounds().then((sounds) => {
       sounds.globals = undefined;
+      sounds.conditionsHold = undefined;
     });
     return this.runtime(opening);
   }

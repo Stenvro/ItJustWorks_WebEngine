@@ -425,6 +425,12 @@ export class ActorCombatAi {
     if (!runtime) return;
     const reaction = await reactionOf(runtime, mind.reference, attacker);
     const hits = (mind.friendHits.get(attacker) ?? 0) + 1;
+    // A script may have it ignore friends' blows (IgnoreFriendlyHits): a friend or ally never
+    // makes it turn.
+    const friendly = reaction === FightReaction.friend || reaction === FightReaction.ally;
+    if (friendly && runtime.state.references.get(mind.reference)?.ignoreFriendlyHits === true) {
+      return;
+    }
     if (turnsOnAttacker(reaction, hits, mind.mode !== 'idle', this.#settings)) {
       mind.friendHits.delete(attacker);
       mind.enemies.add(attacker);

@@ -100,6 +100,7 @@ import { CreatedObjects } from './created-objects.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import type { PlayerView } from './race-menu.ts';
 import { groundUnder, type SoundingWorld } from './actor-sounds.ts';
+import { CombatTargetKeywords } from './combat-target-keywords.ts';
 import type { GameSession } from './game-session.ts';
 import { clock, startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
@@ -176,6 +177,8 @@ export class ModelViewer {
   readonly #fly = new FlyCamera();
   #detachControls: (() => void) | undefined;
   #session: GameSession | undefined;
+  /** The player's combat target's keywords (the combat music's conditions). */
+  readonly #combatTarget = new CombatTargetKeywords();
   #db: RecordDatabase | undefined;
   /** Guards against slow script runs finishing after newer choices. */
   #choiceToken = 0;
@@ -445,6 +448,23 @@ export class ModelViewer {
       this.#stage?.killed(reference);
     },
     currentPackage: (reference) => this.#stage?.ai.current(reference)?.id,
+    currentProcedure: (reference) => this.#stage?.ai.current(reference)?.procedure,
+    impactAt: (impactDataSet, from, direction, length) =>
+      this.#stage?.combat.impactAt(impactDataSet, from, direction, length) ?? false,
+    pathTo: (actor, target, walkRun) => {
+      const stage = this.#stage;
+      const runtime = this.#session?.scriptsReady;
+      if (!stage || !runtime || !stage.movers.moves(actor)) return undefined;
+      return runtime
+        .placement(target)
+        .then((at) =>
+          at
+            ? stage.movers.travel(actor, [...at.position], walkRun >= 0.5 ? 'run' : 'walk')
+            : false,
+        );
+    },
+    changingSpace: () => this.#session?.loading === true,
+    playerRegions: () => [],
     interaction: (reference) =>
       this.#stage?.furniture.interaction(reference) ?? this.#stage?.mounts.interaction(reference),
     playIdle: (actor, idle, target) => {
@@ -466,8 +486,19 @@ export class ModelViewer {
     flight: (actor) => this.#stage?.flight.scriptState(actor),
     riderOf: (horse) => this.#stage?.mounts.riderOf(horse),
     dismount: (actor) => this.#stage?.mounts.dismount(actor) ?? false,
-    motion: (reference) =>
-      reference === PLAYER_REF ? this.#play?.playerMotion() : this.#stage?.movers.motion(reference),
+    motion: (reference) => {
+      const motion =
+        reference === PLAYER_REF
+          ? this.#play?.playerMotion()
+          : this.#stage?.movers.motion(reference);
+      // The water it stands in (IsInDangerousWater).
+      const at =
+        reference === PLAYER_REF
+          ? this.#play?.player.feet
+          : this.#stage?.livePlacement(reference)?.position;
+      const water = at && this.#waterAt(at[0], at[1], at[2]);
+      return motion && { ...motion, water: water && at[2] < water.height ? water.type : undefined };
+    },
     furnitureInUse: (reference, marker) => this.#stage?.furniture.inUse(reference, marker) ?? false,
     evaluatePackage: (reference) => {
       this.#stage?.ai.evaluate(reference);
@@ -1738,6 +1769,7 @@ export class ModelViewer {
           worldMusic: undefined,
           waterAt: this.#waterSurfaceAt,
           underwater: this.#underwater(),
+          combatTargetHasKeyword: this.#combatTarget.of(session.scriptsReady),
         },
       );
     }

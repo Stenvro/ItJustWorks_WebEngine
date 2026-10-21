@@ -1,5 +1,6 @@
 // The names of the condition functions (CTDA) by index, as UESP's "Skyrim Mod:Function
-// Indices" lists them (the console and script function ids minus 4096). For reports and
+// Indices" lists them (the console and script function ids minus 4096), with Skyrim 1.6's two
+// Survival Mode functions after them (xEdit wbDefinitionsTES5). For reports and
 // tools; what a function does is valued in scripting/runtime/condition-values.ts.
 
 const NAMES = `
@@ -136,7 +137,7 @@ IsIgnoringCombat GetLightLevel SavePCFace SpellHasCastingPerk IsBeingRidden IsUn
 GetRealHoursPassed UnequipAll IsUnlockedDoor IsHostileToActor GetTargetHeight IsPoison
 WornApparelHasKeywordCount GetItemHealthPercent EffectWasDualCast GetKnockStateEnum
 DoesNotExist UnequipItemSlot MountActor DismountActor IsOnFlyingMount CanFlyHere
-IsFlyingMountPatrolQueued IsFlyingMountFastTravelling
+IsFlyingMountPatrolQueued IsFlyingMountFastTravelling IsOverEncumbered GetActorWarmth
 `
   .trim()
   .split(/\s+/);

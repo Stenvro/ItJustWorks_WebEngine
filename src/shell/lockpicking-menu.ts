@@ -76,6 +76,8 @@ const PICK_INTRO_SECONDS = 1;
 const DAMAGE_SECONDS = 0.97;
 /** Pick sounds come at most this often (s). */
 const PICK_SOUND_SECONDS = 0.15;
+/** GetPlayerAction's lock outcomes (xEdit wbPlayerActionEnum). */
+const PlayerAction = { lockpickSuccess: 3, lockpickBroken: 4 } as const;
 /** The opened lock shows a moment before the menu closes (s). */
 const OPENED_SECONDS = 0.8;
 /** The broken pick's sequence plays before the next comes in (s). */
@@ -424,6 +426,8 @@ class Picking {
     this.#pickPlayback.start = clock();
     this.#sound('UILockpickingPickBreak');
     const runtime = this.#runtime;
+    // GetPlayerAction: a lockpick broken (those near may react).
+    runtime.playerActed(PlayerAction.lockpickBroken);
     await runtime.removeItem(PLAYER_REF, runtime.formHandle(LOCKPICK), 1, true, undefined);
     await runtime.progression.useSkill(PLAYER_REF, LOCKPICKING, this.#setup.skillUses.broken);
     const left = await runtime.itemCount(PLAYER_REF, LOCKPICK);
@@ -451,6 +455,7 @@ class Picking {
     this.#sound('UILockpickingUnlock');
     void this.#tension?.then((sound) => sound?.stop());
     const { reference } = this.#setup;
+    this.#runtime.playerActed(PlayerAction.lockpickSuccess);
     this.#runtime.state.reference(reference).locked = false;
     void this.#runtime.sendEvent(reference, 'OnLockStateChanged');
     void this.#runtime.progression.useSkill(PLAYER_REF, LOCKPICKING, this.#setup.skillUses.opened);

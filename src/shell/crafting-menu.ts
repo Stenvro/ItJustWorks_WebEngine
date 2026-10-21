@@ -698,7 +698,12 @@ async function smithingModel(
       const recipe = recipeFor.get(entry.formId);
       const record = await item(entry.formId);
       if (!recipe || !record) return;
-      if (!(await runtime.conditionsHold(recipe.conditions, player))) {
+      // The recipe's conditions ask about the item (EPTemperingItemIsEnchanted: Arcane
+      // Blacksmith's).
+      const tempered = { base: entry.formId, enchanted: record.enchantment !== undefined };
+      if (
+        !(await runtime.conditionsHold(recipe.conditions, player, undefined, { item: tempered }))
+      ) {
         game.notify(
           text(
             record.enchantment === undefined

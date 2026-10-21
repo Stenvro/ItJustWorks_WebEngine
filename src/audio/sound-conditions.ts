@@ -1,8 +1,10 @@
-// The conditions of ambient sounds and music tracks (SNDR, MUST CTDA): the time of day
-// (birds in the morning, crickets at night), the weather, being indoors or swimming, and
-// global variables (distant catapults while CWDistantCatapultsAMB is 1). Other functions (an
-// actor's race, faction, perks) belong to sounds actors make and count as true here:
-// TODO(M11). Platform-independent.
+// The conditions of ambient sounds and music tracks (SNDR, MUST CTDA) on the listener: the time
+// of day (birds in the morning, crickets at night), the weather, being indoors or swimming,
+// global variables (distant catapults while CWDistantCatapultsAMB is 1) and the player's combat
+// target (the boss music for dragons: GetCombatTargetHasKeyword ActorTypeDragon). Sounds an
+// actor or a reference makes are played with the running game's conditions on it
+// (SoundSystem.play). tools/condition-audit.ts holds the ambient sounds' and the tracks'
+// functions to SOUND_CONDITION_FUNCTIONS. Platform-independent.
 
 import {
   ConditionFunction,
@@ -21,7 +23,20 @@ export interface SoundConditionContext {
   readonly swimming: boolean;
   /** A global variable's value (GLOB). */
   readonly global: (formId: number) => number;
+  /** Whether the player's combat target has a keyword (none: no target). */
+  readonly combatTargetHasKeyword?: ((keyword: number) => boolean) | undefined;
 }
+
+/** The functions valued here (the audit's). */
+export const SOUND_CONDITION_FUNCTIONS: ReadonlySet<number> = new Set([
+  ConditionFunction.getCurrentTime,
+  ConditionFunction.getIsCurrentWeather,
+  ConditionFunction.isRaining,
+  ConditionFunction.isInInterior,
+  ConditionFunction.isSwimming,
+  ConditionFunction.getGlobalValue,
+  ConditionFunction.getCombatTargetHasKeyword,
+]);
 
 /** Whether a sound's or track's conditions hold. */
 export function soundConditionsHold(
@@ -45,6 +60,8 @@ export function soundConditionsHold(
           return context.swimming ? 1 : 0;
         case ConditionFunction.getGlobalValue:
           return context.global(condition.form);
+        case ConditionFunction.getCombatTargetHasKeyword:
+          return context.combatTargetHasKeyword?.(condition.form) === true ? 1 : 0;
         default:
           return undefined;
       }

@@ -291,6 +291,18 @@ export function talkTargets(
             if (busy) hud?.notification(busy);
             return;
           }
+          // A script may keep the player from talking to it (AllowPCDialogue), and one bleeding
+          // out talks only where a script allows it (AllowBleedoutDialogue).
+          const scripts = session()?.scriptsReady;
+          const own = scripts?.state.actors.get(reference);
+          const bleeding = scripts?.world.combat?.(reference)?.bleedingOut === true;
+          if (
+            menus &&
+            (own?.allowPlayerDialogue === false ||
+              (bleeding && own?.allowBleedoutDialogue !== true))
+          ) {
+            return;
+          }
           if (menus) {
             menus.talk(placed);
             return;
