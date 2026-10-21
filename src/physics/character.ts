@@ -125,6 +125,8 @@ export class CharacterBody {
   #jumpSpeed = 0;
   /** Contacts of the last step: what the shape touched (for pushing objects). */
   readonly touched: RAPIER.Collider[] = [];
+  /** Colliders it moves through (a horse its own cart: they are hitched, never in its way). */
+  ignored: ReadonlySet<number> = new Set();
   /**
    * Swimming: no gravity; the owner sets the vertical speed (floating at the surface,
    * diving and rising).
@@ -459,8 +461,9 @@ export class CharacterBody {
     );
     const own = this.#collider;
     const filter = this.physics.filterFor(Layer.charController);
+    const ignored = this.ignored;
     const predicate = (collider: RAPIER.Collider): boolean =>
-      collider.handle !== own.handle && filter(collider);
+      collider.handle !== own.handle && !ignored.has(collider.handle) && filter(collider);
     const wasGrounded = this.#grounded;
     this.#controller.computeColliderMovement(
       own,

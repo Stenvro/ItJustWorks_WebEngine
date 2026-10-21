@@ -118,8 +118,11 @@ interface Travel {
   readonly destination: Vec3;
   readonly gait: Gait;
   readonly arrive: number;
-  /** Straight there (static pathing), not along a navmesh path. */
-  readonly direct: boolean;
+  /**
+   * Straight there (static pathing), not along a navmesh path; stuck on the way (off its route,
+   * something in it: hay bales in Helgen's square), it searches a navmesh path from there.
+   */
+  direct: boolean;
   follower: PathFollower | undefined;
   /** Searches made (a stuck actor searches again, a few times). */
   searches: number;
@@ -228,6 +231,8 @@ export class ActorMovers {
   #catalogRead: MovementCatalog | undefined;
   /** Physics time stepped since the actors were last drawn (their measured speed). */
   #stepped = 0;
+  /** What each actor's controller moves through (ignore). */
+  readonly #ignored = new Map<number, ReadonlySet<number>>();
   /** Frames so far (actors' body trigger checks take turns). */
   #frames = 0;
   readonly #step = (step: number): void => {
@@ -355,6 +360,11 @@ export class ActorMovers {
     }
     if (step.state === 'blocked') {
       this.#blocked(reference, travel, step.door);
+      return;
+    }
+    if (step.state === 'stuck' && travel.direct) {
+      travel.direct = false;
+      travel.follower = undefined;
       return;
     }
     if (step.state === 'stuck') {
@@ -557,6 +567,17 @@ export class ActorMovers {
     let count = 0;
     for (const mover of this.#movers.values()) if (mover.triggers.has(trigger)) count++;
     return count;
+  }
+
+  /**
+   * What an actor's controller moves through (a horse its cart's colliders: hitched, the cart
+   * never stands in its way, also as it turns round).
+   */
+  ignore(reference: number, colliders: readonly RAPIER.Collider[]): void {
+    const handles = new Set(colliders.map((collider) => collider.handle));
+    this.#ignored.set(reference, handles);
+    const mover = this.#movers.get(reference);
+    if (mover) mover.character.ignored = handles;
   }
 
   /** An actor left the stage: its controller goes, and what it was asked to do. */
@@ -962,6 +983,7 @@ export class ActorMovers {
         triggers: new Set(),
         bodyTriggers: new Set(),
       });
+      character.ignored = this.#ignored.get(reference) ?? new Set();
     } catch (error) {
       this.#options.terminal.log(
         'actor',

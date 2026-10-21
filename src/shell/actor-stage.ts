@@ -967,6 +967,7 @@ export class ActorStage {
     }
     soundPlacedActors([placed], this.#options.sounding);
     staged.placed = placed;
+    this.#tellScripts(staged);
     // Its controller is made again for its new body (its size, its graph).
     this.movers.release(reference);
     const previous = staged.scene;
@@ -1085,6 +1086,7 @@ export class ActorStage {
         };
         this.#actors.set(reference, entry);
         staged.push(entry);
+        this.#tellScripts(entry);
         this.away.arrived(reference);
         // Its abilities, diseases and worn enchantments act while it is here.
         const scripts = session.scriptsReady;
@@ -1109,6 +1111,20 @@ export class ActorStage {
     } finally {
       for (const { actor } of candidates) this.#placing.delete(actor.reference);
     }
+  }
+
+  /**
+   * The events an actor's graph raises reach the scripts that registered for them
+   * (RegisterForAnimationEvent: MQ101's cart riders wait for ExitCartEnd, the headsman for
+   * Decapitate).
+   */
+  #tellScripts(staged: StagedActor): void {
+    const reference = staged.reference;
+    staged.placed.onScriptEvents = (events) => {
+      const runtime = this.#options.session.scriptsReady;
+      if (!runtime) return;
+      for (const event of events) runtime.animationEvent(reference, event);
+    };
   }
 
   #scene(placed: PlacedActor, visibility: InstanceVisibility): GpuScene | undefined {

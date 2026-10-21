@@ -332,6 +332,13 @@ export class PlayerAvatar {
       },
       this.#soundWorld,
     );
+    // Its scripts hear its body's events (OnAnimationEvent: MQ101 waits for the player's
+    // PlayImod and IdleFurnitureExit).
+    body.onScriptEvents = (events) => {
+      const runtime = this.#session.scriptsReady;
+      if (!runtime) return;
+      for (const event of events) runtime.animationEvent(PLAYER_REFERENCE, event);
+    };
     body.onEvents = (events) => {
       sound(events);
       // The jump's animation pushes off.
