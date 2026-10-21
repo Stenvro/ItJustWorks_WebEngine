@@ -240,6 +240,29 @@ export class MagicEngine {
   // --- What is on an actor -------------------------------------------------------------------
 
   /** The effects on an actor (active and inactive), by key. */
+  /**
+   * Whether an effect is taking a target's health now (sNoWaitTakingHealthDamage): a
+   * detrimental value modifier of Health that still runs (poison, fire, frost over time).
+   */
+  async damagingHealth(target: number): Promise<boolean> {
+    for (const [, active] of this.effectsOn(target)) {
+      if (active.inactive === true || active.lasting === true) continue;
+      if (active.duration <= 0 || active.elapsed >= active.duration) continue;
+      const effect = await this.effect(active.effect);
+      if (effect?.actorValue !== ActorValue.health) continue;
+      if ((effect.flags & EffectFlag.detrimental) === 0) continue;
+      const archetype = effect.archetype;
+      if (
+        archetype === EffectArchetype.valueModifier ||
+        archetype === EffectArchetype.dualValueModifier ||
+        archetype === EffectArchetype.peakValueModifier
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   effectsOn(target: number): [string, ActiveEffectState][] {
     const found: [string, ActiveEffectState][] = [];
     for (const entry of this.#runtime.state.activeEffects) {
