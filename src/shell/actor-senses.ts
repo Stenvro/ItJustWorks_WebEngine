@@ -22,6 +22,7 @@ import {
   detectionReach,
   eventLevel,
   loudness,
+  movementNoise,
   readDetectionSettings,
   sightReach,
   type DetectionLevel,
@@ -594,9 +595,9 @@ export class ActorSenses implements ScriptSenses {
       blindness: blindness.current,
       nightEye: nightEye.current > 0,
       invisible: invisibility.current > 0,
-      // Muffle and the like change it from its base (the magic system's temporary modifiers of
-      // MovementNoiseMult).
-      noiseMult: Math.max(0, 1 + noise.current - noise.base),
+      // Muffle (the spell, the enchantment, Muffled Movement and Silence's abilities: their
+      // modifiers of MovementNoiseMult) quiets its movement.
+      noiseMult: movementNoise(noise.current),
       armourWeight,
       size,
       teammate: runtime.state.actors.get(reference)?.playerTeammate === true,

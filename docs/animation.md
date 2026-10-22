@@ -221,10 +221,15 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   lids close over fBlinkDownTime (0.04 s) and open over fBlinkUpTime (0.14 s); each face has
   its own random sequence (seeded by the reference).
 - **Expression:** one of the 17 (MoodHappy, DialogueAnger, CombatShout, ...) held at a
-  strength. A response's emotion (INFO TRDT emotion type and value: anger, disgust, fear,
+  strength, chosen every frame (`src/ai/moods.ts`, `src/shell/actor-moods.ts`): a script's
+  override (Actor.SetExpressionOverride: the mfg expression and its strength 0..100, until
+  ClearExpressionOverride), else CombatShout while the actor shouts and CombatAnger in combat,
+  else its AI's mood (the Mood actor value, AIDT: neutral, anger, fear, happy, sad, surprised,
+  puzzled, disgusted) as its Mood* expression at half strength (TODO(M13): the engine's
+  strengths; SetExpressionOverride's default 50 is taken). The player's face too. A response's
+  emotion (INFO TRDT emotion type and value: anger, disgust, fear,
   sad, happy, surprise, puzzled as the Dialogue* expressions; neutral none) shows over it while
-  it is said, eased in and out over 0.3 s (TODO(M13): the engine's blend). TODO(M10): moods
-  from AI and combat.
+  it is said, eased in and out over 0.3 s (TODO(M13): the engine's blend).
 - **Speech:** a line's lip-sync curves (formats/audio.md, LIP) drive the phonemes and the
   modifiers (blinks join the face's own, the strongest wins; brows, eye looks). The curves
   start with their lead-in frames, the audio after them, at the head through the 3D dialogue
@@ -234,8 +239,8 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   (8 curves) set the creature's behavior graph's lip variables, which move its mouth
   (ai.md, Talking).
 - **Sandbox (debug only), Talk:** in the sandbox, the crosshair finds an actor along the
-  activation ray (within fActivatePickRadius of the line from its feet to its head; TODO(M10):
-  actors' own collision) and "Talk" makes it say a random line of its voice type (NPC VTCK,
+  activation pick (its controller, BIPED bodies or ragdoll the pick meets; one without
+  collision within fActivatePickRadius of the line from its feet to its head) and "Talk" makes it say a random line of its voice type (NPC VTCK,
   `sound\voice\<plugin>\<voice type>\`).
 - Not applied: the TRI's SkinnyMorph (FaceGen heads are baked with the actor's weight:
   formats/esm.md, Actors) and the Races / CharGen morphs (baked by the Creation Kit).
@@ -296,11 +301,15 @@ vanilla expressions parse, the last is malformed in the data and never holds.
 A standing NPC (variable IsNPC 1) reaches `MT_Standing_State` and plays `MT_Idle` with
 `MT_Idle_Skinny`; `moveStart` with a Speed brings it to `Default_Locomotion_State`, walk and run
 blended by speed in step, raising FootLeft / FootRight. All 53 skeletons of the placed actors
-start their graph and play idles (`tools/actor-info.ts --audit --deep`); some creatures start
-in a combat idle (dragons, rieklings) or a transform (vampire lords, werewolves) until the
-engine sets the variables of their state (TODO(M10)). The dead run no graph: their ragdolls pose them
-(physics.md, Constraints and ragdolls). Procedural modifiers: below. Not yet: the engine's
-events and variables of combat (M10 5.x, M11).
+start their graph and play idles (`tools/actor-info.ts --audit --deep`). A dragon's ground idle
+is Ground_CombatIdle (its animations have no other). A riekling's graph draws its weapon as it
+starts (MSG_StandingEquip_State: weaponDraw, which the combat mechanics take as drawn; its AI
+sheathes it out of combat), a werewolf's or vampire lord's plays its transformation's start
+once (WW_Howl) before its idle. TODO(M13): what the engine gives a graph as an actor loads to
+start it elsewhere is not documented. The dead run no graph: their ragdolls pose them
+(physics.md, Constraints and ragdolls). Procedural modifiers: below. The engine's variables and
+events of locomotion (`src/ai/locomotion.ts`), combat (iRightHandType, iLeftHandType,
+IsAttacking, IsBlocking, ...: docs/ai.md, "Combat"), casting and flight are the shell's.
 
 **Intervals:** a transition with a trigger interval (flag 0x1) is taken only within it, one
 with an initiate interval (0x2) is kept until it begins when triggered before (unless one kept
@@ -310,11 +319,15 @@ or else a time in the state (an exit time of 0 never ends). Vanilla: 30 trigger 
 466 initiate intervals (InitiateStart..InitiateEnd: getting up from a seat, out of an idle),
 all bounded by events.
 
-**BSCyclicBlendTransitionGenerator** (directional blends of werewolves, vampire lords, wisps):
+**BSCyclicBlendTransitionGenerator** (directional blends: atronachs, werewolves, vampire lords,
+wisps, the first-person character's locomotion and attacks):
 its CyclicFreeze event holds its blender's parameter where it is; CyclicCrossBlend fades from
 the pose at that parameter to the live one over its transition duration on its blend curve,
-the children at both parameters playing on meanwhile (the engine sends the events when a
-direction wraps around: TODO(M10) with movement). **BSOffsetAnimationGenerator** lays a clip
+the children at both parameters playing on meanwhile. The engine sends the events as the
+movement's Direction wraps round (`Locomotion.drive`, `src/ai/locomotion.ts`: a change of more
+than half the turn, ahead-left to ahead-right, sends CyclicFreeze before the new direction and
+CyclicCrossBlend after it; every vanilla generator names these two; TODO(M13): the engine's own
+test). **BSOffsetAnimationGenerator** lays a clip
 on its generator's pose, sampled at the time its variable picks (rangeStart..rangeEnd over the
 clip), additively for additive clips. Its vanilla use is the characters' weapon adjustment:
 weapAdj picks how far `weaponAdjustment.hkx` pushes the sheathed weapons out; the engine sets
@@ -350,7 +363,8 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   plus the offsets), eased by its gains; its outputs (active, current heading and pitch) go
   to their variables. The target: a bound vector, the camera, or the aim the engine gives its
   kind (BehaviorRuntime.setDirectAtTarget by userInfo: 2 bows and spells, 3 the dragon rider).
-  Casting gives the aim of aimed spells (docs/ai.md, "Magic in combat"); TODO(M10) 5.1: bows'.
+  Casting gives the aim of aimed spells (docs/ai.md, "Magic in combat"), combat a drawn bow's
+  (`ActorCombat`'s aimBow: the player's view, an NPC's target's chest, 2048 units along it).
 - **hkbTwistModifier** (19: the first-person body's pitch and lean, bow draws, a netch's lean,
   a tail's turn): the chain from start to end bone turns about the axis (in model space in
   every vanilla one) by the angle (degrees: 1stPRot = sin(Direction · 360) · RotMax, RotMax 5),
@@ -428,7 +442,8 @@ Scripts' Actor.SetLookAt and ClearLookAt are 'script'; scenes' looks, speakers t
 someone and the actor talking with the player are 'dialogue'; other code asks through
 `session.scriptWorld.lookTargets.lookAt(actor, target, kind)` (a reference or a world point;
 undefined lets go). Without any, an actor looks at the player within 512 units in front of it
-(TODO(M13): the engine's rule; TODO(M10) 4.1: once it detects them). Actor.SetHeadTracking(false)
+once it detects them (detection: docs/ai.md, "Detection"; TODO(M13): the engine's rule).
+Actor.SetHeadTracking(false)
 and the graph's HeadTrackingOff (graphs' and clips' events; actorresponse.txt's
 HeadTrackingOffHandler; HeadTrackingOn again) stop it. The point looked at turns towards the
 target at fHeadTrackSpeedMax (200° a second) when more than fHeadTrackSpeedMaxAngle (10°) off,

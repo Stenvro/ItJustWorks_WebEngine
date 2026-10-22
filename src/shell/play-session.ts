@@ -35,6 +35,7 @@ import type { ActorMotion, ScriptRuntime } from '../scripting/runtime/runtime.ts
 import type { Player } from './player.ts';
 import { attachPlayerInput } from './player-input.ts';
 import type { HudSignals } from './hud-signals.ts';
+import type { ActorTarget } from './actors.ts';
 
 /**
  * How long the sandbox's notice stays (it has no HUD); also how long a notification repeated
@@ -440,7 +441,8 @@ export class PlaySession {
         direction: Vec3,
         length: number,
         radius: number,
-      ) => { readonly distance: number; readonly target: Activatable } | undefined)
+        picked?: { readonly reference: number; readonly distance: number },
+      ) => ActorTarget | undefined)
     | undefined;
   readonly #prompt: HTMLElement | undefined;
   readonly #hud: HudSignals | undefined;
@@ -493,7 +495,9 @@ export class PlaySession {
       direction: Vec3,
       length: number,
       radius: number,
-    ) => { readonly distance: number; readonly target: Activatable } | undefined;
+      /** The actor the physics pick met (its controller, bodies or ragdoll), if it met one. */
+      picked?: { readonly reference: number; readonly distance: number },
+    ) => ActorTarget | undefined;
     /** The player's perks on activation (Filter Activation, Activate, Set Activate Label). */
     perks?: PerkActivation;
     /** Where the activation prompt is shown. */
@@ -686,12 +690,21 @@ export class PlaySession {
       // What the player walked into moves from now on (held objects wait for a touch).
       for (const collider of this.player.character.touched) this.physics.touch(collider);
       // An actor nearer than what the physics pick found is the target. The pick meets actors'
-      // character controllers (L_ITEMPICKER collides with L_CHARCONTROLLER): an actor in the
-      // way is found by its body (actorAt), and hides what is behind it.
+      // character controllers, their keyframed BIPED bodies and the ragdolls of the dead
+      // (L_ITEMPICKER collides with L_CHARCONTROLLER, L_BIPED and L_DEADBIP): the actor it met
+      // is the target (actorAt) and hides what is behind it.
       const pickedAny = this.#pick();
-      const picked = pickedAny?.owner?.kind === 'actor' ? undefined : pickedAny;
+      const pickedActor = pickedAny?.owner?.kind === 'actor' ? pickedAny.owner : undefined;
+      const picked = pickedActor ? undefined : pickedAny;
       const ray = this.#pickRay();
-      const actor = this.#actorAt?.(ray.origin, ray.direction, ray.length, ray.radius);
+      const actor = this.#actorAt?.(
+        ray.origin,
+        ray.direction,
+        ray.length,
+        ray.radius,
+        pickedActor &&
+          pickedAny && { reference: pickedActor.reference, distance: pickedAny.distance },
+      );
       const actorFirst = actor !== undefined && (!picked || actor.distance < picked.distance);
       const hit = actorFirst ? undefined : picked;
       const favor = this.favorMode;
@@ -706,7 +719,12 @@ export class PlaySession {
         this.#setTarget(
           this.#grab ? undefined : actorFirst ? actor.target : this.#activatableAt(hit),
         );
-        this.#activate(hit);
+        // A corpse the pick met (its ragdoll): held, Activate drags it; tapped, it is searched.
+        const corpse =
+          actorFirst && actor.corpse === true && pickedActor?.reference === actor.target.reference
+            ? pickedAny
+            : undefined;
+        this.#activate(corpse ?? hit);
       }
     }
     for (const impact of this.physics.drainImpacts()) this.#onImpact?.(impact);
@@ -775,8 +793,15 @@ export class PlaySession {
       Layer.itemPicker,
       this.player.character.collider,
     );
-    const actor = this.#actorAt?.(ray.origin, ray.direction, ray.length, ray.radius);
-    if (actor && (!picked || actor.distance < picked.distance)) {
+    const pickedActor = picked?.owner?.kind === 'actor' ? picked.owner : undefined;
+    const actor = this.#actorAt?.(
+      ray.origin,
+      ray.direction,
+      ray.length,
+      ray.radius,
+      pickedActor && picked && { reference: pickedActor.reference, distance: picked.distance },
+    );
+    if (actor && (!picked || actor.distance <= picked.distance)) {
       return favor.target(actor.target.reference, undefined);
     }
     const owner = picked?.owner;
@@ -825,7 +850,7 @@ export class PlaySession {
       return;
     }
     if (player.takePressed('Activate') && !this.#grab) {
-      const body = hit && this.physics.grabbable(hit.collider);
+      const body = hit && this.physics.grabbable(hit.collider, hit.owner?.kind === 'actor');
       if (hit && body) {
         this.#hold = { since: clock(), body, point: hit.point, target: this.#target };
       } else {

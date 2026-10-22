@@ -174,10 +174,12 @@ export function inventoryModel(
       await dropAtFeet(game, formId, amount);
     },
     // Charge (T): the soul gems that could recharge the entry's weapon, on its card.
-    soulGemList: async ({ formId }) => {
+    soulGemList: async ({ formId, stack }) => {
       const game = runtime();
       const settings = await session.settings();
-      const current = await game.crafting.chargePercent(PLAYER_REF, formId);
+      // The row's own item: its charge is kept on it (a stack, else a plain one).
+      const which = { stack: typeof stack === 'number' ? stack : undefined };
+      const current = await game.crafting.chargePercent(PLAYER_REF, formId, which);
       if (current === undefined) return undefined;
       const gems = await game.crafting.soulGems(PLAYER_REF);
       if (gems.length === 0) {
@@ -191,16 +193,17 @@ export function inventoryModel(
           text: gem.name,
           soulLVL: soul ? (settings.string(soul) ?? '') : '',
           count: gem.count,
-          chargeAdded: await game.crafting.rechargePercent(PLAYER_REF, gem, formId),
+          chargeAdded: await game.crafting.rechargePercent(PLAYER_REF, gem, formId, which),
           formId: gem.formId,
         });
       }
       return { type: CardType.list, listItems, currentCharge: current };
     },
-    chargeWith: async ({ formId }, index) => {
+    chargeWith: async ({ formId, stack }, index) => {
       const game = runtime();
       const gem = (await game.crafting.soulGems(PLAYER_REF))[index];
-      if (gem && (await game.crafting.recharge(PLAYER_REF, formId, gem.formId))) {
+      const which = { stack: typeof stack === 'number' ? stack : undefined };
+      if (gem && (await game.crafting.recharge(PLAYER_REF, formId, gem.formId, which))) {
         void session.sounds().then((sounds) => sounds.playNamed('UIEnchantRecharge', undefined));
       }
     },
@@ -359,7 +362,9 @@ export async function itemCard(
       card.poisoned = runtime.magic.poisonOf(PLAYER_REF)?.weapon === row.formId;
       // An enchanted weapon's charge (the meter; under 100, T recharges it).
       if (item.weapon) {
-        const charge = await runtime.crafting.chargePercent(PLAYER_REF, row.formId);
+        const charge = await runtime.crafting.chargePercent(PLAYER_REF, row.formId, {
+          stack: row.stack,
+        });
         if (charge !== undefined) {
           card.charge = charge;
           card.usedCharge = charge;

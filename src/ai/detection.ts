@@ -331,7 +331,7 @@ export interface Target {
   readonly skill: number;
   /** The weight of the armour it wears. */
   readonly armourWeight: number;
-  /** MovementNoiseMult (muffled movement lowers it; 1 without). */
+  /** How loud its movement is (movementNoise: Muffle lowers it; 1 without). */
   readonly noiseMult: number;
   /** The loudness of its last action within fDetectionActionTimer (0: none). */
   readonly actionSound: number;
@@ -389,8 +389,7 @@ export interface DetectionLevel {
  * UESP writes the observer's skill twice (attenuated, and again unattenuated against the
  * target's); with it an observer of middling skill would detect a sneaking target in the dark,
  * unseen and unheard, anywhere within reach. The predecessor engine's documented formula has it
- * once, as here. TODO(M13): the engine's own terms are not documented (Stealth perks, muffle:
- * M11).
+ * once, as here. TODO(M13): the engine's own terms are not documented.
  */
 export function detectionLevel(settings: DetectionSettings, input: DetectionInput): DetectionLevel {
   const { observer, target } = input;
@@ -440,6 +439,18 @@ export function detectionLevel(settings: DetectionSettings, input: DetectionInpu
   const skill = settings.skillMult * (perception * attenuation - sneaker);
   const level = settings.baseValue + attenuation * (sound + visual) + skill;
   return { level, inReach, attenuation, sound, visual, skill };
+}
+
+/**
+ * How loud an actor's movement is for its MovementNoiseMult actor value: what its Muffle effects
+ * add (all Value / Peak Value Modifiers on it: the Muffle spell 1, the Muffle enchantment 0.5,
+ * the Muffled Movement perk's ability 0.5, Silence's 1) takes that share of the sound off, so 1
+ * or more is silent (UESP: Muffle "move more quietly", Silence "walking and running does not
+ * affect detection"; the enchantment halves the noise). TODO(M13): whether the engine takes it
+ * off the armour's share only (Muffled Movement: "noise from armor").
+ */
+export function movementNoise(movementNoiseMult: number): number {
+  return Math.max(0, 1 - movementNoiseMult);
 }
 
 /**

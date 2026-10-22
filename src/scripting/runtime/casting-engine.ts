@@ -218,7 +218,7 @@ export class CastingEngine {
     const states = this.#runtime.state.actorCasting;
     let state = states.get(actor);
     if (!state) {
-      state = { powersUsed: new Map(), charge: new Map() };
+      state = { powersUsed: new Map() };
       states.set(actor, state);
     }
     return state;
@@ -580,8 +580,15 @@ export class CastingEngine {
       case 'staff': {
         const left = await this.charge(actor, castable);
         if (left < cost.charge - 1e-6) return false;
-        if (castable.object !== undefined)
-          this.state(actor).charge.set(castable.object, left - cost.charge);
+        // Kept on the staff itself (ExtraCharge: the crafting engine's item stacks).
+        if (castable.object !== undefined) {
+          runtime.crafting.setCharge(
+            actor,
+            castable.object,
+            left - cost.charge,
+            await this.#fullCharge(castable),
+          );
+        }
         return true;
       }
       case 'scroll': {
@@ -604,19 +611,26 @@ export class CastingEngine {
     }
   }
 
-  /** A staff's charge left (its full charge, WEAP EAMT, until it is used). */
+  /**
+   * The charge left on the staff an actor wields (its full charge, WEAP EAMT, until it is used;
+   * kept on the staff: the crafting engine's keptCharge).
+   */
   async charge(actor: number, castable: Castable): Promise<number> {
     const staff = castable.object;
     if (staff === undefined) return 0;
-    const kept = this.state(actor).charge.get(staff);
-    if (kept !== undefined) return kept;
-    const record = await this.#runtime.forms.record(staff);
+    const full = await this.#fullCharge(castable);
+    const kept = this.#runtime.crafting.keptCharge(actor, staff);
+    return kept === undefined ? full : Math.min(full, kept);
+  }
+
+  /** A staff's full charge: WEAP EAMT, else its enchantment's. */
+  async #fullCharge(castable: Castable): Promise<number> {
+    const staff = castable.object;
+    const record = staff === undefined ? undefined : await this.#runtime.forms.record(staff);
     const eamt = record?.fields.first('EAMT');
-    const full =
-      eamt && eamt.length >= 2
-        ? new DataView(eamt.buffer, eamt.byteOffset, eamt.byteLength).getUint16(0, true)
-        : (castable.item.enchantment?.amount ?? 0);
-    return full;
+    return eamt && eamt.length >= 2
+      ? new DataView(eamt.buffer, eamt.byteOffset, eamt.byteLength).getUint16(0, true)
+      : (castable.item.enchantment?.amount ?? 0);
   }
 
   /**

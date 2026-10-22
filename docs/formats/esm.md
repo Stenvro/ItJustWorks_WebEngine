@@ -657,7 +657,10 @@ vanilla stair meshes have risers of 16 and 24 units).
 
 **IPDS** (impact data set, 313; `src/world/impact-records.ts`): PNAM entries of 8 bytes,
 a material (MATT) and the impact (IPCT) for hitting it. Named by MATT HNAM (50 of 80
-materials; physics impacts) and by weapons and projectiles (TODO(M11)).
+materials; physics impacts), WEAP INAM (a weapon's hits and its arrows'; fists the race's
+NAM5) and BIDS (blocks and bashes), MGEF's impact data (a spell's impact), EXPL's (where an
+explosion bursts), HAZD's and the footstep sets (FSTP); the users: `src/shell/combat-impacts.ts`,
+`src/shell/magic-projectiles.ts`, `src/shell/actor-sounds.ts`.
 **IPCT** (impact, 663): DATA (24 bytes) f32 effect duration, u32 orientation (0 surface
 normal, 1 projectile vector, 2 projectile reflection), f32 angle threshold (degrees), f32
 placement radius, u32 sound level (0 loud, 1 normal, 2 silent, 3 very loud), u32 flags (0x1 no
@@ -801,8 +804,9 @@ for 5) and doors. A door leads (REFR XTEL) to its destination door and on to the
 that door on them (2,113 of the 2,162 door links), else to the navmesh under the arrival point
 (XTEL's position, within 256 units in height: 27). 22 lead nowhere: their arrival point lies
 off every navmesh, 17–2,230 units from the nearest triangle (11 exits into Tamriel, 5 into the
-test cells CTest and E3demoBleakFallsBarrow; TODO(M10): how the engine paths through such a
-door, to compare with the game). The engine keeps a location on either side of a door
+test cells CTest and E3demoBleakFallsBarrow); the routes (`src/ai/routes.ts`, docs/ai.md,
+"Routes") lead through such a door to the navmesh nearest its arrival point. TODO(M13): how the
+engine paths through it is not documented. The engine keeps a location on either side of a door
 (CommonLibSSE `PathingDoor` forward and backward locations); the arrival point stands in for the
 far one: for 2,110 of the 2,113 the navmesh there is the one with the destination door.
 Vanilla: 4,270 connected components (edges and doors taken either way); 3,419 navmeshes with
@@ -870,7 +874,8 @@ Records behind every sound (`src/world/sound-records.ts`; files: [audio.md](audi
   fade-out 15 s).
 - Priority: the lower the number, the more important (combat 2, discoveries 3, exploration 49,
   dungeons 50, taverns 55). Conditions use GetCurrentTime (86), GetIsCurrentWeather (48) and
-  GetCombatTargetHasKeyword (707, combat against dragons: TODO(M10)).
+  GetCombatTargetHasKeyword (707, combat against dragons: the player's combat target's keywords,
+  `src/shell/combat-target-keywords.ts`; `src/audio/sound-conditions.ts`).
 - Where music comes from: cells (XCMO; 667 of 761 interiors, Breezehome MUSTownTest),
   regions (RDMO under a sound RDAT), worldspaces (ZNAM: Tamriel `_NONE`, the city worlds
   MUSTownTest, Blackreach MUSDungeonIce), else the default object DFMS (MUSExploreTestb).

@@ -381,7 +381,7 @@ blend then moves the actor at: DefaultMale state 0 direction 0 has (48.5, 16.10)
 and MT_RunForward, blended at those weights (stride over the blended cycle duration), gives
 16.11 and 306.42. State 1 is flat at 370.37, the sprint clip's speed. The sampler so inverts the
 curve: the parameter at which the blend moves at the goal speed (walk 80.1 → 82.24). 1556 curves
-rise in both x and y. Beyond a curve's last point (state 0 forward: 306.4, short of the run's 370) the lookup holds it: TODO(M10) whether the engine extrapolates.
+rise in both x and y. Beyond a curve's last point (state 0 forward: 306.4, short of the run's 370) the lookup holds it. TODO(M13): whether the engine extrapolates is not documented.
 
 ### Responses
 

@@ -272,13 +272,6 @@ export interface ActorMagicState {
 export interface ActorCastingState {
   /** Powers it used, by spell: the game day (GameDaysPassed) of the last use. */
   readonly powersUsed: Map<number, number>;
-  /**
-   * Its staffs' and enchanted weapons' charge left, by weapon base (the crafting engine's for
-   * weapons). An enchanted weapon the player made is a form of its own, so its charge is its
-   * own; the plugins' enchanted weapons share theirs by base. TODO(M13): per item, as the game
-   * keeps it on each one (ExtraCharge).
-   */
-  readonly charge: Map<number, number>;
   /** The voice's recovery it began with (seconds; the shout meter's whole). */
   voiceRecoveryTotal?: number;
   /** Words of its last shout less one (GetCurrentShoutVariation). */
@@ -330,6 +323,11 @@ export interface ItemStack {
   count: number;
   /** ExtraHealth: 1.1 Fine, 1.2 Superior, ... (src/gameplay/crafting.ts temperHealth). */
   readonly health: number;
+  /**
+   * ExtraCharge: the charge left on an enchanted weapon or a staff that was used (undefined:
+   * full). Items alike in health and charge stack.
+   */
+  charge?: number;
   /** The one of its base an actor wears or wields (the game's ExtraWorn on the list). */
   worn?: boolean;
 }
@@ -372,7 +370,7 @@ export class GameState {
   readonly activeEffects = new Map<string, ActiveEffectState>();
   /** What the magic system keeps of actors (a poisoned weapon), by actor. */
   readonly actorMagic = new Map<number, ActorMagicState>();
-  /** What casting keeps of actors (powers used, staffs' charge, the voice), by actor. */
+  /** What casting keeps of actors (powers used, the voice), by actor. */
   readonly actorCasting = new Map<number, ActorCastingState>();
   /** Item counts per container (reference), by base form; filled from the records on first use. */
   readonly inventories = new Map<number, Map<number, number>>();
