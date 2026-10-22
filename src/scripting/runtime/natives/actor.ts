@@ -326,8 +326,8 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
 
   // --- Equipment (natives/equipment.ts: the equip system) ------------------------------------
   ask('getgoldamount', 0, (actor) => runtime.itemCount(actor, GOLD));
-  // TODO(M11): warmth (Survival Mode) of what it wears.
-  ask('getwarmthrating', 0, () => 0);
+  // Survival Mode's warmth: what it wears, its torch, its Fortify Warmth (warmth-engine.ts).
+  ask('getwarmthrating', 0, (actor) => runtime.warmth.actor(actor));
 
   // --- Life and death ---------------------------------------------------------------------
   ask('isdead', false, (actor) => actors.isDead(actor));
@@ -336,9 +336,12 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   act('killsilent', (actor, call) => actors.scriptKill(actor, ref(call.args[0]), true));
   act('resurrect', (actor) => actors.resurrect(actor));
   ask('getkiller', null, (actor) => runtime.actorHandleOrNone(state.actors.get(actor)?.killer));
-  // Deferred kills (the actor dies when the deferral ends, if it should have): TODO(M11).
-  act('startdeferredkill', () => undefined);
-  act('enddeferredkill', () => undefined);
+  // Deferred kills: while one lasts its health may run out without its dying; as it ends it
+  // dies if its health is gone (actor-engine.ts damage, endDeferredKill).
+  act('startdeferredkill', (actor) => {
+    actors.startDeferredKill(actor);
+  });
+  act('enddeferredkill', (actor) => actors.endDeferredKill(actor));
   ask('isessential', false, (actor) => actors.isEssential(actor));
   ask('isghost', false, (actor) => actors.isGhost(actor));
   flag('setghost', 'ghost');
@@ -581,8 +584,12 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   act('clearextraarrows', () => undefined);
 
   // --- Menus ----------------------------------------------------------------------------------
-  // TODO(M11): OpenInventory's abForceOpen (else only a follower's opens).
-  act('openinventory', (actor) => void world.menu?.({ name: 'Container Menu', actor }));
+  // OpenInventory(abForceOpen): a teammate's inventory to trade with (the container menu in NPC
+  // mode); another actor's only when forced (a mannequin, a pack mule, a freed prisoner).
+  act('openinventory', (actor, call) => {
+    if (!bool(call.args[0]) && state.actors.get(actor)?.playerTeammate !== true) return;
+    void world.menu?.({ name: 'Container Menu', actor });
+  });
   act('showbartermenu', (actor) => void world.menu?.({ name: 'Barter Menu', actor }));
   // Latent: the favor points once the menu closes.
   ask('showgiftmenu', 0, async (actor, call) => {

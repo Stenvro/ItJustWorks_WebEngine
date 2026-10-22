@@ -8,11 +8,13 @@
 // (the progression engine's passTime). Where the player may not wait the menu does not open and
 // the game's message says why (sNoWaitDefault while scripts disable waiting, SetInChargen;
 // sNoWaitInAir; the sleep versions), while someone fights the player (sNoWaitHostileActorsNear)
-// or an effect takes their health (sNoWaitTakingHealthDamage). TODO(M10): actors' places after
-// the hours (their packages), the wait broken off by an attack.
+// or an effect takes their health (sNoWaitTakingHealthDamage). After the hours the actors are
+// where their packages had them meanwhile (src/shell/actor-stage.ts, timeSkipped); an attack
+// breaks the wait off (a sleep is told it was interrupted).
 // Nor while guards pursue the player (sNoWaitWhileAlarm) or they trespass (sNoWaitTrespass;
 // the sleep versions); an owned bed is not slept in (sNoSleepInOwnedBed: play-mode.ts).
-// TODO(M11): taking health damage, the rested bonuses (the magic system).
+// The rested bonuses are the scripts': PlayerSleepQuest registers for sleep and its OnSleepStop
+// gives Rested, Well Rested or Lover's Comfort (abilities: the magic system's lasting effects).
 
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { formatGameDate } from '../world/game-time.ts';
@@ -108,8 +110,14 @@ export class SleepWaitMenu {
     if (sleeping) {
       await runtime.registeredEvent('sleep', 'OnSleepStart', [start, start + hours / 24]);
     }
+    let interrupted = false;
     for (let left = hours; left > 0; left--) {
       await wait(HOUR_MS);
+      // Someone attacks: the hours stop there.
+      if (session.combatWatch?.fightingPlayer === true) {
+        interrupted = true;
+        break;
+      }
       session.advanceClock(1);
       runtime.update(0, 1 / 24);
       // Health, magicka and stamina regenerate over the hour (its real seconds).
@@ -119,6 +127,7 @@ export class SleepWaitMenu {
       menu.invoke(`${ROOT}.SetCurrentTime`, await this.#now());
     }
     await wait(HOUR_MS);
-    if (sleeping) await runtime.registeredEvent('sleep', 'OnSleepStop', [false]);
+    for (const listener of session.timeSkipped) listener();
+    if (sleeping) await runtime.registeredEvent('sleep', 'OnSleepStop', [interrupted]);
   }
 }

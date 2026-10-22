@@ -56,6 +56,8 @@ export const HIGH_PROCESS_DISTANCE = 4096;
 const LEAVE_HIGH_DISTANCE = HIGH_PROCESS_DISTANCE * 1.25;
 /** A tilting race leans again with the ground once it moved this far (game units). */
 const TILT_AGAIN = 4;
+/** An NPC sprinting pays its stamina this often (seconds of sprinting at a time). */
+const SPRINT_PAYMENT_SECONDS = 0.5;
 
 /** An actor moved by its controller. */
 interface Mover {
@@ -132,6 +134,8 @@ interface Travel {
   readonly done: (arrived: boolean) => void;
 }
 
+/** A travel ended by skipped hours sets the actor on the navmesh within this of its place. */
+const SKIP_REACH = 256;
 /** Off the navmeshes, a path begins at their nearest point within this (game units). */
 const NAVMESH_REACH = 512;
 /** A stuck actor searches its way again this many times before it gives up. */
@@ -257,6 +261,8 @@ export class ActorMovers {
   }
 
   readonly #travels = new Map<number, Travel>();
+  /** Until then (performance.now ms) a travel ends at once at its place: hours were skipped. */
+  #skipUntil = 0;
 
   /**
    * Sends an actor to a place over the navigation meshes of the loaded area, at a gait:
@@ -272,6 +278,11 @@ export class ActorMovers {
     options: TravelOptions = {},
   ): Promise<boolean> {
     this.#travels.get(reference)?.done(false);
+    const mover = this.#movers.get(reference);
+    if (mover && performance.now() < this.#skipUntil) {
+      this.#arrive(mover.staged, destination);
+      return Promise.resolve(true);
+    }
     return new Promise((resolve) => {
       const travel: Travel = {
         destination,
@@ -291,6 +302,29 @@ export class ActorMovers {
       };
       this.#travels.set(reference, travel);
     });
+  }
+
+  /**
+   * Hours passed at once (waiting, sleeping): for a moment the travels the actors' packages start
+   * end at once, the actor where it was going (it walked there meanwhile).
+   */
+  skipTravels(ms: number): void {
+    this.#skipUntil = performance.now() + ms;
+    // Those on their way already (they set out as the hours passed) are there too.
+    for (const [reference, travel] of [...this.#travels]) {
+      const mover = this.#movers.get(reference);
+      if (!mover) continue;
+      this.#arrive(mover.staged, travel.destination);
+      travel.done(true);
+    }
+  }
+
+  /** An actor set where it was going, on the navmesh there (hours were skipped). */
+  #arrive(staged: StagedActor, destination: Vec3): void {
+    const ground = this.#options.navmeshes?.()?.nearest?.(destination, SKIP_REACH);
+    staged.position = ground ? [...ground] : [...destination];
+    this.teleport(staged);
+    this.#requests.delete(staged.reference);
   }
 
   /** The actor stops travelling (its travel resolves false) and stands. */
@@ -527,6 +561,20 @@ export class ActorMovers {
   /** An actor's controller's collider (its own rays leave it out: foot IK), if it has one. */
   colliderOf(reference: number): CharacterBody['collider'] | undefined {
     return this.#movers.get(reference)?.character.collider;
+  }
+
+  /** Seconds each actor has sprinted that its stamina has not paid for yet. */
+  readonly #sprints = new Map<number, number>();
+
+  /** An actor sprinted `seconds`: its stamina drains (src/scripting/runtime/progression-engine.ts). */
+  #sprinted(reference: number, seconds: number): void {
+    const total = (this.#sprints.get(reference) ?? 0) + seconds;
+    if (total < SPRINT_PAYMENT_SECONDS) {
+      this.#sprints.set(reference, total);
+      return;
+    }
+    this.#sprints.delete(reference);
+    void this.#options.session.scriptsReady?.progression.sprint(reference, total);
   }
 
   /** How a moved actor moves now (its conditions and natives read it). */
@@ -1196,9 +1244,13 @@ export class ActorMovers {
       );
       instance.motion.version++;
     }
+    // Sprinting drains its stamina (the progression engine's, half a second at a time).
+    const sprintRequest = this.#requests.get(staged.reference);
+    if (sprintRequest?.gait === 'sprint' && Math.hypot(velocity[0], velocity[1]) > 5)
+      this.#sprinted(staged.reference, dt);
     const behavior = placed.behavior;
     if (behavior) {
-      const request = this.#requests.get(staged.reference);
+      const request = sprintRequest;
       const moving = Math.hypot(velocity[0], velocity[1]) > 5;
       // Moved by its graph (a canned turn, a lunge), it stands as far as its speed goes: its
       // walk would otherwise feed the root motion that moves it.

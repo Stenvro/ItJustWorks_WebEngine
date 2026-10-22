@@ -242,6 +242,20 @@ export class Renderer {
     return this.#view;
   }
 
+  /**
+   * Where a world point is on the screen as the last frame saw it (0..1 from the top left), or
+   * undefined behind the camera.
+   */
+  project(point: readonly [number, number, number]): readonly [number, number] | undefined {
+    const m = this.#viewProjection;
+    const [x, y, z] = point;
+    const w = (m[3] ?? 0) * x + (m[7] ?? 0) * y + (m[11] ?? 0) * z + (m[15] ?? 0);
+    if (!(w > 1e-6)) return undefined;
+    const cx = ((m[0] ?? 0) * x + (m[4] ?? 0) * y + (m[8] ?? 0) * z + (m[12] ?? 0)) / w;
+    const cy = ((m[1] ?? 0) * x + (m[5] ?? 0) * y + (m[9] ?? 0) * z + (m[13] ?? 0)) / w;
+    return [(cx + 1) / 2, (1 - cy) / 2];
+  }
+
   /** `timeSeconds` drives animation; `pixelScale` is the devicePixelRatio. */
   render(timeSeconds: number, pixelScale: number): void {
     const { device, context } = this.#gpu;

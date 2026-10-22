@@ -214,7 +214,7 @@ export class ConsoleCommands {
         return [];
       }
       case 'showracemenu':
-        // TODO(M11): after the opening, a new race resets the skills (UESP, "Console").
+        // After the opening a new race resets the skills (UESP "Console"): the race menu's.
         this.#context.showRaceMenu();
         return [];
       case 'qqq':

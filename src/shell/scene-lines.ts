@@ -5,8 +5,8 @@
 // DEVA) on its face while it speaks, its gestures (the response's speaker idle, else
 // ActionTalking) and the listener's idle (LNAM), and the HUD's subtitle with the setting General
 // Subtitles (or the info's Force Subtitle) while the player is within the voice's reach. An
-// actor not on stage says nothing here: its line passes silently. TODO(M10) 4.1: who hears it
-// (detection).
+// actor not on stage says nothing here: its line passes silently. Lines are no noise to the
+// actors' detection (its noises are movement, combat, casting, shouts: src/shell/actor-senses.ts).
 
 import type { SceneSpeech } from '../scripting/runtime/scene-host.ts';
 import type { GameSession } from './game-session.ts';

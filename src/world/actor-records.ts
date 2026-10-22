@@ -147,6 +147,8 @@ export interface RaceRecord {
   readonly armorRace: number | undefined;
   /** NAM8: the race whose morphs (.tri) it uses. */
   readonly morphRace: number | undefined;
+  /** GNAM: its body part data (BPTD: src/world/body-part-data.ts). */
+  readonly bodyPartData: number | undefined;
 }
 
 export interface ArmorRecord {
@@ -413,6 +415,7 @@ export function parseRace(record: RecordSource): RaceRecord {
     faceTexture,
     armorRace,
     morphRace,
+    bodyPartData: field(record, 'GNAM'),
   };
 }
 

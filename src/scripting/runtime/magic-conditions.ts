@@ -62,8 +62,8 @@ export async function magicConditionValue(
         : flag(runtime.magic.isSpellTarget(reference, condition.form));
     case MagicFn.isUndead:
       return reference === undefined ? undefined : flag(await runtime.magic.isUndead(reference));
-    // What it wears (its outfit's armor and what is equipped, as Actor.WornHasKeyword reads it:
-    // TODO(M11) the equip system); the count is of its apparel (ARMO).
+    // What it wears (the equip system's worn items: its outfit's armor and what is equipped, as
+    // Actor.WornHasKeyword reads it); the count is of its apparel (ARMO).
     case MagicFn.wornHasKeyword:
     case MagicFn.wornApparelHasKeywordCount: {
       if (reference === undefined) return undefined;

@@ -1,7 +1,7 @@
 // Music as the engine plays it (MUSC music types, MUST tracks). Music types are in play: the
 // location's (the cell's XCMO, else its regions' RDMO, else the worldspace's ZNAM, else the
 // default object DFMS) and those game events add (combat, discoveries, quest moments: Papyrus
-// MusicType.Add and Remove; combat, TODO(M10)). The most important one (the lowest
+// MusicType.Add and Remove; combat: src/shell/actor-combat.ts). The most important one (the lowest
 // priority number; the latest of equals) plays:
 //
 // - A type that ducks the current track (combat, discoveries) plays over it while the other

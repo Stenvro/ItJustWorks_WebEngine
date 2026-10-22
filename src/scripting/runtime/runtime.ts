@@ -51,7 +51,11 @@ import { MagicEngine, type MagicEffectShown } from './magic-engine.ts';
 import { CraftingEngine } from './crafting-engine.ts';
 import { CrimeEngine } from './crime-engine.ts';
 import { PerkEngine } from './perk-engine.ts';
+import { HarvestEngine } from './harvest-engine.ts';
+import { HazardEngine } from './hazard-engine.ts';
 import { installPerkHooks } from './perk-hooks.ts';
+import { UsageStats } from './usage-stats.ts';
+import { WarmthEngine } from './warmth-engine.ts';
 import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
@@ -113,6 +117,8 @@ export interface WorldBridge {
   motionTypeChanged?(reference: number, motionType: number): void;
   impulse?(reference: number, direction: Vec3, magnitude: number): void;
   pushAway?(pushed: number, from: number, force: number): void;
+  /** A Stagger effect: the actor staggers by a magnitude from its caster (src/shell/actor-combat.ts). */
+  stagger?(actor: number, magnitude: number, from: number | undefined): void;
   hasNode?(reference: number, node: string): boolean;
   /** Where a named node of a loaded reference's model is (MoveToNode). */
   nodePlacement?(reference: number, node: string): { position: Vec3; rotation: Vec3 } | undefined;
@@ -225,6 +231,16 @@ export interface WorldBridge {
   motion?(actor: number): ActorMotion | undefined;
   /** Whether a furniture's marker (any marker, without one) is in use by an actor. */
   furnitureInUse?(furniture: number, marker?: number): boolean;
+  /**
+   * Where an actor would use a furniture (its marker: MoveToInteractionLocation), if the view
+   * holds it.
+   */
+  interactionLocation?(
+    furniture: number,
+    from: Vec3,
+  ): Promise<
+    { readonly position: readonly [number, number, number]; readonly heading: number } | undefined
+  >;
   /** An idle played (PlayIdle): false if it could not play. */
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
   /**
@@ -306,13 +322,15 @@ export interface WorldBridge {
   /**
    * An image-space modifier applied (value: strength), removed, cross-faded in (value:
    * seconds), the cross-fade chain's last one faded out (modifier 0, value: seconds) or popped
-   * to `other` (value: strength).
+   * to `other` (value: strength). `target`: the reference it aims at (a magic effect's actor:
+   * radial blur and depth of field that "use target").
    */
   imageSpace?(
     modifier: number,
     action: 'apply' | 'remove' | 'crossfade' | 'removeCrossfade' | 'popTo',
     value: number,
     other?: number,
+    target?: number,
   ): void;
   effectShader?(shader: number, target: number, play: boolean, duration: number): void;
   visualEffect?(
@@ -623,6 +641,14 @@ export class ScriptRuntime implements VmHost {
   readonly crafting: CraftingEngine;
   /** Perks: those actors hold and their entry points (perk-engine.ts). */
   readonly perks: PerkEngine;
+  /** Survival Mode's warmth of armor, lights and actors (warmth-engine.ts). */
+  readonly warmth: WarmthEngine;
+  /** What the player uses most: the journal's favorite weapon, spell, school, shout. */
+  readonly usage: UsageStats;
+  /** Harvesting flora and its regrowth (harvest-engine.ts). */
+  readonly harvest: HarvestEngine;
+  /** Hazards standing in the world: their lifetimes and spells (hazard-engine.ts). */
+  readonly hazards: HazardEngine;
   /** While a new game starts its quests (their aliases may take reserved references). */
   startingNewGame = false;
   /** Game seconds per real second (the TimeScale global; scripts may set it). */
@@ -744,7 +770,11 @@ export class ScriptRuntime implements VmHost {
     this.crime = new CrimeEngine(this);
     this.crafting = new CraftingEngine(this);
     this.perks = new PerkEngine(this);
+    this.harvest = new HarvestEngine(this);
+    this.hazards = new HazardEngine(this);
     installPerkHooks(this);
+    this.warmth = new WarmthEngine(this);
+    this.usage = new UsageStats(this);
     this.sceneHost = new RuntimeSceneHost(this);
     this.scenes = new SceneDirector(this.sceneHost);
     registerNatives(this.#natives, this);
@@ -1238,9 +1268,27 @@ export class ScriptRuntime implements VmHost {
     return data && data.length >= 4 ? view(data).getInt32(0, true) : 0;
   }
 
-  /** Whether the player knows a form (spells, shouts, recipes; TODO(M11)). */
-  playerKnows(formId: number): boolean {
-    return this.wordsLearned.has(formId);
+  /**
+   * PlayerKnows: whether the player knows a form: a word of power learned, an enchantment
+   * learned (disenchanting), a spell or shout they have, a magic effect of an enchantment they
+   * know or of an ingredient whose effect they found.
+   */
+  async playerKnows(formId: number): Promise<boolean> {
+    if (this.wordsLearned.has(formId)) return true;
+    if (this.state.knownEnchantments.has(formId)) return true;
+    const record = await this.forms.record(formId);
+    if (record?.type === 'SPEL' || record?.type === 'SHOU')
+      return this.actors.hasSpell(PLAYER_REF, formId);
+    if (record?.type !== 'MGEF') return false;
+    for (const enchantment of this.state.knownEnchantments) {
+      const item = await this.magic.item(enchantment);
+      if (item?.effects.some((entry) => entry.effect === formId)) return true;
+    }
+    for (const [ingredient, slots] of this.state.ingredientEffects) {
+      const item = await this.magic.item(ingredient);
+      if ([...slots].some((slot) => item?.effects[slot]?.effect === formId)) return true;
+    }
+    return false;
   }
 
   /**
@@ -1694,7 +1742,9 @@ export class ScriptRuntime implements VmHost {
     this.state.inventories.set(container, items);
     if (this.#seeded.has(container)) return items;
     this.#seeded.add(container);
-    const random = seededRandom(container ^ 0x5bd1e995);
+    // A restocked container's leveled items are picked anew (restock).
+    const restocks = this.state.restocked.get(container)?.count ?? 0;
+    const random = seededRandom((container ^ 0x5bd1e995) + Math.imul(restocks, 0x9e3779b9));
     const actor = await this.actors.info(container);
     const base = actor ? actor.inventory.formId : await this.baseOf(container);
     let level: number | undefined;
@@ -1995,6 +2045,28 @@ export class ScriptRuntime implements VmHost {
     );
   }
 
+  /**
+   * A container restocks (a merchant's chest every 48 hours: src/shell/barter-menu.ts): what it
+   * held goes (items sold to it with their references, improvements and stolen marks) and its
+   * own items (CNTO, leveled lists picked anew) are there again as it is next read.
+   */
+  restock(container: number): void {
+    const restocked = this.state.restocked.get(container);
+    this.state.restocked.set(container, {
+      days: this.state.gameDaysPassed,
+      count: (restocked?.count ?? 0) + 1,
+    });
+    for (const state of this.state.references.values()) {
+      if (state.container?.holder !== container) continue;
+      delete state.container;
+      state.deleted = true;
+    }
+    this.state.inventories.delete(container);
+    this.crafting.clear(container);
+    this.crime.clearStolen(container);
+    this.#seeded.delete(container);
+  }
+
   async removeAllItems(container: number, to: number | undefined): Promise<void> {
     const items = await this.inventory(container);
     for (const [item, count] of [...items]) {
@@ -2262,6 +2334,9 @@ export class ScriptRuntime implements VmHost {
     // Casts charge and concentrate; voices recover.
     if (!this.retired) this.casting.update(realSeconds);
     this.scenes.update(realSeconds);
+    // Harvested flora grow again as their cells reset; hazards burn out and hit.
+    if (!this.retired) this.harvest.update(realSeconds);
+    if (!this.retired) this.hazards.update(realSeconds);
   }
 
   /** A frame in a menu (menu mode): only the wall clock moves on (WaitMenuMode). */

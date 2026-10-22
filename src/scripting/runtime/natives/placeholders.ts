@@ -6,13 +6,6 @@
 // placeholders. Platform-independent.
 
 export const PLACEHOLDER_NATIVES: ReadonlyMap<string, string> = new Map([
-  // Survival, deferred kills, favors.
-  ['actor.startdeferredkill', 'TODO(M11): deferred kills (the actor dies as the deferral ends)'],
-  ['actor.enddeferredkill', 'TODO(M11): deferred kills (the actor dies as the deferral ends)'],
-  ['actor.getwarmthrating', "TODO(M11): Survival Mode's warmth"],
-  ['armor.getwarmthrating', "TODO(M11): Survival Mode's warmth"],
-  ['light.getwarmthrating', "TODO(M11): Survival Mode's warmth"],
-  ['objectreference.setnofavorallowed', "TODO(M11): the followers' favor commands (kept, unread)"],
   // Saves.
   ['game.requestsave', 'TODO(M12): saves'],
   ['game.requestautosave', 'TODO(M12): saves'],
@@ -35,7 +28,6 @@ export const PLACEHOLDER_NATIVES: ReadonlyMap<string, string> = new Map([
     'objectreference.playsyncedanimationandwaitss',
     'TODO(M13): synced animations of two references',
   ],
-  ['objectreference.movetointeractionlocation', "TODO(M13): the furniture's entry point"],
   // Movement controller overrides (no vanilla script calls them).
   ['actor.keepoffsetfromactor', "TODO(M13): the movement controller's offsets"],
   ['actor.clearkeepoffsetfromactor', "TODO(M13): the movement controller's offsets"],

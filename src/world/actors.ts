@@ -28,6 +28,7 @@ import {
 } from './actor-records.ts';
 import { resolveActorTemplates } from './actor-templates.ts';
 import { pickLeveled, seededRandom } from './leveled.ts';
+import { headNode, parseBodyPartData } from './body-part-data.ts';
 import type { RecordDatabase } from './record-db.ts';
 
 export { pickLeveled, seededRandom } from './leveled.ts';
@@ -115,6 +116,8 @@ export interface ActorLook {
   readonly raceEditorId: string;
   /** Its race's DATA flags (RaceFlag): whether it walks, swims, flies, tilts with the ground. */
   readonly raceFlags: number;
+  /** Its head's skeleton node (its race's body part data: src/world/body-part-data.ts). */
+  readonly headNode: string | undefined;
   /** Skeleton model and behavior project (meshes\ paths). */
   readonly skeleton: string | undefined;
   readonly behavior: string | undefined;
@@ -246,6 +249,8 @@ const faceGenId = (objectId: number): string =>
 
 /** Reads the records of an actor's look. */
 export class ActorResolver {
+  /** Each body part data's head node (by BPTD form id). */
+  readonly #headNodes = new Map<number, Promise<string | undefined>>();
   readonly #db: RecordDatabase;
   readonly #races = new Map<number, RaceRecord | undefined>();
   readonly #addons = new Map<number, ArmorAddonRecord | undefined>();
@@ -283,6 +288,19 @@ export class ActorResolver {
    * The expression TRI files of an NPC's head parts (its own, its race's and the parts they
    * bring along) by lower-case editor id: the FaceGen head's shapes are named after them.
    */
+  /** The head node of a body part data (BPTD), read once per record. */
+  #headNode(bodyPartData: number | undefined): Promise<string | undefined> {
+    if (bodyPartData === undefined) return Promise.resolve(undefined);
+    let known = this.#headNodes.get(bodyPartData);
+    if (!known) {
+      known = this.#db
+        .get(bodyPartData)
+        .then((record) => (record ? headNode(parseBodyPartData(record)) : undefined));
+      this.#headNodes.set(bodyPartData, known);
+    }
+    return known;
+  }
+
   async #expressions(parts: readonly number[]): Promise<Map<string, string>> {
     const files = new Map<string, string>();
     const queue = [...parts];
@@ -522,6 +540,7 @@ export class ActorResolver {
       race: race.formId,
       raceEditorId: race.editorId,
       raceFlags: race.flags,
+      headNode: await this.#headNode(race.bodyPartData),
       skeleton: skeleton === undefined ? undefined : meshPath(skeleton),
       behavior: behavior === undefined ? undefined : meshPath(behavior),
       scale: race.height[sex] * traits.height,

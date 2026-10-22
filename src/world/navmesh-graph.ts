@@ -161,7 +161,7 @@ export function buildNavmeshGraph(
  * A door's arrival point (its XTEL position) lies this far above or below the navmesh there at
  * most (game units): so for 2,110 of the 2,113 vanilla doors whose destination door is on a
  * navmesh, and the navmesh found is that one. 22 vanilla doors arrive off every navmesh (17 to
- * 2,230 units from the nearest triangle) and lead nowhere here. TODO(M10): how the engine paths
+ * 2,230 units from the nearest triangle) and lead nowhere here. TODO(M13): how the engine paths
  * through such a door (CommonLibSSE PathingDoor's locations), to compare with the game.
  */
 const ARRIVAL_TOLERANCE = 256;

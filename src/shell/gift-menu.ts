@@ -11,6 +11,7 @@
 
 import { INVENTORY_CATEGORIES } from '../gameplay/inventory.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { questItems } from '../scripting/runtime/quest-items.ts';
 import { entryStack, ItemShelf } from './container-menu.ts';
 import type { GameSession } from './game-session.ts';
 import { itemEntry } from './inventory-menu.ts';
@@ -55,6 +56,10 @@ export async function giftModel(
       menu.call('SetMenuInfo', options.giving, options.useFavorPoints);
     },
     view: async () => {
+      // The player's quest items are not given (quest-items.ts) unless the script's list
+      // names them (a quest's item asked for).
+      const quest =
+        from === PLAYER_REF ? await questItems(game, PLAYER_REF) : new Map<number, number>();
       const rows = (await shelf.rows(from)).flatMap((row) => {
         if (
           allowed &&
@@ -63,9 +68,13 @@ export async function giftModel(
         ) {
           return [];
         }
+        const free = allowed?.has(row.formId)
+          ? row.count
+          : row.count - (quest.get(row.formId) ?? 0);
         // Without abShowStolenItems the player's stolen ones are not offered.
-        if (options.showStolen || from !== PLAYER_REF) return [row];
-        const count = row.count - game.crime.stolenCount(PLAYER_REF, row.formId);
+        if (options.showStolen || from !== PLAYER_REF)
+          return free > 0 ? [{ ...row, count: free }] : [];
+        const count = Math.min(free, row.count - game.crime.stolenCount(PLAYER_REF, row.formId));
         return count > 0 ? [{ ...row, count }] : [];
       });
       return {

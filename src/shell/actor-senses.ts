@@ -594,7 +594,8 @@ export class ActorSenses implements ScriptSenses {
       blindness: blindness.current,
       nightEye: nightEye.current > 0,
       invisible: invisibility.current > 0,
-      // Muffle and the like change it from its base. TODO(M11): the magic effects.
+      // Muffle and the like change it from its base (the magic system's temporary modifiers of
+      // MovementNoiseMult).
       noiseMult: Math.max(0, 1 + noise.current - noise.base),
       armourWeight,
       size,
