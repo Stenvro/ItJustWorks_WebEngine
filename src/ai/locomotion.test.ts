@@ -120,6 +120,19 @@ describe('Locomotion', () => {
     expect(graph.events).toEqual(['moveStart', 'moveStop']);
   });
 
+  it('tells a graph that holds it in an idle that it sets out (moveStart ends the idle)', () => {
+    const graph = recorder();
+    const locomotion = new Locomotion();
+    locomotion.drive([graph], frame({}));
+    // Held where it stands (bAnimationDriven) while its AI sends it off: moveStart at once.
+    locomotion.drive([graph], frame({ settingOut: true }));
+    expect(graph.events).toEqual(['moveStart']);
+    expect(graph.values.get('Speed')).toBe(0);
+    // Out of the idle it moves on as measured.
+    locomotion.drive([graph], frame({ velocity: [0, 120] }));
+    expect(graph.events).toEqual(['moveStart']);
+  });
+
   it('drives graphs given once by a generator (the player body and first-person graphs)', () => {
     const body = recorder();
     const first = recorder();

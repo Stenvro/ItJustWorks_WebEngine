@@ -321,6 +321,97 @@ interface GpuPart {
   readonly shadowPipeline: GPURenderPipeline | undefined;
 }
 
+/**
+ * What a pass has bound, as a run of draws goes (drawOpaque, drawShadows): a draw sets only
+ * what differs from the one before it. Consecutive draws are mostly parts of one model (its
+ * pipeline, material and buffers), and each set is a call into the browser's WebGPU: Helgen's
+ * shadow cascades and opaque pass made some 9,000 of them a frame.
+ */
+interface PassState {
+  pipeline: GPURenderPipeline | undefined;
+  material: GPUBindGroup | undefined;
+  vertices: GPUBuffer | undefined;
+  indices: GPUBuffer | undefined;
+}
+
+const passState = (): PassState => ({
+  pipeline: undefined,
+  material: undefined,
+  vertices: undefined,
+  indices: undefined,
+});
+
+/**
+ * Uploads of a scene's draw uniforms gathered into runs: neighbouring draws (an actor's parts
+ * lie side by side in its scene's buffer) go up in one writeBuffer, where each was its own call
+ * (every animated draw every frame). A run is cut where a gap wider than RUN_GAP lies between.
+ */
+class UniformRuns {
+  #start = -1;
+  #end = -1;
+
+  readonly #device: GPUDevice;
+  readonly #buffer: GPUBuffer;
+  readonly #data: ArrayBuffer;
+
+  constructor(device: GPUDevice, buffer: GPUBuffer, data: ArrayBuffer) {
+    this.#device = device;
+    this.#buffer = buffer;
+    this.#data = data;
+  }
+
+  add(offset: number, size: number): void {
+    if (this.#start >= 0 && offset >= this.#start && offset <= this.#end + RUN_GAP) {
+      this.#end = Math.max(this.#end, offset + size);
+      return;
+    }
+    this.flush();
+    this.#start = offset;
+    this.#end = offset + size;
+  }
+
+  flush(): void {
+    if (this.#start < 0) return;
+    this.#device.queue.writeBuffer(
+      this.#buffer,
+      this.#start,
+      this.#data,
+      this.#start,
+      this.#end - this.#start,
+    );
+    this.#start = -1;
+    this.#end = -1;
+  }
+}
+
+/** Draws apart by at most this (bytes) go up in one run (the bytes between go too). */
+const RUN_GAP = 4 * DRAW_SIZE;
+
+/** Binds a part's pipeline, material and buffers where they differ from what is bound. */
+function bindPart(
+  pass: GPURenderPassEncoder,
+  state: PassState,
+  pipeline: GPURenderPipeline,
+  part: GpuPart,
+): void {
+  if (state.pipeline !== pipeline) {
+    pass.setPipeline(pipeline);
+    state.pipeline = pipeline;
+  }
+  if (state.material !== part.bindGroup) {
+    pass.setBindGroup(2, part.bindGroup);
+    state.material = part.bindGroup;
+  }
+  if (state.vertices !== part.vertexBuffer) {
+    pass.setVertexBuffer(0, part.vertexBuffer);
+    state.vertices = part.vertexBuffer;
+  }
+  if (state.indices !== part.indexBuffer) {
+    pass.setIndexBuffer(part.indexBuffer, 'uint16');
+    state.indices = part.indexBuffer;
+  }
+}
+
 /** WGSL `WaterParams`: 11 vec4. */
 const WATER_PARAM_FLOATS = 44;
 
@@ -2478,6 +2569,7 @@ export class SceneRenderer {
       return frame;
     };
     for (const scene of sceneList) {
+      const uniforms = new UniformRuns(this.#device, scene.uniforms, scene.uniformData);
       // Moving instances: add-ons follow, then the draws that moved get their new place.
       for (const addon of scene.movingAddons) {
         if (addon.version === addon.motion.version) continue;
@@ -2492,13 +2584,7 @@ export class SceneRenderer {
         const floats = new Float32Array(scene.uniformData, entry.draw.uniformOffset, 16);
         multiply(entry.instanceWorld, entry.part.world, world);
         floats.set(world, 0);
-        this.#device.queue.writeBuffer(
-          scene.uniforms,
-          entry.draw.uniformOffset,
-          scene.uniformData,
-          entry.draw.uniformOffset,
-          64,
-        );
+        uniforms.add(entry.draw.uniformOffset, 64);
       }
       for (const draw of scene.animated) {
         const frame =
@@ -2577,14 +2663,9 @@ export class SceneRenderer {
             skin.bones.length * PALETTE_BONE_FLOATS,
           );
         }
-        this.#device.queue.writeBuffer(
-          scene.uniforms,
-          draw.offset,
-          scene.uniformData,
-          draw.offset,
-          DRAW_SIZE,
-        );
+        uniforms.add(draw.offset, DRAW_SIZE);
       }
+      uniforms.flush();
       // Emittance colours change with the hour (windows lit at night, sunbeams by day).
       for (const entry of scene.emittance) {
         if (entry.version === entry.source.version) continue;
@@ -2732,9 +2813,12 @@ export class SceneRenderer {
   drawOpaque(pass: GPURenderPassEncoder, scenes: Iterable<GpuScene>): void {
     pass.setBindGroup(0, this.#frame.bindGroup);
     pass.setVertexBuffer(1, this.#fallbackVertices);
+    const state = passState();
     for (const scene of scenes) {
       for (const draw of scene.draws) {
-        if (draw.part.pass === 'opaque' && this.#visible(draw)) this.#drawPart(pass, scene, draw);
+        if (draw.part.pass === 'opaque' && this.#visible(draw)) {
+          this.#drawPart(pass, scene, draw, state);
+        }
       }
     }
   }
@@ -2980,17 +3064,15 @@ export class SceneRenderer {
   ): void {
     pass.setBindGroup(0, this.#cascadeBindGroup, [this.cascadeOffset(cascade)]);
     pass.setVertexBuffer(1, this.#fallbackVertices);
+    const state = passState();
     for (const scene of scenes) {
       for (const draw of scene.draws) {
         const { part } = draw;
         if (!part.shadowPipeline || draw.radius < minRadius || draw.visibility?.hidden) continue;
         if (!sphereVisible(planes, draw.center, draw.radius)) continue;
-        pass.setPipeline(part.shadowPipeline);
+        bindPart(pass, state, part.shadowPipeline, part);
         pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
-        pass.setBindGroup(2, part.bindGroup);
         this.#bindBones(pass, scene, draw);
-        pass.setVertexBuffer(0, part.vertexBuffer);
-        pass.setIndexBuffer(part.indexBuffer, 'uint16');
         if (draw.ranges) {
           for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
         } else {
@@ -3092,14 +3174,16 @@ export class SceneRenderer {
     };
   }
 
-  #drawPart(pass: GPURenderPassEncoder, scene: GpuScene, draw: Draw): void {
+  #drawPart(
+    pass: GPURenderPassEncoder,
+    scene: GpuScene,
+    draw: Draw,
+    state: PassState = passState(),
+  ): void {
     const { part } = draw;
-    pass.setPipeline(part.pipeline);
+    bindPart(pass, state, part.pipeline, part);
     pass.setBindGroup(1, scene.drawBindGroup, [draw.uniformOffset]);
-    pass.setBindGroup(2, part.bindGroup);
     this.#bindBones(pass, scene, draw);
-    pass.setVertexBuffer(0, part.vertexBuffer);
-    pass.setIndexBuffer(part.indexBuffer, 'uint16');
     if (draw.ranges) {
       for (const range of draw.ranges) pass.drawIndexed(range.count, 1, range.first);
       return;

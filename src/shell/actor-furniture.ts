@@ -313,7 +313,13 @@ export class ActorFurniture {
    * actor's graph whose conditions hold, on the actor and `target` (ActionBumpedInto: the
    * bump's direction). Whether one played.
    */
-  async playAction(user: FurnitureUser, action: string, target?: ObjectHandle): Promise<boolean> {
+  async playAction(
+    user: FurnitureUser,
+    action: string,
+    target?: ObjectHandle,
+    /** Asked of nothing: conditions on the target fail (a flier's landing without a perch). */
+    targetless = false,
+  ): Promise<boolean> {
     const runtime = this.#options.session.scriptsReady;
     const tree = await this.#tree();
     const parent = tree.action(action);
@@ -322,7 +328,7 @@ export class ActorFurniture {
       return false;
     }
     const subject = new ObjectHandle(user.reference, 'actor');
-    const context = target === undefined ? {} : { target };
+    const context = target === undefined ? { targetless } : { target };
     const idle = await tree.resolveAsync(parent.formId, graph, (candidate) =>
       runtime.conditionsHold(candidate.conditions, subject, undefined, context),
     );

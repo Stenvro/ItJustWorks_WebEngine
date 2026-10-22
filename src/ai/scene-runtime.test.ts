@@ -467,6 +467,27 @@ describe('scene starts, stops and behaviour', () => {
     expect(test.director.isPlaying(0x12)).toBe(true);
   });
 
+  it('casts a dead actor whose death does not end it (done with); one whose death ends it keeps it from starting', async () => {
+    const test = setup([
+      // MQ101AlduinAttackScene1: StormcloakPrisoner01, beheaded before it, behaviour none.
+      scene(0x10, {
+        actors: [actor(0), actor(1, 0, 0)],
+        phases: [phase([], [truth(9)])],
+        actions: [line(1, 1, 0, 0, 0xa1), line(2, 0, 0, 0, 0xa2)],
+      }),
+      scene(0x11, { actors: [actor(0), actor(1)], phases: [phase([], [truth(9)])] }),
+    ]);
+    test.states.set(0x65, { dead: true });
+    test.director.start(0x10);
+    test.director.start(0x11);
+    await test.tick();
+    expect(test.director.isPlaying(0x10)).toBe(true);
+    expect(test.director.isPlaying(0x11)).toBe(false);
+    // The dead actor's line is done at once (nothing said); the living one's is said.
+    expect(test.director.actionComplete(0x10, 1)).toBe(true);
+    expect(test.only('say')).toEqual(['say 64 a2']);
+  });
+
   it('pauses while its actor talks with the player and ends when one dies', async () => {
     const test = setup([
       scene(0x10, {

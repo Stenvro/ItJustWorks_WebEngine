@@ -2609,6 +2609,7 @@ export class ScriptRuntime implements VmHost {
     event: StoryEventData | undefined,
     context: {
       readonly target?: ObjectHandle;
+      readonly targetless?: boolean;
       readonly quest?: number;
       readonly packageTarget?: (input: number) => number | undefined;
     },
@@ -2617,7 +2618,7 @@ export class ScriptRuntime implements VmHost {
       case ConditionRunOn.subject:
         return subject;
       case ConditionRunOn.target:
-        return context.target ?? 'unknown';
+        return context.target ?? (context.targetless === true ? 'none' : 'unknown');
       case ConditionRunOn.reference:
         return condition.reference === 0 ? 'none' : this.referenceHandle(condition.reference);
       case ConditionRunOn.linkedReference: {

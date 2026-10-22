@@ -42,6 +42,13 @@ wind, the flare's ghosts and halo) are computed in the executable and documented
 they need reverse engineering, not guesses. Anti-aliasing is 4×
 MSAA instead of the engine's TAA (bUseTAA).
 
+**Encoding cost:** each draw is a handful of calls into the browser's WebGPU, and Helgen's
+opening has some 4,400 draws a frame (its shadow cascades and opaque pass). The opaque and
+shadow passes set a part's pipeline, material group and buffers only where they differ from
+the draw before (consecutive draws are mostly one model's parts), and the per-draw uniforms
+of animated draws go up in runs (an actor's parts lie side by side in its scene's buffer)
+instead of one writeBuffer each.
+
 **Frame uniforms** (`shaders/frame.wgsl`, group 0 of every world shader): camera, sun
 direction and colour (times the imagespace's sunlight scale), directional ambient, fog,
 point lights (storage buffer), time, the LOD mask of loaded cells (7×7 bits, see

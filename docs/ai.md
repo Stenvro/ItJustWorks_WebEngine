@@ -76,9 +76,14 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   staggers, dialogue, interactions) or while the actor stands and its clips move it (an attack's
   lunge, a canned turn: NPC_TurnRight90 turns Orgnar 90.1°, NPC_TurnLeft180 180.2°), its root
   motion moves and turns it in the next physics steps instead of its request. TODO(M13): the
-  engine's rule is not documented.
+  engine's rule is not documented. Held so in an idle (the dialogue idles MotionDrivenIdle plays,
+  AnimationDrivenDialogueIdlesStateHH) while its AI sends it somewhere, it is told it moves
+  (moveStart, which MT_Standing_State leaves on, as the engine tells it for the way it wants to
+  go): by its measured speed alone the idle never ended, and Lokir stood in the line while the
+  archers waited for him to run.
 - **Trigger volumes** see actors with controllers: OnTriggerEnter and OnTriggerLeave with the
-  actor, GetTriggerObjectCount counts them.
+  actor, GetTriggerObjectCount counts them; fliers in the air too ([Flying combat](#flying-combat):
+  OnTriggerEnter and Leave; TODO(M13): GetTriggerObjectCount counts only those with controllers).
 - **Bodies:** a living actor near the player also has its race's ragdoll in the world (the
   skeleton model's bodies on the main bones, `src/shell/actor-bodies.ts`), keyframed to its
   animated pose, on the BIPED layer: the crosshair's pick (L_ITEMPICKER collides with
@@ -261,7 +266,9 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   faces its target (Headtrack Target: its head too) and attacks in barrages of Min..Max
   Attacks Per Barrage, Min..Max Pause apart, End After Barrages of them (0 or Never End: while
   the package runs) — a bow drawn, held 0.6 s and loosed (Aim Only: never loosed; Always Hit:
-  no spread; at a target that is no actor, 48 units over its placement: TODO(M13)), a melee
+  no spread, and the arrow flies onto an actor target's chest wherever it runs, without
+  gravity: MQ101's archers on Lokir, whose death the execution scene waits for; TODO(M13): the
+  engine's way; at a target that is no actor, 48 units over its placement: TODO(M13)), a melee
   weapon swung (Always Power Attack); Do No Damage takes no health, and without Allow Combat
   Start On Hit its hits start no fight, search or crime; its weapon goes away as it ends.
   UseMagic casts its Spell (that spell, else the attack spell it would choose) at its target
@@ -501,7 +508,9 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   the horse's left, facing it: the clip's "NPC" track says the same) and gets off 111.6 units
   to its left (the dismount's end). Riding, its root is on the horse's SaddleBone (its
   HorseRider_State poses its pelvis at the root), its graphs driven by the horse's movement;
-  the horse's own AI waits. GetSitting answers 2, 3 and 4 for a rider mounting, riding and
+  the horse's own AI waits. Off the horse its graphs stand again (Speed 0, moveStop): what moves
+  it on foot starts from a standing graph (a rider let off a walking horse came out of
+  HorseExitOut walking on the spot: Elenwen at Helgen's gate). GetSitting answers 2, 3 and 4 for a rider mounting, riding and
   getting off; IsRidingHorse, IsBeingRidden, IsOnMount, Dismount and IsPlayersLastRiddenHorse
   answer from it.
 - **The player** rides a horse by activating it: "Ride" (sRide), "Steal Horse" (sStealHorse)
@@ -706,7 +715,10 @@ after `--package-seconds`).
 - **Starting:** Scene.Start and ForceStart, and a quest's start for its scenes that begin on
   quest start (a stage fragment or the story manager starting the quest starts them). A scene
   starts if its quest runs, its conditions hold (run on the player) and every actor that is not
-  optional is there: the reference its alias holds, alive. Its actors are in it until it ends
+  optional is there: the reference its alias holds, alive, or dead and done with unless its
+  death ends the scene (MQ101AlduinAttackScene1 casts StormcloakPrisoner01, beheaded in Scene4
+  before it, and must play for Alduin to come; TODO(M13): the engine's rule). Its actors are
+  in it until it ends
   (IsInScene, GetCurrentScene). An actor that plays in another scene leaves that one for a
   forced start or for a start against an interruptible scene (that scene ends, unless the actor
   was optional there); otherwise the start waits until its actors are free: MQ101's stage
@@ -1387,8 +1399,19 @@ walkers.
 - **Packages**: Hover flies to its place, Height above it, and hovers facing the place's heading;
   Orbit circles its place between its inner and outer radius (their middle), Height above it;
   FlightGrab grabs its target; a Travel flies when the flier is in the air or its place is 4096
-  or more away (TODO(M13)), at 1536 over the ground, and lands there on the navmesh. With
-  nothing asked it circles where it began to, 2048 wide.
+  or more away (TODO(M13)), at 1536 over the ground, and lands there on the navmesh; a place
+  high in the air (more than 512 over the ground under it: MQ101AlduinApproachPatrol's points,
+  2,000 to 4,000 units up) is flown to at its height and through, arriving within its patrol
+  radius or where it would circle (TODO(M13): the engine's rule). Its furniture is a perch: a
+  package that sits it on a dragon perch (MQ101AlduinPerch1, Sit on Helgen's DragonPerchTower)
+  flies it there and lands it on the perch (ActionFlyStop with the perch as its target:
+  FlyStopPerchTower, whose FlightLanding and TowerLandImpact the quest hears), where it stays
+  until the package lets go. A landing with no perch asks the idle tree of nothing: the
+  perches' GetIsID on the target fail (unvalued they held, and every landing dived into a lake:
+  Special_WaterDiveEnter). With nothing asked it circles where it began to, 2048 wide.
+- **Trigger volumes**: a flier without a controller (in the air, perched) tells the volumes it
+  flies through as a walking actor's controller does (a ball of its size about its middle):
+  MQ101SetStage99 is a wall of a trigger across Alduin's way to the tower, for his base only.
 - **Grounded**: SetAllowFlying(false) (and SetAllowFlyingEx's allow-flying) keeps it on the
   ground and lands it (hastily) if it flies; Dragonrend (its DragonRend actor value above 0)
   crash-lands it (FlyStopCrash) unless SetAllowFlyingEx forbade crashing. Interiors have no
