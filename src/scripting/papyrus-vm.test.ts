@@ -131,6 +131,22 @@ const SCRIPTS: BuildScript[] = [
           ['return', id('::t')],
         ],
       },
+      {
+        // Its object's scripts are reset meanwhile (it started its own quest), then it sets a
+        // variable and describes itself.
+        name: 'ForgetThenBuild',
+        returnType: 'String',
+        locals: [
+          ['::t', 'String'],
+          ['::NoneVar', 'None'],
+        ],
+        code: [
+          ['callstatic', id('Test'), id('Forget'), id('::NoneVar')],
+          ['callmethod', id('Describe'), id('self'), id('::t')],
+          ['assign', id('::Built_var'), int(7)],
+          ['return', id('::t')],
+        ],
+      },
     ],
     states: [
       {
@@ -145,7 +161,7 @@ class TestHost implements VmHost {
   readonly enabled = new Set<number>();
   readonly warnings: string[] = [];
   /** Test.Forget: the house's scripts are let go (PapyrusVm.reset). */
-  forget: (() => void) | undefined;
+  forget: (() => void | Promise<void>) | undefined;
 
   formType(target: ObjectHandle): Promise<string | undefined> {
     return Promise.resolve(target.formId === 0x10 ? 'quest' : 'objectreference');
@@ -179,8 +195,8 @@ class TestHost implements VmHost {
       return ({ self }) => !self || !this.enabled.has(self.formId);
     }
     if (script === 'test' && fn === 'forget') {
-      return () => {
-        this.forget?.();
+      return async () => {
+        await this.forget?.();
         return null;
       };
     }
@@ -236,6 +252,17 @@ describe('Papyrus VM', () => {
     expect(await vm.call(house, 'ForgetThenDescribe')).toBe('built 2');
     // Called anew, the object's scripts start over.
     expect(await vm.call(house, 'Describe')).toBe('built 0');
+  });
+
+  it('resets a running script in place: what it sets afterwards stays', async () => {
+    const { vm, host, house } = setup();
+    host.forget = () => vm.restart(house);
+    await vm.call(house, 'BuildAll');
+    // The reset reaches the running script (its variables are the plugin's again)...
+    expect(await vm.call(house, 'ForgetThenBuild')).toBe('built 0');
+    // ...and what it set after the reset is the object's.
+    expect(await vm.call(house, 'Describe')).toBe('built 7');
+    expect(await vm.getProperty(house, 'Markers')).toBeInstanceOf(PapyrusArray);
   });
 
   it('switches functions with the script state', async () => {
