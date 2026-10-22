@@ -73,6 +73,14 @@ describe('the menu bridge', () => {
     expect(lines).toContain('Push true, r3, r2, 3, r1, "hitTest"');
   });
 
+  it('counts the frames the movie plays, on an empty clip at the lowest depth', () => {
+    expect(lines).toContain('Push "__itjwFrames", 0');
+    expect(lines).toContain('Push -16384, "__itjwFrameClock", 2, "_root"');
+    expect(lines).toMatch(
+      /Push "createEmptyMovieClip"\n\s+\d+\s+CallMethod\n\s+\d+\s+Push "onEnterFrame"\n\s+\d+\s+DefineFunction2[\s\S]*?Increment\n\s+\d+\s+SetMember/,
+    );
+  });
+
   it('goes first in the first frame, after the header tags', () => {
     const menu = writeSwf(
       [
