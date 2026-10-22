@@ -13,7 +13,8 @@ import { Locomotion, taggedMovementType, type LocomotionGraph } from '../ai/loco
 import { MovementCatalog } from '../ai/movement-types.ts';
 import type { MovementType } from '../world/movement.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
-import type { Vec3 } from '../render/math.ts';
+import { multiply, type Vec3 } from '../render/math.ts';
+import type { RigData } from '../animation/skeleton.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -31,6 +32,18 @@ import type { Player } from './player.ts';
 const PLAYER_REFERENCE = 0x14;
 /** A frame longer than this (a hitch, a hidden tab) moves the avatar by this much (s). */
 const MAX_STEP = 0.1;
+
+/** The node a seated body's place is read from (its centre of mass). */
+const COM_NODE = 'npc com [com ]';
+
+/** A node's place in the skeleton model at rest (its locals down from the root). */
+function restPosition(rig: RigData, node: number): Vec3 {
+  let world = rig.local.subarray(node * 16, node * 16 + 16);
+  for (let parent = rig.parents[node] ?? -1; parent >= 0; parent = rig.parents[parent] ?? -1) {
+    world = multiply(rig.local.subarray(parent * 16, parent * 16 + 16), world);
+  }
+  return [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
+}
 
 /** A body made for the player: the placed actor and the scene that draws it. */
 interface Made {
@@ -200,6 +213,43 @@ export class PlayerAvatar {
 
   set bodyYaw(yaw: number) {
     this.#bodyYaw = yaw;
+  }
+
+  /**
+   * The body's pitch (radians, nose up: about its right): a vehicle's it rides
+   * (src/shell/actor-vehicles.ts), as its riders are placed; 0 on its feet.
+   */
+  bodyPitch = 0;
+
+  /**
+   * How far its centre of mass (NPC COM) is from where it is at rest, in the world's axes and
+   * units (its idle seats a cart's rider 200 units behind and 139 above its root); undefined
+   * before its skeleton has it.
+   */
+  comShift(): Vec3 | undefined {
+    const pose = this.#made.body.pose;
+    const node = pose.skeleton.nodeByName.get(COM_NODE);
+    if (node === undefined) return undefined;
+    const rest = restPosition(pose.skeleton.rig, node);
+    const body = this.#made.body;
+    const scale = body.look.scale * body.actor.scale;
+    const at = node * 16;
+    return this.#toWorld([
+      ((pose.worlds[at + 12] ?? 0) - rest[0]) * scale,
+      ((pose.worlds[at + 13] ?? 0) - rest[1]) * scale,
+      ((pose.worlds[at + 14] ?? 0) - rest[2]) * scale,
+    ]);
+  }
+
+  /** A point in the body's frame (x right, y forward, z up) turned by its pitch and heading. */
+  #toWorld([x, y, z]: Vec3): Vec3 {
+    const cp = Math.cos(this.bodyPitch);
+    const sp = Math.sin(this.bodyPitch);
+    const forward = y * cp - z * sp;
+    const up = y * sp + z * cp;
+    const sin = Math.sin(this.#bodyYaw);
+    const cos = Math.cos(this.#bodyYaw);
+    return [x * cos + forward * sin, -x * sin + forward * cos, up];
   }
 
   /** The player's avatar, or undefined if its body cannot be made. */
@@ -404,19 +454,22 @@ export class PlayerAvatar {
     const scale = body.look.scale * body.actor.scale;
     const sin = Math.sin(this.#bodyYaw);
     const cos = Math.cos(this.#bodyYaw);
-    // Turned about z (compass heading: 0 faces +Y), scaled by the race's height.
+    const cp = Math.cos(this.bodyPitch);
+    const sp = Math.sin(this.bodyPitch);
+    // Turned about z (compass heading: 0 faces +Y), pitched about its right (a vehicle's),
+    // scaled by the race's height.
     this.#world.set([
       cos * scale,
       -sin * scale,
       0,
       0,
-      sin * scale,
-      cos * scale,
+      sin * cp * scale,
+      cos * cp * scale,
+      sp * scale,
       0,
-      0,
-      0,
-      0,
-      scale,
+      -sin * sp * scale,
+      -cos * sp * scale,
+      cp * scale,
       0,
       feet[0] ?? 0,
       feet[1] ?? 0,
@@ -543,18 +596,22 @@ export class PlayerAvatar {
   /**
    * The animated Camera1st node in the player's frame (x right, y forward, as they look), scaled.
    * The node moves with the body: where the body faces another way than the player looks (seated
-   * in a cart or a chair, its idle putting the head over the seat), its offset turns with the body.
+   * in a cart or a chair, its idle putting the head over the seat), its offset turns with the body,
+   * and with the pitch of the vehicle it rides.
    */
   #cameraOffset(): Vec3 | undefined {
     const node = this.#firstPerson?.pose.world(CAMERA_NODE);
     if (!node) return undefined;
     const scale = this.#player.height;
-    const x = (node[12] ?? 0) * scale;
-    const y = (node[13] ?? 0) * scale;
-    const turn = this.#bodyYaw - this.#player.yaw;
-    const sin = Math.sin(turn);
-    const cos = Math.cos(turn);
-    return [x * cos + y * sin, -x * sin + y * cos, (node[14] ?? 0) * scale];
+    const [x, y, z] = this.#toWorld([
+      (node[12] ?? 0) * scale,
+      (node[13] ?? 0) * scale,
+      (node[14] ?? 0) * scale,
+    ]);
+    // From the world's axes to the player's frame (x right, y forward as they look).
+    const sin = Math.sin(this.#player.yaw);
+    const cos = Math.cos(this.#player.yaw);
+    return [x * cos - y * sin, x * sin + y * cos, z];
   }
 
   destroy(): void {

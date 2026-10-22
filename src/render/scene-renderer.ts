@@ -702,6 +702,83 @@ interface AnimatedDraw {
   readonly hung?: { readonly pose: ActorPose; readonly node: number };
   /** A FaceGen head part: the face's weights written to its active morphs. */
   readonly face?: FaceDraw;
+  /**
+   * A part its skeleton moves (skinned, or hung on a node): its draws' culling spheres follow
+   * the pose, not the instance's root (a cart's riders sit 200 units behind their root).
+   */
+  readonly follows?: FollowedBound;
+}
+
+/**
+ * Where a posed part's bounding sphere is: its centre in the frame of a bone of its skin (the one
+ * nearest the centre at rest) or of the node it hangs on.
+ */
+interface FollowedBound {
+  readonly draws: Draw[];
+  /** The skin bone the centre moves with (skinned parts). */
+  readonly bone: number;
+  /** The centre in the bone's rest frame (skinned) or in the part's own frame (hung). */
+  readonly local: readonly [number, number, number];
+}
+
+/** The skin bone whose rest place is nearest a skinned part's centre. */
+function nearestBone(skin: NonNullable<ModelPart['skin']>, centre: readonly number[]): number {
+  let best = 0;
+  let bestDistance = Infinity;
+  for (let i = 0; i < skin.bones.length; i++) {
+    const at = i * 16;
+    const distance = Math.hypot(
+      (skin.rest[at + 12] ?? 0) - (centre[0] ?? 0),
+      (skin.rest[at + 13] ?? 0) - (centre[1] ?? 0),
+      (skin.rest[at + 14] ?? 0) - (centre[2] ?? 0),
+    );
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = i;
+    }
+  }
+  return best;
+}
+
+/**
+ * A posed part's culling spheres where its pose has it this frame: a skinned part's centre moved
+ * by its bone (pose × bind), a hung part's by the world it is drawn with.
+ */
+function followBound(draw: AnimatedDraw, follows: FollowedBound, world: Mat4): void {
+  let centre: [number, number, number];
+  if (draw.hung) {
+    centre = transformPoint(world, follows.local);
+  } else if (draw.posed) {
+    const node = draw.posed.nodes[follows.bone] ?? -1;
+    if (node < 0) return;
+    const inModel = transformPoint(
+      draw.posed.pose.worlds.subarray(node * 16, node * 16 + 16),
+      follows.local,
+    );
+    centre = transformPoint(draw.instanceWorld, inModel);
+  } else {
+    return;
+  }
+  for (const followed of follows.draws) followed.center = centre;
+}
+
+/**
+ * The bound a posed part's culling follows: a skinned part's centre (the model's, at rest) in
+ * the rest frame of its bone nearest it; a hung part's in its own frame.
+ */
+function followedBound(
+  part: ModelPart,
+  posed: PosedDraw | undefined,
+  hung: AnimatedDraw['hung'],
+): FollowedBound | undefined {
+  const skin = part.skin;
+  if (posed && skin) {
+    const bone = nearestBone(skin, part.center);
+    const rest = invert(skin.rest.subarray(bone * 16, bone * 16 + 16));
+    return rest ? { draws: [], bone, local: transformPoint(rest, part.center) } : undefined;
+  }
+  const inverse = hung && invert(part.world);
+  return inverse ? { draws: [], bone: -1, local: transformPoint(inverse, part.center) } : undefined;
 }
 
 /** A head part's active morphs, rewritten when its face changes. */
@@ -1958,8 +2035,10 @@ export class SceneRenderer {
             : -1;
         const hung =
           instance.pose && poseNode >= 0 ? { pose: instance.pose, node: poseNode } : undefined;
+        const follows = followedBound(part.part, posed, hung);
         if (animation || part.part.billboard || sky || playback || graph || posed || hung || face) {
           animated.push({
+            ...(follows && { follows }),
             offset,
             instanceWorld: instance.world,
             part: part.part,
@@ -2088,6 +2167,7 @@ export class SceneRenderer {
           ...(instance.visibility && { visibility: instance.visibility }),
         };
         draws.push(draw);
+        follows?.draws.push(draw);
         if (instance.motion) {
           moving.push({
             draw,
@@ -2126,6 +2206,7 @@ export class SceneRenderer {
             ...(instance.visibility && { visibility: instance.visibility }),
           };
           draws.push(passDraw);
+          follows?.draws.push(passDraw);
           if (instance.motion) {
             moving.push({
               draw: passDraw,
@@ -2454,6 +2535,7 @@ export class SceneRenderer {
           floats.set(world, 0);
         }
         if (frame) writeAnimatedMaterial(floats, draw.part, frame);
+        if (draw.follows) followBound(draw, draw.follows, world);
         const skin = draw.part.skin;
         const bones = scene.bones;
         const face = draw.face;
