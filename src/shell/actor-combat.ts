@@ -123,6 +123,9 @@ import {
   type FighterView,
 } from './actor-combat-ai.ts';
 import type { Threat } from '../ai/combat-tactics.ts';
+import { cellLight } from './magic-fx.ts';
+import type { CellLight } from '../world/cell-loader.ts';
+import { parseLight, type LightRecord } from '../world/cell-records.ts';
 
 /** A human's shape for hits (its controller's radius and height at scale 1; game units). */
 /** The vampire lord's graph's events to go up or down (standing, moving). */
@@ -132,6 +135,9 @@ const BODY_RADIUS = 20;
 const BODY_HEIGHT = 128;
 /** The chest a strike or shot comes from and aims at (of the height). */
 const CHEST = 0.75;
+/** The graphs' BSDirectAtModifier kind of bows and spells (userInfo), and how far it aims. */
+const BOW_AIM = 2;
+const BOW_AIM_DISTANCE = 2048;
 /** Seconds an attack waits for its graph to answer (see ActorCombat #unanswered). */
 const ATTACK_ANSWER = 1.5;
 /** Fighters this far from the player are left alone (the high process's reach). */
@@ -187,6 +193,8 @@ interface Fighter {
   readonly deadAttacks: Set<string>;
   /** A package's UseWeapon practice it attacks in (src/shell/actor-practice.ts), if any. */
   practice: Practice | undefined;
+  /** Its arms aim a drawn bow (#aimBow). */
+  bowAimed: boolean;
 }
 
 /** How a UseWeapon practice's attacks go (its procedure's parameters). */
@@ -211,6 +219,8 @@ interface Gear {
   readonly ammoModel: string | undefined;
   readonly attacks: AttackSet;
   readonly race: RaceHits | undefined;
+  /** A torch in the left hand (a LIGH that can be carried): its model and its light. */
+  readonly torch: { readonly model: string | undefined; readonly light: LightRecord } | undefined;
 }
 
 export interface ActorCombatOptions {
@@ -776,6 +786,23 @@ export class ActorCombat implements CombatBridge {
     this.#setMusic(this.#fightingPlayer());
   }
 
+  /**
+   * The lights its fighters carry: each torch's (its LIGH's radius, colour and flicker) at its
+   * flame. The viewers light the world with them; detection's light level counts them.
+   */
+  lights(): CellLight[] {
+    const lights: CellLight[] = [];
+    for (const fighter of this.#fighters.values()) {
+      const torch = fighter.gear?.torch;
+      if (!torch) continue;
+      // The player in first person: the first-person arms' torch.
+      const firstPerson = fighter.player && this.#play?.bodyShown === false;
+      const at = (firstPerson ? fighter.firstHeld : fighter.held)?.torchLight();
+      if (at) lights.push(cellLight(fighter.reference, at, torch.light, 1));
+    }
+    return lights;
+  }
+
   /** A fighter's body: its events heard, its models made for what it holds. */
   #follow(fighter: Fighter, body: PlacedActor, runtime: ScriptRuntime): void {
     fighter.body = body;
@@ -833,10 +860,11 @@ export class ActorCombat implements CombatBridge {
   async #readGear(fighter: Fighter, runtime: ScriptRuntime): Promise<Gear> {
     const reference = fighter.reference;
     const equipment = runtime.equipment;
-    const [right, left, shield] = await Promise.all([
+    const [right, left, shield, torchForm] = await Promise.all([
       equipment.weaponStats(reference, 'right'),
       equipment.weaponStats(reference, 'left'),
       equipment.shield(reference),
+      equipment.torch(reference),
     ]);
     const forms = runtime.forms;
     const weapon = async (form: number | undefined): Promise<WeaponCombat | undefined> => {
@@ -848,6 +876,11 @@ export class ActorCombat implements CombatBridge {
       weapon(left.weapon),
     ]);
     const shieldItem = shield === undefined ? undefined : await equipment.item(shield);
+    const torchRecord = torchForm === undefined ? undefined : await forms.record(torchForm);
+    const torch =
+      torchRecord?.type === 'LIGH'
+        ? { model: torchRecord.fields.zstring('MODL'), light: parseLight(torchRecord) }
+        : undefined;
     const ammoRecord = right.ammo === undefined ? undefined : await forms.record(right.ammo);
     const ammo = ammoRecord?.type === 'AMMO' ? parseAmmo(ammoRecord) : undefined;
     const projectileRecord =
@@ -876,6 +909,7 @@ export class ActorCombat implements CombatBridge {
       ammoModel: right.ammo === undefined ? undefined : ammo?.model,
       attacks: new AttackSet(raceAttacks, own),
       race: raceRecord?.type === 'RACE' ? parseRaceHits(raceRecord) : undefined,
+      torch,
     };
   }
 
@@ -897,7 +931,12 @@ export class ActorCombat implements CombatBridge {
     const twoHanded =
       gear.right.weaponType >= WeaponType.twoHandSword &&
       gear.right.weaponType !== WeaponType.staff;
-    const left = twoHanded ? right : type(gear.left, gear.shield !== undefined);
+    // A torch in the left hand: its type (11), which the graphs hold up in the hand.
+    const left = twoHanded
+      ? right
+      : gear.torch && gear.left.weapon === undefined && gear.shield === undefined
+        ? EquippedItemType.torch
+        : type(gear.left, gear.shield !== undefined);
     this.#setVariable(fighter, 'iRightHandType', right);
     this.#setVariable(fighter, 'iLeftHandType', left);
     this.#setVariable(fighter, 'iRightHandEquipped', gear.right.weapon !== undefined ? 1 : 0);
@@ -916,8 +955,9 @@ export class ActorCombat implements CombatBridge {
       }),
       ...(gear.left.model !== undefined && { left: { model: gear.left.model } }),
       ...(gear.ammoModel !== undefined && { ammo: gear.ammoModel }),
+      ...(gear.torch?.model !== undefined && { torch: gear.torch.model }),
     };
-    const key = `${String(gear.right.weapon)}:${String(gear.left.weapon)}:${String(gear.ammoModel)}`;
+    const key = `${String(gear.right.weapon)}:${String(gear.left.weapon)}:${String(gear.ammoModel)}:${String(gear.torch?.model)}`;
     if (fighter.heldFor === key && fighter.held) return;
     const placement = fighter.player ? this.#avatar?.placement : body.instances[0];
     const visibility = fighter.player
@@ -985,6 +1025,7 @@ export class ActorCombat implements CombatBridge {
       ...(rightModel !== undefined && { right: { model: rightModel, sheathed: undefined } }),
       ...(leftModel !== undefined && { left: { model: leftModel } }),
       ...(gear.ammoModel !== undefined && { ammo: gear.ammoModel }),
+      ...(gear.torch?.model !== undefined && { torch: gear.torch.model }),
     };
     const made = await HeldWeapons.create(
       this.#options.session,
@@ -1023,6 +1064,7 @@ export class ActorCombat implements CombatBridge {
     fighter.blood?.right.advance(seconds);
     fighter.blood?.left.advance(seconds);
     if (state.current?.ranged === true && state.arrowNocked) state.drawnFor += seconds;
+    this.#aimBow(fighter);
     // A paired animation that never says it ended lets go after a while (TODO(M13)).
     fighter.pairedFor = state.paired === undefined ? 0 : fighter.pairedFor + seconds;
     if (fighter.pairedFor > PAIRED_LIMIT) {
@@ -1733,9 +1775,12 @@ export class ActorCombat implements CombatBridge {
     const charge = await runtime.crafting.charge(attacker, weapon);
     if (!charge || charge.max <= 0) return;
     const soul = SOUL_CAPACITY[soulSize(await runtime.actors.level(victim), false)] ?? 0;
-    runtime.casting
-      .state(attacker)
-      .charge.set(weapon, Math.min(charge.max, charge.current + soul * share));
+    runtime.crafting.setCharge(
+      attacker,
+      weapon,
+      Math.min(charge.max, charge.current + soul * share),
+      charge.max,
+    );
   }
 
   /**
@@ -1830,6 +1875,69 @@ export class ActorCombat implements CombatBridge {
 
   // --- Bows ---------------------------------------------------------------------------------------
 
+  /** Where its arrows leave from: before its chest. */
+  #bowFrom(fighter: Fighter, feet: Vec3): Vec3 {
+    const scale = this.#scale(fighter);
+    return [feet[0], feet[1], feet[2] + BODY_HEIGHT * scale * CHEST + 10 * scale];
+  }
+
+  /**
+   * Which way a shot goes from `from`: the player's view; an NPC's target's chest (a practice's
+   * point that is no fighter: an archery butt), `spread` (radians) aside, else its facing.
+   */
+  #bowAim(fighter: Fighter, from: Vec3, spread: number): Vec3 {
+    if (fighter.player && this.#play) {
+      const player = this.#play.player;
+      return tiltUp(
+        player.forward,
+        player.pov === 'first' ? ARROW_TILT.firstPerson : ARROW_TILT.thirdPerson,
+      );
+    }
+    const target = fighter.target === undefined ? undefined : this.#fighters.get(fighter.target);
+    const feetThere = target && this.#feet(target);
+    // A practice's target that is no fighter (an archery butt): its point.
+    const aimAt = feetThere ? undefined : fighter.practice?.aimAt;
+    const there = feetThere ?? aimAt;
+    if (!there) {
+      const heading = this.#heading(fighter);
+      return [Math.sin(heading), Math.cos(heading), 0];
+    }
+    const height = target ? this.#size(target).height * CHEST : 0;
+    const way: Vec3 = [there[0] - from[0], there[1] - from[1], there[2] + height - from[2]];
+    const heading = Math.atan2(way[0], way[1]) + spread;
+    const pitch = Math.atan2(way[2], Math.hypot(way[0], way[1]));
+    return tiltUp(
+      [Math.sin(heading) * Math.cos(pitch), Math.cos(heading) * Math.cos(pitch), Math.sin(pitch)],
+      ARROW_TILT.thirdPerson,
+    );
+  }
+
+  /**
+   * While a bow is drawn its arms aim where the shot would go: the graphs' BSDirectAtModifiers
+   * of bows (userInfo 2, as an aimed spell's: src/shell/actor-casting.ts) get a point along the
+   * aim; let go as the draw ends.
+   */
+  #aimBow(fighter: Fighter): void {
+    const drawing = fighter.state.current?.ranged === true && fighter.state.arrowNocked;
+    const feet = drawing ? this.#feet(fighter) : undefined;
+    if (!feet) {
+      if (fighter.bowAimed) {
+        fighter.bowAimed = false;
+        for (const graph of this.#graphs(fighter)) graph.setDirectAtTarget(BOW_AIM, undefined);
+      }
+      return;
+    }
+    const from = this.#bowFrom(fighter, feet);
+    const aim = this.#bowAim(fighter, from, 0);
+    const point: Vec3 = [
+      from[0] + aim[0] * BOW_AIM_DISTANCE,
+      from[1] + aim[1] * BOW_AIM_DISTANCE,
+      from[2] + aim[2] * BOW_AIM_DISTANCE,
+    ];
+    fighter.bowAimed = true;
+    for (const graph of this.#graphs(fighter)) graph.setDirectAtTarget(BOW_AIM, point);
+  }
+
   /** The arrow leaves the bow (arrowRelease): a shot along the aim, its damage by the draw. */
   #loose(fighter: Fighter): void {
     const gear = fighter.gear;
@@ -1838,42 +1946,11 @@ export class ActorCombat implements CombatBridge {
     if (!gear?.projectile || gear.right.ammo === undefined || !runtime || !feet) return;
     // The journal's Favorite Weapon counts the player's shots (usage-stats.ts).
     runtime.usage.weaponUsed(fighter.reference, gear.right.weapon);
-    const scale = this.#scale(fighter);
-    const from: Vec3 = [feet[0], feet[1], feet[2] + BODY_HEIGHT * scale * CHEST + 10 * scale];
-    let aim: Vec3;
-    if (fighter.player && this.#play) {
-      const player = this.#play.player;
-      aim = tiltUp(
-        player.forward,
-        player.pov === 'first' ? ARROW_TILT.firstPerson : ARROW_TILT.thirdPerson,
-      );
-    } else {
-      const target = fighter.target === undefined ? undefined : this.#fighters.get(fighter.target);
-      const feetThere = target && this.#feet(target);
-      // A practice's target that is no fighter (an archery butt): its point.
-      const aimAt = feetThere ? undefined : fighter.practice?.aimAt;
-      const there = feetThere ?? aimAt;
-      if (there) {
-        const height = target ? this.#size(target).height * CHEST : 0;
-        const way: Vec3 = [there[0] - from[0], there[1] - from[1], there[2] + height - from[2]];
-        // fBowNPCSpreadAngle: an NPC's aim strays this far (degrees); Always Hit: none.
-        const spread =
-          fighter.practice?.alwaysHit === true ? 0 : ((Math.random() - 0.5) * 4 * Math.PI) / 180;
-        const heading = Math.atan2(way[0], way[1]) + spread;
-        const pitch = Math.atan2(way[2], Math.hypot(way[0], way[1]));
-        aim = tiltUp(
-          [
-            Math.sin(heading) * Math.cos(pitch),
-            Math.cos(heading) * Math.cos(pitch),
-            Math.sin(pitch),
-          ],
-          ARROW_TILT.thirdPerson,
-        );
-      } else {
-        const heading = this.#heading(fighter);
-        aim = [Math.sin(heading), Math.cos(heading), 0];
-      }
-    }
+    const from = this.#bowFrom(fighter, feet);
+    // fBowNPCSpreadAngle: an NPC's aim strays this far (degrees); Always Hit: none.
+    const spread =
+      fighter.practice?.alwaysHit === true ? 0 : ((Math.random() - 0.5) * 4 * Math.PI) / 180;
+    const aim = this.#bowAim(fighter, from, spread);
     const power = bowDrawPower(fighter.state.drawnFor, gear.right.speed);
     const ammo = gear.right.ammo;
     const payload: ShotPayload = {
@@ -2688,5 +2765,6 @@ function newFighter(reference: number, player: boolean): Fighter {
     liveAttacks: new Set(),
     deadAttacks: new Set(),
     practice: undefined,
+    bowAimed: false,
   };
 }

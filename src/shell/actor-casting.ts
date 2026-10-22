@@ -82,6 +82,16 @@ export interface ActorCastingOptions {
   ) => void;
   /** The magic effects' lights (LIGH records, read once). */
   readonly fx?: MagicFx;
+  /**
+   * The living actor a ray from `from` along `direction` (unit) meets first within `reach`,
+   * other than `caster` (a Touch spell's target).
+   */
+  readonly aimedActor?: (
+    from: Vec3,
+    direction: Vec3,
+    reach: number,
+    caster: number,
+  ) => number | undefined;
 }
 
 /**
@@ -93,6 +103,14 @@ const NODES: Readonly<Record<number, readonly string[]>> = {
   [CastingSource.right]: ['NPC R MagicNode [RMag]'],
   [CastingSource.voice]: ['NPC Head [Head]', 'NPC Head MagicNode [Hmag]', 'NPC Head'],
 };
+
+/**
+ * The reach of a spell or shout whose projectile names none (Touch spells, projectiles with
+ * range 0): the combat AI casts them within it (src/shell/combat-casting.ts), the player's
+ * touch the actor aimed at within it. TODO(M13): the engine's value is not documented;
+ * fCombatMagic* settings do not name one.
+ */
+export const MAGIC_REACH = 2048;
 
 /**
  * A breath (a concentration shout: the dragons' fire and frost breath) sprays this long at
@@ -596,7 +614,12 @@ export class ActorCasting {
         heard === 0 ? SoundLevel.silent : (main?.castingSoundLevel ?? 1),
       );
     }
-    await this.#options.projectiles.launch(delivered, origin, this.#aim(actor, origin, target), {
+    const aim = this.#aim(actor, origin, target);
+    // The player's Touch spell reaches the actor aimed at, as far as such spells reach.
+    if (target === undefined && delivered.item.delivery === Delivery.touch) {
+      target = this.#options.aimedActor?.(origin, aim, MAGIC_REACH, actor);
+    }
+    await this.#options.projectiles.launch(delivered, origin, aim, {
       ...(target !== undefined && { target }),
       ...(seconds !== undefined && { seconds }),
     });

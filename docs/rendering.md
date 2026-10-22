@@ -149,7 +149,10 @@ field (bDynamicDOF, fDynamicDOF*: near and far blur around an automatic focus, t
 depth at the centre, changing after fDDOFFocusDelay over fDDOFFocusDuration; ISDepthOfField's
 autofocus path) is not part of plain play: imagespace modifiers switch it on (IMAD DNAM
 "DoF - Use Target" and the flags Mode Front/Back, the near and far sides), and the game plays
-those for spells and other effects (TODO(M11)). Behind the tween and item menus the game applies
+those for spells and other effects: a magic effect's IMAD while it lasts on the player, an
+explosion's on the player within its radius, a hazard's while the player is near it,
+scripts' (Image-space modifiers, below; the kill cameras' shots' modifiers: TODO(M13),
+src/shell/killmove-camera.ts). Behind the tween and item menus the game applies
 DOBJ IMID (ISMTween, a constant −0.15 brightness) while any of them is open, as UIBlurManager
 counts them (src/shell/game-menus.ts).
 
@@ -176,8 +179,10 @@ and the engine (ISMTween behind the menus, LowHealthImod). The pieces:
   `remove(formId)`, `crossFade(formId, seconds)`, `removeCrossFade(seconds)` and
   `popTo(from, to, strength)` itself.
 
-Timelines: an animatable modifier plays its keys over its duration once and ends (unless an
-engine caller asks it to loop: TODO(M11) which do); one that is not animatable, or has no
+Timelines: an animatable modifier plays its keys over its duration once and ends (the stack
+can loop one, `ApplyOptions.loop`, but no caller asks it to: the effects that last use
+modifiers that are not animatable; TODO(M13): whether the engine loops one for any caller);
+one that is not animatable, or has no
 duration, stays at its keys at time 0 until removed (Creation Kit: the duration is then
 ignored). Papyrus: `Apply(strength)` shows a modifier (again from its start), `Remove()`
 takes it off at once, `ApplyCrossFade(seconds)` puts it on the cross-fade chain and fades
@@ -195,8 +200,9 @@ Combining, each modifier at weight w = strength × cross-fade (strength is not c
 - Blur radius, double vision and motion blur: the highest (Creation Kit, for blur and double
   vision). Radial blur: the strongest modifier's, its strength × w.
 - Depth of field: the strongest modifier's replaces the imagespace's (TODO(M13): how the game
-  mixes them). "Use target" (radial blur centre and focus on the modifier's target) needs the
-  callers that have a target: TODO(M11); the record's centre and distance until then.
+  mixes them). "Use target" (IMAD DNAM: radial blur centre and focus on the modifier's
+  target) takes the target its caller gives: an explosion's point, a magic effect's actor
+  (`ApplyOptions.target`); without one the record's centre and distance.
 
 The screen effects (`post.ts`, `shaders/screen-effects.wgsl`) run after the depth of field,
 each from the image so far into the next (two full-size half-float images, made the first

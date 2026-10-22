@@ -100,7 +100,10 @@ or not, and the last lightning flash.
 ## Music
 
 `music.ts` decides what plays, `music-output.ts` plays it. Music types are in play: the
-location's and those game events add (combat: BTMS, TODO(M10); discoveries, quest moments
+location's and those game events add (combat: the default object BTMS, MUSCombat, while anyone
+fights the player, ending with its finale as the fight does: `src/shell/actor-combat.ts`, its
+conditions' GetCombatTargetHasKeyword asking the player's foes, the boss music against dragons;
+discoveries, quest moments
 and the rest through Papyrus MusicType.Add / Remove, from the script runtime). The location's is the cell's
 XCMO; indoors else the default object DFMS; outdoors else the music of the camera cell's
 regions in effect (RDMO; the same priority and override rule as region sounds), the
@@ -165,9 +168,9 @@ a water surface (a water activator's volume, the cell's water) step in that wate
 type's material (WATR TNAM: MaterialWaterPuddle for the 5 puddle and ankle-deep interior
 types, whose impacts are FSTWaterPuddleImpact), else Water, the material of the water volumes'
 collision (FSTWaterWalk / Run / Sprint impacts). The engine's exact rule (how deep) is not
-documented: TODO(M13). The player's
-gait: sneaking, sprinting, running or walking; placed NPCs walk (TODO(M10) with their
-movement). The player in iron boots running across the Abandoned Shack's floor plays
+documented: TODO(M13). The gait (`footstepGait`): sneaking, sprinting, running or walking, the
+player's by their movement, an NPC's by its controller's motion (the movers': sneaking, the
+gait its AI asks for while it moves) or, beyond the high process, the gait its AI asks for. The player in iron boots running across the Abandoned Shack's floor plays
 FSTWoodRunArmorHeavyLSD / RSD. Animations' **SoundPlay.`<descriptor>`** events play that sound
 descriptor (by editor id) at the actor; **NPCSoundPlay.`<descriptor>`** only for actors other
 than the player.

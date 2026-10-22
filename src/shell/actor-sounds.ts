@@ -110,14 +110,37 @@ export function groundUnder(
   return hit && { material: hit.material, landscape: hit.owner?.kind === 'landscape' };
 }
 
-/** Placed actors' animations sound: their footsteps by their gait as they move, their SoundPlay events. */
-export function soundPlacedActors(actors: readonly PlacedActorLike[], world: SoundingWorld): void {
+/** How an actor moves, for its footsteps' gait (the movers' motion). */
+export interface GaitMotion {
+  readonly sneaking: boolean;
+  readonly sprinting: boolean;
+  readonly running: boolean;
+}
+
+/** The footstep set's section an actor's footsteps sound from: as the player's. */
+export function footstepGait(motion: GaitMotion | undefined): FootstepGait {
+  if (!motion) return 'walk';
+  if (motion.sneaking) return 'sneak';
+  if (motion.sprinting) return 'sprint';
+  return motion.running ? 'run' : 'walk';
+}
+
+/**
+ * Placed actors' animations sound: their footsteps by their gait as they move (`motion`: how
+ * the stage moves them; walking without), their SoundPlay events.
+ */
+export function soundPlacedActors(
+  actors: readonly PlacedActorLike[],
+  world: SoundingWorld,
+  motion?: (reference: number) => GaitMotion | undefined,
+): void {
   for (const placed of actors) {
+    const reference = placed.actor.reference;
     placed.onEvents = actorSounds(
       {
         look: placed.look,
         feet: () => feetOf(placed),
-        gait: () => 'walk',
+        gait: () => footstepGait(motion?.(reference)),
         player: false,
         reference: placed.actor.reference,
       },

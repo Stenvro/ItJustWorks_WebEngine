@@ -1402,11 +1402,13 @@ export class PhysicsWorld {
   }
 
   /**
-   * The simulated body of a placed object's collider, which the player can take hold of
-   * (bAllowHavokGrabTheLiving is 0: never an actor's).
+   * The simulated body of a placed object's collider, which the player can take hold of; with
+   * `corpse`, a dead actor's ragdoll body (dragging it: bAllowHavokGrabTheLiving is 0, so never
+   * a living one's; the caller knows which are dead).
    */
-  grabbable(collider: RAPIER.Collider): RAPIER.RigidBody | undefined {
-    if (this.ownerOf(collider)?.kind !== 'object') return undefined;
+  grabbable(collider: RAPIER.Collider, corpse = false): RAPIER.RigidBody | undefined {
+    const kind = this.ownerOf(collider)?.kind;
+    if (kind !== 'object' && !(corpse && kind === 'actor')) return undefined;
     const body = collider.parent();
     return body && (body.isDynamic() || this.#held.has(body.handle)) ? body : undefined;
   }

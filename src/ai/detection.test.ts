@@ -8,6 +8,7 @@ import {
   distanceAttenuation,
   eventLevel,
   loudness,
+  movementNoise,
   noticesAt,
   readDetectionSettings,
   sightReach,
@@ -255,7 +256,18 @@ describe('the detection formula', () => {
     });
     expect(running.sound).toBeCloseTo(2 * 22, 9);
     expect(running.visual).toBeCloseTo(0.33 * 35 * 1.21, 9);
-    // Muffled (MovementNoiseMult 0.5) half as loud; swimming silent.
+    // Muffled (MovementNoiseMult 0.5: the enchantment, Muffled Movement) half as loud, the Muffle
+    // spell or Silence (1) silent; swimming silent.
+    expect(movementNoise(0)).toBe(1);
+    expect(movementNoise(0.5)).toBe(0.5);
+    expect(movementNoise(1)).toBe(0);
+    expect(movementNoise(1.5)).toBe(0);
+    expect(
+      detectionLevel(settings, {
+        ...facing,
+        target: { ...player, moving: true, noiseMult: movementNoise(1) },
+      }).sound,
+    ).toBe(0);
     expect(
       detectionLevel(settings, { ...facing, target: { ...player, moving: true, noiseMult: 0.5 } })
         .sound,

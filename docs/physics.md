@@ -127,8 +127,9 @@ walks from a landing below to the one above and back, through the middles of the
 flight's triangles share, steering as a player would. Of 14,367 walks over 6,767 flights, 854
 do not arrive (1,138 with steps on stairs only): closed doors, gates and portcullises, magic
 barriers, spider webs and cocoons to cut through, moving bridges and platforms (game states:
-the running game's scripts open, lower and raise them, the audit runs none; combat cuts the
-webs, TODO(M11); the bridges'
+the running game's scripts open, lower and raise them, the audit runs none; blows, spells and
+explosions tear and break the webs, which are destructible objects: docs/gameplay.md,
+"Destruction"; the bridges'
 collision follows their animation already, see Constraints and ragdolls and animation.md,
 Skeletal objects); walks that hug an obstacle beside the way (the audit steers
 through the edges' middles, a player walks around it); and a few steps higher than 32 units.
@@ -151,8 +152,9 @@ through the edges' middles, a player walks around it); and a few steps higher th
   author of "Wade In Water".
 - **The body and its camera** are the player's avatar (animation.md, The player): the
   first-person camera rides the animated Camera1st node (sneaking lowers it), a jump pushes off
-  when its animation raises JumpUp. Sprinting drains stamina (docs/gameplay.md). **TODO(M11):** fall damage
-  (fJumpFallHeight*: combat).
+  when its animation raises JumpUp. Sprinting drains stamina (docs/gameplay.md). A fall higher
+  than fJumpFallHeightMin takes health (fJumpFallHeight\*, the NPCs' ending in "NPC", through
+  the perks' Mod Falling Damage; none into water): `src/gameplay/falling.ts`, docs/gameplay.md.
 
 ## Cameras and input
 
@@ -217,13 +219,16 @@ Tower is buried in ash), and drops by design (the Ratway's sewer outlet into Lak
 prison release markers). Of 1,492 doors, 104 stay shut to the walk: deadbolted ones (opened
 from the other side), spider webs to cut through, Nchardak's seals, rubble behind false doors,
 and load doors used as plain doors (their Open only cracks them, as the game plays it): the
-deadbolts, seals and secret doors are scripts (the running game's, not the audit's), cutting
-webs is combat (TODO(M11)).
+deadbolts, seals and secret doors are scripts (the running game's, not the audit's), the webs
+destructible objects that blows, spells and explosions break (docs/gameplay.md,
+"Destruction").
 
 **Grabbing:** Activate on a loose (simulated) object waits `[Controls] fZKeyDelay` (0.2 s): let
 go before that, it activates; held longer, the player takes hold of the object where the
-crosshair's sphere touched it, until Activate is let go (`src/physics/grab.ts`). Never actors
-(bAllowHavokGrabTheLiving 0). The engine hangs the object on Havok's mouse spring
+crosshair's sphere touched it, until Activate is let go (`src/physics/grab.ts`). So too a dead
+actor (its search on a tap): held, the player drags the ragdoll body the pick met, its joints
+bringing the rest (`PhysicsWorld.grabbable`'s corpse, src/shell/play-session.ts). Never the
+living (bAllowHavokGrabTheLiving 0: a knocked-down actor's ragdoll neither). The engine hangs the object on Havok's mouse spring
 (hkpMouseSpringAction): every step an impulse at the held point, through the body's effective
 mass there (m⁻¹·1 − [r]× I⁻¹ [r]×), removes fZKeySpringElasticity (0.2) of the distance to the
 point the camera looks at (at the distance it was taken) and fZKeySpringDamping (0.5) of the
@@ -234,11 +239,11 @@ fZKeyMaxForceScaleHigh (1) at fZKeyMaxForceWeightHigh (150); the weight here is 
 (the engine's is not documented). The plugins set only fZKeyMaxForce and
 fZKeyMaxForceWeightHigh; the other values are the executable's defaults, from a dump of every
 game setting (they agree with the plugins on those two). When the held object is left behind
-by more than fActivatePickLength it is dropped (the engine's rule is not documented). Not yet:
-fZKeyHeavyWeight (75) and the complex helper (fZKeyComplexHelper*: dragging corpses, with the
-actors' ragdolls, TODO(M11); their defaults live only in the executable and are not
-documented; a held object ragdoll hangs on the spring at the body taken hold of, its joints
-bring the rest), fZKeyMaxContactDistance and fZKeyMaxContactMassRatio (TODO(M13)).
+by more than fActivatePickLength it is dropped (the engine's rule is not documented).
+TODO(M13): fZKeyHeavyWeight (75), the complex helper's own spring for ragdolls
+(fZKeyComplexHelper\*: their defaults live only in the executable and are not documented; a
+held ragdoll hangs on the plain spring at the body taken hold of),
+fZKeyMaxContactDistance and fZKeyMaxContactMassRatio.
 
 **Constraints and ragdolls** (`physics-world.ts`, `articulation.ts`; the blocks:
 formats/nif.md, Collision): a model's constraints become Rapier impulse joints between its

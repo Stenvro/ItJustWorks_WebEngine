@@ -135,6 +135,40 @@ describe('Locomotion', () => {
     expect(first.values.get('Direction')).toBe(0);
   });
 
+  it('freezes and cross-blends the cyclic blends as the direction wraps round', () => {
+    const order: string[] = [];
+    const graph: LocomotionGraph = {
+      setVariable: (name, value) => {
+        if (name === 'Direction') order.push(`Direction=${value.toFixed(2)}`);
+      },
+      sendEvent: (name) => {
+        if (name.startsWith('Cyclic')) order.push(name);
+        return true;
+      },
+    };
+    const locomotion = new Locomotion();
+    // Ahead-left (0.95 of the turn), then ahead-right (0.05): across 0.
+    const at = (turn: number): [number, number] => [
+      100 * Math.sin(turn * 2 * Math.PI),
+      100 * Math.cos(turn * 2 * Math.PI),
+    ];
+    locomotion.drive([graph], frame({ velocity: at(0.95) }));
+    locomotion.drive([graph], frame({ velocity: at(0.9) }));
+    locomotion.drive([graph], frame({ velocity: at(0.05) }));
+    expect(order).toEqual([
+      'Direction=0.95',
+      'Direction=0.90',
+      'CyclicFreeze',
+      'Direction=0.05',
+      'CyclicCrossBlend',
+    ]);
+    // Starting to move from standing is no wrap.
+    order.length = 0;
+    locomotion.drive([graph], frame({}));
+    locomotion.drive([graph], frame({ velocity: at(0.75) }));
+    expect(order).toEqual(['Direction=0.00', 'Direction=0.75']);
+  });
+
   it('gives the turn rate in degrees per second (left positive) and lands from the air', () => {
     const graph = recorder();
     const locomotion = new Locomotion();
