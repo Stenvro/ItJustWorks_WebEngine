@@ -209,6 +209,12 @@ export interface MagicEffectRecord {
   readonly imageSpaceModifier: number | undefined;
   readonly perk: number | undefined;
   readonly castingSoundLevel: number;
+  /**
+   * DATA's Script Effect AI Score and AI Delay Time: what the combat AI adds to a spell's worth
+   * for this effect (a scripted one's), and the seconds it waits before casting it again.
+   */
+  readonly aiScore: number;
+  readonly aiDelay: number;
   readonly keywords: readonly number[];
   /** ESCE: the effects it dispels. */
   readonly counterEffects: readonly number[];
@@ -285,6 +291,8 @@ export function parseMagicEffect(record: RecordSource): MagicEffectRecord {
     imageSpaceModifier: form(132),
     perk: form(136),
     castingSoundLevel: i32(140, 0),
+    aiScore: f32(144),
+    aiDelay: f32(148),
     keywords,
     counterEffects: record.fields
       .all('ESCE')

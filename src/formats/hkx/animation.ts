@@ -147,6 +147,42 @@ export function readAnimationContainer(pack: Packfile): AnimationContainer {
   return { skeletons, bindings };
 }
 
+/** hkaSkeletonMapper: its mapping (hkaSkeletonMapperData) at 16; simple mappings 64 bytes. */
+const MAPPER = { mapping: 16, skeletonA: 0, skeletonB: 8, simpleMappings: 16 } as const;
+const SIMPLE_MAPPING_SIZE = 64;
+
+/**
+ * The ragdoll skeleton of a character's skeleton file and how its bones map onto the animation
+ * skeleton's (the hkaSkeletonMapper from the ragdoll to the animation skeleton, its simple
+ * mappings): `bones[ragdollBone]` is the animation bone (−1: none). Bone names do not tell (the
+ * giant's ragdoll names its left thigh "[RThg]01").
+ */
+export interface RagdollMapping {
+  readonly ragdoll: HkxSkeleton;
+  readonly bones: Int16Array;
+}
+
+/** The mapping from the ragdoll skeleton onto `animation` (by name), if the file has one. */
+export function readRagdollMapping(pack: Packfile, animation: string): RagdollMapping | undefined {
+  for (const mapper of pack.objectsOf('hkaSkeletonMapper')) {
+    const at = mapper.offset + MAPPER.mapping;
+    const a = pack.object(at + MAPPER.skeletonA);
+    const b = pack.object(at + MAPPER.skeletonB);
+    if (!a || !b) continue;
+    const ragdoll = readSkeleton(pack, a);
+    if (pack.string(b.offset + SKELETON.name) !== animation || ragdoll.name === animation) continue;
+    const bones = new Int16Array(ragdoll.bones.length).fill(-1);
+    const { data, size } = pack.array(at + MAPPER.simpleMappings);
+    for (let i = 0; i < size; i++) {
+      const entry = data + i * SIMPLE_MAPPING_SIZE;
+      const boneA = pack.i16(entry);
+      if (boneA >= 0 && boneA < bones.length) bones[boneA] = pack.i16(entry + 2);
+    }
+    return { ragdoll, bones };
+  }
+  return undefined;
+}
+
 function int16Array(pack: Packfile, offset: number): Int16Array | undefined {
   const { data, size } = pack.array(offset);
   if (size === 0) return undefined;

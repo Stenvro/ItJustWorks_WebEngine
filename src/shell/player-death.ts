@@ -59,6 +59,12 @@ export class PlayerDeath {
     return this.#dying?.holder;
   }
 
+  /** The death's settings (the knocked-down player's camera is the same bleedout camera). */
+  get settings(): PlayerDeathSettings {
+    this.prepare();
+    return this.#settings;
+  }
+
   /** Reads the settings ahead (the death uses them at once). */
   prepare(): void {
     if (this.#settingsRead) return;

@@ -290,7 +290,12 @@ export class ActorCasting {
   async start(
     actor: number,
     source: number,
-    options: { readonly dual?: boolean; readonly target?: number } = {},
+    options: {
+      readonly dual?: boolean;
+      readonly target?: number;
+      /** An NPC's concentration spell held this long (UseMagic's cast time), whatever it serves. */
+      readonly hold?: number;
+    } = {},
   ): Promise<boolean> {
     const runtime = this.#listen();
     const user = this.#user(actor);
@@ -303,12 +308,21 @@ export class ActorCasting {
     const cast = runtime.casting.casting(actor, source);
     if (!cast) return false;
     const shown = this.#show(cast, options.target);
+    if (
+      options.hold !== undefined &&
+      actor !== PLAYER_REF &&
+      cast.castable.item.castType === CastType.concentration
+    ) {
+      shown.holdFor = options.hold;
+      shown.holdCheck = Infinity;
+    }
     const item = cast.castable.item;
     const main = await runtime.casting.mainEffect(item);
     const event = castStartEvent(hand, {
       castType: item.castType,
       delivery: item.delivery,
-      ward: item.keywords.includes(0x1ea69),
+      // MagicWard on the spell or (the vanilla wards') on its effect.
+      ward: item.keywords.includes(0x1ea69) || main?.keywords.includes(0x1ea69) === true,
       telekinesis: main?.archetype === EffectArchetype.telekinesis,
     });
     // A spell's start is the idle tree's attack action (its leaf by GetCurrentCastingType,
@@ -768,7 +782,12 @@ export class ActorCasting {
     actor: number,
     hand: 'left' | 'right' | 'both',
     target: number | undefined,
-    options: { readonly spell?: number; readonly purpose?: CastPurpose } = {},
+    options: {
+      readonly spell?: number;
+      readonly purpose?: CastPurpose;
+      /** A concentration spell held this long (UseMagic's cast time). */
+      readonly hold?: number;
+    } = {},
   ): Promise<boolean> {
     const runtime = this.#listen();
     if (!runtime) return false;
@@ -785,6 +804,7 @@ export class ActorCasting {
     return this.start(actor, source, {
       dual: hand === 'both',
       ...(target !== undefined && { target }),
+      ...(options.hold !== undefined && { hold: options.hold }),
     });
   }
 

@@ -46,7 +46,10 @@ export interface ReactionInputs {
    * bounty with an attack-on-sight faction: crime's guardResponse).
    */
   readonly crimeHostile?: boolean;
-  /** A script made the actor hostile to the other (StartCombat; TODO(M10) 5.2 sets it). */
+  /**
+   * A script made the actor hostile to the other (StartCombat: its combatTargets, until
+   * StopCombat or its combat ends; TODO(M13): how long the engine keeps it is not documented).
+   */
   readonly scriptHostile?: boolean;
 }
 

@@ -689,9 +689,10 @@ export class ActorPlacer {
     const animation = session.animation;
     const behaviors = look.behavior ? await animation.behaviors(look.behavior) : undefined;
     const character = behaviors?.character;
-    const [rig, havok] = await Promise.all([
+    const [rig, havok, ragdollBones] = await Promise.all([
       this.#rig(look.skeleton),
       character?.rig ? animation.havokSkeleton(character.rig) : undefined,
+      character?.rig ? animation.ragdollBones(character.rig) : undefined,
     ]);
     if (!rig) return undefined;
 
@@ -806,8 +807,13 @@ export class ActorPlacer {
         properties: { IsFemale: look.female ? 1 : 0, IsMale: look.female ? 0 : 1, IsNPC: 1 },
         // Its feet on the ground (hkbCharacterData's foot IK: src/animation/procedural.ts).
         ...(behaviors.character.footIk && { footIk: behaviors.character.footIk }),
+        // Its ragdoll's bones (knock-downs, getting up: src/shell/actor-knockdowns.ts).
+        ...(ragdollBones && { ragdollBones }),
       });
       behavior.setVariable('IsNPC', 1);
+      // A third-person graph (the engine's i1stPerson: 1 only for the player's first-person
+      // one; the knock-down's Ragdoll transition asks for 0).
+      behavior.setVariable('i1stPerson', 0);
       // Its cuirass pushes its sheathed weapons out (BSOffsetAnimationGenerator).
       behavior.setVariable('weapAdj', look.weaponAdjust);
       behavior.update(0);

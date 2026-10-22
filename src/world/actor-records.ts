@@ -53,6 +53,10 @@ export const RaceFlag = {
   swims: 0x40,
   flies: 0x80,
   walks: 0x100,
+  /** Pushes do not move it (xEdit "Not Pushable"). */
+  notPushable: 0x400,
+  /** It is never knocked down (xEdit "No Knockdowns": dragons, mammoths, atronachs). */
+  noKnockdowns: 0x400000,
 } as const;
 
 /** Biped object slots (BOD2 / BODT flags): bit i is slot 30 + i. */
