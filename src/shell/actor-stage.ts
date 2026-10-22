@@ -550,6 +550,7 @@ export class ActorStage {
       get: (reference) => this.#actors.get(reference),
       casting: () => this.casting,
       interior: options.interior === true,
+      ...(options.onTrigger && { onTrigger: options.onTrigger }),
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
       ...(options.objects && { objects: options.objects }),
     });
