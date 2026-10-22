@@ -501,11 +501,17 @@ counting down; the game's pace is not documented: 0.2 s an hour), then closes th
 
 The menu does not open where the player may not wait, and the game's message says why:
 `sNoWaitDefault` / `sNoSleepDefault` while scripts disable waiting (`Game.SetInChargen`'s
-abDisableWaiting), `sNoWaitInAir` / `sNoSleepInAir` off the ground. A bed is furniture with a
-sleep marker (FURN FNPR type 2); its prompt is `sFurnitureSleep`.
-TODO(M10): getting into the bed, enemies near, actors' places after the hours, the wait broken
-off by an attack. TODO(M11): guards pursuing, trespassing, health damage, owned beds, what
-sleep restores.
+abDisableWaiting), `sNoWaitInAir` / `sNoSleepInAir` off the ground, `sNoWaitHostileActorsNear`
+while someone fights the player, `sNoWaitTakingHealthDamage` while an effect takes their health,
+`sNoWaitWhileAlarm` while guards pursue them and `sNoWaitTrespass` where they trespass (the
+sleep versions likewise; `noWaitReason`, src/gameplay/waiting.ts). A bed is furniture with a
+sleep marker (FURN FNPR type 2); its prompt is `sFurnitureSleep`; another's bed is not slept in
+(`sNoSleepInOwnedBed`). As in the game the player does not lie down: the menu opens where they
+stand (the bed animations are the NPCs'; mods such as Go To Bed add the player's). Each hour
+health, magicka and stamina regenerate as over the real seconds it stands for; the rested
+bonuses are the scripts' (PlayerSleepQuest's OnSleepStop: Rested, Well Rested, Lover's Comfort).
+After the hours the actors are where their packages had them meanwhile (docs/ai.md, "Actors
+away"); an attack breaks the wait off (a sleep is told it was interrupted).
 
 ## Training
 
@@ -666,7 +672,11 @@ The game's dialogue (20,000 topics, 41,000 infos, about 40 MB) is read in bulk o
 game starts. Each response's emotion shows on the speaker's face and it gestures (ActionTalking);
 an info with Force Subtitle shows its text whatever the setting. The dialogue camera turns the
 player's view to the speaker's head and zooms in while they talk (ai.md, "Talking").
-TODO(M11): persuade, bribe, intimidate. A follower's favors (wait, trade, "I need you to do
+Persuade, bribe and intimidate are the game's own topics: their infos' conditions (the
+player's Speech and perks, GetIntimidateSuccess, GetBribeSuccess, ...) are valued as every
+condition is (docs/scripting.md, "Conditions"), and FavorDialogueScript does the rest through the
+natives (GetBribeAmount, SetBribed, SetIntimidated, Game.AdvanceSkill; docs/gameplay.md,
+"Guards, fines and jail"). A follower's favors (wait, trade, "I need you to do
 something") are the vanilla scripts' and the engine's command mode (ai.md, "Followers, mounts
 and vehicles").
 
@@ -953,7 +963,9 @@ Tab then). After a change: `InvalidateListData`, `UpdateItemList(false)`, `Updat
 
 Each bench's first use shows its tutorial (HBFG forges, HBSM the grindstone, HBSA the armor
 workbench, HBEC enchanting, HBAL alchemy, HBCO cooking pots, HBML smelters, HBTA tanning racks).
-TODO(M10): the player sits at the workbench first. The crafting perks are the perk system's
+The player uses the workbench first (its marker and enter idle, as actors use furniture:
+`src/shell/player-furniture.ts`), then its menu opens; closing it gets them up
+(src/shell/play-session.ts). The crafting perks are the perk system's
 entry points (docs/gameplay.md "Crafting", "Perks").
 
 ## Lockpicking

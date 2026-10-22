@@ -198,6 +198,21 @@ export class ScriptWorld implements WorldBridge {
     this.lookTargets.setHeadTracking(actor, on);
   }
 
+  /**
+   * The expressions scripts hold on actors' faces (SetExpressionOverride: an mfg expression and
+   * its strength 0..100, until ClearExpressionOverride), by actor: the faces read it every
+   * frame (src/shell/actor-moods.ts); it outlives them.
+   */
+  readonly expressionOverrides = new Map<
+    number,
+    { readonly expression: number; readonly strength: number }
+  >();
+
+  expression(actor: number, mood: number | undefined, strength: number): void {
+    if (mood === undefined) this.expressionOverrides.delete(actor);
+    else this.expressionOverrides.set(actor, { expression: mood, strength });
+  }
+
   /** What an actor says now (the session's lines answer: IsTalking, GetDialogueEmotion, ...). */
   talking: ((actor: number) => Talking | undefined) | undefined;
 

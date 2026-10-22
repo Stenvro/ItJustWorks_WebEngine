@@ -174,6 +174,8 @@ const FIRE_DAMAGE_BASE = 0x10fb95;
 const FORTIFY_HEALTH_BASE = 0x10fb77;
 /** EnchIronSwordFire01, "Iron Sword of Embers". */
 const IRON_SWORD_OF_EMBERS = 0x49bb8;
+/** A container of the test's own (no record: it starts empty). */
+const CHEST = 0x00fffe01;
 const HEALTH = 24;
 const ALCHEMY = 16;
 const ENCHANTING = 23;
@@ -325,6 +327,45 @@ describe.skipIf(!hasGamedata())('crafting in a running game on the local game da
     expect((await runtime.crafting.charge(PLAYER_REF, made))?.current).toBeGreaterThanOrEqual(250);
     expect(await count(PLAYER_REF, SOUL_GEM_PETTY_FILLED)).toBe(0);
   }, 120_000);
+
+  it("keep an enchanted weapon's charge on the item itself (ExtraCharge)", async () => {
+    // Two of the plugins' Iron Sword of Embers: the one wielded is used, the other stays full.
+    const had = await count(PLAYER_REF, IRON_SWORD_OF_EMBERS);
+    await give(IRON_SWORD_OF_EMBERS, 2);
+    expect(await runtime.equipment.equip(PLAYER_REF, IRON_SWORD_OF_EMBERS)).toBe(true);
+    const full = await runtime.crafting.charge(PLAYER_REF, IRON_SWORD_OF_EMBERS);
+    expect(full?.max).toBeGreaterThan(0);
+    for (let i = 0; i < 3; i++) await runtime.crafting.useCharge(PLAYER_REF, IRON_SWORD_OF_EMBERS);
+    const used = (await runtime.crafting.charge(PLAYER_REF, IRON_SWORD_OF_EMBERS))?.current ?? 0;
+    expect(used).toBeCloseTo((full?.max ?? 0) - 3 * (full?.cost ?? 0), 3);
+    // The menus list it apart: the plain ones full, the used one with its charge, wielded.
+    const rows = runtime.crafting.instances(PLAYER_REF, IRON_SWORD_OF_EMBERS);
+    expect(rows.map((row) => [row.count, row.charge])).toEqual([
+      [had + 1, undefined],
+      [1, used],
+    ]);
+    const usedRow = rows[1]?.stack;
+    expect(runtime.crafting.isWornInstance(PLAYER_REF, IRON_SWORD_OF_EMBERS, usedRow)).toBe(true);
+    expect(
+      (await runtime.crafting.charge(PLAYER_REF, IRON_SWORD_OF_EMBERS, { stack: undefined }))
+        ?.current,
+    ).toBe(full?.max);
+    // Given away, it keeps its charge; the player's left are full.
+    await runtime.removeItem(
+      PLAYER_REF,
+      runtime.formHandle(IRON_SWORD_OF_EMBERS),
+      1,
+      true,
+      CHEST,
+      usedRow,
+    );
+    expect(runtime.crafting.instances(CHEST, IRON_SWORD_OF_EMBERS)).toEqual([
+      { stack: 0, count: 1, health: 1, charge: used },
+    ]);
+    expect(runtime.crafting.instances(PLAYER_REF, IRON_SWORD_OF_EMBERS)).toEqual([
+      { stack: undefined, count: had + 1, health: 1 },
+    ]);
+  }, 60_000);
 
   it('enchant armor by the soul, and not with a weapon enchantment', async () => {
     runtime.state.knownEnchantments.add(FORTIFY_HEALTH_BASE);

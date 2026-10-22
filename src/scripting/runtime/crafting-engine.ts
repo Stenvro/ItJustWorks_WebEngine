@@ -4,7 +4,7 @@
 // list, with its count; moved with the item, worn by its wearer), enchanting makes an enchantment
 // and an enchanted copy of the item (forms the game made: GameState.createdForms), disenchanting
 // learns an item's base enchantment, a soul gem recharges a weapon (its charge: spent by its
-// hits), and alchemy makes a potion or poison (a created form too, made again it is the same
+// hits and a staff's casts, kept on the item itself as the game's ExtraCharge), and alchemy makes a potion or poison (a created form too, made again it is the same
 // one) and learns the ingredients' effects. Each craft gives its skill its use and counts in
 // the player's stats. Perks change crafting through hooks (CraftingPerks: the perk entry
 // points; the perk system fills them), Fortify Smithing and Alchemy through them too (the skill
@@ -152,7 +152,15 @@ export interface ItemInstance {
   readonly count: number;
   /** ExtraHealth (1: plain). */
   readonly health: number;
+  /** ExtraCharge: the charge left (undefined: full). */
+  readonly charge?: number;
 }
+
+/**
+ * Which of an actor's items of a base: the one it wields ('worn': the stack marked, else a
+ * plain one), or a menu's row (a stack, undefined: the plain ones).
+ */
+export type ItemChoice = 'worn' | { readonly stack: number | undefined };
 
 /** A weapon's charge now: what is left, its full charge, and what a hit uses. */
 export interface ItemCharge {
@@ -355,21 +363,43 @@ export class CraftingEngine {
     const plain = this.plainCount(container, base);
     if (plain > 0) instances.push({ stack: undefined, count: plain, health: 1 });
     this.stacks(container, base).forEach((stack, i) => {
-      if (stack.count > 0) instances.push({ stack: i, count: stack.count, health: stack.health });
+      if (stack.count > 0) {
+        instances.push({
+          stack: i,
+          count: stack.count,
+          health: stack.health,
+          ...(stack.charge !== undefined && { charge: stack.charge }),
+        });
+      }
     });
     return instances;
   }
 
-  /** Items of a container get data of their own (they are counted in its inventory already). */
-  addStack(container: number, base: number, health: number, count = 1, worn = false): void {
-    if (count <= 0 || health === 1) return;
+  /**
+   * Items of a container get data of their own (they are counted in its inventory already): a
+   * health (improved) and the charge left (used); those alike in both stack.
+   */
+  addStack(
+    container: number,
+    base: number,
+    health: number,
+    count = 1,
+    worn = false,
+    charge?: number,
+  ): void {
+    if (count <= 0 || (health === 1 && charge === undefined)) return;
     const list = this.#list(container, base, true) ?? [];
-    const same = list.find((stack) => stack.health === health);
+    const same = list.find((stack) => stack.health === health && stack.charge === charge);
     if (same) {
       same.count += count;
       if (worn) same.worn = true;
     } else {
-      list.push({ count, health, ...(worn && { worn }) });
+      list.push({
+        count,
+        health,
+        ...(charge !== undefined && { charge }),
+        ...(worn && { worn }),
+      });
       list.sort((a, b) => b.health - a.health);
     }
   }
@@ -395,7 +425,7 @@ export class CraftingEngine {
       if (count <= 0) return;
       entry.count -= count;
       left -= count;
-      if (to !== undefined) this.addStack(to, base, entry.health, count);
+      if (to !== undefined) this.addStack(to, base, entry.health, count, false, entry.charge);
     };
     const chosen = stack === undefined ? undefined : list[stack];
     if (chosen) take(chosen, Math.min(chosen.count, left));
@@ -461,8 +491,70 @@ export class CraftingEngine {
 
   // --- Charge ---------------------------------------------------------------------------------
 
-  /** An enchanted weapon's charge (staffs': the casting engine's), or undefined. */
-  async charge(actor: number, weapon: number): Promise<ItemCharge | undefined> {
+  /** The stack of an actor's items of a base `which` names (undefined: a plain one). */
+  #chosen(actor: number, base: number, which: ItemChoice): ItemStack | undefined {
+    if (which === 'worn') return this.wornStack(actor, base);
+    return which.stack === undefined ? undefined : this.stacks(actor, base)[which.stack];
+  }
+
+  /**
+   * The charge left on one of an actor's items of a base (ExtraCharge: undefined, full), kept on
+   * that item: the one it wields, or a menu's row.
+   */
+  keptCharge(actor: number, base: number, which: ItemChoice = 'worn'): number | undefined {
+    return this.#chosen(actor, base, which)?.charge;
+  }
+
+  /**
+   * Sets the charge left on one of an actor's items of a base (`max` or more: full again). An
+   * item of a stack gets a stack of its own (health kept, still the one wielded if it was).
+   * TODO(M13): two of a base in both hands share the one marked wielded (the game's
+   * ExtraWornLeft).
+   */
+  setCharge(
+    actor: number,
+    base: number,
+    charge: number,
+    max: number,
+    which: ItemChoice = 'worn',
+  ): void {
+    if (this.#count(actor, base) <= 0) return;
+    const value = charge >= max - 1e-6 ? undefined : Math.max(0, charge);
+    const from = this.#chosen(actor, base, which);
+    if (from?.charge === value) return;
+    if (from && from.count <= 1) {
+      // Its own stack already: it keeps its health, its charge changes.
+      if (value === undefined) delete from.charge;
+      else from.charge = value;
+      if (from.health === 1 && from.charge === undefined) {
+        from.count = 0;
+        this.#prune(actor, base);
+      }
+      return;
+    }
+    if (which !== 'worn' && which.stack === undefined && this.plainCount(actor, base) <= 0) return;
+    const worn =
+      which === 'worn' ||
+      from?.worn === true ||
+      (from === undefined && this.isWornInstance(actor, base, undefined));
+    if (from) {
+      from.count--;
+      if (worn) delete from.worn;
+    }
+    this.addStack(actor, base, from?.health ?? 1, 1, worn, value);
+    this.#prune(actor, base);
+  }
+
+  /**
+   * An enchanted weapon's or a staff's charge (of the item `which` names: the one wielded, or a
+   * menu's row), or undefined: what is left, its full charge (WEAP EAMT, else its
+   * enchantment's), what a use costs.
+   */
+  async charge(
+    actor: number,
+    weapon: number,
+    which: ItemChoice = 'worn',
+  ): Promise<ItemCharge | undefined> {
     const runtime = this.#runtime;
     const item = await runtime.equipment.item(weapon);
     if (!item?.weapon || item.enchantment === undefined) return undefined;
@@ -470,7 +562,7 @@ export class CraftingEngine {
     if (enchantment?.kind !== 'enchantment' || enchantment.castType === CastType.constantEffect)
       return undefined;
     const max = item.charge > 0 ? item.charge : (enchantment.enchantment?.amount ?? 0);
-    const kept = runtime.casting.state(actor).charge.get(weapon);
+    const kept = this.keptCharge(actor, weapon, which);
     return { current: Math.min(max, kept ?? max), max, cost: Math.max(0, enchantment.cost) };
   }
 
@@ -483,13 +575,17 @@ export class CraftingEngine {
     const charge = await this.charge(actor, weapon);
     if (!charge || actor !== PLAYER_REF || charge.max <= 0 || charge.cost <= 0) return true;
     if (charge.current + 1e-6 < charge.cost) return false;
-    this.#runtime.casting.state(actor).charge.set(weapon, charge.current - charge.cost);
+    this.setCharge(actor, weapon, charge.current - charge.cost, charge.max);
     return true;
   }
 
   /** A weapon's charge as its item card's meter shows it (percent), or undefined. */
-  async chargePercent(actor: number, weapon: number): Promise<number | undefined> {
-    const charge = await this.charge(actor, weapon);
+  async chargePercent(
+    actor: number,
+    weapon: number,
+    which: ItemChoice = 'worn',
+  ): Promise<number | undefined> {
+    const charge = await this.charge(actor, weapon, which);
     return charge && charge.max > 0 ? chargePercent(charge.current, charge.max) : undefined;
   }
 
@@ -508,8 +604,13 @@ export class CraftingEngine {
   }
 
   /** What a soul gem's soul adds to a weapon's charge recharging it (percent of its full). */
-  async rechargePercent(actor: number, gem: SoulGemInfo, weapon: number): Promise<number> {
-    const charge = await this.charge(actor, weapon);
+  async rechargePercent(
+    actor: number,
+    gem: SoulGemInfo,
+    weapon: number,
+    which: ItemChoice = 'worn',
+  ): Promise<number> {
+    const charge = await this.charge(actor, weapon, which);
     if (!charge || charge.max <= 0) return 0;
     const added = await this.perks.soulGemRecharge(actor, gem.charge);
     return (
@@ -523,17 +624,26 @@ export class CraftingEngine {
    * to its full, the gem used up; Enchanting's use (fSkillUsageRechargeMult a point of
    * charge). False if it needs none or there is no such gem.
    */
-  async recharge(actor: number, weapon: number, gem: number): Promise<boolean> {
+  async recharge(
+    actor: number,
+    weapon: number,
+    gem: number,
+    which: ItemChoice = 'worn',
+  ): Promise<boolean> {
     const runtime = this.#runtime;
-    const charge = await this.charge(actor, weapon);
+    const charge = await this.charge(actor, weapon, which);
     if (!charge || charge.current >= charge.max) return false;
     const item = await runtime.equipment.item(gem);
     const soul = item?.type === 'SLGM' ? (item.soul?.current ?? 0) : 0;
     if (soul <= 0 || (await runtime.itemCount(actor, gem)) <= 0) return false;
     const added = await this.perks.soulGemRecharge(actor, SOUL_CAPACITY[soul] ?? 0);
-    runtime.casting
-      .state(actor)
-      .charge.set(weapon, rechargedCharge(charge.current, added, charge.max));
+    this.setCharge(
+      actor,
+      weapon,
+      rechargedCharge(charge.current, added, charge.max),
+      charge.max,
+      which,
+    );
     await this.#useSoulGem(actor, gem);
     const { crafting } = await this.settings();
     await runtime.progression.useSkill(actor, ENCHANTING, rechargeSkillUse(added, crafting));
@@ -612,7 +722,7 @@ export class CraftingEngine {
       return { kind: 'skill' };
     }
     if (wasWorn) this.wear(actor, base, undefined);
-    this.addStack(actor, base, temperHealth(level), 1, wasWorn);
+    this.addStack(actor, base, temperHealth(level), 1, wasWorn, from?.charge);
     const { crafting } = await this.settings();
     await runtime.progression.useSkill(actor, SMITHING, temperingSkillUse(item.value, crafting));
     this.#stat(item.type === 'WEAP' ? 'weapons improved' : 'armor improved');

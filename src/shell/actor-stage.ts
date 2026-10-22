@@ -16,8 +16,8 @@ import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
 import { referenceMatrix, type CellActor } from '../world/cell-loader.ts';
 import { linkedReferences, parseReference } from '../world/cell-records.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
-import { soundPlacedActors, type SoundingWorld } from './actor-sounds.ts';
-import { groundActor, moveActor, ragdollsOf, type PlacedActor } from './actors.ts';
+import { soundPlacedActors, type GaitMotion, type SoundingWorld } from './actor-sounds.ts';
+import { actorOnRay, groundActor, moveActor, ragdollsOf, type PlacedActor } from './actors.ts';
 import { createdEnabled } from './created-objects.ts';
 import type { GameSession } from './game-session.ts';
 import type { CellRagdoll } from './play-session.ts';
@@ -45,6 +45,7 @@ import { ActorFollowers } from './actor-followers.ts';
 import type { PlayerView } from './race-menu.ts';
 import type { LightProbe } from '../ai/light-level.ts';
 import { ActorTalk } from './actor-talk.ts';
+import { ActorMoods, type MoodFace } from './actor-moods.ts';
 import { ActorLooks } from './actor-looks.ts';
 import { ActorCombat } from './actor-combat.ts';
 import { WeaponState } from '../gameplay/combat/combat-state.ts';
@@ -53,7 +54,7 @@ import { ActorFlight } from './actor-flight.ts';
 import { actorShape, MagicProjectiles, type ProjectileTarget } from './magic-projectiles.ts';
 import { MagicFx } from './magic-fx.ts';
 import { ActorEffects, type EffectBody } from './actor-effects.ts';
-import { questTargets } from './compass.ts';
+import { firstDoorToward, questTargets } from './compass.ts';
 import { findPath } from '../ai/pathfinding.ts';
 import type { MagicEffectShown } from '../scripting/runtime/magic-engine.ts';
 import { EffectArchetype } from '../world/magic-effects.ts';
@@ -144,6 +145,8 @@ const describe = (error: unknown): string =>
 const TIME_SKIP_MS = 1500;
 /** An actor put at a reference off the navmesh moves this far at most to stand on it. */
 const SNAP_REACH = 512;
+/** Clairvoyance towards a target beyond the loaded area: this far along the way (units). */
+const GUIDE_AHEAD = 6144;
 /** The collision this near an actor (its cell and the neighbours there) must be in place to set it down (units). */
 const GROUND_REACH = 1024;
 
@@ -206,6 +209,8 @@ export class ActorStage {
   readonly favors: ActorFavors;
   /** Where they look (head tracking) and the world their procedural animation sees. */
   readonly looks: ActorLooks;
+  /** The expressions on their faces (src/shell/actor-moods.ts). */
+  readonly moods: ActorMoods;
   /** Their fights and the player's (src/shell/actor-combat.ts). */
   readonly combat: ActorCombat;
   /** What spells, staffs and shouts send flying (src/shell/magic-projectiles.ts). */
@@ -423,6 +428,7 @@ export class ActorStage {
       movers: this.movers,
       furniture: this.furniture,
     });
+    this.moods = new ActorMoods(options.session);
     this.looks = new ActorLooks({
       session: options.session,
       movers: this.movers,
@@ -501,6 +507,19 @@ export class ActorStage {
       height: (reference) => this.movers.height(reference),
       drawn: (reference) => this.combat.weaponState(reference) === WeaponState.drawn,
       draw: (reference) => this.combat.draw(reference),
+      // A Touch spell's target: the living actor along the aim (its body's line), unless
+      // something on the spell layer stands before it.
+      aimedActor: (from, direction, reach, caster) => {
+        const others = [...this.#living()].filter((placed) => placed.actor.reference !== caster);
+        const hit = actorOnRay(others, from, direction, reach, 0);
+        if (!hit) return undefined;
+        const wall = this.#physics?.raycast(from, direction, hit.distance, Layer.spell);
+        const reference = hit.actor.actor.reference;
+        if (wall && wall.owner?.reference !== reference && wall.owner?.reference !== caster) {
+          return undefined;
+        }
+        return reference;
+      },
       ...(options.player && { player: options.player }),
       // A cast or a shout is heard (detection's action noise); the player's is commented on.
       acted: (actor, kind, soundLevel) => {
@@ -597,12 +616,41 @@ export class ActorStage {
     const navmeshes = this.#options.navmeshes?.();
     if (!runtime || !player || !navmeshes) return;
     const from = player.feet;
+    const here = this.#options.session.scriptWorld.livePlacement(PLAYER_REF);
     let best: { at: Vec3; distance: number } | undefined;
     for (const target of await questTargets(runtime)) {
-      const at = target.placement.position;
-      if (this.#options.cellOf({ ...target.placement, position: [...at] }) === undefined) continue;
+      let at: Vec3 = [...target.placement.position];
+      const sameSpace =
+        here !== undefined &&
+        (here.world !== undefined
+          ? target.placement.world === here.world
+          : target.placement.cell === here.cell);
+      if (here && !sameSpace) {
+        // In another space: to the load door the way there goes through (the compass's
+        // QuestDoor).
+        const door = firstDoorToward(
+          await this.#options.session.routeMap(),
+          here,
+          target.placement,
+        );
+        if (!door) continue;
+        at = door.position;
+      } else if (this.#options.cellOf({ ...target.placement, position: at }) === undefined) {
+        // In this worldspace beyond the loaded area: towards it, to the navmesh nearest a point
+        // GUIDE_AHEAD along the way (TODO(M13): how far the engine's trail leads).
+        const way = Math.hypot(at[0] - from[0], at[1] - from[1]);
+        if (way < 1) continue;
+        const ahead: Vec3 = [
+          from[0] + ((at[0] - from[0]) / way) * GUIDE_AHEAD,
+          from[1] + ((at[1] - from[1]) / way) * GUIDE_AHEAD,
+          from[2],
+        ];
+        const reached = navmeshes.nearest?.(ahead, GUIDE_AHEAD);
+        if (!reached) continue;
+        at = reached;
+      }
       const distance = Math.hypot(at[0] - from[0], at[1] - from[1], at[2] - from[2]);
-      if (!best || distance < best.distance) best = { at: [...at], distance };
+      if (!best || distance < best.distance) best = { at, distance };
     }
     if (!best) return;
     const start = navmeshes.locate(from) ? from : (navmeshes.nearest?.(from, SNAP_REACH) ?? from);
@@ -611,13 +659,17 @@ export class ActorStage {
       this.fx.trail(key, hazard, path.points);
   }
 
-  /** The lights of magic: effects on actors, casts in hands, what flies, what bursts. */
+  /**
+   * The lights of the actors: magic's (effects on actors, casts in hands, what flies, what
+   * bursts) and the torches they carry.
+   */
   lights(): CellLight[] {
     return [
       ...this.effects.lights(),
       ...this.casting.lights(),
       ...this.projectiles.lights(),
       ...this.fx.lights(),
+      ...this.combat.lights(),
     ];
   }
 
@@ -794,6 +846,17 @@ export class ActorStage {
   }
 
   /** The enabled actors that live (they animate). */
+  /** The faces whose expressions are set: the living actors' and the player's. */
+  *#faces(): Iterable<MoodFace> {
+    for (const staged of this.#actors.values()) {
+      if (!staged.visibility.hidden && !staged.dead) {
+        yield { reference: staged.reference, face: staged.placed.face };
+      }
+    }
+    const body = this.#options.player?.()?.avatar?.body;
+    if (body) yield { reference: PLAYER_REF, face: body.face };
+  }
+
   *#living(): Iterable<PlacedActor> {
     for (const staged of this.#actors.values()) {
       if (!staged.visibility.hidden && !staged.dead) yield staged.placed;
@@ -1208,7 +1271,7 @@ export class ActorStage {
       instance.world.set(from);
       if (instance.motion) instance.motion.version++;
     }
-    soundPlacedActors([placed], this.#options.sounding);
+    soundPlacedActors([placed], this.#options.sounding, this.#gait);
     staged.placed = placed;
     this.#tellScripts(staged);
     // Its controller is made again for its new body (its size, its graph).
@@ -1316,6 +1379,7 @@ export class ActorStage {
     }
     // Where they look, and the world their procedural animation sees.
     this.looks.frame(this.#actors.values(), frame);
+    this.moods.frame(this.#faces(), frame);
     const camera = this.#options.renderer.view?.camera;
     animateSkeletons(
       this.#living(),
@@ -1361,6 +1425,23 @@ export class ActorStage {
     this.mounts.frame(frame);
     this.vehicles.frame();
   }
+
+  /**
+   * How an actor moves, for its footsteps: its controller's motion, else (beyond the high
+   * process) the gait its AI asks for.
+   */
+  readonly #gait = (reference: number): GaitMotion | undefined => {
+    const motion = this.movers.motion(reference);
+    if (motion) return motion;
+    const request = this.movers.requestOf(reference);
+    return (
+      request && {
+        sneaking: false,
+        sprinting: request.gait === 'sprint',
+        running: request.gait === 'run',
+      }
+    );
+  };
 
   /** Places actors for a cell and puts them on the stage (unless the cell went meanwhile). */
   async #place(
@@ -1427,6 +1508,7 @@ export class ActorStage {
       soundPlacedActors(
         staged.map((entry) => entry.placed),
         sounding,
+        this.#gait,
       );
       return staged;
     } finally {
@@ -1464,6 +1546,7 @@ export class ActorStage {
 
   #remove(staged: StagedActor): void {
     this.looks.remove(staged.reference);
+    this.moods.forget(staged.reference);
     this.#options.session.scriptsReady?.magic.unloaded(staged.reference);
     this.combat.remove(staged.reference);
     this.ai.remove(staged.reference);

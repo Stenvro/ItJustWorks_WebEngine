@@ -222,10 +222,21 @@ export function actorOnRay(
   return best;
 }
 
+/** The actor the crosshair rests on: how far along the ray, what activating it does. */
+export interface ActorTarget {
+  readonly distance: number;
+  readonly target: Activatable;
+  /** A dead one: holding Activate drags its ragdoll (src/shell/play-session.ts). */
+  readonly corpse?: boolean;
+}
+
 /**
  * What the crosshair finds among the actors shown (PlaySession's actorAt): activating one
  * talks to it (it says a line, ActorPlacer.speak); in Play the dead are searched and, sneaking,
- * the living pickpocketed.
+ * the living pickpocketed. The actor is the one the physics pick met (its character
+ * controller, its keyframed BIPED bodies or its ragdoll: L_ITEMPICKER collides with
+ * L_CHARCONTROLLER, L_BIPED and L_DEADBIP), else, for actors without collision in the world
+ * (beyond the high process), the one whose body's line the ray passes.
  */
 export function talkTargets(
   actors: () => Iterable<PlacedActor>,
@@ -238,9 +249,19 @@ export function talkTargets(
   direction: Vec3,
   length: number,
   radius: number,
-) => { readonly distance: number; readonly target: Activatable } | undefined {
-  return (origin, direction, length, radius) => {
-    const hit = actorOnRay(actors(), origin, direction, length, radius);
+  picked?: { readonly reference: number; readonly distance: number },
+) => ActorTarget | undefined {
+  return (origin, direction, length, radius, picked) => {
+    let hit: { readonly actor: PlacedActor; readonly distance: number } | undefined;
+    if (picked) {
+      for (const placed of actors()) {
+        if (placed.actor.reference === picked.reference) {
+          hit = { actor: placed, distance: picked.distance };
+          break;
+        }
+      }
+    }
+    hit ??= actorOnRay(actors(), origin, direction, length, radius);
     if (!hit) return undefined;
     const placed = hit.actor;
     const instead = session()?.hud.uses ? other?.(placed) : undefined;
@@ -256,6 +277,7 @@ export function talkTargets(
       const uses = hud.uses;
       return {
         distance: hit.distance,
+        corpse: true,
         target: {
           verb: uses.text('sSearch'),
           name,

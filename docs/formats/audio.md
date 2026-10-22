@@ -93,4 +93,8 @@ b/m/p, f/v or r, the first strong phoneme is Th 97/97, W 117/122, BMP 108/111, F
 equal (left and right blinks and brow raises), 18–21 and 28–29 are never used (the CK
 generates no brow-down, brow-in or squint), 24–27 stay small (eye looks, ≤ 0.16), and only
 the last three go negative (head rotation, −0.07…+0.16 radians). Creature lines (952:
-dragons, rieklings, hagravens) have 8 curves: TODO(M10) with creatures' speech.
+dragons, rieklings, hagravens) have 8 curves: the phonemes of the creature's behavior graph's
+lip variables, in their order (dragons' and hagravens' LipBigAah, LipDST, LipEee, LipFV, LipK,
+LipL, LipR, LipTh; rieklings' LipAA ... LipTH), which move its mouth
+(`creatureLipVariables`, src/animation/face.ts; docs/animation.md, "Faces"; TODO(M13): the
+order is inferred, both list the same eight phonemes).

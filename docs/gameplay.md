@@ -133,7 +133,9 @@ shield, 11 a torch, 12 a crossbow), GetEquippedShout, HasEquippedSpell, WornHasK
 WornApparelHasKeywordCount, GetClothingValue (the worn items' value), IsTorchOut and
 IsActorUsingATorch (a torch in the left hand), and of the right hand's weapon GetWeaponAnimType,
 IsWeaponSkillType, IsWeaponInList, HasTwoHandedWeaponEquipped; HasBoundWeaponEquipped by hand.
-IsShieldOut and IsWeaponOut need the weapon drawn (TODO(M10) 5.1).
+IsShieldOut and IsWeaponOut need the weapon drawn: the combat mechanics' weapon state
+(docs/ai.md, "Combat"); IsWeaponOut not when the hands hold only magic (IsWeaponMagicOut), and
+IsShieldOut with a shield equipped.
 
 TODO(M12): the loadout in the save.
 
@@ -381,8 +383,9 @@ the player in a runtime on the game data, `--audit` reads every record).
   they last; `MagicEngine.aiState` is what the combat AI reads ([ai.md](ai.md#combat-ai)).
 - Cure Disease / Poison / Paralysis / Addiction end those effects (a disease leaves the
   actor's spells). Dispel ends spells' effects up to its magnitude (TODO(M13): Oblivion's rule).
-- Summon Creature places its NPC_ before the summoner (one at a time: TODO(M11) Twin Souls),
-  gone as the effect ends or the summoner dies; Reanimate raises a corpse (it falls again as it
+- Summon Creature places its NPC_ before the summoner (one at a time, the oldest going as
+  another comes; the summoner's perks raise the limit: Mod Commanded Actor Limit, Twin Souls'
+  one more), gone as the effect ends or the summoner dies; Reanimate raises a corpse (it falls again as it
   ends); Banish ends a summoning; Bound Weapon puts its weapon in the hand; Spawn Hazard and
   Spawn Scripted Ref place their form; Disarm takes the weapons out of the hands
   (sPlayerDisarmedMessage); Soul Trap and Actor.TrapSoul put a dead actor's soul (by level:
@@ -447,8 +450,11 @@ the player in a runtime on the game data, `--audit` reads every record).
   variants; TODO(M13): the rule taken from the vanilla spells), looked at twice a second.
 - Clairvoyance (Guide): its hazard (ClairvoyanceHazard: GuideHazard01.nif, its light, limit 1,
   10 s) travels along the navmeshes from the player to the nearest target of the shown quest
-  objectives in this space (TODO(M13): its speed), again as each trail ends while the spell is
-  held; TODO(M10): targets in another cell (the compass's QuestDoor).
+  objectives (TODO(M13): its speed), again as each trail ends while the spell is held. A target
+  in another cell or worldspace: to the load door the way there goes through, as the compass's
+  QuestDoor (`firstDoorToward`, src/shell/compass.ts); one in this worldspace beyond the loaded
+  area: towards it, to the navmesh nearest a point 6144 units along the way (TODO(M13): how far
+  the engine's trail leads). `ActorStage`'s guide, src/shell/actor-stage.ts.
 
 ### Lasting effects and items
 
@@ -459,8 +465,8 @@ the player in a runtime on the game data, `--audit` reads every record).
   food applies its effects (its use sound, its addiction by chance); an ingredient its first
   effect, which the player then knows; a poison goes on the equipped weapon after the player
   confirms (sPoisonConfirmMessage, sPoisonBowConfirmMessage; sPoisonNoWeaponMessage,
-  sPoisonAlreadyPoisonedMessage), one dose for its next hit (`weaponHit`, TODO(M10) 5.1;
-  sPoisoned when it hits the player). The equip system uses an item up and tells its scripts
+  sPoisonAlreadyPoisonedMessage), one dose for its next hit (`weaponHit`: combat's hits that
+  are neither bashes nor blocked, src/shell/actor-combat.ts; sPoisoned when it hits the player). The equip system uses an item up and tells its scripts
   (EquipmentEngine.use: OnObjectEquipped), then the magic system applies it (`consumed`; the
   world shows the casting through castSpell). Worn enchantments follow the equip system's
   changes at once (its listeners).
@@ -515,7 +521,7 @@ Format/SPEL"; the game settings.
 - A fire and forget spell is paid as it fires (released when ready), a concentration spell for
   the time it is held (its cost a second); regeneration waits while a cast lasts.
 - A staff spends its enchantment's cost from its charge (WEAP EAMT at first; Staff of Fireball
-  2000, 133 a cast: 15 casts); the charge is kept per staff (TODO(M11): per item). A scroll is
+  2000, 133 a cast: 15 casts); the charge is kept on the staff itself (ExtraCharge: "Items of their own"). A scroll is
   used up. Neither, nor powers or shouts, trains a skill.
 
 ### A hand's cast
@@ -548,7 +554,10 @@ Format/SPEL"; the game settings.
 
 ### Delivery
 
-- Self: on the caster at once. Touch: the actor aimed at (TODO(M10) 5.2: the reach). Aimed,
+- Self: on the caster at once. Touch: the actor aimed at, at once, within 2048 units
+  (`MAGIC_REACH`, src/shell/actor-casting.ts: an NPC's combat target, which its AI casts at
+  within that reach; the player's the living actor along their aim, nothing on the spell layer
+  before it; TODO(M13): the engine's reach is not documented). Aimed,
   target actor and target location fly the costliest effect's projectile (docs/ai.md, "Magic in
   combat"); without one they reach the actor aimed at at once.
 - What reaches an actor (`deliver`): a hostile spell, scroll or staff's (not a power's or a
@@ -610,7 +619,7 @@ spell's half-cost perk). Natives: InterruptCast,
 DoCombatSpellApply, Get/SetVoiceRecoveryTime (the meter counts down from what it is set to),
 Game.TeachWord, UnlockWord, IsWordUnlocked; Spell.Cast and RemoteCast fly.
 
-TODO(M12): the powers used, the staffs' charge, the words learned and the voice in the save.
+TODO(M12): the powers used, the words learned and the voice in the save (the staffs' charge with the item stacks).
 
 ## Crime and factions
 
@@ -673,8 +682,9 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   crimes recorded.
 - Assaults and murders: an attack on, or the killing of, one that does not regard the attacker
   as hostile (`reaction`). Kills reach crime through `ActorEngine.kill`; combat's hits
-  (`src/shell/actor-combat.ts`) and hostile spells call `crime.assault(attacker, victim)`, the
-  one hit always among the witnesses (TODO(M10) 5.3: from the projectile's impact).
+  (`src/shell/actor-combat.ts`, arrows' as they strike) and hostile spells as their projectile,
+  spray or area reaches the victim (the projectiles' hit: `src/shell/actor-stage.ts`) call
+  `crime.assault(attacker, victim)`, the one hit always among the witnesses.
 
 ### Stolen items
 
@@ -763,7 +773,8 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   GetPCExpelled, SetPlayerExpelled, GetPCEnemyofFaction, GetPCInFaction).
 
 TODO(M12): crime's state in the save. The perks' pickpocket, lockpicking and speech effects:
-"Perks". TODO(M11): NPCs' Acquire with Allow Pickpocketing.
+"Perks". NPCs' Acquire with Allow Pickpocketing takes from the pockets of the actor that holds
+what it wants (docs/ai.md, "Packages"; TODO(M13): whether those who see it report it).
 
 ## Crafting
 
@@ -810,8 +821,9 @@ TODO(M12): the created forms in the save, those no container holds any more left
 ### Items of their own
 
 An improved weapon or armor keeps its quality on itself (the game's ExtraHealth on an
-inventory entry's extra data list): `GameState.itemStacks` holds, per container and base,
-stacks of alike items (`ItemStack`: count, health, worn); the rest of the base's count (the
+inventory entry's extra data list), a used enchanted weapon or staff its charge (ExtraCharge):
+`GameState.itemStacks` holds, per container and base, stacks of alike items (`ItemStack`:
+count, health, charge, worn); the rest of the base's count (the
 inventory's) is plain. Removing items (`ScriptRuntime.removeItem` and its `stack`: a menu's
 row) takes the stack asked for first, then the plain ones, then the least improved; stacks
 that leave join the receiver's. Counts set without saying which (a script, a container
@@ -866,10 +878,13 @@ loses its data (the world's references carry none yet); a tempered item's value 
   (Enchanting's 900 a use). Stats: Magic Items Made, Soul Gems Used.
 - **Charge**: each hit of an enchanted weapon uses its enchantment's cost
   (`CraftingEngine.useCharge`, the magic system's weapon hit); with too little left the
-  enchantment does nothing. NPCs' weapons never run out (UESP). The charge is kept per actor
-  and weapon base (`ActorCastingState.charge`, the staffs' too: a made weapon is a form of its
-  own; TODO(M13): the plugins' enchanted weapons per item). The inventory's card shows it
-  (`charge`, `usedCharge`: percent), the HUD its meters (SetChargeMeterPercent per hand).
+  enchantment does nothing. NPCs' weapons never run out (UESP). The charge is kept on the
+  item itself (the game's ExtraCharge: an `ItemStack`'s charge, `CraftingEngine.setCharge`; the
+  staffs' too): a used one becomes a stack of its own, the others of its base stay full, and it
+  keeps its charge where it goes. The inventory's card shows each row's (`charge`,
+  `usedCharge`: percent) and recharges that row's item, the HUD the meters of those wielded
+  (SetChargeMeterPercent per hand). TODO(M13): two of a base in both hands share the one marked
+  wielded (the game's ExtraWornLeft).
 - **Recharging** (the inventory's T: ShowSoulGemList, the card's list of filled soul gems with
   the percent each adds, ItemCardListCallback): the soul's charge is added up to the full
   charge, the gem used up (UIEnchantRecharge); skill use fSkillUsageRechargeMult (0.0002) a

@@ -9,18 +9,11 @@
 // (CombatCasting.support). Notes: docs/ai.md, "Combat AI".
 
 import type { CombatCasting, CombatSupport } from './actor-combat-ai.ts';
-import type { ActorCasting } from './actor-casting.ts';
+import { MAGIC_REACH, type ActorCasting } from './actor-casting.ts';
 import type { EquipOption } from '../ai/combat-tactics.ts';
 import type { GameSession } from './game-session.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { MagicItemRecord } from '../world/magic-records.ts';
-
-/**
- * The reach of a spell or shout whose projectile names none (Touch spells, projectiles with
- * range 0). TODO(M13): the engine's value is not documented; fCombatMagic* settings do not
- * name one.
- */
-const DEFAULT_MAGIC_RANGE = 2048;
 
 /** The NPCs' casting as the combat AI asks for it. */
 export function combatCasting(
@@ -108,6 +101,6 @@ async function option(
       ? undefined
       : await runtime.casting.projectile(effect.projectile);
   const damage = await runtime.casting.spellWorth(actor, item, 'attack', target);
-  const range = projectile && projectile.range > 0 ? projectile.range : DEFAULT_MAGIC_RANGE;
+  const range = projectile && projectile.range > 0 ? projectile.range : MAGIC_REACH;
   return { kind, id, damage, range, equipped: false };
 }

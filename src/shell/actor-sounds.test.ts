@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { Vec3 } from '../render/math.ts';
 import type { ActorLook } from '../world/actors.ts';
-import { actorSounds, type SoundingWorld } from './actor-sounds.ts';
+import { actorSounds, footstepGait, type SoundingWorld } from './actor-sounds.ts';
 
 const FOOTSTEP_SET = 0x1234;
 const PUDDLE = 0x4cc4b;
@@ -35,5 +35,16 @@ describe('actorSounds', () => {
       material: 0x99,
       landscape: false,
     });
+  });
+});
+
+describe('footstepGait', () => {
+  it("steps by the actor's movement: sneaking first, then sprinting, running, walking", () => {
+    const motion = { sneaking: false, sprinting: false, running: false };
+    expect(footstepGait(undefined)).toBe('walk');
+    expect(footstepGait(motion)).toBe('walk');
+    expect(footstepGait({ ...motion, running: true })).toBe('run');
+    expect(footstepGait({ ...motion, sprinting: true })).toBe('sprint');
+    expect(footstepGait({ ...motion, sneaking: true, running: true })).toBe('sneak');
   });
 });
