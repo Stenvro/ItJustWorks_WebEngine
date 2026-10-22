@@ -785,6 +785,8 @@ export class ModelViewer {
       feet,
       yaw,
     );
+    // Game.DisablePlayerControls' abCamSwitch keeps the camera as it is.
+    player.povSwitchAllowed = () => this.#session?.scriptsReady?.controls.camSwitch !== false;
     player.character.walkable = (x, y, z) =>
       this.#cell?.navmesh.heightNear(x, y, z, NAVMESH_TOLERANCE) !== undefined;
     player.overEncumbered = () => this.#session?.overEncumbered === true;

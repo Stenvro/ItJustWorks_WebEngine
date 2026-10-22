@@ -126,6 +126,15 @@ const MOVING_SPEED = 5;
 const DIRECTION_WRAP = 0.5;
 
 /**
+ * Movement this near the facing (of the whole turn: 7.2°) is straight ahead, Direction 0. A
+ * controller's steps stray a little from its heading as it goes (sliding along what it touches,
+ * steering): read as they are, they flip Direction between 0.999 and 0.001, and every flip froze
+ * and cross-blended the cyclic blends (a horse pulling a cart stumbled along). TODO(M13): the
+ * engine's own smoothing of Direction is not documented.
+ */
+const DIRECTION_AHEAD = 0.02;
+
+/**
  * Drives an actor's behavior graphs from its movement, frame by frame: the variables the
  * engine keeps (Speed: the measured speed; Direction: the movement against the facing, 0 ahead,
  * 0.25 right, 0.5 behind, 0.75 left; TurnDelta: the turn rate, degrees per second, left
@@ -169,7 +178,8 @@ export class Locomotion {
     const speed = Math.hypot(vx, vy);
     const airborne = !frame.grounded && !frame.swimming;
     const relative = headingOf(vx, vy) - frame.heading;
-    const direction = speed > 1 ? (((relative / (2 * Math.PI)) % 1) + 1) % 1 : 0;
+    const turn = speed > 1 ? (((relative / (2 * Math.PI)) % 1) + 1) % 1 : 0;
+    const direction = turn < DIRECTION_AHEAD || turn > 1 - DIRECTION_AHEAD ? 0 : turn;
     const turned =
       this.#heading === undefined || frame.seconds <= 0
         ? 0
