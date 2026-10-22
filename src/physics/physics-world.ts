@@ -76,7 +76,10 @@ export interface PlacedBody {
   readonly bodyToModel: Mat4;
 }
 
-/** A model's constraint in the world: the joint, while it holds. */
+/**
+ * A model's constraint in the world: the joint, while it holds and one of its bodies is
+ * simulated (between two keyframed or held bodies it is out of the world: #syncJoints).
+ */
 export interface PlacedJoint {
   joint: RAPIER.ImpulseJoint | undefined;
   readonly a: PlacedBody;
@@ -398,6 +401,12 @@ export class PhysicsWorld {
   readonly #velocities = new Map<number, RAPIER.Vector>();
   /** Joints that break under too much force, while they hold. */
   readonly #breakable = new Set<PlacedJoint>();
+  /**
+   * The placed joints that have not broken, by the handles of their two bodies, and the scale
+   * each one's frames are made at (Havok units per game unit of its placement).
+   */
+  readonly #jointsOf = new Map<number, PlacedJoint[]>();
+  readonly #jointScales = new Map<PlacedJoint, number>();
   /** Bodies settling after being placed: silent until they first sleep (or this time). */
   readonly #settling = new Map<number, number>();
   /**
@@ -676,9 +685,14 @@ export class PhysicsWorld {
       const a = bodies[constraint.bodyA];
       const b = bodies[constraint.bodyB];
       if (!a || !b || a.body === b.body) continue;
-      const joint = this.#createJoint(constraint.data, a.body, b.body, scale / HAVOK_SCALE);
-      const placed: PlacedJoint = { joint, a, b, constraint };
+      const placed: PlacedJoint = { joint: undefined, a, b, constraint };
       joints.push(placed);
+      this.#jointScales.set(placed, scale / HAVOK_SCALE);
+      for (const { body } of [a, b]) {
+        const list = this.#jointsOf.get(body.handle);
+        if (list) list.push(placed);
+        else this.#jointsOf.set(body.handle, [placed]);
+      }
       if (constraint.breakable) this.#breakable.add(placed);
     }
     this.#changed = true;
@@ -686,6 +700,7 @@ export class PhysicsWorld {
     if (settle && isHung(placed)) this.#checkHung(placed);
     // Placed to wait: held where they are until something that moves touches them.
     if (!settle) for (const { body, data } of bodies) if (dynamicBody(data)) this.#hold(body);
+    this.#syncJoints(bodies.map(({ body }) => body));
     return placed;
   }
 
@@ -791,6 +806,44 @@ export class PhysicsWorld {
   }
 
   /**
+   * The joints of the bodies are in the world while one of their two bodies is simulated, and out
+   * of it while both are keyframed or held: Rapier solves a joint between two kinematic bodies
+   * in every substep all the same, and the living actors' ragdolls (keyframed to their poses:
+   * src/shell/actor-bodies.ts) took most of a step with their 17 joints each (Helgen's opening:
+   * 3.5 of 4.8 ms a step, for 23 actors). A joint is made again from its constraint as a body
+   * is let go (a death, a knock-down, a held body touched); a broken one is not.
+   */
+  #syncJoints(bodies: Iterable<RAPIER.RigidBody>): void {
+    for (const body of bodies) {
+      for (const placed of this.#jointsOf.get(body.handle) ?? []) {
+        const a = placed.a.body;
+        const b = placed.b.body;
+        const needed = a.isValid() && b.isValid() && (a.isDynamic() || b.isDynamic());
+        if (needed && !placed.joint) {
+          const scale = this.#jointScales.get(placed) ?? 1 / HAVOK_SCALE;
+          placed.joint = this.#createJoint(placed.constraint.data, a, b, scale);
+        } else if (!needed && placed.joint) {
+          if (placed.joint.isValid()) this.world.removeImpulseJoint(placed.joint, false);
+          placed.joint = undefined;
+        }
+      }
+    }
+  }
+
+  /** A joint is gone for good (broken, or its bodies removed). */
+  #forgetJoint(placed: PlacedJoint): void {
+    this.#breakable.delete(placed);
+    this.#jointScales.delete(placed);
+    for (const { body } of [placed.a, placed.b]) {
+      const list = this.#jointsOf.get(body.handle);
+      if (!list) continue;
+      const left = list.filter((joint) => joint !== placed);
+      if (left.length > 0) this.#jointsOf.set(body.handle, left);
+      else this.#jointsOf.delete(body.handle);
+    }
+  }
+
+  /**
    * Breakable constraints break when the impulse on them in a step exceeds their threshold
    * (Havok's units: kg·m/s, the beehive's 20 holding its 10 kg, a step taking 1.6). The joint's
    * impulse is not exposed: it is the change of momentum of its simulated body that gravity
@@ -801,8 +854,10 @@ export class PhysicsWorld {
     for (const placed of this.#breakable) {
       const joint = placed.joint;
       const threshold = placed.constraint.breakable?.threshold ?? Infinity;
-      if (!joint?.isValid()) {
-        this.#breakable.delete(placed);
+      // Out of the world while both its bodies are held (#syncJoints): nothing pulls on it.
+      if (!joint) continue;
+      if (!joint.isValid()) {
+        this.#forgetJoint(placed);
         continue;
       }
       let impulse = 0;
@@ -824,7 +879,7 @@ export class PhysicsWorld {
       if (impulse > threshold) {
         this.world.removeImpulseJoint(joint, true);
         placed.joint = undefined;
-        this.#breakable.delete(placed);
+        this.#forgetJoint(placed);
       }
     }
   }
@@ -901,7 +956,7 @@ export class PhysicsWorld {
 
   remove(placed: PlacedCollision): void {
     // Removing a body removes its joints.
-    for (const joint of placed.joints) this.#breakable.delete(joint);
+    for (const joint of placed.joints) this.#forgetJoint(joint);
     for (const collider of placed.colliders) this.unregister(collider);
     // Removing a body removes its colliders.
     for (const { body } of placed.bodies) {
@@ -967,6 +1022,7 @@ export class PhysicsWorld {
       collider.setActiveEvents(collider.activeEvents() | RAPIER.ActiveEvents.COLLISION_EVENTS);
     }
     this.#held.add(body.handle);
+    this.#syncJoints([body]);
   }
 
   /**
@@ -979,6 +1035,7 @@ export class PhysicsWorld {
       this.#held.delete(body.handle);
       body.setBodyType(RAPIER.RigidBodyType.KinematicPositionBased, false);
     }
+    this.#syncJoints(placed.bodies.map(({ body }) => body));
   }
 
   /**
@@ -1034,6 +1091,7 @@ export class PhysicsWorld {
       this.#held.delete(body.handle);
       body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
     }
+    this.#syncJoints(placed.bodies.map(({ body }) => body));
   }
 
   /** ApplyHavokImpulse: a push (direction and magnitude in Havok units) on its bodies. */
@@ -1100,11 +1158,32 @@ export class PhysicsWorld {
    * their owners' references (a trap's trigger, a quest's activator box).
    */
   triggersOverlapping(collider: RAPIER.Collider): Set<number> {
+    return this.#triggersIn(collider.translation(), collider.rotation(), collider.shape, collider);
+  }
+
+  /**
+   * The trigger volumes a ball overlaps (`center` and `radius` in game units): those an actor
+   * without a controller reaches (a flier in the air: MQ101SetStage99 across Alduin's way).
+   */
+  triggersNear(center: Vec3, radius: number): Set<number> {
+    return this.#triggersIn(
+      { x: toHavok(center[0]), y: toHavok(center[1]), z: toHavok(center[2]) },
+      { x: 0, y: 0, z: 0, w: 1 },
+      new RAPIER.Ball(toHavok(radius)),
+    );
+  }
+
+  #triggersIn(
+    translation: RAPIER.Vector,
+    rotation: RAPIER.Rotation,
+    shape: RAPIER.Shape,
+    exclude?: RAPIER.Collider,
+  ): Set<number> {
     const found = new Set<number>();
     this.world.intersectionsWithShape(
-      collider.translation(),
-      collider.rotation(),
-      collider.shape,
+      translation,
+      rotation,
+      shape,
       (other) => {
         if (!other.isEnabled()) return true;
         if ((this.matrix.flags(this.layerOf(other)) & LayerFlag.triggerVolume) === 0) return true;
@@ -1114,7 +1193,7 @@ export class PhysicsWorld {
       },
       undefined,
       undefined,
-      collider,
+      exclude,
     );
     return found;
   }
@@ -1123,6 +1202,7 @@ export class PhysicsWorld {
   release(body: RAPIER.RigidBody): void {
     if (!this.#held.delete(body.handle)) return;
     body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    this.#syncJoints([body]);
   }
 
   /** Something moving (the player's shape) touched a collider: a held body under it moves. */

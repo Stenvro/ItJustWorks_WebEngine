@@ -100,6 +100,11 @@ export interface PackageFlight {
   request(actor: number, request: FlightRequest | undefined): void;
   travel(actor: number, to: Vec3, arrive: number): Promise<boolean>;
   grab(actor: number, victim: number): Promise<boolean>;
+  /** Whether a reference is perch furniture (a dragon's: DragonPerchTower). */
+  isPerch(reference: number): Promise<boolean>;
+  /** Lands on a perch and stays there (resolves once perched). */
+  perch(actor: number, perch: number): Promise<boolean>;
+  leavePerch(actor: number): void;
 }
 
 /** A flier flies a travel this far or farther (units; nearer it walks). TODO(M13). */
@@ -505,6 +510,12 @@ export class ActorAi {
       },
       face,
       useFurniture: async (target, types) => {
+        // A flier's furniture is its perch: it flies there and lands on it (MQ101AlduinPerch1,
+        // a Sit on the Helgen tower's DragonPerchTower).
+        const flight = this.#flight?.();
+        if (flight?.mayFly(reference) === true && (await flight.isPerch(target))) {
+          return flight.perch(reference, target);
+        }
         await alight();
         return furniture.use(
           user,
@@ -514,7 +525,10 @@ export class ActorAi {
           types === undefined ? { activates: true } : { types, activates: true },
         );
       },
-      leaveFurniture: () => furniture.leave(user),
+      leaveFurniture: () => {
+        this.#flight?.()?.leavePerch(reference);
+        return furniture.leave(user);
+      },
       takeIdleMarker: (marker) => furniture.takeMarker(reference, marker),
       leaveIdleMarker: () => {
         furniture.leaveMarker(user);

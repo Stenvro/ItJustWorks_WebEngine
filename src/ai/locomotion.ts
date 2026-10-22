@@ -113,6 +113,11 @@ export interface LocomotionFrame {
   readonly verticalSpeed: number;
   readonly sprinting: boolean;
   readonly sneaking: boolean;
+  /**
+   * It wants to move, though its graph holds it where it is (an animation-driven idle): it is
+   * told it moves (moveStart), which ends such an idle.
+   */
+  readonly settingOut?: boolean;
 }
 
 /** Speeds below this are standing (game units per second). */
@@ -193,7 +198,7 @@ export class Locomotion {
     set('IsSprinting', frame.sprinting ? 1 : 0);
     set('IsSneaking', frame.sneaking ? 1 : 0);
     const told = this.#told;
-    const moving = speed > MOVING_SPEED;
+    const moving = speed > MOVING_SPEED || frame.settingOut === true;
     set('iSyncIdleLocomotion', moving ? 1 : 0);
     if (moving !== told.moving) send(moving ? 'moveStart' : 'moveStop');
     if (frame.sprinting !== told.sprinting) send(frame.sprinting ? 'SprintStart' : 'SprintStop');

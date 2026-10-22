@@ -364,6 +364,13 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
     const bones = placed.bodies.filter(({ data }) => data.motion === 'dynamic' && !data.phantom);
     expect(bones.length).toBeGreaterThanOrEqual(18);
     expect(placed.joints.length).toBeGreaterThanOrEqual(17);
+    // Held (kinematic) bodies have their joints out of the world: Rapier would solve them in
+    // every substep all the same. Keyframed (a living actor's ragdoll) the same; let go, back.
+    expect(placed.joints.every(({ joint }) => joint === undefined)).toBe(true);
+    physics.keyframe(placed);
+    expect(placed.joints.every(({ joint }) => joint === undefined)).toBe(true);
+    physics.setMotion(placed, false);
+    expect(placed.joints.every(({ joint }) => joint?.isValid() === true)).toBe(true);
     const height = (name: string): number =>
       (bones.find(({ data }) => data.node === name)?.body.translation().z ?? NaN) * 69.99125;
     // Standing in the skeleton's rest pose, the head is up high.

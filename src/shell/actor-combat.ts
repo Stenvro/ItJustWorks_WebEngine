@@ -1987,6 +1987,17 @@ export class ActorCombat implements CombatBridge {
       projectile: gear.projectile.formId,
       kind: { power: false, bash: false, sneak: false, ranged: true },
     };
+    // Always Hit: the shot flies onto its target's chest, wherever it runs.
+    const target = fighter.practice?.alwaysHit === true ? fighter.target : undefined;
+    const homing =
+      target === undefined
+        ? undefined
+        : (): Vec3 | undefined => {
+            const aimed = this.#fighters.get(target);
+            if (!aimed) return undefined;
+            const feet = this.#feet(aimed);
+            return feet && [feet[0], feet[1], feet[2] + this.#size(aimed).height * CHEST];
+          };
     void this.#projectiles.loose({
       shooter: fighter.reference,
       ammo,
@@ -1995,6 +2006,7 @@ export class ActorCombat implements CombatBridge {
       aim,
       power: Math.max(0.35, power),
       payload,
+      ...(homing && { homing }),
     });
     this.#playSound(gear.rightRecord?.sounds.attack, fighter);
     // The shot is heard; the player's commented on (ShootBow).

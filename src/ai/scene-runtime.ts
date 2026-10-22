@@ -172,9 +172,9 @@ export class SceneDirector {
   /**
    * Scene.Start (force: ForceStart). A scene that plays goes on. It starts if its quest runs,
    * its conditions hold (run on the player) and every actor that is not optional is there
-   * (its alias filled, alive). An actor that plays in another scene leaves that one for a
-   * forced start or an interruptible scene's; otherwise the scene waits until it is free
-   * (MQ101's stage fragment starts Scene4, the execution, before it stops Scene1, the cart
+   * (its alias filled; alive, or dead without its death ending the scene). An actor that plays
+   * in another scene leaves that one for a forced start or an interruptible scene's; otherwise
+   * the scene waits until it is free (MQ101's stage fragment starts Scene4, the execution, before it stops Scene1, the cart
    * ride, whose actors Scene4 needs). IsPlaying answers true from the call on (false while it
    * waits). TODO(M13): whether the engine queues such a start.
    */
@@ -410,7 +410,13 @@ export class SceneDirector {
     const cast = new Map<number, number>();
     for (const actor of record.actors) {
       const reference = host.aliasReference(quest, actor.alias);
-      if (reference !== undefined && (await host.alive(reference))) {
+      // A dead actor is cast and done with (its actions are, #watchActors), unless its death
+      // ends the scene: MQ101AlduinAttackScene1 casts StormcloakPrisoner01, beheaded in
+      // Scene4 before it, and plays all the same in the game. TODO(M13): the engine's rule.
+      const present =
+        reference !== undefined &&
+        ((await host.alive(reference)) || (actor.behaviour & SceneActorBehaviour.deathEnd) === 0);
+      if (present) {
         cast.set(actor.alias, reference);
       } else if (
         (actor.flags & SceneActorFlag.optional) === 0 &&

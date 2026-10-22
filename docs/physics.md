@@ -255,7 +255,12 @@ the twist, the swing towards the motor axis within the cone, the swing towards t
 within the cone and the plane limits (TODO(M13): Havok's limit is a cone and two planes); stiff
 spring → rope (TODO(M13): a stiff spring also pushes); a chain → a ball and socket per link.
 Motors, friction, malleable strength and a chain's tau and damping are not applied (Rapier's
-joints are stiff). **Breakable** constraints break when the impulse on them in a step exceeds
+joints are stiff). A joint is in the world only while one of its two bodies is simulated: between
+two keyframed or held bodies (a living actor's ragdoll keyframed to its pose, an object placed
+to wait) it is left out and made again from its constraint as a body is let go (a death, a
+knock-down, a touch). Rapier solves a joint between two kinematic bodies in every substep all
+the same: Helgen's opening spent 3.5 of its 4.8 ms a physics step on the 400 joints of 23
+living actors' ragdolls, at three steps a frame. **Breakable** constraints break when the impulse on them in a step exceeds
 their threshold: the beehive's 20 holds its 10 kg (1.6 per step at 60 Hz), the mace trap's pin
 (30) its 108 kg of chain and mace (17.6); the joint's impulse is not exposed, so it is the
 change of momentum of its simulated body that gravity does not explain (TODO(M13): contacts on

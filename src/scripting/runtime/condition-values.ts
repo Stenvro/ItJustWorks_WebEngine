@@ -388,6 +388,11 @@ export interface ConditionContext {
   ) => Promise<boolean | undefined> | boolean | undefined;
   /** What the subject acts on (the object it activates: GetActivationHeight, IsCarryable). */
   readonly target?: ObjectHandle;
+  /**
+   * It acts on nothing (an idle tree's action asked without a target): conditions run on the
+   * target fail, as the engine has none to run them on (not unknown, which holds).
+   */
+  readonly targetless?: boolean;
   /** The active magic effect whose conditions these are (magic-conditions.ts). */
   readonly effectKey?: string;
   /** The item a tempering recipe would improve (EPTemperingItemIsEnchanted, ...HasKeyword). */
