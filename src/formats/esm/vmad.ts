@@ -1,5 +1,6 @@
 // VMAD: the Papyrus scripts attached to a record and their property values, plus the
-// fragment section of dialogue (INFO), quest (QUST), scene (SCEN) and package (PACK) records.
+// fragment section of dialogue (INFO), quest (QUST), scene (SCEN), package (PACK) and perk
+// (PERK) records.
 // Layout: docs/formats/esm.md ("Scripts and conditions", "Scenes", "AI packages"), after
 // xEdit's wbVMADFragmented* definitions.
 
@@ -63,7 +64,7 @@ export interface ScriptAttachments {
 }
 
 export interface Fragment {
-  /** Dialogue and scenes: 'begin' or 'end'; packages also 'change'. Quest: the stage index. */
+  /** Dialogue and scenes: 'begin' or 'end'; packages also 'change'. Quest: the stage index; perk: the fragment index. */
   readonly stage: number | 'begin' | 'end' | 'change';
   /** Quest: the stage's log entry index; 0 otherwise. */
   readonly logEntry: number;
@@ -190,7 +191,7 @@ class VmadReader {
 
 /**
  * Parses a VMAD field. `recordType` selects the fragment section that follows the scripts
- * (INFO, QUST, SCEN and PACK; PERK fragments are not read).
+ * (INFO, QUST, SCEN, PACK and PERK: one fragment per index, its `stage`).
  */
 export function parseVmad(data: Uint8Array, recordType: string): ScriptAttachments {
   const reader = new BinaryReader(data);
@@ -253,6 +254,19 @@ export function parseVmad(data: Uint8Array, recordType: string): ScriptAttachmen
       const aliasFormat = reader.i16();
       const aliasReader = new VmadReader(reader, aliasVersion, aliasFormat);
       aliases.push({ alias, scripts: aliasReader.scripts() });
+    }
+  } else if (reader.remaining > 0 && recordType === 'PERK') {
+    // xEdit's perk fragments: u8 extra bind data version (2), the script, u16 count, then per
+    // fragment u16 index, i16 and i8 unknown, the script and its function.
+    reader.skip(1);
+    fragmentScript = vmad.wstring();
+    const fragmentCount = reader.u16();
+    for (let i = 0; i < fragmentCount; i++) {
+      const index = reader.u16();
+      reader.skip(3); // unknown
+      const script = vmad.wstring();
+      const fn = vmad.wstring();
+      fragments.push({ stage: index, logEntry: 0, script, function: fn });
     }
   }
   if (fragmentScript === '') fragmentScript = undefined;

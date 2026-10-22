@@ -146,7 +146,15 @@ export interface CombatAiHost {
  * itself (src/shell/combat-casting.ts; staffs are weapons in its profile).
  */
 export interface CombatCasting {
-  options(actor: number): Promise<readonly EquipOption[]>;
+  /** Its spells and shout as equipment options (the attack spell chosen against `target`). */
+  options(actor: number, target?: number): Promise<readonly EquipOption[]>;
+  /**
+   * Low on a value (Health, Magicka): it heals itself (a healing spell, for Health) or drinks a
+   * potion that restores it; whether it did.
+   */
+  restore?(actor: number, value: number): Promise<boolean>;
+  /** A conjurer calls its summon (or raises the dead) toward its target; whether it did. */
+  summon?(actor: number, target: number): Promise<boolean>;
   castAt(
     actor: number,
     hand: 'left' | 'right' | 'voice',
@@ -154,6 +162,10 @@ export interface CombatCasting {
     option: EquipOption,
   ): Promise<boolean>;
 }
+
+/** Health and Magicka (actor values): what a fighter restores. */
+const HEALTH = 24;
+const MAGICKA = 25;
 
 /**
  * The fliers' fights (src/shell/actor-flight.ts: dragons): a flier that may fly fights from the
@@ -231,6 +243,9 @@ interface Mind {
   equipped: EquipOption | undefined;
   nextEquip: number;
   equipping: boolean;
+  /** It heals or drinks again from then on; it has called its summon this fight. */
+  nextRestore: number;
+  summoned: boolean;
   search: CombatSearch | undefined;
   nextLine: number;
   /** Fleeing: its way away under way, cornered until, scared by a fight until. */
@@ -570,6 +585,8 @@ export class ActorCombatAi {
         equipped: undefined,
         nextEquip: 0,
         equipping: false,
+        nextRestore: 0,
+        summoned: false,
         search: undefined,
         nextLine: 0,
         fleeWay: undefined,
@@ -987,6 +1004,7 @@ export class ActorCombatAi {
     mind.sheatheAt = undefined;
     mind.nextLine = this.#clock + this.#between(this.#settings.tauntMin, this.#settings.tauntMax);
     mind.nextEquip = 0;
+    mind.summoned = false;
     this.#setTarget(mind, target);
     // Its combat group: of an ally already fighting beside it.
     const allies: number[] = [];
@@ -1203,6 +1221,17 @@ export class ActorCombatAi {
       });
     }
     if (mind.equipping) return;
+    // Its magic's other uses: a conjurer calls its summon once a fight; low on health (or
+    // magicka) it heals or drinks, at most every fCombatItemRestoreTimer seconds.
+    const casting = this.#options.casting?.();
+    if (casting && !mind.summoned && casting.summon) {
+      mind.summoned = true;
+      void casting.summon(reference, target.reference);
+    }
+    if (casting?.restore && this.#clock >= mind.nextRestore) {
+      mind.nextRestore = this.#clock + this.#settings.itemRestoreTime;
+      void this.#restore(mind, casting);
+    }
     if (state.weapon === WeaponState.sheathed) {
       void host.draw(reference);
       return;
@@ -1219,9 +1248,9 @@ export class ActorCombatAi {
       });
     }
     const option = mind.equipped;
-    const casting =
+    const casts =
       option && (option.kind === 'magic' || option.kind === 'staff' || option.kind === 'shout');
-    if (casting) {
+    if (casts) {
       this.#cast(mind, view, target.reference, option, distance, facing);
       return;
     }
@@ -1423,7 +1452,7 @@ export class ActorCombatAi {
 
   /**
    * A spell, staff or shout it fights with (5.3's castAt): facing its target within the
-   * option's range, it casts. TODO(M10) 5.3: the casting itself is magic's.
+   * option's range, it casts (src/shell/actor-casting.ts castAt and shoutAt).
    */
   #cast(
     mind: Mind,
@@ -1558,6 +1587,20 @@ export class ActorCombatAi {
     return count;
   }
 
+  /** Low on health or magicka (iAICombatRestore*Percentage): it heals or drinks. */
+  async #restore(mind: Mind, casting: CombatCasting): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime || !casting.restore) return;
+    for (const [value, percent] of [
+      [HEALTH, this.#settings.restoreHealthPercent],
+      [MAGICKA, this.#settings.restoreMagickaPercent],
+    ] as const) {
+      const now = await runtime.actors.value(mind.reference, value);
+      if (now.max <= 0 || (now.current / now.max) * 100 >= percent) continue;
+      if (await casting.restore(mind.reference, value)) return;
+    }
+  }
+
   /**
    * What it fights with (its style's equipment scores against the range): it takes up the best
    * of what it carries (sheathing first), or fights with its fists.
@@ -1567,7 +1610,7 @@ export class ActorCombatAi {
     const runtime = this.#options.session.scriptsReady;
     if (!profile || !runtime) return;
     const casting = this.#options.casting?.();
-    const spells = casting ? await casting.options(mind.reference) : [];
+    const spells = casting ? await casting.options(mind.reference, mind.target) : [];
     const current = view.gear?.weapon;
     const options = [...profile.options, ...spells].map((option) => ({
       ...option,

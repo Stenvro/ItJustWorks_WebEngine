@@ -106,7 +106,7 @@ export class CombatProfiles {
 /**
  * The weapons an actor carries as equipment options (melee by its reach, a bow or crossbow with
  * ammunition for it by its range), and its fists (its unarmed damage). Staffs cast: magic's
- * (TODO(M10) 5.3: CombatCasting's options).
+ * (CombatCasting's options: src/shell/combat-casting.ts).
  */
 export async function weaponOptions(
   runtime: ScriptRuntime,

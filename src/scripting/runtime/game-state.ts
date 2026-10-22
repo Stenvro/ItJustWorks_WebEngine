@@ -73,6 +73,11 @@ export interface ReferenceState {
   noFavor?: boolean;
   /** SetActorCause: the actor its doings are blamed on (a trap's hits). */
   actorCause?: number;
+  /**
+   * Flora harvested (harvest-engine.ts): when (game days) and in which cell; it grows again as
+   * that cell resets. TODO(M12): in the save.
+   */
+  harvested?: { readonly at: number; readonly cell?: number };
 }
 
 export interface ActorValueState {
@@ -334,6 +339,8 @@ export class GameState {
   readonly factions = new Map<number, FactionState>();
   readonly locations = new Map<number, LocationState>();
   readonly cells = new Map<number, CellState>();
+  /** When (game days) the player was last in each cell (cells reset after; TODO(M12): saved). */
+  readonly cellVisits = new Map<number, number>();
   /** Relationship ranks scripts set between two NPC_ bases ("low:high" form ids). */
   readonly relationships = new Map<string, number>();
   /** Crime: stolen items, jail, places off limits, favor (crime-engine.ts). */

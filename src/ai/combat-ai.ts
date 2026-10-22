@@ -105,6 +105,15 @@ export interface CombatAiSettings {
   readonly inventoryUpdateTime: number;
   /** A fleeing actor that cannot get away (cornered) fights again within this of its enemy. */
   readonly corneredDistance: number;
+  /** fCombatItemRestoreTimer: it heals or drinks at most this often (seconds). */
+  readonly itemRestoreTime: number;
+  /** iAICombatRestoreHealthPercentage: it heals or drinks below this share of its health (%). */
+  readonly restoreHealthPercent: number;
+  /**
+   * iAICombatRestoreMagickaPercentage: it drinks below this share of its magicka (%; not in the
+   * plugins: TODO(M13) the engine's value).
+   */
+  readonly restoreMagickaPercent: number;
 }
 
 /**
@@ -145,6 +154,9 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['acceptYieldTime', undefined, 3],
   ['inventoryUpdateTime', 'fCombatInventoryUpdateTimer', 3],
   ['corneredDistance', undefined, 192],
+  ['itemRestoreTime', 'fCombatItemRestoreTimer', 3],
+  ['restoreHealthPercent', 'iAICombatRestoreHealthPercentage', 60],
+  ['restoreMagickaPercent', 'iAICombatRestoreMagickaPercentage', 50],
 ];
 
 export function readCombatAiSettings(

@@ -69,6 +69,8 @@ export interface CellObject {
   readonly lock?: ObjectLock;
   /** ACTI / FLOR RNAM: the verb its activation prompt shows instead of the default. */
   readonly activateText?: string;
+  /** FLOR / TREE with an ingredient (PFIG): activating it harvests it (harvest-engine.ts). */
+  readonly harvestable?: boolean;
   /**
    * Furniture: whether it is slept in (a sleep marker), sat or leant on (a sit or lean marker),
    * its workbench (WBDT type; 0 none).
@@ -721,6 +723,8 @@ export async function loadCellData(
         (item.book.flags & BookFlag.teachesSpell) === 0 &&
         (base.text('DESC') ?? '') !== '' && { readable: true }),
       ...(activateText && { activateText }),
+      ...((base.type === 'FLOR' || base.type === 'TREE') &&
+        (base.formIdField('PFIG') ?? 0) !== 0 && { harvestable: true }),
       ...(base.type === 'FURN' && { furniture: furnitureOf(base) }),
     });
   }

@@ -14,6 +14,7 @@ import type { GpuDecals } from '../render/decals.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { Mat4, Vec3 } from '../render/math.ts';
 import { parseTextureSet, placeDecal, type DecalData, type TextureSet } from '../world/decal.ts';
+import type { Impact } from '../world/impact-records.ts';
 import type { GameSession } from './game-session.ts';
 
 /** How far behind a hit its blood lands (game units). */
@@ -58,13 +59,13 @@ export class CombatImpacts {
     return this.#decals;
   }
 
-  /** Sounds a hit and leaves its decal. */
-  async hit(hit: HitImpact, physics: PhysicsWorld | undefined): Promise<void> {
+  /** Sounds a hit and leaves its decal; resolves the impact (IPCT) it was. */
+  async hit(hit: HitImpact, physics: PhysicsWorld | undefined): Promise<Impact | undefined> {
     const sounds = this.#session.soundSystem;
-    if (!sounds || hit.impactDataSet === undefined) return;
+    if (!sounds || hit.impactDataSet === undefined) return undefined;
     const records = sounds.impactRecords;
     const set = await records.impactDataSet(hit.impactDataSet);
-    if (!set) return;
+    if (!set) return undefined;
     const material =
       hit.materialForm !== undefined
         ? await records.material(hit.materialForm)
@@ -72,10 +73,11 @@ export class CombatImpacts {
           ? await records.materialById(hit.materialId)
           : undefined;
     const impact = await impactAgainst(records, set, material);
-    if (!impact) return;
+    if (!impact) return undefined;
     const sound = hit.heavy ? (impact.heavySound ?? impact.sound) : impact.sound;
     if (sound !== undefined) void sounds.play(sound, hit.position);
     if (physics) await this.#splatter(impact.formId, hit, physics);
+    return impact;
   }
 
   /** The impact's decal on what lies behind the hit (blood on the floor or a wall). */
