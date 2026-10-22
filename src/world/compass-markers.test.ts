@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { discoveryMusic, headingTo, markerAlpha } from './compass.ts';
+import { discoveryMusic, headingTo, markerAlpha } from './compass-markers.ts';
 
 describe('the compass', () => {
   it('gives headings from north and fades map markers with distance', () => {
