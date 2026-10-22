@@ -19,6 +19,7 @@ import {
   collisionGroup,
   objectActivation,
   openable,
+  perkActivation,
   PlaySession,
   type Activatable,
   type CellRagdoll,
@@ -97,6 +98,8 @@ import {
   skeletonEventsToScripts,
 } from '../animation/script-graphs.ts';
 import { CreatedObjects } from './created-objects.ts';
+import { FloraLooks } from './flora-looks.ts';
+import { connectPlayerTime } from './time-flow.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import type { PlayerView } from './race-menu.ts';
 import { groundUnder, type SoundingWorld } from './actor-sounds.ts';
@@ -392,6 +395,8 @@ export class ModelViewer {
   #detachScripts: (() => void) | undefined;
   /** What the scripts created in the cell on screen (PlaceAtMe). */
   #created: CreatedObjects | undefined;
+  /** The cell's harvestable flora (their harvested look). */
+  #flora: FloraLooks | undefined;
 
   /** What the running game's scripts see of, and do to, the cell on screen. */
   readonly #scriptView: ScriptView = {
@@ -426,6 +431,18 @@ export class ModelViewer {
     },
     moved: (reference) => {
       void this.#scriptMoved(reference);
+    },
+    magicEffect: (shown) => {
+      this.#stage?.magicEffect(shown);
+    },
+    stagger: (actor, magnitude, from) => {
+      this.#stage?.combat.staggerBy(actor, magnitude, from);
+    },
+    effectShader: (shader, target, play, duration) => {
+      this.#stage?.effects.shader(shader, target, play, duration);
+    },
+    visualEffect: (effect, target, play, duration) => {
+      this.#stage?.effects.visual(effect, target, play, duration);
     },
     graphOf: (reference) =>
       placedScriptGraph(
@@ -763,6 +780,8 @@ export class ModelViewer {
     player.character.walkable = (x, y, z) =>
       this.#cell?.navmesh.heightNear(x, y, z, NAVMESH_TOLERANCE) !== undefined;
     player.overEncumbered = () => this.#session?.overEncumbered === true;
+    // Slow Time's pace and the falls' damage (src/shell/time-flow.ts).
+    connectPlayerTime(player, () => this.#session);
     // What the player does that the actors near comment on (src/shell/actor-talk.ts).
     player.onAction = (subtype) => {
       void this.#stage?.talk.playerAction(subtype);
@@ -784,6 +803,8 @@ export class ModelViewer {
         // A horse is ridden (src/shell/actor-mounts.ts).
         (placed) => this.#stage?.mounts.activation(placed),
       ),
+      // The player's perks on activation (Filter Activation, Activate's choices, labels).
+      perks: perkActivation(() => this.#session?.scriptsReady),
       prompt: this.#ui.prompt,
       hud: session.hud,
       onImpact: (impact) => {
@@ -888,6 +909,7 @@ export class ModelViewer {
         [
           ...cell.data.lights.filter((light) => this.#isEnabled(light.reference)),
           ...(this.#created?.lights() ?? []),
+          ...(this.#stage?.lights() ?? []),
         ],
         this.#tickClock(),
         at,
@@ -904,6 +926,8 @@ export class ModelViewer {
     this.#detachScripts?.();
     this.#detachScripts = session.scriptWorld.attach(this.#scriptView);
     this.#created = new CreatedObjects(session, this.#renderer);
+    this.#flora?.clear();
+    this.#flora = new FloraLooks(session, this.#renderer);
     this.#stage = new ActorStage({
       session,
       seat: () => this.#seat,
@@ -1302,6 +1326,9 @@ export class ModelViewer {
         instances.push(instance);
         placed.set(object, instance);
         shown.set(object.reference, instance);
+        this.#flora?.add(object, instance.world, shownBy(object.reference), () =>
+          this.#isEnabled(object.reference),
+        );
       }
     }
     // All the collision; a disabled reference's is switched off as it is placed.
@@ -1709,6 +1736,7 @@ export class ModelViewer {
           ...this.#avatarScenes(),
           ...(this.#stage?.scenes() ?? []),
           ...(this.#created?.scenes() ?? []),
+          ...(this.#flora?.scenes() ?? []),
         ],
         camera,
         lighting: () => ({
@@ -1720,6 +1748,8 @@ export class ModelViewer {
               [
                 ...lights.filter((light) => this.#isEnabled(light.reference)),
                 ...(this.#created?.lights() ?? []),
+                // Magic's: effects on actors, casts in hands, what flies and bursts.
+                ...(this.#stage?.lights() ?? []),
               ],
               this.#tickClock(),
               camera.position,
@@ -1733,7 +1763,8 @@ export class ModelViewer {
         decals: () => [...(decals ? [decals] : []), ...(this.#stage?.combat.decals() ?? [])],
         backdrop: false,
         update: (seconds) => {
-          this.#avatar?.update(seconds);
+          // The player animates at their own pace in slowed time.
+          this.#avatar?.update(seconds * (this.#session?.time.playerPace ?? 1));
           if (this.#avatar) this.#seat?.frame(this.#avatar.stepped);
           this.#stage?.animate(seconds);
           animateSkeletons(this.#objectSkeletons, seconds);
@@ -1871,6 +1902,7 @@ export class ModelViewer {
     this.#stageCell = undefined;
     this.#scripted = new Set();
     this.#created?.clear(this.#play);
+    this.#flora?.clear();
     this.#stopPlay();
     this.#sky?.dispose();
     this.#sky = undefined;

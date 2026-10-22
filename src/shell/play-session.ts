@@ -8,6 +8,11 @@ import { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
 import { settlesWhenPlaced, type CollisionData } from '../physics/collision-data.ts';
 import { GrabSpring } from '../physics/grab.ts';
+import { HAVOK_SCALE } from '../physics/collision-data.ts';
+
+/** Telekinesis: where the object is held before the camera, and how fast it flies let go. */
+const TELEKINESIS_HOLD = 150;
+const TELEKINESIS_THROW = 2000;
 import { Layer } from '../physics/collision-layers.ts';
 import { landscapeMesh } from '../physics/landscape.ts';
 import type {
@@ -26,7 +31,8 @@ import type { InstanceMotion, ModelInstance, PointLight } from '../render/scene-
 import type { CellObject, CellPrimitive, ObjectLock, Teleport } from '../world/cell-loader.ts';
 import { lockDifficulty, lockLevelSetting } from '../gameplay/lockpicking.ts';
 import type { LandData } from '../world/land.ts';
-import type { ActorMotion } from '../scripting/runtime/runtime.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import type { ActorMotion, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { Player } from './player.ts';
 import { attachPlayerInput } from './player-input.ts';
 import type { HudSignals } from './hud-signals.ts';
@@ -92,6 +98,10 @@ export interface ObjectUses {
   sneaking?(): boolean;
   /** Opens an actor's pockets (the container menu in pickpocket mode). */
   pickpocket?(actor: number): void;
+  /** The player harvests flora (its ingredient, src/scripting/runtime/harvest-engine.ts). */
+  harvest?(object: CellObject): void;
+  /** Whether flora has been harvested (it has not grown again). */
+  harvested?(object: CellObject): boolean;
 }
 
 /**
@@ -99,7 +109,7 @@ export interface ObjectUses {
  * other doors open and close. In a running game (`uses`) containers open their menu (their
  * lid opening meanwhile), books read, other items taken, beds slept in; owned ones are stolen
  * (sSteal, sStealFrom: their red verbs) and locked ones picked (the lockpicking menu).
- * TODO(M11): flora harvested (FLOR PFIG; as many as the perks give: Mod Ingredients Harvested,
+ * Flora is harvested (FLOR / TREE PFIG; as many as the perks give: Mod Ingredients Harvested,
  * Green Thumb). Furniture is sat in (sSit) and workbenches open the crafting menu.
  */
 export function objectActivation(
@@ -168,6 +178,18 @@ ${name}`);
           play(object.sounds?.close);
           sequence('close');
         });
+      },
+    };
+  }
+  // Flora with an ingredient is harvested ("Harvest", its RNAM: "Catch", "Pick"); harvested,
+  // it offers nothing until it grows again.
+  if (uses?.harvest && object.harvestable) {
+    if (uses.harvested?.(object) === true) return undefined;
+    return {
+      verb: object.activateText ?? verb('sHarvest', 'Harvest'),
+      name: object.name,
+      activate: () => {
+        uses.harvest?.(object);
       },
     };
   }
@@ -250,6 +272,34 @@ export interface Activatable {
   /** The reference activated (the perks may keep the player from it: Filter Activation). */
   readonly reference?: number;
   activate(): void;
+}
+
+/** The player's perks on activating a reference (src/scripting/runtime/perk-engine.ts). */
+export interface PerkActivation {
+  /** Filter Activation: whether the player may activate it (a werewolf opens no doors). */
+  allowed(reference: number): Promise<boolean>;
+  /** Set Activate Label: the verb the perks give it, if any. */
+  label(reference: number): Promise<string | undefined>;
+  /**
+   * Activate: the perks' choices run (or are offered beside the default activation, `verb`,
+   * in a message box); resolves whether the default activation goes on.
+   */
+  choose(reference: number, verb: string, name: string): Promise<boolean>;
+}
+
+/** The player's perk activation on a running game's perk system. */
+export function perkActivation(runtime: () => ScriptRuntime | undefined): PerkActivation {
+  return {
+    allowed: async (reference) => {
+      const perks = runtime()?.perks;
+      return !perks || !(await perks.activationFiltered(PLAYER_REF, reference));
+    },
+    label: async (reference) => runtime()?.perks.activateLabel(PLAYER_REF, reference),
+    choose: async (reference, verb, name) => {
+      const perks = runtime()?.perks;
+      return !perks || perks.activate(PLAYER_REF, reference, verb, name);
+    },
+  };
 }
 
 /** The collision of one loaded cell. */
@@ -391,7 +441,9 @@ export class PlaySession {
   #noticeTimer: ReturnType<typeof setTimeout> | undefined;
   /** What the crosshair rests on. */
   #target: Activatable | undefined;
-  readonly #mayActivate: ((reference: number) => Promise<boolean>) | undefined;
+  readonly #perks: PerkActivation | undefined;
+  /** Set Activate Label's verb of the reference the crosshair rests on (null: none). */
+  #label: { readonly reference: number; verb: string | null | undefined } | undefined;
   /** Activate went down on a loose object: it is grabbed if still held after fZKeyDelay. */
   #hold:
     | {
@@ -402,7 +454,9 @@ export class PlaySession {
       }
     | undefined;
   /** The object held (its spring) and how far in front of the camera. */
-  #grab: { readonly spring: GrabSpring; readonly distance: number } | undefined;
+  #grab:
+    | { readonly spring: GrabSpring; readonly distance: number; readonly telekinesis?: boolean }
+    | undefined;
 
   /**
    * The player is put on the ground below their feet (searching from `searchAbove` higher)
@@ -429,11 +483,8 @@ export class PlaySession {
       length: number,
       radius: number,
     ) => { readonly distance: number; readonly target: Activatable } | undefined;
-    /**
-     * Whether the player may activate a reference (the perks' Filter Activation: a quest's
-     * blocked objects, a werewolf's doors); none: always.
-     */
-    mayActivate?: (reference: number) => Promise<boolean>;
+    /** The player's perks on activation (Filter Activation, Activate, Set Activate Label). */
+    perks?: PerkActivation;
     /** Where the activation prompt is shown. */
     prompt?: HTMLElement;
     /** The HUD's signals: the activation target goes to the game's HUD while one listens. */
@@ -452,7 +503,7 @@ export class PlaySession {
     this.#arrivesOnFloor = init.arrivesOnFloor ?? false;
     this.#activatable = init.activatable;
     this.#actorAt = init.actorAt;
-    this.#mayActivate = init.mayActivate;
+    this.#perks = init.perks;
     this.#prompt = init.prompt;
     this.#hud = init.hud;
     if (init.hud) {
@@ -679,17 +730,23 @@ export class PlaySession {
     };
   }
 
-  /** Activates a target unless the player may not (mayActivate: the perks' Filter Activation). */
+  /**
+   * Activates a target unless the player may not (the perks' Filter Activation); the perks'
+   * Activate choices may run instead of (or before) its default activation.
+   */
   #activateTarget(target: Activatable | undefined): void {
     if (!target) return;
     const reference = target.reference;
-    const may = this.#mayActivate;
-    if (reference === undefined || !may) {
+    const perks = this.#perks;
+    if (reference === undefined || !perks) {
       target.activate();
       return;
     }
-    void may(reference).then((allowed) => {
-      if (allowed) target.activate();
+    void (async (): Promise<boolean> => {
+      if (!(await perks.allowed(reference))) return false;
+      return perks.choose(reference, target.verb, target.name);
+    })().then((goOn) => {
+      if (goOn) target.activate();
     });
   }
 
@@ -742,7 +799,7 @@ export class PlaySession {
         };
       }
     }
-    if (this.#grab && !player.isHeld('Activate')) this.#grab = undefined;
+    if (this.#grab && !this.#grab.telekinesis && !player.isHeld('Activate')) this.#grab = undefined;
   }
 
   /**
@@ -770,15 +827,64 @@ export class PlaySession {
       point[1] - grab.spring.target[1],
       point[2] - grab.spring.target[2],
     );
-    if (gap > this.player.ini.number('Interface', 'fActivatePickLength')) {
+    // A telekinetic hold pulls from afar; a held object left behind drops.
+    if (!grab.telekinesis && gap > this.player.ini.number('Interface', 'fActivatePickLength')) {
       this.#grab = undefined;
       return;
     }
     grab.spring.apply(step);
   }
 
+  /**
+   * Telekinesis held (src/shell/player-casting.ts): the loose object the crosshair finds within
+   * `reach` is taken hold of by the grab spring (the player's grabSpring, as the Z key's:
+   * CommonLibSSE PlayerCharacter GrabbingType kTelekinesis) and pulled to TELEKINESIS_HOLD units
+   * before the camera; let go, it is flung along the view. TODO(M13): the engine's hold distance
+   * and throw speed (fTelekinesis* are not in the plugins), the thrown object's damage (Mod
+   * Telekinesis Damage, Damage Mult).
+   */
+  telekinesis(active: boolean, reach: number): void {
+    const grab = this.#grab;
+    if (!active) {
+      if (grab?.telekinesis) {
+        this.#grab = undefined;
+        const body = grab.spring.body;
+        const forward = this.player.forward;
+        if (body.isValid())
+          body.setLinvel(
+            {
+              x: (forward[0] * TELEKINESIS_THROW) / HAVOK_SCALE,
+              y: (forward[1] * TELEKINESIS_THROW) / HAVOK_SCALE,
+              z: (forward[2] * TELEKINESIS_THROW) / HAVOK_SCALE,
+            },
+            true,
+          );
+      }
+      return;
+    }
+    if (grab || this.seated || this.dead) return;
+    const ray = this.#pickRay();
+    const hit = this.physics.pick(
+      ray.origin,
+      ray.direction,
+      reach,
+      ray.radius,
+      Layer.itemPicker,
+      this.player.character.collider,
+    );
+    const body = hit && this.physics.grabbable(hit.collider);
+    if (!hit || !body) return;
+    this.physics.release(body);
+    this.#grab = {
+      spring: new GrabSpring(body, hit.point, this.player.grab),
+      distance: TELEKINESIS_HOLD,
+      telekinesis: true,
+    };
+  }
+
   /** Shows what activating would do: the game's HUD in Play, the engine's prompt elsewhere. */
-  #setTarget(target: Activatable | undefined): void {
+  #setTarget(shown: Activatable | undefined): void {
+    const target = this.#labelled(shown);
     if (target?.verb === this.#target?.verb && target?.name === this.#target?.name) {
       this.#target = target;
       return;
@@ -800,6 +906,32 @@ export class PlaySession {
     prompt.hidden = !target;
     const key = this.player.keyOf('Activate') ?? '';
     prompt.textContent = target ? `${key}  ${target.verb}  ${target.name}` : '';
+  }
+
+  /**
+   * The target with the verb the player's perks give it (Set Activate Label: a werewolf's
+   * Feed), asked once as the crosshair comes to rest on a reference.
+   */
+  #labelled(target: Activatable | undefined): Activatable | undefined {
+    const reference = target?.reference;
+    const perks = this.#perks;
+    if (!target || reference === undefined || !perks) {
+      this.#label = undefined;
+      return target;
+    }
+    let label = this.#label;
+    if (label?.reference !== reference) {
+      const asked: { readonly reference: number; verb: string | null | undefined } = {
+        reference,
+        verb: undefined,
+      };
+      label = asked;
+      this.#label = asked;
+      void perks.label(reference).then((verb) => {
+        asked.verb = verb ?? null;
+      });
+    }
+    return label.verb ? { ...target, verb: label.verb } : target;
   }
 
   /**

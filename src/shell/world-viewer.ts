@@ -99,6 +99,8 @@ import {
   skeletonEventsToScripts,
 } from '../animation/script-graphs.ts';
 import { CreatedObjects } from './created-objects.ts';
+import { FloraLooks } from './flora-looks.ts';
+import { connectPlayerTime } from './time-flow.ts';
 import { cellStatesElement } from './cell-states.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import type { PlayerView } from './race-menu.ts';
@@ -117,6 +119,7 @@ import {
   collisionGroup,
   objectActivation,
   openable,
+  perkActivation,
   PlaySession,
   type Activatable,
   type CollisionGroup,
@@ -600,6 +603,8 @@ export class WorldViewer {
   #detachScripts: (() => void) | undefined;
   /** What the scripts created in the loaded cells (PlaceAtMe). */
   #created: CreatedObjects | undefined;
+  /** The loaded cells' harvestable flora (their harvested look). */
+  #flora: FloraLooks | undefined;
 
   /** What the running game's scripts see of, and do to, the loaded cells. */
   readonly #scriptView: ScriptView = {
@@ -645,6 +650,18 @@ export class WorldViewer {
     },
     moved: (reference) => {
       void this.#scriptMoved(reference);
+    },
+    magicEffect: (shown) => {
+      this.#stage?.magicEffect(shown);
+    },
+    stagger: (actor, magnitude, from) => {
+      this.#stage?.combat.staggerBy(actor, magnitude, from);
+    },
+    effectShader: (shader, target, play, duration) => {
+      this.#stage?.effects.shader(shader, target, play, duration);
+    },
+    visualEffect: (effect, target, play, duration) => {
+      this.#stage?.effects.visual(effect, target, play, duration);
     },
     graphOf: (reference) => {
       for (const cell of this.#cells.values()) {
@@ -987,6 +1004,8 @@ export class WorldViewer {
     this.#detachScripts?.();
     this.#detachScripts = session.scriptWorld.attach(this.#scriptView);
     this.#created = new CreatedObjects(session, this.#renderer);
+    this.#flora?.clear();
+    this.#flora = new FloraLooks(session, this.#renderer);
     this.#stage = new ActorStage({
       session,
       seat: () => this.#seat,
@@ -1123,6 +1142,8 @@ export class WorldViewer {
         .get(cellKey(Math.floor(px / CELL_SIZE), Math.floor(py / CELL_SIZE)))
         ?.navmesh?.heightNear(px, py, pz, NAVMESH_TOLERANCE) !== undefined;
     player.overEncumbered = () => this.#session?.overEncumbered === true;
+    // Slow Time's pace and the falls' damage (src/shell/time-flow.ts).
+    connectPlayerTime(player, () => this.#session);
     // Sprinting takes stamina (src/scripting/runtime/progression-engine.ts).
     player.canSprint = () => this.#session?.scriptsReady?.progression.canSprint(PLAYER_REF) ?? true;
     player.onSprintRefused = () => {
@@ -1150,11 +1171,8 @@ export class WorldViewer {
         // A horse is ridden (src/shell/actor-mounts.ts).
         (placed) => this.#stage?.mounts.activation(placed),
       ),
-      // The player's perks may keep them from it (Filter Activation: perk-engine.ts).
-      mayActivate: async (reference) => {
-        const perks = this.#session?.scriptsReady?.perks;
-        return !perks || !(await perks.activationFiltered(PLAYER_REF, reference));
-      },
+      // The player's perks on activation (Filter Activation, Activate's choices, labels).
+      perks: perkActivation(() => this.#session?.scriptsReady),
       prompt: this.#ui.prompt,
       hud: session.hud,
       notice: this.#ui.notice,
@@ -1246,7 +1264,8 @@ export class WorldViewer {
       backdrop: false,
       shadows: true,
       update: (seconds) => {
-        this.#avatar?.update(seconds);
+        // The player animates at their own pace in slowed time.
+        this.#avatar?.update(seconds * (this.#session?.time.playerPace ?? 1));
         if (this.#avatar) this.#seat?.frame(this.#avatar.stepped);
         // Pines' branches sway with the weather's wind.
         const wind = this.#sky?.lighting()?.wind ?? 0;
@@ -1726,6 +1745,10 @@ export class WorldViewer {
     const flow = this.#flowMap(world, cell.x, cell.y);
     const placed = await this.#place(session, objects, flow, true, shownBy);
     const instances = placed.map(({ instance }) => instance);
+    for (const { object, instance } of placed)
+      this.#flora?.add(object, instance.world, shownBy(object.reference), () =>
+        cell.isEnabled(object.reference),
+      );
     // Its actors (those in it now) come onto the stage; the dead lie as ragdolls.
     const ragdolls =
       (await this.#stage?.attachCell(cellKey(cell.x, cell.y), data.actors, (reference) =>
@@ -2194,6 +2217,7 @@ export class WorldViewer {
       if (key === cellKey(cell.x, cell.y)) this.#created?.remove(entry.reference, this.#play);
     }
     this.#play?.remove(cell.collision);
+    for (const object of cell.data?.objects ?? []) this.#flora?.remove(object.reference);
     cell.terrain?.destroy();
     cell.scene?.destroy();
     cell.decals?.destroy();
@@ -2215,6 +2239,7 @@ export class WorldViewer {
     for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
     if (this.#stage) yield* this.#stage.scenes();
     if (this.#created) yield* this.#created.scenes();
+    if (this.#flora) yield* this.#flora.scenes();
     for (const [key, large] of this.#largeCells) {
       // The full cell shows them once it is ready.
       if (large.ready && large.scene && this.#cells.get(key)?.ready !== true) yield large.scene;
@@ -2350,6 +2375,24 @@ export class WorldViewer {
           ),
         });
       }
+    }
+    // Magic's lights: effects on actors, casts in hands, what flies and bursts.
+    const startFade = this.#session?.ini.number('Display', 'fLightLODStartFade');
+    for (const light of pointLights(
+      this.#stage?.lights() ?? [],
+      seconds,
+      camera,
+      this.#emittanceRgb,
+      startFade,
+    )) {
+      lights.push({
+        ...light,
+        distance: Math.hypot(
+          light.position[0] - camera[0],
+          light.position[1] - camera[1],
+          light.position[2] - camera[2],
+        ),
+      });
     }
     lights.sort((a, b) => a.distance - b.distance);
     this.#sky?.frame(performance.now(), camera);

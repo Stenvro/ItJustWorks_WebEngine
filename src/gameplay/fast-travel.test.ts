@@ -10,6 +10,9 @@ describe('fast travel', () => {
     expect(noFastTravelReason({ ...free, placeForbids: true })).toBe('sNoFastTravelCell');
     expect(noFastTravelReason({ ...free, inAir: true })).toBe('sNoFastTravelInAir');
     expect(noFastTravelReason({ ...free, carried: 301 })).toBe('sNoFastTravelOverencumbered');
+    expect(noFastTravelReason({ ...free, takingHealthDamage: true })).toBe(
+      'sFastTravelNoTravelHealthDamage',
+    );
   });
 
   it('takes the time walking there takes, at the timescale', () => {

@@ -9,8 +9,8 @@
 // fFastTravelSpeedMult (1 unless a plugin sets it), at the timescale. TODO(M13): the game's own
 // rounding of the hours (unknown, UESP). TODO(M10): in combat (sNoFastTravelCombat), enemies
 // near (sNoFastTravelHostileActorsNear); followers and the horse coming along. Not while guards
-// pursue the player (sNoFastTravelAlarm: crime). TODO(M11): taking health damage
-// (sFastTravelNoTravelHealthDamage).
+// pursue the player (sNoFastTravelAlarm: crime), nor while an effect takes their health
+// (sFastTravelNoTravelHealthDamage: the magic system's damagingHealth).
 // Platform-independent. Notes: docs/ui.md ("The map").
 
 /** WRLD DATA: the world forbids fast travel. */
@@ -28,6 +28,8 @@ export interface FastTravelState {
   readonly carryWeight: number;
   /** Guards pursue the player (crime: src/shell/actor-crime.ts). */
   readonly pursued?: boolean;
+  /** An effect takes the player's health over time (a poison, a fire's burning). */
+  readonly takingHealthDamage?: boolean;
 }
 
 /** Why the player may not fast travel now (the game setting of its message), if not. */
@@ -37,6 +39,7 @@ export function noFastTravelReason(state: FastTravelState): string | undefined {
   if (state.inAir) return 'sNoFastTravelInAir';
   if (state.carried > state.carryWeight) return 'sNoFastTravelOverencumbered';
   if (state.pursued === true) return 'sNoFastTravelAlarm';
+  if (state.takingHealthDamage === true) return 'sFastTravelNoTravelHealthDamage';
   return undefined;
 }
 

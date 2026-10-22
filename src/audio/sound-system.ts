@@ -735,6 +735,25 @@ export class SoundSystem {
     });
   }
 
+  #timeMultiplier = 1;
+
+  /**
+   * The world's clock runs at `multiplier` (Slow Time, src/shell/time-flow.ts): the sounds placed
+   * in the world play slowed and lowered with it. TODO(M13): which of the engine's sounds keep
+   * their pitch is not documented (SSE's SNCT has no such flag); the 2D ones (the interface,
+   * music) do here.
+   */
+  setTimeMultiplier(multiplier: number): void {
+    if (multiplier === this.#timeMultiplier) return;
+    this.#timeMultiplier = multiplier;
+    for (const instance of this.#playing)
+      if (this.#timeAffects(instance)) instance.setTimeRate(multiplier);
+  }
+
+  #timeAffects(instance: SoundInstance): boolean {
+    return instance.placed;
+  }
+
   /** Every frame: the listener at the camera, sounds following, placed loops in range. */
   update(camera: Camera | undefined): void {
     if (!camera) return;
@@ -1002,6 +1021,7 @@ export class SoundSystem {
       fadeIn,
     );
     instance.update(this.#listener);
+    if (this.#timeAffects(instance)) instance.setTimeRate(this.#timeMultiplier);
     this.#playing.add(instance);
     return instance;
   }
