@@ -538,6 +538,84 @@ export const HAVOK_LAYOUTS: Readonly<Record<string, ClassLayout>> = {
       keyframedBonesList: [96, 'ptr'],
     },
   },
+  hkbGetUpModifier: {
+    parent: 'hkbModifier',
+    size: 128,
+    members: {
+      groundNormal: [80, 'vec4'],
+      duration: [96, 'f32'],
+      alignWithGroundDuration: [100, 'f32'],
+      rootBoneIndex: [104, 'i16'],
+      otherBoneIndex: [106, 'i16'],
+      anotherBoneIndex: [108, 'i16'],
+    },
+  },
+  BSRagdollContactListenerModifier: {
+    parent: 'hkbModifier',
+    size: 144,
+    members: { contactEvent: [88, EVENT_PROPERTY], bones: [104, 'ptr'] },
+  },
+  hkbPoweredRagdollControlsModifier: {
+    parent: 'hkbModifier',
+    size: 144,
+    members: {
+      controlData: [80, 'struct:hkbPoweredRagdollControlData'],
+      bones: [112, 'ptr'],
+      worldFromModelModeData: [120, 'struct:hkbWorldFromModelModeData'],
+      boneWeights: [128, 'ptr'],
+    },
+  },
+  hkbPoweredRagdollControlData: {
+    size: 32,
+    members: {
+      maxForce: [0, 'f32'],
+      tau: [4, 'f32'],
+      damping: [8, 'f32'],
+      proportionalRecoveryVelocity: [12, 'f32'],
+      constantRecoveryVelocity: [16, 'f32'],
+    },
+  },
+  hkbWorldFromModelModeData: {
+    size: 8,
+    members: {
+      poseMatchingBone0: [0, 'i16'],
+      poseMatchingBone1: [2, 'i16'],
+      poseMatchingBone2: [4, 'i16'],
+      mode: [6, 'i8'],
+    },
+  },
+  hkbRigidBodyRagdollControlsModifier: {
+    parent: 'hkbModifier',
+    size: 160,
+    members: {
+      controlData: [80, 'struct:hkbRigidBodyRagdollControlData'],
+      bones: [144, 'ptr'],
+    },
+  },
+  hkbRigidBodyRagdollControlData: {
+    size: 64,
+    members: {
+      keyFrameHierarchyControlData: [0, 'struct:hkaKeyFrameHierarchyUtilityControlData'],
+      durationToBlend: [48, 'f32'],
+    },
+  },
+  hkaKeyFrameHierarchyUtilityControlData: {
+    size: 48,
+    members: {
+      hierarchyGain: [0, 'f32'],
+      velocityDamping: [4, 'f32'],
+      accelerationGain: [8, 'f32'],
+      velocityGain: [12, 'f32'],
+      positionGain: [16, 'f32'],
+      positionMaxLinearVelocity: [20, 'f32'],
+      positionMaxAngularVelocity: [24, 'f32'],
+      snapGain: [28, 'f32'],
+      snapMaxLinearVelocity: [32, 'f32'],
+      snapMaxAngularVelocity: [36, 'f32'],
+      snapMaxLinearDistance: [40, 'f32'],
+      snapMaxAngularDistance: [44, 'f32'],
+    },
+  },
   hkbKeyframeBonesModifierKeyframeInfo: {
     size: 48,
     members: {
@@ -889,6 +967,23 @@ export const HAVOK_LAYOUTS: Readonly<Record<string, ClassLayout>> = {
     },
   },
   hkaBone: { size: 16, members: { name: [0, 'str'], lockTranslation: [8, 'bool'] } },
+  hkaSkeletonMapper: {
+    parent: 'hkReferencedObject',
+    size: 128,
+    members: { mapping: [16, 'struct:hkaSkeletonMapperData'] },
+  },
+  hkaSkeletonMapperData: {
+    size: 112,
+    members: {
+      skeletonA: [0, 'ptr'],
+      skeletonB: [8, 'ptr'],
+      simpleMappings: [16, 'array:struct:hkaSkeletonMapperDataSimpleMapping'],
+    },
+  },
+  hkaSkeletonMapperDataSimpleMapping: {
+    size: 64,
+    members: { boneA: [0, 'i16'], boneB: [2, 'i16'], aFromBTransform: [16, 'qs'] },
+  },
   hkaSkeletonLocalFrameOnBone: {
     size: 16,
     members: { localFrame: [0, 'ptr'], boneIndex: [8, 'i32'] },

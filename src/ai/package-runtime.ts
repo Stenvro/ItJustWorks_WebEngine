@@ -129,6 +129,8 @@ export interface PackageMind {
   carried(actor: number, criteria: PackageTarget): Promise<number | undefined>;
   /** A food to eat where the package makes one (Eat's Create Fake Food). */
   fakeFood(): Promise<number | undefined>;
+  /** The living actor whose items hold a reference now (taken into its inventory), if any. */
+  holder?(reference: number): Promise<number | undefined>;
   /** Locks or unlocks the doors within a place (LockDoors, UnlockDoors). */
   lockDoors(place: PackagePlace, locked: boolean): Promise<void>;
   /** Whether a reference runs now (the player's input, an actor's controller), if known. */
@@ -223,6 +225,48 @@ export interface PackageBody {
   fly?(request: FlightRequest | undefined): void;
   /** FlightGrab: it grabs an actor in flight; resolves whether it took it. */
   flightGrab?(target: number): Promise<boolean>;
+  /**
+   * UseWeapon: a barrage at a target (an archery butt, a training dummy, an actor), its weapon
+   * drawn first; resolves once it ended (false: it could not).
+   */
+  useWeapon?(target: number, barrage: WeaponBarrage): Promise<boolean>;
+  /** UseMagic: one cast at a target (a concentration spell held its cast time). */
+  useMagic?(target: number | undefined, cast: MagicCast): Promise<boolean>;
+  /** Shout: its voice's shout (or the one named) at a target; resolves once it was let out. */
+  shout?(
+    target: number | undefined,
+    shout: PackageTarget | undefined,
+    turn: boolean,
+  ): Promise<boolean>;
+  /** Its weapon or magic away again (the procedure that drew it ended). */
+  holster?(): void;
+  /** Starts a fight with an actor (Acquire's Allow Killing: one who holds what it wants). */
+  attack?(target: number): void;
+}
+
+/** One UseWeapon barrage (the procedure's parameters). */
+export interface WeaponBarrage {
+  /** The weapon (Weapon Type: one it carries of the type, or the one named); else what it holds. */
+  readonly weapon: PackageTarget | undefined;
+  readonly attacks: number;
+  readonly alwaysHit: boolean;
+  readonly doNoDamage: boolean;
+  /** It draws and aims, never looses or swings. */
+  readonly aimOnly: boolean;
+  readonly powerAttack: boolean;
+  /** Its hits on an actor may start a fight (else they pass). */
+  readonly combatStartOnHit: boolean;
+  /** It turns its head to the target (else only its body faces it). */
+  readonly headtrack: boolean;
+}
+
+/** One UseMagic cast. */
+export interface MagicCast {
+  /** The spell (Spell: the one named, or of a type it knows); else what its hand holds. */
+  readonly spell: PackageTarget | undefined;
+  /** Seconds a concentration spell is held. */
+  readonly castTime: number;
+  readonly dual: boolean;
 }
 
 export type ProcedureResult = 'success' | 'failure';

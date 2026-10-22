@@ -5,9 +5,12 @@
 // held for a concentration spell — and both pressed at once with one spell in both hands dual
 // cast it. The voice key (Shout, Z) tapped shouts a shout's first word, held its others
 // (fShoutTime1 / 2), or casts the power in the voice. The casts go to the actors' casting
-// (src/shell/actor-casting.ts), aimed along the camera.
+// (src/shell/actor-casting.ts), aimed along the camera. Telekinesis held takes hold of the
+// loose object it is aimed at and throws it as it is let go (PlaySession.telekinesis).
 
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
+import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import { EffectArchetype } from '../world/magic-effects.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorCasting } from './actor-casting.ts';
 import type { GameSession } from './game-session.ts';
@@ -39,6 +42,10 @@ export class PlayerCasting implements CastingButtons {
   /** The voice key went down then, if held. */
   #voiceSince: number | undefined;
   #clock = 0;
+  /** Each item's Telekinesis magnitude (null: none), as read. */
+  readonly #telekinesis = new Map<number, number | null>();
+  /** fMagicTelekinesisBaseDistance and fMagicTelekinesisDistanceMin, once read. */
+  #telekinesisReach: { base: number; nearest: number } | undefined;
 
   constructor(options: PlayerCastingOptions) {
     this.#options = options;
@@ -68,7 +75,7 @@ export class PlayerCasting implements CastingButtons {
     this.#readHands();
     const player = view.play.player;
     // In a menu, with fighting disabled (DisablePlayerControls) or dead, nothing is cast.
-    if (session.menuMode || !runtime.controls.fighting || view.play.dead) {
+    if (session.menuMode || !runtime.controls.fighting || view.play.dead || view.play.knocked) {
       this.clear();
       return;
     }
@@ -89,6 +96,47 @@ export class PlayerCasting implements CastingButtons {
       void casting.voiceUp(held);
     }
     casting.powersFrame();
+    // Telekinesis held (its concentration cast past its charge): its reach to the play.
+    view.play.telekinesis(this.#telekinesisNow(runtime), this.#telekinesisReach?.nearest ?? 64);
+  }
+
+  /**
+   * The reach of a Telekinesis cast the player holds now (fMagicTelekinesisBaseDistance × its
+   * magnitude), or undefined.
+   */
+  #telekinesisNow(runtime: ScriptRuntime): number | undefined {
+    if (!this.#telekinesisReach) {
+      this.#telekinesisReach = { base: 2100, nearest: 64 };
+      const reach = this.#telekinesisReach;
+      void Promise.all([
+        runtime.gameSetting('fMagicTelekinesisBaseDistance'),
+        runtime.gameSetting('fMagicTelekinesisDistanceMin'),
+      ]).then(([base, nearest]) => {
+        if (typeof base === 'number') reach.base = base;
+        if (typeof nearest === 'number') reach.nearest = nearest;
+      });
+    }
+    for (const source of [CastingSource.left, CastingSource.right]) {
+      const cast = runtime.casting.casting(PLAYER_REF, source);
+      if (cast?.hand.phase !== 'casting') continue;
+      const item = cast.castable.item;
+      const magnitude = this.#telekinesis.get(item.formId);
+      if (magnitude === undefined) {
+        this.#telekinesis.set(item.formId, null);
+        void (async () => {
+          for (const entry of item.effects) {
+            const effect = await runtime.magic.effect(entry.effect);
+            if (effect?.archetype === EffectArchetype.telekinesis) {
+              this.#telekinesis.set(item.formId, Math.max(1, entry.magnitude));
+              return;
+            }
+          }
+        })();
+        continue;
+      }
+      if (magnitude !== null) return this.#telekinesisReach.base * magnitude;
+    }
+    return undefined;
   }
 
   /** What the hands hold to cast, read again (once at a time). */

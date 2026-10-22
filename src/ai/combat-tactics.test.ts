@@ -7,6 +7,7 @@ import {
   chooseAttack,
   chooseEquipment,
   chooseManeuver,
+  chooseSupport,
   choosesBlock,
   dodgeDirection,
   maneuverDirection,
@@ -14,6 +15,7 @@ import {
   threatens,
   type AttackInput,
   type EquipOption,
+  type SupportState,
   type Threat,
 } from './combat-tactics.ts';
 
@@ -230,5 +232,52 @@ describe('combat tactics: attacks, blocks, threats', () => {
     expect(y).toBeCloseTo(0);
     expect(avoidsThreat(melee, randoms(0.1))).toBe(true);
     expect(avoidsThreat(melee, randoms(0.3))).toBe(false);
+  });
+});
+
+describe('combat tactics: what it does for itself', () => {
+  const base: SupportState = {
+    health: 1,
+    magicka: 1,
+    stamina: 1,
+    sinceRestore: Infinity,
+    canHeal: false,
+    potions: { health: false, magicka: false, stamina: false },
+    outOfMagicka: false,
+    canSummon: false,
+    canBuff: false,
+    canWard: false,
+  };
+
+  it('reads iAICombatRestoreHealthPercentage and fCombatItemRestoreTimer', () => {
+    expect(settings.restoreHealthPercentage).toBe(60);
+    expect(settings.itemRestoreTime).toBe(3);
+  });
+
+  it('wards a spell coming at it before anything else', () => {
+    expect(chooseSupport({ ...base, canWard: true, health: 0.1, canHeal: true }, settings)).toEqual(
+      { kind: 'ward' },
+    );
+  });
+
+  it('heals below the restore share, by spell first, else a potion, once a timer', () => {
+    const hurt = { ...base, health: 0.5, potions: { ...base.potions, health: true } };
+    expect(chooseSupport({ ...hurt, canHeal: true }, settings)).toEqual({ kind: 'heal' });
+    expect(chooseSupport(hurt, settings)).toEqual({ kind: 'potion', value: 'health' });
+    expect(chooseSupport({ ...hurt, sinceRestore: 1 }, settings)).toBeUndefined();
+    expect(chooseSupport({ ...hurt, health: 0.7 }, settings)).toBeUndefined();
+  });
+
+  it('drinks for magicka when its magic fails it, summons and buffs when it may', () => {
+    const potions = { ...base.potions, magicka: true };
+    expect(chooseSupport({ ...base, outOfMagicka: true, potions }, settings)).toEqual({
+      kind: 'potion',
+      value: 'magicka',
+    });
+    expect(chooseSupport({ ...base, canSummon: true, canBuff: true }, settings)).toEqual({
+      kind: 'summon',
+    });
+    expect(chooseSupport({ ...base, canBuff: true }, settings)).toEqual({ kind: 'buff' });
+    expect(chooseSupport(base, settings)).toBeUndefined();
   });
 });

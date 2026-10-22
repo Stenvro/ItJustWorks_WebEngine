@@ -30,6 +30,9 @@ import { ActorSearch } from './actor-search.ts';
 import { ActorsAway, type AwayPlace } from './actors-away.ts';
 import type { RouteDoor } from '../ai/routes.ts';
 import { ActorBodies, type BodyHolder } from './actor-bodies.ts';
+import { ActorKnockdowns, type KnockSubject } from './actor-knockdowns.ts';
+import { ActorPractice } from './actor-practice.ts';
+import { PlayerKnockSubject } from './player-knockdown.ts';
 import { ActorDoors, type DoorObject } from './actor-doors.ts';
 import { ActorFurniture, type FurnitureUser, type StageObject } from './actor-furniture.ts';
 import { ActorMovers } from './actor-movers.ts';
@@ -160,6 +163,11 @@ export class ActorStage {
   readonly movers: ActorMovers;
   /** The living actors' bodies (their ragdolls, keyframed to their pose) and the dead's. */
   readonly bodies: ActorBodies;
+  /** The knocked down: their ragdolls, and their getting up (src/shell/actor-knockdowns.ts). */
+  readonly knockdowns: ActorKnockdowns;
+  /** The packages' weapon and magic practice (UseWeapon, UseMagic, Shout). */
+  readonly practice: ActorPractice;
+  #physics: PhysicsWorld | undefined;
   /** The player's death shown: their ragdoll, the death camera, the reload's wait. */
   readonly playerDeath: PlayerDeath;
   /** The actors' AI: their packages. */
@@ -233,7 +241,8 @@ export class ActorStage {
         this.furniture.holds(actor) ||
         this.mounts.holds(actor) ||
         this.vehicles.holds(actor) ||
-        this.flight.holds(actor),
+        this.flight.holds(actor) ||
+        this.knockdowns.holds(actor),
       // The player walked into an actor: it flinches by where they came from (ActionBumpedInto's
       // idles by GetLastBumpDirection) and says its ActorCollidewithActor line.
       onBump: (actor) => {
@@ -243,6 +252,15 @@ export class ActorStage {
       },
     });
     this.bodies = new ActorBodies(options.session);
+    this.knockdowns = new ActorKnockdowns({
+      terminal: options.terminal,
+      bodies: this.bodies,
+      physics: () => this.#physics,
+      subject: (reference) => this.#knockSubject(reference),
+      changed: (reference, state) => {
+        this.combat.knockChanged(reference, state);
+      },
+    });
     this.playerDeath = new PlayerDeath({
       session: options.session,
       terminal: options.terminal,
@@ -267,6 +285,7 @@ export class ActorStage {
       ridden: (actor) => this.mounts.ridden(actor),
       npcCasting: () => combatCasting(options.session, () => this.casting),
       flight: () => this.flight,
+      knockdowns: () => this.knockdowns,
       threats: () => [...this.projectiles.threats(), ...this.casting.threats()],
     });
     this.search = new ActorSearch({
@@ -295,6 +314,10 @@ export class ActorStage {
       engaged: (reference) => this.combat.engaged(reference),
       flight: () => this.flight,
       overrides: (actor) => this.senses.overridePackages(actor),
+      practice: () => this.practice,
+      startCombat: (actor, target) => {
+        this.combat.startCombat(actor, target);
+      },
       transport: {
         ready: async (staged, ride) => {
           this.vehicles.release(staged.reference);
@@ -406,8 +429,10 @@ export class ActorStage {
       noise: (at, owner, soundLevel) => {
         this.senses.noise(at, owner, soundLevel);
       },
-      // A hostile spell's hit: the victim searches for its attacker (TODO(M10) 5.2: combat).
+      // A hostile spell's hit: the victim turns on its caster (combat, as a blow does) and
+      // searches for one it does not see.
       hit: (target, caster) => {
+        this.combat.spellHit(caster, target);
         if (target !== caster && target !== PLAYER_REF) this.senses.attackedBy(target, caster);
         // On one not hostile to the caster it is an assault (crime-engine.ts), as a weapon's is.
         const crime = options.session.scriptsReady?.crime;
@@ -457,6 +482,13 @@ export class ActorStage {
       interior: options.interior === true,
       ...(options.navmeshes && { navmeshes: options.navmeshes }),
       ...(options.objects && { objects: options.objects }),
+    });
+    this.practice = new ActorPractice({
+      session: options.session,
+      movers: this.movers,
+      combat: () => this.combat,
+      casting: () => this.casting,
+      carried: (actor, criteria) => this.ai.carried(actor, criteria),
     });
     this.crime = new ActorCrime({
       session: options.session,
@@ -652,6 +684,8 @@ export class ActorStage {
   attachPlay(world: SensesWorld | undefined): void {
     this.movers.attach(world);
     this.bodies.attach(world?.physics);
+    this.#physics = world?.physics;
+    if (!world) this.knockdowns.clear();
     // After the movers' step hook: the cart towed and the player carried after the horse moved.
     this.vehicles.attach(world);
     this.mounts.attach(world?.stepHooks);
@@ -674,9 +708,10 @@ export class ActorStage {
 
   /**
    * An actor died (Kill, killed in combat): it stops moving and acting, its ragdoll falls
-   * from the pose it has (essential and protected actors bleed out first: actor-combat.ts).
+   * from the pose it has (essential and protected actors bleed out first: actor-combat.ts),
+   * and it cries out (its Death line, to its killer) unless the kill was silent (KillSilent).
    */
-  killed(reference: number): void {
+  killed(reference: number, killer?: number, silent = false): void {
     if (reference === PLAYER_REF) {
       this.#playerDied();
       return;
@@ -695,7 +730,15 @@ export class ActorStage {
     this.movers.request(reference, undefined);
     this.movers.release(reference);
     staged.placed.face?.stopSpeaking();
+    this.knockdowns.remove(reference);
     void this.bodies.kill(staged);
+    if (!silent) {
+      this.talk
+        .bark(reference, 'Death', killer ?? PLAYER_REF, { interrupt: true })
+        .catch((error: unknown) => {
+          this.#options.terminal.log('actor', `a death cry: ${describe(error)}`, 'warn');
+        });
+    }
   }
 
   /**
@@ -713,10 +756,46 @@ export class ActorStage {
     this.playerDeath.died();
   }
 
-  /** The staged actors' bodies, and the dead player's. */
+  /**
+   * Who is knocked down (src/shell/actor-knockdowns.ts): an actor of the stage (out of its
+   * furniture, off its horse; not one in the air) or the player (not in furniture).
+   */
+  #knockSubject(reference: number): KnockSubject | undefined {
+    if (reference === PLAYER_REF) {
+      const view = this.#options.player?.();
+      const avatar = view?.avatar;
+      if (!view || !avatar || view.play.dead || view.play.seated) return undefined;
+      return new PlayerKnockSubject(view, avatar, this.playerDeath.settings);
+    }
+    const staged = this.#actors.get(reference);
+    if (!staged || staged.dead || staged.visibility.hidden || this.flight.holds(reference))
+      return undefined;
+    this.furniture.remove(reference);
+    this.mounts.remove(reference);
+    const user = this.userOf(staged);
+    return {
+      reference,
+      get placed() {
+        return staged.placed;
+      },
+      holder: staged,
+      get heading() {
+        return staged.heading;
+      },
+      get dead() {
+        return staged.dead;
+      },
+      moveTo: (position, heading) => {
+        user.moveTo(position, heading);
+        staged.grounded = true;
+      },
+    };
+  }
+
+  /** The staged actors' bodies, the dead player's and the knocked-down player's. */
   *#withPlayerBody(): Iterable<BodyHolder> {
     yield* this.#actors.values();
-    const player = this.playerDeath.body;
+    const player = this.playerDeath.body ?? this.knockdowns.playerBody;
     if (player) yield player;
   }
 
@@ -1084,12 +1163,21 @@ export class ActorStage {
     this.projectiles.frame(frame);
     this.away.frame(frame);
     this.combat.frame(frame, this.#options.focus?.());
+    this.knockdowns.frame(frame);
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     this.#recell();
     // The fliers: in the air they move themselves (no controller), on the ground the movers do.
     this.flight.frame(this.#actors.values(), frame);
     const times = new Map<StagedActor, number | undefined>();
-    for (const staged of this.#actors.values()) times.set(staged, staged.placed.time);
+    for (const staged of this.#actors.values()) {
+      times.set(staged, staged.placed.time);
+      // Its graph's ragdoll contact listeners ask its bodies (a death animation going limp).
+      const behavior = staged.placed.behavior;
+      if (behavior && !behavior.ragdollContact) {
+        const reference = staged.reference;
+        behavior.ragdollContact = (bones) => this.bodies.touching(reference, bones);
+      }
+    }
     // Where they look, and the world their procedural animation sees.
     this.looks.frame(this.#actors.values(), frame);
     const camera = this.#options.renderer.view?.camera;
@@ -1109,6 +1197,8 @@ export class ActorStage {
         }),
     );
     // Their bodies follow the poses (the dead's poses their bodies, the dead player's too).
+    // The knocked down that begin to get up are stood where their get-up was matched.
+    this.knockdowns.afterAnimate();
     this.bodies.frame(this.#withPlayerBody(), this.#options.focus?.());
     this.playerDeath.frame(frame);
     // How their graphs moved them (root motion) moves them in the next physics steps; those
@@ -1250,6 +1340,7 @@ export class ActorStage {
     this.vehicles.remove(staged.reference);
     this.furniture.remove(staged.reference);
     this.movers.remove(staged.reference);
+    this.knockdowns.remove(staged.reference);
     this.bodies.remove(staged.reference);
     this.#actors.delete(staged.reference);
     staged.scene?.destroy();

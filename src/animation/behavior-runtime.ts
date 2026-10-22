@@ -34,6 +34,7 @@ import {
 } from '../formats/hkx/behavior.ts';
 import { evaluateNode, parseExpression, type Expression } from './behavior-expression.ts';
 import { addPose, blendPoses, PoseAccumulator } from './pose.ts';
+import { intoMatchFrame, matchPose, type PoseMatch } from './pose-matching.ts';
 import {
   directAt,
   footIk,
@@ -212,6 +213,15 @@ type Clip = Extract<BehaviorGenerator, { kind: 'clip' }>;
 type Blender = Extract<BehaviorGenerator, { kind: 'blender' }>;
 type CyclicBlend = Extract<BehaviorGenerator, { kind: 'cyclic-blend' }>;
 type OffsetAnimation = Extract<BehaviorGenerator, { kind: 'offset-animation' }>;
+type RigidBodyRagdoll = Extract<BehaviorModifier, { kind: 'rigid-body-ragdoll' }>;
+
+/** A pose matcher's state while it is active: the child it shows and whether it plays. */
+interface MatchState {
+  index: number;
+  playing: boolean;
+  /** The ragdoll pose (its version) it last matched. */
+  version: number;
+}
 
 /** A cyclic blend holding its blender's parameter, or fading from it to the live one. */
 interface CyclicState {
@@ -383,6 +393,27 @@ export class BehaviorRuntime {
   #tweens: Extract<BehaviorModifier, { kind: 'tweener' }>[] = [];
   /** The aims the engine gives BSDirectAtModifiers, by their userInfo (world points). */
   readonly #directAtTargets = new Map<number, Point>();
+  /** The animation bone of each bone of the character's ragdoll skeleton (−1: none). */
+  readonly #ragdollBones: Int16Array;
+  /** The ragdoll's pose the engine gave (setRagdollPose), and that pose in the matched frame. */
+  #ragdollPose: Float32Array | undefined;
+  #ragdollVersion = 0;
+  #matchedRagdoll: Float32Array | undefined;
+  /** The last pose match (hkbPoseMatchingGenerator: the get-up clip, its turn and shift). */
+  #poseMatch: PoseMatch | undefined;
+  /** The pose matchers active, by node. */
+  readonly #matchStates = new WeakMap<object, MatchState>();
+  /** Each active hkbGetUpModifier's ragdoll pose, captured as it became active. */
+  readonly #getUpFrom = new WeakMap<object, Float32Array>();
+  /** The ragdoll controls active in this update. */
+  #poweredForce = 0;
+  #rigidBody: RigidBodyRagdoll | undefined;
+
+  /**
+   * Whether a body of the ragdoll bones named (all, when none are) touches something now
+   * (BSRagdollContactListenerModifier); the engine's physics answers. Undefined: never.
+   */
+  ragdollContact: ((bones: readonly string[]) => boolean) | undefined;
 
   /**
    * Where the character is (its world matrix, the ground under it): the look-at's target and
@@ -407,6 +438,12 @@ export class BehaviorRuntime {
     readonly properties?: Record<string, number>;
     /** The character's foot IK (CharacterInfo.footIk). */
     readonly footIk?: FootIkSetup;
+    /**
+     * The animation bone of each bone of the character's ragdoll skeleton (its skeleton file's
+     * mapper: readRagdollMapping): keyframed bones, pose matching and contact listeners name the
+     * ragdoll's bones by index.
+     */
+    readonly ragdollBones?: Int16Array;
   }) {
     this.skeleton = options.skeleton;
     this.#host = options.host;
@@ -416,6 +453,7 @@ export class BehaviorRuntime {
     this.pose = options.skeleton.referencePose.slice();
     this.#space = new ModelSpace(options.skeleton.parents);
     this.#footIk = options.footIk;
+    this.#ragdollBones = options.ragdollBones ?? new Int16Array(0);
     this.#rootScope = this.#scope(options.root);
     this.#root = options.root.root;
   }
@@ -557,12 +595,61 @@ export class BehaviorRuntime {
 
   /**
    * The ragdoll bones (indices of the character's ragdoll skeleton) the active
-   * hkbKeyframeBonesModifiers keep keyframed to the animation (the living's lower body; the
+   * hkbKeyframeBonesModifiers keep keyframed to the animation (the lower body getting up; the
    * whole ragdoll on its way to ragdolling). The others follow the animation by the rigid body
-   * ragdoll controls (TODO(M10) 5.1: hits push them).
+   * ragdoll controls (rigidBodyRagdoll).
    */
   keyframedRagdollBones(): ReadonlySet<number> {
     return this.#keyframed;
+  }
+
+  /** The animation bone names of ragdoll bones by their index (unknown ones left out). */
+  ragdollBoneNames(bones: Iterable<number>): string[] {
+    const names: string[] = [];
+    for (const bone of bones) {
+      const index = this.#ragdollBones[bone] ?? -1;
+      const name = index >= 0 ? this.skeleton.bones[index]?.name : undefined;
+      if (name !== undefined) names.push(name);
+    }
+    return names;
+  }
+
+  /**
+   * The strongest active hkbPoweredRagdollControlsModifier's maxForce this update: 0 limp (or
+   * none), above it the ragdoll's motors pull it toward the pose (matching the get-up pose).
+   */
+  poweredRagdollForce(): number {
+    return this.#poweredForce;
+  }
+
+  /** The active hkbRigidBodyRagdollControlsModifier this update (its gains), if any. */
+  rigidBodyRagdoll(): RigidBodyRagdoll | undefined {
+    return this.#rigidBody;
+  }
+
+  /**
+   * The ragdoll's pose, as the engine has it (bone-local transforms of this skeleton, its root
+   * in the character's model frame): the pose matchers match it, and a get-up blends from it.
+   * An active pose matcher matches it again at once.
+   */
+  setRagdollPose(pose: Float32Array | undefined): void {
+    this.#ragdollPose = pose && Float32Array.from(pose);
+    this.#ragdollVersion++;
+    this.#matchedRagdoll = undefined;
+  }
+
+  /**
+   * The last pose match: the get-up clip chosen, and the turn (radians about z,
+   * counter-clockwise) and shift (model x, y) that lay it over the ragdoll: where the engine
+   * stands the character to get up.
+   */
+  poseMatch(): PoseMatch | undefined {
+    return this.#poseMatch;
+  }
+
+  /** The ragdoll's pose in the frame of the last match (the get-up begins from it). */
+  matchedRagdollPose(): Float32Array | undefined {
+    return this.#matchedRagdoll ?? this.#ragdollPose;
   }
 
   /**
@@ -636,6 +723,8 @@ export class BehaviorRuntime {
     const active = new Set<object>();
     this.#keyframed = new Set();
     this.#tweens = [];
+    this.#poweredForce = 0;
+    this.#rigidBody = undefined;
     this.#updateNode(this.#root, dt, active);
     // Nodes no longer active are deactivated (their state reset, their exit events raised).
     for (const node of this.#active) {
@@ -730,6 +819,13 @@ export class BehaviorRuntime {
         return;
       }
       case 'blender': {
+        // A pose matcher moves the root by the clip it plays (none while it matches).
+        if (node.poseMatching) {
+          const match = this.#matchState(node);
+          if (match.playing)
+            this.#collectMotion(node.children[match.index]?.generator, weight, depth + 1, sum);
+          return;
+        }
         // The root moves by the children that move the root bone (bone 0), by their weight on
         // it: camera bobs and other partial poses (bone weights) leave it alone.
         const weighted = activeChildren(node, this.#blenderRead(node, scope)).map(
@@ -837,6 +933,9 @@ export class BehaviorRuntime {
       case 'clip':
         this.#clips.delete(generator);
         return;
+      case 'blender':
+        this.#matchStates.delete(generator);
+        return;
       case 'cyclic-blend':
         this.#cyclic.delete(generator);
         if (generator.generator) {
@@ -911,7 +1010,86 @@ export class BehaviorRuntime {
     if (node.kind === 'modifier-generator' && node.modifier)
       this.#modifierEvent(node.modifier, event);
     if (node.kind === 'cyclic-blend') this.#cyclicEvent(node, event);
+    if (node.kind === 'blender' && node.poseMatching) this.#poseMatchEvent(node, event);
     for (const child of this.#activeChildren(node)) this.#handle(child, event, seen);
+  }
+
+  // --- Pose matching (getting up from a ragdoll) ---------------------------------------------
+
+  /** A pose matcher's state (made matching, as it starts). */
+  #matchState(node: Blender): MatchState {
+    let state = this.#matchStates.get(node);
+    if (!state) {
+      state = { index: 0, playing: node.poseMatching?.mode === 1, version: -1 };
+      this.#matchStates.set(node, state);
+      this.#match(node, state);
+    }
+    return state;
+  }
+
+  /**
+   * hkbPoseMatchingGenerator's events: its start-matching event shows the matched pose again
+   * (held still), its start-playing event matches once more and plays that clip.
+   */
+  #poseMatchEvent(node: Blender, event: number): void {
+    const matching = node.poseMatching;
+    if (!matching) return;
+    const scope = this.#scopeOf(node);
+    const state = this.#matchState(node);
+    if (event === this.#globalEvent(matching.startMatchingEventId, scope)) {
+      state.playing = false;
+      this.#match(node, state);
+    } else if (event === this.#globalEvent(matching.startPlayingEventId, scope) && !state.playing) {
+      this.#match(node, state);
+      state.playing = true;
+    }
+  }
+
+  /**
+   * Matches the ragdoll's pose (the engine's: setRagdollPose) against each child's first pose
+   * (src/animation/pose-matching.ts): the best is shown, the turn and shift kept for the
+   * engine, and the ragdoll's pose moved into that frame for the get-up's blend. Without a
+   * ragdoll pose, or a clip still loading, the first child.
+   */
+  #match(node: Blender, state: MatchState): void {
+    const matching = node.poseMatching;
+    const ragdoll = this.#ragdollPose;
+    if (!matching || !ragdoll) return;
+    state.version = this.#ragdollVersion;
+    const bone = (index: number): number => this.#ragdollBones[index] ?? -1;
+    const bones = {
+      root: bone(matching.rootBoneIndex),
+      other: bone(matching.otherBoneIndex),
+      another: bone(matching.anotherBoneIndex),
+    };
+    if (bones.root < 0 || bones.other < 0 || bones.another < 0) return;
+    const space = this.#space;
+    space.update(ragdoll);
+    const target = Float32Array.from(space.positions);
+    const candidates: Float32Array[] = [];
+    const indices: number[] = [];
+    let loading = false;
+    for (const [index, child] of node.children.entries()) {
+      const clip = leafClip(child.generator);
+      if (!clip) continue;
+      const binding = this.#host.clip(clip.animation);
+      if (!binding) {
+        loading = true;
+        continue;
+      }
+      space.update(this.#sample(binding, clip.cropStart ?? 0, 63).pose);
+      candidates.push(Float32Array.from(space.positions));
+      indices.push(index);
+    }
+    // A clip still loading: matched again next update.
+    if (loading) state.version = -1;
+    const best = matchPose(target, candidates, bones);
+    if (!best) return;
+    state.index = indices[best.index] ?? 0;
+    this.#poseMatch = { ...best, index: state.index };
+    const matched = Float32Array.from(ragdoll);
+    intoMatchFrame(matched, this.skeleton.parents, best);
+    this.#matchedRagdoll = matched;
   }
 
   // --- State machines ------------------------------------------------------------------------
@@ -1326,6 +1504,11 @@ export class BehaviorRuntime {
           : [machine.current?.generator];
       }
       case 'blender': {
+        // A pose matcher plays its matched child (none while it matches: its pose held still).
+        if (node.poseMatching) {
+          const match = this.#matchState(node);
+          return match.playing ? [node.children[match.index]?.generator] : [];
+        }
         const live = activeChildren(node, this.#blenderRead(node, scope)).map(
           ([child]) => child.generator,
         );
@@ -1424,6 +1607,11 @@ export class BehaviorRuntime {
         }
         break;
       case 'blender':
+        // A pose matcher matches a new ragdoll pose while it holds still.
+        if (node.poseMatching) {
+          const match = this.#matchState(node);
+          if (!match.playing && match.version !== this.#ragdollVersion) this.#match(node, match);
+        }
         if ((node.flags & BLENDER_FLAGS.sync) !== 0) this.#sync(node, dt, scope);
         break;
       default:
@@ -1608,6 +1796,12 @@ export class BehaviorRuntime {
         // Its duration: known once the clips below it play (#tween).
         state.target = -1;
         break;
+      case 'get-up': {
+        // It blends from the ragdoll's pose as it lay (in the frame the get-up was matched in).
+        const from = this.matchedRagdollPose();
+        if (from) this.#getUpFrom.set(modifier, Float32Array.from(from));
+        break;
+      }
       default:
         break;
     }
@@ -1628,6 +1822,9 @@ export class BehaviorRuntime {
         break;
       case 'modify-once':
         if (modifier.onDeactivate) this.#runOnce(modifier.onDeactivate);
+        break;
+      case 'get-up':
+        this.#getUpFrom.delete(modifier);
         break;
       default:
         break;
@@ -1767,6 +1964,22 @@ export class BehaviorRuntime {
         // It turns the character at degreesPerSecond (bound to TurnDelta: the turn the engine
         // makes it anyway, in the equip and unequip states it wraps): the movers turn the actor
         // (src/ai/locomotion.ts), so the graph's root motion leaves it out, not to turn twice.
+        return;
+      case 'get-up':
+        state.elapsed += dt;
+        return;
+      case 'ragdoll-contact':
+        // Its event once, as a body of its bones first touches something.
+        if (!state.fired && this.ragdollContact?.(this.ragdollBoneNames(modifier.bones)) === true) {
+          state.fired = true;
+          this.#raise(modifier.contactEvent, scope);
+        }
+        return;
+      case 'powered-ragdoll':
+        this.#poweredForce = Math.max(this.#poweredForce, this.#read(modifier.maxForce, scope));
+        return;
+      case 'rigid-body-ragdoll':
+        this.#rigidBody = modifier;
         return;
       case 'is-active':
       case 'event-on-deactivate':
@@ -1982,6 +2195,7 @@ export class BehaviorRuntime {
       case 'foot-ik':
       case 'foot-ik-controls':
       case 'limb-ik':
+      case 'get-up':
         moves = true;
         break;
       case 'list':
@@ -2048,6 +2262,17 @@ export class BehaviorRuntime {
           this.skeleton.referencePose,
         );
         return;
+      case 'get-up': {
+        // From the ragdoll's pose to the animation's over its duration (the ground is level
+        // under the character the engine stood up: groundNormal up, its alignment done).
+        const from = this.#getUpFrom.get(modifier);
+        if (!from) return;
+        const duration = this.#read(modifier.duration, scope);
+        const elapsed = this.#modifiers.get(modifier)?.elapsed ?? 0;
+        const t = duration > 0 ? blendCurve(0, elapsed / duration) : 1;
+        if (t < 1) blendPoses(from, pose, t, pose);
+        return;
+      }
       case 'foot-ik-controls':
         // The character's foot IK runs once the pose is whole (#driveFootIk), with these.
         this.#footIkControls = modifier;
@@ -2525,6 +2750,10 @@ export class BehaviorRuntime {
   }
 
   #generateBlender(node: Blender, depth: number, scope: Scope): Generated | undefined {
+    // A pose matcher: its matched child (at its first pose until it plays).
+    if (node.poseMatching) {
+      return this.#pass(node.children[this.#matchState(node).index]?.generator, depth);
+    }
     const weighted = activeChildren(node, this.#blenderRead(node, scope));
     const accumulator = new PoseAccumulator(this.#boneCount);
     const additive: [Generated, number, Float32Array | undefined][] = [];

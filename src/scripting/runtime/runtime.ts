@@ -112,7 +112,14 @@ export interface WorldBridge {
   /** SetMotionType: the body becomes dynamic, keyframed, ... (and stops waiting for a touch). */
   motionTypeChanged?(reference: number, motionType: number): void;
   impulse?(reference: number, direction: Vec3, magnitude: number): void;
+  /** PushActorAway: the actor is knocked down, pushed away from a reference by a force. */
   pushAway?(pushed: number, from: number, force: number): void;
+  /** An explosion's knock-down flags: the actor is knocked down, away from where it burst. */
+  knockDown?(actor: number, from: Vec3, force: number): void;
+  /** A Stagger effect on an actor (its magnitude), from its caster's side. */
+  stagger?(actor: number, magnitude: number, caster: number | undefined): void;
+  /** Paralysis begins or ends on an actor (it lies as its ragdoll meanwhile). */
+  paralyze?(actor: number, on: boolean): void;
   hasNode?(reference: number, node: string): boolean;
   /** Where a named node of a loaded reference's model is (MoveToNode). */
   nodePlacement?(reference: number, node: string): { position: Vec3; rotation: Vec3 } | undefined;

@@ -18,7 +18,11 @@ export type HealthOut = 'dies' | 'bleeds-out';
 export interface HealthOutInput {
   readonly essential: boolean;
   readonly protected: boolean;
-  /** The blow came from the player (or their follower's doing: TODO(M10) 3.5). */
+  /**
+   * The blow came from the player themselves (UESP "Skyrim:Protected NPCs": only a direct hit
+   * by the player kills the protected; a follower's, a summon's or another NPC's blow, or
+   * falling, leaves them bleeding out).
+   */
   readonly byPlayer: boolean;
 }
 

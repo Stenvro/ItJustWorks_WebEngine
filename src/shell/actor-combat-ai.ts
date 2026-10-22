@@ -47,6 +47,7 @@ import {
   avoidsThreat,
   chooseAttack,
   chooseEquipment,
+  chooseSupport,
   chooseManeuver,
   choosesBlock,
   dodgeDirection,
@@ -140,19 +141,28 @@ export interface CombatAiHost {
   threats(): Iterable<Threat>;
 }
 
+/** One of the casts or potions an actor in combat uses for itself (combat-tactics chooseSupport). */
+export type CombatSupport =
+  | { readonly kind: 'heal' | 'summon' }
+  | { readonly kind: 'potion'; readonly value: number }
+  | { readonly kind: 'ward' | 'buff'; readonly hold?: () => boolean };
+
 /**
- * What magic and shouts in combat give the AI (M10 5.3: `castAt` and NPC shouting): the
- * offensive spells and shouts an actor may fight with, scored with its weapons, and the cast
- * itself (src/shell/combat-casting.ts; staffs are weapons in its profile).
+ * What magic and shouts in combat give the AI (5.3's casting): the offensive spells, staffs and
+ * shouts an actor may fight with against a target, scored with its weapons; the cast itself (a
+ * concentration spell held while `hold` holds); its support (healing, potions, summons, wards,
+ * buffs). src/shell/combat-casting.ts.
  */
 export interface CombatCasting {
-  options(actor: number): Promise<readonly EquipOption[]>;
+  options(actor: number, target?: number): Promise<readonly EquipOption[]>;
   castAt(
     actor: number,
     hand: 'left' | 'right' | 'voice',
     target: number,
     option: EquipOption,
+    hold?: () => boolean,
   ): Promise<boolean>;
+  support(actor: number, purpose: CombatSupport, target?: number): Promise<boolean>;
 }
 
 /**
@@ -255,6 +265,12 @@ interface Mind {
   readonly lastKnown: Map<number, Vec3>;
   /** A combat style its combat override package gives (PACK CNAM). */
   packageStyle: number | undefined;
+  /** It held a weapon in this fight (one disarmed picks one up again). */
+  armed: boolean;
+  /** Its support (heals, potions, summons, wards, buffs): when next weighed, last restored. */
+  nextSupport: number;
+  restoredAt: number;
+  supporting: boolean;
 }
 
 /** An actor weighs its fight this often (seconds). TODO(M13): the engine's rates. */
@@ -277,6 +293,15 @@ const CHASE_RETRY = 1;
 const STRIKE_ANGLE = Math.PI / 6;
 /** A block lasts at most this long (seconds) without a blow coming. */
 const BLOCK_SECONDS = 1.2;
+/**
+ * Its support (heals, potions, summons, wards, buffs) is weighed this often, and its attacks wait
+ * this long after a support cast (seconds). TODO(M13): the engine's rates.
+ */
+const SUPPORT_SECONDS = 1;
+const SUPPORT_CAST_SECONDS = 1.5;
+/** A fighter left without a weapon picks one up lying this near, reached this near (units). */
+const PICK_UP_REACH = 1024;
+const PICK_UP_ARRIVE = 64;
 /** A dodge lasts this long (seconds). */
 const DODGE_SECONDS = 0.6;
 /** A bow is held drawn this long before it looses (seconds, at random between). */
@@ -588,6 +613,10 @@ export class ActorCombatAi {
         sheatheAt: undefined,
         lastKnown: new Map(),
         packageStyle: undefined,
+        armed: false,
+        nextSupport: 0,
+        restoredAt: -Infinity,
+        supporting: false,
       };
       this.#minds.set(reference, mind);
     }
@@ -1096,6 +1125,9 @@ export class ActorCombatAi {
     mind.friendHits.clear();
     mind.quarrels.clear();
     mind.lastKnown.clear();
+    // What a script's StartCombat made it hostile to ends with its combat (crime-engine.ts).
+    const actorState = this.#options.session.scriptsReady?.state.actors.get(reference);
+    if (actorState) delete actorState.combatTargets;
     mind.sheatheAt = this.#clock + SHEATHE_DELAY;
     if (mind.packageStyle !== undefined) {
       mind.packageStyle = undefined;
@@ -1217,6 +1249,18 @@ export class ActorCombatAi {
       void movers.travel(reference, leash.center, 'run', leash.radius / 2).then(() => {
         if (mind.chase === leash.center) mind.chase = undefined;
       });
+    }
+    // What it does for itself now and then (heals, potions, summons, wards, buffs).
+    if (this.#clock >= mind.nextSupport && !mind.supporting) {
+      mind.nextSupport = this.#clock + SUPPORT_SECONDS;
+      mind.supporting = true;
+      void this.#support(mind, view, target.reference)
+        .catch((error: unknown) => {
+          this.#warn(`${reference.toString(16)} support: ${describe(error)}`);
+        })
+        .finally(() => {
+          mind.supporting = false;
+        });
     }
     const option = mind.equipped;
     const casting =
@@ -1423,7 +1467,8 @@ export class ActorCombatAi {
 
   /**
    * A spell, staff or shout it fights with (5.3's castAt): facing its target within the
-   * option's range, it casts. TODO(M10) 5.3: the casting itself is magic's.
+   * option's range, it casts; a concentration spell it holds while its target is alive, within
+   * that range and before it, and it fights it (casting ends it without magicka).
    */
   #cast(
     mind: Mind,
@@ -1451,7 +1496,93 @@ export class ActorCombatAi {
     mind.nextAttack = this.#clock + attackInterval(style, this.#random) * 2;
     if (!casting) return;
     const hand = option.kind === 'shout' ? 'voice' : 'right';
-    void casting.castAt(reference, hand, target, option);
+    const keep = (): boolean => {
+      const me = this.#options.host.fighter(reference);
+      const them = this.#options.host.fighter(target);
+      if (mind.target !== target || mind.mode !== 'fight' || !me?.feet || !them?.feet) {
+        return false;
+      }
+      if (them.state.life !== 0 || flat(me.feet, them.feet) > option.range) return false;
+      return Math.abs(turnBetween(me.heading, headingTo(me.feet, them.feet))) <= STRIKE_ANGLE * 2;
+    };
+    void casting.castAt(reference, hand, target, option, keep);
+  }
+
+  /**
+   * What it does for itself (combat-tactics chooseSupport): a ward against a spell coming at
+   * it, its healing spell or a potion when hurt, a magicka potion when its magic fails it, a
+   * summons when none of its stands, a buff not on it.
+   */
+  async #support(mind: Mind, view: FighterView, target: number): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    const casting = this.#options.casting?.();
+    const reference = mind.reference;
+    if (!runtime || !casting || view.player) return;
+    const share = async (index: number): Promise<number> => {
+      const value = await runtime.actors.value(reference, index);
+      return value.max > 0 ? value.current / value.max : 1;
+    };
+    const spells = runtime.casting;
+    const ward = this.#threatened(mind, view)
+      ? await spells.chooseSpell(reference, 'ward')
+      : undefined;
+    const summon = await spells.chooseSpell(reference, 'summon');
+    const buff = await spells.chooseSpell(reference, 'buff');
+    const choice = chooseSupport(
+      {
+        health: await share(ActorValue.health),
+        magicka: await share(ActorValue.magicka),
+        stamina: await share(ActorValue.stamina),
+        sinceRestore: this.#clock - mind.restoredAt,
+        canHeal: (await spells.chooseSpell(reference, 'heal')) !== undefined,
+        potions: {
+          health: (await spells.choosePotion(reference, ActorValue.health)) !== undefined,
+          magicka: (await spells.choosePotion(reference, ActorValue.magicka)) !== undefined,
+          stamina: (await spells.choosePotion(reference, ActorValue.stamina)) !== undefined,
+        },
+        outOfMagicka:
+          mind.equipped?.kind === 'magic' &&
+          (await spells.chooseSpell(reference, 'attack', target)) === undefined,
+        canSummon: summon !== undefined && (await runtime.magic.summonsOf(reference)).length === 0,
+        canBuff: buff !== undefined && !runtime.magic.hasItemOn(reference, buff.formId),
+        canWard: ward !== undefined,
+      },
+      this.#settings,
+    );
+    if (!choice || mind.mode !== 'fight') return;
+    let purpose: CombatSupport;
+    if (choice.kind === 'potion') {
+      const value =
+        choice.value === 'health'
+          ? ActorValue.health
+          : choice.value === 'magicka'
+            ? ActorValue.magicka
+            : ActorValue.stamina;
+      purpose = { kind: 'potion', value };
+    } else if (choice.kind === 'ward') {
+      // Held while what comes at it still comes (at most the casting's longest hold).
+      purpose = {
+        kind: 'ward',
+        hold: () => this.#threatened(mind, this.#options.host.fighter(reference)),
+      };
+    } else {
+      purpose = { kind: choice.kind };
+    }
+    if (!(await casting.support(reference, purpose, target))) return;
+    if (choice.kind === 'heal' || choice.kind === 'potion') mind.restoredAt = this.#clock;
+    // Its attacks wait while it casts for itself.
+    mind.nextAttack = Math.max(mind.nextAttack, this.#clock + SUPPORT_CAST_SECONDS);
+  }
+
+  /** Whether a spell or a breath comes at it now (the threats it would dodge). */
+  #threatened(mind: Mind, view: FighterView | undefined): boolean {
+    const feet = view?.feet;
+    if (!view || !feet) return false;
+    for (const threat of this.#options.host.threats()) {
+      if (threat.source === mind.reference) continue;
+      if (threatens(threat, feet, view.radius, view.height) !== undefined) return true;
+    }
+    return false;
   }
 
   /** It blocks a blow coming at it (its style's defensive mult), and lets go after. */
@@ -1567,21 +1698,28 @@ export class ActorCombatAi {
     const runtime = this.#options.session.scriptsReady;
     if (!profile || !runtime) return;
     const casting = this.#options.casting?.();
-    const spells = casting ? await casting.options(mind.reference) : [];
+    const spells = casting ? await casting.options(mind.reference, mind.target) : [];
     const current = view.gear?.weapon;
     const options = [...profile.options, ...spells].map((option) => ({
       ...option,
       equipped:
         option.kind === 'unarmed'
           ? current === undefined
-          : option.kind === 'melee' || option.kind === 'ranged'
+          : option.kind === 'melee' || option.kind === 'ranged' || option.kind === 'staff'
             ? option.id === current
             : mind.equipped?.id === option.id,
     }));
     const best = chooseEquipment(options, distance, profile.style, this.#settings);
     if (!best) return;
+    // Left with its fists after it held a weapon (disarmed: its weapon on the ground), it picks
+    // up a weapon lying near.
+    if (current !== undefined) mind.armed = true;
+    if (mind.armed && best.kind === 'unarmed' && current === undefined) {
+      if (await this.#pickUpWeapon(mind, view, runtime)) return;
+    }
     mind.equipped = best;
-    if (best.kind === 'magic' || best.kind === 'staff' || best.kind === 'shout') return;
+    // Spells are taken up as they are cast (castAt); a staff is a weapon in the hand.
+    if (best.kind === 'magic' || best.kind === 'shout') return;
     if (best.equipped) return;
     // Another weapon: sheathed first, then taken up (and arrows for a bow), then drawn again.
     mind.equipping = true;
@@ -1603,6 +1741,61 @@ export class ActorCombatAi {
     } finally {
       mind.equipping = false;
     }
+  }
+
+  /**
+   * A weapon lying in the world within PICK_UP_REACH of a fighter left without one (disarmed:
+   * UESP "Skyrim:Disarm", the disarmed take their weapon back): it runs there and picks it up
+   * (equipped as its profile is read again). Whether it went for one. TODO(M13): the engine's
+   * reach and how it weighs the weapon against its fists.
+   */
+  async #pickUpWeapon(mind: Mind, view: FighterView, runtime: ScriptRuntime): Promise<boolean> {
+    const feet = view.feet;
+    if (!feet) return false;
+    let best: { reference: number; at: Vec3; distance: number } | undefined;
+    // The loaded cells' references and those made in the game (a disarmed weapon dropped).
+    const near = new Set([
+      ...(runtime.world.loadedReferences?.() ?? []),
+      ...runtime.state.created.keys(),
+    ]);
+    for (const reference of near) {
+      const at = runtime.world.livePlacement?.(reference)?.position;
+      if (!at) continue;
+      const distance = flat(feet, at);
+      if (distance > PICK_UP_REACH || (best && distance >= best.distance)) continue;
+      const state = runtime.state.references.get(reference);
+      if (state?.container || state?.deleted === true) continue;
+      const base = await runtime.baseOf(reference);
+      const item = base === undefined ? undefined : await runtime.equipment.item(base);
+      if (item?.type !== 'WEAP' || !item.weapon) continue;
+      if (
+        item.weapon.weaponType > WeaponType.twoHandAxe &&
+        item.weapon.weaponType !== WeaponType.bow
+      )
+        continue;
+      best = { reference, at: [at[0], at[1], at[2]], distance };
+    }
+    if (!best) return false;
+    mind.equipping = true;
+    try {
+      const movers = this.#options.movers;
+      if (best.distance > PICK_UP_ARRIVE)
+        await movers.travel(mind.reference, best.at, 'run', PICK_UP_ARRIVE);
+      const still = runtime.state.references.get(best.reference);
+      if (still?.container || still?.deleted === true) return true;
+      const base = await runtime.baseOf(best.reference);
+      await runtime.pickUp(best.reference, mind.reference);
+      // In its hand (it picked it up to fight with it), its profile read again.
+      if (base !== undefined) {
+        await runtime.equipment.equip(mind.reference, base, { hand: 'right' });
+        await this.#equipAmmo(mind.reference, base, runtime);
+      }
+      mind.profileRead = -Infinity;
+      mind.nextEquip = this.#clock + this.#settings.inventoryUpdateTime;
+    } finally {
+      mind.equipping = false;
+    }
+    return true;
   }
 
   /** Arrows for a bow, bolts for a crossbow: the best it carries. */

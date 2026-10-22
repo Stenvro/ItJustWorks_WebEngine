@@ -247,8 +247,21 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   falls behind; FollowTo follows until one of them reaches the destination; Flee runs to its
   place, else away from what it flees. A procedure that does not use furniture gets the actor
   up first. Hover, Orbit and FlightGrab fly a flier ([Flying combat](#flying-combat); one
-  that cannot fly holds its place). TODO(M10) 5.1–5.3: UseWeapon, UseMagic, Shout (they hold
-  the actor until combat runs); 3.2: Sandbox's eating. Sandbox with Allow Conversation lets
+  that cannot fly holds its place). UseWeapon, UseMagic and Shout practise at their target
+  through combat's mechanics, not its AI (`src/shell/actor-practice.ts`): UseWeapon takes up
+  the weapon its Weapon Type names (one it carries of the type; its arrows for a bow), draws,
+  faces its target (Headtrack Target: its head too) and attacks in barrages of Min..Max
+  Attacks Per Barrage, Min..Max Pause apart, End After Barrages of them (0 or Never End: while
+  the package runs) — a bow drawn, held 0.6 s and loosed (Aim Only: never loosed; Always Hit:
+  no spread; at a target that is no actor, 48 units over its placement: TODO(M13)), a melee
+  weapon swung (Always Power Attack); Do No Damage takes no health, and without Allow Combat
+  Start On Hit its hits start no fight, search or crime; its weapon goes away as it ends.
+  UseMagic casts its Spell (that spell, else the attack spell it would choose) at its target
+  Number To Cast Min..Max times (0: on and on), held Cast Time Min..Max seconds,
+  Cooldown Time apart, Dual Cast with both hands. Shout shouts its Shout (put in its voice)
+  at its target whenever its voice has recovered (the Greybeards), Just Headtrack turning only
+  its head. TODO(M13): Crouch To Reload, Hold When Blocked. Acquire leaves what a living actor
+  holds; with Allow Killing it fights that actor (StartCombat). TODO(M10) 3.2: Sandbox's eating. Sandbox with Allow Conversation lets
   its actor talk with others; Say says its topic (or a topic subtype's line) to its target,
   waiting for the line itself with Finish Speaking, its subtitle forced with Force Subtitle;
   LockDoors with Warn Before Locking first tells a player inside to go (TimeToGo) and locks
@@ -786,8 +799,9 @@ package may do all.
   40 s). Jumping (Jump), grabbing an object (ZKeyObject), picking a lock (LockedObject),
   casting (PlayerCastProjectileSpell, PlayerCastSelfSpell) and shouting (PlayerShout: "Magic in
   combat") are told; swinging a weapon, shooting and aiming are combat's (SwingMeleeWeapon,
-  ShootBow, PlayerinIronSights: TODO(M10) 5.1), knocking things over and standing on furniture
-  TODO(M13) (the physics does not tell who knocked an object).
+  ShootBow, and PlayerinIronSights as a drawn bow is aimed: its graph's bowDrawn), knocking
+  things over and standing on furniture TODO(M13) (the physics does not tell who knocked an
+  object).
 - **Creatures' lines** (dragons, hagravens, rieklings: 8 lip curves) move the creature's mouth
   through its behavior graph's own lip variables (LipBigAah, LipDST, LipEee, LipFV, LipK, LipL,
   LipR, LipTh; rieklings LipAA ... LipTH), which blend its phoneme poses; the curves are taken
@@ -876,6 +890,47 @@ meanwhile.
   fStaggerPlayerMassMult; the graph gets staggerMagnitude (its blend plays the smallest to the
   largest stagger) and staggerDirection (where the blow came from, clockwise from the facing in
   turns: 0 StaggerBack, 0.5 StaggerForward). TODO(M13): the engine's formula is not documented.
+  The Stagger effect (MGEF archetype 33: Unrelenting Force's 0.75, 1.25, 1.5; the Incinerate
+  and Ice Spike perks' push 0.25; the giants' and atronachs' area slams) staggers by its
+  magnitude weighed so against the target's mass, from its caster's side.
+- **Knock-downs** (`src/shell/actor-knockdowns.ts`, `actor-bodies.ts`, the player's:
+  `player-knockdown.ts`): Actor.PushActorAway and KnockAreaEffect (Unrelenting Force's third
+  word is its effect's VoicePushEffectScript: PushActorAway with PushForce 15), a trap's
+  ProcessTrapHit push, an explosion with Knock Down Always (EXPL DATA 0x4; By Formula 0x8:
+  those below fKnockdownCurrentHealthThreshold of their health, TODO(M13)), an attack whose
+  attack data has a knockdown (ATKD @32: the beast forms' sprinting swipes, read as a chance),
+  paralysis (it lies until the effect ends; TODO(M13): the game's paralysed fall stiff). The
+  idle tree's ActionKnockdown says how: the humans', bears', giants' and others' knock-down
+  idles send Ragdoll (or RagdollInstant), mammoths', atronachs' and wisps' stagger; a race
+  with No Knockdowns (RACE DATA 0x400000: dragons, mammoths, Dwarven automatons) and a graph
+  without either stagger at full strength (UESP "Unrelenting Force"). Knocked down, its graph
+  goes to FullyRagdoll (i1stPerson 0: the engine's third-person graphs), its controller goes,
+  its bodies are let go from the pose it had and flung at the force as a speed (m/s, every body
+  alike: TODO(M13) PushActorAway's unit; so read, Fus Ro Dah throws a bandit about 20 m), its
+  pose follows them; it does not act (GetKnockStateEnum 7 down, 6 getting up). Its ragdoll at
+  rest (30 units a second for 0.5 s after a second, at most 8 s: TODO(M13)), the engine gets
+  it up: the ragdoll's pose (as bone transforms, in a frame on the ground under its COM) goes
+  to its graph, iGetUpType 1, GetUpBegin; its pose matcher (hkbPoseMatchingGenerator) picks
+  the get-up clip whose first pose lies as the ragdoll does (GetUpFromFront, GetUpFromBack:
+  by the COM, neck and left upper arm, turned about the up axis to fit:
+  `src/animation/pose-matching.ts`); at the timer's GetUpStart it stands where the match puts
+  it, its bodies follow its pose again and hkbGetUpModifier blends from the ragdoll's pose into
+  the clip over its second; at the clip's GetUpEnd it has its controller back. Pushed again as
+  it rises it falls again; hits on one lying push its ragdoll (fDeathForce\* by the damage).
+  The player knocked down lies so too: their keys do nothing (PlaySession.knocked), the
+  bleedout camera looks at the body as at their death, and they stand where their body got up.
+- **Disarm** (MGEF archetype 9: the Disarm shout's 12, 20, 30, Disarming Bash's 99, read as
+  the highest level it disarms: UESP "Skyrim:Disarm"): the right hand's weapon leaves the
+  actor's items and falls from its hand (the WEAPON node) as a new reference of it in the
+  world, which anyone may pick up; a dual wielder's left goes into its inventory; bound
+  weapons stay. A fighter left with its fists after holding a weapon runs to a weapon lying
+  within 1024 units and picks it up (TODO(M13): the engine's reach).
+- **Telekinesis** (`src/shell/player-casting.ts`, `PlaySession.telekinesis`): while the
+  player holds a Telekinesis cast the loose object the view meets within
+  fMagicTelekinesisBaseDistance × its magnitude is taken by the grab's spring and drawn in to
+  float 160 units before them (no nearer than fMagicTelekinesisDistanceMin); let go, it flies
+  off along the view at 1500 units a second (TODO(M13): the hold, pull and throw are not in the
+  data). TODO(M11): Grab Actor (the Vampire Lord's Vampiric Grip) with the beast forms.
 - **Power attacks**: the player's attack button held [Controls] fInitialPowerAttackDelay (0.3 s)
   is a power attack (both buttons: the dual ones); without stamina it is a plain one (the HUD's
   meter blinks). Power attacks and bashes cost the skill progression's powerAttackCost and
@@ -899,7 +954,10 @@ meanwhile.
   attacker's weapon skill by the weapon's base damage (Sneak by fSneakAttackSkillUsageMelee for
   a sneak attack), and shows the target on the HUD's enemy bar (its name and health) for the
   player's hits. Health run out kills (the ragdoll pushed by fDeathForce{Ranged}Min..Max by the
-  damage); an essential actor, and a protected one unless the player dealt the blow, bleeds out
+  damage; its death cry, its Death line, unless the kill was KillSilent's, which reports no
+  murder either); an essential actor, and a protected one unless the player themselves dealt
+  the blow (a follower's, a summon's or another actor's leaves it down: UESP "Protected
+  NPCs"), bleeds out
   instead (`bleedout.ts`: bleedOutStart, its enemies leave it, it regains fBleedoutRecover of its
   health a second and gets up (bleedOutStop) at fBleedoutDefault after fBleedoutMin seconds;
   SetNoBleedoutRecovery keeps it down). Actor.Kill (KillSilent, the console's kill) bleeds an
@@ -996,7 +1054,8 @@ the projectile and explosion a spell sends.
   once; a held Self spell acts every 0.25 s.
 - **Impacts:** the actor hit takes the spell (`deliver`: absorption, the ward if it faces the
   projectile, OnHit, the school's use); a hostile one that took hold makes it search for its
-  attacker (detection's `attackedBy`; TODO(M10) 5.2: combat begins). A Target Location spell
+  attacker (detection's `attackedBy`) and turns on it as on a blow (the combat AI's hit: a
+  held spell's sprays count once a second). A Target Location spell
   makes its summons and hazards where it landed. The explosion bursts (its sounds, `explode`:
   its enchantment, damage and force within its radius), the area reaches those near (`area`),
   the effect's impact data set sounds on the surface hit; both are noises for detection by their
@@ -1008,13 +1067,16 @@ the projectile and explosion a spell sends.
 - **The AI's API** (5.2's combat AI calls it): `castAt(actor, hand, target, {spell, purpose})`
   casts from a hand ('both': dual cast) the given spell (equipped first), what the hand holds,
   or the spell the casting engine chooses for the purpose (`chooseSpell`: attack, heal, summon,
-  ward, buff: of its spells and what its hands hold, the costliest it has the magicka for;
-  TODO(M10) 5.2: the combat style's magic score); `healSelf(actor)`, `summon(actor, target?)`,
+  ward, buff: of its spells and what its hands hold, those it has the magicka for whose AI
+  delay has passed, the one worth most against the target: `spellWorth`, "Combat AI");
+  `healSelf(actor)` (a concentration heal held until whole), `summon(actor, target?)`,
   `drinkPotion(actor, value)` (the carried potion restoring the value most);
   `shoutAt(actor, target, words?)` (Greybeards, draugr; dragons' breath: [Flying
   combat](#flying-combat)): the voice's shout, its
   words let out after their hold time. NPCs release a fire and forget spell once ready and hold
-  a concentration spell 2.5 s. An actor that dies or leaves the stage stops casting.
+  a concentration spell while their AI keeps it (`castAt`'s hold: the combat AI while its
+  target is alive, within the spell's range and before it; UseMagic its cast time), at most
+  8 s (TODO(M13)); without a say of the AI's, 2.5 s. An actor that dies or leaves the stage stops casting.
 - **Scripts' casts** (Spell.Cast, RemoteCast: WorldBridge.launchSpell) fly the same way from the
   source's right hand or its place; without a play they are delivered at once.
 
@@ -1059,8 +1121,10 @@ the rules below read each value as its name says (TODO(M13)).
   iFriendHitNonCombatAllowed: TODO(M13)), each blow let pass a friendly fire comment (its Hit
   line, GetFriendHit) where its package has the friendly fire interrupt; attacked by one it does
   not detect, it searches. A package with Ignore Combat (PKDT) keeps it out of fights it would
-  pick; calm keeps it out of all; StartCombat sets it on a target whatever its reaction,
-  StopCombat and StopCombatAlarm end it. Entering, it says NormalToCombat (AlertToCombat when
+  pick; calm keeps it out of all; StartCombat sets it on a target whatever its reaction and
+  makes it hostile to it (the reaction's scriptHostile: the actor state's combatTargets, until
+  StopCombat, StopCombatAlarm or its combat ends: TODO(M13) how long the engine keeps it); a
+  hostile spell that takes hold turns its victim on its caster as a blow does. Entering, it says NormalToCombat (AlertToCombat when
   alerted), gets off its horse (TODO(M13): mounted combat), its detection reaction or override
   package ends, and its package's way stops.
 - **Targets** (`selectTarget`): the most threatening (health × its blow's damage), nearest
@@ -1083,8 +1147,23 @@ the rules below read each value as its name says (TODO(M13)).
   Its combat style: its combat override package's (PACK CNAM), else its NPC\_ ZNAM (of the
   template that gives its AI data), else DefaultCombatstyle (0x3D). With csHumanMissile
   (ranged 3.2) an archer shoots down to about 250 units and draws its sword closer; a melee
-  style keeps its sword at 400. TODO(M10) 5.3: spells, staffs and shouts (`CombatCasting`:
-  their options and `castAt`, wired by magic in combat).
+  style keeps its sword at 400. Its magic (`src/shell/combat-casting.ts`, `CombatCasting`)
+  joins its options, weighed by the style's magic, staff and shout mults: the attack spell
+  worth most against its target (`CastingEngine.spellWorth`: each hostile effect's magnitude
+  by its seconds times the share the target keeps through its resistances, Magic Resistance
+  and the effect's own resist value, so a frost-resistant target draws fire; none where its
+  conditions or level cap leave the target out, as Turn Undead on the living; plus the MGEF
+  Script Effect AI Score; a spell cast again only after its effects' AI Delay Time;
+  TODO(M13): the engine's CombatMagicCaster weighing), each staff it carries with charge left
+  (taken up as a weapon), and its voice's shout. A concentration spell it holds while its
+  target is alive, within the spell's range and before it.
+- **Its support** (`chooseSupport`, weighed every second): a ward (MagicWard on the spell or
+  its effect) against a spell or breath coming at it, held while one comes; below
+  iAICombatRestoreHealthPercentage (60%) of its health its healing spell, else the Health
+  potion it carries that restores most, at most once every fCombatItemRestoreTimer (3 s); a
+  Magicka potion when its magic fails it for want of magicka (a Stamina potion below the same
+  share of stamina: TODO(M13)); a summons when none of its summons stands; a buff (a lasting
+  Self spell: Oakflesh, a cloak) not on it. Its attacks wait 1.5 s after.
 - **Movement** (`chooseManeuver`, a maneuver for 1–3 s): more than 512 units beyond its reach
   it chases its target over the navmeshes, running; near, dueling styles fall back (fallback
   mult × 0.5, × (1 + defensive mult) as the target swings), circle (circle mult × 0.5) or

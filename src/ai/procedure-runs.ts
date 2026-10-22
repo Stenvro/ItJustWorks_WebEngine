@@ -519,13 +519,20 @@ const find: ProcedureRunner = async (run) => {
 
 /**
  * Acquire: picks up what its object list holds, nearest first, until it has as many as it was
- * to. TODO(M11): Allow Pickpocketing; TODO(M10) 5.1: Allow Killing.
+ * to. One a living actor holds it does not take; with Allow Killing it fights that actor for it
+ * (its body's attack: a StartCombat). TODO(M11): Allow Pickpocketing.
  */
 const acquire: ProcedureRunner = async (run) => {
   const wanted = Math.max(1, run.inputs.number(1, 1));
+  const killing = run.inputs.bool(4);
   let taken = 0;
   for (const reference of await targetsIn(run, 0)) {
     if (run.stopped() || taken >= wanted) break;
+    const holder = await run.mind.holder?.(reference);
+    if (holder !== undefined && holder !== run.actor) {
+      if (killing) run.body.attack?.(holder);
+      continue;
+    }
     if (!(await goToReference(run, reference, REACH))) continue;
     if (await run.body.take(reference)) taken++;
   }
@@ -831,9 +838,111 @@ const flightGrab: ProcedureRunner = async (run) => {
   return (await run.body.flightGrab(victim)) ? 'success' : 'failure';
 };
 
+/** A value between a and b, picked at random. */
+function between(run: ProcedureRun, min: number, max: number): number {
+  const low = Math.min(min, max);
+  return low + run.random() * Math.abs(max - min);
+}
+
+/**
+ * UseWeapon: to its place, then at its target (an archery butt, a training dummy, an enemy)
+ * with the weapon its Weapon Type names: barrages of Min..Max Attacks Per Barrage (at least
+ * one), Min..Max Pause apart (Pause Between Barrages), until End After Barrages of them (0 or
+ * Never End: while the package runs); Do No Damage, Always Hit, Aim Only (it draws and aims,
+ * never looses), Always Power Attack, Allow Combat Start On Hit and Headtrack Target are the
+ * barrage's (the body's: src/shell/actor-practice.ts). Its weapon goes away as it ends.
+ * TODO(M13): Crouch To Reload and Hold When Blocked (no vanilla package holds its fire for a
+ * blocked line; crouching is the sneak pose the engine gives a crossbowman).
+ */
+const useWeapon: ProcedureRunner = async (run) => {
+  const body = run.body;
+  if (!body.useWeapon) return hold(run);
+  const place = await placeIn(run, 0);
+  if (place) await goTo(run, place);
+  const target = (await targetsIn(run, 2))[0];
+  if (target === undefined) return hold(run);
+  const inputs = run.inputs;
+  const neverEnd = inputs.bool(4);
+  const barrages = Math.max(0, Math.round(inputs.number(11)));
+  const pause = inputs.bool(5);
+  try {
+    for (let done = 0; !run.stopped() && (neverEnd || barrages === 0 || done < barrages); done++) {
+      const attacks = Math.max(
+        1,
+        Math.round(between(run, inputs.number(12, 1), inputs.number(13, 1))),
+      );
+      const ok = await body.useWeapon(target, {
+        weapon: inputs.target(1),
+        attacks,
+        alwaysHit: inputs.bool(3),
+        doNoDamage: inputs.bool(7),
+        aimOnly: inputs.bool(15),
+        powerAttack: inputs.bool(16),
+        combatStartOnHit: inputs.bool(14),
+        headtrack: inputs.bool(17, true),
+      });
+      if (!ok) return 'failure';
+      if (pause) await run.wait(Math.max(0.5, between(run, inputs.number(9), inputs.number(10))));
+    }
+  } finally {
+    body.holster?.();
+  }
+  return run.stopped() ? 'failure' : 'success';
+};
+
+/**
+ * UseMagic: to its place, then casts its Spell at its target (itself without one): Number To
+ * Cast Min..Max casts (0: while the package runs), each held Cast Time Min..Max seconds (a
+ * concentration spell), Cooldown Time Min..Max apart, dual cast with Dual Cast. Its magic goes
+ * away as it ends. TODO(M13): Hold When Blocked.
+ */
+const useMagic: ProcedureRunner = async (run) => {
+  const body = run.body;
+  if (!body.useMagic) return hold(run);
+  const place = await placeIn(run, 0);
+  if (place) await goTo(run, place);
+  const target = (await targetsIn(run, 2))[0];
+  const inputs = run.inputs;
+  const count = Math.round(between(run, inputs.number(8), inputs.number(9)));
+  try {
+    for (let done = 0; !run.stopped() && (count <= 0 || done < count); done++) {
+      const ok = await body.useMagic(target, {
+        spell: inputs.target(1),
+        castTime: Math.max(0, between(run, inputs.number(4), inputs.number(5))),
+        dual: inputs.bool(10),
+      });
+      if (!ok) return 'failure';
+      await run.wait(Math.max(0.5, between(run, inputs.number(6), inputs.number(7))));
+    }
+  } finally {
+    body.holster?.();
+  }
+  return run.stopped() ? 'failure' : 'success';
+};
+
+/**
+ * Shout: to its place, then shouts its Shout (else its voice's) at its target: the Greybeards'
+ * practice, a dragon's breath at a place. With Just Headtrack it only turns its head to the
+ * target (not its body). Once a recovery has passed it shouts again while the package runs.
+ * TODO(M13): Hold When Blocked.
+ */
+const shout: ProcedureRunner = async (run) => {
+  const body = run.body;
+  if (!body.shout) return hold(run);
+  const place = await placeIn(run, 0);
+  if (place) await goTo(run, place);
+  const target = (await targetsIn(run, 2))[0];
+  const turn = !run.inputs.bool(4);
+  while (!run.stopped()) {
+    if (!(await body.shout(target, run.inputs.target(1), turn))) return 'failure';
+    await run.wait(1);
+  }
+  return 'failure';
+};
+
 /**
  * The procedures run, by lower-case name; the others hold the actor where it is (standing up
- * from furniture first): UseWeapon, UseMagic and Shout (TODO(M10) 5.1–5.3: combat).
+ * from furniture first).
  */
 export const PROCEDURES: Readonly<Record<string, ProcedureRunner>> = {
   travel: standing(travel),
@@ -863,4 +972,7 @@ export const PROCEDURES: Readonly<Record<string, ProcedureRunner>> = {
   hover: standing(hover),
   orbit: standing(orbit),
   flightgrab: standing(flightGrab),
+  useweapon: standing(useWeapon),
+  usemagic: standing(useMagic),
+  shout: standing(shout),
 };

@@ -4,7 +4,9 @@
 // what hits it, picks it and sees it meets those bodies. When it dies its bodies are let go
 // from where they are and its pose follows them: the dead fall as ragdolls from the pose they
 // had, as the dead placed in their cells do (src/shell/actors.ts, ragdollsOf). The dead
-// player's avatar gets its bodies so too (src/shell/player-death.ts).
+// player's avatar gets its bodies so too (src/shell/player-death.ts). A living actor knocked
+// down lies as a ragdoll the same way until it gets up (src/shell/actor-knockdowns.ts); hits
+// on a ragdoll push it.
 
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { ActorPose } from '../animation/skeleton.ts';
@@ -52,8 +54,10 @@ interface ActorBody {
   /** The pose and placement versions the bodies were last moved to. */
   poseVersion: number;
   worldVersion: number;
-  /** Dead: its bodies move it (its ragdoll). */
+  /** Dead or knocked down: its bodies move it (its ragdoll). */
   articulation: Articulation | undefined;
+  /** Knocked down living: its ragdoll lies until it gets up (src/shell/actor-knockdowns.ts). */
+  knocked: boolean;
 }
 
 export class ActorBodies {
@@ -100,7 +104,8 @@ export class ActorBodies {
     for (const staged of actors) {
       const entry = this.#bodies.get(staged.reference);
       if (entry?.articulation) {
-        entry.articulation.update();
+        // A knocked-down actor's graph animated its pose meanwhile: the ragdoll's again.
+        entry.articulation.update(entry.knocked);
         continue;
       }
       const distance = focus
@@ -131,7 +136,10 @@ export class ActorBodies {
       entry = this.#bodies.get(staged.reference);
     }
     const physics = this.#physics;
-    if (!entry || !physics || entry.articulation) return;
+    if (!entry || !physics) return;
+    // Knocked down as it died: it lies on as the dead do.
+    entry.knocked = false;
+    if (entry.articulation) return;
     physics.setMotion(entry.placed, false);
     entry.articulation = new Articulation(entry.placed, entry.pose, entry.world);
   }
@@ -144,6 +152,90 @@ export class ActorBodies {
     await this.kill(staged);
     const entry = this.#bodies.get(staged.reference);
     if (entry?.articulation) this.#physics?.impulse(entry.placed, direction, magnitude);
+  }
+
+  /**
+   * A living actor knocked down (src/shell/actor-knockdowns.ts): its bodies are let go from
+   * where its pose has them, as a death's are, and its pose follows them until it gets up
+   * (standUp). Whether it lies as a ragdoll now (false: no bodies for it, no physics).
+   */
+  async knockDown(staged: BodyHolder): Promise<boolean> {
+    let entry = this.#bodies.get(staged.reference);
+    for (let i = 0; i < 2 && !entry; i++) {
+      await this.#add(staged, true);
+      entry = this.#bodies.get(staged.reference);
+    }
+    const physics = this.#physics;
+    if (!entry || !physics || staged.dead) return false;
+    if (entry.articulation) return entry.knocked;
+    physics.setMotion(entry.placed, false);
+    entry.articulation = new Articulation(entry.placed, entry.pose, entry.world);
+    entry.knocked = true;
+    return true;
+  }
+
+  /** Whether an actor lies knocked down as a ragdoll. */
+  knocked(reference: number): boolean {
+    return this.#bodies.get(reference)?.knocked === true;
+  }
+
+  /**
+   * Whether a knocked-down actor's ragdoll has come to rest: every body sleeps or moves slower
+   * than `speed` (units a second). True without one.
+   */
+  resting(reference: number, speed: number): boolean {
+    const entry = this.#bodies.get(reference);
+    return entry?.articulation?.resting(speed) ?? true;
+  }
+
+  /**
+   * A knocked-down actor gets up: its bodies are keyframed again and follow its pose (its
+   * graph's get-up) from now on.
+   */
+  standUp(reference: number): void {
+    const entry = this.#bodies.get(reference);
+    if (!entry?.knocked) return;
+    entry.knocked = false;
+    entry.articulation = undefined;
+    this.#physics?.keyframe(entry.placed);
+    entry.poseVersion = -1;
+  }
+
+  /**
+   * A hit on a ragdoll (one dead or knocked down) pushes it: an impulse along `direction`
+   * (Havok units). False when the actor lies as no ragdoll (it stands: its bodies follow its
+   * pose).
+   */
+  pushRagdoll(reference: number, direction: Vec3, magnitude: number): boolean {
+    const entry = this.#bodies.get(reference);
+    if (!entry?.articulation || magnitude <= 0) return false;
+    this.#physics?.impulse(entry.placed, direction, magnitude);
+    return true;
+  }
+
+  /**
+   * A knock-down's push on a ragdoll (PushActorAway's force): every body flies off at that
+   * speed along `direction` (Havok units a second). False without a ragdoll.
+   */
+  kickRagdoll(reference: number, direction: Vec3, speed: number): boolean {
+    const entry = this.#bodies.get(reference);
+    if (!entry?.articulation || speed <= 0) return false;
+    this.#physics?.kick(entry.placed, direction, speed);
+    return true;
+  }
+
+  /**
+   * Whether a body of an actor's ragdoll on the nodes named (all when none are) touches
+   * something not its own (BSRagdollContactListenerModifier).
+   */
+  touching(reference: number, nodes: readonly string[]): boolean {
+    const entry = this.#bodies.get(reference);
+    const physics = this.#physics;
+    if (!entry || !physics) return false;
+    return physics.touching(
+      entry.placed,
+      nodes.length > 0 ? new Set(nodes.map((node) => node.toLowerCase())) : undefined,
+    );
   }
 
   #lives(staged: BodyHolder): boolean {
@@ -192,6 +284,7 @@ export class ActorBodies {
       poseVersion: -1,
       worldVersion: -1,
       articulation: undefined,
+      knocked: false,
     };
     this.#bodies.set(reference, entry);
     this.#follow(entry, physics, true);

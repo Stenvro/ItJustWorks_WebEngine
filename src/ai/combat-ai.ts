@@ -105,6 +105,10 @@ export interface CombatAiSettings {
   readonly inventoryUpdateTime: number;
   /** A fleeing actor that cannot get away (cornered) fights again within this of its enemy. */
   readonly corneredDistance: number;
+  /** iAICombatRestoreHealthPercentage: below this share (percent) of its health it heals. */
+  readonly restoreHealthPercentage: number;
+  /** fCombatItemRestoreTimer: it heals or drinks at most this often (seconds). */
+  readonly itemRestoreTime: number;
 }
 
 /**
@@ -145,6 +149,8 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['acceptYieldTime', undefined, 3],
   ['inventoryUpdateTime', 'fCombatInventoryUpdateTimer', 3],
   ['corneredDistance', undefined, 192],
+  ['restoreHealthPercentage', 'iAICombatRestoreHealthPercentage', 60],
+  ['itemRestoreTime', 'fCombatItemRestoreTimer', 3],
 ];
 
 export function readCombatAiSettings(

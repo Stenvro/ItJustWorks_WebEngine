@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { PackfileBuilder } from '../../../tests/helpers/hkx-builder.ts';
-import { readAnimationContainer, TRANSFORM_FLOATS } from './animation.ts';
+import { readAnimationContainer, readRagdollMapping, TRANSFORM_FLOATS } from './animation.ts';
 import { Packfile } from './packfile.ts';
 
 /** Writes the bytes of spline-compressed blocks. */
@@ -260,5 +260,45 @@ describe('Havok animations', () => {
   it('evaluates float tracks: a 16-bit curve, then a static value', () => {
     close(sample(0.5).floats, [0.5]);
     close(sample(1.5).floats, [0.25]);
+  });
+});
+
+describe('ragdoll mapping', () => {
+  /** A skeleton of named bones at an object (hkaSkeleton: name, parents, bones, pose). */
+  const skeleton = (b: PackfileBuilder, name: string, bones: string[]): number => {
+    const at = b.object('hkaSkeleton', 104);
+    b.string(at + 16, name);
+    const parents = b.array(at + 24, 2, bones.length);
+    bones.forEach((_, i) => b.i16(parents + i * 2, i === 0 ? -1 : 0));
+    const list = b.array(at + 40, 16, bones.length);
+    bones.forEach((bone, i) => b.string(list + i * 16, bone));
+    b.array(at + 56, 48, bones.length);
+    return at;
+  };
+
+  it("reads the mapper from the ragdoll skeleton onto the animation skeleton's bones", () => {
+    const b = new PackfileBuilder();
+    const container = b.object('hkaAnimationContainer', 64);
+    const animation = skeleton(b, 'NPC Root [Root]', ['NPC Root [Root]', 'NPC COM [COM ]', 'X']);
+    const ragdoll = skeleton(b, 'Ragdoll_COM', ['Ragdoll_COM01', 'Ragdoll_X01']);
+    const skeletons = b.array(container + 16, 8, 2);
+    b.pointer(skeletons, animation).pointer(skeletons + 8, ragdoll);
+    // Two mappers, as the files have: animation → ragdoll (left out) and ragdoll → animation.
+    for (const [a, c, pairs] of [
+      [animation, ragdoll, [[1, 0]]],
+      [ragdoll, animation, [[0, 1]]],
+    ] as const) {
+      const mapper = b.object('hkaSkeletonMapper', 128);
+      b.pointer(mapper + 16, a).pointer(mapper + 24, c);
+      const simple = b.array(mapper + 32, 64, pairs.length);
+      pairs.forEach(([boneA, boneB], i) =>
+        b.i16(simple + i * 64, boneA).i16(simple + i * 64 + 2, boneB),
+      );
+    }
+    const pack = Packfile.parse(b.build(container));
+    const mapping = readRagdollMapping(pack, 'NPC Root [Root]');
+    expect(mapping?.ragdoll.name).toBe('Ragdoll_COM');
+    expect(Array.from(mapping?.bones ?? [])).toEqual([1, -1]);
+    expect(readRagdollMapping(pack, 'no such skeleton')).toBeUndefined();
   });
 });
