@@ -782,7 +782,8 @@ export class CrimeEngine {
 
   /**
    * The doors of a place were locked (LockDoors) or unlocked: an interior locked with the
-   * player in it is off limits to them (they trespass staying: TODO(M10) 4.3 procedure-runs);
+   * player in it is off limits to them (staying, they trespass: warned, then reported,
+   * src/shell/actor-crime.ts);
    * unlocked, it is open to them again.
    */
   doorsLocked(cells: Iterable<number>, locked: boolean, playerCell: number | undefined): void {
