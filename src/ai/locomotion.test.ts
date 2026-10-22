@@ -222,10 +222,17 @@ describe('Locomotion', () => {
     for (const stray of [0.999, 0.002, 0.995, 0.004]) {
       locomotion.drive(
         [graph],
-        frame({ velocity: [125 * Math.sin(stray * 2 * Math.PI), 125 * Math.cos(stray * 2 * Math.PI)] }),
+        frame({
+          velocity: [125 * Math.sin(stray * 2 * Math.PI), 125 * Math.cos(stray * 2 * Math.PI)],
+        }),
       );
     }
-    expect(order).toEqual(['Direction=0.000', 'Direction=0.000', 'Direction=0.000', 'Direction=0.000']);
+    expect(order).toEqual([
+      'Direction=0.000',
+      'Direction=0.000',
+      'Direction=0.000',
+      'Direction=0.000',
+    ]);
   });
 
   it('gives the turn rate in degrees per second (left positive) and lands from the air', () => {

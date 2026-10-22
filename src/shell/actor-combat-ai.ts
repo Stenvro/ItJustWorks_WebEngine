@@ -43,6 +43,7 @@ import { FightReaction, reactionOf } from '../ai/combat-reactions.ts';
 import { CombatSearch } from '../ai/combat-search.ts';
 import { readDetectionSettings } from '../ai/detection.ts';
 import {
+  ATTACK_DECISION_SECONDS,
   attackInterval,
   avoidsThreat,
   chooseAttack,
@@ -238,6 +239,8 @@ interface Mind {
   maneuverUntil: number;
   side: number;
   nextAttack: number;
+  /** When it last attacked in melee (its clock; undefined: not yet in this fight). */
+  lastAttack: number | undefined;
   /** How long it holds its bow drawn this shot (seconds). */
   bowHold: number;
   blockUntil: number;
@@ -595,6 +598,7 @@ export class ActorCombatAi {
         maneuverUntil: 0,
         side: 1,
         nextAttack: 0,
+        lastAttack: undefined,
         bowHold: 0,
         blockUntil: 0,
         blockedSwing: undefined,
@@ -1400,10 +1404,14 @@ export class ActorCombatAi {
         canBash: gear?.canBash === true,
         powerChance: gear?.powerChance ?? 0,
         allies: this.#alliesOn(mind, target.reference),
+        targetIsPlayer: target.reference === PLAYER_REF,
+        sinceLastAttack: mind.lastAttack === undefined ? undefined : this.#clock - mind.lastAttack,
       },
       this.#random,
+      this.#settings,
     );
-    mind.nextAttack = this.#clock + attackInterval(style, this.#random);
+    mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS;
+    if (choice !== 'none') mind.lastAttack = this.#clock;
     const host = this.#options.host;
     switch (choice) {
       case 'attack':

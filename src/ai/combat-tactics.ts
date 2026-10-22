@@ -6,10 +6,10 @@
 // the melee mults against a staggered, blocking, attacking or recoiling target), when it blocks
 // (the defensive mult) and when it gets out of a threat's way (avoid threat chance).
 //
-// The style's values are what the Creation Kit edits (UESP "Skyrim Mod:Mod File Format/CSTY");
-// how the engine turns them into chances is not documented (CommonLibSSE names the combat
-// behaviour trees, not their arithmetic): the rules below read each multiplier as the chance or
-// weight its name gives, at the scale its vanilla values have (TODO(M13)). Platform-independent.
+// The style's values are what the Creation Kit edits (UESP "Skyrim Mod:Mod File Format/CSTY").
+// The melee attack decision follows the engine's (docs/ai.md, "The attack decision"); the other
+// rules read each multiplier as the chance or weight its name gives, at the scale its vanilla
+// values have (TODO(M13)). Platform-independent.
 
 import type { CombatAiSettings } from './combat-ai.ts';
 import { CombatStyleFlag, type CombatStyle } from './combat-style-records.ts';
@@ -225,25 +225,76 @@ export interface AttackInput {
   readonly powerChance: number;
   /** Others of its combat group fight the same target. */
   readonly allies: number;
+  /** Its target is the player. */
+  readonly targetIsPlayer: boolean;
+  /** Seconds since its last attack (undefined: none yet in this fight). */
+  readonly sinceLastAttack: number | undefined;
 }
 
 export type AttackChoice = 'none' | 'attack' | 'power' | 'bash' | 'powerBash';
+
+/** A melee attack is decided this often: the combat tree's "Attack Idle" (seconds). */
+export const ATTACK_DECISION_SECONDS = 0.25;
+
+const lerp = (t: number, from: number, to: number): number => from + (to - from) * t;
+
+/**
+ * The chance it attacks at a decision (docs/ai.md, "The attack decision"): its offensive mult
+ * mapped onto fCombatAttackChanceMin .. Max (against the player with others on them too, × the
+ * group offensive mult per other, not below fCombatGroupOffensiveMultMin); against a staggered
+ * or recoiling target × the larger of the attack and power attack staggered mults, else while it
+ * blocks × fCombatAttackChanceBlockingSwingMult if the target swings, else × its defensive mult
+ * mapped onto fCombatAttackChanceBlockingMultMax .. Min; and × 1 .. the last attack bonus as up
+ * to fCombatAttackChanceLastAttackBonusTime passes since its last attack.
+ */
+export function attackChance(
+  style: CombatStyle,
+  input: AttackInput,
+  settings: CombatAiSettings,
+): number {
+  const general = style.general;
+  let offensive = general.offensiveMult;
+  if (input.targetIsPlayer && input.allies > 0 && general.groupOffensiveMult < 1) {
+    offensive *= Math.max(
+      general.groupOffensiveMult ** input.allies,
+      settings.groupOffensiveMultMin,
+    );
+  }
+  let chance = lerp(offensive, settings.attackChanceMin, settings.attackChanceMax);
+  if (input.targetStaggered || input.targetRecoiling) {
+    chance *= Math.max(style.melee.attackStaggeredMult, style.melee.powerAttackStaggeredMult);
+  } else if (input.blocking) {
+    // TODO(M13): the engine skips the blocking mult for a target in one more state (unnamed).
+    chance *= input.targetAttacking
+      ? settings.attackChanceBlockingSwingMult
+      : lerp(
+          general.defensiveMult,
+          settings.attackChanceBlockingMultMax,
+          settings.attackChanceBlockingMultMin,
+        );
+  }
+  if (input.sinceLastAttack !== undefined) {
+    const passed = input.sinceLastAttack / settings.attackChanceLastAttackBonusTime;
+    chance *= lerp(Math.min(1, Math.max(0, passed)), 1, settings.attackChanceLastAttackBonus);
+  }
+  return chance;
+}
 
 /** A bash from a block is tried this often (× the bash mults). TODO(M13). */
 const BASH_CHANCE = 0.25;
 
 /**
- * Whether and how it attacks now (a decision every attackInterval): blocking, it bashes by the
- * bash mult (× bash attack mult as the target swings, bash power attack mult as it power
- * attacks, bash recoil mult as it recoils); else it attacks by the offensive mult (× the group
- * offensive mult with allies on the target, × attack staggered mult on a staggered target); a
- * power attack by its attack data's chance (× power attack staggered mult on a staggered, power
+ * Whether and how it attacks now (a decision every ATTACK_DECISION_SECONDS): blocking, it may
+ * bash by the bash mult (× bash attack mult as the target swings, bash power attack mult as it
+ * power attacks, bash recoil mult as it recoils); else it attacks by attackChance; a power
+ * attack by its attack data's chance (× power attack staggered mult on a staggered, power
  * attack blocking mult on a blocking target).
  */
 export function chooseAttack(
   style: CombatStyle,
   input: AttackInput,
   random: () => number,
+  settings: CombatAiSettings,
 ): AttackChoice {
   const melee = style.melee;
   const power = (): boolean =>
@@ -254,8 +305,7 @@ export function chooseAttack(
         : input.targetBlocking
           ? melee.powerAttackBlockingMult
           : 1);
-  if (input.blocking) {
-    if (!input.canBash) return 'none';
+  if (input.blocking && input.canBash) {
     const reason = input.targetPowerAttacking
       ? melee.bashPowerAttackMult
       : input.targetAttacking
@@ -263,18 +313,16 @@ export function chooseAttack(
         : input.targetRecoiling
           ? melee.bashRecoilMult
           : 1;
-    if (random() >= BASH_CHANCE * melee.bashMult * reason) return 'none';
-    return power() ? 'powerBash' : 'bash';
+    if (random() < BASH_CHANCE * melee.bashMult * reason) return power() ? 'powerBash' : 'bash';
   }
-  const offensive =
-    style.general.offensiveMult *
-    (input.allies > 0 ? style.general.groupOffensiveMult : 1) *
-    (input.targetStaggered ? melee.attackStaggeredMult : 1);
-  if (random() >= offensive) return 'none';
+  if (random() >= attackChance(style, input, settings)) return 'none';
   return power() ? 'power' : 'attack';
 }
 
-/** Seconds between its attack decisions: the more offensive, the sooner. TODO(M13). */
+/**
+ * Seconds between a shot's or a cast's decisions: the more offensive, the sooner. TODO(M13):
+ * the combat tree's ranged and magic idles (melee: ATTACK_DECISION_SECONDS).
+ */
 export function attackInterval(style: CombatStyle, random: () => number): number {
   const offensive = Math.min(1, Math.max(0, style.general.offensiveMult));
   return (0.4 + random() * 0.8) * (1.5 - offensive);

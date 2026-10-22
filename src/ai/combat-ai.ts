@@ -9,8 +9,9 @@
 // The AI values (NPC_ AIDT; the actor values Aggression, Confidence, Assistance) mean what the
 // Creation Kit says of them (UESP "Skyrim:AI Data"); the game settings are the load order's
 // where it has them (fConfidence*, fCombatConfidenceModifier*, fFleeDistance*,
-// iFriendHitCombatAllowed, ...), else the engine's built-in ones, which no plugin holds: their
-// values here are ours and marked TODO(M13). Platform-independent.
+// iFriendHitCombatAllowed, ...), else the engine's built-in defaults, which no plugin holds
+// (docs/ai.md, "The engine's built-in game settings"); values no setting names are ours and
+// marked TODO(M13). Platform-independent.
 
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorValue } from '../world/actor-values.ts';
@@ -57,13 +58,14 @@ export interface CombatAiSettings {
   /** fFleeDistanceExterior / Interior: how far a fleeing actor runs from its enemies. */
   readonly fleeDistanceExterior: number;
   readonly fleeDistanceInterior: number;
-  /** iFriendHitCombatAllowed: blows a friend or ally may deal it in combat before it turns. */
+  /** iFriendHitCombatAllowed: blows a friend may deal it in combat before it turns. */
   readonly friendHitCombatAllowed: number;
-  /**
-   * The same out of combat (iFriendHitNonCombatAllowed, the engine's; not in the plugins).
-   * TODO(M13): its value.
-   */
+  /** iFriendHitNonCombatAllowed: the same out of combat (none: it turns at the first). */
   readonly friendHitNonCombatAllowed: number;
+  /** iAllyHitCombatAllowed: blows an ally may deal it in combat (1000 or more: any number). */
+  readonly allyHitCombatAllowed: number;
+  /** iAllyHitNonCombatAllowed: the same out of combat. */
+  readonly allyHitNonCombatAllowed: number;
   /** fCombatTeammateFollowRadiusMult: how far (× its follow radius) a teammate fights. */
   readonly teammateFollowRadiusMult: number;
   /** fCombatAbsoluteMaxRangeMult, fCombatCurrentWeaponAbsoluteMaxRangeMult: see combat-tactics. */
@@ -97,7 +99,11 @@ export interface CombatAiSettings {
   readonly lostTargetMult: number;
   /** fCombatYieldTime: a yielding actor stays out of the fight this long (seconds). */
   readonly yieldTime: number;
-  /** fCombatYieldRetryTime: after this long it may yield again. */
+  /**
+   * fCombatYieldRetryTime: after this long it may yield again. The engine reads it (and
+   * fCombatYieldTime) where the player yields to those fighting them; an actor's own yield
+   * borrows them. TODO(M13): the rule of an actor's yield.
+   */
   readonly yieldRetryTime: number;
   /** How long the player must hold off before an actor accepts their yield (seconds). */
   readonly acceptYieldTime: number;
@@ -109,11 +115,21 @@ export interface CombatAiSettings {
   readonly itemRestoreTime: number;
   /** iAICombatRestoreHealthPercentage: it heals or drinks below this share of its health (%). */
   readonly restoreHealthPercent: number;
-  /**
-   * iAICombatRestoreMagickaPercentage: it drinks below this share of its magicka (%; not in the
-   * plugins: TODO(M13) the engine's value).
-   */
+  /** iAICombatRestoreMagickaPercentage: it drinks below this share of its magicka (%). */
   readonly restoreMagickaPercent: number;
+  /** fCombatAttackChanceMin / Max: a melee attack's chance at offensive mult 0 and 1. */
+  readonly attackChanceMin: number;
+  readonly attackChanceMax: number;
+  /** fCombatAttackChanceBlockingMultMax / Min: × while it blocks, at defensive mult 0 and 1. */
+  readonly attackChanceBlockingMultMax: number;
+  readonly attackChanceBlockingMultMin: number;
+  /** fCombatAttackChanceBlockingSwingMult: × while it blocks a target that swings. */
+  readonly attackChanceBlockingSwingMult: number;
+  /** fCombatAttackChanceLastAttackBonus, …BonusTime: × this, reached so long after an attack. */
+  readonly attackChanceLastAttackBonus: number;
+  readonly attackChanceLastAttackBonusTime: number;
+  /** fCombatGroupOffensiveMultMin: the group offensive mult's floor against a crowded player. */
+  readonly groupOffensiveMultMin: number;
 }
 
 /**
@@ -130,7 +146,9 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['fleeDistanceExterior', 'fFleeDistanceExterior', 5000],
   ['fleeDistanceInterior', 'fFleeDistanceInterior', 3000],
   ['friendHitCombatAllowed', 'iFriendHitCombatAllowed', 4],
-  ['friendHitNonCombatAllowed', 'iFriendHitNonCombatAllowed', 2],
+  ['friendHitNonCombatAllowed', 'iFriendHitNonCombatAllowed', 0],
+  ['allyHitCombatAllowed', 'iAllyHitCombatAllowed', 1000],
+  ['allyHitNonCombatAllowed', 'iAllyHitNonCombatAllowed', 3],
   ['teammateFollowRadiusMult', 'fCombatTeammateFollowRadiusMult', 3],
   ['absoluteMaxRangeMult', 'fCombatAbsoluteMaxRangeMult', 4],
   ['currentWeaponAbsoluteMaxRangeMult', 'fCombatCurrentWeaponAbsoluteMaxRangeMult', 1.25],
@@ -150,13 +168,21 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['targetDistanceScale', undefined, 1024],
   ['lostTargetMult', undefined, 0.25],
   ['yieldTime', 'fCombatYieldTime', 10],
-  ['yieldRetryTime', 'fCombatYieldRetryTime', 60],
+  ['yieldRetryTime', 'fCombatYieldRetryTime', 600],
   ['acceptYieldTime', undefined, 3],
-  ['inventoryUpdateTime', 'fCombatInventoryUpdateTimer', 3],
+  ['inventoryUpdateTime', 'fCombatInventoryUpdateTimer', 5],
   ['corneredDistance', undefined, 192],
   ['itemRestoreTime', 'fCombatItemRestoreTimer', 3],
   ['restoreHealthPercent', 'iAICombatRestoreHealthPercentage', 60],
-  ['restoreMagickaPercent', 'iAICombatRestoreMagickaPercentage', 50],
+  ['restoreMagickaPercent', 'iAICombatRestoreMagickaPercentage', 30],
+  ['attackChanceMin', 'fCombatAttackChanceMin', 0.05],
+  ['attackChanceMax', 'fCombatAttackChanceMax', 1],
+  ['attackChanceBlockingMultMax', 'fCombatAttackChanceBlockingMultMax', 0.67],
+  ['attackChanceBlockingMultMin', 'fCombatAttackChanceBlockingMultMin', 0.2],
+  ['attackChanceBlockingSwingMult', 'fCombatAttackChanceBlockingSwingMult', 0],
+  ['attackChanceLastAttackBonus', 'fCombatAttackChanceLastAttackBonus', 1.5],
+  ['attackChanceLastAttackBonusTime', 'fCombatAttackChanceLastAttackBonusTime', 5],
+  ['groupOffensiveMultMin', 'fCombatGroupOffensiveMultMin', 0.1],
 ];
 
 export function readCombatAiSettings(
@@ -171,6 +197,9 @@ export function readCombatAiSettings(
 }
 
 export const COMBAT_AI_DEFAULTS = readCombatAiSettings();
+
+/** A friendly-hit allowance this high lets any number of blows pass. */
+const ANY_NUMBER_OF_HITS = 1000;
 
 // --- Entering combat --------------------------------------------------------------------------
 
@@ -228,8 +257,9 @@ export function assists(assistance: number, reaction: number): boolean {
 
 /**
  * A blow from one it does not fight: whether it turns on the attacker. An enemy or a neutral
- * it fights at once; a friend or ally once it has taken more than iFriendHitCombatAllowed blows
- * from it in combat (the engine's iFriendHitNonCombatAllowed out of it).
+ * it fights at once; a friend once it has taken more blows from it than iFriendHitCombatAllowed
+ * in combat (iFriendHitNonCombatAllowed out of it: none), an ally more than
+ * iAllyHitCombatAllowed (1000 or more: never) or iAllyHitNonCombatAllowed.
  */
 export function turnsOnAttacker(
   reaction: number,
@@ -238,7 +268,15 @@ export function turnsOnAttacker(
   settings: CombatAiSettings,
 ): boolean {
   if (reaction !== FightReaction.ally && reaction !== FightReaction.friend) return true;
-  return hits > (inCombat ? settings.friendHitCombatAllowed : settings.friendHitNonCombatAllowed);
+  const allowed =
+    reaction === FightReaction.friend
+      ? inCombat
+        ? settings.friendHitCombatAllowed
+        : settings.friendHitNonCombatAllowed
+      : inCombat
+        ? settings.allyHitCombatAllowed
+        : settings.allyHitNonCombatAllowed;
+  return allowed < ANY_NUMBER_OF_HITS && hits > allowed;
 }
 
 /** What an actor's aggro radius (AIDT: warn, warn or attack, attack) has it do now. */
