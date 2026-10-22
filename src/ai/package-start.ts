@@ -5,8 +5,8 @@
 // whose package runs elsewhere (asleep in another cell, on a post in another world) are not
 // in this cell. Only what the data decides is decided: conditions on what is not known yet
 // (random chance, quest aliases, package data) leave the actor where it was placed.
-// TODO(M10): the packages themselves (travel, sandbox, furniture use, patrols, schedules
-// changing while the cell is loaded) and actors coming into a cell from elsewhere.
+// The packages then run as the game goes on (src/ai/package-runtime.ts, src/shell/actor-ai.ts);
+// actors away come into the cell as their packages bring them (src/shell/actors-away.ts).
 // Platform-independent. Notes: docs/ai.md ("Where packages put actors").
 
 import { ConditionRunOn, type Condition } from '../scripting/conditions.ts';
@@ -128,8 +128,8 @@ export type PackageStart =
       readonly radius?: number;
     }
   /**
-   * Not known yet (TODO(M10): running the packages; or, before the game's scripts run, held by
-   * a quest alias): it stays where it was placed.
+   * Not known yet (before the game's scripts run, or held by a quest alias): it stays where it
+   * was placed, and its packages take it on once they run.
    */
   | { readonly kind: 'undecided'; readonly package?: number; readonly reason: string };
 

@@ -208,6 +208,11 @@ const LOCKED_KEYS: readonly string[] = [
 const MAX_FRAME_SECONDS = 0.25;
 /** A loading screen waits this long at most for the player's body and the actors around them (ms). */
 const POPULATE_MS = 20000;
+/**
+ * Enemies this near stop fast travel (sNoFastTravelHostileActorsNear; game units). TODO(M13): the
+ * engine's own distance is not documented (no game setting): the high process's.
+ */
+const HOSTILES_NEAR_RADIUS = 4096;
 
 function startRenderLoop(
   renderer: Renderer,
@@ -617,6 +622,12 @@ async function main(): Promise<void> {
       worldViewer.player ? worldViewer.localMapContent() : modelViewer.localMapContent(),
     tweenCamera: () => (worldViewer.player ?? modelViewer.player)?.tween,
     player: () => worldViewer.playerView ?? modelViewer.playerView,
+    hostilesNear: async () => {
+      const view = worldViewer.playerView ?? modelViewer.playerView;
+      const stage = worldViewer.playing ? worldViewer.actorStage : modelViewer.actorStage;
+      if (!view || !stage) return false;
+      return stage.hostilesNear(view.play.player.feet, HOSTILES_NEAR_RADIUS);
+    },
     inAir: () => {
       const player = worldViewer.player ?? modelViewer.player;
       return player !== undefined && !player.character.grounded && !player.character.swimming;

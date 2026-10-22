@@ -54,6 +54,7 @@ import { aimDirection } from '../gameplay/magic/projectile-flight.ts';
 import { PlayerDeath } from './player-death.ts';
 import type { PlayerFurniture } from './player-furniture.ts';
 import { PlayerPilot } from './player-pilot.ts';
+import { reactionsOf } from '../ai/combat-reactions.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -1022,6 +1023,22 @@ export class ActorStage {
       if (user) users.push(user);
     }
     return users;
+  }
+
+  /**
+   * Whether a living actor within `radius` of a place is hostile to the player (how it regards
+   * them: src/ai/combat-reactions.ts), fast travel's "enemies are nearby".
+   */
+  async hostilesNear(at: Vec3, radius: number): Promise<boolean> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return false;
+    const reactions = reactionsOf(runtime);
+    for (const staged of this.#actors.values()) {
+      if (staged.dead || staged.visibility.hidden) continue;
+      if (Math.hypot(staged.position[0] - at[0], staged.position[1] - at[1]) > radius) continue;
+      if ((await reactions.reaction(staged.reference, PLAYER_REF)) === 'hostile') return true;
+    }
+    return false;
   }
 
   /** Whether actors of the loaded cells are still being placed (their models load). */

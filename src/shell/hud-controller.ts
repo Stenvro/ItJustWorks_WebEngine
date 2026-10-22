@@ -16,7 +16,7 @@
 // Notes: docs/ui.md.
 // The enemy health bar (enemy). The charge meters of the enchanted weapons in the player's hands
 // (SetChargeMeterPercent(percent, force, left hand, shown): the crafting engine's charge).
-// TODO(M10): the riding HUD mode (3.5).
+// On a horse the HUD is in HorseMode, with a weapon drawn in WarHorseMode (the movie's modes).
 
 import type { CastEvent } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -158,6 +158,8 @@ export class HudController implements HudSink {
   #stopSettings: (() => void) | undefined;
   /** The CartMode shown (Game.SetHudCartMode). */
   #cartMode = false;
+  /** The riding mode shown: HorseMode, WarHorseMode (weapon drawn), or none. */
+  #ridingMode: 'HorseMode' | 'WarHorseMode' | undefined;
 
   /** The compass's markers: read four times a second, sent when they changed. */
   #compassBusy = false;
@@ -383,6 +385,20 @@ export class HudController implements HudSink {
     if (cart !== this.#cartMode) {
       this.#cartMode = cart;
       this.mode('CartMode', cart);
+    }
+    // On a horse: HorseMode, WarHorseMode while a weapon is drawn.
+    const runtime = this.#source.runtime();
+    const world = runtime?.world;
+    const riding =
+      world?.mountOf?.(PLAYER_REF) === undefined
+        ? undefined
+        : (world.combat?.(PLAYER_REF)?.weaponState ?? 0) !== 0
+          ? 'WarHorseMode'
+          : 'HorseMode';
+    if (riding !== this.#ridingMode) {
+      if (this.#ridingMode) this.mode(this.#ridingMode, false);
+      if (riding) this.mode(riding, true);
+      this.#ridingMode = riding;
     }
     this.#showNotice(menu);
     this.#updateCompass(menu);
