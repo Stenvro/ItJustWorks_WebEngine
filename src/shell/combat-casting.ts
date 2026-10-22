@@ -14,7 +14,6 @@ import type { EquipOption } from '../ai/combat-tactics.ts';
 import type { GameSession } from './game-session.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { MagicItemRecord } from '../world/magic-records.ts';
-import { WeaponType } from '../world/item-records.ts';
 
 /**
  * The reach of a spell or shout whose projectile names none (Touch spells, projectiles with
@@ -35,7 +34,11 @@ export function combatCasting(
       const options: EquipOption[] = [];
       const spell = await runtime.casting.chooseSpell(actor, 'attack', target);
       if (spell) options.push(await option(runtime, actor, 'magic', spell.formId, spell, target));
-      options.push(...(await staffOptions(runtime, actor, target)));
+      // Its staffs with charge (their enchantments; hostile ones only: a fight's).
+      for (const { staff, item } of await runtime.casting.staffs(actor)) {
+        if (await runtime.magic.hostile(item))
+          options.push(await option(runtime, actor, 'staff', staff, item, target));
+      }
       const voice = (await runtime.equipment.of(actor)).voice;
       const shout = voice === undefined ? undefined : await runtime.casting.shout(voice);
       const words = shout ? runtime.casting.wordsKnown(actor, shout) : 0;
@@ -46,14 +49,13 @@ export function combatCasting(
       }
       return options.filter((one) => one.damage > 0);
     },
-    castAt: async (actor, hand, target, chosen, hold) => {
+    castAt: async (actor, hand, target, chosen) => {
       const stage = casting();
       if (!stage) return false;
       if (hand === 'voice') return stage.shoutAt(actor, target);
       // A staff casts from the hand that holds it (the combat AI took it up).
       return stage.castAt(actor, hand, target, {
         ...(chosen.kind === 'magic' && chosen.id !== undefined && { spell: chosen.id }),
-        ...(hold && { hold }),
       });
     },
     support: async (actor, purpose, target) => support(session, casting, actor, purpose, target),
@@ -85,33 +87,10 @@ async function support(
         spell !== undefined &&
         stage.castAt(actor, 'left', purpose.kind === 'ward' ? target : actor, {
           spell: spell.formId,
-          ...(purpose.hold && { hold: purpose.hold }),
         })
       );
     }
   }
-}
-
-/** The staffs an actor carries with charge left, as options (their enchantments' worth). */
-async function staffOptions(
-  runtime: ScriptRuntime,
-  actor: number,
-  target: number | undefined,
-): Promise<EquipOption[]> {
-  const options: EquipOption[] = [];
-  for (const [form, count] of await runtime.inventory(actor)) {
-    if (count <= 0) continue;
-    const item = await runtime.equipment.item(form);
-    if (item?.weapon?.weaponType !== WeaponType.staff || item.enchantment === undefined) continue;
-    const enchantment = await runtime.magic.item(item.enchantment);
-    if (!enchantment) continue;
-    const castable = { item: enchantment, via: 'staff' as const, object: form };
-    const left = await runtime.casting.charge(actor, castable);
-    const cost = (await runtime.casting.cost(actor, castable)).charge;
-    if (left < cost) continue;
-    options.push(await option(runtime, actor, 'staff', form, enchantment, target));
-  }
-  return options;
 }
 
 /** An equipment option of a spell, a staff's enchantment or a shout's word's spell. */

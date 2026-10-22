@@ -22,7 +22,10 @@
 // camera's field of view is fStatsCameraFOV (50, of a 4:3 frame). A perk taken is the
 // player's through the perk system (src/scripting/runtime/perk-engine.ts: its abilities, its
 // quest stages, its entry points act at once).
-// TODO(M11): skill colours for fortified and damaged skills (the magic system's effects).
+// A skill above its base (a Fortify effect, the magic system's temporary modifiers) shows its
+// name and level in the interface's green (#189515, the item cards' better), one below it (a
+// Damage effect) in its red (#FF0000); the meters of magicka, health and stamina so by their
+// maximum.
 // Notes: docs/ui.md ("The skills menu").
 
 import type { ObjectGraph } from '../animation/object-graph.ts';
@@ -78,8 +81,17 @@ const PITCH_SECONDS = 0.5;
 const TURN_SPEED = 120;
 /** Degrees the view turns per pixel the mouse moves. */
 const MOUSE_DEGREES = 0.15;
-/** The skill names' colour (TODO(M11): fortified green, damaged red: the magic system). */
+/** The skills' and meters' colours: as they are, fortified, damaged (the item cards' own). */
 const WHITE = '#FFFFFF';
+const FORTIFIED = '#189515';
+const DAMAGED = '#FF0000';
+
+/** A value's colour: above its base fortified, below damaged. */
+export function valueColour(value: number, base: number): string {
+  if (value > base + 1e-6) return FORTIFIED;
+  if (value < base - 1e-6) return DAMAGED;
+  return WHITE;
+}
 /** The menus' depth among the game's menus. */
 const STATS_DEPTH = 6;
 /** The names the movie has clips for (StatsMenu.MaxPerkNamesDisplayed). */
@@ -496,7 +508,7 @@ class Viewing {
     const level = await actors.level(PLAYER_REF);
     const meter = async (index: number): Promise<unknown[]> => {
       const value = await actors.value(PLAYER_REF, index);
-      return [Math.round(value.current), Math.round(value.max), WHITE];
+      return [Math.round(value.current), Math.round(value.max), valueColour(value.max, value.base)];
     };
     menu.call(
       'SetPlayerInfo',
@@ -520,7 +532,7 @@ class Viewing {
         tree.record.name,
         // The skill's progress to its next level (0..100).
         (await this.#runtime.progression.skillProgress(tree.skill)) * 100,
-        WHITE,
+        valueColour(value.current, value.base),
         this.#runtime.state.legendary.get(tree.skill) ?? 0,
       );
     }

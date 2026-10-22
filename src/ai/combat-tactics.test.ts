@@ -250,7 +250,8 @@ describe('combat tactics: what it does for itself', () => {
   };
 
   it('reads iAICombatRestoreHealthPercentage and fCombatItemRestoreTimer', () => {
-    expect(settings.restoreHealthPercentage).toBe(60);
+    expect(settings.restoreHealthPercent).toBe(60);
+    expect(settings.restoreMagickaPercent).toBe(50);
     expect(settings.itemRestoreTime).toBe(3);
   });
 
@@ -271,6 +272,10 @@ describe('combat tactics: what it does for itself', () => {
   it('drinks for magicka when its magic fails it, summons and buffs when it may', () => {
     const potions = { ...base.potions, magicka: true };
     expect(chooseSupport({ ...base, outOfMagicka: true, potions }, settings)).toEqual({
+      kind: 'potion',
+      value: 'magicka',
+    });
+    expect(chooseSupport({ ...base, magicka: 0.4, potions }, settings)).toEqual({
       kind: 'potion',
       value: 'magicka',
     });

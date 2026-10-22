@@ -61,8 +61,8 @@ called that is missing; `node tools/papyrus-natives.ts` lists the natives done p
   Node) the bridge does nothing and the state alone answers. Those that do not do all the game
   does yet are listed in `natives/placeholders.ts`, each with the milestone that brings what
   they lack (`node tools/papyrus-natives.ts --placeholders`, with the vanilla scripts' calls of
-  each; the integration test holds each to a milestone): 24 of them called by the vanilla
-  scripts, for the player's forms, vampirism and Survival Mode (M11), saves (M12), effects the
+  each; the integration test holds each to a milestone): 16 of them called by the vanilla
+  scripts, for the player's forms and vampirism (M11), saves (M12), effects the
   engine does not show yet, Havok constraints and controllers (M13). Natives that rightly do
   nothing here (profiling, the console's debug helpers, achievements, preloading) are not
   placeholders.

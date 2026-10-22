@@ -7,9 +7,10 @@
 // has no left-hand sheaths). The ammunition hangs in the quiver (QUIVER: the AMMO model's
 // quiver and arrows, its single "Arrow:0" left out); from arrowAttach to arrowRelease an arrow is
 // on the bow (the AMMO model's "Arrow:0" on WEAPON, where the bow animations hold the bow).
-// Shields are worn armour (their addon hangs on SHIELD with the actor's look). TODO(M11): the
-// first-person arms and weapon (the first-person skeleton), with the weapons' bow graphs
-// (the string drawn) and blood on blades (BloodLighting, BloodFX: fWeaponBloodLifetime).
+// Shields are worn armour (their addon hangs on SHIELD with the actor's look). The player's
+// first-person weapons are these on the first-person arms (src/shell/first-person-body.ts),
+// each weapon's first-person model (WEAP WNAM). TODO(M11): the weapons' bow graphs (the string
+// drawn) and blood on blades (BloodLighting, BloodFX: fWeaponBloodLifetime).
 
 import type { ActorPose } from '../animation/skeleton.ts';
 import { ActorPose as Pose, ActorSkeleton, wearOnRig } from '../animation/skeleton.ts';

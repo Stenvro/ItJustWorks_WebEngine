@@ -596,6 +596,10 @@ unused; 2: unused, alias, form id), u16 script count; per script a wstring name,
 - QUST: u8 (2), u16 fragment count, wstring fragment script, per fragment u16 stage, i16, i32
   log entry, u8, wstring script, wstring function; then u16 alias count, each with an object
   value (its alias id), i16 version, i16 object format and its own scripts.
+- PERK (xEdit's wbScriptFragmentsPerk): u8 (2), wstring fragment script, u16 fragment count,
+  per fragment u16 index (an entry point's EPF3 fragment), i16, u8, wstring script, wstring
+  function (`Fragment_N`, N not the index: the VampireFeed perk's index 1 is Fragment_15). The
+  13 vanilla PERK VMADs all read.
 
 The fragment script is also listed among the scripts with its property values. The index of
 which forms each INFO/QUST script names (`src/world/script-references.ts`) reads only INFO and

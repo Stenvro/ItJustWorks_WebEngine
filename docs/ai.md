@@ -216,8 +216,13 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   finds a bed while it sandboxes, then sleeps; TODO(M13)); a Random branch one that may run,
   at random. A procedure runs until it
   succeeds or fails; one whose success completes the package (FNAM 0x1) ends it; a branch that
-  repeats when complete (PRCB 0x1) starts over. The package's preferred speed (PKDT, with its
-  flag) is its gait: jog and run run, walk and fast walk walk.
+  repeats when complete (PRCB 0x1) starts over. Chosen again (every evaluation, EvaluatePackage)
+  while it stays the package chosen, its tree goes on, unless a branch it runs (or, ended, the
+  branches its last procedure ran under) may no longer run: then the tree is taken again from its
+  root, the package staying (no package events): DialogueFollower's follower travels to wait as
+  WaitingForPlayer turns 1 and follows again as it turns 0 (TODO(M13): the engine's own rule).
+  The package's preferred speed (PKDT, with its flag) is its gait: jog and run run, walk and fast
+  walk walk.
 - **Procedures' parameters:** each procedure takes its inputs by slot (PKC2) in an order of its
   own, which no documentation gives: every template names the inputs it gives a procedure
   (BNAM), and over the 7,633 vanilla packages the names and types agree slot by slot
@@ -455,6 +460,27 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   the player's sight (beyond 55° of their view) for 3 seconds is put 512 units behind them on
   the navmesh. TODO(M13): the engine's catch-up rule, where it puts those coming along, Need
   LOS and Accompany. GetPlayerTeammate and GetPlayerTeammateCount answer from the game state.
+- **Favors** (UESP "Skyrim:Followers"): "Wait here" and "Follow me" are DialogueFollower's
+  FollowerWait and FollowerFollow (WaitingForPlayer: the template's Stacked branches follow, or
+  travel there and wait; a package whose running branch may no longer run is taken again from
+  its root, above), "Let's trade" its `OpenInventory` (the container menu in NPC mode: docs/ui.md,
+  "The item menus"). "I need you to do something" is the info's `SetDoingFavor(true)`: as the
+  conversation ends the follower stands (its AI held) and the player is in command mode
+  (`src/shell/actor-favors.ts`; the first time its tutorial, HBFT): the crosshair is the HUD's
+  Favor frame (SetCrosshairTarget's abFavorMode) and reaches fFavorRequestPickDistance (2100);
+  Activate commands at what it rests on: an actor it attacks (sAttack: StartCombat), a corpse or
+  container it empties (sSearch / sOpen), an item it takes (sTake), a door it opens (sOpen),
+  furniture it uses (sUse: sits, sleeps, works there), an activator or plant it activates;
+  anything else (the ground) it goes to and waits there until the player is fFavorRequestRadius
+  (4000) away or talks to it (TODO(M13): how long the engine keeps it, fFavorRequestWaitTimer is
+  read as command mode's own wait). A lock on its way it picks (one that needs its key: Refuse;
+  an owned one where it is seen the player's trespass: lockPicked). It says its Agree line, or
+  refuses: MoralRefusal where its Morality forbids the crime (violence on one not hostile only at
+  Morality 0, taking what the player may not at 0 and 2), Refuse where it cannot get there. A
+  reference marked with SetNoFavorAllowed is not commanded. Tab leaves command mode
+  (ExitFavorState line), as do fFavorRequestWaitTimer (40) seconds without a command, its death,
+  the player fFavorRequestRadius away and a script taking its favor state; doing the favor clears
+  it (IsInFavorState). TODO(M13): a follower's thefts seen as crimes of its own.
 - **Mounting** goes through the idle tree as furniture does: under ActionActivate, HorseEvents
   (the horse HasKeyword ActorTypeHorse) gives Mount (HorseEnter) and Dismount (HorseExit,
   HorseExitSwim). Both are paired animations: rider and horse stand at the horse's root while
@@ -925,12 +951,12 @@ meanwhile.
   world, which anyone may pick up; a dual wielder's left goes into its inventory; bound
   weapons stay. A fighter left with its fists after holding a weapon runs to a weapon lying
   within 1024 units and picks it up (TODO(M13): the engine's reach).
-- **Telekinesis** (`src/shell/player-casting.ts`, `PlaySession.telekinesis`): while the
-  player holds a Telekinesis cast the loose object the view meets within
-  fMagicTelekinesisBaseDistance × its magnitude is taken by the grab's spring and drawn in to
-  float 160 units before them (no nearer than fMagicTelekinesisDistanceMin); let go, it flies
-  off along the view at 1500 units a second (TODO(M13): the hold, pull and throw are not in the
-  data). TODO(M11): Grab Actor (the Vampire Lord's Vampiric Grip) with the beast forms.
+- **Telekinesis** and **Grab Actor**: the player's Telekinesis is the grab spring's
+  (docs/gameplay.md, "Magic effects"). Grab Actor (the Vampire Lord's Vampiric Grip, MGEF
+  archetype 45) knocks its target down (its graph's Ragdoll) and holds its ragdoll's root
+  before its caster, at its chest a reach ahead (pulled there at 8 × the way a second, at most
+  600 units a second: TODO(M13) the engine's hold), while the effect lasts; let go, it falls
+  and gets up.
 - **Power attacks**: the player's attack button held [Controls] fInitialPowerAttackDelay (0.3 s)
   is a power attack (both buttons: the dual ones); without stamina it is a plain one (the HUD's
   meter blinks). Power attacks and bashes cost the skill progression's powerAttackCost and

@@ -108,6 +108,8 @@ export interface Delivered {
   /** The staff, scroll or shout it came by. */
   readonly object?: number | undefined;
   readonly cost: CastCost;
+  /** Sent on by an explosion's spawned projectile this many times (chain lightning). */
+  readonly chained?: number;
 }
 
 /** How a delivery reaches its target. */
@@ -372,6 +374,30 @@ export class CastingEngine {
       return item?.kind === 'staffEnchantment' ? { item, via: 'staff', object: held } : undefined;
     }
     return undefined;
+  }
+
+  /**
+   * The staffs an actor carries that hold charge, with their enchantments (what the combat AI
+   * may fight with: src/shell/combat-casting.ts).
+   */
+  async staffs(
+    actor: number,
+  ): Promise<{ readonly staff: number; readonly item: MagicItemRecord }[]> {
+    const runtime = this.#runtime;
+    const staffs: { staff: number; item: MagicItemRecord }[] = [];
+    for (const [form, count] of await runtime.inventory(actor)) {
+      if (count <= 0) continue;
+      const record = await runtime.forms.record(form);
+      if (record?.type !== 'WEAP') continue;
+      const enchantment = record.formIdField('EITM');
+      const item = enchantment === undefined ? undefined : await runtime.magic.item(enchantment);
+      if (item?.kind !== 'staffEnchantment') continue;
+      const castable: Castable = { item, via: 'staff', object: form };
+      if ((await this.charge(actor, castable)) < (await this.cost(actor, castable)).charge)
+        continue;
+      staffs.push({ staff: form, item });
+    }
+    return staffs;
   }
 
   // --- Casts ---------------------------------------------------------------------------------

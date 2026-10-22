@@ -83,6 +83,11 @@ export interface MagicEffectShown {
   readonly persist: boolean;
   /** Seconds it lasts (0: until it ends). */
   readonly duration: number;
+  /** Its magnitude, and its area in feet (Detect Life's reach). */
+  readonly magnitude: number;
+  readonly area: number;
+  /** Its associated form (Guide: Clairvoyance's trail hazard). */
+  readonly associated: number | undefined;
 }
 
 /** How a magic item is applied. */
@@ -136,6 +141,9 @@ const ACTOR_TYPE_UNDEAD = 0x13796;
  * engine's interval for active effects' conditions is not documented.
  */
 const PULSE_SECONDS = 1;
+
+/** The player's own pace in slowed time (UESP "Skyrim:Slow Time": "only slowed to 70%"). */
+const PLAYER_SLOWED_PACE = 0.7;
 
 /** GetRandomPercent (UESP function index 77). */
 const GET_RANDOM_PERCENT = 77;
@@ -416,17 +424,64 @@ export class MagicEngine {
   }
 
   /**
-   * How fast the world's time runs (Slow Time on the player: its magnitude, the slowest).
-   * TODO(M11): the frame's clock (animations, physics, AI, sounds) runs at it; the player's own
-   * pace in slowed time (the perk entry point Mod Player Magic Slowdown: Quick Reflexes keeps the
-   * player's pace, perk-engine.ts gives it).
+   * How fast the world's time runs (Slow Time on the player: its magnitude, the slowest). The
+   * frame's clock (animations, physics, AI, sounds) runs at it (src/shell/time-flow.ts); the
+   * player keeps a pace of their own (playerPace).
    */
   timeMultiplier(): number {
-    let multiplier = 1;
+    return this.#slowest()?.magnitude ?? 1;
+  }
+
+  /** The strongest Slow Time on the player (its magnitude and the spell that cast it). */
+  #slowest(): ActiveEffectState | undefined {
+    let slowest: ActiveEffectState | undefined;
     for (const [, entry] of this.#archetypeOn(PLAYER_REF, EffectArchetype.slowTime)) {
-      if (entry.magnitude > 0) multiplier = Math.min(multiplier, entry.magnitude);
+      if (entry.magnitude > 0 && entry.magnitude < (slowest?.magnitude ?? 1)) slowest = entry;
     }
-    return multiplier;
+    return slowest;
+  }
+
+  /**
+   * The player's own pace in slowed time (UESP "Skyrim:Slow Time": 70 % of theirs, however
+   * slow the world), through their perks over the spell that slowed it (Mod Player Magic
+   * Slowdown: Quick Reflexes keeps it whole); never slower than the world. TODO(M13): how
+   * fVATSPlayerMagicTimeSlowdownMult (0.6) comes in.
+   */
+  async playerPace(): Promise<number> {
+    const slowest = this.#slowest();
+    if (!slowest) return 1;
+    const spell = slowest.item;
+    const pace = await this.#runtime.perks.apply(
+      EntryPoint.modPlayerMagicSlowdown,
+      PLAYER_REF,
+      PLAYER_SLOWED_PACE,
+      [spell],
+      spell === undefined ? {} : { spell },
+    );
+    return Math.min(1, Math.max(slowest.magnitude, pace));
+  }
+
+  /**
+   * Whether an active Detect Life effect shows an actor: its effect item's and magic effect's
+   * conditions on the actor, the effect's target (its caster) as their target (the Detect Life
+   * spells' variants: friends or enemies, the living or the undead). TODO(M13): the Creation
+   * Kit's rule for Detect Life's conditions is taken from the vanilla spells' use.
+   */
+  async detects(key: string, actor: number): Promise<boolean> {
+    const runtime = this.#runtime;
+    const entry = runtime.state.activeEffects.get(key);
+    if (!entry || entry.inactive) return false;
+    if (await runtime.actors.isDead(actor)) return false;
+    const item = entry.item === undefined ? undefined : await this.item(entry.item);
+    const effect = await this.effect(entry.effect);
+    const conditions = [
+      ...(item?.effects[entry.index ?? 0]?.conditions ?? []),
+      ...(effect?.conditions ?? []),
+    ];
+    if (conditions.length === 0) return true;
+    return runtime.conditionsHold(conditions, runtime.actorHandle(actor), undefined, {
+      target: runtime.actorHandle(entry.target),
+    });
   }
 
   /** The poison on an actor's weapon, if any (its hits deliver it: src/shell/actor-combat.ts). */
@@ -749,7 +804,7 @@ export class MagicEngine {
     await this.#archetypeStart(key, entry, effect);
     // The image space while it lasts on the player (Night Eye's, a poison's tint).
     if (target === PLAYER_REF && effect.imageSpaceModifier !== undefined)
-      runtime.world.imageSpace?.(effect.imageSpaceModifier, 'apply', 1);
+      runtime.world.imageSpace?.(effect.imageSpaceModifier, 'apply', 1, undefined, target);
     this.#show('start', key, entry, effect);
     const hit = effectSound(effect, EffectSound.onHit);
     if (hit !== undefined) runtime.world.playSound?.(hit, target);
@@ -782,6 +837,8 @@ export class MagicEngine {
       this.#archetypeOn(entry.target, EffectArchetype.paralysis).length === 0
     )
       runtime.world.paralyze?.(entry.target, false);
+    if (effect?.archetype === EffectArchetype.grabActor)
+      runtime.world.grabActor?.(entry.caster, entry.target, false);
     if (entry.target === PLAYER_REF && effect?.imageSpaceModifier !== undefined)
       runtime.world.imageSpace?.(effect.imageSpaceModifier, 'remove', 0);
     if (effect) this.#show('stop', key, entry, effect);
@@ -855,6 +912,9 @@ export class MagicEngine {
       light: effect.archetype === EffectArchetype.light ? effect.associatedItem : undefined,
       persist: (effect.flags & EffectFlag.fxPersist) !== 0,
       duration: entry.duration,
+      magnitude: entry.magnitude,
+      area: entry.area ?? 0,
+      associated: effect.associatedItem,
     });
   }
 
@@ -1073,14 +1133,21 @@ export class MagicEngine {
       case EffectArchetype.spawnHazard:
       case EffectArchetype.spawnScriptedRef: {
         // A hazard (HAZD) or an object at the target, or where a Target Location spell landed,
-        // while it lasts. TODO(M11) visuals: the hazard's damage and visuals.
+        // while it lasts; a hazard burns, freezes or heals there (the hazard engine: its
+        // lifetime, its spell on those within its radius, cast by the caster).
         const made = effect.associatedItem;
         if (made !== undefined) {
           entry.made = await runtime.placeAt(made, target, 1);
           if (entry.at) runtime.move(entry.made, [...entry.at]);
+          if (effect.archetype === EffectArchetype.spawnHazard)
+            await runtime.hazards.track(entry.made, made, entry.caster ?? target, {
+              duration: entry.duration,
+              ...(entry.area !== undefined && { area: entry.area }),
+            });
         }
         break;
       }
+
       case EffectArchetype.disarm: {
         // Its weapons leave its hands (UESP "Skyrim:Disarm": up to the magnitude's level, the
         // level cap above): the right hand's falls from the hand into the world, a reference
@@ -1105,19 +1172,30 @@ export class MagicEngine {
         // A stagger by its magnitude, weighed against the target's mass (src/shell/
         // actor-combat.ts staggerEffect); a knock-down is its scripts' (Unrelenting Force's
         // third word: VoicePushEffectScript's PushActorAway).
-        if (entry.magnitude > 0) runtime.world.stagger?.(target, entry.magnitude, entry.caster);
+        if (entry.magnitude > 0 && !(await runtime.actors.isDead(target)))
+          runtime.world.stagger?.(target, entry.magnitude, entry.caster);
         break;
       case EffectArchetype.paralysis:
         // It falls as its ragdoll and lies while it lasts (src/shell/actor-knockdowns.ts).
         runtime.world.paralyze?.(target, true);
         break;
-      // Cloaks act each second (#pulse); Soul Trap as its target dies (died). Telekinesis is
-      // its caster's hold while the cast lasts (src/shell/player-casting.ts, PlaySession
-      // telekinesis). Concussion, Grab Actor (TODO(M11): the Vampire Lord's Vampiric Grip, with
-      // the beast forms), Light, Detect Life, Guide, Disguise, Werewolf, Vampire Lord, Werewolf
-      // Feed, Slow Time, Etherealize, Command Summoned, Script: their state is the effect itself
-      // (aiState, timeMultiplier, the world's magicEffect) and their scripts. TODO(M11) visuals:
-      // lights, Detect Life's shader, Clairvoyance's path.
+      case EffectArchetype.grabActor:
+        // Vampiric Grip: its target hangs as its ragdoll before the caster while it lasts.
+        if (!(await runtime.actors.isDead(target)))
+          runtime.world.grabActor?.(entry.caster, target, true);
+        break;
+      // A werewolf fed on the corpse (PlayerWerewolfFeedVictimSpell, the Feed perk's choice):
+      // it is eaten (HasBeenEaten: no one feeds on it again).
+      case EffectArchetype.werewolfFeed:
+        runtime.state.actor(target).eaten = true;
+        break;
+      // Cloaks act each second (#pulse); Soul Trap as its target dies (died). Concussion,
+      // Telekinesis, Grab Actor, Light, Detect Life, Guide, Disguise, Werewolf, Vampire Lord,
+      // Slow Time, Etherealize, Command Summoned, Script: their state is the effect itself
+      // (aiState, timeMultiplier) and their scripts; what they show (lights, Detect Life's
+      // shader, Clairvoyance's trail) the world's magicEffect shows (src/shell/actor-effects.ts).
+      // Telekinesis: the player's cast takes hold of the object aimed at
+      // (src/shell/player-casting.ts).
       default:
         break;
     }
@@ -1158,8 +1236,10 @@ export class MagicEngine {
     if (!ending) return;
     delete entry.made;
     switch (effect.archetype) {
-      case EffectArchetype.summonCreature:
       case EffectArchetype.spawnHazard:
+        runtime.hazards.remove(made);
+        break;
+      case EffectArchetype.summonCreature:
       case EffectArchetype.spawnScriptedRef: {
         // The summon fades out (fSummonedCreatureFadeOutSeconds) and is gone.
         const state = runtime.state.reference(made);

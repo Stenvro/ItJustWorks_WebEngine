@@ -135,7 +135,39 @@ IsActorUsingATorch (a torch in the left hand), and of the right hand's weapon Ge
 IsWeaponSkillType, IsWeaponInList, HasTwoHandedWeaponEquipped; HasBoundWeaponEquipped by hand.
 IsShieldOut and IsWeaponOut need the weapon drawn (TODO(M10) 5.1).
 
-TODO(M11): warmth (Survival Mode); TODO(M12): the loadout in the save.
+TODO(M12): the loadout in the save.
+
+### Survival Mode's warmth
+
+`src/gameplay/warmth.ts`, `src/scripting/runtime/warmth-engine.ts` (UESP "Skyrim:Cold",
+Warmth): a piece's warmth (Armor.GetWarmthRating) is that of the body part it covers, the body
+before the head (slots 30, 31), then the hands, then the feet; cold, normal or warm as Update.esm's
+keywords make it (Survival_ArmorCold, Survival_ArmorWarm): head 8 / 18 / 29, body 17 / 27 / 54,
+hands and feet 7 / 13 / 24. Survival_BodyAndHead (the hooded robes) counts the body and the head.
+Shields, jewelry and circlets keep none. An enchanted variant made from a template armor (TNAM)
+has its template's keywords (Update.esm gave them only the templates; TODO(M13): the engine's
+reading). A light that can be carried (a torch) warms 50 (Light.GetWarmthRating; the ability
+Survival_abWarmthTorch only shows it). An actor's rating (Actor.GetWarmthRating, the condition
+GetActorWarmth) is its worn pieces', its torch's and its Fortify Warmth effects' (Peak Value
+Modifiers on actor value 76, Variable09 in the SSE list: Survival_FortifyWarmthConstant of the
+racial abilities, the hot soups' Survival_FoodFortifyWarmth). Survival_NeedCold clamps it to
+Survival_ColdResistMaxValue (206) for its cold. TODO(M13): the slot values are UESP's (the
+executable's own settings are not in the plugins). `node tools/item-info.ts <armor>` shows a
+piece's warmth.
+
+### Quest items
+
+`src/scripting/runtime/quest-items.ts`: a reference that fills a Quest Object alias (ALFA FNAM
+0x4) of a running quest is a quest item while it is in a container. The player's cannot be
+dropped, eaten, stored, sold or given (docs/ui.md, "The item menus"); RemoveAllItems leaves them
+unless abRemoveQuestItems.
+
+### Deferred kills
+
+Actor.StartDeferredKill: until EndDeferredKill the actor's health may run out without its dying
+(CommonLibSSE: MiddleHighProcessData inDeferredKill); as the deferral ends it dies (or bleeds
+out, essential or protected) if its health is still gone, by whoever dealt the blow that should
+have killed it (`ActorEngine.startDeferredKill`, `endDeferredKill`). No vanilla script calls them.
 
 ## Skills, levels and actor values
 
@@ -267,8 +299,10 @@ TODO(M13): the zones of parent locations, the very hard modifier's "at least the
 up", how much of a capped skill's excess goes on, the rounding of PC level mult and level
 modifiers, the dual-wield factor, how fCombatHealthRegenRateMult and CombatHealthRegenMult
 combine. Casting spends magicka and holds its regeneration while it lasts ("Casting and
-shouts"). TODO(M11): combat sets `inCombat` and spends stamina, the magic system gives
-SkillAdvance effects, detection gives Sneak's uses, the perk system the perks' effects.
+shouts"). In combat is the combat system's state (`inCombat` reads WorldBridge.combat); NPCs
+sprinting pay their stamina as the player does (their movers, half a second at a time). A hit
+uses the armour skills of what its target wears (Light, Heavy Armor: any piece of that armour)
+by the blow's damage before armour (UESP "Skyrim:Light Armor"), unblocked.
 
 ## Magic effects
 
@@ -355,13 +389,66 @@ the player in a runtime on the game data, `--audit` reads every record).
   iLesserSoulActorLevel 4 .. iGrandSoulActorLevel 38; NPCs black) into the smallest empty gem
   that holds it (its NAM0 form), with the Soul Captured sound (DOBJ SCSD).
 - Cloaks put their spell on actors within the magnitude in feet each second (TODO(M13): the
-  radius read as the magnitude). Slow Time's magnitude is the world's time
-  (`timeMultiplier`, TODO(M11): the frame's clock). Invisibility ends as its actor activates.
-  An actor's effects end as it dies but No Death Dispel ones.
-- TODO(M11) (the archetypes) and visuals: staggers, telekinesis, grabs, Clairvoyance's path,
-  lights, Detect Life's shader, effect shaders (EFSH) and art (ARTO) on actors; their data goes
-  to `WorldBridge.magicEffect`, the image-space modifier is applied while an effect acts on the
-  player, the On Hit sound plays at the target.
+  radius read as the magnitude). Invisibility ends as its actor activates. An actor's effects
+  end as it dies but No Death Dispel ones.
+- Slow Time (src/shell/time-flow.ts): its magnitude on the player (the slowest) is the world's
+  clock: the frame's game clock (main.ts: animations, physics, the actors, particles, what
+  flies) and the pitch of the sounds placed in the world run at it (the 2D ones, the interface
+  and music, keep theirs: TODO(M13)). The player keeps a pace of their own (`playerPace`): 70 %
+  however slow the world (UESP "Skyrim:Slow Time"), through their perks over the spell that
+  slowed it (Mod Player Magic Slowdown: Quick Reflexes' 1 keeps it whole); their movement and
+  their body's animation run at it. Effects and scripts count real seconds.
+- Stagger: the target staggers by the magnitude, weighed against its mass, from its caster
+  (the combat's stagger: staggerMagnitude, ActionStaggerStart; knock-downs: docs/ai.md,
+  "Combat"). Disarm: the right hand's weapon leaves the inventory and falls from the hand into
+  the world, a dual wielder's left goes into its inventory, bound weapons stay (docs/ai.md,
+  "Combat": Disarm). Paralysis: the target falls as its ragdoll and lies while it lasts.
+  Telekinesis: the player's cast held takes hold of
+  the loose object aimed at within reach with the grab spring (CommonLibSSE PlayerCharacter
+  GrabbingType kTelekinesis) and pulls it before the camera; let go, it is flung along the view
+  (TODO(M13): the engine's reach, hold distance and throw speed are not in the plugins). Grab
+  Actor holds its target's ragdoll before its caster (docs/ai.md, "Combat").
+- Spawn Hazard places its hazard (HAZD: limit, radius in feet, lifetime, target interval,
+  spell, light, impact data set, sound, image-space modifier and radius; flags Affects Player
+  Only, Inherit Duration / Radius from Spawn Spell) where the effect lands; the hazard engine
+  (src/scripting/runtime/hazard-engine.ts) keeps it its lifetime (or the spell's), as many of a
+  source's as its limit allows (the oldest go), and every target interval puts its spell on the
+  living within its radius, cast by its source. Explosions' placed objects and impacts' hazards
+  are placed so too. The world shows its model (the created reference), its light, its sound
+  while it stands and its image-space modifier on the player within its image-space radius
+  (src/shell/magic-fx.ts).
+- What the world shows (src/shell/actor-effects.ts, WorldBridge.magicEffect): the hit shader
+  (EFSH) and hit art (ARTO) on the target as the effect takes hold (with FX Persist while it
+  lasts, else their own time once), the light of a Light effect over its shoulder (Candlelight;
+  TODO(M13): where the engine floats it), the image-space modifier while an effect acts on the
+  player (aimed at it: radial blur and depth of field that use their target), the On Hit sound
+  at the target. Scripts' EffectShader.Play / Stop and VisualEffect.Play / Stop (RFCT: its art
+  and shader) show the same.
+- An effect shader (EFSH, xEdit's layout: src/world/effect-shader-records.ts): its membrane is
+  the actor's shapes drawn again over themselves (SceneRenderer.createOverlay: the source's
+  buffers, its pose, partitions and face) with an effect material: the fill texture in its
+  first colour key (TODO(M13): the keys' animation over their times), scrolling at its texture
+  animation speed, through the membrane palette with the greyscale flags; and its edge, opaque
+  towards the silhouette (Edge Effect Inverse: towards the middle; TODO(M13): the falloff's
+  curve), each with its alpha timeline (fade in, full, fade out to the persistent share, pulse;
+  full alpha ratio), its blend modes and z test (Always Show: through walls); Affect Skin Only
+  covers the FaceGen and skin shapes. Its particle shader (src/shell/surface-particles.ts) bears
+  particles at points of the actor's skin as its pose has them (skinned vertices, sampled) at
+  the birth rate (ramp up, full, ramp down, then the persistent count a second), moving off
+  along the normal and with the shader's velocity and acceleration, sized by the two scale keys
+  and coloured by the three colour keys over their lives, turning, in a frame of the texture's
+  atlas (TODO(M13): Particle Animated's frame runs), through the particle palette. TODO(M13):
+  holes (NAM7), addon models (DEBR), the ambient sound.
+- Art objects (ARTO) hang on the actor's skeleton: the art model's nodes follow the bones of
+  their names each frame, its skinned shapes with them.
+- Detect Life shows its hit shader (LifeDetected's particles, through walls) on the living
+  within its area in feet of its caster for whom its effect item's and magic effect's
+  conditions hold (`MagicEngine.detects`: the spells' friend and enemy, living and undead
+  variants; TODO(M13): the rule taken from the vanilla spells), looked at twice a second.
+- Clairvoyance (Guide): its hazard (ClairvoyanceHazard: GuideHazard01.nif, its light, limit 1,
+  10 s) travels along the navmeshes from the player to the nearest target of the shown quest
+  objectives in this space (TODO(M13): its speed), again as each trail ends while the spell is
+  held; TODO(M10): targets in another cell (the compass's QuestDoor).
 
 ### Lasting effects and items
 
@@ -436,8 +523,22 @@ Format/SPEL"; the game settings.
 - Charging: fire and forget spells are ready after their charge time (SPIT @12, dual cast ×
   fMagicDualCastingTimeMult, 1); released before, they go without effect; released ready, they
   fire. Concentration spells cast from their charge time on until let go or out of magicka.
-  NPCs release a ready spell at once and hold a concentration spell while their AI keeps it
-  (docs/ai.md, "Magic in combat": the combat AI while its target is in reach and before it).
+  NPCs release a ready spell at once; a concentration spell they hold while it serves: at a
+  target while it lives and stays within its projectile's reach (and the magicka lasts), one
+  without a target 2.5 s at most (TODO(M13): the engine's ward hold), a healing spell less once
+  their health is whole; UseMagic's for its cast time. The combat AI's spells, staffs, heals,
+  potions, summons, wards and buffs: docs/ai.md, "Combat AI".
+- What shows (src/shell/actor-casting.ts, magic-projectiles.ts, magic-fx.ts): the casting art
+  in the hand (MGEF casting art; dual cast: the dual-cast art at its scale) and the casting
+  light there (MGEF light); a projectile carries its light; with the Muzzle Flash flag its
+  muzzle flash model and light show where it leaves for its muzzle flash duration; a cone's
+  wave (its projectile's model and light) sweeps out at its speed to its range; a beam shows
+  from the hand (TODO(M13): stretched to the hit); an explosion shows its model and light (its
+  light fading), puts its image-space modifier on the player within its image-space radius
+  (aimed at it), leaves its impact on the surface there, its placed object and sends its
+  spawned projectile on to the nearest other living actor in reach (chain lightning; one hop:
+  TODO(M13)); a spell's impact on a surface (the effect's impact data set) sounds, leaves its
+  decal, model (for its duration) and hazard.
 - Dual casting: both attack buttons pressed within 0.15 s with one spell in both hands
   (TODO(M13): the window), with the school's Dual Casting perk (Can Dual Cast Spell; without
   it each hand casts on its own); its effects are cast with
@@ -791,6 +892,22 @@ loses its data (the world's references carry none yet); a tempered item's value 
   counts). Stats: Potions / Poisons Mixed.
 - Eating an ingredient learns its first effect (Ingredients Eaten).
 
+### Harvesting
+
+Flora (FLOR) and shrubs (TREE) with an ingredient (PFIG: an INGR, or a leveled list resolved)
+are harvested as they are activated ("Harvest", FLOR RNAM: "Catch", "Pick"; tools/effects-info.ts
+reads them): by the season's chance (PFPC: spring, summer, fall, winter percent; the calendar's
+seasons, TODO(M13)) the harvester gets the ingredient, as many as its perks make one (Mod
+Ingredients Harvested: Green Thumb's two), with the item's message and the harvest sound
+(SNAM); harvested, it offers nothing and shows its model's harvested look (its NiSwitchNode's
+second child: 133 of the 186 harvestable models have one; the others look the same, as in the
+game). It grows again as its cell resets (UESP "Skyrim:Respawning"): once the player has not
+been in that cell for iHoursToRespawnCell (240) game hours, iHoursToRespawnCellCleared (720)
+where its location is cleared, never in an interior whose encounter zone Never Resets
+(src/scripting/runtime/harvest-engine.ts; TODO(M12): the harvested state and the cells' visits
+in the save; TODO(M13): ownership, the exterior's "area"). TODO(M13): what the game says when
+nothing grew this season.
+
 ### Perks
 
 Perks change crafting through `CraftingEngine.perks` (`CraftingPerks`), each a perk entry point
@@ -932,14 +1049,113 @@ HasBeenEaten, IsPoison.
   (Scholar's Insight). **Death**: Add Leveled List On Death (the killer's lists into the
   victim's items). **Activation**: Filter Activation (the player's activation is refused).
 
-Entry points waiting for their systems: the activation's choices (Activate: vampire feeding,
-Cannibalism, Harvest Blood) and the perks' script fragments they run (PERK VMAD), Set Activate
-Label (the werewolf's Feed) and Allow Mount Actor (dragon riding) with the beast forms and
-dragons (TODO(M11)); Mod Ingredients Harvested (Green Thumb) with harvesting flora (TODO(M11));
-Mod Player Magic Slowdown (Quick Reflexes) with Slow Time's clock (TODO(M11)); Mod Bow Zoom and
-the zoom's stamina (Eagle Eye: there is no bow zoom yet) and Mod Falling Damage (no falling
-damage yet) (TODO(M13)). No vanilla perk uses and no system asks Calculate Mine Explode Chance,
+- **Activation** (src/shell/play-session.ts PerkActivation): Set Activate Label gives the
+  prompt its verb (the werewolf's Feed, "Rip Heart Out"); Activate's choices (`activate`: Feed,
+  Harvest Blood, Cannibalism, the Survival temple blessing, the vampire's coffin) whose
+  conditions hold on the owner and the target: those that Run Immediately run at once; the
+  others are offered in the game's message box beside the default activation ("Search",
+  "Talk"), which a choice that Replaces Default takes out (TODO(M13): the box's text and the
+  buttons' order: the target's name, the default first); a choice runs its spell (cast by the
+  owner at the target) and its fragment (PERK VMAD: the PRKF_ script's Fragment_N by the
+  entry's EPF3 index, as Fragment_N(akTargetRef, akActor): the werewolf's Feed casts
+  PlayerWerewolfFeedVictimSpell, a Werewolf Feed effect that leaves the corpse eaten). Allow
+  Mount Actor (`mayMount`): the dragon the player may ride ("Dragon riding").
+- **Harvesting**: Mod Ingredients Harvested ("Harvesting" in Crafting). **Slow Time**: Mod
+  Player Magic Slowdown on the player's pace ("Magic effects").
+- **The bow** (src/shell/time-flow.ts, player-combat.ts): with a bow and an arrow drawn, block
+  held zooms the view to Mod Bow Zoom's factor of the field of view (Eagle Eye's 0.6; 1, no
+  perk: no zoom), easing in and out; zoomed, stamina drains by Mod Power Attack Stamina on the
+  bow a second (Eagle Eye's 10: UESP "drains Stamina at 10 per second"; fBowZoomStaminaDrainMult
+  is 0) and the world slows by the player's BowSpeedBonus (Steady Hand's abilities −0.5, both
+  ranks −0.75: 50 % and 75 %, as UESP measures them), the player with it; no zoom without
+  stamina or under Slow Time. **Falls** (src/gameplay/falling.ts): landing from higher than
+  fJumpFallHeightMin (600) takes ((height − 600) × fJumpFallHeightMult)^fJumpFallHeightExponent
+  (0.1, 1.45) health, through Mod Falling Damage (UESP "Skyrim:Damage"; none in water;
+  TODO(M13): NPCs' falls with their NPC settings, difficulty).
+
+No vanilla perk uses and no system asks Calculate Mine Explode Chance,
 Adjust Limb Damage, Get Should Attack, Mod Addiction Chance / Duration, Mod Positive Chem
 Duration, Mod Max Placeable Mines, the Telekinesis ones, Mod Secondary Value Weight, Mod Player
 Reputation, Ignore Running During Detection, Ignore Broken Lock, Mod Lockpick Level Allowed and
 Set Progression Picking (Fallout's; TODO(M13) should a mod use them).
+
+## Beast forms
+
+The werewolf and the vampire lord are run by their vanilla scripts; the engine gives them what
+the scripts ask for. `node tools/papyrus-run.ts --new-game --console "2:player.cast
+WerewolfChange player"` (twice: the first cast only ends the Companions' "virgin" flag) or
+`... DLC1VampireChange ...` runs a change in Node, `--activate t:<ref>` feeds.
+
+- **Game.SetBeastForm** (`runtime.beastForm`): the inventory, magic and favorites menus stay
+  shut (their keys and the tween menu's choices: src/shell/game-menus.ts); the map, skills and
+  journal open (UESP "Skyrim:Werewolf").
+- **Actor.SetRace** makes the actor again in the race (the player's avatar, an NPC where it
+  stands), its graph starting at its beginning (the werewolf's begins with its change howl);
+  once the new 3D stands its scripts hear **OnRaceSwitchComplete** (Node: at once).
+  PlayerWerewolfScript starts the tracking there, or shuts the change down after the change
+  back; DLC1PlayerVampireScript likewise.
+- **The change** (PlayerWerewolfQuest): WerewolfChange's effect starts the quest (PrepShift:
+  SetBeastForm, ForceThirdPerson, ShowFirstPersonGeometry false, controls), its visual effect
+  plays IdleWerewolfTransformation on the human graph, whose SetRace annotation (or 10 s)
+  changes the race; StartTracking unequips, adds the howl and the level's ability, and sets
+  PlayerWerewolfShiftBackTime from StandardDurationSeconds; OnUpdate (5 s) changes back once
+  GameDaysPassed reaches it (stage 100: SetRace to CompanionsHousekeepingScript's
+  PlayerOriginalRace, ShowFirstPersonGeometry true). An effect's script that waits past its
+  effect's end (TransformIfNecessary after Wait 10) keeps its properties: a script's calls on
+  itself stay on its own instance (src/scripting/papyrus-vm.ts).
+- **Combat**: the beast's graph fights through the idle tree like any creature
+  (WerewolfRightAttackFast, WerewolfLeftPowerAttack, ...: actor-combat.ts); a creature graph's
+  weapon is out at its weaponDraw even unasked (the werewolf's graph stands in its combat
+  stance once changed), and a race change starts the fighter with nothing drawn. Howls are the
+  equipped shout (ActionVoice: HowlStart).
+- **Movement**: the beast graphs keep their state in iState through BSIStateManagerModifier
+  (src/formats/hkx/behavior.ts: the H2HBehavior's sprint state sets iState_WerewolfBeastSprint);
+  in a beast form the player moves at that movement type (WerewolfBeastDefault 400 running,
+  WerewolfBeastSprint 531), NPCs as their tagged movement types always did.
+- **Feeding**: PlayerWerewolfFeed's entries name the prompt "Feed" on a corpse and take the
+  activation (see "Perks": Activate): the victim spell marks it eaten, Feed extends the time
+  (FeedExtensionTimeSeconds, more on NPCs and with Gorging), plays SpecialFeeding and shows
+  "Bloodlust extended" (a MESG without the Message Box flag is a notification: TNAM seconds).
+- **The vampire lord** (DLC1PlayerVampireQuest): its graph's LevitatePlayerStart (the change's
+  end) lifts the player off (LevitationToggle); Ready Weapon goes up and down instead of drawing
+  (LevitationToggleMoving while moving; TODO(M13): the engine's own trigger is not documented):
+  up in the air the hands hold their spells at once (LevitateStart: drawn; the script equips
+  Vampiric Drain and the left spell), landed (LandStart) it stands out of combat and claws as
+  it draws. Bites are the idle tree's paired power attacks (pa_KillMoveVampireLordFeed*: the
+  script counts them at BiteStart).
+
+## Vampirism
+
+PlayerVampireQuestScript runs it: Sanguinare Vampiris (VampireDiseaseEffectScript) changes
+the player after three days (its message, VampireChange: SetRace to the race's vampire race,
+the stage 1 abilities), then each day without feeding a stage more (OnUpdateGameTime every 12
+hours: VampireProgression's abilities, sun damage, drains), feeding back to stage 1.
+**Actor.SendVampirismStateChanged** / **SendLycanthropyStateChanged** send
+OnVampirismStateChanged / OnLycanthropyStateChanged to the actor's scripts (Survival Mode's
+needs). **Actor.StartVampireFeed** (the VampireFeed perk's fragments on a sleeper) sets the
+feeding for FEEDING_SECONDS (6 s: GetVampireFeed holds; TODO(M13): the engine ends it with
+the animation), plays ActionIdle's IdleVampireFeed on the target (bed left / right, bedroll,
+standing front / back: the paired pa_VampireFeedStanding_* plays the victim's side too) and
+sends OnVampireFeed; StartCannibal likewise (GetCannibal, IdleCannibalFeed). **Actor.
+SetEyeTexture** (DLC1VampireTurnScript's red eyes, Serana's cure) gives the actor's eyes head
+part the texture set: the player's made head and an NPC's baked FaceGen head (its eye shapes
+are named after the head parts) are made again with it.
+
+## Dragon riding
+
+Dragonborn's dragon riding (src/shell/actor-mounts.ts, with src/shell/actor-flight.ts flying
+the dragon). Bend Will tames a dragon (DLC2TameDragonScript: it lands, waits); the player may
+ride it where their perks' Allow Mount Actor entry holds (`perks.mayMount`): activating it
+("Ride") tells its scripts (OnActivate: the wait ends) and mounts it by its pair
+(DragonMountEnter / pa_DragonMountEnter), the rider on its "NPC Saddlebone". Ridden, it is a
+flying mount (IsOnFlyingMount; IsRidingHorse and IsBeingRidden hold as for horses; its AI
+waits): it takes off and circles where it was mounted (an orbit at fCombatOrbitDistance and the
+orbit height), Forward sends it the way the player looks (PATROL_AHEAD at a time:
+IsFlyingMountPatrolQueued) and it circles where it is let go, Right Attack sets it on the
+actor nearest the player's view (its combat flies the attack: breath, passes), the map's fast
+travel in the same worldspace flies it there instead of loading
+(IsFlyingMountFastTravelling), and Activate asks it to land below (refused while
+**Game.SetAllowFlyingMountLandingRequests** forbids it: `runtime.flyingMountLandingAllowed`),
+the player getting off (DragonMountExit) once it stands. The player's own shouts and spells
+work as on foot. TODO(M13): the engine's patrol distance and its landing spot search are not
+documented.

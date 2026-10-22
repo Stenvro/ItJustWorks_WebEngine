@@ -10,11 +10,12 @@
 // conditions hold on their tab's subject: the owner, the weapon, the target ... the caller
 // passes). The entry point functions (EPMagic_SpellHasSkill, EPAlchemyEffectHasKeyword,
 // IsAttackType, ...) read what the caller is doing (PerkContext). Where each system asks:
-// docs/gameplay.md ("Perks"). Entry points no system asks yet: Activate's choices and the
-// perks' script fragments, Set Activate Label and Allow Mount Actor (TODO(M11): the beast
-// forms, dragon riding), Mod Ingredients Harvested (TODO(M11): harvesting flora), Mod Player
-// Magic Slowdown (TODO(M11): Slow Time's clock), Mod Bow Zoom and Mod Falling Damage
-// (TODO(M13): the bow's zoom, falling damage). Platform-independent.
+// docs/gameplay.md ("Perks"). The activation (src/shell/play-session.ts) asks Filter
+// Activation, Set Activate Label and the Activate choices (`activate`: run at once, or offered
+// in a message box; their spell cast, their PRKF_ fragment run: the werewolf's Feed); harvesting
+// asks Mod Ingredients Harvested, Slow Time Mod Player Magic Slowdown, the bow's zoom Mod Bow
+// Zoom, falls Mod Falling Damage (src/shell/time-flow.ts); dragon riding Allow Mount Actor
+// (mayMount: src/shell/actor-mounts.ts). Platform-independent.
 
 import {
   applyEntryFunction,
@@ -26,7 +27,7 @@ import {
 } from '../../gameplay/perk-entry-points.ts';
 import { parsePerk, type EntryPointEntry, type PerkRecord } from '../../world/perk-records.ts';
 import type { Condition } from '../conditions.ts';
-import type { ObjectHandle } from '../values.ts';
+import { ObjectHandle } from '../values.ts';
 import { globalValue } from './condition-values.ts';
 import type { ScriptRuntime } from './runtime.ts';
 
@@ -308,12 +309,7 @@ export class PerkEngine {
     return lists;
   }
 
-  /**
-   * The choices the Activate entry point adds to activating a target (Feed, Eat, ...).
-   * TODO(M11): the activation's choice of them (the game's message box) and the perks' script
-   * fragments they run (PERK VMAD: vmad.ts reads none yet), with the beast forms (Set Activate
-   * Label: the werewolf's Feed) and dragon riding (Allow Mount Actor: mayMount).
-   */
+  /** The choices the Activate entry point adds to activating a target (Feed, Eat, ...). */
   async activateChoices(owner: number, target: number): Promise<ActivateChoice[]> {
     const choices: ActivateChoice[] = [];
     for (const { entry, perk } of await this.entries(owner, EntryPoint.activate)) {
@@ -323,6 +319,58 @@ export class PerkEngine {
       choices.push({ perk, label, spell, runImmediately, replaceDefault, fragment });
     }
     return choices;
+  }
+
+  /**
+   * An actor activates a target through its perks' Activate choices (the Creation Kit's "Run
+   * Immediately" and "Replace Default"): the choices that run immediately run at once; the
+   * others are offered with the default activation (`defaultLabel`: "Search", "Talk"; left out
+   * when a choice replaces it) in the game's message box, the target's name its text, and the
+   * one picked runs. Resolves whether the default activation goes on. TODO(M13): the box's
+   * text and the buttons' order (the default first) are not documented.
+   */
+  async activate(
+    owner: number,
+    target: number,
+    defaultLabel: string,
+    name: string,
+  ): Promise<boolean> {
+    const choices = await this.activateChoices(owner, target);
+    if (choices.length === 0) return true;
+    const keepDefault = !choices.some((choice) => choice.replaceDefault);
+    const offered: ActivateChoice[] = [];
+    for (const choice of choices) {
+      if (choice.runImmediately) await this.runChoice(choice, owner, target);
+      else offered.push(choice);
+    }
+    if (offered.length === 0) return keepDefault;
+    const first = offered[0];
+    if (!keepDefault && offered.length === 1 && first) {
+      await this.runChoice(first, owner, target);
+      return false;
+    }
+    const buttons = [...(keepDefault ? [defaultLabel] : []), ...offered.map((c) => c.label)];
+    const picked = (await this.#runtime.world.messageBox?.(name, buttons)) ?? 0;
+    const choice = offered[picked - (keepDefault ? 1 : 0)];
+    if (!choice) return keepDefault && picked === 0;
+    await this.runChoice(choice, owner, target);
+    return false;
+  }
+
+  /**
+   * A choice runs: its spell is cast by the owner on the target, its fragment (the perk's
+   * PRKF_ script, VMAD) runs as Fragment_N(akTargetRef, akActor).
+   */
+  async runChoice(choice: ActivateChoice, owner: number, target: number): Promise<void> {
+    const runtime = this.#runtime;
+    if (choice.spell !== undefined) await runtime.magic.cast(choice.spell, owner, target, owner);
+    const attachments = await runtime.forms.attachments(choice.perk);
+    const fragment = attachments?.fragments.find((entry) => entry.stage === choice.fragment);
+    if (!fragment) return;
+    await runtime.vm.call(new ObjectHandle(choice.perk, fragment.script), fragment.function, [
+      runtime.referenceHandle(target),
+      runtime.actorHandle(owner),
+    ]);
   }
 
   // --- What systems ask often -------------------------------------------------------------------

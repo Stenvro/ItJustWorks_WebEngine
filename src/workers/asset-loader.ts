@@ -54,8 +54,9 @@ export class AssetLoader {
     return this.#workers.length;
   }
 
-  async loadModel(path: string): Promise<LoadedModel> {
-    const response = await this.#request('model', path);
+  /** A model; `switchChild`: the child its NiSwitchNodes show (flora harvested). */
+  async loadModel(path: string, switchChild?: number): Promise<LoadedModel> {
+    const response = await this.#request('model', path, switchChild);
     if (!response.ok || response.kind !== 'model') throw new Error(describe(response));
     return {
       model: response.model,
@@ -117,9 +118,13 @@ export class AssetLoader {
   async #request(
     kind: 'model' | 'texture' | 'rig' | 'expressions',
     path: string,
+    switchChild?: number,
   ): Promise<AssetResponse> {
     const payload = await this.#vfs.readPayload(path);
-    return this.#send({ id: 0, kind, path, payload }, [payload]);
+    return this.#send(
+      { id: 0, kind, path, payload, ...(switchChild !== undefined && { switchChild }) },
+      [payload],
+    );
   }
 
   /** Sends a request (its id assigned here) to the least busy worker, moving the payloads. */

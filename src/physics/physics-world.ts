@@ -1054,6 +1054,25 @@ export class PhysicsWorld {
   }
 
   /**
+   * A body's speed set toward a point (game units): `gain` × the way there a second, at most
+   * `limit` units a second (a held ragdoll's root).
+   */
+  pullBody(placed: PlacedBody, point: Vec3, gain: number, limit: number): void {
+    const body = placed.body;
+    if (!body.isValid() || !body.isDynamic()) return;
+    const t = body.translation();
+    const way: Vec3 = [
+      point[0] - t.x * HAVOK_SCALE,
+      point[1] - t.y * HAVOK_SCALE,
+      point[2] - t.z * HAVOK_SCALE,
+    ];
+    const distance = Math.hypot(...way);
+    const speed = Math.min(limit, distance * gain);
+    const scale = distance > 1e-6 ? speed / distance / HAVOK_SCALE : 0;
+    body.setLinvel({ x: way[0] * scale, y: way[1] * scale, z: way[2] * scale }, true);
+  }
+
+  /**
    * A push that adds the same speed along `direction` to each of a placement's simulated bodies
    * (Havok units a second; set as velocity, so it holds for bodies just made dynamic, whose
    * masses the next step computes), so a ragdoll flies off as one.

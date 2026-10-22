@@ -30,7 +30,8 @@ import { ActorValue, actorValueIndex, SKILL_COUNT } from '../../world/actor-valu
 import { RecordFlag } from '../../formats/esm/record.ts';
 import { AliasFlag } from '../../world/quest-records.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
-import type { ScriptRuntime } from './runtime.ts';
+import type { Placement, ScriptRuntime } from './runtime.ts';
+import { LocationType } from '../../ai/package-records.ts';
 
 export interface ActorInfo {
   readonly reference: number;
@@ -71,6 +72,17 @@ const GOD_MODE_VALUES: ReadonlySet<number> = new Set([
 const pairKey = (a: number, b: number): string =>
   a < b ? `${String(a)}:${String(b)}` : `${String(b)}:${String(a)}`;
 
+/** An exterior cell's size (game units). */
+const CELL_UNITS = 4096;
+
+/** Whether two places of a world are in the same exterior cell. */
+function sameGridCell(a: readonly number[], b: readonly number[]): boolean {
+  return (
+    Math.floor((a[0] ?? 0) / CELL_UNITS) === Math.floor((b[0] ?? 0) / CELL_UNITS) &&
+    Math.floor((a[1] ?? 0) / CELL_UNITS) === Math.floor((b[1] ?? 0) / CELL_UNITS)
+  );
+}
+
 export class ActorEngine {
   readonly #runtime: ScriptRuntime;
   readonly #infos = new Map<number, Promise<ActorInfo | undefined>>();
@@ -80,6 +92,8 @@ export class ActorEngine {
   #relationships: Promise<Map<string, number>> | undefined;
   /** The RELA records by pair, with their association types (ASTP). */
   readonly #relationRecords = new Map<string, Relationship>();
+  /** Actors in a deferred kill: whether their health ran out meanwhile, and by whose blow. */
+  readonly #deferred = new Map<number, { due: boolean; killer?: number }>();
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
@@ -382,16 +396,54 @@ export class ActorEngine {
     const own = this.#own(reference, index);
     own.damage += amount;
     if (index === ActorValue.health && (await this.value(reference, index)).current <= 0) {
-      // Essential actors, and protected ones but by the player, bleed out instead of dying
-      // (src/gameplay/combat/bleedout.ts); the engine lays them down (WorldBridge.bleedout).
-      const out = healthOut({
-        essential: await this.isEssential(reference),
-        protected: await this.isProtected(reference),
-        byPlayer: source === PLAYER_REF,
-      });
-      if (out === 'dies') await this.kill(reference, source);
-      else this.#runtime.world.bleedout?.(reference, source);
+      // A deferred kill holds its death until it ends (endDeferredKill); who dealt the blow
+      // that should have killed it is its killer then.
+      const deferred = this.#deferred.get(reference);
+      if (deferred) {
+        deferred.due = true;
+        if (source !== undefined) deferred.killer = source;
+        return;
+      }
+      await this.#healthGone(reference, source);
     }
+  }
+
+  /**
+   * Its health ran out: it dies, but essential actors, and protected ones but by the player,
+   * bleed out instead (src/gameplay/combat/bleedout.ts); the engine lays them down
+   * (WorldBridge.bleedout).
+   */
+  async #healthGone(reference: number, source: number | undefined): Promise<void> {
+    // Essential actors, and protected ones but by the player's own blow, bleed out instead of
+    // dying (src/gameplay/combat/bleedout.ts); the engine lays them down (WorldBridge.bleedout).
+    const out = healthOut({
+      essential: await this.isEssential(reference),
+      protected: await this.isProtected(reference),
+      byPlayer: source === PLAYER_REF,
+    });
+    if (out === 'dies') await this.kill(reference, source);
+    else this.#runtime.world.bleedout?.(reference, source);
+  }
+
+  /**
+   * Actor.StartDeferredKill: from now on its health may run out without its dying (CommonLibSSE
+   * MiddleHighProcessData inDeferredKill) until EndDeferredKill.
+   */
+  startDeferredKill(reference: number): void {
+    if (!this.#deferred.has(reference)) this.#deferred.set(reference, { due: false });
+  }
+
+  /**
+   * Actor.EndDeferredKill: the deferral ends; if its health ran out meanwhile and is still gone it
+   * dies now (bleeds out, essential or protected), by whoever dealt the blow.
+   */
+  async endDeferredKill(reference: number): Promise<void> {
+    const deferred = this.#deferred.get(reference);
+    if (!deferred) return;
+    this.#deferred.delete(reference);
+    if (!deferred.due || (await this.isDead(reference))) return;
+    if ((await this.value(reference, ActorValue.health)).current > 0) return;
+    await this.#healthGone(reference, deferred.killer);
   }
 
   /** RestoreActorValue: damage healed, up to none. */
@@ -451,7 +503,8 @@ export class ActorEngine {
   /**
    * It offers its services now (GetOffersServicesNow): it is in a vendor faction (rank 0 or
    * more) whose hours (VENV) include the game's hour now (hours past midnight wrap) and whose
-   * conditions hold on it. TODO(M10): the vendor's location and radius.
+   * conditions hold on it, where it trades (PLVD within VENV's radius: in its cell, near its
+   * reference or its editor location).
    */
   async offersServicesNow(reference: number): Promise<boolean> {
     return (await this.vendorFaction(reference)) !== undefined;
@@ -478,10 +531,51 @@ export class ActorEngine {
           : hour >= startHour || hour < endHour;
       if (!open) continue;
       const self = this.#runtime.referenceHandle(reference);
-      if (await this.#runtime.conditionsHold(vendor.conditions, self))
+      if (
+        (await this.#runtime.conditionsHold(vendor.conditions, self)) &&
+        (await this.#atVendorPlace(reference, vendor))
+      )
         return { faction: formId, vendor };
     }
     return undefined;
+  }
+
+  /** Whether an actor is where its vendor faction trades (PLVD, VENV's radius). */
+  async #atVendorPlace(reference: number, vendor: FactionVendor): Promise<boolean> {
+    const place = vendor.location;
+    const runtime = this.#runtime;
+    if (!place || place.type === LocationType.nearSelf) return true;
+    const at = await runtime.placement(reference);
+    if (!at) return true;
+    const near = (other: Placement | undefined, radius: number): boolean =>
+      other !== undefined &&
+      other.world === at.world &&
+      (at.world !== undefined || other.cell === at.cell) &&
+      (radius <= 0
+        ? at.world === undefined || sameGridCell(other.position, at.position)
+        : Math.hypot(other.position[0] - at.position[0], other.position[1] - at.position[1]) <=
+          radius);
+    switch (place.type) {
+      case LocationType.inCell: {
+        if (at.cell === place.form) return true;
+        const world = runtime.forms.db.worldOfCell(place.form);
+        if (world === undefined || at.world !== world) return false;
+        const xclc = (await runtime.forms.record(place.form))?.fields.first('XCLC');
+        if (!xclc || xclc.length < 8) return false;
+        const grid = new DataView(xclc.buffer, xclc.byteOffset, xclc.byteLength);
+        return (
+          Math.floor(at.position[0] / CELL_UNITS) === grid.getInt32(0, true) &&
+          Math.floor(at.position[1] / CELL_UNITS) === grid.getInt32(4, true)
+        );
+      }
+      case LocationType.nearReference:
+        return near(await runtime.placement(place.form), vendor.radius);
+      case LocationType.nearEditorLocation:
+        return near(await runtime.placement(reference, false), vendor.radius);
+      default:
+        // TODO(M13): the other place kinds (no vanilla vendor names them).
+        return true;
+    }
   }
 
   setFactionRank(reference: number, faction: number, rank: number): void {

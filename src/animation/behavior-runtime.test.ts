@@ -250,6 +250,65 @@ describe('the behavior runtime', () => {
     expect(runtime.takeRaised()).toEqual([]);
   });
 
+  it('sets the iState its state machines are in and tags it (BSIStateManagerModifier)', () => {
+    const machine: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'H2HBehavior',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'Default',
+          probability: 1,
+          enable: true,
+          generator: clip('idle'),
+          transitions: [transition(0, 18)],
+        },
+        {
+          id: 18,
+          name: 'Sprint',
+          probability: 1,
+          enable: true,
+          generator: clip('sprint'),
+          transitions: [],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const manager: BehaviorModifier = {
+      kind: 'istate-manager',
+      name: 'WWiStateManagerModifier',
+      enable: { value: 1 },
+      iStateVar: { value: 0, variable: 0 },
+      states: [
+        { machine, stateId: 0, iState: { value: 0, variable: 1 } },
+        { machine, stateId: 18, iState: { value: 0, variable: 2 } },
+      ],
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(
+        { kind: 'modifier-generator', name: 'Mods', modifier: manager, generator: machine },
+        ['sprintStart'],
+        [
+          { name: 'iState', initial: 0 },
+          { name: 'iState_WerewolfBeastDefault', initial: 0 },
+          { name: 'iState_WerewolfBeastSprint', initial: 1 },
+        ],
+      ),
+      host: host({ idle: animation(0), sprint: animation(1) }),
+      skeleton,
+    });
+    runtime.update(0.1);
+    expect(runtime.variable('iState')).toBe(0);
+    expect(runtime.taggedState()).toBe(0);
+    runtime.sendEvent('sprintStart');
+    runtime.update(0.1);
+    runtime.update(0.1);
+    expect(runtime.variable('iState')).toBe(1);
+    expect(runtime.taggedState()).toBe(1);
+  });
+
   it('blends a parametric blender by its parameter', () => {
     const blender: BehaviorGenerator = {
       kind: 'blender',

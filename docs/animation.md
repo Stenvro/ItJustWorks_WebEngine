@@ -140,9 +140,19 @@ player's race (`ScriptWorld.lookChanged`; the other sex brings the other first-p
 part is baked again only when the weights of its own morphs change, and a tint alone only
 paints the texture again. Its race's height sets the cameras' (TODO(M13): the character
 controller keeps the size it was made with). It is drawn in third person, from the free camera
-and from the race menu's camera; in first person nothing of it is drawn (TODO(M11): the
-first-person arms once weapons or spells are drawn; TODO(M13): the third-person body's shadow,
-which the game casts in first person too). A menu that shows the player (the race menu)
+and from the race menu's camera; in first person its **first-person body** is drawn instead
+(`src/shell/first-person-body.ts`): the first-person models of what it wears (ARMA MOD4 /
+MOD5: the skin's hands, a cuirass's sleeves, gauntlets, a shield: `ActorPlacer.wornModels`
+with `firstPerson`), dressed on the first-person skeleton as the body's are on its own (the
+skeleton takes the models' nodes; dressed again as the look changes, the graph kept), and the
+weapons' first-person models (WEAP WNAM, a STAT's model) in its hands (combat's HeldWeapons on
+its pose: src/shell/actor-combat.ts). It stands on the feet facing the view, scaled by the
+race's height, turned about its Camera1st node by the view's pitch, and is drawn unless
+Game.ShowFirstPersonGeometry hid it (the beast forms, MQ101's cart: `runtime.
+firstPersonGeometry`), from the free camera or dead. TODO(M13): the engine draws it in a pass
+of its own (its own near plane and field of view over the world: here it shares the view's,
+which shows the hands of the resting 1HM pose only looking down); the third-person body's
+shadow, which the game casts in first person too. A menu that shows the player (the race menu)
 animates the body on real time while the game stands still, and turns it itself.
 
 Two graphs run: the race's (`defaultmale.hkx`) on the body and the first-person one

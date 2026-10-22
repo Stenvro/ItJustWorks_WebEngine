@@ -157,6 +157,65 @@ describe('ActorPackages', () => {
     expect(events).toEqual(['begin Pack2', 'change Pack2', 'begin Pack1']);
   });
 
+  it("takes the tree again as a running branch's conditions no longer hold", async () => {
+    // A follower's template: a Stacked branch follows while 7 holds (WaitingForPlayer 0), else
+    // waits; the same package stays chosen.
+    const ran: string[] = [];
+    const forever =
+      (name: string): ProcedureRunner =>
+      async (run) => {
+        ran.push(name);
+        while (!run.stopped()) await run.wait(1);
+        return 'failure';
+      };
+    const follow = procedure('follow', 0, [condition(7)]);
+    const { actor, truths, events } = setup(
+      [pack(1, branch('Stacked', [follow, procedure('wait')]))],
+      { follow: forever('follow'), wait: forever('wait') },
+    );
+    truths.add(7);
+    await tick(actor);
+    expect(ran).toEqual(['follow']);
+    truths.delete(7);
+    actor.evaluate();
+    await tick(actor);
+    await tick(actor);
+    expect(ran).toEqual(['follow', 'wait']);
+    expect(actor.current?.procedure).toBe('wait');
+    expect(events).toEqual(['begin Pack1']);
+  });
+
+  it('runs an ended package again as the branch it ended under may no longer run', async () => {
+    // The follower's wait: it travels there (the tree ends, done) while 8 holds; told to
+    // follow (8 no longer holds, 7 does) it follows.
+    const ran: string[] = [];
+    const follow = procedure('follow', 0, [condition(7)]);
+    const waitThere = branch('Stacked', [procedure('travel')]);
+    const { actor, truths } = setup(
+      [pack(1, branch('Stacked', [follow, { ...waitThere, conditions: [condition(8)] }]))],
+      {
+        follow: async (run) => {
+          ran.push('follow');
+          while (!run.stopped()) await run.wait(1);
+          return 'failure';
+        },
+        travel: () => {
+          ran.push('travel');
+          return Promise.resolve('success');
+        },
+      },
+    );
+    truths.add(8);
+    await tick(actor);
+    await tick(actor, 3);
+    expect(ran).toEqual(['travel']);
+    truths.delete(8);
+    truths.add(7);
+    await tick(actor, 3);
+    await tick(actor);
+    expect(ran).toEqual(['travel', 'follow']);
+  });
+
   it('runs a sequence in order, skipping what may not run, and ends the package', async () => {
     const ran: string[] = [];
     const step =

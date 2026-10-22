@@ -391,23 +391,28 @@ export type SupportChoice =
 /**
  * What an actor in combat does for itself now, if anything, in this order: a ward against a
  * spell coming at it; below iAICombatRestoreHealthPercentage of its health its healing spell,
- * else a Health potion, and a Magicka potion when its magic fails it for want of magicka (at
- * most one restore every fCombatItemRestoreTimer seconds); a summons when none of its stands;
+ * else a Health potion, and a Magicka potion below iAICombatRestoreMagickaPercentage of its
+ * magicka or when its magic fails it for want of magicka (at most one restore every
+ * fCombatItemRestoreTimer seconds); a summons when none of its stands;
  * a buff not on it. TODO(M13): the engine's order and its thresholds for magicka and stamina
  * (a Stamina potion here below the same share as health) are not documented.
  */
 export function chooseSupport(
   state: SupportState,
-  settings: Pick<CombatAiSettings, 'restoreHealthPercentage' | 'itemRestoreTime'>,
+  settings: Pick<
+    CombatAiSettings,
+    'restoreHealthPercent' | 'restoreMagickaPercent' | 'itemRestoreTime'
+  >,
 ): SupportChoice | undefined {
   if (state.canWard) return { kind: 'ward' };
-  const threshold = settings.restoreHealthPercentage / 100;
+  const threshold = settings.restoreHealthPercent / 100;
   const restore = state.sinceRestore >= settings.itemRestoreTime;
   if (restore && state.health < threshold) {
     if (state.canHeal) return { kind: 'heal' };
     if (state.potions.health) return { kind: 'potion', value: 'health' };
   }
-  if (restore && state.outOfMagicka && state.potions.magicka)
+  const magickaLow = state.magicka < settings.restoreMagickaPercent / 100;
+  if (restore && (state.outOfMagicka || magickaLow) && state.potions.magicka)
     return { kind: 'potion', value: 'magicka' };
   if (restore && state.stamina < threshold && state.potions.stamina)
     return { kind: 'potion', value: 'stamina' };

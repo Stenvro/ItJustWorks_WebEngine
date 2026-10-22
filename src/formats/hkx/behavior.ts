@@ -669,9 +669,25 @@ export type BehaviorModifier = { readonly name: string; readonly enable: Bindabl
     }
   | {
       /**
-       * The others the vanilla graphs use: BSIStateManagerModifier (the iState of werewolves,
-       * vampire lords and spriggans: TODO(M11) with the beast forms and their combat
-       * movement). `node tools/behavior-run.ts --modifiers` lists them.
+       * BSIStateManagerModifier: the actor's state (iStateVar, bound to iState) as the state
+       * machines named in its state data are in: the first entry whose machine is in its
+       * StateID sets it to its iStateToSetAs (bound to an iState_<movement type> variable:
+       * the werewolf's H2HBehavior in its sprint state is WerewolfBeastSprint, the vampire
+       * lord's ground and levitation states theirs). The engine takes it as the actor's
+       * movement type, as BSiStateTaggingGenerator's (src/ai/locomotion.ts).
+       */
+      readonly kind: 'istate-manager';
+      readonly iStateVar: Bindable;
+      readonly states: readonly {
+        readonly machine: BehaviorGenerator | undefined;
+        readonly stateId: number;
+        readonly iState: Bindable;
+      }[];
+    }
+  | {
+      /**
+       * Any other modifier (none of the vanilla graphs' is left without a kind of its own:
+       * `node tools/behavior-run.ts --modifiers` lists them).
        */
       readonly kind: 'other';
       readonly className: string;
@@ -780,6 +796,8 @@ const VARIABLE_TYPE_REAL = 4;
 /** Types 6..8 (vector3, vector4, quaternion) hold their value in the quad values. */
 const VARIABLE_TYPE_VECTOR3 = 6;
 const LOOK_AT_BONE_SIZE = 64;
+/** BSIStateManagerModifier's BSiStateData: state machine pointer, StateID, iStateToSetAs. */
+const ISTATE_DATA_SIZE = 16;
 const KEYFRAME_INFO_SIZE = 48;
 const FOOT_IK_CONTROLS_LEG_SIZE = 48;
 const FOOT_IK_MODIFIER_LEG_SIZE = 160;
@@ -1540,6 +1558,24 @@ class GraphReader {
           boneRadius: bindable('boneRadius', file.f32(at + 96)),
           castOffset: bindable('castOffset', file.f32(at + 100)),
         };
+      case 'BSIStateManagerModifier': {
+        // iStateVar i32 @80, stateData @88: hkArray of 16-byte BSiStateData (the state
+        // machine's pointer, StateID i32, iStateToSetAs i32), bound as stateData:<i>/...
+        const { data, size } = file.array(at + 88);
+        return {
+          ...base,
+          kind: 'istate-manager',
+          iStateVar: bindable('iStateVar', file.i32(at + 80)),
+          states: Array.from({ length: size }, (_, i) => {
+            const entry = data + i * ISTATE_DATA_SIZE;
+            return {
+              machine: this.generator(file.object(entry)),
+              stateId: file.i32(entry + 8),
+              iState: bindable(`stateData:${String(i)}/iStateToSetAs`, file.i32(entry + 12)),
+            };
+          }),
+        };
+      }
       default:
         return { ...base, kind: 'other', className: object.className };
     }

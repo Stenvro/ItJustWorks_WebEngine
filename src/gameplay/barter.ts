@@ -44,3 +44,15 @@ export function vendorBuys(
   const listed = item.keywords.some((keyword) => list.has(keyword));
   return vendor.notInList ? !listed : listed;
 }
+
+/** A merchant's chest restocks this many game hours after it last did (UESP "Merchants"). */
+export const RESTOCK_HOURS = 48;
+
+/**
+ * Whether a merchant's chest restocks now: RESTOCK_HOURS (in game days, as GameDaysPassed counts
+ * them) after it was last stocked. TODO(M13): the 48 hours are UESP's; the executable's setting
+ * for them is not in the plugins.
+ */
+export function restockDue(lastDays: number, nowDays: number): boolean {
+  return nowDays - lastDays >= RESTOCK_HOURS / 24;
+}

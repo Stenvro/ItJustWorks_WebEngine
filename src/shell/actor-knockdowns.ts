@@ -34,6 +34,9 @@ const DOWN_MAX = 8;
 /** Seconds the graph has to answer the get-up's events before the engine stands it up. */
 const GET_UP_WAIT = 3;
 const RISE_MAX = 6;
+/** A held ragdoll's root goes this share of the way to its hold a second, at most this fast. */
+const HOLD_GAIN = 8;
+const HOLD_SPEED = 600;
 /** How far down from the ragdoll's root the ground under it is looked for (units). */
 const GROUND_REACH = 512;
 
@@ -80,6 +83,8 @@ interface Knock {
   since: number;
   /** Paralysed: it lies until that ends. */
   paralyzed: boolean;
+  /** Held (Grab Actor): its ragdoll's root is pulled to this point until it is let go. */
+  held: (() => Vec3 | undefined) | undefined;
   /** Events of its graph this frame that move it on. */
   readonly heard: Set<string>;
   /** Where its get-up was matched from. */
@@ -136,6 +141,7 @@ export class ActorKnockdowns {
         resting: 0,
         since: 0,
         paralyzed: this.#paralyzed.has(reference),
+        held: undefined,
         heard: new Set(),
         frame: undefined,
       };
@@ -184,6 +190,15 @@ export class ActorKnockdowns {
     if (knock) knock.paralyzed = on;
   }
 
+  /**
+   * Holds one lying (Grab Actor): its ragdoll's root is pulled each frame to where `point` says;
+   * undefined lets it go (it falls, and gets up once at rest).
+   */
+  hold(reference: number, point: (() => Vec3 | undefined) | undefined): void {
+    const knock = this.#knocks.get(reference);
+    if (knock) knock.held = point;
+  }
+
   /** Whether an actor is paralysed now. */
   paralyzed(reference: number): boolean {
     return this.#paralyzed.has(reference);
@@ -210,6 +225,15 @@ export class ActorKnockdowns {
         if (!bodies.knocked(reference)) {
           // Its bodies went (far from the player): it is up at once.
           this.#stand(knock, undefined);
+          continue;
+        }
+        const held = knock.held?.();
+        if (held) {
+          // Held: its root drawn to the point (HOLD_GAIN of the way a second, at most
+          // HOLD_SPEED), as if hanging from the hand that grips it.
+          const root = knock.placed.behavior?.ragdollBoneNames([0])[0];
+          if (root !== undefined) bodies.pullRagdoll(reference, root, held, HOLD_GAIN, HOLD_SPEED);
+          knock.resting = 0;
           continue;
         }
         knock.resting = bodies.resting(reference, REST_SPEED) ? knock.resting + seconds : 0;

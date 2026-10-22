@@ -31,6 +31,7 @@ const SCRIPTS: BuildScript[] = [
     ],
   },
   { name: 'Quest', parent: 'Form' },
+  { name: 'Test', functions: [{ name: 'Forget', native: true }] },
   {
     name: 'BaseHouse',
     parent: 'Quest',
@@ -115,6 +116,21 @@ const SCRIPTS: BuildScript[] = [
         ],
       },
       { name: 'Forever', code: [['jmp', int(0)]] },
+      {
+        // Its object lets go of its scripts meanwhile (an effect that ended), then it calls
+        // its own function.
+        name: 'ForgetThenDescribe',
+        returnType: 'String',
+        locals: [
+          ['::t', 'String'],
+          ['::NoneVar', 'None'],
+        ],
+        code: [
+          ['callstatic', id('Test'), id('Forget'), id('::NoneVar')],
+          ['callmethod', id('Describe'), id('self'), id('::t')],
+          ['return', id('::t')],
+        ],
+      },
     ],
     states: [
       {
@@ -128,6 +144,8 @@ const SCRIPTS: BuildScript[] = [
 class TestHost implements VmHost {
   readonly enabled = new Set<number>();
   readonly warnings: string[] = [];
+  /** Test.Forget: the house's scripts are let go (PapyrusVm.reset). */
+  forget: (() => void) | undefined;
 
   formType(target: ObjectHandle): Promise<string | undefined> {
     return Promise.resolve(target.formId === 0x10 ? 'quest' : 'objectreference');
@@ -159,6 +177,12 @@ class TestHost implements VmHost {
     }
     if (script === 'objectreference' && fn === 'isdisabled') {
       return ({ self }) => !self || !this.enabled.has(self.formId);
+    }
+    if (script === 'test' && fn === 'forget') {
+      return () => {
+        this.forget?.();
+        return null;
+      };
     }
     return undefined;
   }
@@ -200,6 +224,18 @@ describe('Papyrus VM', () => {
     expect((me as ObjectHandle).type).toBe('housescript');
     expect(await vm.canBe(new ObjectHandle(0x10, 'form'), 'BaseHouse')).toBe(true);
     expect(await vm.canBe(new ObjectHandle(0x20, 'form'), 'HouseScript')).toBe(false);
+  });
+
+  it('keeps a running script on its own instance after its object lets it go', async () => {
+    const { vm, host, house } = setup();
+    host.forget = () => {
+      vm.reset(house);
+    };
+    await vm.call(house, 'BuildAll');
+    // Its own call still sees its variables (an ended effect's script reads its properties).
+    expect(await vm.call(house, 'ForgetThenDescribe')).toBe('built 2');
+    // Called anew, the object's scripts start over.
+    expect(await vm.call(house, 'Describe')).toBe('built 0');
   });
 
   it('switches functions with the script state', async () => {

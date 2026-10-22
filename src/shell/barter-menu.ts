@@ -21,10 +21,13 @@
 // anything to any vendor, the Fence perk (BypassVendorStolenCheck) stolen goods (TODO(M13):
 // whether the engine asks the vendor to be one the player invested in, as the perk's text
 // says; the Investor perk's investing is its dialogue's). A trade is the item's value in Speech
-// uses (the progression engine). TODO(M11): the chest's restock every 48 hours.
+// uses (the progression engine). The merchant chest restocks every 48 game hours (UESP
+// "Merchants": what was sold to it goes, its goods and gold are there again, leveled lists
+// picked anew: ScriptRuntime.restock), checked as the menu opens. Quest items are not offered.
 
-import { barterMultipliers, vendorBuys } from '../gameplay/barter.ts';
+import { barterMultipliers, restockDue, vendorBuys } from '../gameplay/barter.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { questItems } from '../scripting/runtime/quest-items.ts';
 import { actorValueIndex } from '../world/actor-values.ts';
 import { parseItem, type ItemRecord } from '../world/item-records.ts';
 import { GOLD } from './inventory-menu.ts';
@@ -48,6 +51,14 @@ export async function barterModel(
   if (!vendor) terminal.log('ui', `${vendorActor.toString(16)} is in no vendor faction`, 'warn');
   // Without a merchant chest the vendor trades from its own items.
   const chest = vendor?.chest ?? vendorActor;
+  // The merchant chest restocks every 48 hours (what was sold to it goes, its own goods and
+  // gold are there again): reckoned from the first trade, as the menu opens.
+  if (vendor?.chest !== undefined) {
+    const now = game.state.gameDaysPassed;
+    const last = game.state.restocked.get(chest);
+    if (last === undefined) game.state.restocked.set(chest, { days: now, count: 0 });
+    else if (restockDue(last.days, now)) game.restock(chest);
+  }
   const list = new Set(vendor?.list === undefined ? [] : await game.formList(vendor.list));
   const settings = await session.settings();
   const speech = actorValueIndex('Speechcraft') ?? 17;
@@ -90,11 +101,15 @@ export async function barterModel(
     view: async () => {
       const goods = (await shelf.rows(chest)).filter((row) => row.formId !== GOLD);
       const mine = await shelf.rows(PLAYER_REF);
-      // What the vendor buys; a vendor that is no fence not the stolen ones.
+      // What the vendor buys; a vendor that is no fence not the stolen ones; never the
+      // player's quest items (quest-items.ts).
+      const quest = await questItems(game, PLAYER_REF);
       const offered = mine.flatMap((row) => {
         if (!sellable(row.item)) return [];
-        if (vendor?.onlyStolen === true || anyStolen) return [row];
-        const count = row.count - game.crime.stolenCount(PLAYER_REF, row.formId);
+        const free = row.count - (quest.get(row.formId) ?? 0);
+        if (vendor?.onlyStolen === true || anyStolen)
+          return free > 0 ? [{ ...row, count: free }] : [];
+        const count = Math.min(free, row.count - game.crime.stolenCount(PLAYER_REF, row.formId));
         return count > 0 ? [{ ...row, count }] : [];
       });
       return {
