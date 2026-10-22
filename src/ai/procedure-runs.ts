@@ -7,6 +7,7 @@ import { followGait } from './followers.ts';
 import { IdleCollectionFlag } from './idle-records.ts';
 import { sameSpace } from './package-start.ts';
 import { TargetType } from './package-records.ts';
+import { ObjectType } from './object-types.ts';
 import type {
   PackagePlace,
   ProcedureResult,
@@ -29,6 +30,8 @@ const REACH = 96;
 const GREET_DISTANCE = 128;
 /** A meal and a line said take this long (seconds). TODO(M13): the idle's and line's own. */
 const EAT_SECONDS = 6;
+/** Food, as a package target names it (object type Food). */
+const FOOD = { type: TargetType.objectType, value: ObjectType.food, count: 0 } as const;
 const SAY_SECONDS = 3;
 /** LockDoors' warning: the TimeToGo subtype, then the game's fAITrespassWarningTimer (s). */
 const TIME_TO_GO = 'TITG';
@@ -123,9 +126,9 @@ async function goTo(
 }
 
 /**
- * Travel: to the place (within its radius); succeeds there. A place outside the loaded area
- * (in another cell or worldspace): it stays while the package runs (TODO(M10) 2.2 and 3.4:
- * the way there through doors, and actors away).
+ * Travel: to the place (within its radius); succeeds there. A place in another cell or
+ * worldspace: its way leads through the load doors (src/shell/actor-ai.ts), and away from the
+ * loaded area it goes on as actors away do (src/shell/actors-away.ts).
  */
 const travel: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
@@ -151,8 +154,9 @@ const wait: ProcedureRunner = async (run) => {
 };
 
 /**
- * Guard: to its place, facing the way its marker faces, and stays. TODO(M10) 4.1: watching for
- * those it is suspicious of (detection).
+ * Guard: to its place, facing the way its marker faces, and stays. What it notices meanwhile it
+ * reacts to as any actor does (detection's search, the guard's warning: src/ai/reactions.ts).
+ * TODO(M13): whether the Guard procedure itself watches those it is suspicious of (undocumented).
  */
 const guard: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
@@ -357,7 +361,8 @@ const SPOT_MARKERS: Readonly<Record<SandboxSpot['kind'], number>> = {
  * time, each for a while that its Energy shortens. TODO(M13): the engine's own choice and
  * timing are not documented (here: a free spot or a walk, picked at random). With Allow
  * Conversation it talks with the actors near it meanwhile (src/ai/talk.ts: the social timers
- * start them). TODO(M10) 3.2: eating (Allow Eating).
+ * start them). With Allow Eating it eats now and then: food it carries (one used up), else a
+ * meal made up as Eat's Create Fake Food does.
  */
 const sandbox: ProcedureRunner = async (run) => {
   run.body.allowConversation?.(run.inputs.bool(3, true));
@@ -378,6 +383,7 @@ const sandboxing: ProcedureRunner = async (run) => {
     special: run.inputs.bool(9, false),
     idle: run.inputs.bool(4, true),
   };
+  const eats = run.inputs.bool(1, false);
   const wanders = run.inputs.bool(6, true);
   const energy = Math.min(100, Math.max(0, run.inputs.number(8, 50)));
   const radius = Math.max(place.radius, AT_PLACE);
@@ -388,11 +394,21 @@ const sandboxing: ProcedureRunner = async (run) => {
     const spots = (await run.mind.around(place.position, radius, run.actor)).filter(
       (spot) => allows[spot.kind],
     );
-    const choices = spots.length + (wanders && place.radius > 0 ? 1 : 0);
+    const walks = wanders && place.radius > 0 ? 1 : 0;
+    const choices = spots.length + walks + (eats ? 1 : 0);
     const pick = Math.floor(run.random() * choices);
     const spot = spots[pick];
     if (run.stopped()) break;
-    if (spot?.kind === 'idle') {
+    if (eats && pick === choices - 1) {
+      // A meal: what it carries, else one made up.
+      const carried = await run.mind.carried(run.actor, FOOD);
+      const food = carried ?? (await run.mind.fakeFood());
+      if (food !== undefined && (await run.body.useItem(food, carried !== undefined))) {
+        await waitFor(run, EAT_SECONDS);
+      } else {
+        await run.wait(IDLE_SECONDS);
+      }
+    } else if (spot?.kind === 'idle') {
       if (!(await atIdleMarker(run, spot.reference, stay))) await run.wait(IDLE_SECONDS);
     } else if (spot) {
       if (await run.body.useFurniture(spot.reference, SPOT_MARKERS[spot.kind])) {

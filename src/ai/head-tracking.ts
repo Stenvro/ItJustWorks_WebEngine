@@ -124,7 +124,7 @@ export const HEAD_TRACK_SETTINGS = Object.keys(VANILLA_HEAD_TRACK) as (keyof Hea
 /**
  * The player is looked at by actors without a target of their own when this near (game
  * units, head to head) and in front of them (within FRONT_ANGLE of their facing). TODO(M13):
- * the engine's rule is not documented (and TODO(M10) 4.1: only once it has detected them).
+ * the engine's rule is not documented. Only once it has detected them (src/shell/actor-looks.ts).
  */
 export const PLAYER_INTEREST_DISTANCE = 512;
 const FRONT_ANGLE = Math.PI / 2;
