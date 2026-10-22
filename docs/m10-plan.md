@@ -231,16 +231,22 @@ every vanilla record, and a section in [formats/esm.md](formats/esm.md) or
 - [ ] **6.2 The opening (MQ101):** the cart ride, the scenes in the cart and in Helgen,
       chargen, Alduin, the escape with Ralof or Hadvar, the keep's fights, out of the cave.
       2026-10-21: the ride plays to Helgen's gate (stages 15, 14, 20, 22, 25, 26, 27, 30, 35
-      reached in one run). Left: the column's order (Tullius's horse must stay ahead of Cart1,
+      reached in one run). 2026-10-22: to stage 100 headless (the riders get out, the player
+      driven by AI steps into line, the race menu, the first execution by the block's script,
+      the player on the block); MQ102 no longer starts at stage 100 (a log entry's next quest
+      starts nothing), so Alduin keeps to MQ101's approach. Left: Alduin's landing onwards,
+      played by the maintainer. Left: the column's order (Tullius's horse must stay ahead of Cart1,
       which starts on the same patrol chain; Cart1 overtakes it and blocks the gate, so stage
       20 waits and Cart2's next patrol begins behind it), then Helgen onwards.
 - [ ] **6.3 Fights:** Bleak Falls Barrow's draugr, bandit camps, wolves, the dragon at the
       Western Watchtower, giants, mages. Checked 2026-10-21 with spawned enemies near
       Riverwood: wolf, bandit wizard (fists, then Frostbite), draugr, giant, fire dragon (take
       off, breath, hover, kills the player); left: the places themselves.
-- [ ] **6.4 Waiting, sleeping and fast travel** with enemies near and in combat. Waiting and
+- [x] **6.4 Waiting, sleeping and fast travel** with enemies near and in combat. Waiting and
       sleeping are refused while someone fights the player or an effect takes their health
-      (2026-10-21); left: fast travel with enemies near, actors' places after the hours.
+      (2026-10-21); fast travel refuses in combat, with enemies near and taking health damage;
+      after the hours the actors are where their packages had them (Whiterun at 22:00: the
+      townspeople home), an attack breaks the wait off (2026-10-22).
 - [x] **6.5 The open observations:** an NPC standing in a fire (fixed 2026-10-16); the carts
       not moving (they ride: a physics panic, the scene's quest, static pathing, triggers;
       2026-10-21).
