@@ -239,8 +239,11 @@ mass and regeneration from its race; then scripts' permanent modifiers and damag
 (GetFactionRank: −2 not a member, −1 listed but not yet one; an alias's factions while it
 holds the actor), relationships (RELA, read in one pass, and those scripts set), spells and perks (its own, its race's, scripts'), being essential or protected
 (its base, scripts' ActorBase changes, or an alias), dead (killed, or placed dead) and dying
-(OnDying, then OnDeath). Auto-calculated stats follow the level (docs/gameplay.md). TODO(M11): bleedout,
-the magic system's effects; TODO(M10): combat (detection: [ai.md](ai.md#detection)).
+(OnDying, then OnDeath). Auto-calculated stats follow the level (docs/gameplay.md). Bleedout
+(essential and protected actors, its recovery), combat, detection and the AI's state are the
+stage's ([ai.md](ai.md#combat), [Combat AI](ai.md#combat-ai), [Detection](ai.md#detection);
+the natives and conditions read them through the WorldBridge: `combat`, `detects`, ...); the
+magic system's effects change the actor values ([gameplay.md](gameplay.md#magic-effects)).
 
 The player's race, sex and name are the race menu's choices (`GameState.playerAppearance`,
 `playerName`): ActorBase.GetRace and GetSex of the Player base (0x7), Actor.GetRace and the

@@ -119,12 +119,19 @@ export interface LocomotionFrame {
 const MOVING_SPEED = 5;
 
 /**
+ * A change of Direction by more than this (of the whole turn, 0..1) went the short way round
+ * across 0: the cyclic blends cross-fade it. TODO(M13): the engine's own test is not
+ * documented.
+ */
+const DIRECTION_WRAP = 0.5;
+
+/**
  * Drives an actor's behavior graphs from its movement, frame by frame: the variables the
  * engine keeps (Speed: the measured speed; Direction: the movement against the facing, 0 ahead,
  * 0.25 right, 0.5 behind, 0.75 left; TurnDelta: the turn rate, degrees per second, left
  * positive; IsSprinting, IsSneaking; iSyncIdleLocomotion with the movement) and its events
  * (moveStart, moveStop, SprintStart / Stop, SneakStart / Stop, SwimStart / Stop, JumpFall,
- * JumpLand / JumpLandDirectional). iSyncIdleLocomotion: its name is in the executable and no
+ * JumpLand / JumpLandDirectional; CyclicFreeze and CyclicCrossBlend as Direction wraps). iSyncIdleLocomotion: its name is in the executable and no
  * vanilla graph writes it outside blocking, while 38 state machines start from it and leave
  * state 0 on moveStart and state 1 on moveStop; a graph that comes back (landing from a jump)
  * then starts moving while the actor moves. TurnDelta's unit is inferred from the graphs:
@@ -144,6 +151,8 @@ export class Locomotion {
     falling: false,
   };
   #heading: number | undefined;
+  /** The Direction last given while it moved (undefined standing). */
+  #direction: number | undefined;
 
   /** Drives the graphs; returns whether it landed from the air in this frame. */
   drive(graphs: Iterable<LocomotionGraph>, frame: LocomotionFrame): boolean {
@@ -167,7 +176,18 @@ export class Locomotion {
         : angleBetween(this.#heading, frame.heading) / frame.seconds;
     this.#heading = frame.heading;
     set('Speed', speed);
+    // Across the wrap (ahead-left to ahead-right: 0.95 to 0.05) a directional blend would sweep
+    // through every direction between: the graphs' BSCyclicBlendTransitionGenerators hold the
+    // pose they had (CyclicFreeze, sent before the new direction) and cross-fade to the new
+    // one (CyclicCrossBlend, after it). Every vanilla one names these two events.
+    const wrapped =
+      this.#direction !== undefined &&
+      speed > MOVING_SPEED &&
+      Math.abs(direction - this.#direction) > DIRECTION_WRAP;
+    if (wrapped) send('CyclicFreeze');
     set('Direction', direction);
+    if (wrapped) send('CyclicCrossBlend');
+    this.#direction = speed > MOVING_SPEED ? direction : undefined;
     // Compass headings turn clockwise; TurnDelta is left (counter-clockwise) positive.
     set('TurnDelta', (-turned * 180) / Math.PI);
     set('IsSprinting', frame.sprinting ? 1 : 0);
@@ -206,6 +226,7 @@ export class Locomotion {
       falling: false,
     };
     this.#heading = undefined;
+    this.#direction = undefined;
   }
 }
 

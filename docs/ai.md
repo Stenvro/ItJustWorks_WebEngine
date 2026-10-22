@@ -40,8 +40,11 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   floor just under or over its feet). TODO(M13): the engine's process levels (CommonLibSSE
   `ProcessLists`: high, middle-high, middle-low, low) and how often each moves its actors are
   not documented. The controllers are in the world the
-  player moves in: the player bumps into actors and they into each other; activation and
-  line-of-sight rays still take actors by their body's line (TODO(M10) 1.2).
+  player moves in: the player bumps into actors and they into each other. The crosshair's pick
+  (L_ITEMPICKER) meets an actor's controller, its BIPED bodies keyframed to its pose
+  (`src/shell/actor-bodies.ts`) or a dead one's ragdoll and takes that actor (`talkTargets`,
+  `src/shell/actors.ts`; an actor with no collision in the world by its body's line, feet to
+  head); line-of-sight rays meet the BIPED bodies ([Detection](#detection)).
 - **What it wants** is a move request: a way to go (horizontal), a gait (walk, run, sprint) and
   optionally a heading to keep (strafing). On every physics step it turns towards the way it
   goes, or the heading it keeps, at its movement type's rate (rotate while moving, else in place
@@ -266,11 +269,15 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   Cooldown Time apart, Dual Cast with both hands. Shout shouts its Shout (put in its voice)
   at its target whenever its voice has recovered (the Greybeards), Just Headtrack turning only
   its head. TODO(M13): Crouch To Reload, Hold When Blocked. Acquire leaves what a living actor
-  holds; with Allow Killing it fights that actor (StartCombat). TODO(M10) 3.2: Sandbox's eating. Sandbox with Allow Conversation lets
+  holds; with Allow Pickpocketing it goes to that actor and takes it from its pockets, with
+  Allow Killing it fights that actor (StartCombat). Sandbox with Allow Eating eats now and then
+  (food it carries, one used up, else a meal made up as Eat's Create Fake Food does: `sandbox`
+  in `src/ai/procedure-runs.ts`); with Allow Conversation it lets
   its actor talk with others; Say says its topic (or a topic subtype's line) to its target,
   waiting for the line itself with Finish Speaking, its subtitle forced with Force Subtitle;
   LockDoors with Warn Before Locking first tells a player inside to go (TimeToGo) and locks
-  after fAITrespassWarningTimer (5 s; TODO(M11): trespass if they stay); DialogueActivate with
+  after fAITrespassWarningTimer (5 s); a player who stays trespasses (the home is off limits to
+  them: warned by those who see them, then reported; docs/gameplay.md, "Trespassing"); DialogueActivate with
   another actor as its target talks with it ([Talking](#talking)).
 - **Searching** (`src/shell/actor-search.ts`): a criterion names references by object (a base
   object, a form list of them, a faction's members) or by object type
@@ -283,9 +290,13 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
 - **Places:** near a reference (its placement and the radius), near the linked reference of a
   keyword, near the editor location, in a cell (round the actor while it is in it), near self,
   near where the package began, near the reference an alias of the package's quest (QNAM)
-  holds; targets also by an alias. TODO(M10) 3.2: an alias's location, objects and object types
-  as places (no vanilla package names either). A place outside the loaded area: the actor stays
-  while its package runs (TODO(M10) 2.2, 3.4).
+  holds; targets also by an alias. A location alias's location: round its world location
+  marker (LCTN MNAM), as far as its radius (RNAM) or the package's; an object or a type of
+  object: the nearest such reference within 4096 units of the actor (TODO(M13): the engine's
+  search radius; no vanilla package names these three; `place` in `src/shell/actor-ai.ts`). A
+  place in another cell or worldspace: the actor walks its route ([Routes](#routes)) to the
+  first load door and leaves the stage through it, its trip going on away from the loaded area
+  ([Actors away](#actors-away)) until it arrives or comes back into it.
 - Measured: at 8:00 in Whiterun the Imperial guards walk their patrols (600–800 units in ten
   seconds), the gate guard goes to his chair; in the Bannered Mare Hulda, Mikael and Sinmir run
   their sandbox packages, and Saadia hers from her default list. At 2:00 in Carlotta Valentia's
@@ -495,7 +506,9 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   answer from it.
 - **The player** rides a horse by activating it: "Ride" (sRide), "Steal Horse" (sStealHorse)
   for one owned (XOWN) by another that is neither bought (PlayerHorseFaction) nor the last they
-  rode (TODO(M11): the crime). Mounted, the movement keys send the horse the way the camera
+  rode: the game asks first (sStealHorse), then riding off is the theft
+  (`CrimeEngine.horseTheft`: a steal of iCrimeGoldStealHorse, the horse marked stolen for
+  IsHorseStolen; docs/gameplay.md, "Crime and factions"). Mounted, the movement keys send the horse the way the camera
   looks (it turns as it goes; back alone it backs up), Run and Sprint walk, run and gallop it;
   Activate gets them off. They are carried on the saddle in the physics steps (their shape out
   of the world), so their camera rides with the horse. TODO(M13): the engine's horse controls,
@@ -580,7 +593,8 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   fSneakDistanceAttenuationExponent;
 
   sound = fSneakSoundsMult × (moving: (fSneakEquippedWeightBase + fSneakEquippedWeightMult ×
-  the weight of the armour worn) × fSneakRunningMult running or sprinting × MovementNoiseMult;
+  the weight of the armour worn) × fSneakRunningMult running or sprinting × (1 −
+  MovementNoiseMult, at least 0);
   plus its action's loudness (iSoundLevel\* of the sound level) × fSneakActionMult for
   fDetectionActionTimer), × fSneakSoundLosMult without line of sight, none swimming;
 
@@ -602,8 +616,13 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   0.2, fSneakNoticeMin −20, iAICombatMinDetection −50, fDetectionViewCone 190, iSoundLevelLoud
   100, Normal 50, VeryLoud 200 (Silent 10 is Skyrim.esm's), ... The perks: the sneaker's Mod
   Detection Sneak Skill (Stealth), the observer's Mod Detection Light / Movement factors, worn
-  armour's Mod Armor Weight (docs/gameplay.md, "Perks"). TODO(M11): Muffle. `node tools/detection-info.ts --level sneak=15 light=40 distance=500`: −2.9,
-  noticed; Sneak 100 in light 10 at 300: −48.9, unseen.
+  armour's Mod Armor Weight (docs/gameplay.md, "Perks"). **Muffle** (`movementNoise`,
+  `src/ai/detection.ts`): the Value and Peak Value Modifiers on MovementNoiseMult (its base is 0) take that share of the movement's sound off: the Muffle spell (1) and the Silence perk's
+  ability (1) silence it, the Muffle enchantment (0.5; UESP: it halves the noise whatever its
+  text says) and Muffled Movement's ability (0.5) halve it, together at most all of it
+  (TODO(M13): whether the engine takes it off the armour's share only, as Muffled Movement's
+  "noise from armor" reads). `node tools/detection-info.ts --level sneak=15 light=40
+distance=500`: −2.9, noticed; Sneak 100 in light 10 at 300: −48.9, unseen.
 
 - **Sight:** a ray on the line-of-sight layer (L_LINEOFSIGHT: static, clutter, props, trees,
   terrain, the actors' BIPED bodies, ...; not the character controllers, not transparent
@@ -618,7 +637,11 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   to the sun is clear (inside always), each point light within its radius with the renderer's
   falloff 1 − (d / r)²; plus iLightLevelInteriorMod (25) inside or iLightLevelExteriorMod (0),
   at most iLightLevelMax (300). TODO(M13): the engine's own sum (players read 0 to 150 and
-  more). TODO(M11): torches carried and spells in hand.
+  more). The point lights are those the viewers light the world with, outside and in: the
+  cells', the created objects' and those the actors carry (`ActorStage.lights`): a torch in a
+  hand (its LIGH at its model's AttachLight node: [Combat](#combat), Torches), a spell's
+  casting light in a hand, magic effects' lights (Candlelight), what flies and bursts. So a
+  torch carried or a spell readied lights its bearer, as in the game.
 - **States** per observer and target: detected above 0 (in combat with the target above
   iAICombatMinDetection), noticed above fSneakNoticeMin, searching once a noticed or detected
   target is lost (or a noise heard) for fDetectionStateExpireTime (30 s), else unseen. Each
@@ -718,7 +741,9 @@ after `--package-seconds`).
   with Headtrack Player, at the player (MQ302's council looks at Arngeir, who names himself
   and so looks at the player); a later action of the same actor takes over, and one that names
   nobody clears its head tracking (MS13CamillaEscortPlayerScene's "Clear headtracking" phase).
-  The head turns through the world's look-at (WorldBridge.lookAt, as SetLookAt; TODO(M10) 1.5);
+  The head turns through the world's look-at (WorldBridge.lookAt with the 'dialogue' kind:
+  [animation.md](animation.md#head-tracking), the actor's head track target and its graph's
+  BSLookAtModifier);
   with Face Target the actor turns to its target while it stands (`src/shell/actor-scenes.ts`),
   its package's own facing coming back after.
 - **Packages:** while a package action runs, its actor's package stack is that action's
@@ -754,10 +779,12 @@ in four lines, Lucan turns to the player for "Oh, a customer. Sorry you had to h
 they see the player, Camilla goes back to work and the quest stops after 39 seconds of text;
 MQ101Scene1 says the cart ride's lines in the game's order, from Ralof's "Hey, you. You're
 finally awake." to "And it looks like the Thalmor are with him." After a new game in Node
-(`node tools/papyrus-run.ts --new-game`) 8 scenes play: MQ101Scene1 waiting for the player's
+(`node tools/papyrus-run.ts --new-game`) 9 scenes play: MQ101Scene1 waiting for the player's
 3D, and scenes that begin with their quests, whose first phase waits for the player to come near
-(MorthalInitialScene, RJBanditScene; in Node, without the player's place, GetDistance is not
-valued and holds: TODO(M10) 4.2) or for a script (IvarsteadSSScene).
+(MorthalInitialScene, RJBanditScene, MG01MirabelleAncanoScene: GetDistance between references
+in different spaces, or with one placed nowhere yet, is as large as
+ObjectReference.GetDistance's, 1e10, so they wait while the player rides to Helgen;
+`tests/papyrus-runtime.int.test.ts`) or for a script (IvarsteadSSScene).
 
 ## Talking
 
@@ -882,7 +909,17 @@ meanwhile.
   ([animation.md](animation.md#held-weapons)); a blade that drew blood shows it
   ([rendering.md](rendering.md#weapon-blood)). The weapon's sounds: NAM9 at weaponDraw, NAM8 at weaponSheathe, TNAM at weaponSwing (every vanilla
   melee weapon's swing, WPNSwingBladeMediumSD; xEdit names it the attack fail sound), SNAM at
-  a shot.
+  a shot. While a bow is drawn its wielder's arms aim where the shot goes (the graphs'
+  BSDirectAtModifiers of bows, userInfo 2: the player's view, an NPC's target's chest; as an
+  aimed spell's: [Magic in combat](#magic-in-combat)).
+- **Torches** (the equip system's torch: a LIGH that can be carried, in the left hand): its
+  model (LIGH MODL) is held on SHIELD whether the weapons are drawn or not (an instance of its
+  own placed there every frame, so its fire's particles follow it), the graphs get
+  iLeftHandType 11 and the event torchEquip (0_master's MT_LeftHandOverride takes it to
+  MT_Torch_State: the arm holds it up; torchUnequip as it goes, ShdEquip and WeapSoloEquip for
+  a shield likewise; TODO(M13): when the engine sends them) and its light (the LIGH's radius, colour,
+  flicker) shines from the model's AttachLight node, lighting the world and its bearer for
+  detection ([Detection](#detection), the light on the target). `ActorCombat.lights`.
 - **Hits** (`hit-test.ts`): at HitFrame the strike reaches fCombatDistance (141) × the weapon's
   reach (fists: the race's unarmed reach, RACE DATA @100; a bash fCombatBashReach) × the
   attacker's size, from its feet to the target's shape, inside the attack data's strike angle
@@ -1065,8 +1102,10 @@ the projectile and explosion a spell sends.
 - **Sounds and art:** the costliest effect's sounds (MGEF SNDD) from the hand's magic node (NPC R
   / L MagicNode): charge as it charges, ready once it is, the concentration loop while a
   concentration spell is held, release as it fires (a shout's thu'um); its casting art (MGEF
-  casting art, ARTO) drawn on the magic node while the cast lasts. TODO(M11) visuals: the
-  dual-cast art and its scale, the hit art and shaders on the target.
+  casting art, ARTO) drawn on the magic node while the cast lasts, a dual cast's own art (MGEF
+  dual cast art) at its dual cast scale (`src/shell/actor-casting.ts`), its light there (the
+  MGEF's casting light). On the target the effect's hit shader (EFSH) and hit art (ARTO) as it
+  takes hold (`src/shell/actor-effects.ts`; docs/gameplay.md, "Magic effects").
 - **Projectiles** (the costliest effect's PROJ; docs/formats/esm.md, "Projectiles and
   explosions"): from the source's node (the voice: the head) along the aim — the player's
   camera, an NPC's target's chest, else its facing. Missiles, lobbers and arrow-like bolts fly
@@ -1087,8 +1126,14 @@ the projectile and explosion a spell sends.
   makes its summons and hazards where it landed. The explosion bursts (its sounds, `explode`:
   its enchantment, damage and force within its radius), the area reaches those near (`area`),
   the effect's impact data set sounds on the surface hit; both are noises for detection by their
-  sound levels. TODO(M11) visuals: projectile lights and muzzle flashes, explosion and impact
-  models and decals, beams and cones drawn.
+  sound levels. On an actor not hostile to its caster a hostile spell's hit is an assault
+  (crime's `assault`, the one hit among the witnesses), as a blow's is. What shows
+  (`src/shell/magic-fx.ts`): a projectile carries its light (PROJ light); with Muzzle Flash its
+  muzzle flash model and light where it leaves, for its muzzle flash duration; a beam from the
+  hand, a cone's wave sweeping out at its speed to its range; an explosion's model and light and
+  its image-space modifier on the player within its radius; an impact's decal, model and hazard
+  (the effect's and the explosion's impact data sets). TODO(M13): a beam is shown at its own
+  model's length (the engine stretches it to the hit).
 - **Noise and comments:** a cast or a shout is an action noise as loud as its effect's casting
   sound level (detection's `action`); the player's are commented on (PlayerCastProjectileSpell,
   PlayerCastSelfSpell, PlayerShout).
@@ -1122,16 +1167,21 @@ fCombatInventoryUpdateTimer, ...) are in no plugin, and their values here are ou
 (TODO(M13)). CommonLibSSE names the engine's combat behaviour trees but not their arithmetic:
 the rules below read each value as its name says (TODO(M13)).
 
-- **Reactions** (`combatReaction`; it stands in for crime's `reaction(actor, other)` until M11
-  merges): summons, reanimated and commanded actors are their commander's allies and share its
-  reactions; the player's teammates are the player's allies; one scripts set to be attacked on
+- **Reactions** (`reactionsOf(runtime).reaction`, `src/ai/combat-reactions.ts`: the rules crime
+  does not weigh, then crime and factions' `runtime.crime.reaction`; `combatReaction` keeps the
+  rules without crime for tests and tools): summons, reanimated and commanded actors are their
+  commander's allies and share its reactions; the player's teammates are the player's allies; one scripts set to be attacked on
   sight (SetAttackActorOnSight) is everyone's enemy; a relationship decides next (ally and lover
   ally, friend and confidant friend, foe and worse enemy); else the factions' combat reactions
   (FACT XNAM, scripts' SetAlly / SetEnemy) between the factions each is a member of, the closest
   bond winning (ally, friend, enemy, neutral), the other's view where the actor's names none; a
   crime faction set as the player's enemy is an enemy faction to the player. Vanilla factions
   list themselves (BanditFaction is BanditFaction's ally): faction-mates are not allies by
-  themselves. TODO(M11): bounties and guards' hostility to criminals are crime's.
+  themselves. Crime makes the player an enemy (`CrimeEngine.reaction`'s crime hostility): to
+  the members of a faction set as the player's enemy, to those of a crime faction that is, to
+  guards whose response to the player's bounty is to attack (`guardResponse`), and to the others
+  of a crime faction that attacks rather than arrests (soldiers) once alarmed by a bounty
+  (docs/gameplay.md, "Guards, fines and jail").
 - **Entering combat**, every 0.25 s for each actor of the high process, among those it detects
   (or its group sees): by its aggression (unaggressive never, aggressive its enemies, very
   aggressive enemies and the neutral, frenzied anyone) it attacks on sight; its aggro radius
@@ -1142,7 +1192,8 @@ the rules below read each value as its name says (TODO(M13)).
   (inferred: vanilla's wolves and bears are unaggressive with an aggro radius). It
   helps by its assistance (helps allies; helps friends and allies) one that fights or is
   attacked, against the other; guards (CLAS DATA guard flag) help anyone attacked who did not
-  strike first and would not attack on sight (TODO(M11): crime); the player's teammates help
+  strike first and would not attack on sight (the crime itself, its bounty and the guards'
+  arrest are crime's: `src/shell/actor-crime.ts`); the player's teammates help
   the player at least as friends and allies, and fight within fCombatTeammateFollowRadiusMult ×
   512 of them. A blow turns its victim on the attacker: an enemy or a neutral at once, a friend
   or ally after iFriendHitCombatAllowed (4) blows in combat (2 out of it,
@@ -1349,8 +1400,9 @@ walkers.
 - **Scripts and conditions**: IsFlying, GetFlyingState, IsAllowedToFly, CanFlyHere,
   SetAllowFlying, SetAllowFlyingEx, SetForcedLandingMarker (where it lands to fight); the
   conditions GetIsFlying, GetFlyingState, GetIsCrashLandRequest, GetIsHastyLandRequest,
-  IsAllowedToFly, CanFlyHere, GetIsInjured. TODO(M11): Dragonborn's dragon riding (Bend Will:
-  flying mounts, IsOnFlyingMount).
+  IsAllowedToFly, CanFlyHere, GetIsInjured. Dragonborn's dragon riding (Bend Will's tamed
+  dragon as a flying mount, IsOnFlyingMount) flies through the same flight:
+  docs/gameplay.md, "Dragon riding".
 - `node tools/flight-info.ts`: the races that fly, their movement types, speeds and attacks,
   the flight settings; `node tools/flight-info.ts csDragon EncDragon01Fire`: a combat style's
   flight section with its times and how often each maneuver comes, an actor's shouts and their

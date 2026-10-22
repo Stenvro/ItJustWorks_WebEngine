@@ -2382,10 +2382,21 @@ export class WorldViewer {
     const x = Math.floor(at[0] / CELL_SIZE);
     const y = Math.floor(at[1] / CELL_SIZE);
     const lights: PointLight[] = [];
+    const seconds = performance.now() / 1000;
     for (const cell of this.#cells.values()) {
       if (!cell.ready || Math.abs(cell.x - x) > 1 || Math.abs(cell.y - y) > 1) continue;
-      lights.push(...pointLights(cell.lights, performance.now() / 1000, at, this.#emittanceRgb));
+      lights.push(...pointLights(cell.lights, seconds, at, this.#emittanceRgb));
     }
+    // What moves with the actors and the created objects: torches carried, spells in hand,
+    // magic's lights (as indoors: src/shell/model-viewer.ts).
+    lights.push(
+      ...pointLights(
+        [...(this.#created?.lights() ?? []), ...(this.#stage?.lights() ?? [])],
+        seconds,
+        at,
+        this.#emittanceRgb,
+      ),
+    );
     return {
       ambient: sky.ambient,
       sunColor: sky.sunColor,

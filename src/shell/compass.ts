@@ -13,7 +13,7 @@
 // the player show as enemies (Enemy) within fHUDCompassLocationMaxDist. The player's own marker
 // (the map's Place Marker) shows in its world, always (PlayerSet).
 
-import { findRoute } from '../ai/routes.ts';
+import { findRoute, type RouteMap } from '../ai/routes.ts';
 import type { Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -194,22 +194,37 @@ export class Compass {
     if (this.#doorsToward.has(key)) return this.#doorsToward.get(key);
     // Searched once per space and target (a route over the whole map is not cheap).
     this.#doorsToward.set(key, undefined);
-    const routes = await this.#session.routeMap();
-    const position: Vec3 = [at.position[0] ?? 0, at.position[1] ?? 0, at.position[2] ?? 0];
-    const target: Vec3 = [...to.position];
-    const start = routes.nearestNavmesh(here, position);
-    const end = routes.nearestNavmesh(there, target);
-    if (start === undefined || end === undefined) return undefined;
-    const route = findRoute(
-      routes,
-      { space: here, position, navmesh: start },
-      { space: there, position: target, navmesh: end },
-    );
-    const door = route?.doors[0];
-    const found = door && { door: door.door, position: door.position };
+    const found = firstDoorToward(await this.#session.routeMap(), at, to);
     this.#doorsToward.set(key, found);
     return found;
   }
+}
+
+/**
+ * The first load door on the way from a place to a place in another space (the routes over the
+ * navmeshes and load doors: src/ai/routes.ts): the compass's QuestDoor, Clairvoyance's trail.
+ */
+export function firstDoorToward(
+  routes: RouteMap,
+  at: { readonly position: readonly number[]; readonly cell?: number; readonly world?: number },
+  to: Placement,
+): { readonly door: number; readonly position: Vec3 } | undefined {
+  const here = spaceOf({ cell: at.cell, world: at.world });
+  const there = spaceOf(to);
+  const position: Vec3 = [at.position[0] ?? 0, at.position[1] ?? 0, at.position[2] ?? 0];
+  const target: Vec3 = [...to.position];
+  const start = routes.nearestNavmesh(here, position);
+  const end = routes.nearestNavmesh(there, target);
+  if (start === undefined || end === undefined) return undefined;
+  const route = findRoute(
+    routes,
+    { space: here, position, navmesh: start },
+    { space: there, position: target, navmesh: end },
+  );
+  const door = route?.doors[0];
+  return (
+    door && { door: door.door, position: [door.position[0], door.position[1], door.position[2]] }
+  );
 }
 
 /** A target of an active quest's shown objective: the quest and where the target is. */

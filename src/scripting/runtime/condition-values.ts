@@ -581,6 +581,9 @@ const WATER_CAUSES_DAMAGE = 0x1;
 /** The gold item (Gold001). */
 const GOLD = 0xf;
 
+/** GetDistance between references in different spaces (ObjectReference.GetDistance's). */
+const FAR_AWAY = 1e10;
+
 /** A global's value: as a script set it, else its record's (GLOB FLTV). */
 export async function globalValue(runtime: ScriptRuntime, formId: number): Promise<number> {
   const clock = runtime.clockGlobal(formId);
@@ -884,9 +887,15 @@ async function conditionValue(
     // --- Where it is ------------------------------------------------------------------------
     case Fn.getDistance: {
       const other = referenceParameter();
-      const a = reference === undefined ? undefined : await runtime.placement(reference);
-      const b = other === undefined ? undefined : await runtime.placement(other);
-      if (!a || !b) return undefined;
+      if (reference === undefined || other === undefined) return undefined;
+      const a = await runtime.placement(reference);
+      const b = await runtime.placement(other);
+      // One in another cell or worldspace is infinitely far (a large number, as
+      // ObjectReference.GetDistance); so is one placed nowhere yet (the player before a new
+      // game puts them in the world).
+      if (!a || !b || a.world !== b.world || (a.world === undefined && a.cell !== b.cell)) {
+        return FAR_AWAY;
+      }
       return Math.hypot(
         a.position[0] - b.position[0],
         a.position[1] - b.position[1],

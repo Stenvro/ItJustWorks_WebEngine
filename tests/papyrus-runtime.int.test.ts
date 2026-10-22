@@ -187,6 +187,32 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     expect(await runtime.conditionsHold([inContainer(PLAYER)], item)).toBe(true);
   });
 
+  it('values GetDistance: far for one in another space, so a scene waits for the player', async () => {
+    // MorthalInitialScene's first phase completes once Aslfur (in Morthal) is within 1000
+    // units of the player, who is on the opening's cart near Helgen.
+    const morthal = [...runtime.scenes.playing()].find((scene) => scene.scene === 0x00041500);
+    expect(morthal?.phase).toBe(0);
+    const distance = (form: number): Condition => ({
+      function: Fn.getDistance,
+      operator: 4,
+      or: false,
+      comparand: 1000,
+      form,
+      param2: 0,
+      raw1: form,
+      form2: 0,
+      strings: [],
+      runOn: 0,
+      reference: 0,
+      param3: -1,
+      eventMember: '',
+    });
+    const aslfur = runtime.referenceHandle(0x0001aa68);
+    expect(await runtime.conditionsHold([distance(PLAYER)], aslfur)).toBe(false);
+    // Thonnir stands beside him.
+    expect(await runtime.conditionsHold([distance(0x0001aa6b)], aslfur)).toBe(true);
+  });
+
   // Last: the player dies.
   it('lets the player die of their health run out, not in god mode (Debug.SetGodMode)', async () => {
     const killed: number[] = [];
