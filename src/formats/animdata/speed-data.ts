@@ -131,7 +131,7 @@ export function speedAtParameter(table: SpeedTable, direction: number, parameter
 /**
  * What BSSpeedSamplerModifier outputs: the blend parameter that moves the actor at the goal
  * speed in a direction (each curve inverted, linear between the curves around the direction).
- * Beyond the sampled speeds it holds at the curve's last parameter (TODO(M10): whether the
+ * Beyond the sampled speeds it holds at the curve's last parameter (TODO(M13): whether the
  * engine extrapolates there, e.g. a run at 370 against state 0's curve ending at 306).
  */
 export function speedParameter(table: SpeedTable, direction: number, goal: number): number {
