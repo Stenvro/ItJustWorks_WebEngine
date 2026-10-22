@@ -59,7 +59,15 @@ export interface ProjectileOptions {
     readonly payload: unknown;
   }) => void;
   /** A shot hit the world: its impact (material: the collision id). */
-  readonly onWorldHit: (point: Vec3, direction: Vec3, material: number, ammo: number) => void;
+  /** A shot met a surface; `reference`: the object it belongs to (0 or none: the land). */
+  readonly onWorldHit: (
+    point: Vec3,
+    direction: Vec3,
+    material: number,
+    ammo: number,
+    reference: number | undefined,
+    payload: unknown,
+  ) => void;
   /** fCombatMissileStickDepth: how deep an arrow sticks (game units). */
   readonly stickDepth: () => number;
   /** Shapes tested as such (the player), with their reference. */
@@ -191,7 +199,14 @@ export class CombatProjectiles {
       this.#actorHit(shot, owner.reference, hit.distance, from, direction);
       return true;
     }
-    this.#options.onWorldHit(hit.point, direction, hit.material, shot.ammo);
+    this.#options.onWorldHit(
+      hit.point,
+      direction,
+      hit.material,
+      shot.ammo,
+      owner?.kind === 'object' && owner.reference !== 0 ? owner.reference : undefined,
+      shot.payload,
+    );
     void this.#stick(shot, hit.point, direction);
     return true;
   }

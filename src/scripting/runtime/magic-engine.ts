@@ -142,6 +142,14 @@ const ACTOR_TYPE_UNDEAD = 0x13796;
  */
 const PULSE_SECONDS = 1;
 
+/** Archetypes whose hostile Health effect harms a destructible object (Fire Damage, ...). */
+const HEALTH_DAMAGING: ReadonlySet<number> = new Set([
+  EffectArchetype.valueModifier,
+  EffectArchetype.dualValueModifier,
+  EffectArchetype.peakValueModifier,
+  EffectArchetype.absorb,
+]);
+
 /**
  * A disarmed weapon falls from about the hands before the actor (units ahead, above its feet).
  * TODO(M13): the engine throws it; how far is not documented.
@@ -560,9 +568,10 @@ export class MagicEngine {
       duration = options.hold;
     if (options.scale !== undefined && duration === 0) magnitude *= Math.max(0, options.scale);
 
-    // Objects: their scripts hear of it; locks open or close (Lock, Open).
+    // Objects: their scripts hear of it; locks open or close (Lock, Open); destructible ones
+    // take its health damage.
     if (!(await runtime.actors.isActor(target))) {
-      await this.#onObject(effect, target, magnitude, caster);
+      await this.#onObject(effect, target, magnitude, duration, caster);
       return false;
     }
     const dead = await runtime.actors.isDead(target);
@@ -685,11 +694,17 @@ export class MagicEngine {
     this.#runtime.world.notification?.(text.replace(/%s/g, () => names.shift() ?? ''));
   }
 
-  /** An effect on an object: its scripts hear of it; Open and Lock work on its lock. */
+  /**
+   * An effect on an object: its scripts hear of it; Open and Lock work on its lock; a hostile
+   * effect lowering Health (Fire, Frost, Shock Damage) takes a destructible object's health
+   * (destruction-engine.ts), its magnitude for each second it lasts (a fire bolt's at once, a
+   * concentration's by the time held). TODO(M13): over its duration instead of at once.
+   */
   async #onObject(
     effect: MagicEffectRecord,
     target: number,
     magnitude: number,
+    duration: number,
     caster: number | undefined,
   ): Promise<void> {
     const runtime = this.#runtime;
@@ -706,6 +721,16 @@ export class MagicEngine {
         await runtime.setLocked(target, false);
     } else if (effect.archetype === EffectArchetype.lock) {
       await runtime.setLocked(target, true);
+    } else if (
+      effect.actorValue === ActorValue.health &&
+      (effect.flags & (EffectFlag.hostile | EffectFlag.detrimental)) !== 0 &&
+      HEALTH_DAMAGING.has(effect.archetype) &&
+      magnitude > 0
+    ) {
+      await runtime.destruction.damage(target, duration > 0 ? magnitude * duration : magnitude, {
+        external: true,
+        source: caster,
+      });
     }
   }
 

@@ -5,6 +5,7 @@
 // runtime's WorldBridge.
 
 import type { Vec3 } from '../scripting/runtime/game-state.ts';
+import type { DestructionStage } from '../world/destruction-records.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { MagicEffectShown } from '../scripting/runtime/magic-engine.ts';
 import type { SceneSpeech } from '../scripting/runtime/scene-host.ts';
@@ -48,6 +49,13 @@ export interface ScriptView {
   /** SetMotionType (1 dynamic .. 4 keyframed). */
   motionTypeChanged?(reference: number, motionType: number): void;
   impulse?(reference: number, direction: Vec3, magnitude: number): void;
+  /**
+   * A destructible reference's stage changed (src/shell/destruction-looks.ts): its look and
+   * collision follow; `reached`: the stage just reached, whose debris is thrown.
+   */
+  destructionChanged?(reference: number, reached: DestructionStage | undefined): void;
+  /** An explosion bursts at a point (a destruction stage's): its model, light, sounds. */
+  explosion?(explosion: number, at: Vec3, source: number | undefined): void;
   /** How many are inside a reference's trigger volume now. */
   triggerCount?(reference: number): number;
   /** A named node of a shown reference's model: where it is in the world. */
@@ -270,6 +278,14 @@ export class ScriptWorld implements WorldBridge {
 
   impulse(reference: number, direction: Vec3, magnitude: number): void {
     for (const view of this.#views) view.impulse?.(reference, direction, magnitude);
+  }
+
+  destructionChanged(reference: number, reached: DestructionStage | undefined): void {
+    for (const view of this.#views) view.destructionChanged?.(reference, reached);
+  }
+
+  explosion(explosion: number, at: Vec3, source: number | undefined): void {
+    for (const view of this.#views) view.explosion?.(explosion, at, source);
   }
 
   triggerCount(reference: number): number {

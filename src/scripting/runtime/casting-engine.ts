@@ -837,10 +837,17 @@ export class CastingEngine {
   /**
    * An explosion bursts at a point (a projectile's, an effect's): its enchantment on the actors
    * within its radius, its damage (Health, less with distance), its force pushing them (the
-   * world's impulse). Returns the actors reached. TODO(M10) 5.1: knock-downs by its flags
-   * (Knock Down Always, by Formula) with the living ragdolls that get up.
+   * world's impulse); destructible objects within it take its damage and its enchantment
+   * (destruction-engine.ts), `exclude` aside (the object whose destruction stage set it off).
+   * Returns the actors reached. TODO(M10) 5.1: knock-downs by its flags (Knock Down Always, by
+   * Formula) with the living ragdolls that get up.
    */
-  async explode(caster: number | undefined, explosionId: number, point: Point): Promise<number[]> {
+  async explode(
+    caster: number | undefined,
+    explosionId: number,
+    point: Point,
+    exclude?: number,
+  ): Promise<number[]> {
     const runtime = this.#runtime;
     const explosion = await this.explosion(explosionId);
     if (!explosion || explosion.radius <= 0) return [];
@@ -863,6 +870,32 @@ export class CastingEngine {
       reached.push(reference);
       if (explosion.damage > 0)
         await runtime.actors.damage(reference, HEALTH, explosion.damage * share, caster);
+      if (enchantment)
+        await this.deliver(
+          {
+            caster: caster ?? reference,
+            item: enchantment,
+            via: 'script',
+            dual: false,
+            cost: NO_COST,
+          },
+          reference,
+          { facing: false },
+        );
+    }
+    // Destructible objects: its damage (external), its enchantment's effects on objects (the
+    // magic engine's: a Damage Health effect takes their health).
+    const at: Vec3 = [point[0], point[1], point[2]];
+    for (const { reference, share } of await runtime.destruction.within(
+      at,
+      explosion.radius,
+      exclude,
+    )) {
+      if (explosion.damage > 0)
+        await runtime.destruction.damage(reference, explosion.damage * share, {
+          external: true,
+          source: caster,
+        });
       if (enchantment)
         await this.deliver(
           {

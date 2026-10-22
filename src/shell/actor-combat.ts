@@ -284,7 +284,18 @@ export class ActorCombat implements CombatBridge {
           this.#warn(`a shot's hit: ${describe(error)}`);
         });
       },
-      onWorldHit: (point, direction, material) => {
+      onWorldHit: (point, direction, material, _ammo, reference, payload) => {
+        // A destructible object takes the shot's damage (destruction-engine.ts).
+        const shot = payload as ShotPayload;
+        if (reference !== undefined)
+          void this.#options.session.scriptsReady?.destruction
+            .damage(reference, shot.damage * shot.power, {
+              external: true,
+              source: shot.attacker,
+            })
+            .catch((error: unknown) => {
+              this.#warn(`a shot's hit: ${describe(error)}`);
+            });
         void this.#impacts.hit(
           {
             impactDataSet: undefined,
@@ -1100,6 +1111,12 @@ export class ActorCombat implements CombatBridge {
           },
           physics,
         );
+        // A destructible object takes the blow (destruction-engine.ts): the weapon's damage.
+        const struck = wall.owner?.kind === 'object' ? wall.owner.reference : 0;
+        if (struck !== 0)
+          void this.#objectHit(fighter, struck, data.damageMult).catch((error: unknown) => {
+            this.#warn(`a blow on an object: ${describe(error)}`);
+          });
       }
       return;
     }
@@ -1116,6 +1133,24 @@ export class ActorCombat implements CombatBridge {
         shot: undefined,
       });
     }
+  }
+
+  /**
+   * A strike meets an object: a destructible one takes the weapon's damage (as the equip system
+   * reckons it, × the attack's), fists the unarmed damage; external damage (destruction-engine.ts).
+   */
+  async #objectHit(fighter: Fighter, reference: number, mult: number): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    const stats = fighter.state.current?.hand === 'left' ? fighter.gear?.left : fighter.gear?.right;
+    const damage =
+      stats?.weapon === undefined
+        ? (stats?.damage ?? 0)
+        : await runtime.equipment.weaponDamage(fighter.reference, stats.weapon);
+    await runtime.destruction.damage(reference, damage * mult, {
+      external: true,
+      source: fighter.reference,
+    });
   }
 
   /**

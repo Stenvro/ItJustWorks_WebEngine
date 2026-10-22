@@ -53,8 +53,10 @@ export interface ReferenceState {
   deleted?: boolean;
   /** Taken into a container (an actor's inventory) as its base's count: out of the world. */
   container?: { readonly holder: number; readonly base: number; readonly count: number };
+  /** Destruction (destruction-engine.ts): IsDestroyed, the stages reached, the health left. */
   destroyed?: boolean;
   destructionStage?: number;
+  destructionHealth?: number;
   /** Doors and containers: 0 none, 1 open, 2 opening, 3 closed, 4 closing. */
   openState?: number;
   locked?: boolean;
