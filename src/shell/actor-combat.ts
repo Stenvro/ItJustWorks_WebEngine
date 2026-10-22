@@ -100,6 +100,7 @@ import type { ActorKnockdowns } from './actor-knockdowns.ts';
 import { RaceFlag } from '../world/actor-records.ts';
 import type { PlacedActor } from './actors.ts';
 import { HeldWeapons, type HeldModels } from './actor-weapons.ts';
+import { WeaponBlood } from '../gameplay/combat/weapon-blood.ts';
 import { armorSkill } from '../gameplay/inventory.ts';
 import { CombatImpacts, type HitImpact } from './combat-impacts.ts';
 import type { Impact } from '../world/impact-records.ts';
@@ -159,6 +160,9 @@ interface Fighter {
   /** The player's weapons in first person: their first-person models on the arms. */
   firstHeld: HeldWeapons | undefined;
   heldFor: string | undefined;
+  /** Its weapons' blood (both hands; new weapons come clean), for the weapons it was made for. */
+  blood:
+    { readonly right: WeaponBlood; readonly left: WeaponBlood; readonly for: string } | undefined;
   /** What its hands hold (the equip system's) and its attack data, once read. */
   gear: Gear | undefined;
   gearVersion: number;
@@ -776,6 +780,8 @@ export class ActorCombat implements CombatBridge {
       const previous = body.onEvents;
       body.onEvents = (events) => {
         previous?.(events);
+        // Its weapon's own graph (a bow's) hears what its graph raises.
+        if (fighter.body === body) fighter.held?.hear(events);
         this.#events(fighter, events);
       };
       // The first-person graph's events: the player's strikes in first person.
@@ -785,6 +791,7 @@ export class ActorCombat implements CombatBridge {
           const before = first.onEvents;
           first.onEvents = (events) => {
             before?.(events);
+            fighter.firstHeld?.hear(events);
             if (this.#play?.player.pov === 'first') this.#events(fighter, events, true);
           };
         }
@@ -906,20 +913,41 @@ export class ActorCombat implements CombatBridge {
       ? this.#playerVisibility
       : this.#options.get(fighter.reference)?.visibility;
     if (!placement?.motion || !visibility) return;
+    const blood = this.#blood(fighter, key);
     const made = await HeldWeapons.create(
       this.#options.session,
       this.#options.renderer,
       { pose: body.pose, world: placement.world, motion: placement.motion, visibility },
       held,
+      blood,
+      fighter.reference,
     );
     if (fighter.body !== body) {
       made?.destroy();
       return;
     }
+    this.#weaponVariables(made, gear);
     fighter.held?.destroy();
     fighter.held = made;
     fighter.heldFor = key;
     if (fighter.player) await this.#makeFirstPersonModels(fighter, gear, key);
+  }
+
+  /** Its weapons' blood for the weapons `key` names (new weapons come clean). */
+  #blood(fighter: Fighter, key: string): { right: WeaponBlood; left: WeaponBlood } {
+    if (fighter.blood?.for !== key) {
+      fighter.blood = {
+        right: new WeaponBlood(this.#settings),
+        left: new WeaponBlood(this.#settings),
+        for: key,
+      };
+    }
+    return fighter.blood;
+  }
+
+  /** The variables the engine set on the wielder's graphs, on its weapon's graph as it starts. */
+  #weaponVariables(made: HeldWeapons | undefined, gear: Gear): void {
+    made?.setVariable('weaponSpeedMult', gear.right.speed);
   }
 
   /**
@@ -939,9 +967,12 @@ export class ActorCombat implements CombatBridge {
       model(gear.right.firstPersonModel),
       model(gear.left.firstPersonModel),
     ]);
+    // A weapon without a first-person model (the bound bow) shows its world model.
+    const rightModel = right ?? gear.right.model;
+    const leftModel = left ?? gear.left.model;
     const held: HeldModels = {
-      ...(right !== undefined && { right: { model: right, sheathed: undefined } }),
-      ...(left !== undefined && { left: { model: left } }),
+      ...(rightModel !== undefined && { right: { model: rightModel, sheathed: undefined } }),
+      ...(leftModel !== undefined && { left: { model: leftModel } }),
       ...(gear.ammoModel !== undefined && { ammo: gear.ammoModel }),
     };
     const made = await HeldWeapons.create(
@@ -957,11 +988,15 @@ export class ActorCombat implements CombatBridge {
         visibility: this.#firstPersonVisibility,
       },
       held,
+      // The same weapons' blood as in third person.
+      this.#blood(fighter, key),
+      fighter.reference,
     );
     if (fighter.heldFor !== key || this.#avatar?.firstPersonBody !== arms) {
       made?.destroy();
       return;
     }
+    this.#weaponVariables(made, gear);
     fighter.firstHeld?.destroy();
     fighter.firstHeld = made;
   }
@@ -971,8 +1006,11 @@ export class ActorCombat implements CombatBridge {
     const state = fighter.state;
     // Knocked down or getting up it does not act (canAct).
     state.knock = this.#options.knockdowns?.()?.state(fighter.reference) ?? KnockState.normal;
-    fighter.held?.update(fighter.inHand, state.arrowNocked);
-    fighter.firstHeld?.update(fighter.inHand, state.arrowNocked);
+    fighter.held?.update(fighter.inHand, state.arrowNocked, seconds);
+    fighter.firstHeld?.update(fighter.inHand, state.arrowNocked, seconds);
+    // Its weapons' blood dries.
+    fighter.blood?.right.advance(seconds);
+    fighter.blood?.left.advance(seconds);
     if (state.current?.ranged === true && state.arrowNocked) state.drawnFor += seconds;
     // A paired animation that never says it ended lets go after a while (TODO(M13)).
     fighter.pairedFor = state.paired === undefined ? 0 : fighter.pairedFor + seconds;
@@ -1503,16 +1541,28 @@ export class ActorCombat implements CombatBridge {
         : hit.shot
           ? hit.shot.impactDataSet
           : (record?.impactDataSet ?? gear?.race?.impactDataSet);
-    void this.#impacts.hit(
-      {
-        impactDataSet: impactSet,
-        ...(targetGear?.race?.material !== undefined && { materialForm: targetGear.race.material }),
-        position: hit.point,
-        direction: hit.direction,
-        heavy: hit.power,
-      },
-      this.#play?.physics,
-    );
+    void this.#impacts
+      .hit(
+        {
+          impactDataSet: impactSet,
+          ...(targetGear?.race?.material !== undefined && {
+            materialForm: targetGear.race.material,
+          }),
+          position: hit.point,
+          direction: hit.direction,
+          heavy: hit.power,
+        },
+        this.#play?.physics,
+      )
+      .then(async (impact) => {
+        // A weapon's blow that drew blood (its impact leaves a blood decal) bloodies the blade.
+        if (!impact || hit.shot || hit.bash || blocks || stats?.weapon === undefined) return;
+        if (!(await this.#impacts.bleeds(impact))) return;
+        (left ? attacker.blood?.left : attacker.blood?.right)?.hit();
+      })
+      .catch((error: unknown) => {
+        this.#warn(`a hit's impact: ${describe(error)}`);
+      });
     // The skills: the weapon's by its base damage (UESP: experience follows the base damage
     // dealt), Sneak for a sneak attack (fSneakAttackSkillUsageMelee).
     const skill = hit.bash ? ActorValue.firstSkill + 3 : (stats?.skill ?? -1);
@@ -2083,6 +2133,9 @@ export class ActorCombat implements CombatBridge {
 
   #setVariable(fighter: Fighter, name: string, value: number): void {
     for (const graph of this.#graphs(fighter)) graph.setVariable(name, value);
+    // Its weapons' graphs (a bow's) share the wielder's variables.
+    fighter.held?.setVariable(name, value);
+    fighter.firstHeld?.setVariable(name, value);
   }
 
   /** The attack data of an event (killmoves and events without data: a power attack's). */
@@ -2585,6 +2638,7 @@ function newFighter(reference: number, player: boolean): Fighter {
     held: undefined,
     firstHeld: undefined,
     heldFor: undefined,
+    blood: undefined,
     gear: undefined,
     gearVersion: 0,
     gearLoading: false,

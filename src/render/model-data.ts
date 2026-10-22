@@ -7,6 +7,7 @@ import type {
   BSEffectShaderPropertyBlock,
   BSLightingShaderPropertyBlock,
   NiAlphaPropertyBlock,
+  NifBlock,
   NiTriShapeDataBlock,
   Ref,
   VertexDesc,
@@ -152,6 +153,13 @@ export interface ModelPart {
    */
   readonly node?: number;
   readonly local?: Mat4;
+  /**
+   * A weapon's blood: a shape the NIF hides (BloodLighting, BloodFX, EdgeBlood, ...: hidden, its
+   * shader a Dynamic_Decal) until a hit on flesh bloodies the weapon (the engine's
+   * BSTempEffectWeaponBlood shows and fades it). Drawn only for instances that carry a weapon's
+   * blood (ModelInstance.weaponBlood; docs/rendering.md, "Weapon blood").
+   */
+  readonly weaponBlood?: boolean;
 }
 
 /** A node of a model worn on a skeleton (an actor merges them into its own by name). */
@@ -240,6 +248,24 @@ const LOD_WATER: WaterMaterial = {
 
 /** NiAVObject flag: the object (and its subtree) is hidden. */
 const APP_CULLED = 0x1;
+/** SLSF1 Dynamic_Decal: on a hidden shape, a weapon's blood (ModelPart.weaponBlood). */
+const SLSF1_DYNAMIC_DECAL = 0x8000000;
+
+/**
+ * A weapon's blood shape: hidden in the NIF, its lighting or effect shader a Dynamic_Decal. In
+ * the vanilla weapon models (tools/held-weapon-info.ts) these are the blood pairs: an effect
+ * shader with Weapon_Blood over BloodEdge01 (blades) or BloodHitDecals01 (blunt weapons) and a
+ * lighting shader with the same texture's Add version; no other hidden shape has the flag.
+ */
+export function weaponBloodShape(file: NifFile, block: NifBlock): boolean {
+  if (block.kind !== 'tri-shape' && block.kind !== 'ni-tri-shape') return false;
+  if ((block.flags & APP_CULLED) === 0) return false;
+  const shader = file.blocks[block.shaderProperty];
+  return (
+    (shader?.kind === 'lighting-shader' || shader?.kind === 'effect-shader') &&
+    (shader.flags1 & SLSF1_DYNAMIC_DECAL) !== 0
+  );
+}
 
 /**
  * Texture paths in NIFs are relative to Data, usually (but not always) with `textures\`.
@@ -513,13 +539,18 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
   let currentLocal: Mat4 = identity();
   /** NiSwitchNodes met. */
   let switches = 0;
+  /** The shape being visited is a weapon's blood. */
+  let currentWeaponBlood = false;
 
   const visit = (ref: Ref, parentWorld: Mat4, depth: number): void => {
     if (depth > 64) return; // guards against reference cycles in broken files
     const block = file.blocks[ref];
     if (!block) return;
     if (block.kind === 'unknown') return;
-    if (!('transform' in block) || (block.flags & APP_CULLED) !== 0) return;
+    // Hidden objects are not drawn; a weapon's blood shapes wait for a hit.
+    currentWeaponBlood = weaponBloodShape(file, block);
+    if (!('transform' in block) || ((block.flags & APP_CULLED) !== 0 && !currentWeaponBlood))
+      return;
     // Helper geometry only shown in the Creation Kit (e.g. activator trigger volumes).
     if (block.name.toLowerCase() === 'editormarker') return;
     // The engine replaces a root node's own transform with the placement of the object
@@ -723,6 +754,7 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
       ...(skin && { skin }),
       node: currentNode,
       local: currentLocal,
+      ...(currentWeaponBlood && { weaponBlood: true }),
     });
   };
 
