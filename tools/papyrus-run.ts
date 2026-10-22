@@ -8,10 +8,17 @@
 //   node tools/papyrus-run.ts --new-game --log           ... and print the Papyrus log
 //   node tools/papyrus-run.ts --new-game --talk RalofREF ... and what an actor says to the
 //                                                        player: its greeting and its topics
+//   node tools/papyrus-run.ts --new-game --console "5:player.cast WerewolfChange player"
+//       --activate 40:1a2b3   console lines (src/shell/console-commands.ts) and the player's
+//                             activations (the perks' Activate choices first) at a time of the
+//                             play (s), repeatable; the report ends with the player's race and
+//                             forms (beast form, first-person geometry, eyes)
 
 import { parseArgs } from 'node:util';
 import { ScriptLibrary } from '../src/scripting/script-library.ts';
 import { ScriptRuntime } from '../src/scripting/runtime/runtime.ts';
+import { PLAYER_REF } from '../src/scripting/runtime/forms.ts';
+import { ConsoleCommands } from '../src/shell/console-commands.ts';
 import { DialogueEngine } from '../src/scripting/runtime/dialogue-engine.ts';
 import { conditionFunctionName } from '../src/scripting/condition-functions.ts';
 import { readTimeScale } from '../src/world/game-time.ts';
@@ -26,6 +33,8 @@ const { values } = parseArgs({
     log: { type: 'boolean', default: false },
     top: { type: 'string', default: '60' },
     talk: { type: 'string' },
+    console: { type: 'string', multiple: true, default: [] },
+    activate: { type: 'string', multiple: true, default: [] },
   },
 });
 if (!values['new-game']) {
@@ -62,13 +71,54 @@ console.log(
     `archives ${String(vfs.blocks.reads)} (+${String(vfs.blocks.hits)} from blocks)`,
 );
 
-// Play: real seconds pass in frames, game time at the load order's TimeScale.
-const timeScale = await readTimeScale(db);
+// Play: real seconds pass in frames, game time at the TimeScale (the load order's, as scripts
+// and the console set it).
+runtime.timeScale = await readTimeScale(db);
 const frame = 1 / 30;
 const seconds = Number(values.seconds);
+// What the player does meanwhile: console lines and activations at their times ("s:what").
+const timed = (entries: readonly string[]): { at: number; what: string }[] =>
+  entries.map((entry) => {
+    const colon = entry.indexOf(':');
+    return { at: Number(entry.slice(0, colon)), what: entry.slice(colon + 1) };
+  });
+const lines = timed(values.console);
+const activations = timed(values.activate);
+const commands = new ConsoleCommands({
+  runtime,
+  db,
+  travel: () => Promise.resolve(),
+  toggleMenus: () => undefined,
+  forceWeather: () => undefined,
+  showRaceMenu: () => undefined,
+  controlsChanged: () => undefined,
+  quit: () => undefined,
+});
 const played = performance.now();
 for (let t = 0; t < seconds; t += frame) {
-  runtime.update(frame, (frame * timeScale) / 86400);
+  for (const line of lines.filter((entry) => entry.at <= t)) {
+    lines.splice(lines.indexOf(line), 1);
+    const printed = await commands.run(line.what);
+    console.log(
+      `${t.toFixed(1)} s: > ${line.what}${printed
+        .map(
+          (p) => `
+  ${p}`,
+        )
+        .join('')}`,
+    );
+  }
+  for (const activation of activations.filter((entry) => entry.at <= t)) {
+    activations.splice(activations.indexOf(activation), 1);
+    const reference = Number.parseInt(activation.what, 16);
+    // The perks' choices first (the werewolf's Feed); then the default activation.
+    const goesOn = await runtime.perks.activate(PLAYER_REF, reference, 'Activate');
+    if (goesOn) runtime.playerActivated(reference);
+    console.log(
+      `${t.toFixed(1)} s: activated ${activation.what}${goesOn ? '' : ' (a perk took it)'}`,
+    );
+  }
+  runtime.update(frame, (frame * runtime.timeScale) / 86400);
   await runtime.vm.idle();
 }
 console.log(
@@ -118,6 +168,20 @@ ${values.talk} [${hex(found)}] greets:`);
 }
 
 // --- Report ---------------------------------------------------------------------------------
+const player = runtime.state.actors.get(PLAYER_REF);
+const playerRace = await runtime.actors.raceOf(PLAYER_REF);
+console.log(
+  `
+player: race ${(await runtime.forms.record(playerRace ?? 0))?.editorId ?? '?'}` +
+    (runtime.beastForm ? ', beast form' : '') +
+    (runtime.firstPersonGeometry ? '' : ', first-person geometry hidden') +
+    (player?.eyeTexture === undefined ? '' : `, eyes ${hex(player.eyeTexture)}`),
+);
+const added = [...(player?.spells ?? [])].filter(([, has]) => has).map(([spell]) => spell);
+const addedNames = await Promise.all(
+  added.map(async (spell) => (await runtime.forms.record(spell))?.editorId ?? hex(spell)),
+);
+console.log(`  spells added by scripts: ${addedNames.join(', ') || 'none'}`);
 const running = [...runtime.state.quests].filter(([, quest]) => quest.running);
 console.log(`\n${String(running.length)} quests running:`);
 for (const [formId, quest] of running.sort((a, b) => a[0] - b[0])) {

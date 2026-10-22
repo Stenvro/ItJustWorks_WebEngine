@@ -92,6 +92,94 @@ function world(records: PerkRecord[], base: number[] = [], ranks = new Map<numbe
   return engine;
 }
 
+describe("the perks' activation choices", () => {
+  const choice = (
+    label: string,
+    runImmediately: boolean,
+    replaceDefault: boolean,
+    fragment: number,
+  ): EntryPointEntry =>
+    entry(EntryFunction.addActivateChoice, 0, {
+      entryPoint: EntryPoint.activate,
+      data: {
+        type: 'activateChoice',
+        spell: 0x500,
+        label,
+        runImmediately,
+        replaceDefault,
+        fragment,
+      },
+    });
+  /** A perk engine over a runtime that records casts, fragments and the message box asked. */
+  const setup = (entries: EntryPointEntry[], button: number) => {
+    const calls: string[] = [];
+    const state = new GameState();
+    const runtime = {
+      state,
+      actors: {
+        info: () => Promise.resolve({ spells: { perks: [1], perkRanks: new Map() } }),
+        hasPerk: () => Promise.resolve(true),
+      },
+      magic: {
+        effectsOn: () => [],
+        cast: (spell: number, source: number, target: number) => {
+          calls.push(`cast ${spell.toString(16)} ${source.toString(16)} ${target.toString(16)}`);
+          return Promise.resolve(true);
+        },
+      },
+      forms: {
+        attachments: () =>
+          Promise.resolve({
+            fragments: [
+              { stage: 0, logEntry: 0, script: 'PRKF_Feed', function: 'Fragment_0' },
+              { stage: 1, logEntry: 0, script: 'PRKF_Feed', function: 'Fragment_15' },
+            ],
+          }),
+        record: () => Promise.resolve({ text: () => 'Hod' }),
+      },
+      baseOf: () => Promise.resolve(0x100),
+      vm: {
+        call: (handle: ObjectHandle, fn: string) => {
+          calls.push(`${handle.type}.${fn}`);
+          return Promise.resolve(null);
+        },
+      },
+      detach: (work: Promise<unknown>) => void work,
+      referenceHandle: (formId: number) => new ObjectHandle(formId, 'objectreference'),
+      actorHandle: (formId: number) => new ObjectHandle(formId, 'actor'),
+      world: {
+        messageBox: (text: string, buttons: readonly string[]) => {
+          calls.push(`box ${text}: ${buttons.join(', ')}`);
+          return Promise.resolve(button);
+        },
+      },
+      conditionsHold: () => Promise.resolve(true),
+    } as unknown as ScriptRuntime;
+    const engine = new PerkEngine(runtime);
+    engine.record = () => Promise.resolve(perk(1, entries));
+    return { engine, calls };
+  };
+
+  it('takes a Run Immediately choice at once: its spell, its fragment, no default', async () => {
+    const { engine, calls } = setup([choice('', true, true, 0)], 0);
+    expect(await engine.activate(ACTOR, TARGET, 'Search')).toBe(false);
+    expect(calls).toEqual(['cast 500 14 5000', 'prkf_feed.Fragment_0']);
+  });
+
+  it('offers the choices and the default in a message box', async () => {
+    const chose = setup([choice('Feed', false, false, 1)], 0);
+    expect(await chose.engine.activate(ACTOR, TARGET, 'Talk')).toBe(false);
+    expect(chose.calls).toEqual([
+      'box Hod: Feed, Talk',
+      'cast 500 14 5000',
+      'prkf_feed.Fragment_15',
+    ]);
+    const declined = setup([choice('Feed', false, false, 1)], 1);
+    expect(await declined.engine.activate(ACTOR, TARGET, 'Talk')).toBe(true);
+    expect(declined.calls).toEqual(['box Hod: Feed, Talk']);
+  });
+});
+
 describe('the perk engine', () => {
   it("applies an actor's entries of an entry point in priority order", async () => {
     const engine = world(

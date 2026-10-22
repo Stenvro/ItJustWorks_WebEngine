@@ -81,12 +81,17 @@ export interface ScriptView {
   motion?(reference: number): ActorMotion | undefined;
   /** PlayIdle: an actor of the view plays an idle (false: the view does not hold it). */
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
+  /** ForceFirstPerson / ForceThirdPerson: the player's camera of the view. */
+  pointOfView?(pov: 'first' | 'third'): void;
   /** AddDependentAnimatedObjectReference and its Remove (false: the view does not hold it). */
   dependentAnimated?(reference: number, dependent: number, added: boolean): boolean;
   /** Vehicles and mounts of the view (src/shell/actor-vehicles.ts, actor-mounts.ts). */
   vehicleChanged?(actor: number): void;
   tether?(cart: number, horse: number): void;
   mountOf?(actor: number): number | undefined;
+  flyingMount?(
+    actor: number,
+  ): { readonly patrol: boolean; readonly travelling: boolean } | undefined;
   /** How a flier of the view flies (src/shell/actor-flight.ts). */
   flight?(actor: number): ActorFlightState | undefined;
   riderOf?(horse: number): number | undefined;
@@ -301,7 +306,6 @@ export class ScriptWorld implements WorldBridge {
     return false;
   }
 
-  /** Actor.SetRace: the actor is made again in its new race where it is shown. */
   /** Actors whose equipment changed, made again together once the scripts' turn is over. */
   readonly #dressing = new Set<number>();
 
@@ -328,8 +332,9 @@ export class ScriptWorld implements WorldBridge {
     this.#dressing.add(actor);
   }
 
-  raceChanged(actor: number): void {
-    this.lookChanged(actor).catch((error: unknown) => {
+  /** Actor.SetRace: the actor is made again in its new race where it is shown. */
+  raceChanged(actor: number): Promise<void> {
+    return this.lookChanged(actor).catch((error: unknown) => {
       this.#terminal.log(
         'actor',
         `${actor.toString(16)}: not made again in its race: ${error instanceof Error ? error.message : String(error)}`,
@@ -406,6 +411,10 @@ export class ScriptWorld implements WorldBridge {
     return false;
   }
 
+  pointOfView(pov: 'first' | 'third'): void {
+    for (const view of this.#views) view.pointOfView?.(pov);
+  }
+
   playIdle(actor: number, idle: number, target: number | undefined): boolean {
     let played = false;
     for (const view of this.#views)
@@ -432,6 +441,16 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) {
       const horse = view.mountOf?.(actor);
       if (horse !== undefined) return horse;
+    }
+    return undefined;
+  }
+
+  flyingMount(
+    actor: number,
+  ): { readonly patrol: boolean; readonly travelling: boolean } | undefined {
+    for (const view of this.#views) {
+      const mount = view.flyingMount?.(actor);
+      if (mount) return mount;
     }
     return undefined;
   }

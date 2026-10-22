@@ -178,7 +178,6 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     world.pointOfView?.('third');
     return null;
   });
-  n('game.showfirstpersongeometry', () => null);
   n('game.shakecamera', ({ args }) => {
     world.shakeCamera?.(num(args[1], 0.5), num(args[2]));
     return null;
@@ -229,7 +228,17 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     void world.menu?.({ name: 'Main Menu' });
     return null;
   });
-  n('game.setbeastform', () => null);
+  // SetBeastForm: the player is a werewolf or a vampire lord from now on (the menus it shuts).
+  n('game.setbeastform', ({ args }) => {
+    runtime.beastForm = bool(args[0]);
+    return null;
+  });
+  // ShowFirstPersonGeometry: the first-person arms and weapon drawn or not
+  // (src/shell/first-person-body.ts).
+  n('game.showfirstpersongeometry', ({ args }) => {
+    runtime.firstPersonGeometry = bool(args[0], true);
+    return null;
+  });
   // SendWereWolfTransformation: the player changed into a werewolf: a crime where it is seen
   // (iCrimeGoldWerewolf, the WereTransformCrime lines: crime-engine.ts werewolf).
   n('game.sendwerewolftransformation', async () => {
@@ -240,7 +249,12 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     runtime.hudCartMode = bool(args[0], true);
     return null;
   });
-  n('game.setallowflyingmountlandingrequests', () => null);
+  // SetAllowFlyingMountLandingRequests: whether a dragon the player rides lands when asked
+  // (src/shell/dragon-riding.ts).
+  n('game.setallowflyingmountlandingrequests', ({ args }) => {
+    runtime.flyingMountLandingAllowed = bool(args[0], true);
+    return null;
+  });
   n('game.setsittingrotation', () => null);
   // ClearPrison: the player is no longer held in jail.
   n('game.clearprison', () => {

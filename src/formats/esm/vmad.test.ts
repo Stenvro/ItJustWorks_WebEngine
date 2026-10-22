@@ -196,6 +196,24 @@ describe('VMAD', () => {
     expect(plain.fragments).toEqual([]);
   });
 
+  it("reads a perk's fragments by their index", () => {
+    let bytes = new Bytes().u16(5).u16(2).u16(1);
+    bytes = script(bytes, 'PRKF_VampireFeedBeds_000CF02C', (b) => {
+      b.wstring('PlayerVampireQuest').u8(1).u8(1).object(0xeafd5);
+      return 1;
+    });
+    bytes.u8(2).wstring('PRKF_VampireFeedBeds_000CF02C').u16(2);
+    bytes.u16(0).u16(0).u8(0).wstring('PRKF_VampireFeedBeds_000CF02C').wstring('Fragment_0');
+    bytes.u16(1).u16(0).u8(0).wstring('PRKF_VampireFeedBeds_000CF02C').wstring('Fragment_15');
+    const vmad = parseVmad(bytes.data, 'PERK');
+    expect(vmad.fragmentScript).toBe('PRKF_VampireFeedBeds_000CF02C');
+    expect(vmad.fragments.map((fragment) => [fragment.stage, fragment.function])).toEqual([
+      [0, 'Fragment_0'],
+      [1, 'Fragment_15'],
+    ]);
+    expect(vmad.scripts[0]?.properties[0]?.name).toBe('PlayerVampireQuest');
+  });
+
   it('rejects unknown versions and property types', () => {
     expect(() => parseVmad(new Bytes().u16(9).u16(2).u16(0).data, 'ACTI')).toThrow();
     let bytes = new Bytes().u16(5).u16(2).u16(1);

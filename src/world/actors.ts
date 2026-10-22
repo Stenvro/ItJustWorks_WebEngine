@@ -39,6 +39,8 @@ export interface WornAddon {
   readonly armor: number;
   readonly editorId: string;
   readonly model: AddonModel;
+  /** Its first-person model (MOD4 / MOD5: the arms the player sees in first person). */
+  readonly firstPerson: AddonModel | undefined;
   /** _0 and _1 models blended by the actor's weight. */
   readonly weighted: boolean;
   /** The biped slots it covers (BOD2 flags). */
@@ -87,6 +89,8 @@ export interface LookOverrides {
   readonly skinTone?: readonly [number, number, number];
   /** FTST: the face's texture set. */
   readonly faceTexture?: number;
+  /** Actor.SetEyeTexture: the texture set its eyes take (a vampire's red eyes). */
+  readonly eyeTexture?: number;
   /**
    * The outfit worn instead of the record's (Actor.SetOutfit); null: none (the player, who
    * wears what is equipped).
@@ -303,6 +307,7 @@ export class ActorResolver {
     own: readonly number[],
     defaults: readonly number[],
     faceTexture: number | undefined,
+    eyeTexture?: number,
   ): Promise<HeadPartLook[]> {
     const parts = (ids: readonly number[]) => Promise.all(ids.map((id) => this.#headPart(id)));
     const mine = (await parts(own)).filter((part) => part !== undefined);
@@ -327,7 +332,11 @@ export class ActorResolver {
         type: part.type,
         model: meshPath(part.model),
         textureSet:
-          part.type === HeadPartType.face ? (faceTexture ?? part.textureSet) : part.textureSet,
+          part.type === HeadPartType.face
+            ? (faceTexture ?? part.textureSet)
+            : part.type === HeadPartType.eyes
+              ? (eyeTexture ?? part.textureSet)
+              : part.textureSet,
         expressions: file(HeadPartFile.tri),
         raceMorph: file(HeadPartFile.raceMorph),
         chargenMorph: file(HeadPartFile.chargenMorph),
@@ -392,6 +401,7 @@ export class ActorResolver {
           armor: armorId,
           editorId: addon.editorId,
           model,
+          firstPerson: addon.firstPerson[sex],
           weighted: addon.weighted[sex],
           slots: addon.slots,
           priority: addon.priority[sex],
@@ -523,6 +533,7 @@ export class ActorResolver {
         traits.headParts,
         race.headParts[sex],
         traits.faceTexture ?? race.faceTexture[sex],
+        overrides.eyeTexture,
       ),
       worn: [...shown, ...bare],
       owners,

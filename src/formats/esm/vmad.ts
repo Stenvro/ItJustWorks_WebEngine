@@ -1,7 +1,7 @@
 // VMAD: the Papyrus scripts attached to a record and their property values, plus the
-// fragment section of dialogue (INFO), quest (QUST), scene (SCEN) and package (PACK) records.
-// Layout: docs/formats/esm.md ("Scripts and conditions", "Scenes", "AI packages"), after
-// xEdit's wbVMADFragmented* definitions.
+// fragment section of dialogue (INFO), quest (QUST), scene (SCEN), package (PACK) and perk
+// (PERK) records. Layout: docs/formats/esm.md ("Scripts and conditions", "Scenes", "AI
+// packages", "Perks"), after xEdit's wbVMADFragmented* definitions.
 
 import { BinaryReader, FormatError } from '../binary-reader.ts';
 import { decodeGameText } from '../text.ts';
@@ -53,7 +53,8 @@ export interface ScriptAttachments {
   readonly fragmentScript: string | undefined;
   /**
    * The fragments: for dialogue and scenes, `begin`/`end` (run when the response or the scene
-   * starts / ends); for packages also `change`; for quests, one per stage log entry.
+   * starts / ends); for packages also `change`; for quests, one per stage log entry; for
+   * perks, one per fragment index (an entry point's EPF3 names it: an Activate choice's).
    */
   readonly fragments: readonly Fragment[];
   /** A scene's phase fragments (SCEN only): run as a phase starts or completes. */
@@ -63,7 +64,10 @@ export interface ScriptAttachments {
 }
 
 export interface Fragment {
-  /** Dialogue and scenes: 'begin' or 'end'; packages also 'change'. Quest: the stage index. */
+  /**
+   * Dialogue and scenes: 'begin' or 'end'; packages also 'change'. Quest: the stage index;
+   * perk: the fragment index.
+   */
   readonly stage: number | 'begin' | 'end' | 'change';
   /** Quest: the stage's log entry index; 0 otherwise. */
   readonly logEntry: number;
@@ -190,7 +194,7 @@ class VmadReader {
 
 /**
  * Parses a VMAD field. `recordType` selects the fragment section that follows the scripts
- * (INFO, QUST, SCEN and PACK; PERK fragments are not read).
+ * (INFO, QUST, SCEN, PACK and PERK).
  */
 export function parseVmad(data: Uint8Array, recordType: string): ScriptAttachments {
   const reader = new BinaryReader(data);
@@ -253,6 +257,19 @@ export function parseVmad(data: Uint8Array, recordType: string): ScriptAttachmen
       const aliasFormat = reader.i16();
       const aliasReader = new VmadReader(reader, aliasVersion, aliasFormat);
       aliases.push({ alias, scripts: aliasReader.scripts() });
+    }
+  } else if (reader.remaining > 0 && recordType === 'PERK') {
+    // xEdit's wbScriptFragmentsPerk: s8 (2), the file name, then a u16 count of fragments:
+    // u16 index, s16 and s8 unknown, the script and the function.
+    reader.skip(1);
+    fragmentScript = vmad.wstring();
+    const count = reader.u16();
+    for (let i = 0; i < count; i++) {
+      const index = reader.u16();
+      reader.skip(3);
+      const script = vmad.wstring();
+      const fn = vmad.wstring();
+      fragments.push({ stage: index, logEntry: 0, script, function: fn });
     }
   }
   if (fragmentScript === '') fragmentScript = undefined;

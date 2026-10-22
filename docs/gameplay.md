@@ -930,12 +930,21 @@ HasBeenEaten, IsPoison.
   Shadow Warrior).
 - **Skills**: Mod Skill Use (the Rested bonuses, by the skill used), Adjust Book Skill Points
   (Scholar's Insight). **Death**: Add Leveled List On Death (the killer's lists into the
-  victim's items). **Activation**: Filter Activation (the player's activation is refused).
+  victim's items). **Activation**: Filter Activation (the player's activation is refused),
+  Set Activate Label (the prompt's verb: the werewolf's "Feed" on a corpse; asked at most every
+  250 ms per reference, src/shell/activate-labels.ts), Activate (`perks.activate`: the
+  choices whose conditions hold, in priority order; a Run Immediately one is taken at once,
+  replacing the default activation where it says so: the werewolf's Feed instead of searching
+  the corpse; otherwise a message box with the target's name offers the choices' labels and
+  the default activation's verb unless one replaces it: the vampire's Feed on a sleeper, the
+  Cannibalism of Namira's ring. A choice taken casts its spell from the player on the target
+  (PlayerWerewolfFeedVictimSpell: a Werewolf Feed effect, the corpse eaten) and runs its
+  fragment, the perk's PRKF script's `Fragment_N(akTargetRef, akActor)` by its EPF3 index
+  (PERK VMAD, docs/formats/esm.md), on its own thread). **Riding**: Allow Mount Actor (a
+  dragon the player may ride: see "Dragon riding").
 
-Entry points waiting for their systems: the activation's choices (Activate: vampire feeding,
-Cannibalism, Harvest Blood) and the perks' script fragments they run (PERK VMAD), Set Activate
-Label (the werewolf's Feed) and Allow Mount Actor (dragon riding) with the beast forms and
-dragons (TODO(M11)); Mod Ingredients Harvested (Green Thumb) with harvesting flora (TODO(M11));
+Entry points waiting for their systems: Mod Ingredients Harvested (Green Thumb) with harvesting
+flora (TODO(M11));
 Mod Player Magic Slowdown (Quick Reflexes) with Slow Time's clock (TODO(M11)); Mod Bow Zoom and
 the zoom's stamina (Eagle Eye: there is no bow zoom yet) and Mod Falling Damage (no falling
 damage yet) (TODO(M13)). No vanilla perk uses and no system asks Calculate Mine Explode Chance,
@@ -943,3 +952,84 @@ Adjust Limb Damage, Get Should Attack, Mod Addiction Chance / Duration, Mod Posi
 Duration, Mod Max Placeable Mines, the Telekinesis ones, Mod Secondary Value Weight, Mod Player
 Reputation, Ignore Running During Detection, Ignore Broken Lock, Mod Lockpick Level Allowed and
 Set Progression Picking (Fallout's; TODO(M13) should a mod use them).
+
+## Beast forms
+
+The werewolf and the vampire lord are run by their vanilla scripts; the engine gives them what
+the scripts ask for. `node tools/papyrus-run.ts --new-game --console "2:player.cast
+WerewolfChange player"` (twice: the first cast only ends the Companions' "virgin" flag) or
+`... DLC1VampireChange ...` runs a change in Node, `--activate t:<ref>` feeds.
+
+- **Game.SetBeastForm** (`runtime.beastForm`): the inventory, magic and favorites menus stay
+  shut (their keys and the tween menu's choices: src/shell/game-menus.ts); the map, skills and
+  journal open (UESP "Skyrim:Werewolf").
+- **Actor.SetRace** makes the actor again in the race (the player's avatar, an NPC where it
+  stands), its graph starting at its beginning (the werewolf's begins with its change howl);
+  once the new 3D stands its scripts hear **OnRaceSwitchComplete** (Node: at once).
+  PlayerWerewolfScript starts the tracking there, or shuts the change down after the change
+  back; DLC1PlayerVampireScript likewise.
+- **The change** (PlayerWerewolfQuest): WerewolfChange's effect starts the quest (PrepShift:
+  SetBeastForm, ForceThirdPerson, ShowFirstPersonGeometry false, controls), its visual effect
+  plays IdleWerewolfTransformation on the human graph, whose SetRace annotation (or 10 s)
+  changes the race; StartTracking unequips, adds the howl and the level's ability, and sets
+  PlayerWerewolfShiftBackTime from StandardDurationSeconds; OnUpdate (5 s) changes back once
+  GameDaysPassed reaches it (stage 100: SetRace to CompanionsHousekeepingScript's
+  PlayerOriginalRace, ShowFirstPersonGeometry true). An effect's script that waits past its
+  effect's end (TransformIfNecessary after Wait 10) keeps its properties: a script's calls on
+  itself stay on its own instance (src/scripting/papyrus-vm.ts).
+- **Combat**: the beast's graph fights through the idle tree like any creature
+  (WerewolfRightAttackFast, WerewolfLeftPowerAttack, ...: actor-combat.ts); a creature graph's
+  weapon is out at its weaponDraw even unasked (the werewolf's graph stands in its combat
+  stance once changed), and a race change starts the fighter with nothing drawn. Howls are the
+  equipped shout (ActionVoice: HowlStart).
+- **Movement**: the beast graphs keep their state in iState through BSIStateManagerModifier
+  (src/formats/hkx/behavior.ts: the H2HBehavior's sprint state sets iState_WerewolfBeastSprint);
+  in a beast form the player moves at that movement type (WerewolfBeastDefault 400 running,
+  WerewolfBeastSprint 531), NPCs as their tagged movement types always did.
+- **Feeding**: PlayerWerewolfFeed's entries name the prompt "Feed" on a corpse and take the
+  activation (see "Perks": Activate): the victim spell marks it eaten, Feed extends the time
+  (FeedExtensionTimeSeconds, more on NPCs and with Gorging), plays SpecialFeeding and shows
+  "Bloodlust extended" (a MESG without the Message Box flag is a notification: TNAM seconds).
+- **The vampire lord** (DLC1PlayerVampireQuest): its graph's LevitatePlayerStart (the change's
+  end) lifts the player off (LevitationToggle); Ready Weapon goes up and down instead of drawing
+  (LevitationToggleMoving while moving; TODO(M13): the engine's own trigger is not documented):
+  up in the air the hands hold their spells at once (LevitateStart: drawn; the script equips
+  Vampiric Drain and the left spell), landed (LandStart) it stands out of combat and claws as
+  it draws. Bites are the idle tree's paired power attacks (pa_KillMoveVampireLordFeed*: the
+  script counts them at BiteStart).
+
+## Vampirism
+
+PlayerVampireQuestScript runs it: Sanguinare Vampiris (VampireDiseaseEffectScript) changes
+the player after three days (its message, VampireChange: SetRace to the race's vampire race,
+the stage 1 abilities), then each day without feeding a stage more (OnUpdateGameTime every 12
+hours: VampireProgression's abilities, sun damage, drains), feeding back to stage 1.
+**Actor.SendVampirismStateChanged** / **SendLycanthropyStateChanged** send
+OnVampirismStateChanged / OnLycanthropyStateChanged to the actor's scripts (Survival Mode's
+needs). **Actor.StartVampireFeed** (the VampireFeed perk's fragments on a sleeper) sets the
+feeding for FEEDING_SECONDS (6 s: GetVampireFeed holds; TODO(M13): the engine ends it with
+the animation), plays ActionIdle's IdleVampireFeed on the target (bed left / right, bedroll,
+standing front / back: the paired pa_VampireFeedStanding_* plays the victim's side too) and
+sends OnVampireFeed; StartCannibal likewise (GetCannibal, IdleCannibalFeed). **Actor.
+SetEyeTexture** (DLC1VampireTurnScript's red eyes, Serana's cure) gives the actor's eyes head
+part the texture set: the player's made head and an NPC's baked FaceGen head (its eye shapes
+are named after the head parts) are made again with it.
+
+## Dragon riding
+
+Dragonborn's dragon riding (src/shell/actor-mounts.ts, with src/shell/actor-flight.ts flying
+the dragon). Bend Will tames a dragon (DLC2TameDragonScript: it lands, waits); the player may
+ride it where their perks' Allow Mount Actor entry holds (`perks.mayMount`): activating it
+("Ride") tells its scripts (OnActivate: the wait ends) and mounts it by its pair
+(DragonMountEnter / pa_DragonMountEnter), the rider on its "NPC Saddlebone". Ridden, it is a
+flying mount (IsOnFlyingMount; IsRidingHorse and IsBeingRidden hold as for horses; its AI
+waits): it takes off and circles where it was mounted (an orbit at fCombatOrbitDistance and the
+orbit height), Forward sends it the way the player looks (PATROL_AHEAD at a time:
+IsFlyingMountPatrolQueued) and it circles where it is let go, Right Attack sets it on the
+actor nearest the player's view (its combat flies the attack: breath, passes), the map's fast
+travel in the same worldspace flies it there instead of loading
+(IsFlyingMountFastTravelling), and Activate asks it to land below (refused while
+**Game.SetAllowFlyingMountLandingRequests** forbids it: `runtime.flyingMountLandingAllowed`),
+the player getting off (DragonMountExit) once it stands. The player's own shouts and spells
+work as on foot. TODO(M13): the engine's patrol distance and its landing spot search are not
+documented.

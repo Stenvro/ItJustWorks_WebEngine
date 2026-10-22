@@ -113,6 +113,11 @@ export interface ActorFurnitureOptions {
   readonly release: (actor: number) => void;
   /** The enabled objects and markers of the loaded area (sandboxing actors use some). */
   readonly objects?: () => Iterable<StageObject>;
+  /**
+   * An idle played on a target is a paired one (pa_: a vampire's bite): the target plays its
+   * side (src/shell/actor-combat.ts pairIdle).
+   */
+  readonly paired?: (actor: number, target: number, event: string) => void;
 }
 
 /** A placed object of the loaded area, as the view knows it. */
@@ -284,6 +289,8 @@ export class ActorFurniture {
     if (this.#uses.has(user.reference) && options.inFurniture !== true) return false;
     const sent = user.send(event);
     for (const dependent of options.dependents ?? []) dependent.send(event);
+    if (sent && target !== undefined && event.toLowerCase().startsWith('pa_'))
+      this.#options.paired?.(user.reference, target, event);
     return sent;
   }
 
