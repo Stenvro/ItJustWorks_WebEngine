@@ -14,6 +14,7 @@ import { inventoryModel } from './inventory-menu.ts';
 import { magicModel } from './magic-menu.ts';
 import { ItemMenu, type ItemMenuModel } from './item-menu.ts';
 import { FavoritesMenu } from './favorites-menu.ts';
+import { hotkeyOfEvent } from '../gameplay/hotkeys.ts';
 import { SleepWaitMenu } from './sleep-wait-menu.ts';
 import { noWaitReason } from '../gameplay/waiting.ts';
 import { TrainingMenu } from './training-menu.ts';
@@ -177,6 +178,21 @@ export class GameMenus {
    * page only (Pause: its Load and Quit), until the reload (src/shell/player-death.ts).
    */
   userEvent(name: string): void {
+    // Hotkey1..8: the favorite with that hotkey is chosen (favorites-menu.ts), out of the menus.
+    const hotkey = hotkeyOfEvent(name);
+    if (hotkey !== undefined) {
+      const runtime = this.#session.scriptsReady;
+      if (this.#open || this.#session.menuMode || this.#session.loading || !runtime) return;
+      if (runtime.state.actors.get(PLAYER_REF)?.dead === true) return;
+      this.#favorites.useHotkey(hotkey).catch((error: unknown) => {
+        this.#terminal.log(
+          'ui',
+          `a hotkey: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+      });
+      return;
+    }
     const menu = EVENT_MENUS[name.toLowerCase()];
     if (menu === undefined || this.#open || this.#session.menuMode || this.#session.loading) return;
     const runtime = this.#session.scriptsReady;
@@ -544,11 +560,11 @@ export class GameMenus {
 
   /**
    * A book lying in the world, read (its activation): the book menu, the HUD hidden; not while
-   * someone fights the player (sCanNotReadBook).
+   * the player fights (sCanNotReadBook).
    */
   readBook(read: BookToRead): void {
     if (this.#open || this.#reading || this.#session.menuMode) return;
-    if (this.#session.combatWatch?.fightingPlayer === true) {
+    if (this.#session.scriptsReady?.progression.inCombat(PLAYER_REF) === true) {
       void this.#session.settings().then((settings) => {
         this.#session.hud.notification(settings.string('sCanNotReadBook') ?? '');
       });
@@ -859,6 +875,11 @@ export class GameMenus {
   /** A menu's tutorial over it, the first time (src/shell/tutorial-menu.ts). */
   #tutorial(use: string): void {
     void this.#tutorials.show(use);
+  }
+
+  /** A tutorial of the game's own (a follower's command mode: HBFT), the first time. */
+  tutorial(use: string): void {
+    this.#tutorial(use);
   }
 
   /**

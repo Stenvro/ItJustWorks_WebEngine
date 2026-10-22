@@ -628,6 +628,13 @@ async function main(): Promise<void> {
       if (!view || !stage) return false;
       return stage.hostilesNear(view.play.player.feet, HOSTILES_NEAR_RADIUS);
     },
+    enemies: () => {
+      const stage = worldViewer.player ? worldViewer.actorStage : modelViewer.actorStage;
+      return (stage?.combat.enemiesOfPlayer() ?? []).flatMap((reference) => {
+        const staged = stage?.get(reference);
+        return staged ? [staged.position] : [];
+      });
+    },
     inAir: () => {
       const player = worldViewer.player ?? modelViewer.player;
       return player !== undefined && !player.character.grounded && !player.character.swimming;

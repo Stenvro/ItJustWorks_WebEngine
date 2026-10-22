@@ -252,6 +252,17 @@ export interface Activatable {
   activate(): void;
 }
 
+/** What a follower's command mode commands (src/shell/actor-favors.ts). */
+export interface FavorPicker {
+  /** How far the crosshair reaches (fFavorRequestPickDistance). */
+  readonly reach: number;
+  /**
+   * What activating commands: at a reference (an actor or an object the crosshair rests on),
+   * else at a point (the ground, a wall); undefined: nothing.
+   */
+  target(reference: number | undefined, point: Vec3 | undefined): Activatable | undefined;
+}
+
 /** The collision of one loaded cell. */
 export interface CollisionGroup {
   readonly collision: PlacedCollision[];
@@ -391,6 +402,8 @@ export class PlaySession {
   #noticeTimer: ReturnType<typeof setTimeout> | undefined;
   /** What the crosshair rests on. */
   #target: Activatable | undefined;
+  /** The HUD shows the command crosshair (a follower's command mode). */
+  #favorShown = false;
   readonly #mayActivate: ((reference: number) => Promise<boolean>) | undefined;
   /** Activate went down on a loose object: it is grabbed if still held after fZKeyDelay. */
   #hold:
@@ -490,6 +503,11 @@ export class PlaySession {
   cameraOverride: Camera | undefined;
   /** Furniture holds the player (src/shell/player-furniture.ts): they do not move. */
   seated = false;
+  /**
+   * A follower's command mode (src/shell/actor-favors.ts): while set, Activate commands the
+   * follower at what the crosshair rests on (the HUD's command crosshair) instead of activating.
+   */
+  favorMode: FavorPicker | undefined;
   /**
    * The player died (src/shell/player-death.ts): they neither move nor activate anything; the
    * world goes on around their body.
@@ -622,10 +640,20 @@ export class PlaySession {
       const actor = this.#actorAt?.(ray.origin, ray.direction, ray.length, ray.radius);
       const actorFirst = actor !== undefined && (!picked || actor.distance < picked.distance);
       const hit = actorFirst ? undefined : picked;
-      this.#setTarget(
-        this.#grab ? undefined : actorFirst ? actor.target : this.#activatableAt(hit),
-      );
-      this.#activate(hit);
+      const favor = this.favorMode;
+      if (favor) {
+        // A follower's command mode: what the crosshair rests on is commanded, not activated.
+        this.#grab = undefined;
+        this.#hold = undefined;
+        const target = this.#favorTarget(favor);
+        this.#setTarget(target, true);
+        if (this.player.takePressed('Activate')) target?.activate();
+      } else {
+        this.#setTarget(
+          this.#grab ? undefined : actorFirst ? actor.target : this.#activatableAt(hit),
+        );
+        this.#activate(hit);
+      }
     }
     for (const impact of this.physics.drainImpacts()) this.#onImpact?.(impact);
     this.#watchTriggers();
@@ -677,6 +705,30 @@ export class PlaySession {
       length: ini.number('Interface', 'fActivatePickLength') + back,
       radius: ini.number('Interface', 'fActivatePickRadius'),
     };
+  }
+
+  /**
+   * What the crosshair commands in a follower's command mode: the actor or object it rests on,
+   * else the point of the ground, as far as the favor pick reaches (fFavorRequestPickDistance).
+   */
+  #favorTarget(favor: FavorPicker): Activatable | undefined {
+    const ray = { ...this.#pickRay(), length: favor.reach };
+    const picked = this.physics.pick(
+      ray.origin,
+      ray.direction,
+      ray.length,
+      ray.radius,
+      Layer.itemPicker,
+      this.player.character.collider,
+    );
+    const actor = this.#actorAt?.(ray.origin, ray.direction, ray.length, ray.radius);
+    if (actor && (!picked || actor.distance < picked.distance)) {
+      return favor.target(actor.target.reference, undefined);
+    }
+    const owner = picked?.owner;
+    const reference =
+      owner?.kind === 'object' && owner.reference !== 0 ? owner.reference : undefined;
+    return favor.target(reference, picked?.point);
   }
 
   /** Activates a target unless the player may not (mayActivate: the perks' Filter Activation). */
@@ -777,13 +829,21 @@ export class PlaySession {
     grab.spring.apply(step);
   }
 
-  /** Shows what activating would do: the game's HUD in Play, the engine's prompt elsewhere. */
-  #setTarget(target: Activatable | undefined): void {
-    if (target?.verb === this.#target?.verb && target?.name === this.#target?.name) {
+  /**
+   * Shows what activating would do: the game's HUD in Play (`favor`: its command crosshair), the
+   * engine's prompt elsewhere.
+   */
+  #setTarget(target: Activatable | undefined, favor = false): void {
+    if (
+      target?.verb === this.#target?.verb &&
+      target?.name === this.#target?.name &&
+      favor === this.#favorShown
+    ) {
       this.#target = target;
       return;
     }
     this.#target = target;
+    this.#favorShown = favor;
     if (this.#hud?.listening) {
       this.#hud.target(
         target && {
@@ -791,6 +851,7 @@ export class PlaySession {
           name: target.name,
           ...(target.item && { item: target.item }),
         },
+        favor,
       );
       if (this.#prompt) this.#prompt.hidden = true;
       return;

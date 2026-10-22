@@ -362,6 +362,22 @@ export class GameState {
   nextEffect = 0xfd000001;
   /** The player's favorites (items, spells, shouts): the favorites menu's (Q). */
   readonly favorites = new Set<number>();
+  /** The favorites' hotkeys (1-8 as 0..7), by form; a hotkey holds one favorite. */
+  readonly hotkeys = new Map<number, number>();
+  /**
+   * What the player used, by how often (the journal's Favorite Weapon, Spell, School, Shout:
+   * src/scripting/runtime/usage-stats.ts): weapons, spells and shouts by form, schools by skill.
+   */
+  readonly usage = {
+    weapons: new Map<number, number>(),
+    spells: new Map<number, number>(),
+    schools: new Map<number, number>(),
+    shouts: new Map<number, number>(),
+  };
+  /** Merchant chests: the game days passed when each last restocked (barter-menu.ts). */
+  readonly restocked = new Map<number, { readonly days: number; readonly count: number }>();
+  /** The player has finished the race menu once (the opening): a new race then resets skills. */
+  raceChosen = false;
   /** The books the player has read (a skill book teaches once; TODO(M12): in the save). */
   readonly booksRead = new Set<number>();
   /** The tutorials shown in this game (their default objects' uses: "HBLK", ...). */

@@ -37,6 +37,7 @@ import { ActorCrime } from './actor-crime.ts';
 import { ActorSenses, type SensesWorld } from './actor-senses.ts';
 import { ActorMounts } from './actor-mounts.ts';
 import { ActorVehicles, type AdoptedVehicle } from './actor-vehicles.ts';
+import { ActorFavors } from './actor-favors.ts';
 import { ActorFollowers } from './actor-followers.ts';
 import type { PlayerView } from './race-menu.ts';
 import type { LightProbe } from '../ai/light-level.ts';
@@ -186,6 +187,8 @@ export class ActorStage {
   readonly vehicles: ActorVehicles;
   /** The player's followers (src/shell/actor-followers.ts). */
   readonly followers: ActorFollowers;
+  /** The followers' favor commands (src/shell/actor-favors.ts). */
+  readonly favors: ActorFavors;
   /** Where they look (head tracking) and the world their procedural animation sees. */
   readonly looks: ActorLooks;
   /** Their fights and the player's (src/shell/actor-combat.ts). */
@@ -398,6 +401,18 @@ export class ActorStage {
       lookAt: (actor, target) => {
         options.session.scriptWorld.lookAt(actor, target, 'dialogue');
       },
+    });
+    this.favors = new ActorFavors({
+      session: options.session,
+      terminal: options.terminal,
+      ai: this.ai,
+      movers: this.movers,
+      furniture: this.furniture,
+      talk: this.talk,
+      actors: () => this.#actors.values(),
+      get: (reference) => this.#actors.get(reference),
+      userOf: (staged) => this.userOf(staged),
+      ...(options.player && { player: options.player }),
     });
     this.projectiles = new MagicProjectiles({
       session: options.session,
@@ -1077,6 +1092,7 @@ export class ActorStage {
     this.senses.frame(frame);
     this.crime.frame(frame);
     this.followers.frame(frame);
+    this.favors.frame(frame);
     this.actorScenes.frame(this.#actors.values());
     this.talk.frame(this.#actors.values(), frame, this.#options.focus?.());
     // Casting: the player's buttons, the casts' sprays and art, what flies.
