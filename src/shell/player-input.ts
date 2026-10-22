@@ -14,6 +14,16 @@
 import { MouseInput } from '../formats/controlmap/controlmap.ts';
 import type { Player } from './player.ts';
 
+/**
+ * A DOM mouse button (0 left, 1 middle, 2 right) as the control map numbers it (MouseInput: 0
+ * left, 1 right, 2 middle): the right button is Left Attack/Block (the left hand's cast, block).
+ */
+export function mouseInput(button: number): number {
+  if (button === 1) return MouseInput.middle;
+  if (button === 2) return MouseInput.right;
+  return button;
+}
+
 /** Listens to keyboard and mouse for the player; returns a function that detaches. */
 export function attachPlayerInput(
   player: Player,
@@ -55,10 +65,10 @@ export function attachPlayerInput(
       if (event.button === 0) element.requestPointerLock().catch(() => undefined);
       return;
     }
-    press(player.eventsOfMouse(event.button), true);
+    press(player.eventsOfMouse(mouseInput(event.button)), true);
   };
   const onMouseUp = (event: MouseEvent): void => {
-    press(player.eventsOfMouse(event.button), false);
+    press(player.eventsOfMouse(mouseInput(event.button)), false);
   };
   const onMove = (event: MouseEvent): void => {
     if (locked()) player.look(event.movementX, event.movementY);

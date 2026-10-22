@@ -1098,29 +1098,37 @@ the projectile and explosion a spell sends.
   ActionLeftAttack leaves pick it by the hand's GetCurrentCastingType, GetCurrentDeliveryType
   and SpellHasKeyword (MRh_SpellAimedStart, MRh_SpellSelfStart, MRh_SpellAimedConcentrationStart,
   MRh_SpellSelfConcentrationStart, MRh_WardStart, MRh_SpellTelekinesisStart; MLh_ for the
-  left; a dual cast both); a staff's or a scroll's, or where the tree plays none, the event it
+  left; a dual cast its DualMagic_ one), with the hand's bWantCastRight / bWantCastLeft set
+  and BeginCastRight / BeginCastLeft before it (the graph's CastingState: docs/animation.md,
+  "Casting"); a staff's or a scroll's, or where the tree plays none, the event it
   would pick is sent. Magic is drawn as weapons are ("Combat": ActionDraw plays Magic_Equip,
   whose clip raises weaponDraw and Magic_Equip_Out; put away Magic_Unequip_Out), and with it
   drawn the player's attack buttons whose hands hold a spell, staff or scroll cast
   (`PlayerCombat` hands them to `PlayerCasting`: CastingButtons); IsWeaponMagicOut is any drawn
   state, IsWeaponOut not when the hands hold only magic. An NPC's castAt draws first. While an
   aimed cast lasts its arms aim (the graphs' BSDirectAtModifiers of bows and spells:
-  `setDirectAtTarget(2, point)` along the aim). Ready:
-  ActionRightReady (MRh_SpellReady_Event); fired or stopped: ActionRightRelease
-  (MRh_SpellRelease_Event); let go early: ActionRightInterrupt (MRh_Equipped_Event). Shouts:
+  `setDirectAtTarget(2, point)` along the aim). Ready: ActionRightReady
+  (MRh_SpellReady_Event); a concentration spell charged: ActionRightRelease (its loop, whose
+  MRh_SpellFire_Event starts the sprays); released ready: ActionRightRelease
+  (MRh_SpellRelease_Event), the spell leaving as the release clip raises MRh_SpellFire_Event;
+  stopped or let go early: ActionRightInterrupt (MRh_Equipped_Event). A dual cast goes on with
+  the left hand's actions. Shouts:
   ActionVoice (shoutStart), ActionVoiceRelease as the words go (the Whirlwind Sprint variants by
   GetCurrentShoutVariation), ActionVoiceInterrupt. A ward hit: ActionWardHit (wardAbsorb,
-  WardBreak by IsWardState). TODO(M13): the dual-cast animations.
+  WardBreak by IsWardState).
 - **Sounds and art:** the costliest effect's sounds (MGEF SNDD) from the hand's magic node (NPC R
   / L MagicNode): charge as it charges, ready once it is, the concentration loop while a
   concentration spell is held, release as it fires (a shout's thu'um); its casting art (MGEF
-  casting art, ARTO) drawn on the magic node while the cast lasts, a dual cast's own art (MGEF
+  casting art, ARTO, running its own CastingBasic graph on the actor's events) on the magic node
+  while the cast lasts (the player's while their magic is drawn: the hands' idle effects; in
+  first person on the first-person arms' nodes), a dual cast's own art (MGEF
   dual cast art) at its dual cast scale (`src/shell/actor-casting.ts`), its light there (the
   MGEF's casting light). On the target the effect's hit shader (EFSH) and hit art (ARTO) as it
   takes hold (`src/shell/actor-effects.ts`; docs/gameplay.md, "Magic effects").
 - **Projectiles** (the costliest effect's PROJ; docs/formats/esm.md, "Projectiles and
-  explosions"): from the source's node (the voice: the head) along the aim — the player's
-  camera, an NPC's target's chest, else its facing. Missiles, lobbers and arrow-like bolts fly
+  explosions"): from the source's node (the voice: the head) along the aim — the player's at
+  the point under the crosshair (what the camera's ray meets, else 8192 units along it), an
+  NPC's target's chest, else its facing. Missiles, lobbers and arrow-like bolts fly
   through the frames at their speed, falling by gravity × the world's (9.8 m/s²), drawn as their
   model with their flight sound, until their path (as thick as their collision radius) meets a
   surface (a ray of the spell layer: the caster's own bodies passed through), an actor (its

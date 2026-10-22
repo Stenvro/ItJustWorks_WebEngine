@@ -1410,6 +1410,8 @@ export class ActorStage {
     this.knockdowns.afterAnimate();
     this.bodies.frame(this.#withPlayerBody(), this.#options.focus?.());
     this.playerDeath.frame(frame);
+    // The casting art follows the hands as they are posed now.
+    this.casting.afterAnimate();
     // How their graphs moved them (root motion) moves them in the next physics steps; those
     // entering or leaving furniture it moves at once (they have no controller).
     for (const [staged, before] of times) {
