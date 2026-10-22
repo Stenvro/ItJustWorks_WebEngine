@@ -78,6 +78,8 @@ export interface ActorFlightOptions {
   readonly objects?: () => Iterable<StageObject>;
   /** The view shows an interior (no flying: CanFlyHere). */
   readonly interior: boolean;
+  /** A flier without a controller flew into (or out of) a trigger volume. */
+  readonly onTrigger?: (trigger: number, actor: number, entered: boolean) => void;
 }
 
 /** A target of a flier's fight, as combat sees it. */
@@ -134,15 +136,23 @@ interface Flier {
   combat: FlierCombat | undefined;
   /** What its packages ask (Hover, Orbit, FlightGrab, a travel flown): its own outside a fight. */
   package: FlightRequest | undefined;
-  /** Its travel flown: where to, whether it landed for it, how it ends. */
+  /**
+   * Its travel flown: where to, whether it landed for it, how it ends; a place in the air (a
+   * patrol's point over the ground) is flown through, not landed on.
+   */
   travel:
     | {
         readonly to: Vec3;
         readonly arrive: number;
+        readonly aloft: boolean;
         landing: boolean;
         readonly done: (arrived: boolean) => void;
       }
     | undefined;
+  /** A package's perch it lands on and stays on (Sit on a DragonPerchTower: MQ101AlduinPerch1). */
+  perching: { readonly perch: number; readonly done: (perched: boolean) => void } | undefined;
+  /** The trigger volumes it is in while it has no controller (in the air, perched). */
+  triggers: Set<number>;
   /** Its controller's shape when it had one (its size for blows in the air). */
   shape: { readonly radius: number; readonly height: number } | undefined;
   /** Placed in the air (no ground under it): it starts cruising. */
@@ -181,6 +191,11 @@ const BREATH_RANGE = 2000;
 const IDLE_ORBIT = 2048;
 /** Its arrival at a travel's end within this (units, at least). */
 const ARRIVE = 256;
+/**
+ * A flier's size for trigger volumes before it had a controller (units; a dragon's skeleton
+ * bound is about this wide).
+ */
+const FLIER_RADIUS = 256;
 /** GetIsID's condition function index, and a condition run on its target (ConditionRunOn). */
 const GET_IS_ID = 72;
 const RUN_ON_TARGET = 1;
@@ -302,10 +317,17 @@ export class ActorFlight {
     const flier = this.#flier(reference);
     if (!flier || !this.mayFly(reference)) return Promise.resolve(false);
     flier.travel?.done(false);
+    flier.perching?.done(false);
+    // A place high over the ground (MQ101AlduinApproachPatrol's points, 2,000 to 4,000 units
+    // up) is flown to at its height and through: it arrives where it circles (IDLE_ORBIT).
+    // TODO(M13): the engine's rule for a flier's travel to a point in the air.
+    const ground = this.#groundUnder(to);
+    const aloft = ground !== undefined && to[2] - ground > AIR_START;
     return new Promise((resolve) => {
       const travel = {
         to,
-        arrive: Math.max(arrive, ARRIVE),
+        arrive: Math.max(arrive, aloft ? IDLE_ORBIT / 2 : ARRIVE),
+        aloft,
         landing: false,
         done: (arrived: boolean): void => {
           if (flier.travel !== travel) return;
@@ -317,8 +339,61 @@ export class ActorFlight {
         },
       };
       flier.travel = travel;
-      flier.package = { kind: 'cruise', to: aloft(to, this.#settings.orbitHeight) };
+      flier.package = {
+        kind: 'cruise',
+        to: aloft ? [...to] : raised(to, this.#settings.orbitHeight),
+      };
     });
+  }
+
+  /**
+   * A package's perch (Sit on dragon perch furniture: MQ101AlduinPerch1 on the Helgen tower's
+   * DragonPerchTower): it flies there and lands on it (ActionFlyStop with the perch as target:
+   * FlyStopPerch*, its FlightLanding and TowerLandImpact), resolving true once it perches;
+   * it stays until leavePerch. False if it cannot fly or is sent elsewhere.
+   */
+  async perch(reference: number, perch: number): Promise<boolean> {
+    const flier = this.#flier(reference);
+    const at =
+      this.#perchPlace(perch) ??
+      (await this.#options.session.scriptsReady?.placement(perch))?.position;
+    if (!flier || !at || !this.mayFly(reference)) return false;
+    flier.travel?.done(false);
+    flier.perching?.done(false);
+    if (flier.state === FlyingState.perching && flier.perch === perch) {
+      flier.package = { kind: 'land', at: [...at], perch };
+      return true;
+    }
+    return new Promise((resolve) => {
+      const perching = {
+        perch,
+        done: (perched: boolean): void => {
+          if (flier.perching !== perching) return;
+          flier.perching = undefined;
+          resolve(perched);
+        },
+      };
+      flier.perching = perching;
+      flier.package = { kind: 'land', at: [...at], perch };
+    });
+  }
+
+  /** Whether a reference is perch furniture a flier lands on (the idle tree's perches). */
+  async isPerch(reference: number): Promise<boolean> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return false;
+    const [perches, base] = await Promise.all([this.#perchSet(), runtime.baseOf(reference)]);
+    return base !== undefined && perches.has(base);
+  }
+
+  /** Its package let go of its perch: it takes off from it (and does what it is asked next). */
+  leavePerch(reference: number): void {
+    const flier = this.#fliers.get(reference);
+    if (!flier) return;
+    flier.perching?.done(false);
+    if (flier.package?.kind === 'land' && flier.package.perch !== undefined) {
+      flier.package = undefined;
+    }
   }
 
   /** A flight grab (the FlightGrab procedure): resolves whether it took the victim. */
@@ -699,6 +774,7 @@ export class ActorFlight {
     const radius = this.#options.movers.radius(reference);
     const height = this.#options.movers.height(reference);
     if (radius !== undefined && height !== undefined) flier.shape = { radius, height };
+    this.#triggerFrame(flier, radius === undefined);
     // Injured (the graph's Injured: its flight hurt, its landings crashing) and Dragonrend.
     if (this.#clock - flier.valuesRead >= VALUES_SECONDS) {
       flier.valuesRead = this.#clock;
@@ -988,7 +1064,7 @@ export class ActorFlight {
   ): void {
     flier.asked = { what, at: this.#clock };
     void this.#options.furniture
-      .playAction(this.#options.userOf(flier.staged), action, target)
+      .playAction(this.#options.userOf(flier.staged), action, target, target === undefined)
       .then((played) => {
         if (!played && flier.asked?.what === what) flier.asked = undefined;
       })
@@ -1007,8 +1083,16 @@ export class ActorFlight {
       // Landed where it went (as near as the navmesh let it), or there already.
       if (travel.landing || flat(here, travel.to) <= travel.arrive) travel.done(true);
       else if (flier.package?.kind !== 'cruise' && flier.package?.kind !== 'land') {
-        flier.package = { kind: 'cruise', to: aloft(travel.to, this.#settings.orbitHeight) };
+        flier.package = {
+          kind: 'cruise',
+          to: travel.aloft ? [...travel.to] : raised(travel.to, this.#settings.orbitHeight),
+        };
       }
+      return;
+    }
+    // A place in the air: there once it flies within reach of it (on to the next point).
+    if (travel.aloft) {
+      if (distance3(here, travel.to) <= travel.arrive) travel.done(true);
       return;
     }
     if (flier.package?.kind === 'cruise' && flat(here, travel.to) <= IDLE_ORBIT) {
@@ -1137,7 +1221,10 @@ export class ActorFlight {
       flier.perch = undefined;
       this.#options.movers.release(flier.reference);
     }
-    if (state === FlyingState.perching) flier.perch = flier.landing?.perch;
+    if (state === FlyingState.perching) {
+      flier.perch = flier.landing?.perch;
+      if (flier.perching && flier.perching.perch === flier.perch) flier.perching.done(true);
+    }
     // Into its cruise (off the ground, out of a hover): it flies on at half its walking speed
     // at least (the graph accelerates from there).
     const behavior = flier.staged.placed.behavior;
@@ -1212,16 +1299,21 @@ export class ActorFlight {
   }
 
   #perchList: Set<number> | undefined;
-  #perchListRead = false;
+  #perchListRead: Promise<Set<number>> | undefined;
 
   /**
    * The perch furniture: the forms the idle tree's ActionFlyStop idles test their target to be
    * (GetIsID run on the target), read once (undefined meanwhile).
    */
   #perches(): Set<number> | undefined {
+    void this.#perchSet();
+    return this.#perchList;
+  }
+
+  /** The perch furniture, once read. */
+  #perchSet(): Promise<Set<number>> {
     if (!this.#perchListRead) {
-      this.#perchListRead = true;
-      void this.#options.session.db
+      this.#perchListRead = this.#options.session.db
         .then((db) => readIdleTree(db))
         .then((tree) => {
           const found = new Set<number>();
@@ -1238,10 +1330,11 @@ export class ActorFlight {
           };
           if (action) walk(action.formId, 0);
           this.#perchList = found;
+          return found;
         })
-        .catch(() => undefined);
+        .catch(() => new Set<number>());
     }
-    return this.#perchList;
+    return this.#perchListRead;
   }
 
   /** A furniture's interaction keyword, if it has one (read once per base; undefined meanwhile). */
@@ -1277,6 +1370,32 @@ export class ActorFlight {
       if (object.reference === perch) return [...object.position];
     }
     return undefined;
+  }
+
+  /**
+   * The trigger volumes a flier without a controller reaches (a ball of its size about its
+   * middle): their scripts hear it enter and leave, as the movers tell those of the actors
+   * that walk (MQ101SetStage99, across Alduin's way to Helgen's tower). With its controller
+   * again, the movers tell them: it leaves those it was in.
+   */
+  #triggerFrame(flier: Flier, free: boolean): void {
+    const physics = this.#options.movers.physics;
+    const onTrigger = this.#options.onTrigger;
+    if (!onTrigger || !physics?.queriesCurrent) return;
+    let inside = new Set<number>();
+    if (free) {
+      const radius = flier.shape?.radius ?? FLIER_RADIUS;
+      const height = flier.shape?.height ?? radius * 2;
+      const [x, y, z] = flier.staged.position;
+      inside = physics.triggersNear([x, y, z + height / 2], radius);
+    }
+    for (const trigger of inside) {
+      if (!flier.triggers.has(trigger)) onTrigger(trigger, flier.reference, true);
+    }
+    for (const trigger of flier.triggers) {
+      if (!inside.has(trigger)) onTrigger(trigger, flier.reference, false);
+    }
+    flier.triggers = inside;
   }
 
   /** The ground under a point (the collision ray straight down), if any within a long way. */
@@ -1322,6 +1441,8 @@ export class ActorFlight {
       hooked: undefined,
       combat: undefined,
       travel: undefined,
+      perching: undefined,
+      triggers: new Set(),
       shape: undefined,
       checkedAir: false,
       speeds: undefined,
@@ -1441,6 +1562,8 @@ export class ActorFlight {
     if (!flier) return;
     flier.grab?.done(false);
     flier.travel?.done(false);
+    flier.perching?.done(false);
+    for (const trigger of flier.triggers) this.#options.onTrigger?.(trigger, reference, false);
     if (flier.perch !== undefined) this.#perchUsers.delete(flier.perch);
     this.#fliers.delete(reference);
   }
@@ -1500,7 +1623,7 @@ function passed(here: Vec3, heading: number, point: Vec3): boolean {
 }
 
 /** A point raised by a height (a flight's way over a place on the ground). */
-function aloft(at: Vec3, height: number): Vec3 {
+function raised(at: Vec3, height: number): Vec3 {
   return [at[0], at[1], at[2] + height];
 }
 

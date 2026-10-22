@@ -49,6 +49,21 @@ export function launch(from: Vec3, aim: Vec3, speed: number, power = 1): Flight 
 }
 
 /**
+ * A shot that always hits (a UseWeapon package's Always Hit: MQ101's archers on Lokir, who
+ * runs): its velocity turned onto the target point at its speed, each step, gravity left out.
+ * TODO(M13): how the engine makes such a shot hit is not documented; it flies at the target.
+ */
+export function homeOn(flight: Flight, target: Vec3): void {
+  const speed = Math.hypot(flight.velocity[0], flight.velocity[1], flight.velocity[2]);
+  const dx = target[0] - flight.position[0];
+  const dy = target[1] - flight.position[1];
+  const dz = target[2] - flight.position[2];
+  const distance = Math.hypot(dx, dy, dz);
+  if (distance < 1e-6 || speed < 1e-6) return;
+  flight.velocity = [(dx / distance) * speed, (dy / distance) * speed, (dz / distance) * speed];
+}
+
+/**
  * One step of flight: gravity (game units/s², the world's × the PROJ's) pulls the velocity
  * down, the arrow moves along it. Returns the segment flown (what it may have hit lies on it).
  */

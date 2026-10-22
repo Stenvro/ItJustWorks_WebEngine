@@ -1263,6 +1263,12 @@ export class ActorMovers {
         verticalSpeed: mover.character.verticalSpeed,
         sprinting: moving && request?.gait === 'sprint',
         sneaking: this.#sneaking.has(staged.reference),
+        // Held by an animation-driven idle (bAnimationDriven: the dialogue idles MotionDrivenIdle
+        // plays) while its AI sends it somewhere: it sets out, as the engine tells the graph
+        // moveStart for the way it wants to go (MT_Standing_State leaves on it). Measured, it
+        // never moved, and the idle never ended: Lokir stood in the line while the archers
+        // waited for him to run.
+        settingOut: mover.rooted && mover.root.driven && request?.direction !== undefined,
       });
     }
     // The trigger volumes it walked into and out of.

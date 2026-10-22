@@ -545,6 +545,7 @@ export class ActorMounts {
   #dismounted(ride: Ride): void {
     const { get } = this.#options;
     this.#send(ride.rider, DISMOUNTED.slice(PAIRED_PREFIX.length));
+    this.#stand(ride);
     const horse = get(ride.horse);
     horse?.placed.behavior?.sendEvent(PAIR_END);
     this.#rides.delete(ride.rider);
@@ -563,6 +564,43 @@ export class ActorMounts {
     const done = ride.done;
     ride.done = undefined;
     done?.(true);
+  }
+
+  /**
+   * Off the horse, the rider's graphs stand: the horse's movement drove them while it rode
+   * (Speed, Direction, TurnDelta, moveStart), and what moves it on foot now starts from a
+   * standing graph (its own Locomotion tells it moveStart as it sets out). Left as the ride had
+   * them, a rider let off a walking horse came out of HorseExitOut walking: Elenwen walked on
+   * the spot by MQ101's gate, Speed 80 and no package to move her.
+   */
+  #stand(ride: Ride): void {
+    const graphs = this.#graphsOf(ride.rider);
+    if (graphs.length === 0) return;
+    ride.locomotion.drive(graphs, {
+      velocity: [0, 0],
+      heading: 0,
+      seconds: 1,
+      grounded: true,
+      swimming: false,
+      verticalSpeed: 0,
+      sprinting: false,
+      sneaking: false,
+    });
+    for (const graph of graphs) graph.setVariable('TurnDelta', 0);
+  }
+
+  /** The graphs a rider's movement drives (the player's both bodies). */
+  #graphsOf(rider: number): LocomotionGraph[] {
+    const graphs: LocomotionGraph[] = [];
+    if (rider === PLAYER_REF) {
+      const avatar = this.#options.player?.()?.avatar;
+      if (avatar?.body.behavior) graphs.push(avatar.body.behavior);
+      if (avatar?.firstPerson?.behavior) graphs.push(avatar.firstPerson.behavior);
+    } else {
+      const behavior = this.#options.get(rider)?.placed.behavior;
+      if (behavior) graphs.push(behavior);
+    }
+    return graphs;
   }
 
   /** The player stands again: their controls move them, their shape is back. */
@@ -824,6 +862,7 @@ export class ActorMounts {
     const body = this.#bodyOf(ride.rider);
     if (body) body.onEvents = ride.listener;
     this.#send(ride.rider, 'HorseExitOut');
+    this.#stand(ride);
     if (ride.rider === PLAYER_REF) this.#standPlayer();
     const done = ride.done;
     ride.done = undefined;

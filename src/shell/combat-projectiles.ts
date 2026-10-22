@@ -14,6 +14,7 @@ import type { GpuModel, GpuScene, InstanceMotion } from '../render/scene-rendere
 import type { Vec3 } from '../render/math.ts';
 import {
   fly,
+  homeOn,
   launch,
   MAX_STUCK_ARROWS,
   pointing,
@@ -36,6 +37,8 @@ interface Shot {
   scene: GpuScene | undefined;
   /** Whatever the shot carries for its hit (its damage, its draw). */
   readonly payload: unknown;
+  /** An Always Hit shot's target point now (it flies onto it), while there is one. */
+  readonly homing: (() => Vec3 | undefined) | undefined;
 }
 
 /** An actor a shot may hit (the player's shape is tested apart: it has no bodies). */
@@ -104,6 +107,8 @@ export class CombatProjectiles {
     readonly aim: Vec3;
     readonly power: number;
     readonly payload: unknown;
+    /** Always Hit: where its target is now (the shot flies onto it). */
+    readonly homing?: () => Vec3 | undefined;
   }): Promise<void> {
     const flight = launch(shot.from, shot.aim, shot.projectile.speed, shot.power);
     const entry: Shot = {
@@ -115,6 +120,7 @@ export class CombatProjectiles {
       motion: { version: 0 },
       scene: undefined,
       payload: shot.payload,
+      homing: shot.homing,
     };
     place(entry);
     this.#shots.push(entry);
@@ -162,7 +168,10 @@ export class CombatProjectiles {
       while (left > 0) {
         const dt = Math.min(STEP, left);
         left -= dt;
-        const { from, to } = fly(shot.flight, dt, shot.projectile.gravity * WORLD_GRAVITY);
+        const target = shot.homing?.();
+        if (target) homeOn(shot.flight, target);
+        const gravity = target ? 0 : shot.projectile.gravity * WORLD_GRAVITY;
+        const { from, to } = fly(shot.flight, dt, gravity);
         if (this.#meets(shot, from, to, physics)) {
           this.#end(shot);
           break;
