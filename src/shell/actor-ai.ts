@@ -598,6 +598,13 @@ export class ActorAi {
       attack: (target) => {
         this.#startCombat?.(reference, target);
       },
+      pickpocket: async (holder, item) => {
+        const scripts = this.#session.scriptsReady;
+        const base = await scripts?.baseOf(item);
+        if (!scripts || base === undefined) return false;
+        await scripts.removeItem(holder, scripts.formHandle(base), 1, true, reference);
+        return true;
+      },
       ride: (allowed) => {
         this.#rides.set(reference, allowed);
         // Allowed to ride, it gets on its horse now, also where it need not go anywhere: MQ101's

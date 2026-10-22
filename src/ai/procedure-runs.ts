@@ -548,18 +548,26 @@ const find: ProcedureRunner = async (run) => {
 
 /**
  * Acquire: picks up what its object list holds, nearest first, until it has as many as it was
- * to. One a living actor holds it does not take; with Allow Killing it fights that actor for it
- * (its body's attack: a StartCombat). TODO(M11): Allow Pickpocketing.
+ * to. One a living actor holds it does not take: with Allow Pickpocketing it goes to them and
+ * takes it from them, with Allow Killing it fights them for it (its body's attack: a StartCombat).
+ * TODO(M13): whether those who see an actor's pickpocketing report it (the player's is crime's).
  */
 const acquire: ProcedureRunner = async (run) => {
   const wanted = Math.max(1, run.inputs.number(1, 1));
+  const pickpocketing = run.inputs.bool(3);
   const killing = run.inputs.bool(4);
   let taken = 0;
   for (const reference of await targetsIn(run, 0)) {
     if (run.stopped() || taken >= wanted) break;
     const holder = await run.mind.holder?.(reference);
     if (holder !== undefined && holder !== run.actor) {
-      if (killing) run.body.attack?.(holder);
+      if (pickpocketing && run.body.pickpocket) {
+        if (
+          (await goToReference(run, holder, REACH)) &&
+          (await run.body.pickpocket(holder, reference))
+        )
+          taken++;
+      } else if (killing) run.body.attack?.(holder);
       continue;
     }
     if (!(await goToReference(run, reference, REACH))) continue;
