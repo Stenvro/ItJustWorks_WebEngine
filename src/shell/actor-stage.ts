@@ -126,6 +126,11 @@ export interface ActorStageOptions {
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/**
+ * After hours skipped, the travels that start within this (real ms) end at once: the packages
+ * are chosen again within a frame or two. TODO(M13): the engine moves them as the hours pass.
+ */
+const TIME_SKIP_MS = 1500;
 /** An actor put at a reference off the navmesh moves this far at most to stand on it. */
 const SNAP_REACH = 512;
 /** The collision this near an actor (its cell and the neighbours there) must be in place to set it down (units). */
@@ -303,6 +308,10 @@ export class ActorStage {
         paused: (actor) => this.mounts.ridden(actor),
         seat: (staged, instant) => this.mounts.seat(staged, instant),
       },
+    });
+    // Hours waited or slept: the actors are where their packages had them by now.
+    options.session.timeSkipped.add(() => {
+      this.timeSkipped();
     });
     this.pilot = new PlayerPilot({
       session: options.session,
@@ -824,6 +833,15 @@ export class ActorStage {
     for (const staged of [...this.#actors.values()]) {
       if (staged.cell === key) this.#remove(staged);
     }
+  }
+
+  /**
+   * Hours passed at once (waiting, sleeping): every actor chooses its package again, and the
+   * travels that start meanwhile end where they were going (src/shell/actor-movers.ts).
+   */
+  timeSkipped(): void {
+    this.movers.skipTravels(TIME_SKIP_MS);
+    for (const reference of this.#actors.keys()) this.ai.evaluate(reference);
   }
 
   /** Every cell goes (the view closes). */

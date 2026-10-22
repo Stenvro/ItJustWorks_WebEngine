@@ -252,10 +252,11 @@ export class MagicEngine {
       if (effect?.actorValue !== ActorValue.health) continue;
       if ((effect.flags & EffectFlag.detrimental) === 0) continue;
       const archetype = effect.archetype;
+      // Damage over time (poison, fire): a peak value modifier lowers the maximum instead
+      // (Survival Mode's hunger takes none: waiting stays allowed).
       if (
         archetype === EffectArchetype.valueModifier ||
-        archetype === EffectArchetype.dualValueModifier ||
-        archetype === EffectArchetype.peakValueModifier
+        archetype === EffectArchetype.dualValueModifier
       ) {
         return true;
       }

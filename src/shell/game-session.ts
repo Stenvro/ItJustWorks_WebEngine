@@ -175,6 +175,11 @@ export class GameSession {
   crimeWatch: { readonly pursued: boolean; readonly trespassing: boolean } | undefined;
   /** Whether someone fights the player now (src/shell/actor-combat.ts). */
   combatWatch: { readonly fightingPlayer: boolean } | undefined;
+  /**
+   * Told when hours passed at once (waiting, sleeping): the actors of the stage are where their
+   * packages had them by now (src/shell/actor-stage.ts).
+   */
+  readonly timeSkipped = new Set<() => void>();
   /** The actor a reference shows as on screen, if it does (the viewers answer: main.ts). */
   placedActor: ((reference: number) => PlacedActor | undefined) | undefined;
   /** An actor of the loaded area plays the idle an action gives it (ActionTalking as it talks). */
