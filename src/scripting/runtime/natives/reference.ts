@@ -443,35 +443,34 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     }
     return null;
   });
+  // Destruction (destruction-engine.ts): the reference's health, stages and destroyed state.
   n('objectreference.setdestroyed', (call) => {
     const reference = self(call);
-    if (reference !== undefined) {
-      state.reference(reference).destroyed = bool(call.args[0], true);
-      world.destructionChanged?.(reference);
-    }
+    if (reference !== undefined)
+      runtime.destruction.setDestroyed(reference, bool(call.args[0], true));
     return null;
   });
   n('objectreference.isdestroyed', (call) => {
     const reference = self(call);
-    return reference !== undefined && state.references.get(reference)?.destroyed === true;
+    return reference !== undefined && runtime.destruction.isDestroyed(reference);
   });
   n('objectreference.getcurrentdestructionstage', (call) => {
     const reference = self(call);
-    return reference === undefined ? 0 : (state.references.get(reference)?.destructionStage ?? 0);
+    return reference === undefined ? 0 : runtime.destruction.stage(reference);
   });
   n('objectreference.damageobject', async (call) => {
     const reference = self(call);
     if (reference !== undefined) await runtime.damageObject(reference, num(call.args[0]));
     return null;
   });
+  n('objectreference.blowup', async (call) => {
+    const reference = self(call);
+    if (reference !== undefined) await runtime.destruction.blowUp(reference);
+    return null;
+  });
   n('objectreference.cleardestruction', (call) => {
     const reference = self(call);
-    if (reference !== undefined) {
-      const entry = state.reference(reference);
-      entry.destroyed = false;
-      entry.destructionStage = 0;
-      world.destructionChanged?.(reference);
-    }
+    if (reference !== undefined) runtime.destruction.clear(reference);
     return null;
   });
 

@@ -36,6 +36,11 @@ export interface NiNodeBlock extends NiAvObject {
   readonly value?: number;
   /** BSTreeNode: the trunk's bones ("Bones 1") and the branches' ("Bones"). */
   readonly treeBones?: { readonly trunk: readonly Ref[]; readonly branches: readonly Ref[] };
+  /**
+   * BSDamageStage: the model damage stages (DSTD) its subtree shows in (min..max); outside
+   * them it is not drawn and does not collide.
+   */
+  readonly damageStage?: { readonly min: number; readonly max: number };
 }
 
 /** Unpacked BSVertexDesc. Offsets and stride in bytes. */

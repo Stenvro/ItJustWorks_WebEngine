@@ -1080,3 +1080,76 @@ Adjust Limb Damage, Get Should Attack, Mod Addiction Chance / Duration, Mod Posi
 Duration, Mod Max Placeable Mines, the Telekinesis ones, Mod Secondary Value Weight, Mod Player
 Reputation, Ignore Running During Detection, Ignore Broken Lock, Mod Lockpick Level Allowed and
 Set Progression Picking (Fallout's; TODO(M13) should a mod use them).
+
+## Destruction
+
+Destructible objects (the records: docs/formats/esm.md, "Destructible objects"; the rules:
+`src/gameplay/destruction.ts`; the running game: `src/scripting/runtime/destruction-engine.ts`;
+the view: `src/shell/destruction-looks.ts`; check: `node tools/destruction-info.ts`,
+`tests/destruction.int.test.ts`).
+
+### Health and stages
+
+- A reference whose base carries DEST has a health of its own, its base's DEST health at first
+  (the game state's `destructionHealth`, saved with it). Damage lowers it; a stage (DSTD, in
+  the record's order) is reached as the health falls to its health percent of the whole.
+- The **current stage** (GetCurrentDestructionStage, the condition GetDestructionStage) counts
+  the stages reached: 0 undamaged, n the stage of index n − 1. The data shows it: the CW
+  barricades have four stages and their quests test `< 4` for "still standing";
+  CWResolution's barricade scripts take OnDestructionStageChanged's new stage 1 as the first.
+- **Cap Damage**: the blow (or the tick of self damage) that reaches the stage stops at its
+  percent (a web's first hit only tears it: two hits break it). **Ignore External Damage**: while
+  it is the current stage, weapons, spells and explosions do nothing (ore veins once depleted;
+  the oil pool burning); a blow that reaches such a stage stops there too. Scripts'
+  DamageObject and the stage's own self damage are not external. A destroyed reference
+  (IsDestroyed) takes no external damage.
+- Each stage reached, in order: the world shows its look and throws its debris
+  (WorldBridge.destructionChanged), its explosion goes off at the reference (the world shows
+  it: WorldBridge.explosion; the casting engine's explode applies its damage, force and
+  enchantment to the actors and destructible objects within its radius, the reference itself
+  aside: oil pools set one another off), its Destroy flag makes it destroyed, its Disable flag
+  disables it, its self damage per second starts (or stops), and its scripts hear
+  OnDestructionStageChanged(old, new), one event per stage.
+- **Self damage** ticks every frame on the current stage's rate (runtime.update), through the
+  same rules (caps hold: the beehive waits at its 50 % stage for its script's last blow).
+- **Natives**: DamageObject (a script's damage), BlowUp (on through every stage left, past
+  their caps), ClearDestruction (undamaged: health, stage and destroyed state; its own look
+  again; a stage's Disable is not undone), SetDestroyed / IsDestroyed (the destroyed state
+  only), GetCurrentDestructionStage. Actors' DEST (two spriggans) is not used: their health is
+  their actor value (TODO(M13): what the engine does with an NPC\_'s stages).
+
+### Damage sources
+
+- **Weapons**: a melee strike that meets an object instead of an actor (the wall the swing
+  recoils from) gives a destructible one the weapon's damage as the equip system reckons it ×
+  the attack's damage multiplier (fists: the unarmed damage); an arrow or bolt that meets an
+  object gives the shot's damage × its draw (src/shell/actor-combat.ts).
+- **Spells**: a projectile, beam or spray that meets an object delivers its spell to it (the
+  casting engine's deliver: its scripts hear OnMagicEffectApply); a hostile Health effect
+  (value modifier, dual or peak value modifier, absorb: Fire, Frost, Shock Damage) takes its
+  magnitude from a destructible object's health, × its duration where it lasts (a concentration
+  spray's by the time held). A spell's explosion delivers the spell to the destructible objects
+  within its radius too. TODO(M13): a lasting effect's damage over its duration rather than at
+  once.
+- **Explosions**: EXPL damage × (1 − distance / radius) to the destructible objects within its
+  radius, and its enchantment delivered to them (magic-engine's objects).
+
+### The view
+
+- The cell's instance of a reference in a stage steps aside for the stage's look: the latest
+  stage reached with a model (DMDL, its DMDS texture sets swapped onto its shapes), else its own
+  model at the current stage's model damage stage (its BSDamageStage nodes: the stockade's
+  boards) — undamaged models show damage stage 0 (the nodes are culled in the files). Its
+  collision follows: the cell's own bodies are switched off while the stage model's collide
+  (built from the model's BSDamageStage subtrees for that stage), and come back on
+  ClearDestruction. A new play places the stage's collision again. TODO(M13): whether a later
+  stage's model damage stage applies to an earlier stage's DMDL.
+- **Debris**: a stage's DEBR throws its debris count of pieces, each one of its models chosen by
+  their percentages as weights, from about the object's middle (within its bounds) outward and
+  up at 3 m/s, as loose bodies on the small debris layer (the model's own bodies made dynamic,
+  else a sphere of half its bounds; a mass of 5 kg where the file has none) for 15 s.
+  TODO(M13): the engine's debris speed, lifetime, mass and shape (no game setting of the load
+  order names them), and whether a debris' percentages are weights or chances.
+- **Explosions** show through the actor stage's projectiles (MagicProjectiles.burst): its
+  sounds, model and light, image-space modifier on a player within its image-space radius, its
+  placed object (the oil explosion's fire hazard), a noise for detection.

@@ -361,8 +361,11 @@ function inertiaOf(body: RigidBodyBlock): Vec3 {
   return diagonal;
 }
 
-/** Reads the collision of a model. The root node's own transform is replaced by placement. */
-export function buildCollision(file: NifFile): CollisionData {
+/**
+ * Reads the collision of a model. The root node's own transform is replaced by placement;
+ * `damageStage`: a destructible object's model damage stage (BSDamageStage nodes).
+ */
+export function buildCollision(file: NifFile, damageStage = 0): CollisionData {
   const bodies: CollisionBody[] = [];
   const skipped: string[] = [];
   /** Rigid body blocks: their body's index and its scale (Havok units to game units). */
@@ -607,6 +610,9 @@ export function buildCollision(file: NifFile): CollisionData {
     if (depth > 64) return;
     const block = file.blocks[ref];
     if (!block || !('transform' in block)) return;
+    // A BSDamageStage's subtree collides only at the damage stages it shows in.
+    const range = block.kind === 'node' ? block.damageStage : undefined;
+    if (range && (damageStage < range.min || damageStage > range.max)) return;
     const { translation, rotation, scale } = block.transform;
     const world =
       depth === 0
