@@ -3,6 +3,7 @@ import { Fields } from '../formats/esm/fields.ts';
 import { COMBAT_AI_DEFAULTS } from './combat-ai.ts';
 import { CombatStyleFlag, parseCombatStyle, type CombatStyle } from './combat-style-records.ts';
 import {
+  attackChance,
   avoidsThreat,
   chooseAttack,
   chooseEquipment,
@@ -175,36 +176,59 @@ describe('combat tactics: attacks, blocks, threats', () => {
     canBash: true,
     powerChance: 0.5,
     allies: 0,
+    targetIsPlayer: false,
+    sinceLastAttack: undefined,
   };
   const brute = style([0.8, 0.2, 1, 1, 1, 1, 1, 1, 1, 0.2], [2, 1, 0.5, 2, 1, 2, 1, 0.1]);
 
-  it('attacks by its offensive mult, power attacks by its attack data', () => {
-    expect(chooseAttack(brute, attack, randoms(0.9))).toBe('none');
-    expect(chooseAttack(brute, attack, randoms(0.5, 0.9))).toBe('attack');
-    expect(chooseAttack(brute, attack, randoms(0.5, 0.2))).toBe('power');
+  it('attacks by its offensive mult on fCombatAttackChanceMin .. Max, power attacks by its data', () => {
+    // Offensive 0.8: 0.05 + 0.95 × 0.8 = 0.81.
+    expect(attackChance(brute, attack, settings)).toBeCloseTo(0.81);
+    expect(chooseAttack(brute, attack, randoms(0.9), settings)).toBe('none');
+    expect(chooseAttack(brute, attack, randoms(0.5, 0.9), settings)).toBe('attack');
+    expect(chooseAttack(brute, attack, randoms(0.5, 0.2), settings)).toBe('power');
+    // Offensive 0 still attacks at fCombatAttackChanceMin 0.05.
     const timid = style([0, 0.5, 1, 1, 1, 1, 1, 1, 1, 0.2]);
-    expect(chooseAttack(timid, attack, randoms(0))).toBe('none');
+    expect(chooseAttack(timid, attack, randoms(0.06), settings)).toBe('none');
+    expect(chooseAttack(timid, attack, randoms(0.04, 0.9), settings)).toBe('attack');
+  });
+
+  it('attacks more the longer since its last attack, less in a crowd on the player', () => {
+    // × 1 .. fCombatAttackChanceLastAttackBonus 1.5 over fCombatAttackChanceLastAttackBonusTime 5.
+    expect(attackChance(brute, { ...attack, sinceLastAttack: 0 }, settings)).toBeCloseTo(0.81);
+    expect(attackChance(brute, { ...attack, sinceLastAttack: 2.5 }, settings)).toBeCloseTo(1.0125);
+    expect(attackChance(brute, { ...attack, sinceLastAttack: 9 }, settings)).toBeCloseTo(1.215);
+    // Group offensive mult 0.5, two others on the player: offensive 0.8 × 0.25 = 0.2.
+    const pack = style([0.8, 0.2, 0.5, 1, 1, 1, 1, 1, 1, 0.2]);
+    const crowd = { ...attack, allies: 2, targetIsPlayer: true };
+    expect(attackChance(pack, crowd, settings)).toBeCloseTo(0.05 + 0.95 * 0.2);
+    expect(attackChance(pack, { ...crowd, targetIsPlayer: false }, settings)).toBeCloseTo(0.81);
   });
 
   it('presses a staggered target and spares power attacks on a blocking one', () => {
-    // Attack staggered mult 2: offensive 0.8 → 1.6, any roll attacks.
-    expect(chooseAttack(brute, { ...attack, targetStaggered: true }, randoms(0.95, 0.9))).toBe(
-      'attack',
-    );
+    // Attack staggered mult 2: 0.81 → 1.62, any roll attacks.
+    expect(
+      chooseAttack(brute, { ...attack, targetStaggered: true }, randoms(0.95, 0.9), settings),
+    ).toBe('attack');
     // Power attack blocking mult 0.5: chance 0.25.
-    expect(chooseAttack(brute, { ...attack, targetBlocking: true }, randoms(0.1, 0.3))).toBe(
-      'attack',
-    );
+    expect(
+      chooseAttack(brute, { ...attack, targetBlocking: true }, randoms(0.1, 0.3), settings),
+    ).toBe('attack');
   });
 
-  it('bashes from a block, more as the target swings', () => {
+  it('bashes from a block, more as the target swings; attacks from a block less', () => {
     const blocking = { ...attack, blocking: true };
     // Bash chance 0.25 × bash mult 2 = 0.5; as the target swings × bash attack mult 2 = 1.
-    expect(chooseAttack(brute, blocking, randoms(0.6))).toBe('none');
-    expect(chooseAttack(brute, { ...blocking, targetAttacking: true }, randoms(0.6, 0.9))).toBe(
-      'bash',
-    );
-    expect(chooseAttack(brute, { ...blocking, canBash: false }, randoms(0))).toBe('none');
+    // No bash: an attack at 0.81 × (defensive 0.2 on 0.67 .. 0.2: 0.576) = 0.467.
+    expect(attackChance(brute, blocking, settings)).toBeCloseTo(0.81 * 0.576);
+    expect(chooseAttack(brute, blocking, randoms(0.6, 0.6), settings)).toBe('none');
+    expect(chooseAttack(brute, blocking, randoms(0.6, 0.4, 0.9), settings)).toBe('attack');
+    expect(
+      chooseAttack(brute, { ...blocking, targetAttacking: true }, randoms(0.6, 0.9), settings),
+    ).toBe('bash');
+    // Without a bash, never into a swing (fCombatAttackChanceBlockingSwingMult 0).
+    const swung = { ...blocking, canBash: false, targetAttacking: true };
+    expect(chooseAttack(brute, swung, randoms(0), settings)).toBe('none');
   });
 
   it('blocks by its defensive mult, less with a weapon than a shield', () => {
@@ -251,7 +275,7 @@ describe('combat tactics: what it does for itself', () => {
 
   it('reads iAICombatRestoreHealthPercentage and fCombatItemRestoreTimer', () => {
     expect(settings.restoreHealthPercent).toBe(60);
-    expect(settings.restoreMagickaPercent).toBe(50);
+    expect(settings.restoreMagickaPercent).toBe(30);
     expect(settings.itemRestoreTime).toBe(3);
   });
 
@@ -275,7 +299,7 @@ describe('combat tactics: what it does for itself', () => {
       kind: 'potion',
       value: 'magicka',
     });
-    expect(chooseSupport({ ...base, magicka: 0.4, potions }, settings)).toEqual({
+    expect(chooseSupport({ ...base, magicka: 0.25, potions }, settings)).toEqual({
       kind: 'potion',
       value: 'magicka',
     });

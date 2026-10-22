@@ -58,14 +58,17 @@ describe('combat AI: entering combat', () => {
     expect(helps(Assistance.helpsFriendsAndAllies)).toEqual([false, false, true, true]);
   });
 
-  it('turns on an attacker at once, on a friend after iFriendHitCombatAllowed blows', () => {
+  it('turns on an attacker at once, on a friend or ally after the blows it lets pass', () => {
     expect(turnsOnAttacker(FightReaction.neutral, 1, false, settings)).toBe(true);
     expect(turnsOnAttacker(FightReaction.enemy, 1, true, settings)).toBe(true);
-    // iFriendHitCombatAllowed 4: the fifth blow in combat.
-    expect(turnsOnAttacker(FightReaction.ally, 4, true, settings)).toBe(false);
-    expect(turnsOnAttacker(FightReaction.ally, 5, true, settings)).toBe(true);
-    expect(turnsOnAttacker(FightReaction.friend, 2, false, settings)).toBe(false);
-    expect(turnsOnAttacker(FightReaction.friend, 3, false, settings)).toBe(true);
+    // A friend: iFriendHitCombatAllowed 4 in combat (the fifth blow), none out of it.
+    expect(turnsOnAttacker(FightReaction.friend, 4, true, settings)).toBe(false);
+    expect(turnsOnAttacker(FightReaction.friend, 5, true, settings)).toBe(true);
+    expect(turnsOnAttacker(FightReaction.friend, 1, false, settings)).toBe(true);
+    // An ally: any number in combat (iAllyHitCombatAllowed 1000), three out of it.
+    expect(turnsOnAttacker(FightReaction.ally, 50, true, settings)).toBe(false);
+    expect(turnsOnAttacker(FightReaction.ally, 3, false, settings)).toBe(false);
+    expect(turnsOnAttacker(FightReaction.ally, 4, false, settings)).toBe(true);
   });
 
   it('warns within its aggro radius before it attacks', () => {

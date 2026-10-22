@@ -1182,10 +1182,53 @@ Who fights whom, and how (`src/ai/combat-ai.ts`, `combat-tactics.ts`, `combat-gr
 mean what the Creation Kit says of them (UESP "Skyrim:AI Data"); the load order's game settings
 count where it has them (fConfidence\*, fCombatConfidenceModifier\*, fFleeDistance\*,
 iFriendHitCombatAllowed, fCombatAdvance\*Radius\*, fCombatBlockChanceWeaponMult,
-fCombatDialogue\*); the engine's own (fCombatSelectTargetUpdateTime, fCombatYieldTime,
-fCombatInventoryUpdateTimer, ...) are in no plugin, and their values here are ours
-(TODO(M13)). CommonLibSSE names the engine's combat behaviour trees but not their arithmetic:
-the rules below read each value as its name says (TODO(M13)).
+fCombatDialogue\*); the others keep the engine's built-in defaults (see below). Where no rule
+is known yet the rules read each value as its name says (TODO(M13)).
+
+### The engine's built-in game settings
+
+The engine defines about 3,500 game settings with built-in defaults; a plugin's GMST record only
+overrides one. Skyrim.esm overrides a part of them, so for the rest the engine's own default
+counts (`readCombatAiSettings` and the other settings tables keep it as their fallback). The
+defaults are the original game's own, described by behaviour only. Some that matter here:
+
+| Setting                                 | Default           | Meaning                                               |
+| --------------------------------------- | ----------------- | ----------------------------------------------------- |
+| iFriendHitNonCombatAllowed              | 0                 | a friend turns on the player at their first blow      |
+| iFriendHitCombatAllowed                 | 3 (Skyrim.esm: 4) | blows a friend lets pass in combat                    |
+| iAllyHitNonCombatAllowed                | 3                 | blows an ally lets pass out of combat                 |
+| iAllyHitCombatAllowed                   | 1000              | 1000 or more: an ally lets any number pass in combat  |
+| fCombatYieldTime, fCombatYieldRetryTime | 10, 600           | read where the player yields to those fighting them   |
+| fCombatInventoryUpdateTimer             | 5                 | what an actor fights with is weighed again this often |
+| iAICombatRestoreMagickaPercentage       | 30                | an actor drinks for magicka below this share          |
+| iCrimeAlarmRecDistance                  | 4000              | an alarm reaches the actors this near                 |
+| fEvaluatePackageTimer                   | 15                | between an actor's package evaluations (not yet used) |
+
+The friendly-hit allowance depends on the reaction (FACT XNAM): a friend uses the iFriendHit
+pair, an ally the iAllyHit pair; more blows than allowed turn it on the attacker, an allowance of
+1000 or more never does.
+
+### The attack decision
+
+The engine's combat AI is a behaviour tree built in code, with named nodes (Combat Parallel,
+Melee Sequence, Attack Selector, Attack Idle, Flee Selector, Block Selector, ...). In melee an
+"Attack Idle" waits 0.25 s, then a random roll against the attack chance starts an attack
+(`ATTACK_DECISION_SECONDS`, `attackChance` in `src/ai/combat-tactics.ts`). The chance:
+
+- the combat style's offensive mult, mapped linearly onto fCombatAttackChanceMin (0.05, at 0) ..
+  fCombatAttackChanceMax (1, at 1): even an offensive mult of 0 attacks now and then;
+- against the player while others attack them too, the offensive mult × the group offensive
+  mult once per other attacker, not below fCombatGroupOffensiveMultMin (0.1);
+- against a staggered or recoiling target × the larger of the style's attack and power attack
+  staggered mults;
+- else while it blocks: × fCombatAttackChanceBlockingSwingMult (0: no attack) as the target
+  swings, otherwise × the defensive mult mapped onto fCombatAttackChanceBlockingMultMax (0.67,
+  at 0) .. Min (0.2, at 1);
+- after its first attack × 1, rising to fCombatAttackChanceLastAttackBonus (1.5) as
+  fCombatAttackChanceLastAttackBonusTime (5 s) passes since the last one.
+
+So a civilian with a low offensive mult still attacks about every second while it fights; shots
+and casts keep their own pace (`attackInterval`, TODO(M13)).
 
 - **Reactions** (`reactionsOf(runtime).reaction`, `src/ai/combat-reactions.ts`: the rules crime
   does not weigh, then crime and factions' `runtime.crime.reaction`; `combatReaction` keeps the

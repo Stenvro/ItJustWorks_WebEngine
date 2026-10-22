@@ -361,7 +361,8 @@ export class ActorVehicles {
         GROUND_PROBE,
         Layer.charController,
         undefined,
-        (owner) => owner !== undefined && (owner.kind === 'actor' || this.#carts.has(owner.reference)),
+        (owner) =>
+          owner !== undefined && (owner.kind === 'actor' || this.#carts.has(owner.reference)),
       );
       if (hit) return top - hit.distance - GROUND_PROBE;
     }

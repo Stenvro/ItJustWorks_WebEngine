@@ -193,7 +193,7 @@ const SETTINGS: readonly (readonly [
   ['searchInvestigateDistance', 'fCombatSearchLocationInvestigateDistance', 256],
   ['searchLookTime', 'fCombatSearchLookTime', 1],
   ['searchInvestigateTime', 'fCombatSearchInvestigateTime', 2.5],
-  ['alarmDistance', 'iCrimeAlarmRecDistance', 2300],
+  ['alarmDistance', 'iCrimeAlarmRecDistance', 4000],
 ];
 
 /** fSneakDetectionSize* by RACE DATA size (small, medium, large, extra large). */
