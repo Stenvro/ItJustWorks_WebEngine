@@ -117,6 +117,7 @@ import type { ActorSenses } from './actor-senses.ts';
 import type { ActorAi } from './actor-ai.ts';
 import {
   ActorCombatAi,
+  type ActorCombatAiOptions,
   type CombatAiHost,
   type CombatCasting,
   type CombatFlight,
@@ -247,6 +248,8 @@ export interface ActorCombatOptions {
   readonly interior?: () => boolean;
   /** An actor gets off its horse to fight; a horse ridden is its rider's to move. */
   readonly dismount?: (actor: number) => Promise<void>;
+  /** Furniture holding an actor: it gets up to fight or flee. */
+  readonly furniture?: ActorCombatAiOptions['furniture'];
   readonly ridden?: (actor: number) => boolean;
   /** NPCs' spells and shouts in combat (src/shell/combat-casting.ts). */
   readonly npcCasting?: () => CombatCasting | undefined;
@@ -301,6 +304,7 @@ export class ActorCombat implements CombatBridge {
       ...(options.ai && { ai: options.ai }),
       ...(options.interior && { interior: options.interior }),
       ...(options.dismount && { dismount: options.dismount }),
+      ...(options.furniture && { furniture: options.furniture }),
       ...(options.ridden && { ridden: options.ridden }),
       ...(options.npcCasting && { casting: options.npcCasting }),
       ...(options.flight && { flight: options.flight }),

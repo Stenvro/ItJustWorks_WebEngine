@@ -135,6 +135,31 @@ describe('Locomotion', () => {
     expect(first.values.get('Direction')).toBe(0);
   });
 
+  it('ends a sprint before the movement, and again when a sprint ended in the air', () => {
+    const graph = recorder();
+    const locomotion = new Locomotion();
+    locomotion.drive([graph], frame({}));
+    locomotion.drive([graph], frame({ velocity: [0, 500], sprinting: true }));
+    // Stopping while sprinting: the sprint ends while the locomotion machine still runs.
+    locomotion.drive([graph], frame({}));
+    expect(graph.events).toEqual(['moveStart', 'SprintStart', 'SprintStop', 'moveStop']);
+    // Moving again: nothing more to tell.
+    graph.events.length = 0;
+    locomotion.drive([graph], frame({ velocity: [0, 370] }));
+    expect(graph.events).toEqual(['moveStart']);
+    // A sprint jump, the sprint let go in the air: told again on landing.
+    graph.events.length = 0;
+    locomotion.drive([graph], frame({ velocity: [0, 500], sprinting: true }));
+    locomotion.drive([graph], frame({ velocity: [0, 500], grounded: false, verticalSpeed: 10 }));
+    locomotion.drive([graph], frame({ velocity: [0, 370] }));
+    expect(graph.events).toEqual([
+      'SprintStart',
+      'SprintStop',
+      'JumpLandDirectional',
+      'SprintStop',
+    ]);
+  });
+
   it('freezes and cross-blends the cyclic blends as the direction wraps round', () => {
     const order: string[] = [];
     const graph: LocomotionGraph = {

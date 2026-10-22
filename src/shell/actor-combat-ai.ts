@@ -193,6 +193,14 @@ export interface ActorCombatAiOptions {
   readonly interior?: () => boolean;
   /** Off its horse before it fights (TODO(M13): mounted combat, RACE allowMountedCombat). */
   readonly dismount?: (actor: number) => Promise<void>;
+  /**
+   * Furniture holding an actor (src/shell/actor-furniture.ts): one in combat gets up out of
+   * its chair, bed or workstation before it fights or flees (it has no controller meanwhile).
+   */
+  readonly furniture?: {
+    holds(actor: number): boolean;
+    leave(actor: number): Promise<void>;
+  };
   /** A horse its rider moves: its own AI waits. */
   readonly ridden?: (actor: number) => boolean;
   /** Spells, staffs and shouts in combat (M10 5.3). */
@@ -270,6 +278,8 @@ interface Mind {
   nextSupport: number;
   restoredAt: number;
   supporting: boolean;
+  /** It gets up out of the furniture that holds it. */
+  gettingUp: boolean;
 }
 
 /** An actor weighs its fight this often (seconds). TODO(M13): the engine's rates. */
@@ -616,6 +626,7 @@ export class ActorCombatAi {
         nextSupport: 0,
         restoredAt: -Infinity,
         supporting: false,
+        gettingUp: false,
       };
       this.#minds.set(reference, mind);
     }
@@ -1166,6 +1177,23 @@ export class ActorCombatAi {
       return;
     }
     if (!canAct(state) || bleedingOut(state)) return;
+    // In a chair, a bed or at a workstation it gets up first (its exit idle), then fights,
+    // flees or searches: the furniture holds it meanwhile (no controller to move it).
+    const furniture = this.#options.furniture;
+    if (furniture?.holds(mind.reference) === true) {
+      if (!mind.gettingUp) {
+        mind.gettingUp = true;
+        void furniture
+          .leave(mind.reference)
+          .catch((error: unknown) => {
+            this.#warn(`${mind.reference.toString(16)} getting up: ${describe(error)}`);
+          })
+          .finally(() => {
+            mind.gettingUp = false;
+          });
+      }
+      return;
+    }
     switch (mind.mode) {
       case 'search': {
         if (this.#clock >= mind.nextLine) {
@@ -1234,6 +1262,9 @@ export class ActorCombatAi {
       });
     }
     if (mind.equipping) return;
+    // One that would flee at once (a coward, uncornered) does not take up its weapon to fight:
+    // its next decision has it flee or yield.
+    if (state.weapon === WeaponState.sheathed && this.#wouldFlee(mind, profile)) return;
     if (state.weapon === WeaponState.sheathed) {
       void host.draw(reference);
       return;
@@ -1656,6 +1687,22 @@ export class ActorCombatAi {
       mind.fleeRetry = this.#clock + COWER_SECONDS;
       void this.#options.host.act(mind.reference, 'ActionIdle');
     });
+  }
+
+  /** Whether it would flee now, not cornered (as #decide weighs it). */
+  #wouldFlee(mind: Mind, profile: Profile): boolean {
+    if (this.#clock < mind.corneredUntil) return false;
+    const magic = this.#options.session.scriptsReady?.magic.aiState(mind.reference);
+    return shouldFlee(
+      {
+        health: mind.health,
+        confidence: profile.confidence,
+        modifier: mind.modifier,
+        afraid: magic?.fleeing === true,
+        rallied: magic?.rallied === true || magic?.frenzied === true,
+      },
+      this.#settings,
+    );
   }
 
   #fleeDistance(): number {

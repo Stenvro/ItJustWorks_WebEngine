@@ -153,6 +153,8 @@ export class Locomotion {
   #heading: number | undefined;
   /** The Direction last given while it moved (undefined standing). */
   #direction: number | undefined;
+  /** A sprint ended while the graph was out of its locomotion (SprintStop may be lost). */
+  #sprintUnsettled = false;
 
   /** Drives the graphs; returns whether it landed from the air in this frame. */
   drive(graphs: Iterable<LocomotionGraph>, frame: LocomotionFrame): boolean {
@@ -195,15 +197,31 @@ export class Locomotion {
     const told = this.#told;
     const moving = speed > MOVING_SPEED;
     set('iSyncIdleLocomotion', moving ? 1 : 0);
+    // A sprint ends before the movement does: the locomotion machine leaves its sprint state
+    // only while it runs (SprintStop after moveStop finds it gone, and its sync variable,
+    // iSyncSprintState, would start it sprinting again at the next moveStart: the body
+    // sprinting while the player runs or walks).
+    const sprintStop = !frame.sprinting && told.sprinting;
+    const sneakStop = !frame.sneaking && told.sneaking;
+    if (sprintStop) send('SprintStop');
+    if (sneakStop) send('SneakStop');
     if (moving !== told.moving) send(moving ? 'moveStart' : 'moveStop');
-    if (frame.sprinting !== told.sprinting) send(frame.sprinting ? 'SprintStart' : 'SprintStop');
-    if (frame.sneaking !== told.sneaking) send(frame.sneaking ? 'SneakStart' : 'SneakStop');
+    if (frame.sprinting && !told.sprinting) send('SprintStart');
+    if (frame.sneaking && !told.sneaking) send('SneakStart');
     if (frame.swimming !== told.swimming) send(frame.swimming ? 'SwimStart' : 'SwimStop');
     // In the air: falling once it comes down; landing when it stands again.
     const falling = airborne && frame.verticalSpeed < 0;
     if (falling && !told.falling) send('JumpFall');
     const landed = !airborne && told.airborne;
     if (landed) send(moving ? 'JumpLandDirectional' : 'JumpLand');
+    // A sprint that ended away from the locomotion machine (in the air, or standing) is told
+    // again once it is back in it (moving again, or landing on the move) not sprinting.
+    if (sprintStop && (airborne || !told.moving)) this.#sprintUnsettled = true;
+    if (frame.sprinting) this.#sprintUnsettled = false;
+    if (this.#sprintUnsettled && moving && !airborne && (!told.moving || landed)) {
+      this.#sprintUnsettled = false;
+      send('SprintStop');
+    }
     this.#told = {
       moving,
       sprinting: frame.sprinting,
@@ -227,6 +245,7 @@ export class Locomotion {
     };
     this.#heading = undefined;
     this.#direction = undefined;
+    this.#sprintUnsettled = false;
   }
 }
 
