@@ -392,6 +392,8 @@ export class PlaySession {
   /** What the crosshair rests on. */
   #target: Activatable | undefined;
   readonly #mayActivate: ((reference: number) => Promise<boolean>) | undefined;
+  readonly #perkActivate: ((reference: number, verb: string) => Promise<boolean>) | undefined;
+  readonly #activateLabel: ((reference: number) => string | undefined) | undefined;
   /** Activate went down on a loose object: it is grabbed if still held after fZKeyDelay. */
   #hold:
     | {
@@ -434,6 +436,13 @@ export class PlaySession {
      * blocked objects, a werewolf's doors); none: always.
      */
     mayActivate?: (reference: number) => Promise<boolean>;
+    /**
+     * The player's perks' choices activating a reference (the Activate entry point: the
+     * werewolf's Feed), before what activating it does; resolves whether that goes on.
+     */
+    perkActivate?: (reference: number, verb: string) => Promise<boolean>;
+    /** What the player's perks call activating a reference (Set Activate Label), if known. */
+    activateLabel?: (reference: number) => string | undefined;
     /** Where the activation prompt is shown. */
     prompt?: HTMLElement;
     /** The HUD's signals: the activation target goes to the game's HUD while one listens. */
@@ -453,6 +462,8 @@ export class PlaySession {
     this.#activatable = init.activatable;
     this.#actorAt = init.actorAt;
     this.#mayActivate = init.mayActivate;
+    this.#perkActivate = init.perkActivate;
+    this.#activateLabel = init.activateLabel;
     this.#prompt = init.prompt;
     this.#hud = init.hud;
     if (init.hud) {
@@ -623,7 +634,9 @@ export class PlaySession {
       const actorFirst = actor !== undefined && (!picked || actor.distance < picked.distance);
       const hit = actorFirst ? undefined : picked;
       this.#setTarget(
-        this.#grab ? undefined : actorFirst ? actor.target : this.#activatableAt(hit),
+        this.#labeled(
+          this.#grab ? undefined : actorFirst ? actor.target : this.#activatableAt(hit),
+        ),
       );
       this.#activate(hit);
     }
@@ -679,18 +692,31 @@ export class PlaySession {
     };
   }
 
-  /** Activates a target unless the player may not (mayActivate: the perks' Filter Activation). */
+  /**
+   * Activates a target unless the player may not (mayActivate: the perks' Filter Activation);
+   * the perks' choices come first (perkActivate: the werewolf's Feed takes the place of
+   * searching a corpse).
+   */
   #activateTarget(target: Activatable | undefined): void {
     if (!target) return;
     const reference = target.reference;
     const may = this.#mayActivate;
-    if (reference === undefined || !may) {
+    const perks = this.#perkActivate;
+    if (reference === undefined || (!may && !perks)) {
       target.activate();
       return;
     }
-    void may(reference).then((allowed) => {
-      if (allowed) target.activate();
-    });
+    void (async () => {
+      if (may && !(await may(reference))) return;
+      if (!perks || (await perks(reference, target.verb))) target.activate();
+    })();
+  }
+
+  /** A target with the label the player's perks give activating it (Set Activate Label). */
+  #labeled(target: Activatable | undefined): Activatable | undefined {
+    const reference = target?.reference;
+    const label = reference === undefined ? undefined : this.#activateLabel?.(reference);
+    return target && label ? { ...target, verb: label } : target;
   }
 
   #activatableAt(hit: PickHit | undefined): Activatable | undefined {

@@ -75,6 +75,8 @@ export class PlayerCombat {
     const hands = combat.hands(PLAYER_REF);
     if (!state || !hands) return;
     if (ready) {
+      // A vampire lord goes up or down instead (its magic in the air, its claws below).
+      if (combat.toggleLevitation(PLAYER_REF)) return;
       if (state.weapon === WeaponState.sheathed) void combat.draw(PLAYER_REF);
       else void combat.sheathe(PLAYER_REF);
       return;

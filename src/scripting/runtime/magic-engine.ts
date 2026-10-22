@@ -1020,9 +1020,14 @@ export class MagicEngine {
         }
         break;
       }
+      // A werewolf fed on the corpse (PlayerWerewolfFeedVictimSpell, the Feed perk's choice):
+      // it is eaten (HasBeenEaten: no one feeds on it again).
+      case EffectArchetype.werewolfFeed:
+        runtime.state.actor(target).eaten = true;
+        break;
       // Cloaks act each second (#pulse); Soul Trap as its target dies (died). Stagger,
       // Concussion, Telekinesis, Grab Actor, Light, Detect Life, Guide, Disguise, Werewolf,
-      // Vampire Lord, Werewolf Feed, Slow Time, Etherealize, Command Summoned, Script: their
+      // Vampire Lord, Slow Time, Etherealize, Command Summoned, Script: their
       // state is the effect itself (aiState, timeMultiplier, the world's magicEffect) and their
       // scripts. TODO(M10) 5.1: staggers and knock-downs; 5.3: telekinesis and the grab;
       // TODO(M11) visuals: lights, Detect Life's shader, Clairvoyance's path.

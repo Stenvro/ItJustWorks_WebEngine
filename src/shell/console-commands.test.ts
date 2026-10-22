@@ -114,6 +114,10 @@ describe('ConsoleCommands perks and spells', () => {
         },
         magic: {
           syncLasting: () => Promise.resolve(),
+          cast: (spell: number, source: number, target: number) => {
+            calls.push(`cast ${spell.toString(16)} ${source.toString(16)} ${target.toString(16)}`);
+            return Promise.resolve(true);
+          },
         },
         spellMessage: () => Promise.resolve(),
         detach: () => undefined,
@@ -141,6 +145,16 @@ describe('ConsoleCommands perks and spells', () => {
       "Item 'babe4' not found for parameter Spell.",
     ]);
     expect(calls).toEqual(['add spell 14 12fcd', 'remove spell 14 12fcd']);
+  });
+
+  it('casts a spell from a reference at a target as Spell.Cast does, at itself by default', async () => {
+    const { commands, calls } = setup();
+    expect(await commands.run('player.cast 12fcd 1a2b')).toEqual([]);
+    expect(await commands.run('player.cast 12fcd')).toEqual([]);
+    expect(await commands.run('player.cast babe4 player')).toEqual([
+      "Item 'babe4' not found for parameter Spell.",
+    ]);
+    expect(calls).toEqual(['cast 12fcd 14 1a2b', 'cast 12fcd 14 14']);
   });
 });
 

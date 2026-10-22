@@ -8,6 +8,7 @@
 
 import { lockDifficulty, LOCKPICK, SKELETON_KEY } from '../gameplay/lockpicking.ts';
 import type { Renderer } from '../render/renderer.ts';
+import type { Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { CellObject } from '../world/cell-loader.ts';
@@ -99,6 +100,8 @@ export interface PlayWorld {
   enter(at: Placement): Promise<void>;
   /** Whether the world follows the scripts' MoveTo of the player (Play: yes). */
   follow(on: boolean): void;
+  /** Fast travel riding a dragon: it flies the player there; false riding none. */
+  flyMountTo(to: Vec3): boolean;
   /** The player's heading: radians, 0 north (+Y), π/2 east (+X); undefined out of the world. */
   heading(): number | undefined;
   /** The mouse looks around (the game) or moves a cursor (a menu). */
@@ -616,6 +619,10 @@ export class PlayMode {
       this.#terminal.log('ui', `fast travel: ${destination.toString(16)} is nowhere`, 'warn');
       return;
     }
+    // Riding a dragon, it flies the player there (in the same worldspace: no loading).
+    const here = session.scriptWorld.livePlacement(PLAYER_REF);
+    if (here?.world !== undefined && here.world === at.world && this.#world.flyMountTo(at.position))
+      return;
     let way = distance;
     if (way === undefined) {
       const from = session.scriptWorld.livePlacement(PLAYER_REF);

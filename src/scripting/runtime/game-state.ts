@@ -121,6 +121,13 @@ export interface ActorState {
   outfit?: number;
   sleepOutfit?: number;
   race?: number;
+  /** Actor.SetEyeTexture: the texture set its eyes take instead of their own (a vampire's). */
+  eyeTexture?: number;
+  /**
+   * The feeding it does now (StartVampireFeed, StartCannibal: GetVampireFeed, GetCannibal),
+   * until the real second it ends.
+   */
+  feeding?: { readonly kind: 'vampire' | 'cannibal'; readonly until: number };
   /** Spells and shouts added (true) or removed (false) by scripts. */
   readonly spells: Map<number, boolean>;
   /** Perks added (true) or removed (false) by scripts. */

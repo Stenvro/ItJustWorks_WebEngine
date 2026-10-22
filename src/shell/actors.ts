@@ -36,6 +36,7 @@ import {
   standsOnGround,
   type GroundHit,
 } from '../world/actor-ground.ts';
+import { HeadPartType } from '../world/actor-records.ts';
 import { referenceMatrix, type CellActor } from '../world/cell-loader.ts';
 import { parseReference } from '../world/cell-records.ts';
 import { activeMarker, furnitureMarkers, markerPlacement } from '../world/furniture.ts';
@@ -560,7 +561,12 @@ export class ActorPlacer {
   async #wornInGame(actor: CellActor): Promise<LookOverrides> {
     const runtime = this.#session.scriptsReady;
     if (!runtime) return {};
-    return { outfit: null, equipped: await runtime.equipment.worn(actor.reference) };
+    const eyeTexture = runtime.state.actors.get(actor.reference)?.eyeTexture;
+    return {
+      outfit: null,
+      equipped: await runtime.equipment.worn(actor.reference),
+      ...(eyeTexture !== undefined && { eyeTexture }),
+    };
   }
 
   /**
@@ -590,6 +596,47 @@ export class ActorPlacer {
     return resolved ? this.#session.packageStart(placedInCell, resolved, space) : undefined;
   }
 
+  /**
+   * The models a look wears, made for it (its weight's blend, its skin's and its variants'
+   * texture sets): the world models, or the first-person ones (ARMA MOD4 / MOD5: the arms the
+   * first-person view shows).
+   */
+  async wornModels(
+    look: ActorLook,
+    firstPerson = false,
+  ): Promise<({ readonly model: GpuModel; readonly addon: number } | undefined)[]> {
+    const session = this.#session;
+    const weight = Math.round(Math.min(100, Math.max(0, look.weight)));
+    return Promise.all(
+      look.worn.map(async (addon) => {
+        const own = firstPerson ? addon.firstPerson : addon.model;
+        if (!own) return undefined;
+        const path = meshPath(own.path);
+        const thin = addon.weighted ? thinModelPath(path) : undefined;
+        const skin =
+          addon.skinTexture === undefined ? undefined : await this.#textureSet(addon.skinTexture);
+        const shapes = await Promise.all(
+          own.alternateTextures.map(async (swap) => {
+            const textures = await this.#textureSet(swap.textureSet);
+            return textures ? [{ shape: swap.shape, textures }] : [];
+          }),
+        );
+        const swaps: ModelTextureSwaps = {
+          ...(skin && { skin }),
+          ...(shapes.flat().length > 0 && { shapes: shapes.flat() }),
+        };
+        if (!session.vfs.has(path)) return undefined;
+        const model = await session.actorModel(
+          path,
+          thin !== undefined && session.vfs.has(thin) ? thin : undefined,
+          weight,
+          swaps,
+        );
+        return model ? { model, addon: addon.addon } : undefined;
+      }),
+    );
+  }
+
   async place(
     placedInCell: CellActor,
     made?: MadeLook,
@@ -600,6 +647,11 @@ export class ActorPlacer {
        * stands): its package does not place it.
        */
       readonly here?: boolean;
+      /**
+       * Its graph starts at its beginning, not somewhere in its idle (the player; one made
+       * again in a new race: the werewolf's graph begins with its change).
+       */
+      readonly fresh?: boolean;
     },
   ): Promise<PlacedActor | undefined> {
     const overrides: LookOverrides = {
@@ -635,38 +687,27 @@ export class ActorPlacer {
     if (!rig) return undefined;
 
     // The models it wears, then its head.
-    const weight = Math.round(Math.min(100, Math.max(0, look.weight)));
-    const worn = await Promise.all(
-      look.worn.map(async (addon) => {
-        const path = meshPath(addon.model.path);
-        const thin = addon.weighted ? thinModelPath(path) : undefined;
-        const skin =
-          addon.skinTexture === undefined ? undefined : await this.#textureSet(addon.skinTexture);
-        const shapes = await Promise.all(
-          addon.model.alternateTextures.map(async (swap) => {
-            const textures = await this.#textureSet(swap.textureSet);
-            return textures ? [{ shape: swap.shape, textures }] : [];
-          }),
-        );
-        const swaps: ModelTextureSwaps = {
-          ...(skin && { skin }),
-          ...(shapes.flat().length > 0 && { shapes: shapes.flat() }),
-        };
-        const model = await session.actorModel(
-          path,
-          thin !== undefined && session.vfs.has(thin) ? thin : undefined,
-          weight,
-          swaps,
-        );
-        return model ? { model, addon: addon.addon } : undefined;
-      }),
-    );
+    const worn = await this.wornModels(look);
     // Its head: the FaceGen head baked for it, else its head parts put together: the head the
     // engine makes (the player's: shaped and painted by the race menu's choices), else as they
     // are (a race's defaults, unshaped).
+    // Eyes a script gave another texture set (SetEyeTexture) take it in the baked head too:
+    // its shapes are named after the head parts.
+    const eyeTexture = overrides.eyeTexture;
+    const eyes =
+      eyeTexture === undefined
+        ? undefined
+        : await this.#textureSet(eyeTexture).catch(() => undefined);
+    const eyeSwaps: ModelTextureSwaps = eyes
+      ? {
+          shapes: look.headParts
+            .filter((part) => part.type === HeadPartType.eyes)
+            .map((part) => ({ shape: part.editorId.toLowerCase(), textures: eyes })),
+        }
+      : {};
     const baked =
       !made && look.faceGen && session.vfs.has(look.faceGen.geometry)
-        ? await session.actorModel(look.faceGen.geometry, undefined, 100, {})
+        ? await session.actorModel(look.faceGen.geometry, undefined, 100, eyeSwaps)
         : undefined;
     const heads: GpuModel[] = [];
     const expressions = new Map<string, string>();
@@ -762,7 +803,7 @@ export class ActorPlacer {
       behavior.setVariable('weapAdj', look.weaponAdjust);
       behavior.update(0);
       await host.loaded();
-      behavior.update(random() * 4);
+      behavior.update(options?.fresh === true ? 0 : random() * 4);
       await host.loaded();
       behavior.update(0);
       behavior.takeRaised();

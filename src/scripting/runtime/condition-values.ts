@@ -1143,13 +1143,13 @@ async function conditionValue(
       ]);
       return self && other ? other.position[2] - self.position[2] : 0;
     }
-    // Riding (src/shell/actor-mounts.ts). TODO(M11): flying mounts (Dragonborn's dragon riding).
+    // Riding (src/shell/actor-mounts.ts): a horse, or a dragon (a flying mount).
     case Fn.isRidingHorse:
       return flag(reference !== undefined && runtime.world.mountOf?.(reference) !== undefined);
     case Fn.isBeingRidden:
       return flag(reference !== undefined && runtime.world.riderOf?.(reference) !== undefined);
     case Fn.isOnFlyingMount:
-      return 0;
+      return flag(reference !== undefined && runtime.world.flyingMount?.(reference) !== undefined);
     // Flying (src/shell/actor-flight.ts: the dragons; FlyingState 0 on the ground .. 6).
     case Fn.getIsFlying:
     case Fn.getFlyingState:
@@ -1349,11 +1349,14 @@ async function conditionValue(
           (await runtime.crime.reaction(reference, other)) === 'hostile',
       );
     }
-    // Casting is the casting engine's (magic-conditions.ts); being fed on and eaten are the
-    // player's powers (TODO(M11)).
+    // Casting is the casting engine's (magic-conditions.ts). Feeding: while the actor's
+    // StartVampireFeed / StartCannibal lasts (the feeding idles' trees ask it).
     case Fn.getVampireFeed:
-    case Fn.getCannibal:
-      return 0;
+    case Fn.getCannibal: {
+      const feeding = reference === undefined ? undefined : state.actors.get(reference)?.feeding;
+      const kind = condition.function === Fn.getVampireFeed ? 'vampire' : 'cannibal';
+      return flag(feeding?.kind === kind && feeding.until > state.realTime);
+    }
     // The type of what a hand holds (its casting source: 0 left, 1 right; Actor's codes).
     case Fn.getEquippedItemType:
       return reference === undefined
@@ -1724,11 +1727,16 @@ async function moreConditionValue(
     // A menu is open (its parameter: the menu type, 0 any). TODO(M13): the menu types.
     case Fn.menuMode:
       return flag(runtime.inMenuMode);
-    // Dragon riding's flying mounts: TODO(M11) (Dragonborn's dragon riding, with
-    // IsOnFlyingMount): no actor rides one.
+    // A ridden dragon sent the way the player looks, or flown to a place by the map's fast
+    // travel (src/shell/actor-mounts.ts).
     case Fn.isFlyingMountPatrolQueued:
+      return flag(
+        reference !== undefined && runtime.world.flyingMount?.(reference)?.patrol === true,
+      );
     case Fn.isFlyingMountFastTravelling:
-      return 0;
+      return flag(
+        reference !== undefined && runtime.world.flyingMount?.(reference)?.travelling === true,
+      );
 
     // --- The tempering item, the kill cameras' kill --------------------------------------------
     case Fn.epTemperingItemIsEnchanted:
