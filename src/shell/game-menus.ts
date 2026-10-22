@@ -36,6 +36,10 @@ import { RaceMenu, type PlayerView } from './race-menu.ts';
 
 /** The menus' depth among the game's menus (over the HUD, under message boxes). */
 const MENU_DEPTH = 6;
+/** A menu a script opens waits this long at most for the one open to close (ms). */
+const SCRIPTED_MENU_WAIT_MS = 120_000;
+/** ... and says what it waits for after this long (ms). */
+const SCRIPTED_MENU_TELL_MS = 3_000;
 
 /** The tween menu's choices (its FrameToLabelMap: 1 up, 2 left, 3 right, 4 down). */
 const TWEEN_CHOICES = ['None', 'Skills', 'Magic', 'Inventory', 'Map'] as const;
@@ -263,10 +267,26 @@ export class GameMenus {
 
   /**
    * A menu a script opens (OpenInventory, ShowBarterMenu, ShowGiftMenu, ShowRaceMenu); resolves
-   * once it has closed, with what it returns (ShowGiftMenu's favor points).
+   * once it has closed, with what it returns (ShowGiftMenu's favor points). While another menu
+   * is open it waits for it to close (the game queues them: MQ101's ShowRaceMenu may come while
+   * a message box is up), SCRIPTED_MENU_WAIT_MS at most.
    */
   async openScripted(request: MenuRequest): Promise<number> {
-    if (this.#open || this.#session.menuMode) return 0;
+    const since = performance.now();
+    let told = false;
+    while (this.#open || this.#session.menuMode) {
+      const waited = performance.now() - since;
+      if (waited > SCRIPTED_MENU_WAIT_MS) {
+        this.#terminal.log('ui', `${request.name} did not open: another menu stayed open`, 'warn');
+        return 0;
+      }
+      if (!told && waited > SCRIPTED_MENU_TELL_MS) {
+        told = true;
+        const holding = [...this.#host.menus].map((menu) => menu.movie).join(', ');
+        this.#terminal.log('ui', `${request.name} waits for the menus open: ${holding}`, 'warn');
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     const session = this.#session;
     if (request.name === 'Training Menu') {
       return request.actor === undefined ? 0 : this.#openTraining(request.actor);
