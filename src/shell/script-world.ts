@@ -81,6 +81,13 @@ export interface ScriptView {
   motion?(reference: number): ActorMotion | undefined;
   /** PlayIdle: an actor of the view plays an idle (false: the view does not hold it). */
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
+  /** Where an actor would use a furniture of the view (its marker), if the view holds it. */
+  interactionLocation?(
+    furniture: number,
+    from: Vec3,
+  ): Promise<
+    { readonly position: readonly [number, number, number]; readonly heading: number } | undefined
+  >;
   /** AddDependentAnimatedObjectReference and its Remove (false: the view does not hold it). */
   dependentAnimated?(reference: number, dependent: number, added: boolean): boolean;
   /** Vehicles and mounts of the view (src/shell/actor-vehicles.ts, actor-mounts.ts). */
@@ -411,6 +418,19 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views)
       played = (view.playIdle?.(actor, idle, target) ?? false) || played;
     return played;
+  }
+
+  async interactionLocation(
+    furniture: number,
+    from: Vec3,
+  ): Promise<
+    { readonly position: readonly [number, number, number]; readonly heading: number } | undefined
+  > {
+    for (const view of this.#views) {
+      const found = await view.interactionLocation?.(furniture, from);
+      if (found) return found;
+    }
+    return undefined;
   }
 
   dependentAnimated(reference: number, dependent: number, added: boolean): boolean {

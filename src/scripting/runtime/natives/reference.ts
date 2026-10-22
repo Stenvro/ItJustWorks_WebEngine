@@ -165,13 +165,20 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     if (reference !== undefined) runtime.moveToEditorLocation(reference);
     return null;
   });
+  // To where it would use the furniture: the marker it would take, facing its way (the
+  // furniture's own place where the view does not hold it).
   n('objectreference.movetointeractionlocation', async (call) => {
-    // TODO(M10): the furniture's entry point; its place until then.
     const reference = self(call);
     const target = ref(call.args[0]);
     const at = target === undefined ? undefined : await runtime.placement(target);
-    if (reference !== undefined && at)
+    if (reference === undefined || target === undefined || !at) return null;
+    const from = (await runtime.placement(reference))?.position ?? at.position;
+    const marker = await world.interactionLocation?.(target, from);
+    if (marker) {
+      runtime.move(reference, [...marker.position], [0, 0, marker.heading], at.cell, at.world);
+    } else {
       runtime.move(reference, [...at.position], [...at.rotation], at.cell, at.world);
+    }
     return null;
   });
   n('objectreference.getdistance', async (call) => {
