@@ -314,8 +314,9 @@ Community Shaders sources):
 6. Colour × base colour scale; Effect_Lighting (SLSF2 `0x40000000`): blended towards colour
    × scene light (directional ambient, the sun at half strength even from behind — smoke
    scatters it — and point lights) by the lighting influence.
-7. Alpha test, then fog: additive effects (destination factor ONE) fade out, others blend to
-   the fog colour.
+7. Alpha test, then fog: additive effects (destination factor ONE) fade out, multiplicative
+   ones (destination SRC_COLOR or source DEST_COLOR: the engine's MULTBLEND) fade to white by
+   1.5 × the fog, others blend to the fog colour.
 
 Draw uniforms of effects: base colour (emissive slot), base colour scale (params.w), lighting
 influence and soft depth (specular slot). Texture clamp mode picks the sampler (bit 0 wraps U,
@@ -347,6 +348,43 @@ the scene lerped to the shifted scene by that mask. Their UV controllers scroll 
 Fire_Refraction (`0x10000`) without Refraction (about
 50 shapes) is drawn as a regular surface: what it changes in the engine is not documented
 (TODO(M13)).
+
+## Weapon blood
+
+A blade that struck flesh shows blood, as the engine's BSTempEffectWeaponBlood does. The
+blood is in the weapon models themselves (`node tools/held-weapon-info.ts`; 2698 of 3309 WEAP
+world models, 2800 first-person ones): hidden shapes (NiAVObject flag 0x1) over the blade
+whose shader has SLSF1 Decal and Dynamic_Decal (`0x0C000000`; no other hidden shape has
+Dynamic_Decal), in pairs under names that vary (BloodLighting / BloodEffects, EdgeBlood01 /
+EdgeBlood, WarAxeBloodLighting / WarAxeBloodFX, ...):
+
+- an **effect** shape with SLSF2 Weapon_Blood (`0x20000`) over `textures\blood\BloodEdge01.dds`
+  (blades) or `BloodHitDecals01.dds` (maces and hammers), multiplied over the blade (alpha
+  flags `0x5243`: source ZERO, destination SRC_COLOR, alpha test greater than 0). The texture
+  is not a colour: its green is the blood's mask and its blue how thick it is. The engine's
+  BLOOD technique (Community Shaders' `Effect.hlsl`): alpha = green; above = saturate(green −
+  AlphaTestRef.x); mul = blue × vertex alpha, × above / AlphaTestRef.y where above is less
+  than AlphaTestRef.y; colour = saturate((2, 1, 1) − mul) × (1 − mul × AlphaTestRef.z). So
+  the blade keeps its colour where there is no blood and turns dark red where it is thick.
+  Here the draw's `layer` slot (unused by effects) carries AlphaTestRef: x the cutoff, y the
+  soft edge (fWeaponBloodFalloffThreshold, 0.07), z 0 (TODO(M13): what the engine puts
+  there).
+- a **lighting** shape over the same texture's `Add` version (black, its alpha the wet parts)
+  with `BloodEdge01_n.dds`, the eye cube map at 0.25 and glossiness 500, drawn additively
+  (alpha flags `0x520d`: SRC_ALPHA, ONE): the wet sheen.
+
+`buildModel` keeps these shapes (`ModelPart.weaponBlood`); the scene draws them only on an
+instance that carries a weapon's blood (`ModelInstance.weaponBlood`: the weapons combat hangs
+on actors and on the first-person arms, src/shell/actor-weapons.ts), and leaves them out of
+overlays and of the parts decals land on. A melee hit whose impact leaves a blood decal (the
+weapon's impact data set against the target's flesh: DecalBloodBladeHit, DecalBloodDraugrHit;
+not bone, metal or a punch) bloodies the weapon of the hand that struck
+(src/gameplay/combat/weapon-blood.ts): fresh for fWeaponBloodLifetime (10 s), the cutoff then
+rising from 0 to 1 over fWeaponBloodFadeDuration (60 s), so the thin blood goes first and the
+thick drops last, the sheen's alpha falling with it; another hit makes it fresh again. The
+third- and first-person models of the same weapons share it; other weapons come clean.
+TODO(M13): how the engine drives AlphaTestRef and the sheen's alpha from its blend amount over
+time is not documented; this is the plain reading of the three settings.
 
 ## Decals
 

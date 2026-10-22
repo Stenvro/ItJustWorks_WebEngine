@@ -877,8 +877,10 @@ meanwhile.
   weaponSheathe; its scabbard ("Scb") stays at the sheath; a left-hand weapon is shown drawn
   only, in SHIELD (vanilla's skeleton has no left sheaths); the ammunition hangs in QUIVER (its
   single "Arrow:0" left out) and an arrow is on the bow from arrowAttach to its release. The bow
-  animations move the Weapon bone into the left hand (Bow_DrawLight: 19 units beyond it). The
-  weapon's sounds: NAM9 at weaponDraw, NAM8 at weaponSheathe, TNAM at weaponSwing (every vanilla
+  animations move the Weapon bone into the left hand (Bow_DrawLight: 19 units beyond it). A bow's
+  or crossbow's own graph draws its string with its wielder's graph events
+  ([animation.md](animation.md#held-weapons)); a blade that drew blood shows it
+  ([rendering.md](rendering.md#weapon-blood)). The weapon's sounds: NAM9 at weaponDraw, NAM8 at weaponSheathe, TNAM at weaponSwing (every vanilla
   melee weapon's swing, WPNSwingBladeMediumSD; xEdit names it the attack fail sound), SNAM at
   a shot.
 - **Hits** (`hit-test.ts`): at HitFrame the strike reaches fCombatDistance (141) × the weapon's
