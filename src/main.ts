@@ -208,26 +208,33 @@ const LOCKED_KEYS: readonly string[] = [
 const MAX_FRAME_SECONDS = 0.25;
 /** A loading screen waits this long at most for the player's body and the actors around them (ms). */
 const POPULATE_MS = 20000;
+/**
+ * Enemies this near stop fast travel (sNoFastTravelHostileActorsNear; game units). TODO(M13): the
+ * engine's own distance is not documented (no game setting): the high process's.
+ */
+const HOSTILES_NEAR_RADIUS = 4096;
 
 function startRenderLoop(
   renderer: Renderer,
   memory: () => number | undefined,
   everyFrame: () => void,
   paused: () => boolean,
+  /** How fast the game's clock runs against the real one (Slow Time). */
+  timeScale: () => number,
 ): void {
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let frames = 0;
   let windowStart = performance.now();
 
   // The game's clock: it stands still while the game is in a menu (the player, animations,
-  // particles and the sky's hour stop with it).
+  // particles and the sky's hour stop with it); Slow Time runs it slower (src/shell/time-flow.ts).
   let gameTime = 0;
   let last: number | undefined;
   const frame = (now: number): void => {
     // A hidden tab draws no frames: back, the game goes on where it was (the time away is not
     // played at once; the scripts' clock is held the same way).
     if (last !== undefined && !paused())
-      gameTime += Math.min(MAX_FRAME_SECONDS, (now - last) / 1000);
+      gameTime += Math.min(MAX_FRAME_SECONDS, (now - last) / 1000) * timeScale();
     last = now;
     renderer.render(reducedMotion ? 30 : gameTime, devicePixelRatio);
     everyFrame();
@@ -619,6 +626,19 @@ async function main(): Promise<void> {
       worldViewer.player ? worldViewer.localMapContent() : modelViewer.localMapContent(),
     tweenCamera: () => (worldViewer.player ?? modelViewer.player)?.tween,
     player: () => worldViewer.playerView ?? modelViewer.playerView,
+    hostilesNear: async () => {
+      const view = worldViewer.playerView ?? modelViewer.playerView;
+      const stage = worldViewer.playing ? worldViewer.actorStage : modelViewer.actorStage;
+      if (!view || !stage) return false;
+      return stage.hostilesNear(view.play.player.feet, HOSTILES_NEAR_RADIUS);
+    },
+    enemies: () => {
+      const stage = worldViewer.player ? worldViewer.actorStage : modelViewer.actorStage;
+      return (stage?.combat.enemiesOfPlayer() ?? []).flatMap((reference) => {
+        const staged = stage?.get(reference);
+        return staged ? [staged.position] : [];
+      });
+    },
     inAir: () => {
       const player = worldViewer.player ?? modelViewer.player;
       return player !== undefined && !player.character.grounded && !player.character.swimming;
@@ -850,6 +870,7 @@ async function main(): Promise<void> {
       if (loading !== undefined) ui.loadingWhat.textContent = loading;
     },
     () => session?.menuMode === true,
+    () => session?.time.multiplier ?? 1,
   );
   const resumeAudio = (): void => {
     void session?.sounds().then((sounds) => sounds.engine.resume());

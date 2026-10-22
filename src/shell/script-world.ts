@@ -61,6 +61,13 @@ export interface ScriptView {
   lookChanged?(reference: number): Promise<void>;
   /** An actor died: the view lays it down as its ragdoll (its pose follows its bodies). */
   killed?(reference: number): void;
+  /** A magic effect begins or ends on an actor: what it shows (src/shell/actor-effects.ts). */
+  magicEffect?(shown: MagicEffectShown): void;
+  /** A Stagger effect on an actor of the view. */
+  stagger?(actor: number, magnitude: number, from: number | undefined): void;
+  /** EffectShader.Play / Stop and VisualEffect.Play / Stop on a reference of the view. */
+  effectShader?(shader: number, target: number, play: boolean, duration: number): void;
+  visualEffect?(effect: number, target: number, play: boolean, duration: number): void;
   /** The package an actor of the view runs now (its AI), if any. */
   currentPackage?(reference: number): number | undefined;
   /** The procedure its package runs now, by name (GetCurrentAIProcedure). */
@@ -83,6 +90,13 @@ export interface ScriptView {
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
   /** ForceFirstPerson / ForceThirdPerson: the player's camera of the view. */
   pointOfView?(pov: 'first' | 'third'): void;
+  /** Where an actor would use a furniture of the view (its marker), if the view holds it. */
+  interactionLocation?(
+    furniture: number,
+    from: Vec3,
+  ): Promise<
+    { readonly position: readonly [number, number, number]; readonly heading: number } | undefined
+  >;
   /** AddDependentAnimatedObjectReference and its Remove (false: the view does not hold it). */
   dependentAnimated?(reference: number, dependent: number, added: boolean): boolean;
   /** Vehicles and mounts of the view (src/shell/actor-vehicles.ts, actor-mounts.ts). */
@@ -422,6 +436,19 @@ export class ScriptWorld implements WorldBridge {
     return played;
   }
 
+  async interactionLocation(
+    furniture: number,
+    from: Vec3,
+  ): Promise<
+    { readonly position: readonly [number, number, number]; readonly heading: number } | undefined
+  > {
+    for (const view of this.#views) {
+      const found = await view.interactionLocation?.(furniture, from);
+      if (found) return found;
+    }
+    return undefined;
+  }
+
   dependentAnimated(reference: number, dependent: number, added: boolean): boolean {
     let took = false;
     for (const view of this.#views)
@@ -627,12 +654,29 @@ export class ScriptWorld implements WorldBridge {
 
   /**
    * A magic effect begins or ends on an actor: its sound plays (magic-engine.ts plays it); its
-   * hit shader (EFSH), art (ARTO), visuals (RFCT) and light are not drawn yet. TODO(M11)
-   * visuals: effect shaders and art objects on actors, lights that follow them.
+   * hit shader (EFSH), art (ARTO), visuals (RFCT: their art and shader) and light show on it
+   * where a view shows it (src/shell/actor-effects.ts), Detect Life on those it finds,
+   * Clairvoyance's trail.
    */
   magicEffect(shown: MagicEffectShown): void {
     if (shown.event === 'start' && shown.target === PLAYER_REF)
       this.#terminal.log('magic', `effect ${shown.effect.toString(16)} on the player`);
+    for (const view of this.#views) view.magicEffect?.(shown);
+  }
+
+  /** A Stagger effect: the views stagger the actor. */
+  stagger(actor: number, magnitude: number, from: number | undefined): void {
+    for (const view of this.#views) view.stagger?.(actor, magnitude, from);
+  }
+
+  /** EffectShader.Play (seconds; −1 until Stop) and Stop. */
+  effectShader(shader: number, target: number, play: boolean, duration: number): void {
+    for (const view of this.#views) view.effectShader?.(shader, target, play, duration);
+  }
+
+  /** VisualEffect.Play (seconds; −1 until Stop) and Stop (TODO(M13): facing its target). */
+  visualEffect(effect: number, target: number, play: boolean, duration: number): void {
+    for (const view of this.#views) view.visualEffect?.(effect, target, play, duration);
   }
 
   music(type: number, add: boolean): void {
@@ -649,12 +693,17 @@ export class ScriptWorld implements WorldBridge {
     action: 'apply' | 'remove' | 'crossfade' | 'removeCrossfade' | 'popTo',
     value: number,
     other?: number,
+    target?: number,
   ): void {
     const modifiers = this.modifiers;
     if (!modifiers) return;
     switch (action) {
       case 'apply':
-        void modifiers.apply(modifier, value);
+        void modifiers.apply(
+          modifier,
+          value,
+          target === undefined ? {} : { target: () => this.livePlacement(target)?.position },
+        );
         break;
       case 'remove':
         void modifiers.remove(modifier);

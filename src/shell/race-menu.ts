@@ -18,8 +18,9 @@
 // the name box asks for a name (ShowTextEntryField; while it is typed into, Enter accepts, Esc
 // and Tab cancel) and sRSMNameWarning with it; the limited menu asks sRSMFinishedWarning. Then
 // the menu fades (FadeOut: its root's frames 2..9) and closes.
-// TODO(M11): a race change after the opening resets the skills and changes the race's abilities
-// (RACE SPLO). Notes: docs/ui.md ("Character creation").
+// The race it finishes with brings its abilities (RACE SPLO, the magic system's lasting
+// effects); after the opening a new race also resets the skills to the race's (UESP "Console").
+// Notes: docs/ui.md ("Character creation").
 
 import {
   applySlider,
@@ -35,7 +36,9 @@ import {
 } from '../gameplay/chargen.ts';
 import type { ChargenRaceEntry } from '../gameplay/chargen-catalog.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { flashKeyCode } from '../ui/key-codes.ts';
+import { ActorValue, SKILL_COUNT } from '../world/actor-values.ts';
 import type { Menu, MenuCallHandler, MenuHost } from '../ui/menu-host.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import type { GameSession } from './game-session.ts';
@@ -136,6 +139,19 @@ export class RaceMenu {
       if (!view || view.avatar || performance.now() > until) return view;
       await wait(50);
     }
+  }
+}
+
+/**
+ * The player's skills back to their race's (the record's, by the race now: the base the skill
+ * increases set and their experience go). Level, perks and perk points stay.
+ */
+export function resetSkillsToRace(runtime: ScriptRuntime): void {
+  const values = runtime.state.actors.get(PLAYER_REF)?.values;
+  for (let skill = ActorValue.firstSkill; skill < ActorValue.firstSkill + SKILL_COUNT; skill++) {
+    const value = values?.get(skill);
+    if (value) delete value.base;
+    runtime.state.skillExperience.delete(skill);
   }
 }
 
@@ -444,6 +460,21 @@ class Editing {
     event.preventDefault();
   };
 
+  /**
+   * The race the menu finished with: its abilities (RACE SPLO) take the old race's place on the
+   * player (the magic system's lasting effects). After the opening's race menu (any finished
+   * before) a new race also resets the skills to its own (UESP "Console": showracemenu; the
+   * level and perks stay). The limited menu keeps the race.
+   */
+  async #raceSettled(): Promise<void> {
+    const runtime = this.#session.scriptsReady;
+    if (!runtime || this.#setup.limited) return;
+    const changed = this.#appearance.race !== this.#setup.appearance.race;
+    if (changed && runtime.state.raceChosen) resetSkillsToRace(runtime);
+    runtime.state.raceChosen = true;
+    if (changed) await runtime.magic.syncLasting(PLAYER_REF);
+  }
+
   /** Fades the menu out (its root's frames 2..9), then it closes. */
   #finish(menu: Menu): void {
     if (this.#closing) return;
@@ -456,6 +487,13 @@ class Editing {
       }
       // The look's last changes are in place before the game goes on.
       await this.#queue;
+      await this.#raceSettled().catch((error: unknown) => {
+        this.#terminal.log(
+          'ui',
+          `the new race: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+      });
       this.close();
     })();
   }

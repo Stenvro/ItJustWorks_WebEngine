@@ -1756,7 +1756,8 @@ export class BehaviorRuntime {
         return;
       }
       case 'speed-sampler':
-        // TODO(M10): the actor's measured speed; until then its goal speed.
+        // Its goal speed is bound to Speed, the measured speed the locomotion drives
+        // (src/ai/locomotion.ts).
         this.#write(modifier.speedOut, scope, this.#read(modifier.goalSpeed, scope));
         return;
       case 'keyframe-bones':

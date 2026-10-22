@@ -10,6 +10,14 @@ describe('fast travel', () => {
     expect(noFastTravelReason({ ...free, placeForbids: true })).toBe('sNoFastTravelCell');
     expect(noFastTravelReason({ ...free, inAir: true })).toBe('sNoFastTravelInAir');
     expect(noFastTravelReason({ ...free, carried: 301 })).toBe('sNoFastTravelOverencumbered');
+    expect(noFastTravelReason({ ...free, inCombat: true })).toBe('sNoFastTravelCombat');
+    expect(noFastTravelReason({ ...free, hostilesNear: true })).toBe(
+      'sNoFastTravelHostileActorsNear',
+    );
+    expect(noFastTravelReason({ ...free, takingHealthDamage: true })).toBe(
+      'sFastTravelNoTravelHealthDamage',
+    );
+    expect(noFastTravelReason({ ...free, pursued: true })).toBe('sNoFastTravelAlarm');
   });
 
   it('takes the time walking there takes, at the timescale', () => {

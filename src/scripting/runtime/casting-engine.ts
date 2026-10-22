@@ -34,7 +34,11 @@ import {
   type CastingSettings,
   type HandCast,
 } from '../../gameplay/magic/casting.ts';
-import { MagicValue, UNITS_PER_FOOT } from '../../gameplay/magic/effect-rules.ts';
+import {
+  MagicValue,
+  resistanceMultiplier,
+  UNITS_PER_FOOT,
+} from '../../gameplay/magic/effect-rules.ts';
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import {
   SHOUT_DEFAULTS,
@@ -107,6 +111,8 @@ export interface Delivered {
   /** The staff, scroll or shout it came by. */
   readonly object?: number | undefined;
   readonly cost: CastCost;
+  /** Sent on by an explosion's spawned projectile this many times (chain lightning). */
+  readonly chained?: number;
 }
 
 /** How a delivery reaches its target. */
@@ -369,6 +375,30 @@ export class CastingEngine {
       return item?.kind === 'staffEnchantment' ? { item, via: 'staff', object: held } : undefined;
     }
     return undefined;
+  }
+
+  /**
+   * The staffs an actor carries that hold charge, with their enchantments (what the combat AI
+   * may fight with: src/shell/combat-casting.ts).
+   */
+  async staffs(
+    actor: number,
+  ): Promise<{ readonly staff: number; readonly item: MagicItemRecord }[]> {
+    const runtime = this.#runtime;
+    const staffs: { staff: number; item: MagicItemRecord }[] = [];
+    for (const [form, count] of await runtime.inventory(actor)) {
+      if (count <= 0) continue;
+      const record = await runtime.forms.record(form);
+      if (record?.type !== 'WEAP') continue;
+      const enchantment = record.formIdField('EITM');
+      const item = enchantment === undefined ? undefined : await runtime.magic.item(enchantment);
+      if (item?.kind !== 'staffEnchantment') continue;
+      const castable: Castable = { item, via: 'staff', object: form };
+      if ((await this.charge(actor, castable)) < (await this.cost(actor, castable)).charge)
+        continue;
+      staffs.push({ staff: form, item });
+    }
+    return staffs;
   }
 
   // --- Casts ---------------------------------------------------------------------------------
@@ -807,7 +837,8 @@ export class CastingEngine {
   /**
    * An explosion bursts at a point (a projectile's, an effect's): its enchantment on the actors
    * within its radius, its damage (Health, less with distance), its force pushing them (the
-   * world's impulse; TODO(M10) 5.1: knock-downs by its flags). Returns the actors reached.
+   * world's impulse). Returns the actors reached. TODO(M10) 5.1: knock-downs by its flags
+   * (Knock Down Always, by Formula) with the living ragdolls that get up.
    */
   async explode(caster: number | undefined, explosionId: number, point: Point): Promise<number[]> {
     const runtime = this.#runtime;
@@ -1006,9 +1037,16 @@ export class CastingEngine {
    * The spell an NPC casts for a purpose now: of its spells (and what its hands hold), those
    * that serve it (attack: hostile and sent at a target; heal: restores its Health; summon:
    * summons or raises; ward: a ward; buff: a Self spell otherwise), the costliest it has the
-   * magicka for. TODO(M10) 5.2: the combat style's magic score, the target's weaknesses.
+   * magicka for; at a target, the costliest by what gets through its resistances (its
+   * weaknesses first: a frost spell at a fire atronach). Whether the NPC casts at all is its
+   * combat style's (its magic score against its weapons': src/ai/combat-tactics.ts).
+   * TODO(M13): the engine's own weighing of spells (cost taken as their worth).
    */
-  async chooseSpell(actor: number, purpose: CastPurpose): Promise<MagicItemRecord | undefined> {
+  async chooseSpell(
+    actor: number,
+    purpose: CastPurpose,
+    target?: number,
+  ): Promise<MagicItemRecord | undefined> {
     const runtime = this.#runtime;
     const ids = new Set(await runtime.actors.spells(actor));
     const loadout = await runtime.equipment.of(actor);
@@ -1022,15 +1060,28 @@ export class CastingEngine {
       const cost = (await this.cost(actor, { item, via: 'spell' })).magicka;
       const needed = item.castType === CastType.concentration ? 0 : cost;
       if (magicka <= 0 || magicka < needed) continue;
-      if (!best || cost > best.cost) best = { item, cost };
+      const worth =
+        purpose === 'attack' && target !== undefined
+          ? cost * (await this.#getsThrough(item, target))
+          : cost;
+      if (!best || worth > best.cost) best = { item, cost: worth };
     }
     return best?.item;
   }
 
+  /** The share of an attack spell's costliest effect a target's resistance lets through. */
+  async #getsThrough(item: MagicItemRecord, target: number): Promise<number> {
+    const runtime = this.#runtime;
+    const main = await this.mainEffect(item);
+    if (!main || main.resistValue < 0) return 1;
+    const resist = (await runtime.actors.value(target, main.resistValue)).current;
+    return resistanceMultiplier(resist, undefined);
+  }
+
   /**
    * The potion an NPC drinks to restore an actor value (Health, Magicka, Stamina): of the
-   * potions it carries, the one restoring the most (magnitude × its seconds). TODO(M10) 5.2:
-   * when the combat AI drinks (its combat style, the value's threshold).
+   * potions it carries, the one restoring the most (magnitude × its seconds). The combat AI
+   * drinks below iAICombatRestoreHealthPercentage (src/shell/actor-combat-ai.ts).
    */
   async choosePotion(actor: number, value: number): Promise<number | undefined> {
     const runtime = this.#runtime;

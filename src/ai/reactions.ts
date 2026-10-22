@@ -15,9 +15,9 @@
 // - warning (a guard, crime: M11): it goes to the one it warns and faces them while the warning
 //   lasts.
 //
-// TODO(M13): the engine's own steps and timings beyond these settings are not documented. The
-// lines they say (NormalToAlert, AlertToNormal, NoticeCorpse, the guard's warning): TODO(M10)
-// 4.3. Platform-independent.
+// They say their lines as they go (NormalToAlert, AlertToNormal, NoticeCorpse, Trespass for the
+// warning: src/shell/actor-talk.ts). TODO(M13): the engine's own steps and timings beyond these
+// settings are not documented. Platform-independent.
 
 type Vec3 = readonly [number, number, number];
 

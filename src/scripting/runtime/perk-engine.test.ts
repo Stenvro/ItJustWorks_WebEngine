@@ -162,21 +162,21 @@ describe("the perks' activation choices", () => {
 
   it('takes a Run Immediately choice at once: its spell, its fragment, no default', async () => {
     const { engine, calls } = setup([choice('', true, true, 0)], 0);
-    expect(await engine.activate(ACTOR, TARGET, 'Search')).toBe(false);
+    expect(await engine.activate(ACTOR, TARGET, 'Search', 'Hod')).toBe(false);
     expect(calls).toEqual(['cast 500 14 5000', 'prkf_feed.Fragment_0']);
   });
 
   it('offers the choices and the default in a message box', async () => {
-    const chose = setup([choice('Feed', false, false, 1)], 0);
-    expect(await chose.engine.activate(ACTOR, TARGET, 'Talk')).toBe(false);
+    const chose = setup([choice('Feed', false, false, 1)], 1);
+    expect(await chose.engine.activate(ACTOR, TARGET, 'Talk', 'Hod')).toBe(false);
     expect(chose.calls).toEqual([
-      'box Hod: Feed, Talk',
+      'box Hod: Talk, Feed',
       'cast 500 14 5000',
       'prkf_feed.Fragment_15',
     ]);
-    const declined = setup([choice('Feed', false, false, 1)], 1);
-    expect(await declined.engine.activate(ACTOR, TARGET, 'Talk')).toBe(true);
-    expect(declined.calls).toEqual(['box Hod: Feed, Talk']);
+    const declined = setup([choice('Feed', false, false, 1)], 0);
+    expect(await declined.engine.activate(ACTOR, TARGET, 'Talk', 'Hod')).toBe(true);
+    expect(declined.calls).toEqual(['box Hod: Talk, Feed']);
   });
 });
 

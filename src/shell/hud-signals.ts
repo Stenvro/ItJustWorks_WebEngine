@@ -35,7 +35,8 @@ export interface HelpMessage {
 }
 
 export interface HudSink {
-  target(target: HudTarget | undefined): void;
+  /** What the crosshair rests on; `favor`: a follower's command mode (its own crosshair). */
+  target(target: HudTarget | undefined, favor?: boolean): void;
   notification(text: string): void;
   questUpdate(update: QuestUpdate): void;
   helpMessage(message: HelpMessage): void;
@@ -86,6 +87,8 @@ export interface MenuSink {
   playerDied?(): void;
   /** fPlayerDeathReloadTime after the death: the game loads its most recent save. */
   reloadAfterDeath?(): void;
+  /** A tutorial (a default object's help message: HBFT), the first time. */
+  tutorial?(use: string): void;
 }
 
 /** What covers the screen (Play, from its main menu on: a new game's opening uses them). */
@@ -107,6 +110,8 @@ export class HudSignals implements ProgressionListener {
   screen: ScreenSink | undefined;
   /** What activating containers and items does (Play), if anything. */
   uses: ObjectUses | undefined;
+  /** A follower's command mode (src/shell/actor-favors.ts): Tab leaves it (true: it was on). */
+  favors: { cancel(): boolean } | undefined;
   /**
    * The stealth meter's reading (the play's senses: src/shell/actor-senses.ts), read by the HUD
    * every frame; undefined: no play.
@@ -118,8 +123,8 @@ export class HudSignals implements ProgressionListener {
     return this.sink !== undefined;
   }
 
-  target(target: HudTarget | undefined): void {
-    this.sink?.target(target);
+  target(target: HudTarget | undefined, favor = false): void {
+    this.sink?.target(target, favor);
   }
 
   notification(text: string): void {
@@ -176,6 +181,8 @@ export class HudSignals implements ProgressionListener {
 
   userEvent(name: string): void {
     this.sink?.userEvent(name);
+    // Tab in a follower's command mode leaves it (actor-favors.ts) instead of opening a menu.
+    if (name.toLowerCase() === 'tween menu' && this.favors?.cancel() === true) return;
     this.menus?.userEvent(name);
   }
 }

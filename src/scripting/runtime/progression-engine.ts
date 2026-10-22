@@ -178,10 +178,11 @@ export class ProgressionEngine {
   /** Who hears of skill increases and blinking meters (the HUD in Play). */
   listener: ProgressionListener | undefined;
   /**
-   * Whether an actor is in combat now: its regeneration slows (TODO(M11): the combat system
-   * sets this; until then no one is).
+   * Whether an actor is in combat now (the combat system's state: src/shell/actor-combat.ts,
+   * WorldBridge.combat): its regeneration slows.
    */
-  inCombat: (actor: number) => boolean = () => false;
+  inCombat: (actor: number) => boolean = (actor) =>
+    this.#runtime.world.combat?.(actor)?.inCombat === true;
   #settings: Promise<Settings> | undefined;
   readonly #curves = new Map<number, Promise<SkillCurve | undefined>>();
   readonly #classes = new Map<number, Promise<ClassStats | undefined>>();
@@ -823,7 +824,7 @@ export class ProgressionEngine {
     return weight;
   }
 
-  /** `seconds` of an actor sprinting: its stamina drains (TODO(M11): NPCs' movers call this). */
+  /** `seconds` of an actor sprinting: its stamina drains (NPCs' movers: src/shell/actor-movers.ts). */
   async sprint(actor: number, seconds: number): Promise<void> {
     if (actor === PLAYER_REF) return; // The player's drains as it sprints (update).
     await this.#drain(actor, seconds);

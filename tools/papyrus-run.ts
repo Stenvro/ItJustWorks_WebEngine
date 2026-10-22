@@ -112,7 +112,7 @@ for (let t = 0; t < seconds; t += frame) {
     activations.splice(activations.indexOf(activation), 1);
     const reference = Number.parseInt(activation.what, 16);
     // The perks' choices first (the werewolf's Feed); then the default activation.
-    const goesOn = await runtime.perks.activate(PLAYER_REF, reference, 'Activate');
+    const goesOn = await runtime.perks.activate(PLAYER_REF, reference, 'Activate', '');
     if (goesOn) runtime.playerActivated(reference);
     console.log(
       `${t.toFixed(1)} s: activated ${activation.what}${goesOn ? '' : ' (a perk took it)'}`,

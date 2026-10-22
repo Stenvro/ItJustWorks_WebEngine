@@ -149,6 +149,11 @@ interface SpotKind {
 const FURNITURE_SPECIAL = 0x6e9c7;
 /** Spots this far above or below a sandbox's centre are on another floor (units). */
 const SPOT_HEIGHT = 160;
+/**
+ * Furniture markers up to this high are seats and beds whose clips lift the body from the
+ * furniture's own height (game units); higher ones put the root at the marker.
+ */
+const SEAT_HEIGHT_MAX = 64;
 /** The event that ends an idle and returns the graph to its default state. */
 const FORCE_DEFAULT_STATE = 'IdleForceDefaultState';
 
@@ -622,6 +627,19 @@ export class ActorFurniture {
   }
 
   /** A placed furniture's active markers in the world, read once. */
+  /**
+   * Where an actor at `from` would use a furniture: the marker it would take (its place and
+   * heading), MoveToInteractionLocation's place. Undefined: not furniture, no marker free.
+   */
+  async interactionLocation(
+    furniture: number,
+    from: Vec3,
+  ): Promise<{ readonly position: Vec3; readonly heading: number } | undefined> {
+    const info = await this.#info(furniture);
+    const chosen = info && this.#choose(info, from, undefined);
+    return chosen && { position: chosen.marker.position, heading: chosen.marker.heading };
+  }
+
   #info(reference: number): Promise<FurnitureInfo | undefined> {
     let entry = this.#furniture.get(reference);
     if (!entry) {
@@ -655,11 +673,13 @@ export class ActorFurniture {
       if (!isMarkerActive(furniture, index)) return;
       // The root stays at the furniture's own height: its clips put the body on the seat, the
       // bed (the marker's height is the seat's they were made for: a chair's 34, a stool's 49).
-      // TODO(M10) 3.5: furniture whose markers are high above it (a cart's seats, alcoves).
+      // A marker high above that (a creature alcove's 114, a web's 95, the Helgen tower hole's
+      // 223 for Alduin, ambush markers, a cart's seats) is where the root goes: its clips start
+      // there (13 vanilla furniture). TODO(M13): the engine's own rule is not documented.
       const placed = markerPlacement(
         { position: at.position, rotation: at.rotation },
         position,
-        false,
+        position.offset[2] > SEAT_HEIGHT_MAX,
       );
       const allowed = furniture.entryPoints[index]?.entries ?? position.entryPoints;
       const disabled = markerData(furniture, index)?.disabledEntries ?? 0;

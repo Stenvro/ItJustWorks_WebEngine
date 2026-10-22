@@ -185,18 +185,23 @@ export async function ragdollsOf(
   return ragdolls.filter((ragdoll): ragdoll is CellRagdoll => ragdoll !== undefined);
 }
 
-/** Where an actor's head is, in the world (TODO(M10): creatures' heads by their race). */
+/** Where an actor's head is, in the world: its race's head node (its body part data's). */
 export function headPosition(placed: PlacedActor): Vec3 {
   const world = placed.instances[0]?.world;
-  const head = placed.pose.world('NPC Head [Head]') ?? placed.pose.world('Head');
+  const node = placed.look.headNode;
+  const head =
+    (node === undefined ? undefined : placed.pose.world(node)) ??
+    placed.pose.world('NPC Head [Head]') ??
+    placed.pose.world('Head');
   const local: Vec3 = head ? [head[12] ?? 0, head[13] ?? 0, head[14] ?? 0] : [0, 0, 120];
   return world ? transformPoint(world, local) : actorFeet(placed);
 }
 
 /**
  * The actor a ray from `origin` along `direction` (unit) passes within `radius` of (its body,
- * feet to head) within `length`, the nearest along the ray. TODO(M10): actors' own collision
- * (their character controllers and bodies) is what the crosshair rests on in the game.
+ * feet to head) within `length`, the nearest along the ray: which actor the crosshair is on
+ * once the physics pick has met an actor's controller (L_ITEMPICKER meets L_CHARCONTROLLER:
+ * src/shell/play-session.ts).
  */
 export function actorOnRay(
   actors: Iterable<PlacedActor>,
@@ -476,9 +481,13 @@ export class ActorPlacer {
    * The actor says a voice file at its head, its face lip-syncing (lines with lip-sync data
    * start their curves first, by their lead-in). Undefined if the file cannot be read.
    */
-  async say(placed: PlacedActor, path: string): Promise<SpokenLine | undefined> {
+  async say(
+    placed: PlacedActor,
+    path: string,
+    inPlayersHead = false,
+  ): Promise<SpokenLine | undefined> {
     const sounds = await this.#session.sounds();
-    const line = await sounds.voiceLine(path);
+    const line = await sounds.voiceLine(path, inPlayersHead);
     if (!line) return undefined;
     let lip: LipFile | undefined;
     try {

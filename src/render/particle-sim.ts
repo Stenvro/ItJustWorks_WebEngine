@@ -40,6 +40,23 @@ export interface ParticleContext {
   readonly sequences?: readonly { readonly sequence: string; readonly start: number }[];
 }
 
+/**
+ * What a scene's particle draw runs each frame: a NIF system's simulation, or particles another
+ * part of the engine makes (an effect shader's off an actor's surfaces: src/shell/actor-effects.ts).
+ */
+export interface ParticleSource {
+  readonly data: ParticleSystemData;
+  /** Particles alive, and the instances `write` writes for them. */
+  readonly count: number;
+  readonly instanceCount: number;
+  /** World-space bounds of the live particles after the last `write`. */
+  readonly center: readonly [number, number, number];
+  readonly radius: number;
+  update(context: ParticleContext): void;
+  /** Writes the instances (PARTICLE_FLOATS each) at `offset`; returns how many. */
+  write(out: Float32Array, offset: number, context: ParticleContext): number;
+}
+
 /** Floats of per-particle state (see the S_* offsets). */
 const STRIDE = 24;
 const S_POS = 0;
@@ -180,7 +197,7 @@ export function subTextureFrame(
   return first + ((frame - end - 1) % span);
 }
 
-export class ParticleSimulation {
+export class ParticleSimulation implements ParticleSource {
   readonly data: ParticleSystemData;
   /** Particles alive. */
   count = 0;

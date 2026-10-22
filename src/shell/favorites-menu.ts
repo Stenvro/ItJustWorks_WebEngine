@@ -5,8 +5,12 @@
 // asks ItemSelect for its selected entry (the engine reads _root.GetSelectedIndex()) and, once
 // its fade-out has played (Tab, Esc, Q), FadeDone. The mouse's buttons equip the highlighted
 // entry to their hands (the left button the right hand, as in the item menus); the entries
-// show where each is equipped (the equip system). Notes: docs/ui.md ("The item menus").
+// show where each is equipped (the equip system). 1-8 give the highlighted entry that hotkey
+// (the movie shows it before the name: "1. Iron Sword"); in the game the hotkey chooses its
+// favorite as the menu would (GameMenus: the control map's Hotkey1..8). Notes: docs/ui.md
+// ("The item menus").
 
+import { assignHotkey, hotkeyOfKey } from '../gameplay/hotkeys.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
@@ -43,13 +47,30 @@ export class FavoritesMenu {
       const name = (await runtime.forms.record(formId))?.text('FULL') ?? '';
       entries.push({
         text: name,
-        // TODO(M11): hotkeys (1-8) for favorites.
-        hotkey: -1,
+        // Its hotkey (0..7: the movie shows "1. Name"), -1 none.
+        hotkey: runtime.state.hotkeys.get(formId) ?? -1,
         equipState: await runtime.equipment.menuState(PLAYER_REF, formId),
         index: formId,
       });
     }
     return entries;
+  }
+
+  /**
+   * A hotkey pressed in the game (Hotkey1..8): its favorite is chosen as in the menu (equipped
+   * where it goes, taken off where it is, a potion drunk), if the player still has it.
+   */
+  async useHotkey(hotkey: number): Promise<void> {
+    const runtime = this.#session.scriptsReady;
+    if (!runtime) return;
+    for (const [formId, key] of runtime.state.hotkeys) {
+      if (key !== hotkey || !runtime.state.favorites.has(formId)) continue;
+      const has =
+        (await runtime.itemCount(PLAYER_REF, formId)) > 0 ||
+        (await runtime.actors.spells(PLAYER_REF)).includes(formId);
+      if (has) await this.#select(formId, undefined);
+      return;
+    }
   }
 
   /** Opens the menu over the game; `closed` once its fade-out has played. */
@@ -76,10 +97,34 @@ export class FavoritesMenu {
         // A game ended meanwhile: nothing left to show.
         .catch(() => undefined);
     };
+    /** Shows the list as it is now. */
+    const refresh = (menu: Menu): void => {
+      void this.#entries()
+        .then((now) => {
+          if (done) return;
+          menu.set(`${LIST}.entryList`, now);
+          menu.invoke(`${LIST}.InvalidateData`);
+        })
+        .catch(() => undefined);
+    };
     return this.#host.open('favoritesmenu.swf', {
       depth,
       interactive: true,
       keyAs: { KeyQ: 'Tab' },
+      // 1-8 (the control map's Hotkey1..8: the digits and the keypad's) give the highlighted
+      // entry that hotkey (taken from the favorite that had it); its own hotkey again takes it
+      // off.
+      onKey: (menu, event) => {
+        const hotkey = hotkeyOfKey(event.code);
+        if (hotkey === undefined) return false;
+        const index = menu.invoke('_root.GetSelectedIndex');
+        const runtime = this.#session.scriptsReady;
+        if (!event.repeat && typeof index === 'number' && runtime) {
+          assignHotkey(runtime.state.hotkeys, index, hotkey);
+          refresh(menu);
+        }
+        return true;
+      },
       onPointer: (menu, event) => {
         const slot = mouseEquipSlot(event.button);
         if (slot !== undefined) choose(menu, slot);

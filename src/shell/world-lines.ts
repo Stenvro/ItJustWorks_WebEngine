@@ -10,8 +10,9 @@
 // Subtitle) or the package's Say forces it, while the speaker is within the distance its voice
 // is heard (the 3D dialogue output model's, DOBJ DOP2: SOMDialogue3DDefault reaches 3000
 // units). An actor says one line at a time: a new one ends the one it says. An actor not on
-// screen says nothing. TODO(M10) 4.1: who hears it (detection); a line spoken in the player's
-// head (abSpeakInPlayersHead) at the listener.
+// screen says nothing. A line spoken in the player's head (Say's abSpeakInPlayersHead) plays at
+// the listener (the 2D dialogue output model, DOP3), its subtitle shown wherever the speaker is.
+// Lines are no noise to the actors' detection (src/shell/actor-senses.ts).
 
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { SpokenInfo } from '../scripting/runtime/dialogue-engine.ts';
@@ -36,6 +37,8 @@ export interface SpeakOptions {
   readonly forceSubtitle?: boolean | undefined;
   /** Whom it is said to (its listener's idles; a Hello to the player greets them). */
   readonly target?: number | undefined;
+  /** Spoken in the player's head (Say's abSpeakInPlayersHead): heard wherever they are. */
+  readonly inPlayersHead?: boolean | undefined;
 }
 
 /** What an actor says now, as its conditions see it. */
@@ -125,7 +128,12 @@ export class WorldLines {
   }
 
   /** ObjectReference.Say: the topic's first valid info for the speaker, said. */
-  async say(speaker: number, topic: number, speakAs: number | undefined): Promise<void> {
+  async say(
+    speaker: number,
+    topic: number,
+    speakAs: number | undefined,
+    inPlayersHead = false,
+  ): Promise<void> {
     const runtime = this.#session.scriptsReady;
     if (!runtime || !this.#session.placedActor?.(speaker)) return;
     const spoken = await runtime.dialogue.topicLine(topic, speaker);
@@ -136,7 +144,7 @@ export class WorldLines {
       );
       return;
     }
-    await this.speak(spoken, speaker, { speakAs });
+    await this.speak(spoken, speaker, { speakAs, inPlayersHead });
   }
 
   /**
@@ -219,7 +227,7 @@ export class WorldLines {
     // Read anew after each wait (it may be ended meanwhile).
     const ended = (): boolean => control.stopped;
     if (ended()) return;
-    control.line = path ? await placer.say(placed, path) : undefined;
+    control.line = path ? await placer.say(placed, path, options.inPlayersHead) : undefined;
     if (ended()) {
       control.line?.stop();
       return;
@@ -232,7 +240,7 @@ export class WorldLines {
     this.responseBegins(speaker, spoken, response, options.target);
     const subtitle = {};
     const general = session.ini.bool('Interface', 'bGeneralSubtitles');
-    if ((general || forced) && this.#heard(speaker, reach)) {
+    if ((general || forced) && (options.inPlayersHead === true || this.#heard(speaker, reach))) {
       this.#subtitle = subtitle;
       session.hud.subtitle(response.text);
     }

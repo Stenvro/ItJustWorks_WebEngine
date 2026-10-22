@@ -19,18 +19,26 @@ import type { MagicItemRecord } from '../world/magic-records.ts';
  */
 const DEFAULT_MAGIC_RANGE = 2048;
 
+/** Health (an actor value): healed by a spell before a potion. */
+const HEALTH = 24;
+
 /** The NPCs' casting as the combat AI asks for it. */
 export function combatCasting(
   session: GameSession,
   casting: () => ActorCasting | undefined,
 ): CombatCasting {
   return {
-    options: async (actor) => {
+    options: async (actor, target) => {
       const runtime = session.scriptsReady;
       if (!runtime) return [];
       const options: EquipOption[] = [];
-      const spell = await runtime.casting.chooseSpell(actor, 'attack');
+      const spell = await runtime.casting.chooseSpell(actor, 'attack', target);
       if (spell) options.push(await option(runtime, 'magic', spell.formId, spell));
+      // Its staffs with charge (their enchantment's spell; hostile ones only: a fight's).
+      for (const { staff, item } of await runtime.casting.staffs(actor)) {
+        if (await runtime.magic.hostile(item))
+          options.push(await option(runtime, 'staff', staff, item));
+      }
       const voice = (await runtime.equipment.of(actor)).voice;
       const shout = voice === undefined ? undefined : await runtime.casting.shout(voice);
       const words = shout ? runtime.casting.wordsKnown(actor, shout) : 0;
@@ -41,10 +49,26 @@ export function combatCasting(
       }
       return options;
     },
+    // Health: its healing spell, else a potion; Magicka: a potion.
+    restore: async (actor, value) => {
+      const stage = casting();
+      if (!stage) return false;
+      if (value === HEALTH && (await stage.healSelf(actor))) return true;
+      return stage.drinkPotion(actor, value);
+    },
+    summon: async (actor, target) => (await casting()?.summon(actor, target)) === true,
     castAt: async (actor, hand, target, chosen) => {
       const stage = casting();
       if (!stage) return false;
       if (hand === 'voice') return stage.shoutAt(actor, target);
+      // A staff is taken in the hand first (the equip system), then cast from it.
+      if (chosen.kind === 'staff') {
+        const runtime = session.scriptsReady;
+        if (!runtime || chosen.id === undefined) return false;
+        if ((await runtime.equipment.weapon(actor, 'right')) !== chosen.id)
+          await runtime.equipment.equip(actor, chosen.id, { hand: 'right' });
+        return stage.castAt(actor, 'right', target);
+      }
       return stage.castAt(actor, hand, target, {
         ...(chosen.id !== undefined && { spell: chosen.id }),
       });
@@ -52,10 +76,10 @@ export function combatCasting(
   };
 }
 
-/** An equipment option of a spell (or a shout's word's spell). */
+/** An equipment option of a spell (a staff's enchantment, a shout's word's spell). */
 async function option(
   runtime: ScriptRuntime,
-  kind: 'magic' | 'shout',
+  kind: 'magic' | 'staff' | 'shout',
   id: number,
   item: MagicItemRecord,
 ): Promise<EquipOption> {

@@ -213,6 +213,14 @@ export interface ModelData {
    * fire, chimney smoke), by the record's index, in model space.
    */
   readonly addons: readonly AddonNode[];
+  /** NiSwitchNodes drawn (each shows one child): flora have one, its harvested look. */
+  readonly switches?: number;
+}
+
+/** How a model is built. */
+export interface BuildOptions {
+  /** The child every NiSwitchNode shows (its own index without; flora harvested: 1). */
+  readonly switchChild?: number;
 }
 
 export interface AddonNode {
@@ -483,7 +491,7 @@ function layoutOf(desc: VertexDesc): VertexLayout {
 }
 
 /** Walks the scene graph from the roots and collects every drawable shape. */
-export function buildModel(file: NifFile): ModelData {
+export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData {
   const parts: ModelPart[] = [];
   const skipped: string[] = [];
   /** Names of the nodes above the block being visited. */
@@ -503,6 +511,8 @@ export function buildModel(file: NifFile): ModelData {
   let currentNode = -1;
   /** The shape being visited, under its node. */
   let currentLocal: Mat4 = identity();
+  /** NiSwitchNodes met. */
+  let switches = 0;
 
   const visit = (ref: Ref, parentWorld: Mat4, depth: number): void => {
     if (depth > 64) return; // guards against reference cycles in broken files
@@ -523,10 +533,17 @@ export function buildModel(file: NifFile): ModelData {
 
     switch (block.kind) {
       case 'node': {
+        // A NiSwitchNode shows one child: its own index, or the one asked for (flora's
+        // harvested look) where it has that many.
+        if (block.switchIndex !== undefined) switches++;
+        const switchChild =
+          block.switchIndex === undefined
+            ? undefined
+            : options.switchChild !== undefined && options.switchChild < block.children.length
+              ? options.switchChild
+              : block.switchIndex;
         const children =
-          block.switchIndex !== undefined
-            ? [block.children[block.switchIndex] ?? -1]
-            : block.children;
+          switchChild !== undefined ? [block.children[switchChild] ?? -1] : block.children;
         const parentNode = currentNode;
         currentNode = nodes.length;
         nodeOfBlock.set(ref, currentNode);
@@ -792,5 +809,6 @@ export function buildModel(file: NifFile): ModelData {
     ...(treeBones && skeletal && { treeBones }),
     particles,
     addons,
+    ...(switches > 0 && { switches }),
   };
 }

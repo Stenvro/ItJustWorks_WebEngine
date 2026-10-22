@@ -52,8 +52,9 @@ export function animateSkeletons(
     if (animated.face) behavior.headTurn = animated.face.headRotation;
     behavior.update(dt);
     animated.face?.lookWith(behavior.eyes());
-    // Footsteps and SoundPlay events sound through onEvents (src/shell/actor-sounds.ts);
-    // TODO(M10): the events AI reacts to (attacks, weapon draws, dialogue).
+    // Footsteps and SoundPlay events sound through onEvents (src/shell/actor-sounds.ts), the
+    // systems hear theirs there too (combat's hits, casts); scripts hear theirs through
+    // onScriptEvents (RegisterForAnimationEvent).
     const raised = behavior.takeRaised();
     if (raised.length > 0) {
       animated.onEvents?.(raised);

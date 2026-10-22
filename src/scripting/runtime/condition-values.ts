@@ -61,6 +61,7 @@ export const Fn = {
   isAttacking: 672,
   isPowerAttacking: 673,
   isCommandedActor: 700,
+  getActorWarmth: 735,
   getKnockedState: 107,
   getPairedAnimation: 313,
   isPC1stPerson: 391,
@@ -696,7 +697,7 @@ async function conditionValue(
     case Fn.getRealHoursPassed:
       return state.realTime / 3600;
     case Fn.playerKnows:
-      return flag(runtime.playerKnows(form));
+      return flag(await runtime.playerKnows(form));
 
     // --- What a reference is --------------------------------------------------------------
     case Fn.getIsReference: {
@@ -1698,6 +1699,9 @@ async function moreConditionValue(
         reference !== undefined &&
           [...runtime.crime.ledger.open()].some((crime) => crime.victim === reference),
       );
+    // Survival Mode's warmth (warmth-engine.ts: what it wears, its torch, Fortify Warmth).
+    case Fn.getActorWarmth:
+      return reference === undefined ? 0 : runtime.warmth.actor(reference);
     // A follower doing a favor (its favor state: Actor.SetDoingFavor).
     case Fn.isInFavorState:
       return flag(reference !== undefined && state.actors.get(reference)?.doingFavor === true);
@@ -1710,8 +1714,8 @@ async function moreConditionValue(
     }
     // The player would intimidate it (UESP "Skyrim:Speech"): the player's level times
     // (1 + max(−1, (their Speech − its Speech) / 100)) ^ fIntimidateSpeechcraftCurve against its
-    // level times fIntimidateConfidenceMult of its Confidence. TODO(M11): the perk entry point
-    // Mod Player Intimidation (the perk system's).
+    // level times fIntimidateConfidenceMult of its Confidence, the player's perks on their side
+    // (Mod Player Intimidation: crime-engine.ts intimidates).
     case Fn.getIntimidateSuccess:
       return reference === undefined ? undefined : flag(await runtime.crime.intimidates(reference));
     // The player's arrest (on the player): 0 none, 1 a guard arrests them, 2 in jail.

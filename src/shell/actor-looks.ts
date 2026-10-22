@@ -41,6 +41,8 @@ export interface ActorLooksOptions {
   readonly camera: () => { readonly position: Vec3 } | undefined;
   /** A staged actor by its reference (looked at by others: its head). */
   readonly actor: (reference: number) => StagedActor | undefined;
+  /** Whether an actor detects another (src/shell/actor-senses.ts): it looks at the player only then. */
+  readonly detects?: (observer: number, target: number) => boolean;
   /**
    * The point an actor's graph watches it fly past (BSPassByTargetTriggerModifier: a dragon's
    * combat target; src/shell/actor-flight.ts), if any.
@@ -128,7 +130,10 @@ export class ActorLooks {
     }
     if (chosen) return chosen;
     const eye = this.#world?.player?.eye;
-    return eye && noticesPlayer(head, staged.heading, eye)
+    // Near it and in front of it, once it has detected them.
+    return eye &&
+      noticesPlayer(head, staged.heading, eye) &&
+      this.#options.detects?.(reference, PLAYER_REF) !== false
       ? { target: PLAYER_REF, kind: 'default' }
       : undefined;
   }

@@ -43,6 +43,11 @@ import type { GameSession } from './game-session.ts';
 
 /** An "in cell" place reaches this far round where the actor is (game units). */
 const IN_CELL_RADIUS = 1024;
+/**
+ * An object (or a type of object) as a package's place: the nearest one within this of the actor
+ * (units). TODO(M13): the engine's own search radius is not documented.
+ */
+const OBJECT_PLACE_RADIUS = 4096;
 /** A target named by object or object type is the nearest within this of the actor. */
 const TARGET_SEARCH_RADIUS = 4096;
 /** The size of an exterior cell (units). */
@@ -781,9 +786,38 @@ export class ActorAi {
             const at = held === undefined ? undefined : await placementOf(held);
             return at && { ...at, radius: location.radius, reference: held };
           }
+          // The location a location alias of the package's quest holds: round its world
+          // location marker (LCTN MNAM), as far as its radius (RNAM) or the package's.
+          case LocationType.aliasLocation: {
+            const held = aliasReference(context.quest, location.form);
+            const record = held === undefined ? undefined : await scripts?.location(held);
+            const at = record?.marker === undefined ? undefined : await placementOf(record.marker);
+            return (
+              at && {
+                ...at,
+                radius: Math.max(location.radius, record?.radius ?? 0),
+                reference: record?.marker,
+              }
+            );
+          }
+          // The nearest reference of an object (or of a type of object) round the actor.
+          case LocationType.objectId:
+          case LocationType.objectType: {
+            if (!self) return undefined;
+            const criteria = {
+              type:
+                location.type === LocationType.objectId
+                  ? TargetType.objectId
+                  : TargetType.objectType,
+              value: location.form,
+              count: 0,
+            };
+            const around = { position: self.position, radius: OBJECT_PLACE_RADIUS };
+            const [nearest] = await this.#mind.search(criteria, around, actor, false);
+            const at = nearest === undefined ? undefined : await placementOf(nearest);
+            return at && { ...at, radius: location.radius, reference: nearest };
+          }
           default:
-            // TODO(M10) 3.2: an alias's location (LCTN: where in it), and objects or object
-            // types as places (no vanilla package uses either).
             return undefined;
         }
       },

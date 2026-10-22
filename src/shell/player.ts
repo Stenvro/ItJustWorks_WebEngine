@@ -141,6 +141,8 @@ export interface PlayerSetup extends PlayerData {
  * Submersion (water depth over the body's height) at which an actor swims, and the depth it
  * floats at: the shoulders. Not documented; measured in game by the author of "Wade In Water".
  */
+/** How fast the bow's zoom eases in and out (per second). */
+const BOW_ZOOM_RATE = 8;
 const SWIM_SUBMERSION = 0.69;
 /**
  * The highest stair stepped up on stair materials. How the engine climbs them is not
@@ -267,6 +269,14 @@ export class Player implements Camera {
   onBorder: (() => void) | undefined;
   /** The last place inside the border. */
   #inside: Vec3 | undefined;
+  /** The player's own pace against the world's clock (Slow Time); 1 without. */
+  pace: (() => number) | undefined;
+  /** The player landed after falling this far (units): falling damage. */
+  onLanded: ((height: number) => void) | undefined;
+  #fallTop: number | undefined;
+  /** The bow's zoom asked for (the field of view's factor: Mod Bow Zoom), and as eased now. */
+  bowZoom = 1;
+  #bowZoom = 1;
   readonly #fovY: number;
   /** fDefaultWorldFOV: degrees across a 4:3 frame. */
   readonly #fovDegrees: number;
@@ -524,6 +534,10 @@ export class Player implements Camera {
     // Third-person zoom eases towards its target (fMouseWheelZoomSpeed).
     const speed = ini.number('Camera', 'fMouseWheelZoomSpeed');
     this.#zoom += (this.#zoomTarget - this.#zoom) * Math.min(1, deltaSeconds * speed * 10);
+    // The bow's zoom eases in and out (TODO(M13): the engine's rate).
+    const zoom = this.bowZoom;
+    this.#bowZoom += (zoom - this.#bowZoom) * Math.min(1, deltaSeconds * BOW_ZOOM_RATE);
+    if (Math.abs(this.#bowZoom - zoom) < 1e-3) this.#bowZoom = zoom;
     this.#placeCamera(physics.alpha);
   }
 
@@ -580,7 +594,10 @@ export class Player implements Camera {
           : this.sneaking
             ? movement.sneak
             : movement.normal);
-    const speed = moving ? directionalSpeed(running ? type.run : type.walk, x, y) : 0;
+    // In slowed time the player keeps their own pace against the world's clock (Slow Time:
+    // GameSession.playerPace).
+    const pace = this.pace?.() ?? 1;
+    const speed = moving ? directionalSpeed(running ? type.run : type.walk, x, y) * pace : 0;
     this.motion = { inputX: x, inputY: y, moving, running, sprinting };
     const length = Math.hypot(x, y) || 1;
     const sin = Math.sin(this.yaw);
@@ -615,7 +632,9 @@ export class Player implements Camera {
         this.onBorder?.();
       }
     }
+    const airborne = !character.grounded && !swimming;
     character.step(seconds);
+    this.#watchFall(airborne);
     if (border) {
       const [nx, ny, nz] = character.feet;
       if (border(nx, ny)) this.#inside = [nx, ny, nz];
@@ -625,6 +644,23 @@ export class Player implements Camera {
         this.onBorder?.();
       }
     }
+  }
+
+  /**
+   * Falling: the highest point since leaving the ground; landing (not in water) tells
+   * onLanded how far the player fell (falling damage: GameSession).
+   */
+  #watchFall(wasAirborne: boolean): void {
+    const character = this.character;
+    const z = character.feet[2];
+    if (!character.grounded && !character.swimming) {
+      this.#fallTop = Math.max(this.#fallTop ?? z, z);
+      return;
+    }
+    const top = this.#fallTop;
+    this.#fallTop = undefined;
+    if (wasAirborne && top !== undefined && character.grounded && !character.swimming)
+      this.onLanded?.(top - z);
   }
 
   /**
@@ -713,7 +749,8 @@ export class Player implements Camera {
   }
 
   viewProjection(aspect: number, out: Mat4 = new Float32Array(16)): Mat4 {
-    let fovY = this.#fovY;
+    // A bow's zoom (Eagle Eye: Mod Bow Zoom) narrows the view.
+    let fovY = this.#bowZoom === 1 ? this.#fovY : verticalFov(this.#fovDegrees * this.#bowZoom);
     // In a conversation the player's view turns to the speaker (they face it after) and zooms.
     if (this.dialogue.active) {
       const view = this.dialogue.sample(performance.now(), this.position, this.yaw, this.pitch);

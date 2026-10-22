@@ -6,14 +6,20 @@
 // icon (frame 5 + type) or the undiscovered one (72 + type) of the HUD's "Compass Marker". A map
 // marker comes into view as it is near (visible on the map) and is discovered within
 // iMapMarkerRevealDistance: the HUD says so (its name, sDiscoveredText) and it can be travelled
-// to. TODO(M10): a quest target in another cell (the door that leads toward it, QuestDoor),
-// enemies (Enemy), the discovery's experience (iXPRewardDiscoverMapMarker) and music. The player's
-// own marker (the map's Place Marker) shows in its world, always (PlayerSet).
+// to, with its discovery music (by the marker's type: discoveryMusic). Skyrim gives no
+// experience for it (iXPRewardDiscoverMapMarker is one of Fallout's unused XP settings: levels
+// come from skills). A quest target in another cell or world shows at the load door the way
+// there goes through (QuestDoor: the routes over navmeshes and load doors); the actors fighting
+// the player show as enemies (Enemy) within fHUDCompassLocationMaxDist. The player's own marker
+// (the map's Place Marker) shows in its world, always (PlayerSet).
 
+import { findRoute } from '../ai/routes.ts';
+import type { Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import { MapMarkerFlag, readMapMarkers, type MapMarker } from '../world/map-markers.ts';
+import { spaceOf } from './actors-away.ts';
 import type { GameSession } from './game-session.ts';
 
 /** The HUD's "Compass Marker" frames. */
@@ -28,6 +34,34 @@ export function headingTo(from: readonly number[], to: readonly number[]): numbe
   return (degrees + 360) % 360;
 }
 
+/** The discovery music types (MUSC in Skyrim.esm). */
+const DiscoveryMusic = {
+  generic: 0xac13d,
+  city: 0xabda5,
+  dungeon: 0xabda4,
+  town: 0xabda3,
+} as const;
+
+/** Map marker types (TNAM, xEdit's list) whose discovery plays a dungeon's music. */
+const DUNGEON_MARKERS = new Set([4, 6, 7, 8, 12, 15, 31, 53, 59]);
+/** ... a town's: towns, settlements, orc strongholds. */
+const TOWN_MARKERS = new Set([2, 3, 28]);
+
+/**
+ * The music a place's discovery plays, by its map marker's type: a city (and its castles and
+ * capitols, Raven Rock) MUSDiscoveryCity, a town MUSDiscoveryTown, a cave, fort, ruin, mine or
+ * dragon lair MUSDiscoveryDungeon, anything else MUSDiscoveryGeneric. TODO(M13): the engine's
+ * own table is not documented (this one is read from the types' names);
+ * MUSDiscoveryHighHrothgar is not reached by a type.
+ */
+export function discoveryMusic(markerType: number): number {
+  if (markerType === 1 || (markerType >= 35 && markerType <= 52) || markerType === 54)
+    return DiscoveryMusic.city;
+  if (TOWN_MARKERS.has(markerType)) return DiscoveryMusic.town;
+  if (DUNGEON_MARKERS.has(markerType)) return DiscoveryMusic.dungeon;
+  return DiscoveryMusic.generic;
+}
+
 /** A map marker's alpha by its distance (100 near, fading to 0 at the visible distance). */
 export function markerAlpha(distance: number, fadeStart: number, visible: number): number {
   if (distance >= visible) return 0;
@@ -39,9 +73,18 @@ export class Compass {
   readonly #session: GameSession;
   #markers: Promise<MapMarker[]> | undefined;
   #markersOf: ScriptRuntime | undefined;
+  /** The load door toward a quest target in another space, by space and target. */
+  readonly #doorsToward = new Map<
+    string,
+    { readonly door: number; readonly position: readonly number[] } | undefined
+  >();
 
-  constructor(session: GameSession) {
+  /** Where the actors fighting the player are now. */
+  readonly #enemies: () => readonly (readonly number[])[];
+
+  constructor(session: GameSession, enemies: () => readonly (readonly number[])[] = () => []) {
     this.#session = session;
+    this.#enemies = enemies;
   }
 
   /** The compass's data now (4 numbers a marker), discovering the markers the player reached. */
@@ -52,6 +95,12 @@ export class Compass {
     if (!runtime || !at) return [];
     const settings = await session.settings();
     const data = [...(await this.#questTargets(runtime, at))];
+    // The actors fighting the player (Enemy: a red mark), within the compass's reach.
+    const reach = settings.number('fHUDCompassLocationMaxDist') ?? 20000;
+    for (const enemy of this.#enemies()) {
+      const far = Math.hypot((enemy[0] ?? 0) - at.position[0], (enemy[1] ?? 0) - at.position[1]);
+      if (far <= reach) data.push(headingTo(at.position, enemy), 100, CompassFrame.enemy, 100);
+    }
     if (at.world === undefined) return data;
     const own = runtime.state.playerMarker;
     if (own?.world === at.world) {
@@ -98,6 +147,9 @@ export class Compass {
     if (marker.name) {
       this.#session.hud.discovered(marker.name, settings.string('sDiscoveredText') ?? 'discovered');
     }
+    // Its discovery music (a type that plays one selection, then ends: src/audio/music.ts).
+    const music = runtime.forms.db.formIdOf('Skyrim.esm', discoveryMusic(marker.type));
+    if (music !== undefined) this.#session.soundSystem?.music.add(music);
   }
 
   /** The targets of the active quests' shown objectives in the player's space. */
@@ -106,16 +158,57 @@ export class Compass {
     at: { readonly position: readonly number[]; readonly cell?: number; readonly world?: number },
   ): Promise<number[]> {
     const data: number[] = [];
+    const doors = new Set<number>();
     for (const target of await questTargets(runtime)) {
       const { placement } = target;
       const here =
         at.world !== undefined
           ? placement.world === at.world
           : placement.cell !== undefined && placement.cell === at.cell;
-      if (!here) continue;
-      data.push(headingTo(at.position, placement.position), 100, CompassFrame.quest, 100);
+      if (here) {
+        data.push(headingTo(at.position, placement.position), 100, CompassFrame.quest, 100);
+        continue;
+      }
+      // Elsewhere: the load door of this space the way there goes through (QuestDoor), once.
+      const door = await this.#doorToward(at, target.reference, placement);
+      if (!door || doors.has(door.door)) continue;
+      doors.add(door.door);
+      data.push(headingTo(at.position, door.position), 100, CompassFrame.questDoor, 100);
     }
     return data;
+  }
+
+  /**
+   * The first load door on the way from the player to a place in another space (the routes
+   * over the navmeshes and load doors: src/ai/routes.ts), kept for a target while the player
+   * and it stay in their spaces.
+   */
+  async #doorToward(
+    at: { readonly position: readonly number[]; readonly cell?: number; readonly world?: number },
+    reference: number,
+    to: Placement,
+  ): Promise<{ readonly door: number; readonly position: readonly number[] } | undefined> {
+    const here = spaceOf({ cell: at.cell, world: at.world });
+    const there = spaceOf(to);
+    const key = `${JSON.stringify(here)}>${JSON.stringify(there)}:${String(reference)}`;
+    if (this.#doorsToward.has(key)) return this.#doorsToward.get(key);
+    // Searched once per space and target (a route over the whole map is not cheap).
+    this.#doorsToward.set(key, undefined);
+    const routes = await this.#session.routeMap();
+    const position: Vec3 = [at.position[0] ?? 0, at.position[1] ?? 0, at.position[2] ?? 0];
+    const target: Vec3 = [...to.position];
+    const start = routes.nearestNavmesh(here, position);
+    const end = routes.nearestNavmesh(there, target);
+    if (start === undefined || end === undefined) return undefined;
+    const route = findRoute(
+      routes,
+      { space: here, position, navmesh: start },
+      { space: there, position: target, navmesh: end },
+    );
+    const door = route?.doors[0];
+    const found = door && { door: door.door, position: door.position };
+    this.#doorsToward.set(key, found);
+    return found;
   }
 }
 
@@ -144,9 +237,11 @@ export async function questTargets(runtime: ScriptRuntime): Promise<QuestTarget[
       for (const target of objective.targets) {
         const reference = quest.aliases.get(target.alias);
         if (reference === undefined) continue;
+        // Its conditions run on the target (DialogueFollower's "is waiting for you": the
+        // follower's WaitingForPlayer).
         if (
           target.conditions.length > 0 &&
-          !(await runtime.conditionsHold(target.conditions, runtime.referenceHandle(PLAYER_REF)))
+          !(await runtime.conditionsHold(target.conditions, runtime.referenceHandle(reference)))
         ) {
           continue;
         }

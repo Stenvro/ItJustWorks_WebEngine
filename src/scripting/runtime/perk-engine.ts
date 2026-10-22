@@ -10,12 +10,12 @@
 // conditions hold on their tab's subject: the owner, the weapon, the target ... the caller
 // passes). The entry point functions (EPMagic_SpellHasSkill, EPAlchemyEffectHasKeyword,
 // IsAttackType, ...) read what the caller is doing (PerkContext). Where each system asks:
-// docs/gameplay.md ("Perks"). Activate's choices run their perk's script fragment (PERK
-// VMAD: the werewolf's Feed), Set Activate Label names the prompt, Allow Mount Actor lets the
-// player ride a tamed dragon (src/shell/actor-mounts.ts). Entry points no system asks yet:
-// Mod Ingredients Harvested (TODO(M11): harvesting flora), Mod Player
-// Magic Slowdown (TODO(M11): Slow Time's clock), Mod Bow Zoom and Mod Falling Damage
-// (TODO(M13): the bow's zoom, falling damage). Platform-independent.
+// docs/gameplay.md ("Perks"). The activation (src/shell/play-session.ts) asks Filter
+// Activation, Set Activate Label and the Activate choices (`activate`: run at once, or offered
+// in a message box; their spell cast, their PRKF_ fragment run: the werewolf's Feed); harvesting
+// asks Mod Ingredients Harvested, Slow Time Mod Player Magic Slowdown, the bow's zoom Mod Bow
+// Zoom, falls Mod Falling Damage (src/shell/time-flow.ts); dragon riding Allow Mount Actor
+// (mayMount: src/shell/actor-mounts.ts). Platform-independent.
 
 import {
   applyEntryFunction,
@@ -322,51 +322,55 @@ export class PerkEngine {
   }
 
   /**
-   * An actor activates a target its perks add choices to (the Activate entry point, in
-   * priority order): a Run Immediately choice is taken at once (the werewolf's Feed on a
-   * corpse); otherwise a message box offers the choices' labels, then the default activation
-   * (`defaultLabel`: Talk, Search ...) unless a choice replaces it (UESP "Perk Entry Point").
-   * A choice taken casts its spell from the actor on the target and runs its fragment (the
-   * perk's PRKF_ script: FragmentN(akTargetRef, akActor)). Resolves whether the default
-   * activation goes on. Without a world to ask (Node), the first choice is taken.
+   * An actor activates a target through its perks' Activate choices (the Creation Kit's "Run
+   * Immediately" and "Replace Default"): the choices that run immediately run at once; the
+   * others are offered with the default activation (`defaultLabel`: "Search", "Talk"; left out
+   * when a choice replaces it) in the game's message box, the target's name its text, and the
+   * one picked runs. Resolves whether the default activation goes on. TODO(M13): the box's
+   * text and the buttons' order (the default first) are not documented.
    */
-  async activate(actor: number, target: number, defaultLabel: string): Promise<boolean> {
-    const choices = await this.activateChoices(actor, target);
+  async activate(
+    owner: number,
+    target: number,
+    defaultLabel: string,
+    name: string,
+  ): Promise<boolean> {
+    const choices = await this.activateChoices(owner, target);
     if (choices.length === 0) return true;
-    const immediate = choices.find((choice) => choice.runImmediately);
-    if (immediate) {
-      await this.takeChoice(immediate, actor, target);
-      return !immediate.replaceDefault;
+    const keepDefault = !choices.some((choice) => choice.replaceDefault);
+    const offered: ActivateChoice[] = [];
+    for (const choice of choices) {
+      if (choice.runImmediately) await this.runChoice(choice, owner, target);
+      else offered.push(choice);
     }
-    const keepsDefault = !choices.some((choice) => choice.replaceDefault);
-    const buttons = choices.map((choice) => choice.label || defaultLabel);
-    if (keepsDefault) buttons.push(defaultLabel);
-    const base = await this.#runtime.baseOf(target);
-    const record = base === undefined ? undefined : await this.#runtime.forms.record(base);
-    const name = record?.text('FULL') ?? '';
-    const asked = this.#runtime.world.messageBox?.(name, buttons);
-    const chosen = asked ? await asked : 0;
-    const choice = choices[chosen];
-    if (!choice) return keepsDefault && chosen === choices.length;
-    await this.takeChoice(choice, actor, target);
+    if (offered.length === 0) return keepDefault;
+    const first = offered[0];
+    if (!keepDefault && offered.length === 1 && first) {
+      await this.runChoice(first, owner, target);
+      return false;
+    }
+    const buttons = [...(keepDefault ? [defaultLabel] : []), ...offered.map((c) => c.label)];
+    const picked = (await this.#runtime.world.messageBox?.(name, buttons)) ?? 0;
+    const choice = offered[picked - (keepDefault ? 1 : 0)];
+    if (!choice) return keepDefault && picked === 0;
+    await this.runChoice(choice, owner, target);
     return false;
   }
 
-  /** A perk's activation choice taken: its spell on the target, its script fragment. */
-  async takeChoice(choice: ActivateChoice, actor: number, target: number): Promise<void> {
+  /**
+   * A choice runs: its spell is cast by the owner on the target, its fragment (the perk's
+   * PRKF_ script, VMAD) runs as Fragment_N(akTargetRef, akActor).
+   */
+  async runChoice(choice: ActivateChoice, owner: number, target: number): Promise<void> {
     const runtime = this.#runtime;
-    if (choice.spell !== undefined) await runtime.magic.cast(choice.spell, actor, target);
+    if (choice.spell !== undefined) await runtime.magic.cast(choice.spell, owner, target, owner);
     const attachments = await runtime.forms.attachments(choice.perk);
-    for (const fragment of attachments?.fragments ?? []) {
-      if (fragment.stage !== choice.fragment) continue;
-      // On its own thread, as the game queues it (the werewolf's Feed waits for its idle).
-      runtime.detach(
-        runtime.vm.call(new ObjectHandle(choice.perk, fragment.script), fragment.function, [
-          runtime.referenceHandle(target),
-          runtime.actorHandle(actor),
-        ]),
-      );
-    }
+    const fragment = attachments?.fragments.find((entry) => entry.stage === choice.fragment);
+    if (!fragment) return;
+    await runtime.vm.call(new ObjectHandle(choice.perk, fragment.script), fragment.function, [
+      runtime.referenceHandle(target),
+      runtime.actorHandle(owner),
+    ]);
   }
 
   // --- What systems ask often -------------------------------------------------------------------
