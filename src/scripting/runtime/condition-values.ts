@@ -61,6 +61,7 @@ export const Fn = {
   isAttacking: 672,
   isPowerAttacking: 673,
   isCommandedActor: 700,
+  getActorWarmth: 735,
   getKnockedState: 107,
   getPairedAnimation: 313,
   isPC1stPerson: 391,
@@ -1695,6 +1696,9 @@ async function moreConditionValue(
         reference !== undefined &&
           [...runtime.crime.ledger.open()].some((crime) => crime.victim === reference),
       );
+    // Survival Mode's warmth (warmth-engine.ts: what it wears, its torch, Fortify Warmth).
+    case Fn.getActorWarmth:
+      return reference === undefined ? 0 : runtime.warmth.actor(reference);
     // A follower doing a favor (its favor state: Actor.SetDoingFavor).
     case Fn.isInFavorState:
       return flag(reference !== undefined && state.actors.get(reference)?.doingFavor === true);

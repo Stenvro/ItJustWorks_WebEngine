@@ -16,7 +16,7 @@
 // Notes: docs/ui.md.
 // The enemy health bar (enemy). The charge meters of the enchanted weapons in the player's hands
 // (SetChargeMeterPercent(percent, force, left hand, shown): the crafting engine's charge).
-// TODO(M10): the riding HUD mode (3.5).
+// Riding: HorseMode, with the weapon drawn WarHorseMode (the movie's own element lists).
 
 import type { CastEvent } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -158,6 +158,8 @@ export class HudController implements HudSink {
   #stopSettings: (() => void) | undefined;
   /** The CartMode shown (Game.SetHudCartMode). */
   #cartMode = false;
+  /** The riding mode shown (HorseMode, WarHorseMode), if any. */
+  #horseMode: string | undefined;
 
   /** The compass's markers: read four times a second, sent when they changed. */
   #compassBusy = false;
@@ -199,19 +201,20 @@ export class HudController implements HudSink {
     this.#menu = undefined;
   }
 
-  target(target: HudTarget | undefined): void {
+  target(target: HudTarget | undefined, favor = false): void {
     const menu = this.#menu;
     if (!menu) return;
     // (abActivate, aName, abShowButton, abTextOnly, abFavorMode, abShowCrosshair, aWeight,
     // aCost, aFieldValue, aFieldText): the verb over the name, the activate button shown; an
-    // item's weight and value under them (the HUD leaves out those that are undefined).
+    // item's weight and value under them (the HUD leaves out those that are undefined). In a
+    // follower's command mode the crosshair is its Favor frame.
     menu.call(
       'SetCrosshairTarget',
       target !== undefined,
-      target ? `${target.verb}\n${target.name}` : '',
+      target ? `${target.verb}\n${target.name}`.trim() : '',
       target !== undefined,
       false,
-      false,
+      favor,
       true,
       target?.item?.weight ?? null,
       target?.item?.value ?? null,
@@ -383,6 +386,17 @@ export class HudController implements HudSink {
     if (cart !== this.#cartMode) {
       this.#cartMode = cart;
       this.mode('CartMode', cart);
+    }
+    // On a horse: HorseMode (the meters, the compass, messages: no crosshair, no stamina), with
+    // the weapon drawn WarHorseMode (the crosshair, stamina, the charge and arrow info too).
+    const world = this.#source.runtime()?.world;
+    const riding = world?.mountOf?.(PLAYER_REF) !== undefined;
+    const drawn = riding && (world.combat?.(PLAYER_REF)?.weaponState ?? 0) !== 0;
+    const horse = !riding ? undefined : drawn ? 'WarHorseMode' : 'HorseMode';
+    if (horse !== this.#horseMode) {
+      if (this.#horseMode) this.mode(this.#horseMode, false);
+      this.#horseMode = horse;
+      if (horse) this.mode(horse, true);
     }
     this.#showNotice(menu);
     this.#updateCompass(menu);

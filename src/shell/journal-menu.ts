@@ -66,6 +66,9 @@ export class JournalMenu {
   /** The objectives' targets on the map ("quest:objective" → the first target's reference). */
   #targets = new Map<string, number>();
 
+  /** The stats page's favorites, read as the journal opens. */
+  #favorites: Awaited<ReturnType<ScriptRuntime['usage']['favorites']>> | undefined;
+
   /** How a hold's bounty is named on the stats page (sBountyStatString, "%s Bounty"). */
   #bountyFormat = '%s Bounty';
 
@@ -97,6 +100,8 @@ export class JournalMenu {
     }
     const bar = await playerBarInfo(this.#session);
     const help = await this.#helpTopics();
+    // The favorite weapon, spell, school and shout (what the player used most: usage-stats.ts).
+    this.#favorites = runtime ? await runtime.usage.favorites() : undefined;
     let done = false;
     const close = (menu: Menu): void => {
       if (done) return;
@@ -308,8 +313,12 @@ export class JournalMenu {
       const key = stat.name.toLowerCase();
       let value: number | string = runtime?.stats.get(key) ?? 0;
       if (key === 'days passed') value = runtime?.daysPassed ?? 0;
-      // TODO(M11): the favorite weapon, spell, school and shout (what the player uses most).
-      if (key.startsWith('favorite ')) value = '';
+      // The favorite weapon, spell, school and shout: names (none used yet: empty).
+      const favorites = this.#favorites;
+      if (key === 'favorite weapon') value = favorites?.weapon ?? '';
+      if (key === 'favorite spell') value = favorites?.spell ?? '';
+      if (key === 'favorite school') value = favorites?.school ?? '';
+      if (key === 'favorite shout') value = favorites?.shout ?? '';
       values.push(stat.name, value, stat.category, 0);
     }
     // The bounties the player owes, each crime faction's ("Whiterun Bounty"), in the crime

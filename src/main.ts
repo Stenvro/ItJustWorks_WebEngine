@@ -617,6 +617,13 @@ async function main(): Promise<void> {
       worldViewer.player ? worldViewer.localMapContent() : modelViewer.localMapContent(),
     tweenCamera: () => (worldViewer.player ?? modelViewer.player)?.tween,
     player: () => worldViewer.playerView ?? modelViewer.playerView,
+    enemies: () => {
+      const stage = worldViewer.player ? worldViewer.actorStage : modelViewer.actorStage;
+      return (stage?.combat.enemiesOfPlayer() ?? []).flatMap((reference) => {
+        const staged = stage?.get(reference);
+        return staged ? [staged.position] : [];
+      });
+    },
     inAir: () => {
       const player = worldViewer.player ?? modelViewer.player;
       return player !== undefined && !player.character.grounded && !player.character.swimming;

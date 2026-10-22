@@ -988,6 +988,9 @@ export class ActorCombat implements CombatBridge {
         // The swing is heard (its weapon's sound level, VNAM) and, the player's, commented on.
         this.#options.senses?.()?.action(fighter.reference, record?.soundLevel ?? 1);
         if (fighter.player) void this.#options.talk?.()?.playerAction('SWMW');
+        // The journal's Favorite Weapon counts the player's swings (usage-stats.ts).
+        const hand = fighter.state.current?.hand === 'left' ? gear?.left : gear?.right;
+        this.#options.session.scriptsReady?.usage.weaponUsed(fighter.reference, hand?.weapon);
         void this.#swingSpell(fighter).catch((error: unknown) => {
           this.#warn(`a swing's spell: ${describe(error)}`);
         });
@@ -1577,6 +1580,8 @@ export class ActorCombat implements CombatBridge {
     const runtime = this.#options.session.scriptsReady;
     const feet = this.#feet(fighter);
     if (!gear?.projectile || gear.right.ammo === undefined || !runtime || !feet) return;
+    // The journal's Favorite Weapon counts the player's shots (usage-stats.ts).
+    runtime.usage.weaponUsed(fighter.reference, gear.right.weapon);
     const scale = this.#scale(fighter);
     const from: Vec3 = [feet[0], feet[1], feet[2] + BODY_HEIGHT * scale * CHEST + 10 * scale];
     let aim: Vec3;
@@ -2031,6 +2036,20 @@ export class ActorCombat implements CombatBridge {
   /** Whether someone fights the player now (the wait menu's sNoWaitHostileActorsNear). */
   get fightingPlayer(): boolean {
     return this.#fightingPlayer();
+  }
+
+  /** The living actors fighting the player now (the compass's enemies). */
+  enemiesOfPlayer(): number[] {
+    const found: number[] = [];
+    for (const fighter of this.#fighters.values()) {
+      if (
+        fighter.target === PLAYER_REF &&
+        fighter.state.life === LifeState.alive &&
+        !fighter.player
+      )
+        found.push(fighter.reference);
+    }
+    return found;
   }
 
   #fightingPlayer(): boolean {
