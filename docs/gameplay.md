@@ -436,8 +436,8 @@ Format/SPEL"; the game settings.
 - Charging: fire and forget spells are ready after their charge time (SPIT @12, dual cast ×
   fMagicDualCastingTimeMult, 1); released before, they go without effect; released ready, they
   fire. Concentration spells cast from their charge time on until let go or out of magicka.
-  NPCs release a ready spell at once and hold a concentration spell 2.5 s (TODO(M10) 5.2: the
-  combat AI decides).
+  NPCs release a ready spell at once and hold a concentration spell while their AI keeps it
+  (docs/ai.md, "Magic in combat": the combat AI while its target is in reach and before it).
 - Dual casting: both attack buttons pressed within 0.15 s with one spell in both hands
   (TODO(M13): the window), with the school's Dual Casting perk (Can Dual Cast Spell; without
   it each hand casts on its own); its effects are cast with

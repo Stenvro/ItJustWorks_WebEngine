@@ -8,7 +8,14 @@ import {
   type ProcedureBranch,
 } from './package-records.ts';
 import type { FlightRequest } from './flight.ts';
-import type { PackageBody, PackageMind, ProcedureRun, SayOptions } from './package-runtime.ts';
+import type {
+  MagicCast,
+  PackageBody,
+  PackageMind,
+  ProcedureRun,
+  SayOptions,
+  WeaponBarrage,
+} from './package-runtime.ts';
 import { PROCEDURES } from './procedure-runs.ts';
 import { ProcedureInputs } from './procedures.ts';
 
@@ -99,6 +106,28 @@ function harness(
     flightGrab: (target: number) => {
       done.push(`grab ${target.toString(16)}`);
       return Promise.resolve(true);
+    },
+    useWeapon: (target: number, barrage: WeaponBarrage) => {
+      done.push(
+        `weapon at ${target.toString(16)} x${String(barrage.attacks)}${barrage.doNoDamage ? ' no damage' : ''}${barrage.aimOnly ? ' aim only' : ''}`,
+      );
+      return Promise.resolve(true);
+    },
+    useMagic: (target: number | undefined, cast: MagicCast) => {
+      done.push(
+        `magic ${String(cast.spell?.value.toString(16))} at ${String(target?.toString(16))} for ${String(cast.castTime)}${cast.dual ? ' dual' : ''}`,
+      );
+      return Promise.resolve(true);
+    },
+    shout: (target: number | undefined, _shout: unknown, turn: boolean) => {
+      done.push(`shout at ${String(target?.toString(16))}${turn ? '' : ' headtrack'}`);
+      return Promise.resolve(true);
+    },
+    holster: () => {
+      done.push('holster');
+    },
+    attack: (target: number) => {
+      done.push(`attack ${target.toString(16)}`);
     },
   } satisfies PackageBody;
   const mind = {
@@ -346,5 +375,106 @@ describe('procedures', () => {
       }),
     ).toBe('success');
     expect(done).toEqual(['converse 900']);
+  });
+});
+
+describe('combat procedures', () => {
+  const bool = (id: number, value: boolean): PackageInput => ({
+    id,
+    type: 'Bool',
+    value: { kind: 'bool', value },
+  });
+  const int = (id: number, value: number): PackageInput => ({
+    id,
+    type: 'Int',
+    value: { kind: 'int', value },
+  });
+  const float = (id: number, value: number): PackageInput => ({
+    id,
+    type: 'Float',
+    value: { kind: 'float', value },
+  });
+  const target: PackageInput = {
+    id: 2,
+    type: 'SingleRef',
+    value: {
+      kind: 'singleRef',
+      target: { type: TargetType.specificReference, value: 0x900, count: 0 },
+    },
+  };
+  const selector = (value: number): PackageInput => ({
+    id: 1,
+    type: 'TargetSelector',
+    value: { kind: 'targetSelector', target: { type: TargetType.objectId, value, count: 0 } },
+  });
+  const at = { target: () => Promise.resolve(0x900) };
+
+  it('UseWeapon shoots its barrages at its target, then puts the weapon away', async () => {
+    const { run, done } = harness();
+    // Slots: location, weapon, target, always hit, never end, pause, crouch, no damage, hold,
+    // min pause, max pause, end after, min attacks, max attacks, combat start, aim only,
+    // power attack, headtrack.
+    const inputs = [
+      selector(0x111),
+      target,
+      bool(3, false),
+      bool(4, false),
+      bool(5, true),
+      bool(7, true),
+      float(9, 1),
+      float(10, 2),
+      int(11, 2),
+      int(12, 3),
+      int(13, 3),
+      bool(15, false),
+    ];
+    const slots = [255, 1, 2, 3, 4, 5, 255, 7, 255, 9, 10, 11, 12, 13, 255, 15, 255, 255];
+    expect(await run('UseWeapon', slots, inputs, at)).toBe('success');
+    expect(done).toEqual(['weapon at 900 x3 no damage', 'weapon at 900 x3 no damage', 'holster']);
+  });
+
+  it('UseMagic casts its spell its number of times, held its cast time', async () => {
+    const { run, done } = harness();
+    const inputs = [
+      selector(0x222),
+      target,
+      float(4, 2),
+      float(5, 2),
+      float(6, 1),
+      float(7, 1),
+      int(8, 2),
+      int(9, 2),
+      bool(10, true),
+    ];
+    const slots = [255, 1, 2, 255, 4, 5, 6, 7, 8, 9, 10];
+    expect(await run('UseMagic', slots, inputs, at)).toBe('success');
+    expect(done).toEqual(['magic 222 at 900 for 2 dual', 'magic 222 at 900 for 2 dual', 'holster']);
+  });
+
+  it('Shout shouts at its target while the package runs; Just Headtrack keeps its body', async () => {
+    const { run, done } = harness(new Map(), 2);
+    const inputs = [selector(0x333), target, bool(4, true)];
+    expect(await run('Shout', [255, 1, 2, 255, 4], inputs, at)).toBe('failure');
+    expect(done).toEqual(['shout at 900 headtrack', 'wait 1', 'shout at 900 headtrack', 'wait 1']);
+  });
+
+  it('Acquire with Allow Killing fights the one who holds what it wants', async () => {
+    const found = new Map<number, readonly number[]>([[0, [0x601]]]);
+    const { run, done } = harness(found);
+    const list: PackageInput = {
+      id: 0,
+      type: 'ObjectList',
+      value: { kind: 'objectList', value: 0 },
+    };
+    const holder = { holder: () => Promise.resolve(0x777) };
+    expect(await run('Acquire', [0, 255, 255, 255, 4], [list, bool(4, true)], holder)).toBe(
+      'failure',
+    );
+    expect(done).toEqual(['attack 777']);
+    done.length = 0;
+    expect(await run('Acquire', [0, 255, 255, 255, 4], [list, bool(4, false)], holder)).toBe(
+      'failure',
+    );
+    expect(done).toEqual([]);
   });
 });

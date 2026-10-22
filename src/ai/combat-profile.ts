@@ -4,7 +4,7 @@
 // the template that gives its AI data, else the engine's DefaultCombatstyle), whether its class
 // is a guard's, whether it is the player's teammate, and what it may fight with: the weapons it
 // carries (a bow or crossbow only with ammunition for it) and its fists. Its spells, staffs and
-// shouts are magic's (M10 5.3). Platform-independent.
+// shouts are the casting's options (src/shell/combat-casting.ts). Platform-independent.
 
 import { Fields } from '../formats/esm/fields.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -105,8 +105,8 @@ export class CombatProfiles {
 
 /**
  * The weapons an actor carries as equipment options (melee by its reach, a bow or crossbow with
- * ammunition for it by its range), and its fists (its unarmed damage). Staffs cast: magic's
- * (TODO(M10) 5.3: CombatCasting's options).
+ * ammunition for it by its range), and its fists (its unarmed damage). Staffs, spells and shouts
+ * are the casting's options (src/shell/combat-casting.ts: CombatCasting.options).
  */
 export async function weaponOptions(
   runtime: ScriptRuntime,

@@ -5,6 +5,7 @@
 // or an alias's), and dying. Platform-independent. Notes: docs/scripting.md ("Actors").
 
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
+import { healthOut } from '../../gameplay/combat/bleedout.ts';
 import {
   LeveledFlag,
   NpcFlag,
@@ -383,9 +384,12 @@ export class ActorEngine {
     if (index === ActorValue.health && (await this.value(reference, index)).current <= 0) {
       // Essential actors, and protected ones but by the player, bleed out instead of dying
       // (src/gameplay/combat/bleedout.ts); the engine lays them down (WorldBridge.bleedout).
-      const essential = await this.isEssential(reference);
-      const spared = essential || (source !== PLAYER_REF && (await this.isProtected(reference)));
-      if (!spared) await this.kill(reference, source);
+      const out = healthOut({
+        essential: await this.isEssential(reference),
+        protected: await this.isProtected(reference),
+        byPlayer: source === PLAYER_REF,
+      });
+      if (out === 'dies') await this.kill(reference, source);
       else this.#runtime.world.bleedout?.(reference, source);
     }
   }
@@ -767,7 +771,8 @@ export class ActorEngine {
     this.#own(reference, ActorValue.health).damage = (
       await this.value(reference, ActorValue.health)
     ).max;
-    // Silent: no death cry or alarm (TODO(M10): detection and crime).
+    // Silent (KillSilent): no death cry (the stage's: src/shell/actor-stage.ts killed) and no
+    // alarm: no murder reported (crime-engine.ts killed).
     this.#runtime.world.killed?.(reference, killer, silent);
     // Its magic: souls trapped, effects dispelled, its summons gone (magic-engine.ts).
     await this.#runtime.magic.died(reference);
@@ -785,7 +790,7 @@ export class ActorEngine {
     await this.#runtime.sendEvent(reference, 'OnDying', [by]);
     await this.#runtime.sendEvent(reference, 'OnDeath', [by]);
     // Crime: a witness gone, a murder, the story manager's Kill Actor event (crime-engine.ts).
-    await this.#runtime.crime.killed(reference, killer);
+    await this.#runtime.crime.killed(reference, killer, silent);
   }
 
   async resurrect(reference: number): Promise<void> {

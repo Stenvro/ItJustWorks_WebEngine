@@ -59,8 +59,11 @@ export interface ScriptView {
    * view makes its 3D again; resolves once it shows the new look.
    */
   lookChanged?(reference: number): Promise<void>;
-  /** An actor died: the view lays it down as its ragdoll (its pose follows its bodies). */
-  killed?(reference: number): void;
+  /**
+   * An actor died: the view lays it down as its ragdoll (its pose follows its bodies); it cries
+   * out unless the kill was silent (KillSilent).
+   */
+  killed?(reference: number, killer: number | undefined, silent: boolean): void;
   /** The package an actor of the view runs now (its AI), if any. */
   currentPackage?(reference: number): number | undefined;
   /** The procedure its package runs now, by name (GetCurrentAIProcedure). */
@@ -114,6 +117,12 @@ export interface CombatBridge {
   drawWeapon(actor: number, draw: boolean): void;
   bleedout(actor: number, source: number | undefined): void;
   firstPerson(): boolean;
+  /** Knocks an actor down, pushed away from a point (src/shell/actor-knockdowns.ts). */
+  knockDown(actor: number, from: Vec3 | undefined, force: number): Promise<void>;
+  /** A Stagger effect's magnitude on an actor, from its caster's side. */
+  staggerEffect(actor: number, magnitude: number, caster: number | undefined): void;
+  /** Paralysis begins or ends on an actor: it lies as its ragdoll meanwhile. */
+  paralyze(actor: number, on: boolean): void;
 }
 
 /**
@@ -342,8 +351,8 @@ export class ScriptWorld implements WorldBridge {
    * An actor's look changed (its race; the player's appearance): the views showing it make it
    * again; resolves once they have.
    */
-  killed(actor: number): void {
-    for (const view of this.#views) view.killed?.(actor);
+  killed(actor: number, killer?: number, silent = false): void {
+    for (const view of this.#views) view.killed?.(actor, killer, silent);
   }
 
   currentPackage(actor: number): number | undefined {
@@ -553,6 +562,25 @@ export class ScriptWorld implements WorldBridge {
   firstPerson(): boolean {
     for (const fights of this.#fights()) if (fights.firstPerson()) return true;
     return false;
+  }
+
+  /** PushActorAway, KnockAreaEffect, a trap's push: knocked down, away from a reference. */
+  pushAway(pushed: number, from: number, force: number): void {
+    const at = this.livePlacement(from)?.position;
+    for (const fights of this.#fights()) void fights.knockDown(pushed, at && [...at], force);
+  }
+
+  /** An explosion's knock-down: knocked down, away from where it burst. */
+  knockDown(actor: number, from: Vec3, force: number): void {
+    for (const fights of this.#fights()) void fights.knockDown(actor, from, force);
+  }
+
+  stagger(actor: number, magnitude: number, caster: number | undefined): void {
+    for (const fights of this.#fights()) fights.staggerEffect(actor, magnitude, caster);
+  }
+
+  paralyze(actor: number, on: boolean): void {
+    for (const fights of this.#fights()) fights.paralyze(actor, on);
   }
 
   furnitureInUse(furniture: number, marker?: number): boolean {

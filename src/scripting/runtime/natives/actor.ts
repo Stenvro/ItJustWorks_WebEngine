@@ -392,13 +392,22 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     if (target === undefined) return false;
     return (await world.pathTo?.(actor, target, num(call.args[1], 0.5))) ?? false;
   });
+  // StartCombat: it fights the target whatever it thought of it, hostile to it (the reaction:
+  // crime-engine.ts) until StopCombat or its combat ends.
   act('startcombat', (actor, call) => {
     const target = ref(call.args[0]);
-    if (target !== undefined) world.startCombat?.(actor, target);
+    if (target === undefined || target === actor) return;
+    const state = runtime.state.actor(actor);
+    state.combatTargets = [...new Set([...(state.combatTargets ?? []), target])];
+    world.startCombat?.(actor, target);
   });
-  act('stopcombat', (actor) => world.stopCombat?.(actor));
+  act('stopcombat', (actor) => {
+    delete runtime.state.actor(actor).combatTargets;
+    world.stopCombat?.(actor);
+  });
   // On the player: the guards stop pursuing them (a bribe, a persuasion: CrimeGuardsScript).
   act('stopcombatalarm', (actor) => {
+    delete runtime.state.actor(actor).combatTargets;
     world.stopCombat?.(actor);
     world.alarm?.(actor, undefined, 'stop');
     if (actor === PLAYER_REF) runtime.crime.stopPursuit();

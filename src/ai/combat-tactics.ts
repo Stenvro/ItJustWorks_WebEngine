@@ -354,3 +354,64 @@ export function dodgeDirection(threat: Threat, feet: Vec3): readonly [number, nu
   const side = ux * wy - uy * wx >= 0 ? 1 : -1;
   return [-uy * side, ux * side];
 }
+
+// --- Its other casting and its potions ---------------------------------------------------------
+
+/** What an actor in combat can do for itself now (read from its spells, items and state). */
+export interface SupportState {
+  /** Its health, magicka and stamina as shares of their maximum. */
+  readonly health: number;
+  readonly magicka: number;
+  readonly stamina: number;
+  /** Seconds since it last healed itself or drank a potion. */
+  readonly sinceRestore: number;
+  /** It has a healing spell it has the magicka for. */
+  readonly canHeal: boolean;
+  /** It carries a potion restoring Health, Magicka, Stamina. */
+  readonly potions: {
+    readonly health: boolean;
+    readonly magicka: boolean;
+    readonly stamina: boolean;
+  };
+  /** It fights with magic and has no attack spell it has the magicka for. */
+  readonly outOfMagicka: boolean;
+  /** It has a summoning spell it can cast, and none of its summons stands. */
+  readonly canSummon: boolean;
+  /** It has a buff (a Self spell: armour, cloak) it can cast that is not on it. */
+  readonly canBuff: boolean;
+  /** A spell or breath comes at it, and it has a ward it can cast. */
+  readonly canWard: boolean;
+}
+
+/** One thing it does for itself: a ward, a heal, a potion, a summons or a buff. */
+export type SupportChoice =
+  | { readonly kind: 'ward' | 'heal' | 'summon' | 'buff' }
+  | { readonly kind: 'potion'; readonly value: 'health' | 'magicka' | 'stamina' };
+
+/**
+ * What an actor in combat does for itself now, if anything, in this order: a ward against a
+ * spell coming at it; below iAICombatRestoreHealthPercentage of its health its healing spell,
+ * else a Health potion, and a Magicka potion when its magic fails it for want of magicka (at
+ * most one restore every fCombatItemRestoreTimer seconds); a summons when none of its stands;
+ * a buff not on it. TODO(M13): the engine's order and its thresholds for magicka and stamina
+ * (a Stamina potion here below the same share as health) are not documented.
+ */
+export function chooseSupport(
+  state: SupportState,
+  settings: Pick<CombatAiSettings, 'restoreHealthPercentage' | 'itemRestoreTime'>,
+): SupportChoice | undefined {
+  if (state.canWard) return { kind: 'ward' };
+  const threshold = settings.restoreHealthPercentage / 100;
+  const restore = state.sinceRestore >= settings.itemRestoreTime;
+  if (restore && state.health < threshold) {
+    if (state.canHeal) return { kind: 'heal' };
+    if (state.potions.health) return { kind: 'potion', value: 'health' };
+  }
+  if (restore && state.outOfMagicka && state.potions.magicka)
+    return { kind: 'potion', value: 'magicka' };
+  if (restore && state.stamina < threshold && state.potions.stamina)
+    return { kind: 'potion', value: 'stamina' };
+  if (state.canSummon) return { kind: 'summon' };
+  if (state.canBuff) return { kind: 'buff' };
+  return undefined;
+}

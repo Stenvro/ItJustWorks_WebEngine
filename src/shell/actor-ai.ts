@@ -16,6 +16,7 @@ import {
   PackageFlag,
   TargetType,
   type PackageRecord,
+  type PackageTarget,
 } from '../ai/package-records.ts';
 import { PROCEDURES } from '../ai/procedure-runs.ts';
 import { isOfObjectType, ObjectType } from '../ai/object-types.ts';
@@ -28,6 +29,7 @@ import { seededRandom } from '../world/actors.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { ActorFurniture, FurnitureUser } from './actor-furniture.ts';
+import type { ActorPractice } from './actor-practice.ts';
 import type { ActorSearch } from './actor-search.ts';
 import { spaceOf, type AwayPlace } from './actors-away.ts';
 import { findRoute, type RouteDoor } from '../ai/routes.ts';
@@ -152,6 +154,8 @@ export class ActorAi {
   /** The player's packages while the scripts drive them (SetPlayerAIDriven). */
   #player: { packages: ActorPackages; body: PackageBody } | undefined;
   readonly #mind: PackageMind;
+  readonly #practice: (() => ActorPractice | undefined) | undefined;
+  readonly #startCombat: ((actor: number, target: number) => void) | undefined;
 
   constructor(options: {
     readonly session: GameSession;
@@ -185,6 +189,10 @@ export class ActorAi {
     readonly engaged?: (reference: number) => boolean;
     /** The fliers: their packages fly them. */
     readonly flight?: () => PackageFlight | undefined;
+    /** UseWeapon, UseMagic and Shout's practice (src/shell/actor-practice.ts). */
+    readonly practice?: () => ActorPractice | undefined;
+    /** Starts a fight (StartCombat: Acquire's Allow Killing). */
+    readonly startCombat?: (actor: number, target: number) => void;
   }) {
     this.#session = options.session;
     this.#movers = options.movers;
@@ -199,6 +207,8 @@ export class ActorAi {
     this.#flight = options.flight;
     this.#transport = options.transport;
     this.#engaged = options.engaged;
+    this.#practice = options.practice;
+    this.#startCombat = options.startCombat;
     this.#mind = this.#makeMind();
   }
 
@@ -420,6 +430,27 @@ export class ActorAi {
    * What an actor's packages move: its controller (travel, stop, turning) and the furniture
    * it uses (it gets up before it goes anywhere).
    */
+  /** An item an actor carries that a criterion names (an object, a form list, an object type). */
+  async carried(actor: number, criteria: PackageTarget): Promise<number | undefined> {
+    const scripts = this.#session.scriptsReady;
+    if (!scripts) return undefined;
+    const db = scripts.forms.db;
+    const listed =
+      criteria.type === TargetType.objectId
+        ? new Set(await scripts.formList(criteria.value))
+        : undefined;
+    for (const [item, count] of await scripts.inventory(actor)) {
+      if (count <= 0) continue;
+      if (criteria.type === TargetType.objectId) {
+        if (item === criteria.value || listed?.has(item)) return item;
+      } else if (criteria.type === TargetType.objectType) {
+        const record = await db.get(item);
+        if (record && isOfObjectType(criteria.value, record)) return item;
+      }
+    }
+    return undefined;
+  }
+
   #body(staged: StagedActor): PackageBody {
     const movers = this.#movers;
     const furniture = this.#furniture;
@@ -544,6 +575,24 @@ export class ActorAi {
         this.#flight?.()?.request(reference, request);
       },
       flightGrab: (target) => this.#flight?.()?.grab(reference, target) ?? Promise.resolve(false),
+      useWeapon: async (target, barrage) => {
+        await alight();
+        return (await this.#practice?.()?.useWeapon(reference, target, barrage)) ?? false;
+      },
+      useMagic: async (target, cast) => {
+        await alight();
+        return (await this.#practice?.()?.useMagic(reference, target, cast)) ?? false;
+      },
+      shout: async (target, shout, turn) => {
+        await alight();
+        return (await this.#practice?.()?.shout(reference, target, shout, turn)) ?? false;
+      },
+      holster: () => {
+        this.#practice?.()?.holster(reference);
+      },
+      attack: (target) => {
+        this.#startCombat?.(reference, target);
+      },
       ride: (allowed) => {
         this.#rides.set(reference, allowed);
         // Allowed to ride, it gets on its horse now, also where it need not go anywhere: MQ101's
@@ -815,24 +864,14 @@ export class ActorAi {
             return undefined;
         }
       },
-      carried: async (actor, criteria) => {
+      carried: (actor, criteria) => this.carried(actor, criteria),
+      // The living actor whose items took a reference (Acquire's Allow Killing).
+      holder: async (reference) => {
         const scripts = runtime();
-        if (!scripts) return undefined;
-        const db = scripts.forms.db;
-        const listed =
-          criteria.type === TargetType.objectId
-            ? new Set(await scripts.formList(criteria.value))
-            : undefined;
-        for (const [item, count] of await scripts.inventory(actor)) {
-          if (count <= 0) continue;
-          if (criteria.type === TargetType.objectId) {
-            if (item === criteria.value || listed?.has(item)) return item;
-          } else if (criteria.type === TargetType.objectType) {
-            const record = await db.get(item);
-            if (record && isOfObjectType(criteria.value, record)) return item;
-          }
-        }
-        return undefined;
+        const holder = scripts?.state.references.get(reference)?.container?.holder;
+        if (!scripts || holder === undefined || !(await scripts.actors.isActor(holder)))
+          return undefined;
+        return (await scripts.actors.isDead(holder)) ? undefined : holder;
       },
       fakeFood: () => {
         this.#fakeFood ??= session.db.then(async (db) => {

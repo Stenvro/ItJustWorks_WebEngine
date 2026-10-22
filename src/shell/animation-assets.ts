@@ -10,6 +10,7 @@ import type { BehaviorHost, SkeletalGraph } from '../animation/behavior-runtime.
 import { bindPaired, isPaired } from '../animation/paired-clips.ts';
 import {
   readAnimationContainer,
+  readRagdollMapping,
   type AnimationBinding,
   type HkxSkeleton,
 } from '../formats/hkx/animation.ts';
@@ -143,6 +144,7 @@ export class AnimationAssets {
   readonly #vfs: Vfs;
   readonly #terminal: Terminal;
   readonly #skeletons = new Map<string, Promise<HkxSkeleton | undefined>>();
+  readonly #ragdolls = new Map<string, Promise<Int16Array | undefined>>();
   readonly #clips = new Map<string, Promise<AnimationBinding | undefined>>();
   readonly #behaviors = new Map<string, Promise<Behaviors | undefined>>();
   readonly #skeletal = new Map<string, Promise<SkeletalGraph | undefined>>();
@@ -179,6 +181,18 @@ export class AnimationAssets {
       const skeleton = container.skeletons[0];
       if (!skeleton) throw new Error('no skeleton');
       return skeleton;
+    });
+  }
+
+  /**
+   * The animation bone of each bone of a character's ragdoll skeleton (its rig file's
+   * skeleton mapper: readRagdollMapping); undefined without a ragdoll.
+   */
+  ragdollBones(path: string): Promise<Int16Array | undefined> {
+    return this.#cached(this.#ragdolls, path, async () => {
+      const pack = Packfile.parse(await readHavokFile(path, (file) => this.#vfs.read(file)));
+      const animation = readAnimationContainer(pack).skeletons[0];
+      return animation ? readRagdollMapping(pack, animation.name)?.bones : undefined;
     });
   }
 

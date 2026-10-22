@@ -117,6 +117,11 @@ export interface ActorState {
   noBleedoutRecovery?: boolean;
   /** Others attack it on sight (SetAttackActorOnSight: the combat AI). */
   attackOnSight?: boolean;
+  /**
+   * Those a script set it to fight (StartCombat): it is hostile to them (crime-engine.ts
+   * reaction) until StopCombat or its combat ends.
+   */
+  combatTargets?: number[];
   /** Its own outfits (Actor.SetOutfit), over its base's. */
   outfit?: number;
   sleepOutfit?: number;

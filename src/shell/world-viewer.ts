@@ -679,10 +679,10 @@ export class WorldViewer {
       return undefined;
     },
     lookChanged: (reference) => this.#lookChanged(reference),
-    killed: (reference) => {
+    killed: (reference, killer, silent) => {
       // The dead player's furniture lets go of them first (their body falls from it).
       if (reference === PLAYER_REF) this.#seat?.release();
-      this.#stage?.killed(reference);
+      this.#stage?.killed(reference, killer, silent);
     },
     currentPackage: (reference) => this.#stage?.ai.current(reference)?.id,
     currentProcedure: (reference) => this.#stage?.ai.current(reference)?.procedure,

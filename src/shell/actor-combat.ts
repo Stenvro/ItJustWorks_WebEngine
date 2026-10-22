@@ -96,6 +96,8 @@ import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { ActorMovers } from './actor-movers.ts';
 import type { ActorBodies, BodyHolder } from './actor-bodies.ts';
+import type { ActorKnockdowns } from './actor-knockdowns.ts';
+import { RaceFlag } from '../world/actor-records.ts';
 import type { PlacedActor } from './actors.ts';
 import { HeldWeapons, type HeldModels } from './actor-weapons.ts';
 import { CombatImpacts } from './combat-impacts.ts';
@@ -172,6 +174,18 @@ interface Fighter {
   /** Attack events its graph took (past their wind-up) and those it never did (#unanswered). */
   readonly liveAttacks: Set<string>;
   readonly deadAttacks: Set<string>;
+  /** A package's UseWeapon practice it attacks in (src/shell/actor-practice.ts), if any. */
+  practice: Practice | undefined;
+}
+
+/** How a UseWeapon practice's attacks go (its procedure's parameters). */
+export interface Practice {
+  /** Where its shots go when its target is no fighter (an archery butt): a world point. */
+  readonly aimAt: Vec3 | undefined;
+  readonly doNoDamage: boolean;
+  readonly alwaysHit: boolean;
+  /** Its hits on an actor may start a fight. */
+  readonly combatStartOnHit: boolean;
 }
 
 /** What a fighter's hands hold, for combat. */
@@ -215,6 +229,8 @@ export interface ActorCombatOptions {
   readonly npcCasting?: () => CombatCasting | undefined;
   /** The fliers: dragons fighting from the air (src/shell/actor-flight.ts). */
   readonly flight?: () => CombatFlight | undefined;
+  /** The knocked down (src/shell/actor-knockdowns.ts): their ragdolls and getting up. */
+  readonly knockdowns?: () => ActorKnockdowns | undefined;
   /** What else flies at the actors: spells and breath (magic-projectiles.ts, actor-casting.ts). */
   readonly threats?: () => Iterable<Threat>;
 }
@@ -245,6 +261,8 @@ export class ActorCombat implements CombatBridge {
   #input: PlayerCombat | undefined;
   /** Who fights whom and how (src/shell/actor-combat-ai.ts). */
   readonly #brain: ActorCombatAi;
+  /** When a caster's spell last counted as a blow on a victim ("caster:victim"). */
+  readonly #spellHits = new Map<string, number>();
 
   constructor(options: ActorCombatOptions) {
     this.#options = options;
@@ -312,7 +330,7 @@ export class ActorCombat implements CombatBridge {
       this.#input = new PlayerCombat(
         this,
         play.player,
-        () => !play.seated && !play.dead && !this.#options.session.menuMode,
+        () => !play.seated && !play.dead && !play.knocked && !this.#options.session.menuMode,
         () => this.#options.casting?.(),
       );
     }
@@ -857,6 +875,8 @@ export class ActorCombat implements CombatBridge {
   /** One frame of a fighter: its models, its graph's flags, bleeding out, its AI. */
   #update(fighter: Fighter, seconds: number, runtime: ScriptRuntime): void {
     const state = fighter.state;
+    // Knocked down or getting up it does not act (canAct).
+    state.knock = this.#options.knockdowns?.()?.state(fighter.reference) ?? KnockState.normal;
     fighter.held?.update(fighter.inHand, state.arrowNocked);
     if (state.current?.ranged === true && state.arrowNocked) state.drawnFor += seconds;
     // A paired animation that never says it ended lets go after a while (TODO(M13)).
@@ -952,6 +972,10 @@ export class ActorCombat implements CombatBridge {
         this.#setVariable(fighter, 'IsEquipping', 0);
       }
       if (lower === 'weapequip_out') this.#setVariable(fighter, 'IsEquipping', 0);
+      // The player aiming a drawn bow (in its iron sights): those near may comment (PIRN,
+      // PlayerinIronSights), once a draw (the graph whose strikes count).
+      if (fighter.player && strikes && lower === 'bowdrawn')
+        void this.#options.talk?.()?.playerAction('PIRN');
       // So is its sheathing at weaponSheathe (no Unequip_Out follows).
       if (
         lower === 'weaponsheathe' &&
@@ -1345,6 +1369,20 @@ export class ActorCombat implements CombatBridge {
         settings,
       );
       if (stagger > 0) this.#stagger(target, stagger, attackerFeet);
+      // An attack with a knockdown (ATKD: the beast forms' sprinting swipes, 1) knocks it down,
+      // pushed as a killing blow of its damage pushes the dead (TODO(M13): the knockdown read
+      // as a chance, the push as fDeathForce*).
+      if (!hit.shot && data.knockdown > 0 && Math.random() < data.knockdown) {
+        void this.knockDown(targetRef, attackerFeet, this.#pushForce(result.total, false));
+      }
+      // One lying knocked down: the blow pushes its ragdoll.
+      this.#options
+        .knockdowns?.()
+        ?.push(
+          targetRef,
+          [hit.direction[0], hit.direction[1], hit.direction[2] + 0.25],
+          this.#pushForce(result.total, hit.shot !== undefined),
+        );
     }
     // Its impact: the weapon's impact data set (a bash or block: BIDS; fists: the race's)
     // against the target's flesh (its race's material).
@@ -1384,15 +1422,17 @@ export class ActorCombat implements CombatBridge {
       hit.bash,
       blocks,
     ]);
-    // It fights back, or lets a friend's blow pass (the combat AI: iFriendHitCombatAllowed).
-    this.#brain.hit(attackerRef, targetRef);
+    // It fights back, or lets a friend's blow pass (the combat AI: iFriendHitCombatAllowed);
+    // a practice's blow without Allow Combat Start On Hit passes (no fight, search or crime).
+    const passes = attacker.practice?.combatStartOnHit === false;
+    if (!passes) this.#brain.hit(attackerRef, targetRef);
     if (attacker.player)
       this.#enemy = { reference: targetRef, until: this.#clock + ENEMY_BAR_SECONDS };
     // Detection: the one attacked searches for its attacker; those near watch the fight.
-    senses?.attackedBy(targetRef, attackerRef);
+    if (!passes) senses?.attackedBy(targetRef, attackerRef);
     // Crime: a blow on one that was not hostile to its attacker is an assault, reported by the
     // one hit and those who saw it (crime-engine.ts assault; the player's: TODO(M13) NPCs').
-    void runtime.crime.assault(attackerRef, targetRef);
+    if (!passes) void runtime.crime.assault(attackerRef, targetRef);
     // The weapon's enchantment and the poison on it (not a bash: the magic system); a diseased
     // creature's attack (its attack data's spell) may pass its disease on.
     if (!hit.bash && !blocks) await runtime.magic.weaponHit(attackerRef, targetRef, stats?.weapon);
@@ -1414,11 +1454,11 @@ export class ActorCombat implements CombatBridge {
       if (item) await runtime.magic.apply(item, targetRef, { caster: attackerRef, source: weapon });
     }
     // Its health; the killing blow pushes its ragdoll (fDeathForce*). The one hit says its
-    // line (Hit), or its death cry.
-    if (result.total <= 0) return;
+    // line (Hit); its death cry is the stage's (every death but a silent one: killed).
+    // A practice with Do No Damage takes no health.
+    if (result.total <= 0 || attacker.practice?.doNoDamage === true) return;
     await runtime.actors.damage(targetRef, ActorValue.health, result.total, attackerRef);
     if (await runtime.actors.isDead(targetRef)) {
-      this.#bark(targetRef, 'Death', attackerRef, true);
       this.#deathPush(target, result.total, hit);
       if (weapon !== undefined && !hit.bash) await this.#siphonSoul(attackerRef, targetRef, weapon);
     } else if (!target.player) {
@@ -1537,8 +1577,17 @@ export class ActorCombat implements CombatBridge {
       ? this.#options.playerBody?.()
       : this.#options.get(target.reference);
     if (!staged) return;
+    void this.#options.bodies.push(
+      staged,
+      hit.direction,
+      this.#pushForce(damage, hit.shot !== undefined),
+    );
+  }
+
+  /** The push a blow of some damage gives a ragdoll (fDeathForce{Ranged}Min..Max by damage). */
+  #pushForce(damage: number, ranged: boolean): number {
     const s = this.#settings;
-    const [dMin, dMax, fMin, fMax] = hit.shot
+    const [dMin, dMax, fMin, fMax] = ranged
       ? [
           s.deathForceRangedDamageMin,
           s.deathForceRangedDamageMax,
@@ -1547,7 +1596,7 @@ export class ActorCombat implements CombatBridge {
         ]
       : [s.deathForceDamageMin, s.deathForceDamageMax, s.deathForceForceMin, s.deathForceForceMax];
     const t = Math.min(1, Math.max(0, (damage - dMin) / Math.max(1e-6, dMax - dMin)));
-    void this.#options.bodies.push(staged, hit.direction, fMin + (fMax - fMin) * t);
+    return fMin + (fMax - fMin) * t;
   }
 
   /** Staggers a fighter by a magnitude from where the blow came (ActionStaggerStart). */
@@ -1588,12 +1637,16 @@ export class ActorCombat implements CombatBridge {
       );
     } else {
       const target = fighter.target === undefined ? undefined : this.#fighters.get(fighter.target);
-      const there = target && this.#feet(target);
+      const feetThere = target && this.#feet(target);
+      // A practice's target that is no fighter (an archery butt): its point.
+      const aimAt = feetThere ? undefined : fighter.practice?.aimAt;
+      const there = feetThere ?? aimAt;
       if (there) {
-        const height = this.#size(target).height * CHEST;
+        const height = target ? this.#size(target).height * CHEST : 0;
         const way: Vec3 = [there[0] - from[0], there[1] - from[1], there[2] + height - from[2]];
-        // fBowNPCSpreadAngle: an NPC's aim strays this far (degrees).
-        const spread = ((Math.random() - 0.5) * 4 * Math.PI) / 180;
+        // fBowNPCSpreadAngle: an NPC's aim strays this far (degrees); Always Hit: none.
+        const spread =
+          fighter.practice?.alwaysHit === true ? 0 : ((Math.random() - 0.5) * 4 * Math.PI) / 180;
         const heading = Math.atan2(way[0], way[1]) + spread;
         const pitch = Math.atan2(way[2], Math.hypot(way[0], way[1]));
         aim = tiltUp(
@@ -2161,9 +2214,166 @@ export class ActorCombat implements CombatBridge {
     this.#setMusic(false);
   }
 
-  /** Knocked down (a ragdoll that gets up: Unrelenting Force; TODO(M11): the Stagger effects'). */
+  /**
+   * Knocked down (a ragdoll that gets up: src/shell/actor-knockdowns.ts): GetKnockStateEnum's
+   * value.
+   */
   knockState(reference: number): number {
-    return this.#fighters.get(reference)?.state.knock ?? KnockState.normal;
+    return (
+      this.#options.knockdowns?.()?.state(reference) ??
+      this.#fighters.get(reference)?.state.knock ??
+      KnockState.normal
+    );
+  }
+
+  /**
+   * Its knock state changed (src/shell/actor-knockdowns.ts): down, it stops what it did (an
+   * attack, a block, a stagger) and acts no more until it is up.
+   */
+  knockChanged(reference: number, knock: number): void {
+    const fighter = this.#fighters.get(reference);
+    if (!fighter) return;
+    const state = fighter.state;
+    state.knock = knock;
+    if (knock === KnockState.normal) return;
+    state.current = undefined;
+    state.attack = AttackState.none;
+    state.staggered = false;
+    state.recoiling = false;
+    if (state.blocking || state.wantBlocking) {
+      state.blocking = false;
+      state.wantBlocking = false;
+      this.#setVariable(fighter, 'iWantBlock', 0);
+      this.#setVariable(fighter, 'IsBlocking', 0);
+    }
+    this.#setVariable(fighter, 'IsAttacking', 0);
+    this.#setVariable(fighter, 'IsBashing', 0);
+  }
+
+  /**
+   * A package's UseWeapon practice (src/shell/actor-practice.ts): its fighter attacks `target`
+   * (its combat target meanwhile) as the practice says; undefined: the practice ended.
+   */
+  practice(actor: number, target: number | undefined, practice: Practice | undefined): void {
+    const fighter = this.#fighters.get(actor);
+    if (!fighter || fighter.player) return;
+    fighter.practice = practice;
+    // Not a fight of the combat AI's: only its target to aim and strike at.
+    if (!this.#brain.engaged(actor)) fighter.target = target;
+  }
+
+  /**
+   * A hostile spell that took hold on an actor (src/shell/magic-projectiles.ts): as a blow does,
+   * its victim turns on its caster (the combat AI: at once on an enemy or a neutral, a friend's
+   * after iFriendHitCombatAllowed), and the caster shows on the HUD's enemy bar if it is the
+   * player's.
+   */
+  spellHit(caster: number, victim: number): void {
+    if (caster === victim) return;
+    // A held spell's sprays (Flames: one every relaunch interval) count as one blow a second.
+    const key = `${String(caster)}:${String(victim)}`;
+    const last = this.#spellHits.get(key);
+    if (last !== undefined && this.#clock - last < 1) return;
+    this.#spellHits.set(key, this.#clock);
+    if (this.#spellHits.size > 256) this.#spellHits.clear();
+    this.#brain.hit(caster, victim);
+    if (caster === PLAYER_REF && victim !== PLAYER_REF)
+      this.#enemy = { reference: victim, until: this.#clock + ENEMY_BAR_SECONDS };
+  }
+
+  /**
+   * Knocks an actor down (Actor.PushActorAway and KnockAreaEffect, an explosion's knock-down
+   * flags, an attack's knockdown): its idle tree's ActionKnockdown says how (the humans'
+   * NPCKnockDown, the bear's, the giant's: "Ragdoll"; mammoths, atronachs and wisps: a
+   * stagger), and its ragdoll is pushed away from `from` by `force` (an impulse on its bodies,
+   * Havok units; negative pulls). A race with No Knockdowns (RACE DATA), or a graph with no
+   * knock-down, staggers at full strength instead (UESP "Unrelenting Force": those immune to
+   * the ragdoll are staggered). One lying already is pushed again.
+   */
+  async knockDown(reference: number, from: Vec3 | undefined, force: number): Promise<void> {
+    const fighter = this.#fighters.get(reference);
+    const knockdowns = this.#options.knockdowns?.();
+    const feet = fighter && this.#feet(fighter);
+    if (!fighter || !knockdowns || !feet) return;
+    if (bleedingOut(fighter.state) || fighter.state.paired !== undefined) return;
+    const away: Vec3 = from
+      ? [feet[0] - from[0], feet[1] - from[1], 0]
+      : [Math.sin(this.#heading(fighter)), Math.cos(this.#heading(fighter)), 0];
+    const length = Math.hypot(away[0], away[1]) || 1;
+    // Away and a little up (TODO(M13): the engine's push direction is not documented).
+    const sign = force < 0 ? -1 : 1;
+    const direction: Vec3 = [(sign * away[0]) / length, (sign * away[1]) / length, 0.5];
+    const push = { direction, force: Math.abs(force) };
+    if (knockdowns.holds(reference)) {
+      knockdowns.push(reference, direction, push.force);
+      return;
+    }
+    const immune = ((fighter.body?.look.raceFlags ?? 0) & RaceFlag.noKnockdowns) !== 0;
+    const event = immune ? undefined : (await this.#act(fighter, 'ActionKnockdown'))?.toLowerCase();
+    if (event === 'ragdoll' || event === 'ragdollinstant') {
+      await knockdowns.knockDown(reference, push);
+      return;
+    }
+    // No idle for it (a graph the tree has none for: draugr): its graph's own Ragdoll.
+    if (event === undefined && !immune && fighter.body?.behavior?.sendEvent('Ragdoll') === true) {
+      await knockdowns.knockDown(reference, push);
+      return;
+    }
+    if (event !== 'staggerstart') this.stagger(reference, 1, from);
+  }
+
+  /**
+   * Staggers an actor by a magnitude (0..1) from where the blow came (the Stagger effect's
+   * magnitude, weighed against its mass; a hit's: #hit), through ActionStaggerStart.
+   */
+  stagger(reference: number, magnitude: number, from: Vec3 | undefined): void {
+    const fighter = this.#fighters.get(reference);
+    const feet = fighter && this.#feet(fighter);
+    if (!fighter || !feet || magnitude <= 0) return;
+    const heading = this.#heading(fighter);
+    this.#stagger(
+      fighter,
+      Math.min(1, magnitude),
+      from ?? [feet[0] + Math.sin(heading), feet[1] + Math.cos(heading), feet[2]],
+    );
+  }
+
+  /**
+   * Paralysis begins or ends on an actor: it falls as its ragdoll (its graph's Ragdoll) and lies
+   * until it ends, then gets up. TODO(M13): the paralysed fall stiff in the game (the ragdoll's
+   * powered controls holding the pose); here they fall limp.
+   */
+  paralyze(reference: number, on: boolean): void {
+    const knockdowns = this.#options.knockdowns?.();
+    if (!knockdowns) return;
+    knockdowns.paralyze(reference, on);
+    if (!on || knockdowns.holds(reference)) return;
+    const fighter = this.#fighters.get(reference);
+    if (!fighter || bleedingOut(fighter.state) || fighter.state.paired !== undefined) return;
+    fighter.body?.behavior?.sendEvent('Ragdoll');
+    void knockdowns.knockDown(reference);
+  }
+
+  /**
+   * A Stagger effect on an actor (its magnitude: Unrelenting Force's 0.75, 1.25, 1.5; the
+   * spells' 0.05 .. 1), weighed against its mass as a hit's stagger is (stagger.ts), from its
+   * caster's side.
+   */
+  staggerEffect(reference: number, magnitude: number, caster: number | undefined): void {
+    const fighter = this.#fighters.get(reference);
+    if (!fighter) return;
+    const weighed = staggerMagnitude(
+      {
+        weaponStagger: magnitude,
+        attackStagger: 1,
+        perkMult: 1,
+        targetMass: fighter.gear?.race?.mass ?? 1,
+        targetIsPlayer: fighter.player,
+      },
+      this.#settings,
+    );
+    const source = caster === undefined ? undefined : this.#fighters.get(caster);
+    this.stagger(reference, weighed, source && this.#feet(source));
   }
 }
 
@@ -2203,5 +2413,6 @@ function newFighter(reference: number, player: boolean): Fighter {
     attackSince: undefined,
     liveAttacks: new Set(),
     deadAttacks: new Set(),
+    practice: undefined,
   };
 }

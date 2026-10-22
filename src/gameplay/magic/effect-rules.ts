@@ -79,7 +79,7 @@ export const TARGET_VALUES: ReadonlyMap<number, number> = new Map([
 /**
  * Archetypes whose magnitude is the highest level of actor they work on ("up to level <mag>":
  * UESP "Skyrim:Illusion", "Skyrim:Conjuration": Calm, Fear, Frenzy, Rally, Turn Undead,
- * Banish, Reanimate, Command). TODO(M13): Disarm's magnitude read as a level too.
+ * Banish, Reanimate, Command; "Skyrim:Disarm": Zun disarms enemies up to level 12).
  */
 export const LEVEL_CAPPED: ReadonlySet<number> = new Set([
   EffectArchetype.calm,

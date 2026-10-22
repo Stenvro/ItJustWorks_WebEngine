@@ -332,9 +332,34 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   see its ragdoll). TODO(M13): locking planted feet and the planted and raised gains are not
   documented.
 - **hkbKeyframeBonesModifier** (91): the ragdoll bones it keeps keyframed
-  (BehaviorRuntime.keyframedRagdollBones: the living's lower body; the whole ragdoll on its way
-  to ragdolling). The living's bodies all follow the pose now (actor-bodies.ts); TODO(M10) 5.1:
-  hits push the others, driven by the rigid body ragdoll controls.
+  (BehaviorRuntime.keyframedRagdollBones: the lower body getting up; the whole ragdoll on its
+  way to ragdolling). The ragdoll bones are the ragdoll skeleton's, mapped onto the animation
+  skeleton's by the skeleton file's hkaSkeletonMapper (readRagdollMapping: names do not tell,
+  the giant's left thigh is "[RThg]01"). The living's bodies follow the pose (keyframed:
+  actor-bodies.ts); a hit pushes a ragdoll lying (dead or knocked down) instead: vanilla keeps
+  the living's whole ragdoll keyframed (the SKSE mods that add hit reactions to the living make
+  the point), and its rigid body controls (hkbRigidBodyRagdollControlsModifier:
+  rigidBodyRagdoll, its hkaKeyFrameHierarchyUtility gains) drive the get-up's upper body,
+  which is keyframed to the blend here.
+- **Ragdolls and getting up** (docs/ai.md, "Combat": Knock-downs): `Ragdoll` (i1stPerson 0)
+  and `RagdollInstant` take the human graph to FullyRagdoll; its pose matcher
+  (hkbPoseMatchingGenerator, read as a blender with its own members) shows the matched get-up
+  clip's first pose, held still, from its start-matching event, matching again whenever the
+  engine gives the ragdoll's pose (setRagdollPose: bone transforms in the model frame): of its
+  children's first poses the one whose root, other and another bones (the ragdoll's COM, neck,
+  left upper arm) lie as the ragdoll's do, turned about the up axis and shifted to fit
+  (src/animation/pose-matching.ts: least squares; TODO(M13) Havok's own weighing), and keeps
+  the turn and shift (poseMatch) and the ragdoll's pose in that frame (matchedRagdollPose);
+  from its start-playing event (GetUpStart, the timer of MatchAndSendGetup 0.5 s after
+  GetUpBegin) it plays that clip. hkbGetUpModifier, as it becomes active, takes the matched
+  ragdoll pose and blends from it into the animation over its duration (1 s; the ground under
+  the engine's placement is level: groundNormal and alignWithGroundDuration add nothing).
+  hkbPoweredRagdollControlsModifier's maxForce is told (poweredRagdollForce: 0 limp in
+  FullyRagdoll, 200 matching; TODO(M13): the ragdoll's joint motors, the paralysed's stiff
+  fall). BSRagdollContactListenerModifier raises its event once a body of its bones touches
+  something (the engine's ragdollContact: ActorBodies.touching), as AnimateToRagdoll's death
+  animation goes limp. `tests/knockdown.int.test.ts` runs the human graph through it on the game
+  data.
 - **hkbRotateCharacterModifier** (6): turns the character at TurnDelta in the equip and unequip
   states; the movers make that turn already, so the graph's root motion leaves it out.
 - **The dragon's flight modifiers** (docs/ai.md, "Flying combat"): BSTweenerModifier carries
@@ -350,8 +375,7 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   actor's ConstraintOffset), BSLimbIKModifier bends the tail up off the ground (rays from
   castOffset above each bone, the chain's first bone turned within its limit, eased by its
   gain; TODO(M13): Bethesda's solver).
-- Not run, by milestone (behavior.ts): the ragdoll's controls, get-up and contact listener
-  (TODO(M10) 5.1) and BSIStateManagerModifier (M11, with the beast forms).
+- Not run, by milestone (behavior.ts): BSIStateManagerModifier (M11, with the beast forms).
 
 ## Head tracking
 

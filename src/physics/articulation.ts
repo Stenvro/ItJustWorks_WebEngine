@@ -87,10 +87,13 @@ export class Articulation {
     this.#links = links;
   }
 
-  /** Moves the pose to the bodies (after a physics step). */
-  update(): void {
+  /**
+   * Moves the pose to the bodies (after a physics step); `always`: even when they sleep (the
+   * pose was animated meanwhile: a living actor knocked down).
+   */
+  update(always = false): void {
     const awake = this.#links.some(({ body }) => !body.body.isSleeping());
-    if (!awake && this.#synced) return;
+    if (!awake && this.#synced && !always) return;
     for (const { body, node, toNode } of this.#links) {
       if (!body.body.isValid()) continue;
       const world = multiply(bodyWorld(body), toNode);
@@ -98,6 +101,15 @@ export class Articulation {
     }
     this.pose.place(this.#driven);
     this.#synced = !awake;
+  }
+
+  /** Whether every body sleeps, or moves slower than `speed` (game units a second). */
+  resting(speed: number): boolean {
+    return this.#links.every(({ body }) => {
+      if (body.body.isSleeping()) return true;
+      const v = body.body.linvel();
+      return Math.hypot(v.x, v.y, v.z) * HAVOK_SCALE < speed;
+    });
   }
 }
 

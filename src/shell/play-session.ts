@@ -6,7 +6,7 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
-import { settlesWhenPlaced, type CollisionData } from '../physics/collision-data.ts';
+import { HAVOK_SCALE, settlesWhenPlaced, type CollisionData } from '../physics/collision-data.ts';
 import { GrabSpring } from '../physics/grab.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { landscapeMesh } from '../physics/landscape.ts';
@@ -45,6 +45,13 @@ const COLLISION_BUDGET_MS = 3;
  * frames (a heavy city, a hidden tab) before their floor was there: under it.
  */
 const GROUND_WAIT_SECONDS = 60;
+/**
+ * Telekinesis: an object it holds floats this far before the view, drawn in at this speed, and
+ * flies off at this speed when let go (units, units a second). TODO(M13): not in the data.
+ */
+const TELEKINESIS_HOLD = 160;
+const TELEKINESIS_PULL = 600;
+const TELEKINESIS_THROW = 1500;
 
 /** Seconds on the renderer's clock (sequences and their collision run on it). */
 const clock = (): number => performance.now() / 1000;
@@ -403,6 +410,49 @@ export class PlaySession {
     | undefined;
   /** The object held (its spring) and how far in front of the camera. */
   #grab: { readonly spring: GrabSpring; readonly distance: number } | undefined;
+  /** The object Telekinesis holds: its spring, how far it is now and where it floats. */
+  #telekinesis:
+    { readonly spring: GrabSpring; distance: number; readonly hold: number } | undefined;
+
+  /**
+   * Telekinesis (src/shell/player-casting.ts tells it each frame): while the player holds its
+   * cast (`reach`: fMagicTelekinesisBaseDistance × its magnitude, units) the loose object the
+   * view meets within the reach is taken hold of by the grab's spring and drawn in to float
+   * before them (TELEKINESIS_HOLD, no nearer than `nearest`: fMagicTelekinesisDistanceMin);
+   * the cast let go (`reach` undefined), it is thrown along the view. UESP
+   * "Skyrim:Telekinesis". TODO(M13): the engine's hold distance, pull and throw speeds are not
+   * in the data.
+   */
+  telekinesis(reach: number | undefined, nearest: number): void {
+    const held = this.#telekinesis;
+    if (reach === undefined) {
+      if (!held) return;
+      this.#telekinesis = undefined;
+      const body = held.spring.body;
+      if (!body.isValid()) return;
+      const forward = this.player.forward;
+      const speed = TELEKINESIS_THROW / HAVOK_SCALE;
+      body.setLinvel({ x: forward[0] * speed, y: forward[1] * speed, z: forward[2] * speed }, true);
+      return;
+    }
+    if (held || this.#grab || this.dead || this.knocked) return;
+    const hit = this.physics.pick(
+      this.player.position,
+      this.player.forward,
+      reach,
+      1,
+      Layer.itemPicker,
+      this.player.character.collider,
+    );
+    const body = hit && this.physics.grabbable(hit.collider);
+    if (!hit || !body) return;
+    this.physics.release(body);
+    this.#telekinesis = {
+      spring: new GrabSpring(body, hit.point, this.player.grab),
+      distance: hit.distance,
+      hold: Math.max(nearest, TELEKINESIS_HOLD),
+    };
+  }
 
   /**
    * The player is put on the ground below their feet (searching from `searchAbove` higher)
@@ -495,6 +545,11 @@ export class PlaySession {
    * world goes on around their body.
    */
   dead = false;
+  /**
+   * The player lies knocked down or gets up (src/shell/player-knockdown.ts): as the dead, they
+   * neither move nor activate anything meanwhile.
+   */
+  knocked = false;
 
   /** Lights a menu adds to the world while it is open (the race menu's two). */
   extraLights: readonly PointLight[] = [];
@@ -518,7 +573,7 @@ export class PlaySession {
     const player = this.player;
     const { moving, running, sprinting } = player.motion;
     // Free camera, being placed or dead: the player does not move.
-    const free = this.#freeCamera || this.#spawnPending || this.dead;
+    const free = this.#freeCamera || this.#spawnPending || this.dead || this.knocked;
     const [vx, vy] = player.character.velocity;
     return {
       moving: !free && moving,
@@ -595,9 +650,10 @@ export class PlaySession {
         for (const hook of this.stepHooks) hook(step);
       });
       this.#setTarget(undefined);
-    } else if (this.dead) {
+    } else if (this.dead || this.knocked) {
       // The world steps on; the player's keys do nothing.
       this.#grab = undefined;
+      this.#telekinesis = undefined;
       this.#hold = undefined;
       this.physics.step(deltaSeconds, (step) => {
         for (const hook of this.stepHooks) hook(step);
@@ -606,6 +662,7 @@ export class PlaySession {
     } else {
       this.player.onStep = (step) => {
         this.#holdGrabbed(step);
+        this.#holdTelekinesis(step);
         for (const hook of this.stepHooks) hook(step);
       };
       // Where the ground has not loaded yet (streaming ahead of a fast player), the player
@@ -775,6 +832,25 @@ export class PlaySession {
       return;
     }
     grab.spring.apply(step);
+  }
+
+  /** Every physics step while Telekinesis holds something: drawn in to float before the view. */
+  #holdTelekinesis(step: number): void {
+    const held = this.#telekinesis;
+    if (!held) return;
+    if (!held.spring.body.isValid()) {
+      this.#telekinesis = undefined;
+      return;
+    }
+    held.distance = Math.max(held.hold, held.distance - TELEKINESIS_PULL * step);
+    const camera = this.player.position;
+    const forward = this.player.forward;
+    held.spring.target = [
+      camera[0] + forward[0] * held.distance,
+      camera[1] + forward[1] * held.distance,
+      camera[2] + forward[2] * held.distance,
+    ];
+    held.spring.apply(step);
   }
 
   /** Shows what activating would do: the game's HUD in Play, the engine's prompt elsewhere. */

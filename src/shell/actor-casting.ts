@@ -25,6 +25,7 @@ import { castStartEvent } from '../gameplay/magic/casting.ts';
 import { aimDirection, normalize } from '../gameplay/magic/projectile-flight.ts';
 import { wordsByHold } from '../gameplay/magic/shouts.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
+import { ActorValue } from '../world/actor-values.ts';
 import { SoundLevel } from '../ai/detection.ts';
 import { multiply, type Vec3 } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
@@ -112,7 +113,13 @@ const ACTIONS: Readonly<Record<number, { ready: string; release: string; interru
   },
 };
 
-/** Seconds an NPC holds a concentration spell (TODO(M10) 5.2: the combat AI's choice). */
+/**
+ * An NPC holds a concentration spell while its AI keeps it (the combat AI: its target alive, in
+ * reach and before it; healing: until it is whole; UseMagic: its cast time), at most this long
+ * before it weighs its fight again (seconds; TODO(M13): the engine's longest hold); one cast
+ * without a say of the AI's is held NPC_CONCENTRATION_SECONDS.
+ */
+const NPC_CONCENTRATION_MAX = 8;
 const NPC_CONCENTRATION_SECONDS = 2.5;
 /** A concentration spell without a projectile (Self, Touch) acts this often (seconds). */
 const HELD_INTERVAL = 0.25;
@@ -132,6 +139,8 @@ interface Shown {
   spray: number;
   /** An NPC lets go then (seconds left), if it decides. */
   holdFor: number | undefined;
+  /** An NPC holds its concentration spell while this holds (its AI's say). */
+  keep: (() => boolean) | undefined;
   sounds: Promise<SoundInstance | undefined>[];
   loop: Promise<SoundInstance | undefined> | undefined;
   art: { instance: ModelInstance; scene: GpuScene; motion: InstanceMotion } | undefined;
@@ -268,7 +277,12 @@ export class ActorCasting {
   async start(
     actor: number,
     source: number,
-    options: { readonly dual?: boolean; readonly target?: number } = {},
+    options: {
+      readonly dual?: boolean;
+      readonly target?: number;
+      /** An NPC's concentration hold: seconds, or while its AI keeps it. */
+      readonly hold?: number | (() => boolean);
+    } = {},
   ): Promise<boolean> {
     const runtime = this.#listen();
     const user = this.#user(actor);
@@ -281,12 +295,18 @@ export class ActorCasting {
     const cast = runtime.casting.casting(actor, source);
     if (!cast) return false;
     const shown = this.#show(cast, options.target);
+    const hold = options.hold;
+    if (shown.holdFor !== undefined && hold !== undefined) {
+      shown.holdFor = typeof hold === 'number' ? hold : NPC_CONCENTRATION_MAX;
+      if (typeof hold === 'function') shown.keep = hold;
+    }
     const item = cast.castable.item;
     const main = await runtime.casting.mainEffect(item);
     const event = castStartEvent(hand, {
       castType: item.castType,
       delivery: item.delivery,
-      ward: item.keywords.includes(0x1ea69),
+      // MagicWard on the spell or (the vanilla wards') on its effect.
+      ward: item.keywords.includes(0x1ea69) || main?.keywords.includes(0x1ea69) === true,
       telekinesis: main?.archetype === EffectArchetype.telekinesis,
     });
     // A spell's start is the idle tree's attack action (its leaf by GetCurrentCastingType,
@@ -328,6 +348,7 @@ export class ActorCasting {
           : cast.castable.item.castType === CastType.concentration
             ? NPC_CONCENTRATION_SECONDS
             : undefined,
+      keep: undefined,
       sounds: [],
       loop: undefined,
       art: undefined,
@@ -566,7 +587,8 @@ export class ActorCasting {
         if (cast.hand.phase === 'ready') void this.letGo(cast.actor, cast.source);
         if (cast.hand.phase === 'casting' && shown.holdFor !== undefined) {
           shown.holdFor -= seconds;
-          if (shown.holdFor <= 0) void this.letGo(cast.actor, cast.source);
+          if (shown.holdFor <= 0 || shown.keep?.() === false)
+            void this.letGo(cast.actor, cast.source);
         }
       }
       if (cast.hand.phase !== 'casting') continue;
@@ -684,7 +706,12 @@ export class ActorCasting {
     actor: number,
     hand: 'left' | 'right' | 'both',
     target: number | undefined,
-    options: { readonly spell?: number; readonly purpose?: CastPurpose } = {},
+    options: {
+      readonly spell?: number;
+      readonly purpose?: CastPurpose;
+      /** A concentration spell's hold: seconds, or while this holds. */
+      readonly hold?: number | (() => boolean);
+    } = {},
   ): Promise<boolean> {
     const runtime = this.#listen();
     if (!runtime) return false;
@@ -701,13 +728,31 @@ export class ActorCasting {
     return this.start(actor, source, {
       dual: hand === 'both',
       ...(target !== undefined && { target }),
+      ...(options.hold !== undefined && { hold: options.hold }),
     });
   }
 
-  /** An NPC heals itself (its best healing spell it has the magicka for). */
+  /**
+   * An NPC heals itself (its best healing spell it has the magicka for), a concentration one
+   * held until it is whole.
+   */
   async healSelf(actor: number): Promise<boolean> {
-    const spell = (await this.#listen()?.casting.chooseSpell(actor, 'heal'))?.formId;
-    return spell !== undefined && this.castAt(actor, 'right', actor, { spell });
+    const runtime = this.#listen();
+    const spell = (await runtime?.casting.chooseSpell(actor, 'heal'))?.formId;
+    if (!runtime || spell === undefined) return false;
+    let whole = false;
+    const watch = (): void => {
+      void runtime.actors.value(actor, ActorValue.health).then((health) => {
+        whole = health.current >= health.max;
+      });
+    };
+    return this.castAt(actor, 'right', actor, {
+      spell,
+      hold: () => {
+        watch();
+        return !whole;
+      },
+    });
   }
 
   /**

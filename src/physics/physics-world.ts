@@ -1054,6 +1054,29 @@ export class PhysicsWorld {
   }
 
   /**
+   * A push that adds the same speed along `direction` to each of a placement's simulated bodies
+   * (Havok units a second; set as velocity, so it holds for bodies just made dynamic, whose
+   * masses the next step computes), so a ragdoll flies off as one.
+   */
+  kick(placed: PlacedCollision, direction: Vec3, speed: number): void {
+    const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;
+    const scale = speed / length;
+    for (const { body, data } of placed.bodies) {
+      if (!dynamicBody(data)) continue;
+      this.release(body);
+      const v = body.linvel();
+      body.setLinvel(
+        {
+          x: v.x + direction[0] * scale,
+          y: v.y + direction[1] * scale,
+          z: v.z + direction[2] * scale,
+        },
+        true,
+      );
+    }
+  }
+
+  /**
    * The trigger volumes (colliders on layers flagged "trigger volume") a collider overlaps now:
    * their owners' references (a trap's trigger, a quest's activator box).
    */
@@ -1101,6 +1124,30 @@ export class PhysicsWorld {
       if (this.#held.has(one.handle) && moves(other)) this.release(one);
       if (this.#held.has(other.handle) && moves(one)) this.release(other);
     });
+  }
+
+  /**
+   * Whether a body of a placement (of `nodes`, lower-case node names; all when undefined)
+   * touches something not of the placement now (a contact point in the last step).
+   */
+  touching(placed: PlacedCollision, nodes?: ReadonlySet<string>): boolean {
+    const narrow = this.world.narrowPhase;
+    const own = new Set(placed.colliders.map((collider) => collider.handle));
+    for (const { body, data } of placed.bodies) {
+      if (nodes && !nodes.has(data.node.toLowerCase())) continue;
+      for (let i = 0; i < body.numColliders(); i++) {
+        const handle = body.collider(i).handle;
+        const touches = { found: false };
+        narrow.contactPairsWith(handle, (other) => {
+          if (touches.found || own.has(other)) return;
+          narrow.contactPair(handle, other, this.world.bodies, (manifold) => {
+            if (manifold.numContacts() > 0) touches.found = true;
+          });
+        });
+        if (touches.found) return true;
+      }
+    }
+    return false;
   }
 
   /** Lets hung objects' bodies pass through what they were placed into (HUNG_OVERLAP). */

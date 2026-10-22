@@ -303,6 +303,89 @@ export class MagicEngine {
     );
   }
 
+  /**
+   * The share of a hostile effect's magnitude its target keeps through its resistances: the
+   * effect's resist value (Resist Fire, Poison, ...) and Magic Resistance on hostile spells, each
+   * as resistanceMultiplier has it (the player's capped at fPlayerMaxResistance); 1 for an item
+   * that ignores resistance.
+   */
+  async resistedShare(
+    item: MagicItemRecord,
+    effect: MagicEffectRecord,
+    target: number,
+  ): Promise<number> {
+    const runtime = this.#runtime;
+    const ignores = item.type === 'SPEL' && (item.flags & MagicSpellFlag.ignoreResistance) !== 0;
+    let left = 1;
+    const cap =
+      target === PLAYER_REF
+        ? await this.#setting('fPlayerMaxResistance', PLAYER_MAX_RESISTANCE)
+        : undefined;
+    if (!ignores && effect.resistValue >= 0) {
+      const resist = (await runtime.actors.value(target, effect.resistValue)).current;
+      left *= resistanceMultiplier(resist, cap);
+    }
+    if (magicResistanceApplies(item.kind, effect, ignores)) {
+      const resist = (await runtime.actors.value(target, MagicValue.magicResist)).current;
+      left *= resistanceMultiplier(resist, cap);
+    }
+    return left;
+  }
+
+  /**
+   * How much of an item's effect (by index) would take hold on a target from a caster, as the
+   * combat AI foresees it: 0 where its conditions fail on the target (Turn Undead on the
+   * living), its level cap leaves it out or the target is ethereal; else the share its
+   * resistances leave a hostile one (resistedShare).
+   */
+  async foresee(
+    item: MagicItemRecord,
+    index: number,
+    target: number,
+    caster: number | undefined,
+  ): Promise<number> {
+    const runtime = this.#runtime;
+    const entry = item.effects[index];
+    const effect = entry && (await this.effect(entry.effect));
+    if (!entry || !effect) return 0;
+    const hostile = (effect.flags & (EffectFlag.hostile | EffectFlag.detrimental)) !== 0;
+    if (hostile && caster !== target && this.aiState(target).ethereal) return 0;
+    if (LEVEL_CAPPED.has(effect.archetype) && entry.magnitude > 0) {
+      if ((await runtime.actors.level(target)) > entry.magnitude) return 0;
+    }
+    const conditions = [...entry.conditions, ...effect.conditions].filter(
+      (condition) => condition.function !== GET_RANDOM_PERCENT,
+    );
+    if (
+      conditions.length > 0 &&
+      !(await runtime.conditionsHold(conditions, runtime.actorHandle(target), undefined, {
+        ...(caster !== undefined && { target: runtime.actorHandle(caster) }),
+      }))
+    )
+      return 0;
+    return hostile ? this.resistedShare(item, effect, target) : 1;
+  }
+
+  /** The creatures an actor's summonings and reanimations made that stand now (the AI asks). */
+  async summonsOf(caster: number): Promise<number[]> {
+    const runtime = this.#runtime;
+    const made: number[] = [];
+    for (const [, entry] of runtime.state.activeEffects) {
+      if (entry.inactive || entry.made === undefined) continue;
+      if ((entry.caster ?? entry.target) !== caster) continue;
+      const archetype = this.#effects.get(entry.effect)?.archetype;
+      if (archetype !== EffectArchetype.summonCreature && archetype !== EffectArchetype.reanimate)
+        continue;
+      if (!(await runtime.actors.isDead(entry.made))) made.push(entry.made);
+    }
+    return made;
+  }
+
+  /** Whether an item's effects are on an actor now (a buff the AI need not cast again). */
+  hasItemOn(actor: number, item: number): boolean {
+    return this.effectsOn(actor).some(([, entry]) => entry.item === item && !entry.inactive);
+  }
+
   /** What the AI reads of an actor's effects (the combat AI acts on them). */
   aiState(actor: number): MagicAiState {
     const has = (archetype: number): boolean => this.#archetypeOn(actor, archetype).length > 0;
@@ -520,20 +603,7 @@ export class MagicEngine {
     // Resistances (not of what an actor has: abilities, diseases): the effect's resist value,
     // and Magic Resistance on hostile spells.
     if (hostile && !lasting) {
-      const ignores = item.type === 'SPEL' && (item.flags & MagicSpellFlag.ignoreResistance) !== 0;
-      let left = 1;
-      const cap =
-        target === PLAYER_REF
-          ? await this.#setting('fPlayerMaxResistance', PLAYER_MAX_RESISTANCE)
-          : undefined;
-      if (!ignores && effect.resistValue >= 0) {
-        const resist = (await runtime.actors.value(target, effect.resistValue)).current;
-        left *= resistanceMultiplier(resist, cap);
-      }
-      if (magicResistanceApplies(item.kind, effect, ignores)) {
-        const resist = (await runtime.actors.value(target, MagicValue.magicResist)).current;
-        left *= resistanceMultiplier(resist, cap);
-      }
+      const left = await this.resistedShare(item, effect, target);
       if (left < 1) {
         // Without a magnitude, resistance is the chance of resisting it all (UESP
         // "Skyrim:Magic Resistance": Paralysis).
@@ -706,6 +776,12 @@ export class MagicEngine {
     if (effect?.archetype === EffectArchetype.peakValueModifier)
       this.#settlePeak(entry.target, entry.effect);
     if (effect) await this.#archetypeEnd(entry, effect, ending);
+    // The paralysed get up once no paralysis is left on them.
+    if (
+      effect?.archetype === EffectArchetype.paralysis &&
+      this.#archetypeOn(entry.target, EffectArchetype.paralysis).length === 0
+    )
+      runtime.world.paralyze?.(entry.target, false);
     if (entry.target === PLAYER_REF && effect?.imageSpaceModifier !== undefined)
       runtime.world.imageSpace?.(effect.imageSpaceModifier, 'remove', 0);
     if (effect) this.#show('stop', key, entry, effect);
@@ -1006,12 +1082,16 @@ export class MagicEngine {
         break;
       }
       case EffectArchetype.disarm: {
-        // Its weapons leave its hands (TODO(M10) 5.1: dropped into the world).
+        // Its weapons leave its hands (UESP "Skyrim:Disarm": up to the magnitude's level, the
+        // level cap above): the right hand's falls from the hand into the world, a reference
+        // anyone can pick up; a dual wielder's left goes into its inventory; bound weapons stay.
         let dropped = false;
         for (const hand of ['right', 'left'] as const) {
           const weapon = await runtime.equipment.weapon(target, hand);
-          if (weapon !== undefined && (await runtime.equipment.unequip(target, weapon, { hand })))
-            dropped = true;
+          if (weapon === undefined || this.#bound(target, weapon)) continue;
+          if (!(await runtime.equipment.unequip(target, weapon, { hand }))) continue;
+          dropped = true;
+          if (hand === 'right') await this.#dropWeapon(target, weapon);
         }
         if (dropped) {
           if (target === PLAYER_REF) {
@@ -1021,15 +1101,49 @@ export class MagicEngine {
         }
         break;
       }
-      // Cloaks act each second (#pulse); Soul Trap as its target dies (died). Stagger,
-      // Concussion, Telekinesis, Grab Actor, Light, Detect Life, Guide, Disguise, Werewolf,
-      // Vampire Lord, Werewolf Feed, Slow Time, Etherealize, Command Summoned, Script: their
-      // state is the effect itself (aiState, timeMultiplier, the world's magicEffect) and their
-      // scripts. TODO(M10) 5.1: staggers and knock-downs; 5.3: telekinesis and the grab;
-      // TODO(M11) visuals: lights, Detect Life's shader, Clairvoyance's path.
+      case EffectArchetype.stagger:
+        // A stagger by its magnitude, weighed against the target's mass (src/shell/
+        // actor-combat.ts staggerEffect); a knock-down is its scripts' (Unrelenting Force's
+        // third word: VoicePushEffectScript's PushActorAway).
+        if (entry.magnitude > 0) runtime.world.stagger?.(target, entry.magnitude, entry.caster);
+        break;
+      case EffectArchetype.paralysis:
+        // It falls as its ragdoll and lies while it lasts (src/shell/actor-knockdowns.ts).
+        runtime.world.paralyze?.(target, true);
+        break;
+      // Cloaks act each second (#pulse); Soul Trap as its target dies (died). Telekinesis is
+      // its caster's hold while the cast lasts (src/shell/player-casting.ts, PlaySession
+      // telekinesis). Concussion, Grab Actor (TODO(M11): the Vampire Lord's Vampiric Grip, with
+      // the beast forms), Light, Detect Life, Guide, Disguise, Werewolf, Vampire Lord, Werewolf
+      // Feed, Slow Time, Etherealize, Command Summoned, Script: their state is the effect itself
+      // (aiState, timeMultiplier, the world's magicEffect) and their scripts. TODO(M11) visuals:
+      // lights, Detect Life's shader, Clairvoyance's path.
       default:
         break;
     }
+  }
+
+  /** Whether a weapon in an actor's hands is a bound one (a Bound Weapon effect's on it). */
+  #bound(actor: number, weapon: number): boolean {
+    return this.#archetypeOn(actor, EffectArchetype.boundWeapon).some(
+      ([, entry]) => entry.made === weapon,
+    );
+  }
+
+  /**
+   * A disarmed weapon leaves its holder's items and falls from its hand (the WEAPON node; its
+   * place without one): a new reference of it in the world, which the world drops and anyone
+   * may pick up.
+   */
+  async #dropWeapon(actor: number, weapon: number): Promise<void> {
+    const runtime = this.#runtime;
+    await runtime.removeItem(actor, runtime.formHandle(weapon), 1, true, undefined);
+    const dropped = await runtime.placeAt(weapon, actor, 1);
+    const hand = runtime.world.nodePlacement?.(actor, 'WEAPON');
+    const at = hand?.position ?? (await runtime.placement(actor))?.position;
+    if (!at) return;
+    runtime.move(dropped, [at[0], at[1], at[2] + (hand ? 0 : 64)]);
+    runtime.world.moved?.(dropped);
   }
 
   async #archetypeEnd(
