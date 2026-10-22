@@ -23,6 +23,7 @@ import {
 } from '../gameplay/inventory.ts';
 import { temperLevelOfHealth, temperQualityName } from '../gameplay/crafting.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { questItemCount } from '../scripting/runtime/quest-items.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import type { GameSettings } from '../world/game-settings.ts';
@@ -75,6 +76,11 @@ export function inventoryModel(
     }
     return items.get(formId);
   };
+  /** One of the game's messages (a setting's text) on the HUD. */
+  const notify = async (setting: string): Promise<void> => {
+    const text = (await session.settings()).string(setting);
+    if (text) session.hud.notification(text);
+  };
   return {
     movie: 'inventorymenu.swf',
     depth: 6,
@@ -118,6 +124,12 @@ export function inventoryModel(
       }
       const sounds = session.soundSystem;
       if (record.type === 'ALCH' || record.type === 'INGR') {
+        // A quest item is not eaten (sNoEatQuestItem) while other ones are left to eat.
+        const have = await game.itemCount(PLAYER_REF, formId);
+        if ((await questItemCount(game, PLAYER_REF, formId)) >= have) {
+          await notify('sNoEatQuestItem');
+          return;
+        }
         if (!(await equipment.use(PLAYER_REF, formId))) return;
         const sound = await equipment.consumeSound(formId);
         if (sound !== undefined) void sounds?.play(sound);
@@ -140,9 +152,17 @@ export function inventoryModel(
       const sound = sounds && (await equipment.equipSound(formId, on, sounds.defaults));
       if (sound !== undefined) void sounds?.play(sound);
     },
-    // TODO(M11): the dropped items placed in the world at the player's feet.
+    // Dropped items leave the inventory and lie in the world in front of the player's feet,
+    // falling to the ground (a created reference of the item, its count: created-objects.ts);
+    // quest items cannot be dropped (sDropQuestItemWarning).
     drop: async ({ formId, stack }, amount) => {
       const game = runtime();
+      const have = await game.itemCount(PLAYER_REF, formId);
+      const free = have - (await questItemCount(game, PLAYER_REF, formId));
+      if (amount > free) {
+        await notify('sDropQuestItemWarning');
+        return;
+      }
       await game.removeItem(
         PLAYER_REF,
         game.formHandle(formId),
@@ -151,6 +171,7 @@ export function inventoryModel(
         undefined,
         typeof stack === 'number' ? stack : undefined,
       );
+      await dropAtFeet(game, formId, amount);
     },
     // Charge (T): the soul gems that could recharge the entry's weapon, on its card.
     soulGemList: async ({ formId }) => {
@@ -189,6 +210,40 @@ export function inventoryModel(
       else favorites.add(formId);
     },
   };
+}
+
+/** Dropped items lie this far in front of the player's feet (units)... */
+const DROP_AHEAD = 48;
+/** ... and fall from this high above them (units). */
+const DROP_HEIGHT = 40;
+
+/**
+ * Items dropped (the inventory's R): a reference of the item with their count, in front of the
+ * player's feet a little above the ground, from where it falls and settles (created-objects.ts).
+ * TODO(M13): an improved item's improvement and a stolen item's owner stay with it in the game;
+ * the reference made here has neither.
+ */
+export async function dropAtFeet(
+  runtime: ScriptRuntime,
+  formId: number,
+  count: number,
+): Promise<number | undefined> {
+  const at = await runtime.placement(PLAYER_REF);
+  if (!at) return undefined;
+  const heading = runtime.world.motion?.(PLAYER_REF)?.heading ?? at.rotation[2];
+  const dropped = await runtime.placeAt(formId, PLAYER_REF, count);
+  runtime.move(
+    dropped,
+    [
+      at.position[0] + Math.sin(heading) * DROP_AHEAD,
+      at.position[1] + Math.cos(heading) * DROP_AHEAD,
+      at.position[2] + DROP_HEIGHT,
+    ],
+    [0, 0, heading],
+    at.cell,
+    at.world,
+  );
+  return dropped;
 }
 
 /**

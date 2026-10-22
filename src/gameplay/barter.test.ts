@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { barterMultipliers, vendorBuys } from './barter.ts';
+import { barterMultipliers, restockDue, vendorBuys } from './barter.ts';
 
 describe('barterMultipliers', () => {
   it('follows UESP: 3.3 without Speech, 2 at 100, no better beyond', () => {
@@ -32,5 +32,13 @@ describe('vendorBuys', () => {
     expect(vendorBuys({ keywords: [0x200] }, { notInList: true }, list)).toBe(false);
     // The Merchant perk: any vendor buys anything.
     expect(vendorBuys({ keywords: [0x300] }, { notInList: false }, list, true)).toBe(true);
+  });
+});
+
+describe('restockDue', () => {
+  it('restocks a merchant chest 48 game hours after it last did', () => {
+    expect(restockDue(10, 11.9)).toBe(false);
+    expect(restockDue(10, 12)).toBe(true);
+    expect(restockDue(10.5, 12.25)).toBe(false);
   });
 });

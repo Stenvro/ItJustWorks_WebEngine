@@ -113,6 +113,7 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
       const settings = await session.settings();
       const entries: ItemEntry[] = [];
       const cards: Record<string, unknown>[] = [];
+      const shouting = game.casting.isShouting(PLAYER_REF);
       for (const formId of await game.actors.spells(PLAYER_REF)) {
         const record = await game.forms.record(formId);
         const favorite = game.state.favorites.has(formId);
@@ -124,7 +125,9 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
             formId,
             filterFlag: MagicCategory.shouts | favoriteBit,
             favorite,
-            enabled: true,
+            // While the player shouts the voice's shouts and powers cannot change (the movie
+            // asks ShowShoutFail: sFailShouting).
+            enabled: !shouting,
             equipState: await game.equipment.menuState(PLAYER_REF, formId),
           });
           cards.push(await shoutCard(game, shout));
@@ -142,7 +145,7 @@ export function magicModel(session: GameSession, terminal: Terminal): ItemMenuMo
           formId,
           filterFlag: (power ? MagicCategory.powers : school) | favoriteBit,
           favorite,
-          enabled: true,
+          enabled: !(power && shouting),
           equipState: await game.equipment.menuState(PLAYER_REF, formId),
         });
         const text = await effectsText(game, spell.effects);

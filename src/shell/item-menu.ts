@@ -92,6 +92,8 @@ export interface ItemMenuModel {
   transfer?(entry: ItemEntry, amount: number, fromContainer: boolean): Promise<void>;
   /** The container menu's TakeAllItems. */
   takeAll?(): Promise<void>;
+  /** DisabledItemSelect: a disabled entry chosen (enabled false); tells why it cannot move. */
+  disabledSelect?(entry: ItemEntry): Promise<void>;
   /**
    * ItemSelect in the menus that trade (barter: buy or sell; gift: give or take), with the
    * call's arguments; else ItemSelect equips (`select`).
@@ -338,9 +340,19 @@ export class ItemMenu {
           if (!chosen || index === undefined || !model.chargeWith) return;
           act(menu, model.chargeWith(chosen, index));
         },
-        // TODO(M11): a shout's failure, entries that cannot be used.
-        ShowShoutFail: () => undefined,
-        DisabledItemSelect: () => undefined,
+        // A shout or power chosen while the player shouts (the magic menu's disabled entries):
+        // sFailShouting.
+        ShowShoutFail: () => {
+          void this.#session.settings().then((settings) => {
+            this.#session.hud.notification(settings.string('sFailShouting') ?? '');
+          });
+        },
+        // An entry that cannot be moved chosen (enabled false: a quest item, a teammate's
+        // outfit): the model says why.
+        DisabledItemSelect: (menu) => {
+          const chosen = entry(menu);
+          if (chosen && model.disabledSelect) act(menu, model.disabledSelect(chosen));
+        },
       },
       setup: async (menu) => {
         await menu.waitFor('_root.InitExtensions');

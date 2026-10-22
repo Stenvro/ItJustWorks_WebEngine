@@ -52,6 +52,8 @@ import { CraftingEngine } from './crafting-engine.ts';
 import { CrimeEngine } from './crime-engine.ts';
 import { PerkEngine } from './perk-engine.ts';
 import { installPerkHooks } from './perk-hooks.ts';
+import { UsageStats } from './usage-stats.ts';
+import { WarmthEngine } from './warmth-engine.ts';
 import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
@@ -621,6 +623,10 @@ export class ScriptRuntime implements VmHost {
   readonly crafting: CraftingEngine;
   /** Perks: those actors hold and their entry points (perk-engine.ts). */
   readonly perks: PerkEngine;
+  /** Survival Mode's warmth of armor, lights and actors (warmth-engine.ts). */
+  readonly warmth: WarmthEngine;
+  /** What the player uses most: the journal's favorite weapon, spell, school, shout. */
+  readonly usage: UsageStats;
   /** While a new game starts its quests (their aliases may take reserved references). */
   startingNewGame = false;
   /** Game seconds per real second (the TimeScale global; scripts may set it). */
@@ -727,6 +733,8 @@ export class ScriptRuntime implements VmHost {
     this.crafting = new CraftingEngine(this);
     this.perks = new PerkEngine(this);
     installPerkHooks(this);
+    this.warmth = new WarmthEngine(this);
+    this.usage = new UsageStats(this);
     this.sceneHost = new RuntimeSceneHost(this);
     this.scenes = new SceneDirector(this.sceneHost);
     registerNatives(this.#natives, this);
@@ -1676,7 +1684,9 @@ export class ScriptRuntime implements VmHost {
     this.state.inventories.set(container, items);
     if (this.#seeded.has(container)) return items;
     this.#seeded.add(container);
-    const random = seededRandom(container ^ 0x5bd1e995);
+    // A restocked container's leveled items are picked anew (restock).
+    const restocks = this.state.restocked.get(container)?.count ?? 0;
+    const random = seededRandom((container ^ 0x5bd1e995) + Math.imul(restocks, 0x9e3779b9));
     const actor = await this.actors.info(container);
     const base = actor ? actor.inventory.formId : await this.baseOf(container);
     let level: number | undefined;
@@ -1975,6 +1985,28 @@ export class ScriptRuntime implements VmHost {
         null,
       ]),
     );
+  }
+
+  /**
+   * A container restocks (a merchant's chest every 48 hours: src/shell/barter-menu.ts): what it
+   * held goes (items sold to it with their references, improvements and stolen marks) and its
+   * own items (CNTO, leveled lists picked anew) are there again as it is next read.
+   */
+  restock(container: number): void {
+    const restocked = this.state.restocked.get(container);
+    this.state.restocked.set(container, {
+      days: this.state.gameDaysPassed,
+      count: (restocked?.count ?? 0) + 1,
+    });
+    for (const state of this.state.references.values()) {
+      if (state.container?.holder !== container) continue;
+      delete state.container;
+      state.deleted = true;
+    }
+    this.state.inventories.delete(container);
+    this.crafting.clear(container);
+    this.crime.clearStolen(container);
+    this.#seeded.delete(container);
   }
 
   async removeAllItems(container: number, to: number | undefined): Promise<void> {

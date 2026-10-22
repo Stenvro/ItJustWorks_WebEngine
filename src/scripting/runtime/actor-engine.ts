@@ -91,6 +91,8 @@ export class ActorEngine {
   #relationships: Promise<Map<string, number>> | undefined;
   /** The RELA records by pair, with their association types (ASTP). */
   readonly #relationRecords = new Map<string, Relationship>();
+  /** Actors in a deferred kill: whether their health ran out meanwhile, and by whose blow. */
+  readonly #deferred = new Map<number, { due: boolean; killer?: number }>();
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
@@ -393,13 +395,49 @@ export class ActorEngine {
     const own = this.#own(reference, index);
     own.damage += amount;
     if (index === ActorValue.health && (await this.value(reference, index)).current <= 0) {
-      // Essential actors, and protected ones but by the player, bleed out instead of dying
-      // (src/gameplay/combat/bleedout.ts); the engine lays them down (WorldBridge.bleedout).
-      const essential = await this.isEssential(reference);
-      const spared = essential || (source !== PLAYER_REF && (await this.isProtected(reference)));
-      if (!spared) await this.kill(reference, source);
-      else this.#runtime.world.bleedout?.(reference, source);
+      // A deferred kill holds its death until it ends (endDeferredKill); who dealt the blow
+      // that should have killed it is its killer then.
+      const deferred = this.#deferred.get(reference);
+      if (deferred) {
+        deferred.due = true;
+        if (source !== undefined) deferred.killer = source;
+        return;
+      }
+      await this.#healthGone(reference, source);
     }
+  }
+
+  /**
+   * Its health ran out: it dies, but essential actors, and protected ones but by the player,
+   * bleed out instead (src/gameplay/combat/bleedout.ts); the engine lays them down
+   * (WorldBridge.bleedout).
+   */
+  async #healthGone(reference: number, source: number | undefined): Promise<void> {
+    const essential = await this.isEssential(reference);
+    const spared = essential || (source !== PLAYER_REF && (await this.isProtected(reference)));
+    if (!spared) await this.kill(reference, source);
+    else this.#runtime.world.bleedout?.(reference, source);
+  }
+
+  /**
+   * Actor.StartDeferredKill: from now on its health may run out without its dying (CommonLibSSE
+   * MiddleHighProcessData inDeferredKill) until EndDeferredKill.
+   */
+  startDeferredKill(reference: number): void {
+    if (!this.#deferred.has(reference)) this.#deferred.set(reference, { due: false });
+  }
+
+  /**
+   * Actor.EndDeferredKill: the deferral ends; if its health ran out meanwhile and is still gone it
+   * dies now (bleeds out, essential or protected), by whoever dealt the blow.
+   */
+  async endDeferredKill(reference: number): Promise<void> {
+    const deferred = this.#deferred.get(reference);
+    if (!deferred) return;
+    this.#deferred.delete(reference);
+    if (!deferred.due || (await this.isDead(reference))) return;
+    if ((await this.value(reference, ActorValue.health)).current > 0) return;
+    await this.#healthGone(reference, deferred.killer);
   }
 
   /** RestoreActorValue: damage healed, up to none. */

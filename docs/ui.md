@@ -378,7 +378,10 @@ one, only the objectives (and their sound, `UIObjectiveNew`). The engine sends (
 
 Miscellaneous objectives (quest type 6) and quests without a name announce no quest, only lines.
 Texts have their tags filled in (`src/scripting/runtime/quest-text.ts`: `<Alias=...>`,
-`<Alias.ShortName=...>`, `<Global=...>` of the quest's QTGL globals).
+`<Alias.ShortName=...>`, `<Global=...>` of the quest's QTGL globals, the pronouns of the actor in
+an alias by its sex, `<Alias.Pronoun=...>` he / she, `.PronounObj` him / her, `.PronounPos` his
+/ hers, `.PronounPosObj` his / her, `.PronounRef` and `.PronounInt` himself / herself (the
+settings sPronoun*Male / *Female), and its race's name, `<Alias.Race=...>`).
 
 Help messages (Message.ShowAsHelpMessage) are `ShowTutorialHintText(text, show)`: shown for
 their seconds, again after their interval, at most their times, until the player presses their
@@ -392,11 +395,22 @@ The compass (`src/shell/compass.ts`): four times a second the engine sets
 0..100, the "Compass Marker" frame, scale in percent) and calls `SetCompassMarkers()` when it
 changed. Its frames: 1 Quest, 2 QuestDoor, 3 PlayerSet, 4 Enemy, 5 + a map marker's type
 (discovered), 72 + its type (undiscovered). It shows the targets of the active quests' shown
-objectives (QOBJ QSTA, the alias's reference) in the player's worldspace or cell, and the map
-markers within iMapMarkerVisibleDistance, fading from iMapMarkerFadeStartDistance; a marker seen
-so is visible on the map, one reached within iMapMarkerRevealDistance is discovered (it can be
-travelled to) and announced as a quest is: its name and sDiscoveredText. TODO(M10): the door
-toward a quest target elsewhere, enemies, the discovery's experience and music.
+objectives (QOBJ QSTA, the alias's reference, its conditions run on the target: DialogueFollower's
+"is waiting for you" is the follower's WaitingForPlayer) in the player's worldspace or cell; a
+target in another cell or world at the load door the way there goes through (QuestDoor: the
+first door of the route over the navmeshes and load doors, `src/ai/routes.ts`, searched once per
+target and space); the actors fighting the player (Enemy) within fHUDCompassLocationMaxDist; and
+the map markers within iMapMarkerVisibleDistance, fading from iMapMarkerFadeStartDistance; a
+marker seen so is visible on the map, one reached within iMapMarkerRevealDistance is discovered
+(it can be travelled to) and announced as a quest is: its name and sDiscoveredText, with its
+discovery music (by the marker's type: MUSDiscoveryCity for cities and their castles,
+MUSDiscoveryTown, MUSDiscoveryDungeon for caves, forts, ruins, mines and dragon lairs,
+MUSDiscoveryGeneric else; one selection, then the type ends). Skyrim gives no experience for it
+(iXPRewardDiscoverMapMarker is one of Fallout's unused settings).
+
+Riding a horse the HUD is in `ShowElements("HorseMode", true)` (the meters, the compass,
+messages; no crosshair), with the weapon drawn in `WarHorseMode` (the crosshair, stamina, the
+charge meter and arrow info too).
 
 The HUD also shows: speech around the player (`ShowSubtitle(text)`, `HideSubtitle()`; with
 General Subtitles, `SetSubtitlesEnabled`), the lines actors say from scripts
@@ -562,7 +576,11 @@ answers its new state; `ToggleShowMiscObjectives(active)` does it for the miscel
 
 Stats: `updateStats` is answered with every statistic as name, value, category and an unused
 field (`src/gameplay/misc-stats.ts`: the game's stats in the journal's order and categories,
-after UESP); the menu shows `"$" + name`, translated as it is set.
+after UESP); the menu shows `"$" + name`, translated as it is set. Favorite Weapon, Spell,
+School and Shout are names: what the player used most (`src/scripting/runtime/usage-stats.ts`:
+each swing of a melee weapon or shot of a bow, each spell cast (a concentration spell each time
+it is let go) and its school (its cost's skill, named by its AVIF), each shout; the first to reach
+the most on a tie; TODO(M13): what the engine counts as a use), read as the journal opens.
 
 System: the menu lists Quicksave, Save, Load, Installed Content, Settings, Controls, Help and
 Quit. Quit to the main menu ends the game and opens its main menu; quit to the desktop leaves
@@ -648,7 +666,9 @@ The game's dialogue (20,000 topics, 41,000 infos, about 40 MB) is read in bulk o
 game starts. Each response's emotion shows on the speaker's face and it gestures (ActionTalking);
 an info with Force Subtitle shows its text whatever the setting. The dialogue camera turns the
 player's view to the speaker's head and zooms in while they talk (ai.md, "Talking").
-TODO(M11): persuade, bribe, intimidate, favors.
+TODO(M11): persuade, bribe, intimidate. A follower's favors (wait, trade, "I need you to do
+something") are the vanilla scripts' and the engine's command mode (ai.md, "Followers, mounts
+and vehicles").
 
 ## The item menus
 
@@ -716,7 +736,11 @@ spells and shouts marked with F. Its own `PopulateItems` names a function the mo
 have, so the engine sets `_root.MenuHolder.Menu_mc.itemList.entryList` itself (`{text, hotkey,
 equipState, index}`; index the form id) and invokes its `InvalidateData()`. On `ItemSelect` the
 engine reads `_root.GetSelectedIndex()` and acts as the inventory or the magic menu would; the
-menu closes itself with its fade (Tab, Esc, Q) and `FadeDone`.
+menu closes itself with its fade (Tab, Esc, Q) and `FadeDone`. 1-8 (the control map's
+Hotkey1..8: the digits and the keypad's) give the highlighted entry that hotkey (`hotkey` 0..7:
+the movie's AppendHotkeyText shows "1. Iron Sword"), taken from the favorite that had it; its
+own hotkey again takes it off (`GameState.hotkeys`). In the game, Hotkey1..8 choose their
+favorite as the menu would (equipped where it goes, taken off where it is, a potion drunk).
 
 The container menu (`containermenu.swf`, `src/shell/container-menu.ts`; a chest opened, a corpse
 searched) lists the container's items and the player's in one list:
@@ -767,9 +791,29 @@ TAKE GIFT; `ItemSelect(amount)` moves them. The function is latent: it returns o
 closes. A conversation's menus show in its place: the dialogue menu steps aside and comes back,
 and keeps the mouse.
 
-TODO(M11): the
-Haggling, Allure, Merchant and Investor perks, Fortify Barter, fences and stolen goods, the
-chest's restock (every 48 hours), favor points. Potions, food and ingredients are used, poisons put on
+The merchant chest restocks 48 game hours after it last did (UESP "Merchants"; reckoned from
+the first trade, checked as the barter menu opens: `ScriptRuntime.restock`): what was sold to it
+goes (with its references, improvements and stolen marks) and its own goods and gold are there
+again, its leveled lists picked anew (the container's seed moves on with each restock).
+
+Quest items (`src/scripting/runtime/quest-items.ts`: references in a running quest's Quest
+Object alias, ALFA FNAM 0x4, held in a container) do not leave the player: not dropped (ItemDrop:
+sDropQuestItemWarning), not eaten (sNoEatQuestItem), not stored or placed in a container or a
+pocket (their entries `enabled: false`: the movie asks `DisabledItemSelect`, answered with
+sDropQuestItemWarning), not offered for sale, not given (unless the gift menu's list names them:
+a quest's item asked for). A teammate's inventory (`OpenInventory`: the container menu in NPC
+mode, only a teammate's unless abForceOpen) keeps its starting armor (its outfit's pieces:
+disabled, sTeammateCantTakeOutfit; giving one of them sTeammateCantGiveOutfit) and takes no more
+than it can carry (its name and sTeammateOverencumbered). In the magic menu a shout or power
+chosen while the player shouts is disabled (`ShowShoutFail`: sFailShouting). A book lying in the
+world is not read while the player fights (sCanNotReadBook).
+
+Dropped items (R, after the quantity slider for a stack) lie in the world a little in front of
+the player's feet and fall to the ground (a created reference with their count:
+`src/shell/created-objects.ts`; TODO(M13): an improved item's improvement and a stolen item's
+owner go with it in the game).
+
+Potions, food and ingredients are used, poisons put on
 the weapon and the magic menu's Active Effects listed through the magic system (docs/gameplay.md,
 "Magic effects"). Improved items are rows of their own ("Iron Sword (Fine)": the crafting
 engine's item stacks), moved and equipped as such. An enchanted weapon's card shows its charge
@@ -777,8 +821,7 @@ engine's item stacks), moved and equipped as such. An enchanted weapon's card sh
 movie ask `ShowSoulGemList`: the engine sets the card to a list (ICT_LIST: `listItems` of
 `text`, `soulLVL`, `count`, `chargeAdded`, and `currentCharge`; none: sNoChargeItems), and
 `ItemCardListCallback(index)` recharges with that gem. Armor, damage and spell costs are shown
-with the player's perks (the perk system's entry points). TODO(M11): favorites' hotkeys, the
-quantity of a drop.
+with the player's perks (the perk system's entry points).
 
 ## The menus' 3D
 
@@ -1259,5 +1302,8 @@ mode, the cursor, the ItemMenu control context.
   sRSMFinishedWarning "Finished?". Closing: `FadeOut()` (the root's frames 2..9, until
   `_root._currentframe` is 9), then the menu closes and the player's camera, controls and HUD
   come back.
-- TODO(M11): a race changed after the opening resets the skills and changes the race's
-  abilities (RACE SPLO). TODO(M12): the appearance and the name in the save.
+- The race it finishes with brings its abilities (RACE SPLO: the magic system's lasting effects
+  follow the new race). After the opening's race menu (one finished before:
+  `GameState.raceChosen`) a new race also resets the skills to the race's (UESP "Console":
+  showracemenu; the skill increases' bases and experience go, the level and perks stay); the
+  limited menu keeps the race. TODO(M12): the appearance and the name in the save.

@@ -372,9 +372,9 @@ export function registerForms(n: Register, runtime: ScriptRuntime): void {
     const skill = data && data.length >= 16 ? view(data).getInt32(12, true) : -1;
     return skill < 0 ? '' : actorValueName(skill);
   });
-  // TODO(M11): warmth (Survival Mode) from armor and lights.
-  ask('armor.getwarmthrating', 0, () => 0);
-  ask('light.getwarmthrating', 0, () => 0);
+  // Survival Mode's warmth: armor's by its body part and keywords, a carried light's (a torch).
+  ask('armor.getwarmthrating', 0, (armor) => runtime.warmth.armor(armor));
+  ask('light.getwarmthrating', 0, (light) => runtime.warmth.light(light));
 
   // --- What the engine plays --------------------------------------------------------------
   ask('sound.play', 0, (sound, call) => {
