@@ -242,6 +242,11 @@ export interface PackageBody {
   holster?(): void;
   /** Starts a fight with an actor (Acquire's Allow Killing: one who holds what it wants). */
   attack?(target: number): void;
+  /**
+   * Takes an item from the actor who carries it (Acquire's Allow Pickpocketing), standing by
+   * them; whether it got it.
+   */
+  pickpocket?(holder: number, item: number): Promise<boolean>;
 }
 
 /** One UseWeapon barrage (the procedure's parameters). */
