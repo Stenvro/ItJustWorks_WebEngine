@@ -89,6 +89,8 @@ export interface MenuSink {
   reloadAfterDeath?(): void;
   /** A tutorial (a default object's help message: HBFT), the first time. */
   tutorial?(use: string): void;
+  /** Whether a menu takes the keys now: the player's controls get none of them. */
+  takesKeys?(): boolean;
 }
 
 /** What covers the screen (Play, from its main menu on: a new game's opening uses them). */
