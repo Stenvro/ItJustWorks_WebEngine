@@ -8,8 +8,9 @@
 // quiver and arrows, its single "Arrow:0" left out); from arrowAttach to arrowRelease an arrow is
 // on the bow (the AMMO model's "Arrow:0" on WEAPON, where the bow animations hold the bow).
 // Shields are worn armour (their addon hangs on SHIELD with the actor's look). A torch (a LIGH
-// that can be carried) hangs on SHIELD whether the weapons are drawn or not; its light shines
-// from its model's AttachLight node (torchLight). The player's
+// that can be carried) is held on SHIELD whether the weapons are drawn or not, an instance of
+// its own placed there every frame (its fire's particles and billboards follow it as a placed
+// light's do); its light shines from its model's AttachLight node (torchLight). The player's
 // first-person weapons are these on the first-person arms (src/shell/first-person-body.ts),
 // each weapon's first-person model (WEAP WNAM).
 //
@@ -25,7 +26,8 @@
 import type { ActorPose } from '../animation/skeleton.ts';
 import { ActorPose as Pose, ActorSkeleton, wearOnRig } from '../animation/skeleton.ts';
 import { WeaponGraph } from '../animation/weapon-graph.ts';
-import type { ModelPart } from '../render/model-data.ts';
+import type { ModelNode, ModelPart } from '../render/model-data.ts';
+import { multiply, transformPoint, type Mat4 } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type {
   GpuModel,
@@ -65,8 +67,8 @@ export interface HeldBlood {
 }
 
 /** Slots of the models' own pose: each copies a node of the body. */
-const Slot = { right: 0, scabbard: 1, left: 2, quiver: 3, arrow: 4, torch: 5 } as const;
-const SLOT_NAMES = ['right', 'scabbard', 'left', 'quiver', 'arrow', 'torch'];
+const Slot = { right: 0, scabbard: 1, left: 2, quiver: 3, arrow: 4 } as const;
+const SLOT_NAMES = ['right', 'scabbard', 'left', 'quiver', 'arrow'];
 
 /** The node of a light's model its light shines from (torch.nif's flame). */
 const ATTACH_LIGHT = 'attachlight';
@@ -77,6 +79,19 @@ const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 
 const scabbard = (part: ModelPart): boolean => part.name.toLowerCase() === 'scb';
 /** The single arrow of an ammunition model (beside the quiver). */
 const singleArrow = (part: ModelPart): boolean => part.name.toLowerCase() === 'arrow:0';
+
+/** A node's place in its model (by name, its parents' locals multiplied in; else the origin). */
+function nodeWorld(nodes: readonly ModelNode[], name: string): Mat4 {
+  let index = nodes.findIndex((node) => node.name.toLowerCase() === name);
+  let world: Mat4 = new Float32Array(IDENTITY);
+  while (index >= 0) {
+    const node = nodes[index];
+    if (!node) break;
+    world = multiply(node.local, world);
+    index = node.parent;
+  }
+  return world;
+}
 
 /** The weapons of one actor: their scene, hung on their slots. */
 export class HeldWeapons {
@@ -91,8 +106,18 @@ export class HeldWeapons {
   #graph: WeaponGraph | undefined;
   readonly #nodes: (number | undefined)[] = [];
   readonly #driven = new Map<number, Float32Array>();
-  /** The node of its pose its torch's light shines from (AttachLight, else the torch's slot). */
-  #torchLight: number | undefined;
+  /**
+   * Its torch: an instance of its own placed on the hand every frame (so its fire's particles
+   * and billboards follow it as a placed object's do), and where its light shines from in the
+   * model (AttachLight, else its origin).
+   */
+  #torch:
+    | {
+        readonly world: Float32Array;
+        readonly motion: InstanceMotion;
+        readonly light: Mat4;
+      }
+    | undefined;
   #destroyed = false;
 
   private constructor(body: HeldBody, held: HeldModels) {
@@ -151,8 +176,7 @@ export class HeldWeapons {
       hung.push({ model: ammo, slot: Slot.quiver, partShown: (part) => !singleArrow(part) });
       hung.push({ model: ammo, slot: Slot.arrow, partShown: singleArrow });
     }
-    if (torch) hung.push({ model: torch, slot: Slot.torch, partShown: () => true });
-    if (hung.length === 0) return undefined;
+    if (hung.length === 0 && !torch) return undefined;
     // The slots, and each model's nodes merged under its slot (by name, as worn models are).
     const local = new Float32Array(SLOT_NAMES.length * 16);
     for (let i = 0; i < SLOT_NAMES.length; i++) local.set(IDENTITY, i * 16);
@@ -167,14 +191,6 @@ export class HeldWeapons {
     const weapons = new HeldWeapons(body, held);
     const pose = new Pose(new ActorSkeleton(dressed.rig, undefined));
     weapons.#pose = pose;
-    // The torch's light: from its model's AttachLight node, else from the hand.
-    if (torch) {
-      const index = hung.findIndex((entry) => entry.slot === Slot.torch);
-      const nodes = torch.nodes ?? [];
-      const attach = nodes.findIndex((node) => node.name.toLowerCase() === ATTACH_LIGHT);
-      const mapped = attach >= 0 ? dressed.nodeMaps[index]?.[attach] : undefined;
-      weapons.#torchLight = mapped !== undefined && mapped >= 0 ? mapped : Slot.torch;
-    }
     // The right weapon's own graph (a bow's), started in its rest state.
     const rightMap = right ? dressed.nodeMaps[0] : undefined;
     if (right?.skeletal && right.nodes && rightMap) {
@@ -190,6 +206,12 @@ export class HeldWeapons {
       partShown,
       ...(level && { weaponBlood: level }),
     }));
+    if (torch) {
+      const world = new Float32Array(16);
+      const motion: InstanceMotion = { version: 0 };
+      weapons.#torch = { world, motion, light: nodeWorld(torch.nodes ?? [], ATTACH_LIGHT) };
+      instances.push({ model: torch, world, motion, visibility: body.visibility });
+    }
     weapons.#scene = renderer.scene.createScene(instances);
     return weapons;
   }
@@ -227,7 +249,6 @@ export class HeldWeapons {
       inHand ? 'SHIELD' : undefined,
       'QUIVER',
       arrowNocked ? 'WEAPON' : undefined,
-      held.torch !== undefined ? 'SHIELD' : undefined,
     ];
     const pose = this.#pose;
     if (!pose) return;
@@ -252,25 +273,22 @@ export class HeldWeapons {
     const hang = this.#driven.get(Slot.right);
     if (hang) this.#graph?.update(seconds, hang, this.#driven);
     pose.place(this.#driven);
+    // The torch in the left hand (SHIELD), drawn or not.
+    const torch = this.#torch;
+    const hand = this.#node('SHIELD');
+    if (torch && hand !== undefined) {
+      multiply(this.#body.world, body.subarray(hand * 16, hand * 16 + 16), torch.world);
+      torch.motion.version++;
+    }
   }
 
   /** Where its torch's light is in the world (undefined: no torch held, or not shown). */
   torchLight(): [number, number, number] | undefined {
-    const node = this.#torchLight;
-    const pose = this.#pose;
-    if (node === undefined || !pose || this.#destroyed || this.#body.visibility.hidden) {
+    const torch = this.#torch;
+    if (!torch || this.#destroyed || this.#body.visibility.hidden || torch.motion.version === 0) {
       return undefined;
     }
-    const m = pose.worlds;
-    const x = m[node * 16 + 12] ?? 0;
-    const y = m[node * 16 + 13] ?? 0;
-    const z = m[node * 16 + 14] ?? 0;
-    const w = this.#body.world;
-    return [
-      (w[0] ?? 0) * x + (w[4] ?? 0) * y + (w[8] ?? 0) * z + (w[12] ?? 0),
-      (w[1] ?? 0) * x + (w[5] ?? 0) * y + (w[9] ?? 0) * z + (w[13] ?? 0),
-      (w[2] ?? 0) * x + (w[6] ?? 0) * y + (w[10] ?? 0) * z + (w[14] ?? 0),
-    ];
+    return transformPoint(multiply(torch.world, torch.light), [0, 0, 0]);
   }
 
   destroy(): void {
