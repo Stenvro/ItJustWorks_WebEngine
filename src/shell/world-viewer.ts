@@ -720,6 +720,8 @@ export class WorldViewer {
       });
       return true;
     },
+    interactionLocation: (furniture, from) =>
+      this.#stage?.furniture.interactionLocation(furniture, from) ?? Promise.resolve(undefined),
     dependentAnimated: (reference, dependent, added) =>
       this.#stage?.dependentAnimated(reference, dependent, added) ?? false,
     // Carts and their riders, horses and theirs (src/shell/actor-vehicles.ts, actor-mounts.ts).

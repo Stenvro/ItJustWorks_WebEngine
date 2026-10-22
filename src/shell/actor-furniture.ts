@@ -620,6 +620,19 @@ export class ActorFurniture {
   }
 
   /** A placed furniture's active markers in the world, read once. */
+  /**
+   * Where an actor at `from` would use a furniture: the marker it would take (its place and
+   * heading), MoveToInteractionLocation's place. Undefined: not furniture, no marker free.
+   */
+  async interactionLocation(
+    furniture: number,
+    from: Vec3,
+  ): Promise<{ readonly position: Vec3; readonly heading: number } | undefined> {
+    const info = await this.#info(furniture);
+    const chosen = info && this.#choose(info, from, undefined);
+    return chosen && { position: chosen.marker.position, heading: chosen.marker.heading };
+  }
+
   #info(reference: number): Promise<FurnitureInfo | undefined> {
     let entry = this.#furniture.get(reference);
     if (!entry) {

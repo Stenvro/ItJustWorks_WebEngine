@@ -222,6 +222,16 @@ export interface WorldBridge {
   motion?(actor: number): ActorMotion | undefined;
   /** Whether a furniture's marker (any marker, without one) is in use by an actor. */
   furnitureInUse?(furniture: number, marker?: number): boolean;
+  /**
+   * Where an actor would use a furniture (its marker: MoveToInteractionLocation), if the view
+   * holds it.
+   */
+  interactionLocation?(
+    furniture: number,
+    from: Vec3,
+  ): Promise<
+    { readonly position: readonly [number, number, number]; readonly heading: number } | undefined
+  >;
   /** An idle played (PlayIdle): false if it could not play. */
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
   /**
