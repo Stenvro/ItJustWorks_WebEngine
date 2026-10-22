@@ -12,6 +12,7 @@
 import { INTERFACE_URL, type InterfaceFiles } from './interface-files.ts';
 import {
   BRIDGE_CALL,
+  BRIDGE_FRAMES,
   BRIDGE_GET,
   BRIDGE_INVOKE,
   BRIDGE_NATIVE,
@@ -102,6 +103,22 @@ function runWaiting(): void {
 
 /** The class of a menu not yet filled by its setup (style.css: unseen). */
 const FILLING = 'menu-filling';
+/**
+ * The movie's frames a menu stays unseen after its setup: the first runs what the setup
+ * invalidated (CLIK's components redraw on the next enterFrame), the next is drawn after it.
+ */
+const FILL_FRAMES = 2;
+/** How long a menu waits for its frames (a movie that plays no more shows anyway). */
+const FRAMES_TIMEOUT_MS = 500;
+
+/** Whether a key's target is a field of the page that is typed into (the shell's own). */
+function editable(target: EventTarget | null): boolean {
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    (target instanceof HTMLElement && target.isContentEditable)
+  );
+}
 
 /** CLIK's input manager, which every menu built on CLIK reads its keys from. */
 const INPUT_DELEGATE = 'gfx.managers.InputDelegate.instance';
@@ -329,6 +346,24 @@ export class Menu {
   }
 
   /**
+   * Waits until the movie has played `count` more frames (the bridge's frame clock): what the
+   * engine set has been drawn. False after `timeout` ms or once the menu closed.
+   */
+  async framesPass(count: number, timeout = FRAMES_TIMEOUT_MS): Promise<boolean> {
+    const element = this.#element;
+    const start = this.get(BRIDGE_FRAMES);
+    if (typeof start !== 'number') return false;
+    const until = performance.now() + timeout;
+    while (!this.#closed && this.#element === element) {
+      const now = this.get(BRIDGE_FRAMES);
+      if (typeof now === 'number' && now >= start + count) return true;
+      if (performance.now() > until) return false;
+      await new Promise((resolve) => setTimeout(resolve, 8));
+    }
+    return false;
+  }
+
+  /**
    * Sets Stage.visibleRect and Stage.safeRect for the menu's size on screen, as GFx keeps
    * them (src/ui/stage-rects.ts).
    */
@@ -489,6 +524,14 @@ export class MenuHost {
     return this.#menus.values();
   }
 
+  /**
+   * Whether a menu that takes the keys is open (an interactive one): the game's controls then
+   * get none, whether its player has the page's focus or not.
+   */
+  get takesKeys(): boolean {
+    return this.#topInteractive() !== undefined;
+  }
+
   /** The interface files the menus load (and the pictures the engine gives them). */
   get files(): InterfaceFiles {
     return this.#files;
@@ -627,8 +670,8 @@ export class MenuHost {
     window.removeEventListener('pointermove', this.#pointerMoved, { capture: true });
     this.#layer.classList.remove('game-cursor');
     this.#cursor = undefined;
-    this.#layer.removeEventListener('keydown', this.#keyed, { capture: true });
-    this.#layer.removeEventListener('keyup', this.#keyed, { capture: true });
+    window.removeEventListener('keydown', this.#keyed, { capture: true });
+    window.removeEventListener('keyup', this.#keyed, { capture: true });
     if (this.#resizeTimer !== undefined) clearTimeout(this.#resizeTimer);
     if (window[BRIDGE_GLOBAL] === this.#dispatch) window[BRIDGE_GLOBAL] = undefined;
   }
@@ -700,6 +743,10 @@ export class MenuHost {
     // Selection.setFocus (a message box's first button) holds only in a player with focus.
     if (options.interactive) menu.focus();
     await options.setup?.(menu);
+    // Shown once its movie has drawn what the setup set: the player's canvas still holds the
+    // movie's own first frame (its placeholders: "Perk Name", "Conjuration 99", a list's
+    // "TEXT") until the movie's next frames have run and been drawn.
+    await menu.framesPass(FILL_FRAMES);
     if (menu.element === element) menu.filled();
     // Still focused: left so (focusing it again would take the focus its setup gave a button).
     if (options.interactive && menu.element === element && document.activeElement !== element) {
@@ -717,8 +764,8 @@ export class MenuHost {
     this.#sizeWatch.observe(this.#layer);
     this.#layer.addEventListener('pointerdown', this.#pointed);
     window.addEventListener('pointermove', this.#pointerMoved, { capture: true, passive: true });
-    this.#layer.addEventListener('keydown', this.#keyed, { capture: true });
-    this.#layer.addEventListener('keyup', this.#keyed, { capture: true });
+    window.addEventListener('keydown', this.#keyed, { capture: true });
+    window.addEventListener('keyup', this.#keyed, { capture: true });
     window[BRIDGE_GLOBAL] = this.#dispatch;
   }
 
@@ -757,13 +804,21 @@ export class MenuHost {
    * them (Menu.pressKey: a Flash player takes keys only once it has been clicked, a menu
    * opened by a key must take keys at once), as other keys where the menu says (keyAs). Tab
    * is the menus' (closing the tween menu, the next field), not the page's focus. A text
-   * field being typed into gets the keys from the player itself.
+   * field being typed into gets the keys from the player itself. Heard on the window: the keys
+   * are the topmost menu's wherever the page's focus is (a click beside the menus, the
+   * browser's own focus moves), as the game's menus have the keyboard while they are open.
    */
   readonly #keyed = (event: KeyboardEvent): void => {
-    if (event.key === 'Tab') event.preventDefault();
+    const target = event.target;
+    const inLayer = target instanceof Node && this.#layer.contains(target);
+    if (event.key === 'Tab' && inLayer) event.preventDefault();
     if (!event.isTrusted) return;
     const top = this.#topInteractive();
     if (!top) return;
+    // The page's own fields (the shell's) keep their keys; any other key is the topmost
+    // menu's, its player focused or not (the page's focus may have gone to the page itself).
+    if (!inLayer && editable(target)) return;
+    if (event.key === 'Tab') event.preventDefault();
     const down = event.type === 'keydown';
     if (down && top.options.onKey?.(top, event)) {
       this.#taken.add(event.code);

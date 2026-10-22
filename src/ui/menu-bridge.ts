@@ -47,6 +47,15 @@ export const BRIDGE_TRANSLATE = '__itjwTranslate';
 export const BRIDGE_REFERENCE = '__itjwRef:';
 /** The clips passed so far, by number. */
 export const BRIDGE_REFERENCES = '_global.__itjwRefs';
+/**
+ * The frames the movie has played since the bridge ran (a clip of the bridge counts them on
+ * each enterFrame): what the engine set as a menu opened shows only once a frame has drawn it
+ * (CLIK's components redraw on the frame after they are invalidated).
+ */
+export const BRIDGE_FRAMES = '_global.__itjwFrames';
+/** The frame clock's clip, at _root's lowest depth (below the timeline's and the menus' own). */
+const FRAME_CLOCK = '__itjwFrameClock';
+const FRAME_CLOCK_DEPTH = -16384;
 
 const EXTERNAL_INTERFACE = 'flash.external.ExternalInterface';
 /** Where the bridge keeps the player's own ExternalInterface.call. */
@@ -92,6 +101,20 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
   }
   // _global.gfxExtensions = true
   w.push('_global').op(Op.getVariable).push('gfxExtensions', true).op(Op.setMember);
+
+  // The frame clock: _global.__itjwFrames = 0;
+  // _root.createEmptyMovieClip(FRAME_CLOCK, FRAME_CLOCK_DEPTH).onEnterFrame =
+  //   function () { _global.__itjwFrames++; }
+  // (an empty clip: it draws nothing and no mouse search finds it).
+  const [framesObject, framesName] = splitPath(BRIDGE_FRAMES);
+  w.getPath(framesObject).push(framesName, 0).op(Op.setMember);
+  w.push(FRAME_CLOCK_DEPTH, FRAME_CLOCK, 2, '_root').op(Op.getVariable);
+  w.push('createEmptyMovieClip').op(Op.callMethod).push('onEnterFrame');
+  w.function2('', [], 1, Function2Flag.suppressThis | Function2Flag.suppressArguments, (body) => {
+    body.getPath(framesObject).push(framesName).getPath(BRIDGE_FRAMES).op(Op.increment);
+    body.op(Op.setMember);
+  });
+  w.op(Op.setMember);
 
   // _global.__itjwOriginalCall = ExternalInterface.call (once: a movie loaded into it shares
   // the player's _global).
@@ -284,6 +307,12 @@ export function bridgeActions(menu: string, stage?: StageRects): Uint8Array {
     body.push({ register: 1 }).op(Op.getVariable).op(Op.return);
   });
   return w.bytes();
+}
+
+/** A dotted path's object and its last member ("_global.a" → "_global", "a"). */
+function splitPath(path: string): [string, string] {
+  const dot = path.lastIndexOf('.');
+  return [path.slice(0, dot), path.slice(dot + 1)];
 }
 
 /** ExternalInterface.addCallback(name, null, function (params) { body }) */

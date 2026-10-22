@@ -130,6 +130,7 @@ export class DialogueMenu {
       return;
     }
     this.#speaker = speaker;
+    this.#lastChosen = undefined;
     this.#closed = events.closed;
     runtime.dialogueSpeaker = reference;
     events.opened();
@@ -137,9 +138,12 @@ export class DialogueMenu {
       depth: DIALOGUE_DEPTH,
       interactive: true,
       handlers: {
-        TopicClicked: (_menu, args) => {
+        // The menu has left its list for the answer: a click with no topic under it or
+        // highlighted (no index) gets the list back instead of leaving the menu waiting.
+        TopicClicked: (menu, args) => {
           const choice = this.#choices[typeof args[1] === 'number' ? args[1] : -1];
-          if (choice) void this.#chosen(choice);
+          if (choice && !this.#busy) void this.#chosen(choice);
+          else if (!this.#busy) this.#listTopics(menu);
         },
         SkipText: () => {
           this.#line?.skip();
@@ -190,6 +194,7 @@ export class DialogueMenu {
     const speaker = this.#speaker;
     if (!engine || !speaker || this.#busy) return;
     this.#busy = true;
+    this.#lastChosen = choice.text;
     try {
       const spoken = await engine.choose(choice, speaker.actor.reference);
       if (spoken) await this.#say(spoken);
@@ -217,11 +222,25 @@ export class DialogueMenu {
       menu.call('StartHideMenu');
       return;
     }
-    // (text, isNew, index) per topic, then the one to select (-1: none).
+    this.#listTopics(menu);
+  }
+
+  /**
+   * Lists the topics: (text, isNew, index) per topic, then the one to select (the list's
+   * SetSelectedTopic): the topic chosen last if it is listed again, else the first, so that E
+   * (or a click, which takes the highlighted topic) chooses one at once, as in the game.
+   * Inferred from the movie (it selects nothing for -1, and E then chooses nothing).
+   */
+  #listTopics(menu: Menu): void {
     const values = this.#choices.flatMap((choice, index) => [choice.text, choice.isNew, index]);
-    menu.call('PopulateDialogueList', ...values, -1);
+    const last = this.#lastChosen;
+    const again = last === undefined ? -1 : this.#choices.findIndex((c) => c.text === last);
+    menu.call('PopulateDialogueList', ...values, Math.max(0, again));
     menu.call('ShowDialogueList', true, false);
   }
+
+  /** The text of the topic chosen last (selected again when it is listed again). */
+  #lastChosen: string | undefined;
 
   /**
    * The actor says an info: its begin fragment, each response (the voice file of its voice

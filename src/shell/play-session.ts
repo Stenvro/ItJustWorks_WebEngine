@@ -1285,7 +1285,12 @@ export class PlaySession {
     this.#detach?.();
     this.#detach = this.#freeCamera
       ? this.camera.attach(this.#canvas)
-      : attachPlayerInput(this.player, this.#canvas, () => this.#hud?.listening === true);
+      : attachPlayerInput(
+          this.player,
+          this.#canvas,
+          () => this.#hud?.listening === true,
+          () => this.#hud?.menus?.takesKeys?.() === true,
+        );
   }
 
   /** Stops taking input. */
