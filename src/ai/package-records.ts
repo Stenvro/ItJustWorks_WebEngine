@@ -242,7 +242,8 @@ const TARGET_FORMS: ReadonlySet<number> = new Set([
   TargetType.linkedReference,
 ]);
 
-function readLocation(record: RecordSource, data: Uint8Array): PackageLocation | undefined {
+/** A PLDT-shaped place (type, form or raw value, radius): packages', a vendor faction's PLVD. */
+export function readLocation(record: RecordSource, data: Uint8Array): PackageLocation | undefined {
   if (data.length < 12) return undefined;
   const v = view(data);
   const type = v.getInt32(0, true);

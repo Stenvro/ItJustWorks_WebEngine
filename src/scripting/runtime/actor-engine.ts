@@ -29,7 +29,8 @@ import { ActorValue, actorValueIndex, SKILL_COUNT } from '../../world/actor-valu
 import { RecordFlag } from '../../formats/esm/record.ts';
 import { AliasFlag } from '../../world/quest-records.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
-import type { ScriptRuntime } from './runtime.ts';
+import type { Placement, ScriptRuntime } from './runtime.ts';
+import { LocationType } from '../../ai/package-records.ts';
 
 export interface ActorInfo {
   readonly reference: number;
@@ -69,6 +70,17 @@ const GOD_MODE_VALUES: ReadonlySet<number> = new Set([
 
 const pairKey = (a: number, b: number): string =>
   a < b ? `${String(a)}:${String(b)}` : `${String(b)}:${String(a)}`;
+
+/** An exterior cell's size (game units). */
+const CELL_UNITS = 4096;
+
+/** Whether two places of a world are in the same exterior cell. */
+function sameGridCell(a: readonly number[], b: readonly number[]): boolean {
+  return (
+    Math.floor((a[0] ?? 0) / CELL_UNITS) === Math.floor((b[0] ?? 0) / CELL_UNITS) &&
+    Math.floor((a[1] ?? 0) / CELL_UNITS) === Math.floor((b[1] ?? 0) / CELL_UNITS)
+  );
+}
 
 export class ActorEngine {
   readonly #runtime: ScriptRuntime;
@@ -447,7 +459,8 @@ export class ActorEngine {
   /**
    * It offers its services now (GetOffersServicesNow): it is in a vendor faction (rank 0 or
    * more) whose hours (VENV) include the game's hour now (hours past midnight wrap) and whose
-   * conditions hold on it. TODO(M10): the vendor's location and radius.
+   * conditions hold on it, where it trades (PLVD within VENV's radius: in its cell, near its
+   * reference or its editor location).
    */
   async offersServicesNow(reference: number): Promise<boolean> {
     return (await this.vendorFaction(reference)) !== undefined;
@@ -474,10 +487,51 @@ export class ActorEngine {
           : hour >= startHour || hour < endHour;
       if (!open) continue;
       const self = this.#runtime.referenceHandle(reference);
-      if (await this.#runtime.conditionsHold(vendor.conditions, self))
+      if (
+        (await this.#runtime.conditionsHold(vendor.conditions, self)) &&
+        (await this.#atVendorPlace(reference, vendor))
+      )
         return { faction: formId, vendor };
     }
     return undefined;
+  }
+
+  /** Whether an actor is where its vendor faction trades (PLVD, VENV's radius). */
+  async #atVendorPlace(reference: number, vendor: FactionVendor): Promise<boolean> {
+    const place = vendor.location;
+    const runtime = this.#runtime;
+    if (!place || place.type === LocationType.nearSelf) return true;
+    const at = await runtime.placement(reference);
+    if (!at) return true;
+    const near = (other: Placement | undefined, radius: number): boolean =>
+      other !== undefined &&
+      other.world === at.world &&
+      (at.world !== undefined || other.cell === at.cell) &&
+      (radius <= 0
+        ? at.world === undefined || sameGridCell(other.position, at.position)
+        : Math.hypot(other.position[0] - at.position[0], other.position[1] - at.position[1]) <=
+          radius);
+    switch (place.type) {
+      case LocationType.inCell: {
+        if (at.cell === place.form) return true;
+        const world = runtime.forms.db.worldOfCell(place.form);
+        if (world === undefined || at.world !== world) return false;
+        const xclc = (await runtime.forms.record(place.form))?.fields.first('XCLC');
+        if (!xclc || xclc.length < 8) return false;
+        const grid = new DataView(xclc.buffer, xclc.byteOffset, xclc.byteLength);
+        return (
+          Math.floor(at.position[0] / CELL_UNITS) === grid.getInt32(0, true) &&
+          Math.floor(at.position[1] / CELL_UNITS) === grid.getInt32(4, true)
+        );
+      }
+      case LocationType.nearReference:
+        return near(await runtime.placement(place.form), vendor.radius);
+      case LocationType.nearEditorLocation:
+        return near(await runtime.placement(reference, false), vendor.radius);
+      default:
+        // TODO(M13): the other place kinds (no vanilla vendor names them).
+        return true;
+    }
   }
 
   setFactionRank(reference: number, faction: number, rank: number): void {

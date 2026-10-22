@@ -543,11 +543,17 @@ export class GameMenus {
   }
 
   /**
-   * A book lying in the world, read (its activation): the book menu, the HUD hidden. TODO(M10):
-   * not in combat (sCanNotReadBook).
+   * A book lying in the world, read (its activation): the book menu, the HUD hidden; not while
+   * someone fights the player (sCanNotReadBook).
    */
   readBook(read: BookToRead): void {
     if (this.#open || this.#reading || this.#session.menuMode) return;
+    if (this.#session.combatWatch?.fightingPlayer === true) {
+      void this.#session.settings().then((settings) => {
+        this.#session.hud.notification(settings.string('sCanNotReadBook') ?? '');
+      });
+      return;
+    }
     const hud = this.#session.hud;
     hud.shown(false);
     this.#read(read, () => {
