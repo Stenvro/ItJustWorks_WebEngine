@@ -913,8 +913,11 @@ meanwhile.
   BSDirectAtModifiers of bows, userInfo 2: the player's view, an NPC's target's chest; as an
   aimed spell's: [Magic in combat](#magic-in-combat)).
 - **Torches** (the equip system's torch: a LIGH that can be carried, in the left hand): its
-  model (LIGH MODL) hangs on SHIELD whether the weapons are drawn or not, the graphs get
-  iLeftHandType 11 (the torch: they hold it up) and its light (the LIGH's radius, colour,
+  model (LIGH MODL) is held on SHIELD whether the weapons are drawn or not (an instance of its
+  own placed there every frame, so its fire's particles follow it), the graphs get
+  iLeftHandType 11 and the event torchEquip (0_master's MT_LeftHandOverride takes it to
+  MT_Torch_State: the arm holds it up; torchUnequip as it goes, ShdEquip and WeapSoloEquip for
+  a shield likewise; TODO(M13): when the engine sends them) and its light (the LIGH's radius, colour,
   flicker) shines from the model's AttachLight node, lighting the world and its bearer for
   detection ([Detection](#detection), the light on the target). `ActorCombat.lights`.
 - **Hits** (`hit-test.ts`): at HitFrame the strike reaches fCombatDistance (141) × the weapon's

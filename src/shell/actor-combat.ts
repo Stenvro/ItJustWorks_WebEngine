@@ -195,6 +195,8 @@ interface Fighter {
   practice: Practice | undefined;
   /** Its arms aim a drawn bow (#aimBow). */
   bowAimed: boolean;
+  /** What its left hand's graph override was told for which body (#graphVariables). */
+  leftHand: { readonly body: PlacedActor | undefined; readonly kind: string } | undefined;
 }
 
 /** How a UseWeapon practice's attacks go (its procedure's parameters). */
@@ -943,6 +945,28 @@ export class ActorCombat implements CombatBridge {
     this.#setVariable(fighter, 'iLeftHandEquipped', left !== EquippedItemType.handToHand ? 1 : 0);
     this.#setVariable(fighter, 'weaponSpeedMult', gear.right.speed);
     this.#setVariable(fighter, 'leftWeaponSpeedMult', gear.left.speed);
+    // The left hand's override (0_master's MT_LeftHandOverride) changes on the engine's equip
+    // events, the names its transitions take: torchEquip, ShdEquip; torchUnequip and
+    // WeapSoloEquip as a torch or a shield goes. Sent once a body for what it holds.
+    // TODO(M13): when the engine sends them (here as the hands are read).
+    const kind =
+      left === EquippedItemType.torch ? 'torch' : gear.shield !== undefined ? 'shield' : 'other';
+    const sent = fighter.leftHand;
+    const before = sent && sent.body === fighter.body ? sent.kind : undefined;
+    if (before !== kind) {
+      const event =
+        kind === 'torch'
+          ? 'torchEquip'
+          : kind === 'shield'
+            ? 'ShdEquip'
+            : before === 'torch'
+              ? 'torchUnequip'
+              : before === 'shield'
+                ? 'WeapSoloEquip'
+                : undefined;
+      if (event) for (const graph of this.#graphs(fighter)) graph.sendEvent(event);
+      fighter.leftHand = { body: fighter.body, kind };
+    }
   }
 
   /** Its weapons' models on its body (made again for another body or other weapons). */
@@ -2766,5 +2790,6 @@ function newFighter(reference: number, player: boolean): Fighter {
     deadAttacks: new Set(),
     practice: undefined,
     bowAimed: false,
+    leftHand: undefined,
   };
 }
