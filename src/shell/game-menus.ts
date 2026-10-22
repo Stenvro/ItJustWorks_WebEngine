@@ -14,6 +14,7 @@ import { inventoryModel } from './inventory-menu.ts';
 import { magicModel } from './magic-menu.ts';
 import { ItemMenu, type ItemMenuModel } from './item-menu.ts';
 import { FavoritesMenu } from './favorites-menu.ts';
+import { hotkeyOfEvent } from '../gameplay/hotkeys.ts';
 import { SleepWaitMenu } from './sleep-wait-menu.ts';
 import { noWaitReason } from '../gameplay/waiting.ts';
 import { TrainingMenu } from './training-menu.ts';
@@ -57,6 +58,9 @@ const EVENT_MENUS: Readonly<Record<string, string>> = {
   favorites: 'Favorites',
   wait: 'Wait',
 };
+
+/** The menus a beast form keeps shut. */
+const BEAST_SHUT: ReadonlySet<string> = new Set(['Inventory', 'Magic', 'Favorites']);
 
 /** What the menus ask of the world being played. */
 export interface MenusWorld {
@@ -177,6 +181,21 @@ export class GameMenus {
    * page only (Pause: its Load and Quit), until the reload (src/shell/player-death.ts).
    */
   userEvent(name: string): void {
+    // Hotkey1..8: the favorite with that hotkey is chosen (favorites-menu.ts), out of the menus.
+    const hotkey = hotkeyOfEvent(name);
+    if (hotkey !== undefined) {
+      const runtime = this.#session.scriptsReady;
+      if (this.#open || this.#session.menuMode || this.#session.loading || !runtime) return;
+      if (runtime.state.actors.get(PLAYER_REF)?.dead === true) return;
+      this.#favorites.useHotkey(hotkey).catch((error: unknown) => {
+        this.#terminal.log(
+          'ui',
+          `a hotkey: ${error instanceof Error ? error.message : String(error)}`,
+          'error',
+        );
+      });
+      return;
+    }
     const menu = EVENT_MENUS[name.toLowerCase()];
     if (menu === undefined || this.#open || this.#session.menuMode || this.#session.loading) return;
     const runtime = this.#session.scriptsReady;
@@ -186,8 +205,13 @@ export class GameMenus {
     this.openMenu(menu);
   }
 
-  /** Opens one of the game's menus by name ("Tween", "Journal", "Inventory", ...). */
+  /**
+   * Opens one of the game's menus by name ("Tween", "Journal", "Inventory", ...). In a beast
+   * form (Game.SetBeastForm: a werewolf, a vampire lord) the inventory, magic and favorites
+   * stay shut (UESP "Skyrim:Werewolf": no items, no spells of the player's own).
+   */
   openMenu(name: string): void {
+    if (this.#session.scriptsReady?.beastForm === true && BEAST_SHUT.has(name)) return;
     const opening =
       name === 'Tween'
         ? this.#openTween()
@@ -543,11 +567,17 @@ export class GameMenus {
   }
 
   /**
-   * A book lying in the world, read (its activation): the book menu, the HUD hidden. TODO(M10):
-   * not in combat (sCanNotReadBook).
+   * A book lying in the world, read (its activation): the book menu, the HUD hidden; not while
+   * the player fights (sCanNotReadBook).
    */
   readBook(read: BookToRead): void {
     if (this.#open || this.#reading || this.#session.menuMode) return;
+    if (this.#session.scriptsReady?.progression.inCombat(PLAYER_REF) === true) {
+      void this.#session.settings().then((settings) => {
+        this.#session.hud.notification(settings.string('sCanNotReadBook') ?? '');
+      });
+      return;
+    }
     const hud = this.#session.hud;
     hud.shown(false);
     this.#read(read, () => {
@@ -853,6 +883,11 @@ export class GameMenus {
   /** A menu's tutorial over it, the first time (src/shell/tutorial-menu.ts). */
   #tutorial(use: string): void {
     void this.#tutorials.show(use);
+  }
+
+  /** A tutorial of the game's own (a follower's command mode: HBFT), the first time. */
+  tutorial(use: string): void {
+    this.#tutorial(use);
   }
 
   /**

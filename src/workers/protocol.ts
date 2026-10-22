@@ -17,6 +17,8 @@ export type AssetRequest =
       /** For error messages only. */
       readonly path: string;
       readonly payload: BsaPayload;
+      /** Models: the child every NiSwitchNode shows (flora harvested). */
+      readonly switchChild?: number;
     }
   | {
       readonly id: number;

@@ -73,6 +73,11 @@ export interface ReferenceState {
   noFavor?: boolean;
   /** SetActorCause: the actor its doings are blamed on (a trap's hits). */
   actorCause?: number;
+  /**
+   * Flora harvested (harvest-engine.ts): when (game days) and in which cell; it grows again as
+   * that cell resets. TODO(M12): in the save.
+   */
+  harvested?: { readonly at: number; readonly cell?: number };
 }
 
 export interface ActorValueState {
@@ -126,6 +131,13 @@ export interface ActorState {
   outfit?: number;
   sleepOutfit?: number;
   race?: number;
+  /** Actor.SetEyeTexture: the texture set its eyes take instead of their own (a vampire's). */
+  eyeTexture?: number;
+  /**
+   * The feeding it does now (StartVampireFeed, StartCannibal: GetVampireFeed, GetCannibal),
+   * until the real second it ends.
+   */
+  feeding?: { readonly kind: 'vampire' | 'cannibal'; readonly until: number };
   /** Spells and shouts added (true) or removed (false) by scripts. */
   readonly spells: Map<number, boolean>;
   /** Perks added (true) or removed (false) by scripts. */
@@ -339,6 +351,8 @@ export class GameState {
   readonly factions = new Map<number, FactionState>();
   readonly locations = new Map<number, LocationState>();
   readonly cells = new Map<number, CellState>();
+  /** When (game days) the player was last in each cell (cells reset after; TODO(M12): saved). */
+  readonly cellVisits = new Map<number, number>();
   /** Relationship ranks scripts set between two NPC_ bases ("low:high" form ids). */
   readonly relationships = new Map<string, number>();
   /** Crime: stolen items, jail, places off limits, favor (crime-engine.ts). */
@@ -367,6 +381,22 @@ export class GameState {
   nextEffect = 0xfd000001;
   /** The player's favorites (items, spells, shouts): the favorites menu's (Q). */
   readonly favorites = new Set<number>();
+  /** The favorites' hotkeys (1-8 as 0..7), by form; a hotkey holds one favorite. */
+  readonly hotkeys = new Map<number, number>();
+  /**
+   * What the player used, by how often (the journal's Favorite Weapon, Spell, School, Shout:
+   * src/scripting/runtime/usage-stats.ts): weapons, spells and shouts by form, schools by skill.
+   */
+  readonly usage = {
+    weapons: new Map<number, number>(),
+    spells: new Map<number, number>(),
+    schools: new Map<number, number>(),
+    shouts: new Map<number, number>(),
+  };
+  /** Merchant chests: the game days passed when each last restocked (barter-menu.ts). */
+  readonly restocked = new Map<number, { readonly days: number; readonly count: number }>();
+  /** The player has finished the race menu once (the opening): a new race then resets skills. */
+  raceChosen = false;
   /** The books the player has read (a skill book teaches once; TODO(M12): in the save). */
   readonly booksRead = new Set<number>();
   /** The tutorials shown in this game (their default objects' uses: "HBLK", ...). */

@@ -31,6 +31,8 @@ export class SoundInstance {
   readonly #sound: SoundBuffer;
   readonly #place: SoundPlace;
   readonly #rate: number;
+  /** The world's clock (Slow Time) on its pitch: setTimeRate. */
+  #timeRate = 1;
   readonly #volume: GainNode;
   /** Fades (region and acoustic space loops fade in and out). */
   readonly #fade: GainNode;
@@ -90,6 +92,21 @@ export class SoundInstance {
       reverb.connect(engine.reverbSend);
     }
     this.#source = this.#start(0, descriptor.looping !== 'none');
+  }
+
+  /**
+   * The world's clock runs at `rate` (Slow Time): the sound plays that much slower and lower
+   * (sounds in the world only: SoundSystem.setTimeMultiplier).
+   */
+  setTimeRate(rate: number): void {
+    if (rate === this.#timeRate) return;
+    this.#timeRate = rate;
+    this.#source.playbackRate.value = this.#rate * rate;
+  }
+
+  /** Whether it has a place in the world (not 2D: the interface, music). */
+  get placed(): boolean {
+    return this.#place !== undefined;
   }
 
   /** The distance gain was set once (later updates ease towards theirs). */
@@ -186,7 +203,7 @@ export class SoundInstance {
     const context = this.#engine.context;
     const source = context.createBufferSource();
     source.buffer = this.#sound.buffer;
-    source.playbackRate.value = this.#rate;
+    source.playbackRate.value = this.#rate * this.#timeRate;
     if (loop) {
       source.loop = true;
       const region = this.#sound.loop;

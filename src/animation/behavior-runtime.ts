@@ -881,12 +881,18 @@ export class BehaviorRuntime {
    */
   taggedState(): number | undefined {
     let best: { priority: number; value: number } | undefined;
+    let managed: number | undefined;
     for (const node of this.#active) {
-      const tag = node as BehaviorGenerator;
+      const tag = node as BehaviorGenerator | BehaviorModifier;
+      // A BSIStateManagerModifier keeps the state in its variable (the beast forms' graphs).
+      if (tag.kind === 'istate-manager') {
+        managed = this.#read(tag.iStateVar, this.#scopeOf(tag));
+        continue;
+      }
       if (tag.kind !== 'state-tagging' || (best && tag.priority <= best.priority)) continue;
       best = { priority: tag.priority, value: this.#read(tag.iState, this.#scopeOf(tag)) };
     }
-    return best?.value;
+    return best?.value ?? managed;
   }
 
   /** The character variables whose names start with `prefix` (any case), with their values. */
@@ -1947,7 +1953,8 @@ export class BehaviorRuntime {
         return;
       }
       case 'speed-sampler':
-        // TODO(M10): the actor's measured speed; until then its goal speed.
+        // Its goal speed is bound to Speed, the measured speed the locomotion drives
+        // (src/ai/locomotion.ts).
         this.#write(modifier.speedOut, scope, this.#read(modifier.goalSpeed, scope));
         return;
       case 'keyframe-bones':
@@ -1980,6 +1987,16 @@ export class BehaviorRuntime {
         return;
       case 'rigid-body-ragdoll':
         this.#rigidBody = modifier;
+        return;
+      case 'istate-manager':
+        // The first state data whose machine is in its state sets the actor's state.
+        for (const entry of modifier.states) {
+          const machine = entry.machine;
+          if (machine?.kind !== 'state-machine') continue;
+          if (this.#machines.get(machine)?.current?.id !== entry.stateId) continue;
+          this.#write(modifier.iStateVar, scope, this.#read(entry.iState, scope));
+          break;
+        }
         return;
       case 'is-active':
       case 'event-on-deactivate':

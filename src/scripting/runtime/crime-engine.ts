@@ -783,7 +783,8 @@ export class CrimeEngine {
 
   /**
    * The doors of a place were locked (LockDoors) or unlocked: an interior locked with the
-   * player in it is off limits to them (they trespass staying: TODO(M10) 4.3 procedure-runs);
+   * player in it is off limits to them (staying, they trespass: warned, then reported,
+   * src/shell/actor-crime.ts);
    * unlocked, it is open to them again.
    */
   doorsLocked(cells: Iterable<number>, locked: boolean, playerCell: number | undefined): void {
@@ -792,6 +793,22 @@ export class CrimeEngine {
       if (!locked) offLimits.delete(cell);
       else if (cell === playerCell) offLimits.add(cell);
     }
+  }
+
+  /**
+   * A door locked or unlocked as its owner (ObjectReference.Lock's abAsOwner): as the owner's
+   * own LockDoors does it, no crime in it. Unlocked, the places on both its sides are open to
+   * the player again (no longer off limits: entering is no trespass); locked, the one the player
+   * is in becomes off limits (they trespass staying). Without abAsOwner a script's Lock leaves
+   * that as it was.
+   */
+  async lockedAsOwner(door: number, locked: boolean): Promise<void> {
+    const runtime = this.#runtime;
+    const cells = [
+      runtime.forms.db.cellOfReference(door),
+      await this.#doorDestinationCell(door),
+    ].filter((cell): cell is number => cell !== undefined);
+    this.doorsLocked(cells, locked, (await runtime.placement(PLAYER_REF))?.cell);
   }
 
   /**

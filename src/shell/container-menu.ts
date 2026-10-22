@@ -11,13 +11,18 @@
 // mode (an actor's pockets, sneaking) each card shows the chance to take or place it
 // (pickpocketChance: "TO STEAL", "TO PLACE"); each move is an attempt, and one that fails
 // closes the menu (crime-engine.ts pickpocket); what it wears or holds shows only with the
-// perks that let it be taken (Can Pickpocket Equipped Item). TODO(M11): quest items that cannot
-// be stored.
+// perks that let it be taken (Can Pickpocket Equipped Item). The player's quest items cannot
+// be stored or placed (sDropQuestItemWarning: their entries disabled, DisabledItemSelect says
+// why). A teammate's inventory (OpenInventory, NPC mode) keeps its starting armor (its outfit's
+// pieces: sTeammateCantTakeOutfit, sTeammateCantGiveOutfit) and takes no more than it can carry
+// (sTeammateOverencumbered).
 // Notes: docs/ui.md ("The item menus").
 
 import { INVENTORY_CATEGORIES, ItemCategory, itemSound } from '../gameplay/inventory.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { questItemCount, questItems } from '../scripting/runtime/quest-items.ts';
+import { referenceName } from '../scripting/runtime/quest-text.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import { parseItem, type ItemRecord } from '../world/item-records.ts';
@@ -158,6 +163,46 @@ export function containerModel(
     })();
     return owned;
   };
+  const notify = (text: string | undefined): void => {
+    if (text) session.hud.notification(text);
+  };
+  const setting = async (name: string): Promise<string | undefined> =>
+    (await session.settings()).string(name);
+  /**
+   * Why a move may not be made (a message), if it may not: the player's quest items do not
+   * leave them (sDropQuestItemWarning); a teammate's (OpenInventory) starting armor is not taken
+   * (sTeammateCantTakeOutfit), what it has of it is not given again (sTeammateCantGiveOutfit),
+   * and it carries no more than it can (its name and sTeammateOverencumbered).
+   */
+  const refusal = async (
+    formId: number,
+    amount: number,
+    fromContainer: boolean,
+  ): Promise<string | undefined> => {
+    const game = shelf.runtime;
+    if (!fromContainer) {
+      const have = await game.itemCount(PLAYER_REF, formId);
+      if (amount > have - (await questItemCount(game, PLAYER_REF, formId)))
+        return setting('sDropQuestItemWarning');
+    }
+    if (!npcMode) return undefined;
+    const outfit = game.state.actors.get(container)?.equipment.outfitItems.get(formId) ?? 0;
+    if (fromContainer) {
+      const have = await game.itemCount(container, formId);
+      return amount > have - outfit ? setting('sTeammateCantTakeOutfit') : undefined;
+    }
+    if (outfit > 0) return setting('sTeammateCantGiveOutfit');
+    const item = await shelf.item(formId);
+    const [carried, limit] = await Promise.all([
+      game.equipment.carried(container),
+      game.equipment.carryWeight(container),
+    ]);
+    if (item && carried + item.weight * amount > limit) {
+      const name = await referenceName(game, container);
+      return `${name} ${(await setting('sTeammateOverencumbered')) ?? ''}`.trim();
+    }
+    return undefined;
+  };
   const move = async (
     formId: number,
     amount: number,
@@ -166,6 +211,11 @@ export function containerModel(
     /** The entry's stack (an improved item), if it is one. */
     stack?: number,
   ): Promise<void> => {
+    const refused = await refusal(formId, amount, fromContainer);
+    if (refused !== undefined) {
+      notify(refused);
+      return;
+    }
     const crime = shelf.runtime.crime;
     if (pickpocket) {
       const done = await crime.pickpocket(PLAYER_REF, container, formId, amount, !fromContainer);
@@ -222,10 +272,24 @@ export function containerModel(
       const red = pickpocket || (await stealing());
       const rows = [...theirs, ...mine];
       const cards = await shelf.cards(rows);
+      // What cannot move at all is disabled (the movie asks DisabledItemSelect instead): the
+      // player's quest items, a teammate's starting armor.
+      const game = shelf.runtime;
+      const quest = await questItems(game, PLAYER_REF);
+      const outfit = npcMode ? game.state.actors.get(container)?.equipment.outfitItems : undefined;
+      const movable = (row: Row, held: number): { enabled?: false } =>
+        row.count <= held ? { enabled: false } : {};
       return {
         entries: [
-          ...theirs.map((row) => ({ ...otherSideEntry(row), ...(red && { isStealing: true }) })),
-          ...mine.map(itemEntry),
+          ...theirs.map((row) => ({
+            ...otherSideEntry(row),
+            ...(red && { isStealing: true }),
+            ...movable(row, outfit?.get(row.formId) ?? 0),
+          })),
+          ...mine.map((row) => ({
+            ...itemEntry(row),
+            ...movable(row, quest.get(row.formId) ?? 0),
+          })),
         ],
         cards: await Promise.all(
           cards.map((card, index) => withChance(card, rows[index]?.formId ?? 0)),
@@ -245,6 +309,9 @@ export function containerModel(
     },
     transfer: (entry, amount, fromContainer) =>
       move(entry.formId, amount, fromContainer, true, entryStack(entry)),
+    disabledSelect: async (entry) => {
+      notify(await refusal(entry.formId, 1, entry.container === true));
+    },
     // One sound for all of them: the first item's.
     takeAll: async () => {
       if (npcMode || pickpocket) return;

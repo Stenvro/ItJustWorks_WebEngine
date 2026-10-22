@@ -9,7 +9,7 @@
 // <value> (TimeScale too), getav / setav / modav / forceav, advlevel, advskill / incpcs,
 // addperk / removeperk, addspell / removespell, togglemenus (tm), forceweather (fw),
 // enableplayercontrols (epc) / disableplayercontrols (dpc), togglegodmode (tgm), kill,
-// showracemenu, quitquitquit (qqq).
+// showracemenu, cast, quitquitquit (qqq).
 // TODO(M13): the rest of the game's console commands (tcl, tai, resurrect, moveto, prid by
 // clicking, ...).
 
@@ -158,6 +158,18 @@ export class ConsoleCommands {
         if (changed) await runtime.magic.syncLasting(self);
         return [];
       }
+      // <ref>.Cast <spell> <target>: the reference casts the spell at the target, as a
+      // script's Spell.Cast (a power on the player: player.cast WerewolfChange player).
+      case 'cast': {
+        const spell = await this.#form(args[0]);
+        const record = spell === undefined ? undefined : await runtime.forms.record(spell);
+        if (spell === undefined || (record?.type !== 'SPEL' && record?.type !== 'SCRL'))
+          return [`Item '${args[0] ?? ''}' not found for parameter Spell.`];
+        const at = args[1] === undefined ? self : this.#reference(args[1]);
+        if (at === undefined) return [`Item '${args[1] ?? ''}' not found for parameter Reference.`];
+        await runtime.magic.cast(spell, self, at);
+        return [];
+      }
       case 'tm':
       case 'togglemenus':
         this.#context.toggleMenus();
@@ -202,7 +214,7 @@ export class ConsoleCommands {
         return [];
       }
       case 'showracemenu':
-        // TODO(M11): after the opening, a new race resets the skills (UESP, "Console").
+        // After the opening a new race resets the skills (UESP "Console"): the race menu's.
         this.#context.showRaceMenu();
         return [];
       case 'qqq':

@@ -225,6 +225,19 @@ export class ActorBodies {
   }
 
   /**
+   * Pulls one body of a ragdoll (on `node`) toward a point: its speed set to `gain` × the way
+   * there a second, at most `limit` units a second (a ragdoll held by its root).
+   */
+  pullRagdoll(reference: number, node: string, point: Vec3, gain: number, limit: number): void {
+    const entry = this.#bodies.get(reference);
+    if (!entry?.articulation) return;
+    const body = entry.placed.bodies.find(
+      ({ data }) => data.node.toLowerCase() === node.toLowerCase(),
+    );
+    if (body) this.#physics?.pullBody(body, point, gain, limit);
+  }
+
+  /**
    * Whether a body of an actor's ragdoll on the nodes named (all when none are) touches
    * something not its own (BSRagdollContactListenerModifier).
    */

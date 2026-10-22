@@ -344,6 +344,10 @@ interface Running {
   ended: boolean;
   /** The procedure running now (development checks). */
   procedure: string | undefined;
+  /** The branches running now (their conditions held as they began), root first. */
+  readonly active: ProcedureBranch[];
+  /** The branches the last one that began ran under (kept once the tree has ended). */
+  path: readonly ProcedureBranch[];
 }
 
 /** How a travel goes. */
@@ -471,7 +475,20 @@ export class ActorPackages {
     }
     const chosen = await this.#choose(undefined);
     if (this.#running !== current) return;
-    if (chosen?.id === current?.id && current) return;
+    if (chosen && chosen.id === current?.id) {
+      // Still the package chosen: its tree goes on (one that ended stays done), unless a branch
+      // it runs (or ended under) may no longer (its conditions changed): then the tree is taken
+      // again from its root, as the package stays (no package events). TODO(M13): the engine's
+      // own rule for a running tree.
+      if ((await this.#branchesHold(current)) || this.#running !== current) return;
+      current.stopped = true;
+      this.#release();
+      this.#body.stop();
+      this.#body.face(undefined);
+      this.#running = chosen;
+      void this.#runTree(chosen);
+      return;
+    }
     if (current) {
       current.stopped = true;
       if (!current.ended) {
@@ -561,9 +578,25 @@ export class ActorPackages {
         completed: false,
         ended: false,
         procedure: undefined,
+        active: [],
+        path: [],
       };
     }
     return undefined;
+  }
+
+  /**
+   * Whether the branches a package runs now (one that ended: those its last branch ran under)
+   * may still run: their conditions hold (a follower's Stacked branch follows while
+   * WaitingForPlayer is 0, and travels to wait once a script set it to 1).
+   */
+  async #branchesHold(running: Running): Promise<boolean> {
+    for (const branch of running.ended ? running.path : [...running.active]) {
+      if (branch.conditions.length === 0) continue;
+      if (!(await this.#mind.conditionsHold(branch.conditions, this.actor, running.data)))
+        return false;
+    }
+    return true;
   }
 
   /** Runs a package's tree from its root; marks it completed when it ends. */
@@ -591,12 +624,19 @@ export class ActorPackages {
       return 'skipped';
     }
     const repeat = (branch.branchFlags & BranchFlag.repeatWhenComplete) !== 0;
-    for (;;) {
-      const result = await this.#branchOnce(running, branch);
-      if (isStopped(running)) return 'stopped';
-      if (result === 'complete' || !repeat || result === 'skipped') return result;
-      // A branch that repeats starts over (a moment later: nothing runs in a tight loop).
-      await this.#wait(running, 0.1);
+    running.active.push(branch);
+    running.path = [...running.active];
+    try {
+      for (;;) {
+        const result = await this.#branchOnce(running, branch);
+        if (isStopped(running)) return 'stopped';
+        if (result === 'complete' || !repeat || result === 'skipped') return result;
+        // A branch that repeats starts over (a moment later: nothing runs in a tight loop).
+        await this.#wait(running, 0.1);
+      }
+    } finally {
+      const at = running.active.lastIndexOf(branch);
+      if (at >= 0) running.active.splice(at, 1);
     }
   }
 

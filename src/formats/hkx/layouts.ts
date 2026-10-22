@@ -498,6 +498,18 @@ export const HAVOK_LAYOUTS: Readonly<Record<string, ClassLayout>> = {
     size: 32,
     members: { upperBound: [0, 'f32'], event: [8, EVENT_PROPERTY], eventMode: [24, 'i8'] },
   },
+  BSIStateManagerModifier: {
+    parent: 'hkbModifier',
+    size: 160,
+    members: {
+      iStateVar: [80, 'i32'],
+      stateData: [88, 'array:struct:BSIStateManagerModifierBSiStateData'],
+    },
+  },
+  BSIStateManagerModifierBSiStateData: {
+    size: 16,
+    members: { pStateMachine: [0, 'ptr'], StateID: [8, 'i32'], iStateToSetAs: [12, 'i32'] },
+  },
   BSSpeedSamplerModifier: {
     parent: 'hkbModifier',
     size: 96,

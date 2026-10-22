@@ -10,6 +10,7 @@ import {
   ImageSpaceModifiers,
   type ActiveModifier,
   type ApplyOptions,
+  type ModifierView,
 } from '../world/image-space-modifiers.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import type { Terminal } from './terminal.ts';
@@ -33,6 +34,9 @@ export class ScreenModifiers {
     this.#db = db;
     this.#terminal = terminal;
   }
+
+  /** The view the screen is seen from (modifiers that aim at their target: an explosion). */
+  view: (() => ModifierView | undefined) | undefined;
 
   /** Shows a modifier at a strength (ImageSpaceModifier.Apply). */
   apply(formId: number, strength = 1, options: ApplyOptions = {}): Promise<void> {
@@ -93,7 +97,7 @@ export class ScreenModifiers {
     this.#last = now;
     this.#stack.advance(Math.min(MAX_STEP_SECONDS, seconds));
     if (this.#stack.empty) return base;
-    return this.#stack.modify(base ?? NEUTRAL_IMAGE_SPACE);
+    return this.#stack.modify(base ?? NEUTRAL_IMAGE_SPACE, this.view?.());
   }
 
   #enqueue(work: () => void | Promise<void>): Promise<void> {

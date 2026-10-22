@@ -61,6 +61,7 @@ export const Fn = {
   isAttacking: 672,
   isPowerAttacking: 673,
   isCommandedActor: 700,
+  getActorWarmth: 735,
   getKnockedState: 107,
   getPairedAnimation: 313,
   isPC1stPerson: 391,
@@ -696,7 +697,7 @@ async function conditionValue(
     case Fn.getRealHoursPassed:
       return state.realTime / 3600;
     case Fn.playerKnows:
-      return flag(runtime.playerKnows(form));
+      return flag(await runtime.playerKnows(form));
 
     // --- What a reference is --------------------------------------------------------------
     case Fn.getIsReference: {
@@ -1143,13 +1144,13 @@ async function conditionValue(
       ]);
       return self && other ? other.position[2] - self.position[2] : 0;
     }
-    // Riding (src/shell/actor-mounts.ts). TODO(M11): flying mounts (Dragonborn's dragon riding).
+    // Riding (src/shell/actor-mounts.ts): a horse, or a dragon (a flying mount).
     case Fn.isRidingHorse:
       return flag(reference !== undefined && runtime.world.mountOf?.(reference) !== undefined);
     case Fn.isBeingRidden:
       return flag(reference !== undefined && runtime.world.riderOf?.(reference) !== undefined);
     case Fn.isOnFlyingMount:
-      return 0;
+      return flag(reference !== undefined && runtime.world.flyingMount?.(reference) !== undefined);
     // Flying (src/shell/actor-flight.ts: the dragons; FlyingState 0 on the ground .. 6).
     case Fn.getIsFlying:
     case Fn.getFlyingState:
@@ -1349,11 +1350,14 @@ async function conditionValue(
           (await runtime.crime.reaction(reference, other)) === 'hostile',
       );
     }
-    // Casting is the casting engine's (magic-conditions.ts); being fed on and eaten are the
-    // player's powers (TODO(M11)).
+    // Casting is the casting engine's (magic-conditions.ts). Feeding: while the actor's
+    // StartVampireFeed / StartCannibal lasts (the feeding idles' trees ask it).
     case Fn.getVampireFeed:
-    case Fn.getCannibal:
-      return 0;
+    case Fn.getCannibal: {
+      const feeding = reference === undefined ? undefined : state.actors.get(reference)?.feeding;
+      const kind = condition.function === Fn.getVampireFeed ? 'vampire' : 'cannibal';
+      return flag(feeding?.kind === kind && feeding.until > state.realTime);
+    }
     // The type of what a hand holds (its casting source: 0 left, 1 right; Actor's codes).
     case Fn.getEquippedItemType:
       return reference === undefined
@@ -1695,6 +1699,9 @@ async function moreConditionValue(
         reference !== undefined &&
           [...runtime.crime.ledger.open()].some((crime) => crime.victim === reference),
       );
+    // Survival Mode's warmth (warmth-engine.ts: what it wears, its torch, Fortify Warmth).
+    case Fn.getActorWarmth:
+      return reference === undefined ? 0 : runtime.warmth.actor(reference);
     // A follower doing a favor (its favor state: Actor.SetDoingFavor).
     case Fn.isInFavorState:
       return flag(reference !== undefined && state.actors.get(reference)?.doingFavor === true);
@@ -1707,8 +1714,8 @@ async function moreConditionValue(
     }
     // The player would intimidate it (UESP "Skyrim:Speech"): the player's level times
     // (1 + max(−1, (their Speech − its Speech) / 100)) ^ fIntimidateSpeechcraftCurve against its
-    // level times fIntimidateConfidenceMult of its Confidence. TODO(M11): the perk entry point
-    // Mod Player Intimidation (the perk system's).
+    // level times fIntimidateConfidenceMult of its Confidence, the player's perks on their side
+    // (Mod Player Intimidation: crime-engine.ts intimidates).
     case Fn.getIntimidateSuccess:
       return reference === undefined ? undefined : flag(await runtime.crime.intimidates(reference));
     // The player's arrest (on the player): 0 none, 1 a guard arrests them, 2 in jail.
@@ -1724,11 +1731,16 @@ async function moreConditionValue(
     // A menu is open (its parameter: the menu type, 0 any). TODO(M13): the menu types.
     case Fn.menuMode:
       return flag(runtime.inMenuMode);
-    // Dragon riding's flying mounts: TODO(M11) (Dragonborn's dragon riding, with
-    // IsOnFlyingMount): no actor rides one.
+    // A ridden dragon sent the way the player looks, or flown to a place by the map's fast
+    // travel (src/shell/actor-mounts.ts).
     case Fn.isFlyingMountPatrolQueued:
+      return flag(
+        reference !== undefined && runtime.world.flyingMount?.(reference)?.patrol === true,
+      );
     case Fn.isFlyingMountFastTravelling:
-      return 0;
+      return flag(
+        reference !== undefined && runtime.world.flyingMount?.(reference)?.travelling === true,
+      );
 
     // --- The tempering item, the kill cameras' kill --------------------------------------------
     case Fn.epTemperingItemIsEnchanted:

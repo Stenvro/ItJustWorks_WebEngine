@@ -7,6 +7,7 @@
 import { ActorValue } from '../../../world/actor-values.ts';
 import { ObjectHandle, type Value } from '../../values.ts';
 import type { ScriptRuntime } from '../runtime.ts';
+import { questItems } from '../quest-items.ts';
 import { bool, formOf, int, num, object, str, type Register } from './args.ts';
 
 const DEG = 180 / Math.PI;
@@ -165,13 +166,20 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     if (reference !== undefined) runtime.moveToEditorLocation(reference);
     return null;
   });
+  // To where it would use the furniture: the marker it would take, facing its way (the
+  // furniture's own place where the view does not hold it).
   n('objectreference.movetointeractionlocation', async (call) => {
-    // TODO(M10): the furniture's entry point; its place until then.
     const reference = self(call);
     const target = ref(call.args[0]);
     const at = target === undefined ? undefined : await runtime.placement(target);
-    if (reference !== undefined && at)
+    if (reference === undefined || target === undefined || !at) return null;
+    const from = (await runtime.placement(reference))?.position ?? at.position;
+    const marker = await world.interactionLocation?.(target, from);
+    if (marker) {
+      runtime.move(reference, [...marker.position], [0, 0, marker.heading], at.cell, at.world);
+    } else {
       runtime.move(reference, [...at.position], [...at.rotation], at.cell, at.world);
+    }
     return null;
   });
   n('objectreference.getdistance', async (call) => {
@@ -284,10 +292,23 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     for (const count of (await runtime.inventory(reference)).values()) if (count > 0) return false;
     return true;
   });
+  // RemoveAllItems(akTransferTo, abKeepOwnership, abRemoveQuestItems): quest items (in a
+  // running quest's Quest Object alias: quest-items.ts) stay unless abRemoveQuestItems.
   n('objectreference.removeallitems', async (call) => {
     const reference = self(call);
-    // TODO(M11): quest items (in a Quest Object alias) stay unless abRemoveQuestItems.
-    if (reference !== undefined) await runtime.removeAllItems(reference, ref(call.args[0]));
+    if (reference === undefined) return null;
+    const to = ref(call.args[0]);
+    if (bool(call.args[2])) {
+      await runtime.removeAllItems(reference, to);
+      return null;
+    }
+    const kept = await questItems(runtime, reference);
+    for (const [item, count] of [...(await runtime.inventory(reference))]) {
+      const leaving = count - (kept.get(item) ?? 0);
+      if (leaving > 0) {
+        await runtime.removeItem(reference, runtime.formHandle(item), leaving, true, to);
+      }
+    }
     return null;
   });
   // RemoveAllStolenItems(akTransferTo): its stolen items go (to the other container).
@@ -368,10 +389,14 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     const reference = self(call);
     return reference === undefined ? 0 : runtime.openState(reference);
   });
+  // Lock(abLock, abAsOwner): as its owner, no crime in it (the door's places open to the
+  // player again, or off limits locked with them in: crime-engine.ts lockedAsOwner).
   n('objectreference.lock', async (call) => {
     const reference = self(call);
-    // TODO(M11): abAsOwner (no crime).
-    if (reference !== undefined) await runtime.setLocked(reference, bool(call.args[0], true));
+    if (reference === undefined) return null;
+    const locked = bool(call.args[0], true);
+    await runtime.setLocked(reference, locked);
+    if (bool(call.args[1])) await runtime.crime.lockedAsOwner(reference, locked);
     return null;
   });
   n('objectreference.islocked', async (call) => {
@@ -715,7 +740,7 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
     const reference = self(call);
     return reference !== undefined && state.references.get(reference)?.ignoreFriendlyHits === true;
   });
-  // A follower may not be asked to use it. TODO(M11): the followers' favor commands read it.
+  // A follower may not be asked to use it (the favor commands: src/shell/actor-favors.ts).
   n('objectreference.setnofavorallowed', (call) => {
     const reference = self(call);
     if (reference !== undefined) state.reference(reference).noFavor = bool(call.args[0], true);

@@ -1,6 +1,7 @@
 // The player's body: the Player actor (NPC_ 0x7, reference 0x14) on its race's skeleton,
-// drawn in third person, and its first-person skeleton, whose animated Camera1st node the
-// first-person camera rides. Both run their behavior graphs, which the player's movement
+// drawn in third person, and its first-person body (src/shell/first-person-body.ts: the
+// first-person skeleton, whose animated Camera1st node the first-person camera rides, and the
+// arms on it, drawn in first person). Both run their behavior graphs, which the player's movement
 // drives as the engine drives them: Speed and Direction, moveStart / moveStop, sprinting,
 // sneaking, swimming, and jumps (the graph's JumpUp pushes off; JumpFall and JumpLand frame
 // the flight). Its look is the player's appearance (src/shell/player-look.ts: the race menu's
@@ -8,16 +9,17 @@
 // Notes: docs/animation.md ("The player").
 
 import { HeadTracker, VANILLA_HEAD_TRACK, type Vec3 as LookPoint } from '../ai/head-tracking.ts';
-import { Locomotion, type LocomotionGraph } from '../ai/locomotion.ts';
+import { Locomotion, taggedMovementType, type LocomotionGraph } from '../ai/locomotion.ts';
+import { MovementCatalog } from '../ai/movement-types.ts';
+import type { MovementType } from '../world/movement.ts';
 import { animateSkeletons, type AnimatedSkeleton } from '../animation/animated-skeleton.ts';
-import { BehaviorRuntime } from '../animation/behavior-runtime.ts';
-import { ActorPose, ActorSkeleton } from '../animation/skeleton.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { seededRandom } from '../world/actors.ts';
-import { FIRST_PERSON_SKELETON, PLAYER_ACTOR } from '../world/player-body.ts';
+import { PLAYER_ACTOR } from '../world/player-body.ts';
+import { CAMERA_NODE, FirstPersonBody } from './first-person-body.ts';
 import type { PlacedActor } from './actors.ts';
 import { actorSounds, type SoundingWorld } from './actor-sounds.ts';
 import { headPosition } from './actors.ts';
@@ -27,9 +29,6 @@ import type { Player } from './player.ts';
 
 /** The Player reference (PlayerRef). */
 const PLAYER_REFERENCE = 0x14;
-/** The first-person behavior project (the engine's own path). */
-const FIRST_PERSON_PROJECT = 'meshes\\actors\\character\\_1stperson\\firstperson.hkx';
-const CAMERA_NODE = 'Camera1st [Cam1]';
 /** A frame longer than this (a hitch, a hidden tab) moves the avatar by this much (s). */
 const MAX_STEP = 0.1;
 
@@ -54,7 +53,7 @@ export class PlayerAvatar {
   readonly #player: Player;
   readonly #soundWorld: SoundingWorld;
   #made: Made;
-  #firstPerson: AnimatedSkeleton | undefined;
+  #firstPerson: FirstPersonBody | undefined;
   #female: boolean;
   /** One placement matrix the body's instances share, moved every frame. */
   readonly #motion: InstanceMotion;
@@ -87,7 +86,7 @@ export class PlayerAvatar {
     soundWorld: SoundingWorld,
     made: Made,
     placement: { world: Float32Array; motion: InstanceMotion },
-    firstPerson: AnimatedSkeleton | undefined,
+    firstPerson: FirstPersonBody | undefined,
   ) {
     this.#session = session;
     this.#renderer = renderer;
@@ -104,7 +103,28 @@ export class PlayerAvatar {
       this.send(moving ? 'JumpDirectionalStart' : 'JumpStandingStart');
     };
     player.cameraOffset = () => this.#cameraOffset();
+    player.taggedMovement = () => this.#taggedMovement();
+    void session.db
+      .then((db) => MovementCatalog.read(db))
+      .then((catalog) => {
+        this.#movementTypes = catalog;
+      });
     this.#listen(made.body);
+  }
+
+  /** The movement types by name (the graph's states: a beast form's). */
+  #movementTypes: MovementCatalog | undefined;
+
+  /**
+   * In a beast form (Game.SetBeastForm) the player moves at the movement type their graph is
+   * in (its iState: WerewolfBeastDefault, WerewolfBeastSprint, VampireLordDefault, ...), as
+   * the game's werewolves and vampire lords do; the human's types do not apply.
+   */
+  #taggedMovement(): MovementType | undefined {
+    if (this.#session.scriptsReady?.beastForm !== true) return undefined;
+    const graph = this.#made.body.behavior;
+    const name = graph ? taggedMovementType(graph) : undefined;
+    return name === undefined ? undefined : this.#movementTypes?.named(name);
   }
 
   /** The third-person body, drawn in third person. */
@@ -129,6 +149,11 @@ export class PlayerAvatar {
 
   /** The first-person skeleton and its graph (its Camera1st node is the camera). */
   get firstPerson(): AnimatedSkeleton | undefined {
+    return this.#firstPerson?.skeleton;
+  }
+
+  /** The first-person arms (their scene, pose and placement: the weapons hang on them). */
+  get firstPersonBody(): FirstPersonBody | undefined {
     return this.#firstPerson;
   }
 
@@ -188,7 +213,8 @@ export class PlayerAvatar {
     const motion: InstanceMotion = { version: 0 };
     const made = await PlayerAvatar.#make(session, renderer, player, { world, motion });
     if (!made) return undefined;
-    const firstPerson = await PlayerAvatar.#firstPersonSkeleton(session, made.body.look.female);
+    const firstPerson = await FirstPersonBody.create(session, renderer, made.body.look.female);
+    void firstPerson?.dress(made.body.look);
     keepHeads(session, made);
     return new PlayerAvatar(
       session,
@@ -229,6 +255,8 @@ export class PlayerAvatar {
       },
       made,
       made ? undefined : race,
+      // Its graph starts at its beginning (a werewolf's with its change).
+      { fresh: true },
     );
     if (!body) return undefined;
     const { look } = body;
@@ -240,36 +268,6 @@ export class PlayerAvatar {
       ...placement,
     }));
     return { body, scene: renderer.scene.createScene(instances), build: made?.build };
-  }
-
-  /** The first-person skeleton running the first-person graph (nothing of it is drawn yet). */
-  static async #firstPersonSkeleton(
-    session: GameSession,
-    female: boolean,
-  ): Promise<AnimatedSkeleton | undefined> {
-    const animation = session.animation;
-    const behaviors = await animation.behaviors(FIRST_PERSON_PROJECT);
-    const rigPath = behaviors?.character.rig;
-    if (!behaviors || !rigPath) return undefined;
-    const [rig, havok] = await Promise.all([
-      session.loader.loadRig(FIRST_PERSON_SKELETON).catch(() => undefined),
-      animation.havokSkeleton(rigPath),
-    ]);
-    if (!rig || !havok) return undefined;
-    const host = animation.host(behaviors, female);
-    const behavior = new BehaviorRuntime({
-      root: behaviors.root,
-      host,
-      skeleton: havok,
-      random: seededRandom(PLAYER_REFERENCE),
-      properties: { IsFemale: female ? 1 : 0, IsMale: female ? 0 : 1, IsPlayer: 1 },
-    });
-    behavior.update(0);
-    await host.loaded();
-    behavior.update(0);
-    const pose = new ActorPose(new ActorSkeleton(rig, havok));
-    pose.update(behavior.pose);
-    return { pose, behavior, time: undefined };
   }
 
   /**
@@ -309,8 +307,11 @@ export class PlayerAvatar {
     const female = made.body.look.female;
     if (female !== this.#female) {
       this.#female = female;
-      this.#firstPerson = await PlayerAvatar.#firstPersonSkeleton(this.#session, female);
+      this.#firstPerson?.destroy();
+      this.#firstPerson = await FirstPersonBody.create(this.#session, this.#renderer, female);
     }
+    // Its arms wear what the body wears now.
+    void this.#firstPerson?.dress(made.body.look);
     const old = this.#made;
     this.#made = made;
     this.#listen(made.body);
@@ -386,7 +387,7 @@ export class PlayerAvatar {
     if (!this.seated && !this.knocked) this.#drive(dt);
     const body = this.#made.body;
     const skeletons: AnimatedSkeleton[] = [body];
-    if (this.#firstPerson) skeletons.push(this.#firstPerson);
+    if (this.#firstPerson) skeletons.push(this.#firstPerson.skeleton);
     this.#look(body, dt);
     animateSkeletons(skeletons, this.#clock);
     // Knocked down it lies (and gets up) where it is placed.
@@ -423,6 +424,16 @@ export class PlayerAvatar {
       1,
     ]);
     this.#motion.version++;
+    // The first-person arms: on the feet, turned with the view.
+    const player = this.#player;
+    if (player.pov === 'first') {
+      this.#firstPerson?.place(
+        [feet[0] ?? 0, feet[1] ?? 0, feet[2] ?? 0],
+        this.#bodyYaw,
+        player.height,
+        player.pitch,
+      );
+    }
   }
 
   /** The body's head tracking (bHeadTracking, TargetLocation) and its world. */
@@ -501,7 +512,7 @@ export class PlayerAvatar {
   *#graphs(): Iterable<LocomotionGraph> {
     const body = this.#made.body.behavior;
     if (body) yield body;
-    const first = this.#firstPerson?.behavior;
+    const first = this.#firstPerson?.skeleton.behavior;
     if (first) yield first;
   }
 
@@ -513,7 +524,8 @@ export class PlayerAvatar {
       this.#bodyYaw = player.yaw;
     } else if (motion.moving) {
       const heading = player.yaw + Math.atan2(motion.inputX, motion.inputY);
-      const rate = player.movement.normal.rotateWhileMoving || Math.PI;
+      const type = this.#taggedMovement() ?? player.movement.normal;
+      const rate = type.rotateWhileMoving || Math.PI;
       let delta = heading - this.#bodyYaw;
       delta = Math.atan2(Math.sin(delta), Math.cos(delta));
       const step = rate * dt;
@@ -549,6 +561,8 @@ export class PlayerAvatar {
     this.#destroyed = true;
     this.#player.jumpTrigger = undefined;
     this.#player.cameraOffset = undefined;
+    this.#player.taggedMovement = undefined;
     this.#made.scene.destroy();
+    this.#firstPerson?.destroy();
   }
 }

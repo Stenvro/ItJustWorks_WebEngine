@@ -64,6 +64,11 @@ export interface ScriptView {
    * out unless the kill was silent (KillSilent).
    */
   killed?(reference: number, killer: number | undefined, silent: boolean): void;
+  /** A magic effect begins or ends on an actor: what it shows (src/shell/actor-effects.ts). */
+  magicEffect?(shown: MagicEffectShown): void;
+  /** EffectShader.Play / Stop and VisualEffect.Play / Stop on a reference of the view. */
+  effectShader?(shader: number, target: number, play: boolean, duration: number): void;
+  visualEffect?(effect: number, target: number, play: boolean, duration: number): void;
   /** The package an actor of the view runs now (its AI), if any. */
   currentPackage?(reference: number): number | undefined;
   /** The procedure its package runs now, by name (GetCurrentAIProcedure). */
@@ -84,12 +89,24 @@ export interface ScriptView {
   motion?(reference: number): ActorMotion | undefined;
   /** PlayIdle: an actor of the view plays an idle (false: the view does not hold it). */
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
+  /** ForceFirstPerson / ForceThirdPerson: the player's camera of the view. */
+  pointOfView?(pov: 'first' | 'third'): void;
+  /** Where an actor would use a furniture of the view (its marker), if the view holds it. */
+  interactionLocation?(
+    furniture: number,
+    from: Vec3,
+  ): Promise<
+    { readonly position: readonly [number, number, number]; readonly heading: number } | undefined
+  >;
   /** AddDependentAnimatedObjectReference and its Remove (false: the view does not hold it). */
   dependentAnimated?(reference: number, dependent: number, added: boolean): boolean;
   /** Vehicles and mounts of the view (src/shell/actor-vehicles.ts, actor-mounts.ts). */
   vehicleChanged?(actor: number): void;
   tether?(cart: number, horse: number): void;
   mountOf?(actor: number): number | undefined;
+  flyingMount?(
+    actor: number,
+  ): { readonly patrol: boolean; readonly travelling: boolean } | undefined;
   /** How a flier of the view flies (src/shell/actor-flight.ts). */
   flight?(actor: number): ActorFlightState | undefined;
   riderOf?(horse: number): number | undefined;
@@ -123,6 +140,8 @@ export interface CombatBridge {
   staggerEffect(actor: number, magnitude: number, caster: number | undefined): void;
   /** Paralysis begins or ends on an actor: it lies as its ragdoll meanwhile. */
   paralyze(actor: number, on: boolean): void;
+  /** Grab Actor: the target hangs as its ragdoll before its caster while it lasts. */
+  grabActor(caster: number | undefined, target: number, on: boolean): void;
 }
 
 /**
@@ -310,7 +329,6 @@ export class ScriptWorld implements WorldBridge {
     return false;
   }
 
-  /** Actor.SetRace: the actor is made again in its new race where it is shown. */
   /** Actors whose equipment changed, made again together once the scripts' turn is over. */
   readonly #dressing = new Set<number>();
 
@@ -337,8 +355,9 @@ export class ScriptWorld implements WorldBridge {
     this.#dressing.add(actor);
   }
 
-  raceChanged(actor: number): void {
-    this.lookChanged(actor).catch((error: unknown) => {
+  /** Actor.SetRace: the actor is made again in its new race where it is shown. */
+  raceChanged(actor: number): Promise<void> {
+    return this.lookChanged(actor).catch((error: unknown) => {
       this.#terminal.log(
         'actor',
         `${actor.toString(16)}: not made again in its race: ${error instanceof Error ? error.message : String(error)}`,
@@ -415,11 +434,28 @@ export class ScriptWorld implements WorldBridge {
     return false;
   }
 
+  pointOfView(pov: 'first' | 'third'): void {
+    for (const view of this.#views) view.pointOfView?.(pov);
+  }
+
   playIdle(actor: number, idle: number, target: number | undefined): boolean {
     let played = false;
     for (const view of this.#views)
       played = (view.playIdle?.(actor, idle, target) ?? false) || played;
     return played;
+  }
+
+  async interactionLocation(
+    furniture: number,
+    from: Vec3,
+  ): Promise<
+    { readonly position: readonly [number, number, number]; readonly heading: number } | undefined
+  > {
+    for (const view of this.#views) {
+      const found = await view.interactionLocation?.(furniture, from);
+      if (found) return found;
+    }
+    return undefined;
   }
 
   dependentAnimated(reference: number, dependent: number, added: boolean): boolean {
@@ -441,6 +477,16 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) {
       const horse = view.mountOf?.(actor);
       if (horse !== undefined) return horse;
+    }
+    return undefined;
+  }
+
+  flyingMount(
+    actor: number,
+  ): { readonly patrol: boolean; readonly travelling: boolean } | undefined {
+    for (const view of this.#views) {
+      const mount = view.flyingMount?.(actor);
+      if (mount) return mount;
     }
     return undefined;
   }
@@ -583,6 +629,10 @@ export class ScriptWorld implements WorldBridge {
     for (const fights of this.#fights()) fights.paralyze(actor, on);
   }
 
+  grabActor(caster: number | undefined, target: number, on: boolean): void {
+    for (const fights of this.#fights()) fights.grabActor(caster, target, on);
+  }
+
   furnitureInUse(furniture: number, marker?: number): boolean {
     for (const view of this.#views) if (view.furnitureInUse?.(furniture, marker)) return true;
     return false;
@@ -636,12 +686,24 @@ export class ScriptWorld implements WorldBridge {
 
   /**
    * A magic effect begins or ends on an actor: its sound plays (magic-engine.ts plays it); its
-   * hit shader (EFSH), art (ARTO), visuals (RFCT) and light are not drawn yet. TODO(M11)
-   * visuals: effect shaders and art objects on actors, lights that follow them.
+   * hit shader (EFSH), art (ARTO), visuals (RFCT: their art and shader) and light show on it
+   * where a view shows it (src/shell/actor-effects.ts), Detect Life on those it finds,
+   * Clairvoyance's trail.
    */
   magicEffect(shown: MagicEffectShown): void {
     if (shown.event === 'start' && shown.target === PLAYER_REF)
       this.#terminal.log('magic', `effect ${shown.effect.toString(16)} on the player`);
+    for (const view of this.#views) view.magicEffect?.(shown);
+  }
+
+  /** EffectShader.Play (seconds; −1 until Stop) and Stop. */
+  effectShader(shader: number, target: number, play: boolean, duration: number): void {
+    for (const view of this.#views) view.effectShader?.(shader, target, play, duration);
+  }
+
+  /** VisualEffect.Play (seconds; −1 until Stop) and Stop (TODO(M13): facing its target). */
+  visualEffect(effect: number, target: number, play: boolean, duration: number): void {
+    for (const view of this.#views) view.visualEffect?.(effect, target, play, duration);
   }
 
   music(type: number, add: boolean): void {
@@ -658,12 +720,17 @@ export class ScriptWorld implements WorldBridge {
     action: 'apply' | 'remove' | 'crossfade' | 'removeCrossfade' | 'popTo',
     value: number,
     other?: number,
+    target?: number,
   ): void {
     const modifiers = this.modifiers;
     if (!modifiers) return;
     switch (action) {
       case 'apply':
-        void modifiers.apply(modifier, value);
+        void modifiers.apply(
+          modifier,
+          value,
+          target === undefined ? {} : { target: () => this.livePlacement(target)?.position },
+        );
         break;
       case 'remove':
         void modifiers.remove(modifier);

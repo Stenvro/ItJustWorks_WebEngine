@@ -219,20 +219,22 @@ function startRenderLoop(
   memory: () => number | undefined,
   everyFrame: () => void,
   paused: () => boolean,
+  /** How fast the game's clock runs against the real one (Slow Time). */
+  timeScale: () => number,
 ): void {
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   let frames = 0;
   let windowStart = performance.now();
 
   // The game's clock: it stands still while the game is in a menu (the player, animations,
-  // particles and the sky's hour stop with it).
+  // particles and the sky's hour stop with it); Slow Time runs it slower (src/shell/time-flow.ts).
   let gameTime = 0;
   let last: number | undefined;
   const frame = (now: number): void => {
     // A hidden tab draws no frames: back, the game goes on where it was (the time away is not
     // played at once; the scripts' clock is held the same way).
     if (last !== undefined && !paused())
-      gameTime += Math.min(MAX_FRAME_SECONDS, (now - last) / 1000);
+      gameTime += Math.min(MAX_FRAME_SECONDS, (now - last) / 1000) * timeScale();
     last = now;
     renderer.render(reducedMotion ? 30 : gameTime, devicePixelRatio);
     everyFrame();
@@ -617,6 +619,8 @@ async function main(): Promise<void> {
       await settled();
     },
     settled: () => settled(),
+    // Riding a dragon, fast travel flies there (the world viewer's stage has the mounts).
+    flyMountTo: (to) => worldViewer.playing && worldViewer.flyMountTo(to),
     heading: () => (worldViewer.player ?? modelViewer.player)?.yaw,
     localMap: () =>
       worldViewer.player ? worldViewer.localMapContent() : modelViewer.localMapContent(),
@@ -627,6 +631,13 @@ async function main(): Promise<void> {
       const stage = worldViewer.playing ? worldViewer.actorStage : modelViewer.actorStage;
       if (!view || !stage) return false;
       return stage.hostilesNear(view.play.player.feet, HOSTILES_NEAR_RADIUS);
+    },
+    enemies: () => {
+      const stage = worldViewer.player ? worldViewer.actorStage : modelViewer.actorStage;
+      return (stage?.combat.enemiesOfPlayer() ?? []).flatMap((reference) => {
+        const staged = stage?.get(reference);
+        return staged ? [staged.position] : [];
+      });
     },
     inAir: () => {
       const player = worldViewer.player ?? modelViewer.player;
@@ -859,6 +870,7 @@ async function main(): Promise<void> {
       if (loading !== undefined) ui.loadingWhat.textContent = loading;
     },
     () => session?.menuMode === true,
+    () => session?.time.multiplier ?? 1,
   );
   const resumeAudio = (): void => {
     void session?.sounds().then((sounds) => sounds.engine.resume());

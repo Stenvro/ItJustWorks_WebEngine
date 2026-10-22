@@ -9,6 +9,7 @@ import { view } from '../formats/esm/fields.ts';
 import { conditionAt, type Condition } from '../scripting/conditions.ts';
 import { SKILL_COUNT } from './actor-values.ts';
 import type { GameRecord } from './record-db.ts';
+import { readLocation, type PackageLocation } from '../ai/package-records.ts';
 
 type RecordSource = Pick<GameRecord, 'formId' | 'type' | 'editorId' | 'fields' | 'formIdAt'> &
   Partial<Pick<GameRecord, 'text'>>;
@@ -294,6 +295,11 @@ export interface FactionVendor {
   /** VENV: how far from its location it trades. */
   readonly radius: number;
   /**
+   * PLVD: where it trades (a package location: in a cell, near a reference, near its editor
+   * location, anywhere it is).
+   */
+  readonly location: PackageLocation | undefined;
+  /**
    * VENV: xEdit's "Only Buys Stolen Items": a fence, which buys stolen items too (set on the
    * Thieves Guild's fences, ServicesThievesGuild*, which buy everything else as well; UESP
    * "Skyrim:Fences"). Other vendors do not buy stolen items.
@@ -389,6 +395,7 @@ function vendorOf(
   const venv = record.fields.first('VENV');
   if ((flags & FactionFlag.vendor) === 0 || !venv || venv.length < 10) return {};
   const v = view(venv);
+  const plvd = record.fields.first('PLVD');
   const fields = record.fields.list;
   const conditions: Condition[] = [];
   const citc = fields.findIndex((field) => field.type === 'CITC');
@@ -402,6 +409,7 @@ function vendorOf(
       startHour: v.getUint16(0, true),
       endHour: v.getUint16(2, true),
       radius: v.getUint32(4, true),
+      location: plvd ? readLocation(record, plvd) : undefined,
       onlyStolen: v.getUint8(8) !== 0,
       notInList: v.getUint8(9) !== 0,
       list: formField(record, 'VEND'),

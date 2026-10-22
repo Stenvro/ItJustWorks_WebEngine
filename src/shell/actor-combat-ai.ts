@@ -145,7 +145,7 @@ export interface CombatAiHost {
 export type CombatSupport =
   | { readonly kind: 'heal' | 'summon' }
   | { readonly kind: 'potion'; readonly value: number }
-  | { readonly kind: 'ward' | 'buff'; readonly hold?: () => boolean };
+  | { readonly kind: 'ward' | 'buff' };
 
 /**
  * What magic and shouts in combat give the AI (5.3's casting): the offensive spells, staffs and
@@ -160,7 +160,6 @@ export interface CombatCasting {
     hand: 'left' | 'right' | 'voice',
     target: number,
     option: EquipOption,
-    hold?: () => boolean,
   ): Promise<boolean>;
   support(actor: number, purpose: CombatSupport, target?: number): Promise<boolean>;
 }
@@ -890,8 +889,8 @@ export class ActorCombatAi {
       const target = this.#fightTarget(fighter, views);
       if (target === undefined) continue;
       if (fighter.reference === reference && target !== mind.reference) {
-        // `other` attacks `target`: help the victim; guards help any innocent (TODO(M11):
-        // crime's guards and their warnings, bounties).
+        // `other` attacks `target`: help the victim; guards help any innocent (the crime
+        // itself, its bounty and the guards' arrest: src/shell/actor-crime.ts).
         const victim = this.#reaction(mind.reference, target);
         if (victim !== undefined && assists(assistance, victim)) return this.#join(mind, reference);
         if (profile.guard && victim !== FightReaction.enemy && this.#innocent(target, reference)) {
@@ -1263,9 +1262,9 @@ export class ActorCombatAi {
         });
     }
     const option = mind.equipped;
-    const casting =
+    const casts =
       option && (option.kind === 'magic' || option.kind === 'staff' || option.kind === 'shout');
-    if (casting) {
+    if (casts) {
       this.#cast(mind, view, target.reference, option, distance, facing);
       return;
     }
@@ -1467,8 +1466,8 @@ export class ActorCombatAi {
 
   /**
    * A spell, staff or shout it fights with (5.3's castAt): facing its target within the
-   * option's range, it casts; a concentration spell it holds while its target is alive, within
-   * that range and before it, and it fights it (casting ends it without magicka).
+   * option's range, it casts (src/shell/actor-casting.ts castAt and shoutAt: a concentration
+   * spell held while it serves).
    */
   #cast(
     mind: Mind,
@@ -1496,16 +1495,7 @@ export class ActorCombatAi {
     mind.nextAttack = this.#clock + attackInterval(style, this.#random) * 2;
     if (!casting) return;
     const hand = option.kind === 'shout' ? 'voice' : 'right';
-    const keep = (): boolean => {
-      const me = this.#options.host.fighter(reference);
-      const them = this.#options.host.fighter(target);
-      if (mind.target !== target || mind.mode !== 'fight' || !me?.feet || !them?.feet) {
-        return false;
-      }
-      if (them.state.life !== 0 || flat(me.feet, them.feet) > option.range) return false;
-      return Math.abs(turnBetween(me.heading, headingTo(me.feet, them.feet))) <= STRIKE_ANGLE * 2;
-    };
-    void casting.castAt(reference, hand, target, option, keep);
+    void casting.castAt(reference, hand, target, option);
   }
 
   /**
@@ -1559,12 +1549,6 @@ export class ActorCombatAi {
             ? ActorValue.magicka
             : ActorValue.stamina;
       purpose = { kind: 'potion', value };
-    } else if (choice.kind === 'ward') {
-      // Held while what comes at it still comes (at most the casting's longest hold).
-      purpose = {
-        kind: 'ward',
-        hold: () => this.#threatened(mind, this.#options.host.fighter(reference)),
-      };
     } else {
       purpose = { kind: choice.kind };
     }

@@ -100,7 +100,9 @@ import type { ActorKnockdowns } from './actor-knockdowns.ts';
 import { RaceFlag } from '../world/actor-records.ts';
 import type { PlacedActor } from './actors.ts';
 import { HeldWeapons, type HeldModels } from './actor-weapons.ts';
-import { CombatImpacts } from './combat-impacts.ts';
+import { armorSkill } from '../gameplay/inventory.ts';
+import { CombatImpacts, type HitImpact } from './combat-impacts.ts';
+import type { Impact } from '../world/impact-records.ts';
 import { CombatProjectiles } from './combat-projectiles.ts';
 import type { GameSession } from './game-session.ts';
 import type { PlaySession } from './play-session.ts';
@@ -122,6 +124,9 @@ import {
 import type { Threat } from '../ai/combat-tactics.ts';
 
 /** A human's shape for hits (its controller's radius and height at scale 1; game units). */
+/** The vampire lord's graph's events to go up or down (standing, moving). */
+const LEVITATION_TOGGLE = 'LevitationToggle';
+const LEVITATION_TOGGLE_MOVING = 'LevitationToggleMoving';
 const BODY_RADIUS = 20;
 const BODY_HEIGHT = 128;
 /** The chest a strike or shot comes from and aims at (of the height). */
@@ -151,6 +156,8 @@ interface Fighter {
   body: PlacedActor | undefined;
   hooked: PlacedActor | undefined;
   held: HeldWeapons | undefined;
+  /** The player's weapons in first person: their first-person models on the arms. */
+  firstHeld: HeldWeapons | undefined;
   heldFor: string | undefined;
   /** What its hands hold (the equip system's) and its attack data, once read. */
   gear: Gear | undefined;
@@ -252,6 +259,8 @@ export class ActorCombat implements CombatBridge {
   #play: PlaySession | undefined;
   #avatar: PlayerAvatar | undefined;
   readonly #playerVisibility: InstanceVisibility = { hidden: false };
+  /** The player's first-person weapons: shown with the first-person arms. */
+  readonly #firstPersonVisibility: InstanceVisibility = { hidden: true };
   #clock = 0;
   #enemy: { reference: number; until: number } | undefined;
   #music: number | undefined;
@@ -332,6 +341,8 @@ export class ActorCombat implements CombatBridge {
         play.player,
         () => !play.seated && !play.dead && !play.knocked && !this.#options.session.menuMode,
         () => this.#options.casting?.(),
+        // A bow zoomed (Eagle Eye): the view's factor (src/shell/time-flow.ts).
+        (wanted, weapon) => this.#options.session.time.bowZoom(wanted, weapon),
       );
     }
     if (!play) {
@@ -369,6 +380,8 @@ export class ActorCombat implements CombatBridge {
     for (const fighter of this.#fighters.values()) {
       const scene = fighter.held?.scene;
       if (scene) yield scene;
+      const first = fighter.firstHeld?.scene;
+      if (first) yield first;
     }
     yield* this.#projectiles.scenes();
   }
@@ -400,6 +413,14 @@ export class ActorCombat implements CombatBridge {
 
   decals(): Iterable<GpuDecals> {
     return this.#impacts.decals();
+  }
+
+  /**
+   * An impact where something (a spell) met a surface or an actor: its sound and decal; resolves
+   * the impact (IPCT) for what else it leaves (its model, its hazard: src/shell/magic-fx.ts).
+   */
+  surfaceImpact(hit: HitImpact): Promise<Impact | undefined> {
+    return this.#impacts.hit(hit, this.#play?.physics);
   }
 
   // --- CombatBridge (what scripts ask and tell) ------------------------------------------------
@@ -506,6 +527,20 @@ export class ActorCombat implements CombatBridge {
     fighter.state.weapon = WeaponState.drawing;
     this.#setVariable(fighter, 'IsEquipping', 1);
     return true;
+  }
+
+  /**
+   * A graph that levitates (the vampire lord's: it declares LevitationToggle) goes up or down
+   * on Ready Weapon instead of drawing or sheathing (LevitationToggleMoving while it moves):
+   * magic in the air, claws on the ground (UESP "Dawnguard:Vampire Lord"). TODO(M13): the
+   * engine's own trigger is not documented. Whether it toggled.
+   */
+  toggleLevitation(reference: number): boolean {
+    const fighter = this.#fighters.get(reference);
+    const graph = fighter?.body?.behavior;
+    if (!fighter || !graph?.declares(LEVITATION_TOGGLE) || !canAct(fighter.state)) return false;
+    const moving = (graph.variable('Speed') ?? 0) > 0;
+    return graph.sendEvent(moving ? LEVITATION_TOGGLE_MOVING : LEVITATION_TOGGLE);
   }
 
   /** Sheathes its weapon (ActionSheath); whether it began. */
@@ -644,6 +679,11 @@ export class ActorCombat implements CombatBridge {
     };
   }
 
+  /** The weapon (WEAP) in a fighter's right hand, if any (the bow's zoom asks its perks). */
+  weaponOf(reference: number): number | undefined {
+    return this.#fighters.get(reference)?.gear?.right.weapon;
+  }
+
   /** A fighter's combat state (the player's input reads it). */
   combatState(reference: number): CombatState | undefined {
     return this.#fighters.get(reference)?.state;
@@ -693,6 +733,8 @@ export class ActorCombat implements CombatBridge {
       avatar.facesAim = weaponOut(player.state);
       this.#input?.frame(seconds);
       this.#playerVisibility.hidden = this.#play?.bodyShown !== true;
+      this.#firstPersonVisibility.hidden =
+        this.#play?.bodyShown !== false || this.#play.dead || !runtime.firstPersonGeometry;
     }
     for (const fighter of [...this.#fighters.values()]) {
       if (!seen.has(fighter.reference)) {
@@ -723,6 +765,13 @@ export class ActorCombat implements CombatBridge {
   #follow(fighter: Fighter, body: PlacedActor, runtime: ScriptRuntime): void {
     fighter.body = body;
     if (fighter.hooked !== body) {
+      // Made again in another race (Actor.SetRace: a werewolf and back): its new graph starts
+      // with nothing drawn and no attack (the werewolf's raises weaponDraw as it stands).
+      if (fighter.hooked && fighter.hooked.look.race !== body.look.race) {
+        fighter.state.weapon = WeaponState.sheathed;
+        fighter.state.attack = AttackState.none;
+        fighter.state.current = undefined;
+      }
       fighter.hooked = body;
       const previous = body.onEvents;
       body.onEvents = (events) => {
@@ -870,6 +919,51 @@ export class ActorCombat implements CombatBridge {
     fighter.held?.destroy();
     fighter.held = made;
     fighter.heldFor = key;
+    if (fighter.player) await this.#makeFirstPersonModels(fighter, gear, key);
+  }
+
+  /**
+   * The player's weapons in first person: each weapon's first-person model (WEAP WNAM, a STAT's
+   * model) in the first-person arms' hands, the ammunition's with the bow; shown while the
+   * arms are (src/shell/first-person-body.ts).
+   */
+  async #makeFirstPersonModels(fighter: Fighter, gear: Gear, key: string): Promise<void> {
+    const arms = this.#avatar?.firstPersonBody;
+    const runtime = this.#options.session.scriptsReady;
+    if (!arms || !runtime) return;
+    const model = async (stat: number | undefined): Promise<string | undefined> => {
+      const record = stat === undefined ? undefined : await runtime.forms.record(stat);
+      return record?.type === 'STAT' ? record.fields.zstring('MODL') : undefined;
+    };
+    const [right, left] = await Promise.all([
+      model(gear.right.firstPersonModel),
+      model(gear.left.firstPersonModel),
+    ]);
+    const held: HeldModels = {
+      ...(right !== undefined && { right: { model: right, sheathed: undefined } }),
+      ...(left !== undefined && { left: { model: left } }),
+      ...(gear.ammoModel !== undefined && { ammo: gear.ammoModel }),
+    };
+    const made = await HeldWeapons.create(
+      this.#options.session,
+      this.#options.renderer,
+      {
+        // The arms' pose as it is now (dressed anew, they take another).
+        get pose() {
+          return arms.pose;
+        },
+        world: arms.world,
+        motion: arms.motion,
+        visibility: this.#firstPersonVisibility,
+      },
+      held,
+    );
+    if (fighter.heldFor !== key || this.#avatar?.firstPersonBody !== arms) {
+      made?.destroy();
+      return;
+    }
+    fighter.firstHeld?.destroy();
+    fighter.firstHeld = made;
   }
 
   /** One frame of a fighter: its models, its graph's flags, bleeding out, its AI. */
@@ -878,6 +972,7 @@ export class ActorCombat implements CombatBridge {
     // Knocked down or getting up it does not act (canAct).
     state.knock = this.#options.knockdowns?.()?.state(fighter.reference) ?? KnockState.normal;
     fighter.held?.update(fighter.inHand, state.arrowNocked);
+    fighter.firstHeld?.update(fighter.inHand, state.arrowNocked);
     if (state.current?.ranged === true && state.arrowNocked) state.drawnFor += seconds;
     // A paired animation that never says it ended lets go after a while (TODO(M13)).
     fighter.pairedFor = state.paired === undefined ? 0 : fighter.pairedFor + seconds;
@@ -961,11 +1056,13 @@ export class ActorCombat implements CombatBridge {
       }
       const lower = event.toLowerCase();
       // A creature's graph (the wolf's: combatStanceStart raises weaponDraw) has no equip clip
-      // that ends with WeapEquip_Out: its weapon (its teeth and claws) is drawn at weaponDraw.
+      // that ends with WeapEquip_Out: its weapon (its teeth and claws) is drawn at weaponDraw,
+      // also unasked (the werewolf's graph starts in its combat stance once it has changed).
       if (
         lower === 'weapondraw' &&
         (fighter.state.weapon === WeaponState.drawing ||
-          fighter.state.weapon === WeaponState.wantToDraw) &&
+          fighter.state.weapon === WeaponState.wantToDraw ||
+          fighter.state.weapon === WeaponState.sheathed) &&
         !(fighter.body?.behavior?.declares('WeapEquip_Out') ?? true)
       ) {
         fighter.state.weapon = WeaponState.drawn;
@@ -987,6 +1084,17 @@ export class ActorCombat implements CombatBridge {
         this.#setVariable(fighter, 'IsUnequipping', 0);
       }
       if (lower === 'unequip_out') this.#setVariable(fighter, 'IsUnequipping', 0);
+      // The vampire lord: its change ends lifting the player off (the graph's
+      // LevitatePlayerStart), and up in the air its hands hold their spells at once.
+      if (fighter.player && lower === 'levitateplayerstart') this.toggleLevitation(PLAYER_REF);
+      if (lower === 'levitatestart' && fighter.state.weapon === WeaponState.sheathed)
+        void this.draw(fighter.reference);
+      // Landing, its hands let go of their spells: on the ground it stands out of combat.
+      if (lower === 'landstart') {
+        fighter.state.weapon = WeaponState.sheathed;
+        fighter.state.attack = AttackState.none;
+        fighter.state.current = undefined;
+      }
       if (lower === 'attackstop' || lower === 'bashstop') {
         this.#setVariable(fighter, 'IsAttacking', 0);
         this.#setVariable(fighter, 'IsBashing', 0);
@@ -1012,6 +1120,9 @@ export class ActorCombat implements CombatBridge {
         // The swing is heard (its weapon's sound level, VNAM) and, the player's, commented on.
         this.#options.senses?.()?.action(fighter.reference, record?.soundLevel ?? 1);
         if (fighter.player) void this.#options.talk?.()?.playerAction('SWMW');
+        // The journal's Favorite Weapon counts the player's swings (usage-stats.ts).
+        const hand = fighter.state.current?.hand === 'left' ? gear?.left : gear?.right;
+        this.#options.session.scriptsReady?.usage.weaponUsed(fighter.reference, hand?.weapon);
         void this.#swingSpell(fighter).catch((error: unknown) => {
           this.#warn(`a swing's spell: ${describe(error)}`);
         });
@@ -1409,8 +1520,9 @@ export class ActorCombat implements CombatBridge {
       void runtime.progression.useSkill(attackerRef, skill, stats?.baseDamage ?? 0);
     }
     if (sneak) void runtime.progression.useSkill(attackerRef, ActorValue.firstSkill + 9, 30);
-    // TODO(M11): the armour skills of the one hit (Light/Heavy Armor by the damage taken) are
-    // the skill progression's to count.
+    // The one hit uses the armour skills of what it wears (Light, Heavy Armor) by the blow's
+    // damage before its armour (UESP "Skyrim:Light Armor": the incoming base damage), unblocked.
+    if (!blocks && physical > 0) void this.#armourSkills(targetRef, physical);
     // The target's scripts hear of it (OnHit: aggressor, source, projectile, power, sneak,
     // bash, blocked).
     void runtime.sendEvent(targetRef, 'OnHit', [
@@ -1599,6 +1711,19 @@ export class ActorCombat implements CombatBridge {
     return fMin + (fMax - fMin) * t;
   }
 
+  /** A hit's armour skills: each skill of the armour worn (any piece of it) by the damage. */
+  async #armourSkills(target: number, damage: number): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    const skills = new Set<number>();
+    for (const form of await runtime.equipment.worn(target)) {
+      const item = await runtime.equipment.item(form);
+      const skill = item && armorSkill(item);
+      if (skill !== undefined) skills.add(skill);
+    }
+    for (const skill of skills) await runtime.progression.useSkill(target, skill, damage);
+  }
+
   /** Staggers a fighter by a magnitude from where the blow came (ActionStaggerStart). */
   #stagger(fighter: Fighter, magnitude: number, from: Vec3): void {
     const feet = this.#feet(fighter);
@@ -1626,6 +1751,8 @@ export class ActorCombat implements CombatBridge {
     const runtime = this.#options.session.scriptsReady;
     const feet = this.#feet(fighter);
     if (!gear?.projectile || gear.right.ammo === undefined || !runtime || !feet) return;
+    // The journal's Favorite Weapon counts the player's shots (usage-stats.ts).
+    runtime.usage.weaponUsed(fighter.reference, gear.right.weapon);
     const scale = this.#scale(fighter);
     const from: Vec3 = [feet[0], feet[1], feet[2] + BODY_HEIGHT * scale * CHEST + 10 * scale];
     let aim: Vec3;
@@ -1699,6 +1826,15 @@ export class ActorCombat implements CombatBridge {
    * graph's VictimBehavior), each its part of the paired clip, the victim placed before the
    * leader facing it; it dies at its clip's KillActor. The player's camera shows it.
    */
+  /**
+   * A paired idle an actor plays on a target outside an attack (the vampire's feeding bite,
+   * StartVampireFeed's IdleVampireFeed): the target plays its side, at the leader.
+   */
+  pairIdle(leader: number, target: number, event: string): void {
+    const fighter = this.#fighters.get(leader);
+    if (fighter) this.#pair(fighter, target, event);
+  }
+
   #pair(leader: Fighter, victimRef: number, event: string): void {
     const victim = this.#fighters.get(victimRef);
     const feet = this.#feet(leader);
@@ -2086,6 +2222,20 @@ export class ActorCombat implements CombatBridge {
     return this.#fightingPlayer();
   }
 
+  /** The living actors fighting the player now (the compass's enemies). */
+  enemiesOfPlayer(): number[] {
+    const found: number[] = [];
+    for (const fighter of this.#fighters.values()) {
+      if (
+        fighter.target === PLAYER_REF &&
+        fighter.state.life === LifeState.alive &&
+        !fighter.player
+      )
+        found.push(fighter.reference);
+    }
+    return found;
+  }
+
   #fightingPlayer(): boolean {
     for (const fighter of this.#fighters.values()) {
       if (fighter.target === PLAYER_REF && fighter.state.life === LifeState.alive) return true;
@@ -2188,6 +2338,7 @@ export class ActorCombat implements CombatBridge {
 
   #drop(fighter: Fighter): void {
     fighter.held?.destroy();
+    fighter.firstHeld?.destroy();
     this.#fighters.delete(fighter.reference);
     this.#perkVariables.delete(fighter.reference);
   }
@@ -2355,6 +2506,39 @@ export class ActorCombat implements CombatBridge {
   }
 
   /**
+   * Grab Actor (the Vampire Lord's Vampiric Grip): its target goes limp as its ragdoll
+   * (its graph's Ragdoll) and hangs before its caster, at the caster's chest a reach ahead,
+   * while the effect lasts; then it falls and gets up. TODO(M13): the engine's hold point.
+   */
+  grabActor(caster: number | undefined, target: number, on: boolean): void {
+    const knockdowns = this.#options.knockdowns?.();
+    if (!knockdowns || target === PLAYER_REF) return;
+    if (!on) {
+      knockdowns.hold(target, undefined);
+      return;
+    }
+    const holder = caster === undefined ? undefined : this.#fighters.get(caster);
+    const fighter = this.#fighters.get(target);
+    if (!holder || !fighter || bleedingOut(fighter.state)) return;
+    const point = (): Vec3 | undefined => {
+      const feet = this.#feet(holder);
+      if (!feet) return undefined;
+      const heading = this.#heading(holder);
+      const scale = this.#scale(holder);
+      const reach = this.#reach(holder, false);
+      return [
+        feet[0] + Math.sin(heading) * reach,
+        feet[1] + Math.cos(heading) * reach,
+        feet[2] + BODY_HEIGHT * scale * CHEST,
+      ];
+    };
+    if (!knockdowns.holds(target)) fighter.body?.behavior?.sendEvent('Ragdoll');
+    void knockdowns.knockDown(target).then((down) => {
+      if (down) knockdowns.hold(target, point);
+    });
+  }
+
+  /**
    * A Stagger effect on an actor (its magnitude: Unrelenting Force's 0.75, 1.25, 1.5; the
    * spells' 0.05 .. 1), weighed against its mass as a hit's stagger is (stagger.ts), from its
    * caster's side.
@@ -2399,6 +2583,7 @@ function newFighter(reference: number, player: boolean): Fighter {
     body: undefined,
     hooked: undefined,
     held: undefined,
+    firstHeld: undefined,
     heldFor: undefined,
     gear: undefined,
     gearVersion: 0,

@@ -51,7 +51,11 @@ import { MagicEngine, type MagicEffectShown } from './magic-engine.ts';
 import { CraftingEngine } from './crafting-engine.ts';
 import { CrimeEngine } from './crime-engine.ts';
 import { PerkEngine } from './perk-engine.ts';
+import { HarvestEngine } from './harvest-engine.ts';
+import { HazardEngine } from './hazard-engine.ts';
 import { installPerkHooks } from './perk-hooks.ts';
+import { UsageStats } from './usage-stats.ts';
+import { WarmthEngine } from './warmth-engine.ts';
 import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
@@ -116,10 +120,15 @@ export interface WorldBridge {
   pushAway?(pushed: number, from: number, force: number): void;
   /** An explosion's knock-down flags: the actor is knocked down, away from where it burst. */
   knockDown?(actor: number, from: Vec3, force: number): void;
-  /** A Stagger effect on an actor (its magnitude), from its caster's side. */
+  /**
+   * A Stagger effect on an actor (its magnitude, weighed against its mass by combat:
+   * src/shell/actor-combat.ts staggerEffect), from its caster's side.
+   */
   stagger?(actor: number, magnitude: number, caster: number | undefined): void;
   /** Paralysis begins or ends on an actor (it lies as its ragdoll meanwhile). */
   paralyze?(actor: number, on: boolean): void;
+  /** Grab Actor begins or ends: the target hangs as its ragdoll before its caster meanwhile. */
+  grabActor?(caster: number | undefined, target: number, on: boolean): void;
   hasNode?(reference: number, node: string): boolean;
   /** Where a named node of a loaded reference's model is (MoveToNode). */
   nodePlacement?(reference: number, node: string): { position: Vec3; rotation: Vec3 } | undefined;
@@ -147,8 +156,11 @@ export interface WorldBridge {
   /** An actor died (its ragdoll; silent: no death cry or alarm). */
   killed?(actor: number, killer: number | undefined, silent: boolean): void;
   resurrected?(actor: number): void;
-  /** Actor.SetRace: the actor's 3D is made again in its new race (the player's keeps its face). */
-  raceChanged?(actor: number): void;
+  /**
+   * Actor.SetRace: the actor's 3D is made again in its new race (the player's keeps its face);
+   * resolves once it is (its scripts then hear OnRaceSwitchComplete).
+   */
+  raceChanged?(actor: number): Promise<void> | void;
   equipmentChanged?(actor: number): void;
   /**
    * A spell cast by a source at a target that is delivered at once (a Self or Touch spell, a
@@ -229,6 +241,16 @@ export interface WorldBridge {
   motion?(actor: number): ActorMotion | undefined;
   /** Whether a furniture's marker (any marker, without one) is in use by an actor. */
   furnitureInUse?(furniture: number, marker?: number): boolean;
+  /**
+   * Where an actor would use a furniture (its marker: MoveToInteractionLocation), if the view
+   * holds it.
+   */
+  interactionLocation?(
+    furniture: number,
+    from: Vec3,
+  ): Promise<
+    { readonly position: readonly [number, number, number]; readonly heading: number } | undefined
+  >;
   /** An idle played (PlayIdle): false if it could not play. */
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
   /**
@@ -246,6 +268,13 @@ export interface WorldBridge {
   tether?(cart: number, horse: number): void;
   /** The horse an actor rides now (Actor.IsOnMount, IsRidingHorse), if any. */
   mountOf?(actor: number): number | undefined;
+  /**
+   * The flying mount an actor rides (a dragon: src/shell/actor-mounts.ts): whether it was
+   * sent on (its patrol) or flies to a place (fast travel); undefined riding none.
+   */
+  flyingMount?(
+    actor: number,
+  ): { readonly patrol: boolean; readonly travelling: boolean } | undefined;
   /** How a flier flies now (src/shell/actor-flight.ts); undefined: not a flier of the view. */
   flight?(actor: number): ActorFlightState | undefined;
   /** The actor riding a horse now (IsBeingRidden), if any. */
@@ -303,13 +332,15 @@ export interface WorldBridge {
   /**
    * An image-space modifier applied (value: strength), removed, cross-faded in (value:
    * seconds), the cross-fade chain's last one faded out (modifier 0, value: seconds) or popped
-   * to `other` (value: strength).
+   * to `other` (value: strength). `target`: the reference it aims at (a magic effect's actor:
+   * radial blur and depth of field that "use target").
    */
   imageSpace?(
     modifier: number,
     action: 'apply' | 'remove' | 'crossfade' | 'removeCrossfade' | 'popTo',
     value: number,
     other?: number,
+    target?: number,
   ): void;
   effectShader?(shader: number, target: number, play: boolean, duration: number): void;
   visualEffect?(
@@ -555,6 +586,8 @@ export interface Placement {
 }
 
 const CELL_INTERIOR = 0x01;
+/** MESG DNAM: shown as a message box (else, without buttons, as a notification). */
+const MESSAGE_BOX_FLAG = 0x01;
 
 /** The globals the engine keeps as its clock (UESP: GameHour, GameDaysPassed, ...). */
 type ClockGlobal = 'hour' | 'days' | 'day' | 'month' | 'year' | 'timescale';
@@ -618,6 +651,14 @@ export class ScriptRuntime implements VmHost {
   readonly crafting: CraftingEngine;
   /** Perks: those actors hold and their entry points (perk-engine.ts). */
   readonly perks: PerkEngine;
+  /** Survival Mode's warmth of armor, lights and actors (warmth-engine.ts). */
+  readonly warmth: WarmthEngine;
+  /** What the player uses most: the journal's favorite weapon, spell, school, shout. */
+  readonly usage: UsageStats;
+  /** Harvesting flora and its regrowth (harvest-engine.ts). */
+  readonly harvest: HarvestEngine;
+  /** Hazards standing in the world: their lifetimes and spells (hazard-engine.ts). */
+  readonly hazards: HazardEngine;
   /** While a new game starts its quests (their aliases may take reserved references). */
   startingNewGame = false;
   /** Game seconds per real second (the TimeScale global; scripts may set it). */
@@ -643,6 +684,22 @@ export class ScriptRuntime implements VmHost {
   chargen = { noSaving: false, noWaiting: false, controlsMessage: false };
   fastTravelEnabled = true;
   hudCartMode = false;
+  /**
+   * Game.SetBeastForm: the player is a werewolf or a vampire lord (PlayerWerewolfChangeScript,
+   * DLC1PlayerVampireChangeScript): the inventory, magic and favorites menus stay shut
+   * (docs/gameplay.md, "Beast forms").
+   */
+  beastForm = false;
+  /**
+   * Game.ShowFirstPersonGeometry: whether the first-person arms and weapon are drawn (the
+   * beast forms and the carriage ride hide them).
+   */
+  firstPersonGeometry = true;
+  /**
+   * Game.SetAllowFlyingMountLandingRequests: whether the player may ask a dragon they ride to
+   * land (docs/gameplay.md, "Dragon riding").
+   */
+  flyingMountLandingAllowed = true;
   /**
    * God mode (the console's tgm, Debug.SetGodMode): the player takes no damage and cannot die.
    * TODO(M13): its unlimited carry weight and ammunition.
@@ -723,7 +780,11 @@ export class ScriptRuntime implements VmHost {
     this.crime = new CrimeEngine(this);
     this.crafting = new CraftingEngine(this);
     this.perks = new PerkEngine(this);
+    this.harvest = new HarvestEngine(this);
+    this.hazards = new HazardEngine(this);
     installPerkHooks(this);
+    this.warmth = new WarmthEngine(this);
+    this.usage = new UsageStats(this);
     this.sceneHost = new RuntimeSceneHost(this);
     this.scenes = new SceneDirector(this.sceneHost);
     registerNatives(this.#natives, this);
@@ -1217,9 +1278,27 @@ export class ScriptRuntime implements VmHost {
     return data && data.length >= 4 ? view(data).getInt32(0, true) : 0;
   }
 
-  /** Whether the player knows a form (spells, shouts, recipes; TODO(M11)). */
-  playerKnows(formId: number): boolean {
-    return this.wordsLearned.has(formId);
+  /**
+   * PlayerKnows: whether the player knows a form: a word of power learned, an enchantment
+   * learned (disenchanting), a spell or shout they have, a magic effect of an enchantment they
+   * know or of an ingredient whose effect they found.
+   */
+  async playerKnows(formId: number): Promise<boolean> {
+    if (this.wordsLearned.has(formId)) return true;
+    if (this.state.knownEnchantments.has(formId)) return true;
+    const record = await this.forms.record(formId);
+    if (record?.type === 'SPEL' || record?.type === 'SHOU')
+      return this.actors.hasSpell(PLAYER_REF, formId);
+    if (record?.type !== 'MGEF') return false;
+    for (const enchantment of this.state.knownEnchantments) {
+      const item = await this.magic.item(enchantment);
+      if (item?.effects.some((entry) => entry.effect === formId)) return true;
+    }
+    for (const [ingredient, slots] of this.state.ingredientEffects) {
+      const item = await this.magic.item(ingredient);
+      if ([...slots].some((slot) => item?.effects[slot]?.effect === formId)) return true;
+    }
+    return false;
   }
 
   /**
@@ -1673,7 +1752,9 @@ export class ScriptRuntime implements VmHost {
     this.state.inventories.set(container, items);
     if (this.#seeded.has(container)) return items;
     this.#seeded.add(container);
-    const random = seededRandom(container ^ 0x5bd1e995);
+    // A restocked container's leveled items are picked anew (restock).
+    const restocks = this.state.restocked.get(container)?.count ?? 0;
+    const random = seededRandom((container ^ 0x5bd1e995) + Math.imul(restocks, 0x9e3779b9));
     const actor = await this.actors.info(container);
     const base = actor ? actor.inventory.formId : await this.baseOf(container);
     let level: number | undefined;
@@ -1974,6 +2055,28 @@ export class ScriptRuntime implements VmHost {
     );
   }
 
+  /**
+   * A container restocks (a merchant's chest every 48 hours: src/shell/barter-menu.ts): what it
+   * held goes (items sold to it with their references, improvements and stolen marks) and its
+   * own items (CNTO, leveled lists picked anew) are there again as it is next read.
+   */
+  restock(container: number): void {
+    const restocked = this.state.restocked.get(container);
+    this.state.restocked.set(container, {
+      days: this.state.gameDaysPassed,
+      count: (restocked?.count ?? 0) + 1,
+    });
+    for (const state of this.state.references.values()) {
+      if (state.container?.holder !== container) continue;
+      delete state.container;
+      state.deleted = true;
+    }
+    this.state.inventories.delete(container);
+    this.crafting.clear(container);
+    this.crime.clearStolen(container);
+    this.#seeded.delete(container);
+  }
+
   async removeAllItems(container: number, to: number | undefined): Promise<void> {
     const items = await this.inventory(container);
     for (const [item, count] of [...items]) {
@@ -2241,6 +2344,9 @@ export class ScriptRuntime implements VmHost {
     // Casts charge and concentrate; voices recover.
     if (!this.retired) this.casting.update(realSeconds);
     this.scenes.update(realSeconds);
+    // Harvested flora grow again as their cells reset; hazards burn out and hit.
+    if (!this.retired) this.harvest.update(realSeconds);
+    if (!this.retired) this.hazards.update(realSeconds);
   }
 
   /** A frame in a menu (menu mode): only the wall clock moves on (WaitMenuMode). */
@@ -2261,6 +2367,13 @@ export class ScriptRuntime implements VmHost {
     const text = fillNumbers(record.text('DESC') ?? '', args);
     const buttons = record.fields.all('ITXT').map((data) => record.textAt(data));
     this.state.messages.push(text);
+    // Without its Message Box flag (DNAM 0x1) and buttons it is a notification (the HUD's top
+    // left, for TNAM seconds: "Bloodlust extended" as the werewolf feeds).
+    const flags = record.fields.first('DNAM')?.[0] ?? MESSAGE_BOX_FLAG;
+    if ((flags & MESSAGE_BOX_FLAG) === 0 && buttons.length === 0) {
+      this.world.notification?.(text);
+      return 0;
+    }
     const chosen = await this.world.messageBox?.(text, buttons);
     return typeof chosen === 'number' ? chosen : 0;
   }
