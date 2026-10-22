@@ -78,7 +78,7 @@ export class QuestEngine {
     // A quest that does not run once is reset as it starts: its scripts start over and their
     // OnInit runs again (start-game-enabled quests get it twice: at the game's start and now).
     if (!runOnce) {
-      this.#resetScripts(record);
+      await this.#resetScripts(record);
       await this.initialize(record);
     }
     const startUp = record.stages.find((stage) => (stage.flags & StageFlag.startUp) !== 0);
@@ -202,14 +202,21 @@ export class QuestEngine {
     state.log.length = 0;
     state.completed = false;
     state.failed = false;
-    this.#resetScripts(record);
+    await this.#resetScripts(record);
     if (running) await this.start(quest);
   }
 
-  #resetScripts(record: QuestRecord): void {
+  /**
+   * Its scripts and its aliases' start over, in place: a script that started its own quest
+   * (Survival_NeedBase.StartNeed: Start, then SetNeedStageValues) goes on with the reset script,
+   * and what it sets after Start stays (PapyrusVm.restart).
+   */
+  async #resetScripts(record: QuestRecord): Promise<void> {
     const vm = this.#runtime.vm;
-    vm.reset(new ObjectHandle(record.formId, 'quest'));
-    for (const alias of record.aliases) vm.reset(new ObjectHandle(record.formId, 'form', alias.id));
+    await vm.restart(new ObjectHandle(record.formId, 'quest'));
+    await Promise.all(
+      record.aliases.map((alias) => vm.restart(new ObjectHandle(record.formId, 'form', alias.id))),
+    );
   }
 
   /**

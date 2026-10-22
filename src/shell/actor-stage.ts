@@ -304,6 +304,13 @@ export class ActorStage {
       ai: () => this.ai,
       interior: () => options.interior === true,
       dismount: (actor) => this.mounts.getOff(actor),
+      furniture: {
+        holds: (actor) => this.furniture.holds(actor),
+        leave: async (actor) => {
+          const staged = this.#actors.get(actor);
+          if (staged) await this.furniture.leave(this.userOf(staged));
+        },
+      },
       ridden: (actor) => this.mounts.ridden(actor),
       npcCasting: () => combatCasting(options.session, () => this.casting),
       flight: () => this.flight,
@@ -446,6 +453,7 @@ export class ActorStage {
       ai: this.ai,
       furniture: this.furniture,
       detects: (actor) => this.senses.detections.detects(actor, PLAYER_REF),
+      engaged: (actor) => this.combat.engaged(actor),
       lookAt: (actor, target) => {
         options.session.scriptWorld.lookAt(actor, target, 'dialogue');
       },
