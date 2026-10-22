@@ -480,9 +480,13 @@ export class ActorPlacer {
    * The actor says a voice file at its head, its face lip-syncing (lines with lip-sync data
    * start their curves first, by their lead-in). Undefined if the file cannot be read.
    */
-  async say(placed: PlacedActor, path: string): Promise<SpokenLine | undefined> {
+  async say(
+    placed: PlacedActor,
+    path: string,
+    inPlayersHead = false,
+  ): Promise<SpokenLine | undefined> {
     const sounds = await this.#session.sounds();
-    const line = await sounds.voiceLine(path);
+    const line = await sounds.voiceLine(path, inPlayersHead);
     if (!line) return undefined;
     let lip: LipFile | undefined;
     try {

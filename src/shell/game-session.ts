@@ -261,9 +261,9 @@ export class GameSession {
     this.lines = new WorldLines(this, terminal);
     this.sceneLines = new SceneLines(this, terminal);
     this.scriptWorld.sceneLine = (speech) => this.sceneLines.speak(speech);
-    this.scriptWorld.say = (speaker, topic, speakAs) => {
+    this.scriptWorld.say = (speaker, topic, speakAs, inHead) => {
       if (topic === undefined) return;
-      this.lines.say(speaker, topic, speakAs).catch((error: unknown) => {
+      this.lines.say(speaker, topic, speakAs, inHead).catch((error: unknown) => {
         terminal.log('papyrus', `Say: ${describe(error)}`, 'warn');
       });
     };

@@ -140,6 +140,7 @@ export class SoundSystem {
   /** DDSC and DOP2: the category and 3D output model of spoken lines. */
   readonly #dialogueCategory: number | undefined;
   readonly #dialogueOutput: number | undefined;
+  readonly #dialogueOutput2d: number | undefined;
   #underwater: { loop: SoundInstance | undefined; dropped: boolean } | undefined;
   #materials:
     Promise<{ byId: Map<number, MaterialType>; byForm: Map<number, MaterialType> }> | undefined;
@@ -187,6 +188,7 @@ export class SoundSystem {
     this.#underwaterSound = defaults.get(DefaultObjectUse.underwaterLoop);
     this.#dialogueCategory = defaults.get(DefaultObjectUse.dialogueCategory);
     this.#dialogueOutput = defaults.get(DefaultObjectUse.dialogueOutput3d);
+    this.#dialogueOutput2d = defaults.get(DefaultObjectUse.dialogueOutput2d);
     this.#water = new WaterAudio(
       {
         waterSound: (type) => this.#waterSound(type),
@@ -316,12 +318,13 @@ export class SoundSystem {
   /**
    * A spoken line (a voice file: .fuz, or .xwm/.wav with a .lip), loaded: its lip-sync data,
    * and `play` starting it at a place as dialogue plays (the dialogue category, through the
-   * 3D dialogue output model). Undefined if the file cannot be read.
+   * 3D dialogue output model; `atListener`: the 2D one, spoken in the player's head: Say's
+   * abSpeakInPlayersHead). Undefined if the file cannot be read.
    */
-  async voiceLine(path: string): Promise<VoiceLine | undefined> {
+  async voiceLine(path: string, atListener = false): Promise<VoiceLine | undefined> {
     const sound = await this.buffer(path);
     if (!sound) return undefined;
-    const outputModel = this.#dialogueOutput;
+    const outputModel = atListener ? this.#dialogueOutput2d : this.#dialogueOutput;
     const model = outputModel === undefined ? undefined : await this.outputModel(outputModel);
     const descriptor: SoundDescriptor = {
       formId: 0,
