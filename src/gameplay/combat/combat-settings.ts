@@ -104,6 +104,13 @@ export interface CombatSettings {
   readonly deathForceRangedDamageMax: number;
   readonly deathForceRangedForceMin: number;
   readonly deathForceRangedForceMax: number;
+  // --- Weapon blood --------------------------------------------------------------------------
+  /** fWeaponBloodLifetime: seconds a weapon's blood stays fresh after a hit. */
+  readonly weaponBloodLifetime: number;
+  /** fWeaponBloodFadeDuration: seconds it then takes to dry away. */
+  readonly weaponBloodFadeDuration: number;
+  /** fWeaponBloodFalloffThreshold: the soft edge of its mask (the blood shader's). */
+  readonly weaponBloodFalloffThreshold: number;
 }
 
 /** The engine's values where the plugins have none (Skyrim.esm and Update.esm otherwise). */
@@ -166,6 +173,9 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   deathForceRangedDamageMax: 50,
   deathForceRangedForceMin: 10,
   deathForceRangedForceMax: 30,
+  weaponBloodLifetime: 10,
+  weaponBloodFadeDuration: 60,
+  weaponBloodFalloffThreshold: 0.07,
 };
 
 /** Each number setting's game setting (its editor id). */
@@ -215,6 +225,9 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   deathForceRangedDamageMax: 'fDeathForceRangedDamageMax',
   deathForceRangedForceMin: 'fDeathForceRangedForceMin',
   deathForceRangedForceMax: 'fDeathForceRangedForceMax',
+  weaponBloodLifetime: 'fWeaponBloodLifetime',
+  weaponBloodFadeDuration: 'fWeaponBloodFadeDuration',
+  weaponBloodFalloffThreshold: 'fWeaponBloodFalloffThreshold',
 };
 
 /** The sneak multipliers' settings. */

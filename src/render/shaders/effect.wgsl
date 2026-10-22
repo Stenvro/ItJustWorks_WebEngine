@@ -19,6 +19,11 @@ const SLSF2_EFFECT_LIGHTING = 0x40000000u;
 // NiAlphaProperty: blending on; blend factor ONE (additive when it is the destination factor).
 const ALPHA_BLEND = 0x1u;
 const BLEND_ONE = 0u;
+// ...SRC_COLOR as the destination factor, or DEST_COLOR as the source's: multiplicative.
+const BLEND_SRC_COLOR = 2u;
+const BLEND_DST_COLOR = 4u;
+// SLSF2 Weapon_Blood: a weapon's blood shape (the engine's BLOOD technique).
+const SLSF2_WEAPON_BLOOD = 0x20000u;
 // Draw flag beside the alpha flags: a sky object (aurora, distant clouds), not fogged.
 const DRAW_SKY = 0x10000u;
 // ...the second pass of a multi-pass directional material (scene-renderer.ts).
@@ -76,6 +81,20 @@ fn effectShade(
     // Soft effect: fade out where the opaque scene is close behind.
     alpha *= clamp(depthToScene(fragCoord) / draw.specular.y, 0.0, 1.0);
   }
+  let blood = (flags2 & SLSF2_WEAPON_BLOOD) != 0u;
+  if (blood) {
+    // A weapon's blood (the engine's BLOOD technique): the texture's green is the blood's
+    // mask, shown above the cutoff (draw.layer.x) with a soft edge (layer.y), its blue how
+    // dark it is; drawn multiplied over the blade, red where it is thick.
+    alpha = color.g;
+    let above = clamp(color.g - draw.layer.x, 0.0, 1.0);
+    var bloodMul = color.b * tint.a;
+    if (above < draw.layer.y) {
+      bloodMul *= above / draw.layer.y;
+    }
+    color = clamp(vec3f(2.0, 1.0, 1.0) - vec3f(bloodMul), vec3f(0.0), vec3f(1.0)) *
+      (1.0 - bloodMul * draw.layer.z);
+  }
   alpha *= draw.params.y;
 
   // The palette is a lookup table: clamped (its rows must not wrap) and read at its full
@@ -83,10 +102,10 @@ fn effectShade(
   // unlit fire's flames: their palette's first rows are clear) would never quite vanish.
   let paletteA = textureSampleLevel(glowMap, screenSampler, vec2f(source.a, alpha), 0.0).a;
   let paletteRgb = textureSampleLevel(glowMap, screenSampler, vec2f(source.g, colorMul.r), 0.0).rgb;
-  if (paletteAlpha) {
+  if (paletteAlpha && !blood) {
     alpha = paletteA;
   }
-  if (paletteColor) {
+  if (paletteColor && !blood) {
     color = paletteRgb;
   }
   color *= draw.params.w;
@@ -102,9 +121,14 @@ fn effectShade(
   if ((alphaFlags & DRAW_SKY) != 0u) {
     fog = vec4f(0.0);
   }
-  if (blended && ((alphaFlags >> 5u) & 15u) == BLEND_ONE) {
+  let destination = (alphaFlags >> 5u) & 15u;
+  let sourceFactor = (alphaFlags >> 1u) & 15u;
+  if (blended && destination == BLEND_ONE) {
     // Additive: fog takes the light away.
     color *= 1.0 - fog.a;
+  } else if (blended && (destination == BLEND_SRC_COLOR || sourceFactor == BLEND_DST_COLOR)) {
+    // Multiplicative: fog fades it to white (no change), as the engine's MULTBLEND does.
+    color = mix(color, vec3f(1.0), clamp(1.5 * fog.a, 0.0, 1.0));
   } else {
     color = mix(color, fog.rgb, fog.a);
   }

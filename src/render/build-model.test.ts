@@ -155,6 +155,29 @@ describe('buildModel', () => {
     expect(model.parts.map((p) => p.name)).toEqual(['Visible']);
   });
 
+  it("leaves hidden shapes out but keeps a weapon's hidden blood shapes, marked", () => {
+    const hidden = (name: string, shaderRef: number): BSTriShapeBlock => ({
+      ...shape(name, shaderRef, positions(TRIANGLE), 3),
+      flags: 0x1,
+    });
+    // SLSF1 Decal and Dynamic_Decal, as the blood shapes' shaders have them.
+    const bloodShader = { ...shader, flags1: 0x8c000000 };
+    const model = buildModel(
+      file([
+        node([1, 2, 3]),
+        shape('Blade', 4, positions(TRIANGLE), 3),
+        hidden('Hidden', 4),
+        hidden('BloodLighting', 5),
+        shader,
+        bloodShader,
+      ]),
+    );
+    expect(model.parts.map((p) => [p.name, p.weaponBlood === true])).toEqual([
+      ['Blade', false],
+      ['BloodLighting', true],
+    ]);
+  });
+
   it('keeps skinned shapes with their bones; the rest palette places them', () => {
     // Vertex: position (16 bytes) + skinning (4 half weights, 4 bone indices) = 28 bytes.
     const desc = decodeVertexDesc(

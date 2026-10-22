@@ -80,6 +80,16 @@ export class CombatImpacts {
     return impact;
   }
 
+  /**
+   * Whether an impact draws blood: it leaves a decal (IPCT DNAM, without the no-decal flag), as
+   * the impacts of weapons against flesh do (DecalBloodBladeHit, DecalBloodDraugrHit); those
+   * against bone, metal, stone and the punches' do not. A weapon that dealt it is bloodied
+   * (src/gameplay/combat/weapon-blood.ts). TODO(M13): the engine's own test is not documented.
+   */
+  async bleeds(impact: Impact): Promise<boolean> {
+    return (await this.#decal(impact.formId)) !== undefined;
+  }
+
   /** The impact's decal on what lies behind the hit (blood on the floor or a wall). */
   async #splatter(impact: number, hit: HitImpact, physics: PhysicsWorld): Promise<void> {
     const data = await this.#decal(impact);
