@@ -30,6 +30,8 @@ const REACH = 96;
 const GREET_DISTANCE = 128;
 /** A meal and a line said take this long (seconds). TODO(M13): the idle's and line's own. */
 const EAT_SECONDS = 6;
+/** Furniture of an empty object list is looked for this far round the actor (units). */
+const FURNITURE_SEARCH = 2048;
 /** Food, as a package target names it (object type Food). */
 const FOOD = { type: TargetType.objectType, value: ObjectType.food, count: 0 } as const;
 const SAY_SECONDS = 3;
@@ -434,13 +436,24 @@ const sandboxing: ProcedureRunner = async (run) => {
  * package is still the one chosen): MQ101's execution scene goes on when the prisoner's Sit at
  * the chopping block completes. Furniture it cannot use (taken, no way in from where it stood):
  * to it, then once more from there; else it stands there facing its way.
- * TODO(M10) 3.2: furniture found by searching (ObjectList).
+ * Given an object list no Find filled, it looks round itself (as far as the list's value, else
+ * FURNITURE_SEARCH) for furniture of its kinds, nearest first.
  */
 const useFurniture =
   (types: number, seated: 'success' | 'hold' = 'hold'): ProcedureRunner =>
   async (run) => {
-    // Its target, or the first it may use of those a Find found ("Found Bed", "Found Chair").
-    const candidates = await targetsIn(run, 0);
+    // Its target, or the first it may use of those a Find found ("Found Bed", "Found Chair"),
+    // else of those round it (an object list nothing filled).
+    let candidates = await targetsIn(run, 0);
+    const list = run.inputs.slot(0)?.value;
+    const here = run.body.position();
+    if (candidates.length === 0 && list?.kind === 'objectList' && here) {
+      const radius = list.value > 0 ? list.value : FURNITURE_SEARCH;
+      candidates = (await run.mind.around(here, radius, run.actor))
+        .filter((spot) => spot.kind !== 'idle' && (SPOT_MARKERS[spot.kind] & types) !== 0)
+        .sort((a, b) => horizontal(here, a.position) - horizontal(here, b.position))
+        .map((spot) => spot.reference);
+    }
     const sit = async (): Promise<boolean> => {
       for (const reference of candidates) {
         if (run.stopped()) return false;
