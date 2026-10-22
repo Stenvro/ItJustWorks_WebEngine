@@ -115,6 +115,8 @@ export interface PlayWorld {
   tweenCamera(): TweenCamera | undefined;
   /** The player being played, their session and body (the viewer on screen's). */
   player(): PlayerView | undefined;
+  /** Whether living actors hostile to the player are near them (fast travel refuses then). */
+  hostilesNear(): Promise<boolean>;
 }
 
 /** Vite reloads the page (development): leaving it is not asked about. */
@@ -600,6 +602,9 @@ export class PlayMode {
       carried: await carriedWeight(runtime, PLAYER_REF),
       carryWeight: (await runtime.actors.value(PLAYER_REF, ActorValue.carryWeight)).current,
       pursued: session.crimeWatch?.pursued === true,
+      inCombat: session.combatWatch?.fightingPlayer === true,
+      hostilesNear: await this.#world.hostilesNear(),
+      takingHealthDamage: await runtime.magic.damagingHealth(PLAYER_REF),
     });
   }
 

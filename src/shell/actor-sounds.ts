@@ -110,7 +110,7 @@ export function groundUnder(
   return hit && { material: hit.material, landscape: hit.owner?.kind === 'landscape' };
 }
 
-/** Placed actors' animations sound (they stand where they were placed: TODO(M10) gaits). */
+/** Placed actors' animations sound: their footsteps by their gait as they move, their SoundPlay events. */
 export function soundPlacedActors(actors: readonly PlacedActorLike[], world: SoundingWorld): void {
   for (const placed of actors) {
     placed.onEvents = actorSounds(

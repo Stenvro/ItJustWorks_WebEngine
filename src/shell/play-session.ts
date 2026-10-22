@@ -843,7 +843,7 @@ export class PlaySession {
 
   /**
    * The trigger volumes the player is in: entering and leaving one is told (OnTriggerEnter,
-   * OnTriggerLeave). TODO(M10): actors that walk into them.
+   * OnTriggerLeave). Actors' own come through their movers (src/shell/actor-movers.ts).
    */
   #watchTriggers(): void {
     if (!this.physics.queriesCurrent || this.#spawnPending) return;

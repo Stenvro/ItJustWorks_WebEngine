@@ -7,10 +7,10 @@
 // take (UESP, Skyrim:Time: the game estimates it from the player's movement speed, not their
 // horse's or their running): the distance at the walk speed (MOVT NPCDefault, forward), times
 // fFastTravelSpeedMult (1 unless a plugin sets it), at the timescale. TODO(M13): the game's own
-// rounding of the hours (unknown, UESP). TODO(M10): in combat (sNoFastTravelCombat), enemies
-// near (sNoFastTravelHostileActorsNear); followers and the horse coming along. Not while guards
-// pursue the player (sNoFastTravelAlarm: crime). TODO(M11): taking health damage
-// (sFastTravelNoTravelHealthDamage).
+// rounding of the hours (unknown, UESP). Not in combat (sNoFastTravelCombat), with enemies near
+// (sNoFastTravelHostileActorsNear), while guards pursue the player (sNoFastTravelAlarm: crime) or
+// while an effect takes their health (sFastTravelNoTravelHealthDamage). Followers and the horse
+// come along (src/shell/actor-followers.ts).
 // Platform-independent. Notes: docs/ui.md ("The map").
 
 /** WRLD DATA: the world forbids fast travel. */
@@ -28,6 +28,12 @@ export interface FastTravelState {
   readonly carryWeight: number;
   /** Guards pursue the player (crime: src/shell/actor-crime.ts). */
   readonly pursued?: boolean;
+  /** Someone fights the player (the combat AI's). */
+  readonly inCombat?: boolean;
+  /** Actors hostile to the player are near (src/shell/actor-stage.ts, hostilesNear). */
+  readonly hostilesNear?: boolean;
+  /** An effect takes the player's health now (poison, fire over time). */
+  readonly takingHealthDamage?: boolean;
 }
 
 /** Why the player may not fast travel now (the game setting of its message), if not. */
@@ -36,6 +42,9 @@ export function noFastTravelReason(state: FastTravelState): string | undefined {
   if (state.placeForbids) return 'sNoFastTravelCell';
   if (state.inAir) return 'sNoFastTravelInAir';
   if (state.carried > state.carryWeight) return 'sNoFastTravelOverencumbered';
+  if (state.inCombat === true) return 'sNoFastTravelCombat';
+  if (state.hostilesNear === true) return 'sNoFastTravelHostileActorsNear';
+  if (state.takingHealthDamage === true) return 'sFastTravelNoTravelHealthDamage';
   if (state.pursued === true) return 'sNoFastTravelAlarm';
   return undefined;
 }

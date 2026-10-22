@@ -5,7 +5,7 @@
 // mudcrabs, mammoths) lean with the ground under them. Races that do not walk (slaughterfish)
 // stay where they were placed, as do actors in furniture (their package's: Falmer in their
 // wall pods) and actors with nothing under them (held in a cell until their package moves
-// them). TODO(M10): the character controllers themselves.
+// them). Their character controllers take over from there (src/shell/actor-movers.ts).
 // Platform-independent. Notes: docs/physics.md ("Actors on the ground").
 
 import type { Mat4, Vec3 } from '../render/math.ts';
