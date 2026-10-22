@@ -462,6 +462,7 @@ export class PlayMode {
     dialogue.prepare();
     session.hud.menus = {
       messageBox: (text, buttons) => boxes.show(text, buttons),
+      takesKeys: () => this.#host.takesKeys,
       userEvent: (name) => {
         if (!dialogue.isOpen) menus.userEvent(name);
       },
