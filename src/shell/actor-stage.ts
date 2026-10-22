@@ -48,6 +48,13 @@ import { WeaponState } from '../gameplay/combat/combat-state.ts';
 import { ActorCasting } from './actor-casting.ts';
 import { ActorFlight } from './actor-flight.ts';
 import { actorShape, MagicProjectiles, type ProjectileTarget } from './magic-projectiles.ts';
+import { MagicFx } from './magic-fx.ts';
+import { ActorEffects, type EffectBody } from './actor-effects.ts';
+import { questTargets } from './compass.ts';
+import { findPath } from '../ai/pathfinding.ts';
+import type { MagicEffectShown } from '../scripting/runtime/magic-engine.ts';
+import { EffectArchetype } from '../world/magic-effects.ts';
+import type { CellLight } from '../world/cell-loader.ts';
 import { PlayerCasting } from './player-casting.ts';
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import { combatCasting } from './combat-casting.ts';
@@ -195,6 +202,10 @@ export class ActorStage {
   readonly combat: ActorCombat;
   /** What spells, staffs and shouts send flying (src/shell/magic-projectiles.ts). */
   readonly projectiles: MagicProjectiles;
+  /** What magic shows for a moment (explosions, muzzle flashes, impacts, waves, trails). */
+  readonly fx: MagicFx;
+  /** What magic shows on actors (effect shaders, art, lights, Detect Life). */
+  readonly effects: ActorEffects;
   /** Casting and shouting, the player's and the NPCs' (src/shell/actor-casting.ts). */
   readonly casting: ActorCasting;
   /** The player's attack buttons and voice key casting (src/shell/player-casting.ts). */
@@ -414,15 +425,31 @@ export class ActorStage {
       userOf: (staged) => this.userOf(staged),
       ...(options.player && { player: options.player }),
     });
+    this.fx = new MagicFx({
+      session: options.session,
+      renderer: options.renderer,
+      terminal: options.terminal,
+      player: () => options.player?.()?.play.player.feet,
+    });
+    this.effects = new ActorEffects({
+      session: options.session,
+      renderer: options.renderer,
+      terminal: options.terminal,
+      body: (actor) => this.#effectBody(actor),
+      living: () => this.#livingFeet(),
+    });
     this.projectiles = new MagicProjectiles({
       session: options.session,
       renderer: options.renderer,
       terminal: options.terminal,
+      fx: this.fx,
+      impact: (hit) => this.combat.surfaceImpact(hit),
       targets: () => this.#projectileTargets(),
       noise: (at, owner, soundLevel) => {
         this.senses.noise(at, owner, soundLevel);
       },
-      // A hostile spell's hit: the victim searches for its attacker (TODO(M10) 5.2: combat).
+      // A hostile spell's hit: the victim knows its attacker (detection) and fights it, as a
+      // weapon's hit makes it (the combat AI reads who attacked it).
       hit: (target, caster) => {
         if (target !== caster && target !== PLAYER_REF) this.senses.attackedBy(target, caster);
         // On one not hostile to the caster it is an assault (crime-engine.ts), as a weapon's is.
@@ -436,6 +463,7 @@ export class ActorStage {
       terminal: options.terminal,
       furniture: this.furniture,
       projectiles: this.projectiles,
+      fx: this.fx,
       get: (reference) => this.#actors.get(reference),
       userOf: (staged) => this.userOf(staged),
       height: (reference) => this.movers.height(reference),
@@ -483,6 +511,75 @@ export class ActorStage {
       get: (reference) => this.#actors.get(reference),
       bark: (actor, subtype, target) => this.talk.bark(actor, subtype, target),
     });
+  }
+
+  /** An actor's body for the effects on it (the player's avatar's for the player). */
+  #effectBody(actor: number): EffectBody | undefined {
+    if (actor === PLAYER_REF) {
+      const body = this.#options.player?.()?.avatar?.body;
+      return body && { placed: body };
+    }
+    const staged = this.#actors.get(actor);
+    return staged && { placed: staged.placed, visibility: staged.visibility };
+  }
+
+  /** The living actors shown and where their feet are (the player too). */
+  *#livingFeet(): Iterable<{ reference: number; feet: Vec3 }> {
+    for (const staged of this.#actors.values()) {
+      if (staged.visibility.hidden || staged.dead) continue;
+      yield { reference: staged.reference, feet: staged.position };
+    }
+    const player = this.#options.player?.()?.play.player;
+    if (player) yield { reference: PLAYER_REF, feet: player.feet };
+  }
+
+  /** Guide effects going on (Clairvoyance): their trail hazard, by the effect's key. */
+  readonly #guides = new Map<string, { readonly hazard: number; wait: number }>();
+
+  /** A magic effect begins or ends on an actor: what it shows (WorldBridge.magicEffect). */
+  magicEffect(shown: MagicEffectShown): void {
+    this.effects.effect(shown);
+    if (shown.archetype !== EffectArchetype.guide || shown.target !== PLAYER_REF) return;
+    if (shown.event === 'stop') {
+      this.#guides.delete(shown.key);
+      this.fx.stopTrail(shown.key);
+    } else if (shown.associated !== undefined) {
+      this.#guides.set(shown.key, { hazard: shown.associated, wait: 0 });
+    }
+  }
+
+  /**
+   * Clairvoyance's trail: from the player along the navmeshes to the nearest target of the
+   * shown quest objectives in this space, again as each trail ends while the effect lasts.
+   */
+  async #guide(key: string, hazard: number): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    const player = this.#options.player?.()?.play.player;
+    const navmeshes = this.#options.navmeshes?.();
+    if (!runtime || !player || !navmeshes) return;
+    const from = player.feet;
+    let best: { at: Vec3; distance: number } | undefined;
+    for (const target of await questTargets(runtime)) {
+      const at = target.placement.position;
+      if (this.#options.cellOf({ ...target.placement, position: [...at] }) === undefined) continue;
+      const distance = Math.hypot(at[0] - from[0], at[1] - from[1], at[2] - from[2]);
+      if (!best || distance < best.distance) best = { at: [...at], distance };
+    }
+    if (!best) return;
+    const start = navmeshes.locate(from) ? from : (navmeshes.nearest?.(from, SNAP_REACH) ?? from);
+    const path = findPath(navmeshes, start, best.at, { radius: 0 });
+    if (path && path.points.length >= 2 && this.#guides.has(key))
+      this.fx.trail(key, hazard, path.points);
+  }
+
+  /** The lights of magic: effects on actors, casts in hands, what flies, what bursts. */
+  lights(): CellLight[] {
+    return [
+      ...this.effects.lights(),
+      ...this.casting.lights(),
+      ...this.projectiles.lights(),
+      ...this.fx.lights(),
+    ];
   }
 
   /** The living actors projectiles can meet, the player too. */
@@ -766,6 +863,9 @@ export class ActorStage {
     // What casts send flying and the casting art in the hands.
     yield* this.projectiles.scenes();
     yield* this.casting.scenes();
+    // What magic shows on actors and for a moment in the world.
+    yield* this.effects.scenes();
+    yield* this.fx.scenes();
   }
 
   /** Where a staged actor stands now (scripts' live placement). */
@@ -864,6 +964,9 @@ export class ActorStage {
   clear(): void {
     this.vehicles.clear();
     this.projectiles.clear();
+    this.effects.clear();
+    this.fx.clear();
+    this.#guides.clear();
     this.#cells.clear();
     for (const staged of [...this.#actors.values()]) this.#remove(staged);
   }
@@ -1099,6 +1202,14 @@ export class ActorStage {
     this.playerCasting?.frame(frame);
     this.casting.frame(frame);
     this.projectiles.frame(frame);
+    this.effects.frame(frame);
+    this.fx.frame(frame);
+    for (const [key, guide] of this.#guides) {
+      guide.wait -= frame;
+      if (guide.wait > 0 || this.fx.trailing(key)) continue;
+      guide.wait = 1;
+      void this.#guide(key, guide.hazard);
+    }
     this.away.frame(frame);
     this.combat.frame(frame, this.#options.focus?.());
     this.movers.frame(this.#actors.values(), this.#options.focus?.());

@@ -9,6 +9,8 @@
 
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
+import { EffectArchetype } from '../world/magic-effects.ts';
 import type { ActorCasting } from './actor-casting.ts';
 import type { GameSession } from './game-session.ts';
 import type { CastingButtons } from './player-combat.ts';
@@ -19,6 +21,12 @@ export interface PlayerCastingOptions {
   readonly casting: ActorCasting;
   readonly player: () => PlayerView | undefined;
 }
+
+/**
+ * How far Telekinesis reaches (units; TODO(M13): the engine's telekinesis distance, not in the
+ * plugins; Mod Telekinesis Distance has no vanilla perk).
+ */
+const TELEKINESIS_REACH = 2048;
 
 /** Both attack buttons pressed within this dual cast (seconds; TODO(M13): the engine's window). */
 const DUAL_WINDOW = 0.15;
@@ -89,6 +97,28 @@ export class PlayerCasting implements CastingButtons {
       void casting.voiceUp(held);
     }
     casting.powersFrame();
+    // Telekinesis held: the object aimed at is taken hold of and pulled; let go, thrown.
+    view.play.telekinesis(this.#telekinetic(runtime), TELEKINESIS_REACH);
+  }
+
+  /** Spells whose costliest effect is Telekinesis, as read (asynchronously). */
+  readonly #telekinesis = new Map<number, boolean>();
+
+  /** Whether a hand casts Telekinesis now (charged and held). */
+  #telekinetic(runtime: ScriptRuntime): boolean {
+    for (const source of [CastingSource.left, CastingSource.right]) {
+      const cast = runtime.casting.casting(PLAYER_REF, source);
+      if (cast?.hand.phase !== 'casting') continue;
+      const item = cast.castable.item;
+      const known = this.#telekinesis.get(item.formId);
+      if (known === undefined) {
+        this.#telekinesis.set(item.formId, false);
+        void runtime.casting.mainEffect(item).then((main) => {
+          this.#telekinesis.set(item.formId, main?.archetype === EffectArchetype.telekinesis);
+        });
+      } else if (known) return true;
+    }
+    return false;
   }
 
   /** What the hands hold to cast, read again (once at a time). */

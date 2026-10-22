@@ -3,8 +3,9 @@
 // animated and sent on their way. A cast begun plays its start in the actor's graph (the idle
 // tree's ActionRightAttack / ActionLeftAttack leaf: MRh_SpellAimedStart, MLh_WardStart, ...;
 // casting.ts castStartEvent), its MGEF sounds (charge as it charges, ready once it is, release
-// as it fires, the concentration loop while a concentration spell is held) and its casting art
-// in the hand (MGEF casting art, ARTO, on the hand's magic node). Ready: ActionRightReady
+// as it fires, the concentration loop while a concentration spell is held), its casting art
+// in the hand (MGEF casting art, ARTO, on the hand's magic node; dual cast: the dual-cast art at
+// its scale) and its casting light there (MGEF light: the hand's glow). Ready: ActionRightReady
 // (MRh_SpellReady_Event); fired or stopped: ActionRightRelease (MRh_SpellRelease_Event), its
 // projectile leaving the hand's magic node along the actor's aim (src/shell/magic-projectiles.ts);
 // a concentration spell sprays every relaunch interval of its projectile (each spray carries
@@ -40,7 +41,8 @@ import {
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { meshPath } from '../world/actors.ts';
-import { EffectArchetype, effectSound, EffectSound } from '../world/magic-effects.ts';
+import { EffectArchetype, EffectFlag, effectSound, EffectSound } from '../world/magic-effects.ts';
+import { ActorValue } from '../world/actor-values.ts';
 import { Delivery, parseArtObject } from '../world/magic-records.ts';
 import { CastType } from '../world/spell-records.ts';
 import type { ActorFurniture, FurnitureUser } from './actor-furniture.ts';
@@ -50,6 +52,9 @@ import type { GameSession } from './game-session.ts';
 import type { MagicProjectiles } from './magic-projectiles.ts';
 import type { PlayerView } from './race-menu.ts';
 import type { Terminal } from './terminal.ts';
+import { cellLight, type MagicFx } from './magic-fx.ts';
+import type { CellLight } from '../world/cell-loader.ts';
+import type { LightRecord } from '../world/cell-records.ts';
 
 export interface ActorCastingOptions {
   readonly session: GameSession;
@@ -75,6 +80,8 @@ export interface ActorCastingOptions {
     kind: 'projectile' | 'self' | 'shout',
     soundLevel: number,
   ) => void;
+  /** The magic effects' lights (LIGH records, read once). */
+  readonly fx?: MagicFx;
 }
 
 /**
@@ -112,8 +119,17 @@ const ACTIONS: Readonly<Record<number, { ready: string; release: string; interru
   },
 };
 
-/** Seconds an NPC holds a concentration spell (TODO(M10) 5.2: the combat AI's choice). */
-const NPC_CONCENTRATION_SECONDS = 2.5;
+/**
+ * An NPC holds a concentration spell while it serves: at a target while the target lives and
+ * stays within its projectile's reach (and the magicka lasts: the casting engine ends it); one
+ * without a target this long at most, a healing spell less once its health is whole.
+ * TODO(M13): how long the engine holds a ward is not documented.
+ */
+const NPC_WARD_SECONDS = 2.5;
+/** How often an NPC's held concentration spell is looked at (seconds). */
+const HOLD_CHECK_SECONDS = 0.25;
+/** The reach of a concentration spell without a projectile range (units). */
+const HOLD_REACH = 2048;
 /** A concentration spell without a projectile (Self, Touch) acts this often (seconds). */
 const HELD_INTERVAL = 0.25;
 /** The BSDirectAtModifiers' kind for bows and spells (userInfo), and how far off the aimed point is. */
@@ -132,9 +148,15 @@ interface Shown {
   spray: number;
   /** An NPC lets go then (seconds left), if it decides. */
   holdFor: number | undefined;
+  /** Seconds to an NPC's next look at whether its concentration spell still serves. */
+  holdCheck: number;
   sounds: Promise<SoundInstance | undefined>[];
   loop: Promise<SoundInstance | undefined> | undefined;
   art: { instance: ModelInstance; scene: GpuScene; motion: InstanceMotion } | undefined;
+  /** The casting light in the hand (MGEF light), once read. */
+  light: LightRecord | undefined;
+  /** The art's scale (a dual cast's: MGEF dual cast scale). */
+  scale: number;
   done: boolean;
 }
 
@@ -300,8 +322,26 @@ export class ActorCasting {
     // Its charge sound, from the hand.
     const charge = main && effectSound(main, EffectSound.charge);
     if (charge !== undefined) shown.sounds.push(this.#sound(charge, actor, source));
-    void this.#art(shown, main?.castingArt);
+    // Its art in the hand (a dual cast's own art, at its scale), its light there.
+    const dualArt = cast.dual ? main?.dualCastArt : undefined;
+    if (dualArt !== undefined)
+      shown.scale = main && main.dualCastScale > 0 ? main.dualCastScale : 1;
+    void this.#art(shown, dualArt ?? main?.castingArt);
+    void this.#options.fx?.lightRecord(main?.light).then((light) => {
+      shown.light = light;
+    });
     return true;
+  }
+
+  /** The casting lights in the hands (MGEF light) while the casts last. */
+  lights(): CellLight[] {
+    const lights: CellLight[] = [];
+    for (const shown of this.#shown.values()) {
+      if (!shown.light || shown.done) continue;
+      const at = this.origin(shown.cast.actor, shown.cast.source);
+      if (at) lights.push(cellLight(shown.cast.actor, at, shown.light, 1));
+    }
+    return lights;
   }
 
   /** The source lets go (the button released; an NPC's cast once ready or held long enough). */
@@ -323,14 +363,17 @@ export class ActorCasting {
       target,
       spray: 0,
       holdFor:
-        cast.actor === PLAYER_REF
+        cast.actor === PLAYER_REF || target !== undefined
           ? undefined
           : cast.castable.item.castType === CastType.concentration
-            ? NPC_CONCENTRATION_SECONDS
+            ? NPC_WARD_SECONDS
             : undefined,
+      holdCheck: HOLD_CHECK_SECONDS,
       sounds: [],
       loop: undefined,
       art: undefined,
+      light: undefined,
+      scale: 1,
       done: false,
     };
     this.#shown.set(key, shown);
@@ -381,7 +424,9 @@ export class ActorCasting {
     const local = placed && nodeOf(placed, shown.cast.source);
     const world = placed?.instances[0]?.world;
     if (!local || !world) return;
-    instance.world.set(multiply(world, local));
+    const matrix = multiply(world, local);
+    if (shown.scale !== 1) for (let i = 0; i < 12; i++) matrix[i] = (matrix[i] ?? 0) * shown.scale;
+    instance.world.set(matrix);
   }
 
   /** Its scenes (the casting art in the hands). */
@@ -568,6 +613,15 @@ export class ActorCasting {
           shown.holdFor -= seconds;
           if (shown.holdFor <= 0) void this.letGo(cast.actor, cast.source);
         }
+        if (cast.hand.phase === 'casting') {
+          shown.holdCheck -= seconds;
+          if (shown.holdCheck <= 0) {
+            shown.holdCheck = HOLD_CHECK_SECONDS;
+            void this.#serves(runtime, shown).then((serves) => {
+              if (!serves && !shown.done) void this.letGo(cast.actor, cast.source);
+            });
+          }
+        }
       }
       if (cast.hand.phase !== 'casting') continue;
       shown.spray -= seconds;
@@ -595,6 +649,36 @@ export class ActorCasting {
         if (!delivered) this.#shouts.delete(actor);
       });
     }
+  }
+
+  /**
+   * Whether an NPC's concentration spell still serves (see NPC_WARD_SECONDS): its target alive
+   * and in reach, or its health not whole for a healing spell.
+   */
+  async #serves(runtime: ScriptRuntime, shown: Shown): Promise<boolean> {
+    const { cast, target } = shown;
+    const item = cast.castable.item;
+    if (target !== undefined && target !== cast.actor) {
+      if (await runtime.actors.isDead(target)) return false;
+      const from = this.#place(cast.actor)?.feet;
+      const to = this.#place(target)?.feet;
+      if (!from || !to) return false;
+      const main = await runtime.casting.mainEffect(item);
+      const projectile =
+        main?.projectile === undefined
+          ? undefined
+          : await runtime.casting.projectile(main.projectile);
+      const reach = projectile && projectile.range > 0 ? projectile.range : HOLD_REACH;
+      return Math.hypot(to[0] - from[0], to[1] - from[1], to[2] - from[2]) <= reach;
+    }
+    const main = await runtime.casting.mainEffect(item);
+    const heals =
+      main?.archetype === EffectArchetype.valueModifier &&
+      main.actorValue === ActorValue.health &&
+      (main.flags & EffectFlag.detrimental) === 0;
+    if (!heals) return true;
+    const health = await runtime.actors.value(cast.actor, ActorValue.health);
+    return health.current < health.max;
   }
 
   /** One spray of a breath: the interval's share of its shout's spell, from the head. */

@@ -71,6 +71,7 @@ import { ScriptLibrary } from '../scripting/script-library.ts';
 import { PapyrusScheduler } from '../scripting/scheduler.ts';
 import { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ScriptWorld } from './script-world.ts';
+import { TimeFlow } from './time-flow.ts';
 import { ScreenModifiers } from './screen-modifiers.ts';
 import { AssetLoader } from '../workers/asset-loader.ts';
 import { PluginIndexer } from '../workers/plugin-indexer.ts';
@@ -301,6 +302,20 @@ export class GameSession {
     });
     this.imageSpaceModifiers = new ScreenModifiers(this.db, terminal);
     this.scriptWorld.modifiers = this.imageSpaceModifiers;
+    // Modifiers that aim at their target see it from the view's camera.
+    this.imageSpaceModifiers.view = () => {
+      const camera = this.#renderer.view?.camera;
+      if (!camera) return undefined;
+      return {
+        project: (point) => this.#renderer.project(point),
+        distance: (point) =>
+          Math.hypot(
+            point[0] - camera.position[0],
+            point[1] - camera.position[1],
+            point[2] - camera.position[2],
+          ),
+      };
+    };
     void this.db.then(async (db) => {
       this.timeScale = await readTimeScale(db);
       this.#startDate = await readStartDate(db);
@@ -372,16 +387,27 @@ export class GameSession {
     return this.#model(path, true);
   }
 
+  /**
+   * A model with its NiSwitchNodes showing another child (flora harvested: 1); undefined where
+   * it has no switch node (it looks the same).
+   */
+  async switchedModel(path: string, child: number): Promise<GpuModel | undefined> {
+    return this.#model(path, true, child);
+  }
+
   /** Models attached at AddOnNodes get no add-ons of their own (no cycles). */
-  #model(path: string, withAddons: boolean): Promise<GpuModel | undefined> {
-    const key = withAddons ? path : `${path}|addon`;
+  #model(path: string, withAddons: boolean, switchChild?: number): Promise<GpuModel | undefined> {
+    const key =
+      (withAddons ? path : `${path}|addon`) +
+      (switchChild === undefined ? '' : `|switch${switchChild}`);
     let entry = this.#models.get(key);
     const loaded = this.#loadedModels.get(key);
     if (loaded) loaded.lastUsed = performance.now();
     if (!entry) {
-      entry = this.loader.loadModel(path).then(
+      entry = this.loader.loadModel(path, switchChild).then(
         async (loaded) => {
           const data = loaded.model;
+          if (switchChild !== undefined && data.switches === undefined) return undefined;
           // Editor markers have no collision in the game either.
           if (!data.editorMarker) this.#collisions.set(path, loaded.collision);
           const addons = withAddons ? await this.addons(data.addons) : [];
@@ -887,6 +913,9 @@ export class GameSession {
     this.#watchLocation(runtime, realSeconds);
     this.#watchSeen(runtime, realSeconds);
     this.#watchEncumbrance(runtime, realSeconds);
+    // Slow Time and a bow's zoom set the world's clock and the player's pace.
+    this.time.update(runtime, realSeconds);
+    this.soundSystem?.setTimeMultiplier(this.time.multiplier);
     this.timeScale = runtime.timeScale;
     const days = this.gameDaysPassed + this.gameHour / 24;
     if (runtime.clockChanged) {
@@ -905,6 +934,9 @@ export class GameSession {
       runtime.update(realSeconds, passed);
     }
   }
+
+  /** How fast the world's clock runs and the player with it (Slow Time, a bow's zoom). */
+  readonly time = new TimeFlow();
 
   /** The player carries more than they can (the equip system): no running (src/shell/player.ts). */
   overEncumbered = false;

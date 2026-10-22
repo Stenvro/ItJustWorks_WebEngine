@@ -9,9 +9,15 @@
 // skill), a Target Location spell takes effect there (summons, runes), the explosion bursts (its
 // sound, the casting engine's explode), the area reaches those near (area), the effect's impact
 // data set sounds on the surface hit, and the impact's sound level is a noise for detection.
-// TODO(M11) visuals: the projectiles' lights (PROJ light, muzzle flash), the explosions' and
-// impacts' models and decals, beams and cones drawn, the casting art in the hands (MGEF casting
-// art, dual-cast art).
+// What shows (src/shell/magic-fx.ts): a projectile carries its light (PROJ light); with the
+// Muzzle Flash flag its muzzle flash model and light show where it leaves for its muzzle flash
+// duration; a cone's wave sweeps out at its speed to its range, a beam shows from the hand; an
+// explosion shows its model and light, puts its image-space modifier on the player within its
+// image-space radius (aimed at it), leaves its placed object (a hazard: the hazard engine) and
+// sends its spawned projectile on to the nearest other actor (chain lightning); an impact
+// (the effect's and the explosion's impact data set) leaves its decal, model and hazard.
+// TODO(M13): a beam's model is shown at its own length (the engine stretches it to the hit),
+// the hop count of chained explosions (one hop each here).
 
 import {
   flightKind,
@@ -38,7 +44,18 @@ import { meshPath } from '../world/actors.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
 import { EffectArchetype, type MagicEffectRecord } from '../world/magic-effects.ts';
 import { Delivery } from '../world/magic-records.ts';
-import { ProjectileFlag, type ProjectileRecord } from '../world/projectile-data.ts';
+import {
+  ExplosionFlag,
+  ProjectileFlag,
+  type ExplosionRecord,
+  type ProjectileRecord,
+} from '../world/projectile-data.ts';
+import type { CellLight } from '../world/cell-loader.ts';
+import type { LightRecord } from '../world/cell-records.ts';
+import type { Impact } from '../world/impact-records.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import type { HitImpact } from './combat-impacts.ts';
+import { cellLight, type MagicFx } from './magic-fx.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -60,6 +77,10 @@ export interface MagicProjectilesOptions {
   readonly noise?: (at: Vec3, owner: number | undefined, soundLevel: number) => void;
   /** A hostile spell took hold on an actor (who was attacked, by whom). */
   readonly hit?: (target: number, caster: number) => void;
+  /** What shows for a moment (muzzle flashes, explosions, impacts, cones' waves). */
+  readonly fx?: MagicFx;
+  /** An impact on a surface: its sound and decal; the impact (IPCT) it was. */
+  readonly impact?: (hit: HitImpact) => Promise<Impact | undefined>;
 }
 
 /** One projectile on its way. */
@@ -75,6 +96,8 @@ interface Flying {
   scene: GpuScene | undefined;
   readonly motion: InstanceMotion;
   sound: Promise<SoundInstance | undefined> | undefined;
+  /** Its light (PROJ light), once read. */
+  light: LightRecord | undefined;
   done: boolean;
 }
 
@@ -208,6 +231,14 @@ export class MagicProjectiles {
       return;
     }
     const aim = normalize(direction);
+    // Its muzzle flash where it leaves (its model and light, for its duration).
+    const fx = this.#options.fx;
+    if (fx && (projectile.flags & ProjectileFlag.muzzleFlash) !== 0)
+      fx.show(projectile.muzzleFlashModel, projectile.muzzleFlashLight, origin, {
+        direction: aim,
+        duration: projectile.muzzleFlashDuration > 0 ? projectile.muzzleFlashDuration : 0.1,
+        fades: true,
+      });
     switch (flightKind(projectile)) {
       case 'cone':
         await this.#cone(runtime, delivered, projectile, origin, aim, seconds);
@@ -253,9 +284,13 @@ export class MagicProjectiles {
       scene: undefined,
       motion: { version: 0 },
       sound: undefined,
+      light: undefined,
       done: false,
     };
     this.#flying.add(flying);
+    void this.#options.fx?.lightRecord(projectile.light).then((light) => {
+      flying.light = light;
+    });
     if (projectile.sound !== undefined) {
       flying.sound = session.soundSystem?.play(projectile.sound, () => flying.flight.position);
     }
@@ -296,6 +331,12 @@ export class MagicProjectiles {
     );
     const hit = this.#sweep(delivered.caster, origin, end, projectile.collisionRadius);
     const point = hit ? pointAt(origin, end, hit.t) : end;
+    // The beam from the hand (its model and light, for a spray's while).
+    this.#options.fx?.show(projectile.model, projectile.light, origin, {
+      direction: aim,
+      duration: Math.max(0.15, projectile.relaunchInterval),
+      fades: true,
+    });
     await this.#impact(runtime, delivered, projectile, effect, point, aim, hit, seconds);
   }
 
@@ -326,9 +367,16 @@ export class MagicProjectiles {
         ...(seconds !== undefined && { seconds }),
       });
     }
-    // Its sound from its apex (TODO(M11) visuals: the cone drawn).
+    // Its sound from its apex; its wave (its model and light) sweeps out to its range.
     if (projectile.sound !== undefined)
       void this.#options.session.soundSystem?.play(projectile.sound, origin);
+    const speed = projectile.speed > 0 ? projectile.speed : range;
+    this.#options.fx?.show(projectile.model, projectile.light, origin, {
+      direction: aim,
+      speed,
+      range,
+      duration: range / speed + 0.25,
+    });
   }
 
   /** Whether a surface stands between two points (line of sight for cones and areas). */
@@ -509,6 +557,7 @@ export class MagicProjectiles {
       const record = await casting.explosion(explosion);
       if (record?.sound !== undefined) void session.soundSystem?.play(record.sound, point);
       if (record?.sound2 !== undefined) void session.soundSystem?.play(record.sound2, point);
+      if (record) await this.#burst(runtime, delivered, record, point, aim, hit, actor?.reference);
       await casting.explode(delivered.caster, explosion, point);
       noise?.(point, delivered.caster, record?.soundLevel ?? 1);
     }
@@ -518,15 +567,135 @@ export class MagicProjectiles {
         ...(seconds !== undefined && { seconds }),
       });
     }
-    // The effect's impact on the surface hit (MGEF impact data set: its sound, a noise).
+    // The effect's impact on the surface hit (MGEF impact data set: its sound, decal, model,
+    // hazard; a noise).
     if (hit && !actor && effect?.impactData !== undefined) {
-      const impact = await session.soundSystem?.impactOfSet(
-        effect.impactData,
-        hit.material,
-        hit.kind,
-        point,
-      );
+      const impact = await this.#surface(runtime, delivered, effect.impactData, hit, point, aim);
       if (impact) noise?.(point, delivered.caster, impact.soundLevel);
+    }
+  }
+
+  /** An impact on a surface: its sound and decal, its model (for its duration) and hazard. */
+  async #surface(
+    runtime: ScriptRuntime,
+    delivered: Delivered,
+    impactDataSet: number,
+    hit: {
+      readonly material: number;
+      readonly kind: 'object' | 'landscape' | 'actor' | undefined;
+      readonly normal?: Vec3;
+    },
+    point: Vec3,
+    aim: Vec3,
+  ): Promise<Impact | undefined> {
+    const impact = this.#options.impact
+      ? await this.#options.impact({
+          impactDataSet,
+          materialId: hit.material,
+          position: point,
+          direction: aim,
+          heavy: false,
+        })
+      : await this.#options.session.soundSystem?.impactOfSet(
+          impactDataSet,
+          hit.material,
+          hit.kind,
+          point,
+        );
+    if (!impact) return undefined;
+    // Its model along the surface's normal (or the way the spell came), for its duration.
+    if (impact.model)
+      this.#options.fx?.show(impact.model, undefined, point, {
+        direction: impact.orientation === 0 && hit.normal ? hit.normal : aim,
+        ...(impact.duration > 0 && { duration: impact.duration }),
+      });
+    if (impact.hazard !== undefined)
+      await runtime.hazards.place(impact.hazard, point, delivered.caster);
+    return impact;
+  }
+
+  /**
+   * An explosion bursts (beside its sounds and the casting engine's explode): its model and
+   * light, its image-space modifier on a player within its image-space radius, its impact on
+   * the surface there, its placed object, its spawned projectile on to the nearest other actor.
+   */
+  async #burst(
+    runtime: ScriptRuntime,
+    delivered: Delivered,
+    explosion: ExplosionRecord,
+    point: Vec3,
+    aim: Vec3,
+    hit:
+      | {
+          readonly material: number;
+          readonly kind: 'object' | 'landscape' | 'actor' | undefined;
+          readonly normal?: Vec3;
+        }
+      | undefined,
+    struck: number | undefined,
+  ): Promise<void> {
+    const { fx, session } = this.#options;
+    const upright = (explosion.flags & ExplosionFlag.alwaysUsesWorldOrientation) !== 0;
+    fx?.show(explosion.model, explosion.light, point, {
+      ...(!upright && { direction: aim }),
+      fades: true,
+    });
+    const modifier = explosion.imageSpaceModifier;
+    const player = [...this.#options.targets()].find((target) => target.reference === PLAYER_REF);
+    if (modifier !== undefined && player) {
+      const feet = player.shape.feet;
+      const distance = Math.hypot(feet[0] - point[0], feet[1] - point[1], feet[2] - point[2]);
+      if (distance <= explosion.imageSpaceRadius)
+        void session.imageSpaceModifiers.apply(modifier, 1, { target: () => point });
+    }
+    if (explosion.impactDataSet !== undefined && hit && hit.kind !== 'actor')
+      await this.#surface(runtime, delivered, explosion.impactDataSet, hit, point, aim);
+    const placed = explosion.placedObject;
+    if (placed !== undefined) {
+      const hazard = await runtime.hazards.place(placed, point, delivered.caster);
+      if (hazard === undefined) {
+        const reference = await runtime.placeAt(placed, delivered.caster, 1);
+        runtime.move(reference, [...point]);
+      }
+    }
+    // Its projectile flies on from it, at the nearest other living actor within its range
+    // (chain lightning), else on the way the spell came; carrying the same spell.
+    const spawned = explosion.spawnProjectile;
+    const projectile =
+      spawned === undefined ? undefined : await runtime.casting.projectile(spawned);
+    if (projectile) {
+      const range = projectile.range > 0 ? projectile.range : 2048;
+      let best: { direction: Vec3; distance: number } | undefined;
+      for (const target of this.#options.targets()) {
+        if (target.reference === delivered.caster || target.reference === struck) continue;
+        const middle: Vec3 = [
+          target.shape.feet[0],
+          target.shape.feet[1],
+          target.shape.feet[2] + target.shape.height / 2,
+        ];
+        const direction: Vec3 = [middle[0] - point[0], middle[1] - point[1], middle[2] - point[2]];
+        const distance = Math.hypot(...direction);
+        if (distance > range || (best && best.distance <= distance)) continue;
+        if (this.#blocked(delivered.caster, point, middle)) continue;
+        best = { direction, distance };
+      }
+      const chained = { ...delivered, chained: (delivered.chained ?? 0) + 1 };
+      if ((delivered.chained ?? 0) < 1)
+        this.#fly(
+          chained,
+          projectile,
+          undefined,
+          point,
+          normalize(best?.direction ?? aim),
+          undefined,
+        );
+    }
+  }
+
+  /** The lights of what flies now (PROJ light). */
+  *lights(): Iterable<CellLight> {
+    for (const flying of this.#flying) {
+      if (flying.light && !flying.done) yield cellLight(0, flying.flight.position, flying.light, 1);
     }
   }
 

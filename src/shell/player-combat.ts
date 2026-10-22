@@ -45,13 +45,17 @@ export class PlayerCombat {
 
   /** The player's casting, if any. */
   readonly #casting: () => CastingButtons | undefined;
+  /** A bow's zoom wanted (block held, an arrow drawn): the view's factor (1: none). */
+  readonly #zoom: (wanted: boolean, weapon: number | undefined) => number;
 
   constructor(
     combat: ActorCombat,
     player: Player,
     free: () => boolean,
     casting: () => CastingButtons | undefined = () => undefined,
+    zoom: (wanted: boolean, weapon: number | undefined) => number = () => 1,
   ) {
+    this.#zoom = zoom;
     this.#combat = combat;
     this.#player = player;
     this.#free = free;
@@ -69,6 +73,7 @@ export class PlayerCombat {
     if (!this.#free()) {
       this.#right = undefined;
       this.#left = undefined;
+      player.bowZoom = this.#zoom(false, undefined);
       return;
     }
     const state = combat.combatState(PLAYER_REF);
@@ -125,6 +130,12 @@ export class PlayerCombat {
         this.#right = { since: this.#clock, power: false };
       }
     }
+    // Block held with an arrow drawn zooms the view (Eagle Eye: Mod Bow Zoom; the tree's own
+    // block is the bow's zoom).
+    player.bowZoom = this.#zoom(
+      bow && this.#blocking && state.current?.ranged === true,
+      combat.weaponOf(PLAYER_REF),
+    );
     // A bow looses when the button is let go.
     if (bow) {
       if (

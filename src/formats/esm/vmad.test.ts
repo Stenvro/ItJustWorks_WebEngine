@@ -113,6 +113,23 @@ describe('VMAD', () => {
     ]);
   });
 
+  it("reads perks' fragments by their index (an Activate entry's EPF3 names it)", () => {
+    let bytes = new Bytes().u16(5).u16(2).u16(1);
+    bytes = script(bytes, 'PRKF_DA11Cannibalism_000EE5C3', (b) => {
+      b.wstring('DA11CannibalismAbility').u8(1).u8(1).object(0xee5c5);
+      return 1;
+    });
+    bytes.u8(2).wstring('PRKF_DA11Cannibalism_000EE5C3').u16(2);
+    bytes.u16(0).u16(0).u8(1).wstring('PRKF_DA11Cannibalism_000EE5C3').wstring('Fragment_0');
+    bytes.u16(3).u16(0).u8(1).wstring('PRKF_DA11Cannibalism_000EE5C3').wstring('Fragment_7');
+    const vmad = parseVmad(bytes.data, 'PERK');
+    expect(vmad.fragmentScript).toBe('PRKF_DA11Cannibalism_000EE5C3');
+    expect(vmad.fragments).toEqual([
+      { stage: 0, logEntry: 0, script: 'PRKF_DA11Cannibalism_000EE5C3', function: 'Fragment_0' },
+      { stage: 3, logEntry: 0, script: 'PRKF_DA11Cannibalism_000EE5C3', function: 'Fragment_7' },
+    ]);
+  });
+
   it('reads quest stage fragments and alias scripts', () => {
     let bytes = new Bytes().u16(5).u16(2).u16(1);
     bytes = script(bytes, 'QF_MS11_0001F7A3', (b) => {
