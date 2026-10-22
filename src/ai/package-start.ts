@@ -453,7 +453,8 @@ async function locationPlace(
     case LocationType.nearSelf:
       return { kind: 'here', package: id, procedure };
     default:
-      // Aliases (M8), objects and object types found by searching (M10).
+      // Aliases, objects and object types: where the running game's AI finds them (the actor
+      // stays where it was placed until its packages run: src/shell/actor-ai.ts, place).
       return { kind: 'undecided', package: id, reason: `location type ${String(location.type)}` };
   }
 }
@@ -478,7 +479,8 @@ async function targetPlace(
     case TargetType.self:
       return { kind: 'here', package: id, procedure };
     default:
-      // Objects and object types found by searching (M10), aliases (M8).
+      // Objects and object types found by searching, aliases: where the running game's AI
+      // finds them (src/shell/actor-ai.ts, target).
       return { kind: 'undecided', package: id, reason: `target type ${String(target.type)}` };
   }
 }
