@@ -1,7 +1,8 @@
-// Conditions (CTDA) on recipes, dialogue and the like. Only the functions that player-home
-// building needs are evaluated; others count as true and are reported.
+// Conditions (CTDA) on recipes, dialogue and the like: their layout and a reading of them
+// without a running game (player-home building's functions; others count as true and are
+// reported). The running game values every function on its subject in
+// src/scripting/runtime/condition-values.ts (tools/condition-audit.ts: the vanilla uses).
 // Layout: docs/formats/esm.md ("Conditions").
-// TODO(M11): every condition function, run on the right subject (actors, packages, ...).
 
 import { view } from '../formats/esm/fields.ts';
 import type { Field } from '../formats/esm/record.ts';

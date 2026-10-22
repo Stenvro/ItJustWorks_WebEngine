@@ -878,8 +878,8 @@ export class ActorCombatAi {
       const target = this.#fightTarget(fighter, views);
       if (target === undefined) continue;
       if (fighter.reference === reference && target !== mind.reference) {
-        // `other` attacks `target`: help the victim; guards help any innocent (TODO(M11):
-        // crime's guards and their warnings, bounties).
+        // `other` attacks `target`: help the victim; guards help any innocent (the crime
+        // itself, its bounty and the guards' arrest: src/shell/actor-crime.ts).
         const victim = this.#reaction(mind.reference, target);
         if (victim !== undefined && assists(assistance, victim)) return this.#join(mind, reference);
         if (profile.guard && victim !== FightReaction.enemy && this.#innocent(target, reference)) {
