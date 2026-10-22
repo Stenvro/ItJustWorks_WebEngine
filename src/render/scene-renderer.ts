@@ -522,6 +522,11 @@ export interface ModelInstance {
    */
   readonly partShown?: (part: ModelPart) => boolean;
   /**
+   * A held weapon's blood: its blood shapes (ModelPart.weaponBlood) are drawn, following it;
+   * without, they are not (a weapon on a rack or in the inventory shows none).
+   */
+  readonly weaponBlood?: WeaponBloodLevel;
+  /**
    * An actor's face: its morph weights and the expression morphs of the model's skinned
    * shapes by lower-case name (FaceGen head parts).
    */
@@ -574,6 +579,48 @@ interface EmittanceDraw {
   readonly multiple: number;
   readonly effect: boolean;
   version: number;
+}
+
+/**
+ * How bloodied a weapon is (the engine's BSTempEffectWeaponBlood), which its blood shapes
+ * (ModelPart.weaponBlood) show; `version` changes with it (docs/rendering.md, "Weapon blood").
+ */
+export interface WeaponBloodLevel {
+  /**
+   * The effect shader's blood cutoff (its AlphaTestRef.x): the blood mask (the texture's green)
+   * shows where it is above this; 1 or more shows none.
+   */
+  readonly cutoff: number;
+  /** The soft edge above the cutoff (AlphaTestRef.y: fWeaponBloodFalloffThreshold). */
+  readonly falloff: number;
+  /** The wet sheen's (the lighting blood shape's) alpha: 0 shows none. */
+  readonly sheen: number;
+  readonly version: number;
+}
+
+/** A draw of a weapon's blood shape: it follows its weapon's blood. */
+interface WeaponBloodDraw {
+  readonly offset: number;
+  readonly source: WeaponBloodLevel;
+  readonly effect: boolean;
+  /** The material's own alpha (lighting). */
+  readonly alpha: number;
+  version: number;
+}
+
+/**
+ * Writes a weapon's blood into a blood shape's draw: an effect's cutoff and soft edge (its
+ * `layer` slot, which effects do not use otherwise) and whether it shows (material alpha); a
+ * lighting shape's alpha times the sheen.
+ */
+function writeWeaponBlood(floats: Float32Array, entry: WeaponBloodDraw): void {
+  const blood = entry.source;
+  if (entry.effect) {
+    floats.set([blood.cutoff, blood.falloff, 0, 0], 44);
+    floats[29] = blood.cutoff < 1 ? 1 : 0;
+  } else {
+    floats[29] = entry.alpha * blood.sheen;
+  }
 }
 
 /** A material object (MATO) ready to draw: its data and, if multi-pass, its own shader. */
@@ -805,6 +852,8 @@ export class GpuScene {
   readonly movingAddons: readonly MovingAddon[];
   /** Bone palettes of skinned draws (GPU buffer, its bind group and CPU copy). */
   readonly bones: SceneBones | undefined;
+  /** Draws of weapons' blood shapes (updated when their weapon's blood changes). */
+  readonly weaponBlood: readonly WeaponBloodDraw[];
   /** The models it draws (held while it exists). */
   readonly #models: readonly GpuModel[];
 
@@ -822,7 +871,9 @@ export class GpuScene {
       addons: [],
     },
     bones?: SceneBones,
+    weaponBlood: readonly WeaponBloodDraw[] = [],
   ) {
+    this.weaponBlood = weaponBlood;
     this.draws = draws;
     this.drawBindGroup = drawBindGroup;
     this.uniforms = uniforms;
@@ -1714,7 +1765,9 @@ export class SceneRenderer {
     const blend = blendState(alpha);
     const shown = source.parts.filter(
       (gpu) =>
-        (gpu.pass === 'opaque' || gpu.pass === 'transparent') && (!filter || filter(gpu.part)),
+        (gpu.pass === 'opaque' || gpu.pass === 'transparent') &&
+        gpu.part.weaponBlood !== true &&
+        (!filter || filter(gpu.part)),
     );
     const parts = await Promise.all(
       shown.map(async (gpu): Promise<GpuPart> => {
@@ -1843,6 +1896,7 @@ export class SceneRenderer {
     const animated: AnimatedDraw[] = [];
     const particles: ParticleDraw[] = [];
     const emittance: EmittanceDraw[] = [];
+    const weaponBlood: WeaponBloodDraw[] = [];
     const moving: MovingDraw[] = [];
     const world = new Float32Array(16);
     let slot = 0;
@@ -1852,6 +1906,8 @@ export class SceneRenderer {
       const material = directional?.material;
       for (const [partIndex, part] of instance.model.parts.entries()) {
         if (instance.partShown && !instance.partShown(part.part)) continue;
+        // A weapon's blood shapes only on a held weapon that can bleed.
+        if (part.part.weaponBlood === true && !instance.weaponBlood) continue;
         const offset = slot++ * DRAW_STRIDE;
         // Sky scenes follow the camera: their placement changes every frame.
         const sequences = instance.model.sequences;
@@ -1953,6 +2009,23 @@ export class SceneRenderer {
               emittance.push(entry);
             }
           }
+        }
+        const blood = instance.weaponBlood;
+        if (
+          blood &&
+          part.part.weaponBlood === true &&
+          partMaterial &&
+          partMaterial.kind !== 'water'
+        ) {
+          const entry: WeaponBloodDraw = {
+            offset,
+            source: blood,
+            effect: partMaterial.kind === 'effect',
+            alpha: partMaterial.kind === 'lighting' ? partMaterial.alpha : 1,
+            version: blood.version,
+          };
+          writeWeaponBlood(floats, entry);
+          weaponBlood.push(entry);
         }
         if (partMaterial?.kind === 'lighting' && (partMaterial.flags2 & SLSF2_TREE_ANIM) !== 0) {
           // Trees have no directional material: the projection slot holds the leaf amplitude,
@@ -2125,6 +2198,7 @@ export class SceneRenderer {
           morphBase,
           draws.flatMap((draw) => (draw.face ? [draw.face.morphs] : [])),
         ),
+      weaponBlood,
     );
   }
 
@@ -2434,6 +2508,19 @@ export class SceneRenderer {
         if (entry.version === entry.source.version) continue;
         entry.version = entry.source.version;
         writeEmittance(new Float32Array(scene.uniformData, entry.offset, DRAW_SIZE / 4), entry);
+        this.#device.queue.writeBuffer(
+          scene.uniforms,
+          entry.offset,
+          scene.uniformData,
+          entry.offset,
+          DRAW_SIZE,
+        );
+      }
+      // Weapons' blood shows after a hit and dries away.
+      for (const entry of scene.weaponBlood) {
+        if (entry.version === entry.source.version) continue;
+        entry.version = entry.source.version;
+        writeWeaponBlood(new Float32Array(scene.uniformData, entry.offset, DRAW_SIZE / 4), entry);
         this.#device.queue.writeBuffer(
           scene.uniforms,
           entry.offset,
@@ -3259,11 +3346,17 @@ export function vertexBuffers(layout: VertexLayout, skinned = false): GPUVertexB
 /** The parts of placed models in the world (for rays: where decals land). */
 export function placedParts(instances: readonly ModelInstance[]): PlacedPart[] {
   return instances.flatMap((instance) =>
-    instance.model.parts.map(({ part }) => ({
-      part,
-      instanceWorld: instance.world,
-      center: transformPoint(instance.world, part.center),
-      radius: part.radius * maxScale(instance.world),
-    })),
+    instance.model.parts.flatMap(({ part }) =>
+      part.weaponBlood === true
+        ? []
+        : [
+            {
+              part,
+              instanceWorld: instance.world,
+              center: transformPoint(instance.world, part.center),
+              radius: part.radius * maxScale(instance.world),
+            },
+          ],
+    ),
   );
 }

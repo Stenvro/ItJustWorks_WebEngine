@@ -9,11 +9,20 @@
 // on the bow (the AMMO model's "Arrow:0" on WEAPON, where the bow animations hold the bow).
 // Shields are worn armour (their addon hangs on SHIELD with the actor's look). The player's
 // first-person weapons are these on the first-person arms (src/shell/first-person-body.ts),
-// each weapon's first-person model (WEAP WNAM). TODO(M11): the weapons' bow graphs (the string
-// drawn) and blood on blades (BloodLighting, BloodFX: fWeaponBloodLifetime).
+// each weapon's first-person model (WEAP WNAM).
+//
+// A weapon with a behavior graph of its own (BSBehaviorGraphExtraData: every vanilla bow and
+// crossbow, BowProject.hkx and its kin) runs it on the model's nodes, as the engine adds it to
+// its wielder's graph manager: every event the wielder's graph raises goes to it (BowDraw,
+// bowDrawStart, BowRelease, bowReset; Reload and BowReleaseFast for crossbows) and so do the
+// variables the engine sets on the wielder (weaponSpeedMult, the perks' bPerkQuickDraw), so the
+// string and limbs draw, hold and spring back with the wielder's arms (docs/animation.md,
+// "Held weapons"). A weapon that struck flesh shows its blood (src/gameplay/combat/
+// weapon-blood.ts: the model's hidden blood shapes, docs/rendering.md, "Weapon blood").
 
 import type { ActorPose } from '../animation/skeleton.ts';
 import { ActorPose as Pose, ActorSkeleton, wearOnRig } from '../animation/skeleton.ts';
+import { WeaponGraph } from '../animation/weapon-graph.ts';
 import type { ModelPart } from '../render/model-data.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type {
@@ -22,8 +31,9 @@ import type {
   InstanceMotion,
   InstanceVisibility,
   ModelInstance,
+  WeaponBloodLevel,
 } from '../render/scene-renderer.ts';
-import { meshPath } from '../world/actors.ts';
+import { meshPath, seededRandom } from '../world/actors.ts';
 import type { GameSession } from './game-session.ts';
 
 /** What an actor holds, as its models show it. */
@@ -42,6 +52,12 @@ export interface HeldBody {
   readonly world: Float32Array;
   readonly motion: InstanceMotion;
   readonly visibility: InstanceVisibility;
+}
+
+/** The weapons' blood (shared by the third- and first-person models of the same weapons). */
+export interface HeldBlood {
+  readonly right?: WeaponBloodLevel;
+  readonly left?: WeaponBloodLevel;
 }
 
 /** Slots of the models' own pose: each copies a node of the body. */
@@ -65,6 +81,7 @@ export class HeldWeapons {
    */
   #pose: ActorPose | undefined;
   #scene: GpuScene | undefined;
+  #graph: WeaponGraph | undefined;
   readonly #nodes: (number | undefined)[] = [];
   readonly #driven = new Map<number, Float32Array>();
   #destroyed = false;
@@ -74,12 +91,17 @@ export class HeldWeapons {
     this.#held = held;
   }
 
-  /** The models of what an actor holds, on its body (undefined: nothing to show). */
+  /**
+   * The models of what an actor holds, on its body (undefined: nothing to show). `seed` (the
+   * actor's reference) starts a weapon's graph the same way each time.
+   */
   static async create(
     session: GameSession,
     renderer: Renderer,
     body: HeldBody,
     held: HeldModels,
+    blood: HeldBlood = {},
+    seed = 0,
   ): Promise<HeldWeapons | undefined> {
     const load = (path: string | undefined): Promise<GpuModel | undefined> =>
       path === undefined || !session.vfs.has(meshPath(path))
@@ -90,14 +112,31 @@ export class HeldWeapons {
       load(held.left?.model),
       load(held.ammo),
     ]);
-    const hung: { model: GpuModel; slot: number; partShown: (part: ModelPart) => boolean }[] = [];
+    const hung: {
+      model: GpuModel;
+      slot: number;
+      partShown: (part: ModelPart) => boolean;
+      blood?: WeaponBloodLevel | undefined;
+    }[] = [];
     if (right) {
-      hung.push({ model: right, slot: Slot.right, partShown: (part) => !scabbard(part) });
+      hung.push({
+        model: right,
+        slot: Slot.right,
+        partShown: (part) => !scabbard(part),
+        blood: blood.right,
+      });
       if (held.right?.sheathed !== undefined) {
         hung.push({ model: right, slot: Slot.scabbard, partShown: scabbard });
       }
     }
-    if (left) hung.push({ model: left, slot: Slot.left, partShown: (part) => !scabbard(part) });
+    if (left) {
+      hung.push({
+        model: left,
+        slot: Slot.left,
+        partShown: (part) => !scabbard(part),
+        blood: blood.left,
+      });
+    }
     if (ammo) {
       hung.push({ model: ammo, slot: Slot.quiver, partShown: (part) => !singleArrow(part) });
       hung.push({ model: ammo, slot: Slot.arrow, partShown: singleArrow });
@@ -117,7 +156,12 @@ export class HeldWeapons {
     const weapons = new HeldWeapons(body, held);
     const pose = new Pose(new ActorSkeleton(dressed.rig, undefined));
     weapons.#pose = pose;
-    const instances: ModelInstance[] = hung.map(({ model, partShown }, i) => ({
+    // The right weapon's own graph (a bow's), started in its rest state.
+    const rightMap = right ? dressed.nodeMaps[0] : undefined;
+    if (right?.skeletal && right.nodes && rightMap) {
+      weapons.#graph = WeaponGraph.start(right.nodes, right.skeletal, seededRandom(seed), rightMap);
+    }
+    const instances: ModelInstance[] = hung.map(({ model, partShown, blood: level }, i) => ({
       model,
       world: body.world,
       motion: body.motion,
@@ -125,6 +169,7 @@ export class HeldWeapons {
       pose,
       ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),
       partShown,
+      ...(level && { weaponBlood: level }),
     }));
     weapons.#scene = renderer.scene.createScene(instances);
     return weapons;
@@ -135,6 +180,16 @@ export class HeldWeapons {
     return this.#destroyed ? undefined : this.#scene;
   }
 
+  /** The events the wielder's graph raised: its weapon's graph hears them too. */
+  hear(events: readonly string[]): void {
+    this.#graph?.hear(events);
+  }
+
+  /** A variable the engine sets on the wielder's graphs, set on its weapon's too. */
+  setVariable(name: string, value: number): void {
+    this.#graph?.setVariable(name, value);
+  }
+
   #node(name: string | undefined): number | undefined {
     if (name === undefined) return undefined;
     return this.#body.pose.skeleton.nodeByName.get(name.toLowerCase());
@@ -142,9 +197,10 @@ export class HeldWeapons {
 
   /**
    * Every frame after the body's pose: the slots go where the body's nodes are (the right
-   * weapon in the hand while `inHand`, the left drawn only, the arrow while nocked).
+   * weapon in the hand while `inHand`, the left drawn only, the arrow while nocked); the right
+   * weapon's graph runs on by `seconds` and moves its nodes.
    */
-  update(inHand: boolean, arrowNocked: boolean): void {
+  update(inHand: boolean, arrowNocked: boolean, seconds = 0): void {
     const held = this.#held;
     const places: (string | undefined)[] = [
       inHand ? 'WEAPON' : held.right?.sheathed,
@@ -172,6 +228,9 @@ export class HeldWeapons {
       }
       world.set(body.subarray(node * 16, node * 16 + 16));
     });
+    // The right weapon's graph runs on; its moved nodes hang under the right slot.
+    const hang = this.#driven.get(Slot.right);
+    if (hang) this.#graph?.update(seconds, hang, this.#driven);
     pose.place(this.#driven);
   }
 

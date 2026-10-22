@@ -80,6 +80,38 @@ its character's Havok skeleton, every behavior file, and the clips its start sta
   runtime; an event or variable from a script reaches both, as it reaches the one graph in
   the game (`placedScriptGraph`, src/shell/script-world.ts).
 
+## Held weapons
+
+Every vanilla bow and crossbow model names a project of its own (BSBehaviorGraphExtraData;
+`node tools/held-weapon-info.ts`): `Weapons\Bow\BowProject.hkx` (540 models), the iron,
+ebony, nightingale, falmer, wooden and bound bows' copies of it, and the two DLC01 crossbow
+projects. Their character is a 7-bone skeleton (Bow_MidBone, the upper and lower limbs, the
+two string bones) that the model's skinned bow follows. The first-person model (WNAM) is the
+same NIF with the same graph (only `1stPersonIronBow.nif`, used by no weapon, lacks it); a
+weapon without WNAM (the bound bow) shows its world model in first person.
+
+The engine runs that graph beside its wielder's (`WeaponGraph`, src/animation/weapon-graph.ts,
+on the models combat hangs on actors and on the first-person arms: src/shell/actor-weapons.ts):
+
+- **Events:** every event the wielder's graph raises goes to the weapon's graph, which takes
+  those it knows. BowBehavior's are exactly the ones the people's (third and first person),
+  the draugr's and the falmer's graphs raise: `BowDraw` (Idle → Draw: DrawNock plays
+  Bow_DrawLight), `bowDrawStart` (DrawNock → DrawPull), `BowRelease` (→ Release, Bow_Release),
+  `bowReset` (wildcard → Idle), and the draugr's `BowDrawDraugr` (the heavy draw). Its own
+  clips raise `BowDrawOut` (DrawPull → IdleDrawn: the string held) and `BowReleaseOut`
+  (Release → Idle). The crossbows' take `BowDraw`, `BowRelease`, `BowReleaseFast`, `Reload`,
+  `ReloadFast`, `attackStop` and `bowReset`, and raise `reloadOut`, `BowReleaseOut`. Nothing
+  in them listens to the bow zoom (`bowZoomStart`, `bowZoomStop`: the camera's).
+- **Variables:** the ones the engine sets on the wielder go to the weapon too (as combat sets
+  them on the actor's graphs): `weaponSpeedMult`, which DrawPull's clip plays at (bound to its
+  playback speed; at the graph's own 0 the string would stop half drawn), and the crossbows'
+  `bPerkQuickDraw` (a perk's Set Boolean Graph Variable). `blendDefault` is the graph's own.
+- **Pose:** the graph runs on the model's nodes as a skeletal object's does (its bones matched
+  to the nodes by name, `startObjectSkeleton`), stepped with its wielder's combat update; its
+  pose is in the model's space, and the model's root is the node it hangs on (WEAPON in the
+  hand, WeaponBow at the back), so each moved node is that node's matrix times its pose.
+  Sheathed, the bow waits in Idle (Bow_DrawHeavy's first frame, its rest).
+
 ## Actors
 
 How placed actors (ACHR) appear and move (`src/shell/actors.ts`, `src/animation/skeleton.ts`;
