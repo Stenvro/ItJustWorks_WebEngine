@@ -737,6 +737,10 @@ export class WorldViewer {
       });
       return true;
     },
+    // Game.ForceFirstPerson / ForceThirdPerson (the beast forms change in third person).
+    pointOfView: (pov) => {
+      this.#play?.player.setPov(pov);
+    },
     interactionLocation: (furniture, from) =>
       this.#stage?.furniture.interactionLocation(furniture, from) ?? Promise.resolve(undefined),
     dependentAnimated: (reference, dependent, added) =>
@@ -749,6 +753,7 @@ export class WorldViewer {
       void this.#stage?.vehicles.tether(cart, horse);
     },
     mountOf: (actor) => this.#stage?.mounts.horseOf(actor),
+    flyingMount: (actor) => this.#stage?.mounts.flyingMount(actor),
     flight: (actor) => this.#stage?.flight.scriptState(actor),
     riderOf: (horse) => this.#stage?.mounts.riderOf(horse),
     dismount: (actor) => this.#stage?.mounts.dismount(actor) ?? false,
@@ -2231,12 +2236,30 @@ export class WorldViewer {
     cell.ready = false;
   }
 
+  /** The map's fast travel riding a dragon: it flies the player there; false riding none. */
+  flyMountTo(to: Vec3): boolean {
+    return this.#stage?.mounts.flyTo(to) ?? false;
+  }
+
+  /**
+   * Whether the player's first-person arms and weapons are drawn: in first person (not from the
+   * free camera or a menu's), unless Game.ShowFirstPersonGeometry hid them, nor dead.
+   */
+  #firstPersonShown(play: PlaySession): boolean {
+    return (
+      !play.bodyShown && !play.dead && this.#session?.scriptsReady?.firstPersonGeometry !== false
+    );
+  }
+
   *#readyScenes(): Iterable<GpuScene> {
     if (this.#sky && !this.#noSky) yield* this.#sky.skyScenes();
     // The player's body, in third person or seen from the free camera or a menu's.
     const play = this.#play;
     const avatar = this.#avatar;
     if (play && avatar && play.bodyShown) yield avatar.scene;
+    // In first person its arms, unless a script hides them (ShowFirstPersonGeometry).
+    const firstScene = avatar?.firstPersonBody?.scene;
+    if (play && firstScene && this.#firstPersonShown(play)) yield firstScene;
     if (this.#lod) yield* this.#lod.scenes();
     for (const cell of this.#cells.values()) if (cell.ready && cell.scene) yield cell.scene;
     if (this.#stage) yield* this.#stage.scenes();

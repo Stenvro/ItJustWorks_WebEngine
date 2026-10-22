@@ -272,6 +272,7 @@ describe('actor looks', () => {
     armor: id,
     editorId: '',
     model: { path: '', alternateTextures: [] },
+    firstPerson: undefined,
     weighted: false,
     slots,
     priority,

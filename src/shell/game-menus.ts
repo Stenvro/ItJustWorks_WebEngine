@@ -59,6 +59,9 @@ const EVENT_MENUS: Readonly<Record<string, string>> = {
   wait: 'Wait',
 };
 
+/** The menus a beast form keeps shut. */
+const BEAST_SHUT: ReadonlySet<string> = new Set(['Inventory', 'Magic', 'Favorites']);
+
 /** What the menus ask of the world being played. */
 export interface MenusWorld {
   /** The player is off the ground (falling, jumping). */
@@ -202,8 +205,13 @@ export class GameMenus {
     this.openMenu(menu);
   }
 
-  /** Opens one of the game's menus by name ("Tween", "Journal", "Inventory", ...). */
+  /**
+   * Opens one of the game's menus by name ("Tween", "Journal", "Inventory", ...). In a beast
+   * form (Game.SetBeastForm: a werewolf, a vampire lord) the inventory, magic and favorites
+   * stay shut (UESP "Skyrim:Werewolf": no items, no spells of the player's own).
+   */
   openMenu(name: string): void {
+    if (this.#session.scriptsReady?.beastForm === true && BEAST_SHUT.has(name)) return;
     const opening =
       name === 'Tween'
         ? this.#openTween()

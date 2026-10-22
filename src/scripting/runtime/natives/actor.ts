@@ -15,6 +15,15 @@ import { bool, formOf, int, num, object, str, type Register } from './args.ts';
 
 /** The gold item (Gold001), counted by GetGoldAmount. */
 const GOLD = 0xf;
+/** IdleVampireFeed and IdleCannibalFeed: ActionIdle's feeding idles (GetVampireFeed, GetCannibal). */
+const IDLE_VAMPIRE_FEED = 0xff9e5;
+const IDLE_CANNIBAL_FEED = 0xfe09d;
+/**
+ * How long a feeding lasts (real seconds: GetVampireFeed holds meanwhile, the perks' Feed is
+ * not offered again). TODO(M13): the engine ends it with the feeding's animation, whose
+ * length is its own.
+ */
+const FEEDING_SECONDS = 6;
 
 export function registerActor(n: Register, runtime: ScriptRuntime): void {
   const { state, actors, world } = runtime;
@@ -125,9 +134,14 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     // The actor's own race (its base keeps its own); its 3D is made again in it (the player's
     // with the face chosen in the race menu: a werewolf and back keeps it).
     state.actor(actor).race = formOf(call.args[0]);
-    world.raceChanged?.(actor);
+    const made = world.raceChanged?.(actor);
     // The new race's abilities act, the old one's end.
     await runtime.magic.syncLasting(actor);
+    // Once its 3D stands in the new race, its scripts hear OnRaceSwitchComplete (the werewolf's
+    // PlayerWerewolfScript starts its tracking then, or shuts the change down).
+    runtime.detach(
+      Promise.resolve(made).then(() => runtime.sendEvent(actor, 'OnRaceSwitchComplete')),
+    );
   });
   ask('getleveledactorbase', null, async (actor) =>
     object((await actors.info(actor))?.leveled, 'actorbase'),
@@ -562,7 +576,11 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     world.expression?.(actor, int(call.args[0]), int(call.args[1])),
   );
   act('clearexpressionoverride', (actor) => world.expression?.(actor, undefined, 0));
-  act('seteyetexture', () => undefined);
+  // SetEyeTexture: its eyes take another texture set (a vampire's red eyes): it is made again.
+  act('seteyetexture', (actor, call) => {
+    state.actor(actor).eyeTexture = formOf(call.args[0]);
+    world.equipmentChanged?.(actor);
+  });
   act('clearextraarrows', () => undefined);
 
   // --- Menus ----------------------------------------------------------------------------------
@@ -589,17 +607,31 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
   });
 
   // --- Lycanthropy and vampirism (their scripts listen for these) ----------------------------
-  act('sendlycanthropystatechanged', () => undefined);
-  act('sendvampirismstatechanged', () => undefined);
-  // Feeding on a target (a vampire's bite, Namira's cannibalism): a crime where it is seen
-  // (crime-engine.ts vampireFeed). TODO(M10) 5.1: the feeding's paired animation.
+  // The scripts that make the player a werewolf or a vampire, or cure them, tell the actor's
+  // scripts (OnLycanthropyStateChanged / OnVampirismStateChanged: Survival Mode's needs).
+  act('sendlycanthropystatechanged', (actor, call) =>
+    runtime.sendEvent(actor, 'OnLycanthropyStateChanged', [bool(call.args[0])]),
+  );
+  act('sendvampirismstatechanged', (actor, call) =>
+    runtime.sendEvent(actor, 'OnVampirismStateChanged', [bool(call.args[0])]),
+  );
+  // Feeding on a target (a vampire's bite, Namira's cannibalism): while it lasts GetVampireFeed
+  // (GetCannibal) holds, and the action's idle tree gives the feeding's idle (IdleVampireFeed:
+  // the paired bite, standing or at the bed; IdleCannibalFeed); a crime where it is seen
+  // (crime-engine.ts vampireFeed). The vampire's scripts hear OnVampireFeed.
   act('startvampirefeed', async (actor, call) => {
     const target = ref(call.args[0]);
-    if (target !== undefined) await runtime.crime.vampireFeed(actor, target);
+    if (target === undefined) return;
+    state.actor(actor).feeding = { kind: 'vampire', until: state.realTime + FEEDING_SECONDS };
+    world.playIdle?.(actor, IDLE_VAMPIRE_FEED, target);
+    await runtime.crime.vampireFeed(actor, target);
+    runtime.detach(runtime.sendEvent(actor, 'OnVampireFeed', [runtime.actorHandle(target)]));
   });
   act('startcannibal', async (actor, call) => {
     const target = ref(call.args[0]);
     if (target === undefined) return;
+    state.actor(actor).feeding = { kind: 'cannibal', until: state.realTime + FEEDING_SECONDS };
+    world.playIdle?.(actor, IDLE_CANNIBAL_FEED, target);
     // The corpse is eaten (HasBeenEaten: it is not fed on again).
     state.actor(target).eaten = true;
     await runtime.crime.vampireFeed(actor, target);

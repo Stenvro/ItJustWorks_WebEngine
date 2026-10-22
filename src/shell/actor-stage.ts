@@ -233,6 +233,9 @@ export class ActorStage {
         this.movers.release(actor);
       },
       ...(options.objects && { objects: options.objects }),
+      paired: (actor, target, event) => {
+        this.combat.pairIdle(actor, target, event);
+      },
     });
     this.movers = new ActorMovers({
       session: options.session,
@@ -345,6 +348,11 @@ export class ActorStage {
       movers: this.movers,
       get: (reference) => this.#actors.get(reference),
       ...(options.player && { player: options.player }),
+      flight: () => this.flight,
+      startCombat: (actor, target) => {
+        this.combat.startCombat(actor, target);
+      },
+      actors: () => this.#actors.values(),
     });
     this.vehicles = new ActorVehicles({
       session: options.session,
@@ -1107,7 +1115,8 @@ export class ActorStage {
         { ...old.actor, position: staged.position, rotation: [0, 0, staged.heading] },
         undefined,
         race,
-        { here: true },
+        // In a new race its graph starts at its beginning (the werewolf's change).
+        { here: true, fresh: race !== undefined && race !== old.look.race },
       )
       .catch((error: unknown) => {
         this.#options.terminal.log('actor', `${old.actor.editorId}: ${describe(error)}`, 'warn');

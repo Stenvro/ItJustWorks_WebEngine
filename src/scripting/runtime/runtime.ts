@@ -146,8 +146,11 @@ export interface WorldBridge {
   /** An actor died (its ragdoll; silent: no death cry or alarm). */
   killed?(actor: number, killer: number | undefined, silent: boolean): void;
   resurrected?(actor: number): void;
-  /** Actor.SetRace: the actor's 3D is made again in its new race (the player's keeps its face). */
-  raceChanged?(actor: number): void;
+  /**
+   * Actor.SetRace: the actor's 3D is made again in its new race (the player's keeps its face);
+   * resolves once it is (its scripts then hear OnRaceSwitchComplete).
+   */
+  raceChanged?(actor: number): Promise<void> | void;
   equipmentChanged?(actor: number): void;
   /**
    * A spell cast by a source at a target that is delivered at once (a Self or Touch spell, a
@@ -255,6 +258,13 @@ export interface WorldBridge {
   tether?(cart: number, horse: number): void;
   /** The horse an actor rides now (Actor.IsOnMount, IsRidingHorse), if any. */
   mountOf?(actor: number): number | undefined;
+  /**
+   * The flying mount an actor rides (a dragon: src/shell/actor-mounts.ts): whether it was
+   * sent on (its patrol) or flies to a place (fast travel); undefined riding none.
+   */
+  flyingMount?(
+    actor: number,
+  ): { readonly patrol: boolean; readonly travelling: boolean } | undefined;
   /** How a flier flies now (src/shell/actor-flight.ts); undefined: not a flier of the view. */
   flight?(actor: number): ActorFlightState | undefined;
   /** The actor riding a horse now (IsBeingRidden), if any. */
@@ -566,6 +576,8 @@ export interface Placement {
 }
 
 const CELL_INTERIOR = 0x01;
+/** MESG DNAM: shown as a message box (else, without buttons, as a notification). */
+const MESSAGE_BOX_FLAG = 0x01;
 
 /** The globals the engine keeps as its clock (UESP: GameHour, GameDaysPassed, ...). */
 type ClockGlobal = 'hour' | 'days' | 'day' | 'month' | 'year' | 'timescale';
@@ -662,6 +674,22 @@ export class ScriptRuntime implements VmHost {
   chargen = { noSaving: false, noWaiting: false, controlsMessage: false };
   fastTravelEnabled = true;
   hudCartMode = false;
+  /**
+   * Game.SetBeastForm: the player is a werewolf or a vampire lord (PlayerWerewolfChangeScript,
+   * DLC1PlayerVampireChangeScript): the inventory, magic and favorites menus stay shut
+   * (docs/gameplay.md, "Beast forms").
+   */
+  beastForm = false;
+  /**
+   * Game.ShowFirstPersonGeometry: whether the first-person arms and weapon are drawn (the
+   * beast forms and the carriage ride hide them).
+   */
+  firstPersonGeometry = true;
+  /**
+   * Game.SetAllowFlyingMountLandingRequests: whether the player may ask a dragon they ride to
+   * land (docs/gameplay.md, "Dragon riding").
+   */
+  flyingMountLandingAllowed = true;
   /**
    * God mode (the console's tgm, Debug.SetGodMode): the player takes no damage and cannot die.
    * TODO(M13): its unlimited carry weight and ammunition.
@@ -2329,6 +2357,13 @@ export class ScriptRuntime implements VmHost {
     const text = fillNumbers(record.text('DESC') ?? '', args);
     const buttons = record.fields.all('ITXT').map((data) => record.textAt(data));
     this.state.messages.push(text);
+    // Without its Message Box flag (DNAM 0x1) and buttons it is a notification (the HUD's top
+    // left, for TNAM seconds: "Bloodlust extended" as the werewolf feeds).
+    const flags = record.fields.first('DNAM')?.[0] ?? MESSAGE_BOX_FLAG;
+    if ((flags & MESSAGE_BOX_FLAG) === 0 && buttons.length === 0) {
+      this.world.notification?.(text);
+      return 0;
+    }
     const chosen = await this.world.messageBox?.(text, buttons);
     return typeof chosen === 'number' ? chosen : 0;
   }
