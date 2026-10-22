@@ -135,7 +135,39 @@ IsActorUsingATorch (a torch in the left hand), and of the right hand's weapon Ge
 IsWeaponSkillType, IsWeaponInList, HasTwoHandedWeaponEquipped; HasBoundWeaponEquipped by hand.
 IsShieldOut and IsWeaponOut need the weapon drawn (TODO(M10) 5.1).
 
-TODO(M11): warmth (Survival Mode); TODO(M12): the loadout in the save.
+TODO(M12): the loadout in the save.
+
+### Survival Mode's warmth
+
+`src/gameplay/warmth.ts`, `src/scripting/runtime/warmth-engine.ts` (UESP "Skyrim:Cold",
+Warmth): a piece's warmth (Armor.GetWarmthRating) is that of the body part it covers, the body
+before the head (slots 30, 31), then the hands, then the feet; cold, normal or warm as Update.esm's
+keywords make it (Survival_ArmorCold, Survival_ArmorWarm): head 8 / 18 / 29, body 17 / 27 / 54,
+hands and feet 7 / 13 / 24. Survival_BodyAndHead (the hooded robes) counts the body and the head.
+Shields, jewelry and circlets keep none. An enchanted variant made from a template armor (TNAM)
+has its template's keywords (Update.esm gave them only the templates; TODO(M13): the engine's
+reading). A light that can be carried (a torch) warms 50 (Light.GetWarmthRating; the ability
+Survival_abWarmthTorch only shows it). An actor's rating (Actor.GetWarmthRating, the condition
+GetActorWarmth) is its worn pieces', its torch's and its Fortify Warmth effects' (Peak Value
+Modifiers on actor value 76, Variable09 in the SSE list: Survival_FortifyWarmthConstant of the
+racial abilities, the hot soups' Survival_FoodFortifyWarmth). Survival_NeedCold clamps it to
+Survival_ColdResistMaxValue (206) for its cold. TODO(M13): the slot values are UESP's (the
+executable's own settings are not in the plugins). `node tools/item-info.ts <armor>` shows a
+piece's warmth.
+
+### Quest items
+
+`src/scripting/runtime/quest-items.ts`: a reference that fills a Quest Object alias (ALFA FNAM
+0x4) of a running quest is a quest item while it is in a container. The player's cannot be
+dropped, eaten, stored, sold or given (docs/ui.md, "The item menus"); RemoveAllItems leaves them
+unless abRemoveQuestItems.
+
+### Deferred kills
+
+Actor.StartDeferredKill: until EndDeferredKill the actor's health may run out without its dying
+(CommonLibSSE: MiddleHighProcessData inDeferredKill); as the deferral ends it dies (or bleeds
+out, essential or protected) if its health is still gone, by whoever dealt the blow that should
+have killed it (`ActorEngine.startDeferredKill`, `endDeferredKill`). No vanilla script calls them.
 
 ## Skills, levels and actor values
 

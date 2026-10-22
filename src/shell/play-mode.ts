@@ -115,6 +115,8 @@ export interface PlayWorld {
   tweenCamera(): TweenCamera | undefined;
   /** The player being played, their session and body (the viewer on screen's). */
   player(): PlayerView | undefined;
+  /** Where the actors fighting the player are (the compass's enemies). */
+  enemies?(): readonly (readonly number[])[];
 }
 
 /** Vite reloads the page (development): leaving it is not asked about. */
@@ -411,7 +413,8 @@ export class PlayMode {
     this.#mist?.hide();
     this.#mist = undefined;
     // In the game: its HUD, its compass.
-    const compass = new Compass(session);
+    // Its enemies: those fighting the player on the actor stage (src/shell/actor-combat.ts).
+    const compass = new Compass(session, () => this.#world.enemies?.() ?? []);
     const hud = new HudController(this.#host, session.hud, {
       heading: () => this.#world.heading(),
       runtime: () => session.scriptsReady,
@@ -508,6 +511,9 @@ export class PlayMode {
             'error',
           );
         });
+      },
+      tutorial: (use) => {
+        menus.tutorial(use);
       },
     };
     const settings = await session.settings();

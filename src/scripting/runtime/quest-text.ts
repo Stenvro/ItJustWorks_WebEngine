@@ -2,16 +2,29 @@
 // Creation Kit's "Text Replacement" describes them: `<Alias=Name>` is the name of what fills the
 // quest's alias of that name (the alias's display name, ALDN, if it has one), `<Alias.ShortName=
 // Name>` its short name (an NPC's SHRT, else its name), `<Global=EditorId>` the value of one of
-// the quest's text display globals (QTGL) as a whole number. A tag that cannot be filled (an
-// empty alias, a global the quest does not list) stays as it is, as it does in the game.
-// TODO(M11): the pronoun and race tags (<Alias.PronounObj=...>, ...), used by no vanilla quest
-// text the HUD or journal shows. Platform-independent.
+// the quest's text display globals (QTGL) as a whole number; the pronouns of the actor that
+// fills an alias by its sex (`<Alias.Pronoun=Name>` he / she, `.PronounObj` him / her,
+// `.PronounPos` his / hers, `.PronounPosObj` his / her, `.PronounRef` and `.PronounInt` himself /
+// herself: the settings sPronoun*Male / *Female) and its race's name (`<Alias.Race=Name>`). A tag
+// that cannot be filled (an empty alias, a global the quest does not list, a pronoun of what is
+// no actor) stays as it is, as it does in the game. Platform-independent.
 
 import type { QuestRecord } from '../../world/quest-records.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { ScriptRuntime } from './runtime.ts';
 
-const TAG = /<(Alias|Alias\.ShortName|Global)=([^>]+)>/gi;
+const TAG =
+  /<(Alias|Alias\.ShortName|Alias\.Pronoun(?:Obj|Pos|PosObj|Ref|Int)?|Alias\.Race|Global)=([^>]+)>/gi;
+
+/** The pronoun tags' settings: sPronoun<kind>Male / sPronoun<kind>Female. */
+const PRONOUNS: Readonly<Record<string, string>> = {
+  'alias.pronoun': 'sPronoun',
+  'alias.pronounobj': 'sPronounObj',
+  'alias.pronounpos': 'sPronounPos',
+  'alias.pronounposobj': 'sPronounPosObj',
+  'alias.pronounref': 'sPronounRef',
+  'alias.pronounint': 'sPronounInt',
+};
 
 /** How deep NPC templates are followed for a name (TPLT chains are short). */
 const TEMPLATE_DEPTH = 8;
@@ -26,10 +39,16 @@ export async function questText(
   if (tags.length === 0) return text;
   const filled = await Promise.all(
     tags.map(async ([whole, kind = '', name = '']) => {
+      const lower = kind.toLowerCase();
+      const pronoun = PRONOUNS[lower];
       const value =
-        kind.toLowerCase() === 'global'
+        lower === 'global'
           ? await globalText(runtime, quest, name)
-          : await aliasText(runtime, quest, name, kind.toLowerCase() === 'alias.shortname');
+          : pronoun !== undefined
+            ? await pronounText(runtime, quest, name, pronoun)
+            : lower === 'alias.race'
+              ? await raceText(runtime, quest, name)
+              : await aliasText(runtime, quest, name, lower === 'alias.shortname');
       return value ?? whole;
     }),
   );
@@ -50,6 +69,46 @@ async function globalText(
     return String(Math.trunc(value));
   }
   return undefined;
+}
+
+/** The actor that fills a quest's reference alias (by its name), if one does. */
+async function aliasActor(
+  runtime: ScriptRuntime,
+  quest: QuestRecord,
+  aliasName: string,
+): Promise<number | undefined> {
+  const wanted = aliasName.trim().toLowerCase();
+  const alias = quest.aliases.find((entry) => entry.name.toLowerCase() === wanted);
+  if (!alias || alias.location) return undefined;
+  const filled = runtime.state.quests.get(quest.formId)?.aliases.get(alias.id);
+  if (filled === undefined || !(await runtime.actors.isActor(filled))) return undefined;
+  return filled;
+}
+
+/** A pronoun of the actor in an alias, by its sex (sPronoun...Male / ...Female). */
+async function pronounText(
+  runtime: ScriptRuntime,
+  quest: QuestRecord,
+  aliasName: string,
+  setting: string,
+): Promise<string | undefined> {
+  const actor = await aliasActor(runtime, quest, aliasName);
+  if (actor === undefined) return undefined;
+  const female = await runtime.actors.isFemale(actor);
+  const text = await runtime.gameSetting(`${setting}${female ? 'Female' : 'Male'}`);
+  return typeof text === 'string' && text !== '' ? text : undefined;
+}
+
+/** The name of the race of the actor in an alias. */
+async function raceText(
+  runtime: ScriptRuntime,
+  quest: QuestRecord,
+  aliasName: string,
+): Promise<string | undefined> {
+  const actor = await aliasActor(runtime, quest, aliasName);
+  const race = actor === undefined ? undefined : await runtime.actors.raceOf(actor);
+  const name = race === undefined ? undefined : (await runtime.forms.record(race))?.text('FULL');
+  return name === '' ? undefined : name;
 }
 
 async function aliasText(

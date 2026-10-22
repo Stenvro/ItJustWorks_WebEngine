@@ -794,6 +794,22 @@ export class CrimeEngine {
   }
 
   /**
+   * A door locked or unlocked as its owner (ObjectReference.Lock's abAsOwner): as the owner's
+   * own LockDoors does it, no crime in it. Unlocked, the places on both its sides are open to
+   * the player again (no longer off limits: entering is no trespass); locked, the one the player
+   * is in becomes off limits (they trespass staying). Without abAsOwner a script's Lock leaves
+   * that as it was.
+   */
+  async lockedAsOwner(door: number, locked: boolean): Promise<void> {
+    const runtime = this.#runtime;
+    const cells = [
+      runtime.forms.db.cellOfReference(door),
+      await this.#doorDestinationCell(door),
+    ].filter((cell): cell is number => cell !== undefined);
+    this.doorsLocked(cells, locked, (await runtime.placement(PLAYER_REF))?.cell);
+  }
+
+  /**
    * Whether the player trespasses in a cell now (IsTrespassing): an interior off limits to them
    * (picked into, or locked with them in it) that is owned by others and not public.
    */

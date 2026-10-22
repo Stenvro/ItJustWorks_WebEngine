@@ -342,7 +342,11 @@ async function furnish(
       if (script) await craft(vm, host, item, script);
     }
   }
-  // Trophies are the player's choice at each trophy base, crafted there (TODO(M11): crafting).
+  // Trophies are the player's choice at each trophy base, crafted there in the running game (the
+  // crafting menu at the base: BYOHHouseTrophyBaseScript's OnActivate names the base,
+  // BYOHBuildingObjectTrophyScript's BuildTrophy places the trophy with PlaceAtMe). This preview
+  // shows the house's own references only. TODO(M13): trophies chosen in the sandbox's preview
+  // (references the scripts place: WorldState has none).
 }
 
 /**
