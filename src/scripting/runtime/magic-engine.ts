@@ -83,8 +83,9 @@ export interface MagicEffectShown {
   readonly persist: boolean;
   /** Seconds it lasts (0: until it ends). */
   readonly duration: number;
-  /** Its magnitude (Detect Life's reach in feet). */
+  /** Its magnitude, and its area in feet (Detect Life's reach). */
   readonly magnitude: number;
+  readonly area: number;
   /** Its associated form (Guide: Clairvoyance's trail hazard). */
   readonly associated: number | undefined;
 }
@@ -840,6 +841,7 @@ export class MagicEngine {
       persist: (effect.flags & EffectFlag.fxPersist) !== 0,
       duration: entry.duration,
       magnitude: entry.magnitude,
+      area: entry.area ?? 0,
       associated: effect.associatedItem,
     });
   }

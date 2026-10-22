@@ -1,7 +1,7 @@
 // What magic shows on actors (docs/gameplay.md, "Magic effects"): a magic effect's hit shader
 // (EFSH) and hit art (ARTO) on its target as it takes hold, while it lasts with FX Persist (else
 // their own time once), its light (a Light effect's LIGH: Candlelight's ball over the shoulder);
-// Detect Life's shader on the living within its magnitude in feet that its conditions pick
+// Detect Life's shader on the living within its area in feet that its conditions pick
 // (friends and enemies: the Detect Life spells' variants), seen through walls (its particles'
 // z test); scripts' EffectShader.Play and VisualEffect.Play (RFCT: art and shader).
 //
@@ -164,7 +164,7 @@ export class ActorEffects {
         caster: shown.target,
         effect: shown.key,
         shader: shown.shader,
-        radius: shown.magnitude * UNITS_PER_FOOT,
+        radius: shown.area * UNITS_PER_FOOT,
         shown: new Set(),
         wait: 0,
       });
