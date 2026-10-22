@@ -29,6 +29,7 @@ import { invert } from '../render/frustum.ts';
 import { identity, multiply, type Mat4, type Vec3 } from '../render/math.ts';
 import type { GpuScene, ModelInstance } from '../render/scene-renderer.ts';
 import type { Renderer } from '../render/renderer.ts';
+import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld, PlacedCollision } from '../physics/physics-world.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { CellObject } from '../world/cell-loader.ts';
@@ -44,8 +45,15 @@ export interface AdoptedVehicle {
   readonly instance: ModelInstance;
 }
 
-/** The ground's height under a towed wheel is found on the navmesh within this (units). */
+/** The ground under a towed wheel is found within this below it (units). */
 const GROUND_REACH = 160;
+/**
+ * ...looking from this far above it (the road rising between steps; low enough to pass under
+ * Helgen's gate).
+ */
+const GROUND_ABOVE = 64;
+/** The probe that finds the ground is a sphere this large (it does not slip through seams). */
+const GROUND_PROBE = 2;
 
 /** A cart pulled by a horse. */
 interface Cart {
@@ -270,6 +278,12 @@ export class ActorVehicles {
       if (view) {
         view.play.seated = true;
         if (view.avatar) view.avatar.seated = true;
+        const player = view.play.player;
+        // The third-person camera looks at the body where its idle seats it, and passes
+        // through the cart. TODO(M13): whether the engine's camera collides with the vehicle
+        // its player rides is not documented.
+        player.bodyShift = () => this.#options.player?.()?.avatar?.comShift();
+        player.cameraIgnores = (owner) => owner?.reference === vehicle;
       }
     } else {
       this.#options.movers.stop(actor);
@@ -304,7 +318,12 @@ export class ActorVehicles {
       const view = this.#options.player?.();
       if (view) {
         view.play.seated = false;
-        if (view.avatar) view.avatar.seated = false;
+        view.play.player.bodyShift = undefined;
+        view.play.player.cameraIgnores = undefined;
+        if (view.avatar) {
+          view.avatar.seated = false;
+          view.avatar.bodyPitch = 0;
+        }
       }
     }
   }
@@ -326,9 +345,28 @@ export class ActorVehicles {
     };
   }
 
-  /** The ground's height near a point: the navmesh's (the road the cart goes along). */
-  #ground = (x: number, y: number, z: number): number | undefined =>
-    this.#options.navmeshes?.()?.nearest?.([x, y, z], GROUND_REACH)?.[2];
+  /**
+   * The ground's height under a point: the collision's below it (the landscape, the road's
+   * stones, Helgen's paving), leaving out actors and the carts; where none is in place yet,
+   * the navmesh's nearest (which lies up to tens of units off the ground: the wheels sank).
+   */
+  #ground = (x: number, y: number, z: number): number | undefined => {
+    const physics = this.#physics;
+    if (physics?.queriesCurrent) {
+      const top = z + GROUND_ABOVE;
+      const hit = physics.pick(
+        [x, y, top],
+        [0, 0, -1],
+        GROUND_ABOVE + GROUND_REACH,
+        GROUND_PROBE,
+        Layer.charController,
+        undefined,
+        (owner) => owner !== undefined && (owner.kind === 'actor' || this.#carts.has(owner.reference)),
+      );
+      if (hit) return top - hit.distance - GROUND_PROBE;
+    }
+    return this.#options.navmeshes?.()?.nearest?.([x, y, z], GROUND_REACH)?.[2];
+  };
 
   /** Every physics step: each cart towed behind its horse; the player carried on theirs. */
   #stepAll(): void {
@@ -461,8 +499,12 @@ export class ActorVehicles {
       if (!pose) continue;
       const at = inVehicle(pose, passenger.offset);
       if (passenger.actor === PLAYER_REF) {
+        // Turned and pitched with the vehicle, as its other riders are.
         const avatar = this.#options.player?.()?.avatar;
-        if (avatar) avatar.bodyYaw = at.heading;
+        if (avatar) {
+          avatar.bodyYaw = at.heading;
+          avatar.bodyPitch = pose.pitch;
+        }
         continue;
       }
       const staged = this.#options.get(passenger.actor);

@@ -1159,6 +1159,8 @@ export class WorldViewer {
       feet,
       comeIn?.heading ?? 0,
     );
+    // Game.DisablePlayerControls' abCamSwitch keeps the camera as it is.
+    player.povSwitchAllowed = () => this.#session?.scriptsReady?.controls.camSwitch !== false;
     player.character.walkable = (px, py, pz) =>
       this.#cells
         .get(cellKey(Math.floor(px / CELL_SIZE), Math.floor(py / CELL_SIZE)))
