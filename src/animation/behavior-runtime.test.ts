@@ -728,4 +728,102 @@ describe("the dragon's flight modifiers", () => {
     }
     expect(raised).toEqual(['DragonPassByEffect']);
   });
+
+  it('activates the is-active modifiers events enter before an outer modifier reads them', () => {
+    // The magic graph's shape: CastingState's CastStop (an event-on-false-to-true of NotCasting)
+    // over the hand's states, whose cast state sets NotCasting to 0 while it is active.
+    const notCasting: BehaviorModifier = {
+      kind: 'is-active',
+      name: 'InvertNotCasting',
+      enable: { value: 1 },
+      slots: [{ output: { value: 0, variable: 0 }, invert: true }],
+    };
+    const hand: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Hand',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'HandReady',
+          probability: 1,
+          enable: true,
+          generator: clip('ready'),
+          transitions: [transition(2, 1)],
+        },
+        {
+          id: 1,
+          name: 'HandCast',
+          probability: 1,
+          enable: true,
+          generator: {
+            kind: 'modifier-generator',
+            name: 'Cast_MG',
+            modifier: notCasting,
+            generator: clip('cast'),
+          },
+          transitions: [transition(3, 0)],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const castStop: BehaviorModifier = {
+      kind: 'event-on-false-to-true',
+      name: 'CastStop',
+      enable: { value: 1 },
+      slots: [{ enabled: { value: 1 }, test: { value: 0, variable: 0 }, event: { id: 1 } }],
+    };
+    const root: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'MagicRoot',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'MagicReady',
+          probability: 1,
+          enable: true,
+          generator: clip('ready'),
+          transitions: [transition(0, 1)],
+        },
+        {
+          id: 1,
+          name: 'Casting',
+          probability: 1,
+          enable: true,
+          generator: {
+            kind: 'modifier-generator',
+            name: 'Casting_MG',
+            modifier: castStop,
+            generator: hand,
+          },
+          transitions: [transition(1, 0)],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(
+        root,
+        ['BeginCastRight', 'CastStop', 'MRh_SpellAimedStart', 'MRh_Equipped_Event'],
+        [{ name: 'NotCasting', initial: 1 }],
+      ),
+      host: host({ ready: animation(0), cast: animation(10) }),
+      skeleton,
+    });
+    runtime.update(0.1);
+    runtime.sendEvent('BeginCastRight');
+    runtime.sendEvent('MRh_SpellAimedStart');
+    for (let i = 0; i < 3; i++) runtime.update(0.1);
+    expect(runtime.variable('NotCasting')).toBe(0);
+    expect(runtime.takeRaised()).not.toContain('CastStop');
+    expect(runtime.states().map((state) => state.state)).toContain('HandCast');
+    // The hand back to its ready state: NotCasting again, CastStop ends CastingState.
+    runtime.sendEvent('MRh_Equipped_Event');
+    for (let i = 0; i < 3; i++) runtime.update(0.1);
+    expect(runtime.takeRaised()).toContain('CastStop');
+    expect(runtime.states().map((state) => state.state)).toContain('MagicReady');
+  });
 });

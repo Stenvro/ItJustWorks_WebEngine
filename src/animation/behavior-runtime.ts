@@ -715,11 +715,13 @@ export class BehaviorRuntime {
     this.#updates++;
     this.#dt = dt;
     // Events raised while handling others are handled in the same frame, a few rounds deep.
+    const handled = this.#queue.length > 0;
     for (let round = 0; round < 4 && this.#queue.length > 0; round++) {
       const events = this.#queue;
       this.#queue = [];
       for (const event of events) this.#handle(this.#root, event, new Set());
     }
+    if (handled) this.#activateIsActive(this.#root, new Set());
     const active = new Set<object>();
     this.#keyframed = new Set();
     this.#tweens = [];
@@ -1624,6 +1626,32 @@ export class BehaviorRuntime {
         break;
     }
     for (const child of this.#activeChildren(node)) this.#updateNode(child, dt, active);
+  }
+
+  /**
+   * The is-active modifiers (BSIsActiveModifier) of what the events just made active, activated
+   * before any modifier updates: Havok activates the nodes a transition enters before the
+   * frame's modifiers run (inner before outer), so an outer modifier reads what an inner one
+   * says from the first frame on. The magic graph's CastStop (an event-on-false-to-true of
+   * NotCasting, on CastingState) must see the cast state's InvertNotCasting at once, or it ends
+   * every cast as it begins. Those no update reaches this frame are deactivated with the rest.
+   */
+  #activateIsActive(node: BehaviorGenerator | undefined, seen: Set<object>): void {
+    if (!node || seen.has(node)) return;
+    seen.add(node);
+    if (node.kind === 'modifier-generator' && node.modifier)
+      this.#activateIsActiveIn(node.modifier);
+    for (const child of this.#activeChildren(node)) this.#activateIsActive(child, seen);
+  }
+
+  #activateIsActiveIn(modifier: BehaviorModifier): void {
+    if (modifier.kind === 'list') {
+      if (this.#read(modifier.enable, this.#scopeOf(modifier)) === 0) return;
+      for (const child of modifier.modifiers) this.#activateIsActiveIn(child);
+    } else if (modifier.kind === 'is-active' && !this.#modifiers.has(modifier)) {
+      this.#modifierState(modifier);
+      this.#active.add(modifier);
+    }
   }
 
   /**
