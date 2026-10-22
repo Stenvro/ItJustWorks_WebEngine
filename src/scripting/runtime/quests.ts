@@ -133,8 +133,8 @@ export class QuestEngine {
     // then 14, and the cart horses' packages hold from GetStage >= 15 to 20, so the carts would
     // stop halfway if 14 became the current stage. TODO(M13): confirm against the engine.
     state.stage = Math.max(state.stage, stage);
-    // The first log entry whose conditions hold is the one that happens: its flags, its next
-    // quest and its fragment (each log entry has its own; the others' do not run).
+    // The first log entry whose conditions hold is the one that happens: its flags and its
+    // fragment (each log entry has its own; the others' do not run).
     const entries = record.stages.find((s) => s.index === stage)?.logEntries ?? [];
     let chosen: number | undefined;
     for (const [index, entry] of entries.entries()) {
@@ -155,9 +155,10 @@ export class QuestEngine {
       }
       if ((entry.flags & LogEntryFlag.completeQuest) !== 0) this.complete(record.formId);
       if ((entry.flags & LogEntryFlag.failQuest) !== 0) this.fail(record.formId);
-      if (entry.nextQuest !== undefined && entry.nextQuest !== 0) {
-        runtime.detach(this.start(entry.nextQuest));
-      }
+      // Its next quest (NAM0) starts nothing: MQ101's stage 100 names MQ102, which its scripts start
+      // only as the player leaves Helgen (stage 700/800: MQ102A or MQ102B, then MQ102.Start).
+      // Started at the execution, MQ102's Alduin alias took him from the tower (its patrol away
+      // outranks MQ101's approach). TODO(M13): what the engine reads it for (the journal's order).
       break;
     }
     const attachments = await runtime.forms.attachments(record.formId);

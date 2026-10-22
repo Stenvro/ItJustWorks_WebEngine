@@ -61,7 +61,7 @@ export interface QuestLogEntry {
   readonly conditions: readonly Condition[];
   /** CNAM: the journal text (localized). */
   readonly text: string | undefined;
-  /** NAM0: the quest that follows. */
+  /** NAM0: the quest that follows (it does not start it: src/scripting/runtime/quests.ts). */
   readonly nextQuest: number | undefined;
 }
 
