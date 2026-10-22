@@ -408,7 +408,7 @@ the player in a runtime on the game data, `--audit` reads every record).
 - Art objects (ARTO) hang on the actor's skeleton: the art model's nodes follow the bones of
   their names each frame, its skinned shapes with them.
 - Detect Life shows its hit shader (LifeDetected's particles, through walls) on the living
-  within its magnitude in feet of its caster for whom its effect item's and magic effect's
+  within its area in feet of its caster for whom its effect item's and magic effect's
   conditions hold (`MagicEngine.detects`: the spells' friend and enemy, living and undead
   variants; TODO(M13): the rule taken from the vanilla spells), looked at twice a second.
 - Clairvoyance (Guide): its hazard (ClairvoyanceHazard: GuideHazard01.nif, its light, limit 1,

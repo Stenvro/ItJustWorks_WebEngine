@@ -80,10 +80,13 @@ export function texturePath(path: string): string {
 
 /**
  * NiAlphaProperty flags of an EFSH blend (D3D modes 1 zero, 2 one, 3 source colour ... 11
- * source alpha saturate) with blending on: their NiAlphaProperty functions.
+ * source alpha saturate) with blending on: their NiAlphaProperty functions. The destination's
+ * alpha is taken as 0 (the engine's scene target keeps none): destination alpha blends as zero,
+ * inverse destination alpha as one (FireFXShader's particles add their light). TODO(M13): the
+ * engine's target alpha is inferred from how the vanilla shaders look.
  */
 export function alphaFlags(source: number, dest: number): number {
-  const FUNCTIONS = [6, 1, 0, 2, 3, 6, 7, 8, 9, 4, 5, 10];
+  const FUNCTIONS = [6, 1, 0, 2, 3, 6, 7, 1, 0, 4, 5, 10];
   const src = FUNCTIONS[source] ?? 6;
   const dst = FUNCTIONS[dest] ?? 0;
   return 0x1 | (src << 1) | (dst << 5);
