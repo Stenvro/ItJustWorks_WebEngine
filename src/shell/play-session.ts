@@ -6,9 +6,8 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
-import { settlesWhenPlaced, type CollisionData } from '../physics/collision-data.ts';
+import { HAVOK_SCALE, settlesWhenPlaced, type CollisionData } from '../physics/collision-data.ts';
 import { GrabSpring } from '../physics/grab.ts';
-import { HAVOK_SCALE } from '../physics/collision-data.ts';
 
 /** Telekinesis: where the object is held before the camera, and how fast it flies let go. */
 const TELEKINESIS_HOLD = 150;
@@ -563,6 +562,11 @@ export class PlaySession {
    * world goes on around their body.
    */
   dead = false;
+  /**
+   * The player lies knocked down or gets up (src/shell/player-knockdown.ts): as the dead, they
+   * neither move nor activate anything meanwhile.
+   */
+  knocked = false;
 
   /** Lights a menu adds to the world while it is open (the race menu's two). */
   extraLights: readonly PointLight[] = [];
@@ -586,7 +590,7 @@ export class PlaySession {
     const player = this.player;
     const { moving, running, sprinting } = player.motion;
     // Free camera, being placed or dead: the player does not move.
-    const free = this.#freeCamera || this.#spawnPending || this.dead;
+    const free = this.#freeCamera || this.#spawnPending || this.dead || this.knocked;
     const [vx, vy] = player.character.velocity;
     return {
       moving: !free && moving,
@@ -663,7 +667,7 @@ export class PlaySession {
         for (const hook of this.stepHooks) hook(step);
       });
       this.#setTarget(undefined);
-    } else if (this.dead) {
+    } else if (this.dead || this.knocked) {
       // The world steps on; the player's keys do nothing.
       this.#grab = undefined;
       this.#hold = undefined;
@@ -913,7 +917,7 @@ export class PlaySession {
       }
       return;
     }
-    if (grab || this.seated || this.dead) return;
+    if (grab || this.seated || this.dead || this.knocked) return;
     const ray = this.#pickRay();
     const hit = this.physics.pick(
       ray.origin,

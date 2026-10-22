@@ -398,14 +398,16 @@ the player in a runtime on the game data, `--audit` reads every record).
   however slow the world (UESP "Skyrim:Slow Time"), through their perks over the spell that
   slowed it (Mod Player Magic Slowdown: Quick Reflexes' 1 keeps it whole); their movement and
   their body's animation run at it. Effects and scripts count real seconds.
-- Stagger: the target staggers by the magnitude from its caster (the combat's stagger:
-  staggerMagnitude, ActionStaggerStart; TODO(M10) 5.1: knock-downs). Disarm: the weapons leave
-  the hands and fall before the actor (placed at its hands' height, out of its inventory;
-  TODO(M13): how far the engine throws them). Telekinesis: the player's cast held takes hold of
+- Stagger: the target staggers by the magnitude, weighed against its mass, from its caster
+  (the combat's stagger: staggerMagnitude, ActionStaggerStart; knock-downs: docs/ai.md,
+  "Combat"). Disarm: the right hand's weapon leaves the inventory and falls from the hand into
+  the world, a dual wielder's left goes into its inventory, bound weapons stay (docs/ai.md,
+  "Combat": Disarm). Paralysis: the target falls as its ragdoll and lies while it lasts.
+  Telekinesis: the player's cast held takes hold of
   the loose object aimed at within reach with the grab spring (CommonLibSSE PlayerCharacter
   GrabbingType kTelekinesis) and pulls it before the camera; let go, it is flung along the view
   (TODO(M13): the engine's reach, hold distance and throw speed are not in the plugins). Grab
-  Actor is the vampire lord's (TODO(M11) with the beast forms).
+  Actor holds its target's ragdoll before its caster (docs/ai.md, "Combat").
 - Spawn Hazard places its hazard (HAZD: limit, radius in feet, lifetime, target interval,
   spell, light, impact data set, sound, image-space modifier and radius; flags Affects Player
   Only, Inherit Duration / Radius from Spawn Spell) where the effect lands; the hazard engine
@@ -524,13 +526,8 @@ Format/SPEL"; the game settings.
   NPCs release a ready spell at once; a concentration spell they hold while it serves: at a
   target while it lives and stays within its projectile's reach (and the magicka lasts), one
   without a target 2.5 s at most (TODO(M13): the engine's ward hold), a healing spell less once
-  their health is whole. The combat AI fights with the attack spell the casting engine chooses
-  against its target (its spells by cost × what gets through the target's resistance to their
-  costliest effect: its weaknesses first) and with its staffs that hold charge (taken in the
-  hand first), weighed with its weapons by its combat style; a conjurer calls its summon once a
-  fight; below iAICombatRestoreHealthPercentage (60) of its health it heals (its healing spell,
-  else a potion), below iAICombatRestoreMagickaPercentage (50: TODO(M13)) of its magicka it
-  drinks, at most every fCombatItemRestoreTimer (3) seconds.
+  their health is whole; UseMagic's for its cast time. The combat AI's spells, staffs, heals,
+  potions, summons, wards and buffs: docs/ai.md, "Combat AI".
 - What shows (src/shell/actor-casting.ts, magic-projectiles.ts, magic-fx.ts): the casting art
   in the hand (MGEF casting art; dual cast: the dual-cast art at its scale) and the casting
   light there (MGEF light); a projectile carries its light; with the Muzzle Flash flag its

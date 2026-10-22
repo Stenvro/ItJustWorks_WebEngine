@@ -236,6 +236,8 @@ export type BehaviorGenerator =
       readonly maxCyclicBlendParameter?: number;
       readonly indexOfSyncMasterChild?: number;
       readonly subtractLastChild?: boolean;
+      /** An hkbPoseMatchingGenerator's own members (the get-up poses). */
+      readonly poseMatching?: PoseMatching;
     }
   | {
       readonly kind: 'modifier-generator';
@@ -619,6 +621,54 @@ export type BehaviorModifier = { readonly name: string; readonly enable: Bindabl
     }
   | {
       /**
+       * hkbGetUpModifier: a character getting up from its ragdoll blends from the ragdoll's
+       * pose (the one it lay in) to the animation over `duration`, its root aligned with the
+       * ground over `alignWithGroundDuration`. The bone indices are the ragdoll skeleton's.
+       */
+      readonly kind: 'get-up';
+      readonly groundNormal: Vec4;
+      readonly duration: Bindable;
+      readonly alignWithGroundDuration: Bindable;
+      readonly rootBoneIndex: number;
+      readonly otherBoneIndex: number;
+      readonly anotherBoneIndex: number;
+    }
+  | {
+      /**
+       * BSRagdollContactListenerModifier: raises its event once a body of the ragdoll bones
+       * listed (all, when none are) touches something (the death animation going limp as it
+       * meets the floor: AnimateToRagdoll's "Ragdoll").
+       */
+      readonly kind: 'ragdoll-contact';
+      readonly contactEvent: BehaviorEvent;
+      readonly bones: Int16Array;
+    }
+  | {
+      /**
+       * hkbPoweredRagdollControlsModifier: the ragdoll's joints' motors pull its bodies toward
+       * the pose (maxForce 0: limp, as a knocked-down ragdoll's FullyRagdoll; 200 while it
+       * matches the get-up pose).
+       */
+      readonly kind: 'powered-ragdoll';
+      readonly maxForce: Bindable;
+      readonly tau: Bindable;
+      readonly damping: Bindable;
+      readonly proportionalRecoveryVelocity: Bindable;
+      readonly constantRecoveryVelocity: Bindable;
+      readonly bones: Int16Array;
+    }
+  | {
+      /**
+       * hkbRigidBodyRagdollControlsModifier: the ragdoll bones not keyframed follow the pose
+       * by the key frame hierarchy utility's gains (hkaKeyFrameHierarchyUtilityControlData).
+       */
+      readonly kind: 'rigid-body-ragdoll';
+      readonly control: RagdollControlData;
+      readonly durationToBlend: Bindable;
+      readonly bones: Int16Array;
+    }
+  | {
+      /**
        * BSIStateManagerModifier: the actor's state (iStateVar, bound to iState) as the state
        * machines named in its state data are in: the first entry whose machine is in its
        * StateID sets it to its iStateToSetAs (bound to an iState_<movement type> variable:
@@ -636,15 +686,51 @@ export type BehaviorModifier = { readonly name: string; readonly enable: Bindabl
     }
   | {
       /**
-       * The others the vanilla graphs use: the ragdoll's (hkbPoweredRagdollControlsModifier,
-       * hkbRigidBodyRagdollControlsModifier, hkbGetUpModifier,
-       * BSRagdollContactListenerModifier: TODO(M10) 5.1 with hits, knockdowns and getting
-       * up). `node tools/behavior-run.ts --modifiers` lists them.
+       * Any other modifier (none of the vanilla graphs' is left without a kind of its own:
+       * `node tools/behavior-run.ts --modifiers` lists them).
        */
       readonly kind: 'other';
       readonly className: string;
     }
 );
+
+/** hkaKeyFrameHierarchyUtilityControlData: how a ragdoll's driven bodies follow a pose. */
+export interface RagdollControlData {
+  readonly hierarchyGain: number;
+  readonly velocityDamping: number;
+  readonly accelerationGain: number;
+  readonly velocityGain: number;
+  readonly positionGain: number;
+  readonly positionMaxLinearVelocity: number;
+  readonly positionMaxAngularVelocity: number;
+  readonly snapGain: number;
+  readonly snapMaxLinearVelocity: number;
+  readonly snapMaxAngularVelocity: number;
+  readonly snapMaxLinearDistance: number;
+  readonly snapMaxAngularDistance: number;
+}
+
+/**
+ * hkbPoseMatchingGenerator's own members (a blender whose children are poses to get up from):
+ * from startMatchingEventId it shows the child whose first pose best matches the ragdoll's
+ * (by the ragdoll bones root, other and another), turned about the up axis to fit; from
+ * startPlayingEventId that child plays.
+ */
+export interface PoseMatching {
+  readonly worldFromModelRotation: Vec4;
+  readonly blendSpeed: number;
+  readonly minSpeedToSwitch: number;
+  readonly minSwitchTimeNoError: number;
+  readonly minSwitchTimeFullError: number;
+  readonly startPlayingEventId: number;
+  readonly startMatchingEventId: number;
+  readonly rootBoneIndex: number;
+  readonly otherBoneIndex: number;
+  readonly anotherBoneIndex: number;
+  readonly pelvisIndex: number;
+  /** 0 match, 1 play. */
+  readonly mode: number;
+}
 
 export interface BehaviorGraph {
   readonly name: string;
@@ -918,6 +1004,22 @@ class GraphReader {
                 ...(boneWeights && { boneWeights }),
               },
             ];
+          }),
+          ...(object.className === 'hkbPoseMatchingGenerator' && {
+            poseMatching: {
+              worldFromModelRotation: vec4(file, at + 160),
+              blendSpeed: file.f32(at + 176),
+              minSpeedToSwitch: file.f32(at + 180),
+              minSwitchTimeNoError: file.f32(at + 184),
+              minSwitchTimeFullError: file.f32(at + 188),
+              startPlayingEventId: file.i32(at + 192),
+              startMatchingEventId: file.i32(at + 196),
+              rootBoneIndex: file.i16(at + 200),
+              otherBoneIndex: file.i16(at + 202),
+              anotherBoneIndex: file.i16(at + 204),
+              pelvisIndex: file.i16(at + 206),
+              mode: file.i8(at + 208),
+            },
           }),
         };
       case 'hkbModifierGenerator': {
@@ -1326,6 +1428,64 @@ class GraphReader {
               : new Int16Array(0),
         };
       }
+      case 'hkbGetUpModifier':
+        return {
+          ...base,
+          kind: 'get-up',
+          groundNormal: vec4(file, at + 80),
+          duration: bindable('duration', file.f32(at + 96)),
+          alignWithGroundDuration: bindable('alignWithGroundDuration', file.f32(at + 100)),
+          rootBoneIndex: file.i16(at + 104),
+          otherBoneIndex: file.i16(at + 106),
+          anotherBoneIndex: file.i16(at + 108),
+        };
+      case 'BSRagdollContactListenerModifier':
+        return {
+          ...base,
+          kind: 'ragdoll-contact',
+          contactEvent: this.event(at + 88),
+          bones: boneIndexArray(file, file.object(at + 104)),
+        };
+      case 'hkbPoweredRagdollControlsModifier':
+        return {
+          ...base,
+          kind: 'powered-ragdoll',
+          maxForce: bindable('controlData/maxForce', file.f32(at + 80)),
+          tau: bindable('controlData/tau', file.f32(at + 84)),
+          damping: bindable('controlData/damping', file.f32(at + 88)),
+          proportionalRecoveryVelocity: bindable(
+            'controlData/proportionalRecoveryVelocity',
+            file.f32(at + 92),
+          ),
+          constantRecoveryVelocity: bindable(
+            'controlData/constantRecoveryVelocity',
+            file.f32(at + 96),
+          ),
+          bones: boneIndexArray(file, file.object(at + 112)),
+        };
+      case 'hkbRigidBodyRagdollControlsModifier': {
+        const f = (offset: number): number => file.f32(at + 80 + offset);
+        return {
+          ...base,
+          kind: 'rigid-body-ragdoll',
+          control: {
+            hierarchyGain: f(0),
+            velocityDamping: f(4),
+            accelerationGain: f(8),
+            velocityGain: f(12),
+            positionGain: f(16),
+            positionMaxLinearVelocity: f(20),
+            positionMaxAngularVelocity: f(24),
+            snapGain: f(28),
+            snapMaxLinearVelocity: f(32),
+            snapMaxAngularVelocity: f(36),
+            snapMaxLinearDistance: f(40),
+            snapMaxAngularDistance: f(44),
+          },
+          durationToBlend: bindable('controlData/durationToBlend', f(48)),
+          bones: boneIndexArray(file, file.object(at + 144)),
+        };
+      }
       case 'hkbRotateCharacterModifier':
         return {
           ...base,
@@ -1469,6 +1629,13 @@ class GraphReader {
       };
     });
   }
+}
+
+/** An hkbBoneIndexArray's bones (none without one). */
+function boneIndexArray(file: Packfile, object: HkxObject | undefined): Int16Array {
+  return object?.className === 'hkbBoneIndexArray'
+    ? i16Array(file, object.offset + 48)
+    : new Int16Array(0);
 }
 
 /** Reads members of a bindable object, with the variable or property bound to each. */

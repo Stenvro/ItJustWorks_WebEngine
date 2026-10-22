@@ -76,7 +76,7 @@ export class PlayerCasting implements CastingButtons {
     this.#readHands();
     const player = view.play.player;
     // In a menu, with fighting disabled (DisablePlayerControls) or dead, nothing is cast.
-    if (session.menuMode || !runtime.controls.fighting || view.play.dead) {
+    if (session.menuMode || !runtime.controls.fighting || view.play.dead || view.play.knocked) {
       this.clear();
       return;
     }

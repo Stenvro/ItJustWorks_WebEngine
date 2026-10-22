@@ -34,11 +34,7 @@ import {
   type CastingSettings,
   type HandCast,
 } from '../../gameplay/magic/casting.ts';
-import {
-  MagicValue,
-  resistanceMultiplier,
-  UNITS_PER_FOOT,
-} from '../../gameplay/magic/effect-rules.ts';
+import { MagicValue, UNITS_PER_FOOT } from '../../gameplay/magic/effect-rules.ts';
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import {
   SHOUT_DEFAULTS,
@@ -52,6 +48,7 @@ import { ActorValue } from '../../world/actor-values.ts';
 import { EffectArchetype, EffectFlag, type MagicEffectRecord } from '../../world/magic-effects.ts';
 import { Delivery, MagicSpellFlag, type MagicItemRecord } from '../../world/magic-records.ts';
 import {
+  ExplosionFlag,
   parseExplosion,
   parseProjectile,
   type ExplosionRecord,
@@ -182,6 +179,8 @@ export class CastingEngine {
   #settings: Promise<{ casting: CastingSettings; shout: ShoutSettings }> | undefined;
   /** Seconds the engine has run (its own clock: ward states). */
   #clock = 0;
+  /** When an actor last began casting an item ("actor:item": the AI's delays). */
+  readonly #lastCast = new Map<string, number>();
   /** What the world hears of casts. */
   readonly listeners = new Set<(event: CastEvent) => void>();
 
@@ -470,6 +469,8 @@ export class CastingEngine {
       hand: beginCast(castable.item.castType, cost.chargeTime),
     };
     this.#casts.set(`${String(actor)}:${String(source)}`, cast);
+    // When it last cast it (the combat AI waits out its effects' AI Delay Time: chooseSpell).
+    this.#lastCast.set(`${String(actor)}:${String(castable.item.formId)}`, this.#clock);
     // Casting ends invisibility (UESP "Skyrim:Invisibility").
     runtime.magic.acted(actor);
     if (castable.via === 'spell')
@@ -836,9 +837,11 @@ export class CastingEngine {
 
   /**
    * An explosion bursts at a point (a projectile's, an effect's): its enchantment on the actors
-   * within its radius, its damage (Health, less with distance), its force pushing them (the
-   * world's impulse). Returns the actors reached. TODO(M10) 5.1: knock-downs by its flags
-   * (Knock Down Always, by Formula) with the living ragdolls that get up.
+   * within its radius, its damage (Health, less with distance), its force pushing what is there
+   * (the world's impulse). Its knock-down flags (EXPL DATA) knock the actors down, pushed away
+   * from it by its force: Knock Down Always all of them, Knock Down By Formula those whose
+   * health is below fKnockdownCurrentHealthThreshold percent (TODO(M13): the engine's formula is
+   * not documented; that setting is the one its name ties to it). Returns the actors reached.
    */
   async explode(caster: number | undefined, explosionId: number, point: Point): Promise<number[]> {
     const runtime = this.#runtime;
@@ -861,6 +864,8 @@ export class CastingEngine {
       if (!(await runtime.actors.isActor(reference)) || (await runtime.actors.isDead(reference)))
         continue;
       reached.push(reference);
+      if (await this.#knocksDown(explosion, reference))
+        runtime.world.knockDown?.(reference, [...point], explosion.force * share);
       if (explosion.damage > 0)
         await runtime.actors.damage(reference, HEALTH, explosion.damage * share, caster);
       if (enchantment)
@@ -1031,16 +1036,25 @@ export class CastingEngine {
     return 'unlocked';
   }
 
+  /** Whether an explosion knocks an actor down (its flags; by formula: its health is low). */
+  async #knocksDown(explosion: ExplosionRecord, actor: number): Promise<boolean> {
+    if ((explosion.flags & ExplosionFlag.knockDownAlways) !== 0) return true;
+    if ((explosion.flags & ExplosionFlag.knockDownByFormula) === 0) return false;
+    const threshold = await this.#runtime.gameSetting('fKnockdownCurrentHealthThreshold');
+    const health = await this.#runtime.actors.value(actor, HEALTH);
+    const percent = health.max > 0 ? (health.current / health.max) * 100 : 100;
+    return percent < (typeof threshold === 'number' ? threshold : 50);
+  }
+
   // --- The AI ------------------------------------------------------------------------------
 
   /**
-   * The spell an NPC casts for a purpose now: of its spells (and what its hands hold), those
-   * that serve it (attack: hostile and sent at a target; heal: restores its Health; summon:
-   * summons or raises; ward: a ward; buff: a Self spell otherwise), the costliest it has the
-   * magicka for; at a target, the costliest by what gets through its resistances (its
-   * weaknesses first: a frost spell at a fire atronach). Whether the NPC casts at all is its
-   * combat style's (its magic score against its weapons': src/ai/combat-tactics.ts).
-   * TODO(M13): the engine's own weighing of spells (cost taken as their worth).
+   * The spell an NPC casts for a purpose now (the combat AI's: src/shell/combat-casting.ts): of
+   * its spells (and what its hands hold), those that serve it (attack: hostile and sent at a
+   * target; heal: restores its Health; summon: summons or raises; ward: a ward; buff: a Self
+   * spell otherwise), that it has the magicka for and whose effects' AI Delay Time (MGEF) has
+   * passed since it last cast it, the one worth most against `target` (spellWorth: through its
+   * resistances and weaknesses), the costliest of those worth as much.
    */
   async chooseSpell(
     actor: number,
@@ -1052,7 +1066,7 @@ export class CastingEngine {
     const loadout = await runtime.equipment.of(actor);
     for (const held of [loadout.left, loadout.right]) if (held !== undefined) ids.add(held);
     const magicka = (await runtime.actors.value(actor, MAGICKA)).current;
-    let best: { item: MagicItemRecord; cost: number } | undefined;
+    let best: { item: MagicItemRecord; cost: number; worth: number } | undefined;
     for (const id of ids) {
       const item = await runtime.magic.item(id);
       if (item?.kind !== 'spell' || item.castType === CastType.constantEffect) continue;
@@ -1060,28 +1074,69 @@ export class CastingEngine {
       const cost = (await this.cost(actor, { item, via: 'spell' })).magicka;
       const needed = item.castType === CastType.concentration ? 0 : cost;
       if (magicka <= 0 || magicka < needed) continue;
-      const worth =
-        purpose === 'attack' && target !== undefined
-          ? cost * (await this.#getsThrough(item, target))
-          : cost;
-      if (!best || worth > best.cost) best = { item, cost: worth };
+      if (await this.#delayed(actor, item)) continue;
+      const worth = await this.spellWorth(actor, item, purpose, target);
+      if (worth <= 0) continue;
+      if (!best || worth > best.worth || (worth === best.worth && cost > best.cost))
+        best = { item, cost, worth };
     }
     return best?.item;
   }
 
-  /** The share of an attack spell's costliest effect a target's resistance lets through. */
-  async #getsThrough(item: MagicItemRecord, target: number): Promise<number> {
+  /**
+   * What a spell (or a staff's enchantment, a shout's word) is worth to an NPC's combat AI for a
+   * purpose (TODO(M13): the engine's CombatMagicCaster weighing is not documented; this reads
+   * what the data give): for an attack, each effect's magnitude (by its seconds: a damage over
+   * time counts whole) times the share its target keeps of it (magic-engine foresee: none where
+   * its conditions or level cap leave the target out, its resistances' share of a hostile one:
+   * the target's weaknesses and resistances choose the element), an effect without a magnitude
+   * (paralysis, fear, a stagger's push) counting 1, plus each effect's MGEF Script Effect AI
+   * Score; to heal, the Health it restores; for the others, its cost (the stronger the better).
+   */
+  async spellWorth(
+    actor: number,
+    item: MagicItemRecord,
+    purpose: CastPurpose,
+    target?: number,
+  ): Promise<number> {
     const runtime = this.#runtime;
-    const main = await this.mainEffect(item);
-    if (!main || main.resistValue < 0) return 1;
-    const resist = (await runtime.actors.value(target, main.resistValue)).current;
-    return resistanceMultiplier(resist, undefined);
+    let worth = 0;
+    for (const [index, entry] of item.effects.entries()) {
+      const effect = await runtime.magic.effect(entry.effect);
+      if (!effect) continue;
+      const amount = Math.max(0, entry.magnitude) * Math.max(1, entry.duration);
+      if (purpose === 'attack') {
+        if ((effect.flags & EffectFlag.hostile) === 0) continue;
+        const share =
+          target === undefined ? 1 : await runtime.magic.foresee(item, index, target, actor);
+        worth += (amount > 0 ? amount : 1) * share + effect.aiScore * (share > 0 ? 1 : 0);
+      } else if (purpose === 'heal') {
+        if (effect.archetype === EffectArchetype.valueModifier && effect.actorValue === HEALTH)
+          worth += amount;
+      } else {
+        worth += effect.aiScore;
+      }
+    }
+    if (purpose !== 'attack' && purpose !== 'heal')
+      worth += Math.max(1, (await this.cost(actor, { item, via: 'spell' })).magicka);
+    return worth;
+  }
+
+  /** Whether the AI waits yet to cast an item again (its effects' MGEF AI Delay Time). */
+  async #delayed(actor: number, item: MagicItemRecord): Promise<boolean> {
+    const last = this.#lastCast.get(`${String(actor)}:${String(item.formId)}`);
+    if (last === undefined) return false;
+    let delay = 0;
+    for (const entry of item.effects)
+      delay = Math.max(delay, (await this.#runtime.magic.effect(entry.effect))?.aiDelay ?? 0);
+    return this.#clock - last < delay;
   }
 
   /**
    * The potion an NPC drinks to restore an actor value (Health, Magicka, Stamina): of the
-   * potions it carries, the one restoring the most (magnitude × its seconds). The combat AI
-   * drinks below iAICombatRestoreHealthPercentage (src/shell/actor-combat-ai.ts).
+   * potions it carries, the one restoring the most (magnitude × its seconds). When it drinks
+   * is the combat AI's (src/shell/actor-combat-ai.ts: below iAICombatRestoreHealthPercentage,
+   * once every fCombatItemRestoreTimer).
    */
   async choosePotion(actor: number, value: number): Promise<number | undefined> {
     const runtime = this.#runtime;
@@ -1115,6 +1170,10 @@ export class CastingEngine {
     }
     const hostile = effects.some((effect) => (effect.flags & EffectFlag.hostile) !== 0);
     const archetypes = new Set(effects.map((effect) => effect.archetype));
+    // A ward: MagicWard on the spell or (the vanilla wards') on its effects.
+    const ward =
+      item.keywords.includes(MAGIC_WARD) ||
+      effects.some((effect) => effect.keywords.includes(MAGIC_WARD));
     const summons =
       archetypes.has(EffectArchetype.summonCreature) || archetypes.has(EffectArchetype.reanimate);
     switch (purpose) {
@@ -1133,13 +1192,16 @@ export class CastingEngine {
       case 'summon':
         return summons;
       case 'ward':
-        return item.keywords.includes(MAGIC_WARD);
+        return ward;
       case 'buff':
+        // A Self spell that lasts (armour, a cloak, Muffle): cast once, it stays on.
         return (
           item.delivery === Delivery.self &&
+          item.castType === CastType.fireAndForget &&
           !hostile &&
           !summons &&
-          !item.keywords.includes(MAGIC_WARD)
+          !ward &&
+          item.effects.some((entry) => entry.duration > 0)
         );
     }
   }

@@ -679,15 +679,16 @@ export class CrimeEngine {
 
   /**
    * An actor died (ActorEngine.kill): it no longer witnesses; killed by the player, a murder if
-   * it was no enemy; the story manager's Kill Actor event (OnStoryKillActor: crime status 0 no
-   * crime, 1 unseen, 2 seen; the relationship rank to its killer).
+   * it was no enemy (not a silent kill's: KillSilent raises no alarm); the story manager's Kill
+   * Actor event (OnStoryKillActor: crime status 0 no crime, 1 unseen, 2 seen; the relationship
+   * rank to its killer).
    */
-  async killed(victim: number, killer: number | undefined): Promise<void> {
+  async killed(victim: number, killer: number | undefined, silent = false): Promise<void> {
     const runtime = this.#runtime;
     const rank = killer === undefined ? 0 : await runtime.actors.relationshipRank(victim, killer);
     const hostile = killer !== undefined && (await this.reaction(victim, killer)) === 'hostile';
     this.witnessDied(victim);
-    const crime = killer === undefined ? undefined : await this.murder(killer, victim);
+    const crime = killer === undefined || silent ? undefined : await this.murder(killer, victim);
     const status = killer === PLAYER_REF && !hostile ? (crime ? 2 : 1) : 0;
     const location = await runtime.locationOf(victim);
     runtime.detach(
@@ -1268,6 +1269,7 @@ export class CrimeEngine {
       relationshipRank: await actors.relationshipRank(actor, other),
       frenzied: aggression >= 3,
       crimeHostile: other === PLAYER_REF && (await this.#crimeHostile(actor, mine, alarmed)),
+      scriptHostile: runtime.state.actors.get(actor)?.combatTargets?.includes(other) === true,
     });
   }
 

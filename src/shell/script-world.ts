@@ -59,12 +59,13 @@ export interface ScriptView {
    * view makes its 3D again; resolves once it shows the new look.
    */
   lookChanged?(reference: number): Promise<void>;
-  /** An actor died: the view lays it down as its ragdoll (its pose follows its bodies). */
-  killed?(reference: number): void;
+  /**
+   * An actor died: the view lays it down as its ragdoll (its pose follows its bodies); it cries
+   * out unless the kill was silent (KillSilent).
+   */
+  killed?(reference: number, killer: number | undefined, silent: boolean): void;
   /** A magic effect begins or ends on an actor: what it shows (src/shell/actor-effects.ts). */
   magicEffect?(shown: MagicEffectShown): void;
-  /** A Stagger effect on an actor of the view. */
-  stagger?(actor: number, magnitude: number, from: number | undefined): void;
   /** EffectShader.Play / Stop and VisualEffect.Play / Stop on a reference of the view. */
   effectShader?(shader: number, target: number, play: boolean, duration: number): void;
   visualEffect?(effect: number, target: number, play: boolean, duration: number): void;
@@ -133,6 +134,14 @@ export interface CombatBridge {
   drawWeapon(actor: number, draw: boolean): void;
   bleedout(actor: number, source: number | undefined): void;
   firstPerson(): boolean;
+  /** Knocks an actor down, pushed away from a point (src/shell/actor-knockdowns.ts). */
+  knockDown(actor: number, from: Vec3 | undefined, force: number): Promise<void>;
+  /** A Stagger effect's magnitude on an actor, from its caster's side. */
+  staggerEffect(actor: number, magnitude: number, caster: number | undefined): void;
+  /** Paralysis begins or ends on an actor: it lies as its ragdoll meanwhile. */
+  paralyze(actor: number, on: boolean): void;
+  /** Grab Actor: the target hangs as its ragdoll before its caster while it lasts. */
+  grabActor(caster: number | undefined, target: number, on: boolean): void;
 }
 
 /**
@@ -361,8 +370,8 @@ export class ScriptWorld implements WorldBridge {
    * An actor's look changed (its race; the player's appearance): the views showing it make it
    * again; resolves once they have.
    */
-  killed(actor: number): void {
-    for (const view of this.#views) view.killed?.(actor);
+  killed(actor: number, killer?: number, silent = false): void {
+    for (const view of this.#views) view.killed?.(actor, killer, silent);
   }
 
   currentPackage(actor: number): number | undefined {
@@ -601,6 +610,29 @@ export class ScriptWorld implements WorldBridge {
     return false;
   }
 
+  /** PushActorAway, KnockAreaEffect, a trap's push: knocked down, away from a reference. */
+  pushAway(pushed: number, from: number, force: number): void {
+    const at = this.livePlacement(from)?.position;
+    for (const fights of this.#fights()) void fights.knockDown(pushed, at && [...at], force);
+  }
+
+  /** An explosion's knock-down: knocked down, away from where it burst. */
+  knockDown(actor: number, from: Vec3, force: number): void {
+    for (const fights of this.#fights()) void fights.knockDown(actor, from, force);
+  }
+
+  stagger(actor: number, magnitude: number, caster: number | undefined): void {
+    for (const fights of this.#fights()) fights.staggerEffect(actor, magnitude, caster);
+  }
+
+  paralyze(actor: number, on: boolean): void {
+    for (const fights of this.#fights()) fights.paralyze(actor, on);
+  }
+
+  grabActor(caster: number | undefined, target: number, on: boolean): void {
+    for (const fights of this.#fights()) fights.grabActor(caster, target, on);
+  }
+
   furnitureInUse(furniture: number, marker?: number): boolean {
     for (const view of this.#views) if (view.furnitureInUse?.(furniture, marker)) return true;
     return false;
@@ -662,11 +694,6 @@ export class ScriptWorld implements WorldBridge {
     if (shown.event === 'start' && shown.target === PLAYER_REF)
       this.#terminal.log('magic', `effect ${shown.effect.toString(16)} on the player`);
     for (const view of this.#views) view.magicEffect?.(shown);
-  }
-
-  /** A Stagger effect: the views stagger the actor. */
-  stagger(actor: number, magnitude: number, from: number | undefined): void {
-    for (const view of this.#views) view.stagger?.(actor, magnitude, from);
   }
 
   /** EffectShader.Play (seconds; −1 until Stop) and Stop. */

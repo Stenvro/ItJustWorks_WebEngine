@@ -142,13 +142,6 @@ const ACTOR_TYPE_UNDEAD = 0x13796;
  */
 const PULSE_SECONDS = 1;
 
-/**
- * A disarmed weapon falls from about the hands before the actor (units ahead, above its feet).
- * TODO(M13): the engine throws it; how far is not documented.
- */
-const DISARM_REACH = 48;
-const DISARM_HEIGHT = 90;
-
 /** The player's own pace in slowed time (UESP "Skyrim:Slow Time": "only slowed to 70%"). */
 const PLAYER_SLOWED_PACE = 0.7;
 
@@ -316,6 +309,89 @@ export class MagicEngine {
     return this.effectsOn(target).filter(
       ([, entry]) => !entry.inactive && this.#effects.get(entry.effect)?.archetype === archetype,
     );
+  }
+
+  /**
+   * The share of a hostile effect's magnitude its target keeps through its resistances: the
+   * effect's resist value (Resist Fire, Poison, ...) and Magic Resistance on hostile spells, each
+   * as resistanceMultiplier has it (the player's capped at fPlayerMaxResistance); 1 for an item
+   * that ignores resistance.
+   */
+  async resistedShare(
+    item: MagicItemRecord,
+    effect: MagicEffectRecord,
+    target: number,
+  ): Promise<number> {
+    const runtime = this.#runtime;
+    const ignores = item.type === 'SPEL' && (item.flags & MagicSpellFlag.ignoreResistance) !== 0;
+    let left = 1;
+    const cap =
+      target === PLAYER_REF
+        ? await this.#setting('fPlayerMaxResistance', PLAYER_MAX_RESISTANCE)
+        : undefined;
+    if (!ignores && effect.resistValue >= 0) {
+      const resist = (await runtime.actors.value(target, effect.resistValue)).current;
+      left *= resistanceMultiplier(resist, cap);
+    }
+    if (magicResistanceApplies(item.kind, effect, ignores)) {
+      const resist = (await runtime.actors.value(target, MagicValue.magicResist)).current;
+      left *= resistanceMultiplier(resist, cap);
+    }
+    return left;
+  }
+
+  /**
+   * How much of an item's effect (by index) would take hold on a target from a caster, as the
+   * combat AI foresees it: 0 where its conditions fail on the target (Turn Undead on the
+   * living), its level cap leaves it out or the target is ethereal; else the share its
+   * resistances leave a hostile one (resistedShare).
+   */
+  async foresee(
+    item: MagicItemRecord,
+    index: number,
+    target: number,
+    caster: number | undefined,
+  ): Promise<number> {
+    const runtime = this.#runtime;
+    const entry = item.effects[index];
+    const effect = entry && (await this.effect(entry.effect));
+    if (!entry || !effect) return 0;
+    const hostile = (effect.flags & (EffectFlag.hostile | EffectFlag.detrimental)) !== 0;
+    if (hostile && caster !== target && this.aiState(target).ethereal) return 0;
+    if (LEVEL_CAPPED.has(effect.archetype) && entry.magnitude > 0) {
+      if ((await runtime.actors.level(target)) > entry.magnitude) return 0;
+    }
+    const conditions = [...entry.conditions, ...effect.conditions].filter(
+      (condition) => condition.function !== GET_RANDOM_PERCENT,
+    );
+    if (
+      conditions.length > 0 &&
+      !(await runtime.conditionsHold(conditions, runtime.actorHandle(target), undefined, {
+        ...(caster !== undefined && { target: runtime.actorHandle(caster) }),
+      }))
+    )
+      return 0;
+    return hostile ? this.resistedShare(item, effect, target) : 1;
+  }
+
+  /** The creatures an actor's summonings and reanimations made that stand now (the AI asks). */
+  async summonsOf(caster: number): Promise<number[]> {
+    const runtime = this.#runtime;
+    const made: number[] = [];
+    for (const [, entry] of runtime.state.activeEffects) {
+      if (entry.inactive || entry.made === undefined) continue;
+      if ((entry.caster ?? entry.target) !== caster) continue;
+      const archetype = this.#effects.get(entry.effect)?.archetype;
+      if (archetype !== EffectArchetype.summonCreature && archetype !== EffectArchetype.reanimate)
+        continue;
+      if (!(await runtime.actors.isDead(entry.made))) made.push(entry.made);
+    }
+    return made;
+  }
+
+  /** Whether an item's effects are on an actor now (a buff the AI need not cast again). */
+  hasItemOn(actor: number, item: number): boolean {
+    return this.effectsOn(actor).some(([, entry]) => entry.item === item && !entry.inactive);
   }
 
   /** What the AI reads of an actor's effects (the combat AI acts on them). */
@@ -582,20 +658,7 @@ export class MagicEngine {
     // Resistances (not of what an actor has: abilities, diseases): the effect's resist value,
     // and Magic Resistance on hostile spells.
     if (hostile && !lasting) {
-      const ignores = item.type === 'SPEL' && (item.flags & MagicSpellFlag.ignoreResistance) !== 0;
-      let left = 1;
-      const cap =
-        target === PLAYER_REF
-          ? await this.#setting('fPlayerMaxResistance', PLAYER_MAX_RESISTANCE)
-          : undefined;
-      if (!ignores && effect.resistValue >= 0) {
-        const resist = (await runtime.actors.value(target, effect.resistValue)).current;
-        left *= resistanceMultiplier(resist, cap);
-      }
-      if (magicResistanceApplies(item.kind, effect, ignores)) {
-        const resist = (await runtime.actors.value(target, MagicValue.magicResist)).current;
-        left *= resistanceMultiplier(resist, cap);
-      }
+      const left = await this.resistedShare(item, effect, target);
       if (left < 1) {
         // Without a magnitude, resistance is the chance of resisting it all (UESP
         // "Skyrim:Magic Resistance": Paralysis).
@@ -768,6 +831,14 @@ export class MagicEngine {
     if (effect?.archetype === EffectArchetype.peakValueModifier)
       this.#settlePeak(entry.target, entry.effect);
     if (effect) await this.#archetypeEnd(entry, effect, ending);
+    // The paralysed get up once no paralysis is left on them.
+    if (
+      effect?.archetype === EffectArchetype.paralysis &&
+      this.#archetypeOn(entry.target, EffectArchetype.paralysis).length === 0
+    )
+      runtime.world.paralyze?.(entry.target, false);
+    if (effect?.archetype === EffectArchetype.grabActor)
+      runtime.world.grabActor?.(entry.caster, entry.target, false);
     if (entry.target === PLAYER_REF && effect?.imageSpaceModifier !== undefined)
       runtime.world.imageSpace?.(effect.imageSpaceModifier, 'remove', 0);
     if (effect) this.#show('stop', key, entry, effect);
@@ -1078,24 +1149,16 @@ export class MagicEngine {
       }
 
       case EffectArchetype.disarm: {
-        // Its weapons leave its hands and fall to the ground before it (out of its inventory,
-        // placed at its hands' height: the world's physics lets them fall).
+        // Its weapons leave its hands (UESP "Skyrim:Disarm": up to the magnitude's level, the
+        // level cap above): the right hand's falls from the hand into the world, a reference
+        // anyone can pick up; a dual wielder's left goes into its inventory; bound weapons stay.
         let dropped = false;
         for (const hand of ['right', 'left'] as const) {
           const weapon = await runtime.equipment.weapon(target, hand);
-          if (weapon === undefined || !(await runtime.equipment.unequip(target, weapon, { hand })))
-            continue;
+          if (weapon === undefined || this.#bound(target, weapon)) continue;
+          if (!(await runtime.equipment.unequip(target, weapon, { hand }))) continue;
           dropped = true;
-          await runtime.removeItem(target, runtime.formHandle(weapon), 1, true, undefined);
-          const placed = await runtime.placeAt(weapon, target, 1);
-          const at = runtime.state.references.get(placed)?.position;
-          const heading = runtime.state.references.get(placed)?.rotation?.[2] ?? 0;
-          if (at)
-            runtime.move(placed, [
-              at[0] + Math.sin(heading) * DISARM_REACH,
-              at[1] + Math.cos(heading) * DISARM_REACH,
-              at[2] + DISARM_HEIGHT,
-            ]);
+          if (hand === 'right') await this.#dropWeapon(target, weapon);
         }
         if (dropped) {
           if (target === PLAYER_REF) {
@@ -1106,9 +1169,20 @@ export class MagicEngine {
         break;
       }
       case EffectArchetype.stagger:
-        // It staggers by its magnitude from its caster (the combat's stagger).
-        if (!(await runtime.actors.isDead(target)))
+        // A stagger by its magnitude, weighed against the target's mass (src/shell/
+        // actor-combat.ts staggerEffect); a knock-down is its scripts' (Unrelenting Force's
+        // third word: VoicePushEffectScript's PushActorAway).
+        if (entry.magnitude > 0 && !(await runtime.actors.isDead(target)))
           runtime.world.stagger?.(target, entry.magnitude, entry.caster);
+        break;
+      case EffectArchetype.paralysis:
+        // It falls as its ragdoll and lies while it lasts (src/shell/actor-knockdowns.ts).
+        runtime.world.paralyze?.(target, true);
+        break;
+      case EffectArchetype.grabActor:
+        // Vampiric Grip: its target hangs as its ragdoll before the caster while it lasts.
+        if (!(await runtime.actors.isDead(target)))
+          runtime.world.grabActor?.(entry.caster, target, true);
         break;
       // A werewolf fed on the corpse (PlayerWerewolfFeedVictimSpell, the Feed perk's choice):
       // it is eaten (HasBeenEaten: no one feeds on it again).
@@ -1121,11 +1195,33 @@ export class MagicEngine {
       // (aiState, timeMultiplier) and their scripts; what they show (lights, Detect Life's
       // shader, Clairvoyance's trail) the world's magicEffect shows (src/shell/actor-effects.ts).
       // Telekinesis: the player's cast takes hold of the object aimed at
-      // (src/shell/player-casting.ts). TODO(M10) 5.1: knock-downs (a living ragdoll that gets
-      // up), Grab Actor (Dragonborn's Bend Will's grab) with them.
+      // (src/shell/player-casting.ts).
       default:
         break;
     }
+  }
+
+  /** Whether a weapon in an actor's hands is a bound one (a Bound Weapon effect's on it). */
+  #bound(actor: number, weapon: number): boolean {
+    return this.#archetypeOn(actor, EffectArchetype.boundWeapon).some(
+      ([, entry]) => entry.made === weapon,
+    );
+  }
+
+  /**
+   * A disarmed weapon leaves its holder's items and falls from its hand (the WEAPON node; its
+   * place without one): a new reference of it in the world, which the world drops and anyone
+   * may pick up.
+   */
+  async #dropWeapon(actor: number, weapon: number): Promise<void> {
+    const runtime = this.#runtime;
+    await runtime.removeItem(actor, runtime.formHandle(weapon), 1, true, undefined);
+    const dropped = await runtime.placeAt(weapon, actor, 1);
+    const hand = runtime.world.nodePlacement?.(actor, 'WEAPON');
+    const at = hand?.position ?? (await runtime.placement(actor))?.position;
+    if (!at) return;
+    runtime.move(dropped, [at[0], at[1], at[2] + (hand ? 0 : 64)]);
+    runtime.world.moved?.(dropped);
   }
 
   async #archetypeEnd(

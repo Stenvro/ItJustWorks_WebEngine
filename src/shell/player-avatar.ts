@@ -176,6 +176,20 @@ export class PlayerAvatar {
   }
 
   #dead = false;
+
+  /**
+   * Knocked down (src/shell/player-knockdown.ts): its graph runs on (its ragdoll, its get-up),
+   * its pose is its ragdoll's while it lies, and it stays where it is placed (placeAt), not on
+   * the player's feet.
+   */
+  knocked = false;
+
+  /** Places the body (knocked down: where it gets up), facing a heading. */
+  placeAt(position: readonly number[], yaw: number): void {
+    this.#bodyYaw = yaw;
+    this.#place([position[0] ?? 0, position[1] ?? 0, position[2] ?? 0]);
+  }
+
   /** The seconds its graphs moved in the last update (the furniture's root motion). */
   stepped = 0;
 
@@ -370,15 +384,22 @@ export class PlayerAvatar {
     const dt = Math.min(MAX_STEP, Math.max(0, step));
     this.#clock += dt;
     this.stepped = dt;
-    if (!this.seated) this.#drive(dt);
+    if (!this.seated && !this.knocked) this.#drive(dt);
     const body = this.#made.body;
     const skeletons: AnimatedSkeleton[] = [body];
     if (this.#firstPerson) skeletons.push(this.#firstPerson.skeleton);
     this.#look(body, dt);
     animateSkeletons(skeletons, this.#clock);
+    // Knocked down it lies (and gets up) where it is placed.
+    if (this.knocked) return;
     // The body stands on the player's feet, facing its own way: where the camera has them
     // between physics steps (the last step's feet put the body up to a step off the camera).
-    const feet = player.drawnFeet;
+    this.#place(player.drawnFeet);
+  }
+
+  /** The body's placement: at feet, facing its yaw, at its race's and its own size. */
+  #place(feet: readonly number[]): void {
+    const body = this.#made.body;
     // The race's height times its own (as placed actors are).
     const scale = body.look.scale * body.actor.scale;
     const sin = Math.sin(this.#bodyYaw);
@@ -397,15 +418,21 @@ export class PlayerAvatar {
       0,
       scale,
       0,
-      feet[0],
-      feet[1],
-      feet[2],
+      feet[0] ?? 0,
+      feet[1] ?? 0,
+      feet[2] ?? 0,
       1,
     ]);
     this.#motion.version++;
     // The first-person arms: on the feet, turned with the view.
+    const player = this.#player;
     if (player.pov === 'first') {
-      this.#firstPerson?.place(feet, this.#bodyYaw, player.height, player.pitch);
+      this.#firstPerson?.place(
+        [feet[0] ?? 0, feet[1] ?? 0, feet[2] ?? 0],
+        this.#bodyYaw,
+        player.height,
+        player.pitch,
+      );
     }
   }
 
