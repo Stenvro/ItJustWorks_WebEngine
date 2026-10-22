@@ -224,6 +224,8 @@ interface Gear {
   readonly race: RaceHits | undefined;
   /** A torch in the left hand (a LIGH that can be carried): its model and its light. */
   readonly torch: { readonly model: string | undefined; readonly light: LightRecord } | undefined;
+  /** A hand holds a spell or a scroll (GetEquippedItemType 9: the graphs' casting clips). */
+  readonly spells: { readonly right: boolean; readonly left: boolean };
 }
 
 export interface ActorCombatOptions {
@@ -904,6 +906,12 @@ export class ActorCombat implements CombatBridge {
     const info = fighter.player ? undefined : await runtime.actors.info(reference);
     const npcRecord = info === undefined ? undefined : await forms.record(info.leveled);
     const own = npcRecord?.type === 'NPC_' ? parseNpcCombat(npcRecord).attacks : [];
+    const loadout = await equipment.of(reference);
+    const spell = async (form: number | undefined): Promise<boolean> => {
+      const type = form === undefined ? undefined : (await forms.record(form))?.type;
+      return type === 'SPEL' || type === 'SCRL';
+    };
+    const [rightSpell, leftSpell] = await Promise.all([spell(loadout.right), spell(loadout.left)]);
     return {
       right,
       left,
@@ -916,6 +924,7 @@ export class ActorCombat implements CombatBridge {
       attacks: new AttackSet(raceAttacks, own),
       race: raceRecord?.type === 'RACE' ? parseRaceHits(raceRecord) : undefined,
       torch,
+      spells: { right: rightSpell, left: leftSpell },
     };
   }
 
@@ -925,15 +934,19 @@ export class ActorCombat implements CombatBridge {
    * iRightHandEquipped, iLeftHandEquipped, weaponSpeedMult, leftWeaponSpeedMult.
    */
   #graphVariables(fighter: Fighter, gear: Gear): void {
-    const type = (stats: WeaponStats, shield: boolean): number =>
+    // A spell (or a scroll) in a hand is its own type (9): the magic graph's manual selectors
+    // pick the casting clips by it (MRh_ChargeLoop and the rest; other types play NullClips).
+    const type = (stats: WeaponStats, shield: boolean, spell: boolean): number =>
       stats.weapon !== undefined
         ? stats.weaponType === WeaponType.crossbow
           ? EquippedItemType.crossbow
           : stats.weaponType
         : shield
           ? EquippedItemType.shield
-          : EquippedItemType.handToHand;
-    const right = type(gear.right, false);
+          : spell
+            ? EquippedItemType.spell
+            : EquippedItemType.handToHand;
+    const right = type(gear.right, false, gear.spells.right);
     const twoHanded =
       gear.right.weaponType >= WeaponType.twoHandSword &&
       gear.right.weaponType !== WeaponType.staff;
@@ -942,7 +955,7 @@ export class ActorCombat implements CombatBridge {
       ? right
       : gear.torch && gear.left.weapon === undefined && gear.shield === undefined
         ? EquippedItemType.torch
-        : type(gear.left, gear.shield !== undefined);
+        : type(gear.left, gear.shield !== undefined, gear.spells.left);
     this.#setVariable(fighter, 'iRightHandType', right);
     this.#setVariable(fighter, 'iLeftHandType', left);
     this.#setVariable(fighter, 'iRightHandEquipped', gear.right.weapon !== undefined ? 1 : 0);

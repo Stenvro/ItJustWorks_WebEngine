@@ -1,17 +1,29 @@
 // Casting in the world, for the player and the NPCs alike (docs/ai.md, "Magic in combat"): the
 // casting engine (src/scripting/runtime/casting-engine.ts) keeps the casts; here they are
-// animated and sent on their way. A cast begun plays its start in the actor's graph (the idle
-// tree's ActionRightAttack / ActionLeftAttack leaf: MRh_SpellAimedStart, MLh_WardStart, ...;
-// casting.ts castStartEvent), its MGEF sounds (charge as it charges, ready once it is, release
-// as it fires, the concentration loop while a concentration spell is held), its casting art
-// in the hand (MGEF casting art, ARTO, on the hand's magic node; dual cast: the dual-cast art at
-// its scale) and its casting light there (MGEF light: the hand's glow). Ready: ActionRightReady
-// (MRh_SpellReady_Event); fired or stopped: ActionRightRelease (MRh_SpellRelease_Event), its
-// projectile leaving the hand's magic node along the actor's aim (src/shell/magic-projectiles.ts);
-// a concentration spell sprays every relaunch interval of its projectile (each spray carries
-// that much of the spell); let go before it was ready: ActionRightInterrupt. A ward hit plays
-// ActionWardHit (wardAbsorb, WardBreak). Shouts: ActionVoice (shoutStart), ActionVoiceRelease
-// as the words are let out (the shout's spell from the head), ActionVoiceInterrupt.
+// animated and sent on their way. The magic graph's protocol (0_master's magic behavior; docs/
+// animation.md, "Casting"): a hand that casts sets bWantCastRight / bWantCastLeft (its
+// BeginCast_OnFalseToTrueMod raises BeginCastRight / BeginCastLeft: MagicReadyState →
+// CastingState) and plays its start (the idle tree's ActionRightAttack / ActionLeftAttack leaf:
+// MRh_SpellAimedStart, MLh_WardStart, ...; casting.ts castStartEvent; a dual cast DualMagic_*,
+// carried on by the left hand's events). Ready: ActionRightReady (MRh_SpellReady_Event: the
+// ready loop); a concentration spell charged: ActionRightRelease (MRh_SpellRelease_Event: its
+// loop begins). Released ready: ActionRightRelease, and its projectile leaves the hand's magic
+// node as the release clip raises MRh_SpellFire_Event (the engine's RightHandSpellFireHandler);
+// a concentration spell sprays from its loop's MRh_SpellFire_Event on, every relaunch interval
+// of its projectile (each spray carries that much of the spell). Stopped or let go before it
+// was ready: ActionRightInterrupt (MRh_Equipped_Event: back to the hand's ready state; the
+// graph's CastStop ends CastingState once neither hand casts). Its MGEF sounds (charge as it
+// charges, ready once it is, release as it fires, the concentration loop while a concentration
+// spell is held) and its casting light (MGEF light: the hand's glow) are at the hand. The hand's
+// casting art (MGEF casting art, ARTO: Fireball01HandEffects, ...) sits on its magic node: the
+// player's while their magic is drawn with a spell in the hand, an NPC's while it casts. Its
+// own graph (Magic\CastingBasic.hkx: mIntro, mIdle, mCharge, mReady, mCast) hears the events
+// the actor's graph is sent and raises (bRightHand / bLeftHand pick the hand's), as the engine's
+// ActorMagicCaster forwards them. A dual cast adds the dual-cast art at its scale. The player's
+// hands are their first-person arms' in first person (the 1st-person skeleton's magic nodes),
+// their body's in third. A ward hit plays ActionWardHit (wardAbsorb, WardBreak). Shouts:
+// ActionVoice (shoutStart), ActionVoiceRelease as the words are let out (the shout's spell from
+// the head), ActionVoiceInterrupt.
 //
 // The AI's API (5.2's combat AI calls it): castAt(actor, hand, target) — the hand's spell, or the
 // spell the casting engine chooses for the purpose — healSelf, summon, drinkPotion, shoutAt.
@@ -19,8 +31,9 @@
 // fire and forget spell once it is ready, hold a concentration spell for a while. While an aimed
 // cast lasts the arms aim along it (the graphs' BSDirectAtModifiers: setDirectAtTarget).
 // A staff's or a scroll's start, or one the tree does not play, is sent as the tree would pick
-// it. TODO(M13): the dual-cast animations.
+// it.
 
+import type { ObjectGraph } from '../animation/object-graph.ts';
 import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { castStartEvent } from '../gameplay/magic/casting.ts';
 import { aimDirection, normalize } from '../gameplay/magic/projectile-flight.ts';
@@ -53,6 +66,7 @@ import type { MagicProjectiles } from './magic-projectiles.ts';
 import type { PlayerView } from './race-menu.ts';
 import type { Terminal } from './terminal.ts';
 import { cellLight, type MagicFx } from './magic-fx.ts';
+import { clock, startObjectGraph } from './object-graphs.ts';
 import type { CellLight } from '../world/cell-loader.ts';
 import type { LightRecord } from '../world/cell-records.ts';
 
@@ -138,6 +152,35 @@ const ACTIONS: Readonly<Record<number, { ready: string; release: string; interru
 };
 
 /**
+ * The magic graph by hand: the variable the engine sets while the hand wants to cast, the event
+ * that takes the graph into CastingState, the event its clips raise as the spell leaves.
+ */
+const HANDS: Readonly<Record<number, { want: string; begin: string; fire: string }>> = {
+  [CastingSource.left]: {
+    want: 'bWantCastLeft',
+    begin: 'BeginCastLeft',
+    fire: 'mlh_spellfire_event',
+  },
+  [CastingSource.right]: {
+    want: 'bWantCastRight',
+    begin: 'BeginCastRight',
+    fire: 'mrh_spellfire_event',
+  },
+};
+
+/**
+ * A cast whose graph raises no SpellFire event (a graph without the casting clips: creatures,
+ * a staff's) fires this long after its release, or its concentration loop's start (seconds;
+ * the human release clips raise it at 0.17 s, MRh_PreAimedCon ends at 0.4 s). TODO(M13): what
+ * the engine does without the event.
+ */
+const FIRE_WAIT = 0.5;
+/** An NPC's casting art stays this long after its cast ended (its release, mCast, plays out). */
+const ART_LINGER = 1.5;
+/** How often the player's hands are read for their casting art (seconds). */
+const HANDS_REFRESH = 0.25;
+
+/**
  * An NPC holds a concentration spell while it serves: at a target while the target lives and
  * stays within its projectile's reach (and the magicka lasts: the casting engine ends it); one
  * without a target this long at most, a healing spell less once its health is whole.
@@ -170,18 +213,58 @@ interface Shown {
   holdCheck: number;
   sounds: Promise<SoundInstance | undefined>[];
   loop: Promise<SoundInstance | undefined> | undefined;
+  /** A dual cast's own art (MGEF dual cast art) on the hand, at its scale. */
   art: { instance: ModelInstance; scene: GpuScene; motion: InstanceMotion } | undefined;
   /** The casting light in the hand (MGEF light), once read. */
   light: LightRecord | undefined;
   /** The art's scale (a dual cast's: MGEF dual cast scale). */
   scale: number;
+  /**
+   * A concentration spell sprays once its loop began (the graph's SpellFire event, or FIRE_WAIT
+   * after it was charged); the seconds left to wait for it.
+   */
+  firing: boolean;
+  fireWait: number;
   done: boolean;
 }
 
-/** A source's node in an actor's pose (model space), the first its skeleton has. */
-function nodeOf(placed: PlacedActor, source: number): Float32Array | undefined {
+/** A hand's casting art (MGEF casting art) on its magic node, running its own graph. */
+interface HandArt {
+  readonly actor: number;
+  readonly source: number;
+  /** The ARTO it shows. */
+  readonly art: number;
+  instance: ModelInstance | undefined;
+  scene: GpuScene | undefined;
+  readonly motion: InstanceMotion;
+  graph: ObjectGraph | undefined;
+  /** Seconds since the actor's cast from this hand ended (NPCs: it goes after ART_LINGER). */
+  idle: number;
+  done: boolean;
+}
+
+/** A released cast waiting for its graph's SpellFire event to leave the hand. */
+interface PendingFire {
+  readonly delivered: Delivered;
+  readonly target: number | undefined;
+  /** The source it leaves from. */
+  readonly source: number;
+  /** It fires anyway once this runs out (seconds). */
+  wait: number;
+  /** A dual cast fires on the left hand's event (its graph's DualMagic states raise those). */
+  readonly dual: boolean;
+}
+
+/** A skeleton a source's node is read from: its pose and its placement in the world. */
+interface Skeleton {
+  readonly pose: { world(node: string): Float32Array | undefined };
+  readonly world: Float32Array;
+}
+
+/** A source's node in a skeleton's pose (model space), the first it has. */
+function nodeOf(skeleton: Skeleton, source: number): Float32Array | undefined {
   for (const node of NODES[source] ?? []) {
-    const local = placed.pose.world(node);
+    const local = skeleton.pose.world(node);
     if (local) return local;
   }
   return undefined;
@@ -206,8 +289,21 @@ export class ActorCasting {
       spray: number;
     }
   >();
-  /** The player's aim (the camera's forward), set by the player's casting. */
-  playerAim: (() => Vec3) | undefined;
+  /**
+   * The player's aim, set by the player's casting: the point under the crosshair (what the
+   * camera's ray meets, else far along it). Their casts leave the hand toward it.
+   */
+  playerTarget: (() => Vec3 | undefined) | undefined;
+  /** The hands' casting art, by "actor:source". */
+  readonly #arts = new Map<string, HandArt>();
+  /** Released casts waiting for their graph's SpellFire event, by "actor:source". */
+  readonly #pending = new Map<string, PendingFire>();
+  /** Graphs whose raised events this hears (the bodies', the player's first-person one). */
+  readonly #hooked = new WeakSet<object>();
+  /** What the player's hands hold to cast (spells and scrolls: their casting art), as read. */
+  readonly #playerHands = new Map<number, number | undefined>();
+  #handsRead = 0;
+  #readingHands = false;
   #runtime: ScriptRuntime | undefined;
   #stop: (() => void) | undefined;
 
@@ -257,9 +353,93 @@ export class ActorCasting {
     return staged && !staged.dead ? this.#options.userOf(staged) : undefined;
   }
 
+  /**
+   * The actor as a user of the idle tree whose events also reach its hands' casting art (as
+   * the engine's casters hear the graph); `before` runs once, before the first event is sent.
+   */
+  #handUser(user: FurnitureUser, actor: number, before?: () => void): FurnitureUser {
+    let first = before;
+    return {
+      reference: user.reference,
+      get placed() {
+        return user.placed;
+      },
+      get position() {
+        return user.position;
+      },
+      get heading() {
+        return user.heading;
+      },
+      moveTo: (position, heading) => {
+        user.moveTo(position, heading);
+      },
+      send: (event) => {
+        first?.();
+        first = undefined;
+        const taken = user.send(event);
+        this.#artsHear(actor, [event]);
+        return taken;
+      },
+    };
+  }
+
+  /**
+   * A hand wants to cast or no longer does (the graphs' bWantCastRight / bWantCastLeft); as it
+   * begins, BeginCastRight / BeginCastLeft takes the graphs into CastingState with the start
+   * sent after it (their BeginCast_OnFalseToTrueMod raises it too, a frame later).
+   */
+  #wantCast(actor: number, source: number, want: boolean): void {
+    const hand = HANDS[source];
+    if (!hand) return;
+    for (const graph of this.#graphs(actor)) {
+      graph.setVariable(hand.want, want ? 1 : 0);
+      if (want) graph.sendEvent(hand.begin);
+    }
+  }
+
+  /** Plays an idle tree action for a hand (its event reaches the casting art too). */
+  #play(actor: number, action: string | undefined): void {
+    const user = this.#user(actor);
+    if (user && action)
+      void this.#options.furniture.playAction(this.#handUser(user, actor), action);
+  }
+
   #placed(actor: number): PlacedActor | undefined {
     if (actor === PLAYER_REF) return this.#options.player?.()?.avatar?.body;
     return this.#options.get(actor)?.placed;
+  }
+
+  /** Whether the player is seen in first person (their first-person arms are the hands). */
+  #firstPerson(): boolean {
+    const view = this.#options.player?.();
+    return view !== undefined && !view.play.bodyShown && view.avatar?.firstPersonBody !== undefined;
+  }
+
+  /**
+   * The skeleton an actor's source is on: the player's first-person arms in first person (the
+   * hands the player sees; the engine's magic node is the first-person 3D's then), else the
+   * body. A source the arms lack (the voice) is the body's.
+   */
+  #skeleton(actor: number, source: number): Skeleton | undefined {
+    if (actor === PLAYER_REF) {
+      const avatar = this.#options.player?.()?.avatar;
+      if (!avatar) return undefined;
+      const arms = avatar.firstPersonBody;
+      if (arms && this.#firstPerson() && nodeOf(arms, source)) return arms;
+      // The body's placement is the avatar's, moved every frame (its placed instances keep the
+      // matrix it was made with).
+      return { pose: avatar.body.pose, world: avatar.placement.world };
+    }
+    const placed = this.#placed(actor);
+    const world = placed?.instances[0]?.world;
+    return placed && world ? { pose: placed.pose, world } : undefined;
+  }
+
+  /** A source's node in the world (its matrix), if the actor's skeleton has it. */
+  #node(actor: number, source: number): Float32Array | undefined {
+    const skeleton = this.#skeleton(actor, source);
+    const local = skeleton && nodeOf(skeleton, source);
+    return skeleton && local ? multiply(skeleton.world, local) : undefined;
   }
 
   /** Where an actor's feet are and which way it faces. */
@@ -274,22 +454,25 @@ export class ActorCasting {
 
   /** A source's node in the world (a hand's magic node, the head), else at the actor's eyes. */
   origin(actor: number, source: number): Vec3 | undefined {
-    const placed = this.#placed(actor);
-    const instance = placed?.instances[0];
-    const local = placed && nodeOf(placed, source);
-    if (instance && local) {
-      const world = multiply(instance.world, local);
-      return [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
-    }
+    const world = this.#node(actor, source);
+    if (world) return [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
     const place = this.#place(actor);
     if (!place) return undefined;
     const eye = this.#options.height?.(actor) ?? EYE_HEIGHT;
     return [place.feet[0], place.feet[1], place.feet[2] + eye];
   }
 
-  /** Where an actor aims from a point: the player along the camera, an NPC at its target's chest. */
+  /**
+   * Where an actor aims from a point: the player at the point under the crosshair (from the
+   * hand, so the spell goes where the crosshair shows in either view), an NPC at its target's
+   * chest.
+   */
   #aim(actor: number, from: Vec3, target: number | undefined): Vec3 {
-    if (actor === PLAYER_REF && this.playerAim) return this.playerAim();
+    const aimed = actor === PLAYER_REF ? this.playerTarget?.() : undefined;
+    if (aimed) {
+      const way: Vec3 = [aimed[0] - from[0], aimed[1] - from[1], aimed[2] - from[2]];
+      if (Math.hypot(...way) > 1) return normalize(way);
+    }
     const at = target === undefined ? undefined : this.#place(target);
     if (at) {
       const chest =
@@ -343,22 +526,41 @@ export class ActorCasting {
       ward: item.keywords.includes(0x1ea69) || main?.keywords.includes(0x1ea69) === true,
       telekinesis: main?.archetype === EffectArchetype.telekinesis,
     });
-    // A spell's start is the idle tree's attack action (its leaf by GetCurrentCastingType,
-    // GetCurrentDeliveryType, SpellHasKeyword); a staff's or a scroll's, or where the tree has
-    // none (undrawn: IsWeaponMagicOut is the combat mechanics'), the event it would pick.
-    const action = hand === 'left' ? 'ActionLeftAttack' : 'ActionRightAttack';
-    const played =
-      cast.castable.via === 'spell' && (await this.#options.furniture.playAction(user, action));
-    if (!played) user.send(event);
-    if (cast.dual) user.send(castStartEvent(hand === 'left' ? 'right' : 'left', item));
+    if (shown.done) return false;
+    // The hand wants to cast (both hands for a dual cast): the graph goes into CastingState as
+    // the start arrives, in the same update (its CastStop would end a CastingState entered
+    // without a cast).
+    const hands = cast.dual ? [CastingSource.right, CastingSource.left] : [source];
+    const starting = this.#handUser(user, actor, () => {
+      for (const each of hands) this.#wantCast(actor, each, true);
+    });
+    // A dual cast's start is the DualMagic_ one of the spell's (its graph's Dual_Cast states;
+    // the left hand's events carry it on). Telekinesis has none: each hand starts its own.
+    const dual = cast.dual && !event.endsWith('TelekinesisStart');
+    if (dual) {
+      starting.send(`DualMagic_${event.slice(4)}`);
+    } else {
+      // A spell's start is the idle tree's attack action (its leaf by GetCurrentCastingType,
+      // GetCurrentDeliveryType, SpellHasKeyword); a staff's or a scroll's, or where the tree has
+      // none (undrawn: IsWeaponMagicOut is the combat mechanics'), the event it would pick.
+      const action = hand === 'left' ? 'ActionLeftAttack' : 'ActionRightAttack';
+      const played =
+        cast.castable.via === 'spell' &&
+        (await this.#options.furniture.playAction(starting, action));
+      if (!played) starting.send(event);
+      if (cast.dual) starting.send(castStartEvent(hand === 'left' ? 'right' : 'left', item));
+    }
     // Its charge sound, from the hand.
     const charge = main && effectSound(main, EffectSound.charge);
     if (charge !== undefined) shown.sounds.push(this.#sound(charge, actor, source));
-    // Its art in the hand (a dual cast's own art, at its scale), its light there.
+    // The hands' casting art (an NPC's comes as it casts), a dual cast's own art at its scale;
+    // its light there.
+    for (const each of hands) this.#handArt(actor, each, main?.castingArt);
     const dualArt = cast.dual ? main?.dualCastArt : undefined;
-    if (dualArt !== undefined)
+    if (dualArt !== undefined) {
       shown.scale = main && main.dualCastScale > 0 ? main.dualCastScale : 1;
-    void this.#art(shown, dualArt ?? main?.castingArt);
+      void this.#art(shown, dualArt);
+    }
     void this.#options.fx?.lightRecord(main?.light).then((light) => {
       shown.light = light;
     });
@@ -406,6 +608,8 @@ export class ActorCasting {
       art: undefined,
       light: undefined,
       scale: 1,
+      firing: false,
+      fireWait: Infinity,
       done: false,
     };
     this.#shown.set(key, shown);
@@ -427,7 +631,7 @@ export class ActorCasting {
     );
   }
 
-  /** The casting art (ARTO) in the hand while the cast lasts. */
+  /** A dual cast's art (ARTO) in the hand while the cast lasts. */
   async #art(shown: Shown, art: number | undefined): Promise<void> {
     const runtime = this.#runtime;
     if (art === undefined || !runtime) return;
@@ -452,17 +656,15 @@ export class ActorCasting {
   }
 
   #placeArt(shown: Shown, instance: ModelInstance): void {
-    const placed = this.#placed(shown.cast.actor);
-    const local = placed && nodeOf(placed, shown.cast.source);
-    const world = placed?.instances[0]?.world;
-    if (!local || !world) return;
-    const matrix = multiply(world, local);
+    const matrix = this.#node(shown.cast.actor, shown.cast.source);
+    if (!matrix) return;
     if (shown.scale !== 1) for (let i = 0; i < 12; i++) matrix[i] = (matrix[i] ?? 0) * shown.scale;
     instance.world.set(matrix);
   }
 
   /** Its scenes (the casting art in the hands). */
   *scenes(): Iterable<GpuScene> {
+    for (const art of this.#arts.values()) if (art.scene) yield art.scene;
     for (const shown of this.#shown.values()) if (shown.art) yield shown.art.scene;
   }
 
@@ -513,40 +715,67 @@ export class ActorCasting {
   #heard(runtime: ScriptRuntime, event: CastEvent): void {
     const { actor, source } = event;
     const key = this.#key(actor, source);
-    const user = this.#user(actor);
     const play = (action: string | undefined): void => {
-      if (user && action) void this.#options.furniture.playAction(user, action);
+      this.#play(actor, action);
     };
-    const actions = ACTIONS[source];
+    // A dual cast goes on with the left hand's events (its graph's DualMagic states hear them).
+    const dual = event.cast?.dual === true;
+    const actions = ACTIONS[dual ? CastingSource.left : source];
+    const hands = dual ? [CastingSource.right, CastingSource.left] : [source];
+    const stopWanting = (): void => {
+      for (const hand of hands) this.#wantCast(actor, hand, false);
+    };
     switch (event.kind) {
       case 'ready': {
-        play(actions?.ready);
         const shown = this.#shown.get(key);
         const cast = event.cast;
+        // A concentration spell charged: its release starts its loop (MRh_PreAimedCon, then
+        // MRh_AimedConState, which raises MRh_SpellFire_Event); a fire and forget spell's ready
+        // loop.
+        const concentration = cast?.castable.item.castType === CastType.concentration;
+        play(concentration ? actions?.release : actions?.ready);
+        if (shown && concentration) shown.fireWait = FIRE_WAIT;
         void (async () => {
           const main = cast && (await runtime.casting.mainEffect(cast.castable.item));
           if (!cast || !main || !shown || shown.done) return;
           const ready = effectSound(main, EffectSound.ready);
           if (ready !== undefined) shown.sounds.push(this.#sound(ready, actor, source));
           const loop = effectSound(main, EffectSound.concentrationLoop);
-          if (loop !== undefined && cast.castable.item.castType === CastType.concentration)
-            shown.loop = this.#sound(loop, actor, source);
+          if (loop !== undefined && concentration) shown.loop = this.#sound(loop, actor, source);
         })();
         break;
       }
       case 'fire': {
         play(source === CastingSource.voice ? 'ActionVoiceRelease' : actions?.release);
+        stopWanting();
         const shown = this.#shown.get(key);
         this.#end(key);
-        if (event.delivered) void this.#send(runtime, event.delivered, source, shown?.target);
+        const delivered = event.delivered;
+        if (!delivered) break;
+        // A hand's spell leaves as its release clip raises its SpellFire event; a power at once.
+        if (source === CastingSource.voice || !HANDS[source]) {
+          void this.#send(runtime, delivered, source, shown?.target);
+        } else {
+          this.#launch(key);
+          this.#pending.set(key, {
+            delivered,
+            target: shown?.target,
+            source,
+            wait: FIRE_WAIT,
+            dual,
+          });
+        }
         break;
       }
       case 'stop':
-        play(actions?.release);
+        // A concentration spell let go (or out of magicka): the hand back to its ready state.
+        play(actions?.interrupt);
+        stopWanting();
         this.#end(key);
         break;
       case 'cancel':
         play(actions?.interrupt);
+        stopWanting();
         this.#end(key);
         if (source === CastingSource.voice) play('ActionVoiceInterrupt');
         break;
@@ -632,16 +861,14 @@ export class ActorCasting {
   frame(seconds: number): void {
     const runtime = this.#listen();
     if (!runtime || seconds <= 0) return;
+    this.#playerArts(runtime, seconds);
     for (const [key, shown] of [...this.#shown]) {
       const { cast } = shown;
       if (cast.hand.phase === 'done' && !runtime.casting.casting(cast.actor, cast.source)) {
         this.#end(key);
         continue;
       }
-      if (shown.art) {
-        this.#placeArt(shown, shown.art.instance);
-        shown.art.motion.version++;
-      }
+      this.#hear(cast.actor);
       this.#aimArms(shown);
       // NPCs: a fire and forget spell goes once ready; a concentration spell after a while.
       if (cast.actor !== PLAYER_REF) {
@@ -661,9 +888,30 @@ export class ActorCasting {
         }
       }
       if (cast.hand.phase !== 'casting') continue;
+      // It sprays once its loop began (the graph's SpellFire event; without one, a while on).
+      if (!shown.firing) {
+        shown.fireWait -= seconds;
+        if (shown.fireWait > 0) continue;
+        shown.firing = true;
+      }
       shown.spray -= seconds;
       if (shown.spray > 0) continue;
       void this.#spray(runtime, shown);
+    }
+    // Released casts whose graph raised no SpellFire event go anyway.
+    for (const [key, pending] of [...this.#pending]) {
+      pending.wait -= seconds;
+      if (pending.wait <= 0) this.#launch(key);
+    }
+    // An NPC's casting art goes a while after its casts from that hand ended.
+    for (const [key, art] of [...this.#arts]) {
+      if (art.actor === PLAYER_REF) continue;
+      const casting =
+        this.#shown.has(key) ||
+        (art.source === CastingSource.left &&
+          this.#shown.get(this.#key(art.actor, CastingSource.right))?.cast.dual === true);
+      art.idle = casting ? 0 : art.idle + seconds;
+      if (art.idle >= ART_LINGER) this.#endArt(key);
     }
     for (const [actor, breath] of [...this.#breaths]) {
       breath.left -= seconds;
@@ -918,18 +1166,223 @@ export class ActorCasting {
     if (cast?.hand.phase === 'ready') void this.letGo(PLAYER_REF, CastingSource.voice);
   }
 
+  // --- The hands' casting art and the graphs' events ------------------------------------------
+
+  /** A released cast leaves the hand now (its graph's SpellFire event, or its wait ran out). */
+  #launch(key: string): void {
+    const pending = this.#pending.get(key);
+    const runtime = this.#runtime;
+    this.#pending.delete(key);
+    if (pending && runtime)
+      void this.#send(runtime, pending.delivered, pending.source, pending.target);
+  }
+
+  /** Hears the graphs an actor's casts play in (its body's; the player's first-person one too). */
+  #hear(actor: number): void {
+    const placed = this.#placed(actor);
+    if (placed) this.#hook(placed, actor, false);
+    if (actor !== PLAYER_REF) return;
+    const first = this.#options.player?.()?.avatar?.firstPerson;
+    if (first) this.#hook(first, actor, true);
+  }
+
+  #hook(
+    target: { onEvents?: ((events: readonly string[]) => void) | undefined },
+    actor: number,
+    firstPerson: boolean,
+  ): void {
+    if (this.#hooked.has(target)) return;
+    this.#hooked.add(target);
+    const previous = target.onEvents;
+    target.onEvents = (events) => {
+      previous?.(events);
+      this.#graphEvents(actor, events, firstPerson);
+    };
+  }
+
+  /**
+   * What an actor's graph raised: the hands' casting art hears it; a hand's SpellFire event sends
+   * its released spell on its way, or begins its concentration spell's sprays. The player's are
+   * the graph of the view's (the first-person arms' in first person, the body's in third).
+   */
+  #graphEvents(actor: number, events: readonly string[], firstPerson: boolean): void {
+    if (actor === PLAYER_REF && firstPerson !== this.#firstPerson()) return;
+    this.#artsHear(actor, events);
+    for (const event of events) {
+      const lower = event.toLowerCase();
+      for (const source of [CastingSource.left, CastingSource.right]) {
+        if (HANDS[source]?.fire !== lower) continue;
+        this.#fired(actor, source);
+        // A dual cast (the right hand's) goes on the left hand's event.
+        const right = this.#key(actor, CastingSource.right);
+        if (source === CastingSource.left) {
+          if (this.#pending.get(right)?.dual === true) this.#launch(right);
+          if (this.#shown.get(right)?.cast.dual === true) this.#fired(actor, CastingSource.right);
+        }
+      }
+    }
+  }
+
+  /** A hand's SpellFire event: its released spell goes, its concentration spell sprays. */
+  #fired(actor: number, source: number): void {
+    const key = this.#key(actor, source);
+    if (this.#pending.has(key)) this.#launch(key);
+    const shown = this.#shown.get(key);
+    if (shown?.cast.castable.item.castType === CastType.concentration) shown.firing = true;
+  }
+
+  /** The hands' casting art hears the events (its graph: CastingBasic.hkx). */
+  #artsHear(actor: number, events: readonly string[]): void {
+    for (const art of this.#arts.values()) {
+      if (art.actor !== actor || !art.graph) continue;
+      const now = clock();
+      for (const event of events) art.graph.send(event, now);
+    }
+  }
+
+  /** A hand shows a casting art (undefined: none), made anew as it changes. */
+  #handArt(actor: number, source: number, art: number | undefined): void {
+    const key = this.#key(actor, source);
+    const current = this.#arts.get(key);
+    if (current?.art === art) {
+      if (current) current.idle = 0;
+      return;
+    }
+    if (current) this.#endArt(key);
+    if (art === undefined) return;
+    const entry: HandArt = {
+      actor,
+      source,
+      art,
+      instance: undefined,
+      scene: undefined,
+      motion: { version: 0 },
+      graph: undefined,
+      idle: 0,
+      done: false,
+    };
+    this.#arts.set(key, entry);
+    void this.#loadArt(entry);
+  }
+
+  async #loadArt(entry: HandArt): Promise<void> {
+    const runtime = this.#runtime;
+    const record = runtime && (await runtime.forms.record(entry.art));
+    const model = record ? parseArtObject(record)?.model : undefined;
+    if (!model || entry.done) return;
+    try {
+      const gpu = await this.#options.session.model(meshPath(model));
+      // Gone meanwhile (unequipped, sheathed): it is not shown.
+      if (!gpu || this.#arts.get(this.#key(entry.actor, entry.source)) !== entry) return;
+      // Its graph starts with its intro (then its idle) and plays the hand's: bRightHand or
+      // bLeftHand picks which events it takes (MRh_ or MLh_).
+      const graph = startObjectGraph(gpu, entry.actor);
+      graph?.setVariable('bRightHand', entry.source === CastingSource.right ? 1 : 0);
+      graph?.setVariable('bLeftHand', entry.source === CastingSource.left ? 1 : 0);
+      const instance: ModelInstance = {
+        model: gpu,
+        world: new Float32Array(16),
+        motion: entry.motion,
+        ...(graph && { graph }),
+      };
+      entry.graph = graph;
+      entry.instance = instance;
+      this.#placeHandArt(entry);
+      entry.scene = this.#options.renderer.scene.createScene([instance]);
+    } catch (error) {
+      this.#options.terminal.log('magic', `${model}: ${describe(error)}`, 'warn');
+    }
+  }
+
+  #placeHandArt(entry: HandArt): void {
+    const matrix = entry.instance && this.#node(entry.actor, entry.source);
+    if (!entry.instance || !matrix) return;
+    entry.instance.world.set(matrix);
+    entry.motion.version++;
+  }
+
+  #endArt(key: string): void {
+    const entry = this.#arts.get(key);
+    if (!entry) return;
+    this.#arts.delete(key);
+    entry.done = true;
+    entry.scene?.destroy();
+    entry.scene = undefined;
+  }
+
+  /**
+   * The player's hands: with their magic drawn, a spell (or a scroll) in a hand shows its casting
+   * art there (its idle, its charge, ...); sheathed, unequipped or dead, it goes. A hand casting
+   * something else (a staff) keeps the art its cast brought.
+   */
+  #playerArts(runtime: ScriptRuntime, seconds: number): void {
+    const view = this.#options.player?.();
+    if (!view?.avatar || view.play.dead) {
+      for (const [key, art] of [...this.#arts]) if (art.actor === PLAYER_REF) this.#endArt(key);
+      return;
+    }
+    this.#hear(PLAYER_REF);
+    this.#handsRead -= seconds;
+    if (this.#handsRead <= 0 && !this.#readingHands) {
+      this.#handsRead = HANDS_REFRESH;
+      this.#readingHands = true;
+      void this.#readPlayerHands(runtime).finally(() => {
+        this.#readingHands = false;
+      });
+    }
+    const drawn = this.#options.drawn?.(PLAYER_REF) === true;
+    const dual = this.#shown.get(this.#key(PLAYER_REF, CastingSource.right))?.cast.dual === true;
+    for (const source of [CastingSource.left, CastingSource.right]) {
+      const art = drawn ? this.#playerHands.get(source) : undefined;
+      const casting =
+        this.#shown.has(this.#key(PLAYER_REF, source)) || (dual && source === CastingSource.left);
+      if (art === undefined && casting && drawn) continue;
+      this.#handArt(PLAYER_REF, source, art);
+    }
+  }
+
+  /** What the player's hands hold to cast: a spell's or a scroll's casting art. */
+  async #readPlayerHands(runtime: ScriptRuntime): Promise<void> {
+    for (const source of [CastingSource.left, CastingSource.right]) {
+      const castable = await runtime.casting.castable(PLAYER_REF, source);
+      const main =
+        castable && (castable.via === 'spell' || castable.via === 'scroll')
+          ? await runtime.casting.mainEffect(castable.item)
+          : undefined;
+      this.#playerHands.set(source, main?.castingArt);
+    }
+  }
+
+  /**
+   * After the skeletons animated: the casting art follows the hands (where they are this frame,
+   * not the last).
+   */
+  afterAnimate(): void {
+    for (const entry of this.#arts.values()) this.#placeHandArt(entry);
+    for (const shown of this.#shown.values()) {
+      if (!shown.art) continue;
+      this.#placeArt(shown, shown.art.instance);
+      shown.art.motion.version++;
+    }
+  }
+
   /** An actor left the stage or died: its casts stop. */
   remove(actor: number): void {
     this.#runtime?.casting.interrupt(actor);
     this.#shouts.delete(actor);
     this.#breaths.delete(actor);
-    for (const key of [...this.#shown.keys()])
-      if (key.startsWith(`${String(actor)}:`)) this.#end(key);
+    const mine = (key: string): boolean => key.startsWith(`${String(actor)}:`);
+    for (const key of [...this.#shown.keys()]) if (mine(key)) this.#end(key);
+    for (const key of [...this.#pending.keys()]) if (mine(key)) this.#pending.delete(key);
+    for (const key of [...this.#arts.keys()]) if (mine(key)) this.#endArt(key);
   }
 
   /** Everything stops (the view closes). */
   clear(): void {
     for (const key of [...this.#shown.keys()]) this.#end(key);
+    this.#pending.clear();
+    for (const key of [...this.#arts.keys()]) this.#endArt(key);
+    this.#playerHands.clear();
     this.#shouts.clear();
     this.#breaths.clear();
     this.#stop?.();
