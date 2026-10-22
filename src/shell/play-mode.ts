@@ -530,6 +530,29 @@ export class PlayMode {
       pickpocket: (actor) => {
         menus.pickpocket(actor);
       },
+      // Flora: its ingredient (the item's message) and sound; the world shows it harvested.
+      harvest: (object) => {
+        const runtime = session.scriptsReady;
+        if (!runtime) return;
+        const at: [number, number, number] = [
+          object.world[12] ?? 0,
+          object.world[13] ?? 0,
+          object.world[14] ?? 0,
+        ];
+        runtime.harvest
+          .harvest(PLAYER_REF, object.reference)
+          .then((harvest) => {
+            if (harvest?.sound !== undefined) void session.soundSystem?.play(harvest.sound, at);
+          })
+          .catch((error: unknown) => {
+            this.#terminal.log(
+              'ui',
+              `${object.name} is not harvested: ${error instanceof Error ? error.message : String(error)}`,
+              'error',
+            );
+          });
+      },
+      harvested: (object) => session.scriptsReady?.harvest.isHarvested(object.reference) === true,
       craft: (object, closed) => {
         menus.craft(object.reference, object.base, closed);
       },
@@ -600,6 +623,7 @@ export class PlayMode {
       carried: await carriedWeight(runtime, PLAYER_REF),
       carryWeight: (await runtime.actors.value(PLAYER_REF, ActorValue.carryWeight)).current,
       pursued: session.crimeWatch?.pursued === true,
+      takingHealthDamage: await runtime.magic.damagingHealth(PLAYER_REF),
     });
   }
 

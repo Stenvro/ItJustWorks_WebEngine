@@ -77,6 +77,27 @@ const base: ImageSpace = {
   depthOfField: { strength: 0.5, distance: 20000, range: 10000, blurRadius: 2, sky: false },
 };
 
+describe('modifiers that use their target', () => {
+  it('centre their radial blur on it and focus their depth of field at its distance', () => {
+    const imod = modifier(7, { radialStrength: at(1), dofStrength: at(1) });
+    const aiming: ImageSpaceModifier = {
+      ...imod,
+      radialBlur: { ...imod.radialBlur, useTarget: true },
+      depthOfField: { ...imod.depthOfField, useTarget: true },
+    };
+    const stack = new ImageSpaceModifiers();
+    stack.apply(aiming, 1, { target: () => [100, 0, 0] });
+    const view = { project: () => [0.25, 0.75] as const, distance: () => 1234 };
+    const shown = stack.modify(base, view);
+    expect(shown.effects?.radialBlur.center).toEqual([0.25, 0.75]);
+    expect(shown.depthOfField.distance).toBe(1234);
+    // Without a view (or a target) the record's centre and focus.
+    const plain = stack.modify(base);
+    expect(plain.effects?.radialBlur.center).toEqual([0.5, 0.5]);
+    expect(plain.depthOfField.distance).toBe(300);
+  });
+});
+
 const brightness = IMAD_CINEMATIC_CHANNELS.brightness;
 const saturation = IMAD_CINEMATIC_CHANNELS.saturation;
 

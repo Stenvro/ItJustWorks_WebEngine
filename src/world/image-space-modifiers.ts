@@ -5,6 +5,9 @@
 // Combining (Creation Kit, "ImageSpace Modifiers"): most values are multiplied and added to;
 // the tint colour is the average of the modifiers' tints weighted by their alpha, with the
 // highest alpha as the amount; blur radius and double vision are the highest of any modifier.
+// A modifier with a target (an explosion's point, a magic effect's actor) centres its radial
+// blur on the target's place on the screen and focuses its depth of field on its distance where
+// the record says "use target" (IMAD DNAM 0xC8, 0xE0); others keep the record's centre and focus.
 // Notes: docs/rendering.md ("Image-space modifiers").
 
 import {
@@ -35,6 +38,17 @@ interface Instance {
   fadeTarget: number;
   /** Change of `fade` per second (Infinity: at once). */
   fadeRate: number;
+  /** Where its target is now (radial blur and depth of field that use it). */
+  readonly target?: () => Point | undefined;
+}
+
+type Point = readonly [number, number, number];
+
+/** The view the screen effects are seen from: a point's place on the screen and its distance. */
+export interface ModifierView {
+  /** Screen place (0..1 from the top left), or undefined behind the camera. */
+  project(point: Point): readonly [number, number] | undefined;
+  distance(point: Point): number;
 }
 
 /** An active modifier as the dev panel and logs show it. */
@@ -50,11 +64,14 @@ export interface ActiveModifier {
 
 export interface ApplyOptions {
   /**
-   * Start an animated modifier over when its duration has passed instead of ending it (for
-   * engine callers that keep one up, e.g. a magic effect's for its duration).
-   * TODO(M11): check which engine callers loop.
+   * Start an animated modifier over when its duration has passed instead of ending it. None of
+   * the engine's own callers does: a magic effect's modifier plays once (the cast's flash:
+   * DetectLife01Imod, 3 s) or is static and holds while the effect lasts (NightEyeImod,
+   * SlowTimeImod), an explosion's plays once (tools/imad-info.ts).
    */
   readonly loop?: boolean;
+  /** Its target (radial blur and depth of field that "use target"). */
+  readonly target?: () => Point | undefined;
 }
 
 const HDR_KEYS: readonly (keyof ImageSpaceHdr)[] = [
@@ -126,6 +143,7 @@ export class ImageSpaceModifiers {
       fade: 1,
       fadeTarget: 1,
       fadeRate: Infinity,
+      ...(options.target && { target: options.target }),
     });
   }
 
@@ -242,13 +260,15 @@ export class ImageSpaceModifiers {
   }
 
   /** The active modifiers at their strengths now, laid onto `base` (itself when none acts). */
-  modify(base: ImageSpace): ImageSpace {
+  modify(base: ImageSpace, view?: ModifierView): ImageSpace {
     const frames: { frame: ModifierFrame; weight: number }[] = [];
     for (const instance of [...this.#applied.values(), ...this.#chain, ...this.#leaving]) {
       const weight = instance.strength * instance.fade;
       if (weight === 0) continue;
       const time = modifierKeyTime(instance.modifier, instance.age, instance.loop);
-      frames.push({ frame: evaluateModifier(instance.modifier, time), weight });
+      const frame = evaluateModifier(instance.modifier, time);
+      const target = instance.target?.();
+      frames.push({ frame: target && view ? aimedAt(frame, target, view) : frame, weight });
     }
     return frames.length === 0 ? base : combineModifiers(base, frames);
   }
@@ -310,8 +330,6 @@ export function combineModifiers(
     (frame) => frame.radialBlur,
     (blur) => blur.strength,
   );
-  // TODO(M11): radial blur and depth of field that "use target" follow the modifier's target
-  // (an explosion, a spell's target) on the screen; until then the record's centre and focus.
   const field = strongest(
     (frame) => frame.depthOfField,
     (dof) => (dof.mode === 'none' ? 0 : dof.strength),
@@ -356,6 +374,19 @@ export function combineModifiers(
         }
       : base.depthOfField,
     effects,
+  };
+}
+
+/** A frame whose radial blur and depth of field "use target": centred and focused on it. */
+export function aimedAt(frame: ModifierFrame, target: Point, view: ModifierView): ModifierFrame {
+  const radial = frame.radialBlur;
+  const field = frame.depthOfField;
+  if (!radial.useTarget && !field.useTarget) return frame;
+  const center = radial.useTarget ? view.project(target) : undefined;
+  return {
+    ...frame,
+    radialBlur: center ? { ...radial, center: [center[0], center[1]] } : radial,
+    depthOfField: field.useTarget ? { ...field, distance: view.distance(target) } : field,
   };
 }
 

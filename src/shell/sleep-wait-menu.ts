@@ -12,7 +12,8 @@
 // the hours (their packages), the wait broken off by an attack.
 // Nor while guards pursue the player (sNoWaitWhileAlarm) or they trespass (sNoWaitTrespass;
 // the sleep versions); an owned bed is not slept in (sNoSleepInOwnedBed: play-mode.ts).
-// TODO(M11): taking health damage, the rested bonuses (the magic system).
+// The rested bonuses are the scripts': PlayerSleepQuest registers for sleep and its OnSleepStop
+// gives Rested, Well Rested or Lover's Comfort (abilities: the magic system's lasting effects).
 
 import type { Menu, MenuHost } from '../ui/menu-host.ts';
 import { formatGameDate } from '../world/game-time.ts';

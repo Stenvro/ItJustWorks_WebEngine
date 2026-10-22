@@ -98,7 +98,9 @@ import type { ActorMovers } from './actor-movers.ts';
 import type { ActorBodies, BodyHolder } from './actor-bodies.ts';
 import type { PlacedActor } from './actors.ts';
 import { HeldWeapons, type HeldModels } from './actor-weapons.ts';
-import { CombatImpacts } from './combat-impacts.ts';
+import { armorSkill } from '../gameplay/inventory.ts';
+import { CombatImpacts, type HitImpact } from './combat-impacts.ts';
+import type { Impact } from '../world/impact-records.ts';
 import { CombatProjectiles } from './combat-projectiles.ts';
 import type { GameSession } from './game-session.ts';
 import type { PlaySession } from './play-session.ts';
@@ -314,6 +316,8 @@ export class ActorCombat implements CombatBridge {
         play.player,
         () => !play.seated && !play.dead && !this.#options.session.menuMode,
         () => this.#options.casting?.(),
+        // A bow zoomed (Eagle Eye): the view's factor (src/shell/time-flow.ts).
+        (wanted, weapon) => this.#options.session.time.bowZoom(wanted, weapon),
       );
     }
     if (!play) {
@@ -382,6 +386,14 @@ export class ActorCombat implements CombatBridge {
 
   decals(): Iterable<GpuDecals> {
     return this.#impacts.decals();
+  }
+
+  /**
+   * An impact where something (a spell) met a surface or an actor: its sound and decal; resolves
+   * the impact (IPCT) for what else it leaves (its model, its hazard: src/shell/magic-fx.ts).
+   */
+  surfaceImpact(hit: HitImpact): Promise<Impact | undefined> {
+    return this.#impacts.hit(hit, this.#play?.physics);
   }
 
   // --- CombatBridge (what scripts ask and tell) ------------------------------------------------
@@ -624,6 +636,11 @@ export class ActorCombat implements CombatBridge {
       left: gear.left.weapon === undefined ? undefined : gear.left.weaponType,
       shield: gear.shield !== undefined,
     };
+  }
+
+  /** The weapon (WEAP) in a fighter's right hand, if any (the bow's zoom asks its perks). */
+  weaponOf(reference: number): number | undefined {
+    return this.#fighters.get(reference)?.gear?.right.weapon;
   }
 
   /** A fighter's combat state (the player's input reads it). */
@@ -1371,8 +1388,9 @@ export class ActorCombat implements CombatBridge {
       void runtime.progression.useSkill(attackerRef, skill, stats?.baseDamage ?? 0);
     }
     if (sneak) void runtime.progression.useSkill(attackerRef, ActorValue.firstSkill + 9, 30);
-    // TODO(M11): the armour skills of the one hit (Light/Heavy Armor by the damage taken) are
-    // the skill progression's to count.
+    // The one hit uses the armour skills of what it wears (Light, Heavy Armor) by the blow's
+    // damage before its armour (UESP "Skyrim:Light Armor": the incoming base damage), unblocked.
+    if (!blocks && physical > 0) void this.#armourSkills(targetRef, physical);
     // The target's scripts hear of it (OnHit: aggressor, source, projectile, power, sneak,
     // bash, blocked).
     void runtime.sendEvent(targetRef, 'OnHit', [
@@ -1548,6 +1566,36 @@ export class ActorCombat implements CombatBridge {
       : [s.deathForceDamageMin, s.deathForceDamageMax, s.deathForceForceMin, s.deathForceForceMax];
     const t = Math.min(1, Math.max(0, (damage - dMin) / Math.max(1e-6, dMax - dMin)));
     void this.#options.bodies.push(staged, hit.direction, fMin + (fMax - fMin) * t);
+  }
+
+  /** A hit's armour skills: each skill of the armour worn (any piece of it) by the damage. */
+  async #armourSkills(target: number, damage: number): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    const skills = new Set<number>();
+    for (const form of await runtime.equipment.worn(target)) {
+      const item = await runtime.equipment.item(form);
+      const skill = item && armorSkill(item);
+      if (skill !== undefined) skills.add(skill);
+    }
+    for (const skill of skills) await runtime.progression.useSkill(target, skill, damage);
+  }
+
+  /**
+   * A Stagger effect (Unrelenting Force, a giant's stomp, the Warmaster's bash): the actor
+   * staggers by its magnitude from where its caster is (or the way it faces without one).
+   */
+  staggerBy(reference: number, magnitude: number, from: number | undefined): void {
+    const fighter = this.#fighters.get(reference);
+    const feet = fighter && this.#feet(fighter);
+    if (!fighter || !feet || magnitude <= 0) return;
+    const source = from === undefined ? undefined : this.#fighters.get(from);
+    const at = (source && this.#feet(source)) ?? [
+      feet[0] + Math.sin(this.#heading(fighter)),
+      feet[1] + Math.cos(this.#heading(fighter)),
+      feet[2],
+    ];
+    this.#stagger(fighter, magnitude, at);
   }
 
   /** Staggers a fighter by a magnitude from where the blow came (ActionStaggerStart). */
@@ -2161,7 +2209,10 @@ export class ActorCombat implements CombatBridge {
     this.#setMusic(false);
   }
 
-  /** Knocked down (a ragdoll that gets up: Unrelenting Force; TODO(M11): the Stagger effects'). */
+  /**
+   * Knocked down (a ragdoll that gets up: Unrelenting Force at full strength). TODO(M10) 5.1:
+   * knock-downs (Stagger effects past the actor's mass, explosions' Knock Down flags).
+   */
   knockState(reference: number): number {
     return this.#fighters.get(reference)?.state.knock ?? KnockState.normal;
   }

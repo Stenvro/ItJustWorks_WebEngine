@@ -48,7 +48,12 @@ import type {
 import type { ParticleSystemData } from './particle-data.ts';
 import type { PlacedPart } from './raycast.ts';
 import { REFRACTION_FORMAT } from './refraction.ts';
-import { PARTICLE_FLOATS, ParticleSimulation, type ParticleContext } from './particle-sim.ts';
+import {
+  PARTICLE_FLOATS,
+  ParticleSimulation,
+  type ParticleContext,
+  type ParticleSource,
+} from './particle-sim.ts';
 import commonShader from './shaders/common.wgsl?raw';
 import frameShader from './shaders/frame.wgsl?raw';
 import effectShader from './shaders/effect.wgsl?raw';
@@ -521,6 +526,11 @@ export interface ModelInstance {
    * shapes by lower-case name (FaceGen head parts).
    */
   readonly face?: InstanceFace;
+  /**
+   * Particles of the model's systems made elsewhere (an effect shader's particles: their
+   * system is the model's only one); the systems' own simulation without.
+   */
+  readonly particleSource?: (system: ParticleSystemData) => ParticleSource | undefined;
 }
 
 /** A head part's expression morphs on the GPU (shared by every head that uses its TRI file). */
@@ -750,7 +760,7 @@ interface MovingAddon {
 /** A placed particle system: its simulation and where its particles are this frame. */
 interface ParticleDraw {
   readonly system: GpuParticleSystem;
-  readonly simulation: ParticleSimulation;
+  readonly simulation: ParticleSource;
   readonly instanceWorld: Mat4;
   readonly animation: ModelAnimation | undefined;
   /** The instance's behavior graph: its sequences drive the system's controllers. */
@@ -1686,6 +1696,57 @@ export class SceneRenderer {
   }
 
   /**
+   * A model drawn over another's surfaces with an effect material (an effect shader's membrane
+   * on an actor: src/shell/actor-effects.ts): the other's shapes (their buffers shared: the
+   * caller keeps `source` acquired while this one lives) in the blended pass, its own animation
+   * (the membrane's texture scrolling). Placed with the source instance's world, pose, pose
+   * nodes and face, it covers it exactly.
+   */
+  async createOverlay(
+    source: GpuModel,
+    material: EffectMaterial,
+    alpha: AlphaState,
+    textures: TextureCache,
+    animation?: ModelAnimation,
+    /** Which of the source's shapes it covers (all without). */
+    filter?: (part: ModelPart) => boolean,
+  ): Promise<GpuModel> {
+    const blend = blendState(alpha);
+    const shown = source.parts.filter(
+      (gpu) =>
+        (gpu.pass === 'opaque' || gpu.pass === 'transparent') && (!filter || filter(gpu.part)),
+    );
+    const parts = await Promise.all(
+      shown.map(async (gpu): Promise<GpuPart> => {
+        const part: ModelPart = { ...gpu.part, material, alpha };
+        return {
+          part,
+          vertexBuffer: gpu.vertexBuffer,
+          indexBuffer: gpu.indexBuffer,
+          indexCount: gpu.indexCount,
+          pipeline: this.#pipeline(part, blend),
+          bindGroup: await this.#materialBindGroup(material, part.name, textures),
+          pass: 'transparent',
+          shadowPipeline: undefined,
+        };
+      }),
+    );
+    return new GpuModel({
+      center: source.center,
+      radius: source.radius,
+      parts,
+      buffers: [],
+      animation,
+      particles: [],
+      textures: { cache: textures, paths: materialTextures(material).filter((p) => p !== '') },
+      leafAnimation: false,
+      nodes: source.nodes,
+      nodeWorlds: source.nodeWorlds,
+      attachTo: source.attachTo,
+    });
+  }
+
+  /**
    * Places model instances (with the models attached at their AddOnNodes); writes one
    * uniform slot per (instance, part) and per (instance, particle system).
    */
@@ -2022,7 +2083,8 @@ export class SceneRenderer {
         const graph = graphDraw(instance);
         particles.push({
           system,
-          simulation: new ParticleSimulation(system.data, seed),
+          simulation:
+            instance.particleSource?.(system.data) ?? new ParticleSimulation(system.data, seed),
           instanceWorld: instance.world,
           animation,
           ...(graph && { graph }),

@@ -56,6 +56,8 @@ export const HIGH_PROCESS_DISTANCE = 4096;
 const LEAVE_HIGH_DISTANCE = HIGH_PROCESS_DISTANCE * 1.25;
 /** A tilting race leans again with the ground once it moved this far (game units). */
 const TILT_AGAIN = 4;
+/** An NPC sprinting pays its stamina this often (seconds of sprinting at a time). */
+const SPRINT_PAYMENT_SECONDS = 0.5;
 
 /** An actor moved by its controller. */
 interface Mover {
@@ -527,6 +529,20 @@ export class ActorMovers {
   /** An actor's controller's collider (its own rays leave it out: foot IK), if it has one. */
   colliderOf(reference: number): CharacterBody['collider'] | undefined {
     return this.#movers.get(reference)?.character.collider;
+  }
+
+  /** Seconds each actor has sprinted that its stamina has not paid for yet. */
+  readonly #sprints = new Map<number, number>();
+
+  /** An actor sprinted `seconds`: its stamina drains (src/scripting/runtime/progression-engine.ts). */
+  #sprinted(reference: number, seconds: number): void {
+    const total = (this.#sprints.get(reference) ?? 0) + seconds;
+    if (total < SPRINT_PAYMENT_SECONDS) {
+      this.#sprints.set(reference, total);
+      return;
+    }
+    this.#sprints.delete(reference);
+    void this.#options.session.scriptsReady?.progression.sprint(reference, total);
   }
 
   /** How a moved actor moves now (its conditions and natives read it). */
@@ -1196,9 +1212,13 @@ export class ActorMovers {
       );
       instance.motion.version++;
     }
+    // Sprinting drains its stamina (the progression engine's, half a second at a time).
+    const sprintRequest = this.#requests.get(staged.reference);
+    if (sprintRequest?.gait === 'sprint' && Math.hypot(velocity[0], velocity[1]) > 5)
+      this.#sprinted(staged.reference, dt);
     const behavior = placed.behavior;
     if (behavior) {
-      const request = this.#requests.get(staged.reference);
+      const request = sprintRequest;
       const moving = Math.hypot(velocity[0], velocity[1]) > 5;
       // Moved by its graph (a canned turn, a lunge), it stands as far as its speed goes: its
       // walk would otherwise feed the root motion that moves it.
