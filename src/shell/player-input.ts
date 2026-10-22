@@ -63,17 +63,20 @@ export function attachPlayerInput(
     player.releaseAll();
   };
   window.addEventListener('keydown', onKeyDown);
-  window.addEventListener('keyup', onKeyUp);
+  // Releases are heard before a menu's player takes them: Ruffle stops the key-ups it gets from
+  // bubbling, and a movement key let go in a menu would hold on after it (the player walking on
+  // by themselves once the menu closed).
+  window.addEventListener('keyup', onKeyUp, true);
   element.addEventListener('mousedown', onMouseDown);
-  window.addEventListener('mouseup', onMouseUp);
+  window.addEventListener('mouseup', onMouseUp, true);
   document.addEventListener('mousemove', onMove);
   element.addEventListener('wheel', onWheel, { passive: false });
   window.addEventListener('blur', onBlur);
   return () => {
     window.removeEventListener('keydown', onKeyDown);
-    window.removeEventListener('keyup', onKeyUp);
+    window.removeEventListener('keyup', onKeyUp, true);
     element.removeEventListener('mousedown', onMouseDown);
-    window.removeEventListener('mouseup', onMouseUp);
+    window.removeEventListener('mouseup', onMouseUp, true);
     document.removeEventListener('mousemove', onMove);
     element.removeEventListener('wheel', onWheel);
     window.removeEventListener('blur', onBlur);

@@ -1,13 +1,15 @@
 // Integration test: Survival Mode's warmth on the local game data (src/scripting/runtime/
 // warmth-engine.ts): armor by its body part and Update.esm's keywords (an enchanted variant by its
 // template's), a hooded robe, a torch, and the player's rating with what they wear and a Fortify
-// Warmth. Skipped without game data.
+// Warmth; a need's quest, started by its own script, keeps the stage values the script sets
+// after Start. Skipped without game data.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { WARMTH_BONUS_VALUE } from '../src/gameplay/warmth.ts';
 import { PLAYER_REF } from '../src/scripting/runtime/forms.ts';
 import { ScriptRuntime } from '../src/scripting/runtime/runtime.ts';
 import { ScriptLibrary } from '../src/scripting/script-library.ts';
+import { ObjectHandle } from '../src/scripting/values.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
@@ -74,5 +76,33 @@ describe.skipIf(!hasGamedata())("Survival Mode's warmth on the local game data",
       worn += await runtime.warmth.armor(piece);
     expect(after).toBe(worn + 25);
     expect(worn).toBeGreaterThanOrEqual(54);
+  });
+
+  it('keeps what a need sets after starting its own quest (its stage values)', async () => {
+    // Survival_NeedBase.StartNeed: Start (the quest's scripts are reset as it starts), then
+    // SetNeedStageValues and the first update. Reset apart from the running script, the quest's
+    // own had no stage values: every need value counted as stage 5 (frostbite, starving, their
+    // image-space modifiers at once).
+    let quest: number | undefined;
+    for (const formId of db.formIdsOfType('QUST')) {
+      if ((await db.get(formId))?.editorId === 'Survival_NeedHungerQuest') quest = formId;
+    }
+    expect(quest).toBeDefined();
+    if (quest === undefined) return;
+    const hunger = new ObjectHandle(quest, 'survival_needhunger');
+    // Its first update waits on game time, which stands still here: not awaited.
+    void runtime.vm.call(hunger, 'StartNeed');
+    const stages = async (): Promise<unknown[]> => {
+      const values: unknown[] = [];
+      for (let n = 1; n <= 5; n++) {
+        values.push(await runtime.vm.getVariable(hunger, `::needStage${String(n)}Value_var`));
+      }
+      return values;
+    };
+    for (let i = 0; i < 100 && (await stages())[4] !== 770; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(runtime.quests.isRunning(quest)).toBe(true);
+    expect(await stages()).toEqual([80, 160, 340, 520, 770]);
   });
 });

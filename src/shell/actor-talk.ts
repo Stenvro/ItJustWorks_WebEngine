@@ -53,6 +53,11 @@ export interface ActorTalkOptions {
    * it stops): the actor stage makes it a dialogue head track (src/shell/actor-looks.ts).
    */
   readonly lookAt?: (actor: number, target: number | undefined) => void;
+  /**
+   * Whether an actor fights (or flees, searches) now: it greets, chatters and converses no more
+   * (its combat moves it: a greeting would stop a coward fleeing in its tracks).
+   */
+  readonly engaged?: (actor: number) => boolean;
 }
 
 export class ActorTalk {
@@ -154,6 +159,7 @@ export class ActorTalk {
       runtime !== undefined &&
       runtime.dialogueSpeaker !== reference &&
       runtime.scenes.sceneOf(reference) === undefined &&
+      this.#options.engaged?.(reference) !== true &&
       !this.#conversing.has(reference) &&
       !this.#looking.has(reference) &&
       !this.#options.session.lines.speaking(reference)

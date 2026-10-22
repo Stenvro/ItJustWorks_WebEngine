@@ -118,6 +118,14 @@ class Instance {
     }
     this.state = script.object.autoState.toLowerCase();
   }
+
+  /** Takes a fresh instance's variables and state (a reset in place). */
+  reinitialize(fresh: Instance): void {
+    this.vars.clear();
+    for (const [level, vars] of fresh.vars) this.vars.set(level, vars);
+    this.state = fresh.state;
+    this.initializing = undefined;
+  }
 }
 
 interface Frame {
@@ -242,6 +250,30 @@ export class PapyrusVm {
   /** Forgets an object's script instances (a reset: they start over from the plugin). */
   reset(target: ObjectHandle): void {
     this.#attached.delete(target.key);
+  }
+
+  /**
+   * Resets an object's script instances in place (a quest that starts again): their variables,
+   * properties and states go back to the plugin's, on the same objects, so a thread running in
+   * one (a script that started its own quest: Survival_NeedBase.StartNeed) goes on with the
+   * reset script and what it sets afterwards stays. Objects not seen yet start fresh anyway.
+   */
+  async restart(target: ObjectHandle): Promise<void> {
+    const pending = this.#attached.get(target.key);
+    if (!pending) return;
+    const existing = await pending;
+    const fresh = await this.#createAttached(target);
+    const kept: Instance[] = [];
+    for (const instance of fresh) {
+      const same = existing.find((old) => old.script === instance.script && !kept.includes(old));
+      if (!same) {
+        kept.push(instance);
+        continue;
+      }
+      same.reinitialize(instance);
+      kept.push(same);
+    }
+    this.#attached.set(target.key, Promise.resolve(kept));
   }
 
   /** Native type chain instance (e.g. ObjectReference → Form) for a handle. */
