@@ -20,7 +20,7 @@ import {
 import { HAVOK_SCALE } from '../physics/collision-data.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { GRAB_DEFAULTS, type GrabSettings } from '../physics/grab.ts';
-import type { PhysicsWorld } from '../physics/physics-world.ts';
+import type { PhysicsOwner, PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vfs } from '../vfs/vfs.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import { IniSettings, type IniOverrides } from '../world/ini-settings.ts';
@@ -221,6 +221,15 @@ export class Player implements Camera {
   pov: Pov = 'first';
   /** The camera stays as it is (furniture that forces one: src/shell/player-furniture.ts). */
   povLocked = false;
+  /**
+   * Whether the player may switch the camera (Game.DisablePlayerControls' abCamSwitch: MQ101's
+   * cart ride keeps it in first person); undefined: always.
+   */
+  povSwitchAllowed: (() => boolean) | undefined;
+  /** Furniture or the scripts keep the camera as it is. */
+  get #povFixed(): boolean {
+    return this.povLocked || this.povSwitchAllowed?.() === false;
+  }
   /** Third-person zoom (0 = fVanityModeMinDist, 1 = fVanityModeMaxDist). */
   #zoom = 0;
   #zoomTarget = 0;
@@ -260,6 +269,14 @@ export class Player implements Camera {
    * up), as the animated Camera1st node has it; undefined: the skeleton's rest height.
    */
   cameraOffset: (() => Vec3 | undefined) | undefined;
+  /**
+   * How far the body is from where it stands on its feet (game units, the world's axes): a
+   * seated body's (a cart's rider sits 200 units behind and 139 above its root). The
+   * third-person camera looks at the body where it is. Undefined: on its feet.
+   */
+  bodyShift: (() => Vec3 | undefined) | undefined;
+  /** What the third-person camera passes through (the cart the player rides). */
+  cameraIgnores: ((owner: PhysicsOwner | undefined) => boolean) | undefined;
   /**
    * Where the player may stand (the worldspace's border regions); undefined: anywhere.
    * Movement across the border stops at it and calls onBorder.
@@ -519,7 +536,7 @@ export class Player implements Camera {
   /** Every frame; `held`: the ground is not there yet, the player stays where they are. */
   update(deltaSeconds: number, held = false): void {
     const { physics, ini } = this.#setup;
-    if (this.#take('Toggle POV') && !this.povLocked) {
+    if (this.#take('Toggle POV') && !this.#povFixed) {
       this.setPov(this.pov === 'first' ? 'third' : 'first');
     }
     if (this.#take('Toggle Always Run')) this.#alwaysRun = !this.#alwaysRun;
@@ -714,10 +731,13 @@ export class Player implements Camera {
       this.position = [feet[0] + x * cos + y * sin, feet[1] - x * sin + y * cos, feet[2] + z];
       return;
     }
+    // Camera3rd hangs on the skeleton's root, not on its animated bones: a seated body (a cart's
+    // rider, its root at the cart's) takes it along where the body is.
+    const [sx, sy, sz] = this.bodyShift?.() ?? [0, 0, 0];
     const target: Vec3 = [
-      feet[0] + body.thirdPersonTarget[0],
-      feet[1] + body.thirdPersonTarget[1],
-      feet[2] + body.thirdPersonTarget[2],
+      feet[0] + sx + body.thirdPersonTarget[0],
+      feet[1] + sy + body.thirdPersonTarget[1],
+      feet[2] + sz + body.thirdPersonTarget[2],
     ];
     const min = ini.number('Camera', 'fVanityModeMinDist');
     const max = ini.number('Camera', 'fVanityModeMaxDist');
@@ -740,6 +760,7 @@ export class Player implements Camera {
       ini.number('Camera', 'fCameraCasterSize'),
       Layer.camera,
       this.character.collider,
+      this.cameraIgnores,
     );
     this.position = [
       pivot[0] + back[0] * reach,
@@ -844,11 +865,11 @@ export class Player implements Camera {
       if (this.pov === 'third') {
         const lowest = ini.number('Camera', 'fMinCurrentZoom');
         if (this.#zoomTarget <= lowest + 1e-6) {
-          if (!this.povLocked) this.setPov('first');
+          if (!this.#povFixed) this.setPov('first');
         } else this.#zoomTarget = Math.max(lowest, this.#zoomTarget - step);
       }
     } else if (this.pov === 'first') {
-      if (this.povLocked) return;
+      if (this.#povFixed) return;
       this.#zoomTarget = ini.number('Camera', 'fMinCurrentZoom');
       this.#zoom = this.#zoomTarget;
       this.setPov('third');

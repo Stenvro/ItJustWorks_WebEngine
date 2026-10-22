@@ -261,6 +261,12 @@ export class ActorMovers {
   }
 
   readonly #travels = new Map<number, Travel>();
+  /**
+   * The way each actor was going as a travel arrived in this frame: a travel its AI starts at
+   * once (a patrol's next point) goes on from it, not from standing (the physics steps before
+   * its path is followed would stop it: moveStop, moveStart at every patrol point).
+   */
+  readonly #arrived = new Map<number, MoveRequest>();
   /** Until then (performance.now ms) a travel ends at once at its place: hours were skipped. */
   #skipUntil = 0;
 
@@ -278,6 +284,9 @@ export class ActorMovers {
     options: TravelOptions = {},
   ): Promise<boolean> {
     this.#travels.get(reference)?.done(false);
+    const going = this.#arrived.get(reference);
+    this.#arrived.delete(reference);
+    if (going) this.#requests.set(reference, going);
     const mover = this.#movers.get(reference);
     if (mover && performance.now() < this.#skipUntil) {
       this.#arrive(mover.staged, destination);
@@ -296,6 +305,8 @@ export class ActorMovers {
         done: (arrived) => {
           if (this.#travels.get(reference) !== travel) return;
           this.#travels.delete(reference);
+          const request = this.#requests.get(reference);
+          if (arrived && request?.direction) this.#arrived.set(reference, request);
           this.#requests.delete(reference);
           resolve(arrived);
         },
@@ -676,6 +687,8 @@ export class ActorMovers {
     const world = this.#world;
     if (!world) return;
     this.#frames++;
+    // A travel that arrived in the last frame and was followed by none: the actor stands.
+    this.#arrived.clear();
     // Their speed is measured over the physics time stepped (the controllers' own time).
     const seconds = this.#stepped;
     this.#stepped = 0;
