@@ -383,6 +383,7 @@ export class ActorStage {
       movers: this.movers,
       camera: () => options.renderer.view?.camera,
       actor: (reference) => this.#actors.get(reference),
+      detects: (observer, target) => this.senses.detects(observer, target),
       passByTarget: (reference) => this.flight.passByTarget(reference),
     });
     // Who greets and chatters: those that detect the player; a speaker looks at whom it
