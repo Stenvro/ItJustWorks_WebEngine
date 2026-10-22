@@ -53,6 +53,8 @@ import { CrimeEngine } from './crime-engine.ts';
 import { PerkEngine } from './perk-engine.ts';
 import { HarvestEngine } from './harvest-engine.ts';
 import { HazardEngine } from './hazard-engine.ts';
+import { DestructionEngine } from './destruction-engine.ts';
+import type { DestructionStage } from '../../world/destruction-records.ts';
 import { installPerkHooks } from './perk-hooks.ts';
 import { UsageStats } from './usage-stats.ts';
 import { WarmthEngine } from './warmth-engine.ts';
@@ -135,7 +137,17 @@ export interface WorldBridge {
   triggerCount?(reference: number): number;
   openChanged?(reference: number, open: boolean): void;
   lockChanged?(reference: number): void;
-  destructionChanged?(reference: number): void;
+  /**
+   * A destructible reference's destruction changed (destruction-engine.ts): the world shows its
+   * stage's look (and collision); `reached`: the stage it just reached, whose debris it throws.
+   */
+  destructionChanged?(reference: number, reached: DestructionStage | undefined): void;
+  /**
+   * An explosion bursts at a point (a destruction stage's): the world shows it (its model,
+   * light, sounds, image-space modifier, placed object); the casting engine's explode applies
+   * its damage and force.
+   */
+  explosion?(explosion: number, at: Vec3, source: number | undefined): void;
   /** Default activation (doors, containers, items) after the scripts' OnActivate. */
   activate?(reference: number, activator: number | undefined): void;
   controlsChanged?(): void;
@@ -659,6 +671,8 @@ export class ScriptRuntime implements VmHost {
   readonly harvest: HarvestEngine;
   /** Hazards standing in the world: their lifetimes and spells (hazard-engine.ts). */
   readonly hazards: HazardEngine;
+  /** Destructible objects: their health, stages and what they set off (destruction-engine.ts). */
+  readonly destruction: DestructionEngine;
   /** While a new game starts its quests (their aliases may take reserved references). */
   startingNewGame = false;
   /** Game seconds per real second (the TimeScale global; scripts may set it). */
@@ -782,6 +796,7 @@ export class ScriptRuntime implements VmHost {
     this.perks = new PerkEngine(this);
     this.harvest = new HarvestEngine(this);
     this.hazards = new HazardEngine(this);
+    this.destruction = new DestructionEngine(this);
     installPerkHooks(this);
     this.warmth = new WarmthEngine(this);
     this.usage = new UsageStats(this);
@@ -1642,16 +1657,9 @@ export class ScriptRuntime implements VmHost {
     return record?.fields.has('ONAM') ? 1 : 3;
   }
 
-  /** DamageObject: through its destruction stages (TODO(M11): its base's DSTD stages). */
+  /** DamageObject: a script's damage, through its base's destruction stages (DSTD). */
   async damageObject(reference: number, damage: number): Promise<void> {
-    if (damage <= 0) return;
-    const state = this.state.reference(reference);
-    state.destructionStage = (state.destructionStage ?? 0) + 1;
-    this.world.destructionChanged?.(reference);
-    await this.sendEvent(reference, 'OnDestructionStageChanged', [
-      state.destructionStage - 1,
-      state.destructionStage,
-    ]);
+    await this.destruction.damage(reference, damage, { external: false });
   }
 
   /** A map marker shown and reachable (the map, the compass); the plugin's XMRK FNAM at first. */
@@ -2347,6 +2355,8 @@ export class ScriptRuntime implements VmHost {
     // Harvested flora grow again as their cells reset; hazards burn out and hit.
     if (!this.retired) this.harvest.update(realSeconds);
     if (!this.retired) this.hazards.update(realSeconds);
+    // Destruction stages' self damage per second.
+    if (!this.retired) this.destruction.update(realSeconds);
   }
 
   /** A frame in a menu (menu mode): only the wall clock moves on (WaitMenuMode). */

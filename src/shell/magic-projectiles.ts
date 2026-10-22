@@ -410,6 +410,8 @@ export class MagicProjectiles {
         readonly material: number;
         readonly kind: 'object' | 'landscape' | 'actor' | undefined;
         readonly normal?: Vec3;
+        /** The object hit (its reference), if a surface of one. */
+        readonly reference?: number;
       }
     | undefined {
     let best:
@@ -419,6 +421,7 @@ export class MagicProjectiles {
           material: number;
           kind: 'object' | 'landscape' | 'actor' | undefined;
           normal?: Vec3;
+          reference?: number;
         }
       | undefined;
     const targets = new Map<number, ProjectileTarget>();
@@ -457,7 +460,13 @@ export class MagicProjectiles {
           : undefined;
       if (actor) best = { t, actor, material: 0, kind: 'actor' };
       else if (!ACTOR_LAYERS.has(hit.layer))
-        best = { t, material: hit.material, kind: owner?.kind, normal: hit.normal };
+        best = {
+          t,
+          material: hit.material,
+          kind: owner?.kind,
+          normal: hit.normal,
+          ...(owner?.kind === 'object' && owner.reference !== 0 && { reference: owner.reference }),
+        };
       break;
     }
     return best;
@@ -524,6 +533,7 @@ export class MagicProjectiles {
           readonly actor?: ProjectileTarget;
           readonly material: number;
           readonly kind: 'object' | 'landscape' | 'actor' | undefined;
+          readonly reference?: number;
         }
       | undefined,
     seconds: number | undefined,
@@ -548,6 +558,13 @@ export class MagicProjectiles {
         facing: facing(actor, [point[0] - aim[0], point[1] - aim[1], point[2] - aim[2]]),
         ...(seconds !== undefined && { seconds }),
       });
+    } else if (hit?.reference !== undefined) {
+      // An object hit takes the spell (its scripts hear of it; a destructible one's health
+      // takes its Damage Health effects: the magic engine's, destruction-engine.ts).
+      await casting.deliver(delivered, hit.reference, {
+        facing: false,
+        ...(seconds !== undefined && { seconds }),
+      });
     }
     // Its explosion (the projectile's, with the Explosion flag; else the effect's).
     const explosion =
@@ -557,9 +574,28 @@ export class MagicProjectiles {
       const record = await casting.explosion(explosion);
       if (record?.sound !== undefined) void session.soundSystem?.play(record.sound, point);
       if (record?.sound2 !== undefined) void session.soundSystem?.play(record.sound2, point);
-      if (record) await this.#burst(runtime, delivered, record, point, aim, hit, actor?.reference);
+      if (record)
+        await this.#burst(
+          runtime,
+          delivered.caster,
+          delivered,
+          record,
+          point,
+          aim,
+          hit,
+          actor?.reference,
+        );
       await casting.explode(delivered.caster, explosion, point);
       noise?.(point, delivered.caster, record?.soundLevel ?? 1);
+      // Destructible objects within its radius take the spell too (a fireball's burst on webs),
+      // the one hit straight aside (it took it above).
+      for (const { reference } of await runtime.destruction.within(
+        point,
+        record?.radius ?? 0,
+        hit?.reference,
+      )) {
+        await casting.deliver(delivered, reference, { facing: false });
+      }
     }
     if (reached) {
       await casting.area(delivered, point, {
@@ -570,7 +606,14 @@ export class MagicProjectiles {
     // The effect's impact on the surface hit (MGEF impact data set: its sound, decal, model,
     // hazard; a noise).
     if (hit && !actor && effect?.impactData !== undefined) {
-      const impact = await this.#surface(runtime, delivered, effect.impactData, hit, point, aim);
+      const impact = await this.#surface(
+        runtime,
+        delivered.caster,
+        effect.impactData,
+        hit,
+        point,
+        aim,
+      );
       if (impact) noise?.(point, delivered.caster, impact.soundLevel);
     }
   }
@@ -578,7 +621,7 @@ export class MagicProjectiles {
   /** An impact on a surface: its sound and decal, its model (for its duration) and hazard. */
   async #surface(
     runtime: ScriptRuntime,
-    delivered: Delivered,
+    caster: number,
     impactDataSet: number,
     hit: {
       readonly material: number;
@@ -609,19 +652,37 @@ export class MagicProjectiles {
         direction: impact.orientation === 0 && hit.normal ? hit.normal : aim,
         ...(impact.duration > 0 && { duration: impact.duration }),
       });
-    if (impact.hazard !== undefined)
-      await runtime.hazards.place(impact.hazard, point, delivered.caster);
+    if (impact.hazard !== undefined) await runtime.hazards.place(impact.hazard, point, caster);
     return impact;
+  }
+
+  /**
+   * An explosion that is no spell's bursts at a point (a destruction stage's: the destruction
+   * engine applies its damage and force through the casting engine's explode): its sounds, what
+   * #burst shows and leaves, a noise for detection. `source`: whose it is (the attacker, else the
+   * object that blew up).
+   */
+  async burst(explosionId: number, point: Vec3, source: number): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    const record = runtime && (await runtime.casting.explosion(explosionId));
+    if (!runtime || !record) return;
+    const { session, noise } = this.#options;
+    if (record.sound !== undefined) void session.soundSystem?.play(record.sound, point);
+    if (record.sound2 !== undefined) void session.soundSystem?.play(record.sound2, point);
+    await this.#burst(runtime, source, undefined, record, point, [0, 0, 1], undefined, undefined);
+    noise?.(point, source, record.soundLevel);
   }
 
   /**
    * An explosion bursts (beside its sounds and the casting engine's explode): its model and
    * light, its image-space modifier on a player within its image-space radius, its impact on
-   * the surface there, its placed object, its spawned projectile on to the nearest other actor.
+   * the surface there, its placed object, its spawned projectile (a spell's: `delivered`) on to
+   * the nearest other actor.
    */
   async #burst(
     runtime: ScriptRuntime,
-    delivered: Delivered,
+    caster: number,
+    delivered: Delivered | undefined,
     explosion: ExplosionRecord,
     point: Vec3,
     aim: Vec3,
@@ -649,21 +710,23 @@ export class MagicProjectiles {
         void session.imageSpaceModifiers.apply(modifier, 1, { target: () => point });
     }
     if (explosion.impactDataSet !== undefined && hit && hit.kind !== 'actor')
-      await this.#surface(runtime, delivered, explosion.impactDataSet, hit, point, aim);
+      await this.#surface(runtime, caster, explosion.impactDataSet, hit, point, aim);
     const placed = explosion.placedObject;
     if (placed !== undefined) {
-      const hazard = await runtime.hazards.place(placed, point, delivered.caster);
+      const hazard = await runtime.hazards.place(placed, point, caster);
       if (hazard === undefined) {
-        const reference = await runtime.placeAt(placed, delivered.caster, 1);
+        const reference = await runtime.placeAt(placed, caster, 1);
         runtime.move(reference, [...point]);
       }
     }
     // Its projectile flies on from it, at the nearest other living actor within its range
-    // (chain lightning), else on the way the spell came; carrying the same spell.
+    // (chain lightning), else on the way the spell came; carrying the same spell. TODO(M13):
+    // an explosion that is no spell's (a destruction stage's) sending its projectile (no
+    // vanilla destruction explosion has one).
     const spawned = explosion.spawnProjectile;
     const projectile =
-      spawned === undefined ? undefined : await runtime.casting.projectile(spawned);
-    if (projectile) {
+      spawned === undefined || !delivered ? undefined : await runtime.casting.projectile(spawned);
+    if (projectile && delivered) {
       const range = projectile.range > 0 ? projectile.range : 2048;
       let best: { direction: Vec3; distance: number } | undefined;
       for (const target of this.#options.targets()) {

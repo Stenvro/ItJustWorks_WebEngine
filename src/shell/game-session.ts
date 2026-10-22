@@ -395,21 +395,43 @@ export class GameSession {
     return this.#model(path, true, child);
   }
 
+  /**
+   * A destructible object's model at a model damage stage (DSTD): its BSDamageStage nodes show
+   * that stage's subtrees and collide as they do (GameSession.collision with the stage); `swaps`:
+   * texture sets on its shapes (the stage's DMDS).
+   */
+  damagedModel(
+    path: string,
+    damageStage: number,
+    swaps?: ModelTextureSwaps,
+  ): Promise<GpuModel | undefined> {
+    return this.#model(path, true, undefined, damageStage, swaps);
+  }
+
   /** Models attached at AddOnNodes get no add-ons of their own (no cycles). */
-  #model(path: string, withAddons: boolean, switchChild?: number): Promise<GpuModel | undefined> {
+  #model(
+    path: string,
+    withAddons: boolean,
+    switchChild?: number,
+    damageStage = 0,
+    swaps?: ModelTextureSwaps,
+  ): Promise<GpuModel | undefined> {
     const key =
       (withAddons ? path : `${path}|addon`) +
-      (switchChild === undefined ? '' : `|switch${switchChild}`);
+      (switchChild === undefined ? '' : `|switch${switchChild}`) +
+      (damageStage === 0 ? '' : `|damage${damageStage}`) +
+      (swaps ? `|swaps${JSON.stringify(swaps)}` : '');
+    const collisionKey = damageStage === 0 ? path : `${path}|damage${damageStage}`;
     let entry = this.#models.get(key);
     const loaded = this.#loadedModels.get(key);
     if (loaded) loaded.lastUsed = performance.now();
     if (!entry) {
-      entry = this.loader.loadModel(path, switchChild).then(
+      entry = this.loader.loadModel(path, switchChild, damageStage, swaps).then(
         async (loaded) => {
           const data = loaded.model;
           if (switchChild !== undefined && data.switches === undefined) return undefined;
           // Editor markers have no collision in the game either.
-          if (!data.editorMarker) this.#collisions.set(path, loaded.collision);
+          if (!data.editorMarker) this.#collisions.set(collisionKey, loaded.collision);
           const addons = withAddons ? await this.addons(data.addons) : [];
           const empty = data.parts.length === 0 && data.particles.length === 0;
           if (data.editorMarker || (empty && addons.length === 0)) return undefined;
@@ -551,12 +573,16 @@ export class GameSession {
     return entry;
   }
 
-  /** A model's Havok collision (also for models with nothing to draw). */
-  async collision(path: string): Promise<CollisionData | undefined> {
-    const cached = this.#collisions.get(path);
+  /**
+   * A model's Havok collision (also for models with nothing to draw); at a destructible object's
+   * model damage stage, its BSDamageStage nodes' collision for that stage.
+   */
+  async collision(path: string, damageStage = 0): Promise<CollisionData | undefined> {
+    const key = damageStage === 0 ? path : `${path}|damage${damageStage}`;
+    const cached = this.#collisions.get(key);
     if (cached) return cached;
-    await this.#model(path, true);
-    return this.#collisions.get(path);
+    await this.#model(path, true, undefined, damageStage);
+    return this.#collisions.get(key);
   }
 
   /** Which collision layers collide (COLL records), read once. */

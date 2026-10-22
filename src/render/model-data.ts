@@ -221,6 +221,20 @@ export interface ModelData {
 export interface BuildOptions {
   /** The child every NiSwitchNode shows (its own index without; flora harvested: 1). */
   readonly switchChild?: number;
+  /**
+   * The model damage stage of a destructible object (DSTD; 0 undamaged): BSDamageStage nodes
+   * show their subtree only within their range of stages.
+   */
+  readonly damageStage?: number;
+}
+
+/** Whether a node shows at a model damage stage (BSDamageStage's range; others always). */
+export function shownAtDamageStage(
+  block: { readonly damageStage?: { readonly min: number; readonly max: number } },
+  stage: number,
+): boolean {
+  const range = block.damageStage;
+  return !range || (stage >= range.min && stage <= range.max);
 }
 
 export interface AddonNode {
@@ -519,7 +533,12 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
     const block = file.blocks[ref];
     if (!block) return;
     if (block.kind === 'unknown') return;
-    if (!('transform' in block) || (block.flags & APP_CULLED) !== 0) return;
+    if (!('transform' in block)) return;
+    // A BSDamageStage node shows by the object's model damage stage (the files keep every one
+    // culled: the engine shows the current one); other nodes by their culled flag.
+    if (block.kind === 'node' && block.damageStage) {
+      if (!shownAtDamageStage(block, options.damageStage ?? 0)) return;
+    } else if ((block.flags & APP_CULLED) !== 0) return;
     // Helper geometry only shown in the Creation Kit (e.g. activator trigger volumes).
     if (block.name.toLowerCase() === 'editormarker') return;
     // The engine replaces a root node's own transform with the placement of the object

@@ -99,6 +99,7 @@ import {
 } from '../animation/script-graphs.ts';
 import { CreatedObjects } from './created-objects.ts';
 import { FloraLooks } from './flora-looks.ts';
+import { DestructionLooks } from './destruction-looks.ts';
 import { connectPlayerTime } from './time-flow.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import type { PlayerView } from './race-menu.ts';
@@ -397,6 +398,8 @@ export class ModelViewer {
   #created: CreatedObjects | undefined;
   /** The cell's harvestable flora (their harvested look). */
   #flora: FloraLooks | undefined;
+  /** The cell's destructible objects (their stages' looks, their debris). */
+  #destruction: DestructionLooks | undefined;
 
   /** What the running game's scripts see of, and do to, the cell on screen. */
   readonly #scriptView: ScriptView = {
@@ -456,6 +459,12 @@ export class ModelViewer {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.impulse(placed, direction, magnitude);
       }
+    },
+    destructionChanged: (reference, reached) => {
+      this.#destruction?.changed(reference, reached);
+    },
+    explosion: (explosion, at, source) => {
+      void this.#stage?.projectiles.burst(explosion, at, source ?? 0);
     },
     activate: (reference) => {
       this.#defaultActivation(reference)?.activate();
@@ -927,6 +936,15 @@ export class ModelViewer {
     this.#created = new CreatedObjects(session, this.#renderer);
     this.#flora?.clear();
     this.#flora = new FloraLooks(session, this.#renderer);
+    this.#destruction?.clear();
+    this.#destruction = new DestructionLooks(
+      session,
+      this.#renderer,
+      () => this.#play,
+      (message) => {
+        this.#terminal.log('world', message, 'warn');
+      },
+    );
     this.#stage = new ActorStage({
       session,
       seat: () => this.#seat,
@@ -1326,6 +1344,9 @@ export class ModelViewer {
         placed.set(object, instance);
         shown.set(object.reference, instance);
         this.#flora?.add(object, instance.world, shownBy(object.reference), () =>
+          this.#isEnabled(object.reference),
+        );
+        this.#destruction?.add(object, instance.world, shownBy(object.reference), () =>
           this.#isEnabled(object.reference),
         );
       }
@@ -1736,6 +1757,7 @@ export class ModelViewer {
           ...(this.#stage?.scenes() ?? []),
           ...(this.#created?.scenes() ?? []),
           ...(this.#flora?.scenes() ?? []),
+          ...(this.#destruction?.scenes() ?? []),
         ],
         camera,
         lighting: () => ({
@@ -1902,6 +1924,7 @@ export class ModelViewer {
     this.#scripted = new Set();
     this.#created?.clear(this.#play);
     this.#flora?.clear();
+    this.#destruction?.clear();
     this.#stopPlay();
     this.#sky?.dispose();
     this.#sky = undefined;

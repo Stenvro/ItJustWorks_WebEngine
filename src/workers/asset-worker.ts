@@ -86,10 +86,12 @@ function handle(request: AssetRequest): [AssetResponse, ArrayBuffer[]] {
 
   if (request.kind === 'model') {
     const nif = parseNif(bytes);
-    const model = buildModel(nif, {
+    const built = buildModel(nif, {
       ...(request.switchChild !== undefined && { switchChild: request.switchChild }),
+      ...(request.damageStage !== undefined && { damageStage: request.damageStage }),
     });
-    const collision = buildCollision(nif);
+    const model = request.swaps ? swapTextures(built, request.swaps) : built;
+    const collision = buildCollision(nif, request.damageStage ?? 0);
     for (const body of collision.bodies) {
       for (const shape of body.shapes) {
         if (shape.type === 'mesh') {

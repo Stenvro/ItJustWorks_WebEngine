@@ -100,6 +100,7 @@ import {
 } from '../animation/script-graphs.ts';
 import { CreatedObjects } from './created-objects.ts';
 import { FloraLooks } from './flora-looks.ts';
+import { DestructionLooks } from './destruction-looks.ts';
 import { connectPlayerTime } from './time-flow.ts';
 import { cellStatesElement } from './cell-states.ts';
 import { PlayerAvatar } from './player-avatar.ts';
@@ -605,6 +606,8 @@ export class WorldViewer {
   #created: CreatedObjects | undefined;
   /** The loaded cells' harvestable flora (their harvested look). */
   #flora: FloraLooks | undefined;
+  /** The loaded cells' destructible objects (their stages' looks, their debris). */
+  #destruction: DestructionLooks | undefined;
 
   /** What the running game's scripts see of, and do to, the loaded cells. */
   readonly #scriptView: ScriptView = {
@@ -678,6 +681,12 @@ export class WorldViewer {
       for (const placed of this.#play?.placementsOf(reference) ?? []) {
         this.#play?.physics.impulse(placed, direction, magnitude);
       }
+    },
+    destructionChanged: (reference, reached) => {
+      this.#destruction?.changed(reference, reached);
+    },
+    explosion: (explosion, at, source) => {
+      void this.#stage?.projectiles.burst(explosion, at, source ?? 0);
     },
     activate: (reference) => {
       this.#defaultActivation(reference)?.activate();
@@ -1010,6 +1019,15 @@ export class WorldViewer {
     this.#created = new CreatedObjects(session, this.#renderer);
     this.#flora?.clear();
     this.#flora = new FloraLooks(session, this.#renderer);
+    this.#destruction?.clear();
+    this.#destruction = new DestructionLooks(
+      session,
+      this.#renderer,
+      () => this.#play,
+      (message) => {
+        this.#terminal.log('world', message, 'warn');
+      },
+    );
     this.#stage = new ActorStage({
       session,
       seat: () => this.#seat,
@@ -1749,10 +1767,14 @@ export class WorldViewer {
     const flow = this.#flowMap(world, cell.x, cell.y);
     const placed = await this.#place(session, objects, flow, true, shownBy);
     const instances = placed.map(({ instance }) => instance);
-    for (const { object, instance } of placed)
+    for (const { object, instance } of placed) {
       this.#flora?.add(object, instance.world, shownBy(object.reference), () =>
         cell.isEnabled(object.reference),
       );
+      this.#destruction?.add(object, instance.world, shownBy(object.reference), () =>
+        cell.isEnabled(object.reference),
+      );
+    }
     // Its actors (those in it now) come onto the stage; the dead lie as ragdolls.
     const ragdolls =
       (await this.#stage?.attachCell(cellKey(cell.x, cell.y), data.actors, (reference) =>
@@ -2221,7 +2243,10 @@ export class WorldViewer {
       if (key === cellKey(cell.x, cell.y)) this.#created?.remove(entry.reference, this.#play);
     }
     this.#play?.remove(cell.collision);
-    for (const object of cell.data?.objects ?? []) this.#flora?.remove(object.reference);
+    for (const object of cell.data?.objects ?? []) {
+      this.#flora?.remove(object.reference);
+      this.#destruction?.remove(object.reference);
+    }
     cell.terrain?.destroy();
     cell.scene?.destroy();
     cell.decals?.destroy();
@@ -2262,6 +2287,7 @@ export class WorldViewer {
     if (this.#stage) yield* this.#stage.scenes();
     if (this.#created) yield* this.#created.scenes();
     if (this.#flora) yield* this.#flora.scenes();
+    if (this.#destruction) yield* this.#destruction.scenes();
     for (const [key, large] of this.#largeCells) {
       // The full cell shows them once it is ready.
       if (large.ready && large.scene && this.#cells.get(key)?.ready !== true) yield large.scene;
