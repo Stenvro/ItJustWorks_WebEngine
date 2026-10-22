@@ -619,6 +619,8 @@ async function main(): Promise<void> {
       await settled();
     },
     settled: () => settled(),
+    // Riding a dragon, fast travel flies there (the world viewer's stage has the mounts).
+    flyMountTo: (to) => worldViewer.playing && worldViewer.flyMountTo(to),
     heading: () => (worldViewer.player ?? modelViewer.player)?.yaw,
     localMap: () =>
       worldViewer.player ? worldViewer.localMapContent() : modelViewer.localMapContent(),

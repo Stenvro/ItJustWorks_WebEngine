@@ -12,10 +12,10 @@
 // IsAttackType, ...) read what the caller is doing (PerkContext). Where each system asks:
 // docs/gameplay.md ("Perks"). The activation (src/shell/play-session.ts) asks Filter
 // Activation, Set Activate Label and the Activate choices (`activate`: run at once, or offered
-// in a message box; their spell cast, their PRKF_ fragment run); harvesting asks Mod Ingredients
-// Harvested, Slow Time Mod Player Magic Slowdown, the bow's zoom Mod Bow Zoom, falls Mod
-// Falling Damage (src/shell/time-flow.ts). Allow Mount Actor (mayMount) waits for dragon riding
-// (TODO(M11): Dragonborn's dragon riding). Platform-independent.
+// in a message box; their spell cast, their PRKF_ fragment run: the werewolf's Feed); harvesting
+// asks Mod Ingredients Harvested, Slow Time Mod Player Magic Slowdown, the bow's zoom Mod Bow
+// Zoom, falls Mod Falling Damage (src/shell/time-flow.ts); dragon riding Allow Mount Actor
+// (mayMount: src/shell/actor-mounts.ts). Platform-independent.
 
 import {
   applyEntryFunction,

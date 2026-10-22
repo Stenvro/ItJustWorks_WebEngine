@@ -6,6 +6,17 @@
 // root is on the horse's SaddleBone. A ridden horse's own AI waits: the player's controls drive
 // it (src/ai/mounts.ts riddenRequest), an actor's AI sends it where it goes. While riding, the
 // rider's graphs are driven by the horse's movement (its HorseRider_State blends by Speed).
+//
+// Dragon riding (Dragonborn; docs/gameplay.md, "Dragon riding"): a dragon (ActorTypeDragon)
+// is ridden where the player's perks allow it (the Allow Mount Actor entry point: a dragon
+// Bend Will tamed, DLC2TameDragonScript), mounted by its own pair (DragonMountEnter /
+// pa_DragonMountEnter, the rider on its "NPC Saddlebone"). Ridden, it is a flying mount
+// (IsOnFlyingMount): it takes off and circles where it was mounted (src/shell/actor-flight.ts
+// flies it), Forward sends it the way the player looks (its patrol, IsFlyingMountPatrolQueued)
+// and it circles where it is let go, the map's fast travel flies it to the place
+// (IsFlyingMountFastTravelling), Right Attack sets it on the actor the player looks at, and
+// Activate asks it to land (refused while Game.SetAllowFlyingMountLandingRequests forbids it),
+// the player getting off once it stands.
 
 import { Locomotion, type LocomotionGraph } from '../ai/locomotion.ts';
 import {
@@ -20,6 +31,8 @@ import {
   type Placed,
 } from '../ai/mounts.ts';
 import { parseRaceCombat } from '../ai/race-combat-records.ts';
+import { FLIGHT_DEFAULTS, FlyingState } from '../ai/flight.ts';
+import type { ActorFlight } from './actor-flight.ts';
 import { transformPoint, type Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ActorInteraction } from '../scripting/runtime/runtime.ts';
@@ -34,12 +47,37 @@ import type { Terminal } from './terminal.ts';
 
 /** KYWD ActorTypeHorse (Skyrim.esm): the races one rides (HorseEvents' condition). */
 const ACTOR_TYPE_HORSE = 0x26110;
+/** KYWD ActorTypeDragon (Skyrim.esm): the fliers ridden where the perks allow it. */
+const ACTOR_TYPE_DRAGON = 0x35d59;
+/** What one rides. */
+type MountKind = 'horse' | 'dragon';
+/** Each kind's rider events (its mount gets pa_ of them) and the node the rider sits on. */
+const KIND_EVENTS: Readonly<
+  Record<MountKind, { mount: string; instant: string; dismount: string; saddle: string }>
+> = {
+  horse: {
+    mount: 'HorseEnter',
+    instant: 'HorseEnterInstant',
+    dismount: 'HorseExit',
+    saddle: 'SaddleBone',
+  },
+  // IDLE DragonMount, DragonMountInstant, DragonDismount (Dragonborn.esm).
+  dragon: {
+    mount: 'DragonMountEnter',
+    instant: 'DragonMountEnterInstant',
+    dismount: 'DragonMountExit',
+    saddle: 'NPC Saddlebone',
+  },
+};
+/** Forward sends a ridden dragon this far ahead at a time (units). TODO(M13): the engine's. */
+const PATROL_AHEAD = 4096;
+/** A dragon flown to a place (the map's fast travel) has arrived within this (units). */
+const TRAVEL_ARRIVED = 2048;
+/** The actor the player sets their dragon on: the nearest to their view within this (units). */
+const DRAGON_TARGET_REACH = 8192;
 /** FACT PlayerHorseFaction (Skyrim.esm): the horses the player bought (the stables quest). */
 const PLAYER_HORSE_FACTION = 0x68d78;
-/** The rider's events (IDLE Mount, Dismount, DismountSwim, EnterHorseInstant). */
-const MOUNT = 'HorseEnter';
-const MOUNT_INSTANT = 'HorseEnterInstant';
-const DISMOUNT = 'HorseExit';
+/** The rider's event getting off a horse in the water (IDLE DismountSwim). */
 const DISMOUNT_SWIM = 'HorseExitSwim';
 /** What the rider's graph raises at its paired animation's end (NPC + the event it gets). */
 const MOUNTED = `${PAIRED_PREFIX}pairedStop`;
@@ -58,10 +96,19 @@ const DEFAULT_OFFSETS: MountOffsets = {
   mountCameraOffset: [0, -300, 0],
 };
 
-/** One rider on one horse. */
+/** One rider on one horse (or dragon). */
 interface Ride {
   readonly rider: number;
   readonly horse: number;
+  readonly kind: MountKind;
+  /** A dragon sent the way the player looks (Forward held). */
+  patrol: boolean;
+  /** A dragon asked to land: the player gets off once it stands. */
+  landing: boolean;
+  /** A dragon flown to a place (the map's fast travel). */
+  travel: Vec3 | undefined;
+  /** The Right Attack button was held at the last frame (the dragon's target on a press). */
+  attacking: boolean;
   phase: 'mounting' | 'riding' | 'dismounting';
   /** Seconds in the phase (a paired animation's timeout). */
   elapsed: number;
@@ -85,13 +132,21 @@ export interface ActorMountsOptions {
   readonly get: (reference: number) => StagedActor | undefined;
   /** The player being played (their session and body). */
   readonly player?: () => PlayerView | undefined;
+  /** The fliers (a ridden dragon flies by them). */
+  readonly flight?: () => ActorFlight | undefined;
+  /** Sets an actor on another (a ridden dragon on the player's target). */
+  readonly startCombat?: (actor: number, target: number) => void;
+  /** The actors on the stage (the dragon's targets). */
+  readonly actors?: () => Iterable<StagedActor>;
 }
 
 export class ActorMounts {
   readonly #options: ActorMountsOptions;
   readonly #rides = new Map<number, Ride>();
   readonly #offsets = new Map<number, Promise<MountOffsets>>();
-  readonly #horseRaces = new Map<number, boolean>();
+  readonly #mountRaces = new Map<number, MountKind | undefined>();
+  /** Whether the player's perks let them ride each dragon asked about (Allow Mount Actor). */
+  readonly #mayRide = new Map<number, boolean>();
   #stepHooks: Set<(step: number) => void> | undefined;
   readonly #step = (): void => {
     this.#carryPlayer();
@@ -156,10 +211,24 @@ export class ActorMounts {
    */
   activation(placed: PlacedActor): Activatable | undefined {
     const horse = placed.actor.reference;
-    if (!this.#isHorse(placed.look.race) || this.ridden(horse)) return undefined;
+    const kind = this.#kindOf(placed.look.race);
+    if (kind === undefined || this.ridden(horse)) return undefined;
     const session = this.#options.session;
     const uses = session.hud.uses;
     const name = placed.look.name !== '' ? placed.look.name : placed.look.editorId;
+    if (kind === 'dragon') {
+      if (!this.#mayRideDragon(horse)) return undefined;
+      return {
+        verb: uses?.text('sRide') ?? 'Ride',
+        name,
+        activate: () => {
+          // Its scripts hear it (DLC2TameDragonAliasScript.OnActivate: the tamed dragon's
+          // wait ends), then the player gets on.
+          session.scriptsReady?.playerActivated(horse);
+          void this.mountPlayer(horse);
+        },
+      };
+    }
     const stealing = this.#stealing(horse);
     return {
       verb: stealing ? (uses?.text('sSteal') ?? 'Steal') : (uses?.text('sRide') ?? 'Ride'),
@@ -209,20 +278,75 @@ export class ActorMounts {
   /** Whether riding each horse asked about is stealing it. */
   readonly #stolen = new Map<number, boolean>();
 
-  /** Whether a race is ridden (its keywords have ActorTypeHorse), read once per race. */
-  #isHorse(race: number): boolean {
-    const known = this.#horseRaces.get(race);
-    if (known !== undefined) return known;
-    this.#horseRaces.set(race, false);
+  /**
+   * What a race is ridden as (its keywords: ActorTypeHorse, ActorTypeDragon), read once per
+   * race (known from the frame after it is first asked).
+   */
+  #kindOf(race: number): MountKind | undefined {
+    if (this.#mountRaces.has(race)) return this.#mountRaces.get(race);
+    this.#mountRaces.set(race, undefined);
     void this.#options.session.db.then(async (db) => {
       const record = await db.get(race);
       const keywords = record?.fields.first('KWDA');
       if (!record || !keywords) return;
       for (let at = 0; at + 4 <= keywords.length; at += 4) {
-        if (record.formIdAt(keywords, at) === ACTOR_TYPE_HORSE) this.#horseRaces.set(race, true);
+        const keyword = record.formIdAt(keywords, at);
+        if (keyword === ACTOR_TYPE_HORSE) this.#mountRaces.set(race, 'horse');
+        if (keyword === ACTOR_TYPE_DRAGON) this.#mountRaces.set(race, 'dragon');
       }
     });
-    return false;
+    return undefined;
+  }
+
+  /**
+   * Whether the player's perks let them ride a dragon now (Allow Mount Actor: the tamed one),
+   * asked again each time (the answer of the last asking).
+   */
+  #mayRideDragon(dragon: number): boolean {
+    const perks = this.#options.session.scriptsReady?.perks;
+    if (!perks) return false;
+    void perks.mayMount(PLAYER_REF, dragon).then(
+      (may) => {
+        this.#mayRide.set(dragon, may);
+      },
+      () => undefined,
+    );
+    return this.#mayRide.get(dragon) === true;
+  }
+
+  /** What a horse (or dragon) is ridden as, if known. */
+  #kindOfMount(horse: number): MountKind {
+    const race = this.#options.get(horse)?.placed.look.race;
+    return (race === undefined ? undefined : this.#mountRaces.get(race)) ?? 'horse';
+  }
+
+  /**
+   * A flying mount an actor rides (a dragon): whether the player sent it on (its patrol) or it
+   * flies them to a place (the map's fast travel); undefined riding none.
+   */
+  flyingMount(
+    actor: number,
+  ): { readonly patrol: boolean; readonly travelling: boolean } | undefined {
+    const ride = this.#rides.get(actor);
+    if (ride?.kind !== 'dragon') return undefined;
+    return { patrol: ride.patrol, travelling: ride.travel !== undefined };
+  }
+
+  /**
+   * The map's fast travel riding a dragon: it flies the player there (no loading); false if
+   * the player rides none.
+   */
+  flyTo(to: Vec3): boolean {
+    const ride = this.#rides.get(PLAYER_REF);
+    const flight = this.#options.flight?.();
+    if (ride?.kind !== 'dragon' || ride.phase !== 'riding' || !flight) return false;
+    ride.travel = [...to];
+    ride.patrol = false;
+    ride.landing = false;
+    void flight.travel(ride.horse, [...to], TRAVEL_ARRIVED).then(() => {
+      if (ride.travel?.[0] === to[0] && ride.travel[1] === to[1]) ride.travel = undefined;
+    });
+    return true;
   }
 
   /** A race's mount offsets (RACE DATA), read once per race. */
@@ -304,9 +428,16 @@ export class ActorMounts {
     movers.stop(horse);
     movers.request(horse, undefined);
     movers.release(rider);
+    const kind = this.#kindOfMount(horse);
+    const events = KIND_EVENTS[kind];
     const ride: Ride = {
       rider,
       horse,
+      kind,
+      patrol: false,
+      landing: false,
+      travel: undefined,
+      attacking: true,
       phase: instant ? 'riding' : 'mounting',
       elapsed: 0,
       done: undefined,
@@ -317,9 +448,12 @@ export class ActorMounts {
     };
     this.#rides.set(rider, ride);
     this.#listen(ride, body);
-    this.#send(rider, instant ? MOUNT_INSTANT : MOUNT);
-    if (instant) return Promise.resolve(true);
-    mount.placed.behavior?.sendEvent(partnerEvent(MOUNT));
+    this.#send(rider, instant ? events.instant : events.mount);
+    if (instant) {
+      this.#takeOff(ride);
+      return Promise.resolve(true);
+    }
+    mount.placed.behavior?.sendEvent(partnerEvent(events.mount));
     return new Promise((resolve) => {
       ride.done = resolve;
     });
@@ -341,9 +475,28 @@ export class ActorMounts {
     this.#options.get(ride.horse)?.placed.behavior?.sendEvent(PAIR_END);
     ride.phase = 'riding';
     ride.elapsed = 0;
+    this.#takeOff(ride);
     const done = ride.done;
     ride.done = undefined;
     done?.(true);
+  }
+
+  /** A dragon mounted takes off and circles where it was mounted. */
+  #takeOff(ride: Ride): void {
+    const dragon = this.#options.get(ride.horse);
+    const flight = this.#options.flight?.();
+    if (ride.kind !== 'dragon' || !dragon || !flight) return;
+    this.#circle(ride, dragon.position);
+  }
+
+  /** A ridden dragon circles a point (where it was mounted, where its patrol was let go). */
+  #circle(ride: Ride, center: Vec3): void {
+    this.#options.flight?.()?.request(ride.horse, {
+      kind: 'orbit',
+      center: [...center],
+      radius: FLIGHT_DEFAULTS.orbitDistance,
+      height: FLIGHT_DEFAULTS.orbitHeight,
+    });
   }
 
   /**
@@ -374,7 +527,10 @@ export class ActorMounts {
     this.#options.movers.stop(ride.horse);
     this.#options.movers.request(ride.horse, undefined);
     const swimming = this.#options.movers.motion(ride.horse)?.swimming === true;
-    const event = swimming ? DISMOUNT_SWIM : DISMOUNT;
+    const event =
+      swimming && ride.kind === 'horse' ? DISMOUNT_SWIM : KIND_EVENTS[ride.kind].dismount;
+    // A dragon got off stays where it stands (its own AI again: its scripts' packages).
+    if (ride.kind === 'dragon') this.#options.flight?.()?.request(ride.horse, undefined);
     ride.phase = 'dismounting';
     ride.elapsed = 0;
     this.#send(actor, event);
@@ -452,7 +608,7 @@ export class ActorMounts {
   #riderPlace(ride: Ride, horse: StagedActor): Placed {
     const at: Placed = { position: horse.position, heading: horse.heading };
     if (ride.phase !== 'riding') return at;
-    const node = horse.placed.pose.world('SaddleBone');
+    const node = horse.placed.pose.world(KIND_EVENTS[ride.kind].saddle);
     const world = horse.placed.instances[0]?.world;
     const saddle =
       node && world
@@ -522,6 +678,10 @@ export class ActorMounts {
 
   /** The player's controls on their horse: where it goes, getting off on Activate. */
   #controls(ride: Ride, view: PlayerView, horse: StagedActor): void {
+    if (ride.kind === 'dragon') {
+      this.#flyControls(ride, view, horse);
+      return;
+    }
     const player = view.play.player;
     const held = (name: string): number => (player.isHeld(name) ? 1 : 0);
     const activating = player.isHeld('Activate');
@@ -544,6 +704,89 @@ export class ActorMounts {
       horse.heading,
     );
     this.#options.movers.request(ride.horse, request);
+  }
+
+  /**
+   * The player's controls on their dragon: Activate asks it to land (and gets off once it
+   * stands), Forward sends it the way they look, Right Attack sets it on the actor they look
+   * at; otherwise it circles (where it was let go, where it took off).
+   */
+  #flyControls(ride: Ride, view: PlayerView, dragon: StagedActor): void {
+    const flight = this.#options.flight?.();
+    const runtime = this.#options.session.scriptsReady;
+    if (!flight || !runtime) return;
+    const player = view.play.player;
+    const flying = flight.isFlying(ride.horse);
+    const activating = player.isHeld('Activate');
+    const pressed = activating && !ride.activating;
+    ride.activating = activating;
+    if (pressed) {
+      if (!flying) {
+        void this.getOff(PLAYER_REF);
+        return;
+      }
+      if (!runtime.flyingMountLandingAllowed) return;
+      // It lands below where it is (its landing finds the ground there: actor-flight.ts).
+      ride.landing = true;
+      ride.patrol = false;
+      ride.travel = undefined;
+      flight.request(ride.horse, {
+        kind: 'land',
+        at: [...dragon.position],
+        heading: dragon.heading,
+      });
+      return;
+    }
+    if (ride.landing) {
+      if (!flying && flight.state(ride.horse) === FlyingState.none) {
+        ride.landing = false;
+        void this.getOff(PLAYER_REF);
+      }
+      return;
+    }
+    // The player's target: the actor nearest their view.
+    const attacking = player.isHeld('Right Attack/Block');
+    if (attacking && !ride.attacking) {
+      const target = this.#viewTarget(player.position, player.forward, ride.horse);
+      if (target !== undefined) this.#options.startCombat?.(ride.horse, target);
+    }
+    ride.attacking = attacking;
+    if (ride.travel) return;
+    if (player.isHeld('Forward')) {
+      ride.patrol = true;
+      const ahead: Vec3 = [
+        dragon.position[0] + Math.sin(player.yaw) * PATROL_AHEAD,
+        dragon.position[1] + Math.cos(player.yaw) * PATROL_AHEAD,
+        dragon.position[2],
+      ];
+      flight.request(ride.horse, { kind: 'cruise', to: ahead });
+    } else if (ride.patrol) {
+      ride.patrol = false;
+      this.#circle(ride, dragon.position);
+    }
+  }
+
+  /** The living actor nearest the player's view line (a dragon's target), not their mount. */
+  #viewTarget(eye: Vec3, forward: Vec3, mount: number): number | undefined {
+    let best: { reference: number; off: number } | undefined;
+    for (const staged of this.#options.actors?.() ?? []) {
+      if (staged.dead || staged.reference === mount || staged.reference === PLAYER_REF) continue;
+      const d: Vec3 = [
+        staged.position[0] - eye[0],
+        staged.position[1] - eye[1],
+        staged.position[2] - eye[2],
+      ];
+      const along = d[0] * forward[0] + d[1] * forward[1] + d[2] * forward[2];
+      if (along <= 0 || along > DRAGON_TARGET_REACH) continue;
+      const off =
+        Math.hypot(
+          d[0] - forward[0] * along,
+          d[1] - forward[1] * along,
+          d[2] - forward[2] * along,
+        ) / along;
+      if (!best || off < best.off) best = { reference: staged.reference, off };
+    }
+    return best?.reference;
   }
 
   /**

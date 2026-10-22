@@ -1060,8 +1060,9 @@ HasBeenEaten, IsPoison.
   "Talk"), which a choice that Replaces Default takes out (TODO(M13): the box's text and the
   buttons' order: the target's name, the default first); a choice runs its spell (cast by the
   owner at the target) and its fragment (PERK VMAD: the PRKF_ script's Fragment_N by the
-  entry's EPF3 index, as Fragment_N(akTargetRef, akActor)). Allow Mount Actor (`mayMount`)
-  waits for dragon riding (TODO(M11): Dragonborn's dragon riding).
+  entry's EPF3 index, as Fragment_N(akTargetRef, akActor): the werewolf's Feed casts
+  PlayerWerewolfFeedVictimSpell, a Werewolf Feed effect that leaves the corpse eaten). Allow
+  Mount Actor (`mayMount`): the dragon the player may ride ("Dragon riding").
 - **Harvesting**: Mod Ingredients Harvested ("Harvesting" in Crafting). **Slow Time**: Mod
   Player Magic Slowdown on the player's pace ("Magic effects").
 - **The bow** (src/shell/time-flow.ts, player-combat.ts): with a bow and an arrow drawn, block
@@ -1080,3 +1081,84 @@ Adjust Limb Damage, Get Should Attack, Mod Addiction Chance / Duration, Mod Posi
 Duration, Mod Max Placeable Mines, the Telekinesis ones, Mod Secondary Value Weight, Mod Player
 Reputation, Ignore Running During Detection, Ignore Broken Lock, Mod Lockpick Level Allowed and
 Set Progression Picking (Fallout's; TODO(M13) should a mod use them).
+
+## Beast forms
+
+The werewolf and the vampire lord are run by their vanilla scripts; the engine gives them what
+the scripts ask for. `node tools/papyrus-run.ts --new-game --console "2:player.cast
+WerewolfChange player"` (twice: the first cast only ends the Companions' "virgin" flag) or
+`... DLC1VampireChange ...` runs a change in Node, `--activate t:<ref>` feeds.
+
+- **Game.SetBeastForm** (`runtime.beastForm`): the inventory, magic and favorites menus stay
+  shut (their keys and the tween menu's choices: src/shell/game-menus.ts); the map, skills and
+  journal open (UESP "Skyrim:Werewolf").
+- **Actor.SetRace** makes the actor again in the race (the player's avatar, an NPC where it
+  stands), its graph starting at its beginning (the werewolf's begins with its change howl);
+  once the new 3D stands its scripts hear **OnRaceSwitchComplete** (Node: at once).
+  PlayerWerewolfScript starts the tracking there, or shuts the change down after the change
+  back; DLC1PlayerVampireScript likewise.
+- **The change** (PlayerWerewolfQuest): WerewolfChange's effect starts the quest (PrepShift:
+  SetBeastForm, ForceThirdPerson, ShowFirstPersonGeometry false, controls), its visual effect
+  plays IdleWerewolfTransformation on the human graph, whose SetRace annotation (or 10 s)
+  changes the race; StartTracking unequips, adds the howl and the level's ability, and sets
+  PlayerWerewolfShiftBackTime from StandardDurationSeconds; OnUpdate (5 s) changes back once
+  GameDaysPassed reaches it (stage 100: SetRace to CompanionsHousekeepingScript's
+  PlayerOriginalRace, ShowFirstPersonGeometry true). An effect's script that waits past its
+  effect's end (TransformIfNecessary after Wait 10) keeps its properties: a script's calls on
+  itself stay on its own instance (src/scripting/papyrus-vm.ts).
+- **Combat**: the beast's graph fights through the idle tree like any creature
+  (WerewolfRightAttackFast, WerewolfLeftPowerAttack, ...: actor-combat.ts); a creature graph's
+  weapon is out at its weaponDraw even unasked (the werewolf's graph stands in its combat
+  stance once changed), and a race change starts the fighter with nothing drawn. Howls are the
+  equipped shout (ActionVoice: HowlStart).
+- **Movement**: the beast graphs keep their state in iState through BSIStateManagerModifier
+  (src/formats/hkx/behavior.ts: the H2HBehavior's sprint state sets iState_WerewolfBeastSprint);
+  in a beast form the player moves at that movement type (WerewolfBeastDefault 400 running,
+  WerewolfBeastSprint 531), NPCs as their tagged movement types always did.
+- **Feeding**: PlayerWerewolfFeed's entries name the prompt "Feed" on a corpse and take the
+  activation (see "Perks": Activate): the victim spell marks it eaten, Feed extends the time
+  (FeedExtensionTimeSeconds, more on NPCs and with Gorging), plays SpecialFeeding and shows
+  "Bloodlust extended" (a MESG without the Message Box flag is a notification: TNAM seconds).
+- **The vampire lord** (DLC1PlayerVampireQuest): its graph's LevitatePlayerStart (the change's
+  end) lifts the player off (LevitationToggle); Ready Weapon goes up and down instead of drawing
+  (LevitationToggleMoving while moving; TODO(M13): the engine's own trigger is not documented):
+  up in the air the hands hold their spells at once (LevitateStart: drawn; the script equips
+  Vampiric Drain and the left spell), landed (LandStart) it stands out of combat and claws as
+  it draws. Bites are the idle tree's paired power attacks (pa_KillMoveVampireLordFeed*: the
+  script counts them at BiteStart).
+
+## Vampirism
+
+PlayerVampireQuestScript runs it: Sanguinare Vampiris (VampireDiseaseEffectScript) changes
+the player after three days (its message, VampireChange: SetRace to the race's vampire race,
+the stage 1 abilities), then each day without feeding a stage more (OnUpdateGameTime every 12
+hours: VampireProgression's abilities, sun damage, drains), feeding back to stage 1.
+**Actor.SendVampirismStateChanged** / **SendLycanthropyStateChanged** send
+OnVampirismStateChanged / OnLycanthropyStateChanged to the actor's scripts (Survival Mode's
+needs). **Actor.StartVampireFeed** (the VampireFeed perk's fragments on a sleeper) sets the
+feeding for FEEDING_SECONDS (6 s: GetVampireFeed holds; TODO(M13): the engine ends it with
+the animation), plays ActionIdle's IdleVampireFeed on the target (bed left / right, bedroll,
+standing front / back: the paired pa_VampireFeedStanding_* plays the victim's side too) and
+sends OnVampireFeed; StartCannibal likewise (GetCannibal, IdleCannibalFeed). **Actor.
+SetEyeTexture** (DLC1VampireTurnScript's red eyes, Serana's cure) gives the actor's eyes head
+part the texture set: the player's made head and an NPC's baked FaceGen head (its eye shapes
+are named after the head parts) are made again with it.
+
+## Dragon riding
+
+Dragonborn's dragon riding (src/shell/actor-mounts.ts, with src/shell/actor-flight.ts flying
+the dragon). Bend Will tames a dragon (DLC2TameDragonScript: it lands, waits); the player may
+ride it where their perks' Allow Mount Actor entry holds (`perks.mayMount`): activating it
+("Ride") tells its scripts (OnActivate: the wait ends) and mounts it by its pair
+(DragonMountEnter / pa_DragonMountEnter), the rider on its "NPC Saddlebone". Ridden, it is a
+flying mount (IsOnFlyingMount; IsRidingHorse and IsBeingRidden hold as for horses; its AI
+waits): it takes off and circles where it was mounted (an orbit at fCombatOrbitDistance and the
+orbit height), Forward sends it the way the player looks (PATROL_AHEAD at a time:
+IsFlyingMountPatrolQueued) and it circles where it is let go, Right Attack sets it on the
+actor nearest the player's view (its combat flies the attack: breath, passes), the map's fast
+travel in the same worldspace flies it there instead of loading
+(IsFlyingMountFastTravelling), and Activate asks it to land below (refused while
+**Game.SetAllowFlyingMountLandingRequests** forbids it: `runtime.flyingMountLandingAllowed`),
+the player getting off (DragonMountExit) once it stands. The player's own shouts and spells
+work as on foot. TODO(M13): the engine's patrol distance and its landing spot search are not
+documented.

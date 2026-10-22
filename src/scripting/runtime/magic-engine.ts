@@ -1110,14 +1110,19 @@ export class MagicEngine {
         if (!(await runtime.actors.isDead(target)))
           runtime.world.stagger?.(target, entry.magnitude, entry.caster);
         break;
+      // A werewolf fed on the corpse (PlayerWerewolfFeedVictimSpell, the Feed perk's choice):
+      // it is eaten (HasBeenEaten: no one feeds on it again).
+      case EffectArchetype.werewolfFeed:
+        runtime.state.actor(target).eaten = true;
+        break;
       // Cloaks act each second (#pulse); Soul Trap as its target dies (died). Concussion,
       // Telekinesis, Grab Actor, Light, Detect Life, Guide, Disguise, Werewolf, Vampire Lord,
-      // Werewolf Feed, Slow Time, Etherealize, Command Summoned, Script: their state is the
-      // effect itself (aiState, timeMultiplier) and their scripts; what they show (lights,
-      // Detect Life's shader, Clairvoyance's trail) the world's magicEffect shows
-      // (src/shell/actor-effects.ts). Telekinesis: the player's cast takes hold of the object
-      // aimed at (src/shell/player-casting.ts). TODO(M10) 5.1: knock-downs (a living ragdoll
-      // that gets up), Grab Actor (Dragonborn's Bend Will's grab) with them.
+      // Slow Time, Etherealize, Command Summoned, Script: their state is the effect itself
+      // (aiState, timeMultiplier) and their scripts; what they show (lights, Detect Life's
+      // shader, Clairvoyance's trail) the world's magicEffect shows (src/shell/actor-effects.ts).
+      // Telekinesis: the player's cast takes hold of the object aimed at
+      // (src/shell/player-casting.ts). TODO(M10) 5.1: knock-downs (a living ragdoll that gets
+      // up), Grab Actor (Dragonborn's Bend Will's grab) with them.
       default:
         break;
     }

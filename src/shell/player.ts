@@ -405,6 +405,12 @@ export class Player implements Camera {
     this.#body = body;
   }
 
+  /**
+   * The movement type the player's graph has them in, where it decides (a beast form's iState:
+   * src/shell/player-avatar.ts); undefined: the player's own types by what they do.
+   */
+  taggedMovement: (() => MovementType | undefined) | undefined;
+
   /** The movement types the player moves with. */
   get movement(): PlayerMovement {
     return this.#setup.movement;
@@ -577,13 +583,17 @@ export class Player implements Camera {
     if (wantsSprint && !allowed && !this.#sprintRefused) this.onSprintRefused?.();
     this.#sprintRefused = wantsSprint && !allowed;
     const sprinting = wantsSprint && allowed;
-    const type = swimming
-      ? movement.swim
-      : sprinting
-        ? movement.sprint
-        : this.sneaking
-          ? movement.sneak
-          : movement.normal;
+    // A beast form moves at the movement type its graph is in (WerewolfBeastSprint, ...).
+    const beast = swimming ? undefined : this.taggedMovement?.();
+    const type =
+      beast ??
+      (swimming
+        ? movement.swim
+        : sprinting
+          ? movement.sprint
+          : this.sneaking
+            ? movement.sneak
+            : movement.normal);
     // In slowed time the player keeps their own pace against the world's clock (Slow Time:
     // GameSession.playerPace).
     const pace = this.pace?.() ?? 1;

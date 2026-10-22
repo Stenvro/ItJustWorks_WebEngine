@@ -6,13 +6,6 @@
 // placeholders. Platform-independent.
 
 export const PLACEHOLDER_NATIVES: ReadonlyMap<string, string> = new Map([
-  // The player's forms, the first-person view.
-  ['game.setbeastform', 'TODO(M11): the werewolf and vampire lord forms'],
-  ['game.showfirstpersongeometry', 'TODO(M11): the first-person arms and weapon'],
-  ['actor.sendlycanthropystatechanged', 'TODO(M11): lycanthropy (the werewolf forms)'],
-  ['actor.sendvampirismstatechanged', 'TODO(M11): vampirism (its stages)'],
-  ['actor.seteyetexture', "TODO(M11): vampirism (the vampire's eyes)"],
-  ['game.setallowflyingmountlandingrequests', "TODO(M11): Dragonborn's dragon riding"],
   // Saves.
   ['game.requestsave', 'TODO(M12): saves'],
   ['game.requestautosave', 'TODO(M12): saves'],

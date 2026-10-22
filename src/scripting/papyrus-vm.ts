@@ -519,13 +519,19 @@ export class PapyrusVm {
     depth: number,
     thread: Thread,
     caller?: string,
+    from?: Frame,
   ): Promise<Value> {
     if (!(target instanceof ObjectHandle)) {
       // The game logs this as an error of the calling script; the call returns None.
       this.warn(`${caller ? `${caller}: ` : ''}call to ${name} on ${formatValue(target)}`);
       return null;
     }
-    const instance = await this.#resolve(target);
+    // A script calling its own functions stays on its own instance, even one its object let
+    // go meanwhile (an effect that ended while its function waited: its properties are
+    // still there, as the game keeps them).
+    const own = from?.instance && from.self?.sameObject(target) ? from.instance : undefined;
+    const instance =
+      own && extendsScript(own.script, target.type) ? own : await this.#resolve(target);
     if (!instance) {
       this.warn(`no script for ${formatValue(target)} (calling ${name})`);
       return null;
@@ -874,6 +880,7 @@ export class PapyrusVm {
               frame.depth + 1,
               thread,
               frame.level.displayName,
+              frame,
             ),
           );
           break;
