@@ -134,6 +134,7 @@ const parseNode: BlockParser = (reader, context, type): NiNodeBlock => {
   let billboardMode: number | undefined;
   let value: number | undefined;
   let treeBones: { trunk: Ref[]; branches: Ref[] } | undefined;
+  let damageStage: { min: number; max: number } | undefined;
 
   switch (type) {
     case 'NiSwitchNode':
@@ -157,9 +158,17 @@ const parseNode: BlockParser = (reader, context, type): NiNodeBlock => {
       value = reader.i32();
       reader.u8(); // flags
       break;
+    case 'BSDamageStage': {
+      // BSRangeNode: min, max, current. A damage stage node shows its subtree while the
+      // object's model damage stage (DSTD) is within min..max.
+      const min = reader.u8();
+      const max = reader.u8();
+      reader.u8(); // current
+      damageStage = { min, max };
+      break;
+    }
     case 'BSRangeNode':
     case 'BSBlastNode':
-    case 'BSDamageStage':
     case 'BSDebrisNode':
       reader.skip(3); // min, max, current
       break;
@@ -181,6 +190,7 @@ const parseNode: BlockParser = (reader, context, type): NiNodeBlock => {
     ...(billboardMode !== undefined && { billboardMode }),
     ...(value !== undefined && { value }),
     ...(treeBones && { treeBones }),
+    ...(damageStage && { damageStage }),
   };
 };
 

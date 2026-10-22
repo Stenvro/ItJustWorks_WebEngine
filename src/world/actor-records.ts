@@ -440,7 +440,10 @@ export function parseArmor(record: RecordSource): ArmorRecord {
  * MO2S..MO5S: count (u32), then per entry the shape name (u32 length + text), the texture
  * set (form id) and the shape's index (u32).
  */
-function alternateTextures(record: RecordSource, data: Uint8Array | undefined): AlternateTexture[] {
+export function alternateTextures(
+  record: RecordSource,
+  data: Uint8Array | undefined,
+): AlternateTexture[] {
   if (!data || data.length < 4) return [];
   const dataView = view(data);
   const count = dataView.getUint32(0, true);

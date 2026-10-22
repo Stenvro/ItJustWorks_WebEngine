@@ -54,9 +54,17 @@ export class AssetLoader {
     return this.#workers.length;
   }
 
-  /** A model; `switchChild`: the child its NiSwitchNodes show (flora harvested). */
-  async loadModel(path: string, switchChild?: number): Promise<LoadedModel> {
-    const response = await this.#request('model', path, switchChild);
+  /**
+   * A model; `switchChild`: the child its NiSwitchNodes show (flora harvested); `damageStage`:
+   * a destructible object's model damage stage (its BSDamageStage nodes, drawn and colliding).
+   */
+  async loadModel(
+    path: string,
+    switchChild?: number,
+    damageStage?: number,
+    swaps?: ModelTextureSwaps,
+  ): Promise<LoadedModel> {
+    const response = await this.#request('model', path, switchChild, damageStage, swaps);
     if (!response.ok || response.kind !== 'model') throw new Error(describe(response));
     return {
       model: response.model,
@@ -119,10 +127,20 @@ export class AssetLoader {
     kind: 'model' | 'texture' | 'rig' | 'expressions',
     path: string,
     switchChild?: number,
+    damageStage?: number,
+    swaps?: ModelTextureSwaps,
   ): Promise<AssetResponse> {
     const payload = await this.#vfs.readPayload(path);
     return this.#send(
-      { id: 0, kind, path, payload, ...(switchChild !== undefined && { switchChild }) },
+      {
+        id: 0,
+        kind,
+        path,
+        payload,
+        ...(switchChild !== undefined && { switchChild }),
+        ...(damageStage ? { damageStage } : {}),
+        ...(swaps && { swaps }),
+      },
       [payload],
     );
   }

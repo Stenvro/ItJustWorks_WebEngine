@@ -1433,6 +1433,46 @@ lobber 10) and 279 EXPL (86 with an enchantment).
   EITM the enchantment or spell it applies, MNAM its image-space modifier, MODL its model.
   Fireball01ImpactExplosion: radius 320, force 60, damage 2.
 
+## Destructible objects
+
+`src/world/destruction-records.ts`, after xEdit (wbDefinitionsTES5 wbDEST, DEBR); check:
+`node tools/destruction-info.ts` (counts, stage flags, every object), `<editor id>` (one with
+its explosions and debris models), `--refs` (the placed references, by object). The block can
+sit on ACTI, ALCH, AMMO, ARMO, BOOK, CONT, DOOR, FLOR, FURN, INGR, KEYM, LIGH, MISC, MSTT,
+NPC\_, PROJ, SCRL, SLGM, STAT, TACT, TREE and WEAP; the load order has 674 (ACTI 658: 600 ore
+veins and gem deposits, traps, webs, barricades, frozen Falmer, ...; FURN 2, MSTT 2, NPC\_ 2,
+PROJ 10) with 813 stages, and 3286 placed references of 340 of them. 6 DEBR.
+
+- **DEST** (8 bytes): health i32 @0, stage count u8 @4, flags u8 @5 (0x1 VATS targetable, 0x2
+  large actor destroys; 0 in every vanilla record), 2 unknown. Then per stage, in order:
+- **DSTD** (20 bytes): health % u8 @0 (falling from stage to stage), index u8 @1 (its position),
+  model damage stage u8 @2, flags u8 @3 (0x1 cap damage, 0x2 disable, 0x4 destroy, 0x8 ignore
+  external damage), self damage per second i32 @4, explosion (EXPL) @8, debris (DEBR) @12,
+  debris count i32 @16; then optionally **DMDL** (the stage's model, relative to meshes\),
+  **DMDT** (its texture hashes) and **DMDS** (texture sets on its shapes: u32 count, then per
+  entry the shape name as u32 length + text, the TXST and the shape index u32: the layout of
+  ARMA's MO2S..MO5S; 496 stages, the ore veins' depleted rock taking their ground's texture);
+  **DSTF** (empty) ends the stage.
+- **DEBR**: per model a **DATA** (u8 percentage, the model's path, u8 flags: 0x1 has collision
+  data) and its MODT. IceWraithDebris' percentages add up to 100; IceFormDebris lists eight
+  pieces at 100 each. Several debris models have no collision of their own (IceFormChunk01..04,
+  TentacleDebris) or a fixed one (DLC01 IceChunk01: a fixed sphere of mass 0).
+- **BSDamageStage** (NIF, a BSRangeNode: min, max, current bytes): the subtree a model shows at
+  model damage stages min..max; the files keep each one culled (the engine shows the current
+  one). Seven vanilla models: the stockade barricade (DamageStage0..3, one per stage), the
+  windmills (DamageStage0-1, their pins), the beehive (2-3), Bersi's urn (its decals), the
+  lumber mill's log, an Apocrypha ring's rubble.
+- Examples: MineOreIron01 health 100, one stage at 50 % (cap damage, ignore external) with
+  MineOreDepleted01.nif (MineOreScript's DamageObject(50)); FXspiderWebKitDestructible health
+  10, [99 % cap damage, FXSpiderwebStripExplosion] [0 %, its torn model and explosion];
+  StockadeBarricade01Activator health 125, stages at 75/50/25 % (model damage stages 1..3) and 0
+  % (StockadeBarricade01Stage04.nif); TrapOilPool01 health 100, [99 % cap, destroy, 16/s] [94 %
+  12/s, TrapOilExplosionInitial] [12 % 1/s] [7 % disable]. No vanilla destruction explosion
+  spawns a projectile; TrapOilExplosion01 places a fire hazard. No record of MQ101's Helgen
+  tower, of the icicles or of the ice walls carries DEST; Dwemer columns and boulders do
+  (DweDesColumn01Intact, DLC2DweDestructableColumn, CaveGBoulderDes01Intact: scripted, ignoring
+  external damage).
+
 ## Idles and actions
 
 `src/ai/idle-records.ts`, after xEdit (wbDefinitionsTES5 IDLE / AACT / IDLM, wbIdleAnimation),

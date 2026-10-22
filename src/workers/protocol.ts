@@ -19,6 +19,10 @@ export type AssetRequest =
       readonly payload: BsaPayload;
       /** Models: the child every NiSwitchNode shows (flora harvested). */
       readonly switchChild?: number;
+      /** Models: a destructible object's model damage stage (BSDamageStage nodes). */
+      readonly damageStage?: number;
+      /** Models: texture sets swapped onto its shapes (a destruction stage's DMDS). */
+      readonly swaps?: ModelTextureSwaps;
     }
   | {
       readonly id: number;

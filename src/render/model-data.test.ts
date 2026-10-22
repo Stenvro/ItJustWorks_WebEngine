@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { VertexAttribute } from '../formats/nif/blocks.ts';
 import type { NiTriShapeDataBlock } from '../formats/nif/types.ts';
-import { normalizeTexturePath, packTriShapeData } from './model-data.ts';
+import { normalizeTexturePath, packTriShapeData, shownAtDamageStage } from './model-data.ts';
+
+describe('shownAtDamageStage', () => {
+  it("shows a BSDamageStage node's subtree within its range of stages; other nodes always", () => {
+    const windmillPins = { damageStage: { min: 0, max: 1 } };
+    expect([0, 1, 2].map((stage) => shownAtDamageStage(windmillPins, stage))).toEqual([
+      true,
+      true,
+      false,
+    ]);
+    expect(shownAtDamageStage({}, 3)).toBe(true);
+  });
+});
 
 describe('normalizeTexturePath', () => {
   it.each([
