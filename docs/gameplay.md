@@ -535,8 +535,9 @@ Format/SPEL"; the game settings.
   their health is whole; UseMagic's for its cast time. The combat AI's spells, staffs, heals,
   potions, summons, wards and buffs: docs/ai.md, "Combat AI".
 - What shows (src/shell/actor-casting.ts, magic-projectiles.ts, magic-fx.ts): the casting art
-  in the hand (MGEF casting art; dual cast: the dual-cast art at its scale) and the casting
-  light there (MGEF light); a projectile carries its light; with the Muzzle Flash flag its
+  in the hand (MGEF casting art, on the player's hands while their magic is drawn; dual cast:
+  the dual-cast art at its scale) and the casting light there (MGEF light); the spell leaves
+  the hand as its graph's release raises SpellFire (docs/animation.md, "Casting"); a projectile carries its light; with the Muzzle Flash flag its
   muzzle flash model and light show where it leaves for its muzzle flash duration; a cone's
   wave (its projectile's model and light) sweeps out at its speed to its range; a beam shows
   from the hand (TODO(M13): stretched to the hit); an explosion shows its model and light (its

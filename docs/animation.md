@@ -250,6 +250,53 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   a random offset in the range of the face's emotion (fEyeHeading/PitchMin/MaxOffsetEmotion*;
   a new one every 1–3 s, TODO(M13)); a line's own looks join them.
 
+## Casting
+
+The characters' magic graph (`magicbehavior.hkx` under 0_master; `src/shell/actor-casting.ts`
+plays it, for the player's body and first-person graphs alike):
+
+- The engine sets **iRightHandType / iLeftHandType** to 9 for a spell or a scroll in the hand
+  (GetEquippedItemType's code; src/shell/actor-combat.ts): the casting states' manual
+  selectors pick their clips by it (index 9: MRh_ChargeLoop, MRh_Release, ...; 8 a staff's);
+  any other type plays NullClips (MT_Idle), and the arms do not move.
+- A hand that casts sets **bWantCastRight / bWantCastLeft**: MagicRoot's
+  BeginCast_OnFalseToTrueMod raises BeginCastRight / BeginCastLeft, MagicReadyState →
+  CastingState. The engine sends BeginCast with the start (the idle tree's ActionRightAttack
+  leaf: MRh_SpellAimedStart, MRh_SpellAimedConcentrationStart, MRh_SpellSelfStart, MRh_WardStart,
+  ...) in the same update: the hand's state machine (MRh_ReadyCast_Behavior) takes the start
+  only in CastingState, and CastingState entered without a cast ends at once (below). They are
+  cleared as the cast is released, stopped or interrupted.
+- **CastStop**: CastingState's event-on-false-to-true of NotCasting, which the cast states'
+  InvertNotCasting (is-active, inverted) hold at 0; when no hand casts any more it goes back to
+  MagicReadyState.
+- Fire and forget (MRh_AimedFireAndForgetBehavior): MRh_PreCharge → (MRh_PreChargeOut)
+  MRh_ChargeLoop → **MRh_SpellReady_Event** (ActionRightReady, as the charge time passes)
+  MRh_ReadyLoop → **MRh_SpellRelease_Event** (ActionRightRelease) MRh_Release, whose trigger at
+  0.17 s raises **MRh_SpellFire_Event**: the spell leaves the hand then (the engine's
+  RightHandSpellFireHandler), and its end MRh_Equipped_Event takes the hand back to its ready
+  state.
+- Concentration (MRh_AimedConcentrationBehavior, MRh_SelfConcentrationBehavior): the charge
+  loop until **MRh_SpellRelease_Event** (ActionRightRelease as it is charged), MRh_PreAimedCon,
+  then the loop, whose state raises MRh_SpellFire_Event as it is entered: the sprays begin.
+  Let go (or out of magicka): ActionRightInterrupt, **MRh_Equipped_Event**, the wildcard back
+  to MRh_Ready_State. Released before it was ready: the same.
+- Dual casting: both bWantCast set, the start's DualMagic_ event (MLh_ReadyCast_Behavior's
+  wildcards → Dual_Cast), carried on by the left hand's MLh_SpellReady_Event,
+  MLh_SpellRelease_Event and MLh_SpellFire_Event (DMagAimRelease raises it at 0.17 s).
+- A cast whose graph raises no SpellFire event fires 0.5 s on (TODO(M13): the engine's way
+  without it).
+
+**Casting art** (MGEF casting art: Fireball01HandEffects, ShockHandEffects, ...) carries its own
+graph (BGED `Magic\CastingBasic.hkx`: mIntro → mIdle, mCharge on a start, mReady on
+SpellReady, mCast on SpellRelease, back to mIdle on Equipped), which hears the events the
+actor's graph is sent and raises (the engine's ActorMagicCaster is a sink of the actor's graph
+events); its bRightHand / bLeftHand (conditions of every transition) pick the hand's events. It
+sits on the hand's magic node (NPC R MagicNode [RMag], NPC L MagicNode [LMag]): the player's
+while their magic is drawn with a spell or a scroll in the hand (their hands' idle flames), an
+NPC's while it casts. In first person the player's hands are the first-person skeleton's magic
+nodes (the arms the player sees): the art, the casting light, the sounds and the projectiles
+leave from them; in third person the body's.
+
 ## Behavior runtime
 
 Actors run their race's behavior project (`src/animation/behavior-runtime.ts`; offline:
@@ -276,7 +323,12 @@ them by name (a variable keeps the first file's initial value). Each frame:
    second's prefixed "2_"; each actor's graph takes its own bones' tracks by name
    (`src/animation/paired-clips.ts`). A machine with a sync variable writes the id
    of the state it enters into it, and one whose start mode is SYNC starts from it (sneaking
-   locomotion and the idle turns share iIsInSneak that way).
+   locomotion and the idle turns share iIsInSneak that way). The BSIsActiveModifiers of the
+   nodes the events made active are activated then, before any modifier updates (Havok
+   activates what a transition enters before the frame's modifiers run, inner before outer):
+   the magic graph's CastStop, an event-on-false-to-true of NotCasting on CastingState, reads
+   the cast state's InvertNotCasting from the first frame, or it would end every cast as it
+   begins.
 2. **Update** of the active nodes: transitions without an event whose condition holds are
    taken; clips advance by their playback speed (looping, single play, ping-pong, user
    controlled; an enforced duration plays the clip in that time) and raise their triggers
