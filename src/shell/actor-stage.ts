@@ -321,7 +321,10 @@ export class ActorStage {
         );
       },
     });
-    this.bodies = new ActorBodies(options.session);
+    this.bodies = new ActorBodies(options.session, (reference) => {
+      const staged = this.#actors.get(reference);
+      return !staged || this.#groundReady(staged);
+    });
     this.knockdowns = new ActorKnockdowns({
       terminal: options.terminal,
       bodies: this.bodies,
