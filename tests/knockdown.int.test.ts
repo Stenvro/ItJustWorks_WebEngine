@@ -89,7 +89,7 @@ describe.skipIf(!hasGamedata())('knock-downs on the local game data', () => {
     const step = async (seconds: number): Promise<void> => {
       for (let t = 0; t < seconds; t += 1 / 30) {
         runtime.update(1 / 30);
-        raised.push(...runtime.takeRaised());
+        raised.push(...runtime.takeRaised().map((event) => event.text));
         await Promise.all(pending.splice(0));
       }
     };

@@ -21,6 +21,8 @@
 import { parseNpcCombat, parseRaceCombat } from '../ai/race-combat-records.ts';
 import { behaviorGraphKey, readIdleTree, type IdleTree } from '../ai/idle-records.ts';
 import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
+import type { GraphEvent } from '../animation/graph-events.ts';
+import type { ActorGraphSource } from './actor-graph-events.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import { DefaultObjectUse } from '../world/default-objects.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -508,7 +510,7 @@ export class ActorCombat implements CombatBridge {
       bleedingOut: bleedingOut(state),
       knockState: state.knock,
       paired: state.paired !== undefined,
-      killMove: state.paired !== undefined,
+      killMove: state.killMove,
       movementDirection: this.#movementDirection(fighter),
       lastHitCritical: fighter.lastCritical,
       // The player is in combat while an actor fights them.
@@ -527,6 +529,16 @@ export class ActorCombat implements CombatBridge {
       targetHeight: feet && targetFeet ? targetFeet[2] - feet[2] : 0,
       lastHostile: fighter.target !== undefined && this.#lastHostile(fighter),
     };
+  }
+
+  /** A fighter's combat target, if it has one. */
+  targetOf(actor: number): number | undefined {
+    return this.#fighters.get(actor)?.target;
+  }
+
+  /** Whether an actor plays a paired animation (a killmove: its death is its clip's). */
+  paired(actor: number): boolean {
+    return this.#fighters.get(actor)?.state.paired !== undefined;
   }
 
   startCombat(actor: number, target: number): void {
@@ -842,7 +854,10 @@ export class ActorCombat implements CombatBridge {
     return lights;
   }
 
-  /** A fighter's body: its events heard, its models made for what it holds. */
+  /**
+   * A fighter's body: its models made for what it holds (its graph's events come through the
+   * stage's dispatch: graphEvent, heard).
+   */
   #follow(fighter: Fighter, body: PlacedActor, runtime: ScriptRuntime): void {
     fighter.body = body;
     if (fighter.hooked !== body) {
@@ -854,25 +869,6 @@ export class ActorCombat implements CombatBridge {
         fighter.state.current = undefined;
       }
       fighter.hooked = body;
-      const previous = body.onEvents;
-      body.onEvents = (events) => {
-        previous?.(events);
-        // Its weapon's own graph (a bow's) hears what its graph raises.
-        if (fighter.body === body) fighter.held?.hear(events);
-        this.#events(fighter, events);
-      };
-      // The first-person graph's events: the player's strikes in first person.
-      if (fighter.player) {
-        const first = this.#avatar?.firstPerson;
-        if (first) {
-          const before = first.onEvents;
-          first.onEvents = (events) => {
-            before?.(events);
-            fighter.firstHeld?.hear(events);
-            if (this.#play?.player.pov === 'first') this.#events(fighter, events, true);
-          };
-        }
-      }
       fighter.gear = undefined;
       fighter.heldFor = undefined;
     }
@@ -1226,87 +1222,126 @@ export class ActorCombat implements CombatBridge {
 
   // --- Graph events -----------------------------------------------------------------------------
 
-  #events(fighter: Fighter, events: readonly string[], firstPerson = false): void {
+  /**
+   * An event of a fighter's graph (the stage's dispatch, src/shell/actor-graph-events.ts), with
+   * the engine handler class the response files give it (undefined: one they name none for,
+   * the fighter's own: WeapEquip_Out, blockStop). The player's first-person graph's count in
+   * first person.
+   */
+  graphEvent(source: ActorGraphSource, event: GraphEvent, handler: string | undefined): void {
+    const fighter = this.#fighters.get(source.reference);
+    if (!fighter) return;
+    if (source.firstPerson) {
+      if (!fighter.player || this.#play?.player.pov !== 'first') return;
+    } else if (fighter.body !== source.skeleton) return;
+    this.#event(fighter, event, handler, source.firstPerson);
+  }
+
+  /** The events a fighter's graph raised reach its weapons' own graphs (a bow's). */
+  heard(source: ActorGraphSource, events: readonly GraphEvent[]): void {
+    const fighter = this.#fighters.get(source.reference);
+    if (!fighter) return;
+    if (source.firstPerson) fighter.firstHeld?.hear(events);
+    else if (fighter.body === source.skeleton) fighter.held?.hear(events);
+  }
+
+  /** Who leads the paired animation an actor dies in (its killmove's killer), if anyone. */
+  killerOf(reference: number): number | undefined {
+    for (const other of this.#fighters.values()) {
+      if (other.state.paired === 'lead' && other.target === reference) return other.reference;
+    }
+    return undefined;
+  }
+
+  #event(
+    fighter: Fighter,
+    event: GraphEvent,
+    handler: string | undefined,
+    firstPerson: boolean,
+  ): void {
     // In first person the player's strikes follow the first-person graph; the body's graph
     // still moves the models.
     const strikes = !fighter.player || (this.#play?.player.pov === 'first') === firstPerson;
-    for (const event of events) {
-      // Only the striking graph's release lets the arrow go: the other's (raised first, some
-      // frames) would take the nocked arrow and the shot with it.
-      const released = event.toLowerCase() === 'arrowrelease';
-      const effects = !strikes && released ? [] : graphEvent(fighter.state, event);
-      for (const effect of effects) {
-        if (!strikes && (effect.kind === 'strike' || effect.kind === 'arrow-release')) continue;
-        this.#effect(fighter, effect);
-      }
-      const lower = event.toLowerCase();
-      // A creature's graph (the wolf's: combatStanceStart raises weaponDraw) has no equip clip
-      // that ends with WeapEquip_Out: its weapon (its teeth and claws) is drawn at weaponDraw,
-      // also unasked (the werewolf's graph starts in its combat stance once it has changed).
-      if (
-        lower === 'weapondraw' &&
-        (fighter.state.weapon === WeaponState.drawing ||
-          fighter.state.weapon === WeaponState.wantToDraw ||
-          fighter.state.weapon === WeaponState.sheathed) &&
-        !(fighter.body?.behavior?.declares('WeapEquip_Out') ?? true)
-      ) {
-        fighter.state.weapon = WeaponState.drawn;
-        this.#setVariable(fighter, 'IsEquipping', 0);
-      }
-      if (lower === 'weapequip_out') this.#setVariable(fighter, 'IsEquipping', 0);
-      // The player aiming a drawn bow (in its iron sights): those near may comment (PIRN,
-      // PlayerinIronSights), once a draw (the graph whose strikes count).
-      if (fighter.player && strikes && lower === 'bowdrawn')
-        void this.#options.talk?.()?.playerAction('PIRN');
-      // So is its sheathing at weaponSheathe (no Unequip_Out follows).
-      if (
-        lower === 'weaponsheathe' &&
-        (fighter.state.weapon === WeaponState.sheathing ||
-          fighter.state.weapon === WeaponState.wantToSheathe) &&
-        !(fighter.body?.behavior?.declares('Unequip_Out') ?? true)
-      ) {
-        fighter.state.weapon = WeaponState.sheathed;
-        this.#setVariable(fighter, 'IsUnequipping', 0);
-      }
-      if (lower === 'unequip_out') this.#setVariable(fighter, 'IsUnequipping', 0);
-      // The vampire lord: its change ends lifting the player off (the graph's
-      // LevitatePlayerStart), and up in the air its hands hold their spells at once.
-      if (fighter.player && lower === 'levitateplayerstart') this.toggleLevitation(PLAYER_REF);
-      if (lower === 'levitatestart' && fighter.state.weapon === WeaponState.sheathed)
-        void this.draw(fighter.reference);
-      // Landing, its hands let go of their spells: on the ground it stands out of combat.
-      if (lower === 'landstart') {
-        fighter.state.weapon = WeaponState.sheathed;
-        fighter.state.attack = AttackState.none;
-        fighter.state.current = undefined;
-      }
-      if (lower === 'attackstop' || lower === 'bashstop') {
-        this.#setVariable(fighter, 'IsAttacking', 0);
-        this.#setVariable(fighter, 'IsBashing', 0);
-      }
+    const answer = handler?.toLowerCase();
+    // Only the striking graph's release lets the arrow go: the other's (raised first, some
+    // frames) would take the nocked arrow and the shot with it.
+    const released = answer === 'arrowreleasehandler';
+    const effects = !strikes && released ? [] : graphEvent(fighter.state, event.name, handler);
+    for (const effect of effects) {
+      if (!strikes && (effect.kind === 'strike' || effect.kind === 'arrow-release')) continue;
+      this.#effect(fighter, effect);
+    }
+    const lower = answer === undefined ? event.name.toLowerCase() : undefined;
+    // A creature's graph (the wolf's: combatStanceStart raises weaponDraw) has no equip clip
+    // that ends with WeapEquip_Out: its weapon (its teeth and claws) is drawn at weaponDraw,
+    // also unasked (the werewolf's graph starts in its combat stance once it has changed).
+    if (
+      answer === 'righthandweapondrawhandler' &&
+      (fighter.state.weapon === WeaponState.drawing ||
+        fighter.state.weapon === WeaponState.wantToDraw ||
+        fighter.state.weapon === WeaponState.sheathed) &&
+      !(fighter.body?.behavior?.declares('WeapEquip_Out') ?? true)
+    ) {
+      fighter.state.weapon = WeaponState.drawn;
+      this.#setVariable(fighter, 'IsEquipping', 0);
+    }
+    if (lower === 'weapequip_out') this.#setVariable(fighter, 'IsEquipping', 0);
+    // The player aiming a drawn bow (in its iron sights): those near may comment (PIRN,
+    // PlayerinIronSights), once a draw (the graph whose strikes count).
+    if (fighter.player && strikes && answer === 'bowdrawnhandler')
+      void this.#options.talk?.()?.playerAction('PIRN');
+    // So is its sheathing at weaponSheathe (no Unequip_Out follows).
+    if (
+      answer === 'righthandweaponsheathehandler' &&
+      (fighter.state.weapon === WeaponState.sheathing ||
+        fighter.state.weapon === WeaponState.wantToSheathe) &&
+      !(fighter.body?.behavior?.declares('Unequip_Out') ?? true)
+    ) {
+      fighter.state.weapon = WeaponState.sheathed;
+      this.#setVariable(fighter, 'IsUnequipping', 0);
+    }
+    if (lower === 'unequip_out') this.#setVariable(fighter, 'IsUnequipping', 0);
+    // The vampire lord: its change ends lifting the player off (the graph's
+    // LevitatePlayerStart), and up in the air its hands hold their spells at once.
+    if (fighter.player && lower === 'levitateplayerstart') this.toggleLevitation(PLAYER_REF);
+    if (lower === 'levitatestart' && fighter.state.weapon === WeaponState.sheathed)
+      void this.draw(fighter.reference);
+    // Landing, its hands let go of their spells: on the ground it stands out of combat.
+    if (lower === 'landstart') {
+      fighter.state.weapon = WeaponState.sheathed;
+      fighter.state.attack = AttackState.none;
+      fighter.state.current = undefined;
+    }
+    if (answer === 'attackstophandler') {
+      this.#setVariable(fighter, 'IsAttacking', 0);
+      this.#setVariable(fighter, 'IsBashing', 0);
     }
   }
 
   #effect(fighter: Fighter, effect: CombatEffect): void {
     const gear = fighter.gear;
     switch (effect.kind) {
+      case 'draw-begin':
+        this.#playSound(gear?.rightRecord?.sounds.equip, fighter);
+        break;
+      case 'sheathe-begin':
+        this.#playSound(gear?.rightRecord?.sounds.unequip, fighter);
+        break;
       case 'hand':
         fighter.inHand = true;
-        this.#playSound(gear?.rightRecord?.sounds.equip, fighter);
         break;
       case 'sheath':
         fighter.inHand = false;
-        this.#playSound(gear?.rightRecord?.sounds.unequip, fighter);
         break;
       case 'swing': {
-        const record =
-          fighter.state.current?.hand === 'left' ? gear?.leftRecord : gear?.rightRecord;
+        const left = effect.hand === 'left';
+        const record = left ? gear?.leftRecord : gear?.rightRecord;
         this.#playSound(record?.sounds.swing, fighter);
         // The swing is heard (its weapon's sound level, VNAM) and, the player's, commented on.
         this.#options.senses?.()?.action(fighter.reference, record?.soundLevel ?? 1);
         if (fighter.player) void this.#options.talk?.()?.playerAction('SWMW');
         // The journal's Favorite Weapon counts the player's swings (usage-stats.ts).
-        const hand = fighter.state.current?.hand === 'left' ? gear?.left : gear?.right;
+        const hand = left ? gear?.left : gear?.right;
         this.#options.session.scriptsReady?.usage.weaponUsed(fighter.reference, hand?.weapon);
         void this.#swingSpell(fighter).catch((error: unknown) => {
           this.#warn(`a swing's spell: ${describe(error)}`);
@@ -1321,13 +1356,12 @@ export class ActorCombat implements CombatBridge {
       case 'arrow-release':
         this.#loose(fighter);
         break;
-      case 'kill-actor': {
-        const leader = [...this.#fighters.values()].find(
-          (other) => other.state.paired === 'lead' && other.target === fighter.reference,
+      case 'kill-actor':
+        void this.#options.session.scriptsReady?.actors.kill(
+          fighter.reference,
+          this.killerOf(fighter.reference),
         );
-        void this.#options.session.scriptsReady?.actors.kill(fighter.reference, leader?.reference);
         break;
-      }
       case 'pair-end':
         for (const graph of this.#graphs(fighter)) graph.pairedSide = undefined;
         if (this.#camera) this.#camera.done = true;
@@ -2169,6 +2203,10 @@ export class ActorCombat implements CombatBridge {
     if (!victim || !feet) return;
     leader.state.paired = 'lead';
     victim.state.paired = 'support';
+    // A killmove (pa_...) until the graph's KillMoveEnd (a feeding bite is none).
+    const killMove = leader.state.current?.killMove === true;
+    leader.state.killMove = killMove;
+    victim.state.killMove = killMove;
     victim.state.current = undefined;
     // The leader plays the clip's first side, the victim its "2_" side (one skeleton both:
     // the side is theirs to set, src/animation/paired-clips.ts).
@@ -2340,7 +2378,7 @@ export class ActorCombat implements CombatBridge {
     if (this.#clock - since < ATTACK_ANSWER) return;
     fighter.attackSince = undefined;
     if (!fighter.liveAttacks.has(event)) fighter.deadAttacks.add(event);
-    graphEvent(fighter.state, 'attackStop');
+    graphEvent(fighter.state, 'attackStop', 'AttackStopHandler');
     this.#setVariable(fighter, 'IsAttacking', 0);
     this.#setVariable(fighter, 'IsBashing', 0);
   }

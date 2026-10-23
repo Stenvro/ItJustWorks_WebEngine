@@ -24,6 +24,7 @@
 // weapon-blood.ts: the model's hidden blood shapes, docs/rendering.md, "Weapon blood").
 
 import type { ActorPose } from '../animation/skeleton.ts';
+import type { GraphEvent } from '../animation/graph-events.ts';
 import { ActorPose as Pose, ActorSkeleton, wearOnRig } from '../animation/skeleton.ts';
 import { WeaponGraph } from '../animation/weapon-graph.ts';
 import type { ModelNode, ModelPart } from '../render/model-data.ts';
@@ -222,7 +223,7 @@ export class HeldWeapons {
   }
 
   /** The events the wielder's graph raised: its weapon's graph hears them too. */
-  hear(events: readonly string[]): void {
+  hear(events: readonly GraphEvent[]): void {
     this.#graph?.hear(events);
   }
 

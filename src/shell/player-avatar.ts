@@ -9,6 +9,7 @@
 // Notes: docs/animation.md ("The player").
 
 import { HeadTracker, VANILLA_HEAD_TRACK, type Vec3 as LookPoint } from '../ai/head-tracking.ts';
+import { isEvent, type GraphEvent } from '../animation/graph-events.ts';
 import { Locomotion, taggedMovementType, type LocomotionGraph } from '../ai/locomotion.ts';
 import { MovementCatalog } from '../ai/movement-types.ts';
 import type { MovementType } from '../world/movement.ts';
@@ -170,8 +171,11 @@ export class PlayerAvatar {
     return this.#firstPerson;
   }
 
-  /** The events its body's graph raised (the view's vehicles read a rider's: actor-vehicles.ts). */
-  onGraphEvents: ((events: readonly string[]) => void) | undefined;
+  /**
+   * The events its graphs raised (its body's; its first-person arms', firstPerson): the view hands
+   * them to its stage's dispatch (src/shell/actor-graph-events.ts).
+   */
+  onGraphEvents: ((events: readonly GraphEvent[], firstPerson: boolean) => void) | undefined;
   /** Furniture holds the player: its graphs are moved by the furniture's idles, not its walk. */
   seated = false;
 
@@ -399,21 +403,28 @@ export class PlayerAvatar {
       },
       this.#soundWorld,
     );
-    // Its scripts hear its body's events (OnAnimationEvent: MQ101 waits for the player's
-    // PlayImod and IdleFurnitureExit).
-    body.onScriptEvents = (events) => {
-      this.onGraphEvents?.(events);
-      const runtime = this.#session.scriptsReady;
-      if (!runtime) return;
-      for (const event of events) runtime.animationEvent(PLAYER_REFERENCE, event);
-    };
+    // Its graph's events go to the engine's handlers and its scripts through the stage's
+    // dispatch (onGraphEvents: src/shell/actor-graph-events.ts; OnAnimationEvent: MQ101 waits
+    // for the player's PlayImod and IdleFurnitureExit).
+    body.onScriptEvents = undefined;
     body.onEvents = (events) => {
       sound(events);
       // The jump's animation pushes off.
-      if (this.#jumping && events.some((event) => event.toLowerCase() === 'jumpup')) {
+      if (this.#jumping && events.some((event) => isEvent(event, 'JumpUp'))) {
         this.#jumping = false;
         player.launchJump();
       }
+      this.onGraphEvents?.(events, false);
+    };
+    this.#listenFirstPerson();
+  }
+
+  /** The first-person graph's events go to the stage's dispatch too (the view's strikes, casts). */
+  #listenFirstPerson(): void {
+    const first = this.#firstPerson?.skeleton;
+    if (!first) return;
+    first.onEvents = (events) => {
+      this.onGraphEvents?.(events, true);
     };
   }
 

@@ -13,6 +13,7 @@
 // and field of view, over the world); here it shares the view's camera.
 
 import type { AnimatedSkeleton } from '../animation/animated-skeleton.ts';
+import type { GraphEvent } from '../animation/graph-events.ts';
 import { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { ActorPose, ActorSkeleton, wearOnRig, type RigData } from '../animation/skeleton.ts';
 import type { HkxSkeleton } from '../formats/hkx/animation.ts';
@@ -36,8 +37,8 @@ interface Skeleton {
   pose: ActorPose;
   readonly behavior: BehaviorRuntime;
   time: number | undefined;
-  onEvents?: (events: readonly string[]) => void;
-  onScriptEvents?: (events: readonly string[]) => void;
+  onEvents?: (events: readonly GraphEvent[]) => void;
+  onScriptEvents?: (events: readonly GraphEvent[]) => void;
 }
 
 export class FirstPersonBody {

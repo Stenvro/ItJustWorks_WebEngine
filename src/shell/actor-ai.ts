@@ -166,6 +166,7 @@ export class ActorAi {
   readonly #mind: PackageMind;
   readonly #practice: (() => ActorPractice | undefined) | undefined;
   readonly #startCombat: ((actor: number, target: number) => void) | undefined;
+  readonly #activationDone: ((actor: number) => Promise<void>) | undefined;
 
   constructor(options: {
     readonly session: GameSession;
@@ -203,10 +204,16 @@ export class ActorAi {
     readonly practice?: () => ActorPractice | undefined;
     /** Starts a fight (StartCombat: Acquire's Allow Killing). */
     readonly startCombat?: (actor: number, target: number) => void;
+    /**
+     * An activation's idle reached its moment (its graph's ActivationDone: the stage's graph
+     * events, src/shell/actor-graph-events.ts); resolves then, or after a while without one.
+     */
+    readonly activationDone?: (actor: number) => Promise<void>;
   }) {
     this.#session = options.session;
     this.#movers = options.movers;
     this.#furniture = options.furniture;
+    this.#activationDone = options.activationDone;
     this.#search = options.search;
     this.#userOf = options.userOf;
     this.#leaveThrough = options.leaveThrough;
@@ -570,6 +577,15 @@ export class ActorAi {
             { activates: true },
           );
         }
+        // Observed in the original: an actor activates with the idle ActionActivate gives
+        // it (a lever's pull, a pick-up), and the activation happens at its graph's
+        // ActivationDone (the engine's ActionActivateDoneHandler); without an idle, at once.
+        const played = await furniture.playAction(
+          user,
+          'ActionActivate',
+          scripts.referenceHandle(target),
+        );
+        if (played) await this.#activationDone?.(reference);
         return scripts.activate(target, reference, false);
       },
       take: async (target) => {

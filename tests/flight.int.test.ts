@@ -194,7 +194,7 @@ describe.skipIf(!hasGamedata())('flying combat on the local game data', () => {
       run: (seconds) => {
         for (let t = 0; t < seconds; t += 1 / 30) {
           runtime.update(1 / 30, false);
-          raised.push(...runtime.takeRaised());
+          raised.push(...runtime.takeRaised().map((event) => event.text));
           // Its root motion moves it (as src/shell/actor-flight.ts moves an animation-driven
           // flier).
           const { translation, yaw } = runtime.rootMotion();
