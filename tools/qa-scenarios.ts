@@ -147,7 +147,7 @@ var QA_PLAY = engineDev.world.#play;
     }
     return found;
   };
-  const say = (text) => { bot.log.push(Math.round(performance.now() / 1000) + ' ' + text); if (bot.log.length > 50) bot.log.shift(); };
+  const say = (text) => { bot.log.push(Math.round(performance.now() / 1000) + ' ' + text); if (bot.log.length > 200) bot.log.shift(); };
   const events = (code) => W.player?.eventsOfKey(code) ?? [];
   const hold = (code, down) => {
     const player = W.player; if (!player) return;
@@ -214,7 +214,23 @@ var QA_PLAY = engineDev.world.#play;
       bot.door = door.door; goal = [...door.position];
     }
     const feet = [...player.feet];
-    const found = nav && paths.findPath(nav, feet, goal, { radius: 24 });
+    // Where it got stuck lately (20 s), here: a way the navmesh has but something shuts (the
+    // inn's rubble, a collision box the quest enabled) is closed there and searched round,
+    // as an actor closes a door it cannot pass.
+    bot.stucks = (bot.stucks ?? []).filter((s) => now - s.time < 20000);
+    const stuckHere = bot.stucks.filter((s) => Math.hypot(s.at[0] - feet[0], s.at[1] - feet[1]) < 64).length;
+    if (bot.blockedFor !== best.t.reference) { bot.blocked = []; bot.blockedFor = best.t.reference; }
+    if (stuckHere >= 4 && nav?.locate(feet) && bot.path?.[0]) {
+      const ahead = bot.path[0];
+      const dx = ahead[0] - feet[0]; const dy = ahead[1] - feet[1]; const l = Math.hypot(dx, dy) || 1;
+      const at = [feet[0] + (dx / l) * 64, feet[1] + (dy / l) * 64, feet[2]];
+      if (!bot.blocked.some((b) => Math.hypot(b.at[0] - at[0], b.at[1] - at[1]) < 48)) {
+        bot.blocked.push({ at, radius: 64 });
+        bot.stucks = [];
+        say('the way is shut at ' + at.map(Math.round).join(',') + ': round it');
+      }
+    }
+    const found = nav && paths.findPath(nav, feet, goal, { radius: 24, blocked: bot.blocked });
     const changed = !bot.goal || Math.hypot(goal[0] - bot.goal[0], goal[1] - bot.goal[1]) > 64;
     bot.goal = goal;
     bot.path = found && found.points.length > 1 ? found.points.slice(1).map((p) => [...p]) : [goal];
@@ -231,9 +247,9 @@ var QA_PLAY = engineDev.world.#play;
         bot.path = [goal];
       } else bot.straight = false;
     }
-    // Off the navmesh with the navmesh below (the burning inn's upper floor): a player drops
-    // down where the floor gives way, the drop nearest the way to the goal.
-    if (!found && nav && !nav.locate(feet) && nav.nearest?.([feet[0], feet[1], feet[2] - 300], 600)) {
+    // Off the navmesh with the navmesh below (the burning inn's upper floor), stuck going
+    // straight: a player drops down where the floor gives way, the drop nearest the way on.
+    if (!found && stuckHere >= 2 && nav && !nav.locate(feet) && nav.nearest?.([feet[0], feet[1], feet[2] - 300], 600)) {
       const way = findDrop(feet, goal);
       const drop = way?.at(-1);
       if (drop) {
@@ -285,6 +301,7 @@ var QA_PLAY = engineDev.world.#play;
     if (last && Math.hypot(feet[0] - last[0], feet[1] - last[1]) < 1.5) bot.still += 0.1; else bot.still = Math.max(0, bot.still - 0.05);
     if (bot.still > 1.2) {
       bot.still = 0; bot.stuckCount = (bot.stuckCount ?? 0) + 1; bot.lastPlan = 0;
+      (bot.stucks ??= []).push({ at: [...feet], time: now });
       const move = ['KeyA', 'KeyD', 'KeyS'][bot.stuckCount % 3];
       bot.dodge = { key: move, until: now + 500 + 200 * (bot.stuckCount % 4) };
       if (bot.stuckCount % 2 === 0) tap('Space');

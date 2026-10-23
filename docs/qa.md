@@ -62,14 +62,17 @@ units (after 8 s it closes in to 90: a trigger may be by them; after 15 s of a g
 still it walks on 160 units past them, into the room they lead to: Ralof in Helgen's tower, the
 stage-25 strip beyond him), uses the load door toward a target in another space
 (`firstDoorToward`, aiming and pressing Activate), and when stuck steps left, right or back
-(every other time with a jump) and searches again. A target that is a place (no actor),
+(every other time with a jump) and searches again; stuck four times within 20 s at one spot on
+the navmesh, it closes the way 64 units ahead (`findPath`'s `blocked`, as an actor closes a
+door it cannot pass) and searches round it. A target that is a place (no actor),
 reached with nothing moving on for 6 s, leads on to the same objective's next target whose
 conditions do not hold yet, as a player goes on the way the objective leads (MQ101's "Make your
 way to the Keep" shows the burning inn's marker until stage 120 of MQ101DragonAttack; then
 Hadvar). A navmesh way far longer than the straight line (twice it and 300 more) to a goal not
 above is left for the straight line, as a player jumps down (from the tower's broken wall onto
 the inn, while the navmesh leads down the stairs to the door the quest has shut). Off the
-navmesh with navmesh below (the inn's upper floor) it walks to where the floor gives way: a
+navmesh with navmesh below (the inn's upper floor) it goes straight, and stuck twice there it
+walks to where the floor gives way: a
 grid of physics rays round it (32 units a cell, 900 units each way: the floor under each cell,
 steps of up to 32 units, nothing at chest height between neighbours; a drop is 150 units or
 more), the first drop by the way and towards the goal that lands on navmesh with a way on to
