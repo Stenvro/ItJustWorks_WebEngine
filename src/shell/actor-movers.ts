@@ -9,6 +9,7 @@
 // the player bumps into it, it into the player and the others, and trigger volumes see it.
 
 import type RAPIER from '@dimforge/rapier3d-compat';
+import { driveOf, type MovementDrive } from '../ai/movement-drive.ts';
 import {
   angleBetween,
   Locomotion,
@@ -87,6 +88,8 @@ interface Mover {
     readonly velocity: readonly [number, number];
     readonly turn: number;
     readonly driven: boolean;
+    /** Animation-driven with the controller still turning it (AllowRotation). */
+    readonly rotates: boolean;
   };
   /** Its graph moved it in the last step (not its controller's wish): it stands, to its graph. */
   rooted: boolean;
@@ -677,8 +680,52 @@ export class ActorMovers {
     if (mover) mover.character.ignored = handles;
   }
 
+  // --- How its graph drives its movement --------------------------------------------------------
+
+  /** Each actor's movement drive (its graph's handlers and variables set it). */
+  readonly #drives = new Map<
+    number,
+    { drive: MovementDrive; animation: number; rotation: number }
+  >();
+
+  /**
+   * The engine's AnimationDriven, MotionDriven and AllowRotation handlers (the graph's
+   * StartAnimationDriven, StartMotionDriven, StartAllowRotation): its movement controller
+   * switches at once.
+   */
+  setDrive(reference: number, drive: MovementDrive): void {
+    const entry = this.#drives.get(reference);
+    if (entry) entry.drive = drive;
+    else this.#drives.set(reference, { drive, animation: -1, rotation: -1 });
+  }
+
+  /** How an actor's movement is driven now (its controller unless its graph says otherwise). */
+  drive(reference: number): MovementDrive {
+    return this.#drives.get(reference)?.drive ?? 'controller';
+  }
+
+  /**
+   * Its drive before a movement update: the engine reads bAnimationDriven and bAllowRotation
+   * from the graph and switches the controller by them (docs/animation.md, "Driving the
+   * graphs"); here as they change, so that a handler's switch holds until they do.
+   * TODO(M13): whether the engine reads them every update or as they change.
+   */
+  #readDrive(
+    reference: number,
+    behavior: { variable(name: string): number | undefined },
+  ): MovementDrive {
+    const animation = behavior.variable('bAnimationDriven') ?? 0;
+    const rotation = behavior.variable('bAllowRotation') ?? 0;
+    const entry = this.#drives.get(reference);
+    if (entry?.animation === animation && entry.rotation === rotation) return entry.drive;
+    const drive = driveOf(animation, rotation);
+    this.#drives.set(reference, { drive, animation, rotation });
+    return drive;
+  }
+
   /** An actor left the stage: its controller goes, and what it was asked to do. */
   remove(reference: number): void {
+    this.#drives.delete(reference);
     this.#walkers.delete(reference);
     this.#reactions.delete(reference);
     this.#sneaking.delete(reference);
@@ -919,7 +966,8 @@ export class ActorMovers {
     // Held by an animation-driven graph (an idle, sitting down: bAnimationDriven) it does not go
     // its way: its graph is told it sets out (moveStart ends such an idle) and it goes once the
     // graph lets it. Moved meanwhile, it glided: a chicken sat in its idle while it went on.
-    const held = staged.placed.behavior?.variable('bAnimationDriven') === 1;
+    const behavior = staged.placed.behavior;
+    const held = behavior !== undefined && this.#readDrive(reference, behavior) !== 'controller';
     let velocity: [number, number] = [0, 0];
     let turnRate = 0;
     if (request && types && seconds > 0 && !held) {
@@ -1103,7 +1151,7 @@ export class ActorMovers {
         drawn: [...staged.position],
         velocity: [0, 0],
         wish: { velocity: [0, 0], turnRate: 0 },
-        root: { velocity: [0, 0], turn: 0, driven: false },
+        root: { velocity: [0, 0], turn: 0, driven: false, rotates: false },
         rooted: false,
         heldByGraph: false,
         idleStoppedAt: -Infinity,
@@ -1190,7 +1238,14 @@ export class ActorMovers {
       mover.rooted = rooted;
       if (rooted) {
         mover.character.velocity = [root.velocity[0], root.velocity[1]];
-        staged.heading -= root.turn * step;
+        // Allowed to rotate (AllowRotation), its controller turns it the way it goes while its
+        // animation moves it.
+        const turning =
+          root.rotates && request && types
+            ? steer(request, staged.heading, types, step)
+            : undefined;
+        if (turning) staged.heading = turning.heading;
+        else staged.heading -= root.turn * step;
         // Its graph moves it: to its graph it stands (its walk would feed the root motion).
         mover.wish = { velocity: [0, 0], turnRate: 0 };
       } else if (request && types) {
@@ -1254,6 +1309,7 @@ export class ActorMovers {
     const behavior = staged.placed.behavior;
     if (!mover || !behavior || seconds <= 0) return;
     const motion = behavior.rootMotion();
+    const drive = this.#readDrive(staged.reference, behavior);
     const [x, y] = motion.translation;
     // The actor's frame (x right, y forward) to the world's: right (cos, −sin), forward
     // (sin, cos) of its compass heading.
@@ -1263,7 +1319,8 @@ export class ActorMovers {
       velocity: [(x * cos + y * sin) / seconds, (-x * sin + y * cos) / seconds],
       // Counter-clockwise (to the left) lowers the compass heading.
       turn: motion.yaw / seconds,
-      driven: behavior.variable('bAnimationDriven') === 1,
+      driven: drive !== 'controller',
+      rotates: drive === 'animation-rotation',
     };
   }
 

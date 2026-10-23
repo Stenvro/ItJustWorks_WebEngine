@@ -16,7 +16,8 @@ import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
 import { referenceMatrix, type CellActor } from '../world/cell-loader.ts';
 import { linkedReferences, parseReference } from '../world/cell-records.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
-import { soundPlacedActors, type GaitMotion, type SoundingWorld } from './actor-sounds.ts';
+import type { GaitMotion, SoundingWorld } from './actor-sounds.ts';
+import { ActorGraphEvents, type AnimObjectKind } from './actor-graph-events.ts';
 import { actorOnRay, groundActor, moveActor, ragdollsOf, type PlacedActor } from './actors.ts';
 import { createdEnabled } from './created-objects.ts';
 import type { GameSession } from './game-session.ts';
@@ -230,6 +231,19 @@ export class ActorStage {
   readonly crime: ActorCrime;
   /** The fliers: dragons taking off, flying, hovering, landing (src/shell/actor-flight.ts). */
   readonly flight: ActorFlight;
+  /**
+   * The engine's answers to the actors' graph events: every placed actor's and the player's
+   * events dispatched to their handlers (src/shell/actor-graph-events.ts).
+   */
+  readonly graphEvents: ActorGraphEvents;
+  /**
+   * Animation objects (ANIO) an actor's graph loads into its hand, draws, or lets go of
+   * (AnimObjLoad, AnimObjDraw, AnimObjectUnequip; the editor id their payload names): the
+   * animation objects' module answers.
+   */
+  animObject?: (reference: number, kind: AnimObjectKind, editorId: string | undefined) => void;
+  /** An actor's graph asks for a new idle (PickNewIdle): ambient idle picking answers. */
+  pickNewIdle?: (reference: number) => void;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -377,6 +391,7 @@ export class ActorStage {
       startCombat: (actor, target) => {
         this.combat.startCombat(actor, target);
       },
+      activationDone: (actor) => this.graphEvents.activationDone(actor),
       transport: {
         ready: async (staged, ride) => {
           this.vehicles.release(staged.reference);
@@ -613,6 +628,15 @@ export class ActorStage {
       actors: () => this.#actors.values(),
       get: (reference) => this.#actors.get(reference),
       bark: (actor, subtype, target) => this.talk.bark(actor, subtype, target),
+    });
+    this.graphEvents = new ActorGraphEvents({
+      session: options.session,
+      terminal: options.terminal,
+      stage: this,
+      sounding: options.sounding,
+      gait: this.#gait,
+      ...(options.player && { player: options.player }),
+      ...(options.seat && { seat: options.seat }),
     });
   }
 
@@ -902,6 +926,14 @@ export class ActorStage {
     if (body) yield { reference: PLAYER_REF, face: body.face };
   }
 
+  /** The skeletons that animate: the living, and the dying whose graph plays their death. */
+  *#animating(): Iterable<PlacedActor> {
+    for (const staged of this.#actors.values()) {
+      if (staged.visibility.hidden) continue;
+      if (!staged.dead || this.graphEvents.dying(staged.reference)) yield staged.placed;
+    }
+  }
+
   *#living(): Iterable<PlacedActor> {
     for (const staged of this.#actors.values()) {
       if (!staged.visibility.hidden && !staged.dead) yield staged.placed;
@@ -959,14 +991,11 @@ export class ActorStage {
     this.movers.release(reference);
     staged.placed.face?.stopSpeaking();
     this.knockdowns.remove(reference);
-    void this.bodies.kill(staged);
-    if (!silent) {
-      this.talk
-        .bark(reference, 'Death', killer ?? PLAYER_REF, { interrupt: true })
-        .catch((error: unknown) => {
-          this.#options.terminal.log('actor', `a death cry: ${describe(error)}`, 'warn');
-        });
-    }
+    // Its death plays as its graph has it, into its ragdoll (src/shell/actor-graph-events.ts).
+    this.graphEvents.died(staged, killer, silent).catch((error: unknown) => {
+      this.#options.terminal.log('actor', `a death: ${describe(error)}`, 'warn');
+      void this.bodies.kill(staged);
+    });
   }
 
   /**
@@ -1316,9 +1345,8 @@ export class ActorStage {
       instance.world.set(from);
       if (instance.motion) instance.motion.version++;
     }
-    soundPlacedActors([placed], this.#options.sounding, this.#gait);
     staged.placed = placed;
-    this.#tellScripts(staged);
+    this.graphEvents.attach(staged);
     // Its controller is made again for its new body (its size, its graph).
     this.movers.release(reference);
     const previous = staged.scene;
@@ -1410,6 +1438,7 @@ export class ActorStage {
     this.away.frame(frame);
     this.combat.frame(frame, this.#options.focus?.());
     this.knockdowns.frame(frame);
+    this.graphEvents.frame(frame);
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     this.#recell();
     // The fliers: in the air they move themselves (no controller), on the ground the movers do.
@@ -1429,7 +1458,7 @@ export class ActorStage {
     this.moods.frame(this.#faces(), frame);
     const camera = this.#options.renderer.view?.camera;
     animateSkeletons(
-      this.#living(),
+      this.#animating(),
       seconds,
       camera &&
         ((animated) => {
@@ -1501,7 +1530,7 @@ export class ActorStage {
   ): Promise<StagedActor[]> {
     if (candidates.length === 0) return [];
     for (const { actor } of candidates) this.#placing.add(actor.reference);
-    const { session, terminal, sounding } = this.#options;
+    const { session, terminal } = this.#options;
     try {
       const placer = await session.actors();
       const placed = await Promise.all(
@@ -1537,7 +1566,7 @@ export class ActorStage {
         };
         this.#actors.set(reference, entry);
         staged.push(entry);
-        this.#tellScripts(entry);
+        this.graphEvents.attach(entry);
         this.away.arrived(reference);
         // Its abilities, diseases and worn enchantments act while it is here.
         const scripts = session.scriptsReady;
@@ -1554,38 +1583,10 @@ export class ActorStage {
           );
         }
       }
-      soundPlacedActors(
-        staged.map((entry) => entry.placed),
-        sounding,
-        this.#gait,
-      );
       return staged;
     } finally {
       for (const { actor } of candidates) this.#placing.delete(actor.reference);
     }
-  }
-
-  /**
-   * The events an actor's graph raises reach the scripts that registered for them
-   * (RegisterForAnimationEvent: MQ101's cart riders wait for ExitCartEnd, the headsman for
-   * Decapitate).
-   */
-  #tellScripts(staged: StagedActor): void {
-    const reference = staged.reference;
-    staged.placed.onScriptEvents = (events) => {
-      const graph = staged.placed.behavior;
-      if (graph) this.vehicles.riderEvents(reference, graph, events);
-      // Its graph's furniture exits end its use of furniture (idleChairGetUp, ...).
-      this.furniture.graphEvents(this.userOf(staged), events);
-      const runtime = this.#options.session.scriptsReady;
-      if (!runtime) return;
-      // A graph's KillActor kills its actor (an executed prisoner's chop: its killmoves in a
-      // fight are the combat's, src/shell/actor-combat.ts, which names the killer).
-      if (events.some((event) => event.toLowerCase() === 'killactor')) {
-        void runtime.actors.kill(reference, undefined);
-      }
-      for (const event of events) runtime.animationEvent(reference, event);
-    };
   }
 
   #scene(placed: PlacedActor, visibility: InstanceVisibility): GpuScene | undefined {
@@ -1596,6 +1597,7 @@ export class ActorStage {
   }
 
   #remove(staged: StagedActor): void {
+    this.graphEvents.remove(staged.reference);
     this.looks.remove(staged.reference);
     this.moods.forget(staged.reference);
     this.#options.session.scriptsReady?.magic.unloaded(staged.reference);

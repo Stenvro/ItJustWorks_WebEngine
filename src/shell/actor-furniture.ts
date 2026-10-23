@@ -9,13 +9,12 @@
 // at its end what is left to the marker is made up in a quarter of a second (the engine's path
 // tweener: CommonLibSSE's PathTweenerStart / End; its rule is not documented). In it (3) its
 // scripts hear OnSit; about to leave (4) the idle tree gives the exit, whose root motion takes
-// it out; once its graph says it got up (idleChairGetUp, idleBedGetUp: graphEvents, also when
+// it out; once its graph says it got up (idleChairGetUp, idleBedGetUp: graphExit, also when
 // the graph leaves by itself) it stands (0), its scripts hear OnGetUp and its controller is
 // back. An actor
 // placed in furniture as its cell loads is in it at once: the "instant" idles
 // (IsEnteringInteractionQuick).
 
-import type { AnimationDataLibrary } from '../animation/animation-data-library.ts';
 import { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import {
   behaviorGraphKey,
@@ -185,9 +184,20 @@ const KEEP_IN_SECONDS = 0.7;
  * playercharacterresponse.txt name them for idleChairGetUp, idleBedGetUp, idleSleepGetUp): an
  * actor's chair exit ends a sit or lean use, its bed exit a sleep use, the player's either.
  */
+export const FURNITURE_EXIT_HANDLERS = [
+  'ChairFurnitureExitHandler',
+  'BedFurnitureExitHandler',
+  'PlayerFurnitureExitHandler',
+] as const;
 const CHAIR_EXIT = 'chairfurnitureexithandler';
 const BED_EXIT = 'bedfurnitureexithandler';
-const PLAYER_EXIT = 'playerfurnitureexithandler';
+/** The engine's handlers of a graph reaching its furniture's state (idleChairSitting, ...). */
+export const FURNITURE_ENTER_HANDLERS = [
+  'ChairEnterHandler',
+  'BedEnterHandler',
+  'PlayerChairEnterHandler',
+  'PlayerBedEnterHandler',
+] as const;
 /** A marker's animation type bit for sleeping (1 sit, 2 sleep, 4 lean). */
 const SLEEP_TYPE = 2;
 /**
@@ -212,42 +222,45 @@ export class ActorFurniture {
   readonly #markers = new Map<number, number>();
   readonly #kinds = new Map<number, Promise<SpotKind | undefined>>();
   #idleTree: Promise<IdleTree> | undefined;
-  /** The animation data, for the engine handlers of the graphs' events (once read). */
-  #responses: AnimationDataLibrary | undefined;
 
   constructor(options: ActorFurnitureOptions) {
     this.#options = options;
   }
 
   /**
-   * The events a user's graph raised: one the engine answers with a furniture exit handler
-   * (idleChairGetUp, idleBedGetUp, idleSleepGetUp: the graph left its furniture state, at the
-   * end of an exit or by itself, as MQ101's chopping block reaction does with
-   * IdleFurnitureExit) ends its use: it stands where its graph put it, its scripts hear
-   * OnGetUp. An actor's chair exit ends a use of a sit or lean marker, its bed exit one of a
-   * sleep marker; the player's ends either. A use still on its way is not in the furniture.
+   * The engine's furniture exit handlers (the stage's dispatch, src/shell/actor-graph-events.ts:
+   * the response files name ChairFurnitureExitHandler, BedFurnitureExitHandler and, for the
+   * player, PlayerFurnitureExitHandler for idleChairGetUp, idleBedGetUp, idleSleepGetUp): the
+   * graph left its furniture state, at the end of an exit or by itself (as MQ101's chopping
+   * block reaction does with IdleFurnitureExit), so its use ends: it stands where its graph put
+   * it, its scripts hear OnGetUp. An actor's chair exit ends a use of a sit or lean marker, its
+   * bed exit one of a sleep marker; the player's ends either. A use still on its way is not in
+   * the furniture.
    */
-  graphEvents(user: FurnitureUser, events: readonly string[], player = false): void {
-    if (!this.#uses.has(user.reference)) return;
-    const responses = this.#responses;
-    if (!responses) {
-      void this.#options.session.animation.animationData().then((library) => {
-        this.#responses = library;
-        this.graphEvents(user, events, player);
-      });
-      return;
-    }
-    for (const event of events) {
-      const handler = responses.response(event, player)?.toLowerCase();
-      if (handler !== CHAIR_EXIT && handler !== BED_EXIT && handler !== PLAYER_EXIT) continue;
-      const use = this.#uses.get(user.reference);
-      if (!use || use.phase === 'approaching') return;
-      const sleeping = (use.animationType & SLEEP_TYPE) !== 0;
-      if (handler === CHAIR_EXIT && sleeping) continue;
-      if (handler === BED_EXIT && !sleeping) continue;
-      this.#graphLeft(user, use);
-      return;
-    }
+  graphExit(user: FurnitureUser, handler: string): void {
+    const use = this.#uses.get(user.reference);
+    if (!use || use.phase === 'approaching') return;
+    const kind = handler.toLowerCase();
+    const sleeping = (use.animationType & SLEEP_TYPE) !== 0;
+    if (kind === CHAIR_EXIT && sleeping) return;
+    if (kind === BED_EXIT && !sleeping) return;
+    this.#graphLeft(user, use);
+  }
+
+  /**
+   * The engine's furniture enter handlers (idleChairSitting: ChairEnterHandler, the player's
+   * PlayerChairEnterHandler; idleBedSleeping: BedEnterHandler, PlayerBedEnterHandler). Observed
+   * in the original: unless the actor is already getting up (or waking), its sit
+   * state becomes "sitting" (a bed's "sleeping") as its graph reaches the furniture's state.
+   * Here an entering use is in its furniture then (at its marker, its scripts hear OnSit),
+   * else once its enter's root motion has played. TODO(M13): the player's handlers also switch
+   * the camera to the furniture's and set the controls (not reproduced).
+   */
+  graphEntered(user: FurnitureUser): void {
+    const use = this.#uses.get(user.reference);
+    if (use?.phase !== 'entering') return;
+    user.moveTo(use.worldMarker.position, use.worldMarker.heading);
+    this.#in(user, use);
   }
 
   /**
@@ -394,19 +407,29 @@ export class ActorFurniture {
     /** Asked of nothing: conditions on the target fail (a flier's landing without a perch). */
     targetless = false,
   ): Promise<boolean> {
+    return (await this.actionEvent(user, action, target, targetless)) !== undefined;
+  }
+
+  /** As playAction: the event of the idle its graph took (undefined: none played). */
+  async actionEvent(
+    user: FurnitureUser,
+    action: string,
+    target?: ObjectHandle,
+    targetless = false,
+  ): Promise<string | undefined> {
     const runtime = this.#options.session.scriptsReady;
     const tree = await this.#tree();
     const parent = tree.action(action);
     const graph = await this.#graphKey(user);
     if (!runtime || !parent || graph === undefined || this.#uses.has(user.reference)) {
-      return false;
+      return undefined;
     }
     const subject = new ObjectHandle(user.reference, 'actor');
     const context = target === undefined ? { targetless } : { target };
     const idle = await tree.resolveAsync(parent.formId, graph, (candidate) =>
       runtime.conditionsHold(candidate.conditions, subject, undefined, context),
     );
-    return idle?.event !== undefined && user.send(idle.event);
+    return idle?.event !== undefined && user.send(idle.event) ? idle.event : undefined;
   }
 
   /** What sandboxing makes of a base object, read once per base. */
@@ -636,7 +659,7 @@ export class ActorFurniture {
     const done = Math.min(1, 1 - use.left / use.duration);
     if (use.phase === 'leaving') {
       // Its exit's root motion takes it out; it stands once its graph says it got up
-      // (graphEvents), at the latest a moment after that motion.
+      // (graphExit), at the latest a moment after that motion.
       const z = marker.position[2] + (use.floor - marker.position[2]) * done;
       user.moveTo([x, y, z], heading);
       if (use.left <= -EXIT_GRACE) this.#stood(user, use);

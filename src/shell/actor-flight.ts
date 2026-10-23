@@ -43,6 +43,8 @@ import {
   type FlyingStateValue,
 } from '../ai/flight.ts';
 import type { CombatStyleFlight } from '../ai/combat-style-records.ts';
+import type { GraphEvent } from '../animation/graph-events.ts';
+import type { ActorGraphSource } from './actor-graph-events.ts';
 import { readIdleTree } from '../ai/idle-records.ts';
 import { MovementCatalog } from '../ai/movement-types.ts';
 import { parseRaceCombat } from '../ai/race-combat-records.ts';
@@ -59,7 +61,6 @@ import type { ActorCasting } from './actor-casting.ts';
 import type { ActorFurniture, FurnitureUser, StageObject } from './actor-furniture.ts';
 import type { ActorMovers } from './actor-movers.ts';
 import type { StagedActor } from './actor-stage.ts';
-import type { PlacedActor } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -131,8 +132,6 @@ interface Flier {
         readonly done: (grabbed: boolean) => void;
       }
     | undefined;
-  /** The body its events are heard from. */
-  hooked: PlacedActor | undefined;
   combat: FlierCombat | undefined;
   /** What its packages ask (Hover, Orbit, FlightGrab, a travel flown): its own outside a fight. */
   package: FlightRequest | undefined;
@@ -730,7 +729,6 @@ export class ActorFlight {
       const flier = this.#flier(staged.reference);
       if (!flier) continue;
       flier.staged = staged;
-      this.#hook(flier);
       try {
         this.#update(flier, runtime, seconds);
       } catch (error) {
@@ -1142,15 +1140,15 @@ export class ActorFlight {
 
   // --- The graph's events -------------------------------------------------------------------
 
-  #hook(flier: Flier): void {
-    const body = flier.staged.placed;
-    if (flier.hooked === body) return;
-    flier.hooked = body;
-    const previous = body.onEvents;
-    body.onEvents = (events) => {
-      previous?.(events);
-      for (const event of events) this.#heard(flier, event);
-    };
+  /**
+   * What a flier's graph raised (the stage's dispatch, src/shell/actor-graph-events.ts): its
+   * flight states (the engine's Flight*Handler answers of FlightTakeOff, FlightCruising, ...),
+   * its grab's steps, its breath's end.
+   */
+  graphEvents(source: ActorGraphSource, events: readonly GraphEvent[]): void {
+    const flier = this.#fliers.get(source.reference);
+    if (flier?.staged.placed !== source.skeleton) return;
+    for (const event of events) this.#heard(flier, event.name);
   }
 
   #heard(flier: Flier, event: string): void {
@@ -1438,7 +1436,6 @@ export class ActorFlight {
       landing: undefined,
       perch: undefined,
       grab: undefined,
-      hooked: undefined,
       combat: undefined,
       travel: undefined,
       perching: undefined,

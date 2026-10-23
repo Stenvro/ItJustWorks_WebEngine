@@ -8,6 +8,10 @@ import type {
   Vec4,
 } from '../formats/hkx/behavior.ts';
 import { BehaviorRuntime, type BehaviorHost } from './behavior-runtime.ts';
+import type { GraphEvent } from './graph-events.ts';
+
+/** Raised events by their names as the graph has them. */
+const names = (events: readonly GraphEvent[]): string[] => events.map((event) => event.text);
 
 /** One bone; a clip moves it along x to `x` (or by time with `speed`). */
 const skeleton: HkxSkeleton = {
@@ -135,7 +139,7 @@ describe('the behavior runtime', () => {
     // Halfway through the linear blend: idle at 0.5, walk at 100.5 (started late by 0).
     expect(runtime.states()).toEqual([{ machine: 'Machine', state: 'Walk' }]);
     expect(runtime.pose[0]).toBeCloseTo(50.5, 0);
-    expect(runtime.takeRaised()).toEqual(['idleExit']);
+    expect(names(runtime.takeRaised())).toEqual(['idleExit']);
     runtime.update(0.6);
     expect(runtime.pose[0]).toBeCloseTo(101.1);
   });
@@ -191,10 +195,50 @@ describe('the behavior runtime', () => {
     });
     runtime.update(0);
     runtime.update(0.6);
-    expect(runtime.takeRaised()).toEqual(['halfway']);
+    expect(names(runtime.takeRaised())).toEqual(['halfway']);
     runtime.update(0.6); // wraps past 0.9 and back to 0.2
-    expect(runtime.takeRaised()).toEqual(['FootLeft']);
+    expect(names(runtime.takeRaised())).toEqual(['FootLeft']);
     expect(runtime.pose[0]).toBeCloseTo(0.2);
+  });
+
+  it('raises events with their payloads: a string payload, an annotation after its dot', () => {
+    const playing: BehaviorGenerator = {
+      ...(clip('work') as Extract<BehaviorGenerator, { kind: 'clip' }>),
+      triggers: [
+        {
+          localTime: 0.2,
+          event: { id: 0, payload: 'AnimObjectTankard' },
+          relativeToEndOfClip: false,
+          acyclic: false,
+          isAnnotation: false,
+        },
+      ],
+    };
+    const runtime = new BehaviorRuntime({
+      // The graph declares the annotation's whole text as an event: it is handled as one.
+      root: graph(playing, ['AnimObjLoad', 'CameraShake.0.5']),
+      host: host({
+        work: animation(0, 1, [
+          { time: 0.4, text: 'CameraShake.0.5' },
+          { time: 0.6, text: 'AnimObjLoad.DecapitationHeadGore' },
+        ]),
+      }),
+      skeleton,
+    });
+    runtime.update(0);
+    runtime.update(0.7);
+    expect(runtime.takeRaised()).toEqual([
+      { name: 'AnimObjLoad', payload: 'AnimObjectTankard', text: 'AnimObjLoad' },
+      { name: 'CameraShake', payload: '0.5', text: 'CameraShake.0.5' },
+      {
+        name: 'AnimObjLoad',
+        payload: 'DecapitationHeadGore',
+        text: 'AnimObjLoad.DecapitationHeadGore',
+      },
+    ]);
+    // Sent with a payload, an event is taken as any other.
+    expect(runtime.sendEvent('AnimObjLoad', 'AnimObjectBook')).toBe(true);
+    expect(runtime.sendEvent('NoSuchEvent', 'x')).toBe(false);
   });
 
   it('runs modifiers: expressions assign, BSIsActiveModifier flags while active', () => {
@@ -245,9 +289,9 @@ describe('the behavior runtime', () => {
     runtime.update(0.1);
     expect(runtime.variable('iMovementSpeed')).toBe(1);
     expect(runtime.variable('bIsActive')).toBe(1);
-    expect(runtime.takeRaised()).toEqual(['runStart']);
+    expect(names(runtime.takeRaised())).toEqual(['runStart']);
     runtime.update(0.1);
-    expect(runtime.takeRaised()).toEqual([]);
+    expect(names(runtime.takeRaised())).toEqual([]);
   });
 
   it('sets the iState its state machines are in and tags it (BSIStateManagerModifier)', () => {
@@ -646,7 +690,7 @@ describe("the dragon's flight modifiers", () => {
     const raised: string[] = [];
     for (let i = 0; i < 6; i++) {
       runtime.update(0.5);
-      raised.push(...runtime.takeRaised());
+      raised.push(...names(runtime.takeRaised()));
     }
     expect(raised).toEqual(['PickNewIdle', 'PickNewIdle', 'PickNewIdle']);
   });
@@ -724,7 +768,7 @@ describe("the dragon's flight modifiers", () => {
     for (const y of [-1000, -200, 300, 900]) {
       matrix[13] = y;
       runtime.update(0.1);
-      raised.push(...runtime.takeRaised());
+      raised.push(...names(runtime.takeRaised()));
     }
     expect(raised).toEqual(['DragonPassByEffect']);
   });
@@ -823,7 +867,7 @@ describe("the dragon's flight modifiers", () => {
     // The hand back to its ready state: NotCasting again, CastStop ends CastingState.
     runtime.sendEvent('MRh_Equipped_Event');
     for (let i = 0; i < 3; i++) runtime.update(0.1);
-    expect(runtime.takeRaised()).toContain('CastStop');
+    expect(names(runtime.takeRaised())).toContain('CastStop');
     expect(runtime.states().map((state) => state.state)).toContain('MagicReady');
   });
 });

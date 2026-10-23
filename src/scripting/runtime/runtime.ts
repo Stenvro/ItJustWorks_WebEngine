@@ -157,7 +157,11 @@ export interface WorldBridge {
   titleSequence?(action: 'show' | 'hide' | 'start', name?: string): void;
   fade?(out: boolean, black: boolean, delay: number, duration: number): void;
   pointOfView?(pov: 'first' | 'third'): void;
-  shakeCamera?(strength: number, seconds: number): void;
+  /**
+   * The camera shakes (Game.ShakeCamera, a shout): at a strength (0..1), for seconds (0: the
+   * engine's fCameraShakeTime), from a reference's place (none: the player's).
+   */
+  shakeCamera?(strength: number, seconds: number, source?: number): void;
   grabbed?(): number | undefined;
   /**
    * A menu the scripts open; resolves once it has closed, with what it returns (ShowGiftMenu:

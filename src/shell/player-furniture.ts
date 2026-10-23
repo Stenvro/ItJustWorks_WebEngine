@@ -84,13 +84,9 @@ export class PlayerFurniture {
       },
       send: (event) => avatar.send(event),
     };
-    // Their graph's furniture exits end their use (the PlayerFurnitureExitHandler of
-    // idleChairGetUp, idleBedGetUp): its own exit's end, or a graph that left by itself.
-    const previous = avatar.onGraphEvents;
-    avatar.onGraphEvents = (events) => {
-      previous?.(events);
-      furniture.graphEvents(this.user, events, true);
-    };
+    // Their graph's furniture enters and exits (PlayerChairEnterHandler, the
+    // PlayerFurnitureExitHandler of idleChairGetUp, idleBedGetUp) come through the stage's
+    // dispatch (src/shell/actor-graph-events.ts).
   }
 
   /** Whether furniture holds the player (from using it until they stand again). */

@@ -101,6 +101,7 @@ import { CreatedObjects } from './created-objects.ts';
 import { FloraLooks } from './flora-looks.ts';
 import { DestructionLooks } from './destruction-looks.ts';
 import { connectPlayerTime } from './time-flow.ts';
+import { prepareCameraShake } from './camera-shake.ts';
 import { PlayerAvatar } from './player-avatar.ts';
 import type { PlayerView } from './race-menu.ts';
 import { groundUnder, type SoundingWorld } from './actor-sounds.ts';
@@ -840,16 +841,20 @@ export class ModelViewer {
     };
     this.#ui.freeCamera.checked = false;
     this.#ui.play.hidden = false;
+    // The camera's shake: its settings and its model's motion (src/shell/camera-shake.ts).
+    prepareCameraShake(session, play.player.shake).catch((error: unknown) => {
+      this.#terminal.log('world', `the camera's shake: ${describe(error)}`, 'warn');
+    });
     // The player's body (third person) and first-person camera animation.
     PlayerAvatar.create(session, this.#renderer, player, this.#soundingWorld).then(
       (avatar) => {
         if (this.#play === play) {
           this.#avatar = avatar;
           if (avatar) {
-            // The player as a cart's rider: its exit ends its cart state (actor-vehicles.ts).
-            avatar.onGraphEvents = (events) => {
-              const graph = avatar.body.behavior;
-              if (graph) this.#stage?.vehicles.riderEvents(PLAYER_REF, graph, events);
+            // The player's graphs' events go to the engine's handlers as an actor's do (a cart's
+            // rider's exit, furniture, strikes, casts: src/shell/actor-graph-events.ts).
+            avatar.onGraphEvents = (events, firstPerson) => {
+              this.#stage?.graphEvents.player(avatar, events, firstPerson);
             };
           }
           this.#seat = avatar && this.#makeSeat(play, avatar);

@@ -34,6 +34,8 @@
 // it.
 
 import type { ObjectGraph } from '../animation/object-graph.ts';
+import type { GraphEvent } from '../animation/graph-events.ts';
+import type { ActorGraphSource } from './actor-graph-events.ts';
 import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { castStartEvent } from '../gameplay/magic/casting.ts';
 import { AIM_HEIGHT } from '../gameplay/combat/aim.ts';
@@ -158,18 +160,16 @@ const ACTIONS: Readonly<Record<number, { ready: string; release: string; interru
 
 /**
  * The magic graph by hand: the variable the engine sets while the hand wants to cast, the event
- * that takes the graph into CastingState, the event its clips raise as the spell leaves.
+ * that takes the graph into CastingState (its clips' SpellFire events: spellFire).
  */
-const HANDS: Readonly<Record<number, { want: string; begin: string; fire: string }>> = {
+const HANDS: Readonly<Record<number, { want: string; begin: string }>> = {
   [CastingSource.left]: {
     want: 'bWantCastLeft',
     begin: 'BeginCastLeft',
-    fire: 'mlh_spellfire_event',
   },
   [CastingSource.right]: {
     want: 'bWantCastRight',
     begin: 'BeginCastRight',
-    fire: 'mrh_spellfire_event',
   },
 };
 
@@ -180,6 +180,12 @@ const HANDS: Readonly<Record<number, { want: string; begin: string; fire: string
  * the engine does without the event.
  */
 const FIRE_WAIT = 0.5;
+/**
+ * A shout whose graph raises no Voice_SpellFire_Event (or no BeginCastVoice) goes this long
+ * after its release (or its start) all the same (seconds). TODO(M13): what the engine does
+ * without the events (the human shout release raises it within half a second).
+ */
+const VOICE_WAIT = 1;
 /** An NPC's casting art stays this long after its cast ended (its release, mCast, plays out). */
 const ART_LINGER = 1.5;
 /** How often the player's hands are read for their casting art (seconds). */
@@ -264,6 +270,20 @@ interface PendingFire {
   wait: number;
   /** A dual cast fires on the left hand's event (its graph's DualMagic states raise those). */
   readonly dual: boolean;
+  /** A concentration shout (a dragon's breath): it sprays from then on. */
+  readonly breath?: boolean;
+}
+
+/** An NPC's shout going on: its target, its words, its hold. */
+interface NpcShout {
+  readonly target: number | undefined;
+  readonly words: number;
+  /** Seconds its words are still held (from its graph's BeginCastVoice). */
+  left: number;
+  /** Its graph began the shout (BeginCastVoice), or the wait for it ran out. */
+  begun: boolean;
+  /** Seconds left to wait for BeginCastVoice (a graph without it begins after these). */
+  wait: number;
 }
 
 /** A skeleton a source's node is read from: its pose and its placement in the world. */
@@ -289,7 +309,7 @@ export class ActorCasting {
   /** Casts shown, by "actor:source". */
   readonly #shown = new Map<string, Shown>();
   /** NPCs' shouts going on: the target and the words. */
-  readonly #shouts = new Map<number, { target: number | undefined; words: number; left: number }>();
+  readonly #shouts = new Map<number, NpcShout>();
   /** Breaths sprayed (concentration shouts let out): what fired, at whom, how long left. */
   readonly #breaths = new Map<
     number,
@@ -304,8 +324,6 @@ export class ActorCasting {
   readonly #arts = new Map<string, HandArt>();
   /** Released casts waiting for their graph's SpellFire event, by "actor:source". */
   readonly #pending = new Map<string, PendingFire>();
-  /** Graphs whose raised events this hears (the bodies', the player's first-person one). */
-  readonly #hooked = new WeakSet<object>();
   /** What the player's hands hold to cast (spells and scrolls: their casting art), as read. */
   readonly #playerHands = new Map<number, number | undefined>();
   #handsRead = 0;
@@ -817,23 +835,18 @@ export class ActorCasting {
         this.#shouts.delete(actor);
         const delivered = event.delivered;
         if (!delivered) break;
-        // A concentration shout (a dragon's breath) sprays while its exhale lasts.
-        if (delivered.item.castType === CastType.concentration) {
-          this.#breaths.set(actor, {
-            delivered,
-            target: shout?.target,
-            left: BREATH_SECONDS,
-            spray: 0,
-          });
-          const main = runtime.casting.mainEffect(delivered.item);
-          void main.then((effect) => {
-            const release = effect && effectSound(effect, EffectSound.release);
-            if (release !== undefined) void this.#sound(release, actor, source);
-            this.#options.acted?.(actor, 'shout', effect?.castingSoundLevel ?? 1);
-          });
-          break;
-        }
-        void this.#send(runtime, delivered, source, shout?.target);
+        // It leaves as its release clip raises Voice_SpellFire_Event (the engine's
+        // VoiceSpellFireHandler: voiceFire), else a while after; a concentration shout (a
+        // dragon's breath) then sprays while its exhale lasts.
+        this.#launch(key);
+        this.#pending.set(key, {
+          delivered,
+          target: shout?.target,
+          source,
+          wait: VOICE_WAIT,
+          dual: false,
+          breath: delivered.item.castType === CastType.concentration,
+        });
         break;
       }
       default:
@@ -918,7 +931,6 @@ export class ActorCasting {
         this.#end(key);
         continue;
       }
-      this.#hear(cast.actor);
       this.#aimArms(shown);
       // NPCs: a fire and forget spell goes once ready; a concentration spell after a while.
       if (cast.actor !== PLAYER_REF) {
@@ -976,6 +988,12 @@ export class ActorCasting {
       void this.#breathSpray(runtime, breath);
     }
     for (const [actor, shout] of this.#shouts) {
+      // Its words are held from its graph's BeginCastVoice (voiceCast) on.
+      if (!shout.begun) {
+        shout.wait -= seconds;
+        if (shout.wait > 0) continue;
+        shout.begun = true;
+      }
       shout.left -= seconds;
       if (shout.left > 0) continue;
       // Let out once (its 'shout' event sends it on its way, with the target kept here).
@@ -1180,7 +1198,7 @@ export class ActorCasting {
     const { shout: times } = await runtime.casting.settings();
     const hold = count >= 3 ? times.time2 : count === 2 ? times.time1 : 0;
     await this.#options.furniture.playAction(user, 'ActionVoice');
-    this.#shouts.set(actor, { target, words: count, left: hold });
+    this.#shouts.set(actor, { target, words: count, left: hold, begun: false, wait: VOICE_WAIT });
     return true;
   }
 
@@ -1229,54 +1247,89 @@ export class ActorCasting {
     const pending = this.#pending.get(key);
     const runtime = this.#runtime;
     this.#pending.delete(key);
-    if (pending && runtime)
-      void this.#send(runtime, pending.delivered, pending.source, pending.target);
+    if (!pending || !runtime) return;
+    if (pending.breath === true) {
+      this.#breathe(runtime, pending.delivered, pending.target);
+      return;
+    }
+    void this.#send(runtime, pending.delivered, pending.source, pending.target);
   }
 
-  /** Hears the graphs an actor's casts play in (its body's; the player's first-person one too). */
-  #hear(actor: number): void {
-    const placed = this.#placed(actor);
-    if (placed) this.#hook(placed, actor, false);
-    if (actor !== PLAYER_REF) return;
-    const first = this.#options.player?.()?.avatar?.firstPerson;
-    if (first) this.#hook(first, actor, true);
-  }
-
-  #hook(
-    target: { onEvents?: ((events: readonly string[]) => void) | undefined },
-    actor: number,
-    firstPerson: boolean,
-  ): void {
-    if (this.#hooked.has(target)) return;
-    this.#hooked.add(target);
-    const previous = target.onEvents;
-    target.onEvents = (events) => {
-      previous?.(events);
-      this.#graphEvents(actor, events, firstPerson);
-    };
+  /** A concentration shout let out (a dragon's breath): it sprays while its exhale lasts. */
+  #breathe(runtime: ScriptRuntime, delivered: Delivered, target: number | undefined): void {
+    const actor = delivered.caster;
+    this.#breaths.set(actor, { delivered, target, left: BREATH_SECONDS, spray: 0 });
+    void runtime.casting.mainEffect(delivered.item).then((effect) => {
+      const release = effect && effectSound(effect, EffectSound.release);
+      if (release !== undefined) void this.#sound(release, actor, CastingSource.voice);
+      this.#options.acted?.(actor, 'shout', effect?.castingSoundLevel ?? 1);
+    });
   }
 
   /**
-   * What an actor's graph raised: the hands' casting art hears it; a hand's SpellFire event sends
-   * its released spell on its way, or begins its concentration spell's sprays. The player's are
-   * the graph of the view's (the first-person arms' in first person, the body's in third).
+   * Whether events of this graph count for the actor's casts: the player's are the graph of
+   * the view's (the first-person arms' in first person, the body's in third).
    */
-  #graphEvents(actor: number, events: readonly string[], firstPerson: boolean): void {
-    if (actor === PLAYER_REF && firstPerson !== this.#firstPerson()) return;
-    this.#artsHear(actor, events);
-    for (const event of events) {
-      const lower = event.toLowerCase();
-      for (const source of [CastingSource.left, CastingSource.right]) {
-        if (HANDS[source]?.fire !== lower) continue;
-        this.#fired(actor, source);
-        // A dual cast (the right hand's) goes on the left hand's event.
-        const right = this.#key(actor, CastingSource.right);
-        if (source === CastingSource.left) {
-          if (this.#pending.get(right)?.dual === true) this.#launch(right);
-          if (this.#shown.get(right)?.cast.dual === true) this.#fired(actor, CastingSource.right);
-        }
-      }
+  #counts(source: ActorGraphSource): boolean {
+    return source.reference !== PLAYER_REF || source.firstPerson === this.#firstPerson();
+  }
+
+  /** What an actor's graph raised (the stage's dispatch): the hands' casting art hears it. */
+  graphEvents(source: ActorGraphSource, events: readonly GraphEvent[]): void {
+    if (!this.#counts(source)) return;
+    this.#artsHear(
+      source.reference,
+      events.map((event) => event.text),
+    );
+  }
+
+  /**
+   * The engine's LeftHandSpellFireHandler and RightHandSpellFireHandler (MLh_SpellFire_Event,
+   * MRh_SpellFire_Event): the hand's released spell goes on its way, or its concentration
+   * spell begins to spray. A dual cast (the right hand's) goes on the left hand's event.
+   */
+  spellFire(source: ActorGraphSource, hand: 'left' | 'right'): void {
+    if (!this.#counts(source)) return;
+    const actor = source.reference;
+    if (hand === 'right') {
+      this.#fired(actor, CastingSource.right);
+      return;
     }
+    this.#fired(actor, CastingSource.left);
+    const right = this.#key(actor, CastingSource.right);
+    if (this.#pending.get(right)?.dual === true) this.#launch(right);
+    if (this.#shown.get(right)?.cast.dual === true) this.#fired(actor, CastingSource.right);
+  }
+
+  /**
+   * The engine's VoiceSpellFireHandler (Voice_SpellFire_Event, raised by the shout's release
+   * clip): observed in the original, the voice's cast is released then (its shout's
+   * spell leaves, the voice's recovery begins). Here the released shout's spell leaves the head
+   * (or its breath begins to spray).
+   */
+  voiceFire(source: ActorGraphSource): void {
+    if (!this.#counts(source)) return;
+    const key = this.#key(source.reference, CastingSource.voice);
+    if (this.#pending.has(key)) this.#launch(key);
+  }
+
+  /**
+   * The engine's VoiceSpellCastHandler (BeginCastVoice, raised as the shout's start clip plays):
+   * observed in the original, the voice's cast begins charging then. An NPC holds its
+   * shout's words from then on.
+   */
+  voiceCast(source: ActorGraphSource): void {
+    const shout = this.#shouts.get(source.reference);
+    if (shout) shout.begun = true;
+  }
+
+  /**
+   * The engine's InterruptCastHandler (InterruptCast: a stagger, a death's full ragdoll): observed
+   * in the original, the actor's casting is interrupted (every hand and the voice).
+   */
+  interruptCast(reference: number): void {
+    this.#runtime?.casting.interrupt(reference);
+    this.#shouts.delete(reference);
   }
 
   /** A hand's SpellFire event: its released spell goes, its concentration spell sprays. */
@@ -1377,7 +1430,6 @@ export class ActorCasting {
       for (const [key, art] of [...this.#arts]) if (art.actor === PLAYER_REF) this.#endArt(key);
       return;
     }
-    this.#hear(PLAYER_REF);
     this.#handsRead -= seconds;
     if (this.#handsRead <= 0 && !this.#readingHands) {
       this.#handsRead = HANDS_REFRESH;
