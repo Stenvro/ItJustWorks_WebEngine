@@ -83,7 +83,6 @@ import { WorldLines } from './world-lines.ts';
 import { SceneLines } from './scene-lines.ts';
 import { PlayerLook } from './player-look.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
-import { ObjectHandle } from '../scripting/values.ts';
 import type { PlacedActor } from './actors.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -872,6 +871,11 @@ export class GameSession {
       this.scriptsStarting = runtime;
       // Skill increases and blinking meters go to the HUD.
       runtime.progression.listener = this.hud;
+      // The INI's settings the events read: OnTrigger's repeat, the attached area.
+      const triggerDelay = this.ini.lookup('Havok', 'fTriggerEventDelayMS');
+      if (triggerDelay !== undefined) runtime.triggerVolumes.delayMs = triggerDelay;
+      const grids = this.ini.lookup('General', 'uGridsToLoad');
+      if (grids !== undefined) runtime.gridsToLoad = grids;
       await runtime.newGame((what) => {
         if (runtime.retired) return;
         this.scriptsProgress = what;
@@ -1038,12 +1042,9 @@ export class GameSession {
   #watchLocation(runtime: ScriptRuntime): void {
     if (this.#locationsHeard !== runtime) {
       this.#locationsHeard = runtime;
-      runtime.events.on('actorLocationChange', async ({ actor, from, to }) => {
-        // TODO(merge): the SCRIPT-EVENTS relay (script-events.ts) sends OnLocationChange from
-        // this event; drop this send once it is in, or the actor hears it twice.
-        const handle = (formId: number | undefined) =>
-          formId === undefined ? null : new ObjectHandle(formId, 'location');
-        runtime.detach(runtime.sendEvent(actor, 'OnLocationChange', [handle(from), handle(to)]));
+      // The scripts hear it through the relay (script-events.ts: OnLocationChange); the HUD
+      // shows the player's new location.
+      runtime.events.on('actorLocationChange', async ({ actor, to }) => {
         if (actor !== PLAYER_REF || to === undefined) return;
         const name = (await runtime.forms.record(to))?.text('FULL');
         if (name) this.hud.location(name);

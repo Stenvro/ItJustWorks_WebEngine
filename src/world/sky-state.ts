@@ -544,3 +544,24 @@ export function skyState(input: SkyInput): SkyState {
     imageSpaces,
   };
 }
+
+/** The sun's distance in sky-mesh units (fSunXExtreme; the sky draws it there). */
+const SUN_SKY_DISTANCE = 400;
+
+/**
+ * Whether a look along `direction` meets the sun as the sky draws it: the sun above the horizon
+ * and the look within its disc (its size, fSunBaseSize, at its distance). The player's bow shot
+ * tells it (TESPlayerBowShotEvent's sun gazing: Auriel's Bow). TODO(M13): the engine's own test
+ * (its sun glare's visibility) is not read; the disc is inferred.
+ */
+export function sunInView(
+  state: Pick<SkyState, 'sunDirection' | 'sunSize'>,
+  direction: Vec3,
+): boolean {
+  const sun = state.sunDirection;
+  if (sun[2] <= 0) return false;
+  const length = Math.hypot(direction[0], direction[1], direction[2]);
+  if (length === 0) return false;
+  const cos = (sun[0] * direction[0] + sun[1] * direction[1] + sun[2] * direction[2]) / length;
+  return cos >= Math.cos(Math.atan(state.sunSize / 2 / SUN_SKY_DISTANCE));
+}

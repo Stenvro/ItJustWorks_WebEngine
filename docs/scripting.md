@@ -264,6 +264,98 @@ wilderness). Observed in the original:
 - Heard by: the story manager's Change Location (the player's only, below), the actor's
   OnLocationChange (the scripts' relay), the HUD's location name (the player's).
 
+### The scripts' events
+
+**The relay to the scripts** (`script-events.ts`), observed in the original (one event
+sink per source): an event about a reference goes to the reference's scripts, then to the
+aliases holding it and, for an actor, to the scripts of the magic effects on it
+(`ScriptRuntime.sendEvent`). The player's own events go to the player; sleep and tracked
+stats go to every object registered for them. What each kind becomes:
+
+| Kind                                   | Script event, to whom (arguments)                                                                                                                               |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| activate                               | OnActivate to the reference (who activated it)                                                                                                                  |
+| actorLocationChange                    | OnLocationChange to the actor (old, new)                                                                                                                        |
+| bookRead                               | OnRead to the book's reference, when it was one                                                                                                                 |
+| cellAttachDetach, cellFullyLoaded      | OnCellAttach / OnCellDetach; OnCellLoad to each reference whose 3D is in                                                                                        |
+| combat                                 | OnCombatStateChanged to the actor (its target if that is an actor, the state: 0 none, 1 combat, 2 searching)                                                    |
+| containerChanged                       | OnContainerChanged to the item's reference (new, old), OnItemRemoved to the old container, OnItemAdded to the new (item, count, reference, the other container) |
+| death                                  | OnDying (dying), OnDeath (dead) to the actor (killer)                                                                                                           |
+| destructionStageChanged                | OnDestructionStageChanged (old stage, new stage)                                                                                                                |
+| enterBleedout                          | OnEnterBleedout to the actor                                                                                                                                    |
+| equip                                  | OnObjectEquipped / OnObjectUnequipped to the actor (base, reference), then OnEquipped / OnUnequipped to an item with scripts (the actor)                        |
+| fastTravelEnd, playerBowShot, loadGame | OnPlayerFastTravelEnd (game hours), OnPlayerBowShot (bow, arrow, draw, sun gazing), OnPlayerLoadGame: to the player                                             |
+| grabRelease                            | OnGrab / OnRelease to the object                                                                                                                                |
+| hit                                    | OnHit to the target, actor or object (aggressor, source, projectile, power, sneak, bash, blocked)                                                               |
+| lockChanged                            | OnLockStateChanged                                                                                                                                              |
+| magicEffectApply, magicWardHit         | OnMagicEffectApply (caster, effect); OnWardHit (caster, spell, status: 0 friendly, 1 absorbed, 2 broken)                                                        |
+| moveAttachDetach                       | OnAttachedToCell / OnDetachedFromCell                                                                                                                           |
+| objectLoaded                           | OnLoad / OnUnload                                                                                                                                               |
+| objectTranslation                      | result 0 OnTranslationFailed, 1 OnTranslationComplete, 2 OnTranslationAlmostComplete                                                                            |
+| openClose                              | OnOpen / OnClose (who opened or closed it)                                                                                                                      |
+| package                                | OnPackageStart (new), OnPackageChange (old), OnPackageEnd (old)                                                                                                 |
+| reset                                  | OnReset, not for a deleted reference                                                                                                                            |
+| sell                                   | OnSell to the item sold, when it is a reference of its own (the seller)                                                                                         |
+| sleep, trackedStats                    | OnSleepStart (start, desired end) / OnSleepStop (interrupted); OnTrackedStatsEvent (stat, value): to those registered                                           |
+| spellCast                              | OnSpellCast to the caster (the spell)                                                                                                                           |
+| switchRaceComplete                     | OnRaceSwitchComplete                                                                                                                                            |
+| trapHit                                | to the trap, only for a living actor hit: OnTrapHitStart, OnTrapHit (target, velocity, position, material, first hit, motion type), OnTrapHitStop (target)      |
+| trigger, triggerEnterLeave             | OnTrigger, OnTriggerEnter / OnTriggerLeave to the trigger (who is inside)                                                                                       |
+
+**The producers**, each where the engine raises its event (observed in the original):
+
+- **Combat** (`src/shell/actor-combat-ai.ts`): an actor's combat state is told each time it
+  changes (into combat, its group searching and back, out of it), with its target; out of
+  combat with the target it last fought. Only NPCs have a combat controller and are told.
+- **Bleedout** (`actor-combat.ts` bleedout): told as an actor's life state turns to bleeding
+  out, the player's too.
+- **Open and close** (`src/shell/open-close.ts`): the engine tells them when the object's
+  animation raises Open or Close, at the end of its swing, with the one who activated it. Ours:
+  at the end of the open or close sequence, for the player's doors and containers (the lid
+  while the container menu is open), for actors' doors (`actor-doors.ts`) and for a script's
+  SetOpen (no one). Objects without an open sequence, and load doors, tell nothing. A swing
+  turned back before its end tells only the last one.
+- **Triggers** (`trigger-volumes.ts`, `ScriptRuntime.triggered`): entering and leaving are
+  told at once; while something stays inside, the volume tells everyone in it as it finds
+  them, then again once [Havok] fTriggerEventDelayMS (500 ms) has passed since it last told.
+- **Spell casts** (`casting-engine.ts`): told as the cast takes effect with its cost: a fire
+  and forget spell, staff, scroll or power as it fires, a concentration spell as it begins to
+  cast, a shout as it is let out (the word's spell). A script's Spell.Cast is not told.
+- **Grab** (`play-session.ts`): the Z key's hold and Telekinesis tell the object taken and let
+  go.
+- **Moves across the attached area** (`ScriptRuntime.move`): the engine tells a reference
+  whose parent cell changes between an attached cell and a detached one. Ours: a move to
+  another cell (MoveTo, an actor walking away or back) between the attached area (the
+  player's interior cell, or the uGridsToLoad cells round the player's outside, where the
+  player is going if a script just moved them) and the rest. The player is always attached.
+  A cell attaching or detaching with its references is OnCellAttach / OnCellDetach instead.
+- **Translations** (`ScriptRuntime.translate`): failed at once for a reference without its 3D,
+  almost complete as it passes fRefTranslationAlmostDonePercent (0.9) of its way, complete at
+  the end.
+- **The player's bow shot** (`actor-combat.ts`): a bow's (not a crossbow's) arrow leaving,
+  with its draw and whether the player looks into the sun as the sky draws it (TODO(M13): the
+  engine's own sun test).
+- **Wards** (`casting-engine.ts`): a hostile spell absorbed (1) or breaking the ward (2); a
+  spell that is not hostile meeting a ward from the front (0, inferred).
+- **Fast travel** (`play-mode.ts`): its end, with the game hours the way took.
+- **Sales** (`barter-menu.ts`): each item the player sells, with its reference if it has one.
+- **Tracked stats** (`ScriptRuntime.incrementStat`): the engine's own stat counts tell their
+  new value; a script's Game.IncrementStat does not.
+- **Hits on objects**: a weapon's blow on an object, an arrow, a spell reaching an object (any
+  spell; an actor hears only hostile ones that took hold), destructible objects in an
+  explosion's radius. TODO(M13): other objects in an explosion's radius.
+- The happenings that were sent straight to the scripts before go through the hub now:
+  activation, containers, deaths, destruction stages, equipment, magic effects, packages,
+  books read, locks (a script's Lock too), race switches, sleep and waits, cells loading. The
+  actors' location changes are the story events' (above); the relay is their one sender of
+  OnLocationChange.
+- Not produced yet: trap hits (traps do not hit yet; the relay is ready), resets (cell reset,
+  M12 with respawn), loading a game (M12).
+
+`tools/script-events.ts` lists each event's declarations in the base scripts and the scripts
+of the load order that handle it. `PapyrusVm.handled` (debugging) hears every handler that
+runs.
+
 ## Story manager
 
 `story-manager.ts`, after the Creation Kit's "Story Manager" and "SM Event Node" pages: an

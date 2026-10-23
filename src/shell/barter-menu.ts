@@ -151,9 +151,18 @@ export async function barterModel(
       if (fromChest > 0) await shelf.move(GOLD, fromChest, chest, PLAYER_REF, false);
       owed -= fromChest;
       if (owed > 0) await shelf.move(GOLD, owed, vendorActor, PLAYER_REF, false);
+      // The item's own reference, if it is one the player carries (a quest's item kept whole).
+      const reference = game.heldReference(PLAYER_REF, entry.formId);
       await shelf.move(entry.formId, amount, PLAYER_REF, chest, true, entryStack(entry));
       game.crime.clearStolen(chest, entry.formId);
       await speechUse(entry.formId);
+      // The sale is told (TESSellEvent: the sold reference's OnSell with the one who sold it).
+      game.events.emit('sell', {
+        seller: PLAYER_REF,
+        item: entry.formId,
+        count: amount,
+        reference,
+      });
     },
     handlers: {
       // (price): sNotEnoughVendorGold, "Transaction value: %d gold. Vendor only has %d gold."
