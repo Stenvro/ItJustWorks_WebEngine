@@ -21,6 +21,7 @@ import { transformPoint, type Vec3 } from '../render/math.ts';
 import type { GpuModel, GpuMorphs, ModelInstance } from '../render/scene-renderer.ts';
 import {
   ActorResolver,
+  inFirstPerson,
   meshPath,
   partitionVisible,
   seededRandom,
@@ -629,8 +630,8 @@ export class ActorPlacer {
 
   /**
    * The models a look wears, made for it (its weight's blend, its skin's and its variants'
-   * texture sets): the world models, or the first-person ones (ARMA MOD4 / MOD5: the arms the
-   * first-person view shows).
+   * texture sets): the world models, or those of its first-person body (the pieces in its
+   * first-person slots, in their first-person models: `inFirstPerson`, `addonModel`).
    */
   async wornModels(
     look: ActorLook,
@@ -638,14 +639,13 @@ export class ActorPlacer {
   ): Promise<({ readonly model: GpuModel; readonly addon: number } | undefined)[]> {
     const session = this.#session;
     const weight = Math.round(Math.min(100, Math.max(0, look.weight)));
+    const worn = firstPerson ? look.worn.filter((addon) => inFirstPerson(addon, look)) : look.worn;
     return Promise.all(
-      look.worn.map(async (addon) => {
-        const own = firstPerson ? addon.firstPerson : addon.model;
-        if (!own) return undefined;
+      worn.map(async (addon) => {
+        const { model: own, skinTexture } = firstPerson ? addon.firstPerson : addon;
         const path = meshPath(own.path);
         const thin = addon.weighted ? thinModelPath(path) : undefined;
-        const skin =
-          addon.skinTexture === undefined ? undefined : await this.#textureSet(addon.skinTexture);
+        const skin = skinTexture === undefined ? undefined : await this.#textureSet(skinTexture);
         const shapes = await Promise.all(
           own.alternateTextures.map(async (swap) => {
             const textures = await this.#textureSet(swap.textureSet);
