@@ -120,10 +120,13 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
     const now = performance.now();
     if (now - ride.planned < 500) return;
     ride.planned = now;
-    const ground = nav && paths.onNavmeshColumn(nav, feet);
+    // Off the navmesh (a rock it climbed): back onto its nearest point first, else home.
+    const ground = nav && (paths.onNavmeshColumn(nav, feet) ?? nav.nearest?.(feet, 512));
     const goal = ground && paths.randomReachablePoint(nav, ground, ride.home, 1200, 600, Math.random, { large: true });
-    const found = goal && paths.findPath(nav, ground, goal, { radius: 64, large: true });
+    const found = goal && paths.findPath(nav, ground, goal, { radius: 128, large: true });
     ride.path = found && found.points.length > 1 ? found.points.slice(1).map((p) => [...p]) : [];
+    if (ground && Math.hypot(ground[0] - feet[0], ground[1] - feet[1]) > 100) ride.path.unshift([...ground]);
+    if (ride.path.length === 0) ride.path = [[...ride.home]];
     ride.log.push(Math.round(performance.now() / 1000) + ' way ' + (goal ? goal.map(Math.round).join(',') : 'none') + ' ' + ride.path.length);
     if (ride.log.length > 40) ride.log.shift();
   };
@@ -155,7 +158,9 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
       if (ride.slow > 1.5) { ride.slow = 0; ride.path = []; ride.backing = 1.2; ride.log.push(Math.round(now / 1000) + ' stuck: backing out'); }
       if (ride.backing > 0) ride.backing -= dt;
       const backing = ride.backing > 0;
-      while (ride.path.length > 0 && Math.hypot(ride.path[0][0] - at[0], ride.path[0][1] - at[1]) < 150) ride.path.shift();
+      // A point is passed nearer the faster it goes (a galloping horse circled one it could not turn into).
+      const pass = 150 + speed * 0.5;
+      while (ride.path.length > 0 && Math.hypot(ride.path[0][0] - at[0], ride.path[0][1] - at[1]) < pass) ride.path.shift();
       if (ride.path.length === 0) plan(at);
       let rate = spin;
       const next = ride.path[0];
