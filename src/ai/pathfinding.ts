@@ -469,6 +469,8 @@ export function randomReachablePoint(
   const queue: { navmesh: Navmesh; triangle: number }[] = [start];
   let total = 0;
   const across2d = (point: Vec3): number => Math.hypot(point[0] - center[0], point[1] - center[1]);
+  // Farther from the place than this (and than the actor stands), the search does not go on.
+  const farthest = Math.max(2 * radius, across2d(from)) + RANDOM_SEARCH_MARGIN;
   for (let i = 0; i < queue.length && seen.size < RANDOM_SEARCH_LIMIT; i++) {
     const { navmesh, triangle } = queue[i] ?? start;
     const middle = triangleCentre(navmesh, triangle);
@@ -480,7 +482,7 @@ export function randomReachablePoint(
         candidates.push({ navmesh, triangle, area });
         total += area;
       }
-    } else if (off > 2 * radius + RANDOM_SEARCH_MARGIN) {
+    } else if (off > farthest) {
       // Far outside the place: the search does not go on from there.
       continue;
     }
@@ -538,5 +540,25 @@ export function randomReachablePoint(
   return best;
 }
 
-/** How far beyond twice its radius from a place a random location's search still goes on. */
+/** How far beyond twice its radius (or the actor) from a place a random location's search goes on. */
 const RANDOM_SEARCH_MARGIN = 512;
+
+/** A point is looked for on the navmesh this far above and below it (units)... */
+const COLUMN_REACH = 1024;
+/** ... in steps of this (twice the navmesh's own tolerance, NAVMESH_TOLERANCE). */
+const COLUMN_STEP = 48;
+
+/**
+ * Where a point's column meets the navmesh: the point itself if a triangle is at its height,
+ * else the nearest height above or below it (within COLUMN_REACH) where one is. A wander point
+ * is at its place's middle's height (the engine's), wherever the ground there lies.
+ */
+export function onNavmeshColumn(set: NavmeshSet, point: Vec3): Vec3 | undefined {
+  for (let rise = 0; rise <= COLUMN_REACH; rise += COLUMN_STEP) {
+    for (const dz of rise === 0 ? [0] : [-rise, rise]) {
+      const at: Vec3 = [point[0], point[1], point[2] + dz];
+      if (set.locate(at)) return at;
+    }
+  }
+  return undefined;
+}

@@ -419,7 +419,7 @@ function pointIn(run: ProcedureRun, place: PackagePlace): Vec3 {
 /**
  * Where a wanderer walks next (observed in the original: its Wander, and a Sandbox's
  * wandering, which runs a Wander in the sandbox's place with its Min Wander Distance). Its place
- * reaches at least fAIDistanceRadiusMinLocation.
+ * reaches at least fAIDistanceRadiusMinLocation; outside it, it first goes into it (to its middle).
  *
  * - **Its first walk** (`last` undefined): a random point of the navmesh within the place that it
  *   can walk to, at least its Min Wander Distance from it (the pathing's random location).
@@ -441,6 +441,8 @@ function wanderPoint(
   const here = run.body.position();
   const radius = Math.max(place.radius, atPlace(run));
   if (!here) return pointIn(run, { ...place, radius });
+  // Outside its place it first goes into it.
+  if (horizontal(here, place.position) > radius) return place.position;
   const mind = run.mind;
   if (last === undefined) {
     if (!mind.randomPoint) return pointIn(run, { ...place, radius });

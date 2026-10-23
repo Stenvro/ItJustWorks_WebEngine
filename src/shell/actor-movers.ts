@@ -290,6 +290,8 @@ interface Walker {
   held: boolean;
   /** When its idle was last stopped for its AI's way (performance.now ms). */
   idleStoppedAt: number;
+  /** Its graph has been driven since it became a walker. */
+  driven: boolean;
 }
 
 export class ActorMovers {
@@ -498,9 +500,6 @@ export class ActorMovers {
       this.#blocked(reference, travel, ahead.door);
       return;
     }
-    // Its graph holds it (an idle being stopped, a stagger, a canned turn): its path waits, no
-    // headway asked meanwhile.
-    if (mover.root.driven) travel.follower.hold();
     const step = travel.follower.step(mover.staged.position, seconds, (door) =>
       this.#options.openDoor?.(door, reference),
     );
@@ -812,6 +811,15 @@ export class ActorMovers {
     void this.#options.session.scriptsReady?.progression.sprint(reference, total);
   }
 
+  /**
+   * How fast a moved actor's steering turns it now (radians a second, compass: clockwise
+   * positive): over the physics steps of the last frame that had any (a rider's graph turns with
+   * its horse; measured from frame to frame, frames without a step said it stopped turning).
+   */
+  turnRate(reference: number): number | undefined {
+    return this.#movers.get(reference)?.wish.turnRate;
+  }
+
   /** How a moved actor moves now (its conditions and natives read it). */
   motion(reference: number): ActorMotion | undefined {
     const mover = this.#movers.get(reference);
@@ -927,6 +935,7 @@ export class ActorMovers {
   /** An actor left the stage: its controller goes, and what it was asked to do. */
   remove(reference: number): void {
     this.#drives.delete(reference);
+    this.#locomotions.delete(reference);
     this.#dropWalker(reference);
     this.#reactions.delete(reference);
     this.#sneaking.delete(reference);
@@ -1171,11 +1180,12 @@ export class ActorMovers {
     if (!walker) {
       walker = {
         staged,
-        locomotion: new Locomotion(),
+        locomotion: this.#locomotionOf(reference),
         race: undefined,
         moving: false,
         held: false,
         idleStoppedAt: -Infinity,
+        driven: false,
       };
       this.#walkers.set(reference, walker);
       const created = walker;
@@ -1190,13 +1200,13 @@ export class ActorMovers {
     // Held by an animation-driven graph (an idle, sitting down: bAnimationDriven) it does not go
     // its way: its graph is told it sets out (moveStart ends such an idle), its idle is stopped
     // as a moved actor's is (ActionIdleStop, again each second while it holds), and it goes once
-    // the graph lets it; its path waits meanwhile (no headway is asked). Moved meanwhile, it
-    // glided: a chicken sat in its idle while it went on. Not stopped, a chicken lying down
-    // (its LaydownState) gave up every walk its sandbox sent it on: no headway in its searches.
+    // the graph lets it. Moved meanwhile, it glided: a chicken sat in its idle while it went on.
+    // Not stopped, a chicken lying down (its LaydownState) gave up every walk its sandbox sent it
+    // on (no headway in its searches).
     const behavior = staged.placed.behavior;
     const held = behavior !== undefined && this.#readDrive(reference, behavior) !== 'controller';
     const travel = this.#travels.get(reference);
-    if (travel && !this.#walkerTravel(walker, travel, seconds, held)) return;
+    if (travel && !this.#walkerTravel(walker, travel, seconds)) return;
     const request = this.#requests.get(reference);
     const types = this.#catalogRead?.forActor(walker.race, undefined);
     if (held && request?.direction !== undefined) {
@@ -1220,7 +1230,10 @@ export class ActorMovers {
       if (on) staged.position = [on[0], on[1], on[2]];
     }
     const moving = Math.hypot(velocity[0], velocity[1]) > 1;
-    if (moving || walker.moving || request) {
+    // Driven at least once as a walker: what it was told as a moved actor goes on (a deer that
+    // fled past the high process ran on the spot for minutes, its graph never told it stopped).
+    if (moving || walker.moving || request || !walker.driven) {
+      walker.driven = true;
       this.#placeWalker(staged);
       const behavior = staged.placed.behavior;
       if (behavior) {
@@ -1247,7 +1260,7 @@ export class ActorMovers {
   }
 
   /** A walker's travel: its path searched and followed (false: it ended). */
-  #walkerTravel(walker: Walker, travel: Travel, seconds: number, held: boolean): boolean {
+  #walkerTravel(walker: Walker, travel: Travel, seconds: number): boolean {
     const staged = walker.staged;
     const reference = staged.reference;
     this.#followMoving(travel);
@@ -1267,8 +1280,6 @@ export class ActorMovers {
       }
       travel.follower = new PathFollower(path, { gait: travel.gait, arrive: travel.arrive });
     }
-    // Its graph holds it (an idle being stopped): it waits, no headway asked meanwhile.
-    if (held) travel.follower.hold();
     const step = travel.follower.step(staged.position, seconds, (door) =>
       this.#options.openDoor?.(door, reference),
     );
@@ -1390,7 +1401,7 @@ export class ActorMovers {
       this.#movers.set(reference, {
         staged,
         character,
-        locomotion: new Locomotion(),
+        locomotion: this.#locomotionOf(reference),
         feedback: new MotionFeedback(motionFeedbackSettings(session.ini)),
         race,
         types: undefined,
@@ -1420,6 +1431,22 @@ export class ActorMovers {
   }
 
   /** A walker is no longer one: its graph's channels no longer read its movement. */
+  /**
+   * An actor's movement as its graph was told it (one for the actor, whether its controller or
+   * its walk beyond the high process moves it): what it was told goes on as one gives way to the
+   * other (its graph is told it stopped when it did).
+   */
+  readonly #locomotions = new Map<number, Locomotion>();
+
+  #locomotionOf(reference: number): Locomotion {
+    let locomotion = this.#locomotions.get(reference);
+    if (!locomotion) {
+      locomotion = new Locomotion();
+      this.#locomotions.set(reference, locomotion);
+    }
+    return locomotion;
+  }
+
   #dropWalker(reference: number): void {
     this.#walkers.get(reference)?.locomotion.release();
     this.#walkers.delete(reference);

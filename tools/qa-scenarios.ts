@@ -91,14 +91,21 @@ const placeAnimals = (
 })()`;
 
 /**
- * The ride (page side): the player on a saddled horse goes through its gaits on a minute's loop,
- * steering by its yaw as the controls do: a walk, a trot, a gallop, a sprint, a stop, turns
- * while moving and on the spot, a gallop in a circle, back towards where it started.
+ * The ride (page side): the player on a saddled horse goes through its gaits on a minute's loop
+ * (a walk, a trot, a gallop, a sprint, a stop, a turn on the spot), steering by its yaw as the
+ * controls do: along navmesh paths to random points round where it started (as a player rides
+ * round rocks and fences), the view turning smoothly every frame as a mouse does; a new way when
+ * it gets nowhere. Runs as a console line (replMode): the world viewer's navmeshes are a private
+ * field.
  */
-const RIDE_BOT = `(() => {
+const RIDE_BOT = `
+var QA_RIDE_NAV = engineDev.world.#navmeshes;
+(async () => {
   if (window.__qaRide) return 'running';
+  const paths = await import('/src/ai/pathfinding.ts');
   const W = engineDev.world;
-  const ride = { start: performance.now(), held: new Set(), home: undefined, last: undefined, slow: 0, away: 0 };
+  const nav = QA_RIDE_NAV;
+  const ride = { start: performance.now(), held: new Set(), home: undefined, last: undefined, slow: 0, path: [], log: [] };
   window.__qaRide = ride;
   const press = (name, down) => {
     const player = W.player; if (!player) return;
@@ -107,14 +114,20 @@ const RIDE_BOT = `(() => {
     if (down) ride.held.add(name); else ride.held.delete(name);
   };
   ride.release = () => { for (const name of [...ride.held]) press(name, false); };
-  // Phases: [until, forward, walk (run toggled off), sprint, turn rate rad/s].
+  // A way to a random point of the navmesh within 1200 of home, at least 600 on.
+  const plan = (feet) => {
+    const goal = nav && paths.randomReachablePoint(nav, feet, ride.home, 1200, 600, Math.random, { large: true });
+    const found = goal && paths.findPath(nav, feet, goal, { radius: 64, large: true });
+    ride.path = found && found.points.length > 1 ? found.points.slice(1).map((p) => [...p]) : [];
+    ride.log.push(Math.round(performance.now() / 1000) + ' way ' + (goal ? goal.map(Math.round).join(',') : 'none') + ' ' + ride.path.length);
+    if (ride.log.length > 40) ride.log.shift();
+  };
+  // Phases: [until, forward, walk (run toggled off), sprint, turn on the spot rad/s].
   const phases = [
     [8, true, true, false, 0], [16, true, false, false, 0], [22, true, false, true, 0],
-    [26, false, false, false, 0], [34, true, true, false, 0.5], [40, true, false, false, -0.6],
-    [44, false, false, false, 1.2], [56, true, false, false, 0.35], [60, false, false, false, 0],
+    [26, false, false, false, 0], [34, true, true, false, 0], [44, true, false, false, 0],
+    [48, false, false, false, 1.2], [56, true, false, true, 0], [60, false, false, false, 0],
   ];
-  // The view turns smoothly, every frame (as a mouse does); home again when it strays, away
-  // from what it runs into (a fence, a wall) when it gets nowhere.
   let before = performance.now();
   const frame = (now) => {
     if (window.__qaRide !== ride) return;
@@ -125,18 +138,19 @@ const RIDE_BOT = `(() => {
       const feet = player.feet;
       ride.home ??= [...feet];
       const t = ((now - ride.start) / 1000) % 60;
-      const [, forward, walk, sprint, turn] = phases.find((p) => t < p[0]) ?? phases[phases.length - 1];
+      const [, forward, walk, sprint, spin] = phases.find((p) => t < p[0]) ?? phases[phases.length - 1];
       const speed = ride.last ? Math.hypot(feet[0] - ride.last[0], feet[1] - ride.last[1]) / Math.max(dt, 1e-3) : 0;
       ride.last = [...feet];
       ride.slow = forward && speed < 30 ? ride.slow + dt : 0;
-      if (ride.slow > 1.5) { ride.away = 1.2; ride.slow = 0; }
-      const toHome = Math.atan2(ride.home[0] - feet[0], ride.home[1] - feet[1]);
-      const far = Math.hypot(ride.home[0] - feet[0], ride.home[1] - feet[1]) > 1500;
-      let rate = turn;
-      if (ride.away > 0) { ride.away -= dt; rate = 2.2; }
-      else if (far) {
-        const off = Math.atan2(Math.sin(toHome - player.yaw), Math.cos(toHome - player.yaw));
-        rate = Math.max(-1.5, Math.min(1.5, off * 2));
+      if (ride.slow > 1.5) { ride.slow = 0; ride.path = []; }
+      while (ride.path.length > 0 && Math.hypot(ride.path[0][0] - feet[0], ride.path[0][1] - feet[1]) < 150) ride.path.shift();
+      if (ride.path.length === 0) plan(feet);
+      let rate = spin;
+      const next = ride.path[0];
+      if (!spin && next) {
+        const want = Math.atan2(next[0] - feet[0], next[1] - feet[1]);
+        const off = Math.atan2(Math.sin(want - player.yaw), Math.cos(want - player.yaw));
+        rate = Math.max(-1.5, Math.min(1.5, off * 3));
       }
       player.yaw += rate * dt;
       press('Forward', forward);
@@ -417,15 +431,16 @@ export const SCENARIOS: readonly Scenario[] = [
       );
       ctx.note(mounted ? 'the player rides the saddled horse' : 'the player could not mount');
       await sleepMs(2000);
-      await ctx.page.eval(RIDE_BOT, 10000);
+      await ctx.page.eval(RIDE_BOT, 30000, true);
     },
     finish: async (ctx) => {
-      await ctx.page
-        .eval(
-          `(() => { const r = window.__qaRide; if (r) { window.__qaRide = undefined; r.release(); } return true; })()`,
+      const log = await ctx.page
+        .eval<string[] | undefined>(
+          `(() => { const r = window.__qaRide; if (!r) return undefined; window.__qaRide = undefined; r.release(); return r.log; })()`,
           10000,
         )
         .catch(() => undefined);
+      for (const line of log ?? []) ctx.note(`ride: ${line}`);
     },
   },
   {
