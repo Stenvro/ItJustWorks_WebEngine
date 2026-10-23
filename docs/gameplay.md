@@ -539,13 +539,28 @@ Format/SPEL"; the game settings.
   the dual-cast art at its scale) and the casting light there (MGEF light); the spell leaves
   the hand as its graph's release raises SpellFire (docs/animation.md, "Casting"); a projectile carries its light; with the Muzzle Flash flag its
   muzzle flash model and light show where it leaves for its muzzle flash duration; a cone's
-  wave (its projectile's model and light) sweeps out at its speed to its range; a beam shows
-  from the hand (TODO(M13): stretched to the hit); an explosion shows its model and light (its
+  wave (its projectile's model and light) sweeps out at its speed to its range; a beam's model
+  reaches from the hand to what it met (below); an explosion shows its model and light (its
   light fading), puts its image-space modifier on the player within its image-space radius
   (aimed at it), leaves its impact on the surface there, its placed object and sends its
   spawned projectile on to the nearest other living actor in reach (chain lightning; one hop:
-  TODO(M13)); a spell's impact on a surface (the effect's impact data set) sounds, leaves its
-  decal, model (for its duration) and hazard.
+  TODO(M13)); with the Chain flag and no spawned projectile of its own (Chain Lightning's
+  ChainLightningExplosion) it sends on the projectile that burst (TODO(M13): inferred from the
+  data, the engine's use of the flag is unread); a spell's impact on a surface (the effect's
+  impact data set) sounds, leaves its decal, model (for its duration) and hazard.
+- Beams (src/shell/magic-beams.ts; observed in the original): Sparks (ShockBoltConAim,
+  `Magic\LightningBolt01.nif`), Lightning Bolt and Chain Lightning's bolts (ShockBoltAim,
+  ShockBoltAimChain: `LightningBolt02`), Thunderbolt (ShockBoltAimExpert: `LightningBolt04`),
+  Lightning Storm (`LightningBolt03`), the staffs' and traps'. The model stays at the casting
+  hand's magic node, along the aim at the launch, while it shows; its behavior graph plays
+  (`mIdle`: the bolts' generation, mutation and arc); its procedural lightning
+  (docs/rendering.md, "Procedural lightning") is stretched along the beam to the distance to
+  what the beam met (its range without a hit) over the model's BeamEnd distance (512); its
+  light (PROJ light) shines at the model's AttachLight node (200 units out in the bolts, at
+  most the beam's length). It shows for the projectile's lifetime, at least one relaunch
+  interval (a held beam is cast anew every interval: Sparks every 0.15 s), then fades over its
+  fade duration (Lightning Bolt: 0.35 s, then 0.5 s). TODO(M13): how the engine times a beam's
+  fade. A chained beam leaves the explosion toward its next target. NPCs' beams are the same.
 - Dual casting: both attack buttons pressed within 0.15 s with one spell in both hands
   (TODO(M13): the window), with the school's Dual Casting perk (Can Dual Cast Spell; without
   it each hand casts on its own); its effects are cast with
@@ -634,9 +649,7 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
 - Speeds and falls: missiles and arrows fly at the PROJ's speed (an arrow's times the draw) and
   fall by the PROJ's gravity × 9.8 m/s²; beams reach their range at once; flames are sprays,
   one every relaunch interval. fArrowSpeedMult and fArrowGravityBase are not read by the engine.
-- Not done here: the beam's lightning (Magic\LightningBolt01.nif is procedural geometry between
-  its node and BeamEnd, BSProceduralLightningController; the impact is at the hit point but the
-  bolt is not drawn). TODO(M13).
+- The beam's bolt is drawn from the hand to the hit ("A hand's cast", Beams).
 
 ### Shouts and powers
 
