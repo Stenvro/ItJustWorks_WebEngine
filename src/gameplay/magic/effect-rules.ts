@@ -256,3 +256,129 @@ export const UNITS_PER_FOOT = 64 / 3;
 export function remainingSeconds(duration: number, elapsed: number): number {
   return duration > 0 ? Math.max(0, duration - elapsed) : 0;
 }
+
+/**
+ * The settings the effects' archetypes read (GMSTs), each with its fallback where the load order
+ * has none: Skyrim.esm's value for those it sets, else the engine's built-in default.
+ */
+const EFFECT_SETTING_TABLE = {
+  /** A ward grows by (Mult × skill + Base) × its magnitude a second. */
+  wardPowerMaxBase: ['fMagicWardPowerMaxBase', 1.3],
+  wardPowerMaxMult: ['fMagicWardPowerMaxMult', 0],
+  /** Other Accumulate Magnitude effects grow by this a second. */
+  accumulatingRate: ['fMagicDefaultAccumulatingModifierEffectRate', 1],
+  /** Seconds a ward lowered by a hit stops growing. */
+  accumulatingHold: ['fMagicAccumulatingModifierEffectHoldDuration', 0.5],
+  /** A summon's placement: how far ahead it is looked for; when a landing point is too near. */
+  summonSearchRadius: ['fSummonedCreatureSearchRadius', 512],
+  summonDistanceCheck: ['fSummonDistanceCheckThreshold', 750],
+} as const satisfies Readonly<Record<string, readonly [string, number]>>;
+
+export type EffectSettings = {
+  readonly [K in keyof typeof EFFECT_SETTING_TABLE]: number;
+};
+
+export const EFFECT_DEFAULTS = Object.fromEntries(
+  Object.entries(EFFECT_SETTING_TABLE).map(([key, [, fallback]]) => [key, fallback]),
+) as EffectSettings;
+
+export const EFFECT_SETTING_NAMES = Object.fromEntries(
+  Object.entries(EFFECT_SETTING_TABLE).map(([key, [name]]) => [key, name]),
+) as Readonly<Record<keyof EffectSettings, string>>;
+
+/**
+ * How fast an Accumulate Magnitude effect grows (a second; observed in the original): a
+ * ward (WardPower) by (fMagicWardPowerMaxMult × its caster's skill + fMagicWardPowerMaxBase) ×
+ * its magnitude, any other by fMagicDefaultAccumulatingModifierEffectRate.
+ */
+export function accumulateRate(
+  actorValue: number,
+  magnitude: number,
+  skill: number,
+  settings: EffectSettings = EFFECT_DEFAULTS,
+): number {
+  return actorValue === MagicValue.wardPower
+    ? (settings.wardPowerMaxMult * skill + settings.wardPowerMaxBase) * magnitude
+    : settings.accumulatingRate;
+}
+
+/**
+ * What an Accumulate Magnitude effect adds over `seconds` (observed in the original): its
+ * rate's share, no more than takes its actor value (`current`, whatever lowered it) to `cap`
+ * (its magnitude; a ward's: the largest of the actor's wards).
+ */
+export function accumulateStep(
+  rate: number,
+  seconds: number,
+  current: number,
+  cap: number,
+): number {
+  const step = rate * Math.max(0, seconds);
+  return current + step > cap ? cap - current : step;
+}
+
+/**
+ * How far ahead of its summoner a summon is placed (observed in the original): the two
+ * actors' radii and half of fSummonedCreatureSearchRadius between them.
+ */
+export function summonDistance(
+  summonerRadius: number,
+  creatureRadius: number,
+  settings: Pick<EffectSettings, 'summonSearchRadius'> = EFFECT_DEFAULTS,
+): number {
+  return (
+    Math.max(0, summonerRadius) + Math.max(0, creatureRadius) + settings.summonSearchRadius / 2
+  );
+}
+
+/**
+ * Whether a Target Location summon stands where its spell landed (observed in the
+ * original): yes, unless the landing point lies within fSummonDistanceCheckThreshold of the summoner
+ * and the place ahead of it (summonDistance) is farther away; then it stands there.
+ */
+export function summonAtLanding(
+  landingDistance: number,
+  aheadDistance: number,
+  settings: Pick<EffectSettings, 'summonDistanceCheck'> = EFFECT_DEFAULTS,
+): boolean {
+  return landingDistance >= settings.summonDistanceCheck || aheadDistance <= landingDistance;
+}
+
+/**
+ * The Guide archetype's settings (Clairvoyance's trail), each with its fallback where the load
+ * order has none (Skyrim.esm's values).
+ */
+export const GUIDE_SETTING_TABLE = {
+  waypoints: ['iMagicGuideWaypoints', 44],
+  spacing: ['fMagicGuideSpacing', 46],
+} as const satisfies Readonly<Record<string, readonly [string, number]>>;
+
+/**
+ * A Guide effect's waypoints along its path (observed in the original): from the path's
+ * start, a point every `spacing` units along it, at most `count` of them (the engine puts the
+ * effect's hazard at each).
+ */
+export function guideWaypoints(
+  path: readonly (readonly [number, number, number])[],
+  spacing: number,
+  count: number,
+): [number, number, number][] {
+  const first = path[0];
+  if (!first || count <= 0) return [];
+  const points: [number, number, number][] = [[first[0], first[1], first[2]]];
+  if (spacing <= 0) return points;
+  let along = spacing;
+  let walked = 0;
+  for (let i = 1; i < path.length && points.length < count; i++) {
+    const a = path[i - 1] ?? first;
+    const b = path[i] ?? a;
+    const length = Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    while (length > 0 && walked + length >= along && points.length < count) {
+      const t = (along - walked) / length;
+      points.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
+      along += spacing;
+    }
+    walked += length;
+  }
+  return points;
+}

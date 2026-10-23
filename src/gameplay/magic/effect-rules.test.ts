@@ -1,8 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import { EffectArchetype, EffectFlag } from '../../world/magic-effects.ts';
 import {
+  accumulateRate,
+  accumulateStep,
   castStrength,
+  EFFECT_DEFAULTS,
+  guideWaypoints,
   isValueEffect,
+  MagicValue,
+  summonAtLanding,
+  summonDistance,
   magicResistanceApplies,
   resistanceMultiplier,
   soulGemFor,
@@ -96,5 +103,51 @@ describe('souls', () => {
     expect(soulGemFor(gems, 5, false)?.id).toBe('grand');
     expect(soulGemFor(gems, 5, true)?.id).toBe('black');
     expect(soulGemFor(gems.slice(2), 3, false)).toBeUndefined();
+  });
+});
+
+describe('the archetypes read from the engine', () => {
+  it('grow a ward by (Mult × skill + Base) × its magnitude, others by the default rate', () => {
+    expect(accumulateRate(MagicValue.wardPower, 40, 50)).toBeCloseTo(52, 9);
+    expect(
+      accumulateRate(MagicValue.wardPower, 40, 50, { ...EFFECT_DEFAULTS, wardPowerMaxMult: 0.01 }),
+    ).toBeCloseTo((0.5 + 1.3) * 40, 9);
+    expect(accumulateRate(MagicValue.magicResist, 40, 50)).toBe(1);
+  });
+
+  it('grow no further than their cap, from whatever lowered them', () => {
+    expect(accumulateStep(52, 0.1, 0, 40)).toBeCloseTo(5.2, 9);
+    expect(accumulateStep(52, 0.1, 38, 40)).toBeCloseTo(2, 9);
+    // A hit took 30: it grows back.
+    expect(accumulateStep(52, 0.5, 10, 40)).toBeCloseTo(26, 9);
+  });
+
+  it('place a summon ahead by the radii and half the search radius', () => {
+    expect(summonDistance(20, 30)).toBe(306);
+    // A landing point beyond fSummonDistanceCheckThreshold stays; a near one gives way to the
+    // place ahead when that is farther.
+    expect(summonAtLanding(800, 306)).toBe(true);
+    expect(summonAtLanding(500, 306)).toBe(true);
+    expect(summonAtLanding(100, 306)).toBe(false);
+  });
+
+  it("lays a guide's waypoints along its path", () => {
+    const path: [number, number, number][] = [
+      [0, 0, 0],
+      [100, 0, 0],
+      [100, 100, 0],
+    ];
+    expect(guideWaypoints(path, 46, 44)).toEqual([
+      [0, 0, 0],
+      [46, 0, 0],
+      [92, 0, 0],
+      [100, 38, 0],
+      [100, 84, 0],
+    ]);
+    expect(guideWaypoints(path, 46, 2)).toEqual([
+      [0, 0, 0],
+      [46, 0, 0],
+    ]);
+    expect(guideWaypoints([], 46, 44)).toEqual([]);
   });
 });

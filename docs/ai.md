@@ -1246,9 +1246,11 @@ meanwhile.
 - **Telekinesis** and **Grab Actor**: the player's Telekinesis is the grab spring's
   (docs/gameplay.md, "Magic effects"). Grab Actor (the Vampire Lord's Vampiric Grip, MGEF
   archetype 45) knocks its target down (its graph's Ragdoll) and holds its ragdoll's root
-  before its caster, at its chest a reach ahead (pulled there at 8 × the way a second, at most
-  600 units a second: TODO(M13) the engine's hold), while the effect lasts; let go, it falls
-  and gets up.
+  before its caster, at its chest fMagicGrabActorMinDistance ahead (120, Dawnguard.esm; observed
+  in the original: the hold's distance; pulled there at 8 × the way a second, at most
+  600 units a second: TODO(M13) the engine holds it before the player's camera), while the
+  effect lasts; let go, it is flung away from its caster with fMagicGrabActorThrowForce (15),
+  falls and gets up.
 - **Power attacks**: the player's attack button held [Controls] fInitialPowerAttackDelay (0.3 s)
   is a power attack (both buttons: the dual ones); without stamina it is a plain one (the HUD's
   meter blinks). Power attacks and bashes cost the skill progression's powerAttackCost and
