@@ -56,6 +56,8 @@ export interface CellObject {
   readonly dontHavokSettle?: boolean;
   /** XTEL: a load door's destination (the door it leads to and where the player arrives). */
   readonly teleport?: Teleport;
+  /** ONAM: a door placed open ("Open by Default"); scripts may shut it since (SetOpen). */
+  readonly openByDefault?: boolean;
   /** Sounds of using it (SNDR): doors and containers opening and closing, activators. */
   readonly sounds?: ObjectSounds;
   /** Carryable items: what the crosshair shows of them (weight and value). */
@@ -717,6 +719,7 @@ export async function loadCellData(
       ...emittanceOf(record),
       ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
       ...(base.type === 'DOOR' && { teleport: parseTeleport(record) }),
+      ...(base.type === 'DOOR' && record.fields.has('ONAM') && { openByDefault: true }),
       ...objectSoundsOf(base),
       ...(item && { item: { weight: item.weight, value: item.value } }),
       ...(item?.book &&

@@ -58,6 +58,8 @@ export interface ScriptView {
   explosion?(explosion: number, at: Vec3, source: number | undefined): void;
   /** How many are inside a reference's trigger volume now. */
   triggerCount?(reference: number): number;
+  /** SetOpen: a door of the view swings open or shut (src/shell/actor-doors.ts setOpen). */
+  openChanged?(reference: number, open: boolean): void;
   /** A named node of a shown reference's model: where it is in the world. */
   nodeWorld?(reference: number, node: string): Mat4 | undefined;
   /** What activating a reference does by default (a script's Activate). */
@@ -315,6 +317,10 @@ export class ScriptWorld implements WorldBridge {
 
   explosion(explosion: number, at: Vec3, source: number | undefined): void {
     for (const view of this.#views) view.explosion?.(explosion, at, source);
+  }
+
+  openChanged(reference: number, open: boolean): void {
+    for (const view of this.#views) view.openChanged?.(reference, open);
   }
 
   triggerCount(reference: number): number {
