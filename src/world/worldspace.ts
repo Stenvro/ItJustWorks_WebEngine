@@ -54,6 +54,8 @@ export interface WorldspaceRecord {
   readonly mapOffset: WorldMapOffset;
   /** MODL: the world map's clouds (undefined: the engine's default). */
   readonly cloudModel: string | undefined;
+  /** LTMP: the worldspace's lighting template (LGTM; the sky shows only its dome there). */
+  readonly lightingTemplate: number | undefined;
 }
 
 /**
@@ -106,11 +108,15 @@ export function parseWorldspace(record: GameRecord): WorldspaceRecord {
       offset: [f32('ONAM', 4) ?? 0, f32('ONAM', 8) ?? 0, f32('ONAM', 12) ?? 0],
     },
     cloudModel: nonEmpty(record.text('MODL')),
+    lightingTemplate: nonZeroForm(record.formIdField('LTMP')),
   };
 }
 
 const nonEmpty = (text: string | undefined): string | undefined =>
   text === undefined || text === '' ? undefined : text;
+
+const nonZeroForm = (formId: number | undefined): number | undefined =>
+  formId === 0 ? undefined : formId;
 
 function parseWorldMap(data: Uint8Array | undefined): WorldMapData | undefined {
   if (!data || data.length < 16) return undefined;

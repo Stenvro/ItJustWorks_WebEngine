@@ -1681,7 +1681,7 @@ export class WorldViewer {
     if (this.streamLargeReferences) this.#updateLargeReferences(world, cx, cy);
     this.#pump();
     this.#lod?.update(px, py);
-    this.#sky?.update(world, cx, cy).catch((error: unknown) => {
+    this.#sky?.update(world, cx, cy, [px, py]).catch((error: unknown) => {
       this.#terminal.log('sky', describe(error), 'warn');
     });
     this.#ui.status.hidden = false;

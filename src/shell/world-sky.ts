@@ -1,7 +1,8 @@
-// Time of day and weather for an exterior worldspace, as the engine runs them: the clock
-// advances at the timescale, the weather comes from the cell's weather region (else the
-// climate) and changes with a transition when the camera enters a region whose list does
-// not have the current weather. Drives the sky, the directional light, ambient and fog.
+// Time of day and weather for an exterior worldspace: the clock advances at the timescale and
+// the session's sky (src/world/sky-weather.ts, the engine's one weather state, which scripts
+// and the console drive too) runs each frame; this shows its current weather and the change
+// from the outgoing one in the sky, the directional light, ambient and fog. As the player
+// enters a cell it tells the sky the weather region there and the worldspace's climate.
 
 import type {
   GpuPrecipitation,
@@ -21,20 +22,16 @@ import { parsePrecipitation, precipitationAmounts } from '../world/precipitation
 import type { GpuSky, SkyFrame, SkyRenderer } from '../render/sky.ts';
 import { skyShapes } from '../render/sky-data.ts';
 import { blendImageSpaces, parseImageSpace, type ImageSpace } from '../world/image-space.ts';
-import type { GameRecord, RecordDatabase } from '../world/record-db.ts';
+import type { RecordDatabase } from '../world/record-db.ts';
 import { skySettings, skyState, type SkySettings, type SkyState } from '../world/sky-state.ts';
+import { SkyMode, weatherRegionAt } from '../world/sky-weather.ts';
 import {
-  cellWeathers,
   parseClimate,
-  parseRegionWeather,
-  parseWeather,
-  pickWeather,
   type ClimateRecord,
-  type RegionWeather,
   type WeatherChance,
   type WeatherRecord,
 } from '../world/weather.ts';
-import type { Worldspace } from '../world/worldspace.ts';
+import { WorldFlag, type Worldspace } from '../world/worldspace.ts';
 import type { GameSession } from './game-session.ts';
 import { SkyObjects } from './sky-objects.ts';
 import type { Terminal } from './terminal.ts';
@@ -156,18 +153,18 @@ export class WorldSky {
   readonly #settings: SkySettings;
   readonly #climate: ClimateRecord | undefined;
   readonly #gpu: GpuSky;
-  readonly #weathers = new Map<number, Promise<WeatherRecord | undefined>>();
-  readonly #regions = new Map<number, Promise<RegionWeather | undefined>>();
   /** Imagespaces by form id; undefined while loading or if missing. */
   readonly #imageSpaces = new Map<number, ImageSpace | undefined>();
   #imageSpace: ImageSpace | undefined;
   readonly #detach: () => void;
+  /** The sky's current and outgoing weather of the last frame, and the change between. */
   #weather: WeatherRecord | undefined;
   #previous: WeatherRecord | undefined;
   #transition = 1;
+  /** The sky's count of new weathers last seen (a change is logged once). */
+  #seenChanges = -1;
+  /** The weather list the panel offers (the sky's region's, else the climate's). */
   #list: readonly WeatherChance[] = [];
-  /** Weather picked by hand (UI): kept while the camera moves. */
-  #pinned = false;
   #hour = 10;
   readonly #session: GameSession;
   #seconds = 0;
@@ -221,17 +218,12 @@ export class WorldSky {
       session.gameHour = this.#hour;
       ui.timeLabel.value = formatHour(this.#hour);
     };
+    // A weather picked on the panel is the console's `fw <weather> 1`; "as the region picks"
+    // its `rwo`.
     const onWeather = (): void => {
       const id = Number(ui.weather.value);
-      if (!Number.isFinite(id) || id === 0) {
-        this.#pinned = false;
-        session.pinnedWeather = undefined;
-        this.#cell = undefined; // re-pick from the region on the next update
-        return;
-      }
-      this.#pinned = true;
-      session.pinnedWeather = id;
-      void this.#changeWeather(id, false);
+      if (!Number.isFinite(id) || id === 0) session.sky.releaseOverride();
+      else session.sky.forceWeather(id, true);
     };
     ui.time.addEventListener('input', onTime);
     ui.weather.addEventListener('change', onWeather);
@@ -242,12 +234,6 @@ export class WorldSky {
     ui.time.value = String(this.#hour);
     ui.timeLabel.value = formatHour(this.#hour);
     ui.sky.hidden = false;
-    // A weather picked by hand (also indoors) stays.
-    const pinned = session.pinnedWeather;
-    if (pinned !== undefined) {
-      this.#pinned = true;
-      void this.#changeWeather(pinned, false);
-    }
     this.#fillWeatherSelect();
   }
 
@@ -270,6 +256,16 @@ export class WorldSky {
     const climateId = world.climateWorld.climate;
     const climateRecord = climateId === undefined ? undefined : await db.get(climateId);
     const climate = climateRecord ? parseClimate(climateRecord) : undefined;
+    // The sky's climate is the worldspace's; the place is outside (the dome only under a
+    // worldspace's own lighting template, nothing of it with No Sky as well).
+    await session.weathers();
+    if (climate) await session.weatherGlobals(climate.weathers);
+    session.sky.setClimate(climate);
+    session.sky.setPlace({
+      interior: false,
+      lightingTemplate: world.record.lightingTemplate !== undefined,
+      noSky: (world.record.flags & WorldFlag.noSky) !== 0,
+    });
     const gpu = await createGpuSky(session, sky, climate, terminal);
     return new WorldSky(
       session,
@@ -328,20 +324,22 @@ export class WorldSky {
     return this.#cellMusic;
   }
 
-  /** The weathers that can occur in the current cell. */
+  /** The weathers that can occur here (the sky's region's list, else the climate's). */
   get weatherList(): readonly WeatherChance[] {
     return this.#list;
   }
 
-  /** Sets a weather by form id at once (dev helper); `transition` fades to it instead. */
-  async setWeather(formId: number, transition = false): Promise<void> {
-    this.#pinned = true;
-    this.#session.pinnedWeather = formId;
-    await this.#changeWeather(formId, transition);
-  }
-
-  /** Looks up the weather list of the camera's cell; changes weather if it does not fit. */
-  async update(world: Worldspace, x: number, y: number): Promise<void> {
+  /**
+   * The player entered a cell (at x, y in the world): the sky learns the weather region there,
+   * chosen among the cell's regions (XCLR) by where the player stands, as the engine does on
+   * the player's change of cell.
+   */
+  async update(
+    world: Worldspace,
+    x: number,
+    y: number,
+    at: readonly [number, number],
+  ): Promise<void> {
     const key = `${String(x)},${String(y)}`;
     if (key === this.#cell) return;
     this.#cell = key;
@@ -350,23 +348,23 @@ export class WorldSky {
     this.#regionIds = ids;
     this.#cellMusic = music;
     this.#located = true;
-    const regions = await Promise.all(ids.map((id) => this.#region(id)));
-    const list = cellWeathers(regions, this.#climate);
+    const regions = await Promise.all(ids.map((id) => this.#session.weatherRegion(id)));
+    if (key !== this.#cell) return;
+    const region = weatherRegionAt(regions, world.record.formId, at[0], at[1]);
+    this.#session.sky.enterExterior(
+      region && { formId: region.formId, weathers: region.weather?.weathers ?? [] },
+    );
+    const list = this.#session.sky.region?.weathers ?? this.#climate?.weathers ?? [];
     const changed =
       list.length !== this.#list.length ||
       list.some((w, i) => w.weather !== this.#list[i]?.weather);
     this.#list = list;
     if (changed) this.#fillWeatherSelect();
-    if (this.#pinned) return;
-    const current = this.#weather?.formId;
-    if (current !== undefined && list.some((entry) => entry.weather === current)) return;
-    const pick = pickWeather(list, Math.random());
-    if (pick !== undefined) await this.#changeWeather(pick, current !== undefined);
   }
 
   /**
-   * Advances the clock and the weather transition, and places the sky objects around the
-   * camera; call once per frame.
+   * Advances the clock, runs the sky's weather and shows it, and places the sky objects around
+   * the camera; call once per frame.
    */
   frame(now: number, camera: Vec3): SkyState | undefined {
     const delta =
@@ -387,15 +385,9 @@ export class WorldSky {
     // The colours of the references' emittance follow the clock (window glow by night,
     // sunbeams by day).
     this.#session.updateEmittance(this.#hour, this.#climate);
+    this.#showSky();
     const weather = this.#weather;
     if (!weather) return undefined;
-    if (this.#previous) {
-      // The new weather's Trans Delta: the share of the change done per real second.
-      // TODO(M13): when the engine applies fWeatherTransAccel (forced weather changes).
-      const speed = Math.max(weather.transDelta, 0.004);
-      this.#transition = Math.min(1, this.#transition + delta * speed);
-      if (this.#transition >= 1) this.#previous = undefined;
-    }
     this.#state = skyState({
       lightning: this.#lightning(weather),
       weather,
@@ -418,22 +410,48 @@ export class WorldSky {
       now,
     );
     this.#falling = [];
-    for (const { formId, amount } of precipitationAmounts(
-      weather,
-      this.#previous,
-      this.#transition,
-    )) {
-      const system = this.#loadPrecipitation(formId);
-      if (system) this.#falling.push({ system, amount });
+    if (this.#session.sky.mode !== SkyMode.none) {
+      for (const { formId, amount } of precipitationAmounts(
+        weather,
+        this.#previous,
+        this.#transition,
+      )) {
+        const system = this.#loadPrecipitation(formId);
+        if (system) this.#falling.push({ system, amount });
+      }
     }
     this.#objects.update(weather, this.#previous, this.#transition, this.#state, camera);
     return this.#state;
   }
 
-  /** The sky of the last frame. */
+  /** The sky's turn this frame: its weathers move on; this shows its current and outgoing. */
+  #showSky(): void {
+    const sky = this.#session.sky;
+    sky.frame();
+    const current =
+      sky.current === undefined ? undefined : this.#session.weatherRecord(sky.current);
+    const outgoing =
+      sky.outgoing === undefined ? undefined : this.#session.weatherRecord(sky.outgoing);
+    this.#weather = current;
+    this.#previous = current && outgoing;
+    this.#transition = this.#previous ? sky.transition : 1;
+    if (sky.changes !== this.#seenChanges) {
+      this.#seenChanges = sky.changes;
+      if (current) {
+        this.#terminal.log(
+          'sky',
+          `weather ${current.editorId}${outgoing ? ` (changing from ${outgoing.editorId})` : ''}`,
+        );
+      }
+      const shown = String(sky.override ?? 0);
+      if (this.#ui.weather.value !== shown) this.#ui.weather.value = shown;
+    }
+  }
+
+  /** The sky of the last frame (none while the console's ts has turned it off). */
   skyFrame(): SkyFrame | undefined {
     const state = this.#state;
-    if (!state) return undefined;
+    if (!state || this.#session.sky.mode === SkyMode.none) return undefined;
     return {
       sky: this.#gpu,
       state,
@@ -443,7 +461,7 @@ export class WorldSky {
 
   /** The sky statics and aurora of the last frame. */
   skyScenes(): readonly GpuScene[] {
-    return this.#objects.scenes();
+    return this.#session.sky.mode === SkyMode.none ? [] : this.#objects.scenes();
   }
 
   /** The rain and snow of the last frame. */
@@ -468,26 +486,6 @@ export class WorldSky {
     for (const system of this.#precipitation.values()) system?.destroy();
     this.#objects.dispose();
     this.#precipitation.clear();
-  }
-
-  async #changeWeather(formId: number, transition: boolean): Promise<void> {
-    const weather = await this.#weatherRecord(formId);
-    if (!weather) {
-      this.#terminal.log('sky', `weather ${formId.toString(16)} does not exist`, 'warn');
-      return;
-    }
-    if (weather.formId === this.#weather?.formId) return;
-    if (transition && this.#weather) {
-      this.#previous = this.#weather;
-      this.#transition = 0;
-    } else {
-      this.#previous = undefined;
-      this.#transition = 1;
-    }
-    this.#weather = weather;
-    if (this.#ui.weather.value !== String(formId) && this.#pinned)
-      this.#ui.weather.value = String(formId);
-    this.#terminal.log('sky', `weather ${weather.editorId}${transition ? ' (changing)' : ''}`);
   }
 
   /** The lightning flash this frame: storms flash at random, about their weather's interval. */
@@ -546,51 +544,24 @@ export class WorldSky {
     return this.#imageSpaces.get(formId);
   }
 
-  #weatherRecord(formId: number): Promise<WeatherRecord | undefined> {
-    let pending = this.#weathers.get(formId);
-    if (!pending) {
-      pending = this.#db
-        .get(formId)
-        .then((record) => (record?.type === 'WTHR' ? parseWeather(record) : undefined));
-      this.#weathers.set(formId, pending);
-    }
-    return pending;
-  }
-
-  #region(formId: number): Promise<RegionWeather | undefined> {
-    let pending = this.#regions.get(formId);
-    if (!pending) {
-      pending = this.#db
-        .get(formId)
-        .then((record: GameRecord | undefined) =>
-          record?.type === 'REGN' ? parseRegionWeather(record) : undefined,
-        );
-      this.#regions.set(formId, pending);
-    }
-    return pending;
-  }
-
   /** The region's weathers with their chances, then every other weather (as the console's fw). */
   #fillWeatherSelect(): void {
     const select = this.#ui.weather;
     const total = this.#list.reduce((sum, entry) => sum + entry.chance, 0) || 1;
-    void Promise.all([
-      Promise.all(this.#list.map((entry) => this.#weatherRecord(entry.weather))),
-      this.#session.weathers(),
-    ]).then(([records, all]) => {
-      const current = this.#pinned ? String(this.#session.pinnedWeather ?? 0) : '0';
+    void this.#session.weathers().then((all) => {
+      const current = String(this.#session.sky.override ?? 0);
       const region = document.createElement('optgroup');
       region.label = 'this region';
       const listed = new Set<number>();
-      records.forEach((record, i) => {
-        const entry = this.#list[i];
-        if (!record || !entry) return;
+      for (const entry of this.#list) {
+        const record = this.#session.weatherRecord(entry.weather);
+        if (!record) continue;
         listed.add(record.formId);
         const percent = Math.round((entry.chance / total) * 100);
         region.append(
           new Option(`${record.editorId} · ${String(percent)}%`, String(record.formId)),
         );
-      });
+      }
       const others = document.createElement('optgroup');
       others.label = 'all weathers';
       for (const weather of all) {
