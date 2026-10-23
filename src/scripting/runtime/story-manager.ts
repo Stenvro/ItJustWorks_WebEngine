@@ -97,6 +97,33 @@ export function scriptEvent(
   };
 }
 
+/**
+ * The Actor Dialogue event's data (ADIA; observed in the original): the location of the
+ * actor that asks for a scene (L1), it (R1) and the one it asks (R2). The started quest's
+ * OnStoryDialogue gets the location and the two.
+ */
+export function actorDialogueEvent(
+  location: number | undefined,
+  actor: number,
+  other: number,
+): StoryEventData {
+  const forms = new Map<string, number>([
+    ['R1', actor],
+    ['R2', other],
+  ]);
+  if (location !== undefined) forms.set('L1', location);
+  return {
+    type: 'ADIA',
+    forms,
+    values: new Map(),
+    args: [
+      location === undefined ? null : new ObjectHandle(location, 'location'),
+      new ObjectHandle(actor, 'objectreference'),
+      new ObjectHandle(other, 'objectreference'),
+    ],
+  };
+}
+
 const shuffled = <T>(items: readonly T[], random: () => number): T[] => {
   const copy = [...items];
   for (let i = copy.length - 1; i > 0; i--) {
@@ -105,6 +132,13 @@ const shuffled = <T>(items: readonly T[], random: () => number): T[] => {
   }
   return copy;
 };
+
+/** What an event did as it went through its tree. */
+interface StoryResult {
+  readonly started: number[];
+  /** A quest node that does not share the event started a quest: no node after it gets it. */
+  consumed: boolean;
+}
 
 export class StoryManager {
   readonly #runtime: ScriptRuntime;
@@ -136,9 +170,14 @@ export class StoryManager {
 
   /** An event: true if it started a quest. */
   async event(event: StoryEventData): Promise<boolean> {
+    return (await this.quests(event)).length > 0;
+  }
+
+  /** An event: the quests it started (none: no quest node answered). */
+  async quests(event: StoryEventData): Promise<readonly number[]> {
     const tree = (await this.#load()).get(event.type);
-    if (!tree) return false;
-    const result = { started: false, consumed: false };
+    if (!tree) return [];
+    const result: StoryResult = { started: [], consumed: false };
     await this.#process(tree, event, result);
     return result.started;
   }
@@ -152,16 +191,12 @@ export class StoryManager {
     );
   }
 
-  async #process(
-    node: StoryNode,
-    event: StoryEventData,
-    result: { started: boolean; consumed: boolean },
-  ): Promise<void> {
+  async #process(node: StoryNode, event: StoryEventData, result: StoryResult): Promise<void> {
     if (!(await this.#holds(node, event))) return;
     if (node.kind === 'quest') {
       const started = await this.#startQuests(node, event);
-      if (started > 0) {
-        result.started = true;
+      if (started.length > 0) {
+        result.started.push(...started);
         if ((node.questFlags & StoryQuestNodeFlag.sharesEvent) === 0) result.consumed = true;
       } else if ((node.flags & StoryNodeFlag.warnIfNoQuest) !== 0) {
         this.#runtime.warn(`story manager: ${node.editorId} started no quest`);
@@ -177,8 +212,8 @@ export class StoryManager {
     }
   }
 
-  /** A quest node's quests started for an event: how many. */
-  async #startQuests(node: StoryNode, event: StoryEventData): Promise<number> {
+  /** A quest node's quests started for an event. */
+  async #startQuests(node: StoryNode, event: StoryEventData): Promise<number[]> {
     const runtime = this.#runtime;
     const wanted =
       (node.questFlags & StoryQuestNodeFlag.numQuestsToRun) !== 0
@@ -199,9 +234,9 @@ export class StoryManager {
       if (fresh.length === 0) startedBy.clear();
       else order = fresh;
     }
-    let started = 0;
+    const started: number[] = [];
     for (const { quest, hoursUntilReset } of order) {
-      if (started >= wanted) break;
+      if (started.length >= wanted) break;
       if (node.maxConcurrent > 0 && running() >= node.maxConcurrent) break;
       if (runtime.quests.isRunning(quest)) continue;
       const last = this.#lastStarted.get(quest);
@@ -225,7 +260,7 @@ export class StoryManager {
       )
         continue;
       if (!(await runtime.quests.start(quest, event))) continue;
-      started++;
+      started.push(quest);
       startedBy.add(quest);
       this.#lastStarted.set(quest, runtime.state.gameDaysPassed);
       const story = STORY_EVENTS[event.type];

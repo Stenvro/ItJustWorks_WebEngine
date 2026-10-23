@@ -238,7 +238,10 @@ conditions hold and its aliases fill (from the event's data too). Once a quest n
 quest the event is consumed, unless the node shares the event; a node that starts nothing
 passes the event on. The started quest gets its OnStory event (OnStoryScript for
 Keyword.SendStoryEvent: keyword, location, two references, two values) and keeps the event's
-data for its conditions.
+data for its conditions. `StoryManager.quests` names the quests an event started. The Actor
+Dialogue event (ADIA: the asking actor's location, it and the one it asks) is raised by actors
+asking for a scene with each other and by DialogueActivate (src/shell/actor-talk.ts;
+[ai.md](ai.md#conversations-between-actors)).
 
 ## Actors
 

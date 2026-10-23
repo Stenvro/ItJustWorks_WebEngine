@@ -1,16 +1,17 @@
 // What actors say outside the dialogue menu (docs/ai.md, "Talking"), against the real files:
 // after a new game (the scripts' quests running), an actor's greeting as the player passes,
-// its idle chatter and its line of each bark subtype, or a conversation between two actors
-// turn by turn, each line with the time it took to find; or the talking subtypes' infos and
-// what tells them apart by speaker (src/scripting/runtime/speaker-filter.ts).
+// its idle chatter and its line of each bark subtype, each line with the time it took to find;
+// or the quest (and its scenes) the story manager starts as one actor asks for a scene with
+// another (the Actor Dialogue event); or the talking subtypes' infos and what tells them apart
+// by speaker (src/scripting/runtime/speaker-filter.ts).
 //
 //   node tools/talk-info.ts HuldaREF                    her lines to the player, by subtype
-//   node tools/talk-info.ts HuldaREF SaadiaREF          a conversation between the two
+//   node tools/talk-info.ts AlvorREF SigridREF          his ask for a scene with her
 //   node tools/talk-info.ts --survey                    the subtypes' infos and their speakers
 
-import { converse, CONVERSATION_LINES } from '../src/ai/talk.ts';
 import { conditionFunctionName } from '../src/scripting/condition-functions.ts';
 import { ScriptRuntime } from '../src/scripting/runtime/runtime.ts';
+import { actorDialogueEvent } from '../src/scripting/runtime/story-manager.ts';
 import type { SpokenInfo } from '../src/scripting/runtime/dialogue-engine.ts';
 import { ScriptLibrary } from '../src/scripting/script-library.ts';
 import { DialogueIndex } from '../src/world/dialogue.ts';
@@ -132,21 +133,25 @@ if (second === undefined) {
     console.log(`  ${code} ${dialogueSubtype(code)?.name ?? ''}: ${line}`);
   }
 } else {
-  console.log(`\n${args[0] ?? ''} [${hex(first)}] and ${args[1] ?? ''} [${hex(second)}] talk:`);
-  const lines = await converse(
-    first,
-    second,
-    async (speaker, listener, subtype) => {
-      const start = performance.now();
-      const spoken = await engine.subtypeLine(speaker, subtype, listener);
-      const who = speaker === first ? (args[0] ?? '') : (args[1] ?? '');
-      console.log(`  ${who} (${subtype}): ${await describe(spoken, performance.now() - start)}`);
-      if (spoken) engine.said(spoken.info);
-      return spoken !== undefined;
-    },
-    () => true,
-    CONVERSATION_LINES,
+  // The first asks the story manager for a scene with the second (the Actor Dialogue event).
+  console.log(
+    `\n${args[0] ?? ''} [${hex(first)}] asks for a scene with ${args[1] ?? ''} [${hex(second)}]:`,
   );
-  console.log(`${String(lines)} lines`);
+  const start = performance.now();
+  const location = await runtime.locationOf(first);
+  const quests = await runtime.storyManager.quests(actorDialogueEvent(location, first, second));
+  const took = `${(performance.now() - start).toFixed(0)} ms`;
+  if (quests.length === 0) console.log(`  no quest (${took})`);
+  for (const quest of quests) {
+    const record = await runtime.forms.quest(quest);
+    const scenes = await Promise.all(
+      (await runtime.sceneHost.scenesOf(quest)).map(
+        async (scene) => (await runtime.sceneHost.scene(scene))?.editorId ?? hex(scene),
+      ),
+    );
+    console.log(
+      `  quest ${record?.editorId ?? '?'} [${hex(quest)}], scenes ${scenes.join(', ') || 'none'} (${took})`,
+    );
+  }
 }
 await vfs.close();

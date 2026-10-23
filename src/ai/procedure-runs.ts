@@ -38,8 +38,6 @@ const SAY_SECONDS = 3;
 /** LockDoors' warning: the TimeToGo subtype, then the game's fAITrespassWarningTimer (s). */
 const TIME_TO_GO = 'TITG';
 const TRESPASS_WARNING_SECONDS = 5;
-/** DialogueActivate tries again this often while its target is busy (seconds). TODO(M13). */
-const CONVERSE_AGAIN_SECONDS = 5;
 /** An actor is at an idle marker within this of it. */
 const ARRIVE_AT_MARKER = 24;
 /** At an idle marker, an idle at least this long apart (its timer when longer; seconds). */
@@ -650,25 +648,25 @@ const forceGreet: ProcedureRunner = async (run) => {
 };
 
 /**
- * DialogueActivate: from where it talks (else beside its target), it talks to its target: the
- * player gets the conversation; another actor talks with it (src/ai/talk.ts, converse), once
- * it is free to.
+ * DialogueActivate: to the player, from where it talks (else beside them) it talks to them:
+ * the player gets the conversation. To another actor (observed in the original) it asks
+ * the story manager for a scene with it (the Actor Dialogue event) and waits for one
+ * (src/shell/actor-talk.ts, dialogueActivate): it succeeds once that scene has played and
+ * fails when none came within fAISocialTimerToWaitForEvent; the scene brings the two together.
  */
 const dialogueActivate: ProcedureRunner = async (run) => {
   const target = (await targetsIn(run, 0))[0];
   if (target === undefined) return hold(run);
+  if (target !== PLAYER) {
+    const converse = run.body.converse?.bind(run.body);
+    if (!converse) return hold(run);
+    return (await converse(target)) ? 'success' : 'failure';
+  }
   const from = await placeIn(run, 1);
   if (from) await goTo(run, from);
   else await goToReference(run, target, GREET_DISTANCE);
   if (run.inputs.bool(2, true)) await faceReference(run, target);
-  if (target === PLAYER) return run.body.greet(undefined) ? 'success' : hold(run);
-  const converse = run.body.converse?.bind(run.body);
-  if (!converse) return hold(run);
-  while (!run.stopped()) {
-    if (await converse(target)) return 'success';
-    await run.wait(CONVERSE_AGAIN_SECONDS);
-  }
-  return 'failure';
+  return run.body.greet(undefined) ? 'success' : hold(run);
 };
 
 /**
