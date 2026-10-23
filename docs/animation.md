@@ -503,7 +503,8 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   to their variables. The target: a bound vector, the camera, or the aim the engine gives its
   kind (BehaviorRuntime.setDirectAtTarget by userInfo: 2 bows and spells, 3 the dragon rider).
   Casting gives the aim of aimed spells (docs/ai.md, "Magic in combat"), combat a drawn bow's
-  (`ActorCombat`'s aimBow: the player's view, an NPC's target's chest, 2048 units along it).
+  (`ActorCombat`'s aimBow: where the shot would go, docs/gameplay.md "Aiming projectiles",
+  2048 units along it).
 - **hkbTwistModifier** (19: the first-person body's pitch and lean, bow draws, a netch's lean,
   a tail's turn): the chain from start to end bone turns about the axis (in model space in
   every vanilla one) by the angle (degrees: 1stPRot = sin(Direction · 360) · RotMax, RotMax 5),

@@ -86,7 +86,10 @@ import {
   turnBetween,
   type StrikeTarget,
 } from '../gameplay/combat/hit-test.ts';
-import { ARROW_TILT, tiltUp } from '../gameplay/combat/projectile.ts';
+import { ARROW_TILT, tiltUp, WORLD_GRAVITY } from '../gameplay/combat/projectile.ts';
+import { anglesOf, directionOf, npcSpread } from '../gameplay/combat/aim.ts';
+import { ProjectileFlag } from '../world/projectile-data.ts';
+import type { AimTarget, ProjectileAim, ShotKind } from './projectile-aim.ts';
 import { blockStagger, recoilOf, staggerMagnitude } from '../gameplay/combat/stagger.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { transformPoint, type Vec3 } from '../render/math.ts';
@@ -274,6 +277,8 @@ export interface ActorCombatOptions {
   readonly knockdowns?: () => ActorKnockdowns | undefined;
   /** What else flies at the actors: spells and breath (magic-projectiles.ts, actor-casting.ts). */
   readonly threats?: () => Iterable<Threat>;
+  /** Where shots go: the player's aim assistance, an NPC's aim at its target. */
+  readonly aim?: () => ProjectileAim | undefined;
 }
 
 const describe = (error: unknown): string =>
@@ -282,6 +287,8 @@ const describe = (error: unknown): string =>
 export class ActorCombat implements CombatBridge {
   readonly #options: ActorCombatOptions;
   readonly #fighters = new Map<number, Fighter>();
+  /** The NPC archers' Archery, as read when they draw. */
+  readonly #archery = new Map<number, number>();
   /** The graph variables each fighter's perks set (Set Boolean Graph Variable), when read. */
   readonly #perkVariables = new Map<number, { at: number; names: Set<string>; reading: boolean }>();
   readonly #impacts: CombatImpacts;
@@ -387,6 +394,11 @@ export class ActorCombat implements CombatBridge {
     this.#input = undefined;
     if (play && avatar) {
       this.#fighters.set(PLAYER_REF, newFighter(PLAYER_REF, true));
+      // Drawn (or being drawn), the third-person camera moves behind the back.
+      play.player.weaponDrawn = () => {
+        const state = this.weaponState(PLAYER_REF);
+        return state >= WeaponState.wantToDraw && state <= WeaponState.drawn;
+      };
       // In furniture or a menu the buttons are not the fight's.
       this.#input = new PlayerCombat(
         this,
@@ -1219,7 +1231,10 @@ export class ActorCombat implements CombatBridge {
     // still moves the models.
     const strikes = !fighter.player || (this.#play?.player.pov === 'first') === firstPerson;
     for (const event of events) {
-      const effects = graphEvent(fighter.state, event);
+      // Only the striking graph's release lets the arrow go: the other's (raised first, some
+      // frames) would take the nocked arrow and the shot with it.
+      const released = event.toLowerCase() === 'arrowrelease';
+      const effects = !strikes && released ? [] : graphEvent(fighter.state, event);
       for (const effect of effects) {
         if (!strikes && (effect.kind === 'strike' || effect.kind === 'arrow-release')) continue;
         this.#effect(fighter, effect);
@@ -1954,18 +1969,52 @@ export class ActorCombat implements CombatBridge {
 
   // --- Bows ---------------------------------------------------------------------------------------
 
-  /** Where its arrows leave from: before its chest. */
+  /**
+   * Where its arrows leave from: its WEAPON node, the drawing hand (the player's first-person
+   * arms' in first person), else before its chest.
+   */
   #bowFrom(fighter: Fighter, feet: Vec3): Vec3 {
+    let pose: { world(name: string): Float32Array | undefined } | undefined;
+    let world: Float32Array | undefined;
+    if (fighter.player) {
+      const avatar = this.#avatar;
+      const arms = avatar?.firstPersonBody;
+      if (arms && this.#play?.bodyShown === false) {
+        pose = arms.pose;
+        world = arms.world;
+      } else if (avatar) {
+        pose = avatar.body.pose;
+        world = avatar.placement.world;
+      }
+    } else {
+      pose = fighter.body?.pose;
+      world = fighter.body?.instances[0]?.world;
+    }
+    const node = pose?.world('WEAPON');
+    if (node && world) return transformPoint(world, [node[12] ?? 0, node[13] ?? 0, node[14] ?? 0]);
     const scale = this.#scale(fighter);
     return [feet[0], feet[1], feet[2] + BODY_HEIGHT * scale * CHEST + 10 * scale];
   }
 
   /**
-   * Which way a shot goes from `from`: the player's view; an NPC's target's chest (a practice's
-   * point that is no fighter: an archery butt), `spread` (radians) aside, else its facing.
+   * Which way a shot goes from `from` (src/shell/projectile-aim.ts): the player's along the view
+   * tilted up, turned by the aim assistance toward what the crosshair is on; an NPC's at its
+   * target's upper body where it will be (a practice's point that is no fighter: an archery
+   * butt), on the arrow's arc, then astray by fBowNPCSpreadAngle as far as its Archery lacks
+   * (`stray`; Always Hit: none); else along its facing.
    */
-  #bowAim(fighter: Fighter, from: Vec3, spread: number): Vec3 {
+  #bowAim(fighter: Fighter, from: Vec3, power: number, stray: boolean): Vec3 {
+    const projectile = fighter.gear?.projectile;
+    const shot: ShotKind = {
+      speed: (projectile?.speed ?? 0) * Math.max(0.35, power),
+      gravity: (projectile?.gravity ?? 0) * WORLD_GRAVITY,
+      ammunition: fighter.gear?.right.weaponType === WeaponType.crossbow ? 'bolt' : 'arrow',
+      uncorrected: ((projectile?.flags ?? 0) & ProjectileFlag.disableCombatAimCorrection) !== 0,
+    };
+    const aim = this.#options.aim?.();
     if (fighter.player && this.#play) {
+      const aimed = aim?.player(from, shot);
+      if (aimed) return aimed;
       const player = this.#play.player;
       return tiltUp(
         player.forward,
@@ -1981,14 +2030,41 @@ export class ActorCombat implements CombatBridge {
       const heading = this.#heading(fighter);
       return [Math.sin(heading), Math.cos(heading), 0];
     }
-    const height = target ? this.#size(target).height * CHEST : 0;
-    const way: Vec3 = [there[0] - from[0], there[1] - from[1], there[2] + height - from[2]];
-    const heading = Math.atan2(way[0], way[1]) + spread;
-    const pitch = Math.atan2(way[2], Math.hypot(way[0], way[1]));
-    return tiltUp(
-      [Math.sin(heading) * Math.cos(pitch), Math.cos(heading) * Math.cos(pitch), Math.sin(pitch)],
-      ARROW_TILT.thirdPerson,
+    const aimed: AimTarget = {
+      reference: target?.reference ?? 0,
+      feet: there,
+      height: target ? this.#size(target).height : 0,
+      radius: 0,
+    };
+    if (!aim) {
+      const way: Vec3 = [
+        there[0] - from[0],
+        there[1] - from[1],
+        there[2] + aimed.height * CHEST - from[2],
+      ];
+      return tiltUp(way, ARROW_TILT.thirdPerson);
+    }
+    const direction = aim.npc(from, aimed, shot, stray ? 'bow' : 'none');
+    if (!stray) return direction;
+    const archery = this.#archery.get(fighter.reference) ?? 0;
+    return directionOf(
+      npcSpread(
+        anglesOf(direction),
+        archery,
+        aim.settings.bowNpcSpreadAngle,
+        Math.random(),
+        Math.random(),
+      ),
     );
+  }
+
+  /** An NPC's Archery (the third skill), read as it draws (its arrows stray by what it lacks). */
+  #readArchery(fighter: Fighter): void {
+    const runtime = this.#options.session.scriptsReady;
+    if (fighter.player || !runtime) return;
+    void runtime.actors.value(fighter.reference, ActorValue.firstSkill + 2).then((value) => {
+      this.#archery.set(fighter.reference, value.current);
+    });
   }
 
   /**
@@ -2006,8 +2082,9 @@ export class ActorCombat implements CombatBridge {
       }
       return;
     }
+    if (!fighter.bowAimed) this.#readArchery(fighter);
     const from = this.#bowFrom(fighter, feet);
-    const aim = this.#bowAim(fighter, from, 0);
+    const aim = this.#bowAim(fighter, from, 1, false);
     const point: Vec3 = [
       from[0] + aim[0] * BOW_AIM_DISTANCE,
       from[1] + aim[1] * BOW_AIM_DISTANCE,
@@ -2026,11 +2103,9 @@ export class ActorCombat implements CombatBridge {
     // The journal's Favorite Weapon counts the player's shots (usage-stats.ts).
     runtime.usage.weaponUsed(fighter.reference, gear.right.weapon);
     const from = this.#bowFrom(fighter, feet);
-    // fBowNPCSpreadAngle: an NPC's aim strays this far (degrees); Always Hit: none.
-    const spread =
-      fighter.practice?.alwaysHit === true ? 0 : ((Math.random() - 0.5) * 4 * Math.PI) / 180;
-    const aim = this.#bowAim(fighter, from, spread);
     const power = bowDrawPower(fighter.state.drawnFor, gear.right.speed);
+    // An NPC's shot strays (fBowNPCSpreadAngle by its Archery); Always Hit: none.
+    const aim = this.#bowAim(fighter, from, power, fighter.practice?.alwaysHit !== true);
     const ammo = gear.right.ammo;
     const payload: ShotPayload = {
       attacker: fighter.reference,
