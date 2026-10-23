@@ -25,6 +25,9 @@ export interface SceneSpeech extends SceneLine {
 /** Seconds per character of a line without a voice (GMST fAIDefaultSpeechMult). */
 const DEFAULT_SPEECH_MULT = 0.15;
 
+/** The engine's built-in fRandomSceneAgainMinTime / MaxTime (seconds; observed in the original). */
+const RANDOM_SCENE_AGAIN: readonly [number, number] = [5, 10];
+
 export class RuntimeSceneHost implements SceneHost {
   readonly #runtime: ScriptRuntime;
   readonly #scenes = new Map<number, Promise<SceneRecord | undefined>>();
@@ -32,6 +35,8 @@ export class RuntimeSceneHost implements SceneHost {
   /** Actors whose head a scene turned (only those are let go). */
   readonly #looking = new Set<number>();
   #speechMult: Promise<number> | undefined;
+  #again: readonly [number, number] | undefined;
+  #againRead: Promise<void> | undefined;
   /** What the scenes do, for tools (tools/scene-info.ts --play). */
   trace: ((text: string) => void) | undefined;
 
@@ -189,6 +194,37 @@ export class RuntimeSceneHost implements SceneHost {
 
   stopQuest(quest: number): void {
     this.#runtime.detach(this.#runtime.quests.stop(quest));
+  }
+
+  /** A quest the story manager started for the Actor Dialogue event (ADIA). */
+  randomScene(quest: number): boolean {
+    void this.#againTimes();
+    return this.#runtime.state.quests.get(quest)?.event?.type === 'ADIA';
+  }
+
+  /** The world brings the two together (without a world: they may, the lines pass silently). */
+  randomSceneStarts(scene: number, first: number, second: number): boolean {
+    return this.#runtime.world.randomSceneStarts?.(scene, first, second) ?? true;
+  }
+
+  randomSceneAgain(): number {
+    const [min, max] = this.#again ?? RANDOM_SCENE_AGAIN;
+    return min + (Math.max(min, max) - min) * Math.random();
+  }
+
+  /** fRandomSceneAgainMinTime / MaxTime of the load order (read as the first random scene asks). */
+  #againTimes(): Promise<void> {
+    this.#againRead ??= (async () => {
+      const setting = async (name: string, fallback: number): Promise<number> => {
+        const value = await this.#runtime.gameSetting(name);
+        return typeof value === 'number' ? value : fallback;
+      };
+      this.#again = [
+        await setting('fRandomSceneAgainMinTime', RANDOM_SCENE_AGAIN[0]),
+        await setting('fRandomSceneAgainMaxTime', RANDOM_SCENE_AGAIN[1]),
+      ];
+    })();
+    return this.#againRead;
   }
 
   random(): number {

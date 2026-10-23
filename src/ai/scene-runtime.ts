@@ -7,7 +7,8 @@
 // turns to) its target while the action runs; an action's packages are its actor's package
 // stack while it runs; the scene's fragments run as it begins and ends and as its phases start
 // and complete; its actors' behaviour flags pause or end it on death, combat and
-// conversations. The Scene natives (Start, ForceStart, Stop, IsPlaying, IsActionComplete) and
+// conversations; a random scene (one the story manager started for two actors: the Actor
+// Dialogue event) waits its turn and holds while its actors come together. The Scene natives (Start, ForceStart, Stop, IsPlaying, IsActionComplete) and
 // the conditions IsInScene, IsScenePlaying, IsSceneActionComplete and IsScenePackageRunning
 // read it. The engine's rules are not documented (the Creation Kit names the fields,
 // CommonLibSSE the structures: BGSScene, BGSSceneAction*); those below are read from the
@@ -93,6 +94,19 @@ export interface SceneHost {
   packagesRunnable(actor: number, packages: readonly number[]): Promise<boolean>;
   /** Stops a quest (the scene's Stop Quest on End). */
   stopQuest(quest: number): void;
+  /**
+   * Whether a quest's scenes are random scenes: the story manager started it for the Actor
+   * Dialogue event (ADIA), two actors asking for a scene.
+   */
+  randomScene?(quest: number): boolean;
+  /**
+   * A random scene is about to begin with these two actors (its first two): whether they may
+   * still talk (false: it does not play). The world brings them together meanwhile, holding
+   * the scene (`SceneDirector.hold`) until they face each other.
+   */
+  randomSceneStarts?(scene: number, first: number, second: number): boolean;
+  /** Seconds before the next random scene may begin (fRandomSceneAgainMinTime .. MaxTime). */
+  randomSceneAgain?(): number;
   random(): number;
   warn(message: string): void;
   /** What happens, for tools (tools/scene-info.ts --play). */
@@ -138,6 +152,8 @@ interface Playing {
   state: 'starting' | 'playing' | 'ended';
   /** An actor's behaviour holds it (dialogue, combat): its clock and phases wait. */
   paused: boolean;
+  /** A random scene (its quest started by the Actor Dialogue event). */
+  random: boolean;
   /** Its own clock (real seconds while it plays and is not paused). */
   clock: number;
   /** When its package actions were last looked at again (its clock). */
@@ -152,6 +168,12 @@ interface Playing {
  */
 const PACKAGE_RECHECK = 1;
 
+/**
+ * Seconds a random scene waits before it looks again when one of its actors plays in another
+ * scene (observed in the original).
+ */
+const RANDOM_BUSY_AGAIN = 1;
+
 /** How a scene ended: its last phase completed, or it was stopped. */
 type EndReason = 'done' | 'stopped';
 
@@ -164,7 +186,15 @@ export class SceneDirector {
   /** Scenes starting or playing, by form id. */
   readonly #playing = new Map<number, Playing>();
   /** Scenes started while their actors play in other scenes: they start once those are free. */
-  readonly #waiting = new Map<number, { readonly force: boolean; readonly record: SceneRecord }>();
+  readonly #waiting = new Map<
+    number,
+    { readonly force: boolean; readonly record: SceneRecord; readonly random: boolean }
+  >();
+  /** The random scene playing (one at a time) and the seconds before the next may begin. */
+  #randomPlaying: Playing | undefined;
+  #randomAgain = 0;
+  /** Actors being brought together for a random scene: their scene waits meanwhile. */
+  readonly #held = new Set<number>();
   /** The scene each cast actor is in. */
   readonly #actors = new Map<number, Playing>();
   /** Where scenes have actors look (as the host last heard). */
@@ -202,6 +232,7 @@ export class SceneDirector {
       phase: -1,
       state: 'starting',
       paused: false,
+      random: false,
       clock: 0,
       rechecked: 0,
       waiters: [],
@@ -218,6 +249,23 @@ export class SceneDirector {
     this.#waiting.delete(scene);
     const playing = this.#playing.get(scene);
     if (playing) this.#end(playing, 'stopped');
+  }
+
+  /**
+   * An actor is being brought to the one it talks with (`held`), or is there: the scene it
+   * plays in waits meanwhile (its lines, timers and phases).
+   */
+  hold(actor: number, held: boolean): void {
+    if (held) this.#held.add(actor);
+    else this.#held.delete(actor);
+    const playing = this.#actors.get(actor);
+    if (playing && live(playing)) this.#watchActors(playing);
+  }
+
+  /** The random scene playing now, if one does. */
+  get randomScene(): number | undefined {
+    const playing = this.#randomPlaying;
+    return playing && live(playing) ? playing.formId : undefined;
   }
 
   /** Scene.IsPlaying, IsScenePlaying. */
@@ -340,6 +388,7 @@ export class SceneDirector {
    */
   update(seconds: number): void {
     this.#clock += seconds;
+    if (!this.#randomPlaying) this.#randomAgain = Math.max(0, this.#randomAgain - seconds);
     for (const playing of [...this.#playing.values()]) {
       if (!live(playing)) continue;
       this.#watchActors(playing);
@@ -445,6 +494,8 @@ export class SceneDirector {
       }
     }
     if (over(playing)) return;
+    playing.random = host.randomScene?.(quest) === true;
+    if (playing.random && !this.#randomMayBegin(playing, record, cast)) return;
     // Actors playing in other scenes: taken (a forced start, an interruptible scene's), else
     // it waits for them (an optional one it leaves out).
     for (const [alias, reference] of [...cast]) {
@@ -456,10 +507,7 @@ export class SceneDirector {
         cast.delete(alias);
         continue;
       }
-      this.#playing.delete(scene);
-      playing.state = 'ended';
-      this.#waiting.set(scene, { force: playing.force, record });
-      this.#trace(playing, `waits for ${hex(reference)} (in ${hex(other.formId)})`);
+      this.#waitToStart(playing, record, `waits for ${hex(reference)} (in ${hex(other.formId)})`);
       return;
     }
     for (const reference of cast.values()) {
@@ -481,7 +529,68 @@ export class SceneDirector {
     }
     playing.state = 'playing';
     this.#trace(playing, `starts (${String(cast.size)} actors)`);
+    // Its actors may be held (coming together for a random scene): it waits from the start.
+    this.#watchActors(playing);
+    if (!live(playing)) return;
     await this.#play(playing);
+  }
+
+  /** A start that waits (for its actors, for its turn): it starts again once it may. */
+  #waitToStart(playing: Playing, record: SceneRecord, why: string): void {
+    this.#playing.delete(playing.formId);
+    playing.state = 'ended';
+    this.#waiting.set(playing.formId, { force: playing.force, record, random: playing.random });
+    this.#trace(playing, why);
+  }
+
+  /**
+   * Whether a random scene may begin now (observed in the original): one plays at a time,
+   * and the next waits the pause drawn as the last began (fRandomSceneAgainMinTime .. MaxTime;
+   * the engine clears it as a random scene ends, so it spaces only the starts it holds back);
+   * an actor of it in another scene makes it wait (a second before it looks again). As it
+   * begins the world looks whether its first two actors may still talk (else it does not play
+   * and its quest stops, with Stop Quest on End) and brings them together.
+   */
+  #randomMayBegin(
+    playing: Playing,
+    record: SceneRecord,
+    cast: ReadonlyMap<number, number>,
+  ): boolean {
+    const host = this.#host;
+    const other = this.#randomPlaying;
+    if (other && other !== playing && live(other)) {
+      this.#waitToStart(playing, record, `waits for the random scene ${hex(other.formId)}`);
+      return false;
+    }
+    if (this.#randomAgain > 0) {
+      this.#waitToStart(playing, record, 'waits for its turn (random scenes)');
+      return false;
+    }
+    for (const reference of cast.values()) {
+      const busy = this.#actors.get(reference);
+      if (busy && busy !== playing && live(busy)) {
+        this.#randomAgain = Math.max(this.#randomAgain, RANDOM_BUSY_AGAIN);
+        this.#waitToStart(playing, record, `waits for ${hex(reference)} (in ${hex(busy.formId)})`);
+        return false;
+      }
+    }
+    const [first, second] = record.actors.flatMap((actor) => {
+      const reference = cast.get(actor.alias);
+      return reference === undefined ? [] : [reference];
+    });
+    if (first !== undefined && second !== undefined && host.randomSceneStarts) {
+      if (!host.randomSceneStarts(playing.formId, first, second)) {
+        this.#drop(playing, 'its actors may not talk');
+        const quest = record.quest;
+        if (quest !== undefined && (record.flags & SceneFlag.stopQuestOnEnd) !== 0) {
+          host.stopQuest(quest);
+        }
+        return false;
+      }
+    }
+    this.#randomPlaying = playing;
+    this.#randomAgain = host.randomSceneAgain?.() ?? 0;
+    return true;
   }
 
   /** A start that does not happen: it is not playing. */
@@ -493,7 +602,10 @@ export class SceneDirector {
 
   /** Waiting starts whose actors are free (or in interruptible scenes) start. */
   #retryWaiting(): void {
+    const randomClosed =
+      (this.#randomPlaying !== undefined && live(this.#randomPlaying)) || this.#randomAgain > 0;
     for (const [scene, waiting] of [...this.#waiting]) {
+      if (waiting.random && randomClosed) continue;
       const record = waiting.record;
       const quest = record.quest;
       const free =
@@ -708,13 +820,17 @@ export class SceneDirector {
    * A scene ends: its actions end (looks and packages let go), its actors leave it, its end
    * fragment runs; then its quest stops (Stop Quest on End), or, having played to its end, it
    * starts again while its conditions hold (Repeat Conditions While True: Heimskr's sermon).
-   * TODO(M13): the engine's pause before a repeat (fRandomSceneAgainMinTime / MaxTime may be
-   * it).
+   * TODO(M13): the engine's pause before a repeat (fRandomSceneAgainMinTime / MaxTime is not
+   * it: observed in the original, that spaces random scenes).
    */
   #end(playing: Playing, reason: EndReason): void {
     if (over(playing)) return;
     const started = live(playing);
     playing.state = 'ended';
+    if (this.#randomPlaying === playing) {
+      this.#randomPlaying = undefined;
+      this.#randomAgain = 0;
+    }
     if (this.#playing.get(playing.formId) === playing) this.#playing.delete(playing.formId);
     const touched = new Set<number>();
     for (const run of playing.actions) {
@@ -805,6 +921,7 @@ export class SceneDirector {
         }
       }
       paused ||=
+        this.#held.has(reference) ||
         (state.combat && (behaviour & SceneActorBehaviour.combatPause) !== 0) ||
         (state.talking && (behaviour & SceneActorBehaviour.dialoguePause) !== 0) ||
         (state.observingCombat && (behaviour & SceneActorBehaviour.observeCombatPause) !== 0);

@@ -271,7 +271,8 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   the load doors of their place (a door without a lock gets a novice one); Say says its topic,
   facing its target; ForceGreet waits at its place until the player comes into its trigger
   area, goes to them and opens the conversation with its topic; DialogueActivate talks to the
-  player from its place; KeepAnEyeOn watches its target in its observation area and pursues it
+  player from its place, and to another actor through a scene the story manager gives the two
+  ([Conversations between actors](#conversations-between-actors)); KeepAnEyeOn watches its target in its observation area and pursues it
   in its pursuit area; Escort leads its target to the destination, waiting for it where it
   falls behind; FollowTo follows until one of them reaches the destination; Flee runs to its
   place, else away from what it flees. A procedure that does not use furniture gets the actor
@@ -949,7 +950,10 @@ after `--package-seconds`).
   its quest stops if the scene stops it on its end (851 scenes: MS13LucanCamillaScene ends with
   Lucan's "Oh, a customer"), or, having played to its end, it starts again while its conditions
   hold (Repeat Conditions While True: Heimskr's sermon). TODO(M13): a pause before the repeat
-  (fRandomSceneAgainMinTime / MaxTime may be it).
+  (not fRandomSceneAgainMinTime / MaxTime: those space random scenes).
+- **Random scenes** (those of quests the Actor Dialogue event started) play one at a time and
+  hold while their two actors come together: [Conversations between
+  actors](#conversations-between-actors).
 
 Measured with `--play`: Lucan and Camilla argue in the Riverwood Trader (MS13LucanCamillaSceneView)
 in four lines, Lucan turns to the player for "Oh, a customer. Sorry you had to hear that." if
@@ -969,8 +973,9 @@ What actors say outside the dialogue menu (`src/ai/talk.ts` for who talks when,
 `src/shell/actor-talk.ts` on the stage, `src/shell/world-lines.ts` for how a line is said; the
 lines: the dialogue engine's `subtypeLine` and `topicLineTo`). What the engine keeps for it is
 CommonLibSSE's HighProcessData (greetingTimer, exclusiveTimer, idleTimer, checkToTalkTimer,
-lastSpokenToArray); how it combines them is not documented, so the rules below follow the game
-settings' names (TODO(M13) where they are ours). The running package's PKDT interrupt flags
+lastSpokenToArray); the conversations between actors follow the engine's own rule, observed in
+it ([below](#conversations-between-actors)); for greetings and chatter the rules
+follow the game settings' names (TODO(M13) where they are ours). The running package's PKDT interrupt flags
 say what an actor may do: hellos to the player (0x1, 4,604 of 7,633 vanilla packages), random
 conversations (0x2), idle chatter (0x80), reactions to the player's actions (0x10), world
 interactions (0x200, GetAllowWorldInteractions: the WI comment quests); an actor without a
@@ -1005,18 +1010,9 @@ package may do all.
   actor whose package allows chatter, within 1,024 units of the player and detecting them,
   says its Idle line to them; one line of chatter at a time (TODO(M13)). The Idle infos weigh
   chance and the player's sneaking themselves (GetRandomPercent, IsSneaking).
-- **Conversations between actors:** every fAISocialTimerForConversationsMin to Max (10–30 s)
-  an actor that may (its package's random conversations flag; sandboxing, its Allow
-  Conversation; not on its way) starts one by fAISocialchanceForConversation (10 %, inside the
-  Interior value) with the nearest within fAISocialRadiusToTriggerConversation (500) who may
-  too and with whom it has not talked within 120 s (TODO(M13)). Their packages wait; the one
-  that starts walks up to within iAISocialDistanceToTriggerEvent (200; one seated stays and
-  the other comes), they face each other and take turns: a Hello each, then Idle lines, four
-  lines at most, ending when the one whose turn it is has nothing to say (TODO(M13): the
-  engine's topics for random conversations are not documented). It breaks off when the player
-  talks to one of them, a scene takes one, or one leaves or dies. DialogueActivate between
-  actors starts one the same way. `node tools/talk-info.ts HuldaREF SaadiaREF` plays one after
-  a new game in Node.
+- **Conversations between actors** are scenes the story manager gives two actors that ask for
+  one: see [below](#conversations-between-actors). The engine has no conversation of its own
+  made of Hello and Idle lines.
 - **Barks:** `ActorTalk.bark(actor, subtype, target?)` says a topic subtype's line (by code or
   name: ObserveCombat, NoticeCorpse, NormalToAlert, Steal, Trespass, PickpocketTopic, TimeToGo,
   ...) to a target (the player without one); the reactions of [Detection](#detection) call
@@ -1042,6 +1038,80 @@ package may do all.
 - `node tools/talk-info.ts HuldaREF`: after a new game in Node, an actor's line of each subtype
   to the player and the time it took to find; `--survey`: the subtypes' infos and what names
   their speakers.
+
+### Conversations between actors
+
+Observed in the original (the behaviour, in our words; `src/ai/talk.ts` holds the rules,
+`src/shell/actor-talk.ts` carries them out on the stage, `src/ai/scene-runtime.ts` plays the
+scenes). Two actors talking with each other is always a scene of a quest: an actor asks the
+story manager for a scene with another (the Actor Dialogue event, ADIA), and what its tree
+answers plays. The vanilla tree holds 900 quests under it (with the Creation Club plugins'
+nodes 919 entries: town and household scenes, inns, Civil War soldiers, the MQ201 party,
+Sovngarde, dogs), all with a scene of two (869) or three actors.
+
+- **Who asks, and when.** Each actor of the high process keeps a social timer, drawn between
+  fAISocialTimerForConversationsMin and Max (vanilla 10 to 30 s; the engine's own defaults are
+  5 and 30), which counts down while the actor is in no scene. Once it has run out, the actor
+  looks for a partner on every update until it finds one, if: its package allows random
+  conversations (PKDT 0x2), it speaks (has a voice), is not asleep, not fighting, not talking
+  with the player, in no scene and in no other ask, and is within fDistancetoPlayerforConversations
+  (3000) of the player, who is not in a conversation. There is no chance roll:
+  fAISocialchanceForConversation (and its Interior twin) is read by the engine's spectator
+  comments, not here.
+- **Whom.** It goes through the high process's actors in their order and takes the first that
+  may be asked: not itself or the player, speaking, free, standing or seated (not asleep, not in
+  other furniture), its package allowing random conversations, in no scene and no other ask,
+  within fDistancetoPlayerforConversations of the player, within
+  fAISocialRadiusToTriggerConversation (vanilla 500; the engine's default 900; in an interior
+  the Interior value, 500) of the one asking, in an interior on its floor (less than 90 units
+  higher or lower), and not on the asking actor's list of those it talked with. Both are put on
+  each other's list; the list is cleared every fAItalktosameNPCtimer (120 s) the actor spends
+  looking.
+- **The event.** Its data are the asking actor's current location (L1), the asking actor (R1)
+  and the one asked (R2); the started quest's OnStoryDialogue gets the three. Both are taken
+  (the engine's "in random scene" flag) until the story manager answers.
+- **The answer.** With a quest, both draw their social timers again and stay taken while the
+  quest runs. Without one nothing else happens (there is no conversation of the engine's own):
+  both are free again, and only the first of the two in the process list draws its timer again,
+  so the other may look again at once.
+- **Random scenes.** A scene of a quest the Actor Dialogue event started is a random scene. One
+  random scene plays at a time; as one begins, the pause before the next is drawn
+  (fRandomSceneAgainMinTime to MaxTime: vanilla 10 to 30 s, the engine's default 5 to 10), and it
+  counts only while no random scene plays; the engine clears it as a random scene ends, so it
+  holds back only starts that come while one is about to begin. If an actor of it plays in
+  another scene, it waits and looks again a second later. As it begins, the engine looks again
+  whether its first two actors may talk (the second as the asking one, the first as the one
+  asked); if not, the scene does not play (its quest stops with Stop Quest on End).
+- **Coming together.** The one that asked (else the second actor) starts a conversation with the
+  other: both stop their packages and the scene holds while the one that started walks up to
+  within iAISocialDistanceToTriggerEvent (vanilla 200; the engine's default 90; seated, 20 more)
+  of the other, or, with both seated or asleep, they talk from up to
+  iAIMaxSocialDistanceToTriggerEvent (500) apart. They turn to each other (a scene's line waits
+  until its speaker faces whom it speaks to within fAIMinAngleRangeToStartSceneDialogue, 20
+  degrees; we hold the scene for that, at most 2 s: TODO(M13) the engine's patience), and the
+  scene goes on: its phases and lines as any scene's. They stand facing each other while it
+  plays (the engine's in-game dialogue package); an actor the scene gives a package to follows
+  that. TODO(M13): whether the engine gets a seated actor up (we have the other one come) and
+  what fAIWalkAwayTimerForConversation (2 s, set as a random scene begins) does.
+- **DialogueActivate** with another actor as its target raises the same event (it as R1, its
+  target as R2) and waits fAISocialTimerToWaitForEvent (20 s) for a scene to take it: none, the
+  procedure fails. In the scene it walks up to within fAIDialogueDistance (170) of its target,
+  both face each other, and the procedure succeeds as the scene ends.
+- **The log** names each ask and its answer ("YsoldaREF asking for random scene with NazeemREF",
+  "got a quest back: DialogueWhiterunNazeemYsoldaScene1" or "failed to get a quest"), the coming
+  together and when the two face each other.
+- **What answers where.** Most quests' aliases name who may play them (R1 and R2 by GetIsID, a
+  faction, a voice type), and an alias another quest reserves keeps an actor out unless the alias
+  allows reserved ones: at the start of the main quest MQReserved holds Riverwood's family, so
+  their household scenes wait for it. `node tools/story-manager.ts ADIA` shows the tree;
+  `node tools/story-manager.ts ADIA --at WhiterunLocation` walks it for every pair of a
+  location's actors after a new game (nothing started) and lists the quests each pair reaches;
+  `node tools/talk-info.ts YsoldaREF NazeemREF` asks for real and names the quest and its scenes.
+- **Measured in the browser** (main-menu `coc`, 2026-10-23): in Whiterun's Plains District at
+  9:00, 50 asks in 8 minutes gave five market scenes (Nazeem and Ysolda, Anoriath and Ysolda,
+  Carlotta and Nazeem, Fralia and Ysolda, Olfina and Ysolda), each with the asking one walking
+  from 250 to 500 units up to 200, both facing each other (0 degrees off) and every line said;
+  in Riverwood the dog's scene (Stump and Frodnar) played, the family's waited for MQReserved.
 
 ## Combat
 

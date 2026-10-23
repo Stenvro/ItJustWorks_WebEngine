@@ -405,6 +405,12 @@ export interface WorldBridge {
    * resolves once said. Undefined: the speaker is not loaded (the line passes silently).
    */
   sceneLine?(speech: SceneSpeech): Promise<void> | undefined;
+  /**
+   * A random scene (the story manager's answer to two actors' Actor Dialogue event) is about
+   * to begin: whether its two actors may still talk; the world brings them together, holding
+   * the scene meanwhile (src/shell/actor-talk.ts). Undefined: the world does not show them.
+   */
+  randomSceneStarts?(scene: number, first: number, second: number): boolean | undefined;
 }
 
 /** A quest's update as the HUD announces it. */

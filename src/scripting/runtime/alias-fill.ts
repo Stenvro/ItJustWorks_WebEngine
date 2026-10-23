@@ -87,6 +87,11 @@ export class AliasFiller {
     return this.#runtime.location(formId);
   }
 
+  /** Whether an alias that reserves it holds a reference or location now (for reports). */
+  reserved(value: number): boolean {
+    return (this.#reserved.get(value)?.size ?? 0) > 0;
+  }
+
   /** An alias let go of what filled it (its reservation ends). */
   released(quest: number, alias: number, filled: number): void {
     this.#reserved.get(filled)?.delete(key(quest, alias));
