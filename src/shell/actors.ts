@@ -229,8 +229,8 @@ export function moveActor(
 /**
  * The ragdolls of the dead among placed actors: their skeleton's bodies (the race's
  * skeleton.nif: capsules on the bones, joined by ragdoll and hinge constraints) move their
- * pose and fall where they lie as the cell settles. TODO(M13): the pose a dead actor's ragdoll
- * starts from as its cell first loads is not documented; it starts in the skeleton's rest pose.
+ * pose. They start in their placed ragdoll pose (XRGD: poseRagdoll), else the skeleton's rest
+ * pose (the dead the running game killed: TODO(M12), their bodies' place is the save's).
  */
 export async function ragdollsOf(
   actors: readonly PlacedActor[],
@@ -247,6 +247,8 @@ export async function ragdollsOf(
         collision: await collision(skeleton),
         pose: placed.pose,
         severed: placed.severing.nodes,
+        ...(placed.actor.ragdoll && { ragdoll: placed.actor.ragdoll }),
+        ...(placed.actor.dontHavokSettle === true && { dontHavokSettle: true }),
       };
     }),
   );

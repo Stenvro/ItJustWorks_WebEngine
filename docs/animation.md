@@ -604,10 +604,20 @@ victim is paired, in furniture, bleeding out, swimming, or half the time, else D
 idles' conditions on their target see the killer (inferred, TODO(M13)). A Ragdoll idle, or none,
 lets the ragdoll go at once; an animated death keeps the body on its graph (still animating
 while dead) until the graph adds the ragdoll; one whose graph did not take the idle (its states
-unchanged 0.3 s on) goes limp, and so does one whose graph never adds it (8 s). A killmove's
+unchanged 0.3 s on) goes limp, and so does one whose graph never adds it, or keeps it keyframed
+or powered, 8 s after it began (TODO(M13): what the engine does with such a graph; before, a
+graph that kept its ragdoll keyframed held the corpse on its feet for good). A killmove's
 victim dies in its paired clip. Seen in the browser (Riverwood): a villager's DeathAnim,
 AddRagdollToWorld 0.06 s in, AnimateToRagdoll with 18 bones keyframed, limp as FullyRagdoll
-began at 1.2 s; a cow and a dog took DeathAnimation and lay as ragdolls within 0.7 s.
+began at 1.2 s; a cow and a dog took DeathAnimation and lay as ragdolls within 0.7 s (the dog's
+DeathAnimation goes to Fully Ragdoll at once: it drops from the pose it stood in).
+
+The graphs' ragdoll contact listeners (BSRagdollContactListenerModifier: AnimateToRagdoll's
+death waits for a body to touch something) see the actor's bodies while they are still
+keyframed: Havok reports a keyframed body's contacts with fixed ones, Rapier only when asked
+(`PhysicsWorld.findFixedContacts`, set on an actor's bodies as its graph first asks: computed for every living actor they cost). Where the ragdoll goes from
+there (the dead bodies' layer, the placed ragdoll pose, the limbs through the ground, the death
+push, how it comes to rest): [physics.md](physics.md), "The dead".
 
 **The camera's shake** (`src/shell/camera-shake.ts`, also `Game.ShakeCamera`: its strength
 kept within 0 and 1, from its source's place or the player's): within fCameraShakeDistFadeStart ×

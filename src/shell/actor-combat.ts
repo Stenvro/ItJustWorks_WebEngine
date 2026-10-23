@@ -2211,7 +2211,11 @@ export class ActorCombat implements CombatBridge {
     });
   }
 
-  /** The blow that killed pushes the ragdoll by its damage (fDeathForce{Ranged}*). */
+  /**
+   * The blow that killed pushes the ragdoll by its damage (fDeathForce{Ranged}*): observed in the
+   * original, the force over fDeathForceMassBase + fDeathForceMassMult × the victim's
+   * Mass is the speed its bodies gain along the blow (src/shell/actor-bodies.ts, push).
+   */
   #deathPush(
     target: Fighter,
     damage: number,
@@ -2221,10 +2225,18 @@ export class ActorCombat implements CombatBridge {
       ? this.#options.playerBody?.()
       : this.#options.get(target.reference);
     if (!staged) return;
-    void this.#options.bodies.push(
-      staged,
-      hit.direction,
-      this.#pushForce(damage, hit.shot !== undefined),
+    const force = this.#pushForce(damage, hit.shot !== undefined);
+    const s = this.#settings;
+    const runtime = this.#options.session.scriptsReady;
+    const mass = runtime
+      ? runtime.actors.value(target.reference, ActorValue.mass).then((value) => value.current)
+      : Promise.resolve(0);
+    void mass.then((value) =>
+      this.#options.bodies.push(
+        staged,
+        hit.direction,
+        force / Math.max(1e-3, s.deathForceMassBase + s.deathForceMassMult * Math.max(0, value)),
+      ),
     );
   }
 

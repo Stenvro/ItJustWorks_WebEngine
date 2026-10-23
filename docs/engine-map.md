@@ -130,20 +130,20 @@ These run through every area and explain most of what breaks in play.
 
 ### Animation and bodies
 
-| System               | Status    | Main gaps                                                            |
-| -------------------- | --------- | -------------------------------------------------------------------- |
-| Graph runtime        | partial   | event payloads                                                       |
-| Clips                | complete  | mirrored additive clips by our own rule                              |
-| Engine handlers      | partial   | about 65 of 95 unanswered                                            |
-| Weapons and aim      | partial   | the player's casting pitch (PitchOverride), a crossbow's launch node |
-| Ambient idles        | missing   | no idle picking (PickNewIdle)                                        |
-| Animation objects    | missing   | no tankards, hammers, brooms, lutes                                  |
-| Paired animations    | different | victim placed, no get-to-mark, events not routed per side            |
-| Ragdolls, death      | partial   | no powered ragdoll, instant limp deaths                              |
-| Dismemberment        | complete  | re-dressing a reloaded corpse from its recorded worn objects         |
-| Actor build          | complete  | first-person render pass, bone LOD                                   |
-| Faces                | complete  | expression change rate                                               |
-| Graph state in saves | missing   | M12                                                                  |
+| System               | Status    | Main gaps                                                                |
+| -------------------- | --------- | ------------------------------------------------------------------------ |
+| Graph runtime        | partial   | event payloads                                                           |
+| Clips                | complete  | mirrored additive clips by our own rule                                  |
+| Engine handlers      | partial   | about 65 of 95 unanswered                                                |
+| Weapons and aim      | partial   | the player's casting pitch (PitchOverride), a crossbow's launch node     |
+| Ambient idles        | missing   | no idle picking (PickNewIdle)                                            |
+| Animation objects    | missing   | no tankards, hammers, brooms, lutes                                      |
+| Paired animations    | different | victim placed, no get-to-mark, events not routed per side                |
+| Ragdolls, death      | partial   | no powered ragdoll motors; objects' placed ragdoll poses; joint friction |
+| Dismemberment        | complete  | re-dressing a reloaded corpse from its recorded worn objects             |
+| Actor build          | complete  | first-person render pass, bone LOD                                       |
+| Faces                | complete  | expression change rate                                                   |
+| Graph state in saves | missing   | M12                                                                      |
 
 ### Physics
 

@@ -73,6 +73,8 @@ export interface CollisionBody {
   readonly phantom: boolean;
   /** The body's collision layer (its shapes may override it per part). */
   readonly layer: number;
+  /** The biped part of its collision filter (FILTER_BIPED_PART: a ragdoll bone's id). */
+  readonly part?: number;
   /** Mass in kg (0 for fixed bodies). */
   readonly mass: number;
   /** Principal moments of inertia (kg·m², Havok units). */
@@ -109,9 +111,54 @@ export interface CollisionData {
   readonly bodies: readonly CollisionBody[];
   /** What holds bodies together: ragdolls, hinged signs, wheels, chains. */
   readonly constraints?: readonly CollisionConstraint[];
+  /**
+   * The nodes a placed ragdoll pose (REFR/ACHR XRGD: src/world/ragdoll-data.ts) poses, in the
+   * order its entries go, with the biped part each entry must name (ragdollPoseOrder).
+   */
+  readonly poseOrder?: readonly RagdollPoseNode[];
   /** Shapes that could not be used, with the reason. */
   readonly skipped: readonly string[];
 }
+
+/** A node a placed ragdoll pose's entry poses: its name and the biped part of its body. */
+export interface RagdollPoseNode {
+  readonly node: string;
+  /** The body's collision filter's biped part (its flags' low 5 bits). */
+  readonly part: number;
+}
+
+/**
+ * The nodes a placed ragdoll pose (XRGD) poses, in its entries' order. Observed in the
+ * original: as a reference's 3D loads, its ragdoll pose's entries are applied walking the model's
+ * nodes depth first (a node, then its children in order) from the root; every node with a
+ * collision object takes the next entry, which must name the biped part of the node's body
+ * (else the walk stops there), and a faded node with collision (a BSFadeNode: an attached
+ * model's root, or the model's own root) ends the walk of its subtree without taking one.
+ */
+export function ragdollPoseOrder(file: NifFile): RagdollPoseNode[] {
+  const order: RagdollPoseNode[] = [];
+  const visit = (ref: Ref, depth: number): void => {
+    if (depth > 64) return;
+    const block = file.blocks[ref];
+    if (!block || !('transform' in block)) return;
+    if (block.collision >= 0) {
+      const object = getBlock(file, block.collision, 'collision-object');
+      const body = object && file.blocks[object.body];
+      const filter =
+        body?.kind === 'rigid-body' || body?.kind === 'phantom' ? body.filter : undefined;
+      if (filter) {
+        if (file.blockTypes[ref] === 'BSFadeNode') return;
+        order.push({ node: block.name, part: filter.flags & FILTER_BIPED_PART });
+      }
+    }
+    if (block.kind === 'node') for (const child of block.children) visit(child, depth + 1);
+  };
+  for (const root of file.roots) visit(root, 0);
+  return order;
+}
+
+/** The biped part bits of a Havok filter's flags (0x1f; the engine's bone id of a body). */
+export const FILTER_BIPED_PART = 0x1f;
 
 /**
  * Whether a placed object's simulated bodies settle once its cell's collision is in place (the
@@ -646,6 +693,7 @@ export function buildCollision(file: NifFile, damageStage = 0): CollisionData {
       motion,
       phantom: !rigid,
       layer: filter.layer,
+      part: filter.flags & FILTER_BIPED_PART,
       mass: rigid && motion === 'dynamic' ? rigid.mass : 0,
       inertia: rigid ? inertiaOf(rigid) : [0, 0, 0],
       centerOfMass: [
@@ -720,5 +768,14 @@ export function buildCollision(file: NifFile, damageStage = 0): CollisionData {
       });
     }
   }
-  return { bodies, ...(constraints.length > 0 && { constraints }), skipped };
+  // A placed ragdoll pose moves the nodes of simulated bodies only.
+  const poseOrder = bodies.some((body) => body.motion === 'dynamic' && !body.phantom)
+    ? ragdollPoseOrder(file)
+    : [];
+  return {
+    bodies,
+    ...(constraints.length > 0 && { constraints }),
+    ...(poseOrder.length > 0 && { poseOrder }),
+    skipped,
+  };
 }

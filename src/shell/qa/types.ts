@@ -24,6 +24,8 @@ export type QaKind =
   | 'bind-pose'
   /** A corpse stands upright (no ragdoll laid it down: its bind pose). */
   | 'corpse-upright'
+  /** A corpse's ragdoll has not come to rest long after it fell (a body still awake). */
+  | 'ragdoll-restless'
   /** A bone is NaN or absurdly far from the actor. */
   | 'bad-bone'
   /** A grounded actor's feet are well above what is under them. */
@@ -60,6 +62,7 @@ export const KIND_SYSTEM: Readonly<Record<QaKind, QaSystem>> = {
   'turn-chatter': 'locomotion',
   'bind-pose': 'animation',
   'corpse-upright': 'physics',
+  'ragdoll-restless': 'physics',
   'bad-bone': 'animation',
   floating: 'physics',
   sunk: 'physics',

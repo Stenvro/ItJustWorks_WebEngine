@@ -345,13 +345,20 @@ placement's scale on the pivots), and bodies held together do not collide with e
 Ball and socket → spherical; hinge → revolute; limited hinge → revolute limited to its angles;
 prismatic → prismatic limited to its distances; ragdoll → spherical with three angle ranges:
 the twist, the swing towards the motor axis within the cone, the swing towards the plane axis
-within the cone and the plane limits (TODO(M13): Havok's limit is a cone and two planes); stiff
+within the cone and the plane limits (TODO(M13): Havok's limit is a cone and two planes); the
+hinges' and the ragdolls' twist and plane angles are mirrored, as Rapier measures a joint's
+turn the other way round from the files' limits (`node tools/ragdoll-info.ts --limits`: of
+12,149 limited hinges in the 1,257 complete placed ragdoll poses, the Creation Kit's settled
+Havok state, 60 % lie within their limits unmirrored and 97 % mirrored; the plane angles 90 %
+and 97 %; unmirrored, knees and elbows bent only backwards, and a dying pose's bent knee
+started past its limit and snapped); stiff
 spring → rope (TODO(M13): a stiff spring also pushes); a chain → a ball and socket per link.
 **Friction:** a ragdoll's and a limited hinge's maximum friction torque (a prismatic's friction
 force) is a motor towards no relative speed on the joint's free axes whose force is that maximum
 (an absolute torque in Havok's units, kg·m²/s²: the human skeleton's ragdoll joints hold 10, its
-hinges 0, as the mammoth's, sabre cat's and centurion's), so limbs hold against less and give
-way to more. Motors (no vanilla constraint has one), malleable strength and a chain's tau and
+hinges 0, as the mammoth's, sabre cat's and centurion's), meant to hold limbs against less and
+let them give way to more (TODO(M13): measured, Rapier's velocity motor holds far less than its
+maximum: see "The dead"). Motors (no vanilla constraint has one), malleable strength and a chain's tau and
 damping are not applied (Rapier's joints are stiff). A joint is in the world only while one of its two bodies is simulated: between
 two keyframed or held bodies (a living actor's ragdoll keyframed to its pose, an object placed
 to wait) it is left out and made again from its constraint as a body is let go (a death, a
@@ -373,18 +380,101 @@ bows, dead creatures) and 130 have limited hinges (shop signs swing when pushed,
 covers, hanging game). Placed objects stay asleep in their placed pose until touched (or settle
 as their cell loads, as other loose objects).
 
-**The dead** (ACHR flag 0x200, "starts dead": 938 of the actors in interiors at a new game,
-mostly draugr, people, Dwemer spiders and skeevers) lie as ragdolls: their race's skeleton.nif
-holds a body on each main bone (capsules on the BIPED layer, 18 for humans) joined by ragdoll
-and limited hinge constraints, placed at the actor and articulated like the objects above, so
-the skinned body, its armor and head follow the bones. They run no behavior graph and no face,
-and fall where they lie as their cell settles. 43 of the 49 race skeletons with a ragdoll come
-to rest on a floor; the mammoth's, sabre cat's, steam centurion's, netch's and riekling boar's
-keep stirring without the constraints' friction (TODO(M13), as above). TODO(M13): the pose a
-dead actor's ragdoll starts from when its cell first loads is not documented; here the
-skeleton's rest pose. Those the running game kills lie the same way when their cell loads again;
-one that dies in sight falls from the pose it had (its living bodies, keyframed to its pose, are
-let go: [ai.md](ai.md#movement)).
+**The dead** (ACHR flag 0x200, "starts dead": 1,527 in the load order, 938 of them in interiors
+at a new game, mostly draugr, people, Dwemer spiders and skeevers) lie as ragdolls: their race's
+skeleton.nif holds a body on each main bone (capsules, 18 for humans) joined by ragdoll and
+limited hinge constraints, placed at the actor and articulated like the objects above, so the
+skinned body, its armor and head follow the bones. They run no behavior graph and no face. Those
+the running game kills lie the same way when their cell loads again (TODO(M12): from the rest
+pose; where their bodies lay is the save's); one that dies in sight falls from the pose it had
+(its living bodies, keyframed to its pose, are let go: [ai.md](ai.md#movement)). One that had no
+bodies living (beyond the high process) gets them in the pose it has as it dies: they were made
+in the model's rest pose and let go before their keyframed move reached the pose, so Lokir and
+a Stormcloak at Helgen's block stood in their bind pose, balanced, until they slept so. A dead
+actor's ragdoll over ground whose collision is not in yet waits for it; one whose actor is made
+again (its look changed) moves the new look's pose (that stood in its bind pose over the
+corpse). Observed in the
+original:
+
+- **The dead bodies' layer.** As a dead actor's Havok is set up, its ragdoll's bodies go to
+  L_DEADBIP and become simulated (a living one's stay on L_BIPED, keyframed). By the COLL records
+  L_DEADBIP meets clutter, weapons, projectiles, debris and other corpses, and no character
+  controller; L_BIPED meets none of those (two corpses on L_BIPED passed through each other).
+  Here too, for the placed dead and for every death (`ActorBodies.kill`, the dead player's too).
+- **The placed ragdoll pose** (`src/world/ragdoll-data.ts`; XRGD: 28-byte entries of a bone id,
+  a position and Euler angles; XRGB: the biped's turn). As the reference's 3D loads without a
+  saved Havok state, the entries pose the model's nodes: walking its nodes depth first, every node
+  with a collision object takes the next entry, whose bone id must be its body's biped part (its
+  collision filter's low five bits), else the walk stops; a BSFadeNode with collision (an attached
+  model's root, a clutter item's own root) ends its subtree's walk. An entry sets its node's local
+  translation and rotation (the angles made a matrix as a reference's rotation is); XRGB, unless
+  zero, turns the root's first child. The bodies are then placed on their nodes. A complete walk
+  leaves the ragdoll simulated but at rest (here: held until something touches it); one that
+  stopped sets its bodies simulated and awake (they fall from the pose so far). A dead actor with
+  no pose is given a downward speed of one unit a second: it settles from its rest pose (here:
+  the warm start, unless "Don't Havok Settle"). 1,463 of the 1,527 dead carry a pose; 1,332 walk
+  completely on their skeletons (`node tools/ragdoll-info.ts --pose`), the joints' two pivots then
+  lying a median 0.35 units apart (in the rest pose the human knees' are 4.3 apart); 33 skeleton
+  corpses stop at the jaw (their poses were made before the skeleton's jaw had a body), and two
+  corrupt entries (a node millions of units away) are taken as a stop here, as is a pose that
+  would tear a joint apart (its pivots 16 units farther apart than at rest: some horses' and
+  Dwemer spiders' poses were made on a skeleton whose nodes differ, and their bodies all share
+  biped part 0, so the engine's check passes; Rapier snapped such joints together in one step,
+  flinging Helgen's dead horse and the carts beside it). A ragdoll held until touched is let go
+  as a whole: one body released alone hung, simulated, on its held neighbours' joints and shook. 8,670 objects carry a
+  pose too (TODO(M13): not applied to objects yet; single-body clutter's is never applied, its
+  body sits on its fade root).
+- **Ragdoll penetration** (`src/physics/ragdoll-penetration.ts`, the engine's
+  bhkRagdollPenetrationUtil): for [RagdollAnim] fDetectionUpdateTimeSec (5 s) after a dead
+  actor's ragdoll is set up, every frame while all its bodies are simulated, each bone is tested
+  by a ray from its parent's pivot to its own pivot, and back (the engine's ray interface casts
+  both ways), against what L_DEADBIP collides with but the ragdoll itself. A bone whose ray meets
+  something, and its descendants, collide with nothing until clear; the bone itself gets an
+  impulse at the point met, along the surface's normal, of (fDesiredVel − its speed there along
+  the normal) × its mass, at most fImpulseLimit (1.5 Havok units a second, 15) either way. A frame
+  with no penetration and the end of the time give every bone its collision back.
+- **The death push** (`ActorBodies.push`): the killing blow's force (fDeathForce{Ranged}*, by
+  its damage) over fDeathForceMassBase + fDeathForceMassMult × the victim's Mass is a speed every
+  body gains along the blow, times its biped part's share: the trunk, neck, head and upper arms
+  all of it, forearms and thighs ¾, hands and calves ½, feet ¼, parts 17 to 22 (tails, wings) ¾,
+  higher parts none (TODO(M13): the head's 1.5 the engine gives for some hits). It was an impulse
+  of the force on every body, which sent hands and feet off at many times the trunk's speed.
+
+How a ragdoll comes to rest: Havok deactivates by place, not by speed (inferred from Havok's
+documented behaviour, TODO(M13): the engine's world settings are not read): a body is inactive
+while it stays within 0.02 Havok units (and 0.05 radians) of where it last moved, however it
+trembles there, and a system of bodies inactive for a second as a whole goes to sleep
+(`PhysicsWorld.#deactivate`, checked every quarter second). Rapier sleeps bodies by their speed
+alone, so a ragdoll whose limbs shook against a slope or a rock never slept (the Helgen skeleton
+flipped its vertical speed 12–31 times a second for half a minute). Also behind the shaking, and
+fixed: the landscape is solid from above only (`addMesh` with `ground`: Rapier's fixed internal
+edges, which drop contacts from below a triangle and smooth the edges between them), so a foot
+that went under the ground is no longer pushed further down while its joint pulls it up; and
+trees' collision no longer sways with the wind (a fixed body in the file: only keyframed bodies
+follow their nodes; the swaying trunks' kinematic bodies kept every corpse and loose object
+against them stirring). Measured in Riverwood with 28 actor types spawned around the player and
+killed by script: ragdolls still awake 30 s later 12 (before) → 0 (40 s), most at rest within
+5–10 s. `node tools/ragdoll-info.ts [--still]` drops every race skeleton on a floor: 51 of 52
+rest within 20 s (TODO(M13): the Dwemer spider keeps stirring: a 50 kg body on a 5 kg hub held
+by a nearly rigid joint, under six legs of hinges); `--ref 97D60` lets one placed dead's
+ragdoll go from its placed pose (the Khajiit caravan's, which stopped at its tail and shook for
+good until the limits were mirrored, now rest within 3 s). A finding
+left open (TODO(M13)): Rapier's velocity motor does not hold a torque below its maximum as
+Havok's friction does (a 1 kg pendulum on a 1 m arm swings down against a 20 N·m limit), so the
+joints' friction does little; the deactivation does what it did for Havok. Also open
+(TODO(M13)): an animated pose past a joint's limits as the body is let go snaps back within a step
+(Rapier's limits are stiff, Havok's soft): a body may jump 2,000 units a second for a frame.
+
+Measured with the QA runner (docs/qa.md), before (the lead's sweep on main, or the coordinator's
+runs of `combat-melee`) and after: the opening's corpse-upright 3 → 1 (Lokir and the Helgen
+skeleton lie; one Stormcloak stays), the Helgen skeleton's jitter (42 episodes, 12–31 vertical flips a second for half a minute) →
+none; ragdoll velocity spikes 17 (an Imperial soldier's) → 72, 65 of them Helgen's dead horse,
+which now lies on L_DEADBIP where MQ101's carts (L_PROPS) run into it;
+`combat` physics 0 → 0 with deaths in it; `combat-melee` 20–45 spikes a run and a dead soldier
+left standing in two runs → 3 and 18 spikes in two runs, none left standing (one still in its death animation at 5 s). The `deaths` scenario (28 kinds
+killed by script on Riverwood's rocky slopes) still shows a few ragdolls trembling against
+rocks (static meshes are two-sided triangle meshes: their winding is not consistent enough to
+make them one-sided like the landscape).
 
 **Border regions:** in a worldspace with border regions (see
 [esm.md](formats/esm.md#border-regions)) movement that would leave them stops at the edge, and
