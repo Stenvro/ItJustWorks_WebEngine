@@ -715,8 +715,11 @@ describe('the behavior runtime', () => {
     const sit = make();
     sit.update(0);
     sit.sendEvent('getUp');
+    expect(sit.answered('getUp')).toBeUndefined();
     sit.update(0.1);
     expect(sit.states()[0]?.state).toBe('Sit');
+    // Delayed to its initiate interval: taken.
+    expect(sit.answered('getUp')).toBe(true);
     sit.sendEvent('InitiateStart');
     sit.update(0.1);
     expect(sit.states()[0]?.state).toBe('Stand');
@@ -726,6 +729,8 @@ describe('the behavior runtime', () => {
     attack.sendEvent('attack');
     attack.update(0.1);
     expect(attack.states()[0]?.state).toBe('Sit');
+    // Out of its trigger interval: refused.
+    expect(attack.answered('attack')).toBe(false);
     attack.sendEvent('R1_Start');
     attack.update(0.1);
     attack.sendEvent('R1_Stop');
@@ -738,6 +743,7 @@ describe('the behavior runtime', () => {
     attack.sendEvent('attack');
     attack.update(0.1);
     expect(attack.states()[0]?.state).toBe('Attack');
+    expect(attack.answered('attack')).toBe(true);
   });
 
   it("takes a nested machine's global wildcard from the machine above it", () => {

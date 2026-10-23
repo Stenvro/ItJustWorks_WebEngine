@@ -89,6 +89,8 @@ export class ActorFollowers {
       } else if ((!teammate || !sneaking) && this.#sneaking.delete(reference)) {
         movers.sneak(reference, false);
       }
+      // Its AI disabled (EnableAI false), it is not put behind the player.
+      if (movers.aiDisabled(reference)) continue;
       const feet = player.feet;
       const distance = Math.hypot(staged.position[0] - feet[0], staged.position[1] - feet[1]);
       const unseen = outOfSight({ position: player.position, forward: player.forward }, [

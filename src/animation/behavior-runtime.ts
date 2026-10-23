@@ -790,6 +790,7 @@ export class BehaviorRuntime {
     const id = this.#eventIndex.get(name.toLowerCase());
     if (id === undefined) return false;
     this.#queue.push(payload === undefined ? { id } : { id, payload });
+    this.#answers.delete(id);
     return true;
   }
 
@@ -843,6 +844,27 @@ export class BehaviorRuntime {
       if (this.#wouldHandle(child, event, seen)) return true;
     }
     return false;
+  }
+
+  /**
+   * Whether the graph took an event sent to it: true when, at the update that handled it, a
+   * state machine of the graph took (or delayed to its initiate interval) a transition for it;
+   * false when none did (the graph refused it: no state it is in answers it then, or the
+   * transition under way may not be interrupted); undefined while it waits for an update.
+   */
+  answered(name: string): boolean | undefined {
+    const id = this.#eventIndex.get(name.toLowerCase());
+    return id === undefined ? false : this.#answers.get(id);
+  }
+
+  /** The events of the last update that handled them, and whether a transition took each. */
+  readonly #answers = new Map<number, boolean>();
+  /** Set while an event is handled once a state machine takes a transition for it. */
+  readonly #handling = { taken: false };
+
+  /** Whether a state machine took a transition for the event handled last. */
+  #took(): boolean {
+    return this.#handling.taken;
   }
 
   /**
@@ -904,7 +926,11 @@ export class BehaviorRuntime {
     for (let round = 0; round < 4 && this.#queue.length > 0; round++) {
       const events = this.#queue;
       this.#queue = [];
-      for (const event of events) this.#handle(this.#root, event.id, new Set());
+      for (const event of events) {
+        this.#handling.taken = false;
+        this.#handle(this.#root, event.id, new Set());
+        this.#answers.set(event.id, this.#took() || this.#answers.get(event.id) === true);
+      }
     }
     if (handled) this.#activateIsActive(this.#root, new Set());
     const active = new Set<object>();
@@ -1528,13 +1554,17 @@ export class BehaviorRuntime {
       id === undefined ? -1 : this.#globalEvent(id, scope);
     // Events of the machine itself.
     if (event === local(node.returnToPreviousStateEventId) && machine.previous) {
+      this.#handling.taken = true;
       this.#change(node, machine, machine.previous, undefined);
       return;
     }
     if (event === local(node.randomTransitionEventId)) {
       const options = node.states.filter((state) => state.enable && state !== current);
       const pick = options[Math.floor(this.#random() * options.length)];
-      if (pick) this.#change(node, machine, pick, undefined);
+      if (pick) {
+        this.#handling.taken = true;
+        this.#change(node, machine, pick, undefined);
+      }
       return;
     }
     if (
@@ -1546,7 +1576,10 @@ export class BehaviorRuntime {
       const at = sorted.indexOf(current);
       let next = sorted[at + (higher ? 1 : -1)];
       if (!next && node.wrapAroundStateId) next = higher ? sorted[0] : sorted.at(-1);
-      if (next) this.#change(node, machine, next, undefined);
+      if (next) {
+        this.#handling.taken = true;
+        this.#change(node, machine, next, undefined);
+      }
       return;
     }
     const chosen =
@@ -1555,7 +1588,10 @@ export class BehaviorRuntime {
         machine,
         (transition) => this.#globalEvent(transition.eventId, scope) === event,
       ) ?? this.#chooseGlobal(node, machine, event);
-    if (chosen) this.#initiate(node, machine, chosen);
+    if (chosen) {
+      this.#handling.taken = true;
+      this.#initiate(node, machine, chosen);
+    }
   }
 
   /**
