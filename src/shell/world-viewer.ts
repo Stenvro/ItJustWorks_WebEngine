@@ -727,6 +727,9 @@ export class WorldViewer {
     triggerCount: (reference) =>
       (this.#play?.triggerCount(reference) ?? 0) +
       (this.#stage?.movers.triggerCount(reference) ?? 0),
+    openChanged: (reference, open) => {
+      this.#stage?.doors.setOpen(reference, open);
+    },
     nodeWorld: (reference, node) => {
       for (const cell of this.#cells.values()) {
         const placed = placedByReference(cell, reference);
@@ -2016,7 +2019,11 @@ export class WorldViewer {
           ...(graph && { graph }),
           ...(posed && { pose: posed.pose, poseNodes: posed.poseNodes }),
           ...(simulated && {
-            playback: openable(object, model.sequences?.byName.has('open') === true),
+            playback: openable(
+              object,
+              model.sequences?.byName.has('open') === true,
+              this.#session?.scriptsReady?.state.references.get(object.reference)?.openState,
+            ),
           }),
           ...(water && { water }),
           ...(directional && { directional }),

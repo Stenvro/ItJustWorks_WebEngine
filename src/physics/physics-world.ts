@@ -4,7 +4,7 @@
 // Platform-independent (Rapier's WebAssembly runs in browsers and in Node).
 
 import RAPIER from '@dimforge/rapier3d-compat';
-import type { ConstraintData } from '../formats/nif/types.ts';
+import type { ConstraintData, ConstraintFrame } from '../formats/nif/types.ts';
 import { identity, type Mat4, type Vec3 } from '../render/math.ts';
 import {
   HAVOK_SCALE,
@@ -85,6 +85,14 @@ export interface PlacedJoint {
   readonly a: PlacedBody;
   readonly b: PlacedBody;
   readonly constraint: CollisionConstraint;
+}
+
+/** A keyframed body pulling a placed body by a joint (PhysicsWorld.addHitch). */
+export interface Hitch {
+  readonly body: RAPIER.RigidBody;
+  /** Where the hitch is by the next step (game units). */
+  move(world: Mat4): void;
+  remove(): void;
 }
 
 /** The collision of one placed model (or landscape cell). */
@@ -320,6 +328,13 @@ const toHavok = (v: number): number => v / HAVOK_SCALE;
 interface RawJointLimits {
   readonly rawSet: {
     jointSetLimits(handle: number, axis: number, min: number, max: number): void;
+    jointConfigureMotorPosition(
+      handle: number,
+      axis: number,
+      target: number,
+      stiffness: number,
+      damping: number,
+    ): void;
   };
   readonly handle: number;
 }
@@ -1023,6 +1038,160 @@ export class PhysicsWorld {
     }
     this.#held.add(body.handle);
     this.#syncJoints([body]);
+  }
+
+  /**
+   * A keyframed body that pulls a placed body by a joint (a cart's tether to its horse:
+   * src/shell/actor-vehicles.ts): `at` is where it starts (game units), the frames are in game
+   * units, `a` in the pulled body's space and `b` in the hitch's (axes: the slide, the
+   * perpendicular); the pulled body slides along the axis between the limits and turns as the
+   * hitch does (held, or springing back to it: `turnSpring`). It has no shape.
+   */
+  addHitch(
+    pulled: PlacedBody,
+    at: Mat4,
+    joint: {
+      readonly a: ConstraintFrame;
+      readonly b: ConstraintFrame;
+      readonly minDistance: number;
+      readonly maxDistance: number;
+      readonly turnSpring?: { readonly stiffness: number; readonly damping: number };
+    },
+  ): Hitch {
+    const rigid = rigidPart(at);
+    const body = this.world.createRigidBody(
+      RAPIER.RigidBodyDesc.kinematicPositionBased()
+        .setTranslation(toHavok(rigid[12] ?? 0), toHavok(rigid[13] ?? 0), toHavok(rigid[14] ?? 0))
+        .setRotation(matrixQuaternion(rigid)),
+    );
+    const point = (v: Vec3): RAPIER.Vector => ({
+      x: toHavok(v[0]),
+      y: toHavok(v[1]),
+      z: toHavok(v[2]),
+    });
+    const frame = (axes: readonly [Vec3, Vec3, Vec3]): RAPIER.Rotation => {
+      const m = identity();
+      const [x, y] = axes;
+      const z = cross(x, y);
+      m.set([x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0], 0);
+      return matrixQuaternion(m);
+    };
+    // Along the slide (x) it slides between the limits, across it it is held; its turns spring
+    // back to how the two were joined (turnSpring; without one they are held). TODO(M13): the
+    // engine's joint (a prismatic one) holds them outright, and Havok's solver gives way to the
+    // wheels' extra pull and to the horse's sharp turns; Rapier's joints are stiff, so held the
+    // cart's rear wheels hung above the ground on any slope the horse did not share, and on
+    // Helgen's road's hairpin the horse's turn on the spot threw the cart over.
+    const turns = RAPIER.JointAxesMask.AngX | RAPIER.JointAxesMask.AngY | RAPIER.JointAxesMask.AngZ;
+    const locked =
+      RAPIER.JointAxesMask.LinY | RAPIER.JointAxesMask.LinZ | (joint.turnSpring ? 0 : turns);
+    const made = this.world.createImpulseJoint(
+      RAPIER.JointData.generic(
+        point(joint.a.pivot),
+        point(joint.b.pivot),
+        { x: 1, y: 0, z: 0 },
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-assignment -- a mask of its flags
+        locked,
+      ),
+      pulled.body,
+      body,
+      true,
+    );
+    made.setContactsEnabled(false);
+    made.setLocalFrame1(point(joint.a.pivot), frame(joint.a.axes));
+    made.setLocalFrame2(point(joint.b.pivot), frame(joint.b.axes));
+    const raw = made as unknown as RawJointLimits;
+    raw.rawSet.jointSetLimits(
+      raw.handle,
+      RAPIER.JointAxis.LinX,
+      toHavok(joint.minDistance),
+      toHavok(joint.maxDistance),
+    );
+    // The turns spring back (accelerations: stiffness in 1/s², damping in 1/s).
+    const spring = joint.turnSpring;
+    if (spring) {
+      for (const axis of [RAPIER.JointAxis.AngX, RAPIER.JointAxis.AngY, RAPIER.JointAxis.AngZ]) {
+        raw.rawSet.jointConfigureMotorPosition(
+          raw.handle,
+          axis,
+          0,
+          spring.stiffness,
+          spring.damping,
+        );
+      }
+    }
+    pulled.body.wakeUp();
+    const world = this.world;
+    return {
+      body,
+      move(to: Mat4): void {
+        const pose = rigidPart(to);
+        body.setNextKinematicTranslation({
+          x: toHavok(pose[12] ?? 0),
+          y: toHavok(pose[13] ?? 0),
+          z: toHavok(pose[14] ?? 0),
+        });
+        body.setNextKinematicRotation(matrixQuaternion(pose));
+      },
+      remove(): void {
+        if (made.isValid()) world.removeImpulseJoint(made, true);
+        if (body.isValid()) world.removeRigidBody(body);
+      },
+    };
+  }
+
+  /**
+   * Gives a simulated body of a placement other physical properties (a tethered cart's:
+   * src/shell/actor-vehicles.ts): its mass (the inertia scaled with it), its shapes' friction,
+   * its damping and how much gravity pulls it.
+   */
+  tuneBody(
+    placed: PlacedCollision,
+    target: PlacedBody,
+    tuning: {
+      readonly mass?: number;
+      readonly friction?: number;
+      readonly linearDamping?: number;
+      readonly angularDamping?: number;
+      readonly gravityScale?: number;
+    },
+  ): void {
+    const { body, data } = target;
+    if (tuning.mass !== undefined && data.mass > 0) {
+      const s = placed.scale / HAVOK_SCALE;
+      const share = (tuning.mass / data.mass) * placed.scale * placed.scale;
+      const [ix, iy, iz] = data.inertia;
+      body.setAdditionalMassProperties(
+        tuning.mass,
+        { x: data.centerOfMass[0] * s, y: data.centerOfMass[1] * s, z: data.centerOfMass[2] * s },
+        { x: ix * share, y: iy * share, z: iz * share },
+        { x: 0, y: 0, z: 0, w: 1 },
+        true,
+      );
+    }
+    if (tuning.friction !== undefined) {
+      for (let i = 0; i < body.numColliders(); i++) {
+        body.collider(i).setFriction(Math.sqrt(Math.max(0, tuning.friction)));
+      }
+    }
+    if (tuning.linearDamping !== undefined) body.setLinearDamping(tuning.linearDamping);
+    if (tuning.angularDamping !== undefined) body.setAngularDamping(tuning.angularDamping);
+    if (tuning.gravityScale !== undefined) body.setGravityScale(tuning.gravityScale, true);
+  }
+
+  /** Two sets of colliders do not touch each other (or do again: `ignored` false). */
+  ignoreBetween(
+    a: readonly RAPIER.Collider[],
+    b: readonly RAPIER.Collider[],
+    ignored = true,
+  ): void {
+    for (const first of a) {
+      for (const second of b) {
+        const key = pairKey(first.handle, second.handle);
+        if (ignored) this.#ignoredPairs.add(key);
+        else this.#ignoredPairs.delete(key);
+      }
+    }
   }
 
   /**

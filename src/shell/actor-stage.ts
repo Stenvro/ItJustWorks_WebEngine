@@ -421,8 +421,13 @@ export class ActorStage {
       renderer: options.renderer,
       movers: this.movers,
       get: (reference) => this.#actors.get(reference),
-      ...(options.navmeshes && { navmeshes: options.navmeshes }),
       ...(options.adoptVehicle && { adopt: options.adoptVehicle }),
+      colliders: (actor) => {
+        const own = this.movers.colliderOf(actor);
+        return own ? [own, ...this.bodies.colliders(actor)] : this.bodies.colliders(actor);
+      },
+      door: (door, actor) => this.doors.passage(door, actor),
+      actors: () => this.#actors.values(),
       ...(options.player && { player: options.player }),
       evaluate: (actor) => {
         this.ai.evaluate(actor);
