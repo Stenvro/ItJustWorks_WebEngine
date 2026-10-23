@@ -421,14 +421,35 @@ while its place loads (`SetLoadDoorInfo(show, text)`).
 
 ## Menu mode
 
-While a menu that pauses the game is open (a message box now; the journal, the inventory and
-the game's other menus as they come), the game is in menu mode (`PlayMode`, `GameSession.
-menuMode`): the frames' game clock stands still (`main.ts`), so the player, the actors'
-animations, the particles and the sky's hour stop; the scripts' clocks stop too, and only
-`Utility.WaitMenuMode` counts on (`PapyrusScheduler.wallTime`; `Utility.Wait` waits out the
-menu), `Utility.IsInMenuMode` is true; the sound categories the data pauses during menus
-(`AudioCategoryPausedDuringMenu`, `...Fade`, `...Load`) go quiet while music and the interface
-play on; the mouse leaves the 3D view for the menu's cursor and comes back after.
+Which menus pause the game (observed in the original): each menu's constructor sets its
+flags, one of them "pauses the game"; the interface counts the open menus that have it, and the
+game is paused while that count is above zero. These pause it: the tween menu, the inventory,
+magic, favorites, container, barter and gift menus, the map, the journal (which also shows a
+frozen picture of the world behind it), the skills menu, level up, books, lockpicking, the
+console, message boxes, sleep and wait, training, tutorials, the race menu and the loading menu.
+These do not: the dialogue menu and the crafting menu (the world goes on while the player talks
+or works at a bench, and those fighting them may strike them meanwhile), nor the HUD, the fader,
+the cursor and the mist menu.
+
+While a menu that pauses the game is open, the game is in menu mode (`PlayMode`, `GameSession.
+menuMode`): the frames' game clock stands still (`main.ts`), so the player, the actors (their
+AI, combat, movement, physics and animations), the particles and the sky's hour stop; the
+scripts' clocks stop too, and only `Utility.WaitMenuMode` counts on (`PapyrusScheduler.
+wallTime`; `Utility.Wait` waits out the menu), `Utility.IsInMenuMode` is true; the sound
+categories the data pauses during menus (`AudioCategoryPausedDuringMenu`, `...Fade`, `...Load`)
+go quiet while music and the interface play on; the mouse leaves the 3D view for the menu's
+cursor and comes back after. The world is still drawn behind the menu each frame, as it stood.
+The menus that do not pause (`GameMenus` opens crafting with `pauses` false) only take the
+mouse and the keys. A strike the engine resolved before the menu opened still lands: its blow
+was struck (its HitFrame) in the last frame before the menu, though its damage, worked out over
+a few awaits, may show a moment after the menu opens. TODO(M13): whether the player's own idle
+animates behind a pausing menu (the engine's paused frame update was not read).
+
+A guard's arrest (its force greet, `src/shell/actor-crime.ts`) waits until no one fights the
+player: the dialogue menu does not pause the game, so a conversation opened mid-fight (a guard
+struck, its fellows joining in) left the player struck by the others while it was open. The
+guards that took up such a fight accept the player's yield as the one struck does (weapon
+away, no blow for a while: AcceptYield), then the arrest follows.
 
 ## Message boxes
 
