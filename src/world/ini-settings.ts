@@ -170,6 +170,8 @@ export const INI_DEFAULTS = {
     fDecapInitialSpeed: 250,
     // The player's attack mounted aims at actors this near (src/shell/actor-combat.ts).
     fMountedAttackRange: 135,
+    // A fighter's advance from afar sprints (src/shell/actor-combat-ai.ts; the executable's).
+    bCombatPathSprinting: 1,
     f1PArrowTiltUpAngle: 2,
     f1PBoltTiltUpAngle: 1,
     f3PArrowTiltUpAngle: 2.5,

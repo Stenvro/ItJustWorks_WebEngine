@@ -5,7 +5,7 @@ import {
   type Navmesh,
   type NavmeshTriangle,
 } from '../world/navmesh.ts';
-import { findPath, type NavmeshSet } from './pathfinding.ts';
+import { findPath, straightReach, type NavmeshSet } from './pathfinding.ts';
 
 type Point = [number, number, number];
 
@@ -207,5 +207,27 @@ describe('findPath', () => {
       blocked: [{ at: [50, 250, 0], radius: 40 }],
     });
     expect(elsewhere?.complete).toBe(true);
+  });
+});
+
+describe('straightReach', () => {
+  it('reaches the whole way along a clear line', () => {
+    const set = setOf([gridMesh(1, L_SQUARES)]);
+    expect(straightReach(set, [10, 50, 0], [290, 50, 0], 10)).toBeCloseTo(280);
+  });
+
+  it('stops where the line leaves the navmesh, its radius kept off the edge', () => {
+    const set = setOf([gridMesh(1, L_SQUARES)]);
+    // North from the first square: off the mesh past y 100, within a sample of its edge.
+    const reach = straightReach(set, [50, 20, 0], [50, 300, 0], 10);
+    expect(reach).toBeGreaterThanOrEqual(48);
+    expect(reach).toBeLessThanOrEqual(80);
+    // Along the bottom edge, 5 units in: its radius to the side leaves the mesh at once.
+    expect(straightReach(set, [10, 5, 0], [290, 5, 0], 10)).toBe(0);
+  });
+
+  it('counts the whole way off the navmeshes', () => {
+    const set = setOf([gridMesh(1, L_SQUARES)]);
+    expect(straightReach(set, [-500, -500, 0], [-500, 0, 0], 10)).toBeCloseTo(500);
   });
 });

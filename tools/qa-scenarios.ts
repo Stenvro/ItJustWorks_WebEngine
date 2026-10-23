@@ -46,6 +46,49 @@ const BANDITS = [0x3de91, 0x3dea5, 0x9a549];
 const GUARDS = [0xaa8fc, 0xaa8fd, 0xaa901];
 
 /**
+ * The fight's setup: god mode, the six placed at the player (bandits 400 units to one side,
+ * guards to the other), each bandit set on a guard and back. `meleeOnly`: their ammunition is
+ * taken first (a bow without arrows is no option), so all six close in.
+ */
+async function fightSetup(ctx: ScenarioContext, meleeOnly: boolean): Promise<void> {
+  await ctx.console('tgm');
+  const placed = await ctx.page.eval<string>(
+    `(async () => {
+      const play = engineDev.play();
+      const rt = play.session.scriptsReady;
+      const db = await play.session.db;
+      const at = await rt.placement(0x14);
+      // Not on top of one another: bandits 400 units to one side, guards to the other.
+      const place = async (base, side, i) => {
+        const reference = await rt.placeAt(base, 0x14, 1);
+        const [x, y, z] = at.position;
+        rt.move(reference, [x + side * 400, y + (i - 1) * 160, z + 20], [...at.rotation], at.cell, at.world);
+        rt.world.moved?.(reference);
+        if (${String(meleeOnly)}) {
+          for (const [item, count] of await rt.inventory(reference)) {
+            if ((await db.get(item))?.type === 'AMMO') await rt.removeItem(reference, rt.formHandle(item), count, true, undefined);
+          }
+        }
+        return reference;
+      };
+      const bandits = []; const guards = [];
+      for (const [i, base] of ${JSON.stringify(BANDITS)}.entries()) bandits.push(await place(base, 1, i));
+      for (const [i, base] of ${JSON.stringify(GUARDS)}.entries()) guards.push(await place(base, -1, i));
+      window.__qaFight = { bandits, guards };
+      return bandits.concat(guards).map((r) => r.toString(16)).join(',');
+    })()`,
+    60000,
+  );
+  ctx.note(`placed ${placed}${meleeOnly ? ' (their ammunition taken)' : ''}`);
+  await sleepMs(4000);
+  await ctx.page.eval(
+    `(() => { const sw = engineDev.play().session.scriptWorld; const f = window.__qaFight; f.bandits.forEach((b, i) => { const g = f.guards[i]; sw.startCombat(b, g); sw.startCombat(g, b); }); return true; })()`,
+    20000,
+  );
+  ctx.note('combat started: each bandit against a guard');
+}
+
+/**
  * The follow bot (in the page): it walks the player to the nearest target of the active quests'
  * shown objectives (the compass's quest marker: "Follow Ralof", "Follow Hadvar", the keep's
  * door), along the navmesh (src/ai/pathfinding.ts), through the load door on the way when the
@@ -257,36 +300,17 @@ export const SCENARIOS: readonly Scenario[] = [
     hour: 12,
     bootSeconds: 240,
     seconds: 150,
-    setup: async (ctx) => {
-      await ctx.console('tgm');
-      const placed = await ctx.page.eval<string>(
-        `(async () => {
-          const rt = engineDev.play().session.scriptsReady;
-          const at = await rt.placement(0x14);
-          // Not on top of one another: bandits 400 units to one side, guards to the other.
-          const place = async (base, side, i) => {
-            const reference = await rt.placeAt(base, 0x14, 1);
-            const [x, y, z] = at.position;
-            rt.move(reference, [x + side * 400, y + (i - 1) * 160, z + 20], [...at.rotation], at.cell, at.world);
-            rt.world.moved?.(reference);
-            return reference;
-          };
-          const bandits = []; const guards = [];
-          for (const [i, base] of ${JSON.stringify(BANDITS)}.entries()) bandits.push(await place(base, 1, i));
-          for (const [i, base] of ${JSON.stringify(GUARDS)}.entries()) guards.push(await place(base, -1, i));
-          window.__qaFight = { bandits, guards };
-          return bandits.concat(guards).map((r) => r.toString(16)).join(',');
-        })()`,
-        60000,
-      );
-      ctx.note(`placed ${placed}`);
-      await sleepMs(4000);
-      await ctx.page.eval(
-        `(() => { const sw = engineDev.play().session.scriptWorld; const f = window.__qaFight; f.bandits.forEach((b, i) => { const g = f.guards[i]; sw.startCombat(b, g); sw.startCombat(g, b); }); return true; })()`,
-        20000,
-      );
-      ctx.note('combat started: each bandit against a guard');
-    },
+    setup: (ctx) => fightSetup(ctx, false),
+  },
+  {
+    name: 'combat-melee',
+    description:
+      'The same fight in Riverwood at 12:00 with their arrows taken: three bandits and three Imperial guards close in with blades (advancing to places round their targets, circling, falling back, backing off).',
+    start: { kind: 'coc', cell: 'Riverwood' },
+    hour: 12,
+    bootSeconds: 240,
+    seconds: 150,
+    setup: (ctx) => fightSetup(ctx, true),
   },
   {
     name: 'opening',

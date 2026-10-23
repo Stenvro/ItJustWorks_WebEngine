@@ -244,6 +244,22 @@ export class CharacterBody {
     physics.register(this.#collider, Layer.charController, owner);
   }
 
+  /**
+   * A body of its own actor (its ragdoll's bones, what it holds or wears that has collision):
+   * the engine's character and its bodies share a collision system group, which does not
+   * collide with itself, so they never block or push its controller. (A kinematic shape of an
+   * archer's own, inside its capsule, pushed it out every step: it slid about at up to 600
+   * units a second while it stood.)
+   */
+  #ownBody(collider: RAPIER.Collider): boolean {
+    const owner = this.physics.ownerOf(collider);
+    return (
+      this.owner.kind === 'actor' &&
+      owner?.kind === 'actor' &&
+      owner.reference === this.owner.reference
+    );
+  }
+
   /** Centre of the capsule (Havok units) for feet at `feet` (game units). */
   #center(feet: Vec3): RAPIER.Vector {
     return {
@@ -354,7 +370,7 @@ export class CharacterBody {
         undefined,
         own,
         undefined,
-        (collider) => filter(collider),
+        (collider) => filter(collider) && !this.#ownBody(collider),
       );
       if (contacts === 0) return;
       const next = { x: at.x + push.x, y: at.y + push.y, z: at.z + push.z };
@@ -525,7 +541,10 @@ export class CharacterBody {
     const filter = this.physics.filterFor(Layer.charController);
     const ignored = this.ignored;
     const predicate = (collider: RAPIER.Collider): boolean =>
-      collider.handle !== own.handle && !ignored.has(collider.handle) && filter(collider);
+      collider.handle !== own.handle &&
+      !ignored.has(collider.handle) &&
+      filter(collider) &&
+      !this.#ownBody(collider);
     const wasGrounded = this.#grounded;
     this.#controller.computeColliderMovement(
       own,

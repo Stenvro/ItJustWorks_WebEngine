@@ -162,6 +162,11 @@ through the edges' middles, a player walks around it); and a few steps higher th
   nor a projectile; a prop (L_PROPS) ×3 up to half that mass, else ×0.1; a trap ×0.1; anything
   else ×2. Rapier's own impulses on dynamic bodies are off; the controller still stops at what it
   does not push.
+- **Its own bodies** (its ragdoll's bones, a held or worn object with collision) never block or
+  push its controller: Havok's character and its bodies share a collision system group that
+  does not collide with itself. A kinematic shape of an archer's own inside its capsule pushed
+  the capsule out every step, so it slid about at 200–600 units a second while it stood
+  (`CharacterBody`: what it moves against and recovers from leaves out its own actor's).
 - **Speeds** come from the movement types (MOVT): NPCDefault walking and running,
   NPCSprinting (only forward), NPCSneaking, NPCSwimming; `bAlwaysRunByDefault`, Run walks,
   Caps Lock toggles. Air control is not documented: the speed at take-off is kept.
