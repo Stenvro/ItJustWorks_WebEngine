@@ -20,6 +20,11 @@ export const RecordFlag = {
   persistent: 0x400, // REFR/ACHR
   initiallyDisabled: 0x800,
   ignored: 0x1000,
+  /**
+   * REFR: a sky marker (xEdit's name), a point in the air: a flier flies to it rather than
+   * landing there (docs/ai.md, "Flying").
+   */
+  skyMarker: 0x2000,
   visibleWhenDistant: 0x8000,
   /** Base objects (STAT, FURN, ...): an editor marker, never drawn in game. */
   isMarker: 0x800000,

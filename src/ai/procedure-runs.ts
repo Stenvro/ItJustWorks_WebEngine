@@ -9,6 +9,7 @@ import { IdleCollectionFlag } from './idle-records.ts';
 import { sameSpace } from './package-start.ts';
 import { TargetType } from './package-records.ts';
 import { ObjectType } from './object-types.ts';
+import { ORBIT_PROCEDURE } from './flight.ts';
 import type {
   PackagePlace,
   ProcedureResult,
@@ -127,8 +128,17 @@ async function goTo(
 ): Promise<boolean> {
   const here = run.body.position();
   const reach = arrive ?? (await destinationRadius(run, place.reference, place.radius));
-  if (here && horizontal(here, place.position) <= reach) return true;
-  return run.body.travel(place.position, run.gait, reach, place.space, options);
+  // A flier in the air is not there by standing under it: it flies there, or lands there.
+  const airborne = run.body.airborne?.() === true;
+  if (here && !airborne && horizontal(here, place.position) <= reach) return true;
+  const target = place.reference;
+  return run.body.travel(
+    place.position,
+    run.gait,
+    reach,
+    place.space,
+    target === undefined ? options : { ...options, target },
+  );
 }
 
 /**
@@ -246,6 +256,8 @@ const patrol: ProcedureRunner = async (run) => {
     next = await run.mind.linked(next, 0);
   }
   let index = 0;
+  // A flier whose patrol begins at a sky marker cruises from there at once.
+  if (points[0] !== undefined) await run.body.patrolStart?.(points[0]);
   if (run.inputs.bool(3)) {
     const here = run.body.position();
     let nearest = Infinity;
@@ -272,7 +284,8 @@ const patrol: ProcedureRunner = async (run) => {
       const radius = await destinationRadius(run, point, pointRadius);
       const here = run.body.position();
       if (!here || horizontal(here, at.position) > radius) spent = true;
-      if (!(await goTo(run, { position: at.position, radius, space: at.space }, radius, options))) {
+      const place = { position: at.position, radius, space: at.space, reference: point };
+      if (!(await goTo(run, place, radius, options))) {
         // Not reached (blocked): a moment, then again; given up, on to the next.
         await run.wait(IDLE_SECONDS);
         spent = true;
@@ -417,21 +430,61 @@ function pointIn(run: ProcedureRun, place: PackagePlace): Vec3 {
 }
 
 /**
- * A point to wander to within a place: at least `least` from where the actor stands (Min
- * Wander Distance), as far as the place reaches (a few tries, else the farthest found).
+ * Where a wanderer walks next (observed in the original: its Wander, and a Sandbox's
+ * wandering, which runs a Wander in the sandbox's place with its Min Wander Distance). Its place
+ * reaches at least fAIDistanceRadiusMinLocation; outside it, it first goes into it (to its middle).
+ *
+ * - **Its first walk** (`last` undefined): a random point of the navmesh within the place that it
+ *   can walk to, at least its Min Wander Distance from it (the pathing's random location).
+ * - **Each walk after:** from the place's middle, the way from where its last walk led towards
+ *   the middle, turned at random up to 45° either side, as far as a random share of the radius:
+ *   across the place from where it was, at the middle's height. A point it cannot walk to (off
+ *   the navmesh, beyond a fence, on another island) is not taken: the engine's path request
+ *   finds no way and it asks again (inferred: TODO(M13), how its pathing answers a goal off its
+ *   navmesh is not read); here a few points are tried at once.
+ *
+ * Undefined: no point found (it waits a moment and tries again). Before, any point within the
+ * radius was taken, unchecked (inside a house, behind a fence).
  */
-function wanderPoint(run: ProcedureRun, place: PackagePlace, least: number): Vec3 {
+function wanderPoint(
+  run: ProcedureRun,
+  place: PackagePlace,
+  least: number,
+  last: Vec3 | undefined,
+): Vec3 | undefined {
   const here = run.body.position();
-  let best = pointIn(run, place);
-  if (!here) return best;
-  for (let i = 0; i < WANDER_TRIES && horizontal(here, best) < least; i++) {
-    const next = pointIn(run, place);
-    if (horizontal(here, next) > horizontal(here, best)) best = next;
+  const radius = Math.max(place.radius, atPlace(run));
+  if (!here) return pointIn(run, { ...place, radius });
+  // Outside its place it first goes into it.
+  if (horizontal(here, place.position) > radius) return place.position;
+  const mind = run.mind;
+  if (last === undefined) {
+    if (!mind.randomPoint) return pointIn(run, { ...place, radius });
+    return mind.randomPoint(run.actor, place.position, radius, least, () => run.random());
   }
-  return best;
+  const [cx, cy, cz] = place.position;
+  const dx = cx - last[0];
+  const dy = cy - last[1];
+  const length = Math.hypot(dx, dy);
+  const [ux, uy] = length > 1e-6 ? [dx / length, dy / length] : [0, 1];
+  for (let attempt = 0; attempt < WANDER_TRIES; attempt++) {
+    const turn = (run.random() - 0.5) * (Math.PI / 2);
+    const reach = run.random() * radius;
+    const cos = Math.cos(turn);
+    const sin = Math.sin(turn);
+    const point: Vec3 = [
+      cx + (ux * cos + uy * sin) * reach,
+      cy + (uy * cos - ux * sin) * reach,
+      cz,
+    ];
+    if (!mind.walkable) return point;
+    const on = mind.walkable(run.actor, point);
+    if (on) return on;
+  }
+  return undefined;
 }
 
-/** A wander point is looked for this many times to lie Min Wander Distance away. */
+/** Points a wanderer tries at once before it waits and asks again. */
 const WANDER_TRIES = 8;
 /** A wanderer is at its point within this (units). */
 const WANDER_ARRIVE = 48;
@@ -464,8 +517,15 @@ const wander: ProcedureRunner = async (run) => {
   if (!place) return hold(run);
   const least = numberIn(run, 3) ?? settingsOf(run).wanderDefaultMinDist;
   const energy = await energyOf(run);
+  let last: Vec3 | undefined;
   while (!run.stopped()) {
-    await run.body.travel(wanderPoint(run, place, least), 'walk', WANDER_ARRIVE);
+    const point = wanderPoint(run, place, least, last);
+    if (!point) {
+      await run.wait(IDLE_SECONDS);
+      continue;
+    }
+    last = point;
+    await run.body.travel(point, 'walk', WANDER_ARRIVE);
     // At least until the next update (a pause of 0 is no endless loop).
     await run.wait(wanderPause(run, energy));
   }
@@ -568,6 +628,8 @@ const sandboxing: ProcedureRunner = async (run) => {
   const energy = Math.min(100, Math.max(0, numberIn(run, 8) ?? (await energyOf(run))));
   const least = numberIn(run, 10) ?? settingsOf(run).wanderDefaultMinDist;
   const radius = Math.max(place.radius, atPlace(run));
+  // Where its last walk led (its wandering goes on across the place from there).
+  let lastWalk: Vec3 | undefined;
   while (!run.stopped()) {
     // An active actor (high energy) moves on sooner.
     const stay =
@@ -599,8 +661,14 @@ const sandboxing: ProcedureRunner = async (run) => {
         await run.wait(IDLE_SECONDS);
       }
     } else if (choices > 0) {
-      await run.body.travel(wanderPoint(run, place, least), 'walk', WANDER_ARRIVE);
-      await waitFor(run, stay / 4);
+      const point = wanderPoint(run, place, least, lastWalk);
+      if (point) {
+        lastWalk = point;
+        await run.body.travel(point, 'walk', WANDER_ARRIVE);
+        await waitFor(run, stay / 4);
+      } else {
+        await run.wait(IDLE_SECONDS);
+      }
     } else {
       await waitFor(run, stay / 4);
     }
@@ -651,9 +719,11 @@ const useFurniture =
     if (run.stopped()) return 'failure';
     const at = first === undefined ? undefined : await run.mind.placement(first);
     if (at) {
+      // To the furniture itself (a flier lands on its perch: observed in the original, the
+      // Sit's way there is a travel to the furniture, landed on in the air).
       await goTo(
         run,
-        { position: at.position, radius: 0 },
+        { position: at.position, radius: 0, reference: first },
         settingsOf(run).furnitureDestinationRadius,
       );
       if (await sit()) return inIt();
@@ -1033,20 +1103,19 @@ const fleeAway: ProcedureRunner = async (run) => {
   return arrived ? 'success' : 'failure';
 };
 
-/** An orbit without radii circles this far from its place (units). TODO(M13): the engine's. */
-const ORBIT_RADIUS = 2048;
 /** A hover faces this far ahead along its place's heading (units). */
 const HOVER_FACE = 1024;
 
 /**
- * Hover: a flier flies to its place, Height above it, and hovers there facing the place's
- * heading while the package runs (src/shell/actor-flight.ts); one that cannot fly holds its
- * place.
+ * Hover (observed in the original): a flier flies to its place, Height above it (0 without
+ * one), and hovers there facing the place's heading; the procedure is done once it hovers within
+ * the place's radius, and it stays hovering (src/shell/actor-flight.ts). One that cannot fly
+ * holds its place.
  */
 const hover: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
   const body = run.body;
-  if (!place || !body.fly || body.flies?.() !== true) return hold(run);
+  if (!place || !body.hover || body.flies?.() !== true) return hold(run);
   const height = run.inputs.number(1, 0);
   const at: Vec3 = [place.position[0], place.position[1], place.position[2] + height];
   const heading = place.heading ?? body.heading();
@@ -1055,31 +1124,25 @@ const hover: ProcedureRunner = async (run) => {
     at[1] + Math.cos(heading) * HOVER_FACE,
     at[2],
   ];
-  body.fly({ kind: 'hover', at, face });
-  try {
-    return await hold(run);
-  } finally {
-    body.fly(undefined);
-  }
+  return (await body.hover(at, face, place.radius)) ? 'success' : 'failure';
 };
 
 /**
- * Orbit: a flier circles its place between the inner and outer radius (their middle), Height
- * above it, while the package runs; one that cannot fly holds its place.
+ * Orbit (observed in the original): a flier circles its place, Height above it (1000 without
+ * one), at a radius at random between its inner and outer radius (3000 and 3500 without them),
+ * lap after lap while the package runs; one that cannot fly holds its place.
  */
 const orbit: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
   const body = run.body;
   if (!place || !body.fly || body.flies?.() !== true) return hold(run);
-  const inner = run.inputs.number(1, 0);
-  const outer = run.inputs.number(2, 0);
-  const radius = inner > 0 || outer > 0 ? (inner + Math.max(inner, outer)) / 2 : ORBIT_RADIUS;
+  const inner = run.inputs.number(1, ORBIT_PROCEDURE.inner);
+  const outer = run.inputs.number(2, ORBIT_PROCEDURE.outer);
   body.fly({
     kind: 'orbit',
     center: place.position,
-    radius: Math.max(radius, place.radius),
-    height: run.inputs.number(3, 0),
-    clockwise: run.random() < 0.5,
+    radius: between(run, inner, outer),
+    height: run.inputs.number(3, ORBIT_PROCEDURE.height),
   });
   try {
     return await hold(run);

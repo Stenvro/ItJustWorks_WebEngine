@@ -424,7 +424,11 @@ while a clip moves it) an actor stands to its graph. Held by an animation-driven
 AI sends it away it is told moveStart (which ends such idles); as the graph lets go
 (bAnimationDriven back to 0) it is told again what it does (`Locomotion.resume`: the engine's
 re-performed action after an idle stop). Riders copy the horse's HorseSpeedSampled and
-iSyncIdleLocomotion (`src/shell/actor-mounts.ts`).
+iSyncIdleLocomotion (`src/shell/actor-mounts.ts`). An NPC's falls and landings are the
+engine's ActionFall and ActionLand through its idle tree (0_master's JumpFall only falling faster
+than 350 units a second, its landings only in its jump state: [ai.md](ai.md#combat-movement)),
+not a JumpFall for every step without ground; its turning is the engine's angle controller (the
+same section), so TurnDelta rises and falls smoothly instead of dropping to 0 between steps.
 
 What this fixed (gliding): turning in place had no turnLeft / turnRight / turnStop at all, so
 standing actors and horses rotated stiffly on their idles (measured: a Whiterun guard now plays
@@ -471,6 +475,60 @@ parameter moves the character at) and gives the blend parameter that moves it at
 gets 125.8, its walk (125.11) with 0.8 % of its slow trot, as in the engine; slower or faster,
 the parameter differs more from the speed (a horse at 60 units a second gets 119.7: its walk
 played slower, not a blend with standing). Before, Speed went through as it was.
+
+The lookup itself (observed in the original: the speed sampler database's lookup, behind
+the modifier and the [Animation] bUseSpeedSampler switch): the state's table by iState (none:
+Speed itself); of its curves **one**, the one for exactly that direction, else the next higher,
+and past the last (a direction a hair left of ahead, 0.99) the first: the curves are not
+blended. In that curve the first point at least as fast as the goal, and the parameter linear
+between it and the point before (before the first, a point at speed 0 with parameter 0).
+**Faster than the curve's last point, the goal speed itself.** The horse's curves end at 321
+units a second (parameter 324.5); its run blend's child sits at 450, its gallop's speed. Held
+at the last parameter (ours before), a galloping horse played its trot with a seventh of its
+run at 450 units a second; now it gets 450 and gallops. The same holds for every table: a
+character running at 370 against state 0's curve that ends at 306.
+
+### Horses
+
+The horse's graph (`meshes\actors\horse\behaviors\horsebehavior.hkx`) is driven as every
+actor's is, by its movement (Speed, Direction, TurnDelta, IsSprinting), whether it walks free,
+tows a cart or carries a rider. HorseSpeedSampled is the output of the graph's own
+BSSpeedSamplerModifier (in its root modifier list, bound to iState, Direction, Speed), which a
+rider's graph copies (above); in the engine the name appears only in its table of graph
+variable names (observed in the original), no other writer of it was found. Its locomotion:
+
+- **LocomotionState** plays ForwardLocomotionBlend_Horse, a syncing parametric blend on
+  HorseSpeedSampled of five syncing turn blends: WalkForwardSlow (5: the walk at 0.04 of its
+  speed), WalkForward (125.11), TrotForwardSlow (214: the trot at 0.704), TrotForward (303.9)
+  and RunForward (450), each left, straight and right on TurnDeltaDamped (135, 0, −135; the
+  walk's three are the same clip, the trot's and run's have clips of their own). TurnDeltaDamped
+  is TurnDelta through a PID damping modifier (0.2, 0.015, −0.1). The speed sampler gives a
+  walking horse (125) 125.8: 0.8 % of the slow trot in its walk, in step with it (above,
+  Syncing blenders); 214 trots slowly, 302 trots, 450 gallops (it is past the speed table's last
+  point, 321: the goal itself).
+- **SprintState** (IsSprinting, SprintStart / SprintStop) plays SprintForward, tagged
+  iState_HorseSprint (61: its movement type's sprint speeds).
+- **Standing:** looping turns on TurnDelta (TurnLoopingL / R at turnSpeedMult, |TurnDelta| /
+  112.5, by an expression), the idles; the canned turns (TurnCanned L / R, 90 and 180) are
+  animation-driven.
+- **Saddle_offset** (SaddleOffsetBlend) is an additive clip on the SaddleBone alone (4.2 units
+  forward, 0.8 up; its other tracks hold nothing), blended beside the whole body by the
+  SaddleBone's weight: it moves no body bone and gives no root motion. TODO(M13): Havok's
+  normalisation of an additive child in a non-parametric blender (ours halves it with the body's
+  weight of 1: the saddle sits 2.1 units back).
+
+Measured with the QA monitors (docs/qa.md; main before and after, the same scenarios): in the
+opening the cart horses' trot restarts and their walk at 900 to 1,300 units a second of root
+motion are gone (0 horse anomalies; the carts' velocity spikes and jitter at the Alduin attack
+went from 15 to 0 in that run), in `creatures` the animals' turn chatter went from 12 to 0,
+their state chatter from 4 to 0, in `creature-combat` the turn chatter from 13 to 2, in
+`combat` (people: the same syncing blenders and turn rates) clip restarts from 7 to 0, state
+chatter from 11 to 1, turn chatter from 39 to 5. What made the horses walk wrong, besides the
+syncing blenders: the player's horse steered round its own
+rider (docs/ai.md, "Paths": the avoidance), TurnDelta read from one physics step of a frame of
+several (docs/ai.md, "Movement"), IsSprinting from the speed physics made of a sprint (a horse
+galloping into a fence flipped in and out of SprintState), and the speed sampler held at its
+last parameter past the table (a gallop played as a trot).
 
 TODO(M13): the actions are not resolved through the idle tree yet (the vanilla events are sent:
 a rider's graph gets moveStart, and SprintStart is not refused while sneaking or blocking); the
@@ -1072,8 +1130,11 @@ them by name (a variable keeps the first file's initial value). Each frame:
    taken; clips advance by their playback speed (looping, single play, ping-pong, user
    controlled; an enforced duration plays the clip in that time) and raise their triggers
    and the animation's annotations as they pass them (unless the clip's flag 0x10 says not
-   to); a syncing blender (flag 0x1) plays its clips at one phase, advanced by the time over
-   their weighted duration; modifiers run: expressions assign variables or raise events
+   to); a syncing blender (flag 0x1) keeps a cycle of its own and plays everything it blends
+   at that phase, advanced by the time over its children's weighted cycle (a clip's at its
+   playback speed, a blender's its children's weighted); a syncing blender within one plays
+   at the outer one's phase ([Syncing blenders](#syncing-blenders)); modifiers run:
+   expressions assign variables or raise events
    (once, on true, false to true, every frame once true), BSIsActiveModifier sets its bound
    flags while active, timers, event-driven modifiers, events every N events, damping (PID),
    value interpolation, events from ranges, modify-once modifiers.
@@ -1166,6 +1227,35 @@ behavior files: `node tools/behavior-run.ts --transitions`):
   (0x20) does not move it. A clip that joins a syncing blender's cycle (a horse's trot joining its
   walk) starts at the cycle's phase without moving the character from its start (it jumped a
   stride ahead), as does a clip started at a fraction.
+
+### Syncing blenders
+
+A blender with the sync flag (hkbBlenderGenerator FLAG_SYNC, 0x1) plays what it blends in step:
+one cycle for all its children. Ours (`BehaviorRuntime`, `#sync`): the blender keeps a phase of
+its own (0..1), advanced every update by the time over the weighted cycle of its active
+children (a clip's duration, cropped or enforced, over its playback speed; a blender's, its own
+children's weighted; a state machine's, its current state's). Every child plays at that phase:
+a clip's time is the phase times its duration; a syncing blender within takes the phase from
+the outer one instead of advancing its own (the horse's speed blend, ForwardLocomotionBlend_Horse,
+holds five syncing turn blends: walk-slow, walk, trot-slow, trot and run, each left, straight
+and right on TurnDeltaDamped at 135, 0 and −135; of the vanilla graphs' 1,358 syncing blenders in
+428 behavior files, 162 hold syncing blenders of their own, in 37 files: the characters' MT,
+weapon, bow, magic and block locomotion, the horse, the mudcrab, draugr, troll, giant, dragon,
+werewolf and others). A child whose weight comes back above zero is
+activated anew and starts at the blender's phase; the cycle goes on. A blender entered anew
+starts where its clips were started (a transition that syncs), else at 0.
+
+**What this fixed.** The phase was read from the first active child's clip. In a turn blend
+whose damped TurnDelta wavers about zero, the side children take turns: right and straight, then
+straight and left. Each time the right child came in, its clip was new (phase 0): the whole walk
+started over. Measured offline (`tools/behavior-run.ts`'s runtime, the horse project, Speed 125,
+TurnDelta ±30 every eighth of a second): the walk stood in its first tenth (WalkForward at
+0.08, 0.10, 0.12 after 1, 2, 3 s) and its root motion read 530 units a second, each restart
+counted as a loop of the clips that stayed; the opening's cart horse (MQ101CartHorse2Patrol1)
+read 893 to 1314 units a second at a walk of 125 in the QA sweep, its trot clips restarting 8
+times a second. Now the walk goes through its stride (1.00, 0.91, 0.83 after 1, 2, 3 s, about 1.1 s
+a cycle) and its root motion reads 126 units a second; the walk and the trot within the speed
+blend are in step (before, each turn blend kept its own phase).
 
 The runtime counts what it does (`BehaviorRuntime.stats`: updates, state changes, self
 transitions, interrupted transitions, clip starts) and tells a development hook of every state
@@ -1283,7 +1373,7 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   data.
 - **hkbRotateCharacterModifier** (6): turns the character at TurnDelta in the equip and unequip
   states; the movers make that turn already, so the graph's root motion leaves it out.
-- **The dragon's flight modifiers** (docs/ai.md, "Flying combat"): BSTweenerModifier carries
+- **The dragon's flight modifiers** (docs/ai.md, "Flying"): BSTweenerModifier carries
   the character to the engine's TweenPosition and TweenRotation (the landing spot, the hover
   point, the actor grabbed) over its tween duration or what was left of the clips below it as
   it began: it overrides the clips' root motion where it tweens (linear; TODO(M13): Havok's

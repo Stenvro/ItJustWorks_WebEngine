@@ -6,6 +6,8 @@ import {
   MotionFeedback,
   steer,
   taggedMovementType,
+  turnRate,
+  Turning,
   type LocomotionFrame,
   type LocomotionGraph,
 } from './locomotion.ts';
@@ -73,6 +75,67 @@ describe('steer', () => {
     const turn = steer({ gait: 'walk', face: degrees(90) }, 0, TYPES, 0.25);
     expect(turn.heading).toBeCloseTo(degrees(45));
     expect(turn.velocity).toEqual([0, 0]);
+  });
+});
+
+describe("turning (the engine's angle controller)", () => {
+  it('speeds up at its acceleration and stops on its goal without passing it', () => {
+    let heading = 0;
+    let rate = 0;
+    const goal = degrees(90);
+    const rates: number[] = [];
+    for (let i = 0; i < 120; i++) {
+      rate = turnRate(goal - heading, rate, degrees(180), degrees(720), 1 / 60);
+      heading += rate / 60;
+      rates.push(rate);
+      expect(heading).toBeLessThanOrEqual(goal + 1e-9);
+    }
+    expect(heading).toBeCloseTo(goal, 3);
+    // From standing it gains 12° a second each step, never more than its rate.
+    expect(rates[0]).toBeCloseTo(degrees(12));
+    expect(Math.max(...rates)).toBeLessThanOrEqual(degrees(180) + 1e-9);
+    expect(rates[rates.length - 1]).toBe(0);
+  });
+
+  it('standing, settles on the heading and holds its facing within its tolerance', () => {
+    const turning = new Turning();
+    const types = { ...TYPES, angularAcceleration: 4 };
+    let heading = 0;
+    const tolerance = { tolerance: degrees(5), rateMult: 1, accelerationMult: 1 };
+    for (let i = 0; i < 120; i++) {
+      heading = steer(
+        { gait: 'walk', face: degrees(30), turning: tolerance },
+        heading,
+        types,
+        1 / 60,
+        turning,
+      ).heading;
+    }
+    expect(heading).toBeCloseTo(degrees(30), 2);
+    expect(turning.settled).toBe(true);
+    // A heading 3° off: it holds; 8° off: it turns again.
+    const held = steer(
+      { gait: 'walk', face: degrees(33), turning: tolerance },
+      heading,
+      types,
+      1 / 60,
+      turning,
+    );
+    expect(held.heading).toBeCloseTo(heading);
+    const turned = steer(
+      { gait: 'walk', face: degrees(38), turning: tolerance },
+      heading,
+      types,
+      1 / 60,
+      turning,
+    );
+    expect(turned.heading).toBeGreaterThan(heading);
+    expect(turning.settled).toBe(false);
+  });
+
+  it('walks at a normalized pace between its walk and run speeds', () => {
+    const step = steer({ direction: [0, 1], gait: 'walk', pace: 1.5 }, 0, TYPES, 1 / 60);
+    expect(step.velocity[1]).toBeCloseTo(80 + 0.5 * (370 - 80));
   });
 });
 
@@ -322,5 +385,39 @@ describe('the motion feedback to the graph', () => {
     // Wanting to go right (a quarter turn): a tenth of a second turns it 36° at most.
     const told = feedback.feed([300, 0], [0, 0], 0, 0.1);
     expect(Math.atan2(told[0], told[1])).toBeCloseTo((36 * Math.PI) / 180);
+  });
+});
+
+describe('Locomotion falls and landings (the idle tree)', () => {
+  it('asks for ActionFall while it falls and ActionLand as it lands, with the speed it came down at', async () => {
+    const asked: string[] = [];
+    let takes = false;
+    const locomotion = new Locomotion({
+      perform: (action) => {
+        asked.push(action);
+        return Promise.resolve(action === 'ActionFall' ? takes : true);
+      },
+    });
+    const graph = recorder();
+    locomotion.drive([graph], frame({}));
+    // Off the ground, coming down: its fall is asked for; not taken (too slow), asked again
+    // once 0.1 s has passed, not every frame.
+    locomotion.drive([graph], frame({ grounded: false, verticalSpeed: -50 }));
+    await Promise.resolve();
+    await Promise.resolve();
+    locomotion.drive([graph], frame({ grounded: false, verticalSpeed: -80 }));
+    expect(asked).toEqual(['ActionFall']);
+    takes = true;
+    for (let i = 0; i < 6; i++) {
+      locomotion.drive([graph], frame({ grounded: false, verticalSpeed: -400 }));
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    expect(asked).toEqual(['ActionFall', 'ActionFall']);
+    // No raw JumpFall: the idle the tree picks sends its own event.
+    expect(graph.events).not.toContain('JumpFall');
+    locomotion.drive([graph], frame({ grounded: true, verticalSpeed: 0 }));
+    expect(asked).toEqual(['ActionFall', 'ActionFall', 'ActionLand']);
+    expect(graph.values.get('VelocityZ')).toBe(-400);
   });
 });

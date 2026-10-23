@@ -37,7 +37,13 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   controller. Beyond it, in the loaded area, it is in the middle-high process: its AI runs and
   it walks its paths without a controller, kept on the navmesh (its height there), its graph
   driven as a controlled one's; coming near it gets its controller where it stands (on the
-  floor just under or over its feet). TODO(M13): the engine's process levels (CommonLibSSE
+  floor just under or over its feet). What its graph was told goes on from one to the other: a
+  deer that fled past the high process at a run is told it stopped as it stops (before, its
+  graph ran on the spot for minutes, never told). Held there by an animation-driven idle while
+  its AI sends it away, its idle is stopped as a moved actor's is (ActionIdleStop, again each
+  second): a chicken lying down otherwise gave up every walk its sandbox sent it on. Held so, its
+  clips' root motion moves and turns it, as a controlled one's (a deer's canned flee turn
+  carries it on). TODO(M13): the engine's process levels (CommonLibSSE
   `ProcessLists`: high, middle-high, middle-low, low) and how often each moves its actors are
   not documented. The controllers are in the world the
   player moves in: the player bumps into actors and they into each other. The crosshair's pick
@@ -68,7 +74,14 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   turnRight, turnStop, moveForward, moveBackward) and the sync variables they set. The player's
   body is driven the same way. The graph's BSSpeedSamplerModifier turns Speed into
   SpeedSampled, the blend parameter of the locomotion blends. Measured on Orgnar: walking 80
-  units per second plays MT_WalkForward, running 370 MT_RunForward. A travel that arrives on
+  units per second plays MT_WalkForward, running 370 MT_RunForward. Its TurnDelta is the turn
+  its steering made over all the physics steps since its graph was last driven (steps run at 60
+  a second, frames at their own rate): read from the last step alone, a frame of two steps whose
+  second had nothing left to turn said 0 and the next frame's single step said the turn, so an
+  actor turning steadily (a wolf circling its prey, a horse following its rider's view) sent
+  turnLeft and turnStop ten times a second and more (QA: 17 to 23 a second). Its IsSprinting
+  follows its wish too (it asks to go at a sprint), not the speed physics made of it: a horse
+  galloping into a fence went in and out of its SprintState 19 times a second. A travel that arrives on
   the way keeps its request until the next frame, so that the next travel its AI starts at once
   (a patrol's next point) goes on without a step of standing (a moveStop and moveStart at every
   patrol point otherwise).
@@ -95,7 +108,7 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   controller) an actor held so does not go its way either: it glided (a chicken sitting in its
   idle while it went on).
 - **Trigger volumes** see actors with controllers: OnTriggerEnter and OnTriggerLeave with the
-  actor, GetTriggerObjectCount counts them; fliers in the air too ([Flying combat](#flying-combat):
+  actor, GetTriggerObjectCount counts them; fliers in the air too ([Flying](#flying):
   OnTriggerEnter and Leave; TODO(M13): GetTriggerObjectCount counts only those with controllers).
 - **Bodies:** a living actor near the player also has its race's ragdoll in the world (the
   skeleton model's bodies on the main bones, `src/shell/actor-bodies.ts`), keyframed to its
@@ -155,7 +168,9 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   and fMaxAvoidanceRadius 512, and its radius: observed in the original), and goes round
   those its way would bring within reach (both radii and 8 units) in the next 1.5 seconds, the
   first it would meet: on the side away from it (right of one straight ahead), two that meet
-  head-on both keeping right, turning just as far as passing needs (at most 1.2 radians).
+  head-on both keeping right, turning just as far as passing needs (at most 1.2 radians). The
+  player riding (a horse, a cart) is carried and no one to go round: their own horse went round
+  them every step, its way wavering left and right under its rider.
   Kept from going on by one in its way (slower than 16 units a second) for longer than
   fMaxTimeBlockedByActors (1 s), it searches its path again round that one. TODO(M13): how the
   engine's own avoidance turns the way is not read yet.
@@ -298,7 +313,7 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   in its pursuit area; Escort leads its target to the destination, waiting for it where it
   falls behind; FollowTo follows until one of them reaches the destination; Flee runs to its
   place, else away from what it flees. A procedure that does not use furniture gets the actor
-  up first. Hover, Orbit and FlightGrab fly a flier ([Flying combat](#flying-combat); one
+  up first. Hover, Orbit and FlightGrab fly a flier ([Flying](#flying); one
   that cannot fly holds its place). UseWeapon, UseMagic and Shout practise at their target
   through combat's mechanics, not its AI (`src/shell/actor-practice.ts`): UseWeapon takes up
   the weapon its Weapon Type names (one it carries of the type; its arrows for a bow), draws,
@@ -627,7 +642,9 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   horse PairEnd). The rider starts at the race's mount offset (HorseRace DATA: 63.5 units to
   the horse's left, facing it: the clip's "NPC" track says the same) and gets off 111.6 units
   to its left (the dismount's end). Riding, its root is on the horse's SaddleBone (its
-  HorseRider_State poses its pelvis at the root), its graphs driven by the horse's movement;
+  HorseRider_State poses its pelvis at the root), its graphs driven by the horse's movement
+  (its TurnDelta the horse's steering's: measured from frame to frame, frames without a physics
+  step told the rider's graph it stopped turning);
   the horse's own AI waits. Off the horse its graphs stand again (Speed 0, moveStop): what moves
   it on foot starts from a standing graph (a rider let off a walking horse came out of
   HorseExitOut walking on the spot: Elenwen at Helgen's gate). GetSitting answers 2, 3 and 4 for a rider mounting, riding and
@@ -639,9 +656,13 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   rode: the game asks first (sStealHorse), then riding off is the theft
   (`CrimeEngine.horseTheft`: a steal of iCrimeGoldStealHorse, the horse marked stolen for
   IsHorseStolen; docs/gameplay.md, "Crime and factions"). Mounted, the movement keys send the horse the way the camera
-  looks (it turns as it goes; back alone it backs up), Run and Sprint walk, run and gallop it;
-  Activate gets them off. They are carried on the saddle in the physics steps (their shape out
-  of the world), so their camera rides with the horse. TODO(M13): the engine's horse controls,
+  looks (it turns as it goes), Run and Sprint walk, run and gallop it; Activate gets them off.
+  The back key (observed in the original: the player's movement input on a mount) drops
+  the side keys; a horse that stands, or already backs up (its way within [Controls]
+  fHorseClampAngle, 10°, of straight back), backs up facing on, one that moves otherwise is
+  reined in and stops. They are carried on the saddle in the physics steps (their shape out of
+  the world, and no one for their horse to go round), so their camera rides with the horse.
+  TODO(M13): how the engine turns the horse to the camera (its rate; fHorseMaxAngleBeforeTurn),
   the path tweener to the mount place, mounting from the right.
 - **Actors riding:** a procedure that lets an actor ride ("Ride Horse If Possible": Travel,
   Patrol, Follow, ...) mounts its horse (its ACHR's XHOR: General Tullius' MQ101TulliusHorse)
@@ -869,6 +890,24 @@ from the original game's behaviour only (in our words):
   Sandbox's slot 10; fAIWanderDefaultMinDist, 200, without one); between walks a pause of up to
   (fAIMaxWanderTime − (Energy × fAIEngergyLevelMult + fAIEnergyLevelBase)) / 2 seconds, at
   random (Energy: the actor's; 100 − 50 → up to 25 s).
+- **Where a wanderer walks** (observed in the original: BGSProcedureWander's update; a
+  Sandbox that wanders runs a Wander of its own in the sandbox's place, with its Min Wander
+  Distance). Its place reaches at least fAIDistanceRadiusMinLocation (100). Outside the place
+  it first goes into it. Its first walk is a **random location of the pathing**: a point of the
+  navmesh within the place that it can walk to, at least its Min Wander Distance away. Every
+  walk after that goes **across the place**: from the place's middle, the way from where its
+  last walk led towards the middle, turned at random by up to 45° either side, as far as a random
+  share of the radius (the middle's height). A point it cannot walk to (off the navmesh, behind
+  a fence, on another island) gets no path; its walk is a request to the pathing, which finds
+  its way later, and without one the wander asks again (inferred: TODO(M13), how the engine's
+  pathing answers a goal off its navmesh is not read). Ours
+  (`src/ai/procedure-runs.ts` wanderPoint, `randomReachablePoint` in `src/ai/pathfinding.ts`):
+  the reachable triangles within the place by their area, a random point in the one picked; an
+  across-the-place point is taken only where a path reaches it (up to 8 tried at once, else it
+  waits a moment). Before, any point of the circle was taken unchecked, inside houses and
+  behind the garden fences, and the first walk went anywhere within it (QA: a Riverwood chicken
+  beyond the high process stood 26 s 687 units short of its point, in every run; with this and
+  the walkers' idles stopped, above in "Movement", none).
 - **Follow:** its radii without its own are fFollowSlowdownZoneWidth (150) and
   fFollowMatchSpeedZoneWidth (128), the smaller the minimum. Its speed is matched to the
   leader's (`followSpeed`): at least the leader's; from the middle of its radii to the outer one
@@ -908,7 +947,7 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   wiki: GetDetected runs the formula).
 - **The reach** (observed in the original): fSneakMaxDistance (2500 in Skyrim.esm), times
   fSneakExteriorDistanceMult (2.1) outside, times fSneakFlyingDistanceMult (3) when the
-  observer or the target flies ([Flying combat](#flying-combat)); for an observer in combat and
+  observer or the target flies ([Flying](#flying)); for an observer in combat and
   a target other than its combat target (not the player), times
   fDetectionCombatNonTargetDistanceMult (0.75): a fighter's mind is on its own target. Beyond
   the reach the level is −1000 (combat's "out of reach").
@@ -1173,8 +1212,9 @@ Two halves, one in the browser and one in Node:
   skipped and completing, each action starting for its actor, lines said, packages done, actions
   ending, scenes ending or stopped), each playing scene's phase, and for every actor a scene
   casts (followed on after its scene) the package it runs, whether it fights, watches a fight,
-  flees, is carried (horse, cart), is in furniture or off the stage, its graph's innermost states
-  and its path (a point each 40 units). The first call begins it; each call returns it so far.
+  flees, is carried (horse, cart), flies, is in furniture or off the stage, its graph's
+  innermost states and its path (a point each 40 units). The first call begins it; each call
+  returns it so far.
 - `node tools/scene-audit.ts <scene>` (or `--quest <quest>`) lists what the data says each
   actor does phase by phase: its alias (how it is filled, its own alias packages), each action
   (a line with its first info's text and whom it looks at, a timer, a package with its procedure
@@ -1220,10 +1260,12 @@ wrong:
 
 Whiterun's market by day (10:00, seven minutes): ADIA's random scenes (Nazeem and Ysolda,
 Carlotta and Ysolda, Anoriath and Ysolda) and WhiterunMarketplaceScene2/3 play through, their
-actors brought together, every line said, no deviation. Left in MQ101's run: Alduin
-(MQ101AlduinAttackScene1) runs his approach patrol rather than MQ101AlduinPerch1 for a while and
-ends his tower shout packages a thousand units from their markers, a flier's (the flight's
-perch and travel); Haming takes 20-30 seconds of failed approaches before he sits cross-legged at
+actors brought together, every line said, no deviation. Alduin (MQ101AlduinAttackScene1) ran his
+approach patrol rather than MQ101AlduinPerch1 for a while (Must Complete held it past the
+scene's package action) and ended his tower shout packages 1,200 to 1,900 units from the perch
+(the end of Perch1 took him off it): both fixed with the flight ([Flying](#flying), Packages);
+a flier in the air (the trace's FLYING) is not taken to walk off while a done package holds it.
+Left in MQ101's run: Haming takes 20-30 seconds of failed approaches before he sits cross-legged at
 the start (his enter's start point next to the furniture's own); the cart driver's
 MQ101Guard1ToMarker5 is done at once as its Variable01 (set by the cart's ExitCartEnd) is not
 yet 1, as the engine's rule has it.
@@ -1753,7 +1795,7 @@ the projectile and explosion a spell sends.
   `healSelf(actor)` (a concentration heal held until whole), `summon(actor, target?)`,
   `drinkPotion(actor, value)` (the carried potion restoring the value most);
   `shoutAt(actor, target, words?)` (Greybeards, draugr; dragons' breath: [Flying
-  combat](#flying-combat)): the voice's shout, its
+  combat](#flying)): the voice's shout, its
   words let out after their hold time. NPCs release a fire and forget spell once ready and hold
   a concentration spell while their AI keeps it (`castAt`'s hold: the combat AI while its
   target is alive, within the spell's range and before it; UseMagic its cast time), at most
@@ -1886,9 +1928,9 @@ on its fCombat…ChanceMin .. Max (0 .. 1); a hover, perch attack or ground figh
 from its setting's Min up to the style's time on Min .. Max; an orbit at random from
 fCombatOrbitTimeMin up to offensive on fCombatOrbitTimeMax .. Min (12 .. 3 s).
 
-Not yet run (TODO(M13): phase 5, the combat tree): the circle distant, special attack, block
-attack and offensive bash behaviours (their values are ready); the conditions of the close,
-flanking and ranged movement selectors (ours: in `chooseManeuver`).
+Not yet run (TODO(M13): phase 5, the combat tree): the special attack, block attack and offensive
+bash behaviours (their values are ready); the flanking and ranged movement selectors (ours: in
+`chooseManeuver`). The close movement is the engine's ([Combat movement](#combat-movement)).
 
 - **Reactions** (`reactionsOf(runtime).reaction`, `src/ai/combat-reactions.ts`: the rules crime
   does not weigh, then crime and factions' `runtime.crime.reaction`; `combatReaction` keeps the
@@ -1980,16 +2022,16 @@ flanking and ranged movement selectors (ours: in `chooseManeuver`).
   value); a summons when none of its summons stands; a buff (a lasting Self spell: Oakflesh, a
   cloak) not on it. Its attacks wait 1.5 s after a cast, fCombatMagicDrinkPotionWaitTime (3 s)
   after a potion.
-- **Movement** (`chooseManeuver`, a maneuver for 1–3 s, a stalk for its stalk time): more than
-  512 units beyond its reach it chases its target over the navmeshes, running; beyond its outer
-  advance radius past its reach it advances (to its inner radius: a defensive style recently hurt
-  hangs back); within it dueling styles fall back (fallback chance), circle (circle chance) or
-  advance; flanking styles stalk round it just out of reach for their stalk time, then come at
-  it from the side with allies on the target (round to the point a quarter round it, their flank
-  distance past their reach; from afar too with allies on the target), else advance; at range it
-  closes to its optimal range (Style values), falls back within fCombatAdvanceOuterRadiusMax
-  (fallback chance), strafes (strafe chance) or holds, and chases beyond its range. TODO(M13):
-  phase 5, the combat tree's movement selectors. Its combat override package list (NPC\_ / alias ECOR: the first package
+- **Movement** ([Combat movement](#combat-movement): how it faces and its close movement): more
+  than 512 units beyond its reach it chases its target over the navmeshes, running (sprinting
+  from beyond fCombatApproachTargetSprintStopRange); nearer, the combat tree's close movement:
+  it advances to a place round its target, surrounds a crowded one, circles, falls back, backs
+  off or stands. Flanking styles stalk round it just out of reach for their stalk time (a
+  circle), then come at it from the side with allies on the target (round to the point a quarter
+  round it, their flank distance past their reach), else advance; at range it closes to its
+  optimal range (Style values), falls back within fCombatAdvanceOuterRadiusMax (fallback chance),
+  strafes aside (strafe chance) or holds, and chases beyond its range (TODO(M13): the ranged and
+  flanking movement trees are not read). Its combat override package list (NPC\_ / alias ECOR: the first package
   whose conditions hold) keeps it within that package's place: back there first, no chase of a
   target beyond it.
 - **Attacks** (`chooseAttack`, every 0.25 s: The attack decision): within reach and facing
@@ -2056,118 +2098,319 @@ flanking and ranged movement selectors (ours: in `chooseManeuver`).
   actor's AI values, combat style, what it carries and fights with at 100, 400 and 1500 units,
   and the reactions between them and to the player (`--new-game`: after a new game).
 
-## Flying combat
+### Combat movement
+
+How a fighter faces and moves near its target (`src/ai/combat-movement.ts`, the turning in
+`src/ai/locomotion.ts`, on the stage `#melee` / `#shoot` of `src/shell/actor-combat-ai.ts`).
+Observed in the original, behaviour only: its combat tree's close movement, the target
+locations, the aim controllers, the movement parameters its combat paths hand the movement
+controller, and the planner's facing. Settings: `readCombatMovementSettings` (the load order's
+GMSTs, else the engine's defaults).
+
+**Facing.** A fighter faces a point, not its target: its aim controller takes the target's place
+as the point every fCombatAimMeleeUpdateTime (0.25 s; fCombatAimMeleeHighPriorityUpdateTime,
+0.1 s, against the player within its reach; a shooter's every fCombatAimProjectileUpdateTime),
+and an advance farther than fCombatCloseRangeTrackTargetDistance (768) from its target faces the
+way it runs. Its planner turns it there as the engine's movement controller does:
+
+- standing, it turns until it faces the point within 1°, then holds its facing until the point
+  is more than its tolerance off: fCombatAngleTolerance (1°) or its race's aim angle tolerance
+  if larger (RACE DATA: trolls 23°, bears 30°, dragons 42°); out of combat fDefaultAngleTolerance
+  (5°). Moving, it keeps turning to it;
+- its turn rate comes from an angle controller: the fastest that still stops on the heading at
+  its angular acceleration (never past it), at most its rate; within 1° of the heading and
+  slower than 1° a second, none. In combat the rate is fCombatPathingNormalizedRotationSpeed
+  (2.25) on the engine's normalized scale (1 its movement type's walking turn rate, 2 its running
+  one, beyond that in running rates: 1.25 × the running rate) and its angular acceleration
+  1 / its race's angular acceleration rate (humans 0.25: 4) × fCombatPathingRotationAccelerationMult
+  (2) in turn-while-moving rates a second (humans: 0.16 s to full speed). Out of combat its
+  movement type's rates and its race's acceleration unscaled (TODO(M13): the movement parameters
+  outside combat are not read).
+
+What this fixed: the heading was snapped to the target's place every physics step, so while a
+fighter or its target moved, its turn rate fell to 0 on the steps that had no turn left and rose
+again on the next (frames and steps at different rates); the graph's TurnDelta channel, which
+has no hysteresis, sent turnLeft / turnStop 12–23 times a second and the idle and drawn-bow turn
+states flipped as often (QA combat: 20 turn-chatter and 6 state-chatter anomalies).
+
+**The close movement** (the combat tree's Close Movement Context; its Movement Repeat runs the
+selector again whenever the behaviour under way ends):
+
+| Where           | Tries, in turn                                                                      |
+| --------------- | ----------------------------------------------------------------------------------- |
+| out of range    | Fallback To Ranged, Advance, Surround, Circle Distant (its chance), idle            |
+| out of position | Reposition, Surround, idle                                                          |
+| in range        | Fallback or Circle (the style's chances), Backoff (fCombatBackoffChance 0.25), idle |
+
+Its range is its reach (with the target's radius) and its inner advance radius; idle is the
+tree's Close Movement Idle, 0.25 s standing. Each behaviour is a straight combat path
+(CombatPathRequestStraightPath) to one goal the navmesh must allow (`straightReach` in
+`src/ai/pathfinding.ts`: the line and the lines its radius to either side stay on the navmeshes;
+a goal cut short where the navmesh ends, if the rest is still worth going), at a combat speed on
+the normalized scale (fCombatSpeedValueWalk 1, FastWalk 1.33, Jog 1.66, Run 2: between the
+movement type's walk and run speeds in the way it goes). It ends at its goal or by its own rule,
+checked every 0.1 s:
+
+- **Advance / Reposition**: to a target location (below) at its range less
+  fCombatTargetLocationPathingRadius (10), running (sprinting from farther than
+  fCombatApproachTargetSprintStopRange, [Combat] bCombatPathSprinting), walking the last
+  fCombatApproachTargetSlowdownDistance (96); its place moves with its target; where the
+  straight line is not clear it goes over the navmeshes. Reposition: it has left its place
+  (its bearing from the target off its reservation by more than
+  fCombatTargetLocationRepositionAngleMult × its width, or another holds it).
+- **Surround**: it keeps within fCombatSurroundDistanceMin .. Max (128 .. 384) beyond its range:
+  nearer it retreats to the band's middle, farther it makes for it, running.
+- **Circle**: facing its target, round it by an angle (at random from fCombatCircleAngleMin up to
+  the style's circle mult on fCombatCircleAngleMin .. Max, 30 .. 90°, × fCombatCircleAnglePlayerMult
+  against the player, at least the angle three of its radii take at its distance) at its
+  distance, one side at random, else the other, to a goal its target sees
+  (fCombatCircleViewConeAngle 150°), at least fCombatCircleMinMovementDistance away, a place
+  there reserved; FastWalk. Given up once its target will be (fCombatAnticipateTime ahead)
+  beyond fCombatCircleDistanceMax past its range, or comes within fCombatCircleMinDistanceMult
+  of its range of the goal. **Circle Distant**: the same out of range, at its own distance, with
+  no sight cone and no place.
+- **Fallback**: facing its target that faces it (120°) and does not move away, straight back by
+  fCombatFallbackDistanceMin .. Max, FastWalk, then it waits fCombatFallbackWaitTimeMin .. Max;
+  given up once its target will be beyond fCombatFallbackDistanceMax past its range or its way
+  turns more than fCombatFallbackMaxAngle off straight away.
+- **Backoff**: facing its target that does not move away, closer than fCombatBackoffMinDistanceMult
+  of its range, straight back to its range, FastWalk.
+
+Every behaviour goes towards a fixed goal while it faces its aim point, so the way it goes
+against its facing changes smoothly and crosses between ahead and behind at most once: before, a
+circle or strafe went exactly sideways every frame (Direction 0.25 or 0.75, on the line between
+the forward and backward halves), so moveForward / moveBackward flipped and the walk-back and
+strafe clips restarted 9–14 times a second.
+
+**Target locations** (`TargetLocations`): round each target its attackers hold places, each an
+angular width (its size, the larger of twice its radius × fCombatTargetLocationRadiusSizeMult and
+its radius × fCombatTargetLocationWidthSizeMult, over the distance, within
+fCombatTargetLocationWidthMin .. Max: 10 .. 180°). An advancing fighter looks at
+iCombatTargetLocationCount (24) bearings round its target, from its own, and takes the free one
+nearest to itself whose way out from the target the navmesh allows (cut short to no less than
+fCombatTargetLocationMinDistanceMult of the distance); its own place counts
+fCombatTargetLocationCurrentReservationDistanceMult nearer. So a group spreads round its target
+instead of piling onto one point. TODO(M13): the second size of the width rule (a cached size of
+the actor's) is read as its radius; the selector's split of out of range, out of position and
+in range, and Fallback To Ranged's condition, are inferred (its behaviour, backing to
+fCombatRangedDistance to shoot, is the equipment choice's here).
+
+**While it attacks** its controller does not move it (it stands, still turning to its aim): a
+standing attack's clip has no root motion and the controller's way made it glide. Its attack
+clip's own root motion carries it instead (`MoveRequest.rootMotion`: a forward power attack's
+lunge, which before played on the spot), and what its graph moves it by is not fed back to the
+graph as its own movement (`MotionFeedback` gets nothing made while the graph moves it: a drawn
+bow's slight root motion was told as walking, the graph took its moving draw, stood again, and
+flipped every frame). A dodge does not start in an attack under way and takes the movement over
+(the tree's Interrupt Movement Resource). Ranged fighters' maneuvers (`#rangedRun`) are such
+goals too: to their optimal range, back (a fallback), aside by fCombatStrafeDistanceMin .. Max,
+or standing.
+
+**Its own bodies** do not push its controller ([physics.md](physics.md#the-character-controller)):
+an archer's own kinematic shape inside its capsule slid it about at 200–600 units a second while
+it drew and stood (QA combat's glides in MT_Idle, Bow_Idle and the landing).
+
+**Falls and landings** (every NPC's, `Locomotion` with the movers' actions): the engine performs
+ActionFall and ActionLand, and the idle tree's conditions decide what plays: 0_master's JumpFall
+only falling faster than 350 units a second (GetVelocity Z), its landings only in its jump state
+(bInJumpState), JumpLand / JumpLandDirectional by the speed it came down with (VelocityZ below
+−200; inferred: VelocityZ is its controller's vertical speed). Before, every step without ground
+under it sent JumpFall and the next JumpLand: placed fighters and those on rocks chattered between
+JumpFall and JumpLand and stood in the landing while they moved.
+
+## Flying
 
 Actors of a race that flies (RACE DATA Flies: DragonRace, AlduinRace, UndeadDragonRace,
-DragonBlackRace and the DLCs': `src/ai/flight.ts`; on the stage `src/shell/actor-flight.ts`;
-the plan: [m10-plan.md](m10-plan.md) 5.4; check: `node tools/flight-info.ts`). No other vanilla
-race flies: the dragon priests and the chaurus hunters hover in their animations and move as
-walkers.
+DragonBlackRace and the DLCs'; no other vanilla race flies: the dragon priests and the chaurus
+hunters hover in their animations and move as walkers). The rules: `src/ai/flight.ts`; on the
+stage `src/shell/actor-flight.ts`; check: `node tools/flight-info.ts`; in the browser
+`engineDev.flightTrace()` (a line per flying state change and fight phase). Observed in the
+original (behaviour, in our words), unless marked ours.
 
-- **The graph drives it**, as the engine's flight does: the idle tree's ActionFlyStart (off the
-  ground TakeOff, off a perch, its idles test GetFlyingState 5), ActionFlyStop (FlyStopDefault,
-  FlyStopInjured when hurt, FlyStopHasty and FlyStopCrash as the landing is asked for,
-  FlyStopPerch\* by the perch: GetIsID of the action's target), ActionHoverStart and
-  ActionHoverStop; a flight grab sends to_Flight_Kill_Grab_Enter and, as the enter clip ends
-  (FlightActionEntryEnd), to_Flight_Kill_Grab_Action or \_Action_Failed. The graph tells the
-  flying state as its states begin (FlightTakeOff, FlightCruising, FlightHovering,
-  FlightLanding, FlightPerching, FlightAction; LandEnd on the ground: CommonLibSSE FLY_STATE 0
-  none, 1 take-off, 2 cruising, 3 hovering, 4 landing, 5 perching, 6 action). Offline:
-  `node tools/behavior-run.ts meshes\actors\dragon\dragonproject.hkx --motion --at 0.2:TakeOff
---vector-at 6:TweenPosition=0,9000,0,0 --at 6:FlyStopDefault --time 12` takes off (FlightTakeOff
-  at 0.67 s, FlightCruising at 5.3 s, 4116 ahead and 2068 up) and lands on the spot
-  (FlightLanded, LandEnd).
-- **What the engine sets**: TargetSpeed (its flying movement type's: Dragon_Flying_MT forward
-  2000 walking, 7400 running), TurnDelta and PitchDelta (degrees a second, left and up
-  positive: the graph's PathAngle slows it to MinSpeed at 25° a second), MovementDirection (its
-  z the climb and dive blend), DistToGoal, HasTweenSpeed and TweenSpeed near a stop (the graph
-  slows and feathers), TweenPosition, TweenRotation and TweenEntryDirection (in turns clockwise:
-  the approach blends' 0, 0.25, 0.5, 0.75) for the tweeners, Injured below its race's injured
-  health (RACE DATA: 35%). The graph flies at its own Speed: its acceleration (MaxAcc while
-  flapping), deceleration and drag.
-- **Moving**: in the air a flier has no character controller. Cruising (neither bAnimationDriven
-  nor bIsSynced) it steers for its goal (`steerFlight`: turning at its movement type's
-  rotate-while-moving rate, 90° a second; pitching at most 45°) at the graph's Speed, kept 512
-  units (ours) over the ground under it; taking off, landing, hovering and in the grab its
-  clips' root motion (the dragon project's animation data: MTTakeOff45 4096
-  ahead, 2048 up) and the graph's BSTweenerModifier carry it ([animation.md](animation.md)).
-  A landing begins where the approach clip ends on the spot (2048 ahead, 2048 up); a hover
-  within 3584 of its point (the feather-stop clips' way). Drawn level, turned to its heading:
-  its clips bank and pitch it. Placed in the air (no ground within 512 under it) it starts
-  cruising (FlyStartCruise). Landed (LandEnd) the movers give it its controller again; its size
-  for blows and projectiles in the air is its controller's on the ground (its skeleton's bound).
-- **In combat** (`ActorFlight.fight`, asked by the combat AI for a flier that may fly) its
-  combat style's flight section (CSTY CSFL, each chance and time on the engine's scale:
-  [Style values](#style-values)) decides, each time a maneuver ends, in turn: a dive
-  bomb (dive bomb chance: low over its target, 384 over it, and on beyond), a hover (hover
-  chance: 1280 before its target, 768 above it, at random from fCombatHoverTimeMin 5.5 s up to
-  its hover time on that .. fCombatHoverTimeMax 15 s), a perch attack (perch attack chance,
-  with a free perch within 6000 of its target: from fCombatPerchAttackTimeMin 4 s up to its
-  perch time on 4 .. 15 s), a ground attack (ground attack chance, with a landing spot on the
-  navmesh 1024 from the target on its side, or its forced landing marker: it fights there from
-  fCombatGroundAttackTimeMin 8 s up to its ground attack time on 8 .. 17 s, as the combat AI's
-  melee fights, with its race's bites, tail and wing attacks), else an orbit round its target at
-  fCombatOrbitDistance (4000), 1536 above it, from fCombatOrbitTimeMin 3 s up to its offensive
-  mult on fCombatOrbitTimeMax .. Min (12 .. 3 s). Each maneuver rolls its flying attack chance: it breathes at its
-  target before it (within 36°) and within its shout's reach (the last word's projectile's
-  range: fire and frost breath 2000, fireball and ice storm 10000); hovering and perched it
-  breathes whenever its voice has recovered. Hurt below its injured health it lands to fight on
-  the ground (FlyStopInjured). TODO(M13): phase 5, the order and conditions of the combat
-  tree's flight selector, the heights and distances (ours, `tools/flight-info.ts` lists
-  them); vanilla's csDragon chooses a dive bomb 36%, a hover 33%, a perch 16%, a landing 13%.
-- **Its breath** (`ActorCasting.shoutAt`): a shout it knows (its spell list's SHOU, one at
-  random) in its voice, ActionVoice (shoutStart, or shoutStartFireball for a fireball shout:
-  the neck states of its flight, hover, perch or ground), its words let out after their hold
-  time from its graph's BeginCastVoice (ActionVoiceRelease: shoutRelease, the exhale); as the
-  exhale raises Voice_SpellFire_Event (docs/animation.md, "Graph events") a concentration shout
-  (the breaths) sprays from its head's magic node ("NPC Head MagicNode [Hmag]") every relaunch interval of its
-  flame projectile until the graph's shoutStop or 3 s (the exhale clips' length). Those it
-  breathes at may sidestep it ([Combat AI](#combat-ai): Threats).
-- **Perches**: the furniture the idle tree's ActionFlyStop lands on (GetIsID of its target:
-  DragonPerchTower, DragonPerchWordwall, DragonPerchRockL02, DragonTowerHole01, DragonWaterDive)
-  whose interaction keyword (ActorTypeDragon) its race has, one flier each. On it (FlightPerching,
-  PerchLandEnd) it has no controller and turns to its target; ActionFlyStart takes it off.
-  TODO(M13): the perch furniture's marker offset (it lands on the reference's place).
-- **The flight grab** (the FlightGrab procedure): it flies at its victim, the talon grab's enter
-  clip tweens it there; as the enter ends it takes the victim within reach (else the grab fails:
-  Special_TalonGrabFailExitVert), which hangs from its rear talon ("NPC RLegFoot") at the
-  graph's ConstraintOffset (hkbTransformVectorModifier: 100, −7, −0.5) without a controller of
-  its own, and lets go at FlightActionRelease, dead. TODO(M13): whether the engine kills it or
-  the fall does, and the bone it hangs from.
-- **Packages**: Hover flies to its place, Height above it, and hovers facing the place's heading;
-  Orbit circles its place between its inner and outer radius (their middle), Height above it;
-  FlightGrab grabs its target; a Travel flies when the flier is in the air or its place is 4096
-  or more away (TODO(M13)), at 1536 over the ground, and lands there on the navmesh; a place
-  high in the air (more than 512 over the ground under it: MQ101AlduinApproachPatrol's points,
-  2,000 to 4,000 units up) is flown to at its height and through, arriving within its patrol
-  radius or where it would circle (TODO(M13): the engine's rule). Its furniture is a perch: a
-  package that sits it on a dragon perch (MQ101AlduinPerch1, Sit on Helgen's DragonPerchTower)
-  flies it there and lands it on the perch (ActionFlyStop with the perch as its target:
-  FlyStopPerchTower, whose FlightLanding and TowerLandImpact the quest hears), where it stays
-  until the package lets go. One standing on the ground takes off for its perch however near
-  it stands (a perch is landed on from the air): the Sit template's Travel to the perch's
-  place landed Alduin beside the Helgen tower's perch, and he stood there, his Sit never done,
-  while MQ101AlduinAttackScene1 waited for him to perch. A landing with no perch asks the idle tree of nothing: the
-  perches' GetIsID on the target fail (unvalued they held, and every landing dived into a lake:
-  Special_WaterDiveEnter). With nothing asked it circles where it began to, 2048 wide.
+### States and the graph
+
+- **Flying state** (CommonLibSSE FLY_STATE): 0 on the ground, 1 taking off, 2 cruising, 3
+  hovering, 4 landing, 5 perched, 6 an action (the talon grab). In the air (IsFlying) is every
+  state but 0 and 5. The engine sets the state as the dragon graph raises its events
+  (FlightTakeOff 1, FlightCruising 2, FlightHovering 3, FlightLanding 4, FlightPerching 5,
+  FlightAction 6, FlightLand back to 0; LandEnd ends a landing); setting it also switches the
+  character controller between its flying and ground states (in the air a flier has no
+  controller here: src/shell/actor-movers.ts holds it off).
+- **CanFly**: its race flies, its graph's Injured is not set, it is allowed to (SetAllowFlying;
+  Dragonrend's DragonRend actor value here), and it has health. A hurt flier (below its race's
+  injured health: RACE DATA 35%) cannot fly at all: in the air it lands, on the ground it stays.
+- **The idle tree drives it**: ActionFlyStart (TakeOff off the ground or a perch;
+  FlyStartCruise when the state is already cruising: a start in the air with no take-off clip),
+  ActionFlyStop (FlyStopDefault; FlyStopInjured when hurt; FlyStopHasty and FlyStopCrash as the
+  landing request is hasty or a crash; FlyStopPerch\* by the landing's target: GetIsID of the
+  perch), ActionHoverStart and ActionHoverStop. A flight grab sends to_Flight_Kill_Grab_Enter and,
+  as the enter clip ends (FlightActionEntryEnd), to_Flight_Kill_Grab_Action or \_Action_Failed.
+  Offline: `node tools/behavior-run.ts meshes\actors\dragon\dragonproject.hkx --motion --at
+0.2:TakeOff --vector-at 6:TweenPosition=0,9000,0,0 --at 6:FlyStopDefault --time 12`.
+- **What the engine sets each frame**: TargetSpeed (its flying movement type's speed for the
+  speed asked: Dragon_Flying_MT forward 2000 walking, 7400 running; combat flies at its fastest),
+  TurnDelta and PitchDelta (degrees a second, left and up positive), MovementDirection; while it
+  comes to a landing, a hover or a grab DistToGoal (the way left) with HasTweenSpeed and
+  TweenSpeed (the chosen clip's own speed), else HasTweenSpeed 0. Every flight action sets the
+  tweeners' target: TweenPosition, TweenRotation (its heading as a rotation about z) and
+  TweenEntryDirection (the turn to it, in turns clockwise). A take-off keeps its place and the
+  way it faces; it turns for its goal once it cruises. The graph flies at its own Speed (its
+  acceleration, drag and turns towards TargetSpeed).
+
+### How it moves
+
+- **Paths in the air** (the engine's fly path builders): a flight to a point lifts the point to
+  its flight radius over the ground (RACE DATA flight radius, dragons 400) and curves there from
+  the way it faces, turning no faster than its turn rate (its flying movement type's
+  rotate-while-moving rate, 90° a second; fFlyingActorDefaultTurningSpeed without one), split
+  between heading and pitch; the path ends at its point (no arrival radius). An orbit is a lap
+  of points round its centre at its radius, raised over the ground under them and levelled, gone
+  round the way the flier already turns, built again each lap. A hover and a landing are flown
+  to where their clip begins: the point less the chosen clip's root motion, turned to the
+  heading it will face (the landing approach MTLand45Approach: 2048 ahead and 2048 above its
+  spot; the hover-enter clips 3584 ahead). The take-off clip is the first ActionFlyStart idle
+  whose way up is clear (TakeOff, else TakeOff_Vertical).
+- **Ours**: `steerFlight` turns and pitches towards the goal at that turn rate along the way
+  (no spline), kept its flight radius over the ground; a landing begins within 768 of its
+  approach point, a hover within the hover clip's 3584. fMoveFlyWalkMult and fMoveFlyRunMult
+  are read by nothing in the engine. TODO(M13): the clear-way test that picks TakeOff_Vertical
+  (we play the idle tree's first that holds), and what the engine's path follower does when a
+  path ends and nothing asks again (ours circles where it is, 2048 wide).
+
+### Packages
+
+- **Travel**: a flier on the ground walks it (it does not take off for a Travel). In the air (or
+  perched: it takes off first) it lands at its place: the engine's own Landing package lands it
+  at the place's reference, facing the reference's heading (a plain XMarker: the way it comes
+  in), the reference the landing's target (so a perch's FlyStopPerch\* idle plays). A **sky
+  marker** (REFR flag 0x2000, xEdit "Sky Marker": a point in the air) is flown to and through
+  instead.
+- **Patrol**: a patrol whose first point is a sky marker starts its flier cruising at once
+  (FlyStartCruise, no take-off), and its start is not set on the ground: a flier placed there by
+  its package stays in the air (MQ101's Alduin over the mountains east of Helgen; before, the
+  stage set him down on a peak and his trip to the tower began with a take-off from it, beside the
+  trigger MQ101SetStage99). In the air it flies through each point and counts it reached within
+  the point's radius and fAIPatrolHysteresisWidth (50) across and 180 up or down (the location's
+  height window), or once its path ends there; a point that is not a sky marker it lands at; on
+  the ground it walks to a point on the ground and takes off for a sky marker.
+- **Sit on a perch** (furniture whose MNAM has Is Perch, 0x04000000: DragonPerchTower,
+  DragonPerchWordwall, DragonPerchRockL02, DragonTowerHole01, DLC1's DragonWaterDive): in the air
+  it lands on the perch (its Travel's radius is ten times fAIMarkerDestinationRadius in the air),
+  facing the perch's heading; perched there already the Sit is done at once and it stays; perched
+  elsewhere it takes off first. Ours: one on the ground takes off for its perch (the engine walks
+  it to the perch, which a perch up a tower or a word wall does not allow).
+- **Perched, it stays**: a perch is left only when a procedure needs it in the air (Travel,
+  Patrol to a sky marker, Hover, Orbit, FlightGrab, Sit elsewhere, Shout without its stay input);
+  Wait, DoNothing and a package that simply ends leave it there. (MQ101AlduinAttackScene1 moves
+  Alduin from MQ101AlduinPerch1 to dunCGAlduinShoutTower01 and 02, each a Sit on the same tower
+  perch and a Shout with BoolTrue: he shouts from the tower; before, the end of Perch1 took him
+  off it and the shout packages ended 1,300 to 1,800 units from it.)
+- **Hover**: it flies to its place, Height (0 without one) above it, and hovers facing the
+  place's heading; the procedure is done once it hovers within the place's radius, and it stays
+  hovering.
+- **Orbit**: it circles its place, Height (1000 without one) above it, at a radius at random
+  between its inner and outer radius (3000 and 3500 without them), lap after lap.
+- **FlightGrab**: it flies at its target and grabs it with the talon grab (below).
+- **Must Complete and scenes**: a package with Must Complete is kept until it completes when the
+  actor's packages are chosen again, but a scene's package action sets its package at once, past
+  it (src/ai/package-runtime.ts): MQ101AlduinApproachPatrol (Must Complete) gives way to
+  MQ101AlduinPerch1 as the attack scene's phase changes.
+- **Unable to fly outside a fight** (hurt, Dragonrend, SetAllowFlying false): it lands at its
+  forced landing marker (SetForcedLandingMarker), else the nearest landing marker, else the
+  navmesh near it; a crash landing under Dragonrend (unless SetAllowFlyingEx forbade crashing),
+  a hasty one when a script grounds it (ours).
+
+### Combat: the Flight subtree
+
+The combat tree's movement selector (checked every 0.25 s) takes its Flight branch, second after
+Essential Down, for a flier that can fly or is not on the ground (src/shell/actor-combat-ai.ts
+asks `ActorFlight.fight`). A flier on the ground that cannot fly fights with the ground movement.
+
+- **Takeoff** first: one on the ground or perched that can fly takes off.
+- Then a selector checked every second: **able to fly**, the attack loop; **perched and unable**,
+  it takes off; **in the air and unable**, it waits until it cruises and lands.
+- **The attack loop**: while its target is outside its **combat area** it circles that area
+  (Orbit Distant: round the area's centre at its radius). The area: fCombatAreaStandardRadius
+  4096 (fCombatAreaStandardAttackedRadius 8192 for fCombatAreaStandardAttackedTime 1000 s after it
+  was attacked), times fCombatAreaStandardFlyingRadiusMult 2 in the air; its centre is where the
+  flier is as the fight begins, and moves to it again when it is attacked and when its target
+  faces it within 30° nearer than both their sizes and 4096 (1024 at 30°). Otherwise, cruising:
+  **Orbit** round its target at fCombatOrbitDistance (Skyrim.esm 4000; the engine's 6000) for
+  a time at random from fCombatOrbitTimeMin (3 s) up to its offensive mult on
+  fCombatOrbitTimeMax .. Min (12 .. 3 s), not ending while it is busy (breathing); then **one
+  maneuver**, drawn by weight among those not tried: each weight its style's CSFL chance on its
+  fCombat…ChanceMin .. Max (csDragon: ground attack 0.85, flying attack 0.75, hover 0.52, perch
+  attack 0.5, dive bomb 0.36: drawn first 29%, 26%, 17%, 17%, 12%). One that cannot start is
+  marked tried and another is drawn; none left, it orbits again.
+- **Its ranges** (the combat inventory's): a breath's farthest is 0.9 of its projectile's range
+  (at most fCombatMaximumRange 4096), its nearest 256, its optimal three quarters of the way
+  between (fire and frost breath 256 / 1414 / 1800; fireball 256 / 3136 / 4096); its optimal range
+  is the nearer of its style's farthest optimal range (fCombatMaximumOptimalRange\*, by its
+  defensive less offensive mult) and its breath's optimal range, its reach its breath's farthest,
+  each beyond both actors' size; in the air its farthest is at least fCombatFlightMinimumRange
+  (1536).
+- **Dive Bomb**: at its target where it will be in fCombatAnticipateTime (0.5 s), to one side by
+  up to fCombatDiveBombOffsetPercent (10%) of its optimal range, fast, slowing within
+  fCombatDiveBombSlowDownDistance (4096) of it; done within its optimal range less that offset.
+  It may breathe on the way.
+- **Hover** (one flier at a time): iCombatHoverLocationCount (4) points round its target at its
+  optimal range, its own side first, each raised by fCombatHoverAngleMin .. Max (0 .. 20°),
+  within its combat area; there it hovers facing its target from fCombatHoverTimeMin (Skyrim.esm
+  5.5 s; the engine's 7.5) up to its style's hover time on that .. fCombatHoverTimeMax (15 s),
+  then back into its cruise.
+- **Ground Attack** (one flier landing or on the ground at a time): a hasty landing near its
+  target within its optimal range, clear of the target and of every actor larger than
+  fCombatLandingAvoidActorRadius (64); on the ground it fights (the combat AI's bites, tail,
+  wing attacks and breath) from fCombatGroundAttackTimeMin (Skyrim.esm 8 s) up to its style's
+  time on that .. fCombatGroundAttackTimeMax (17 s), then takes off if it can.
+- **Perch Attack**: one of the loaded perches at random within its reach of the target, facing
+  the target within fCombatPerchMaxTargetAngle (75°) of the perch's heading, free, with a clear
+  line to the target; it lands on it facing the perch's heading and breathes from there for
+  fCombatPerchAttackTimeMin (Skyrim.esm 4 s) up to its style's time .. Max (15 s), leaving early
+  once its target is out of that angle (checked each second).
+- **Flying Attack** is the talon grab, not a breath: only at a target slower than a jog (three
+  quarters from its walk to its run), one a kill move may end (not essential), that one blow of
+  the flier's would kill (its race's unarmed damage on its strongest attack); given up once the
+  target moved fCombatFlyingAttackTargetDistanceThreshold (256) from where it was. TODO(M13): the
+  engine's combat check does not leave out the player; whether the fly action's idles do is not
+  read: ours does not grab the player.
+- **Unable to fly in the air** (hurt, Dragonrend, killed): once it cruises it lands at its forced
+  landing marker, else the nearest landing marker (DOBJ DLZM DragonMarker) within
+  fCombatLandingZoneDistance (6000) with no actor within fDragonLandingZoneClearRadius (256) and
+  its size, else the navmesh near it within fCombatLandingSearchDistance (6000), else any landing
+  marker, else it circles and tries again. Hurt and fighting the player it looks round the player,
+  where a crash strip (DOBJ DCZM DragonMarkerCrashStrip) competes: landing there is the crash
+  landing (FlyStopCrash). A hurt flier's landing elsewhere plays FlyStopInjured. On the ground it
+  cannot take off again while hurt: it fights there to its death.
+- **Its breath** (the combat tree's Shout action: tried each second): while its actions are free,
+  as it circles and dive bombs, hovering and perched once there (held while it flies to a hover
+  point, lands, comes to a perch or grabs); a shout it knows (its spell list's SHOU, one at random)
+  at a target before it (within 36°, ours) and within the shout's reach, when its voice has
+  recovered: ActionVoice (shoutStart, shoutStartFireball), its words let out after their hold
+  time (ActionVoiceRelease), a concentration breath spraying from its head's magic node until the
+  graph's shoutStop or 3 s. On the ground the combat AI's own shouts breathe.
+- **Killed in the air** (the engine's deferred kill): leaving the ground arms its deferred kill
+  (Actor.StartDeferredKill); with no health it cannot fly and comes down, and dies as it lands
+  (EndDeferredKill as its state returns to the ground), at the latest fBetaDeferredKillTimer (15 s)
+  after its health ran out. Its death plays on the ground, then its scripts' soul absorb
+  (dragonActorScript).
+
+### Others
+
+- **Perches**: one flier each; on it a flier has no controller and turns to its target.
 - **Trigger volumes**: a flier without a controller (in the air, perched) tells the volumes it
   flies through as a walking actor's controller does (a ball of its size about its middle):
-  MQ101SetStage99 is a wall of a trigger across Alduin's way to the tower, for his base only.
-- **Grounded**: SetAllowFlying(false) (and SetAllowFlyingEx's allow-flying) keeps it on the
-  ground and lands it (hastily) if it flies; Dragonrend (its DragonRend actor value above 0)
-  crash-lands it (FlyStopCrash) unless SetAllowFlyingEx forbade crashing. Interiors have no
-  flying (CanFlyHere).
+  MQ101SetStage99 lies across Alduin's way from his patrol's start.
 - **Against fliers**: a target in the air counts as far as it is in three dimensions (bows and
   spells reach it, `chooseEquipment`); a blow from the ground does not reach one whose feet are
   above the attacker's head and half its reach (`withinReach`: melee fighters wait under it);
-  observers notice it fSneakFlyingDistanceMult (3) times as far.
+  observers notice it fSneakFlyingDistanceMult times as far.
 - **Scripts and conditions**: IsFlying, GetFlyingState, IsAllowedToFly, CanFlyHere,
-  SetAllowFlying, SetAllowFlyingEx, SetForcedLandingMarker (where it lands to fight); the
-  conditions GetIsFlying, GetFlyingState, GetIsCrashLandRequest, GetIsHastyLandRequest,
-  IsAllowedToFly, CanFlyHere, GetIsInjured. Dragonborn's dragon riding (Bend Will's tamed
-  dragon as a flying mount, IsOnFlyingMount) flies through the same flight:
-  docs/gameplay.md, "Dragon riding".
-- `node tools/flight-info.ts`: the races that fly, their movement types, speeds and attacks,
-  the flight settings; `node tools/flight-info.ts csDragon EncDragon01Fire`: a combat style's
-  flight section with its times and how often each maneuver comes, an actor's shouts and their
-  reach; `--perches`: the perch furniture.
+  SetAllowFlying, SetAllowFlyingEx, SetForcedLandingMarker; the conditions GetIsFlying,
+  GetFlyingState, GetIsCrashLandRequest, GetIsHastyLandRequest, IsAllowedToFly, CanFlyHere,
+  GetIsInjured. Interiors have no flying (CanFlyHere). Dragonborn's dragon riding flies through
+  the same flight: docs/gameplay.md, "Dragon riding".
+- `node tools/flight-info.ts`: the races that fly, their movement types, speeds and attacks, the
+  flight settings; `node tools/flight-info.ts csDragon EncDragon01Fire`: a combat style's flight
+  section with its times and how often each maneuver is drawn, an actor's shouts with their reach
+  and combat ranges; `--perches`: the perch furniture.

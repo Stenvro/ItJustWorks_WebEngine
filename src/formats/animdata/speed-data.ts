@@ -129,14 +129,30 @@ export function speedAtParameter(table: SpeedTable, direction: number, parameter
 }
 
 /**
- * What BSSpeedSamplerModifier outputs: the blend parameter that moves the actor at the goal
- * speed in a direction (each curve inverted, linear between the curves around the direction).
- * Beyond the sampled speeds it holds at the curve's last parameter (TODO(M13): whether the
- * engine extrapolates there, e.g. a run at 370 against state 0's curve ending at 306).
+ * What BSSpeedSamplerModifier outputs (observed in the original: its speed sampler
+ * database's lookup): the blend parameter that moves the actor at the goal speed in a direction.
+ *
+ * - **The curve:** one curve, not a blend of two: the one for exactly that direction, else the
+ *   next higher; past the last (a direction a hair left of ahead, 0.99) the first.
+ * - **The point:** the first point of that curve at least as fast as the goal; the parameter
+ *   is linear between it and the point before (before the first, a point at 0 speed with
+ *   parameter 0).
+ * - **Faster than every point:** the goal speed itself. A horse galloping at 450 units a
+ *   second (its run blend's child sits at 450) is past its curve's last point (321 units a
+ *   second at 324.5): it gets 450 and gallops; held at the last parameter, it trotted with a
+ *   seventh of its gallop.
  */
 export function speedParameter(table: SpeedTable, direction: number, goal: number): number {
-  const curves = around(table, direction);
-  if (!curves) return goal;
-  const [a, b, t] = curves;
-  return lookup(a.points, goal, 1) * (1 - t) + lookup(b.points, goal, 1) * t;
+  const curves = table.curves;
+  if (curves.length === 0) return goal;
+  const curve = curves.find((c) => c.direction >= direction) ?? curves[0];
+  const points = curve?.points ?? [];
+  const index = points.findIndex(([, speed]) => speed >= goal);
+  const point = points[index];
+  if (!point) return goal;
+  const [parameter, speed] = point;
+  const [before, slower] = points[index - 1] ?? [0, 0];
+  const span = speed - slower;
+  const t = Math.abs(span) > 2 ** -23 ? (speed - goal) / span : 1;
+  return (1 - t) * parameter + t * before;
 }

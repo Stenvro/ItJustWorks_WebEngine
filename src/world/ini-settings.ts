@@ -170,6 +170,8 @@ export const INI_DEFAULTS = {
     fDecapInitialSpeed: 250,
     // The player's attack mounted aims at actors this near (src/shell/actor-combat.ts).
     fMountedAttackRange: 135,
+    // A fighter's advance from afar sprints (src/shell/actor-combat-ai.ts; the executable's).
+    bCombatPathSprinting: 1,
     f1PArrowTiltUpAngle: 2,
     f1PBoltTiltUpAngle: 1,
     f3PArrowTiltUpAngle: 2.5,
@@ -181,6 +183,9 @@ export const INI_DEFAULTS = {
     bFreezeDirectionOnLargeDelta: 1,
     fFreezeDirectionDefaultAngleThreshold: 60,
     fFreezeDirectionDefaultSpeedThreshold: 100,
+    // On a horse moving within this of straight back, the back key backs it up on
+    // (src/ai/mounts.ts riddenRequest).
+    fHorseClampAngle: 10,
     bInvertYValues: 0,
     // Both attack buttons pressed within this dual cast (seconds; src/shell/player-casting.ts).
     fDualCastChordTime: 0.05,

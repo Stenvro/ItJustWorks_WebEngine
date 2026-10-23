@@ -8,6 +8,7 @@
 
 import { view } from '../formats/esm/fields.ts';
 import { parseVmad } from '../formats/esm/vmad.ts';
+import { RecordFlag } from '../formats/esm/record.ts';
 import { parseReference } from '../world/cell-records.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import { globalValue } from '../scripting/runtime/condition-values.ts';
@@ -91,7 +92,12 @@ export class PackageData implements PackageWorld {
     const space = cell === undefined ? undefined : await this.cellSpace(cell);
     if (!space) return undefined;
     const base = await this.#db.get(record.formIdField('NAME') ?? 0);
-    return { space, baseType: base?.type ?? '', position: parseReference(record).position };
+    return {
+      space,
+      baseType: base?.type ?? '',
+      position: parseReference(record).position,
+      ...((record.flags & RecordFlag.skyMarker) !== 0 && { sky: true }),
+    };
   }
 
   async cellSpace(cell: number): Promise<Space | undefined> {
