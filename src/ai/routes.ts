@@ -75,6 +75,8 @@ export class RouteMap {
   readonly #areas = new Map<number, number>();
   readonly #doors = new Map<number, RouteDoor[]>();
   readonly #byDoor = new Map<number, RouteDoor>();
+  /** The area each load door puts one in (on its other side), worked out once. */
+  readonly #arrivalAreas = new Map<number, number>();
   /** The navmeshes of each space. */
   readonly #bySpace = new Map<string, number[]>();
   /** The load doors of each space. */
@@ -129,7 +131,16 @@ export class RouteMap {
         list.push(door);
         this.#doors.set(area, list);
       }
+      const arrival = door.arrivalNavmeshes
+        .map((navmesh) => this.#areas.get(navmesh))
+        .find((found) => found !== undefined);
+      if (arrival !== undefined) this.#arrivalAreas.set(door.door, arrival);
     }
+  }
+
+  /** The area a load door puts one in, if the map has its other side. */
+  arrivalArea(door: RouteDoor): number | undefined {
+    return this.#arrivalAreas.get(door.door);
   }
 
   /** A navmesh's area (the navmeshes its edges join it with), if the map has it. */
@@ -263,6 +274,9 @@ export function findRoute(
     length: 0,
   });
   const done = new Set<number>();
+  // The cheapest way found to each door so far: a dearer one is not queued (a worldspace's
+  // area has thousands of doors, each way back into it would queue them all again).
+  const reached = new Map<number, number>();
   let best: { node: Node; cost: number; length: number } | undefined;
   for (;;) {
     const node = open.pop();
@@ -281,14 +295,15 @@ export function findRoute(
     }
     for (const door of map.doorsIn(node.area)) {
       if (done.has(door.door) || closed?.has(door.door) === true) continue;
-      const area = door.arrivalNavmeshes
-        .map((navmesh) => map.areaOf(navmesh))
-        .find((found) => found !== undefined);
+      const area = map.arrivalArea(door);
       // The way back through the door it came out of is no way on.
       if (area === undefined || door.door === node.door?.destination) continue;
       const walk = distance(node.at, door.position);
+      const cost = node.cost + walk + DOOR_COST;
+      if (cost >= (reached.get(door.door) ?? Infinity) || (best && cost >= best.cost)) continue;
+      reached.set(door.door, cost);
       open.push({
-        cost: node.cost + walk + DOOR_COST,
+        cost,
         area,
         at: door.arrival,
         door,

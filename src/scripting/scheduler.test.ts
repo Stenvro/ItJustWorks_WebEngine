@@ -18,4 +18,22 @@ describe('PapyrusScheduler', () => {
     expect(done).toEqual(['waitMenuMode', 'wait']);
     expect(scheduler.wallTime).toBe(2);
   });
+
+  it('lets long engine work give way once its slice is spent', async () => {
+    let now = 0;
+    const scheduler = new PapyrusScheduler(1.2, () => now);
+    let yields = 0;
+    scheduler.yieldTask = () => {
+      yields++;
+      return Promise.resolve();
+    };
+    // Within the slice: no yield, the same start.
+    now = 3;
+    expect(await scheduler.giveWay(0, 4)).toBe(0);
+    expect(yields).toBe(0);
+    // Past it: one yield, and a new slice from the time it goes on.
+    now = 5;
+    expect(await scheduler.giveWay(0, 4)).toBe(5);
+    expect(yields).toBe(1);
+  });
 });
