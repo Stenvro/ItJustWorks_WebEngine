@@ -1281,6 +1281,26 @@ What the QA sweep's opening (2026-10-23) showed beyond the dragon, where MQ101 s
   not count a phase with nothing of its own open that waits for the player to come (a
   condition naming the player): [qa.md](qa.md).
 
+Measured with the QA runner (riverwood, combat, opening): scene stalls 3 before (TorriLedge in
+the opening, HildeSoldier in riverwood and in combat), none after. The opening, unattended with
+the follow bot, now runs past the tower (stage 25 some 30 s after the bot reaches the door),
+across the inn's roof, through Hadvar's street and wall scenes to
+MQ101DragonAttackSceneDToKeep, Hadvar escorting the player to the keep; MQ101 itself stays at
+stage 160 until the keep (its next stage is set inside). Left, and seen on the way:
+
+- **The tower's open door** (ImpWoodDoorSingleSmall01, open as placed): its collision, a
+  convex block 206 units wide on the leaf's node (63 beyond its hinge's far side), swung with
+  the open sequence lies along the way in, its near end across the outer step; the player gets
+  past only from some angles (the bot after a few tries, in one run of four never). Whether the
+  engine's open leaf leaves more room is not read yet (TODO(M13): the door's open pose against
+  the game's).
+- **AvoidPlayer:** the engine has a procedure that keeps an actor fAvoidPlayerDistance (100)
+  from the player, given to actors within fTriggerAvoidPlayerDistance (400) who see the player
+  do certain things (observed in the original, its comments-on-the-player loop); which actions start it is
+  not read yet (TODO(M13)). The player's bumps already move a standing actor aside.
+- The follow bot's limits: it stands where the debris east of the inn holds it in some runs,
+  and does not loot or equip (the keep's "Find some equipment").
+
 Whiterun's market by day (10:00, seven minutes): ADIA's random scenes (Nazeem and Ysolda,
 Carlotta and Ysolda, Anoriath and Ysolda) and WhiterunMarketplaceScene2/3 play through, their
 actors brought together, every line said, no deviation. Left in MQ101's run: Alduin
