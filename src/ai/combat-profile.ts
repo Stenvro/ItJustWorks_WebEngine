@@ -10,7 +10,6 @@ import { Fields } from '../formats/esm/fields.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import { AmmoFlag, WeaponType } from '../world/item-records.ts';
-import { isGuardClass } from './combat-reactions.ts';
 import { parseCombatStyle, type CombatStyle } from './combat-style-records.ts';
 import type { EquipOption } from './combat-tactics.ts';
 
@@ -75,15 +74,15 @@ export class CombatProfiles {
       (await this.style(runtime, packageStyle ?? info?.ai.combatStyle ?? DEFAULT_COMBAT_STYLE)) ??
       (await this.style(runtime, DEFAULT_COMBAT_STYLE)) ??
       NO_STYLE;
-    const classId = info?.stats.class;
-    const classRecord = classId === undefined ? undefined : await runtime.forms.record(classId);
     return {
       aggression,
       confidence,
       assistance,
       aggroRadius: info?.ai.aiData.aggroRadius,
       style,
-      guard: classRecord?.type === 'CLAS' && isGuardClass(classRecord.fields.first('DATA')),
+      // A guard as crime has it: its class's guard flag, or IsGuardFaction (vanilla's town guards
+      // are in the faction; their classes are fighters').
+      guard: await runtime.crime.isGuard(actor),
       teammate: runtime.state.actors.get(actor)?.playerTeammate === true,
       options: await weaponOptions(runtime, actor, held),
     };

@@ -182,7 +182,13 @@ are merged. RNAM: i16 cell Y, i16 cell X, u32 count, then per reference its form
 i16 X of the cell it is placed in. A reference is listed under every cell its bounds reach
 into (its own cell and mostly the 8 neighbours). With the camera in a cell, the references
 listed for the cells of the 11 × 11 grid around it are shown: the cells outside the loaded
-5 × 5 get a scene of only those references (with the cell's enable state).
+5 × 5 get a scene of only those references (with the cell's enable state). As the camera moves
+a cell the set listed for a cell at the grid's edge grows or shrinks by the references that
+only reach into the cells it entered or left: a scene is made again only when its cell wants
+references it lacks (with those it had: a camera going to and fro over a border, a fight near
+one, loads each cell once more at most), and none is made where the full cell is still kept
+just outside the grid. Reloading on every change read and inflated some fifty cells' records
+on the main thread per border crossing.
 
 ## Landscape
 

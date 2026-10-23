@@ -910,6 +910,12 @@ meanwhile.
   GetTargetHeight, IsLastHostileActor, IsInCombat, GetCombatState, IsPC1stPerson and the
   conditions run on the combat target read it, as do the natives IsWeaponDrawn, DrawWeapon,
   SheatheWeapon, IsBleedingOut, IsInKillMove, IsInCombat, GetCombatState and GetCombatTarget.
+  ShouldAttackKill is valued now and then (about 4 times a game second per fighter): its
+  target's health against the strike's damage less the target's armor, the armor read through
+  each worn piece's perks and kept 2 s. A fighter's work that awaits the scripts (this
+  estimate, the bleedout's regain) runs one at a time: started every frame, long frames
+  started more of it than finished and the backlog of perk conditions froze a fight for
+  seconds.
 - **Weapons on the body** (`src/shell/actor-weapons.ts`): the right hand's weapon model hangs on
   its sheath node (the equip system's: the models' "Prn", WeaponSword, WeaponDagger,
   WeaponAxe, WeaponMace, WeaponBack, WeaponBow) and goes to WEAPON at weaponDraw, back at
@@ -1254,7 +1260,7 @@ and casts keep their own pace (`attackInterval`, TODO(M13)).
   radius also has one that would not attack on sight warn and attack the neutral that come close
   (inferred: vanilla's wolves and bears are unaggressive with an aggro radius). It
   helps by its assistance (helps allies; helps friends and allies) one that fights or is
-  attacked, against the other; guards (CLAS DATA guard flag) help anyone attacked who did not
+  attacked, against the other; guards (IsGuard: the class's guard flag or IsGuardFaction, as crime has it) help anyone attacked who did not
   strike first and would not attack on sight (the crime itself, its bounty and the guards'
   arrest are crime's: `src/shell/actor-crime.ts`); the player's teammates help
   the player at least as friends and allies, and fight within fCombatTeammateFollowRadiusMult ×

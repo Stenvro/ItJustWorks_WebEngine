@@ -736,13 +736,14 @@ export class ActorCombatAi {
     const playerEnemy = this.#onSight(mind, profile, magic, PLAYER_REF);
     if (mind.mode === 'fight') {
       // The player yields a quarrel of their blows: it accepts once they held off a while. So
-      // do the guards that took up the fight against them (a crime: their arrest follows,
-      // src/shell/actor-crime.ts); those whose faction wants the player dead stay their enemy.
+      // do those that took up the fight against them (the guards of a crime, whose arrest
+      // follows: src/shell/actor-crime.ts; those who helped them); one that attacks the player
+      // on sight (its faction wants them dead) stays their enemy.
       if (
         acceptsYield({
-          fightsPlayer: fightsPlayer && (mind.quarrels.has(PLAYER_REF) || profile.guard),
+          fightsPlayer,
           playerEnemy,
-          heldOff: this.#clock - Math.max(this.#playerBlow, this.#playerArmed),
+          heldOff: this.#playerHeldOff(),
           settings: this.#settings,
         })
       ) {
@@ -896,6 +897,11 @@ export class ActorCombatAi {
       this.#aggro(mind, view, other, profile.aggroRadius)
     ) {
       return this.#join(mind, reference);
+    }
+    // No one takes up a fight against a player who yields (else those who took it up keep each
+    // other in it: each helps the other against the player, and the yield never ends it).
+    if (reference === PLAYER_REF && this.#playerHeldOff() >= this.#settings.acceptYieldTime) {
+      return false;
     }
     // Helping: one it helps fights `other`, or `other` fights one it helps.
     const assistance = profile.teammate
@@ -1106,6 +1112,11 @@ export class ActorCombatAi {
       settings,
       this.#random,
     );
+  }
+
+  /** How long the player has held off: weapon away and no blow struck (their yield). */
+  #playerHeldOff(): number {
+    return this.#clock - Math.max(this.#playerBlow, this.#playerArmed);
   }
 
   /** It yields to the player (Yield): out of the fight for fCombatYieldTime, weapon away. */
