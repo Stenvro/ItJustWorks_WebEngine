@@ -537,9 +537,16 @@ one actor, `--audit` for cells):
   AI packages from, template flag 0x20) whose schedule fits the game's time and whose
   conditions hold. A night that began yesterday counts by yesterday's day of the week.
 - **Its first procedure:** a template's tree (else the package's own) is walked in order. Of a
-  Sequence or Stacked branch the first child whose conditions hold runs; a Simultaneous
-  branch's first child gives the place. The procedure's inputs (PKC2) are the package's data
-  inputs over its template's defaults.
+  Sequence or Stacked branch the first child whose conditions hold runs; of a Simultaneous
+  branch's children that may run (those whose conditions are not known passed over), the first
+  with a place gives it: one whose place is a link the actor lacks does nothing beside the
+  others. CWPatrolAndGuardContestedHold (Sven's SvenRiverwoodIntroPatrol) is a Simultaneous of
+  Guards at the Civil War's linked places and a Patrol from a marker in Riverwood; Sven has none
+  of the links, and taking the first Guard's missing link as "not known" left him in his house,
+  so RiverwoodIntroSceneHildeSoldierScene, which waits for him within 1,000 units of the player,
+  never went on (`node tools/package-info.ts --audit interiors`: 498 actors undecided at 10:00,
+  494 now). The procedure's inputs (PKC2) are the package's data inputs over its template's
+  defaults.
 - **The place:** the procedure's first input that is a location or a target.
   - A reference: the actor is on it (its position and heading) if it is in the actor's cell or
     worldspace, else in another (not in this cell). Near a reference with a radius (a sandbox's
@@ -1260,10 +1267,15 @@ What the QA sweep's opening (2026-10-23) showed beyond the dragon, where MQ101 s
   (MQ101SetStage32, defaultSetStageTRIGSpecificActor on the cart's horse) about 5,000 units
   after the gate trigger that started the scene (MQ101CloseNorthGate, stage 25): 45 to 50
   seconds at the horse's walk (about 110 units a second measured).
-- **RiverwoodIntroSceneHildeSoldierScene, phase 1** (45 s, nothing open) is no fault either:
-  Hilde has run to her marker and the phase completes once Sven is within 1,000 units of the
-  player (GetDistance on his alias), which never happens while the player stands at
-  Riverwood's arrival with Sven elsewhere in the village.
+- **RiverwoodIntroSceneHildeSoldierScene, phase 1** (45 s, nothing open): Hilde has run to
+  her marker and the phase completes once Sven is within 1,000 units of the player (GetDistance
+  on his alias). That waits for the player rightly, but Sven was never out to be met: his
+  SvenRiverwoodIntroPatrol (until stage 10 of the scene's quest) patrols from a marker beside
+  Hilde's, and where packages put actors took the first Guard of its Simultaneous, whose link
+  he lacks, for an unknown place, so he stayed in RiverwoodSvensHouse. Fixed ([Where packages
+  put actors](#where-packages-put-actors)): he walks his patrol outside, and with the player
+  within 1,000 units the scene plays through ("A dragon! I saw a dragon!" to Sven's "And I've
+  got better things to do", measured in the browser after `coc Riverwood` at 13:00).
 - The QA monitor's `scene-stall` now says what a phase waits for (its completion conditions
   written out), starts the wait again when a quest those conditions read moves on, and does
   not count a phase with nothing of its own open that waits for the player to come (a

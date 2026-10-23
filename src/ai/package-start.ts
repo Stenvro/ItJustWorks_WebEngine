@@ -348,15 +348,26 @@ export async function packageStart(
     }
     const tree = template?.tree ?? pack.tree;
     if (!tree) return { kind: 'undecided', package: id, reason: `${pack.editorId} has no tree` };
-    const procedure = firstProcedure(tree, holds);
-    if (procedure === undefined) {
+    const procedures = firstProcedures(tree, holds);
+    if (procedures === undefined) {
       return { kind: 'undecided', package: id, reason: `the branches of ${pack.editorId}` };
     }
-    if (procedure === 'none') return { kind: 'here', package: id };
-    return placeOf(id, procedure, inputs, actor, world);
+    if (procedures === 'none') return { kind: 'here', package: id };
+    // Of those that run at once (a Simultaneous's), the first with a place: one whose place is
+    // a link the actor lacks does nothing (CWPatrolAndGuardContestedHold's Guards of the Civil
+    // War's links beside the Patrol that moves Sven out of his house in Riverwood).
+    let start: PackageStart = { kind: 'here', package: id };
+    for (const procedure of procedures) {
+      start = await placeOf(id, procedure, inputs, actor, world);
+      if (start.kind !== 'undecided' || start.reason !== LINK_MISSING) return start;
+    }
+    return start;
   }
   return { kind: 'here' };
 }
+
+/** Why a place is not known: the link it names is missing (scripts link some as needed). */
+const LINK_MISSING = 'its linked reference is missing';
 
 /** The globals a package's and its template's conditions read. */
 function globalsOf(pack: PackageRecord, template: PackageRecord | undefined): Set<number> {
@@ -375,6 +386,34 @@ function globalsOf(pack: PackageRecord, template: PackageRecord | undefined): Se
   add(pack.conditions);
   walk(template?.tree ?? pack.tree);
   return globals;
+}
+
+/**
+ * The procedures that run first: a Sequence's or Stacked's first child whose conditions hold;
+ * a Simultaneous's children that may run, in order (the first with a place decides it);
+ * undefined where it is not known (a Random choice, conditions not known), 'none' if none may
+ * run.
+ */
+function firstProcedures(
+  branch: ProcedureBranch,
+  holds: (conditions: readonly Condition[]) => boolean | undefined,
+): ProcedureBranch[] | 'none' | undefined {
+  if (branch.type !== 'Simultaneous') {
+    const first = firstProcedure(branch, holds);
+    return first === undefined || first === 'none' ? first : [first];
+  }
+  const runs = holds(branch.conditions);
+  if (runs === undefined) return undefined;
+  if (!runs) return 'none';
+  // A child whose conditions are not known is passed over (those after it may decide).
+  const found: ProcedureBranch[] = [];
+  let unknown = false;
+  for (const child of branch.children) {
+    const procedures = firstProcedures(child, holds);
+    if (procedures === undefined) unknown = true;
+    else if (procedures !== 'none') found.push(...procedures);
+  }
+  return found.length > 0 ? found : unknown ? undefined : 'none';
 }
 
 /**
