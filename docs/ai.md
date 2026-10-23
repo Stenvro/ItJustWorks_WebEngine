@@ -373,7 +373,18 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   instant idle (IdleChairEnterInstant, ...), sent after the enter it would have had: the graphs
   take an instant idle only within the furniture's own state, which the enters lead to
   (MT_RootBehavior goes to ChairRoot_State on IdleChairFrontEnter, whose IdleChairEnterInstant
-  goes on to ChairIdleState). Its exit is measured after the same events.
+  goes on to ChairIdleState). Its exit is measured after the same events. Its graph is kept in
+  the furniture's state: a body made again while it uses furniture (its look changed, a new
+  play made the player's) is put back in it by the enter and the instant idle once the use is
+  in it, and so is one a script's idle left standing (not animation-driven, as furniture states
+  are) a moment after it played. MQ101's player walked to Helgen's chopping block in the
+  camera-bob idle (IdleWalkingCameraStart: the Master machine's MT WalkingCamera, outside the
+  states that take a furniture's enter), so the block's IdleExecutioneeIdle went unheard, and
+  the package's end fragment played IdleWalkingCameraEnd, which left them standing in the
+  block: its IdleExecutionerAlduinReactionDeath (Behavior37, within Executionee_State) never
+  played, PlayImod and IdleFurnitureExit never came, and MQ101 never reached stages 145 and
+  160, which give the controls back. TODO(M13): how the engine keeps a graph in its furniture
+  (an enter it holds until the graph takes it).
 - **Idle markers** (IDLM, not drawn; with the furniture markers they are the cells' markers:
   `CellData.markers`): the actor goes to it, faces its way and plays its idles (IDLA), in order or
   one picked each time (IDLF 0x1), once through if so set (0x4), one each time its timer (IDLT)
