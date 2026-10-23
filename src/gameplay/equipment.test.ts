@@ -162,6 +162,13 @@ describe('what is held', () => {
       sheathed: undefined,
       drawn: 'SHIELD',
     });
+    // A bow is drawn into the left hand (the arrow takes WEAPON); a crossbow into the right.
+    expect(weaponNodes(WeaponType.bow, 'right')).toEqual({
+      sheathed: 'WeaponBow',
+      drawn: 'SHIELD',
+    });
+    expect(weaponNodes(WeaponType.crossbow, 'right').drawn).toBe('WEAPON');
+    expect(weaponNodes(WeaponType.staff, 'right').drawn).toBe('WEAPON');
   });
 });
 

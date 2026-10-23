@@ -201,6 +201,149 @@ describe('the behavior runtime', () => {
     expect(runtime.pose[0]).toBeCloseTo(0.2);
   });
 
+  it('keeps playing what a state left at once shares with another active parent', () => {
+    // The bow attack's shape: a blend of the lower body (standing holds the arms' draw too,
+    // moving does not) and the arms' draw; a step from standing to moving keeps the draw going.
+    const draw = clip('draw');
+    const lower: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Lower',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'Standing',
+          probability: 1,
+          enable: true,
+          generator: draw,
+          transitions: [transition(0, 1)],
+        },
+        {
+          id: 1,
+          name: 'Moving',
+          probability: 1,
+          enable: true,
+          generator: clip('walk'),
+          transitions: [],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const blend: BehaviorGenerator = {
+      kind: 'blender',
+      name: 'UpperLower',
+      referencePoseWeightThreshold: 0,
+      blendParameter: { value: 1 },
+      minCyclicBlendParameter: 0,
+      maxCyclicBlendParameter: 1,
+      indexOfSyncMasterChild: -1,
+      flags: 0,
+      subtractLastChild: false,
+      children: [
+        { weight: { value: 1 }, generator: lower },
+        { weight: { value: 1 }, generator: draw },
+      ],
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(blend, ['moveStart']),
+      host: host({ draw: animation(0, 2), walk: animation(1) }),
+      skeleton,
+    });
+    runtime.update(0.5);
+    runtime.sendEvent('moveStart');
+    runtime.update(0.1);
+    const playing = runtime.playing();
+    expect(playing.map((entry) => entry.animation).sort()).toEqual(['draw', 'walk']);
+    expect(playing.find((entry) => entry.animation === 'draw')?.time).toBeCloseTo(0.6, 5);
+  });
+
+  it('starts a state over when entered at once while still blending out of it', () => {
+    // The bow attack's shape: Attack (a nested machine Draw -> End on 'release') blends back to
+    // Ready on 'stop' (0.2 s); 'attack' again during that blend enters Attack at once: its
+    // nested machine starts at Draw again, without the exit events a deactivation would raise.
+    // Events: 0 attack, 1 release, 2 stop, 3 endExit.
+    const inner: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Inner',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'Draw',
+          probability: 1,
+          enable: true,
+          generator: clip('draw'),
+          transitions: [transition(1, 1)],
+        },
+        {
+          id: 1,
+          name: 'End',
+          probability: 1,
+          enable: true,
+          generator: clip('end'),
+          transitions: [],
+          exitNotifyEvents: [{ id: 3 }],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const blend = {
+      duration: 0.2,
+      toGeneratorStartTimeFraction: 0,
+      flags: 0,
+      endMode: 0,
+      blendCurve: 0,
+      selfTransitionMode: 0,
+      eventMode: 0,
+    };
+    const outer: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Outer',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'Ready',
+          probability: 1,
+          enable: true,
+          generator: clip('ready'),
+          transitions: [transition(0, 1)],
+        },
+        {
+          id: 1,
+          name: 'Attack',
+          probability: 1,
+          enable: true,
+          generator: inner,
+          transitions: [transition(2, 0, { duration: 0.2, effect: blend })],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(outer, ['attack', 'release', 'stop', 'endExit']),
+      host: host({ ready: animation(0), draw: animation(1), end: animation(2) }),
+      skeleton,
+    });
+    const states = (): string[] => runtime.states().map((entry) => entry.state);
+    runtime.update(0.1);
+    runtime.sendEvent('attack');
+    runtime.update(0.1);
+    runtime.sendEvent('release');
+    runtime.update(0.1);
+    runtime.sendEvent('stop');
+    runtime.update(0.05);
+    expect(states()).toEqual(['Ready', 'End']);
+    runtime.takeRaised();
+    runtime.sendEvent('attack');
+    runtime.update(0.05);
+    expect(states()).toEqual(['Attack', 'Draw']);
+    expect(names(runtime.takeRaised())).not.toContain('endExit');
+  });
+
   it("leaves a state at once before entering the next: its nested machine's exit first", () => {
     // Events: 0 go, 1 innerExit, 2 bEnter.
     const inner: BehaviorGenerator = {

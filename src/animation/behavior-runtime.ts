@@ -1436,13 +1436,30 @@ export class BehaviorRuntime {
         elapsed: 0,
       };
     } else {
+      const blendingOut = machine.transition?.from;
       machine.transition = undefined;
       // A self transition resets what the state plays (unless it continues).
       if (from === to && (effect?.selfTransitionMode ?? 2) !== 1) this.#reset(to.generator);
       // Left at once, the old state's nodes are deactivated now, before the new state is
       // entered (its nested machines' exit events come before the new state's enter events:
       // an idle's AnimObjectUnequip does not take the prop the next state just loaded).
-      if (from && from !== to) this.#leave(from.generator, to.generator);
+      if (from && from !== to) this.#leave(node, from.generator, to.generator);
+      // Entered at once while the machine still blends out of it (an earlier transition's
+      // from-state, its nodes still active), it starts over as a state entered anew, its nested
+      // machines at their start states (what it shares with the state left goes on): a bow
+      // attack begun again during the blend back to the ready state draws again, where it would
+      // have resumed its finished release and waited there for good. Nothing is deactivated, so
+      // no exit events are raised (the release's attackStop would end the new draw at once).
+      if (blendingOut === to && from !== to) {
+        const shared = new Set<object>();
+        const mark = (generator: BehaviorGenerator | undefined): void => {
+          if (!generator || shared.has(generator)) return;
+          shared.add(generator);
+          for (const child of children(generator)) mark(child);
+        };
+        mark(from?.generator);
+        this.#reset(to.generator, shared);
+      }
     }
     machine.current = to;
     machine.timeInState = 0;
@@ -1463,9 +1480,16 @@ export class BehaviorRuntime {
 
   /**
    * Deactivates the active nodes under a state's generator left at once (innermost first), but
-   * those the state entered shares; they are no longer active at the update's end.
+   * those the state entered shares and those the graph still plays through another parent (as
+   * Havok keeps a node active while any active parent holds it: the bow attack's arms, a blend's
+   * upper-body child, also lie under its standing lower body, and a step from standing to
+   * moving must not start the draw over); they are no longer active at the update's end.
    */
-  #leave(left: BehaviorGenerator | undefined, entered: BehaviorGenerator | undefined): void {
+  #leave(
+    machine: StateMachine,
+    left: BehaviorGenerator | undefined,
+    entered: BehaviorGenerator | undefined,
+  ): void {
     const under = (root: BehaviorGenerator | undefined): object[] => {
       const nodes: object[] = [];
       const seen = new Set<object>();
@@ -1486,11 +1510,36 @@ export class BehaviorRuntime {
       return nodes;
     };
     const kept = new Set(under(entered));
+    const elsewhere = this.#playedWithout(machine, left);
     for (const node of under(left)) {
-      if (kept.has(node) || !this.#active.has(node)) continue;
+      if (kept.has(node) || elsewhere.has(node) || !this.#active.has(node)) continue;
       this.#active.delete(node);
       this.#deactivate(node);
     }
+  }
+
+  /**
+   * The active nodes the graph plays now other than through `machine`'s state `left`:
+   * generators reached from the root through their active children, with the modifiers they
+   * apply.
+   */
+  #playedWithout(machine: StateMachine, left: BehaviorGenerator | undefined): Set<object> {
+    const reached = new Set<object>();
+    const visitModifier = (modifier: BehaviorModifier): void => {
+      if (reached.has(modifier)) return;
+      reached.add(modifier);
+      for (const child of modifierChildren(modifier)) visitModifier(child);
+    };
+    const visit = (node: BehaviorGenerator | undefined): void => {
+      if (!node || reached.has(node) || !this.#active.has(node)) return;
+      reached.add(node);
+      if (node.kind === 'modifier-generator' && node.modifier) visitModifier(node.modifier);
+      for (const child of this.#activeChildren(node)) {
+        if (node !== machine || child !== left) visit(child);
+      }
+    };
+    visit(this.#root);
+    return reached;
   }
 
   /** Makes the nearest machine below a generator start in state `id`. */
