@@ -315,15 +315,40 @@ their look: [formats/esm.md](formats/esm.md#actors)).
   Dwemer centurion's `FXSteamCenturionFogSkin.nif`: Autoplay plays its AutoPlay, then loops
   AutoLoop, scrolling the steam's texture along its skin; without it the steam stood still
   around its joints).
-- **How often they move:** near the camera (512 units) and in front of it every frame; behind
-  it or beyond 2048 units ten times a second, beyond 4096 five times a second, their graphs
-  then running the longer step at once (`animationInterval`). In Whiterun's 25 cells this
-  took the actors' per-frame cost from 6.1 to 0.3 ms. TODO(M13): the engine's scheme (observed
-  in the original): a graph is updated every frame up to [Animation] fAnimInterpNearDist (400) from the
-  camera (the distance scaled by 80° over the field of view), every fAnimInterpMinTime (0.08 s)
-  there, rising to fAnimInterpMaxTime (0.25 s) at fAnimInterpFarDist (800) and beyond or unseen,
-  its pose interpolated between the updates (fAnimInterpSlop); without that interpolation the
-  engine's intervals would make poses step, so ours stay.
+- **How often they move:** as the engine updates its actors' graphs: every frame near the
+  camera, farther away a few times a second ahead of time with their poses interpolated
+  between ([below](#how-often-graphs-update)).
+
+## How often graphs update
+
+Observed in the original (its graph manager's update), in our words; ours in
+`animateSkeletons` and `animationRate` (`src/animation/animated-skeleton.ts`), for actors and
+animated objects alike.
+
+- **The interval.** The skeleton's distance from the camera, scaled by 80° over the field of view
+  (degrees across a 4:3 frame, fDefaultWorldFOV's measure: zooming in brings it near), decides
+  how often its graph updates: up to [Animation] fAnimInterpNearDist (400) every frame; beyond,
+  every fAnimInterpMinTime (0.08 s), rising evenly to fAnimInterpMaxTime (0.25 s) at
+  fAnimInterpFarDist (800) and beyond. One the engine does not see gets the longest interval.
+- **Ahead of time.** A far graph does not run the time that has passed: it runs ahead in one
+  update to where it will be an interval on, and its pose blends from the pose before into that
+  one as the interval passes (the engine keeps two pose buffers and swaps them at each update).
+  Far actors so move smoothly at a fraction of the cost, and nothing lags.
+- **Not past a trigger.** The interval is cut to just short (half a frame) of the next trigger or
+  annotation a playing clip passes (the engine walks the active clips' triggers), so that what
+  the clips raise (a footstep, a sound) is raised at its moment, not up to a quarter of a second
+  early (`BehaviorRuntime.nextEventIn`).
+- **Not for a frame or two.** An interval no longer than (1 + fAnimInterpSlop) frames is not worth
+  it: the graph updates every frame. bAnimInterpEnable 0 turns it all off.
+
+Ours besides: a skeleton behind the camera beyond the far distance is not interpolated (it steps:
+nothing of it is seen), a nearer one is (its shadow is). A graph whose variable bDisableInterp is
+set updates every frame (inferred from the engine's graph variable names: the manager checks a
+flag of its own there; how it is set was not read). The skeleton's `time` is its graph's, ahead
+of the clock between such updates, so the time its root motion covers is the graph's step and the
+movers spread that motion over the interval. Before (every frame within 512 units in front of the
+camera, else 10 or 5 times a second by 2048 and 4096 units, without interpolation) far actors'
+poses stepped, and the graphs of everyone between 512 and 2048 units in front ran every frame.
 
 ## Driving the graphs
 
@@ -411,11 +436,48 @@ written every frame over the graphs'; actors beyond the high process went their 
 graph held them in an idle; a graph out of an animation-driven idle stayed standing while the
 actor walked (no new moveStart came).
 
+**When the channels are read** (observed in the original). The engine reads its graph data
+channels into a graph right before each update of that graph, comparing each value with what it
+read at the update before: an action is performed as a value crosses its threshold between two
+updates of the graph. The thresholds have no hysteresis: TurnDelta's 1° a second either way
+(ActionTurnLeft or Right from below, ActionTurnStop from above), Speed's 5 (its ActionMoveStop is
+withheld while a flag of the actor's process is set, as all its channels hold while another
+is). Ours: `BehaviorRuntime.channels` is read at the start of every update; `Locomotion.latch`
+hands it the actor's latest movement (the movers', the walkers', an NPC rider's) and
+`Locomotion.release` takes it back (a mover freed, a walker gone, a rider off its horse). The
+player's two graphs update every frame and are driven at once. A walker does nothing on a frame
+without a physics step (no time stepped to move in): before, its speed fell to 0 on such frames.
+
+What this fixed (the "animation that hangs in one step, repeated fast"): a far actor's graph,
+updated five times a second, got every frame's moveStop and moveStart queued (a walker's speed
+fell to 0 between physics steps); in one update it left its locomotion and came back several
+times, each time its transitions dropping the blend under way (below, "Transitions"). Measured
+over 90 s outside Whiterun: a chicken 7.9 state changes a second (265 locomotion-to-standing
+flips and back), a cow 3.1, a Whiterun guard 3.7; in Riverwood a mudcrab 1.1.
+
+**Ahead, not sideways.** Direction is the movement against the facing, wrapped into 0..1 (observed
+in the original: the engine wraps the angle into a turn and divides; a movement a hair left of ahead is
+0.99, a hair right 0.01, and the forward / backward and right / left actions are performed as it
+crosses their halves). An NPC that does not strafe moves ahead, the way it faces, while it turns
+towards the way it goes (`steer`): its Direction is 0. Before, it moved along the way while its
+facing still turned, so walkers turning onto a path swayed into their walk-left and walk-right
+blends.
+
+**The speed sampled.** The graphs do not blend their locomotion by Speed itself: their
+BSSpeedSamplerModifier (observed in the original) looks Speed up in the project's speed
+data (`meshes\speeddatasinglefile.txt`: per locomotion state and direction, the speed each blend
+parameter moves the character at) and gives the blend parameter that moves it at that speed
+(HorseSpeedSampled, SpeedSampled); without a table, Speed itself. A cart horse walking at 125
+gets 125.8, its walk (125.11) with 0.8 % of its slow trot, as in the engine; slower or faster,
+the parameter differs more from the speed (a horse at 60 units a second gets 119.7: its walk
+played slower, not a blend with standing). Before, Speed went through as it was.
+
 TODO(M13): the actions are not resolved through the idle tree yet (the vanilla events are sent:
 a rider's graph gets moveStart, and SprintStart is not refused while sneaking or blocking); the
 movement controller's acceleration (it ramps the speed by the race's acceleration and deceleration
 rates, RACE DATA: a factor 1 / rate, the scale it applies to not known) is not reproduced; the
-per-actor divisor of Speed; the hold flag.
+per-actor divisor of Speed; what sets the process flags that hold the channels and withhold
+ActionMoveStop.
 
 ## Graph events
 
@@ -662,6 +724,16 @@ which shows the hands of the resting 1HM pose only looking down); the third-pers
 shadow, which the game casts in first person too. A menu that shows the player (the race menu)
 animates the body on real time while the game stands still, and turns it itself.
 
+**Both graphs hear the player's idles** (observed in the original): the player's graph
+manager holds two graphs, the third-person body's and the first-person one, the one shown being
+the manager's active graph; an event (an idle's, a script's SendAnimationEvent) goes to every
+graph of the manager. So MQ101's walk to the chopping block (the package's CameraBobStart plays
+IdleWalkingCameraStart on the player) takes the third-person graph too into Master_Behavior's MT
+WalkingCamera, an additive camera bob without legs: in third person the body glides there (as
+the engine's routing has it: inferred, the vanilla third-person view of that walk not seen;
+the scene is made for first person, where the camera bobs as the player walks). Measured: the piloted player walks into its walk blends (MT_WalkForward, Speed 80) until
+IdleWalkingCameraStart, then plays MT_WalkingCamera alone until IdleWalkingCameraEnd.
+
 ### First person
 
 How the engine dresses the first-person body (observed in the original; implemented in
@@ -866,22 +938,23 @@ them by name (a variable keeps the first file's initial value). Each frame:
    state, take a random state or the next higher / lower state id. Leaving a state raises its
    exit events, entering one its enter events and the machine's change event; a transition
    with a blending effect (duration, curve) plays both states and blends them (the old one's
-   nodes deactivate as the blend ends), an instant one switches, the old state's active nodes
+   nodes deactivate as the blend ends; nested, into the same state, its events and flags:
+   [Transitions](#transitions)), an instant one switches, the old states' active nodes
    deactivated then, before the new state's enter events (their nested machines' exit events
-   first: TODO(M13), Havok's order is not documented; this is the one the vanilla props need); a self transition starts the state over (unless its effect continues); a
+   first: TODO(M13), Havok's order is not documented; this is the one the vanilla props need); a
    transition into a nested state sets that machine's start. A node stays active while any
    active parent still holds it, as in Havok, whose graph activates and deactivates nodes by
    whether anything active reaches them: the bow attack's blend lays its arms (BowZoomBlend)
    over its lower body, and the standing lower body holds the same arms again, so an instant
    step from standing to moving (moveStart) must not deactivate them; it did, and every step
-   an archer took started its draw over (it never shot while strafing). A state entered at
-   once while the machine still blends out of it (an earlier transition's from-state) starts
-   over, its nested machines at their start states, without deactivating it (no exit events):
-   the bow attack's Bow_End state has no way out but the attack's attackStop back to the ready
-   state, and a new bowAttackStart during that 0.2 s blend resumed Bow_End and waited there
-   for good (the idle tree lets the next shot start at once: its condition is only that the
-   attack state is not drawn or releasing). TODO(M13): Havok's own rule for re-entering a
-   state that is blending out is not documented; this is the behaviour the game shows. A global wildcard (flag 0x400) of
+   an archer took started its draw over (it never shot while strafing). A state entered while
+   the machine still blends out of it (one an earlier transition blends from) starts over, its
+   nested machines at their start states, without deactivating it (no exit events), as Havok
+   plays a fresh copy of a node used twice (`#restart`; blending in, from the pose the machine
+   had): the bow attack's Bow_End state has no way out but the attack's attackStop back to the
+   ready state, and a new bowAttackStart during that 0.2 s blend resumed Bow_End and waited
+   there for good (the idle tree lets the next shot start at once: its condition is only that
+   the attack state is not drawn or releasing). A global wildcard (flag 0x400) of
    a machine nested in another state of a machine is that machine's too: taken, it goes to the
    state holding the nested machine, which starts in the wildcard's state (Master_Behavior has
    no way into Cart_State but its Cart machine's IdleCartPrisonerASway). Paired animations
@@ -951,6 +1024,80 @@ weapAdj picks how far `weaponAdjustment.hkx` pushes the sheathed weapons out; th
 it from the armour (ARMA DNAM weapon adjust, f32 at 8): only body pieces vary it in the data
 (0.1–0.65; helmets and the rest are 0 or 1), so it is the cuirass's (slot 32; TODO(M13): not
 documented).
+
+### Transitions
+
+How a state machine's blending transitions run (Havok's hkbStateMachine and
+hkbBlendingTransitionEffect as the vanilla graphs use them; the census of the 428 vanilla
+behavior files: `node tools/behavior-run.ts --transitions`):
+
+- **Nested.** A transition taken while another of the same machine still blends does not start
+  from the state that one enters: it blends from the transition under way, which goes on blending
+  inside it (its clips play on) until it ends and becomes its state. A machine keeps at most
+  maxSimultaneousTransitions nested (32 in 3,604 vanilla machines, 2 or 4 in 39): beyond, the
+  oldest ends at once. Before, the blend under way was dropped and the pose popped to the state
+  it entered; a graph flipping back and forth showed the state it left at full weight each time.
+  Transitions without an event (a condition) are taken while one blends too, unless that one may
+  not be interrupted.
+- **Back into a state it blends out of** (A to B, then back to A while A still blends out): Havok
+  plays a fresh copy of A beside the one blending out; ours share their nodes, so the machine's
+  pose as it was is held and A starts over blended in from it (`#restart`, as an instant
+  transition back starts it over).
+- **Events while blending.** The project's default event mode (hkbProjectData: 2 in every
+  vanilla actor project) keeps events from the states a transition blends out of; an effect may
+  say otherwise (1,222 vanilla effects let both sides hear them, 30 say not the state left;
+  3 would keep them from the state entered). Before, every event reached both sides.
+- **Into the same state.** By the effect's self-transition mode: continue (nothing starts over),
+  reset (what the state plays starts over), blend (it starts over, blended in from the pose the
+  machine had: the runtime keeps the last pose of the machines that have such a transition), or
+  the default, continue if what the state plays is cyclic (a looping or ping-pong clip, a blender
+  of such, a machine whose state plays one) and blend if not. Without an effect: reset. Before,
+  every self transition but a continuing one reset, so a looping clip re-entered by a repeated
+  event started over each time. 220 vanilla transitions can lead into their own state.
+- **A machine entered again** (a self transition above it that resets or blends): by its own
+  self-transition mode it stays in its state (3,510 vanilla machines; what that state plays starts
+  over), goes to its start state if its state has a transition there (47), or always (86).
+- **Effect flags and end mode:** sync (344) starts the state entered where the state left is in
+  its cycle; ignore from / to world-from-model (1,290 / 487) leaves the root motion to the other
+  side; end mode 1 lasts until the state left ends, 2 no longer than that (22 vanilla, all of
+  duration 0).
+- **Clip flags:** continue motion at end (0x1: the quadrupeds' canned flee turns) keeps moving
+  the character as the clip's last moment did once a single-play clip has ended; ignore motion
+  (0x20) does not move it. A clip that joins a syncing blender's cycle (a horse's trot joining its
+  walk) starts at the cycle's phase without moving the character from its start (it jumped a
+  stride ahead), as does a clip started at a fraction.
+
+The runtime counts what it does (`BehaviorRuntime.stats`: updates, state changes, self
+transitions, interrupted transitions, clip starts) and tells a development hook of every state
+change (`traceChange`): the measurements in this file come from them.
+
+## Mirrored clips
+
+A clip with the mirror flag (hkbClipGenerator 0x4: 200 vanilla clips in 37 graphs: every
+quadruped's right turns, played from the left ones; mirrored attacks, recoils, get-ups and deaths;
+the humans' HideL* and CornerPeek*R) plays its pose mirrored across the character
+(`src/animation/mirror.ts`). Observed in the original (Havok's hkaMirroredSkeleton as the
+executable builds it from the character's hkbMirroredSkeletonInfo), in our words:
+
+- The mirror axis is a quaternion (every vanilla character: (1, 0, 0, 0), across the plane x = 0,
+  its left and right) and each bone has a partner (the bone pair map; empty in 326 of the 355
+  vanilla characters, the horse, the wolf and the skeever among them: then every bone is its own
+  partner; `CharacterInfo.mirror`).
+- As the skeleton is set up, each bone gets an invariant rotation from the reference pose: its
+  model-space rotation inverted, times the axis, times its partner's model-space rotation,
+  snapped to the nearest of the 24 quarter-turn rotations when within 0.1 of one. The reference
+  pose so mirrors onto itself (checked: the human skeleton within 0.01 units and 1.2°, the deer
+  and the chicken likewise).
+- A pose is mirrored bone by bone in local space: the rotation becomes the parent's invariant
+  (the axis for a root) times the rotation times the bone's own invariant inverted; the
+  translation is turned by the parent's invariant and negated. Then each bone swaps its
+  transform with its partner's. The clip's motion is mirrored by the axis: x negated, the turn
+  reversed.
+- With every bone its own partner (horses, wolves) the bones' places are reflected too: a left
+  leg's place goes to the right side, the right leg's to the left, each keeping its own
+  orientation; that is what the engine's mirroring does with these characters.
+- An additive mirrored clip (ours: the engine's path for additive poses was not read) is laid
+  on the reference pose, mirrored, and taken again as the difference to the mirrored reference.
 
 ## Procedural modifiers
 

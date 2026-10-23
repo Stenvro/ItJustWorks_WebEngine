@@ -47,6 +47,17 @@ export interface ActorsAwayOptions {
   readonly staged: (actor: number) => boolean;
   /** The doors actors go through: locked load doors, those of the loaded area swinging. */
   readonly doors?: ActorDoors;
+  /**
+   * An actor away got to the place its package sent it to (a scene's package action whose
+   * package ends there is done: src/ai/scene-runtime.ts packageEnded).
+   */
+  readonly reached?: (actor: number, walk: AwayPackage) => void;
+}
+
+/** The package an actor away walks for: it and the procedure that sent it. */
+export interface AwayPackage {
+  readonly id: number;
+  readonly procedure: string;
 }
 
 /** A stretch of a trip: points in one space, ending at a load door (or at the place). */
@@ -68,6 +79,8 @@ interface ScheduleRun {
 /** An actor on its way while away. */
 interface Trip {
   readonly destination: AwayPlace;
+  /** The package it walks for, if known. */
+  readonly package: AwayPackage | undefined;
   readonly speed: number;
   legs: readonly Leg[] | undefined;
   leg: number;
@@ -132,9 +145,10 @@ export class ActorsAway {
    * An actor sets out for a place it cannot walk to in the loaded area (another cell or
    * worldspace), from where it is now (`from`: where it stepped out through a load door).
    */
-  depart(actor: number, from: AwayPlace, destination: AwayPlace): void {
+  depart(actor: number, from: AwayPlace, destination: AwayPlace, walk?: AwayPackage): void {
     const trip: Trip = {
       destination,
+      package: walk,
       speed: this.#walkSpeed ?? WALK_SPEED,
       legs: undefined,
       leg: 0,
@@ -153,6 +167,44 @@ export class ActorsAway {
   /** The actor came onto the stage (or left the game): its trip is the high process's now. */
   arrived(actor: number): void {
     this.#trips.delete(actor);
+  }
+
+  /**
+   * An actor away chooses its package again (EvaluatePackage, a scene's package action
+   * starting or ending): where its package has it now, it is sent there; one already there
+   * has reached it.
+   */
+  reconsider(actor: number): void {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime || this.#options.staged(actor)) return;
+    const session = this.#options.session;
+    void (async () => {
+      // Those of the player's space and of the spaces one door from it, as the schedules.
+      const [routes, placer, player, at] = await Promise.all([
+        session.routeMap(),
+        session.actors(),
+        runtime.placement(PLAYER_REF),
+        runtime.placement(actor, false),
+      ]);
+      if (!player || !at) return;
+      const here = spaceOf(player);
+      const there = spaceOf(at);
+      if (![here, ...spacesNextTo(routes, here)].some((space) => sameSpace(space, there))) return;
+      await this.#scheduleActor(runtime, placer, actor, 'walk', true);
+    })().catch((error: unknown) => {
+      this.#options.terminal.log(
+        'actor',
+        `actors away: ${actor.toString(16)}: ${describe(error)}`,
+        'warn',
+      );
+    });
+  }
+
+  /** A trip ended at its place: the package it walked for has got it there. */
+  #reached(actor: number, trip: Trip): void {
+    // One on the stage meanwhile (a rider getting off its horse is asked again while it
+    // changes hands) walks there itself: the high process's package says when it is done.
+    if (trip.package && !this.#options.staged(actor)) this.#options.reached?.(actor, trip.package);
   }
 
   /** Every frame (real seconds): trips walk on; schedules are asked again when it is time. */
@@ -233,6 +285,7 @@ export class ActorsAway {
     for (const [actor, trip] of this.#trips) {
       this.#trips.delete(actor);
       if (runtime) void this.#moveTo(runtime, actor, trip.destination);
+      this.#reached(actor, trip);
     }
   }
 
@@ -281,8 +334,11 @@ export class ActorsAway {
     placer: ActorPlacer,
     actor: number,
     mode: 'jump' | 'walk',
+    /** Asked again for this actor alone: a trip it is on gives way to its new package's. */
+    again = false,
   ): Promise<boolean> {
-    if (this.#options.staged(actor) || (mode === 'walk' && this.#trips.has(actor))) return false;
+    if (this.#options.staged(actor)) return false;
+    if (mode === 'walk' && !again && this.#trips.has(actor)) return false;
     const now = await runtime.placement(actor, false);
     const record = await runtime.forms.record(actor);
     if (!now || record?.type !== 'ACHR') return false;
@@ -290,11 +346,21 @@ export class ActorsAway {
     const placed = cellActor(record, now.position, now.rotation[2]);
     const start = await placer.whereNow(placed, current.space).catch(() => undefined);
     const destination = start && (await this.#destination(runtime, actor, start, current));
-    if (!destination) return false;
+    const walk: AwayPackage | undefined =
+      start && start.kind !== 'undecided' && start.package !== undefined
+        ? { id: start.package, procedure: start.procedure ?? '' }
+        : undefined;
+    if (!destination) {
+      if (again) this.#trips.delete(actor);
+      return false;
+    }
     if (
       sameSpace(destination.space, current.space) &&
       distance(destination.position, current.position) <= AT_PLACE
     ) {
+      // There already: its package got it there.
+      if (again) this.#trips.delete(actor);
+      if (walk && !this.#options.staged(actor)) this.#options.reached?.(actor, walk);
       return false;
     }
     // It came onto the stage meanwhile: the high process has it.
@@ -302,8 +368,18 @@ export class ActorsAway {
     if (mode === 'jump') {
       this.#trips.delete(actor);
       await this.#moveTo(runtime, actor, destination);
+      if (walk) this.#options.reached?.(actor, walk);
     } else {
-      this.depart(actor, current, destination);
+      const trip = this.#trips.get(actor);
+      // On its way there already.
+      if (
+        trip &&
+        sameSpace(trip.destination.space, destination.space) &&
+        distance(trip.destination.position, destination.position) <= AT_PLACE
+      ) {
+        return false;
+      }
+      this.depart(actor, current, destination, walk);
     }
     return true;
   }
@@ -402,10 +478,13 @@ export class ActorsAway {
             );
       if (this.#trips.get(actor) !== trip) return;
       if (!route) {
-        // No way there over the navmeshes: it gets there all the same, at once.
+        // No way there over the navmeshes: it gets there all the same, at once (unless it came
+        // onto the stage meanwhile: the high process has it).
         this.#trips.delete(actor);
+        if (this.#options.staged(actor)) return;
         const runtime = this.#options.session.scriptsReady;
         if (runtime) await this.#moveTo(runtime, actor, trip.destination);
+        this.#reached(actor, trip);
         return;
       }
       const legs: Leg[] = [];
@@ -447,6 +526,7 @@ export class ActorsAway {
         // At its place.
         this.#trips.delete(actor);
         void this.#moveTo(runtime, actor, trip.destination);
+        this.#reached(actor, trip);
         return;
       }
       const arrival: AwayPlace = {

@@ -585,6 +585,8 @@ export class ActorMounts {
    * the spot by MQ101's gate, Speed 80 and no package to move her.
    */
   #stand(ride: Ride): void {
+    // Its graph's channels no longer read the horse's movement.
+    ride.locomotion.release();
     const graphs = this.#graphsOf(ride.rider);
     if (graphs.length === 0) return;
     ride.locomotion.drive(graphs, {
@@ -715,7 +717,7 @@ export class ActorMounts {
         if (behavior) graphs.push(behavior);
       }
       if (ride.phase === 'riding') {
-        ride.locomotion.drive(graphs, {
+        const frame = {
           velocity,
           heading: horse.heading,
           seconds: Math.max(seconds, 1e-3),
@@ -724,7 +726,12 @@ export class ActorMounts {
           verticalSpeed: 0,
           sprinting: movers.motion(ride.horse)?.sprinting === true,
           sneaking: false,
-        });
+        };
+        // An NPC rider's graph reads it as it updates (its channels); the player's two graphs
+        // update every frame.
+        const npc = ride.rider !== PLAYER_REF ? get(ride.rider)?.placed.behavior : undefined;
+        if (npc) ride.locomotion.latch(npc, frame);
+        else ride.locomotion.drive(graphs, frame);
         // As the engine's riders do: their graphs copy the horse graph's sampled speed and its
         // locomotion sync (copy channels made as the rider mounts) every update, so that the
         // rider's horse locomotion keeps the horse's gait.

@@ -32,6 +32,8 @@ const atPlace = (run: ProcedureRun): number => settingsOf(run).distanceRadiusMin
 const NEAR_TARGET = 128;
 /** Standing actors look round for something to do this often (seconds). */
 const IDLE_SECONDS = 1;
+/** A travel whose way failed searches again after this (seconds; ours). */
+const TRAVEL_AGAIN = 1;
 /** The player's reference. */
 const PLAYER = 0x14;
 /** An actor reaches what it picks up, activates or talks to from this far. */
@@ -158,9 +160,17 @@ async function destinationRadius(
 const travel: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
   if (!place) return hold(run);
-  return (await goTo(run, place, undefined, movingTo(run, place.reference)))
-    ? 'success'
-    : 'failure';
+  // A way that fails is searched for again (a moment later), not given up: the procedure does
+  // not fail its package (a scene's package action would be done with the actor short of its
+  // place: MQ101's Torolf on Helgen's porch, his way to the door cut by its frame). The movers
+  // warp an actor whose ways keep failing near one spot (bWarpOnConsecutiveFailures, observed
+  // in the original), so it gets there in the end.
+  for (;;) {
+    if (await goTo(run, place, undefined, movingTo(run, place.reference))) return 'success';
+    if (run.stopped()) return 'failure';
+    await run.wait(TRAVEL_AGAIN);
+    if (run.stopped()) return 'failure';
+  }
 };
 
 /**
@@ -749,12 +759,29 @@ const acquire: ProcedureRunner = async (run) => {
   return taken > 0 ? 'success' : 'failure';
 };
 
-/** Activate: goes to its target (or those its object list holds) and activates it. */
+/**
+ * Activate: goes to its target (or those its object list holds) and activates it. Furniture
+ * activated is furniture used (the ActivateSpecialFurniture template: Torolf leaning on his
+ * porch's rail, Haming sitting by it): the actor goes into it by its enter, from where it is,
+ * and one in it already stays (it does not stand up first, nor walk to the furniture's own
+ * place, which its graph could not leave while it sits).
+ */
 const activate: ProcedureRunner = async (run) => {
   const count = Math.max(1, run.inputs.number(1, 1));
+  const targets = await targetsIn(run, 0);
+  const furniture = new Set<number>();
+  for (const reference of targets) {
+    if ((await run.mind.destinationKind?.(reference)) === 'furniture') furniture.add(reference);
+  }
+  const first = targets[0];
+  if (first === undefined || !furniture.has(first)) await run.body.leaveFurniture();
   let done = 0;
-  for (const reference of await targetsIn(run, 0)) {
+  for (const reference of targets) {
     if (run.stopped() || done >= count) break;
+    if (furniture.has(reference)) {
+      if (await run.body.useFurniture(reference)) done++;
+      continue;
+    }
     if (!(await goToReference(run, reference, REACH))) continue;
     await faceReference(run, reference);
     if (await run.body.activate(reference)) done++;
@@ -1208,7 +1235,7 @@ export const PROCEDURES: Readonly<Record<string, ProcedureRunner>> = {
   lockdoors: doors(true),
   find,
   acquire: standing(acquire),
-  activate: standing(activate),
+  activate,
   eat,
   say,
   forcegreet: standing(forceGreet),
