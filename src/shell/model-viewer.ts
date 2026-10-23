@@ -107,6 +107,7 @@ import type { PlayerView } from './race-menu.ts';
 import { groundUnder, type SoundingWorld } from './actor-sounds.ts';
 import { CombatTargetKeywords } from './combat-target-keywords.ts';
 import type { GameSession } from './game-session.ts';
+import type { CellRecord } from '../world/cell-records.ts';
 import { clock, startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
 import type { LocalMapContent } from './local-map.ts';
@@ -1209,6 +1210,7 @@ export class ModelViewer {
     if (session) {
       this.#sky?.dispose();
       this.#sky = new InteriorSkyControls(session, this.#ui.sky);
+      void this.#enterSky(session, data.cell, token);
     }
     this.#ui.status.hidden = false;
     const actorsShown = [...(this.#stage?.shown() ?? [])].length;
@@ -1873,6 +1875,9 @@ export class ModelViewer {
       if (!session.menuMode && !session.loading) {
         session.advanceClock((delta * session.clockRate) / 3600);
       }
+      // The sky's weather runs indoors too where the interior has a sky (Show Sky); without
+      // one it stands still until the player is out again.
+      if (this.#cell) session.sky.frame();
       this.#sky?.sync();
       session.updateEmittance(session.gameHour);
       // Indoors the sound system plays the region of the cell's acoustic space.
@@ -1896,6 +1901,20 @@ export class ModelViewer {
     }
     this.#lastClock = now;
     return now;
+  }
+
+  /**
+   * The player is in an interior: the sky's mode follows its Show Sky and Use Sky Lighting, and
+   * its weather comes from the interior's sky region (XCCM) if it names one.
+   */
+  async #enterSky(session: GameSession, cell: CellRecord, token: number): Promise<void> {
+    session.sky.setPlace({ interior: true, cellFlags: cell.flags });
+    const region =
+      cell.skyRegion === undefined ? undefined : await session.weatherRegion(cell.skyRegion);
+    if (token !== this.#loadToken) return;
+    session.sky.enterInterior(
+      region && { formId: region.formId, weathers: region.weather?.weathers ?? [] },
+    );
   }
 
   #emittanceRgb(formId: number): Rgb {

@@ -1,7 +1,7 @@
 // The time and weather controls of the dev panel indoors: the session's clock (time passes
-// indoors too, at the timescale) and the weather outside, which the game keeps going while the
-// player is inside and shows again at the door. The same controls as the world's sky
-// (world-sky.ts), so the panel offers the same in both.
+// indoors too, at the timescale) and the sky's weather, which the game keeps while the player
+// is inside and shows again at the door. The same controls as the world's sky (world-sky.ts),
+// so the panel offers the same in both.
 
 import type { GameSession } from './game-session.ts';
 import { showClockSpeed, type SkyElements } from './world-sky.ts';
@@ -24,9 +24,11 @@ export class InteriorSkyControls {
       session.gameHour = Number(ui.time.value);
       ui.timeLabel.value = formatHour(session.gameHour);
     };
+    // As outside: a weather picked is the console's `fw <weather> 1`, the region's choice `rwo`.
     const onWeather = (): void => {
       const id = Number(ui.weather.value);
-      session.pinnedWeather = Number.isFinite(id) && id !== 0 ? id : undefined;
+      if (!Number.isFinite(id) || id === 0) session.sky.releaseOverride();
+      else session.sky.forceWeather(id, true);
     };
     ui.time.addEventListener('input', onTime);
     ui.weather.addEventListener('change', onWeather);
@@ -42,7 +44,7 @@ export class InteriorSkyControls {
       for (const weather of weathers)
         all.append(new Option(weather.editorId, String(weather.formId)));
       ui.weather.replaceChildren(new Option('as the region picks', '0'), all);
-      ui.weather.value = String(session.pinnedWeather ?? 0);
+      ui.weather.value = String(session.sky.override ?? 0);
     });
   }
 

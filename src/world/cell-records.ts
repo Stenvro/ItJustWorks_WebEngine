@@ -103,6 +103,10 @@ export interface CellRecord {
   readonly editorId: string;
   readonly name: string;
   readonly interior: boolean;
+  /** DATA flags (u16: 0x1 interior, 0x2 has water, 0x80 show sky, 0x100 use sky lighting, ...). */
+  readonly flags: number;
+  /** XCCM: the region an interior's sky and weather come from (REGN). */
+  readonly skyRegion: number | undefined;
   /** XCLL, if the cell has its own lighting. */
   readonly lighting: CellLighting | undefined;
   /** Which XCLL values come from the lighting template instead. */
@@ -145,6 +149,8 @@ export function parseCell(record: GameRecord): CellRecord {
     editorId: record.editorId ?? '',
     name: record.text('FULL') ?? '',
     interior: data !== undefined && data.length > 0 && ((data[0] ?? 0) & 0x1) !== 0,
+    flags: (data?.[0] ?? 0) | ((data?.[1] ?? 0) << 8),
+    skyRegion: nonZero(record.formIdField('XCCM')),
     lighting,
     inheritFlags,
     lightingTemplate: ltmp === 0 ? undefined : ltmp,

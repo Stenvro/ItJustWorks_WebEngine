@@ -677,6 +677,8 @@ export class PlayMode {
       session.timeScale,
     );
     if (hours > 0) session.advanceClock(hours);
+    // The sky takes the next weather at once, without a change.
+    session.sky.fastTravel();
     await this.#loadInto(at);
     // Arrived: the hub tells the time it took (TESFastTravelEndEvent: OnPlayerFastTravelEnd).
     runtime.events.emit('fastTravelEnd', { hours });
@@ -817,7 +819,17 @@ export class PlayMode {
             this.#menusShown = !this.#menusShown;
             session.hud.shown(this.#menusShown);
           },
-          forceWeather: (weather) => runtime.world.setWeather?.(weather, true, false, false),
+          forceWeather: (weather, override) => {
+            session.sky.forceWeather(weather, override);
+          },
+          // From the console a change is not hurried (scripts' SetActive may hurry it).
+          setWeather: (weather, override) => {
+            session.sky.setWeather(weather, override, false);
+          },
+          releaseWeatherOverride: () => {
+            session.sky.releaseOverride();
+          },
+          toggleSky: () => session.sky.toggleSky(),
           showRaceMenu: () => {
             this.#showRaceMenu();
           },
