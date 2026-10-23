@@ -158,6 +158,14 @@ export interface RaceRecord {
   readonly morphRace: number | undefined;
   /** GNAM: its body part data (BPTD: src/world/body-part-data.ts). */
   readonly bodyPartData: number | undefined;
+  /**
+   * DNAM: the armor (ARMO) of [male, female] an actor of the race is given as its head comes
+   * off (the neck's stump and the head's cut: src/shell/actor-dismemberment.ts); a race without
+   * one cannot be decapitated.
+   */
+  readonly decapitateArmors: readonly [number | undefined, number | undefined];
+  /** NAM7: the art (ARTO) that bleeds from the neck after a decapitation. */
+  readonly dismemberBlood: number | undefined;
 }
 
 export interface ArmorRecord {
@@ -412,6 +420,7 @@ export function parseRace(record: RecordSource): RaceRecord {
     }
   }
   const hclf = record.fields.first('HCLF');
+  const decapitate = record.fields.all('DNAM').find((value) => value.length === 8);
   return {
     formId: record.formId,
     editorId: record.editorId ?? '',
@@ -428,6 +437,9 @@ export function parseRace(record: RecordSource): RaceRecord {
     armorRace,
     morphRace,
     bodyPartData: field(record, 'GNAM'),
+    // The race's DNAM (two form ids; xEdit "Decapitate Armors").
+    decapitateArmors: [formOf(record, decapitate, 0), formOf(record, decapitate, 4)],
+    dismemberBlood: field(record, 'NAM7'),
   };
 }
 

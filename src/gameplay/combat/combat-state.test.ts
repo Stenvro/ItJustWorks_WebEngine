@@ -119,7 +119,11 @@ describe('the combat state', () => {
     kinds(['staggerStop'], state);
     expect(canAct(state)).toBe(true);
     state.paired = 'support';
-    expect(kinds(['2_KillActor', '2_PairEnd'], state)).toEqual(['kill-actor', 'pair-end']);
+    expect(kinds(['2_Decapitate', '2_KillActor', '2_PairEnd'], state)).toEqual([
+      'decapitate',
+      'kill-actor',
+      'pair-end',
+    ]);
     expect(state.paired).toBeUndefined();
   });
 

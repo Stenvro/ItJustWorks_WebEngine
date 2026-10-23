@@ -192,6 +192,11 @@ export class ActorGraphEvents {
       const runtime = this.#options.session.scriptsReady;
       void runtime?.actors.kill(source.reference, stage.combat.killerOf(source.reference));
     });
+    // Decapitate (an execution's chop): the actor's head comes off
+    // (src/shell/actor-dismemberment.ts; a killmove's victim hears its killer's 2_Decapitate).
+    d.handle('DecapitateHandler', (source) => {
+      if (!source.firstPerson) void stage.dismemberment.decapitate(source.reference);
+    });
     // Casting: the hands' SpellFire, the voice's (shouts) and its start, interrupts.
     d.handle('LeftHandSpellFireHandler', (source) => {
       stage.casting.spellFire(source, 'left');

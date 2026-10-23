@@ -147,6 +147,8 @@ export type CombatEffect =
   | { readonly kind: 'attack-end' }
   /** A paired killmove's victim dies now (its graph's 2_KillActor). */
   | { readonly kind: 'kill-actor' }
+  /** A decapitating killmove's victim loses its head now (its graph's 2_Decapitate). */
+  | { readonly kind: 'decapitate' }
   /** The paired animation is over (PairEnd, pairedStop). */
   | { readonly kind: 'pair-end' }
   /** It got up from bleeding out (bleedOutStop's state left). */
@@ -346,6 +348,9 @@ export function graphEvent(state: CombatState, event: string, handler?: string):
     // Paired animations: the side done to hears its partner's events with "2_".
     case '2_killactor':
       if (state.paired === 'support') effects.push({ kind: 'kill-actor' });
+      break;
+    case '2_decapitate':
+      if (state.paired === 'support') effects.push({ kind: 'decapitate' });
       break;
     case 'pairend':
     case '2_pairend':
