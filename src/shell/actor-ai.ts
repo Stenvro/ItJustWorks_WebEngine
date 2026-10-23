@@ -555,7 +555,8 @@ export class ActorAi {
       allowConversation: (allowed) => {
         this.#talk?.()?.allowConversation(reference, allowed);
       },
-      converse: (target) => this.#talk?.()?.converse(reference, target) ?? Promise.resolve(false),
+      converse: (target) =>
+        this.#talk?.()?.dialogueActivate(reference, target) ?? Promise.resolve(false),
       standing: () =>
         movers.moves(reference) &&
         movers.travelOf(reference) === undefined &&

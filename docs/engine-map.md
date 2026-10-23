@@ -37,7 +37,7 @@ These run through every area and explain most of what breaks in play.
      OnOpen/OnClose, OnTrapHit, OnSpellCast, OnGrab/OnRelease, OnAttachedToCell, …; about 400 vanilla
      scripts wait for them);
    - story manager events never raised: Change Location (258 quest entries: favors, bounties, town
-     scenes, Daedric starts, bards), Actor Dialogue (919 two-actor scene quests), Cast Magic, Add/Remove
+     scenes, Daedric starts, bards), Cast Magic, Add/Remove
      Item, Dead Body, Arrest, Actor Hello, New Voice Power;
    - about 65 of the 95 graph event handlers of the response files are not answered (ambient idles,
      animation objects, ragdoll on death, camera shake, animated cameras, voice fire, …), and graph event
@@ -87,7 +87,7 @@ These run through every area and explain most of what breaks in play.
 | Avoidance                    | different | avoid boxes and re-planning                                                                                                                                                         |
 | Detection                    | partial   | formula reconstructed, single ray, projectiles alert no one                                                                                                                         |
 | Crime                        | partial   | responder cap, NPC crimes                                                                                                                                                           |
-| Dialogue                     | partial   | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away; actor conversations not through Actor Dialogue scenes                                          |
+| Dialogue                     | partial   | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away                                                                                                 |
 | Scenes                       | partial   | lines do not wait for facing; repeat pause                                                                                                                                          |
 | Actors away                  | partial   | only one door away, hour steps                                                                                                                                                      |
 | Followers, horses, furniture | partial   | speed matching, door spacing; mount from the right; enter by graph event                                                                                                            |

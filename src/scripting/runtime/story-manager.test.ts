@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { Fields } from '../../formats/esm/fields.ts';
 import type { Condition } from '../conditions.ts';
 import type { ScriptRuntime } from './runtime.ts';
-import { StoryManager, type StoryEventData } from './story-manager.ts';
+import { ObjectHandle } from '../values.ts';
+import { actorDialogueEvent, StoryManager, type StoryEventData } from './story-manager.ts';
 
 /** A condition function the stub runtime treats as failing. */
 const FAILS = 999;
@@ -205,5 +206,31 @@ describe('the story manager', () => {
     );
     await new StoryManager(runtime).event(event());
     expect(started).toEqual([0x200]);
+  });
+});
+
+describe('the Actor Dialogue event (ADIA)', () => {
+  it('names the quests an event started (none: no node answered)', async () => {
+    const { runtime } = stubRuntime([
+      questNode(0x10, 0, 0x0002_0000, [[0x100, 0]]),
+      questNode(0x20, 0x10, 0, [[0x200, 0]]),
+    ]);
+    const manager = new StoryManager(runtime);
+    expect(await manager.quests(event())).toEqual([0x100, 0x200]);
+    // Both run now: nothing more starts.
+    expect(await manager.quests(event())).toEqual([]);
+  });
+
+  it("carries the asking actor's location (L1), it (R1) and the one asked (R2)", () => {
+    const data = actorDialogueEvent(0x30, 0x14a, 0x14b);
+    expect(data.type).toBe('ADIA');
+    expect(Object.fromEntries(data.forms)).toEqual({ L1: 0x30, R1: 0x14a, R2: 0x14b });
+    expect(data.args.map((arg) => (arg instanceof ObjectHandle ? arg.formId : arg))).toEqual([
+      0x30, 0x14a, 0x14b,
+    ]);
+    // Without a location (the wilderness): no L1, None for the quest's event.
+    const outside = actorDialogueEvent(undefined, 0x14a, 0x14b);
+    expect(outside.forms.has('L1')).toBe(false);
+    expect(outside.args[0]).toBeNull();
   });
 });

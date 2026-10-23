@@ -193,7 +193,11 @@ export interface PackageBody {
    * Conversation; src/shell/actor-talk.ts).
    */
   allowConversation?(allowed: boolean): void;
-  /** Talks with another actor (DialogueActivate between actors): resolves once they have. */
+  /**
+   * Talks with another actor (DialogueActivate between actors): asks the story manager for a
+   * scene with it (the Actor Dialogue event); resolves whether one played (false: none came in
+   * fAISocialTimerToWaitForEvent).
+   */
   converse?(target: number): Promise<boolean>;
   /** Activates a reference (its OnActivate; furniture it uses); whether it did. */
   activate(reference: number): Promise<boolean>;
