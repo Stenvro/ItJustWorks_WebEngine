@@ -899,6 +899,8 @@ export class ActorCasting {
     await this.#options.projectiles.launch(delivered, origin, aim, {
       ...(target !== undefined && { target }),
       ...(seconds !== undefined && { seconds }),
+      // A beam stays on the hand that cast it.
+      follow: () => this.origin(actor, source),
     });
   }
 

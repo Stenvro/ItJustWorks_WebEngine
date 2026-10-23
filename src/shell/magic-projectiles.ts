@@ -11,13 +11,13 @@
 // data set sounds on the surface hit, and the impact's sound level is a noise for detection.
 // What shows (src/shell/magic-fx.ts): a projectile carries its light (PROJ light); with the
 // Muzzle Flash flag its muzzle flash model and light show where it leaves for its muzzle flash
-// duration; a cone's wave sweeps out at its speed to its range, a beam shows from the hand; an
+// duration; a cone's wave sweeps out at its speed to its range, a beam's model reaches from the
+// hand to what it met (src/shell/magic-beams.ts: its procedural lightning stretched); an
 // explosion shows its model and light, puts its image-space modifier on the player within its
 // image-space radius (aimed at it), leaves its placed object (a hazard: the hazard engine) and
 // sends its spawned projectile on to the nearest other actor (chain lightning); an impact
 // (the effect's and the explosion's impact data set) leaves its decal, model and hazard.
-// TODO(M13): a beam's model is shown at its own length (the engine stretches it to the hit),
-// the hop count of chained explosions (one hop each here).
+// TODO(M13): the hop count of chained explosions (one hop each here).
 
 import {
   flightKind,
@@ -41,7 +41,6 @@ import type { Delivered } from '../scripting/runtime/casting-engine.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { SoundInstance } from '../audio/sound-instance.ts';
 import { meshPath } from '../world/actors.ts';
-import { referenceMatrix } from '../world/cell-loader.ts';
 import { EffectArchetype, type MagicEffectRecord } from '../world/magic-effects.ts';
 import { Delivery } from '../world/magic-records.ts';
 import {
@@ -55,7 +54,8 @@ import type { LightRecord } from '../world/cell-records.ts';
 import type { Impact } from '../world/impact-records.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { HitImpact } from './combat-impacts.ts';
-import { cellLight, type MagicFx } from './magic-fx.ts';
+import { MagicBeams } from './magic-beams.ts';
+import { alongMatrix, cellLight, type MagicFx } from './magic-fx.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -142,10 +142,17 @@ const describe = (error: unknown): string =>
 export class MagicProjectiles {
   readonly #options: MagicProjectilesOptions;
   readonly #flying = new Set<Flying>();
+  readonly #beams: MagicBeams;
   #physics: PhysicsWorld | undefined;
 
   constructor(options: MagicProjectilesOptions) {
     this.#options = options;
+    this.#beams = new MagicBeams({
+      session: options.session,
+      renderer: options.renderer,
+      terminal: options.terminal,
+      ...(options.fx && { fx: options.fx }),
+    });
   }
 
   /** The physics world they fly in (undefined: the play ended; they are gone). */
@@ -180,19 +187,25 @@ export class MagicProjectiles {
   /** Their drawn scenes. */
   *scenes(): Iterable<GpuScene> {
     for (const flying of this.#flying) if (flying.scene) yield flying.scene;
+    yield* this.#beams.scenes();
   }
 
   /**
    * A cast leaves `origin` along `direction` (a fire and forget spell released, a concentration
    * spell's spray with the `seconds` it carries, a shout, a script's cast). `target`: the actor
    * aimed at (a Target Actor spell reaches it; a Touch spell or one without a projectile
-   * reaches it at once). Resolves once it is on its way.
+   * reaches it at once). `follow`: where the casting hand is now (a beam stays on it).
+   * Resolves once it is on its way.
    */
   async launch(
     delivered: Delivered,
     origin: Vec3,
     direction: Vec3,
-    options: { readonly target?: number | undefined; readonly seconds?: number } = {},
+    options: {
+      readonly target?: number | undefined;
+      readonly seconds?: number;
+      readonly follow?: () => Vec3 | undefined;
+    } = {},
   ): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime) return;
@@ -244,7 +257,9 @@ export class MagicProjectiles {
         await this.#cone(runtime, delivered, projectile, origin, aim, seconds);
         return;
       case 'instant':
-        await this.#instant(runtime, delivered, projectile, effect, origin, aim, seconds);
+        await this.#instant(runtime, delivered, projectile, effect, origin, aim, seconds, {
+          ...(options.follow && { follow: options.follow }),
+        });
         return;
       default:
         this.#fly(delivered, projectile, effect, origin, aim, seconds);
@@ -322,6 +337,7 @@ export class MagicProjectiles {
     origin: Vec3,
     aim: Vec3,
     seconds: number | undefined,
+    options: { readonly follow?: () => Vec3 | undefined } = {},
   ): Promise<void> {
     const range = projectile.range > 0 ? projectile.range : 10000;
     const end: Vec3 = pointAt(
@@ -331,12 +347,8 @@ export class MagicProjectiles {
     );
     const hit = this.#sweep(delivered.caster, origin, end, projectile.collisionRadius);
     const point = hit ? pointAt(origin, end, hit.t) : end;
-    // The beam from the hand (its model and light, for a spray's while).
-    this.#options.fx?.show(projectile.model, projectile.light, origin, {
-      direction: aim,
-      duration: Math.max(0.15, projectile.relaunchInterval),
-      fades: true,
-    });
+    // The beam from the hand to what it met (its model stretched to it, and its light).
+    this.#beams.show(projectile, origin, aim, range * (hit ? hit.t : 1), options.follow);
     await this.#impact(runtime, delivered, projectile, effect, point, aim, hit, seconds);
   }
 
@@ -474,6 +486,7 @@ export class MagicProjectiles {
 
   /** Every frame: the flying fly on; those that met something or ran out end there. */
   frame(seconds: number): void {
+    if (seconds > 0) this.#beams.frame(seconds);
     if (seconds <= 0 || this.#flying.size === 0) return;
     const runtime = this.#options.session.scriptsReady;
     for (const flying of [...this.#flying]) {
@@ -584,6 +597,7 @@ export class MagicProjectiles {
           aim,
           hit,
           actor?.reference,
+          projectile,
         );
       await casting.explode(delivered.caster, explosion, point);
       noise?.(point, delivered.caster, record?.soundLevel ?? 1);
@@ -694,6 +708,7 @@ export class MagicProjectiles {
         }
       | undefined,
     struck: number | undefined,
+    from?: ProjectileRecord,
   ): Promise<void> {
     const { fx, session } = this.#options;
     const upright = (explosion.flags & ExplosionFlag.alwaysUsesWorldOrientation) !== 0;
@@ -722,8 +737,12 @@ export class MagicProjectiles {
     // Its projectile flies on from it, at the nearest other living actor within its range
     // (chain lightning), else on the way the spell came; carrying the same spell. TODO(M13):
     // an explosion that is no spell's (a destruction stage's) sending its projectile (no
-    // vanilla destruction explosion has one).
-    const spawned = explosion.spawnProjectile;
+    // vanilla destruction explosion has one). An explosion with the Chain flag and no projectile
+    // of its own (Chain Lightning's) sends on the projectile that burst (`from`). TODO(M13): the
+    // Chain flag's rule is inferred from the data (xEdit names it; the engine's use is unread).
+    const spawned =
+      explosion.spawnProjectile ??
+      ((explosion.flags & ExplosionFlag.chain) !== 0 ? from?.formId : undefined);
     const projectile =
       spawned === undefined || !delivered ? undefined : await runtime.casting.projectile(spawned);
     if (projectile && delivered) {
@@ -743,15 +762,13 @@ export class MagicProjectiles {
         best = { direction, distance };
       }
       const chained = { ...delivered, chained: (delivered.chained ?? 0) + 1 };
-      if ((delivered.chained ?? 0) < 1)
-        this.#fly(
-          chained,
-          projectile,
-          undefined,
-          point,
-          normalize(best?.direction ?? aim),
-          undefined,
-        );
+      const direction = normalize(best?.direction ?? aim);
+      // A beam (chain lightning's jump) reaches at once; others fly.
+      if ((delivered.chained ?? 0) < 1) {
+        if (flightKind(projectile) === 'instant')
+          await this.#instant(runtime, chained, projectile, undefined, point, direction, undefined);
+        else this.#fly(chained, projectile, undefined, point, direction, undefined);
+      }
     }
   }
 
@@ -760,6 +777,7 @@ export class MagicProjectiles {
     for (const flying of this.#flying) {
       if (flying.light && !flying.done) yield cellLight(0, flying.flight.position, flying.light, 1);
     }
+    yield* this.#beams.lights();
   }
 
   #end(flying: Flying): void {
@@ -773,15 +791,13 @@ export class MagicProjectiles {
   /** Every projectile goes (the play ended, the view changed). */
   clear(): void {
     for (const flying of [...this.#flying]) this.#end(flying);
+    this.#beams.clear();
   }
 }
 
 /** A flying projectile's world matrix: at its position, along its velocity. */
 function placementOf(flight: Flight): Float32Array {
-  const [vx, vy, vz] = flight.velocity;
-  const yaw = Math.atan2(vx, vy);
-  const pitch = Math.atan2(vz, Math.hypot(vx, vy));
-  return referenceMatrix({ position: flight.position, rotation: [-pitch, 0, yaw], scale: 1 });
+  return alongMatrix(flight.position, normalize(flight.velocity));
 }
 
 /** Whether a target faces a point (within 90° of its heading: a ward meets it). */
