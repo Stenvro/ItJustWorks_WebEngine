@@ -10,7 +10,12 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { RAGDOLL_FALL_SHARE } from '../gameplay/falling.ts';
 import { actorFell } from './time-flow.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
-import { animateSkeletons, animationInterval } from '../animation/animated-skeleton.ts';
+import {
+  animateSkeletons,
+  animationRate,
+  animationRateSettings,
+  fovAcross,
+} from '../animation/animated-skeleton.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
@@ -1531,7 +1536,7 @@ export class ActorStage {
     return this.#placing.size > 0;
   }
 
-  /** Moves the enabled actors' skeletons; far or unseen ones less often (animationInterval). */
+  /** Moves the enabled actors' skeletons; far or unseen ones less often (animationRate). */
   animate(seconds: number): void {
     // Their AI first (what they want now), then their movement.
     const frame =
@@ -1585,19 +1590,23 @@ export class ActorStage {
     this.looks.frame(this.#actors.values(), frame);
     this.moods.frame(this.#faces(), frame);
     const camera = this.#options.renderer.view?.camera;
+    const settings = animationRateSettings(this.#options.session.ini);
+    const view = camera && {
+      position: camera.position,
+      forward: camera.forward,
+      fov: camera.fovY === undefined ? 80 : fovAcross(camera.fovY),
+    };
     animateSkeletons(
       this.#animating(),
       seconds,
-      camera &&
+      view &&
         ((animated) => {
           const world = (animated as PlacedActor).instances[0]?.world;
-          return world
-            ? animationInterval(
-                [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0],
-                camera.position,
-                camera.forward,
-              )
-            : 0;
+          return animationRate(
+            world ? [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] : view.position,
+            view,
+            settings,
+          );
         }),
     );
     // Their bodies follow the poses (the dead's poses their bodies, the dead player's too).

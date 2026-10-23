@@ -27,12 +27,14 @@ import {
   type FootIkGains,
   type FootIkSetup,
   type LookAtBone,
+  type MirrorSetup,
   type StateMachineState,
   type StateTransition,
   type Vec4,
   type VectorBindable,
 } from '../formats/hkx/behavior.ts';
 import { evaluateNode, parseExpression, type Expression } from './behavior-expression.ts';
+import { MirroredSkeleton } from './mirror.ts';
 import { addPose, blendPoses, PoseAccumulator } from './pose.ts';
 import { intoMatchFrame, matchPose, type PoseMatch } from './pose-matching.ts';
 import {
@@ -69,6 +71,12 @@ export interface BehaviorHost {
   /** A referenced behavior file by its name (relative to the project's folder). */
   behavior(name: string): BehaviorGraph | undefined;
   /**
+   * The locomotion blend parameter that moves the character at `goal` units a second in a
+   * locomotion state (iState) and direction (0..1): the project's speed data
+   * (src/formats/animdata/speed-data.ts). Undefined: no table for the state.
+   */
+  speedParameter?(state: number, direction: number, goal: number): number | undefined;
+  /**
    * How a clip generator (by its name) moves the actor between two local times of its clip
    * (seconds, uncropped; `to` < `from`: it looped), in the actor's frame at `from` (x right,
    * y forward, z up): the behavior project's animation data (src/animation/
@@ -95,6 +103,12 @@ export interface RootMotion {
 }
 
 const NO_MOTION: RootMotion = { translation: [0, 0, 0], yaw: 0 };
+
+/**
+ * The span of a clip's end whose motion a clip continuing its motion past its end goes on with
+ * (seconds; Havok's continue-motion-at-end keeps the last motion: its sampling is ours).
+ */
+const CONTINUED_MOTION_SPAN = 1 / 30;
 
 type Point = readonly [number, number, number];
 
@@ -207,7 +221,12 @@ export interface SkeletalGraph {
 }
 
 /** ClipFlags (hkbClipGenerator.m_flags). */
-const CLIP_FLAGS = { dontConvertAnnotationsToTriggers: 0x10 } as const;
+const CLIP_FLAGS = {
+  continueMotionAtEnd: 0x1,
+  mirror: 0x4,
+  dontConvertAnnotationsToTriggers: 0x10,
+  ignoreMotion: 0x20,
+} as const;
 
 type StateMachine = Extract<BehaviorGenerator, { kind: 'state-machine' }>;
 type Clip = Extract<BehaviorGenerator, { kind: 'clip' }>;
@@ -251,15 +270,49 @@ interface ClipState {
   phase: number | undefined;
 }
 
+/**
+ * What a blending transition blends from: the state it left, the transition it interrupted
+ * (still blending on, nested), or the pose the machine had (a state blending into itself).
+ */
+type TransitionFrom =
+  | { readonly kind: 'state'; readonly state: StateMachineState }
+  | { readonly kind: 'transition'; readonly transition: Transition }
+  | { readonly kind: 'pose'; readonly pose: Float32Array };
+
 interface Transition {
-  readonly from: StateMachineState;
+  from: TransitionFrom;
   readonly to: StateMachineState;
   readonly duration: number;
   readonly curve: number;
   /** The transition's TRANSITION_FLAGS. */
   readonly flags: number;
+  /** Its blending effect's flags (TRANSITION_EFFECT_FLAGS). */
+  readonly effectFlags: number;
+  /** Which states hear events while it blends (EVENT_MODE, resolved). */
+  readonly eventMode: number;
   elapsed: number;
 }
+
+/** hkbBlendingTransitionEffect flags. */
+const TRANSITION_EFFECT_FLAGS = {
+  ignoreFromWorldFromModel: 0x1,
+  sync: 0x2,
+  ignoreToWorldFromModel: 0x4,
+} as const;
+
+/** hkbTransitionEffect event modes (0: the project's default). */
+const EVENT_MODE = { processAll: 1, ignoreFrom: 2, ignoreTo: 3 } as const;
+
+/** hkbTransitionEffect self-transition modes. */
+const SELF_TRANSITION = {
+  continueIfCyclicBlendIfAcyclic: 0,
+  continue: 1,
+  reset: 2,
+  blend: 3,
+} as const;
+
+/** hkbBlendingTransitionEffect end modes. */
+const END_MODE = { none: 0, untilEndOfFrom: 1, capAtEndOfFrom: 2 } as const;
 
 interface MachineState {
   current: StateMachineState | undefined;
@@ -289,6 +342,24 @@ interface ModifierState {
 interface QueuedEvent {
   readonly id: number;
   readonly payload?: string;
+}
+
+/** What reads an actor's state into its graph right before each update (BehaviorRuntime.channels). */
+export interface GraphChannels {
+  /** The graph is about to update by `dt` seconds. */
+  read(dt: number): void;
+}
+
+/** Counts of what a running graph did (BehaviorRuntime.stats). */
+export interface GraphStats {
+  updates: number;
+  stateChanges: number;
+  /** State changes into the state the machine was in. */
+  selfTransitions: number;
+  /** Transitions begun while another of the same machine still blended. */
+  interrupted: number;
+  /** Clips that started playing from their start (again). */
+  clipStarts: number;
 }
 
 /** A pose a generator gave: its values and whether it is additive. */
@@ -396,6 +467,25 @@ export class BehaviorRuntime {
   #eyes: EyeLook | undefined;
   /** The ragdoll bones the active hkbKeyframeBonesModifiers keep keyframed. */
   #keyframed = new Set<number>();
+  /**
+   * What the graph did since it started (development checks: state changes and clip starts per
+   * second show a graph stuck restarting one step).
+   */
+  readonly stats: GraphStats = {
+    updates: 0,
+    stateChanges: 0,
+    selfTransitions: 0,
+    interrupted: 0,
+    clipStarts: 0,
+  };
+  /** Development: told of every state change (machine, from, to). */
+  traceChange: ((machine: string, from: string, to: string) => void) | undefined = undefined;
+  /**
+   * The engine's graph data channels: what copies the actor's movement into the graph's
+   * variables (and performs the movement actions), read right before every update with the
+   * update's step (src/ai/locomotion.ts). Undefined: nothing is read.
+   */
+  channels: GraphChannels | undefined = undefined;
   /** The tweeners active in this update (BSTweenerModifier: they carry the character). */
   #tweens: Extract<BehaviorModifier, { kind: 'tweener' }>[] = [];
   /** The aims the engine gives BSDirectAtModifiers, by their userInfo (world points). */
@@ -415,6 +505,17 @@ export class BehaviorRuntime {
   /** The ragdoll controls active in this update. */
   #poweredForce = 0;
   #rigidBody: RigidBodyRagdoll | undefined;
+  /** The character's mirroring (mirrored clips), if it has one. */
+  readonly #mirror: MirroredSkeleton | undefined;
+  /** The project's default event mode of blending transitions (EVENT_MODE). */
+  readonly #eventMode: number;
+  /**
+   * The last pose of each machine that may blend a state into itself (its self transitions
+   * blend from it), by node.
+   */
+  readonly #machinePoses = new WeakMap<object, Float32Array>();
+  /** Whether a machine has a self transition that blends (decided once). */
+  readonly #selfBlending = new WeakMap<object, boolean>();
 
   /**
    * Whether a body of the ragdoll bones named (all, when none are) touches something now
@@ -451,8 +552,20 @@ export class BehaviorRuntime {
      * ragdoll's bones by index.
      */
     readonly ragdollBones?: Int16Array;
+    /** The character's mirroring (CharacterInfo.mirror): mirrored clips play mirrored. */
+    readonly mirror?: MirrorSetup;
+    /**
+     * The project's default event mode (CharacterInfo.defaultEventMode): which states hear
+     * events while a transition blends them, where its effect does not say. Without: both.
+     */
+    readonly defaultEventMode?: number;
   }) {
     this.skeleton = options.skeleton;
+    this.#mirror = options.mirror && new MirroredSkeleton(options.skeleton, options.mirror);
+    this.#eventMode =
+      options.defaultEventMode !== undefined && options.defaultEventMode > 0
+        ? options.defaultEventMode
+        : EVENT_MODE.processAll;
     this.#host = options.host;
     this.#random = options.random ?? Math.random;
     this.#properties = options.properties ?? {};
@@ -729,7 +842,10 @@ export class BehaviorRuntime {
    * graph goes and how it moves the actor).
    */
   update(dt: number, pose = true): void {
+    // The data channels first: the movement as it is now (its actions queue their events).
+    this.channels?.read(dt);
     this.#updates++;
+    this.stats.updates++;
     this.#dt = dt;
     // Events raised while handling others are handled in the same frame, a few rounds deep.
     const handled = this.#queue.length > 0;
@@ -807,22 +923,21 @@ export class BehaviorRuntime {
     const scope = this.#scopeOf(node);
     switch (node.kind) {
       case 'clip': {
+        const flags = node.flags ?? 0;
+        if ((flags & CLIP_FLAGS.ignoreMotion) !== 0) return;
         const state = this.#clips.get(node);
         if (state?.updated !== this.#updates) return;
-        if (state.time === state.previous && !state.wrapped) return;
-        const crop = node.cropStart ?? 0;
-        const backward = state.time < state.previous && !state.wrapped;
-        const from = (backward ? state.time : state.previous) + crop;
-        const to = (backward ? state.previous : state.time) + crop;
-        const moved = this.#host.rootMotion?.(node.name, from, to);
+        let moved = this.#clipMotion(node, state);
         if (!moved) return;
-        const sign = backward ? -1 : 1;
+        // A mirrored clip moves the character mirrored.
+        if ((flags & CLIP_FLAGS.mirror) !== 0 && this.#mirror) {
+          moved = this.#mirror.mirrorMotion(moved.translation, moved.yaw);
+        }
         const [x, y, z] = moved.translation;
-        const [, , qz, qw] = moved.rotation;
-        sum.x += sign * weight * x;
-        sum.y += sign * weight * y;
-        sum.z += sign * weight * z;
-        sum.yaw += sign * weight * 2 * Math.atan2(qz, qw);
+        sum.x += weight * x;
+        sum.y += weight * y;
+        sum.z += weight * z;
+        sum.yaw += weight * moved.yaw;
         return;
       }
       case 'state-machine': {
@@ -832,9 +947,7 @@ export class BehaviorRuntime {
           this.#collectMotion(machine.current?.generator, weight, depth + 1, sum);
           return;
         }
-        const t = blendCurve(transition.curve, transition.elapsed / transition.duration);
-        this.#collectMotion(machine.current?.generator, weight * t, depth + 1, sum);
-        this.#collectMotion(transition.from.generator, weight * (1 - t), depth + 1, sum);
+        this.#collectTransitionMotion(transition, weight, depth + 1, sum);
         return;
       }
       case 'blender': {
@@ -880,6 +993,118 @@ export class BehaviorRuntime {
       default:
         return;
     }
+  }
+
+  /**
+   * How a clip moved the character in this update (its animation data between its last two
+   * times; played backward, the way back). A single-play clip with continue-motion-at-end
+   * (flag 0x1: the quadrupeds' canned flee turns) that has ended goes on as its last moment
+   * moved it.
+   */
+  #clipMotion(
+    node: Clip,
+    state: ClipState,
+  ): { readonly translation: readonly [number, number, number]; readonly yaw: number } | undefined {
+    const host = this.#host;
+    if (!host.rootMotion) return undefined;
+    const rootMotion = (
+      generator: string,
+      from: number,
+      to: number,
+    ): ReturnType<NonNullable<BehaviorHost['rootMotion']>> =>
+      host.rootMotion?.(generator, from, to);
+    const crop = node.cropStart ?? 0;
+    const asMotion = (
+      moved: ReturnType<NonNullable<BehaviorHost['rootMotion']>>,
+      scale: number,
+    ): { translation: [number, number, number]; yaw: number } | undefined => {
+      if (!moved) return undefined;
+      const [x, y, z] = moved.translation;
+      const [, , qz, qw] = moved.rotation;
+      return {
+        translation: [x * scale, y * scale, z * scale],
+        yaw: 2 * Math.atan2(qz, qw) * scale,
+      };
+    };
+    if (state.time === state.previous && !state.wrapped) {
+      if ((node.flags ?? 0) & CLIP_FLAGS.continueMotionAtEnd && node.mode === 0 && this.#dt > 0) {
+        const animation = this.#host.clip(node.animation)?.animation;
+        if (!animation) return undefined;
+        const end = animation.duration - (node.cropEnd ?? 0);
+        if (state.time + crop < end - 1e-4) return undefined;
+        const span = Math.min(CONTINUED_MOTION_SPAN, end - crop);
+        if (span <= 0) return undefined;
+        return asMotion(rootMotion(node.name, end - span, end), this.#dt / span);
+      }
+      return undefined;
+    }
+    const backward = state.time < state.previous && !state.wrapped;
+    const from = (backward ? state.time : state.previous) + crop;
+    const to = (backward ? state.previous : state.time) + crop;
+    return asMotion(rootMotion(node.name, from, to), backward ? -1 : 1);
+  }
+
+  /**
+   * A transition's share of the motion: the state entered by the blend weight, what it blends
+   * from by the rest (an interrupted transition's own states by theirs). An effect that ignores
+   * one side's world-from-model leaves the motion to the other.
+   */
+  #collectTransitionMotion(
+    transition: Transition,
+    weight: number,
+    depth: number,
+    sum: { x: number; y: number; z: number; yaw: number },
+  ): void {
+    if (depth > 64) return;
+    let t = blendCurve(transition.curve, transition.elapsed / transition.duration);
+    if ((transition.effectFlags & TRANSITION_EFFECT_FLAGS.ignoreFromWorldFromModel) !== 0) t = 1;
+    else if ((transition.effectFlags & TRANSITION_EFFECT_FLAGS.ignoreToWorldFromModel) !== 0) t = 0;
+    this.#collectMotion(transition.to.generator, weight * t, depth + 1, sum);
+    const from = transition.from;
+    if (from.kind === 'state') {
+      this.#collectMotion(from.state.generator, weight * (1 - t), depth + 1, sum);
+    } else if (from.kind === 'transition') {
+      this.#collectTransitionMotion(from.transition, weight * (1 - t), depth + 1, sum);
+    }
+  }
+
+  /**
+   * Graph seconds until a clip playing now passes its next trigger or annotation (Infinity:
+   * none ahead). The engine updates a far actor's graph ahead of time, but no further than just
+   * short of this, so that what the clips raise (footsteps) is heard on time.
+   */
+  nextEventIn(): number {
+    let soonest = Infinity;
+    for (const node of this.#active) {
+      const clip = node as BehaviorGenerator;
+      if (clip.kind !== 'clip' || clip.mode === 2) continue;
+      const state = this.#clips.get(clip);
+      const animation = this.#host.clip(clip.animation)?.animation;
+      if (!state || !animation) continue;
+      const crop = clip.cropStart ?? 0;
+      const duration = Math.max(1e-4, animation.duration - crop - (clip.cropEnd ?? 0));
+      const scope = this.#scopeOf(clip);
+      const scale =
+        clip.enforcedDuration && clip.enforcedDuration > 0 ? duration / clip.enforcedDuration : 1;
+      const speed = this.#read(clip.speed ?? { value: clip.playbackSpeed }, scope) * scale;
+      if (!(speed > 0)) continue;
+      const looping = clip.mode === 1;
+      const consider = (time: number): void => {
+        let ahead = time - state.time;
+        if (ahead <= 0) {
+          if (!looping) return;
+          ahead += duration;
+        }
+        soonest = Math.min(soonest, ahead / speed);
+      };
+      for (const trigger of clip.triggers ?? []) {
+        consider(trigger.relativeToEndOfClip ? duration + trigger.localTime : trigger.localTime);
+      }
+      if (((clip.flags ?? 0) & CLIP_FLAGS.dontConvertAnnotationsToTriggers) === 0) {
+        for (const annotation of animation.annotations) consider(annotation.time - crop);
+      }
+    }
+    return soonest;
   }
 
   /** The clips playing and their weights in the pose (development, tools). */
@@ -1027,9 +1252,18 @@ export class BehaviorRuntime {
     if (node.kind === 'state-machine') {
       const machine = this.#machine(node);
       this.#machineEvent(node, machine, event);
+      // While a transition blends, its event mode says which side hears the event (the vanilla
+      // projects' default: not the states it blends from).
       const transition = machine.transition;
-      if (transition) this.#handle(transition.from.generator, event, seen);
-      this.#handle(machine.current?.generator, event, seen);
+      const mode = transition?.eventMode ?? EVENT_MODE.processAll;
+      if (transition && mode !== EVENT_MODE.ignoreFrom) {
+        for (const state of this.#fromStates(transition.from)) {
+          this.#handle(state.generator, event, seen);
+        }
+      }
+      if (!transition || mode !== EVENT_MODE.ignoreTo) {
+        this.#handle(machine.current?.generator, event, seen);
+      }
       return;
     }
     if (node.kind === 'modifier-generator' && node.modifier)
@@ -1423,43 +1657,30 @@ export class BehaviorRuntime {
   ): void {
     const scope = this.#scopeOf(node);
     const from = machine.current;
+    this.stats.stateChanges++;
+    if (from === to) this.stats.selfTransitions++;
+    if (machine.transition) this.stats.interrupted++;
+    this.traceChange?.(node.name, from?.name ?? '', to.name);
     if (from) for (const event of from.exitNotifyEvents ?? []) this.#raise(event, scope);
     machine.previous = from;
     const effect = transition?.effect;
-    if (from && from !== to && effect && effect.duration > 0) {
-      machine.transition = {
-        from,
-        to,
-        duration: effect.duration,
-        curve: effect.blendCurve,
-        flags: transition.flags,
-        elapsed: 0,
-      };
+    if (from === to) {
+      this.#selfTransition(node, machine, to, transition);
+    } else if (from && transition && effect && effect.duration > 0) {
+      machine.transition = this.#blend(node, machine, from, to, transition, effect);
     } else {
-      const blendingOut = machine.transition?.from;
+      // Left at once (and what an interrupted transition still blended from), the old states'
+      // nodes are deactivated now, before the new state is entered (its nested machines' exit
+      // events come before the new state's enter events: an idle's AnimObjectUnequip does not
+      // take the prop the next state just loaded).
+      const left = machine.transition ? this.#fromStates(machine.transition.from) : [];
       machine.transition = undefined;
-      // A self transition resets what the state plays (unless it continues).
-      if (from === to && (effect?.selfTransitionMode ?? 2) !== 1) this.#reset(to.generator);
-      // Left at once, the old state's nodes are deactivated now, before the new state is
-      // entered (its nested machines' exit events come before the new state's enter events:
-      // an idle's AnimObjectUnequip does not take the prop the next state just loaded).
-      if (from && from !== to) this.#leave(node, from.generator, to.generator);
-      // Entered at once while the machine still blends out of it (an earlier transition's
-      // from-state, its nodes still active), it starts over as a state entered anew, its nested
-      // machines at their start states (what it shares with the state left goes on): a bow
-      // attack begun again during the blend back to the ready state draws again, where it would
-      // have resumed its finished release and waited there for good. Nothing is deactivated, so
-      // no exit events are raised (the release's attackStop would end the new draw at once).
-      if (blendingOut === to && from !== to) {
-        const shared = new Set<object>();
-        const mark = (generator: BehaviorGenerator | undefined): void => {
-          if (!generator || shared.has(generator)) return;
-          shared.add(generator);
-          for (const child of children(generator)) mark(child);
-        };
-        mark(from?.generator);
-        this.#reset(to.generator, shared);
+      for (const state of [from, ...left]) {
+        if (state && state !== to) this.#leave(node, state.generator, to.generator);
       }
+      // Entered at once while the machine still blends out of it, it starts over as a state
+      // entered anew (#restart).
+      if (from && left.includes(to)) this.#restart(to, from);
     }
     machine.current = to;
     machine.timeInState = 0;
@@ -1476,6 +1697,211 @@ export class BehaviorRuntime {
     if (transition?.effect && transition.effect.toGeneratorStartTimeFraction > 0) {
       this.#startAt(to.generator, transition.effect.toGeneratorStartTimeFraction);
     }
+  }
+
+  /**
+   * A transition from a state into itself, by its effect's self-transition mode (none: it is
+   * entered again, reset): continue (nothing starts over), reset (what it plays starts over),
+   * blend (it starts over, blended in from the pose the machine had), or continue if what it
+   * plays is cyclic (a looping clip) and blend if not. 69 + 43 vanilla self transitions blend.
+   */
+  #selfTransition(
+    node: StateMachine,
+    machine: MachineState,
+    state: StateMachineState,
+    transition: StateTransition | undefined,
+  ): void {
+    const effect = transition?.effect;
+    const blends = effect !== undefined && effect.duration > 0;
+    let mode = effect?.selfTransitionMode ?? SELF_TRANSITION.reset;
+    if (mode === SELF_TRANSITION.continueIfCyclicBlendIfAcyclic) {
+      mode = this.#isCyclic(state.generator, 0)
+        ? SELF_TRANSITION.continue
+        : blends
+          ? SELF_TRANSITION.blend
+          : SELF_TRANSITION.reset;
+    }
+    if (mode === SELF_TRANSITION.continue) return;
+    const pose = this.#machinePoses.get(node);
+    if (mode === SELF_TRANSITION.blend && transition && effect && blends && pose) {
+      machine.transition = {
+        from: { kind: 'pose', pose: pose.slice() },
+        to: state,
+        duration: effect.duration,
+        curve: effect.blendCurve,
+        flags: transition.flags,
+        effectFlags: effect.flags,
+        eventMode: effect.eventMode > 0 ? effect.eventMode : this.#eventMode,
+        elapsed: 0,
+      };
+    }
+    this.#reset(state.generator);
+  }
+
+  /**
+   * A blending transition from `from` (or from the transition blending into it, which goes on
+   * blending inside the new one: Havok nests interrupted transitions, so nothing pops) into
+   * `to`. Its effect's end mode lets it last until the state left ends (or no longer than
+   * that); with the sync flag the state entered starts where the state left is in its cycle.
+   * A machine keeps at most maxSimultaneousTransitions nested: beyond, the oldest ends at once.
+   */
+  #blend(
+    node: StateMachine,
+    machine: MachineState,
+    from: StateMachineState,
+    to: StateMachineState,
+    transition: StateTransition,
+    effect: NonNullable<StateTransition['effect']>,
+  ): Transition {
+    let duration = effect.duration;
+    if (effect.endMode !== END_MODE.none) {
+      const left = this.#remaining(from.generator, 0);
+      if (left > 0)
+        duration = effect.endMode === END_MODE.untilEndOfFrom ? left : Math.min(duration, left);
+    }
+    const playing = to.generator !== undefined && this.#active.has(to.generator);
+    if ((effect.flags & TRANSITION_EFFECT_FLAGS.sync) !== 0 && !playing) {
+      const phase = this.#phase(from.generator, 0);
+      if (phase !== undefined) this.#startAt(to.generator, phase);
+    }
+    // Back into a state it still blends out of: that state starts over as one entered anew,
+    // blended in from the pose the machine had (Havok plays a fresh copy of it beside the one
+    // blending out; ours share their nodes, so the old blend is held as it was).
+    let source: TransitionFrom = machine.transition
+      ? { kind: 'transition', transition: machine.transition }
+      : { kind: 'state', state: from };
+    if (machine.transition && this.#fromStates(machine.transition.from).includes(to)) {
+      const pose = this.#machinePoses.get(node);
+      if (pose) source = { kind: 'pose', pose: pose.slice() };
+      this.#restart(to, from);
+    }
+    const blending: Transition = {
+      from: source,
+      to,
+      duration: Math.max(duration, 1e-4),
+      curve: effect.blendCurve,
+      flags: transition.flags,
+      effectFlags: effect.flags,
+      eventMode: effect.eventMode > 0 ? effect.eventMode : this.#eventMode,
+      elapsed: 0,
+    };
+    // The oldest nested transitions beyond the machine's limit end: they become their state.
+    const most = Math.max(1, node.maxSimultaneousTransitions ?? 32);
+    for (;;) {
+      const chain: Transition[] = [];
+      for (let at: Transition | undefined = blending; at;) {
+        chain.push(at);
+        at = at.from.kind === 'transition' ? at.from.transition : undefined;
+      }
+      if (chain.length <= most) break;
+      const parent = chain[chain.length - 2];
+      const oldest = chain[chain.length - 1];
+      if (!parent || !oldest) break;
+      parent.from = { kind: 'state', state: oldest.to };
+    }
+    return blending;
+  }
+
+  /** The states a transition blends from (an interrupted transition's, innermost last). */
+  #fromStates(from: TransitionFrom): StateMachineState[] {
+    const states: StateMachineState[] = [];
+    let at: TransitionFrom = from;
+    for (let depth = 0; depth < 64; depth++) {
+      if (at.kind === 'state') {
+        states.push(at.state);
+        break;
+      }
+      if (at.kind === 'pose') break;
+      states.push(at.transition.to);
+      at = at.transition.from;
+    }
+    return states;
+  }
+
+  /**
+   * Advances a transition and those nested in it; one that has ended becomes the state it
+   * entered (undefined: the transition itself has ended).
+   */
+  #advanceTransition(transition: Transition, dt: number): Transition | undefined {
+    transition.elapsed += dt;
+    const from = transition.from;
+    if (from.kind === 'transition' && !this.#advanceTransition(from.transition, dt)) {
+      transition.from = { kind: 'state', state: from.transition.to };
+    }
+    return transition.elapsed >= transition.duration ? undefined : transition;
+  }
+
+  /**
+   * Whether a generator plays in cycles (Havok's isCyclic): a looping or ping-pong clip, a
+   * machine whose state does, a blender whose children all do, what a pass-through node holds.
+   */
+  #isCyclic(node: BehaviorGenerator | undefined, depth: number): boolean {
+    if (!node || depth > 32) return false;
+    switch (node.kind) {
+      case 'clip':
+        return node.mode === 1 || node.mode === 3;
+      case 'state-machine':
+        return this.#isCyclic(this.#machines.get(node)?.current?.generator, depth + 1);
+      case 'blender': {
+        const live = this.#activeChildren(node);
+        return live.length > 0 && live.every((child) => this.#isCyclic(child, depth + 1));
+      }
+      case 'manual-selector':
+      case 'behavior-reference':
+        return this.#activeChildren(node).some((child) => this.#isCyclic(child, depth + 1));
+      case 'bone-switch':
+      case 'offset-animation':
+      case 'cyclic-blend':
+      case 'modifier-generator':
+      case 'state-tagging':
+      case 'synchronized-clip':
+        return this.#isCyclic(node.generator, depth + 1);
+      default:
+        return false;
+    }
+  }
+
+  /** Where the first clip a generator plays is in its cycle (0..1), if it plays one. */
+  #phase(node: BehaviorGenerator | undefined, depth: number): number | undefined {
+    if (!node || depth > 32) return undefined;
+    if (node.kind === 'clip') {
+      const state = this.#clips.get(node);
+      const animation = this.#host.clip(node.animation)?.animation;
+      if (!state || !animation) return undefined;
+      const duration = animation.duration - (node.cropStart ?? 0) - (node.cropEnd ?? 0);
+      return duration > 0 ? Math.min(1, Math.max(0, state.time / duration)) : undefined;
+    }
+    for (const child of this.#activeChildren(node)) {
+      const phase = this.#phase(child, depth + 1);
+      if (phase !== undefined) return phase;
+    }
+    return undefined;
+  }
+
+  /** Whether a machine has a self transition that may blend (its last pose is then kept). */
+  #selfBlends(node: StateMachine): boolean {
+    let blends = this.#selfBlending.get(node);
+    if (blends !== undefined) return blends;
+    const blending = (transition: StateTransition): boolean => {
+      const effect = transition.effect;
+      return (
+        effect !== undefined &&
+        effect.duration > 0 &&
+        effect.selfTransitionMode !== SELF_TRANSITION.continue &&
+        effect.selfTransitionMode !== SELF_TRANSITION.reset
+      );
+    };
+    blends =
+      node.states.some((state) =>
+        state.transitions.some((t) => t.toStateId === state.id && blending(t)),
+      ) ||
+      node.wildcardTransitions.some(
+        (t) =>
+          (t.flags & TRANSITION_FLAGS.allowSelfTransitionByTransitionFromAnyState) !== 0 &&
+          blending(t),
+      );
+    this.#selfBlending.set(node, blends);
+    return blends;
   }
 
   /**
@@ -1572,30 +1998,78 @@ export class BehaviorRuntime {
     }
   }
 
-  /** Forgets the state of a subtree: it starts over. */
-  #reset(node: BehaviorGenerator | undefined, seen = new Set<object>()): void {
+  /**
+   * A subtree starts over (a state entered again): its clips from their start; a state machine
+   * by its self-transition mode (hkbStateMachine, as it is entered while active): it stays in
+   * its state (none: 3,510 vanilla machines; what that state plays starts over), goes to its
+   * start state if its state has a transition there (47), or always (86).
+   */
+  #reset(node: BehaviorGenerator | undefined, seen = new Set<object>(), anew = false): void {
     if (!node || seen.has(node)) return;
     seen.add(node);
-    this.#machines.delete(node);
+    if (node.kind === 'state-machine') {
+      const machine = this.#machines.get(node);
+      const current = machine?.current;
+      const mode = node.selfTransitionMode ?? 0;
+      const toStart =
+        anew ||
+        mode === 2 ||
+        (mode === 1 &&
+          current?.transitions.some(
+            (t) => t.toStateId === this.#read(node.startStateId, this.#scopeOf(node)),
+          ) === true);
+      if (machine && current && !toStart) {
+        this.#reset(current.generator, seen, anew);
+        return;
+      }
+      this.#machines.delete(node);
+    }
     this.#clips.delete(node);
-    for (const child of children(node)) this.#reset(child, seen);
+    for (const child of children(node)) this.#reset(child, seen, anew);
   }
 
-  /** Starts the clips below a generator at a fraction of their duration. */
+  /**
+   * A state entered while the machine still blends out of it starts over as a state entered
+   * anew, its nested machines at their start states, but for what it shares with the state left
+   * (that goes on). Havok activates a fresh copy of a node used twice: a bow attack begun again
+   * during the blend back to the ready state draws again (it resumed its finished release and
+   * waited there for good). Nothing is deactivated: no exit events (the release's attackStop
+   * would end the new draw at once).
+   */
+  #restart(state: StateMachineState, left: StateMachineState): void {
+    const shared = new Set<object>();
+    const mark = (generator: BehaviorGenerator | undefined): void => {
+      if (!generator || shared.has(generator)) return;
+      shared.add(generator);
+      for (const child of children(generator)) mark(child);
+    };
+    mark(left.generator);
+    this.#reset(state.generator, shared, true);
+  }
+
+  /** Starts the clips below a generator at a fraction of their (cropped) duration. */
   #startAt(node: BehaviorGenerator | undefined, fraction: number, seen = new Set<object>()): void {
     if (!node || seen.has(node)) return;
     seen.add(node);
     if (node.kind === 'clip') {
       const animation = this.#host.clip(node.animation)?.animation;
-      if (animation)
+      if (animation && !this.#clips.has(node)) this.stats.clipStarts++;
+      if (animation) {
+        const duration = Math.max(
+          0,
+          animation.duration - (node.cropStart ?? 0) - (node.cropEnd ?? 0),
+        );
+        const time = fraction * duration;
+        // Started there: it has not moved the character from its start.
         this.#clips.set(node, {
-          previous: 0,
+          previous: time,
           wrapped: false,
           updated: -1,
-          time: fraction * animation.duration,
+          time,
           backward: false,
           phase: undefined,
         });
+      }
       return;
     }
     for (const child of children(node)) this.#startAt(child, fraction, seen);
@@ -1610,7 +2084,10 @@ export class BehaviorRuntime {
       case 'state-machine': {
         const machine = this.#machine(node);
         return machine.transition
-          ? [machine.transition.from.generator, machine.current?.generator]
+          ? [
+              ...this.#fromStates(machine.transition.from).map((state) => state.generator),
+              machine.current?.generator,
+            ]
           : [machine.current?.generator];
       }
       case 'blender': {
@@ -1670,8 +2147,10 @@ export class BehaviorRuntime {
         const machine = this.#machine(node);
         if (node.isActive) this.#write(node.isActive, scope, 1);
         machine.timeInState += dt;
-        // Transitions without an event take place as soon as their condition holds.
-        if (!machine.transition) {
+        // Transitions without an event take place as soon as their condition holds (also while
+        // a transition blends, unless it may not be interrupted: the new one nests it).
+        const interruptible = !machine.transition || !this.#uninterruptible(machine.transition);
+        if (interruptible) {
           const chosen = this.#choose(
             node,
             machine,
@@ -1683,15 +2162,13 @@ export class BehaviorRuntime {
         const pending = machine.pending;
         if (
           pending &&
-          !machine.transition &&
+          interruptible &&
           this.#inInterval(machine, pending.transition.initiateInterval, scope)
         ) {
           this.#change(node, machine, pending.to, pending.transition);
         }
-        const transition = machine.transition;
-        if (transition) {
-          transition.elapsed += dt;
-          if (transition.elapsed >= transition.duration) machine.transition = undefined;
+        if (machine.transition) {
+          machine.transition = this.#advanceTransition(machine.transition, dt);
         }
         break;
       }
@@ -1809,16 +2286,20 @@ export class BehaviorRuntime {
         phase: undefined,
       };
       this.#clips.set(node, state);
+      this.stats.clipStarts++;
     }
     if (!animation) return;
     const duration = Math.max(
       1e-4,
       animation.duration - (node.cropStart ?? 0) - (node.cropEnd ?? 0),
     );
-    const previous = state.time;
+    let previous = state.time;
     let wrapped = false;
     if (state.phase !== undefined) {
       const time = state.phase * duration;
+      // Joining a syncing blender's cycle, it starts at its phase: it has not moved the
+      // character from its start (a horse's trot joining its walk jumped a stride ahead).
+      if (state.updated < 0) previous = time;
       wrapped = time < previous;
       state.time = time;
     } else {
@@ -2084,11 +2565,21 @@ export class BehaviorRuntime {
         });
         return;
       }
-      case 'speed-sampler':
-        // Its goal speed is bound to Speed, the measured speed the locomotion drives
-        // (src/ai/locomotion.ts).
-        this.#write(modifier.speedOut, scope, this.#read(modifier.goalSpeed, scope));
+      case 'speed-sampler': {
+        // Observed in the original: the goal speed (bound to Speed, what the locomotion
+        // drives: src/ai/locomotion.ts) looked up in the project's speed data for the state and
+        // direction, as the blend parameter that moves the character at that speed; without a
+        // table, the goal speed itself. Before, Speed went through as it was: a cart horse
+        // walking at 125 units a second blended its trot in (its walk is 125.11 in the blend).
+        const goal = this.#read(modifier.goalSpeed, scope);
+        const sampled = this.#host.speedParameter?.(
+          this.#read(modifier.state, scope),
+          this.#read(modifier.direction, scope),
+          goal,
+        );
+        this.#write(modifier.speedOut, scope, sampled ?? goal);
         return;
+      }
       case 'keyframe-bones':
         for (const bone of modifier.keyframedBones) this.#keyframed.add(bone);
         return;
@@ -2711,17 +3202,23 @@ export class BehaviorRuntime {
       }
       case 'state-machine': {
         const machine = this.#machine(node);
-        const to = this.#generate(machine.current?.generator, depth + 1);
         const transition = machine.transition;
-        if (!transition) return to && this.#own(to, depth);
-        const t = blendCurve(transition.curve, transition.elapsed / transition.duration);
-        const toPose = to && this.#own(to, depth + 1);
-        const from = this.#generate(transition.from.generator, depth + 2);
-        if (!from) return toPose && this.#own(toPose, depth);
-        if (!toPose) return this.#own(from, depth);
-        const out = this.#buffer(depth);
-        blendPoses(this.#solid(from, depth + 3), this.#solid(toPose, depth + 4), t, out);
-        return { pose: out, additive: false };
+        let generated: Generated | undefined;
+        if (transition) {
+          generated = this.#generateTransition(transition, depth);
+        } else {
+          const to = this.#generate(machine.current?.generator, depth + 1);
+          generated = to && this.#own(to, depth);
+        }
+        // A machine that may blend a state into itself, or that blends now (it may be sent back
+        // into a state it blends out of), keeps its pose to blend from.
+        if (generated && (transition !== undefined || this.#selfBlends(node))) {
+          const solid = this.#solid(generated, depth + 1);
+          const kept = this.#machinePoses.get(node);
+          if (kept?.length === solid.length) kept.set(solid);
+          else this.#machinePoses.set(node, solid.slice());
+        }
+        return generated;
       }
       case 'blender':
         return this.#generateBlender(node, depth, scope);
@@ -2762,6 +3259,26 @@ export class BehaviorRuntime {
     }
   }
 
+  /** A transition's pose: what it blends from (nested transitions in turn) blended into its state. */
+  #generateTransition(transition: Transition, depth: number): Generated | undefined {
+    if (depth > 64) return undefined;
+    const t = blendCurve(transition.curve, transition.elapsed / transition.duration);
+    const to = this.#generate(transition.to.generator, depth + 1);
+    const toPose = to && this.#own(to, depth + 1);
+    const source = transition.from;
+    const from =
+      source.kind === 'state'
+        ? this.#generate(source.state.generator, depth + 2)
+        : source.kind === 'transition'
+          ? this.#generateTransition(source.transition, depth + 2)
+          : { pose: source.pose, additive: false };
+    if (!from) return toPose && this.#own(toPose, depth);
+    if (!toPose) return this.#own(from, depth);
+    const out = this.#buffer(depth);
+    blendPoses(this.#solid(from, depth + 3), this.#solid(toPose, depth + 4), t, out);
+    return { pose: out, additive: false };
+  }
+
   #pass(node: BehaviorGenerator | undefined, depth: number): Generated | undefined {
     const generated = this.#generate(node, depth + 1);
     return generated && this.#own(generated, depth);
@@ -2787,7 +3304,14 @@ export class BehaviorRuntime {
     const binding = this.#host.clip(node.animation);
     if (!binding) return undefined;
     const state = this.#clips.get(node);
-    return this.#sample(binding, (state?.time ?? 0) + (node.cropStart ?? 0), depth);
+    const sampled = this.#sample(binding, (state?.time ?? 0) + (node.cropStart ?? 0), depth);
+    // A mirrored clip: its pose mirrored across the character (src/animation/mirror.ts).
+    const mirror = this.#mirror;
+    if (mirror && ((node.flags ?? 0) & CLIP_FLAGS.mirror) !== 0) {
+      if (sampled.additive) mirror.mirrorAdditive(sampled.pose, this.skeleton.referencePose);
+      else mirror.mirrorPose(sampled.pose);
+    }
+    return sampled;
   }
 
   /**
