@@ -16,8 +16,10 @@
 // explosion shows its model and light, puts its image-space modifier on the player within its
 // image-space radius (aimed at it), leaves its placed object (a hazard: the hazard engine) and
 // sends its spawned projectile on to the nearest other actor (chain lightning); an impact
-// (the effect's and the explosion's impact data set) leaves its decal, model and hazard.
-// TODO(M13): the hop count of chained explosions (one hop each here).
+// (the effect's and the explosion's impact data set) leaves its decal, model and hazard. A
+// chained hop is weaker by fMagicChainExplosionEffectivenessDelta for each actor the chain
+// reached (observed in the original). TODO(M13): the hop count of chained explosions (one
+// hop each here; the engine's limit is not read).
 
 import {
   flightKind,
@@ -31,6 +33,7 @@ import {
   type ActorShape,
   type Flight,
 } from '../gameplay/magic/projectile-flight.ts';
+import { chainEffectiveness } from '../gameplay/magic/explosions.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
@@ -273,7 +276,15 @@ export class MagicProjectiles {
     target: number,
     options: { readonly facing?: boolean; readonly seconds?: number },
   ): Promise<number> {
-    const applied = await runtime.casting.deliver(delivered, target, options);
+    // A chain explosion's hop is weaker by each actor the chain reached before (explosions.ts
+    // chainEffectiveness: the first one hit, then each hop).
+    const hops = delivered.chained ?? 0;
+    const effectiveness =
+      hops > 0 ? chainEffectiveness(hops, await runtime.casting.explosionSettings()) : undefined;
+    const applied = await runtime.casting.deliver(delivered, target, {
+      ...options,
+      ...(effectiveness !== undefined && { effectiveness }),
+    });
     if (applied > 0 && target !== delivered.caster && (await runtime.magic.hostile(delivered.item)))
       this.#options.hit?.(target, delivered.caster);
     return applied;
@@ -389,6 +400,27 @@ export class MagicProjectiles {
       range,
       duration: range / speed + 0.25,
     });
+  }
+
+  /**
+   * Whether an explosion seen from `from` reaches an actor (WorldBridge.explosionReaches; the
+   * engine's sight of an explosion: src/gameplay/magic/explosions.ts): no surface between it
+   * and the actor's middle, or the one met lies within `buffer` units of the actor. Undefined:
+   * the actor or the physics is not here to ask.
+   */
+  reaches(from: Vec3, target: number, buffer: number): boolean | undefined {
+    const physics = this.#physics;
+    let shape: ActorShape | undefined;
+    for (const entry of this.#options.targets())
+      if (entry.reference === target) shape = entry.shape;
+    if (!physics || !shape) return undefined;
+    const middle: Vec3 = [shape.feet[0], shape.feet[1], shape.feet[2] + shape.height / 2];
+    const way: Vec3 = [middle[0] - from[0], middle[1] - from[1], middle[2] - from[2]];
+    const distance = Math.hypot(...way);
+    if (distance < 1) return true;
+    const hit = physics.raycast(from, way, distance, Layer.spell);
+    if (!hit || ACTOR_LAYERS.has(hit.layer) || hit.owner?.kind === 'actor') return true;
+    return distance - hit.distance <= buffer;
   }
 
   /** Whether a surface stands between two points (line of sight for cones and areas). */
@@ -547,6 +579,7 @@ export class MagicProjectiles {
           readonly material: number;
           readonly kind: 'object' | 'landscape' | 'actor' | undefined;
           readonly reference?: number;
+          readonly normal?: Vec3;
         }
       | undefined,
     seconds: number | undefined,
@@ -600,7 +633,10 @@ export class MagicProjectiles {
           actor?.reference,
           projectile,
         );
-      await casting.explode(delivered.caster, explosion, point);
+      // It faces off the surface it burst on (else back the way the spell came): its sight
+      // starts from there.
+      const facingOut: Vec3 = hit?.normal ?? [-aim[0], -aim[1], -aim[2]];
+      await casting.explode(delivered.caster, explosion, point, undefined, facingOut);
       noise?.(point, delivered.caster, record?.soundLevel ?? 1);
       // Destructible objects within its radius take the spell too (a fireball's burst on webs),
       // the one hit straight aside (it took it above).

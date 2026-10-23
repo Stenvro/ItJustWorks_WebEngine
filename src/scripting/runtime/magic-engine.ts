@@ -19,9 +19,13 @@
 // `useItem`. Platform-independent.
 
 import {
+  accumulateRate,
+  accumulateStep,
   actsAtOnce,
   castStrength,
   DUAL_CASTING_POWER,
+  EFFECT_DEFAULTS,
+  EFFECT_SETTING_NAMES,
   isLastingKind,
   isValueEffect,
   LEVEL_CAPPED,
@@ -31,14 +35,17 @@ import {
   resistanceMultiplier,
   soulGemFor,
   soulSize,
+  summonAtLanding,
+  summonDistance,
   TARGET_VALUES,
   UNITS_PER_FOOT,
   valueAmount,
   valueMode,
   valueSign,
+  type EffectSettings,
 } from '../../gameplay/magic/effect-rules.ts';
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
-import { ActorValue } from '../../world/actor-values.ts';
+import { ActorValue, SKILL_COUNT } from '../../world/actor-values.ts';
 import { DefaultObjects } from '../../world/default-objects.ts';
 import {
   EffectArchetype,
@@ -137,10 +144,13 @@ const ACTOR_TYPE_NPC = 0x13794;
 const ACTOR_TYPE_UNDEAD = 0x13796;
 
 /**
- * How often lasting effects, conditions and cloaks are looked at (seconds). TODO(M13): the
- * engine's interval for active effects' conditions is not documented.
+ * How often lasting effects and conditions are looked at (seconds). TODO(M13): the engine's
+ * interval for active effects' conditions is not documented.
  */
 const PULSE_SECONDS = 1;
+
+/** [General] fCloakEffectUpdateInterval's built-in default: how often cloaks reach (seconds). */
+const CLOAK_UPDATE_INTERVAL = 0.5;
 
 /** Archetypes whose hostile Health effect harms a destructible object (Fire Damage, ...). */
 const HEALTH_DAMAGING: ReadonlySet<number> = new Set([
@@ -155,12 +165,6 @@ const PLAYER_SLOWED_PACE = 0.7;
 
 /** GetRandomPercent (UESP function index 77). */
 const GET_RANDOM_PERCENT = 77;
-
-/**
- * A summon stands this far in front of who summons it (units). TODO(M13): the engine's
- * placement (SummonPlacementEffect). A Target Location spell's summon stands where it landed.
- */
-const SUMMON_DISTANCE = 128;
 
 /**
  * How many creatures an actor may have summoned at once (the oldest goes when another comes),
@@ -200,7 +204,16 @@ export class MagicEngine {
   #changes: Promise<void> = Promise.resolve();
   #pulseWait = 0;
   #pulsing = false;
+  #cloakWait = 0;
+  #cloaking = false;
+  /** [General] fCloakEffectUpdateInterval (the session sets the INI's): cloaks reach this often. */
+  cloakInterval = CLOAK_UPDATE_INTERVAL;
   #defaults: Promise<DefaultObjects> | undefined;
+  #settings: Promise<EffectSettings> | undefined;
+  /** The settings once read (the per-frame work reads them without waiting). */
+  #settingsRead: EffectSettings | undefined;
+  /** Accumulate Magnitude effects (wards): how fast each grows, and how long it holds still. */
+  readonly #accumulating = new WeakMap<ActiveEffectState, { rate: number; hold: number }>();
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
@@ -579,6 +592,18 @@ export class MagicEngine {
     return typeof value === 'number' ? value : fallback;
   }
 
+  /** The archetypes' settings (effect-rules.ts EffectSettings), read once. */
+  effectSettings(): Promise<EffectSettings> {
+    this.#settings ??= (async () => {
+      const settings: Record<string, number> = {};
+      for (const [key, name] of Object.entries(EFFECT_SETTING_NAMES))
+        settings[key] = await this.#setting(name, EFFECT_DEFAULTS[key as keyof EffectSettings]);
+      this.#settingsRead = { ...EFFECT_DEFAULTS, ...settings };
+      return this.#settingsRead;
+    })();
+    return this.#settings;
+  }
+
   /** An actor's name (its leveled base's FULL). */
   async #name(reference: number): Promise<string> {
     const runtime = this.#runtime;
@@ -950,8 +975,21 @@ export class MagicEngine {
       this.#settlePeak(entry.target, entry.effect);
       return;
     }
-    // Accumulate Magnitude (wards) grows each second (update).
-    if (effect.archetype === EffectArchetype.accumulateMagnitude) return;
+    // Accumulate Magnitude (wards) grows each second (update), at its rate: a ward's by its
+    // caster's skill in its school.
+    if (effect.archetype === EffectArchetype.accumulateMagnitude) {
+      const settings = await this.effectSettings();
+      const caster = entry.caster ?? entry.target;
+      const skill =
+        effect.skill >= ActorValue.firstSkill && effect.skill < ActorValue.firstSkill + SKILL_COUNT
+          ? (await runtime.actors.value(caster, effect.skill)).current
+          : 0;
+      this.#accumulating.set(entry, {
+        rate: accumulateRate(effect.actorValue, entry.magnitude, skill, settings),
+        hold: 0,
+      });
+      return;
+    }
     const goal = TARGET_VALUES.get(effect.archetype);
     if (goal !== undefined) {
       // Calm, Frenzy, Fear, Rally: the AI value set to its target while it lasts.
@@ -1206,7 +1244,7 @@ export class MagicEngine {
       case EffectArchetype.werewolfFeed:
         runtime.state.actor(target).eaten = true;
         break;
-      // Cloaks act each second (#pulse); Soul Trap as its target dies (died). Concussion,
+      // Cloaks act each cloak interval (#cloaks); Soul Trap as its target dies (died). Concussion,
       // Telekinesis, Grab Actor, Light, Detect Life, Guide, Disguise, Werewolf, Vampire Lord,
       // Slow Time, Etherealize, Command Summoned, Script: their state is the effect itself
       // (aiState, timeMultiplier) and their scripts; what they show (lights, Detect Life's
@@ -1316,20 +1354,43 @@ export class MagicEngine {
       await this.end(key);
     const made = await runtime.placeAt(creature, summoner, 1);
     const at = await runtime.placement(summoner);
-    if (at && entry.at) {
-      // Where its Target Location spell landed, facing the summoner.
-      const heading = Math.atan2(at.position[0] - entry.at[0], at.position[1] - entry.at[1]);
-      runtime.move(made, [...entry.at], [0, 0, heading], at.cell, at.world);
-    } else if (at) {
+    if (at) {
+      // Observed in the original: it stands ahead of its summoner, both actors' radii and
+      // half of fSummonedCreatureSearchRadius away; a Target Location spell's where it landed,
+      // unless that is within fSummonDistanceCheckThreshold and nearer than the place ahead.
+      // TODO(M13): the engine then looks for the navmesh near there, the way clear of the
+      // summoner's line of sight; the place is taken as it is here.
+      const settings = await this.effectSettings();
+      const ahead = summonDistance(
+        await this.#radius(summoner),
+        await this.#radius(made),
+        settings,
+      );
       const heading = at.rotation[2];
-      const position: Vec3 = [
-        at.position[0] + Math.sin(heading) * SUMMON_DISTANCE,
-        at.position[1] + Math.cos(heading) * SUMMON_DISTANCE,
+      let position: Vec3 = [
+        at.position[0] + Math.sin(heading) * ahead,
+        at.position[1] + Math.cos(heading) * ahead,
         at.position[2],
       ];
-      runtime.move(made, position, [0, 0, heading + Math.PI], at.cell, at.world);
+      if (entry.at) {
+        const landing = Math.hypot(
+          entry.at[0] - at.position[0],
+          entry.at[1] - at.position[1],
+          entry.at[2] - at.position[2],
+        );
+        if (summonAtLanding(landing, ahead, settings)) position = [...entry.at];
+      }
+      // Facing its summoner.
+      const facing = Math.atan2(at.position[0] - position[0], at.position[1] - position[1]);
+      runtime.move(made, position, [0, 0, facing], at.cell, at.world);
     }
     entry.made = made;
+  }
+
+  /** An actor's radius: half the wider of its bounds' sides (units). */
+  async #radius(reference: number): Promise<number> {
+    const bounds = await this.#runtime.bounds(reference);
+    return Math.max(bounds[0], bounds[1]) / 2;
   }
 
   // --- Dispelling -------------------------------------------------------------------------
@@ -1419,10 +1480,15 @@ export class MagicEngine {
     if (gem?.filled === undefined) return false;
     await runtime.removeItem(trapper, runtime.formHandle(gem.formId), 1, true, undefined);
     await runtime.addItem(trapper, runtime.formHandle(gem.filled), 1, true);
-    this.#defaults ??= DefaultObjects.read(runtime.forms.db);
-    const sound = (await this.#defaults).get('SCSD');
+    const sound = await this.defaultObject('SCSD');
     if (sound !== undefined) runtime.world.playSound?.(sound, trapper);
     return true;
+  }
+
+  /** The load order's default object for a use (DOBJ, read once). */
+  async defaultObject(use: string): Promise<number | undefined> {
+    this.#defaults ??= DefaultObjects.read(this.#runtime.forms.db);
+    return (await this.#defaults).get(use);
   }
 
   // --- Lasting effects ---------------------------------------------------------------------
@@ -1672,6 +1738,7 @@ export class MagicEngine {
     if (seconds <= 0) return;
     const ended: string[] = [];
     const changes: { entry: ActiveEffectState; effect: MagicEffectRecord; amount: number }[] = [];
+    const grows: { entry: ActiveEffectState; effect: MagicEffectRecord; seconds: number }[] = [];
     for (const [key, entry] of this.#runtime.state.activeEffects) {
       if (this.#ending.has(key)) continue;
       const before = entry.elapsed;
@@ -1684,18 +1751,23 @@ export class MagicEngine {
         if (mode === 'perSecond' && span > 0) {
           changes.push({ entry, effect, amount: valueSign(effect) * entry.magnitude * span });
         } else if (effect.archetype === EffectArchetype.accumulateMagnitude) {
-          // A ward grows by its magnitude each second up to it. TODO(M13): the engine's rate.
-          const now = entry.applied?.[0]?.amount ?? 0;
-          const grow = Math.min(entry.magnitude - now, entry.magnitude * seconds);
-          if (grow > 0) this.#add(entry, entry.target, effect.actorValue, grow);
+          // A ward grows at its rate (observed in the original), holding still a while
+          // after a hit lowered it (holdWards).
+          const growing = this.#accumulating.get(entry);
+          if (growing && growing.hold > 0) {
+            growing.hold -= seconds;
+          } else if (growing) {
+            grows.push({ entry, effect, seconds });
+          }
         }
       }
       if (!entry.lasting && entry.duration > 0 && entry.elapsed >= entry.duration) ended.push(key);
     }
-    if (changes.length > 0) {
+    if (changes.length > 0 || grows.length > 0) {
       this.#changes = this.#changes.then(async () => {
         for (const change of changes)
           await this.#change(change.entry, change.effect, change.amount);
+        for (const grow of grows) await this.#grow(grow.entry, grow.effect, grow.seconds);
       });
       this.#runtime.detach(this.#changes);
     }
@@ -1710,6 +1782,60 @@ export class MagicEngine {
         }),
       );
     }
+    // Cloaks reach those near every fCloakEffectUpdateInterval.
+    this.#cloakWait -= seconds;
+    if (this.#cloakWait <= 0 && !this.#cloaking) {
+      this.#cloakWait = this.cloakInterval;
+      this.#cloaking = true;
+      this.#runtime.detach(
+        this.#cloaks().finally(() => {
+          this.#cloaking = false;
+        }),
+      );
+    }
+  }
+
+  /**
+   * An Accumulate Magnitude effect grows (observed in the original): by its rate's share,
+   * no further than takes its actor value to its cap (its magnitude; a ward's: the largest
+   * magnitude of the wards on its actor).
+   */
+  async #grow(entry: ActiveEffectState, effect: MagicEffectRecord, seconds: number): Promise<void> {
+    const growing = this.#accumulating.get(entry);
+    if (!growing || entry.inactive) return;
+    let cap = entry.magnitude;
+    if (effect.actorValue === MagicValue.wardPower) {
+      for (const [, other] of this.effectsOn(entry.target)) {
+        const kind = this.#effects.get(other.effect);
+        if (
+          !other.inactive &&
+          kind?.archetype === EffectArchetype.accumulateMagnitude &&
+          kind.actorValue === MagicValue.wardPower
+        )
+          cap = Math.max(cap, other.magnitude);
+      }
+    }
+    const current = (await this.#runtime.actors.value(entry.target, effect.actorValue)).current;
+    const amount = accumulateStep(growing.rate, seconds, current, cap);
+    if (amount > 0) this.#add(entry, entry.target, effect.actorValue, amount);
+  }
+
+  /**
+   * A ward on an actor was lowered by a hit (not broken): its wards stop growing for
+   * fMagicAccumulatingModifierEffectHoldDuration seconds (observed in the original).
+   */
+  holdWards(actor: number): void {
+    const hold = (this.#settingsRead ?? EFFECT_DEFAULTS).accumulatingHold;
+    for (const [, entry] of this.effectsOn(actor)) {
+      const effect = this.#effects.get(entry.effect);
+      if (
+        effect?.archetype !== EffectArchetype.accumulateMagnitude ||
+        effect.actorValue !== MagicValue.wardPower
+      )
+        continue;
+      const growing = this.#accumulating.get(entry);
+      if (growing) growing.hold = hold;
+    }
   }
 
   async #pulse(): Promise<void> {
@@ -1723,15 +1849,24 @@ export class MagicEngine {
       if (!runtime.state.activeEffects.has(key) || this.#ending.has(key)) continue;
       if (holds && entry.inactive) await this.#activate(key, entry, effect);
       else if (!holds && !entry.inactive) await this.#deactivate(key, entry, false);
-      if (!entry.inactive && effect.archetype === EffectArchetype.cloak)
-        await this.#cloak(entry, effect);
+    }
+  }
+
+  /** The cloaks on actors reach those near ([General] fCloakEffectUpdateInterval). */
+  async #cloaks(): Promise<void> {
+    const runtime = this.#runtime;
+    for (const [key, entry] of [...runtime.state.activeEffects]) {
+      if (entry.inactive || this.#ending.has(key) || !runtime.state.activeEffects.has(key))
+        continue;
+      const effect = this.#effects.get(entry.effect);
+      if (effect?.archetype === EffectArchetype.cloak) await this.#cloak(entry, effect);
     }
   }
 
   /**
-   * A cloak: its spell (MGEF's associated SPEL) on every actor within its magnitude in feet of
-   * its wearer, each second. TODO(M13): the radius read as the magnitude (the vanilla cloaks'
-   * areas are 0).
+   * A cloak: its spell (MGEF's associated SPEL) on every other actor within its magnitude in
+   * feet of its wearer (observed in the original: the radius is the magnitude), each
+   * fCloakEffectUpdateInterval.
    */
   async #cloak(entry: ActiveEffectState, effect: MagicEffectRecord): Promise<void> {
     const runtime = this.#runtime;
@@ -1739,7 +1874,7 @@ export class MagicEngine {
       effect.associatedItem === undefined ? undefined : await this.item(effect.associatedItem);
     const center = runtime.world.livePlacement?.(entry.target)?.position;
     if (!spell || !center) return;
-    const radius = Math.max(entry.magnitude, entry.area ?? 0) * UNITS_PER_FOOT;
+    const radius = entry.magnitude * UNITS_PER_FOOT;
     for (const reference of runtime.world.loadedReferences?.() ?? []) {
       if (reference === entry.target) continue;
       const at = runtime.world.livePlacement?.(reference)?.position;

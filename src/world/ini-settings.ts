@@ -105,6 +105,8 @@ export const INI_DEFAULTS = {
     fFreezeDirectionDefaultAngleThreshold: 60,
     fFreezeDirectionDefaultSpeedThreshold: 100,
     bInvertYValues: 0,
+    // Both attack buttons pressed within this dual cast (seconds; src/shell/player-casting.ts).
+    fDualCastChordTime: 0.05,
     fMouseHeadingSensitivity: 0.0125,
     fMouseHeadingXScale: 0.02,
     fMouseHeadingYScale: 0.85,
@@ -151,6 +153,8 @@ export const INI_DEFAULTS = {
   General: {
     bBorderRegionsEnabled: 1,
     fAutoDoorFadeSecs: 0.5,
+    // How often cloaks reach those near (seconds; src/scripting/runtime/magic-engine.ts).
+    fCloakEffectUpdateInterval: 0.5,
   },
   HAVOK: {
     fInAirFallingCharGravityMult: 1.35,
