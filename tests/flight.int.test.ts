@@ -1,4 +1,4 @@
-// Integration test: flying combat on the local game data (docs/ai.md, "Flying combat"): the
+// Integration test: flying combat on the local game data (docs/ai.md, "Flying"): the
 // dragons' races, movement types, combat styles, shouts and the flight settings read from the
 // plugins; the idle tree's flight actions; the dragon behavior graph flown offline with the
 // events the flight sends (take-off, hover, landing, perch, breath), its clips' root motion
@@ -7,9 +7,10 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { parseCombatStyle } from '../src/ai/combat-style-records.ts';
 import {
-  chooseFlightManeuver,
   fliesByRace,
   headingRotation,
+  maneuverWeights,
+  pickManeuver,
   readFlightSettings,
 } from '../src/ai/flight.ts';
 import { readIdleTree, type IdleTree } from '../src/ai/idle-records.ts';
@@ -23,7 +24,10 @@ import {
   projectRelative,
 } from '../src/formats/hkx/behavior.ts';
 import { Packfile } from '../src/formats/hkx/packfile.ts';
+import { RecordFlag } from '../src/formats/esm/record.ts';
 import { RaceFlag } from '../src/world/actor-records.ts';
+import { FurnitureMarkerFlag, parseFurniture } from '../src/world/furniture-records.ts';
+import { PackageData } from '../src/ai/package-data.ts';
 import { GameSettings } from '../src/world/game-settings.ts';
 import { parseMovementType } from '../src/world/movement.ts';
 import { RecordDatabase, type GameRecord } from '../src/world/record-db.ts';
@@ -106,7 +110,8 @@ describe.skipIf(!hasGamedata())('flying combat on the local game data', () => {
     expect(settings.diveBombChanceMax).toBe(1);
     expect(settings.orbitTimeMin).toBe(3);
     expect(settings.orbitTimeMax).toBe(12);
-    // Its style chooses every maneuver it has.
+    // Its style draws every maneuver it has.
+    const weights = maneuverWeights(flight, settings);
     const seen = new Set<string>();
     let seed = 7;
     const random = (): number => {
@@ -114,9 +119,15 @@ describe.skipIf(!hasGamedata())('flying combat on the local game data', () => {
       return seed / 2147483647;
     };
     for (let i = 0; i < 200; i++) {
-      seen.add(chooseFlightManeuver(flight, { canLand: true, perch: true }, random, settings));
+      seen.add(pickManeuver(weights, new Set(), random) ?? '-');
     }
-    expect([...seen].sort()).toEqual(['diveBomb', 'hover', 'land', 'orbit', 'perch']);
+    expect([...seen].sort()).toEqual([
+      'diveBomb',
+      'flyingAttack',
+      'groundAttack',
+      'hover',
+      'perchAttack',
+    ]);
   });
 
   it("reads a dragon's breath: its shouts, the fire breath a concentration flame", async () => {
@@ -134,6 +145,22 @@ describe.skipIf(!hasGamedata())('flying combat on the local game data', () => {
     }
     expect(shouts.sort()).toEqual(['DragonFireBallShout01', 'DragonFireBreathShout01']);
     expect(breath?.castType).toBe(CastType.concentration);
+  });
+
+  it('reads the perches (MNAM Is Perch) and the sky markers (REFR flag 0x2000)', async () => {
+    // DragonPerchTower, DragonPerchWordwall, DragonPerchRockL02, DragonTowerHole01.
+    for (const perch of [0x1e595, 0x1cc4a, 0xaa934, 0x6cf46]) {
+      const furniture = parseFurniture(await record(perch));
+      expect((furniture.markerFlags ?? 0) & FurnitureMarkerFlag.isPerch).not.toBe(0);
+    }
+    // MQ101's Alduin patrols from a sky marker to another; his perch and orbit marker are not.
+    expect((await record(0xd07f0)).flags & RecordFlag.skyMarker).not.toBe(0);
+    expect((await record(0xd07f3)).flags & RecordFlag.skyMarker).not.toBe(0);
+    expect((await record(0xaa7de)).flags & RecordFlag.skyMarker).toBe(0);
+    expect((await record(0x32c41)).flags & RecordFlag.skyMarker).toBe(0);
+    const data = new PackageData(db);
+    expect((await data.reference(0xd07f0))?.sky).toBe(true);
+    expect((await data.reference(0xaa7de))?.sky).toBeUndefined();
   });
 
   it("finds the flight actions in the dragon's idle tree", () => {

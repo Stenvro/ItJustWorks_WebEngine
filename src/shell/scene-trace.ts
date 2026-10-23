@@ -11,7 +11,7 @@
 //   13.0 pos 654fb 14843,-81654,8210
 //
 // An actor's line names the scene and alias that cast it ('-': none now, followed on after its
-// scene), its package (id/procedure), its flags (COMBAT, OBSERVE, FLEE, CARRIED,
+// scene), its package (id/procedure), its flags (COMBAT, OBSERVE, FLEE, CARRIED, FLYING,
 // FURNITURE:<furniture>, unstaged, dead), whether it travels, and its graph's innermost states.
 //
 // Started from the browser console: `engineDev.sceneTrace()` begins (or begins again) and
@@ -120,6 +120,7 @@ export class SceneTrace {
         combat?.observingCombat === true ? 'OBSERVE' : '',
         stage?.ai.fleeing(reference) === true ? 'FLEE' : '',
         carried ? 'CARRIED' : '',
+        stage?.flight.isFlying(reference) === true ? 'FLYING' : '',
         furniture ? `FURNITURE:${hex(furniture.furniture)}` : '',
         staged ? '' : 'unstaged',
         staged?.dead === true ? 'dead' : '',

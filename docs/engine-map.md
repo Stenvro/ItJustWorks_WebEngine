@@ -90,28 +90,29 @@ These run through every area and explain most of what breaks in play.
 | Dialogue                     | partial   | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away                                                                |
 | Scenes                       | partial   | lines do not wait for facing; repeat pause                                                                                                         |
 | Actors away                  | partial   | only one door away, hour steps                                                                                                                     |
-| Followers, horses, furniture | partial   | walk zone; mount from the right; enter by graph event                                                                                              |
+| Followers, horses, furniture | partial   | walk zone; mount from the right; enter by graph event; the horse's turn to the camera                                                              |
 | Head tracking                | partial   | candidates' scores, look along the path, package target's look                                                                                     |
 
 ### Combat
 
-| System            | Status    | Main gaps                                                                                                                                                   |
-| ----------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Controller, state | different | per-behaviour timers; per-fight confidence roll                                                                                                             |
-| Target selection  | different | additive scores, re-selection timing, crowding, reachability (the group's target knowledge and stealth points are the engine's: ai.md Combat detection)     |
-| Flee              | different | strength ratio (damage per second × health against armour) instead of health share                                                                          |
-| Behaviour tree    | partial   | per-slot actions (left and dual attacks, shield and weapon, spell and weapon), surround, backoff, reposition, cover, find attack location, hide, low combat |
-| Style values      | complete  | (on the engine's scale; the circle distant, special attack, block attack and offensive bash behaviours wait for the tree)                                   |
-| Inventory         | partial   | hand pairs, continuous weighing after the minimum equip times, torches, ammunition                                                                          |
-| Melee choice      | partial   | attacks from attack data while closing in, per-attack angle and cooldown, special attack                                                                    |
-| Block, bash       | different | sustained block, block attack, offensive bash                                                                                                               |
-| Ranged            | partial   | line of fire, optimal range, cover                                                                                                                          |
-| Combat magic      | partial   | casters by purpose, dual casting, reanimate a corpse                                                                                                        |
-| Potions           | partial   | the casters' order in the tree; the stop-cast threshold of a held healing spell                                                                             |
-| Damage, stagger   | partial   | sneak attacks by the player only, critical chance actor value, attack damage mult, stagger by the Mass actor value                                          |
-| Combat dialogue   | partial   | per-subtype cooldowns and distance gates                                                                                                                    |
-| Combat music      | different | threat-ratio gate, near-combat radius, stop delay                                                                                                           |
-| Kill moves        | partial   | the magic kill cam (rules read: docs/gameplay.md), the kill camera's radial blur between shots                                                              |
+| System            | Status    | Main gaps                                                                                                                                                            |
+| ----------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Controller, state | different | per-behaviour timers; per-fight confidence roll                                                                                                                      |
+| Target selection  | different | additive scores, re-selection timing, crowding, reachability (the group's target knowledge and stealth points are the engine's: ai.md Combat detection)              |
+| Flee              | different | strength ratio (damage per second × health against armour) instead of health share                                                                                   |
+| Behaviour tree    | partial   | per-slot actions (left and dual attacks, shield and weapon, spell and weapon), cover, find attack location, hide, low combat (close movement: ai.md Combat movement) |
+| Style values      | complete  | (on the engine's scale; the special attack, block attack and offensive bash behaviours wait for the tree)                                                            |
+| Inventory         | partial   | hand pairs, continuous weighing after the minimum equip times, torches, ammunition                                                                                   |
+| Melee choice      | partial   | attacks from attack data while closing in, per-attack angle and cooldown, special attack                                                                             |
+| Block, bash       | different | sustained block, block attack, offensive bash                                                                                                                        |
+| Close movement    | partial   | the selector's range split and Fallback To Ranged's condition (inferred); the flanking and ranged movement trees                                                     |
+| Ranged            | partial   | line of fire, optimal range, cover                                                                                                                                   |
+| Combat magic      | partial   | casters by purpose, dual casting, reanimate a corpse                                                                                                                 |
+| Potions           | partial   | the casters' order in the tree; the stop-cast threshold of a held healing spell                                                                                      |
+| Damage, stagger   | partial   | sneak attacks by the player only, critical chance actor value, attack damage mult, stagger by the Mass actor value                                                   |
+| Combat dialogue   | partial   | per-subtype cooldowns and distance gates                                                                                                                             |
+| Combat music      | different | threat-ratio gate, near-combat radius, stop delay                                                                                                                    |
+| Kill moves        | partial   | the magic kill cam (rules read: docs/gameplay.md), the kill camera's radial blur between shots                                                                       |
 
 ### Magic, effects, perks
 

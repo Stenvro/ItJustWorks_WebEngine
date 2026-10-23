@@ -438,3 +438,157 @@ function pullTight(chain: readonly Node[], from: Vec3, to: Vec3, radius: number)
 
 const samePoint = (a: Vec3, b: Vec3): boolean =>
   Math.abs(a[0] - b[0]) < 1e-3 && Math.abs(a[1] - b[1]) < 1e-3;
+
+/** The line's samples are this far apart (units). */
+const STRAIGHT_STEP = 16;
+
+/**
+ * How far the navmeshes let an actor go straight from `from` towards `to` (units, horizontal):
+ * the line and the two lines its radius to either side, sampled every 16 units, stay on the
+ * navmeshes up to there (the engine's straight combat paths, CombatPathRequestStraightPath: a
+ * maneuver's goal the navmesh does not reach is no goal). Off the navmeshes (none loaded under
+ * its start) the whole way counts.
+ */
+export function straightReach(set: NavmeshSet, from: Vec3, to: Vec3, radius: number): number {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const length = Math.hypot(dx, dy);
+  if (length < 1e-6 || !set.locate(from)) return length;
+  const ux = dx / length;
+  const uy = dy / length;
+  // Across the way: (uy, −ux) to the right.
+  const offsets = radius > 0 ? [0, radius, -radius] : [0];
+  for (let along = STRAIGHT_STEP; along < length + STRAIGHT_STEP; along += STRAIGHT_STEP) {
+    const at = Math.min(along, length);
+    const z = from[2] + ((to[2] - from[2]) * at) / length;
+    for (const offset of offsets) {
+      const point: Vec3 = [from[0] + ux * at + uy * offset, from[1] + uy * at - ux * offset, z];
+      if (!set.locate(point)) return Math.max(0, at - STRAIGHT_STEP);
+    }
+  }
+  return length;
+}
+
+/** A random location's search reaches at most this many triangles. */
+const RANDOM_SEARCH_LIMIT = 4000;
+/** A random location is tried this many times to lie far enough from the actor. */
+const RANDOM_TRIES = 8;
+
+/**
+ * A random point of the navmeshes within `radius` of `center` that an actor at `from` can walk
+ * to, at least `least` from it if such a point is found in a few tries (else the farthest
+ * found): the pathing's random location, which the engine's wander asks for its first walk
+ * (observed in the original). The triangles reachable from the actor's (through the edges
+ * and portals a path takes, closed ones left out) whose middle lies within the radius are the
+ * candidates, picked by their area; the point is random within the triangle picked. Undefined:
+ * the actor is off the navmeshes, or nothing it reaches lies within the radius.
+ */
+export function randomReachablePoint(
+  set: NavmeshSet,
+  from: Vec3,
+  center: Vec3,
+  radius: number,
+  least: number,
+  random: () => number,
+  options: Pick<PathOptions, 'large' | 'closedDoors'> = {},
+): Vec3 | undefined {
+  const start = set.locate(from);
+  if (!start) return undefined;
+  const candidates: { navmesh: Navmesh; triangle: number; area: number }[] = [];
+  const seen = new Set<number>([keyOf(start.navmesh.formId, start.triangle)]);
+  const queue: { navmesh: Navmesh; triangle: number }[] = [start];
+  let total = 0;
+  const across2d = (point: Vec3): number => Math.hypot(point[0] - center[0], point[1] - center[1]);
+  // Farther from the place than this (and than the actor stands), the search does not go on.
+  const farthest = Math.max(2 * radius, across2d(from)) + RANDOM_SEARCH_MARGIN;
+  for (let i = 0; i < queue.length && seen.size < RANDOM_SEARCH_LIMIT; i++) {
+    const { navmesh, triangle } = queue[i] ?? start;
+    const middle = triangleCentre(navmesh, triangle);
+    const off = across2d(middle);
+    if (off <= radius) {
+      const [a, b, c] = navmeshTriangle(navmesh, triangle);
+      const area = Math.abs((b[0] - a[0]) * (c[1] - a[1]) - (c[0] - a[0]) * (b[1] - a[1])) / 2;
+      if (area > 0) {
+        candidates.push({ navmesh, triangle, area });
+        total += area;
+      }
+    } else if (off > farthest) {
+      // Far outside the place: the search does not go on from there.
+      continue;
+    }
+    for (let edge = 0; edge < 3; edge++) {
+      const neighbour = triangleNeighbour(navmesh, triangle, edge);
+      if (neighbour === undefined) continue;
+      let next = navmesh;
+      let index: number;
+      if (typeof neighbour === 'number') {
+        index = neighbour;
+      } else {
+        if (neighbour.type !== NavmeshLinkType.portal) continue;
+        const other = set.navmesh(neighbour.navmesh);
+        if (!other) continue;
+        next = other;
+        index = neighbour.triangle;
+      }
+      const key = keyOf(next.formId, index);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const target = next.triangles[index];
+      if (!target || (target.flags & NavmeshFlag.deleted) !== 0) continue;
+      if (!Number.isFinite(enterCost(target.flags, 1, { radius: 0, ...options }))) continue;
+      const door = options.closedDoors?.size ? doorOf(next, index) : undefined;
+      if (door !== undefined && options.closedDoors?.has(door) === true) continue;
+      queue.push({ navmesh: next, triangle: index });
+    }
+  }
+  if (candidates.length === 0 || total <= 0) return undefined;
+  let best: Vec3 | undefined;
+  let bestAway = -1;
+  for (let attempt = 0; attempt < RANDOM_TRIES; attempt++) {
+    let pick = random() * total;
+    const chosen = candidates.find((candidate) => (pick -= candidate.area) <= 0) ?? candidates[0];
+    if (!chosen) break;
+    const [a, b, c] = navmeshTriangle(chosen.navmesh, chosen.triangle);
+    let u = random();
+    let v = random();
+    if (u + v > 1) {
+      u = 1 - u;
+      v = 1 - v;
+    }
+    const point: Vec3 = [
+      a[0] + (b[0] - a[0]) * u + (c[0] - a[0]) * v,
+      a[1] + (b[1] - a[1]) * u + (c[1] - a[1]) * v,
+      a[2] + (b[2] - a[2]) * u + (c[2] - a[2]) * v,
+    ];
+    const away = Math.hypot(point[0] - from[0], point[1] - from[1]);
+    if (away > bestAway) {
+      best = point;
+      bestAway = away;
+    }
+    if (away >= least) return point;
+  }
+  return best;
+}
+
+/** How far beyond twice its radius (or the actor) from a place a random location's search goes on. */
+const RANDOM_SEARCH_MARGIN = 512;
+
+/** A point is looked for on the navmesh this far above and below it (units)... */
+const COLUMN_REACH = 1024;
+/** ... in steps of this (twice the navmesh's own tolerance, NAVMESH_TOLERANCE). */
+const COLUMN_STEP = 48;
+
+/**
+ * Where a point's column meets the navmesh: the point itself if a triangle is at its height,
+ * else the nearest height above or below it (within COLUMN_REACH) where one is. A wander point
+ * is at its place's middle's height (the engine's), wherever the ground there lies.
+ */
+export function onNavmeshColumn(set: NavmeshSet, point: Vec3): Vec3 | undefined {
+  for (let rise = 0; rise <= COLUMN_REACH; rise += COLUMN_STEP) {
+    for (const dz of rise === 0 ? [0] : [-rise, rise]) {
+      const at: Vec3 = [point[0], point[1], point[2] + dz];
+      if (set.locate(at)) return at;
+    }
+  }
+  return undefined;
+}

@@ -130,7 +130,10 @@ Off the stairs the same step is tried — the engine's controller has a TryStep 
 the cells' navigation meshes (`NavmeshSurface`, within 24 units of the mesh). Rubble piles,
 cave rocks and raised floor pieces lie on the navmesh with bumps of 17–32 units; benches
 (30–32 high) and chests are left out of it, so the player walks over the one and not onto the
-other. How far the engine's own TryStep goes is not documented: TODO(M13).
+other. How far the engine's own TryStep goes is not documented: TODO(M13). The actors'
+controllers step so too (`src/shell/actor-movers.ts`, onto the navmeshes of the loaded area):
+before only the player's did, and a Riverwood chicken sent onto a porch the navmesh covers
+stood before its edge.
 
 `node tools/stairs-audit.ts` walks the player up and down every staircase and ramp of the
 interiors as actors walk them: the slopes of the navigation meshes (see
@@ -162,6 +165,11 @@ through the edges' middles, a player walks around it); and a few steps higher th
   nor a projectile; a prop (L_PROPS) ×3 up to half that mass, else ×0.1; a trap ×0.1; anything
   else ×2. Rapier's own impulses on dynamic bodies are off; the controller still stops at what it
   does not push.
+- **Its own bodies** (its ragdoll's bones, a held or worn object with collision) never block or
+  push its controller: Havok's character and its bodies share a collision system group that
+  does not collide with itself. A kinematic shape of an archer's own inside its capsule pushed
+  the capsule out every step, so it slid about at 200–600 units a second while it stood
+  (`CharacterBody`: what it moves against and recovers from leaves out its own actor's).
 - **Speeds** come from the movement types (MOVT): NPCDefault walking and running,
   NPCSprinting (only forward), NPCSneaking, NPCSwimming; `bAlwaysRunByDefault`, Run walks,
   Caps Lock toggles. Air control is not documented: the speed at take-off is kept.

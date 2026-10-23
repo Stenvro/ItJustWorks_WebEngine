@@ -80,6 +80,17 @@ describe.skipIf(!hasGamedata())('animation data on the local game data', () => {
     expect(attacks.every((attack) => attack.clips.every((clip) => wolf?.clip(clip)))).toBe(true);
   });
 
+  it("samples the horse's speed as the engine's sampler does", () => {
+    const horse = library.project('meshes\\actors\\horse\\horseproject.hkx');
+    // HorseDefault (iState 60): a walk of 125 is the walk (125.11) with a little slow trot; a
+    // gallop of 450 is past the table's last point (321) and is the goal itself (the run
+    // blend's child sits at 450); a hair left of ahead (0.99) reads the first curve.
+    expect(horse?.speedParameter(60, 0, 125)).toBeCloseTo(125.81, 1);
+    expect(horse?.speedParameter(60, 0, 450)).toBe(450);
+    expect(horse?.speedParameter(60, 0.99, 125)).toBeCloseTo(125.81, 1);
+    expect(horse?.speedParameter(60, 0, 0)).toBe(0);
+  });
+
   it('turns the actor around as it sits down on a chair', () => {
     const turn = library.project(MALE)?.rootMotionTotal('Chair_FrontEnterVar1');
     expect(Math.abs(turn?.yaw ?? 0)).toBeCloseTo(Math.PI, 1);

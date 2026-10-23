@@ -108,6 +108,14 @@ function harness(
     fly: (request: FlightRequest | undefined) => {
       done.push(`fly ${request ? JSON.stringify(request) : 'nothing'}`);
     },
+    hover: (
+      at: readonly [number, number, number],
+      face: readonly [number, number, number],
+      radius: number,
+    ) => {
+      done.push(`hover ${JSON.stringify({ at, face, radius })}`);
+      return Promise.resolve(true);
+    },
     flightGrab: (target: number) => {
       done.push(`grab ${target.toString(16)}`);
       return Promise.resolve(true);
@@ -207,23 +215,20 @@ describe('flying procedures', () => {
     value: { kind: 'float', value },
   });
 
-  it('hover flies to its place, Height above it, facing its heading, while the package runs', async () => {
+  it('hover flies to its place, Height above it, facing its heading; done once it hovers there', async () => {
     const { run, done } = harness(undefined, 1);
-    expect(await run('Hover', [0, 1], [NEAR_HOME, float(1, 512)])).toBe('failure');
-    expect(done).toEqual([
-      'fly {"kind":"hover","at":[100,0,512],"face":[100,1024,512]}',
-      'wait 1',
-      'fly nothing',
-    ]);
+    expect(await run('Hover', [0, 1], [NEAR_HOME, float(1, 512)])).toBe('success');
+    expect(done).toEqual(['hover {"at":[100,0,512],"face":[100,1024,512],"radius":600}']);
   });
 
-  it('orbit circles its place between its radii (their middle), Height above it', async () => {
+  it('orbit circles its place at a radius between its radii, Height above it', async () => {
     const { run, done } = harness(undefined, 1);
     expect(
       await run('Orbit', [0, 1, 2, 3], [NEAR_HOME, float(1, 1000), float(2, 3000), float(3, 2000)]),
     ).toBe('failure');
     expect(done[0]).toBe(
-      'fly {"kind":"orbit","center":[100,0,0],"radius":2000,"height":2000,"clockwise":true}',
+      // The harness's random is 0: the nearer radius.
+      'fly {"kind":"orbit","center":[100,0,0],"radius":1000,"height":2000}',
     );
     expect(done.at(-1)).toBe('fly nothing');
   });
