@@ -745,6 +745,80 @@ Game.TeachWord, UnlockWord, IsWordUnlocked; Spell.Cast and RemoteCast fly.
 
 TODO(M12): the powers used, the words learned and the voice in the save (the staffs' charge with the item stacks).
 
+## Killmoves
+
+When the game tries a killmove and which it plays (`src/shell/actor-combat.ts`; how the two
+actors play it, its end and its camera: [animation.md](animation.md#killmoves)). Observed in the
+original; in our words.
+
+**No chance setting.** A melee killmove is not rolled: it is what the attack action's idle tree
+gives (below), with the tree's own GetRandomPercent picks among the clips. The global KillMove
+(1) turns them all off at 0 (the killmove mods' chance is that global, set at random). The kill
+camera's odds settings (fKillCamBaseOdds 0.1, fKillCamLevelBias 0.01, fKillCamLevelMaxBias 0.1,
+iKillCamLevelOffset 4, fKillCamLevelFactor 0.5: a chance of 0.1 plus up to 0.1 by the levels) have
+their function in the executable, but nothing calls it.
+
+**The attack's target.** An NPC's attack actions aim at its combat target. The player's aim at:
+among the actors near (the dead too, not the player's mount), those within the reach of the
+player's weapon (fists: their race's unarmed reach; a bash: fCombatBashReach; riding: [Combat]
+fMountedAttackRange, 135) between the two bodies' edges, and inside fCombatHitConeAngle (35°) of
+the player's facing (the dead: fCombatDeadActorHitConeMult, 2, times as wide), the one nearest
+that facing that the player sees; the player's combat target first while it is so. The idle
+tree's conditions run on the attacker with that target as their target (see
+[scripting.md](scripting.md#conditions)): without one, every condition run on the target fails.
+
+**The tree** (ActionRightPowerAttack > PowerAttackRoot > NonMountedCombatRightPower, searched depth
+first: [esm.md](formats/esm.md#idles-and-actions)): the Dragonborn's RipHeartOut (only Ildari's,
+GetIsID on the target), the sneak's back attack (sneaking, undetected by the target), then
+KillMoveFrontSideRoot and KillMoveBackSideRoot, whose conditions are the killmove's: the attacker
+ShouldAttackKill on the target, its weapon or magic out, not equipping, not bashing (GetAttackState
+6), not staggered; the global KillMove 1; the target within 35 units of height, in no paired
+animation and no furniture, not paralyzed (actor value 53); and for the player alone the target
+the last actor hostile to them (GetIsID(Player) 0 OR IsLastHostileActor on the target). The front
+side asks the two to face each other (GetRelativeAngle, the attacker's rotation less the target's:
+90..270); the back side has its own clips (a back stab, from-behind stabs and hacks, the suplex).
+Under the front side: the creatures by race (dragons, draugr, Falmer, bears, centurions,
+hagravens, spriggans, spiders, wolves, giants, trolls, sabre cats), then people (HasKeyword
+ActorTypeNPC on the target: a race's keyword) by the attacker's weapon: two-handed, dual wield,
+one-handed blades, axes and maces, fists (1HM_KillMoveRoot asks the graph variable iTempSwitch,
+which nothing sets: inert), each a list of random picks ending in one that always holds. The
+decapitating ones need Savage Strike (one-handed, dual) or Devastating Blow (two-handed), the
+target without NoDecapitate and not a ghost, and GetRandomPercent at most the global
+DecapitationChance; a bleeding-out target has its own (not if essential). For NPCs this tree holds
+nothing but killmoves (the plain power attacks under it are the player's: GetIsID(Player) 1): an
+NPC's other power attacks are its attack data's.
+
+**ShouldAttackKill(actor)** (its parameter left empty: the target): the attacker's predicted hit
+kills the target. Never a target already dead or one that cannot be killed: essential, a child,
+or protected but by the player's hand (one raised from the dead can always be). The prediction is
+the engine's hit with its "predict" flag: the weapon in the attacker's hand through the target's
+armour and the difficulty, times its attack under way's data (none: 1), without a critical or a
+sneak attack, against the target's health now. Ours: valued when asked (the armour kept 2 s).
+TODO(M13): an attacker whose process carries a flag (its high-process data, not read further)
+must also be in combat.
+
+**IsLastHostileActor** (run on the target): the actors hostile to the player near them (alive, in
+combat with the player, within fHostileActorExteriorDistance 3000, inside
+fHostileActorInteriorDistance 2000; fliers also within fHostileFlyingActorExteriorDistance 15000)
+are none, or only that actor.
+
+**Damage.** A blow on an actor in a killmove does fCombatKillMoveDamageMult (10) times its damage
+(both ways: the leader too).
+
+**The kill camera** of a melee killmove: [animation.md](animation.md#killmoves). The ranged and
+magic kill cameras (observed in the original; TODO(M13): not played yet): as the player looses a shot or
+casts (a bow or crossbow, a staff or a spell; not riding; [VATS] bVATSDisable off; no kill camera
+playing), on the actor aimed at, when at most one actor fights the player (unless [VATS]
+bVATSMultipleCombatants), the target is not dead, a bow is drawn to at least 0.8 of its power
+(a crossbow always), the shot is predicted to kill (unless [VATS] bVATSAllowNoKill: then by odds:
+from [VATS] fVATSRangedLongDistance (2500 units) always, nearer when the target is not above the
+player's level and the player has fVATSRangedLowHealthPercent (5%) of their health or more, a roll
+under max(fVATSRangedPercentMin 50, the distance as a percentage of 2500) less
+fVATSRangedPercentSneakKill (20, a sneak's undetected bow shot) or fVATSRangedPercentTargetNoThreat
+(10, a target not hostile), less 10 more for a target under fVATSRangedTargetLowLevelMult (0.3) of
+the player's level), and the shot's path reaches it (unless [VATS] bVATSIgnoreProjectileTest).
+The camera then follows the projectile (CAMS location 1) through the tree's MagicOrBowCams paths.
+
 ## Crime and factions
 
 Crime's rules are platform-free in `src/gameplay/crime.ts` (bounties, the pickpocket chance,

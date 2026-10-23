@@ -161,10 +161,10 @@ autofocus path) is not part of plain play: imagespace modifiers switch it on (IM
 "DoF - Use Target" and the flags Mode Front/Back, the near and far sides), and the game plays
 those for spells and other effects: a magic effect's IMAD while it lasts on the player, an
 explosion's on the player within its radius, a hazard's while the player is near it,
-scripts' (Image-space modifiers, below; the kill cameras' shots' modifiers: TODO(M13),
-src/shell/killmove-camera.ts). Behind the tween and item menus the game applies
-DOBJ IMID (ISMTween, a constant −0.15 brightness) while any of them is open, as UIBlurManager
-counts them (src/shell/game-menus.ts).
+scripts' (Image-space modifiers, below), a kill camera's shots' (cross-faded in over
+fVATSImageSpaceTransitionTime: src/shell/killmove-camera.ts). Behind the tween and item menus
+the game applies DOBJ IMID (ISMTween, a constant −0.15 brightness) while any of them is open, as
+UIBlurManager counts them (src/shell/game-menus.ts).
 
 A modifier's own depth of field (below) goes through the same pass with its mode: front
 blurs what is nearer than the focus distance, back what is farther (ISDepthOfField without
