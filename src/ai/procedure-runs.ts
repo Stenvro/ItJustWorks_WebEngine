@@ -968,8 +968,9 @@ const useMagic: ProcedureRunner = async (run) => {
 
 /**
  * Shout: to its place, then shouts its Shout (else its voice's) at its target once, and
- * succeeds: the Greybeards' practice, a dragon's breath at a place. While its voice recovers it
- * waits to shout. With Just Headtrack it only turns its head to the target (not its body). One
+ * succeeds: the Greybeards' practice, a dragon's breath at a place. As the engine's procedure
+ * does, it shouts whether or not its voice has recovered from its last shout (the voice's cast
+ * check skipped); while it casts it waits to shout. With Just Headtrack it only turns its head to the target (not its body). One
  * shout each: vanilla templates run Shouts one after another (dunCGAlduinDTravelGateBlocker02's
  * two, dunCGAlduinShoutFromHoverMultipleTargetsRepeatTemplate's three in a repeating
  * sequence), and MQ101's attack scene waits for Alduin's shout from the tower to complete his

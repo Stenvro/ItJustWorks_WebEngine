@@ -946,9 +946,11 @@ export class CastingEngine {
   /**
    * The voice key goes down (or an NPC begins a shout): with a shout in the voice whose first
    * word is known and the voice recovered it begins; while it recovers the HUD's shout meter
-   * flashes (refused 'voice'); a power in the voice is cast as a spell (begin).
+   * flashes (refused 'voice'); a power in the voice is cast as a spell (begin). `unchecked`: an
+   * AI package's Shout, which the engine lets skip its caster's cast check (its voice need not
+   * have recovered; the shout still sets its recovery).
    */
-  async beginShout(actor: number): Promise<BeginResult> {
+  async beginShout(actor: number, unchecked = false): Promise<BeginResult> {
     const runtime = this.#runtime;
     const voice = (await runtime.equipment.of(actor)).voice;
     if (voice === undefined) return 'nothing';
@@ -968,7 +970,7 @@ export class CastingEngine {
       this.#emit({ actor, source: CastingSource.voice, kind: 'refused', reason: 'casting' });
       return 'casting';
     }
-    if ((runtime.state.actors.get(actor)?.voiceRecoveryTime ?? 0) > 0) {
+    if (!unchecked && (runtime.state.actors.get(actor)?.voiceRecoveryTime ?? 0) > 0) {
       this.#emit({ actor, source: CastingSource.voice, kind: 'refused', reason: 'voice' });
       return 'voice';
     }
