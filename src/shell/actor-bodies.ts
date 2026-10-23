@@ -145,7 +145,10 @@ export class ActorBodies {
       if (this.#groundReady(reference)) void this.kill(staged);
     }
     for (const staged of actors) {
-      const entry = this.#bodies.get(staged.reference);
+      let entry = this.#bodies.get(staged.reference);
+      // A ragdoll whose actor was made again (its look changed: an outfit, a cut-off head)
+      // moves the new one's pose from now on.
+      if (entry?.articulation && staged.placed !== entry.actor) entry = this.#rehome(entry, staged);
       if (entry?.articulation) {
         if (entry.penetration && !entry.penetration.update(seconds)) entry.penetration = undefined;
         // A knocked-down actor's graph animated its pose meanwhile: the ragdoll's again.
@@ -424,6 +427,46 @@ export class ActorBodies {
       const nodeWorld = worlds.subarray(node * 16, node * 16 + 16);
       physics.moveBody(entry.placed, body, multiply(nodeWorld, offset), entry.world);
     }
+  }
+
+  /**
+   * A ragdoll's actor made again: the new pose takes the old one's nodes (by name) and the
+   * ragdoll moves it from now on (else the new look stood in its bind pose over the corpse).
+   */
+  #rehome(entry: ActorBody, staged: BodyHolder): ActorBody | undefined {
+    const placed = staged.placed;
+    const world = staged.world ?? placed.instances[0]?.world;
+    if (!world) return entry;
+    const old = entry.pose;
+    const pose = placed.pose;
+    const nodes = new Map<number, Float32Array>();
+    pose.skeleton.rig.names.forEach((name, node) => {
+      const from = old.skeleton.nodeByName.get(name.toLowerCase());
+      if (from !== undefined) nodes.set(node, old.worlds.slice(from * 16, from * 16 + 16));
+    });
+    pose.place(nodes);
+    const rest = new Pose(pose.skeleton).worlds;
+    const bodies: PosedBody[] = [];
+    for (const { body } of entry.bodies) {
+      const node = pose.skeleton.nodeByName.get(body.data.node.toLowerCase());
+      const restInverse =
+        node === undefined ? undefined : invert(rest.subarray(node * 16, node * 16 + 16));
+      if (node === undefined || !restInverse) continue;
+      bodies.push({ body, node, offset: multiply(restInverse, body.data.transform) });
+    }
+    const moved: ActorBody = {
+      ...entry,
+      staged,
+      actor: placed,
+      pose,
+      world,
+      bodies,
+      poseVersion: -1,
+      worldVersion: -1,
+      articulation: new Articulation(entry.placed, pose, world),
+    };
+    this.#bodies.set(staged.reference, moved);
+    return moved;
   }
 
   #free(entry: ActorBody): void {
