@@ -60,7 +60,7 @@ units (after 8 s it closes in to 90: a trigger may be by them), uses the load do
 target in another space (`firstDoorToward`, aiming and pressing Activate), and when stuck steps
 left, right or back (every other time with a jump) and searches again. The scenario ends a
 minute after the player is in an interior (the keep), or when MQ101's stage stands 8 minutes
-with the bot. Its log goes into the report's notes.
+(the opening stalled, or the bot got nowhere). Its log goes into the report's notes.
 
 ## The monitors in the page
 

@@ -213,62 +213,8 @@ const OPENING_NOW = `(async () => {
   };
 })()`;
 
+/** The scenarios, in the order a run without names plays them (the long opening last). */
 export const SCENARIOS: readonly Scenario[] = [
-  {
-    name: 'opening',
-    description:
-      'New game: the cart ride to Helgen, the execution, Alduin, AI-driven until MQ101 stage 160, then a bot following the quest marker into the keep.',
-    start: { kind: 'new' },
-    bootSeconds: 300,
-    seconds: 2400,
-    watchQuests: { [MQ101]: 240 },
-    tick: async (ctx) => {
-      const now = await ctx.page.eval<OpeningNow>(OPENING_NOW, 20000);
-      const state = ctx.state as {
-        raced?: boolean;
-        stage?: number;
-        bot?: boolean;
-        inside?: number;
-        since?: number;
-      };
-      if (now.stage !== state.stage) {
-        state.stage = now.stage;
-        state.since = Date.now();
-        ctx.note(`MQ101 stage ${now.stage}`);
-      }
-      if (now.menus.includes('racesex_menu') && state.raced !== true) {
-        state.raced = true;
-        await sleepMs(3000);
-        ctx.note('race menu: finished as a player would');
-        await finishRaceMenu(ctx);
-      }
-      if (now.stage >= 160 && !now.driven && state.bot !== true) {
-        state.bot = true;
-        await ctx.page.eval(FOLLOW_BOT, 30000, true);
-        ctx.note('the player is free: the follow bot takes over');
-      }
-      // In the keep (an interior after the bot took over): a minute more there, then done.
-      if (state.bot === true && now.interior && !now.loading) {
-        state.inside ??= Date.now();
-        if (Date.now() - state.inside > 60000) return true;
-      }
-      // The bot got nowhere for 8 minutes: the run ends there.
-      if (state.bot === true && Date.now() - (state.since ?? Date.now()) > 480000) {
-        ctx.note('MQ101 stands for 8 minutes with the bot: stopped');
-        return true;
-      }
-      return false;
-    },
-    finish: async (ctx) => {
-      const log = await ctx.page
-        .eval<string[] | undefined>(
-          `(() => { const b = window.__qaBot; if (!b) return undefined; clearInterval(b.timer); b.release(); return b.log; })()`,
-          10000,
-        )
-        .catch(() => undefined);
-      for (const line of log ?? []) ctx.note(`bot: ${line}`);
-    },
-  },
   {
     name: 'whiterun-day',
     description:
@@ -340,6 +286,61 @@ export const SCENARIOS: readonly Scenario[] = [
         20000,
       );
       ctx.note('combat started: each bandit against a guard');
+    },
+  },
+  {
+    name: 'opening',
+    description:
+      'New game: the cart ride to Helgen, the execution, Alduin, AI-driven until MQ101 stage 160, then a bot following the quest marker into the keep.',
+    start: { kind: 'new' },
+    bootSeconds: 300,
+    seconds: 2400,
+    watchQuests: { [MQ101]: 240 },
+    tick: async (ctx) => {
+      const now = await ctx.page.eval<OpeningNow>(OPENING_NOW, 20000);
+      const state = ctx.state as {
+        raced?: boolean;
+        stage?: number;
+        bot?: boolean;
+        inside?: number;
+        since?: number;
+      };
+      if (now.stage !== state.stage) {
+        state.stage = now.stage;
+        state.since = Date.now();
+        ctx.note(`MQ101 stage ${now.stage}`);
+      }
+      if (now.menus.includes('racesex_menu') && state.raced !== true) {
+        state.raced = true;
+        await sleepMs(3000);
+        ctx.note('race menu: finished as a player would');
+        await finishRaceMenu(ctx);
+      }
+      if (now.stage >= 160 && !now.driven && state.bot !== true) {
+        state.bot = true;
+        await ctx.page.eval(FOLLOW_BOT, 30000, true);
+        ctx.note('the player is free: the follow bot takes over');
+      }
+      // In the keep (an interior after the bot took over): a minute more there, then done.
+      if (state.bot === true && now.interior && !now.loading) {
+        state.inside ??= Date.now();
+        if (Date.now() - state.inside > 60000) return true;
+      }
+      // MQ101 stands for 8 minutes (the opening stalled, or the bot got nowhere): it ends there.
+      if (Date.now() - (state.since ?? Date.now()) > 480000) {
+        ctx.note(`MQ101 stands at stage ${String(now.stage)} for 8 minutes: stopped`);
+        return true;
+      }
+      return false;
+    },
+    finish: async (ctx) => {
+      const log = await ctx.page
+        .eval<string[] | undefined>(
+          `(() => { const b = window.__qaBot; if (!b) return undefined; clearInterval(b.timer); b.release(); return b.log; })()`,
+          10000,
+        )
+        .catch(() => undefined);
+      for (const line of log ?? []) ctx.note(`bot: ${line}`);
     },
   },
 ];
