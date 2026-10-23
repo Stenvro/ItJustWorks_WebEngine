@@ -1,6 +1,6 @@
 // Screen-space ambient occlusion (shaders/sao.wgsl): camera-space Z and its mips from the
-// resolved depth, the raw AO, a bilateral blur per axis, and a composite that darkens the
-// opaque scene (the multisampled colour target, before the blended pass draws over it).
+// resolved depth, the raw AO and a bilateral blur per axis. The composite (composite.ts)
+// darkens the opaque scene by it.
 
 import frameShader from './shaders/frame.wgsl?raw';
 import saoShader from './shaders/sao.wgsl?raw';
@@ -31,16 +31,10 @@ export class Sao {
     readonly ao: GPURenderPipeline;
     readonly blurH: GPURenderPipeline;
     readonly blurV: GPURenderPipeline;
-    readonly composite: GPURenderPipeline;
   };
   #targets: SaoTargets | undefined;
 
-  constructor(
-    device: GPUDevice,
-    frameLayout: GPUBindGroupLayout,
-    colorFormat: GPUTextureFormat,
-    sampleCount: number,
-  ) {
+  constructor(device: GPUDevice, frameLayout: GPUBindGroupLayout) {
     this.#device = device;
     const texture = (binding: number): GPUBindGroupLayoutEntry => ({
       binding,
@@ -56,19 +50,13 @@ export class Sao {
       bindGroupLayouts: [frameLayout, this.#layout],
     });
     const module = device.createShaderModule({ label: 'sao', code: frameShader + saoShader });
-    const pipeline = (
-      entryPoint: string,
-      format: GPUTextureFormat,
-      extra: Partial<GPUColorTargetState> = {},
-      samples = 1,
-    ): GPURenderPipeline =>
+    const pipeline = (entryPoint: string, format: GPUTextureFormat): GPURenderPipeline =>
       device.createRenderPipeline({
         label: `sao-${entryPoint}`,
         layout,
         vertex: { module, entryPoint: 'vs_fullscreen' },
-        fragment: { module, entryPoint, targets: [{ format, ...extra }] },
+        fragment: { module, entryPoint, targets: [{ format }] },
         primitive: { topology: 'triangle-list' },
-        multisample: { count: samples },
       });
     this.#pipelines = {
       cameraZ: pipeline('fs_camera_z', Z_FORMAT),
@@ -76,36 +64,18 @@ export class Sao {
       ao: pipeline('fs_ao', AO_FORMAT),
       blurH: pipeline('fs_blur_h', AO_FORMAT),
       blurV: pipeline('fs_blur_v', AO_FORMAT),
-      // dst * AO + fog colour * fog * (1 - AO): the AO under the fog.
-      composite: pipeline(
-        'fs_composite',
-        colorFormat,
-        {
-          blend: {
-            color: { srcFactor: 'one', dstFactor: 'src-alpha', operation: 'add' },
-            alpha: { srcFactor: 'zero', dstFactor: 'one', operation: 'add' },
-          },
-        },
-        sampleCount,
-      ),
     };
   }
 
   /**
-   * Darkens the opaque scene in `color` (multisampled, resolved into `resolve`) by its
-   * ambient occlusion. Needs the frame bind group's scene depth resolved this frame.
+   * The opaque scene's ambient occlusion (r: 1 = open), for the composite. Needs the frame
+   * bind group's scene depth resolved this frame.
    */
   run(
     encoder: GPUCommandEncoder,
     frameBindGroup: GPUBindGroup,
-    frame: {
-      readonly width: number;
-      readonly height: number;
-      readonly gbuffer: GPUTexture;
-      readonly color: GPUTextureView;
-      readonly resolve: GPUTextureView;
-    },
-  ): void {
+    frame: { readonly width: number; readonly height: number; readonly gbuffer: GPUTexture },
+  ): GPUTexture {
     const targets = this.#ensureTargets(frame.width, frame.height);
     const gbuffer = frame.gbuffer.createView();
     const group = (
@@ -157,17 +127,7 @@ export class Sao {
     pass('sao-ao', aoView, this.#pipelines.ao, group(blurredView, targets.cameraZChain));
     pass('sao-blur-h', blurredView, this.#pipelines.blurH, group(aoView, targets.cameraZChain));
     pass('sao-blur-v', aoView, this.#pipelines.blurV, group(blurredView, targets.cameraZChain));
-    const composite = encoder.beginRenderPass({
-      label: 'sao-composite',
-      colorAttachments: [
-        { view: frame.color, resolveTarget: frame.resolve, loadOp: 'load', storeOp: 'store' },
-      ],
-    });
-    composite.setPipeline(this.#pipelines.composite);
-    composite.setBindGroup(0, frameBindGroup);
-    composite.setBindGroup(1, group(aoView, targets.cameraZChain));
-    composite.draw(3);
-    composite.end();
+    return targets.ao;
   }
 
   #ensureTargets(width: number, height: number): SaoTargets {

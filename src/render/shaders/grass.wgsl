@@ -1,6 +1,7 @@
 // Grass: one grass mesh drawn many times (instances placed per cell), swaying with the wind,
-// shrinking away at the fade distance, lit with the ground's normal. Prepended with
-// frame.wgsl. ASCII only.
+// shrinking away at the fade distance, lit with the ground's normal; fogged by the composite
+// (as the engine's grass shader leaves its fog to ISSAOComposite). Prepended with frame.wgsl.
+// ASCII only.
 
 struct GrassDraw {
   // x: seconds per sway (wave period), y: wind strength, z: fade start, w: fade range.
@@ -68,15 +69,24 @@ fn vs_grass(input: GrassIn) -> GrassOut {
   return out;
 }
 
+// The colour (unfogged: the composite fogs it) and the G-buffer.
+struct GrassPixel {
+  @location(0) color: vec4f,
+  @location(1) gbuffer: vec4f,
+};
+
 @fragment
-fn fs_grass(input: GrassOut) -> @location(0) vec4f {
+fn fs_grass(input: GrassOut) -> GrassPixel {
   let texel = textureSample(diffuseMap, linearSampler, input.uv);
+  let toCamera = safeNormalize(frame.cameraPos.xyz - input.worldPos);
+  // The engine's grass writes the normal of its triangle (from the position's derivatives)
+  // and no snow: what lies under a plant is not seen there.
+  var face = safeNormalize(cross(dpdx(input.worldPos), dpdy(input.worldPos)));
+  face = select(face, -face, dot(face, toCamera) < 0.0);
   if (grass.params.x >= 0.0 && texel.a < grass.params.x) {
     discard;
   }
-  let toCamera = safeNormalize(frame.cameraPos.xyz - input.worldPos);
   let shadow = sunShadow(input.worldPos, input.normal);
   let light = lightAt(input.normal, input.worldPos, toCamera, 1.0, false, shadow);
-  let color = texel.rgb * input.color * light.diffuse;
-  return vec4f(applyFog(color, input.worldPos), 1.0);
+  return GrassPixel(vec4f(texel.rgb * input.color * light.diffuse, 1.0), gbufferValue(face, 0.0, 0.0));
 }

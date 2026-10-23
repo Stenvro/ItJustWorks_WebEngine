@@ -5,9 +5,9 @@
 // Mara and Luebke, HPG 2012). The engine's passes around the raw AO match the paper's
 // reference code (Community Shaders' ISSAOCameraZ, ISSAOMinify, ISSAOBlur, ISSAOComposite):
 // camera-space Z, a mip chain picked on a rotated grid, the raw AO with its depth key packed
-// into two channels, a bilateral 7-tap blur per axis, and a composite that multiplies the
-// opaque scene before its fog and leaves snow alone (bDeactivateAOOnSnow). The raw AO itself
-// is not in those sources; it follows the reference code with the game's INI values.
+// into two channels and a bilateral 7-tap blur per axis; the composite (composite.wgsl)
+// multiplies the opaque scene by it before its fog. The raw AO itself is not in those
+// sources; it follows the reference code with the game's INI values.
 // Prepended with frame.wgsl. ASCII only. Notes: docs/rendering.md ("Ambient occlusion").
 
 // fSAORadius, fSAOBias, fSAOIntensity (the game's defaults, BethINI database).
@@ -56,15 +56,6 @@ fn packKey(key: f32) -> vec2f {
 
 fn unpackKey(packed: vec2f) -> f32 {
   return dot(packed, vec2f(0.996108949, 0.00389105058));
-}
-
-fn octahedralDecode(e: vec2f) -> vec3f {
-  var n = vec3f(e, 1.0 - abs(e.x) - abs(e.y));
-  if (n.z < 0.0) {
-    let signs = select(vec2f(-1.0), vec2f(1.0), n.xy >= vec2f(0.0));
-    n = vec3f((1.0 - abs(n.yx)) * signs, n.z);
-  }
-  return normalize(n);
 }
 
 // ISSAOCameraZ: camera-space Z from the resolved depth.
@@ -162,26 +153,4 @@ fn fs_blur_h(in: FullscreenOut) -> @location(0) vec4f {
 @fragment
 fn fs_blur_v(in: FullscreenOut) -> @location(0) vec4f {
   return saoBlur(in.position.xy, vec2i(0, 1));
-}
-
-// ISSAOComposite: the scene times the AO before its fog (so the fog is not darkened), no AO on
-// snow. Blended as src + dst * src.a: src = fog colour * fog * (1 - AO), src.a = AO.
-@fragment
-fn fs_composite(in: FullscreenOut) -> @location(0) vec4f {
-  let pixel = vec2i(in.position.xy);
-  let z = textureLoad(cameraZ, pixel, 0).r;
-  if (z >= SAO_FAR) {
-    return select(vec4f(0.0, 0.0, 0.0, 1.0), vec4f(1.0, 0.0, 1.0, 0.0), frame.counts.z == 6u);
-  }
-  var ao = textureLoad(source, pixel, 0).r;
-  let g = textureLoad(gbuffer, pixel, 0);
-  if (g.a > 0.5 && g.b > 1e-5) {
-    ao = 1.0;
-  }
-  // Debug view 6 (DebugView.ambientOcclusion): the AO alone.
-  if (frame.counts.z == 6u) {
-    return vec4f(vec3f(ao), 0.0);
-  }
-  let fog = fogAt(saoPosition(in.position.xy, z));
-  return vec4f(fog.rgb * fog.a * (1.0 - ao), ao);
 }

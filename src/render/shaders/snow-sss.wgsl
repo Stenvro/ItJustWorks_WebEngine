@@ -3,8 +3,10 @@
 // The improved snow's subsurface scattering (the engine's ISSnowSSS pass, as Community
 // Shaders' ISSnowSSS.hlsl reproduces it): snow pixels are blurred along the screen with a
 // wide kernel whose blue reaches farthest, stopping at depth edges, and darkened towards a cool
-// tint where the result is dark. Runs on the opaque scene, written into the multisampled
-// colour target before the blended pass. ASCII only.
+// tint where the result is dark. Runs on the opaque scene as lit, before the composite adds
+// the snow highlights, AO and fog (the engine's lighting shader leaves the snow's specular and
+// the fog to ISSAOComposite, so the scattering sees the snow's diffuse light), written into the
+// multisampled colour target. ASCII only.
 
 struct SnowScattering {
   // fSnowSSSStrength, fSnowSSSDepthDiff, the camera's near plane, unused.

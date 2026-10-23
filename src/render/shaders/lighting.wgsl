@@ -7,7 +7,8 @@
 // landscape and its noise, directional materials (snow, ash, moss and ice laid over a
 // static) and the multi-index snow pass of multi-pass materials. Sun, directional ambient,
 // point lights, shadows and fog come from frame.wgsl; the snow rim light and sparkles from
-// snow.wgsl. Prepended with frame.wgsl, snow.wgsl and common.wgsl. ASCII only.
+// snow.wgsl (opaque parts leave the rim, fog and sparkles to the composite, see DEFERRED).
+// Prepended with frame.wgsl, snow.wgsl and common.wgsl. ASCII only.
 // Notes: docs/rendering.md ("Lighting shader").
 //
 // Parallax (type 3), as the vanilla pixel shader (aers' Skyrim SE shader decompile): the height
@@ -50,6 +51,10 @@ const DRAW_LOD_HD = 0x200000u;
 // fProjectedUVDiffuseNormalTilingScale (the launcher's presets): projected texture repeats
 // per noise repeat.
 const PROJECTED_TILING = 0.2;
+// Set for the opaque pass's pipelines: the colour leaves the snow specular, fog and sparkles
+// to the composite (composite.wgsl), which runs after the snow's scattering, as the engine's
+// lighting shader leaves them to ISSAOComposite. Blended parts finish their colour here.
+override DEFERRED: bool = false;
 
 // Texture coordinate gradients for samples taken outside uniform control flow.
 struct Gradients {
@@ -442,12 +447,17 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
     specular = lights.specular * glossiness;
   }
   color += specular;
-  // Snow: the rim light in place of the specular.
-  if (snowMask > 0.0) {
-    color += vec3f(snowRimSpecular(vertexNormal, shadingNormal, toCamera) * snowMask);
-  }
+  // Snow: the rim light in place of the specular (the engine's SnowParameters.x).
+  let snowSpecular = select(0.0, snowRimSpecular(vertexNormal, shadingNormal, toCamera), snowMask > 0.0);
+  // Sky objects (weather sky statics) are not fogged: finished here, also when opaque.
+  let sky = (drawFlags & DRAW_SKY) != 0u;
+  let deferred = DEFERRED && !sky;
 
-  let gbuffer = gbufferValue(shadingNormal, snowMask);
+  let gbuffer = select(
+    gbufferFinished(shadingNormal),
+    gbufferValue(shadingNormal, snowMask, snowSpecular),
+    deferred,
+  );
   switch (frame.counts.z) {
     case 1u: {
       return LightingOut(vec4f(base, alpha), gbuffer);
@@ -465,8 +475,14 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> LightingO
       return LightingOut(vec4f(vertexNormal * 0.5 + 0.5, alpha), gbuffer);
     }
     default: {
-      // Sky objects (weather sky statics) are not fogged.
-      var fogged = select(applyFog(color, in.worldPos), color, (drawFlags & DRAW_SKY) != 0u);
+      // Opaque parts: the snow's scattering and then the composite (snow specular, AO, fog,
+      // sparkles) finish the colour, as in the engine.
+      if (deferred) {
+        return LightingOut(vec4f(color, alpha), gbuffer);
+      }
+      // Blended parts (and sky objects) are finished here.
+      color += vec3f(snowSpecular * snowMask);
+      var fogged = select(applyFog(color, in.worldPos), color, sky);
       // Snow sparkles come after the fog, as in the engine's composite pass.
       if (snowMask > 0.0) {
         fogged += snowSparkles(in.worldPos, shadow) * snowMask;
