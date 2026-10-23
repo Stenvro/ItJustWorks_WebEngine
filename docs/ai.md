@@ -642,7 +642,9 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   horse PairEnd). The rider starts at the race's mount offset (HorseRace DATA: 63.5 units to
   the horse's left, facing it: the clip's "NPC" track says the same) and gets off 111.6 units
   to its left (the dismount's end). Riding, its root is on the horse's SaddleBone (its
-  HorseRider_State poses its pelvis at the root), its graphs driven by the horse's movement;
+  HorseRider_State poses its pelvis at the root), its graphs driven by the horse's movement
+  (its TurnDelta the horse's steering's: measured from frame to frame, frames without a physics
+  step told the rider's graph it stopped turning);
   the horse's own AI waits. Off the horse its graphs stand again (Speed 0, moveStop): what moves
   it on foot starts from a standing graph (a rider let off a walking horse came out of
   HorseExitOut walking on the spot: Elenwen at Helgen's gate). GetSitting answers 2, 3 and 4 for a rider mounting, riding and
