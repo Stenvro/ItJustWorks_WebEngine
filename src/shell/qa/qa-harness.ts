@@ -30,6 +30,7 @@ import {
   isReferencePose,
   messageKey,
   RateWindow,
+  sceneWait,
   SpeedMeter,
   StateWatch,
   TravelWatch,
@@ -201,6 +202,10 @@ export class QaHarness {
       reported: boolean;
       /** Played here at some point (its end goes in the timeline). */
       here: boolean;
+      /** The stages of the quests its phase's conditions read (their moving restarts the wait). */
+      stages: string;
+      /** Its wait for the player is in the timeline. */
+      noted: boolean;
     }
   >();
   #quests = new Map<number, { stage: number; since: number; limit: number; reported: boolean }>();
@@ -976,6 +981,17 @@ export class QaHarness {
       if (!seen && here) {
         this.#events.push({ time: now, text: `scene ${this.#formName(scene.scene)} starts` });
       }
+      // What its phase waits for: the quests its conditions read (as they move on, the wait
+      // starts again: the scene follows its quest, a cart's arrival setting the stage it waits
+      // for), and whether it waits for the player to come.
+      const wait = sceneWait(
+        scene.waits,
+        (formId) => (formId === PLAYER_REF ? 'Player' : this.#formName(formId)),
+        (formId) => runtime.state.quests.has(formId),
+      );
+      const stages = wait.quests
+        .map((quest) => String(runtime.state.quests.get(quest)?.stage ?? -1))
+        .join(',');
       if (seen?.phase !== scene.phase) {
         if (seen && here)
           this.#events.push({
@@ -989,11 +1005,17 @@ export class QaHarness {
           moved: 0,
           reported: false,
           here: here || seen?.here === true,
+          stages,
+          noted: false,
         };
         this.#scenes.set(scene.scene, seen);
         continue;
       }
       if (here) seen.here = true;
+      if (seen.stages !== stages) {
+        seen.stages = stages;
+        seen.since = now;
+      }
       for (const [actor, at] of positions) {
         const from = seen.at.get(actor);
         if (from) seen.moved = Math.max(seen.moved, Math.hypot(at[0] - from[0], at[1] - from[1]));
@@ -1007,6 +1029,19 @@ export class QaHarness {
       const stalled = now - seen.since;
       if (seen.reported || stalled < this.#thresholds.sceneStallSeconds || seen.moved > 64)
         continue;
+      // Nothing of its own left to do and waiting for the player to come near: the scene is
+      // where its data has it (RiverwoodIntroSceneHildeSoldierScene waits for Sven within
+      // 1000 units of the player); the timeline says so.
+      if (scene.open.length === 0 && wait.onPlayer) {
+        if (!seen.noted) {
+          seen.noted = true;
+          this.#events.push({
+            time: now,
+            text: `scene ${this.#formName(scene.scene)} phase ${scene.phase} waits for the player: ${wait.text}`,
+          });
+        }
+        continue;
+      }
       seen.reported = true;
       const open = scene.open
         .map(
@@ -1022,7 +1057,7 @@ export class QaHarness {
         time: now,
         gameHour: runtime.gameHour,
         position: at,
-        detail: `phase ${scene.phase} stands ${stalled.toFixed(0)} s, its actors still; open: ${open || 'none'}`,
+        detail: `phase ${scene.phase} stands ${stalled.toFixed(0)} s, its actors still; open: ${open || 'none'}; waits for: ${wait.text || 'its actions'}`,
         values: { phase: scene.phase, seconds: Math.round(stalled), moved: Math.round(seen.moved) },
         severity: stalled,
         context: `cast ${scene.cast.map((a) => this.#formName(a)).join(', ')}`,

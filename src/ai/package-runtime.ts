@@ -420,6 +420,8 @@ export class ActorPackages {
   #hour: number | undefined;
   #evaluating = false;
   #wanted = false;
+  /** A scene's package action started: the package chosen next starts anew if it completed. */
+  #restart = false;
   /** Packages that run once a day: the day each last ran. */
   readonly #ranOn = new Map<number, number>();
   /** Its own clock (real seconds, moved by update) and what waits on it. */
@@ -497,9 +499,14 @@ export class ActorPackages {
     });
   }
 
-  /** EvaluatePackage: chosen again at once. */
-  evaluate(): void {
+  /**
+   * EvaluatePackage: chosen again at once. `restart`: a scene's package action started, which
+   * starts its package (observed in the original): one this actor ran to its end already
+   * runs again from its root rather than staying done.
+   */
+  evaluate(restart = false): void {
     this.#wanted = true;
+    if (restart) this.#restart = true;
   }
 
   /** It leaves its package and stands (it left the high process, died, a scene took it). */
@@ -519,6 +526,8 @@ export class ActorPackages {
     if (current && !current.completed && (current.pack.flags & PackageFlag.mustComplete) !== 0) {
       return;
     }
+    const restart = this.#restart;
+    this.#restart = false;
     // A package that completed ends (its scripts and its end action hear of it) and stays, done,
     // while it is still the one chosen: it does not run again (a branch that repeats when
     // complete is what goes round; a patrol not repeatable stops at its end: MQ101's carts at
@@ -534,7 +543,9 @@ export class ActorPackages {
     }
     const chosen = await this.#choose(undefined);
     if (this.#running !== current) return;
-    if (chosen && chosen.id === current?.id) {
+    // A scene's action starting it again: the package done already is a new start (its
+    // scripts hear it begin, its tree runs from the root).
+    if (chosen && chosen.id === current?.id && !(restart && current.ended)) {
       // Still the package chosen: its tree goes on (one that ended stays done), unless a branch
       // it runs (or ended under) may no longer (its conditions changed): then the tree is taken
       // again from its root, as the package stays (no package events). TODO(M13): the engine's

@@ -95,7 +95,7 @@ describe.skipIf(!hasGamedata())('a tethered cart on the local game data', () => 
 
   it('follows its tether on flat ground, upright, its wheels rolling, and stops at a gate', () => {
     const physics = new PhysicsWorld(matrix, GRAVITY);
-    physics.addPrimitive('box', [20000, 20000, 100], place(0, 0, -50), Layer.static, {
+    physics.addPrimitive('box', [10000, 10000, 50], place(0, 0, -50), Layer.static, {
       reference: 0,
       kind: 'landscape',
     });
@@ -149,7 +149,7 @@ describe.skipIf(!hasGamedata())('a tethered cart on the local game data', () => 
     // into it: the cart stops at the gate (its bodies collide with a door's ANIMSTATIC ones).
     const back = Math.min(...cart.bodies.map((body) => body.body.translation().y * HAVOK_SCALE));
     const gate = back - 160;
-    physics.addPrimitive('box', [2000, 20, 400], place(0, gate, 200), Layer.animStatic, {
+    physics.addPrimitive('box', [1000, 10, 200], place(0, gate, 200), Layer.animStatic, {
       reference: 2,
       kind: 'object',
     });

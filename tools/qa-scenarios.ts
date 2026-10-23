@@ -49,18 +49,75 @@ const GUARDS = [0xaa8fc, 0xaa8fd, 0xaa901];
  * The follow bot (in the page): it walks the player to the nearest target of the active quests'
  * shown objectives (the compass's quest marker: "Follow Ralof", "Follow Hadvar", the keep's
  * door), along the navmesh (src/ai/pathfinding.ts), through the load door on the way when the
- * target is in another space; a guide near enough is waited for. Stuck, it jumps and searches
- * again; without a path it goes straight (the tower's jump into the inn). Runs as a console
- * line (replMode): the world viewer's navmeshes are a private field.
+ * target is in another space; a guide near enough is waited for. A target that is a place,
+ * reached with nothing moving on for 6 s, leads on to the objective's next target (the way a
+ * player goes on: the burning inn's marker, then Hadvar in the street). Stuck, it jumps and
+ * searches again; without a path it goes straight (the tower's jump into the inn). Runs as a
+ * console line (replMode): the world viewer's navmeshes are a private field.
  */
 export const FOLLOW_BOT = `
 var QA_NAV = engineDev.world.#navmeshes;
+var QA_PLAY = engineDev.world.#play;
 (async () => {
   if (window.__qaBot) return 'running';
   const compass = await import('/src/shell/compass.ts');
   const paths = await import('/src/ai/pathfinding.ts');
+  const { Layer } = await import('/src/physics/collision-layers.ts');
   const W = engineDev.world;
   const nav = QA_NAV;
+  // A way to where the floor gives way (150 units or more down), found on a grid of 32 units
+  // round the player (physics rays: the floor under each cell, steps of up to 32, nothing at
+  // chest height between neighbours): the drop nearest by the way, then most towards the goal.
+  const findDrop = (feet, goal) => {
+    const physics = QA_PLAY?.physics;
+    if (!physics) return undefined;
+    const ray = (from, dir, length) => physics.raycast(from, dir, length, Layer.charController, undefined, 0x14);
+    const CELL = 32; const SPAN = 20;
+    const floor = new Map();
+    const floorAt = (i, j) => {
+      const key = i + ',' + j;
+      if (!floor.has(key)) {
+        const hit = ray([feet[0] + i * CELL, feet[1] + j * CELL, feet[2] + 100], [0, 0, -1], 600);
+        floor.set(key, hit ? hit.point[2] : -Infinity);
+      }
+      return floor.get(key);
+    };
+    const toward = [goal[0] - feet[0], goal[1] - feet[1]];
+    const tl = Math.hypot(toward[0], toward[1]) || 1;
+    const seen = new Map([['0,0', undefined]]);
+    const queue = [[0, 0, feet[2]]];
+    let best;
+    for (let head = 0; head < queue.length; head++) {
+      const [i, j, z] = queue[head];
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const ni = i + di; const nj = j + dj;
+        const key = ni + ',' + nj;
+        if (seen.has(key) || Math.abs(ni) > SPAN || Math.abs(nj) > SPAN) continue;
+        const from = [feet[0] + i * CELL, feet[1] + j * CELL, z + 50];
+        const length = CELL * Math.hypot(di, dj);
+        if (ray(from, [di, dj, 0], length)) continue;
+        const h = floorAt(ni, nj);
+        if (h > z + 32) continue;
+        seen.set(key, [i, j]);
+        if (h < z - 150) {
+          const steps = head + 1;
+          const score = steps - ((ni * toward[0] + nj * toward[1]) / tl) * 0.5;
+          if (!best || score < best.score) best = { score, key };
+          continue;
+        }
+        queue.push([ni, nj, h]);
+      }
+    }
+    if (!best) return undefined;
+    const way = [];
+    for (let key = best.key; key !== '0,0'; ) {
+      const [i, j] = key.split(',').map(Number);
+      way.unshift([feet[0] + i * CELL, feet[1] + j * CELL, feet[2]]);
+      const parent = seen.get(key);
+      key = parent[0] + ',' + parent[1];
+    }
+    return way;
+  };
   const bot = { goal: undefined, door: undefined, guide: undefined, path: [], planning: false, lastPlan: 0, last: undefined, still: 0, held: new Set(), log: [], steps: 0 };
   window.__qaBot = bot;
   // The targets of the running quests' shown objectives (as the compass's questTargets, also
@@ -73,12 +130,12 @@ var QA_NAV = engineDev.world.#navmeshes;
       for (const objective of record?.objectives ?? []) {
         const state = quest.objectives.get(objective.index);
         if (!state?.displayed || state.completed || state.failed) continue;
-        for (const target of objective.targets) {
+        for (const [order, target] of objective.targets.entries()) {
           const reference = quest.aliases.get(target.alias);
           if (reference === undefined) continue;
-          if (target.conditions.length > 0 && !(await rt.conditionsHold(target.conditions, rt.referenceHandle(reference)))) continue;
+          const holds = target.conditions.length === 0 || (await rt.conditionsHold(target.conditions, rt.referenceHandle(reference)));
           const placement = await rt.placement(reference);
-          if (placement) found.push({ quest: formId, objective: objective.index, reference, placement });
+          if (placement) found.push({ quest: formId, objective: objective.index, order, holds, reference, placement });
         }
       }
     }
@@ -101,13 +158,33 @@ var QA_NAV = engineDev.world.#navmeshes;
     if (!at) return;
     const targets = await objectiveTargets(rt);
     const here = (p) => at.world !== undefined ? p.world === at.world : p.cell !== undefined && p.cell === at.cell;
-    let best;
-    for (const t of targets) {
+    const measure = (t) => {
       const same = here(t.placement);
       const d = same ? Math.hypot(t.placement.position[0] - at.position[0], t.placement.position[1] - at.position[1]) : 1e9;
-      if (!best || d < best.d) best = { t, d, same };
+      return { t, d, same };
+    };
+    let best;
+    for (const t of targets) {
+      if (!t.holds) continue;
+      const m = measure(t);
+      if (!best || m.d < best.d) best = m;
     }
     if (!best) { bot.goal = undefined; bot.path = []; return; }
+    // A place reached (no guide) where nothing moves on for a while: a player goes on the way
+    // the objective leads, to its next target (MQ101's inn marker, then Hadvar in the street).
+    // It holds while that target is the one shown.
+    const now = performance.now();
+    const guideHere = W.actorStage?.get(best.t.reference) !== undefined;
+    if (bot.reached?.reference !== best.t.reference) bot.reached = undefined;
+    if (!guideHere && best.d < 128) bot.reached ??= { reference: best.t.reference, since: now };
+    if (bot.reached && now - bot.reached.since > 6000) {
+      const next = targets.find((t) => !t.holds && t.quest === best.t.quest && t.objective === best.t.objective && t.order > best.t.order);
+      if (next) {
+        if (bot.ahead !== next.reference) say('target reached, on to the next: ' + next.reference.toString(16));
+        bot.ahead = next.reference;
+        best = measure(next);
+      }
+    }
     let goal = [...best.t.placement.position];
     bot.door = undefined;
     bot.guide = W.actorStage?.get(best.t.reference) ? best.t.reference : undefined;
@@ -121,6 +198,17 @@ var QA_NAV = engineDev.world.#navmeshes;
     const changed = !bot.goal || Math.hypot(goal[0] - bot.goal[0], goal[1] - bot.goal[1]) > 64;
     bot.goal = goal;
     bot.path = found && found.points.length > 1 ? found.points.slice(1).map((p) => [...p]) : [goal];
+    // Off the navmesh with the navmesh below (the burning inn's upper floor): a player drops
+    // down where the floor gives way, the drop nearest the way to the goal.
+    if (!found && nav && !nav.locate(feet) && nav.nearest?.([feet[0], feet[1], feet[2] - 300], 600)) {
+      const way = findDrop(feet, goal);
+      const drop = way?.at(-1);
+      if (drop) {
+        bot.path = way;
+        if (Math.hypot(drop[0] - (bot.drop?.[0] ?? 0), drop[1] - (bot.drop?.[1] ?? 0)) > 32) say('drop down at ' + drop.map(Math.round).join(',') + ' (' + way.length + ' steps)');
+        bot.drop = drop;
+      }
+    }
     if (changed) say('goal ' + goal.map(Math.round).join(',') + (bot.door ? ' (door ' + bot.door.toString(16) + ')' : '') + (bot.guide ? ' (guide ' + bot.guide.toString(16) + ')' : '') + ' path ' + (found ? found.points.length + (found.complete ? '' : ' partial') : 'none'));
   };
   bot.timer = setInterval(() => {
