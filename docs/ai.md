@@ -1015,12 +1015,15 @@ meanwhile.
 - **Bows** (`projectile.ts`, `src/shell/combat-projectiles.ts`): the bow draws while the button is
   held and looses at arrowRelease; the shot's damage is the equip system's (bow and arrow) × the
   draw (UESP "Archery": 35% before the draw, then linear from 50% to full). The arrow flies at
-  its PROJ's speed (iron arrows 3600) × the draw, tilted up by f1PArrowTiltUpAngle (2°) or
-  f3PArrowTiltUpAngle (2.5°), under 9.8 m/s² × its gravity (0.35), against what L_PROJECTILE
-  meets (actors' bodies; the player's shape), until its range. An actor hit takes the shot;
+  its PROJ's speed (iron arrows 3600) × the draw from the WEAPON node, under 9.8 m/s² × its
+  gravity (0.35), against what L_PROJECTILE meets (actors' bodies; the player's shape), until
+  its range. Where it goes (the player's view tilted up and the aim assistance; an NPC's led aim
+  at its target's upper body on the arrow's arc, astray by fBowNPCSpreadAngle as far as its
+  Archery lacks): docs/gameplay.md, "Aiming projectiles". An actor hit takes the shot;
   hitting the world the arrow sticks fCombatMissileStickDepth deep, a reference of its
-  ammunition to pick up (kept still), at most 15 of them. NPCs aim at their target's chest,
-  straying fBowNPCSpreadAngle (4°). TODO(M13): how much slower a partly drawn arrow flies.
+  ammunition to pick up (kept still), at most 15 of them. In first person only the first-person
+  graph's arrowRelease looses the arrow (the body's, often raised first, is not counted).
+  TODO(M13): how much slower a partly drawn arrow flies.
 - **Impacts** (`src/shell/combat-impacts.ts`): the weapon's impact data set (INAM; bashes and
   blocks BIDS; fists the race's NAM5; arrows the bow's) against the target's flesh (its race's
   NAM4: MaterialSkin, MaterialBoneActor, ...) gives the impact: its sound (heavy for power

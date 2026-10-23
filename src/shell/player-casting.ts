@@ -5,10 +5,9 @@
 // held for a concentration spell — and both pressed at once with one spell in both hands dual
 // cast it. The voice key (Shout, Z) tapped shouts a shout's first word, held its others
 // (fShoutTime1 / 2), or casts the power in the voice. The casts go to the actors' casting
-// (src/shell/actor-casting.ts), aimed from the hand at the point under the crosshair.
+// (src/shell/actor-casting.ts), aimed from the hand along the view and turned by the aim
+// assistance toward what the crosshair is on (src/shell/projectile-aim.ts).
 
-import { Layer } from '../physics/collision-layers.ts';
-import type { Vec3 } from '../render/math.ts';
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -29,15 +28,6 @@ export interface PlayerCastingOptions {
  * plugins; Mod Telekinesis Distance has no vanilla perk).
  */
 const TELEKINESIS_REACH = 2048;
-
-/**
- * How far the crosshair's point is looked for (units): what the camera's ray meets within it,
- * else the point this far along it.
- */
-const AIM_REACH = 8192;
-/** The camera's ray passes the player's own bodies this many times at most (units a step). */
-const AIM_SELF_TRIES = 4;
-const AIM_SELF_STEP = 4;
 
 /** Both attack buttons pressed within this dual cast (seconds; TODO(M13): the engine's window). */
 const DUAL_WINDOW = 0.15;
@@ -61,49 +51,6 @@ export class PlayerCasting implements CastingButtons {
 
   constructor(options: PlayerCastingOptions) {
     this.#options = options;
-    options.casting.playerTarget = () => this.#crosshair();
-  }
-
-  /**
-   * The point under the crosshair: what the camera's ray meets first on the spell layer (the
-   * player's own bodies passed), else far along it. The player's casts leave the hand toward it,
-   * so they go where the crosshair shows in first and third person alike.
-   */
-  #crosshair(): Vec3 | undefined {
-    const play = this.#options.player()?.play;
-    if (!play) return undefined;
-    const from = play.camera.position;
-    const forward = play.forward;
-    const character = play.player.character;
-    const physics = character.physics;
-    let start = 0;
-    let distance = AIM_REACH;
-    for (let tries = 0; tries < AIM_SELF_TRIES && physics.queriesCurrent; tries++) {
-      const origin: Vec3 = [
-        from[0] + forward[0] * start,
-        from[1] + forward[1] * start,
-        from[2] + forward[2] * start,
-      ];
-      const hit = physics.raycast(
-        origin,
-        forward,
-        AIM_REACH - start,
-        Layer.spell,
-        character.collider,
-      );
-      if (!hit) break;
-      if (hit.owner?.reference === PLAYER_REF) {
-        start += hit.distance + AIM_SELF_STEP;
-        continue;
-      }
-      distance = start + hit.distance;
-      break;
-    }
-    return [
-      from[0] + forward[0] * distance,
-      from[1] + forward[1] * distance,
-      from[2] + forward[2] * distance,
-    ];
   }
 
   /** Whether a hand holds something to cast (a spell, a staff, a scroll). */
