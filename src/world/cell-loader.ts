@@ -188,7 +188,10 @@ export interface CellMarker {
 export interface CellPrimitive {
   readonly reference: number;
   readonly shape: 'box' | 'sphere';
-  /** Box: full size along x, y, z. Sphere: radius in x. */
+  /**
+   * Box: half its size along x, y, z (the engine's box primitive holds a point within plus or
+   * minus each: observed in the original). Sphere: radius in x.
+   */
   readonly bounds: readonly [number, number, number];
   /** The reference's placement (with its scale). */
   readonly world: Mat4;

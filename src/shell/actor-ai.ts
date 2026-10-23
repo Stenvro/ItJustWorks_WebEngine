@@ -271,8 +271,8 @@ export class ActorAi {
   }
 
   /** EvaluatePackage: the actor chooses its package again. */
-  evaluate(reference: number): void {
-    this.#actors.get(reference)?.packages.evaluate();
+  evaluate(reference: number, restart = false): void {
+    this.#actors.get(reference)?.packages.evaluate(restart);
   }
 
   /**

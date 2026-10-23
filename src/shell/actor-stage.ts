@@ -1003,10 +1003,11 @@ export class ActorStage {
   /**
    * EvaluatePackage (a script's, a scene's package action starting or ending): an actor on the
    * stage chooses its package again; one away is sent where its package has it now (the low
-   * process: src/shell/actors-away.ts).
+   * process: src/shell/actors-away.ts). `restart`: a scene's package action started (its
+   * package starts anew though the actor ran and completed it already).
    */
-  evaluatePackage(reference: number): void {
-    if (this.#actors.has(reference)) this.ai.evaluate(reference);
+  evaluatePackage(reference: number, restart = false): void {
+    if (this.#actors.has(reference)) this.ai.evaluate(reference, restart);
     // Each view's stage hears it: only the one that holds the loaded area (its actors) asks the
     // low process, so a view not shown sends no actor off.
     else if (this.#actors.size > 0) this.away.reconsider(reference);

@@ -110,8 +110,8 @@ export interface ScriptView {
   impactAt?(impactDataSet: number, from: Vec3, direction: Vec3, length: number): boolean;
   /** PathToReference: an actor of the view walks to a reference (undefined: not shown here). */
   pathTo?(actor: number, target: number, walkRun: number): Promise<boolean> | undefined;
-  /** EvaluatePackage: the actor chooses its package again. */
-  evaluatePackage?(reference: number): void;
+  /** EvaluatePackage: the actor chooses its package again (`restart`: anew, as ScriptWorld). */
+  evaluatePackage?(reference: number, restart?: boolean): void;
   /** What an actor of the view uses now (its furniture), if anything. */
   interaction?(reference: number): ActorInteraction | undefined;
   /** How an actor of the view (the player too) moves now. */
@@ -499,8 +499,8 @@ export class ScriptWorld implements WorldBridge {
     return undefined;
   }
 
-  evaluatePackage(actor: number): void {
-    for (const view of this.#views) view.evaluatePackage?.(actor);
+  evaluatePackage(actor: number, restart = false): void {
+    for (const view of this.#views) view.evaluatePackage?.(actor, restart);
   }
 
   interaction(actor: number): ActorInteraction | undefined {

@@ -167,9 +167,9 @@ describe('trigger volumes', () => {
     ]);
     const physics = new PhysicsWorld(withTrigger, GRAVITY);
     const box = new Float32Array(IDENTITY);
-    box[12] = 500; // a 200-unit box around (500, 0, 100)
+    box[12] = 500; // a 200-unit box around (500, 0, 100): half extents of 100
     box[14] = 100;
-    physics.addPrimitive('box', [200, 200, 200], box, Layer.trigger, {
+    physics.addPrimitive('box', [100, 100, 100], box, Layer.trigger, {
       reference: 0x77,
       kind: 'object',
     });

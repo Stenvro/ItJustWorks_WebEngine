@@ -1105,7 +1105,12 @@ after `--package-seconds`).
 - **Packages:** while a package action runs, its actor's package stack is that action's
   packages alone (`ActorAi`'s stack asks the scene first). Observed in the original
   (BGSSceneActionPackage): as the action starts, its actor takes the first of its packages
-  whose conditions hold; with none, or an actor dead, disabled or no actor, the action is done
+  whose conditions hold, as a new start of that package: one the actor runs already and has
+  completed (its alias's package, the same package of an action a phase before) runs again
+  from its root, so a Travel to where the actor stands is done at once (ours kept a completed
+  package done while it was still the one chosen, and the action waited for an end that had
+  come before it started: Hadvar at MQ101HadvarMarker8, below); with none, or an actor dead,
+  disabled or no actor, the action is done
   at once (MQ101DragonAttackScene1's first phase waits on Alduin's MQ101AlduinPerch1, whose
   conditions no longer hold by then). While it runs, the engine looks at it every update: with
   the actor running the action's package, it is done once the actor is dead or disabled or the
@@ -1217,6 +1222,42 @@ wrong:
   (getting off his horse), the cart soldiers' and Ulfric's and Ralof's walks to the block ended
   as done when a way failed once. With a failing way searched again, the final run's audit has
   none of them; a trip planned by a view that is not shown no longer ends a package either.
+
+What the QA sweep's opening (2026-10-23) showed beyond the dragon, where MQ101 stood at stage
+160 in every run:
+
+- **The tower (MQ101DragonAttackScene1, phase 4)** has Ralof run inside to MQ101RalofMarker9
+  and waits for stage 25 of MQ101DragonAttack, which only the player sets: a
+  defaultSetStageTrigSCRIPT strip across the tower room (MQ101DASetStage25, prerequisite stage
+  10). Its fragment closes the door behind the player and enables the doorway's collision
+  marker (stage 50), and the scene goes on up the stairs. Ralof and the door were never in the
+  way: Ralof stood at his marker, the door open as placed (ONAM), the collision marker
+  disabled as placed. The trigger was half its size: XPRM bounds are a box's half extents
+  (observed in the original: [formats/esm.md](formats/esm.md#doors-arrivals-and-collision-primitives)),
+  and taken as full sizes every trigger and collision box of the game was half as wide, deep
+  and tall; the player stood in the room by Ralof, a few units outside the strip. Fixed in
+  the physics' primitives (`PhysicsWorld.addPrimitive`): the box is its bounds' size each way.
+  The player's bumps were checked on the way: an actor standing (its travel arrived) steps
+  aside after the bump's delay; one still on a travel only flinches, as before.
+- **The street below the inn (MQ101DragonAttackSceneBPerchTower, phase 2)** waits for
+  Hadvar's dunCGHadvarToBFromC, a Travel to MQ101HadvarMarker8. His alias runs the same
+  package from stage 10 and he had got there and completed it before the scene started; the
+  action giving him the package again found it chosen already and done, so it never heard an
+  end and the phase stood ("Still alive, prisoner?" never came). Fixed: a package action
+  starts its package anew ([Packages](#scenes), above).
+- **MQ101TorriLedgeScene, phase 0** (45 s with Torolf's rail package running) is no fault: it
+  waits for stage 32 of MQ101, set by a trigger the prisoners' cart passes
+  (MQ101SetStage32, defaultSetStageTRIGSpecificActor on the cart's horse) about 5,000 units
+  after the gate trigger that started the scene (MQ101CloseNorthGate, stage 25): 45 to 50
+  seconds at the horse's walk (about 110 units a second measured).
+- **RiverwoodIntroSceneHildeSoldierScene, phase 1** (45 s, nothing open) is no fault either:
+  Hilde has run to her marker and the phase completes once Sven is within 1,000 units of the
+  player (GetDistance on his alias), which never happens while the player stands at
+  Riverwood's arrival with Sven elsewhere in the village.
+- The QA monitor's `scene-stall` now says what a phase waits for (its completion conditions
+  written out), starts the wait again when a quest those conditions read moves on, and does
+  not count a phase with nothing of its own open that waits for the player to come (a
+  condition naming the player): [qa.md](qa.md).
 
 Whiterun's market by day (10:00, seven minutes): ADIA's random scenes (Nazeem and Ysolda,
 Carlotta and Ysolda, Anoriath and Ysolda) and WhiterunMarketplaceScene2/3 play through, their

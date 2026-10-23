@@ -10,10 +10,12 @@ import {
   isReferencePose,
   messageKey,
   RateWindow,
+  sceneWait,
   SpeedMeter,
   StateWatch,
   TravelWatch,
 } from './detectors.ts';
+import type { Condition } from '../../scripting/conditions.ts';
 import { DEFAULT_THRESHOLDS } from './types.ts';
 
 describe('Episode', () => {
@@ -237,6 +239,52 @@ describe('AnomalyLog', () => {
     const kept = log.all.map((x) => x.detail);
     expect(kept).toEqual(['a', 'c']);
     expect(log.dropped.glide).toBe(1);
+  });
+});
+
+describe('sceneWait', () => {
+  const condition = (fields: Partial<Condition>): Condition => ({
+    function: 0,
+    operator: 0,
+    or: false,
+    comparand: 1,
+    form: 0,
+    param2: 0,
+    raw1: 0,
+    form2: 0,
+    strings: [],
+    runOn: 0,
+    reference: 0,
+    param3: 0,
+    eventMember: '',
+    ...fields,
+  });
+  const name = (formId: number): string => (formId === 0x14 ? 'Player' : formId.toString(16));
+
+  it('writes the conditions out and finds a wait for the player', () => {
+    // Sven.GetDistance(Player) < 1000 (RiverwoodIntroSceneHildeSoldierScene's second phase).
+    const wait = sceneWait(
+      [condition({ function: 1, operator: 4, comparand: 1000, form: 0x14, runOn: 5, param3: 2 })],
+      name,
+      () => false,
+    );
+    expect(wait.text).toBe('alias 2.GetDistance(Player) < 1000');
+    expect(wait.onPlayer).toBe(true);
+    expect(wait.quests).toEqual([]);
+  });
+
+  it('names the quests a stage condition reads', () => {
+    const wait = sceneWait(
+      [
+        condition({ function: 59, form: 0x3372b, param2: 32, or: true }),
+        condition({ function: 58, operator: 3, comparand: 40, form: 0x3372b }),
+      ],
+      name,
+      (formId) => formId === 0x3372b,
+    );
+    expect(wait.text).toBe('GetStageDone(3372b) == 1 OR GetStage(3372b) >= 40');
+    expect(wait.onPlayer).toBe(false);
+    expect(wait.quests).toEqual([0x3372b]);
   });
 });
 
