@@ -69,14 +69,14 @@ var QA_PLAY = engineDev.world.#play;
   const nav = QA_NAV;
   // A way to where the floor gives way (150 units or more down), found on a grid of 32 units
   // round the player (physics rays: the floor under each cell, steps of up to 32, nothing at
-  // chest height between neighbours): of the drops, the first (nearest by the way, then most
-  // towards the goal) that lands on navmesh with a way on to the goal (the inn's upper floor
-  // has holes down into rooms that rubble shuts), else the first.
+  // chest height between neighbours): of the drops, the one landing nearest the goal that lands
+  // on navmesh with a way on to it (the inn's upper floor has holes nearer down into a room that
+  // rubble shuts), else the one landing nearest.
   const findDrop = (feet, goal) => {
     const physics = QA_PLAY?.physics;
     if (!physics) return undefined;
     const ray = (from, dir, length) => physics.raycast(from, dir, length, Layer.charController, undefined, 0x14);
-    const CELL = 32; const SPAN = 28;
+    const CELL = 32; const SPAN = 40;
     const floor = new Map();
     const floorAt = (i, j) => {
       const key = i + ',' + j;
@@ -86,8 +86,6 @@ var QA_PLAY = engineDev.world.#play;
       }
       return floor.get(key);
     };
-    const toward = [goal[0] - feet[0], goal[1] - feet[1]];
-    const tl = Math.hypot(toward[0], toward[1]) || 1;
     const seen = new Map([['0,0', undefined]]);
     const queue = [[0, 0, feet[2]]];
     const drops = [];
@@ -104,8 +102,9 @@ var QA_PLAY = engineDev.world.#play;
         if (h > z + 32) continue;
         seen.set(key, [i, j]);
         if (h < z - 150) {
-          const score = head + 1 - ((ni * toward[0] + nj * toward[1]) / tl) * 0.5;
-          drops.push({ score, key, landing: [feet[0] + ni * CELL, feet[1] + nj * CELL, h] });
+          const landing = [feet[0] + ni * CELL, feet[1] + nj * CELL, h];
+          const score = Math.hypot(goal[0] - landing[0], goal[1] - landing[1]);
+          drops.push({ score, key, landing });
           continue;
         }
         queue.push([ni, nj, h]);
@@ -214,13 +213,16 @@ var QA_PLAY = engineDev.world.#play;
       bot.door = door.door; goal = [...door.position];
     }
     const feet = [...player.feet];
+    // On the navmesh: one at its feet' height (the triangle under the inn's upper floor is the
+    // ground floor's, 300 units down: a way from there is not the player's).
+    const onNav = nav?.nearest?.(feet, 48) !== undefined;
     // Where it got stuck lately (20 s), here: a way the navmesh has but something shuts (the
     // inn's rubble, a collision box the quest enabled) is closed there and searched round,
     // as an actor closes a door it cannot pass.
     bot.stucks = (bot.stucks ?? []).filter((s) => now - s.time < 20000);
     const stuckHere = bot.stucks.filter((s) => Math.hypot(s.at[0] - feet[0], s.at[1] - feet[1]) < 64).length;
     if (bot.blockedFor !== best.t.reference) { bot.blocked = []; bot.blockedFor = best.t.reference; }
-    if (stuckHere >= 4 && nav?.locate(feet) && bot.path?.[0]) {
+    if (stuckHere >= 4 && onNav && bot.path?.[0]) {
       const ahead = bot.path[0];
       const dx = ahead[0] - feet[0]; const dy = ahead[1] - feet[1]; const l = Math.hypot(dx, dy) || 1;
       const at = [feet[0] + (dx / l) * 64, feet[1] + (dy / l) * 64, feet[2]];
@@ -230,7 +232,7 @@ var QA_PLAY = engineDev.world.#play;
         say('the way is shut at ' + at.map(Math.round).join(',') + ': round it');
       }
     }
-    const found = nav && paths.findPath(nav, feet, goal, { radius: 24, blocked: bot.blocked });
+    const found = onNav ? paths.findPath(nav, feet, goal, { radius: 24, blocked: bot.blocked }) : undefined;
     const changed = !bot.goal || Math.hypot(goal[0] - bot.goal[0], goal[1] - bot.goal[1]) > 64;
     bot.goal = goal;
     bot.path = found && found.points.length > 1 ? found.points.slice(1).map((p) => [...p]) : [goal];
@@ -247,9 +249,11 @@ var QA_PLAY = engineDev.world.#play;
         bot.path = [goal];
       } else bot.straight = false;
     }
-    // Off the navmesh with the navmesh below (the burning inn's upper floor), stuck going
-    // straight: a player drops down where the floor gives way, the drop nearest the way on.
-    if (!found && stuckHere >= 2 && nav && !nav.locate(feet) && nav.nearest?.([feet[0], feet[1], feet[2] - 300], 600)) {
+    // Off the navmesh with the navmesh below (the burning inn's upper floor), its goal below it
+    // or stuck going straight: a player drops down where the floor gives way, the drop landing
+    // nearest the goal with a way on (straight on, a goal not below: the tower's jump).
+    const below = goal[2] < feet[2] - 150;
+    if (!found && (below || stuckHere >= 2) && nav && !onNav && nav.nearest?.([feet[0], feet[1], feet[2] - 300], 600)) {
       const way = findDrop(feet, goal);
       const drop = way?.at(-1);
       if (drop) {

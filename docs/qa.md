@@ -70,13 +70,15 @@ conditions do not hold yet, as a player goes on the way the objective leads (MQ1
 way to the Keep" shows the burning inn's marker until stage 120 of MQ101DragonAttack; then
 Hadvar). A navmesh way far longer than the straight line (twice it and 300 more) to a goal not
 above is left for the straight line, as a player jumps down (from the tower's broken wall onto
-the inn, while the navmesh leads down the stairs to the door the quest has shut). Off the
-navmesh with navmesh below (the inn's upper floor) it goes straight, and stuck twice there it
-walks to where the floor gives way: a
-grid of physics rays round it (32 units a cell, 900 units each way: the floor under each cell,
-steps of up to 32 units, nothing at chest height between neighbours; a drop is 150 units or
-more), the first drop by the way and towards the goal that lands on navmesh with a way on to
-the goal (holes in the inn's floor lead into rooms rubble shuts). The scenario ends a minute
+the inn, while the navmesh leads down the stairs to the door the quest has shut). It counts as
+on the navmesh only where a triangle is near its feet' height (under the inn's upper floor
+lies the ground floor's, 300 units down). Off the navmesh with navmesh below, it goes straight
+to a goal not below it; to a goal below it (or stuck twice going straight) it walks to where
+the floor gives way: a grid of physics rays round it (32 units a cell, 1,280 units each way:
+the floor under each cell, steps of up to 32 units, nothing at chest height between
+neighbours; a drop is 150 units or more), the drop landing nearest the goal on navmesh with a
+way on to it (a hole in the inn's floor nearer the marker leads into a room that rubble
+shuts). The scenario ends a minute
 after MQ101 reaches stage 900 (out of the keep), or when MQ101's stage stands 8 minutes (the
 opening stalled, or the bot got nowhere). Its log goes into the report's notes.
 
