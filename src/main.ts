@@ -850,6 +850,17 @@ async function main(): Promise<void> {
       session: () => session,
       play: () => play,
     };
+    // The automated QA monitors (docs/qa.md): loaded on the side, idle until started.
+    void import('./shell/qa/qa-harness.ts').then(({ QaHarness }) => {
+      if (window.engineDev)
+        window.engineDev.qa = new QaHarness({
+          // Interiors play in the model viewer, the world outside in the world viewer.
+          world: () => (worldViewer.play ? worldViewer : modelViewer),
+          session: () => session,
+          renderer,
+          terminal,
+        });
+    });
   }
   let lastScriptTick = performance.now() / 1000;
   // Sounds follow the camera; browsers start audio only after a user gesture.
