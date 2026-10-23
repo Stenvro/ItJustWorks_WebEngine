@@ -387,7 +387,13 @@ limited hinge constraints, placed at the actor and articulated like the objects 
 skinned body, its armor and head follow the bones. They run no behavior graph and no face. Those
 the running game kills lie the same way when their cell loads again (TODO(M12): from the rest
 pose; where their bodies lay is the save's); one that dies in sight falls from the pose it had
-(its living bodies, keyframed to its pose, are let go: [ai.md](ai.md#movement)). Observed in the
+(its living bodies, keyframed to its pose, are let go: [ai.md](ai.md#movement)). One that had no
+bodies living (beyond the high process) gets them in the pose it has as it dies: they were made
+in the model's rest pose and let go before their keyframed move reached the pose, so Lokir and
+a Stormcloak at Helgen's block stood in their bind pose, balanced, until they slept so. A dead
+actor's ragdoll over ground whose collision is not in yet waits for it; one whose actor is made
+again (its look changed) moves the new look's pose (that stood in its bind pose over the
+corpse). Observed in the
 original:
 
 - **The dead bodies' layer.** As a dead actor's Havok is set up, its ragdoll's bodies go to
@@ -455,7 +461,20 @@ ragdoll go from its placed pose (the Khajiit caravan's, which stopped at its tai
 good until the limits were mirrored, now rest within 3 s). A finding
 left open (TODO(M13)): Rapier's velocity motor does not hold a torque below its maximum as
 Havok's friction does (a 1 kg pendulum on a 1 m arm swings down against a 20 N·m limit), so the
-joints' friction does little; the deactivation does what it did for Havok.
+joints' friction does little; the deactivation does what it did for Havok. Also open
+(TODO(M13)): an animated pose past a joint's limits as the body is let go snaps back within a step
+(Rapier's limits are stiff, Havok's soft): a body may jump 2,000 units a second for a frame.
+
+Measured with the QA runner (docs/qa.md), before (the lead's sweep on main, or the coordinator's
+runs of `combat-melee`) and after: the opening's corpse-upright 3 → 1 (Lokir and the Helgen
+skeleton lie; one Stormcloak stays), the Helgen skeleton's jitter (42 episodes, 12–31 vertical flips a second for half a minute) →
+none; ragdoll velocity spikes 17 (an Imperial soldier's) → 72, 65 of them Helgen's dead horse,
+which now lies on L_DEADBIP where MQ101's carts (L_PROPS) run into it;
+`combat` physics 0 → 0 with deaths in it; `combat-melee` 20–45 spikes a run and a dead soldier
+left standing in two runs → 3 and 18 spikes in two runs, none left standing (one still in its death animation at 5 s). The `deaths` scenario (28 kinds
+killed by script on Riverwood's rocky slopes) still shows a few ragdolls trembling against
+rocks (static meshes are two-sided triangle meshes: their winding is not consistent enough to
+make them one-sided like the landscape).
 
 **Border regions:** in a worldspace with border regions (see
 [esm.md](formats/esm.md#border-regions)) movement that would leave them stops at the edge, and
