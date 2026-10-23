@@ -137,6 +137,11 @@ export interface RaceRecord {
   readonly weight: readonly [number, number];
   /** WNAM: the race's skin (ARMO). */
   readonly skin: number | undefined;
+  /**
+   * BOD2: the biped slots its first-person body shows (the vanilla playable races': body,
+   * hands, forearms, ring, shield and FX01).
+   */
+  readonly firstPersonSlots: number;
   /** ANAM under MNAM / FNAM: skeleton models of [male, female] (female falls back to male). */
   readonly skeleton: readonly [string | undefined, string | undefined];
   /** NAM3 MODL under MNAM / FNAM: behavior projects of [male, female] (Havok, .hkx). */
@@ -192,9 +197,11 @@ export interface ArmorAddonRecord {
   readonly priority: readonly [number, number];
   /** DNAM: weight slider of [male, female]: _0 and _1 models blended by the actor's weight. */
   readonly weighted: readonly [boolean, boolean];
-  /** World models of [male, female] (MOD2, MOD3; the female falls back to the male). */
+  /**
+   * World models of [male, female] (MOD2, MOD3) and first-person ones (MOD4, MOD5), as the
+   * record has them: which one an actor wears is `addonModel`'s choice (src/world/actors.ts).
+   */
   readonly models: readonly [AddonModel | undefined, AddonModel | undefined];
-  /** First-person models of [male, female] (MOD4, MOD5). */
   readonly firstPerson: readonly [AddonModel | undefined, AddonModel | undefined];
   /** NAM0 / NAM1: the skin texture set of [male, female] (TXST). */
   readonly skinTexture: readonly [number | undefined, number | undefined];
@@ -412,6 +419,7 @@ export function parseRace(record: RecordSource): RaceRecord {
     height: [dataView?.getFloat32(16, true) ?? 1, dataView?.getFloat32(20, true) ?? 1],
     weight: [dataView?.getFloat32(24, true) ?? 1, dataView?.getFloat32(28, true) ?? 1],
     skin: field(record, 'WNAM'),
+    firstPersonSlots: bipedSlots(record),
     skeleton: [skeleton[0], skeleton[1] ?? skeleton[0]],
     behavior: [behavior[0], behavior[1] ?? behavior[0]],
     hairColor: [formOf(record, hclf, 0), formOf(record, hclf, 4)],
@@ -471,8 +479,6 @@ export function parseArmorAddon(record: RecordSource): ArmorAddonRecord {
       ? { path, alternateTextures: alternateTextures(record, record.fields.first(swaps)) }
       : undefined;
   };
-  const male = model('MOD2', 'MO2S');
-  const maleFirst = model('MOD4', 'MO4S');
   return {
     formId: record.formId,
     editorId: record.editorId ?? '',
@@ -484,8 +490,8 @@ export function parseArmorAddon(record: RecordSource): ArmorAddonRecord {
       .filter((formId): formId is number => formId !== undefined),
     priority: [dnam?.[0] ?? 0, dnam?.[1] ?? 0],
     weighted: [((dnam?.[2] ?? 0) & 0x2) !== 0, ((dnam?.[3] ?? 0) & 0x2) !== 0],
-    models: [male, model('MOD3', 'MO3S') ?? male],
-    firstPerson: [maleFirst, model('MOD5', 'MO5S') ?? maleFirst],
+    models: [model('MOD2', 'MO2S'), model('MOD3', 'MO3S')],
+    firstPerson: [model('MOD4', 'MO4S'), model('MOD5', 'MO5S')],
     skinTexture: [field(record, 'NAM0'), field(record, 'NAM1')],
     weaponAdjust: dnam && dnam.length >= 12 ? view(dnam).getFloat32(8, true) : 0,
     footstepSet: field(record, 'SNDD'),

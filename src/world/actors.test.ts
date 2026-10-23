@@ -10,12 +10,15 @@ import {
   type ArmorAddonRecord,
 } from './actor-records.ts';
 import {
+  addonModel,
   addonsForRace,
   firstSlot,
+  inFirstPerson,
   partitionVisible,
   pickLeveled,
   seededRandom,
   slotOwners,
+  underSkin,
   withOverrides,
   type WornAddon,
 } from './actors.ts';
@@ -187,8 +190,9 @@ describe('actor records', () => {
     expect(addon.priority).toEqual([3, 4]);
     expect(addon.weighted).toEqual([true, false]);
     expect(addon.models[0]?.path).toBe('Actors\\Character\\Character Assets\\MaleBody_1.NIF');
-    // Without MOD3 the female wears the male model.
-    expect(addon.models[1]).toBe(addon.models[0]);
+    // The record's models as they are (addonModel chooses).
+    expect(addon.models[1]).toBeUndefined();
+    expect(addon.firstPerson).toEqual([undefined, undefined]);
     expect(addon.models[0]?.alternateTextures).toEqual([
       { shape: 'Body', textureSet: 0x3ede8, index: 2 },
     ]);
@@ -272,7 +276,7 @@ describe('actor looks', () => {
     armor: id,
     editorId: '',
     model: { path: '', alternateTextures: [] },
-    firstPerson: undefined,
+    firstPerson: { model: { path: '', alternateTextures: [] }, skinTexture: undefined },
     weighted: false,
     slots,
     priority,
@@ -300,6 +304,75 @@ describe('actor looks', () => {
     expect(partitionVisible(130, helmet, undefined)).toBe(true);
     expect(partitionVisible(230, slotOwners([worn(5, 0x1)]), undefined)).toBe(false);
     expect(firstSlot(0x174)).toBe(32);
+  });
+
+  it('chooses the model an addon is worn in: first person falls back to the world model', () => {
+    const model = (path: string) => ({ path, alternateTextures: [] });
+    const hands: ArmorAddonRecord = {
+      ...addon(1, 0x19, []),
+      models: [model('MaleHands_1.nif'), model('FemaleHands_1.nif')],
+      firstPerson: [model('1stPersonMaleHands_1.nif'), undefined],
+      skinTexture: [0x10, 0x11],
+    };
+    expect(addonModel(hands, false, true)).toEqual({
+      model: model('1stPersonMaleHands_1.nif'),
+      skinTexture: 0x10,
+    });
+    // A woman without her own first-person model wears the man's, in his skin texture set.
+    expect(addonModel(hands, true, true)).toEqual({
+      model: model('1stPersonMaleHands_1.nif'),
+      skinTexture: 0x10,
+    });
+    expect(addonModel(hands, true, false)).toEqual({
+      model: model('FemaleHands_1.nif'),
+      skinTexture: 0x11,
+    });
+    // Gauntlets without first-person models show their world models in first person.
+    const gauntlets: ArmorAddonRecord = {
+      ...addon(2, 0x19, []),
+      models: [model('Gauntlets_1.nif'), model('F\\Gauntlets_1.nif')],
+    };
+    expect(addonModel(gauntlets, true, true)?.model).toEqual(model('F\\Gauntlets_1.nif'));
+    expect(addonModel(addon(3, 0x19, []), false, true)).toBeUndefined();
+  });
+
+  it('gives a piece without a skin texture set the one the skin left in its slot', () => {
+    const skinned = (id: number, slots: number, texture: number): WornAddon => ({
+      ...worn(id, slots, 0, true),
+      skinTexture: texture,
+      firstPerson: { model: { path: '', alternateTextures: [] }, skinTexture: texture },
+    });
+    const skin = [skinned(10, 0x8, 0x33), skinned(11, 0x4 | 0x10, 0x32)];
+    const cuirass = underSkin(worn(1, 0x4 | 0x10 | 0x100), skin);
+    expect([cuirass.skinTexture, cuirass.firstPerson.skinTexture]).toEqual([0x32, 0x32]);
+    expect(underSkin(worn(2, 0x8 | 0x10), skin).skinTexture).toBe(0x33);
+    // Its own wins; a slot no skin covers leaves it as it is.
+    expect(underSkin({ ...worn(3, 0x8), skinTexture: 0x99 }, skin).skinTexture).toBe(0x99);
+    expect(underSkin(worn(4, 0x80), skin).skinTexture).toBeUndefined();
+  });
+
+  it("shows in first person the pieces owning one of the race's first-person slots", () => {
+    // NordRace BOD2: body, hands, forearms, ring, shield, FX01.
+    const firstPersonSlots = 0x8000025c;
+    const cuirass = worn(1, 0x4 | 0x10 | 0x100, 5);
+    const gauntlets = worn(2, 0x8 | 0x10, 10);
+    const boots = worn(3, 0x80 | 0x100);
+    const helmet = worn(4, 0x2 | 0x2000);
+    const owners = slotOwners([cuirass, gauntlets, boots, helmet]);
+    const look = { owners, firstPersonSlots };
+    expect([cuirass, gauntlets, boots, helmet].map((piece) => inFirstPerson(piece, look))).toEqual([
+      true,
+      true,
+      false,
+      false,
+    ]);
+    // The skin's hands where nothing covers them; not its feet.
+    expect(inFirstPerson(worn(9, 0x8, 0, true), { owners: new Map(), firstPersonSlots })).toBe(
+      true,
+    );
+    expect(inFirstPerson(worn(9, 0x80, 0, true), { owners: new Map(), firstPersonSlots })).toBe(
+      false,
+    );
   });
 
   it("puts a made look's traits over the record's (the player's appearance)", () => {
