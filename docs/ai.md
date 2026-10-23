@@ -41,7 +41,9 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   deer that fled past the high process at a run is told it stopped as it stops (before, its
   graph ran on the spot for minutes, never told). Held there by an animation-driven idle while
   its AI sends it away, its idle is stopped as a moved actor's is (ActionIdleStop, again each
-  second): a chicken lying down otherwise gave up every walk its sandbox sent it on. TODO(M13): the engine's process levels (CommonLibSSE
+  second): a chicken lying down otherwise gave up every walk its sandbox sent it on. Held so, its
+  clips' root motion moves and turns it, as a controlled one's (a deer's canned flee turn
+  carries it on). TODO(M13): the engine's process levels (CommonLibSSE
   `ProcessLists`: high, middle-high, middle-low, low) and how often each moves its actors are
   not documented. The controllers are in the world the
   player moves in: the player bumps into actors and they into each other. The crosshair's pick
