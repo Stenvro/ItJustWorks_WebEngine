@@ -2,12 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
 import {
   CLOUD_LAYERS,
-  cellWeathers,
   cloudTextureField,
   parseClimate,
   parseRegionWeather,
   parseWeather,
-  pickWeather,
   RegionDataType,
   WeatherColor,
   type WeatherSource,
@@ -123,7 +121,7 @@ describe('parseWeather', () => {
       nightMax: expect.closeTo(0.9, 5) as number,
     });
     expect(weather.windSpeed).toBe(1);
-    expect(weather.transDelta).toBeCloseTo(0.25, 5);
+    expect(weather.transDelta).toBeCloseTo(1, 5);
     expect(weather.sunGlare).toBeCloseTo(0.75, 2);
     expect(weather.flags).toBe(0x04);
     expect(weather.windDirection).toBeCloseTo(180.7, 1);
@@ -183,33 +181,5 @@ describe('region weather', () => {
     expect(region?.priority).toBe(50);
     expect(region?.weathers.map((w) => w.weather)).toEqual([0x200, 0x201]);
     expect(parseRegionWeather(record([['RDAT', rdat(RegionDataType.sound, 1)]]))).toBeUndefined();
-  });
-
-  it('takes the highest-priority region list, else the climate', () => {
-    const list = (weather: number) => [{ weather, chance: 100, global: undefined }];
-    const climate = parseClimate(record([['WLST', u32s([0x900, 100, 0])]]));
-    expect(
-      cellWeathers(
-        [
-          { priority: 50, override: false, weathers: list(1) },
-          undefined,
-          { priority: 60, override: false, weathers: list(2) },
-        ],
-        climate,
-      ),
-    ).toEqual(list(2));
-    expect(cellWeathers([undefined], climate)).toEqual(list(0x900));
-  });
-
-  it('picks weathers by chance', () => {
-    const entries = [
-      { weather: 1, chance: 45, global: undefined },
-      { weather: 2, chance: 55, global: undefined },
-    ];
-    expect(pickWeather(entries, 0)).toBe(1);
-    expect(pickWeather(entries, 0.44)).toBe(1);
-    expect(pickWeather(entries, 0.46)).toBe(2);
-    expect(pickWeather(entries, 0.999)).toBe(2);
-    expect(pickWeather([], 0.5)).toBeUndefined();
   });
 });

@@ -1,8 +1,10 @@
 // Climates, weathers and region weather lists of the load order, checked against the files
-// they name; or one weather's sky at a time of day.
+// they name; one weather's sky at a time of day; the weather regions as the sky chooses them.
 //
 //   node tools/weather-info.ts                      every climate and weather, problems
 //   node tools/weather-info.ts SkyrimClear 13.5     one weather at 13:30 (DefaultClimate)
+//   node tools/weather-info.ts --regions            weather regions, climates' weather lifetimes
+//   node tools/weather-info.ts --at Tamriel 20 -5   the player's weather region in a cell's middle
 
 import { parseNif } from '../src/formats/nif/nif.ts';
 import { skyState } from '../src/world/sky-state.ts';
@@ -15,6 +17,8 @@ import {
   type WeatherRecord,
 } from '../src/world/weather.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
+import { parseWeatherRegionArea, weatherRegionAt } from '../src/world/sky-weather.ts';
+import { Worldspace } from '../src/world/worldspace.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { openGameFolder } from './gamedata-path.ts';
 
@@ -35,7 +39,51 @@ for (const id of db.formIdsOfType('CLMT')) {
 }
 
 const query = process.argv[2];
-if (query) {
+if (query === '--regions') {
+  for (const climate of climates.values()) {
+    const hours = Math.trunc((255 - climate.volatility) * 22) / 255 + 1;
+    console.log(
+      `${hex(climate.formId)} ${climate.editorId}: a weather lasts ${hours.toFixed(2)} h`,
+    );
+  }
+  for (const id of db.formIdsOfType('REGN')) {
+    const record = await db.get(id);
+    const region = record && parseWeatherRegionArea(record);
+    if (!record || !region?.weather) continue;
+    const tab = region.weather;
+    const list = tab.weathers
+      .map((w) => `${weathers.get(w.weather)?.editorId ?? hex(w.weather)} ${String(w.chance)}`)
+      .join(', ');
+    console.log(
+      `${hex(id)} ${record.editorId ?? ''}: world ${hex(region.world ?? 0)}, ` +
+        `${String(region.areas.length)} areas, priority ${String(tab.priority)}` +
+        `${tab.override ? ' override' : ''}: ${list}`,
+    );
+  }
+} else if (query === '--at') {
+  const [name = 'Tamriel', cx = '0', cy = '0'] = process.argv.slice(3);
+  const worldRecord = (await db.worldspaces()).find((w) => w.editorId === name);
+  if (!worldRecord) throw new Error(`no worldspace ${name}`);
+  const world = await Worldspace.open(db, worldRecord.formId);
+  const [x, y] = [Number(cx), Number(cy)];
+  const ids = await world.regions(x, y);
+  const regions = await Promise.all(
+    ids.map(async (id) => {
+      const record = await db.get(id);
+      return record && parseWeatherRegionArea(record);
+    }),
+  );
+  for (const [i, id] of ids.entries()) {
+    const tab = regions[i]?.weather;
+    const editorId = (await db.get(id))?.editorId ?? '';
+    console.log(`  ${hex(id)} ${editorId}${tab ? ` priority ${String(tab.priority)}` : ''}`);
+  }
+  const chosen = weatherRegionAt(regions, worldRecord.formId, (x + 0.5) * 4096, (y + 0.5) * 4096);
+  const chosenName = chosen
+    ? ((await db.get(chosen.formId))?.editorId ?? '')
+    : 'none (the climate)';
+  console.log(`weather region: ${chosenName}`);
+} else if (query) {
   const weather = [...weathers.values()].find(
     (w) => w.editorId.toLowerCase() === query.toLowerCase(),
   );

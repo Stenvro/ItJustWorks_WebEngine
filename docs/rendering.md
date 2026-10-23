@@ -513,6 +513,101 @@ Dynamic decals (a hit's blood: `src/shell/combat-impacts.ts`) last `[Display]` f
 first (observed in the original: each is made with the lifetime, the count capped by the
 setting; `expireDecals`). TODO(M13): whether one fades at its end or vanishes.
 
+## Weather
+
+Which weather the sky shows, and how scripts, the console and conditions control it
+(`src/world/sky-weather.ts`, `SkyWeather`; observed in the original). The game has one
+sky state for its whole run, kept in the session (`GameSession.sky`): it outlives the
+viewers, so a weather set indoors or by a quest is the one shown at the door. The viewers
+run it once a frame (`WorldSky.frame` outside, `ModelViewer` indoors) and draw what it holds;
+the scripts' bridge (`ScriptWorld`) and the console drive and read it.
+
+**What it holds.** The _current_ weather and the _outgoing_ one it is changing from, the
+_transition_ (0..1) between them, the _default_ weather (the regions' choice, or one a script
+set without override), the _override_ (a weather held over the regions), the region the
+current choice was made in, the player's weather region, the time the current weather
+began (game hours), and the sky's _mode_.
+
+**The player's weather region** is chosen as the player enters an exterior cell: of the
+cell's regions (XCLR, in order) that belong to its worldspace (REGN WNAM) and have an area
+(RPLD polygon) around the player, those with a weather tab (RDAT type 3) compete: one whose
+tab is marked Override beats one that is not; otherwise the higher priority wins; on equal
+terms the first stays. Indoors the region stays the one outside; an interior with a sky
+region (XCCM) uses that one instead for as long as the player is in it.
+
+**Each frame** (not in an interior without a sky, see the modes):
+
+- _How long a weather lasts_ comes from the climate's volatility: `(255 − volatility) × 22 /
+255 + 1` game hours (SkyrimClimate's 50: 18.69 h; 0: 23 h). The time since a weather came
+  wraps at midnight (a weather that began at 23:00 is one hour old at midnight).
+- An override that has lasted that long is let go, as if released.
+- With an override, the override is the weather wanted. Otherwise the regions choose:
+  - In the same region as last time (and nothing released): while the weather still has
+    time, nothing changes in a region; without a region the default stands (or one picked
+    from the climate's list becomes the default). Once its time is up a new one is picked
+    from the region (else the climate) — again each frame until one differs from the
+    current, so the weather changes as soon as its time is up.
+  - In another region, or just after a release: the region's pick is wanted, but a weather
+    the region also has may stay, the more likely the younger it is (a random number above
+    the share of its life that has passed keeps it). Without a region, a current weather
+    the climate also has may stay the same way (it becomes the default); else the default
+    (or a climate pick) is wanted.
+  - A pick is by chance: a random whole number below the sum of the chances (an entry's
+    chance is its global's value if it names one) falls into one entry's share; entries of
+    chance 0 never come. With nothing at all, DefaultWeather (`0x15E`).
+- A wanted weather that differs from the current one begins only once no change is under
+  way. It begins with a change from the current one — at once (no outgoing weather) after
+  fast travel or when there is no sky.
+- The transition is the game hours since the weather began over its change time:
+  `transDelta × (fWeatherTransMax − fWeatherTransMin) + fWeatherTransMin` hours (0.01..0.25
+  h; Trans Delta is WTHR DATA byte 3 / 255, 125 for most weathers: 0.128 h, about 23 real
+  seconds at TimeScale 20). It runs on game time: it stands still in menus, and waiting or
+  sleeping finishes it. Above 1 the change is over (the outgoing weather goes).
+- Under the full sky the wind is the current weather's, blended with the outgoing one's
+  through a change (GetWindSpeed); elsewhere it keeps its last value.
+
+**Scripts and the console:**
+
+- `Weather.SetActive(override, accelerate)` and the console's `sw <weather> [1]`: with
+  override the weather becomes the override; without, it becomes the default and the region
+  is forgotten (until the player enters the next cell, when the regions choose again). The
+  weather comes through a change on the next frame (after one under way). _Accelerate_
+  hurries a change under way: from the moment of the call its remaining part runs
+  fWeatherTransAccel + 1 times faster (Skyrim.esm sets fWeatherTransAccel to 16). The console
+  never hurries. With no weather at all yet, SetActive forces.
+- `Weather.ForceActive(override)` and the console's `fw <weather> [1]`: the engine queues them
+  for its next frame, then the weather is there at once (no change), as the override or the
+  default, and the region is forgotten as with SetActive.
+- `Weather.ReleaseOverride` and `rwo`: the override goes and the regions choose again at once
+  (a young current weather the region has may stay).
+- `GetCurrentWeather`, `GetOutgoingWeather`, `GetCurrentWeatherTransition` read the state.
+- `Weather.FindWeather(class)` (0 pleasant, 1 cloudy, 2 rainy, 3 snow): of the region's list
+  (the interior's sky region first), else the climate's, the weather of that class with the
+  _lowest_ chance (the first of equals); a region without weathers finds none.
+- `ts` (ToggleSky) turns the sky off (mode none: no dome, clouds, sky objects or rain) and
+  back to the place's mode.
+
+**Modes** (`Weather.GetSkyMode`): outside the full sky (3); a worldspace with its own
+lighting template (WRLD LTMP) only the dome (2), or none of it as an interior (1) if it also
+has No Sky. An interior has no sky (1) unless it has Show Sky (CELL DATA `0x80`: the dome, 2;
+with Use Sky Lighting `0x100` the full sky, 3). Without a sky the weather stands still: no
+change begins and one under way waits, while game time passes; out again, the hours count and
+the change is over at once. Most town interiors have Show Sky (Breezehome, the Sleeping
+Giant Inn, Dragonsreach), so their weather runs on with their sky region's list.
+
+**Conditions:** `GetIsCurrentWeather` (a weather, or any of a form list's),
+`GetCurrentWeatherPercent` (the transition), `GetWindSpeed`; `IsRaining` / `IsSnowing` hold
+once the current weather of that class is past its precipitation fade-in (DATA byte 6) or
+while the outgoing one of that class is short of its fade-out (byte 7), both × 0.999 as the
+engine scales them; `IsPleasant` / `IsCloudy` are the share of the class: the transition if
+the current weather has it plus the rest if the outgoing one has it.
+
+Not read yet: a game-wide state flag the update consults (it lets the weather run in an
+interior and keeps a change's start time; most likely the load or reset state); and where the
+engine sets its fast-travel state (we set it for the map's fast travel). TODO(M13). Drawing
+the dome in interiors with Show Sky (mode 2) and the sky objects in mode 2 worldspaces is
+TODO(M13) in the renderer; the state and its weather are as the engine's there.
+
 ## Precipitation
 
 Rain and snow (`precipitation.ts`, `shaders/precipitation.wgsl`), as the engine's particle

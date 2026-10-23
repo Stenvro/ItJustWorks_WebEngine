@@ -14,12 +14,8 @@ import { landTexture } from '../src/world/land.ts';
 import { selectLodBlocks } from '../src/world/lod.ts';
 import { RecordDatabase, type GameRecord } from '../src/world/record-db.ts';
 import { skyState } from '../src/world/sky-state.ts';
-import {
-  cellWeathers,
-  parseClimate,
-  parseRegionWeather,
-  parseWeather,
-} from '../src/world/weather.ts';
+import { parseWeatherRegionArea, weatherRegionAt } from '../src/world/sky-weather.ts';
+import { parseClimate, parseWeather } from '../src/world/weather.ts';
 import { cellWater, parseWater } from '../src/world/water.ts';
 import { ParentUse, Worldspace } from '../src/world/worldspace.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
@@ -84,15 +80,16 @@ describe.skipIf(!hasGamedata())('exteriors on the local game data', () => {
     expect(await tamriel.cell(500, 500)).toBeUndefined();
   }, 30_000);
 
-  it("takes a cell's weathers from its weather region", async () => {
+  it("takes a cell's weathers from the weather region around the player", async () => {
     const tamriel = await Worldspace.open(db, await worldId('Tamriel'));
     const regions = await Promise.all(
       (await tamriel.regions(4, -3)).map(async (id) => {
         const record = await db.get(id);
-        return record ? parseRegionWeather(record) : undefined;
+        return record ? parseWeatherRegionArea(record) : undefined;
       }),
     );
-    const list = cellWeathers(regions, undefined);
+    const region = weatherRegionAt(regions, tamriel.record.formId, 4.5 * 4096, -2.5 * 4096);
+    const list = region?.weather?.weathers ?? [];
     expect(list.length).toBeGreaterThan(2);
     const names = await Promise.all(
       list.map(async (entry) => (await db.get(entry.weather))?.editorId),

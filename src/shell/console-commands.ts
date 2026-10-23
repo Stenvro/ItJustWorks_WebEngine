@@ -8,7 +8,7 @@
 // removeitem, setstage / getstage / startquest / stopquest / completequest, set <global> to
 // <value> (TimeScale too), getav / setav / modav / forceav, advlevel, advskill / incpcs,
 // addperk / removeperk, addspell / removespell, togglemenus (tm), forceweather (fw),
-// enableplayercontrols (epc) / disableplayercontrols (dpc), togglegodmode (tgm), kill,
+// setweather (sw), releaseweatheroverride (rwo), togglesky (ts), enableplayercontrols (epc) / disableplayercontrols (dpc), togglegodmode (tgm), kill,
 // showracemenu, cast, quitquitquit (qqq).
 // TODO(M13): the rest of the game's console commands (tcl, tai, resurrect, moveto, prid by
 // clicking, ...).
@@ -28,8 +28,14 @@ export interface ConsoleContext {
   travel(at: Placement): Promise<void>;
   /** Shows or hides the game's menus and HUD (tm). */
   toggleMenus(): void;
-  /** Forces a weather (fw). */
-  forceWeather(weather: number): void;
+  /** Forces a weather at once (fw <weather> [override]). */
+  forceWeather(weather: number, override: boolean): void;
+  /** Makes a weather active with a change (sw <weather> [override]). */
+  setWeather(weather: number, override: boolean): void;
+  /** Lets the regions choose the weather again (rwo). */
+  releaseWeatherOverride(): void;
+  /** Turns the sky off or on again (ts); whether it is on now. */
+  toggleSky(): boolean;
   /** Opens the race menu (showracemenu). */
   showRaceMenu(): void;
   /** The player's controls changed (epc, dpc). */
@@ -174,14 +180,29 @@ export class ConsoleCommands {
       case 'togglemenus':
         this.#context.toggleMenus();
         return [];
+      // fw / sw <weather> [1]: the weather at once, or with a change; 1 holds it over the
+      // regions (an override) until rwo or until a weather's time is up.
       case 'fw':
-      case 'forceweather': {
+      case 'forceweather':
+      case 'sw':
+      case 'setweather': {
         const weather = await this.#form(args[0]);
-        if (weather === undefined)
+        const at = weather === undefined ? undefined : runtime.forms.db.locate(weather);
+        if (weather === undefined || !at || runtime.forms.db.typeAt(at) !== 'WTHR')
           return [`Item '${args[0] ?? ''}' not found for parameter Weather.`];
-        this.#context.forceWeather(weather);
+        const override = Number(args[1] ?? 0) !== 0;
+        if (command === 'fw' || command === 'forceweather')
+          this.#context.forceWeather(weather, override);
+        else this.#context.setWeather(weather, override);
         return [];
       }
+      case 'rwo':
+      case 'releaseweatheroverride':
+        this.#context.releaseWeatherOverride();
+        return [];
+      case 'ts':
+      case 'togglesky':
+        return [`Sky -> ${this.#context.toggleSky() ? 'On' : 'Off'}`];
       case 'epc':
       case 'enableplayercontrols':
       case 'dpc':
