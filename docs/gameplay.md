@@ -423,14 +423,15 @@ the player in a runtime on the game data, `--audit` reads every record).
   Telekinesis (src/gameplay/magic/telekinesis.ts; observed in the original): the player's
   cast held takes hold of the loose object aimed at within fMagicTelekinesisBaseDistance feet
   (2100; the perks' Mod Telekinesis Distance on it) × fMagicUnitsPerFoot (22) with the grab
-  spring (CommonLibSSE PlayerCharacter GrabbingType kTelekinesis) and pulls it in from its own
+  spring (CommonLibSSE PlayerCharacter GrabbingType kTelekinesis) at its middle, with
+  Telekinesis's own spring settings (docs/physics.md, Grabbing), and pulls it in from its own
   distance at a speed from fMagicTelekinesisMoveBase (50) growing by
   fMagicTelekinesisMoveAccelerate (400) a second up to fMagicTelekinesisMoveMax (1000), to
   fMagicTelekinesisDistanceMin (64) before the camera (never farther than the reach ×
   fMagicTelekinesiDistanceMult); held there its throw gathers fMagicTelekinesisThrowAccelerate
   (10) a second up to fMagicTelekinesisThrowMax (30). Let go held, it is thrown along the view at
   fMagicTelekinesisThrow (1000) plus that (dual cast × fMagicTelekinesisDualCastThrowMult, 2);
-  let go while pulled in, it stops. TODO(M13): the thrown object's damage
+  its turning stopped; let go while pulled in, it stops. TODO(M13): the thrown object's damage
   (fMagicTelekinesisDamageBase plus its collision's, × fMagicTelekinesisDamageMult or the dual
   cast's, Mod Telekinesis Damage / Damage Mult). Grab Actor holds its target's ragdoll
   fMagicGrabActorMinDistance (120, Dawnguard.esm) before its caster, and flings it away with
@@ -1217,8 +1218,10 @@ HasBeenEaten, IsPoison.
   ranks −0.75: 50 % and 75 %, as UESP measures them), the player with it; no zoom without
   stamina or under Slow Time. **Falls** (src/gameplay/falling.ts): landing from higher than
   fJumpFallHeightMin (600) takes ((height − 600) × fJumpFallHeightMult)^fJumpFallHeightExponent
-  (0.1, 1.45) health, through Mod Falling Damage (UESP "Skyrim:Damage"; none in water;
-  TODO(M13): NPCs' falls with their NPC settings, difficulty).
+  (Skyrim.esm: 0.1, 1.45) health, through Mod Falling Damage (UESP "Skyrim:Damage"; none in
+  water); every other actor, horses too, by the NPCs' settings (fJumpFallHeightMinNPC 450,
+  exponent 1.65), and one getting up from a ragdoll against a quarter of the minimum height (the
+  engine's landing and ragdoll end, observed in the original; docs/physics.md). TODO(M13): difficulty.
 
 No vanilla perk uses and no system asks Calculate Mine Explode Chance,
 Adjust Limb Damage, Get Should Attack, Mod Addiction Chance / Duration, Mod Positive Chem
@@ -1373,9 +1376,12 @@ the view: `src/shell/destruction-looks.ts`; check: `node tools/destruction-info.
 - **Debris**: a stage's DEBR throws its debris count of pieces, each one of its models chosen by
   their percentages as weights, from about the object's middle (within its bounds) outward and
   up at 3 m/s, as loose bodies on the small debris layer (the model's own bodies made dynamic,
-  else a sphere of half its bounds; a mass of 5 kg where the file has none) for 15 s.
-  TODO(M13): the engine's debris speed, lifetime, mass and shape (no game setting of the load
-  order names them), and whether a debris' percentages are weights or chances.
+  else a sphere of half its bounds; a mass of 5 kg where the file has none) for 15 s; with
+  more than iDebrisMaxCount (25) pieces lying about, the oldest go (the engine's, observed in
+  the original). TODO(M13): the engine's debris speed, lifetime, mass and shape (no game setting of the
+  load order names them; fDebrisMaxVelocity and fDebrisMinExtent choose which bodies are swept:
+  docs/physics.md), its fade over a piece's last fDebrisFadeTime (1 s: instances have no alpha
+  of their own yet), and whether a debris' percentages are weights or chances.
 - **Explosions** show through the actor stage's projectiles (MagicProjectiles.burst): its
   sounds, model and light, image-space modifier on a player within its image-space radius, its
   placed object (the oil explosion's fire hazard), a noise for detection.

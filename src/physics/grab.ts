@@ -5,7 +5,8 @@
 // fZKeySpringElasticity of the distance per step and fZKeySpringDamping of the point's
 // velocity, through the body's effective mass at the point; the impulse is limited to the
 // body's mass × the step × the maximum relative force; then the body's velocities are scaled
-// by fZKeyObjectDamping. Notes: docs/physics.md.
+// by fZKeyObjectDamping. Telekinesis hangs the object on the same spring with its own settings
+// (TELEKINESIS_SPRING). Notes: docs/physics.md.
 
 import RAPIER from '@dimforge/rapier3d-compat';
 import { HAVOK_SCALE } from './collision-data.ts';
@@ -27,34 +28,61 @@ export interface GrabSettings {
 }
 
 /**
- * The executable's defaults of the grab settings (a dump of every game setting; the plugins
- * set fZKeyMaxForce and fZKeyMaxForceWeightHigh to the same values).
+ * The executable's built-in grab settings (Skyrim.esm sets fZKeyMaxForce to 100 and
+ * fZKeyMaxForceWeightHigh to 150).
  */
 export const GRAB_DEFAULTS: GrabSettings = {
   springDamping: 0.5,
   springElasticity: 0.2,
   objectDamping: 0.75,
-  maxForce: 100,
+  maxForce: 250,
   maxForceScaleLow: 0.2,
   maxForceScaleHigh: 1,
   maxForceWeightLow: 0,
-  maxForceWeightHigh: 150,
+  maxForceWeightHigh: 300,
 };
 
 /**
- * The spring's maximum relative force (acceleration, m/s²) for an object's weight:
- * fZKeyMaxForce × the scale from fZKeyMaxForceScaleLow at fZKeyMaxForceWeightLow to
- * fZKeyMaxForceScaleHigh at fZKeyMaxForceWeightHigh. The engine's use of the weight is not
- * documented; here the body's Havok mass is the weight. TODO(M13): calibrate against the game.
+ * The spring's maximum relative force (acceleration, m/s²) for an object's weight (the engine
+ * weighs it by its Havok mass, its bodies' together; observed in the original): fZKeyMaxForce ×
+ * fZKeyMaxForceScaleHigh up to fZKeyMaxForceWeightLow, falling to fZKeyMaxForceScaleLow at
+ * fZKeyMaxForceWeightHigh and beyond: heavy objects are held more weakly.
  */
 export function maxRelativeForce(settings: GrabSettings, weight: number): number {
-  const span = settings.maxForceWeightHigh - settings.maxForceWeightLow;
-  const t = span > 0 ? Math.min(1, Math.max(0, (weight - settings.maxForceWeightLow) / span)) : 1;
+  const low = settings.maxForceWeightLow;
+  const high = settings.maxForceWeightHigh;
+  const t = high > low ? (Math.min(high, Math.max(low, weight)) - high) / (low - high) : 1;
   return (
     settings.maxForce *
     (settings.maxForceScaleLow + (settings.maxForceScaleHigh - settings.maxForceScaleLow) * t)
   );
 }
+
+/** What may be grabbed and what a held object hinders (GMST; the engine's built-in values). */
+export interface GrabLimits {
+  /** fGrabMaxWeightWalking: objects heavier (Havok mass, kg) are not taken hold of. */
+  readonly maxWeight: number;
+  /** fZKeyHeavyWeight: holding a heavier object, the player neither runs nor sprints. */
+  readonly heavyWeight: number;
+}
+
+export const GRAB_LIMITS: GrabLimits = { maxWeight: 100, heavyWeight: 75 };
+
+/**
+ * Telekinesis's spring (GMST fMagicTelekinesisSpringDamping, ...SpringElasticity, ...ObjectDamping,
+ * ...MaxForce; the engine's built-in values, observed in the original; Skyrim.esm sets none): a constant
+ * maximum force, no weight scale. Its pull and throw: src/gameplay/magic/telekinesis.ts.
+ */
+export const TELEKINESIS_SPRING: GrabSettings = {
+  springDamping: 0.5,
+  springElasticity: 0.075,
+  objectDamping: 0.95,
+  maxForce: 1000,
+  maxForceScaleLow: 1,
+  maxForceScaleHigh: 1,
+  maxForceWeightLow: 0,
+  maxForceWeightHigh: 0,
+};
 
 /** A held object: the body, the point taken hold of (in the body's frame) and the spring. */
 export class GrabSpring {

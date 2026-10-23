@@ -8,8 +8,21 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
 
 - **Units:** Rapier runs in Havok units (≈ metres, 1 = 69.99125 game units); the engine's
   own code works in game units and converts at the boundary.
-- **Steps:** fixed 1/60 s (`[HAVOK] fMaxTime`), at most 4 per frame; the player's camera is
-  interpolated between the last two steps, so 144 Hz screens see smooth motion.
+- **Steps:** fixed `[HAVOK] fMaxTime` (1/60 s), at most `uMaxNumPhysicsStepsPerUpdate` (3) per
+  frame (observed in the original: the engine clamps a frame's physics time to that many steps; its
+  "complex" mode, fMaxTimeComplex with uMaxNumPhysicsStepsPerUpdateComplex 1, is not known to be
+  used: TODO(M13); fTimePerSubStep and iMinNumSubSteps are read by nothing); the player's camera
+  is interpolated between the last two steps, so 144 Hz screens see smooth motion.
+- **Top speeds:** every simulated body's velocity is clamped after each step to its file's
+  maximum linear velocity (Havok units a second) and angular velocity (radians a second), as
+  Havok's motions do.
+- **Swept bodies** (continuous collision, Rapier's CCD): the engine chooses a body's quality as
+  it makes it (observed in the original): a simulated body thicker than `fDebrisMinExtent` (2 Havok units,
+  140 game units) along all three axes, or whose top speed is below `fDebrisMaxVelocity` (25
+  game units a second), is debris, never swept; of the others, debris quality becomes moving
+  (swept against what is fixed) and the rest keep the file's (vanilla files: fixed, keyframed,
+  debris and moving). So nearly all clutter is swept; a cart is not. Rapier sweeps against
+  everything, not only fixed bodies.
 - **Gravity:** 9.8 m/s² downwards. Not documented; it is what mods read from the running
   game (hkpWorld::m_gravity).
 - **Collision filter:** every collider has a layer; pairs collide as the COLL records say
@@ -141,11 +154,21 @@ through the edges' middles, a player walks around it); and a few steps higher th
   the Palace of the Kings, now 2).
 - Gravity × `[HAVOK] fInAirFallingCharGravityMult` (1.35) while falling, ×
   `fUnsupportedGravMult` (4) while standing on something too steep (sliding off).
+- **Pushing** (the engine's character controller, observed in the original): a simulated body a character
+  walks into gets an impulse along the contact's normal at the contact, the one that takes the
+  touched point up to the character's speed (TODO(M13): Havok's character proxy's own impulse is
+  not known), its speed change held to 1000 Havok units a second, times a factor by the body's
+  layer and mass: nothing for one without mass or of `[HAVOK] fMoveLimitMass` (95 kg) or more,
+  nor a projectile; a prop (L_PROPS) ×3 up to half that mass, else ×0.1; a trap ×0.1; anything
+  else ×2. Rapier's own impulses on dynamic bodies are off; the controller still stops at what it
+  does not push.
 - **Speeds** come from the movement types (MOVT): NPCDefault walking and running,
   NPCSprinting (only forward), NPCSneaking, NPCSwimming; `bAlwaysRunByDefault`, Run walks,
   Caps Lock toggles. Air control is not documented: the speed at take-off is kept.
-- **Jump:** GMST fJumpHeightMin (76) is the height; with constant gravity the take-off speed
-  is √(2 g h). No jumping while sprinting (vanilla blocks it).
+- **Jump:** GMST fJumpHeightMin (Skyrim.esm 76, built in 64) is the height; with constant
+  gravity the take-off speed is √(2 g h). No jumping while sprinting (vanilla blocks it). A
+  sprint goes on in the air (a jump, a step down) until the fall is faster than
+  fJumpFallVelocityMin (Skyrim.esm 700 units a second; the engine's sprint, observed in the original).
 - **Swimming:** at a submersion (water depth over the body's height) of 0.69 the body floats
   with its shoulders at the surface; looking down while swimming forward dives. The engine's
   float height (swimFloatHeight) is not documented; 0.69 is the in-game measurement of the
@@ -153,8 +176,14 @@ through the edges' middles, a player walks around it); and a few steps higher th
 - **The body and its camera** are the player's avatar (animation.md, The player): the
   first-person camera rides the animated Camera1st node (sneaking lowers it), a jump pushes off
   when its animation raises JumpUp. Sprinting drains stamina (docs/gameplay.md). A fall higher
-  than fJumpFallHeightMin takes health (fJumpFallHeight\*, the NPCs' ending in "NPC", through
-  the perks' Mod Falling Damage; none into water): `src/gameplay/falling.ts`, docs/gameplay.md.
+  than fJumpFallHeightMin takes health (fJumpFallHeight\*, through the perks' Mod Falling
+  Damage; none into water): `src/gameplay/falling.ts`, docs/gameplay.md. Every character
+  controller measures its falls (`CharacterBody.landedFrom`: from the highest point of its feet
+  since it left the ground), so NPCs, creatures and horses take the NPCs' falling damage
+  (`...NPC` settings) as the player takes the player's (the engine's landing handler, observed in
+  the original, is the actor's). An actor getting up from a ragdoll (knocked down, thrown) is measured
+  from its feet as it fell (raised by however far its ragdoll flew up) to the ground it gets up
+  on, against a quarter of the minimum height (the engine's ragdoll end).
 
 ## Cameras and input
 
@@ -250,16 +279,22 @@ mass there (m⁻¹·1 − [r]× I⁻¹ [r]×), removes fZKeySpringElasticity (0.
 point the camera looks at (at the distance it was taken) and fZKeySpringDamping (0.5) of the
 point's velocity; the impulse is limited to mass × step × the maximum relative force; then
 both velocities are scaled by fZKeyObjectDamping (0.75). The maximum force is fZKeyMaxForce
-(100) × a scale from fZKeyMaxForceScaleLow (0.2) at fZKeyMaxForceWeightLow (0) to
-fZKeyMaxForceScaleHigh (1) at fZKeyMaxForceWeightHigh (150); the weight here is the Havok mass
-(the engine's is not documented). The plugins set only fZKeyMaxForce and
-fZKeyMaxForceWeightHigh; the other values are the executable's defaults, from a dump of every
-game setting (they agree with the plugins on those two). When the held object is left behind
-by more than fActivatePickLength it is dropped (the engine's rule is not documented).
-TODO(M13): fZKeyHeavyWeight (75), the complex helper's own spring for ragdolls
-(fZKeyComplexHelper\*: their defaults live only in the executable and are not documented; a
-held ragdoll hangs on the plain spring at the body taken hold of),
-fZKeyMaxContactDistance and fZKeyMaxContactMassRatio.
+(Skyrim.esm 100, built in 250) × a scale that falls with the weight (observed in the original: the Havok
+mass of the object's bodies): fZKeyMaxForceScaleHigh (1) up to fZKeyMaxForceWeightLow (0),
+fZKeyMaxForceScaleLow (0.2) at fZKeyMaxForceWeightHigh (Skyrim.esm 150, built in 300) and
+beyond: heavy objects sag. A body heavier than fGrabMaxWeightWalking (100 kg) is not taken
+hold of (fGrabMaxWeightRunning is read by nothing); holding one heavier than fZKeyHeavyWeight
+(75 kg) the player walks, as over-encumbered. When the held object is left behind by more than
+fActivatePickLength it is dropped. TODO(M13): the engine checks a held object that falls more
+than 96 units behind against its contacts (fZKeyMaxContactDistance, fZKeyMaxContactMassRatio);
+what it then does is not known; the complex helper's spring for ragdolls (fZKeyComplexHelper\*;
+a held ragdoll hangs on the plain spring at the body taken hold of).
+
+**Telekinesis** (observed in the original): the same spring with fMagicTelekinesisSpringDamping (0.5),
+...SpringElasticity (0.075), ...ObjectDamping (0.95) and ...MaxForce (1000, no weight scale),
+holding the object at its middle; thrown, its turning is stopped. Its reach, pull, hold and throw:
+docs/gameplay.md, "Magic effects" (src/gameplay/magic/telekinesis.ts). TODO(M13): the complex
+spring for ragdolls (fMagicTelekinesisComplex*); fMagicTelekinesisLiftPowerMult is read by nothing.
 
 **Constraints and ragdolls** (`physics-world.ts`, `articulation.ts`; the blocks:
 formats/nif.md, Collision): a model's constraints become Rapier impulse joints between its
@@ -270,8 +305,12 @@ prismatic → prismatic limited to its distances; ragdoll → spherical with thr
 the twist, the swing towards the motor axis within the cone, the swing towards the plane axis
 within the cone and the plane limits (TODO(M13): Havok's limit is a cone and two planes); stiff
 spring → rope (TODO(M13): a stiff spring also pushes); a chain → a ball and socket per link.
-Motors, friction, malleable strength and a chain's tau and damping are not applied (Rapier's
-joints are stiff). A joint is in the world only while one of its two bodies is simulated: between
+**Friction:** a ragdoll's and a limited hinge's maximum friction torque (a prismatic's friction
+force) is a motor towards no relative speed on the joint's free axes whose force is that maximum
+(an absolute torque in Havok's units, kg·m²/s²: the human skeleton's ragdoll joints hold 10, its
+hinges 0, as the mammoth's, sabre cat's and centurion's), so limbs hold against less and give
+way to more. Motors (no vanilla constraint has one), malleable strength and a chain's tau and
+damping are not applied (Rapier's joints are stiff). A joint is in the world only while one of its two bodies is simulated: between
 two keyframed or held bodies (a living actor's ragdoll keyframed to its pose, an object placed
 to wait) it is left out and made again from its constraint as a body is let go (a death, a
 knock-down, a touch). Rapier solves a joint between two kinematic bodies in every substep all

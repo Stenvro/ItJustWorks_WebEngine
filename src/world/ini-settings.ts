@@ -13,6 +13,15 @@ export const INI_DEFAULTS = {
   // world (AddRagdollToWorld) is driven by the graph's pose (the engine's built-in default).
   Animation: {
     bDriveRagdollWithGraph: 1,
+    // A mount or dismount not ended by its paired animation is ended (src/shell/actor-mounts.ts).
+    fMountDismountTimeout: 8,
+    // An actor's graph is driven by how its controller moved it once that agrees with what it
+    // wanted (src/ai/locomotion.ts, MotionFeedback).
+    bFeedbackToGraphFromCharacterController: 1,
+    fMotionFeedbackMinAngleDelta: 20,
+    fMotionFeedbackMinSpeed: 5,
+    fMotionFeedbackMinSpeedDelta: 25,
+    fMotionFeedbackMinTime: 0.5,
   },
   Audio: {
     fASFadeInTime: 3,
@@ -266,7 +275,12 @@ export const INI_DEFAULTS = {
   },
   HAVOK: {
     fInAirFallingCharGravityMult: 1.35,
-    fMaxTime: 0.016666668,
+    // The physics step and the steps a frame takes at most (src/physics/physics-world.ts).
+    fMaxTime: 1 / 60,
+    // Bodies this heavy (kg) or heavier are not pushed by characters (src/physics/character.ts).
+    fMoveLimitMass: 95,
+    // The least time between two tellings of a trigger volume's OnTrigger (ms; [Havok]).
+    fTriggerEventDelayMS: 500,
     fUnsupportedGravMult: 4,
     fWarmStartMaxTime: 4,
     uMaxNumPhysicsStepsPerUpdate: 3,

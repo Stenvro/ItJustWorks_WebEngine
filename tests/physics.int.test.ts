@@ -11,14 +11,19 @@ import { parseNif } from '../src/formats/nif/nif.ts';
 import { decodeWindows1252 } from '../src/formats/text.ts';
 import { CharacterBody } from '../src/physics/character.ts';
 import { buildCollision } from '../src/physics/collision-data.ts';
-import { GRAB_DEFAULTS, GrabSpring } from '../src/physics/grab.ts';
+import { GRAB_DEFAULTS, GRAB_LIMITS, GrabSpring, TELEKINESIS_SPRING } from '../src/physics/grab.ts';
 import {
   CollisionMatrix,
   Layer,
   parseCollisionLayer,
   type CollisionLayer,
 } from '../src/physics/collision-layers.ts';
-import { GRAVITY, initPhysics, PhysicsWorld } from '../src/physics/physics-world.ts';
+import {
+  DEBRIS_QUALITY,
+  GRAVITY,
+  initPhysics,
+  PhysicsWorld,
+} from '../src/physics/physics-world.ts';
 import { cellArrival, doorDestination, loadCellData } from '../src/world/cell-loader.ts';
 import { MaterialFlag, materialId, parseMaterialType } from '../src/world/material-type.ts';
 import { parseMovementType } from '../src/world/movement.ts';
@@ -286,6 +291,11 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
         },
         jumpHeight: 76,
         grab: GRAB_DEFAULTS,
+        fallVelocityMin: 600,
+        grabLimits: GRAB_LIMITS,
+        telekinesisSpring: TELEKINESIS_SPRING,
+        debris: DEBRIS_QUALITY,
+        materialFlags: new Map(),
         stairMaterials: new Set(),
         physics,
         waterHeight: () => undefined,
@@ -453,6 +463,11 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
         },
         jumpHeight: 76,
         grab: GRAB_DEFAULTS,
+        fallVelocityMin: 600,
+        grabLimits: GRAB_LIMITS,
+        telekinesisSpring: TELEKINESIS_SPRING,
+        debris: DEBRIS_QUALITY,
+        materialFlags: new Map(),
         stairMaterials: new Set(),
         physics,
         waterHeight: (_x, y) => (y < 1500 ? 0 : undefined),

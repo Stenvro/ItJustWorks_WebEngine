@@ -234,8 +234,12 @@ their look: [formats/esm.md](formats/esm.md#actors)).
 - **How often they move:** near the camera (512 units) and in front of it every frame; behind
   it or beyond 2048 units ten times a second, beyond 4096 five times a second, their graphs
   then running the longer step at once (`animationInterval`). In Whiterun's 25 cells this
-  took the actors' per-frame cost from 6.1 to 0.3 ms. The engine's own scheme (actors'
-  processing levels) is not documented: TODO(M13).
+  took the actors' per-frame cost from 6.1 to 0.3 ms. TODO(M13): the engine's scheme (observed
+  in the original): a graph is updated every frame up to [Animation] fAnimInterpNearDist (400) from the
+  camera (the distance scaled by 80° over the field of view), every fAnimInterpMinTime (0.08 s)
+  there, rising to fAnimInterpMaxTime (0.25 s) at fAnimInterpFarDist (800) and beyond or unseen,
+  its pose interpolated between the updates (fAnimInterpSlop); without that interpolation the
+  engine's intervals would make poses step, so ours stay.
 
 ## Driving the graphs
 
@@ -247,7 +251,13 @@ and the player alike).
 it wants: a speed, the direction to go in (an angle against the actor's facing) and a rotation
 speed; the engine keeps them in the actor's process data and moves the actor by them. The graph
 sees these wishes, not what physics made of them: an actor walking into a wall walks on the
-spot. Two graph variables change the source: with **bIsSynced** (paired and synced animations)
+spot. **Motion feedback** ([Animation] bFeedbackToGraphFromCharacterController, on; observed in
+the original; `MotionFeedback`): once the movement an NPC's controller made has agreed with the wish
+(their speeds within fMotionFeedbackMinSpeedDelta, 25 units a second; their directions within
+fMotionFeedbackMinAngleDelta, 20°) for fMotionFeedbackMinTime (0.5 s), the graph is told the
+movement made (its direction only above fMotionFeedbackMinSpeed, 5); until then the wish, none
+below fMotionFeedbackMinSpeed, its direction turning from the one told before by at most a full
+turn a second. Two graph variables change the source: with **bIsSynced** (paired and synced animations)
 the speed, direction and rotation are taken from the animation's own motion instead; with
 **bSpeedSynced** the speed is taken from the graph's Speed (times the actor's scale). Before
 each movement update the engine reads **bAnimationDriven** and **bAllowRotation** from the graph
@@ -518,7 +528,10 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
 
 - **Blinking:** after a delay between fBlinkDelayMin and fBlinkDelayMax (0.5–2.5 s), both
   lids close over fBlinkDownTime (0.04 s) and open over fBlinkUpTime (0.14 s); each face has
-  its own random sequence (seeded by the reference).
+  its own random sequence (seeded by the reference). After a blink, eyes looking down by
+  fLookDownDisableBlinkingAmt (0.25 of the LookDown morph) or more hold the next one back until
+  they look up (the engine's blink, observed in the original; inferred: its comparison reads the other way
+  round, which would let only downcast eyes blink).
 - **Expression:** one of the 17 (MoodHappy, DialogueAnger, CombatShout, ...) held at a
   strength, chosen every frame (`src/ai/moods.ts`, `src/shell/actor-moods.ts`): a script's
   override (Actor.SetExpressionOverride: the mfg expression and its strength 0..100, until
@@ -527,8 +540,11 @@ the morphs to the FaceGen head's shapes (rendering.md, Skinning).
   puzzled, disgusted) as its Mood* expression at half strength (TODO(M13): the engine's
   strengths; SetExpressionOverride's default 50 is taken). The player's face too. A response's
   emotion (INFO TRDT emotion type and value: anger, disgust, fear,
-  sad, happy, surprise, puzzled as the Dialogue* expressions; neutral none) shows over it while
-  it is said, eased in and out over 0.3 s (TODO(M13): the engine's blend).
+  sad, happy, surprise, puzzled as the Dialogue* expressions; neutral none) shows instead of it
+  while it is said. The shown expression's morph moves towards its strength, the others towards
+  none, by fExpressionChangePerSec (2) a second and fExpressionStrengthAdd (1) more times the
+  strength (the engine's expression update, observed in the original; the strength is taken to be the
+  target expression's).
 - **Speech:** a line's lip-sync curves (formats/audio.md, LIP) drive the phonemes and the
   modifiers (blinks join the face's own, the strongest wins; brows, eye looks). The curves
   start with their lead-in frames, the audio after them, at the head through the 3D dialogue

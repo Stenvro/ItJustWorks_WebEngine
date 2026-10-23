@@ -63,7 +63,8 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   ([animation.md](animation.md#driving-the-graphs)): Speed, Direction and TurnDelta are what
   its steering wants in the last physics step (the velocity and the turn rate it asked of its
   controller, not what physics made of it: an actor walking into a wall walks on the spot, as
-  the engine's do), with the actions their thresholds perform (moveStart, moveStop, turnLeft,
+  the engine's do; once its controller has made the same for half a second, that: the motion
+  feedback), with the actions their thresholds perform (moveStart, moveStop, turnLeft,
   turnRight, turnStop, moveForward, moveBackward) and the sync variables they set. The player's
   body is driven the same way. The graph's BSSpeedSamplerModifier turns Speed into
   SpeedSampled, the blend parameter of the locomotion blends. Measured on Orgnar: walking 80
@@ -622,7 +623,8 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   it on foot starts from a standing graph (a rider let off a walking horse came out of
   HorseExitOut walking on the spot: Elenwen at Helgen's gate). GetSitting answers 2, 3 and 4 for a rider mounting, riding and
   getting off; IsRidingHorse, IsBeingRidden, IsOnMount, Dismount and IsPlayersLastRiddenHorse
-  answer from it.
+  answer from it. A mount or dismount whose paired animation never says it ended is ended after
+  [Animation] fMountDismountTimeout (8 s; the engine's timer, observed in the original).
 - **The player** rides a horse by activating it: "Ride" (sRide), "Steal Horse" (sStealHorse)
   for one owned (XOWN) by another that is neither bought (PlayerHorseFaction) nor the last they
   rode: the game asks first (sStealHorse), then riding off is the theft

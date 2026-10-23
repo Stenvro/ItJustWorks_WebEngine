@@ -9,6 +9,7 @@ import {
   creatureLipVariables,
   FaceAnimation,
   lipLeadIn,
+  EXPRESSION_DEFAULTS,
   VANILLA_BLINK,
   type BlinkSettings,
 } from '../animation/face.ts';
@@ -539,13 +540,20 @@ export class ActorPlacer {
     };
   }
 
-  /** Blink timing from the game settings, read once. */
+  /** Blink timing and expression changes from the game settings, read once. */
   #blinkSettings(): Promise<BlinkSettings> {
     this.#blink ??= this.#session.settings().then((settings) => ({
       fBlinkDelayMin: settings.number('fBlinkDelayMin') ?? VANILLA_BLINK.fBlinkDelayMin,
       fBlinkDelayMax: settings.number('fBlinkDelayMax') ?? VANILLA_BLINK.fBlinkDelayMax,
       fBlinkDownTime: settings.number('fBlinkDownTime') ?? VANILLA_BLINK.fBlinkDownTime,
       fBlinkUpTime: settings.number('fBlinkUpTime') ?? VANILLA_BLINK.fBlinkUpTime,
+      fExpressionChangePerSec:
+        settings.number('fExpressionChangePerSec') ?? EXPRESSION_DEFAULTS.fExpressionChangePerSec,
+      fExpressionStrengthAdd:
+        settings.number('fExpressionStrengthAdd') ?? EXPRESSION_DEFAULTS.fExpressionStrengthAdd,
+      fLookDownDisableBlinkingAmt:
+        settings.number('fLookDownDisableBlinkingAmt') ??
+        EXPRESSION_DEFAULTS.fLookDownDisableBlinkingAmt,
     }));
     return this.#blink;
   }

@@ -4,8 +4,10 @@
 // actor (what L_PROJECTILE collides with: the actors' bodies on BIPED; the player's character
 // controller) or have flown their range. An actor hit takes the shot's damage (the combat's
 // hit); iArrowInventoryChance % of the arrows go into its inventory. One that hits the world
-// sticks fCombatMissileStickDepth deep where it hit: an arrow lying there to pick up (a
-// reference of the ammunition, kept still), at most 15 of them (the oldest goes).
+// sticks fCombatMissileStickDepth deep where it hit if the surface's material lets arrows stick
+// (MATT "Arrows Stick": wood, earth, snow, cloth, flesh; not stone, metal or glass), else it
+// drops there: either way an arrow lying there to pick up (a reference of the ammunition), at
+// most 15 of them (the oldest goes).
 
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
@@ -24,6 +26,7 @@ import {
 } from '../gameplay/combat/projectile.ts';
 import type { ProjectileCombat } from '../gameplay/combat/combat-records.ts';
 import { meshPath } from '../world/actors.ts';
+import { MaterialFlag } from '../world/material-type.ts';
 import type { GameSession } from './game-session.ts';
 
 /** A shot on its way. */
@@ -79,6 +82,8 @@ export interface ProjectileOptions {
 
 /** Steps a frame is cut into, at most this long (seconds). */
 const STEP = 1 / 60;
+/** An arrow that does not stick is laid this far back out of what it hit (units). */
+const BOUNCE_CLEARANCE = 8;
 /** A shot does not hit its shooter (its own bodies around the bow) in its first this many units. */
 const OWN_REACH = 64;
 
@@ -216,7 +221,7 @@ export class CombatProjectiles {
       owner?.kind === 'object' && owner.reference !== 0 ? owner.reference : undefined,
       shot.payload,
     );
-    void this.#stick(shot, hit.point, direction);
+    void this.#stick(shot, hit.point, direction, hit.material);
     return true;
   }
 
@@ -235,11 +240,17 @@ export class CombatProjectiles {
     });
   }
 
-  /** The arrow lies where it hit, fCombatMissileStickDepth into it: a reference to pick up. */
-  async #stick(shot: Shot, point: Vec3, direction: Vec3): Promise<void> {
+  /**
+   * The arrow lies where it hit: fCombatMissileStickDepth into it, held still, where its material
+   * (a collision material id) lets arrows stick (a material that is no material type does), else
+   * just out of it, falling (TODO(M13): the bounce, fArrowBounce*): a reference to pick up.
+   */
+  async #stick(shot: Shot, point: Vec3, direction: Vec3, material: number): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime) return;
-    const depth = this.#options.stickDepth();
+    const flags = (await this.#options.session.playerData()).materialFlags.get(material);
+    const sticks = flags === undefined || (flags & MaterialFlag.arrowsStick) !== 0;
+    const depth = sticks ? this.#options.stickDepth() : -2 * BOUNCE_CLEARANCE;
     const at: [number, number, number] = [
       point[0] - direction[0] * depth * 0.5,
       point[1] - direction[1] * depth * 0.5,
@@ -252,7 +263,8 @@ export class CombatProjectiles {
     state.position = at;
     // The arrow model lies along +Y: turned to the flight's heading, pitched along it.
     state.rotation = [-pitch, 0, heading];
-    state.motionType = 4;
+    // Stuck it is held (keyframed); not, it falls (dynamic).
+    state.motionType = sticks ? 4 : 1;
     if (shooter?.cell !== undefined) state.cell = shooter.cell;
     if (shooter?.world !== undefined) state.world = shooter.world;
     runtime.world.created?.(reference);

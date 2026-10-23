@@ -70,6 +70,12 @@ export interface ActorKnockdownsOptions {
   readonly subject: (reference: number) => KnockSubject | undefined;
   /** The knock state changed (combat's GetKnockStateEnum, canAct). */
   readonly changed?: (reference: number, state: number) => void;
+  /**
+   * Its get-up begins after a fall of `height` units (from its feet as it was knocked down,
+   * raised by however far its ragdoll flew up, to the ground it gets up on): the engine's
+   * falling damage of a ragdoll (src/gameplay/falling.ts, RAGDOLL_FALL_SHARE).
+   */
+  readonly fell?: (reference: number, height: number) => void;
 }
 
 type Phase = 'down' | 'matching' | 'rising';
@@ -91,6 +97,10 @@ interface Knock {
   readonly heard: Set<string>;
   /** Where its get-up was matched from. */
   frame: GroundFrame | undefined;
+  /** Its feet as it was knocked down, its ragdoll root's height then and the highest since. */
+  feet: number | undefined;
+  rootStart: number | undefined;
+  rootTop: number | undefined;
 }
 
 export class ActorKnockdowns {
@@ -144,7 +154,13 @@ export class ActorKnockdowns {
         held: undefined,
         heard: new Set(),
         frame: undefined,
+        feet: (subject.holder.world ?? subject.placed.instances[0]?.world)?.[14],
+        rootStart: undefined,
+        rootTop: undefined,
       };
+      const root = this.#root(knock);
+      knock.rootStart = root?.[2];
+      knock.rootTop = root?.[2];
       this.#knocks.set(reference, knock);
       this.#options.changed?.(reference, KnockState.queued);
       subject.lying?.(true);
@@ -235,6 +251,8 @@ export class ActorKnockdowns {
           knock.resting = 0;
           continue;
         }
+        const rootZ = this.#root(knock)?.[2];
+        if (rootZ !== undefined) knock.rootTop = Math.max(knock.rootTop ?? rootZ, rootZ);
         knock.resting = bodies.resting(reference, REST_SPEED) ? knock.resting + seconds : 0;
         const rested = knock.down >= DOWN_MIN && knock.resting >= REST_SECONDS;
         if (!knock.paralyzed && (rested || knock.down >= DOWN_MAX)) this.#beginGetUp(knock);
@@ -303,6 +321,11 @@ export class ActorKnockdowns {
     const placed = knock.placed;
     const behavior = placed.behavior;
     const frame = this.#groundFrame(knock);
+    const { feet, rootStart, rootTop } = knock;
+    if (frame && feet !== undefined && rootStart !== undefined && rootTop !== undefined) {
+      const height = feet + Math.max(0, rootTop - rootStart) - frame.position[2];
+      if (height > 0) this.#options.fell?.(knock.subject.reference, height);
+    }
     if (!behavior || !frame) {
       this.#stand(knock, frame);
       return;
@@ -389,13 +412,8 @@ export class ActorKnockdowns {
     const subject = knock.subject;
     const placed = knock.placed;
     const world = subject.holder.world ?? placed.instances[0]?.world;
-    if (!world) return undefined;
-    const rootName = placed.behavior?.ragdollBoneNames([0])[0];
-    const pose = placed.pose;
-    const node =
-      (rootName === undefined ? undefined : pose.world(rootName)) ?? pose.worlds.subarray(0, 16);
-    const at = multiply(world, node);
-    const root: Vec3 = [at[12] ?? 0, at[13] ?? 0, at[14] ?? 0];
+    const root = this.#root(knock);
+    if (!world || !root) return undefined;
     const ground = this.#ground(root, subject.reference) ?? root[2];
     const scale = Math.hypot(world[0] ?? 1, world[1] ?? 0, world[2] ?? 0);
     const position: Vec3 = [root[0], root[1], ground];
@@ -406,6 +424,19 @@ export class ActorKnockdowns {
       world: referenceMatrix({ position, rotation: [0, 0, subject.heading], scale }),
     };
   }
+  /** Its ragdoll root's place now (the COM, else the skeleton's first node). */
+  #root(knock: Knock): Vec3 | undefined {
+    const placed = knock.placed;
+    const world = knock.subject.holder.world ?? placed.instances[0]?.world;
+    if (!world) return undefined;
+    const rootName = placed.behavior?.ragdollBoneNames([0])[0];
+    const pose = placed.pose;
+    const node =
+      (rootName === undefined ? undefined : pose.world(rootName)) ?? pose.worlds.subarray(0, 16);
+    const at = multiply(world, node);
+    return [at[12] ?? 0, at[13] ?? 0, at[14] ?? 0];
+  }
+
   /** The floor under a point (what character controllers stand on), not the actor's own body. */
   #ground(from: Vec3, reference: number): number | undefined {
     const physics = this.#options.physics();
