@@ -457,7 +457,7 @@ export class ActorsAway {
       if (this.#options.loaded(arrival)) {
         // Through a door into the loaded area: it comes out of it there (the door swings).
         this.#trips.delete(actor);
-        this.#options.doors?.arrive(door.destination);
+        this.#options.doors?.arrive(door.destination, actor);
         void this.#moveTo(runtime, actor, arrival);
         return;
       }

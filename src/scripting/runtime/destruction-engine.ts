@@ -299,6 +299,10 @@ export class DestructionEngine {
     }
     if ((stage.flags & DestructionStageFlag.disable) !== 0)
       await runtime.setEnabled(reference, false);
-    await runtime.sendEvent(reference, 'OnDestructionStageChanged', [old, reached]);
+    await runtime.events.emitted('destructionStageChanged', {
+      reference,
+      oldStage: old,
+      newStage: reached,
+    });
   }
 }

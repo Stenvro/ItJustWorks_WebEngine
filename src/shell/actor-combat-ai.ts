@@ -283,7 +283,13 @@ interface Mind {
   supporting: boolean;
   /** It gets up out of the furniture that holds it. */
   gettingUp: boolean;
+  /** The combat state last told (TESCombatEvent), and the target told with it. */
+  told: CombatStateValue;
+  toldTarget: number | undefined;
 }
+
+/** GetCombatState: 0 not in combat, 1 in combat, 2 searching. */
+type CombatStateValue = 0 | 1 | 2;
 
 /** An actor weighs its fight this often (seconds). TODO(M13): the engine's rates. */
 const DECIDE_SECONDS = 0.25;
@@ -372,7 +378,7 @@ export class ActorCombatAi {
   }
 
   /** GetCombatState: 0 not in combat, 1 in combat, 2 searching. */
-  combatState(reference: number): number {
+  combatState(reference: number): CombatStateValue {
     switch (this.#minds.get(reference)?.mode) {
       case 'fight':
       case 'flee':
@@ -499,6 +505,8 @@ export class ActorCombatAi {
   remove(reference: number): void {
     const mind = this.#minds.get(reference);
     if (mind) {
+      // Gone from the fight: its combat ends (told as it ends).
+      if (mind.told !== 0) this.#tellState(mind, 0);
       mind.search?.cancel();
       this.#groups.leave(reference);
       this.#minds.delete(reference);
@@ -555,6 +563,28 @@ export class ActorCombatAi {
       this.remove(reference);
     }
     this.#spectators(senses);
+    // Each change of an actor's combat state is told (below).
+    for (const mind of this.#minds.values()) {
+      const state = this.combatState(mind.reference);
+      if (state !== mind.told) this.#tellState(mind, state);
+    }
+  }
+
+  /**
+   * An actor's combat state changed: the hub tells it with its target (TESCombatEvent: the
+   * actor's OnCombatStateChanged, the story manager, the HUD), as the engine does when an actor
+   * enters or leaves combat and when its combat group turns to searching and back (observed in
+   * the original). Leaving combat is told with the target it last fought.
+   */
+  #tellState(mind: Mind, state: CombatStateValue): void {
+    const target = state === 0 ? mind.toldTarget : (mind.target ?? mind.toldTarget);
+    mind.told = state;
+    mind.toldTarget = target;
+    this.#options.session.scriptsReady?.events.emit('combat', {
+      actor: mind.reference,
+      target,
+      state,
+    });
   }
 
   /** Detection asks combat: who is in combat, who fights whom, who is hostile to whom. */
@@ -631,6 +661,8 @@ export class ActorCombatAi {
         restoredAt: -Infinity,
         supporting: false,
         gettingUp: false,
+        told: 0,
+        toldTarget: undefined,
       };
       this.#minds.set(reference, mind);
     }

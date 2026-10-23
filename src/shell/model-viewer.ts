@@ -838,6 +838,10 @@ export class ModelViewer {
     play.onTrigger = (reference, entered) => {
       this.#session?.scriptsReady?.triggered(reference, PLAYER_REF, entered);
     };
+    // The player taking hold of an object and letting it go tells its scripts (OnGrab, OnRelease).
+    play.onGrab = (reference, grabbed) => {
+      this.#session?.scriptsReady?.events.emit('grabRelease', { reference, grabbed });
+    };
     this.#ui.freeCamera.checked = false;
     this.#ui.play.hidden = false;
     // The player's body (third person) and first-person camera animation.

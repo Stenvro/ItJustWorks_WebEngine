@@ -178,6 +178,8 @@ export class PapyrusVm {
   readonly scheduler: PapyrusScheduler;
   /** Set to log every instruction (for tools and debugging). */
   trace: ((line: string) => void) | undefined;
+  /** Set to hear every event handler that runs: its script, the event, the object (debugging). */
+  handled: ((script: string, event: string, target: ObjectHandle) => void) | undefined;
   readonly #attached = new Map<string, Promise<Instance[]>>();
   readonly #natives = new Map<string, Instance>();
   readonly #warned = new Set<string>();
@@ -478,6 +480,7 @@ export class PapyrusVm {
         // The handler of the state the script is in when the event comes.
         const found = this.#findFunction(instance, instance.script, event);
         if (!found) return null;
+        this.handled?.(instance.script.displayName, event, instance.target);
         return this.#invoke(
           found.level,
           found.fn,

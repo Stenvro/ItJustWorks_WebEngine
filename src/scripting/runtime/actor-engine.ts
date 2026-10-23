@@ -897,9 +897,10 @@ export class ActorEngine {
       for (const list of lists)
         await this.#runtime.addItem(reference, this.#runtime.formHandle(list), 1, true);
     }
-    const by = killer === undefined ? null : this.#runtime.actorHandle(killer);
-    await this.#runtime.sendEvent(reference, 'OnDying', [by]);
-    await this.#runtime.sendEvent(reference, 'OnDeath', [by]);
+    // The hub tells it dying, then dead (TESDeathEvent: OnDying, OnDeath).
+    const events = this.#runtime.events;
+    await events.emitted('death', { actor: reference, killer, dead: false });
+    await events.emitted('death', { actor: reference, killer, dead: true });
     // Crime: a witness gone, a murder, the story manager's Kill Actor event (crime-engine.ts).
     await this.#runtime.crime.killed(reference, killer, silent);
   }

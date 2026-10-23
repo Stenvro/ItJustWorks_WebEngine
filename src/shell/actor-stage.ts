@@ -862,7 +862,7 @@ export class ActorStage {
       position: door.arrival,
       heading: door.arrivalHeading,
     };
-    if (this.#loaded(arrival)) this.doors.arrive(door.destination);
+    if (this.#loaded(arrival)) this.doors.arrive(door.destination, reference);
     else this.away.depart(reference, arrival, destination);
     await this.away.place(reference, arrival);
   }

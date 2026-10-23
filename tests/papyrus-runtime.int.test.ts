@@ -213,6 +213,64 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     expect(await runtime.conditionsHold([distance(0x0001aa6b)], aslfur)).toBe(true);
   });
 
+  it("relays the hub's events to the scripts that handle them (a dragon's combat)", async () => {
+    // EncDragon04Fire runs dragonActorSCRIPT, which handles OnCombatStateChanged.
+    const dragon = await runtime.placeAt(0x000f811b, PLAYER, 1);
+    const ran: string[] = [];
+    runtime.vm.handled = (script, event, target) => {
+      if (target.formId === dragon) ran.push(`${script.toLowerCase()}.${event}`);
+    };
+    try {
+      await runtime.events.emitted('combat', { actor: dragon, target: PLAYER, state: 1 });
+      await runtime.vm.idle();
+      expect(ran).toContain('dragonactorscript.OnCombatStateChanged');
+    } finally {
+      runtime.vm.handled = undefined;
+    }
+  });
+
+  it('tells a translation as almost complete, then complete; one without its 3D as failed', async () => {
+    const told: string[] = [];
+    const stop = runtime.events.on('objectTranslation', (event) => {
+      told.push(`${event.reference.toString(16)}:${String(event.result)}`);
+    });
+    const marker = await runtime.placeAt(0x0000003b, PLAYER, 1);
+    try {
+      world.loaded = () => false;
+      await runtime.translate(marker, [0, 0, 0], [0, 0, 0], 100);
+      world.loaded = () => true;
+      const at = await runtime.placement(marker);
+      const to = at?.position ?? [0, 0, 0];
+      await runtime.translate(marker, [to[0] + 100, to[1], to[2]], [0, 0, 0], 100);
+      for (let t = 0; t < 1.5; t += 0.05) {
+        runtime.update(0.05, 0);
+        await runtime.vm.idle();
+      }
+      const id = marker.toString(16);
+      expect(told).toEqual([`${id}:0`, `${id}:2`, `${id}:1`]);
+    } finally {
+      delete world.loaded;
+      stop();
+    }
+  });
+
+  it('tells those inside a trigger volume again every fTriggerEventDelayMS', () => {
+    const told: number[] = [];
+    const stop = runtime.events.on('trigger', (event) => {
+      if (event.trigger === 0x7f) told.push(event.reference);
+    });
+    try {
+      runtime.triggered(0x7f, PLAYER, true);
+      for (let t = 0; t < 1.2; t += 0.1) runtime.update(0.1, 0);
+      runtime.triggered(0x7f, PLAYER, false);
+      runtime.update(1, 0);
+      // At once, after 0.5 s and after 1 s; none once out.
+      expect(told).toEqual([PLAYER, PLAYER, PLAYER]);
+    } finally {
+      stop();
+    }
+  });
+
   // Last: the player dies.
   it('lets the player die of their health run out, not in god mode (Debug.SetGodMode)', async () => {
     const killed: number[] = [];
