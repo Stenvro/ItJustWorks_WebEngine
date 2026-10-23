@@ -203,6 +203,8 @@ export class SceneDirector {
   #updates: (() => void)[] = [];
   #clock = 0;
   #order = 0;
+  /** Who hears the trace besides the host (`listen`). */
+  #listener: ((text: string) => void) | undefined;
 
   constructor(host: SceneHost) {
     this.#host = host;
@@ -421,6 +423,8 @@ export class SceneDirector {
     readonly scene: number;
     readonly phase: number;
     readonly paused: boolean;
+    /** The references cast, by alias. */
+    readonly cast: ReadonlyMap<number, number>;
     readonly actions: readonly {
       readonly index: number;
       readonly status: ActionStatus;
@@ -432,6 +436,7 @@ export class SceneDirector {
         scene: playing.formId,
         phase: playing.phase,
         paused: playing.paused,
+        cast: playing.cast,
         actions: playing.actions.map((run) => ({
           index: run.action.index,
           status: run.status,
@@ -439,6 +444,36 @@ export class SceneDirector {
         })),
       };
     }
+  }
+
+  /**
+   * The scenes starting or playing now, for development checks (src/shell/qa/): their phase,
+   * state and cast, and the actions running and not yet complete.
+   */
+  snapshot(): {
+    readonly scene: number;
+    readonly phase: number;
+    readonly state: 'starting' | 'playing' | 'ended';
+    readonly paused: boolean;
+    readonly clock: number;
+    readonly cast: readonly number[];
+    readonly open: readonly {
+      readonly type: string;
+      readonly actor: number | undefined;
+      readonly status: string;
+    }[];
+  }[] {
+    return [...this.#playing.values()].map((playing) => ({
+      scene: playing.formId,
+      phase: playing.phase,
+      state: playing.state,
+      paused: playing.paused,
+      clock: playing.clock,
+      cast: [...playing.cast.values()],
+      open: playing.actions
+        .filter((run) => !run.complete && run.status === 'running')
+        .map((run) => ({ type: run.action.type, actor: run.actor, status: run.status })),
+    }));
   }
 
   /** The scenes waiting for their actors. */
@@ -1070,8 +1105,19 @@ export class SceneDirector {
     });
   }
 
+  /**
+   * Hears what the scenes do, as the host's trace has it (the browser's scene trace,
+   * src/shell/scene-trace.ts); undefined stops it.
+   */
+  listen(listener: ((text: string) => void) | undefined): void {
+    this.#listener = listener;
+  }
+
   #trace(playing: Playing, text: string): void {
-    this.#host.trace?.(`${playing.record?.editorId ?? hex(playing.formId)}: ${text}`);
+    if (!this.#host.trace && !this.#listener) return;
+    const line = `${playing.record?.editorId ?? hex(playing.formId)}: ${text}`;
+    this.#host.trace?.(line);
+    this.#listener?.(line);
   }
 }
 

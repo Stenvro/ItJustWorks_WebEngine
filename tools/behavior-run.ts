@@ -13,6 +13,8 @@
 //       and the pelvis's heights
 //   node tools/behavior-run.ts <project> --set iRightHandType=9 --event Magic_Equip
 //       --bone "R MagicNode"      a bone's model-space position (name part) at each printed step
+//   node tools/behavior-run.ts --transitions    how the vanilla graphs' transitions blend: their
+//       effects' flags and modes, the machines' self-transition modes, the clips' flags
 //   node tools/behavior-run.ts --modifiers      the modifiers of every vanilla behavior file: how
 //       many there are by class, and which the runtime runs
 //   node tools/behavior-run.ts meshesactorsdragondragonproject.hkx --motion
@@ -31,6 +33,7 @@ import {
   projectRelative,
   type BehaviorGenerator,
   type BehaviorModifier,
+  type StateTransition,
 } from '../src/formats/hkx/behavior.ts';
 import { Packfile } from '../src/formats/hkx/packfile.ts';
 import { AnimationDataLibrary } from '../src/animation/animation-data-library.ts';
@@ -43,6 +46,94 @@ const option = (name: string): string[] =>
   args.flatMap((arg, i) => (arg === name && args[i + 1] !== undefined ? [args[i + 1] ?? ''] : []));
 const vfs = await Vfs.mount(openGameFolder());
 const read = (path: string): Promise<Uint8Array> => vfs.read(path);
+
+if (args.includes('--transitions')) {
+  // How the vanilla graphs' transitions blend (docs/animation.md, "Behavior runtime"): their
+  // effects' flags, end, event and self-transition modes, the machines' own self-transition
+  // modes and transition limits, and the clips' flags (mirrored clips).
+  const counts = new Map<string, number>();
+  const add = (key: string): void => {
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  };
+  let graphs = 0;
+  for (const path of vfs.list('meshes')) {
+    if (!path.endsWith('.hkx') || !/behavior/i.test(path)) continue;
+    let file: Packfile;
+    try {
+      file = Packfile.parse(await read(path));
+    } catch {
+      continue;
+    }
+    if (file.objectsOf('hkbBehaviorGraph').length === 0) continue;
+    graphs++;
+    const seen = new Set<object>();
+    const transition = (t: StateTransition, self: boolean): void => {
+      const effect = t.effect;
+      if (!effect) {
+        add('transition without a blending effect');
+        return;
+      }
+      add('blending transition');
+      if (effect.flags & 0x1) add('effect: ignore from world-from-model');
+      if (effect.flags & 0x2) add('effect: sync');
+      if (effect.flags & 0x4) add('effect: ignore to world-from-model');
+      add(`effect end mode ${String(effect.endMode)}`);
+      add(`effect event mode ${String(effect.eventMode)}`);
+      if (self) {
+        const kind = effect.duration > 0 ? 'blending' : 'instant';
+        add(`self transition, mode ${String(effect.selfTransitionMode)}, ${kind}`);
+      }
+    };
+    const walk = (node: BehaviorGenerator | undefined): void => {
+      if (!node || seen.has(node)) return;
+      seen.add(node);
+      switch (node.kind) {
+        case 'state-machine':
+          add(`machine: at most ${String(node.maxSimultaneousTransitions ?? -1)} transitions`);
+          add(`machine: self-transition mode ${String(node.selfTransitionMode ?? -1)}`);
+          for (const state of node.states) {
+            for (const t of state.transitions) transition(t, t.toStateId === state.id);
+            walk(state.generator);
+          }
+          for (const t of node.wildcardTransitions) transition(t, (t.flags & 0x200) !== 0);
+          return;
+        case 'clip':
+          for (const bit of [0x1, 0x2, 0x4, 0x8, 0x10, 0x20]) {
+            if ((node.flags ?? 0) & bit) add(`clip flag 0x${bit.toString(16)}`);
+          }
+          return;
+        case 'blender':
+          for (const child of node.children) walk(child.generator);
+          return;
+        case 'manual-selector':
+          for (const child of node.generators) walk(child);
+          return;
+        case 'bone-switch':
+          walk(node.generator);
+          for (const child of node.children) walk(child.generator);
+          return;
+        case 'offset-animation':
+          walk(node.generator);
+          walk(node.offsetGenerator);
+          return;
+        case 'modifier-generator':
+        case 'state-tagging':
+        case 'cyclic-blend':
+        case 'synchronized-clip':
+          walk(node.generator);
+          return;
+        default:
+          return;
+      }
+    };
+    walk(parseBehaviorGraph(file).root);
+  }
+  console.log(`${String(graphs)} behavior files`);
+  for (const [key, count] of [...counts].sort())
+    console.log(`  ${key.padEnd(48)} ${String(count)}`);
+  await vfs.close();
+  process.exit(0);
+}
 
 if (args.includes('--modifiers')) {
   // Every modifier of every behavior file, by class: those the parser reads as a kind of
@@ -169,6 +260,8 @@ const runtime = new BehaviorRuntime({
   skeleton,
   random: () => 0.5,
   ...(character.footIk && { footIk: character.footIk }),
+  ...(character.mirror && { mirror: character.mirror }),
+  defaultEventMode: character.defaultEventMode,
 });
 for (const assignment of option('--set')) {
   const [name = '', value = '0'] = assignment.split('=');

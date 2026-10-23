@@ -129,20 +129,20 @@ These run through every area and explain most of what breaks in play.
 
 ### Animation and bodies
 
-| System               | Status    | Main gaps                                                                                |
-| -------------------- | --------- | ---------------------------------------------------------------------------------------- |
-| Graph runtime        | partial   | interrupted transitions, self-transition blends, transition effect flags, event payloads |
-| Clips                | partial   | mirrored clips (200: every quadruped's right turns)                                      |
-| Engine handlers      | partial   | about 65 of 95 unanswered                                                                |
-| Weapons and aim      | partial   | the player's casting pitch (PitchOverride), a crossbow's launch node                     |
-| Ambient idles        | missing   | no idle picking (PickNewIdle)                                                            |
-| Animation objects    | missing   | no tankards, hammers, brooms, lutes                                                      |
-| Paired animations    | different | victim placed, no get-to-mark, events not routed per side                                |
-| Ragdolls, death      | partial   | no powered ragdoll, instant limp deaths                                                  |
-| Dismemberment        | complete  | re-dressing a reloaded corpse from its recorded worn objects                             |
-| Actor build          | complete  | first-person render pass, bone LOD                                                       |
-| Faces                | complete  | expression change rate                                                                   |
-| Graph state in saves | missing   | M12                                                                                      |
+| System               | Status    | Main gaps                                                            |
+| -------------------- | --------- | -------------------------------------------------------------------- |
+| Graph runtime        | partial   | event payloads                                                       |
+| Clips                | complete  | mirrored additive clips by our own rule                              |
+| Engine handlers      | partial   | about 65 of 95 unanswered                                            |
+| Weapons and aim      | partial   | the player's casting pitch (PitchOverride), a crossbow's launch node |
+| Ambient idles        | missing   | no idle picking (PickNewIdle)                                        |
+| Animation objects    | missing   | no tankards, hammers, brooms, lutes                                  |
+| Paired animations    | different | victim placed, no get-to-mark, events not routed per side            |
+| Ragdolls, death      | partial   | no powered ragdoll, instant limp deaths                              |
+| Dismemberment        | complete  | re-dressing a reloaded corpse from its recorded worn objects         |
+| Actor build          | complete  | first-person render pass, bone LOD                                   |
+| Faces                | complete  | expression change rate                                               |
+| Graph state in saves | missing   | M12                                                                  |
 
 ### Physics
 
@@ -203,7 +203,7 @@ Systems that everything uses come first; each phase makes the next cheaper.
 5. **Combat and magic rules.** Style values on the engine's scale, flee by strength, target selection,
    combat dialogue and music, blocking, potions, damage and stagger rules; taper, NPC magicka cost, skill
    use, line of sight and wards for areas and explosions, enchantment glow and value.
-6. **Bodies and physics.** Transition semantics and mirrored clips, death into ragdoll and powered
+6. **Bodies and physics.** Death into ragdoll and powered
    ragdolls, physics damage, swimming and drowning for all, water physics, moving platforms.
 7. **Rendering.** Per-object lights with rooms and portals, interior shadows, distance fade, the
    first-person pass, underwater, camera states and shake.

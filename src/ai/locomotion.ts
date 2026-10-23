@@ -6,6 +6,7 @@
 // IsSneaking and the movement events. The player's body drives its graphs the same way
 // (src/shell/player-avatar.ts). Platform-independent.
 
+import type { GraphChannels } from '../animation/behavior-runtime.ts';
 import { directionalSpeed, type MovementType } from '../world/movement.ts';
 
 export type Gait = 'walk' | 'run' | 'sprint';
@@ -174,7 +175,13 @@ export function steer(
   const against = angleBetween(next, way);
   let speed =
     directionalSpeed(speeds, Math.sin(against), Math.cos(against)) * (request.speedMult ?? 1);
-  if (request.face === undefined) speed *= Math.max(0, Math.cos(against));
+  if (request.face === undefined) {
+    // Not strafing it goes ahead, the way it faces (its graph's Direction is 0: a sideways
+    // remainder of the turn it still makes swayed walkers into their walk-left and walk-right
+    // blends, and a horse's Direction flipped between 0 and 1).
+    speed *= Math.max(0, Math.cos(against));
+    return { velocity: [Math.sin(next) * speed, Math.cos(next) * speed], heading: next };
+  }
   return {
     velocity: [(direction[0] / length) * speed, (direction[1] / length) * speed],
     heading: next,
@@ -185,6 +192,11 @@ export function steer(
 export interface LocomotionGraph {
   setVariable(name: string, value: number): void;
   sendEvent(name: string): boolean;
+}
+
+/** A graph whose data channels read the movement right before each of its updates. */
+export interface ChannelGraph extends LocomotionGraph {
+  channels: GraphChannels | undefined;
 }
 
 /** How the actor moves in the frame. */
@@ -293,6 +305,39 @@ export class Locomotion {
   #heading: number | undefined;
   /** The direction (0..1) last given while it moved faster than the freeze speed. */
   #direction: number | undefined;
+  /** The movement latched for the graph's channels (latch), and the graph. */
+  #latched: { readonly graph: ChannelGraph; frame: LocomotionFrame } | undefined;
+  /** Its graph's channels: they drive the graph with the latched movement as it updates. */
+  readonly #channels: GraphChannels = {
+    read: (dt) => {
+      const latched = this.#latched;
+      if (!latched) return;
+      // Measured over the graph's own step (a graph updated less often than every frame).
+      const seconds = dt > 0 ? dt : latched.frame.seconds;
+      this.drive([latched.graph], { ...latched.frame, seconds });
+    },
+  };
+
+  /**
+   * The movement now, for the graph's data channels to read as the graph next updates (the
+   * engine reads its channels right before every graph update): an actor whose graph updates
+   * less often than every frame is driven by its movement at its updates, not by every frame's
+   * (a speed that dipped below 5 for a frame between two updates sends no moveStop and
+   * moveStart; each queued, its graph left its locomotion and came back in one update,
+   * restarting its walk). The graph's channels are this Locomotion's from now on.
+   */
+  latch(graph: ChannelGraph, frame: LocomotionFrame): void {
+    if (this.#latched?.graph !== graph) this.#latched = { graph, frame };
+    else this.#latched.frame = frame;
+    graph.channels = this.#channels;
+  }
+
+  /** Its graph's channels no longer read this movement (another drives the graph now). */
+  release(): void {
+    const latched = this.#latched;
+    if (latched?.graph.channels === this.#channels) latched.graph.channels = undefined;
+    this.#latched = undefined;
+  }
 
   /** Drives the graphs; returns whether it landed from the air in this frame. */
   drive(graphs: Iterable<LocomotionGraph>, frame: LocomotionFrame): boolean {
@@ -416,6 +461,7 @@ export class Locomotion {
 
   /** Forgets what the graphs were told (a body made again starts from its graphs' start). */
   reset(): void {
+    this.release();
     this.#told = {
       moving: false,
       sprinting: false,

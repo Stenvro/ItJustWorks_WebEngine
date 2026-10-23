@@ -219,7 +219,7 @@ const POSE_EASE_MAX = 0.25;
  * A node of an actor's pose followed smoothly: each new pose (the animation moved the skeleton:
  * every frame near the camera, less often far away or unseen) is eased into over the time the
  * last one took, from where it was shown, as the engine interpolates an actor's pose between
- * its graph's updates (src/animation/animated-skeleton.ts animationInterval); also over the
+ * its graph's updates (src/animation/animated-skeleton.ts animationRate); also over the
  * physics steps of one frame. The tether's keyframed body follows the horse's spine so: it
  * jumped at every update (ten a second for a horse behind the camera) and shook the cart.
  */

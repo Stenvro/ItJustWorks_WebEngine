@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { AnimationBinding, HkxSkeleton } from '../formats/hkx/animation.ts';
 import { identity } from '../render/math.ts';
-import { animateSkeletons, animationInterval, startObjectSkeleton } from './animated-skeleton.ts';
+import {
+  animateSkeletons,
+  animationRate,
+  startObjectSkeleton,
+  type AnimationRate,
+} from './animated-skeleton.ts';
 import type { SkeletalGraph } from './behavior-runtime.ts';
 
 /** One Havok bone, "Arm", which the clip moves along x by time. */
@@ -64,29 +69,58 @@ describe('object skeletons', () => {
     expect(pose.worlds[3 * 16 + 12]).toBe(0);
   });
 
-  it('moves far or unseen skeletons less often, keeping time', () => {
+  it('updates far graphs ahead of time and interpolates their poses between', () => {
     const object = startObjectSkeleton(nodes, graph, () => 0.5);
     if (!object) throw new Error('no skeleton');
-    const { pose } = object.skeleton;
-    const every = (): number => 0.1;
-    animateSkeletons([object.skeleton], 0, every);
-    animateSkeletons([object.skeleton], 0.05, every);
-    // Not due yet: still in its start pose.
+    const { skeleton } = object;
+    const { pose } = skeleton;
+    const rate = (): AnimationRate => ({ interval: 0.2, interpolate: true, slop: 0.25 });
+    animateSkeletons([skeleton], 0, rate);
+    animateSkeletons([skeleton], 0, rate);
+    // Its graph ran ahead to 0.2 s; its pose is still where it was.
+    expect(skeleton.time).toBeCloseTo(0.2);
     expect(pose.worlds[2 * 16 + 12]).toBeCloseTo(0);
-    animateSkeletons([object.skeleton], 0.15, every);
-    // Due: the whole 0.15 s at once.
+    animateSkeletons([skeleton], 0.05, rate);
+    expect(pose.worlds[2 * 16 + 12]).toBeCloseTo(0.5);
+    animateSkeletons([skeleton], 0.15, rate);
     expect(pose.worlds[2 * 16 + 12]).toBeCloseTo(1.5);
+    // Due: ahead again, from the pose it reached.
+    animateSkeletons([skeleton], 0.2, rate);
+    expect(skeleton.time).toBeCloseTo(0.4);
+    expect(pose.worlds[2 * 16 + 12]).toBeCloseTo(2);
+    animateSkeletons([skeleton], 0.3, rate);
+    expect(pose.worlds[2 * 16 + 12]).toBeCloseTo(3);
   });
 
-  it('says how often by distance and facing', () => {
-    const camera = [0, 0, 0] as const;
-    const ahead = [0, 1, 0] as const;
-    expect(animationInterval([0, 300, 0], camera, ahead)).toBe(0);
-    expect(animationInterval([0, -300, 0], camera, ahead)).toBe(0);
-    expect(animationInterval([0, 1500, 0], camera, ahead)).toBe(0);
-    expect(animationInterval([0, -1500, 0], camera, ahead)).toBe(0.1);
-    expect(animationInterval([0, 3000, 0], camera, ahead)).toBe(0.1);
-    expect(animationInterval([0, 5000, 0], camera, ahead)).toBe(0.2);
+  it('steps unseen graphs without interpolating', () => {
+    const object = startObjectSkeleton(nodes, graph, () => 0.5);
+    if (!object) throw new Error('no skeleton');
+    const { skeleton } = object;
+    const rate = (): AnimationRate => ({ interval: 0.2, interpolate: false, slop: 0.25 });
+    animateSkeletons([skeleton], 0, rate);
+    animateSkeletons([skeleton], 0.05, rate);
+    // Its pose is where its graph went: 0.25 s.
+    expect(skeleton.pose.worlds[2 * 16 + 12]).toBeCloseTo(2.5);
+    animateSkeletons([skeleton], 0.15, rate);
+    expect(skeleton.pose.worlds[2 * 16 + 12]).toBeCloseTo(2.5);
+  });
+
+  it('says how often by distance, field of view and facing', () => {
+    const camera = { position: [0, 0, 0] as const, forward: [0, 1, 0] as const, fov: 80 };
+    expect(animationRate([0, 300, 0], camera).interval).toBe(0);
+    expect(animationRate([0, 600, 0], camera).interval).toBeCloseTo(0.165);
+    expect(animationRate([0, 900, 0], camera).interval).toBe(0.25);
+    // Zoomed in (half the field of view): twice as near.
+    expect(animationRate([0, 300, 0], { ...camera, fov: 40 }).interval).toBeCloseTo(0.165);
+    // Behind the camera: the longest interval, interpolated only near.
+    expect(animationRate([0, -300, 0], camera)).toMatchObject({
+      interval: 0.25,
+      interpolate: true,
+    });
+    expect(animationRate([0, -900, 0], camera)).toMatchObject({
+      interval: 0.25,
+      interpolate: false,
+    });
   });
 
   it('leaves models whose nodes no bone of the graph names', () => {
