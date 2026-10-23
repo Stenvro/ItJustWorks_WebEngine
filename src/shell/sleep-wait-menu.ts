@@ -107,9 +107,15 @@ export class SleepWaitMenu {
     const runtime = session.scriptsReady;
     if (!runtime) return;
     const start = runtime.state.gameDaysPassed;
+    // The hub tells it (TESSleepStartEvent / TESWaitStartEvent: OnSleepStart to those registered).
     if (sleeping) {
-      await runtime.registeredEvent('sleep', 'OnSleepStart', [start, start + hours / 24]);
-    }
+      await runtime.events.emitted('sleep', {
+        started: true,
+        interrupted: false,
+        start,
+        end: start + hours / 24,
+      });
+    } else runtime.events.emit('wait', { started: true, interrupted: false });
     let interrupted = false;
     for (let left = hours; left > 0; left--) {
       await wait(HOUR_MS);
@@ -128,6 +134,7 @@ export class SleepWaitMenu {
     }
     await wait(HOUR_MS);
     for (const listener of session.timeSkipped) listener();
-    if (sleeping) await runtime.registeredEvent('sleep', 'OnSleepStop', [interrupted]);
+    if (sleeping) await runtime.events.emitted('sleep', { started: false, interrupted });
+    else runtime.events.emit('wait', { started: false, interrupted });
   }
 }

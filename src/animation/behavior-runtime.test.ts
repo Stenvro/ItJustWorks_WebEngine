@@ -201,6 +201,64 @@ describe('the behavior runtime', () => {
     expect(runtime.pose[0]).toBeCloseTo(0.2);
   });
 
+  it("leaves a state at once before entering the next: its nested machine's exit first", () => {
+    // Events: 0 go, 1 innerExit, 2 bEnter.
+    const inner: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Inner',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'Drinking',
+          probability: 1,
+          enable: true,
+          generator: clip('drink'),
+          transitions: [],
+          exitNotifyEvents: [{ id: 1 }],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const outer: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Outer',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'A',
+          probability: 1,
+          enable: true,
+          generator: inner,
+          transitions: [transition(0, 1)],
+        },
+        {
+          id: 1,
+          name: 'B',
+          probability: 1,
+          enable: true,
+          generator: clip('chop'),
+          transitions: [],
+          enterNotifyEvents: [{ id: 2 }],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(outer, ['go', 'innerExit', 'bEnter']),
+      host: host({ drink: animation(0), chop: animation(1) }),
+      skeleton,
+    });
+    runtime.update(0.1);
+    runtime.takeRaised();
+    runtime.sendEvent('go');
+    runtime.update(0.1);
+    expect(names(runtime.takeRaised())).toEqual(['innerExit', 'bEnter']);
+  });
+
   it('raises events with their payloads: a string payload, an annotation after its dot', () => {
     const playing: BehaviorGenerator = {
       ...(clip('work') as Extract<BehaviorGenerator, { kind: 'clip' }>),

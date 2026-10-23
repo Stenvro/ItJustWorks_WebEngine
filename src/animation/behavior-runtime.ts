@@ -1439,6 +1439,10 @@ export class BehaviorRuntime {
       machine.transition = undefined;
       // A self transition resets what the state plays (unless it continues).
       if (from === to && (effect?.selfTransitionMode ?? 2) !== 1) this.#reset(to.generator);
+      // Left at once, the old state's nodes are deactivated now, before the new state is
+      // entered (its nested machines' exit events come before the new state's enter events:
+      // an idle's AnimObjectUnequip does not take the prop the next state just loaded).
+      if (from && from !== to) this.#leave(from.generator, to.generator);
     }
     machine.current = to;
     machine.timeInState = 0;
@@ -1454,6 +1458,38 @@ export class BehaviorRuntime {
     }
     if (transition?.effect && transition.effect.toGeneratorStartTimeFraction > 0) {
       this.#startAt(to.generator, transition.effect.toGeneratorStartTimeFraction);
+    }
+  }
+
+  /**
+   * Deactivates the active nodes under a state's generator left at once (innermost first), but
+   * those the state entered shares; they are no longer active at the update's end.
+   */
+  #leave(left: BehaviorGenerator | undefined, entered: BehaviorGenerator | undefined): void {
+    const under = (root: BehaviorGenerator | undefined): object[] => {
+      const nodes: object[] = [];
+      const seen = new Set<object>();
+      const visitModifier = (modifier: BehaviorModifier): void => {
+        if (seen.has(modifier)) return;
+        seen.add(modifier);
+        for (const child of modifierChildren(modifier)) visitModifier(child);
+        nodes.push(modifier);
+      };
+      const visit = (node: BehaviorGenerator | undefined): void => {
+        if (!node || seen.has(node)) return;
+        seen.add(node);
+        for (const child of children(node)) visit(child);
+        if (node.kind === 'modifier-generator' && node.modifier) visitModifier(node.modifier);
+        nodes.push(node);
+      };
+      visit(root);
+      return nodes;
+    };
+    const kept = new Set(under(entered));
+    for (const node of under(left)) {
+      if (kept.has(node) || !this.#active.has(node)) continue;
+      this.#active.delete(node);
+      this.#deactivate(node);
     }
   }
 

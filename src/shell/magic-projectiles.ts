@@ -576,6 +576,7 @@ export class MagicProjectiles {
       // takes its Damage Health effects: the magic engine's, destruction-engine.ts).
       await casting.deliver(delivered, hit.reference, {
         facing: false,
+        projectile: projectile.formId,
         ...(seconds !== undefined && { seconds }),
       });
     }

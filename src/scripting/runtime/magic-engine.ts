@@ -730,12 +730,8 @@ export class MagicEngine {
       return false;
     }
     entry.inactive = !holds;
-    runtime.detach(
-      runtime.sendEvent(target, 'OnMagicEffectApply', [
-        runtime.referenceHandleOrNone(caster),
-        new ObjectHandle(effect.formId, 'magiceffect'),
-      ]),
-    );
+    // The hub tells it (TESMagicEffectApplyEvent: OnMagicEffectApply).
+    runtime.events.emit('magicEffectApply', { caster, target, effect: effect.formId });
     if (holds) await this.#activate(key, entry, effect);
     // Effects at once end as they have acted.
     if (duration === 0 && !lasting) await this.end(key);
@@ -771,12 +767,8 @@ export class MagicEngine {
     caster: number | undefined,
   ): Promise<void> {
     const runtime = this.#runtime;
-    runtime.detach(
-      runtime.sendEvent(target, 'OnMagicEffectApply', [
-        runtime.referenceHandleOrNone(caster),
-        new ObjectHandle(effect.formId, 'magiceffect'),
-      ]),
-    );
+    // The hub tells it (TESMagicEffectApplyEvent: OnMagicEffectApply).
+    runtime.events.emit('magicEffectApply', { caster, target, effect: effect.formId });
     if (effect.archetype === EffectArchetype.open) {
       const lock = await runtime.lock(target);
       // A lock up to the magnitude's level opens; one only its key opens does not.

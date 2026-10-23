@@ -29,12 +29,22 @@ export interface GameEvents {
     readonly from: number | undefined;
     readonly to: number | undefined;
   };
-  /** A book was read (TESBookReadEvent). */
-  bookRead: { readonly book: number; readonly reader: number };
+  /**
+   * A book was read (TESBookReadEvent): the book (its base) and, when it was one, the reference
+   * read (a book lying in the world).
+   */
+  bookRead: {
+    readonly book: number;
+    readonly reader: number;
+    readonly reference: number | undefined;
+  };
   /** A reference's cell attached or detached (TESCellAttachDetachEvent). */
   cellAttachDetach: { readonly reference: number; readonly attached: boolean };
-  /** A cell finished loading, its references' 3D included (TESCellFullyLoadedEvent). */
-  cellFullyLoaded: { readonly cell: number };
+  /**
+   * A cell finished loading, its references' 3D included (TESCellFullyLoadedEvent): the cell,
+   * if known, and its references whose 3D is in.
+   */
+  cellFullyLoaded: { readonly cell: number | undefined; readonly references: readonly number[] };
   /** An actor's combat state changed: 0 not in combat, 1 in combat, 2 searching (TESCombatEvent). */
   combat: {
     readonly actor: number;
@@ -104,7 +114,10 @@ export interface GameEvents {
   moveAttachDetach: { readonly reference: number; readonly attached: boolean };
   /** A reference's 3D loaded or unloaded (TESObjectLoadedEvent). */
   objectLoaded: { readonly reference: number; readonly loaded: boolean };
-  /** A reference's translation (TranslateTo) ended: 0 complete, 1 almost complete, 2 failed. */
+  /**
+   * A reference's translation (TranslateTo) failed (0), completed (1) or is almost complete (2:
+   * past fRefTranslationAlmostDonePercent of its way) (TESObjectREFRTranslationEvent).
+   */
   objectTranslation: { readonly reference: number; readonly result: 0 | 1 | 2 };
   /** A door or container opened or closed (TESOpenCloseEvent). */
   openClose: {
@@ -146,10 +159,26 @@ export interface GameEvents {
     readonly type: 'begin' | 'end' | 'phaseBegin' | 'phaseEnd' | 'action';
     readonly index: number | undefined;
   };
-  /** The player sold an item (TESSellEvent). */
-  sell: { readonly seller: number; readonly item: number; readonly count: number };
-  /** The player's sleep started or stopped (TESSleepStartEvent, TESSleepStopEvent). */
-  sleep: { readonly started: boolean; readonly interrupted: boolean };
+  /**
+   * An item was sold (TESSellEvent): who sold it, the item, how many, and the item's own
+   * reference when it has one (a quest's item kept in the inventory).
+   */
+  sell: {
+    readonly seller: number;
+    readonly item: number;
+    readonly count: number;
+    readonly reference: number | undefined;
+  };
+  /**
+   * The player's sleep started or stopped (TESSleepStartEvent, TESSleepStopEvent): at the start
+   * when it began and when it is to end (game days passed), at the stop whether it was broken.
+   */
+  sleep: {
+    readonly started: boolean;
+    readonly interrupted: boolean;
+    readonly start?: number;
+    readonly end?: number;
+  };
   /** A spell, power, scroll or shout was cast (TESSpellCastEvent). */
   spellCast: { readonly caster: number; readonly spell: number };
   /** An actor's race switch ended (TESSwitchRaceCompleteEvent). */
@@ -162,9 +191,13 @@ export interface GameEvents {
   };
   /** A tracked misc stat changed (TESTrackedStatsEvent). */
   trackedStats: { readonly stat: string; readonly value: number };
-  /** A trap hit something (TESTrapHitEvent): `initial` its first contact. */
+  /**
+   * A trap hit something (TESTrapHitEvent): its contact began (`start`), goes on (`hit`) or
+   * ended (`stop`); `initial` its first contact.
+   */
   trapHit: {
     readonly trap: number;
+    readonly phase: 'start' | 'hit' | 'stop';
     readonly target: number;
     readonly velocity: readonly [number, number, number];
     readonly position: readonly [number, number, number];
