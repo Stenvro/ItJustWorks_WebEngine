@@ -58,8 +58,10 @@ const XMARKER_HEADING = 0x34;
 const CELL_SIZE = 4096;
 /** A way to another space that failed holds its package this long (milliseconds). */
 const ACROSS_FAILED_MS = 1000;
-/** An actor goes through a load door within this of it (units). */
+/** An actor goes through a load door within this of where it walks to (units). */
 const DOOR_REACH = 96;
+/** A load door's navmesh point is looked for this far round it (units; ours). */
+const DOOR_APPROACH_REACH = 256;
 /** LockDoors and UnlockDoors reach doors this far round a place without a radius. */
 const DOOR_RADIUS = 256;
 
@@ -243,6 +245,11 @@ export class ActorAi {
       return;
     }
     if (this.#held.delete(reference)) this.#actors.get(reference)?.packages.evaluate();
+  }
+
+  /** Whether the engine's own reaction holds an actor now (see hold). */
+  held(reference: number): boolean {
+    return this.#held.has(reference);
   }
 
   /** The package running for an actor now (GetCurrentPackage), if its AI runs. */
@@ -738,12 +745,54 @@ export class ActorAi {
       : findRoute(routes, from, to);
     const door = route?.doors[0];
     if (!door) return false;
-    const arrived = await this.#movers.travel(staged.reference, door.position, gait, DOOR_REACH);
+    const arrived = await this.#movers.travel(
+      staged.reference,
+      this.#doorApproach(door),
+      gait,
+      DOOR_REACH,
+    );
     if (!arrived) return false;
     // The door swings open with its sound; it is through a moment later.
     await this.#doors?.through(door.door, staged.reference);
     await this.#leaveThrough(staged, door, destination);
     return false;
+  }
+
+  /**
+   * Where an actor walks to go through a load door: the middle of the navmesh triangle the
+   * navmesh marks in front of it (NAVM door triangles), the nearest to the door; else the
+   * navmesh's point nearest the door. The door's own place is in its frame, off the navmesh,
+   * often farther from the walkable floor than an actor gets (HelgenHomestead's door on
+   * Torolf's porch: a hundred units).
+   */
+  #doorApproach(door: RouteDoor): Vec3 {
+    const set = this.#navmeshes?.();
+    if (!set) return door.position;
+    const [dx, dy, dz] = door.position;
+    let best: Vec3 | undefined;
+    let nearest = Infinity;
+    for (const id of door.navmeshes) {
+      const navmesh = set.navmesh(id);
+      if (!navmesh) continue;
+      for (const marked of navmesh.doors) {
+        if (marked.door !== door.door) continue;
+        const triangle = navmesh.triangles[marked.triangle];
+        if (!triangle) continue;
+        const sum: [number, number, number] = [0, 0, 0];
+        for (const vertex of triangle.vertices) {
+          for (let axis = 0; axis < 3; axis++) {
+            sum[axis] = (sum[axis] ?? 0) + (navmesh.vertices[vertex * 3 + axis] ?? 0) / 3;
+          }
+        }
+        const middle: Vec3 = sum;
+        const distance = Math.hypot(middle[0] - dx, middle[1] - dy, middle[2] - dz);
+        if (distance < nearest) {
+          nearest = distance;
+          best = middle;
+        }
+      }
+    }
+    return best ?? set.nearest?.(door.position, DOOR_APPROACH_REACH) ?? door.position;
   }
 
   /** What the packages ask of the game: the running game's scripts and records. */

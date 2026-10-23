@@ -50,8 +50,15 @@ import {
   parseRegionWeather,
   parseWeather,
   type ClimateRecord,
+  type WeatherChance,
   type WeatherRecord,
 } from '../world/weather.ts';
+import {
+  parseWeatherRegionArea,
+  SkyWeather,
+  weatherSettings,
+  type WeatherRegionArea,
+} from '../world/sky-weather.ts';
 import { ScriptEnvironment } from '../world/player-home.ts';
 import { RecordDatabase } from '../world/record-db.ts';
 import {
@@ -185,6 +192,17 @@ export class GameSession {
   /** What the scripts do to the world on screen (the viewers attach to it). */
   readonly scriptWorld: ScriptWorld;
   /**
+   * The sky's weather, one for the whole game as the engine's (src/world/sky-weather.ts): the
+   * viewers draw it and run it each frame, scripts, the console and conditions drive and read it.
+   */
+  readonly sky: SkyWeather;
+  /** Every weather of the load order, parsed (filled once the records are read). */
+  readonly #weatherRecords = new Map<number, WeatherRecord>();
+  /** The globals weather lists take chances from, as the plugins set them. */
+  readonly #weatherGlobals = new Map<number, number>();
+  /** Regions' areas and weather tabs, by form id. */
+  readonly #weatherRegions = new Map<number, Promise<WeatherRegionArea | undefined>>();
+  /**
    * Crime on the stage now (src/shell/actor-crime.ts): guards pursue the player, the player
    * trespasses. The menus that refuse then read it (waiting, fast travel, lockpicking).
    */
@@ -247,11 +265,6 @@ export class GameSession {
     return this.timeScale * this.timeSpeed;
   }
   /**
-   * The weather picked by hand (the dev panel, as the console's fw), kept going in and out of
-   * doors as the game keeps its weather; undefined: the regions pick.
-   */
-  pinnedWeather: number | undefined;
-  /**
    * Quest and scene states set by hand, by cell form id (enable-parent markers that are on);
    * cells without an entry show them as a new game has them.
    */
@@ -299,6 +312,14 @@ export class GameSession {
     };
     this.scriptWorld.sounds = () => this.soundSystem;
     this.scriptWorld.talking = (actor) => this.lines.talking(actor);
+    this.sky = new SkyWeather({
+      hour: () => this.gameHour,
+      weather: (formId) => this.#weatherRecords.get(formId),
+      global: (formId) =>
+        this.scriptsReady?.state.globals.get(formId) ?? this.#weatherGlobals.get(formId),
+      random: Math.random,
+    });
+    this.scriptWorld.sky = this.sky;
     const loader = new AssetLoader(vfs);
     this.loader = loader;
     this.textures = new TextureCache(device, (path) => loader.loadTexture(path));
@@ -322,6 +343,11 @@ export class GameSession {
       return db;
     });
     this.imageSpaceModifiers = new ScreenModifiers(this.db, terminal);
+    // The sky knows every weather and its settings as soon as the records are read.
+    void this.weathers();
+    void this.settings().then((gmst) => {
+      this.sky.settings = weatherSettings((id) => gmst.number(id));
+    });
     this.scriptWorld.modifiers = this.imageSpaceModifiers;
     // Modifiers that aim at their target see it from the view's camera.
     this.imageSpaceModifiers.view = () => {
@@ -514,17 +540,54 @@ export class GameSession {
     return entry;
   }
 
-  /** Every weather (WTHR) of the load order, by editor id. */
+  /** Every weather (WTHR) of the load order, by editor id (the sky reads them all once). */
   weathers(): Promise<readonly { formId: number; editorId: string }[]> {
     this.#weathersEntry ??= this.db.then(async (db) => {
       const records = await Promise.all(db.formIdsOfType('WTHR').map((id) => db.get(id)));
-      return records
-        .flatMap((record) =>
-          record ? [{ formId: record.formId, editorId: record.editorId ?? '' }] : [],
-        )
-        .sort((a, b) => a.editorId.localeCompare(b.editorId));
+      const weathers: { formId: number; editorId: string }[] = [];
+      for (const record of records) {
+        if (!record) continue;
+        try {
+          this.#weatherRecords.set(record.formId, parseWeather(record));
+        } catch (error) {
+          this.#terminal.log('sky', `${record.editorId ?? ''}: ${describe(error)}`, 'warn');
+        }
+        weathers.push({ formId: record.formId, editorId: record.editorId ?? '' });
+      }
+      return weathers.sort((a, b) => a.editorId.localeCompare(b.editorId));
     });
     return this.#weathersEntry;
+  }
+
+  /** A weather of the load order, once the weathers are read. */
+  weatherRecord(formId: number): WeatherRecord | undefined {
+    return this.#weatherRecords.get(formId);
+  }
+
+  /** A region's areas and weather tab (REGN), read once (its chances' globals too). */
+  weatherRegion(formId: number): Promise<WeatherRegionArea | undefined> {
+    let entry = this.#weatherRegions.get(formId);
+    if (!entry) {
+      entry = this.db.then(async (db) => {
+        const record = await db.get(formId);
+        if (record?.type !== 'REGN') return undefined;
+        const region = parseWeatherRegionArea(record);
+        if (region.weather) await this.weatherGlobals(region.weather.weathers);
+        return region;
+      });
+      this.#weatherRegions.set(formId, entry);
+    }
+    return entry;
+  }
+
+  /** Reads the globals a weather list takes chances from (GLOB FLTV), once each. */
+  async weatherGlobals(list: readonly WeatherChance[]): Promise<void> {
+    const db = await this.db;
+    for (const { global } of list) {
+      if (global === undefined || this.#weatherGlobals.has(global)) continue;
+      const value = (await db.get(global))?.fields.f32('FLTV');
+      if (value !== undefined) this.#weatherGlobals.set(global, value);
+    }
   }
 
   /** A head part's expression morphs (its TRI file) on the GPU, read once. */

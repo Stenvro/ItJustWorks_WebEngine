@@ -16,6 +16,7 @@
 import { hostileTo, shouldAttack } from '../../ai/combat-ai.ts';
 import { parseRaceCombat } from '../../ai/race-combat-records.ts';
 import { NpcFlag, RaceFlag } from '../../world/actor-records.ts';
+import { classShare, precipitating, type WeatherTraits } from '../../world/sky-weather.ts';
 import { ActorValue } from '../../world/actor-values.ts';
 import { conditionFunctionName } from '../condition-functions.ts';
 import { floatParam2, NOT_VALUED, type Condition } from '../conditions.ts';
@@ -244,6 +245,8 @@ export const Fn = {
   isPleasant: 266,
   isCloudy: 267,
   getIsCurrentWeather: 149,
+  getCurrentWeatherPercent: 148,
+  getWindSpeed: 147,
   // What it is and has.
   getGold: 48,
   getKeywordItemCount: 465,
@@ -582,8 +585,20 @@ const halfCircle = (radians: number): number => {
 const axisOf = (raw: number): 0 | 1 | 2 => (raw === 0x59 ? 1 : raw === 0x5a ? 2 : 0);
 
 /** WTHR DATA classification flags (byte 11: 0x1 pleasant, 0x2 cloudy, 0x4 rainy, 0x8 snow). */
-const WEATHER_FLAGS = 11;
 const WeatherClass = { pleasant: 0x1, cloudy: 0x2, rainy: 0x4, snow: 0x8 } as const;
+
+/** A weather's DATA as the sky's conditions read it (src/world/sky-weather.ts). */
+function weatherTraitsOf(formId: number, data: Uint8Array): WeatherTraits {
+  const unit = (offset: number): number => (data[offset] ?? 0) / 255;
+  return {
+    formId,
+    windSpeed: unit(0),
+    transDelta: unit(3),
+    precipitationFadeIn: unit(6),
+    precipitationFadeOut: unit(7),
+    flags: data[11] ?? 0,
+  };
+}
 
 /** WATR FNAM flag Causes Damage (xEdit). */
 const WATER_CAUSES_DAMAGE = 0x1;
@@ -1499,14 +1514,22 @@ async function moreConditionValue(
   };
   /** The compass heading from one place to another. */
   const headingTo = (from: Vec3, to: Vec3): number => Math.atan2(to[0] - from[0], to[1] - from[1]);
-  /** The current weather's classification flags (WTHR DATA). */
-  const weatherFlags = async (): Promise<number> => {
-    const weather = world.currentWeather?.();
-    const data =
-      weather === undefined
-        ? undefined
-        : (await runtime.forms.record(weather))?.fields.first('DATA');
-    return data?.[WEATHER_FLAGS] ?? 0;
+  /** The sky's weather now: the current and outgoing weathers' data and the change between. */
+  const sky = async (): Promise<{
+    current: WeatherTraits | undefined;
+    outgoing: WeatherTraits | undefined;
+    transition: number;
+  }> => {
+    const traits = async (weather: number | undefined): Promise<WeatherTraits | undefined> => {
+      if (weather === undefined) return undefined;
+      const data = (await runtime.forms.record(weather))?.fields.first('DATA');
+      return data && weatherTraitsOf(weather, data);
+    };
+    return {
+      current: await traits(world.currentWeather?.()),
+      outgoing: await traits(world.outgoingWeather?.()),
+      transition: world.weatherTransition?.() ?? 1,
+    };
   };
   const motion = reference === undefined ? undefined : world.motion?.(reference);
 
@@ -1627,16 +1650,38 @@ async function moreConditionValue(
     }
 
     // --- The weather ------------------------------------------------------------------------
-    case Fn.isRaining:
-      return flag(((await weatherFlags()) & WeatherClass.rainy) !== 0);
-    case Fn.isSnowing:
-      return flag(((await weatherFlags()) & WeatherClass.snow) !== 0);
-    case Fn.isPleasant:
-      return flag(((await weatherFlags()) & WeatherClass.pleasant) !== 0);
-    case Fn.isCloudy:
-      return flag(((await weatherFlags()) & WeatherClass.cloudy) !== 0);
-    case Fn.getIsCurrentWeather:
-      return flag(world.currentWeather?.() === form);
+    // Rain and snow have begun in the current weather (past its precipitation fade-in) or not
+    // yet ended in the one being left (before its fade-out).
+    case Fn.isRaining: {
+      const { current, outgoing, transition } = await sky();
+      return flag(precipitating(current, outgoing, transition, WeatherClass.rainy));
+    }
+    case Fn.isSnowing: {
+      const { current, outgoing, transition } = await sky();
+      return flag(precipitating(current, outgoing, transition, WeatherClass.snow));
+    }
+    // How much of the sky is pleasant or cloudy: the share of each weather through a change.
+    case Fn.isPleasant: {
+      const { current, outgoing, transition } = await sky();
+      return classShare(current, outgoing, transition, WeatherClass.pleasant);
+    }
+    case Fn.isCloudy: {
+      const { current, outgoing, transition } = await sky();
+      return classShare(current, outgoing, transition, WeatherClass.cloudy);
+    }
+    // The current weather is the weather, or one of a form list's.
+    case Fn.getIsCurrentWeather: {
+      const current = world.currentWeather?.();
+      if (current === undefined) return 0;
+      const at = runtime.forms.db.locate(form);
+      if (at && runtime.forms.db.typeAt(at) === 'FLST')
+        return flag((await runtime.formList(form)).includes(current));
+      return flag(current === form);
+    }
+    case Fn.getCurrentWeatherPercent:
+      return world.currentWeather?.() === undefined ? 0 : (world.weatherTransition?.() ?? 1);
+    case Fn.getWindSpeed:
+      return world.windSpeed?.() ?? 0;
 
     // --- What it is and has -------------------------------------------------------------------
     case Fn.getGold:

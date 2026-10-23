@@ -416,7 +416,16 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   marker, turns to its heading there, and its controller goes; its graph's root motion moves it in,
   and what is left to the marker at the end is made up in a quarter of a second (the engine's
   path tweener; its rule is not documented). Leaving, the exit's root motion takes it out; then
-  it stands and its controller is back.
+  it stands and its controller is back. Where no exit idle fits the actor it leaves by the quick
+  exit (IdleForceDefaultState, which the tree gives an instant exit before any furniture
+  branch): the tree sends every child getting up from a chair-type furniture into its
+  ExitChairCHILD group (that branch tests no FurnitureSpecial keyword, unlike the child's
+  enter), which has only front, left and right exits, so Haming could not get up from his
+  cross-legged sit and his graph stayed seated under a package that walked. TODO(M13): the
+  engine's own fallback (inferred).
+- **Activate** (the ActivateSpecialFurniture template) of furniture is a use of it, not a walk
+  to the furniture's place and an activation: an actor in it already stays (Torolf at his porch
+  rail), one standing goes in by its enter.
 - **The height:** the actor's root stays at the furniture's own height. The furniture clips put
   the body on the seat or the bed themselves: seated on a chair the pelvis is 39 above the root,
   on a bar stool 55, lying in a bed 53, in a bedroll 21, and the feet stay 6 above it; their
@@ -656,24 +665,31 @@ across, 0; `fHorseOffsetZ` up, 0, on the horse's own height), turned as the cart
 character controller moved there too: a horse is always put in the shafts, wherever it stood
 (the opening's second horse stands 411 ahead in the editor). Then the cart is joined to it:
 
-- every simulated body of the cart weighs `fMass:Cart` (130 kg; the prisoner carriage's body
-  was authored at 12,000);
+- every simulated body of the cart weighs `fMass:Cart` (130 kg). Havok's setMass changes only
+  the mass: the inertia stays as the model has it (the prisoner carriage's body was authored at
+  12,000 kg with an inertia of 23,190 kg·m², which it keeps);
 - the four wheels (WheelBackLeft, WheelBackRight, WheelFrontLeft, WheelFrontRight, on their own
-  hinges) get `fFriction:Cart` (100), an angular damping of `fWheelAngDamp:Cart` (0.01) and a
-  small linear damping, and an action pulls each down with `fGravMult:Cart` times gravity on top
-  of the world's (3.5: they hold the road);
-- an action keeps the cart's body from tipping over: when its up leans more than 0.71 to a side,
-  or points down, it gets an angular impulse of `fTipImpulse:Cart` (500, Havok units) about its
-  forward axis (inferred: in the direction that rights it; the engine takes the sign from the
-  up's world x);
-- a keyframed body (a small sphere in the cart's collision system, so the two never touch)
-  follows the horse's spine node (`sHorseConnect:Cart`, HorseSpine2) and holds the cart's
+  hinges) get `fFriction:Cart` (100; the carriage's front wheels were authored with 0.5), an
+  angular damping of `fWheelAngDamp:Cart` (0.01), a linear damping of 0.005 and an allowed
+  penetration of 0.3 Havok units (21 game units: they are swept only when a step would sink them
+  deeper), and an action that every step pushes each down with its mass times `fGravMult:Cart`
+  times 9.81 m/s², on top of the world's gravity (3.5: they hold the road);
+- the FrontBar gets a linear and angular damping of 0.01;
+- an action keeps the cart's body from tipping over: it looks at the world's up from the body;
+  when that leans more than 0.71 towards the body's side (the body's right axis rises or sinks
+  that far), or the body is upside down, it gives the body an angular impulse of
+  `fTipImpulse:Cart` (500, Havok units) about the body's own forward axis, turning the side
+  that is up down;
+- a keyframed body follows the horse's spine node (`sHorseConnect:Cart`, HorseSpine2), placed
+  where the node is in the world and turned as it is: a sphere of 0.057 Havok units (4 game
+  units) on the BIPED_NO_CC layer, 130 kg, keyframed. The whole cart is put in the horse's
+  collision group, so the cart, the horse and that body never touch. The body holds the cart's
   FrontBar (its shafts and front axle) by a prismatic constraint: the FrontBar's point
   (`fCartPivotX/Y/Z:Cart`, 0, 3, 0.7 Havok units: 210 ahead and 49 up of it) on the spine
   (`fHorsePivot`, its origin), sliding along the FrontBar's up tilted `fCartRot1:Cart` (10°)
-  between `fCartLimitMin/Max:Cart` (±0.75: ±52 units), turning as the spine turns. The cart's
-  body hangs on the FrontBar by the model's own limited hinge (±40° about the vertical), so it
-  turns behind the horse as a wagon does, its wheels rolling on the ground;
+  between `fCartLimitMin/Max:Cart` (±0.75: ±52 units), held across that axis and in all three
+  turns. The cart's body hangs on the FrontBar by the model's own limited hinge (±40° about the
+  vertical), so it turns behind the horse as a wagon does, its wheels rolling on the ground;
 - the horse's harness bones (`sHarnessBoneLeft/Right:Cart`) are taken off the horse and hung
   on the cart's pole (`sHarnessBoneCart:Cart`, FrontHorseCarriage01, under the FrontBar) at
   ∓`fTetherOffsetX` (50), `fTetherOffsetY` (163), `fTetherOffsetZ` (13): the harness mesh,
@@ -681,18 +697,76 @@ character controller moved there too: a horse is always put in the shafts, where
   frame the pole turns (the shortest turn of its length, +y) to point from where it hangs at
   the spine raised by `fPoleZOffset:Cart` (-20).
 
-Here the cart is simulated so with Rapier once its horse stands where the tether put it and the
-ground under the cart is in place (until then its bodies wait). Two things differ, as Rapier's
-joints are stiff where Havok's give way (TODO(M13), how far they give is not known): the
-tether's turns are held by a spring back to how the two stood when hitched (about 3 a second,
-nearly critically damped) instead of outright (held, the rear wheels hung above the ground on
-any slope the horse did not share, and the horse turning on the spot at the hairpin of
-Helgen's road threw the cart over); and the slide axis on the spine is taken from how the
-FrontBar and the spine stand when hitched (read as the engine gives it, the spine's y turned by
-`fCartRot2:Cart`, our spine's y points down and the cart was turned upside down). The cart does
-not touch the actors near it (its horse, its riders, those walking by): their controllers keep
-them off it, but their keyframed bodies, moved into it at any speed, threw it. TODO(M13): how
-strongly the engine's characters push simulated objects.
+Here the cart is simulated so with Rapier (`src/ai/cart-tether.ts`; the physics:
+[physics.md](physics.md#tethered-carts)) once its horse stands where the tether put it and the
+ground under the cart is in place (until then its bodies wait where it was placed). The cart
+does not touch the actors near it (its horse, its riders, those walking by): their controllers
+keep them off it, but their keyframed bodies, moved into it at any speed, threw it. TODO(M13):
+how strongly the engine's characters push simulated objects.
+
+**The ride.** The carts bounced like mad on the opening's road. Measured every physics step
+over the whole ride to Helgen (both carts, about 4 minutes each), with the bounce as the cart
+body's vertical speed against its average over a second (the road's own rise and fall taken
+out; the ground under the horse's feet alone gives 7.4 units a second):
+
+|                                              | before              | now                   |
+| -------------------------------------------- | ------------------- | --------------------- |
+| bounce (RMS, units a second)                 | 15–23               | 7.9                   |
+| bounce at most                               | 211–404             | 82–106                |
+| at the hairpin (RMS / at most)               | 12–27 / 113–338     | 8–9 / 69–72           |
+| vertical acceleration (RMS, units a second²) | 950–1,290           | 560–590               |
+| pitch rate (RMS / at most, radians a second) | 0.12–0.19 / 1.8–3.4 | 0.08 / 0.8–1.2        |
+| roll rate (RMS / at most)                    | 0.15–0.19 / 2.3–2.9 | 0.10 / 0.7–0.8        |
+| the tether's turn away from its frame (RMS)  | 15–19°              | (pitch and roll free) |
+
+The causes, each measured by replaying a recorded ride (the horse's spine every step) over the
+road's collision in Node:
+
+- **The spine jumped.** A horse behind the camera is animated ten times a second, and a frame
+  of several physics steps moves it once: the keyframed body jumped to each new pose in one
+  step and yanked the cart ten times a second. The engine interpolates an actor's pose between
+  its graph's updates; the tether now follows the spine so (`PoseEasing`: each new pose eased
+  into over the time the last one took, from where it was shown). This alone halved the bounce.
+- **The frame fought the wheels.** The joint's frame was taken from how the FrontBar and the
+  spine stood when hitched (the horse's idle leaned its spine up to 8° sideways), and the spine
+  stood upright on a road sloping down up to 25° (the horse leans with the ground, but only as
+  drawn); held by the tether's turns, the cart was pressed into the road or lifted off it on
+  every slope (15° from the frame on average, a wheel in the air on every step). Now the frame
+  is the spine's rest (the cart turned as the horse standing), the spine leans as the horse is
+  drawn leaning (eased: `TETHER_LEAN_EASE`, 0.3 s; the drawn lean jumps from one ground
+  triangle's normal to the next), and the cart's pitch and roll are left to its wheels; its
+  heading is held by a spring (`TETHER_TURN_SPRING`). Held outright (as the engine's joint
+  holds them), Rapier's stiff joint threw the cart off the road whatever the spine did.
+- **The start.** The cart waited where it was placed, a little above the ground, and fell onto
+  it as it was let go, Rapier pushing it back out at 100 units a second; it now starts as the
+  engine's settled cart would (its first half second only moved out of what it overlaps).
+- **The tilt prevention never acted**: it compared the body's up with its own right (always
+  square). It reads the body's right's rise now, as the engine does.
+
+What did not matter (the same replay): the wheels' continuous collision, the landscape's
+internal edges (Rapier's fix for edge bumps), 16 solver iterations instead of 8, restitution (a
+wheel's 0.4 against the landscape's none is none), and the steps per frame: with the browser's
+CPU slowed three times every frame took the 3 steps `uMaxNumPhysicsStepsPerUpdate` allows, and
+the cart bounced 8.7–10.8 units a second (17 seconds of the ride), as at one step a frame (the
+spine's pose, moved once a frame, is eased over the frame's steps). Keeping the inertia as the
+engine does made the cart rock 40% more here: the engine holds the body's attitude by the
+tether, here the wheels do, and a body as heavy to turn as 12,000 kg on a mass of 130 follows
+them late; so the inertia is scaled with the mass. TODO(M13): Havok's solver lets the held
+turns give way to the wheels; how far is not known.
+
+`node tools/cart-ride.ts` drives a cart behind its horse over the real collision of its road
+(the horse walking its linked references, its spine at rest): MQ101's carts down past the
+hairpin (their links end before Helgen) bounce 8.8 units a second (7.0–12.3 per 20 s), their
+pitch rate at most 0.69 radians a second, their up never below 0.895;
+tests/vehicles.int.test.ts rides the first cart's first 40 seconds.
+
+**Its riders** sit still on it: each frame their 3D is placed at the cart's root as it is drawn
+(0.00 units and 0.00° apart for each of the nine riders in every frame measured; the player,
+carried in the physics steps, is within the step's 2 units). **The horses' gait** matches
+the cart's speed: the horse walks at 125 units a second, as fast as its WalkForward clip moves
+(125.1); TODO(M13): its graph blends TrotForward in now and then (its Direction flips between
+0 and 1) and its spine sways up to 10 units sideways and 14 forward and back, which the cart
+feels; that is the horse's animation's.
 
 A door along the cart or just ahead of it is one its horse comes to: it opens to the horse as
 any door on an actor's way, and an actor's door is not shut while a cart is still in it.
@@ -746,7 +820,17 @@ has it now (the placement above, from its packages, factions, race and sex, read
   put where its package has it. So too when the player comes into another worldspace or
   interior: what is there is where it should be as it loads.
 - An actor of the loaded area on its way through a load door its package takes leaves the stage
-  through it, and its trip goes on from the door's arrival point.
+  through it, and its trip goes on from the door's arrival point. It walks to the navmesh
+  triangle the navmesh marks in front of the door (else the navmesh point nearest the door), not
+  to the door's own place, which sits in its frame off the walkable floor (HelgenHomestead's
+  door is a hundred units from Torolf's porch).
+- **When its package changes** (a script's EvaluatePackage, a scene's package action starting
+  or ending) an actor away of those spaces is asked again at once and sent where its package now
+  has it. While a scene's package action runs, its packages are the actor's only ones away as
+  on the stage (an action done: it stays). A trip that reaches the place a Travel sent it to
+  completes that package, so a scene waiting on it goes on: MQ101TorriLedgeScene's last phase
+  waits for Haming's walk into his house, which he finishes beyond its door. TODO(M13): the low
+  process's other procedures (a sit, a sandbox) are not done by getting there.
 - Asked 16 at a time: at Whiterun's plains district 449 actors in 38 spaces in 8 seconds at the
   start (the jump as the game loads), 0.6 seconds at an hour's change. At 9:00 Mila Valentia
   steps out of her house's door and walks to her stall at the market; set to 10:00 she stands
@@ -1021,8 +1105,15 @@ after `--package-seconds`).
   ends, the actor's own packages come back. An actor with Run Only Scene Packages (CommonLibSSE;
   no vanilla actor) runs only scene packages for the whole scene. IsScenePackageRunning,
   GetIsCurrentPackage and GetCurrentPackage answer from it (the scene's package where the
-  actor's AI does not run). TODO(M13): the engine's stack during a scene; an actor that is not
-  loaded does not run its scene package (the low process: TODO(M13)).
+  actor's AI does not run). TODO(M13): the engine's stack during a scene. Observed in the
+  original, the action asks nothing of where its actor is: its process runs the package, high or
+  low. So an actor away runs its scene package too ([Actors away](#actors-away): sent where it
+  has it, a Travel done once its trip gets there).
+- **A travel that fails** is not a package done: its Travel procedure searches its way again a
+  second later (the movers warp an actor whose ways keep failing near one spot,
+  bWarpOnConsecutiveFailures), so a phase waiting on a walk waits until the actor is there.
+  Before, a way cut short (Torolf at HelgenHomestead's door frame) ended the package as if it
+  had arrived, and the action was done with him a door's width short.
 - **Timers** are done after their seconds of the scene's clock (real seconds outside menus, not
   while the scene is paused).
 - **Fragments:** the scene's begin and end, each phase's start and completion (a phase
@@ -1056,6 +1147,70 @@ finally awake." to "And it looks like the Thalmor are with him." After a new gam
 in different spaces, or with one placed nowhere yet, is as large as
 ObjectReference.GetDistance's, 1e10, so they wait while the player rides to Helgen;
 `tests/papyrus-runtime.int.test.ts`) or for a script (IvarsteadSSScene).
+
+### Checking a scene against its data
+
+Two halves, one in the browser and one in Node:
+
+- `engineDev.sceneTrace()` (development builds, `src/shell/scene-trace.ts`) traces what the
+  scenes and their actors do, a line per change: the director's own trace (phases starting,
+  skipped and completing, each action starting for its actor, lines said, packages done, actions
+  ending, scenes ending or stopped), each playing scene's phase, and for every actor a scene
+  casts (followed on after its scene) the package it runs, whether it fights, watches a fight,
+  flees, is carried (horse, cart), is in furniture or off the stage, its graph's innermost states
+  and its path (a point each 40 units). The first call begins it; each call returns it so far.
+- `node tools/scene-audit.ts <scene>` (or `--quest <quest>`) lists what the data says each
+  actor does phase by phase: its alias (how it is filled, its own alias packages), each action
+  (a line with its first info's text and whom it looks at, a timer, a package with its procedure
+  tree, every input named and resolved: the reference, its base and where it is placed), the
+  conditions of the scene, its phases, the packages and their branches.
+- `node tools/scene-audit.ts --trace <file> [--quest <quest>]` reads a trace and lists where the
+  actors did otherwise: a scene that did not start; a package action whose actor runs another
+  package (or fights, flees, stands) a few seconds on; a travel-like package done well short of
+  its place; furniture a package should use never entered; a line never said; an actor that
+  walks off while its done package holds it still; a phase that has waited 90 seconds and the
+  actions it waits on (with their actors' state). Notes list what is not the scene's to say: a
+  phase skipped, a package action none of whose packages may run, an actor moving on its own
+  packages between its package actions, a stopped scene's lines cut short.
+
+What MQ101's run (the opening, unattended, to the dragon) showed and how the systems were
+wrong:
+
+- **Torolf (MQ101TorriLedgeScene)** leans on his porch rail (MQ101TorolfUseFurnitureStart,
+  ActivateSpecialFurniture), tells Haming to go in, walks to his start marker, then into the
+  house after him (MQ101TorolfGoesInside); the scene ends once both are in (stage 28), and their
+  aliases' packages take them out again (Torolf to his rail, at stage 120 running to
+  MQ101TorolfMarker8, where Alduin's fire takes him). Ours: the Activate procedure stood him up
+  from the rail first (as every procedure but the furniture ones does) and walked him to the
+  rail's enter point while his graph was still leaning, which it could not leave: he retried
+  every few seconds and never leaned; his later Travel left a furniture he was no longer
+  recorded in, so his graph stayed leaning while his package walked, and the walk failed, which
+  ended his package as done a door's width from the door. Haming's sit had no exit idle for a
+  child (below), so he stayed seated with a Travel he could not walk. Once through the door
+  neither's package went on (the low process did not run scene packages), so the scene's last
+  phase waited for ever and held both. Fixed: Activate of furniture is a use of it (in it
+  already: it stays); a travel that fails searches again; doors are walked to by their navmesh
+  door triangle; an actor away runs its scene package and a Travel completes when its trip gets
+  there; furniture with no exit idle for the actor is left by the quick exit.
+- **Lokir (MQ101Scene4, phase 8)** runs MQ101LokirtoMarker2Package (a static patrol, Ignore
+  Combat) while the archers shoot (MQ101ArcherFireLokirPackage, Always Hit) and dies on the run.
+  Ours ran him; but an arrow that did not kill him at once put him in combat with the archer,
+  and combat held his package: he would stand under fire. Fixed: a package that ignores combat
+  holds the actor's fight ([Combat AI](#combat-ai)).
+- **Package actions done short of their place:** General Tullius's MQ101TulliusToMarker6
+  (getting off his horse), the cart soldiers' and Ulfric's and Ralof's walks to the block ended
+  as done when a way failed once. With a failing way searched again, the final run's audit has
+  none of them; a trip planned by a view that is not shown no longer ends a package either.
+
+Whiterun's market by day (10:00, seven minutes): ADIA's random scenes (Nazeem and Ysolda,
+Carlotta and Ysolda, Anoriath and Ysolda) and WhiterunMarketplaceScene2/3 play through, their
+actors brought together, every line said, no deviation. Left in MQ101's run: Alduin
+(MQ101AlduinAttackScene1) runs his approach patrol rather than MQ101AlduinPerch1 for a while and
+ends his tower shout packages a thousand units from their markers, a flier's (the flight's
+perch and travel); Haming takes 20-30 seconds of failed approaches before he sits cross-legged at
+the start (his enter's start point next to the furniture's own); the cart driver's
+MQ101Guard1ToMarker5 is done at once as its Variable01 (set by the cart's ExitCartEnd) is not
+yet 1, as the engine's rule has it.
 
 ## Talking
 
@@ -1662,7 +1817,12 @@ flanking and ranged movement selectors (ours: in `chooseManeuver`).
   iFriendHitNonCombatAllowed: TODO(M13)), each blow let pass a friendly fire comment (its Hit
   line, GetFriendHit) where its package has the friendly fire interrupt; attacked by one it does
   not detect, it searches. A package with Ignore Combat (PKDT) keeps it out of fights it would
-  pick; calm keeps it out of all; StartCombat sets it on a target whatever its reaction and
+  pick, and holds the fights it is in (observed in the original: as its package changes,
+  the process is marked as ignoring combat by that flag, and meanwhile the combat controller's
+  behaviour tree stands stopped; it starts again, Combat or LowCombat, once the package no
+  longer ignores combat). Attacked, it stays in combat with its attacker but goes on with its
+  package: MQ101's Lokir runs from the archers whether or not their first arrow fells him;
+  calm keeps it out of all; StartCombat sets it on a target whatever its reaction and
   makes it hostile to it (the reaction's scriptHostile: the actor state's combatTargets, until
   StopCombat, StopCombatAlarm or its combat ends: TODO(M13) how long the engine keeps it); a
   hostile spell that takes hold turns its victim on its caster as a blow does. Entering, it says NormalToCombat (AlertToCombat when

@@ -91,6 +91,12 @@ export interface PackageWorld {
    * if an alias may hold it but which packages it gives is not known (no scripts running).
    */
   aliasPackages(actor: PackageActor): Promise<readonly number[] | undefined>;
+  /**
+   * The packages a scene's package action has the actor run now, its only ones while the
+   * action runs (empty: its package completed and it stays where it got to); undefined where
+   * no scene holds it (src/ai/scene-runtime.ts packagesOf).
+   */
+  scenePackages?(actor: PackageActor): readonly number[] | undefined;
 }
 
 export type PackageStart =
@@ -323,9 +329,12 @@ export async function packageStart(
         (condition) => conditionValue(condition, actor, world, time, inputs),
         (formId) => world.global(formId),
       );
-  const aliases = await world.aliasPackages(actor);
+  // A scene's package action: its packages alone (the low process runs it as the high does).
+  const scene = world.scenePackages?.(actor);
+  if (scene?.length === 0) return { kind: 'here' };
+  const aliases = scene ?? (await world.aliasPackages(actor));
   if (aliases === undefined) return { kind: 'undecided', reason: 'a quest alias holds it' };
-  for (const id of [...aliases, ...actor.packages]) {
+  for (const id of scene ?? [...aliases, ...actor.packages]) {
     const pack = await world.package(id);
     if (!pack || !scheduleFits(pack.schedule, time)) continue;
     const template = pack.template === undefined ? pack : await world.package(pack.template);

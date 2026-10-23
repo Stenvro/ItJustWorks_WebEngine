@@ -10,7 +10,12 @@ import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { RAGDOLL_FALL_SHARE } from '../gameplay/falling.ts';
 import { actorFell } from './time-flow.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
-import { animateSkeletons, animationInterval } from '../animation/animated-skeleton.ts';
+import {
+  animateSkeletons,
+  animationRate,
+  animationRateSettings,
+  fovAcross,
+} from '../animation/animated-skeleton.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
@@ -395,6 +400,12 @@ export class ActorStage {
       loaded: (place) => this.#loaded(place),
       staged: (actor) => this.#actors.has(actor),
       doors: this.doors,
+      // The low process: a travel's place reached completes its package (a scene's package
+      // action whose actor went through a door, Haming into his house, is done then).
+      reached: (actor, walk) => {
+        if (walk.procedure.toLowerCase() !== 'travel') return;
+        options.session.scriptsReady?.scenes.packageEnded(actor, walk.id);
+      },
     });
     this.ai = new ActorAi({
       session: options.session,
@@ -517,6 +528,7 @@ export class ActorStage {
       actor: (reference) => this.#actors.get(reference),
       detects: (observer, target) => this.senses.detects(observer, target),
       passByTarget: (reference) => this.flight.passByTarget(reference),
+      weaponPoint: (reference) => this.combat.weaponPoint(reference),
     });
     // Who greets and chatters: those that detect the player; a speaker looks at whom it
     // speaks to (a dialogue head track).
@@ -974,6 +986,9 @@ export class ActorStage {
   async leaveThrough(staged: StagedActor, door: RouteDoor, destination: AwayPlace): Promise<void> {
     const reference = staged.reference;
     if (this.#actors.get(reference) !== staged) return;
+    // The package it walks for goes on away (its place reached completes a travel).
+    const running = this.ai.current(reference);
+    const walk = running && { id: running.id, procedure: running.procedure ?? '' };
     this.#remove(staged);
     const arrival: AwayPlace = {
       space: door.arrivalSpace,
@@ -981,8 +996,20 @@ export class ActorStage {
       heading: door.arrivalHeading,
     };
     if (this.#loaded(arrival)) this.doors.arrive(door.destination, reference);
-    else this.away.depart(reference, arrival, destination);
+    else this.away.depart(reference, arrival, destination, walk);
     await this.away.place(reference, arrival);
+  }
+
+  /**
+   * EvaluatePackage (a script's, a scene's package action starting or ending): an actor on the
+   * stage chooses its package again; one away is sent where its package has it now (the low
+   * process: src/shell/actors-away.ts).
+   */
+  evaluatePackage(reference: number): void {
+    if (this.#actors.has(reference)) this.ai.evaluate(reference);
+    // Each view's stage hears it: only the one that holds the loaded area (its actors) asks the
+    // low process, so a view not shown sends no actor off.
+    else if (this.#actors.size > 0) this.away.reconsider(reference);
   }
 
   /** An actor plays the idle an action gives it now (ActionTalking); whether it is here. */
@@ -1511,7 +1538,7 @@ export class ActorStage {
     return this.#placing.size > 0;
   }
 
-  /** Moves the enabled actors' skeletons; far or unseen ones less often (animationInterval). */
+  /** Moves the enabled actors' skeletons; far or unseen ones less often (animationRate). */
   animate(seconds: number): void {
     // Their AI first (what they want now), then their movement.
     const frame =
@@ -1565,19 +1592,23 @@ export class ActorStage {
     this.looks.frame(this.#actors.values(), frame);
     this.moods.frame(this.#faces(), frame);
     const camera = this.#options.renderer.view?.camera;
+    const settings = animationRateSettings(this.#options.session.ini);
+    const view = camera && {
+      position: camera.position,
+      forward: camera.forward,
+      fov: camera.fovY === undefined ? 80 : fovAcross(camera.fovY),
+    };
     animateSkeletons(
       this.#animating(),
       seconds,
-      camera &&
+      view &&
         ((animated) => {
           const world = (animated as PlacedActor).instances[0]?.world;
-          return world
-            ? animationInterval(
-                [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0],
-                camera.position,
-                camera.forward,
-              )
-            : 0;
+          return animationRate(
+            world ? [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] : view.position,
+            view,
+            settings,
+          );
         }),
     );
     // Their bodies follow the poses (the dead's poses their bodies, the dead player's too).

@@ -33,7 +33,6 @@ export interface SkySettings {
   readonly auroraFadeInStart: number;
   readonly auroraFadeIn: number;
   readonly auroraFadeOut: number;
-  readonly weatherTransAccel: number;
   readonly sunMinimumGlareScale: number;
   /** INI [Weather] fSunBaseSize / fSunGlareSize. */
   readonly sunBaseSize: number;
@@ -66,7 +65,6 @@ export function skySettings(get: (editorId: string) => number | undefined): SkyS
     // Both spelled "Autora" in Skyrim.esm.
     auroraFadeIn: value('fAutoraFadeIn', d.auroraFadeIn),
     auroraFadeOut: value('fAutoraFadeOut', d.auroraFadeOut),
-    weatherTransAccel: value('fWeatherTransAccel', d.weatherTransAccel),
     sunMinimumGlareScale: value('fSunMinimumGlareScale', d.sunMinimumGlareScale),
   };
 }
@@ -84,7 +82,6 @@ export const DEFAULT_SKY_SETTINGS: SkySettings = {
   auroraFadeInStart: 19,
   auroraFadeIn: 20,
   auroraFadeOut: 6,
-  weatherTransAccel: 16,
   sunMinimumGlareScale: 0.25,
   sunBaseSize: 425,
   sunGlareSize: 600,
