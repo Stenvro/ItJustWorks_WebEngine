@@ -245,6 +245,11 @@ export class ActorAi {
     if (this.#held.delete(reference)) this.#actors.get(reference)?.packages.evaluate();
   }
 
+  /** Whether the engine's own reaction holds an actor now (see hold). */
+  held(reference: number): boolean {
+    return this.#held.has(reference);
+  }
+
   /** The package running for an actor now (GetCurrentPackage), if its AI runs. */
   current(
     reference: number,

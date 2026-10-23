@@ -441,6 +441,36 @@ export class SceneDirector {
     }
   }
 
+  /**
+   * The scenes starting or playing now, for development checks (src/shell/qa/): their phase,
+   * state and cast, and the actions running and not yet complete.
+   */
+  snapshot(): {
+    readonly scene: number;
+    readonly phase: number;
+    readonly state: 'starting' | 'playing' | 'ended';
+    readonly paused: boolean;
+    readonly clock: number;
+    readonly cast: readonly number[];
+    readonly open: readonly {
+      readonly type: string;
+      readonly actor: number | undefined;
+      readonly status: string;
+    }[];
+  }[] {
+    return [...this.#playing.values()].map((playing) => ({
+      scene: playing.formId,
+      phase: playing.phase,
+      state: playing.state,
+      paused: playing.paused,
+      clock: playing.clock,
+      cast: [...playing.cast.values()],
+      open: playing.actions
+        .filter((run) => !run.complete && run.status === 'running')
+        .map((run) => ({ type: run.action.type, actor: run.actor, status: run.status })),
+    }));
+  }
+
   /** The scenes waiting for their actors. */
   get waiting(): readonly number[] {
     return [...this.#waiting.keys()];
