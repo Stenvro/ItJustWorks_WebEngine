@@ -16,6 +16,11 @@ declare global {
       readonly session: () => GameSession | undefined;
       /** Play while it runs. */
       readonly play: () => PlayMode | undefined;
+      /**
+       * The scene trace (src/shell/scene-trace.ts): begins it on the first call, returns it so
+       * far; false stops it.
+       */
+      readonly sceneTrace: (on?: boolean) => string;
     };
   }
 }

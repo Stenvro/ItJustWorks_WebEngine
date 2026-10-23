@@ -393,6 +393,12 @@ export class ActorStage {
       loaded: (place) => this.#loaded(place),
       staged: (actor) => this.#actors.has(actor),
       doors: this.doors,
+      // The low process: a travel's place reached completes its package (a scene's package
+      // action whose actor went through a door, Haming into his house, is done then).
+      reached: (actor, walk) => {
+        if (walk.procedure.toLowerCase() !== 'travel') return;
+        options.session.scriptsReady?.scenes.packageEnded(actor, walk.id);
+      },
     });
     this.ai = new ActorAi({
       session: options.session,
@@ -973,6 +979,9 @@ export class ActorStage {
   async leaveThrough(staged: StagedActor, door: RouteDoor, destination: AwayPlace): Promise<void> {
     const reference = staged.reference;
     if (this.#actors.get(reference) !== staged) return;
+    // The package it walks for goes on away (its place reached completes a travel).
+    const running = this.ai.current(reference);
+    const walk = running && { id: running.id, procedure: running.procedure ?? '' };
     this.#remove(staged);
     const arrival: AwayPlace = {
       space: door.arrivalSpace,
@@ -980,8 +989,20 @@ export class ActorStage {
       heading: door.arrivalHeading,
     };
     if (this.#loaded(arrival)) this.doors.arrive(door.destination, reference);
-    else this.away.depart(reference, arrival, destination);
+    else this.away.depart(reference, arrival, destination, walk);
     await this.away.place(reference, arrival);
+  }
+
+  /**
+   * EvaluatePackage (a script's, a scene's package action starting or ending): an actor on the
+   * stage chooses its package again; one away is sent where its package has it now (the low
+   * process: src/shell/actors-away.ts).
+   */
+  evaluatePackage(reference: number): void {
+    if (this.#actors.has(reference)) this.ai.evaluate(reference);
+    // Each view's stage hears it: only the one that holds the loaded area (its actors) asks the
+    // low process, so a view not shown sends no actor off.
+    else if (this.#actors.size > 0) this.away.reconsider(reference);
   }
 
   /** An actor plays the idle an action gives it now (ActionTalking); whether it is here. */
