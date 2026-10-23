@@ -101,8 +101,17 @@ const SEAT_INSTANT_MS = 3000;
 export interface PackageFlight {
   mayFly(actor: number): boolean;
   isFlying(actor: number): boolean;
+  /** Whether it sits on a perch now. */
+  perched(actor: number): boolean;
   request(actor: number, request: FlightRequest | undefined): void;
-  travel(actor: number, to: Vec3, arrive: number): Promise<boolean>;
+  /** A way flown: through a sky marker, else landed at the place (its reference the target). */
+  travel(actor: number, to: Vec3, arrive: number, target?: number): Promise<boolean>;
+  /** Whether a reference is a sky marker (a point in the air). */
+  isSkyMarker(reference: number): Promise<boolean>;
+  /** It starts cruising at once (a patrol from a sky marker). */
+  startCruising(actor: number): void;
+  /** It hovers at a point facing another; resolves once it hovers within the radius. */
+  hover(actor: number, at: Vec3, face: Vec3, radius: number): Promise<boolean>;
   grab(actor: number, victim: number): Promise<boolean>;
   /** Whether a reference is perch furniture (a dragon's: DragonPerchTower). */
   isPerch(reference: number): Promise<boolean>;
@@ -110,9 +119,6 @@ export interface PackageFlight {
   perch(actor: number, perch: number): Promise<boolean>;
   leavePerch(actor: number): void;
 }
-
-/** A flier flies a travel this far or farther (units; nearer it walks). TODO(M13). */
-const FLY_TRAVEL = 4096;
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -502,14 +508,16 @@ export class ActorAi {
           await new Promise((resolve) => setTimeout(resolve, ACROSS_FAILED_MS));
           return false;
         }
-        // A flier flies there: in the air already, or a way far off (it lands there).
+        // A flier in the air (or on its perch) flies there and lands, or through a sky marker;
+        // on the ground it walks, but takes off for a sky marker (observed in the original).
         const flight = this.#flight?.();
         if (
           flight?.mayFly(reference) === true &&
           (flight.isFlying(reference) ||
-            Math.hypot(to[0] - staged.position[0], to[1] - staged.position[1]) >= FLY_TRAVEL)
+            flight.perched(reference) ||
+            (options?.target !== undefined && (await flight.isSkyMarker(options.target))))
         ) {
-          return flight.travel(reference, to, arrive);
+          return flight.travel(reference, to, arrive, options?.target);
         }
         // On its horse where its procedure lets it ride, else off it and off its vehicle.
         const going =
@@ -615,6 +623,14 @@ export class ActorAi {
         this.#flight?.()?.request(reference, request);
       },
       flightGrab: (target) => this.#flight?.()?.grab(reference, target) ?? Promise.resolve(false),
+      airborne: () => this.#flight?.()?.isFlying(reference) === true,
+      hover: (at, face, radius) =>
+        this.#flight?.()?.hover(reference, at, face, radius) ?? Promise.resolve(false),
+      patrolStart: async (point) => {
+        const flight = this.#flight?.();
+        if (flight?.mayFly(reference) !== true || flight.isFlying(reference)) return;
+        if (await flight.isSkyMarker(point)) flight.startCruising(reference);
+      },
       useWeapon: async (target, barrage) => {
         await alight();
         return (await this.#practice?.()?.useWeapon(reference, target, barrage)) ?? false;
@@ -838,6 +854,7 @@ export class ActorAi {
           override === undefined ? [] : ((await runtime()?.formList(override)) ?? []);
         return [...overrides, ...(aliases ?? []), ...own, ...defaults];
       },
+      scenePackages: (actor) => runtime()?.scenes.packagesOf(actor),
       conditionsHold: async (conditions, actor, data) => {
         const scripts = runtime();
         if (!scripts || conditions.length === 0) return true;
