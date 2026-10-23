@@ -924,6 +924,12 @@ meanwhile.
   GetTargetHeight, IsLastHostileActor, IsInCombat, GetCombatState, IsPC1stPerson and the
   conditions run on the combat target read it, as do the natives IsWeaponDrawn, DrawWeapon,
   SheatheWeapon, IsBleedingOut, IsInKillMove, IsInCombat, GetCombatState and GetCombatTarget.
+  ShouldAttackKill is valued now and then (about 4 times a game second per fighter): its
+  target's health against the strike's damage less the target's armor, the armor read through
+  each worn piece's perks and kept 2 s. A fighter's work that awaits the scripts (this
+  estimate, the bleedout's regain) runs one at a time: started every frame, long frames
+  started more of it than finished and the backlog of perk conditions froze a fight for
+  seconds.
 - **Weapons on the body** (`src/shell/actor-weapons.ts`): the right hand's weapon model hangs on
   its sheath node (the equip system's: the models' "Prn", WeaponSword, WeaponDagger,
   WeaponAxe, WeaponMace, WeaponBack, WeaponBow) and goes to WEAPON at weaponDraw, back at
@@ -1268,7 +1274,7 @@ and casts keep their own pace (`attackInterval`, TODO(M13)).
   radius also has one that would not attack on sight warn and attack the neutral that come close
   (inferred: vanilla's wolves and bears are unaggressive with an aggro radius). It
   helps by its assistance (helps allies; helps friends and allies) one that fights or is
-  attacked, against the other; guards (CLAS DATA guard flag) help anyone attacked who did not
+  attacked, against the other; guards (IsGuard: the class's guard flag or IsGuardFaction, as crime has it) help anyone attacked who did not
   strike first and would not attack on sight (the crime itself, its bounty and the guards'
   arrest are crime's: `src/shell/actor-crime.ts`); the player's teammates help
   the player at least as friends and allies, and fight within fCombatTeammateFollowRadiusMult ×
@@ -1362,7 +1368,9 @@ and casts keep their own pace (`attackInterval`, TODO(M13)).
   a quarrel or a brawl) and would flee yields instead: Yield, weapon away, out of the fight for
   fCombatYieldTime (10 s), not again within fCombatYieldRetryTime (60 s); struck again it
   fights on. The player yields a quarrel their blows started by sheathing and holding off 3 s:
-  AcceptYield, and it lets them be. TODO(M13): the engine's rule.
+  AcceptYield, and it lets them be; so do guards that took up a fight against the player (a
+  crime: their arrest follows) unless their faction attacks the player on sight. TODO(M13): the
+  engine's rule.
 - **The end of combat**: no enemy known (CombatToNormal; dead, bleeding out, gone or left
   behind), StopCombat, calm or a search given up: it leaves its group, stands, sheathes 3 s
   later (unless its package keeps its weapon drawn) and chooses its package again. Its own lines

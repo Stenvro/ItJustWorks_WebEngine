@@ -136,6 +136,11 @@ const BODY_RADIUS = 20;
 const BODY_HEIGHT = 128;
 /** The chest a strike or shot comes from and aims at (of the height). */
 const CHEST = 0.75;
+/**
+ * How long a kill estimate's armor reading of its target holds (game seconds). TODO(M13): how
+ * often the engine values ShouldAttackKill is not known.
+ */
+const ESTIMATED_ARMOR_SECONDS = 2;
 /** The graphs' BSDirectAtModifier kind of bows and spells (userInfo), and how far it aims. */
 const BOW_AIM = 2;
 const BOW_AIM_DISTANCE = 2048;
@@ -185,6 +190,14 @@ interface Fighter {
   pairedFor: number;
   /** Estimated: its next attack kills its target (ShouldAttackKill), valued now and then. */
   killing: boolean;
+  /**
+   * Its work that takes awaits and is asked for every frame (the kill estimate, the bleedout's
+   * regain) under way: one at a time, or long frames start more of it than finishes (each a chain
+   * of perk conditions), and the backlog makes the frames longer still.
+   */
+  estimating: boolean;
+  bleeding: boolean;
+  unbled: number;
   /** The last hit it dealt was critical. */
   lastCritical: boolean;
   /** When its current attack began, while it has not got past its wind-up (see #unanswered). */
@@ -283,6 +296,12 @@ export class ActorCombat implements CombatBridge {
   /** The player's first-person weapons: shown with the first-person arms. */
   readonly #firstPersonVisibility: InstanceVisibility = { hidden: true };
   #clock = 0;
+  /**
+   * The armor reduction of each kill estimate's target, kept a while: worked out piece by piece
+   * through the perks' conditions, it is too dear for every estimate of every fighter (a hit
+   * works it out afresh).
+   */
+  readonly #estimatedArmor = new Map<number, { readonly reduction: number; readonly at: number }>();
   #enemy: { reference: number; until: number } | undefined;
   #music: number | undefined;
   #musicOn = false;
@@ -1114,11 +1133,23 @@ export class ActorCombat implements CombatBridge {
     }
     if (bleedingOut(state)) {
       fighter.down += seconds;
-      void this.#bleed(fighter, seconds, runtime);
+      // The seconds since its last regain (frames while one was under way included).
+      fighter.unbled += seconds;
+      if (!fighter.bleeding) {
+        fighter.bleeding = true;
+        const since = fighter.unbled;
+        fighter.unbled = 0;
+        void this.#bleed(fighter, since, runtime).finally(() => {
+          fighter.bleeding = false;
+        });
+      }
     }
     // Its next attack would kill its target (ShouldAttackKill), valued now and then.
-    if (fighter.target !== undefined && Math.random() < seconds * 4) {
-      void this.#estimateKill(fighter, runtime);
+    if (fighter.target !== undefined && !fighter.estimating && Math.random() < seconds * 4) {
+      fighter.estimating = true;
+      void this.#estimateKill(fighter, runtime).finally(() => {
+        fighter.estimating = false;
+      });
     }
   }
 
@@ -1157,7 +1188,14 @@ export class ActorCombat implements CombatBridge {
     const gear = fighter.gear;
     if (target === undefined || !gear) return;
     const health = (await runtime.actors.value(target, ActorValue.health)).current;
-    const armor = await runtime.equipment.armorRating(target);
+    let armor = this.#estimatedArmor.get(target);
+    if (!armor || this.#clock - armor.at > ESTIMATED_ARMOR_SECONDS) {
+      armor = {
+        reduction: (await runtime.equipment.armorRating(target)).reduction,
+        at: this.#clock,
+      };
+      this.#estimatedArmor.set(target, armor);
+    }
     const damage = hitDamage(
       {
         physical: gear.right.damage,
@@ -2573,10 +2611,12 @@ export class ActorCombat implements CombatBridge {
       if (other.target === reference) other.target = undefined;
     }
     this.#brain.remove(reference);
+    this.#estimatedArmor.delete(reference);
   }
 
   clear(): void {
     this.#brain.clear();
+    this.#estimatedArmor.clear();
     for (const fighter of [...this.#fighters.values()]) this.#drop(fighter);
     this.#projectiles.clear();
     this.#impacts.clear();
@@ -2813,6 +2853,9 @@ function newFighter(reference: number, player: boolean): Fighter {
     down: 0,
     pairedFor: 0,
     killing: false,
+    estimating: false,
+    bleeding: false,
+    unbled: 0,
     lastCritical: false,
     attackSince: undefined,
     liveAttacks: new Set(),
