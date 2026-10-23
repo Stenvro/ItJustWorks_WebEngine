@@ -793,6 +793,7 @@ const BINDING_TYPE_CHARACTER_PROPERTY = 1;
 /** hkbVariableInfo: role (4 bytes) + type (int8), 6 bytes each. */
 const VARIABLE_INFO_SIZE = 6;
 const VARIABLE_TYPE_REAL = 4;
+const VARIABLE_TYPE_POINTER = 5;
 /** Types 6..8 (vector3, vector4, quaternion) hold their value in the quad values. */
 const VARIABLE_TYPE_VECTOR3 = 6;
 const LOOK_AT_BONE_SIZE = 64;
@@ -833,8 +834,16 @@ export function characterBehaviorFile(character: Packfile): string {
   return behavior;
 }
 
-/** Reads the generator tree and variables of a behavior file (hkbBehaviorGraph). */
-export function parseBehaviorGraph(file: Packfile): BehaviorGraph {
+/**
+ * Reads the generator tree and variables of a behavior file (hkbBehaviorGraph). Bone weights
+ * bound to a character property (the vanilla graphs' LeftArm, RightArm, UpperBody, ...) take
+ * the character's (`characterBoneWeights`, by lower-case property name:
+ * readCharacterBoneWeights); without them the file's own placeholder stays.
+ */
+export function parseBehaviorGraph(
+  file: Packfile,
+  characterBoneWeights?: ReadonlyMap<string, Float32Array>,
+): BehaviorGraph {
   const graph = requireObject(file, 'hkbBehaviorGraph');
   const data = file.object(graph.offset + 136);
   const variables: BehaviorVariable[] = [];
@@ -866,7 +875,10 @@ export function parseBehaviorGraph(file: Packfile): BehaviorGraph {
       });
     }
   }
-  const reader = new GraphReader(file);
+  const reader = new GraphReader(file, (property) => {
+    const name = characterProperties[property];
+    return name === undefined ? undefined : characterBoneWeights?.get(name.toLowerCase());
+  });
   return {
     name: file.string(graph.offset + NODE_NAME) ?? '',
     events,
@@ -882,9 +894,12 @@ class GraphReader {
   readonly #generators = new Map<number, BehaviorGenerator | undefined>();
   readonly #modifiers = new Map<number, BehaviorModifier | undefined>();
   readonly #visiting = new Set<number>();
+  /** A character property's bone weights, by the file's property index. */
+  readonly #propertyWeights: (property: number) => Float32Array | undefined;
 
-  constructor(file: Packfile) {
+  constructor(file: Packfile, propertyWeights: (property: number) => Float32Array | undefined) {
     this.#file = file;
+    this.#propertyWeights = propertyWeights;
   }
 
   generator(object: HkxObject | undefined): BehaviorGenerator | undefined {
@@ -930,8 +945,22 @@ class GraphReader {
     return Array.from({ length: size }, (_, i) => this.event(data + i * EVENT_PROPERTY_SIZE));
   }
 
-  /** The per-bone weights of an hkbBoneWeightArray. */
-  boneWeights(object: HkxObject | undefined): Float32Array | undefined {
+  /**
+   * The per-bone weights of a child's hkbBoneWeightArray (`member` of the bindable at
+   * `holder`: hkbBlenderGeneratorChild's boneWeights, BSBoneSwitchGeneratorBoneData's
+   * spBoneWeight): the character's when the member is bound to a character property (the
+   * file's array is then a one-bone placeholder).
+   */
+  boneWeights(
+    holder: number,
+    member: string,
+    object: HkxObject | undefined,
+  ): Float32Array | undefined {
+    const binding = readBindings(this.#file, holder).get(member);
+    if (binding?.type === BINDING_TYPE_CHARACTER_PROPERTY) {
+      const weights = this.#propertyWeights(binding.index);
+      if (weights) return weights;
+    }
     if (object?.className !== 'hkbBoneWeightArray') return undefined;
     const { data, size } = this.#file.array(object.offset + 48);
     return Float32Array.from({ length: size }, (_, i) => this.#file.f32(data + i * 4));
@@ -996,7 +1025,11 @@ class GraphReader {
           children: file.objectArray(at + 96).flatMap((child) => {
             if (child?.className !== 'hkbBlenderGeneratorChild') return [];
             const childBindable = bindableReader(file, child.offset);
-            const boneWeights = this.boneWeights(file.object(child.offset + 56));
+            const boneWeights = this.boneWeights(
+              child.offset,
+              'boneWeights',
+              file.object(child.offset + 56),
+            );
             return [
               {
                 weight: childBindable('weight', file.f32(child.offset + 64)),
@@ -1105,7 +1138,11 @@ class GraphReader {
           generator: child(80),
           children: file.objectArray(at + 88).flatMap((data) => {
             if (data?.className !== 'BSBoneSwitchGeneratorBoneData') return [];
-            const boneWeights = this.boneWeights(file.object(data.offset + 56));
+            const boneWeights = this.boneWeights(
+              data.offset,
+              'spBoneWeight',
+              file.object(data.offset + 56),
+            );
             return [
               {
                 generator: this.generator(file.object(data.offset + 48)),
@@ -1934,6 +1971,41 @@ export async function readHavokFile(
   }
 }
 
+/**
+ * The bone weights a character gives its properties (hkbCharacterData.characterPropertyValues),
+ * by lower-case property name: a property of pointer type holds the index of its
+ * hkbBoneWeightArray among the value set's variants. The vanilla humans' name body parts
+ * (LeftArm, RightArm, UpperBody, Hands, ...) that the graphs' blenders and bone switches bind
+ * their bone weights to.
+ */
+export function readCharacterBoneWeights(character: Packfile): Map<string, Float32Array> {
+  const result = new Map<string, Float32Array>();
+  const data = requireObject(character, 'hkbCharacterData');
+  // hkbCharacterData: characterPropertyInfos 96, characterPropertyValues 128, stringData 152.
+  const infos = character.array(data.offset + 96);
+  const values = character.object(data.offset + 128);
+  const strings = character.object(data.offset + 152);
+  if (values?.className !== 'hkbVariableValueSet' || !strings) return result;
+  const names = character.stringArray(strings.offset + 80);
+  // hkbVariableValueSet: wordVariableValues 16, variantVariableValues 48.
+  const words = character.array(values.offset + 16);
+  const variants = character.array(values.offset + 48);
+  for (let i = 0; i < Math.min(infos.size, words.size); i++) {
+    if (character.i8(infos.data + i * VARIABLE_INFO_SIZE + 4) !== VARIABLE_TYPE_POINTER) continue;
+    const index = character.i32(words.data + i * 4);
+    const name = names[i];
+    if (name === undefined || index < 0 || index >= variants.size) continue;
+    const array = character.object(variants.data + index * 8);
+    if (array?.className !== 'hkbBoneWeightArray') continue;
+    const { data: weights, size } = character.array(array.offset + 48);
+    result.set(
+      name.toLowerCase(),
+      Float32Array.from({ length: size }, (_, bone) => character.f32(weights + bone * 4)),
+    );
+  }
+  return result;
+}
+
 /** A behavior project's character file (`path` normalized). */
 async function readProjectCharacter(
   path: string,
@@ -1955,11 +2027,16 @@ export async function loadBehaviorFiles(
   read: (path: string) => Promise<Uint8Array>,
 ): Promise<{ readonly root: BehaviorGraph; readonly files: ReadonlyMap<string, BehaviorGraph> }> {
   const files = new Map<string, BehaviorGraph>();
+  // The character's bone weights, which the files' bound weights take (a project without a
+  // readable character keeps the files' own).
+  const boneWeights = await readProjectCharacter(normalizePath(project), read)
+    .then(readCharacterBoneWeights)
+    .catch(() => undefined);
   const load = async (path: string): Promise<BehaviorGraph> => {
     const key = normalizePath(path);
     const known = files.get(key);
     if (known) return known;
-    const graph = parseBehaviorGraph(Packfile.parse(await readHavokFile(key, read)));
+    const graph = parseBehaviorGraph(Packfile.parse(await readHavokFile(key, read)), boneWeights);
     files.set(key, graph);
     const references = new Set<string>();
     const seen = new Set<object>();
