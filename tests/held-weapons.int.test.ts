@@ -3,6 +3,7 @@
 // a sword's hidden blood shapes (ModelPart.weaponBlood). Skipped without game data.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { graphEvent } from '../src/animation/graph-events.ts';
 import type { BehaviorHost } from '../src/animation/behavior-runtime.ts';
 import { WeaponGraph } from '../src/animation/weapon-graph.ts';
 import { readAnimationContainer, type AnimationBinding } from '../src/formats/hkx/animation.ts';
@@ -81,15 +82,15 @@ describe.skipIf(!hasGamedata())('held weapons on the local game data', () => {
     expect(bow.states().map((s) => s.state)).toContain('Idle');
     // The wielder's graph: weaponSpeedMult as the engine sets it, then the draw's events.
     bow.setVariable('weaponSpeedMult', 1);
-    bow.hear(['BowDraw', 'SoundPlay.WPNBowNockSD']);
+    bow.hear([graphEvent('BowDraw'), graphEvent('SoundPlay.WPNBowNockSD')]);
     await run(0.3);
-    bow.hear(['bowDrawStart']);
+    bow.hear([graphEvent('bowDrawStart')]);
     await run(1.5);
     expect(bow.states().map((s) => s.state)).toContain('IdleDrawn');
     const drawn = stringAt();
     const pulled = Math.hypot(drawn[0] - rest[0], drawn[1] - rest[1], drawn[2] - rest[2]);
     expect(pulled).toBeGreaterThan(5);
-    bow.hear(['BowRelease', 'arrowRelease']);
+    bow.hear([graphEvent('BowRelease'), graphEvent('arrowRelease')]);
     await run(1.5);
     expect(bow.states().map((s) => s.state)).toContain('Idle');
     const after = stringAt();

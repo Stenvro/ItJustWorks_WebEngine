@@ -5,6 +5,7 @@
 // (player-avatar.ts), which hooks in here.
 
 import { DialogueCamera } from './dialogue-camera.ts';
+import { CameraShake } from './camera-shake.ts';
 import { TweenCamera } from './tween-camera.ts';
 import type { Camera } from '../render/view-camera.ts';
 import type { MoveRequest } from '../ai/locomotion.ts';
@@ -207,6 +208,16 @@ function verticalFov(degrees: number): number {
   return 2 * Math.atan(Math.tan((degrees * Math.PI) / 360) * 0.75);
 }
 
+/** An animated camera the player's graph starts (src/shell/actor-graph-events.ts). */
+export interface AnimatedCameraRequest {
+  /** The node's world matrix now (undefined: it is gone). */
+  readonly node: () => Mat4 | undefined;
+  /** StartAnimatedCameraDelta: the third-person camera adds the node's motion. */
+  readonly delta: boolean;
+  /** Seconds the camera takes over to the node (iAnimatedTransitionMillis). */
+  readonly transition: number;
+}
+
 export class Player implements Camera {
   readonly character: CharacterBody;
   readonly #setup: PlayerSetup;
@@ -318,6 +329,8 @@ export class Player implements Camera {
   onAction: ((subtype: string) => void) | undefined;
   /** The dialogue camera while the player talks with an actor (it turns to it and zooms). */
   readonly dialogue = new DialogueCamera();
+  /** The camera's shake (a giant's stomp, Game.ShakeCamera): stepped with the game's time. */
+  readonly shake = new CameraShake();
   /** The race's body (the cameras' heights). */
   #body: PlayerBody;
 
@@ -564,6 +577,8 @@ export class Player implements Camera {
     if (Math.abs(this.#bowZoom - zoom) < 1e-3) this.#bowZoom = zoom;
     this.#moveShoulder(deltaSeconds);
     this.#placeCamera(physics.alpha);
+    this.shake.step(deltaSeconds);
+    if (this.#animated) this.#animated.since += deltaSeconds;
   }
 
   /**
@@ -807,6 +822,91 @@ export class Player implements Camera {
       pivot[1] + back[1] * reach,
       pivot[2] + back[2] * reach,
     ];
+    this.#animateCamera();
+  }
+
+  // --- Animated cameras (the player's graph: StartAnimatedCamera) -------------------------------
+
+  /** The animated camera under way, if any. */
+  #animated:
+    | (AnimatedCameraRequest & {
+        /** Seconds since it began. */
+        since: number;
+        /** The node's place as it began (the delta camera adds its motion since). */
+        readonly start: Vec3 | undefined;
+      })
+    | undefined;
+  /** Where the animated camera looks (the node's forward), blended in as it takes over. */
+  #animatedForward: { readonly forward: Vec3; readonly share: number } | undefined;
+
+  /**
+   * StartAnimatedCamera / StartAnimatedCameraDelta (src/shell/actor-graph-events.ts): the
+   * third-person camera goes over to the node (its transition's seconds), or adds its motion.
+   */
+  startAnimatedCamera(request: AnimatedCameraRequest): void {
+    const at = request.node();
+    this.#animated = {
+      ...request,
+      since: 0,
+      start: at ? [at[12] ?? 0, at[13] ?? 0, at[14] ?? 0] : undefined,
+    };
+  }
+
+  /** EndAnimatedCamera: the camera is the player's again. */
+  endAnimatedCamera(): void {
+    this.#animated = undefined;
+    this.#animatedForward = undefined;
+  }
+
+  /**
+   * PitchOverrideStart / PitchOverrideEnd: observed in the original, set on the
+   * third-person camera while it is the camera's state. TODO(M13): what the third-person camera
+   * does with it is not known; nothing reads it yet.
+   */
+  pitchOverride = false;
+
+  setPitchOverride(on: boolean): void {
+    if (this.pov === 'third') this.pitchOverride = on;
+  }
+
+  /**
+   * ZeroOutCameraPitch: observed in the original, the camera's pitch goes to level (its
+   * heading kept). TODO(M13): whether the engine eases it there.
+   */
+  zeroPitch(): void {
+    this.pitch = 0;
+  }
+
+  /** The animated camera rides its node (third person; first person keeps the eye). */
+  #animateCamera(): void {
+    const animated = this.#animated;
+    this.#animatedForward = undefined;
+    if (!animated || this.pov !== 'third') return;
+    const node = animated.node();
+    if (!node) return;
+    const at: Vec3 = [node[12] ?? 0, node[13] ?? 0, node[14] ?? 0];
+    if (animated.delta) {
+      const start = animated.start ?? at;
+      this.position = [
+        this.position[0] + at[0] - start[0],
+        this.position[1] + at[1] - start[1],
+        this.position[2] + at[2] - start[2],
+      ];
+      return;
+    }
+    const share = animated.transition > 0 ? Math.min(1, animated.since / animated.transition) : 1;
+    this.position = [
+      this.position[0] + (at[0] - this.position[0]) * share,
+      this.position[1] + (at[1] - this.position[1]) * share,
+      this.position[2] + (at[2] - this.position[2]) * share,
+    ];
+    // TODO(M13): the axis an animated camera node looks along is inferred (the node's +y, as
+    // actors face).
+    const length = Math.hypot(node[4] ?? 0, node[5] ?? 0, node[6] ?? 0) || 1;
+    this.#animatedForward = {
+      forward: [(node[4] ?? 0) / length, (node[5] ?? 0) / length, (node[6] ?? 0) / length],
+      share,
+    };
   }
 
   viewProjection(aspect: number, out: Mat4 = new Float32Array(16)): Mat4 {
@@ -820,20 +920,45 @@ export class Player implements Camera {
       fovY = verticalFov(this.#fovDegrees + view.fov);
     }
     let forward = this.forward;
+    let yaw = this.yaw;
+    let pitch = this.pitch;
     if (this.tween.active) {
       const added = this.tween.sample(performance.now());
-      const yaw = this.yaw + added.yaw;
-      const pitch = this.pitch + added.pitch;
+      yaw += added.yaw;
+      pitch += added.pitch;
+      fovY = verticalFov(this.#fovDegrees + added.fov);
+    }
+    // The camera's shake turns the view (src/shell/camera-shake.ts): about its right (pitch),
+    // its forward (roll) and up (counter-clockwise lowers the compass heading).
+    const shake = this.shake.angles;
+    let up: Vec3 = [0, 0, 1];
+    if (shake) {
+      yaw -= shake[2];
+      pitch += shake[0];
+      const roll = shake[1];
+      up = [Math.cos(yaw) * Math.sin(roll), -Math.sin(yaw) * Math.sin(roll), Math.cos(roll)];
+    }
+    if (this.tween.active || shake) {
       const c = Math.cos(pitch);
       forward = [Math.sin(yaw) * c, Math.cos(yaw) * c, Math.sin(pitch)];
-      fovY = verticalFov(this.#fovDegrees + added.fov);
+    }
+    // An animated camera looks where its node does, taking over through its transition.
+    const animated = this.#animatedForward;
+    if (animated) {
+      const mixed: Vec3 = [
+        forward[0] + (animated.forward[0] - forward[0]) * animated.share,
+        forward[1] + (animated.forward[1] - forward[1]) * animated.share,
+        forward[2] + (animated.forward[2] - forward[2]) * animated.share,
+      ];
+      const length = Math.hypot(...mixed) || 1;
+      forward = [mixed[0] / length, mixed[1] / length, mixed[2] / length];
     }
     const target: Vec3 = [
       this.position[0] + forward[0],
       this.position[1] + forward[1],
       this.position[2] + forward[2],
     ];
-    const view = lookAt(this.position, target, [0, 0, 1]);
+    const view = lookAt(this.position, target, up);
     const projection = perspectiveReversedZ(fovY, aspect, this.near);
     projection[8] = -this.lensShift;
     return multiply(projection, view, out);

@@ -177,8 +177,11 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     world.pointOfView?.('third');
     return null;
   });
+  // ShakeCamera(akSource, afStrength = 0.5, afDuration = 0.0): observed in the original, the
+  // strength is kept within 0 and 1 and the shake starts at the source (none: the player).
   n('game.shakecamera', ({ args }) => {
-    world.shakeCamera?.(num(args[1], 0.5), num(args[2]));
+    const strength = Math.min(1, Math.max(0, num(args[1], 0.5)));
+    world.shakeCamera?.(strength, num(args[2], 0), runtime.reference(args[0] ?? null));
     return null;
   });
   n('game.shakecontroller', () => null);

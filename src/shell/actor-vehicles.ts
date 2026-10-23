@@ -11,6 +11,7 @@
 // ExitCartEnd ends the ride. The cart's travel is its horse's: its package moves the horse.
 
 import type RAPIER from '@dimforge/rapier3d-compat';
+import type { GraphEvent } from '../animation/graph-events.ts';
 import {
   AT_ROOT,
   hitchPlace,
@@ -406,11 +407,11 @@ export class ActorVehicles {
   riderEvents(
     actor: number,
     graph: { sendEvent(name: string): boolean },
-    events: readonly string[],
+    events: readonly GraphEvent[],
   ): void {
     const passenger = this.#passengers.get(actor);
     if (!passenger) return;
-    for (const event of events) {
+    for (const { name: event } of events) {
       if (BOUND_STANDING.has(event.toLowerCase())) graph.sendEvent('CartExit');
       const effect = riderEvent(event);
       if (effect === 'detach' && !passenger.detached) {

@@ -14,6 +14,8 @@
 // a second down, or eight seconds at most.
 
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import type { GraphEvent } from '../animation/graph-events.ts';
+import type { ActorGraphSource } from './actor-graph-events.ts';
 import { KnockState } from '../gameplay/combat/combat-state.ts';
 import { TRANSFORM_FLOATS } from '../formats/hkx/animation.ts';
 import { invert } from '../render/frustum.ts';
@@ -95,8 +97,6 @@ export class ActorKnockdowns {
   readonly #options: ActorKnockdownsOptions;
   readonly #knocks = new Map<number, Knock>();
   readonly #paralyzed = new Set<number>();
-  /** Bodies whose graph events it hears (once each). */
-  readonly #hooked = new WeakSet<PlacedActor>();
 
   constructor(options: ActorKnockdownsOptions) {
     this.#options = options;
@@ -217,7 +217,6 @@ export class ActorKnockdowns {
         if (!subject.dead) this.#end(knock);
         continue;
       }
-      this.#hook(knock.placed, reference);
       subject.frame?.(seconds);
       if (knock.phase === 'down') {
         knock.down += seconds;
@@ -284,17 +283,15 @@ export class ActorKnockdowns {
     this.#paralyzed.clear();
   }
 
-  /** Hears a body's graph events (the get-up's), for whoever lies in it then. */
-  #hook(placed: PlacedActor, reference: number): void {
-    if (this.#hooked.has(placed)) return;
-    this.#hooked.add(placed);
-    const previous = placed.onEvents;
-    placed.onEvents = (events) => {
-      previous?.(events);
-      const knock = this.#knocks.get(reference);
-      if (knock?.placed !== placed) return;
-      for (const event of events) knock.heard.add(event.toLowerCase());
-    };
+  /**
+   * What a body's graph raised (the stage's dispatch, src/shell/actor-graph-events.ts), for
+   * whoever lies in it then: its get-up's GetUpStart and GetUpEnd (the engine's
+   * GetUpStartHandler and GetUpEndHandler), GetUpExit.
+   */
+  graphEvents(source: ActorGraphSource, events: readonly GraphEvent[]): void {
+    const knock = this.#knocks.get(source.reference);
+    if (knock?.placed !== source.skeleton) return;
+    for (const event of events) knock.heard.add(event.name.toLowerCase());
   }
 
   /**

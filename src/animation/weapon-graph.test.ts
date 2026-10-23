@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AnimationBinding, HkxSkeleton } from '../formats/hkx/animation.ts';
 import { identity, transformPoint } from '../render/math.ts';
 import type { SkeletalGraph } from './behavior-runtime.ts';
+import { graphEvent } from './graph-events.ts';
 import { WeaponGraph } from './weapon-graph.ts';
 
 /** One Havok bone, "String", which the clip pulls back along -y by time. */
@@ -71,7 +72,7 @@ describe('a held weapon graph', () => {
   it('runs a long frame as one short step and ignores events it does not know', () => {
     const weapon = WeaponGraph.start(nodes, graph, () => 0.5, Int16Array.of(-1, 1));
     if (!weapon) throw new Error('no graph');
-    weapon.hear(['weaponDraw', 'SoundPlay.WPNBowNockSD']);
+    weapon.hear([graphEvent('weaponDraw'), graphEvent('SoundPlay.WPNBowNockSD')]);
     const driven = new Map<number, Float32Array>();
     weapon.update(5, identity(), driven);
     expect(transformPoint(driven.get(1) ?? identity(), [0, 0, 0])[1]).toBeCloseTo(-1);

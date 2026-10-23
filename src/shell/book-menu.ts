@@ -390,7 +390,7 @@ class Reading {
     if (skeletal) {
       const skeleton = skeletal.skeleton;
       skeleton.onEvents = (events) => {
-        this.#events(events);
+        this.#events(events.map((event) => event.text));
       };
       this.#skeletons.push(skeleton);
       const behavior = skeleton.behavior;

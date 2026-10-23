@@ -72,7 +72,10 @@ export function placedScriptGraph(
   };
 }
 
-/** The events a placed object's skeletal graph raises reach its scripts (OnAnimationEvent). */
+/**
+ * The events a placed object's skeletal graph raises reach its scripts (OnAnimationEvent), by
+ * their names as the graph has them.
+ */
 export function skeletonEventsToScripts(
   skeleton: AnimatedSkeleton,
   send: (event: string) => void,
@@ -80,6 +83,6 @@ export function skeletonEventsToScripts(
   const previous = skeleton.onEvents;
   skeleton.onEvents = (events) => {
     previous?.(events);
-    for (const event of events) send(event);
+    for (const event of events) send(event.text);
   };
 }

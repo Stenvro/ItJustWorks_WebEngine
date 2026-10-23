@@ -4,6 +4,7 @@
 
 import { BehaviorRuntime, type SkeletalGraph } from './behavior-runtime.ts';
 import type { FaceAnimation } from './face.ts';
+import type { GraphEvent } from './graph-events.ts';
 import { ActorPose, ActorSkeleton, type RigData } from './skeleton.ts';
 
 /** A skeleton moved by a running graph (an actor or an animated object). */
@@ -14,13 +15,16 @@ export interface AnimatedSkeleton {
   readonly face?: FaceAnimation;
   /** The renderer's clock at its last update. */
   time: number | undefined;
-  /** The events its graph raised in an update (the player's avatar listens for JumpUp). */
-  onEvents?: (events: readonly string[]) => void;
+  /**
+   * The events its graph raised in an update, with their payloads: an actor's go to the stage's
+   * dispatch (src/animation/graph-events.ts), which hands them to the engine's handlers.
+   */
+  onEvents?: (events: readonly GraphEvent[]) => void;
   /**
    * The same events for its scripts (OnAnimationEvent, WaitForAnimationEvent): kept apart from
    * onEvents, which the engine's systems chain and replace.
    */
-  onScriptEvents?: (events: readonly string[]) => void;
+  onScriptEvents?: (events: readonly GraphEvent[]) => void;
 }
 
 /** A frame longer than this (a hitch, a hidden tab) advances the graphs by this much. */
