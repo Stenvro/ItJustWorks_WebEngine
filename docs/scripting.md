@@ -90,6 +90,23 @@ EPModSkillUsage_IsAdvanceSkill, EPAlchemyEffectHasKeyword, EPAlchemyGetMakingPoi
 they ask about the entry point's spell, attack, skill or potion: the perk engine values them in
 perk entries, the only records that use them).
 
+**Subject, target and the other** (observed in the original). Conditions are asked of a
+subject and its target (an idle's actor and the action's target, a speaker and the one spoken
+to, an effect's target and its caster). Each condition runs on one reference, by its run-on,
+and has an other: run on the subject, the other is the target; on the target, the subject; on
+a reference, the target; on the subject's combat target, the subject; on a linked reference, a
+quest alias, package data or event data, none. Swap Subject and Target exchanges the two when
+both are there. A reference parameter left empty (no form, neither Use aliases nor Use packdata)
+is the other: the killmove idles' ShouldAttackKill(), GetRelativeAngle(, Z) and
+GetTargetHeight(), dialogue's IsHostileToActor() ask about the target that way. A condition
+whose run-on has nothing to run on fails, whatever its comparison (a target run-on asked without
+a target: an idle tree asked of no target, RipHeartOut's GetIsID(DLC2Ildari) on it); only a
+function no evaluator values holds. An actor's keywords are its base's, then its race's
+(HasKeyword(ActorTypeNPC): a race's keyword). GetRelativeAngle(reference, axis) is the subject's
+rotation on the axis less the reference's, 0..360 degrees (not where the reference stands:
+GetHeadingAngle says that); GetTargetHeight(reference) how far above the subject's feet the
+reference's are.
+
 What they read: quests, globals and script variables; what a reference is and has (its base,
 race, class, keywords, factions, items, gold, keyword items, diseases, lock, being essential,
 protected, restrained, eaten); where it is (cells, worldspaces, locations and their keywords,

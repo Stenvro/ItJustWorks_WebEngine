@@ -158,6 +158,10 @@ export interface ScriptView {
 /** What scripts ask of and tell combat (ActorCombat). */
 export interface CombatBridge {
   state(actor: number): ActorCombatState | undefined;
+  /** ShouldAttackKill (undefined: neither is one of its fighters). */
+  attackKills(attacker: number, target: number): Promise<boolean> | undefined;
+  /** IsLastHostileActor (undefined: it plays no part of the player's fights). */
+  lastHostileActor(actor: number): boolean | undefined;
   startCombat(actor: number, target: number): void;
   stopCombat(actor: number): void;
   /** Whether an actor fights or holds another an enemy (src/shell/actor-combat-ai.ts). */
@@ -674,6 +678,22 @@ export class ScriptWorld implements WorldBridge {
       if (state) return state;
     }
     return undefined;
+  }
+
+  async attackKills(attacker: number, target: number): Promise<boolean> {
+    for (const fights of this.#fights()) {
+      const kills = fights.attackKills(attacker, target);
+      if (kills) return kills;
+    }
+    return false;
+  }
+
+  lastHostileActor(actor: number): boolean {
+    for (const fights of this.#fights()) {
+      const last = fights.lastHostileActor(actor);
+      if (last !== undefined) return last;
+    }
+    return true;
   }
 
   startCombat(actor: number, target: number): void {

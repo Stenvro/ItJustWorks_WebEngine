@@ -19,8 +19,15 @@
 // sets each fighter's target and asks for its draws, attacks, blocks and releases here.
 
 import { parseNpcCombat, parseRaceCombat } from '../ai/race-combat-records.ts';
-import { behaviorGraphKey, readIdleTree, type IdleTree } from '../ai/idle-records.ts';
+import {
+  behaviorGraphKey,
+  readIdleTree,
+  type IdleRecord,
+  type IdleTree,
+} from '../ai/idle-records.ts';
 import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
+import { partnerMark } from '../animation/paired-clips.ts';
+import type { AnimationBinding } from '../formats/hkx/animation.ts';
 import type { GraphEvent } from '../animation/graph-events.ts';
 import type { ActorGraphSource } from './actor-graph-events.ts';
 import { ActorValue } from '../world/actor-values.ts';
@@ -89,6 +96,8 @@ import {
   turnBetween,
   type StrikeTarget,
 } from '../gameplay/combat/hit-test.ts';
+import { rangedKillCameraPlays } from '../gameplay/combat/ranged-kill-camera.ts';
+import type { INI_DEFAULTS } from '../world/ini-settings.ts';
 import { ARROW_TILT, tiltUp, WORLD_GRAVITY } from '../gameplay/combat/projectile.ts';
 import { anglesOf, directionOf, npcSpread } from '../gameplay/combat/aim.ts';
 import { ProjectileFlag } from '../world/projectile-data.ts';
@@ -171,11 +180,13 @@ const ATTACK_ANSWER = 1.5;
 const FIGHT_REACH = 4096;
 /** How often a fighter's perks' graph variables are read again (seconds). */
 const PERK_VARIABLE_SECONDS = 1;
-/** A paired killmove's victim stands this far before the leader (Paired_1HMKillMoveB's "2_"
- * root at its start: 72.8 units ahead, turned to face it). TODO(M13): each clip's own offset. */
-const PAIRED_DISTANCE = 72.8;
 /** How wide a flying arrow is to those it may hit and who dodge it (units). */
 const SHOT_RADIUS = 8;
+/**
+ * A paired idle's event begins so; its partner's event is the rest (observed in the
+ * original: "pa_KillMoveB" for the leader, "KillMoveB" for the one it is done to).
+ */
+const PAIRED_PREFIX = 'pa_';
 
 /** One who fights: an actor of the stage or the player. */
 interface Fighter {
@@ -209,14 +220,26 @@ interface Fighter {
   /** Bleeding out: seconds down; in a paired animation: seconds in it. */
   down: number;
   pairedFor: number;
-  /** Estimated: its next attack kills its target (ShouldAttackKill), valued now and then. */
-  killing: boolean;
+  /** A killmove's victim: who leads it (the engine's myKiller, set as the killmove starts). */
+  killer: number | undefined;
+  /** In a paired animation, its graph has entered its synchronized clip. */
+  synced: boolean;
   /**
-   * Its work that takes awaits and is asked for every frame (the kill estimate, the bleedout's
-   * regain) under way: one at a time, or long frames start more of it than finishes (each a chain
-   * of perk conditions), and the backlog makes the frames longer still.
+   * A paired clip's partner on its way to its mark (#followMark): whose, since when (the
+   * clock), and where it started once the clip is known.
    */
-  estimating: boolean;
+  toMark:
+    | {
+        readonly leader: number;
+        readonly since: number;
+        from:
+          { readonly position: Vec3; readonly heading: number; readonly at: number } | undefined;
+      }
+    | undefined;
+  /**
+   * Its bleedout's regain under way: one at a time, or long frames start more of it than
+   * finishes (each a chain of perk conditions), and the backlog makes the frames longer still.
+   */
   bleeding: boolean;
   unbled: number;
   /** The last hit it dealt was critical. */
@@ -343,6 +366,8 @@ export class ActorCombat implements CombatBridge {
   #musicOn = false;
   #equipListening: ScriptRuntime | undefined;
   #camera: KillmoveCamera | undefined;
+  /** The kill camera's image-space modifier shown now. */
+  #killCamImod: number | undefined;
   #input: PlayerCombat | undefined;
   /** Who fights whom and how (src/shell/actor-combat-ai.ts). */
   readonly #brain: ActorCombatAi;
@@ -534,9 +559,6 @@ export class ActorCombat implements CombatBridge {
     const fighter = this.#fighters.get(actor);
     if (!fighter) return undefined;
     const state = fighter.state;
-    const target = fighter.target === undefined ? undefined : this.#fighters.get(fighter.target);
-    const feet = this.#feet(fighter);
-    const targetFeet = target && this.#feet(target);
     return {
       weaponState: state.weapon,
       attackState: state.attack,
@@ -564,10 +586,55 @@ export class ActorCombat implements CombatBridge {
       friendHits: this.#brain.friendHits(actor),
       groupSize: this.#brain.groupSize(actor),
       combatTarget: fighter.target,
-      shouldAttackKill: fighter.killing,
-      targetHeight: feet && targetFeet ? targetFeet[2] - feet[2] : 0,
-      lastHostile: fighter.target !== undefined && this.#lastHostile(fighter),
     };
+  }
+
+  /**
+   * ShouldAttackKill, observed in the original: the attacker's next strike would kill the
+   * target. Never one already dead, nor one that cannot be killed: an essential actor or a
+   * child, nor a protected one but by the player (one raised from the dead always can be). The
+   * strike is the engine's predicted hit: the weapon in the attacker's hand (its fists without
+   * one) through the target's armour and the difficulty, times the attack data of its attack
+   * under way (none: 1; no critical, no sneak attack), against the target's health now. Undefined:
+   * not one of its fighters.
+   */
+  attackKills(attacker: number, target: number): Promise<boolean> | undefined {
+    const fighter = this.#fighters.get(attacker);
+    const victim = this.#fighters.get(target);
+    if (!fighter || !victim) return undefined;
+    return this.#attackKills(fighter, victim);
+  }
+
+  /**
+   * IsLastHostileActor, observed in the original: the actors hostile to the player near
+   * them (alive, fighting the player, within fHostileActorExteriorDistance, inside
+   * fHostileActorInteriorDistance; fliers also within fHostileFlyingActorExteriorDistance) are
+   * none, or the actor alone.
+   */
+  lastHostileActor(actor: number): boolean | undefined {
+    const player = this.#fighters.get(PLAYER_REF);
+    const at = player && this.#feet(player);
+    if (!at) return undefined;
+    const interior = this.#options.interior?.() === true;
+    const reach = interior
+      ? this.#settings.hostileActorInteriorDistance
+      : this.#settings.hostileActorExteriorDistance;
+    let others = 0;
+    for (const fighter of this.#fighters.values()) {
+      if (fighter.player || fighter.reference === actor) continue;
+      if (fighter.target !== PLAYER_REF || fighter.state.life === LifeState.dead) continue;
+      const feet = this.#feet(fighter);
+      if (!feet) continue;
+      const distance = Math.hypot(feet[0] - at[0], feet[1] - at[1], feet[2] - at[2]);
+      const flying = this.#options.flight?.()?.isFlying(fighter.reference) === true;
+      if (
+        distance <= reach ||
+        (flying && distance <= this.#settings.hostileFlyingActorExteriorDistance)
+      ) {
+        others++;
+      }
+    }
+    return others === 0;
   }
 
   /** A fighter's combat target, if it has one. */
@@ -742,7 +809,7 @@ export class ActorCombat implements CombatBridge {
       this.#bark(reference, kind.bash ? 'Bash' : kind.power ? 'PowerAttack' : 'Attack', target);
     }
     // A paired killmove: the one it is done to plays its part.
-    if (lower.startsWith('pa_') && target !== undefined) this.#pair(fighter, target, event);
+    if (lower.startsWith(PAIRED_PREFIX) && target !== undefined) this.#pair(fighter, target, event);
     return true;
   }
 
@@ -882,11 +949,17 @@ export class ActorCombat implements CombatBridge {
     // Who fights whom, and how.
     this.#brain.frame(seconds);
     this.#projectiles.frame(seconds, this.#play?.physics);
-    this.#camera?.update(seconds);
-    // The killmove camera is the player's while it plays.
+    // Its shots last real seconds (the world's clock runs at their pace meanwhile).
+    const realSeconds = seconds / Math.max(0.01, this.#options.session.time.multiplier);
+    this.#camera?.update(realSeconds);
+    // The kill camera is the player's while it plays: the world's clock at its shot's pace,
+    // the shot's image-space modifier on.
     const play = this.#play;
     if (this.#camera?.done === true) this.#camera = undefined;
+    this.#options.session.time.killCam = this.#camera?.timeMultiplier ?? 1;
+    this.#killCamModifier(this.#camera?.imageSpaceModifier);
     if (play) {
+      play.heldByPair = player?.state.paired !== undefined;
       if (this.#camera && play.cameraOverride === undefined) play.cameraOverride = this.#camera;
       else if (!this.#camera && play.cameraOverride instanceof KillmoveCamera) {
         play.cameraOverride = undefined;
@@ -894,6 +967,19 @@ export class ActorCombat implements CombatBridge {
     }
     this.#enemyBar();
     this.#setMusic(this.#fightingPlayer());
+  }
+
+  /**
+   * The kill camera's image-space modifier (its shot's, observed in the original): each
+   * shot's cross-faded in over fVATSImageSpaceTransitionTime, faded out as the camera ends.
+   */
+  #killCamModifier(modifier: number | undefined): void {
+    if (modifier === this.#killCamImod) return;
+    const modifiers = this.#options.session.imageSpaceModifiers;
+    const seconds = this.#settings.vatsImageSpaceTransitionTime;
+    this.#killCamImod = modifier;
+    if (modifier === undefined) void modifiers.removeCrossFade(seconds);
+    else void modifiers.crossFade(modifier, seconds);
   }
 
   /**
@@ -1219,12 +1305,28 @@ export class ActorCombat implements CombatBridge {
     if (state.current?.ranged === true && state.arrowNocked) state.drawnFor += seconds;
     this.#combatLook(fighter);
     this.#aimBow(fighter);
-    // A paired animation that never says it ended lets go after fKillMoveMaxDuration (the
-    // engine's killmove timer).
-    fighter.pairedFor = state.paired === undefined ? 0 : fighter.pairedFor + seconds;
+    this.#followMark(fighter);
+    // A synchronized scene lasts as long as its clips (observed in the original: an actor
+    // is in a paired animation while it is in its scene): out of its paired clip, it is in its
+    // pair no more, whether or not its graph said so (a bear killmove's leader raises no PairEnd).
+    const synced = fighter.body?.behavior?.synchronizedClip() !== undefined;
+    if (state.paired !== undefined && synced) fighter.synced = true;
+    else if (state.paired !== undefined && fighter.synced) {
+      fighter.synced = false;
+      for (const effect of graphEvent(state, 'PairEnd')) this.#effect(fighter, effect);
+    } else if (state.paired === undefined) fighter.synced = false;
+    // The engine's killmove timer (observed in the original): fKillMoveMaxDuration after it began, an
+    // actor is in its killmove no more (IsInKillMove). A paired animation that never says it
+    // ended lets go then too.
+    fighter.pairedFor =
+      state.paired === undefined && !state.killMove ? 0 : fighter.pairedFor + seconds;
     if (fighter.pairedFor > this.#settings.killMoveMaxDuration) {
-      state.paired = undefined;
-      for (const graph of this.#graphs(fighter)) graph.pairedSide = undefined;
+      fighter.pairedFor = 0;
+      state.killMove = false;
+      if (state.paired !== undefined) {
+        state.paired = undefined;
+        for (const graph of this.#graphs(fighter)) graph.pairedSide = undefined;
+      }
     }
     if (bleedingOut(state)) {
       fighter.down += seconds;
@@ -1238,13 +1340,6 @@ export class ActorCombat implements CombatBridge {
           fighter.bleeding = false;
         });
       }
-    }
-    // Its next attack would kill its target (ShouldAttackKill), valued now and then.
-    if (fighter.target !== undefined && !fighter.estimating && Math.random() < seconds * 4) {
-      fighter.estimating = true;
-      void this.#estimateKill(fighter, runtime).finally(() => {
-        fighter.estimating = false;
-      });
     }
   }
 
@@ -1277,11 +1372,31 @@ export class ActorCombat implements CombatBridge {
     }
   }
 
-  /** Values ShouldAttackKill: the fighter's next strike takes its target's health. */
-  async #estimateKill(fighter: Fighter, runtime: ScriptRuntime): Promise<void> {
-    const target = fighter.target;
+  /** ShouldAttackKill (see attackKills). */
+  async #attackKills(fighter: Fighter, victim: Fighter): Promise<boolean> {
     const gear = fighter.gear;
-    if (target === undefined || !gear) return;
+    if (!gear) return false;
+    const current = fighter.state.current;
+    const mult = current ? this.#attackData(fighter, current.event).damageMult : 1;
+    return this.#predictedKill(fighter, victim, gear.right.damage * mult);
+  }
+
+  /**
+   * The engine's predicted hit: whether a blow of some physical damage kills the victim now
+   * (through its armour and the difficulty, no critical, no sneak attack), which it can.
+   */
+  async #predictedKill(fighter: Fighter, victim: Fighter, physical: number): Promise<boolean> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return false;
+    const target = victim.reference;
+    if (victim.state.life === LifeState.dead || (await runtime.actors.isDead(target))) return false;
+    // Who cannot be killed (one raised from the dead always can).
+    if (victim.state.life !== LifeState.reanimate) {
+      if ((await runtime.actors.isEssential(target)) || (await runtime.actors.isChild(target))) {
+        return false;
+      }
+      if (!fighter.player && (await runtime.actors.isProtected(target))) return false;
+    }
     const health = (await runtime.actors.value(target, ActorValue.health)).current;
     let armor = this.#estimatedArmor.get(target);
     if (!armor || this.#clock - armor.at > ESTIMATED_ARMOR_SECONDS) {
@@ -1293,18 +1408,18 @@ export class ActorCombat implements CombatBridge {
     }
     const damage = hitDamage(
       {
-        physical: gear.right.damage,
+        physical,
         critical: 0,
         sneakMult: 1,
         armorReduction: armor.reduction,
         blocked: 0,
         difficulty: this.#difficulty(),
         attackerIsPlayer: fighter.player,
-        targetIsPlayer: target === PLAYER_REF,
+        targetIsPlayer: victim.player,
       },
       this.#settings,
     );
-    fighter.killing = damage.total >= health;
+    return damage.total >= health;
   }
 
   // --- Graph events -----------------------------------------------------------------------------
@@ -1334,10 +1449,21 @@ export class ActorCombat implements CombatBridge {
 
   /** Who leads the paired animation an actor dies in (its killmove's killer), if anyone. */
   killerOf(reference: number): number | undefined {
+    const killer = this.#fighters.get(reference)?.killer;
+    if (killer !== undefined) return killer;
     for (const other of this.#fighters.values()) {
       if (other.state.paired === 'lead' && other.target === reference) return other.reference;
     }
     return undefined;
+  }
+
+  /** The one a fighter's killmove is done to (its partner in it), if any. */
+  #victimOf(leader: Fighter): Fighter | undefined {
+    for (const other of this.#fighters.values()) {
+      if (other.state.paired === 'support' && other.killer === leader.reference) return other;
+    }
+    const target = leader.target === undefined ? undefined : this.#fighters.get(leader.target);
+    return target?.state.paired === 'support' ? target : undefined;
   }
 
   #event(
@@ -1465,6 +1591,11 @@ export class ActorCombat implements CombatBridge {
           this.killerOf(fighter.reference),
         );
         break;
+      case 'killmove-end':
+        void this.#endKillMove(fighter).catch((error: unknown) => {
+          this.#warn(`a killmove's end: ${describe(error)}`);
+        });
+        break;
       case 'decapitate':
         this.#options.decapitate?.(fighter.reference);
         break;
@@ -1483,7 +1614,12 @@ export class ActorCombat implements CombatBridge {
   async #strike(fighter: Fighter): Promise<void> {
     const current = fighter.state.current;
     const feet = this.#feet(fighter);
-    if (!current || !feet || current.killMove) return;
+    // A killmove's hit frames strike its victim, wherever the clip has it.
+    if (fighter.state.paired === 'lead' && (current?.killMove ?? fighter.state.killMove)) {
+      await this.#killMoveStrike(fighter);
+      return;
+    }
+    if (!current || !feet) return;
     const data = this.#attackData(fighter, current.event);
     const strike = {
       origin: feet,
@@ -1940,11 +2076,16 @@ export class ActorCombat implements CombatBridge {
     }
     // Its health; the killing blow pushes its ragdoll (fDeathForce*). The one hit says its
     // line (Hit); its death cry is the stage's (every death but a silent one: killed).
-    // A practice with Do No Damage takes no health.
+    // A practice with Do No Damage takes no health. Observed in the original: a blow on
+    // one in a killmove does fCombatKillMoveDamageMult times its damage.
     if (result.total <= 0 || attacker.practice?.doNoDamage === true) return;
-    await runtime.actors.damage(targetRef, ActorValue.health, result.total, attackerRef);
+    const dealt = target.state.killMove
+      ? result.total * this.#settings.killMoveDamageMult
+      : result.total;
+    await runtime.actors.damage(targetRef, ActorValue.health, dealt, attackerRef);
     if (await runtime.actors.isDead(targetRef)) {
-      this.#deathPush(target, result.total, hit);
+      // One dying in its paired clip falls as the clip has it.
+      if (target.state.paired === undefined) this.#deathPush(target, dealt, hit);
       if (weapon !== undefined && !hit.bash) await this.#siphonSoul(attackerRef, targetRef, weapon);
     } else if (!target.player) {
       this.#bark(targetRef, 'Hit', attackerRef);
@@ -2323,6 +2464,8 @@ export class ActorCombat implements CombatBridge {
             const feet = this.#feet(aimed);
             return feet && [feet[0], feet[1], feet[2] + this.#size(aimed).height * CHEST];
           };
+    const before = new Set([...this.#projectiles.flying()].map((shot) => shot.key));
+    // The shot is in flight as soon as it is loosed (its model follows).
     void this.#projectiles.loose({
       shooter: fighter.reference,
       ammo,
@@ -2333,6 +2476,12 @@ export class ActorCombat implements CombatBridge {
       payload,
       ...(homing && { homing }),
     });
+    if (fighter.player) {
+      const shot = [...this.#projectiles.flying()].find((flying) => !before.has(flying.key));
+      this.#rangedKillCamera(fighter, from, aim, power, shot?.key).catch((error: unknown) => {
+        this.#warn(`a shot's kill camera: ${describe(error)}`);
+      });
+    }
     this.#playSound(gear.rightRecord?.sounds.attack, fighter);
     // The player's shot with a bow (not a crossbow) is told with its draw and whether they look
     // into the sun (TESPlayerBowShotEvent: OnPlayerBowShot; observed in the original).
@@ -2358,11 +2507,6 @@ export class ActorCombat implements CombatBridge {
   // --- Killmoves -------------------------------------------------------------------------------
 
   /**
-   * A paired killmove: the leader plays "pa_<name>", the one it is done to "<name>" (its
-   * graph's VictimBehavior), each its part of the paired clip, the victim placed before the
-   * leader facing it; it dies at its clip's KillActor. The player's camera shows it.
-   */
-  /**
    * A paired idle an actor plays on a target outside an attack (the vampire's feeding bite,
    * StartVampireFeed's IdleVampireFeed): the target plays its side, at the leader.
    */
@@ -2371,49 +2515,308 @@ export class ActorCombat implements CombatBridge {
     if (fighter) this.#pair(fighter, target, event);
   }
 
+  /**
+   * A paired idle played on a target (an attack action's "pa_" idle, a feeding bite): the
+   * leader plays "pa_<name>", the target "<name>" (its graph's VictimBehavior), each its side of
+   * the synchronized clip, the target at its mark before the leader (#toMark). Observed in the
+   * original: an idle whose event begins "pa_Kill" starts a killmove. The leader's
+   * attack state is drawing, both are in a killmove (IsInKillMove) until their KillMoveEnd or
+   * fKillMoveMaxDuration, the victim's killer (myKiller) is the leader, and both have their
+   * deaths deferred (StartDeferredKill: a blow that empties their health kills them as the
+   * deferral ends, at KillMoveEnd). The victim dies at its KillActor or its KillMoveEnd, by its
+   * killer. A killmove the player leads plays in the kill camera (#killCamera); one done to the
+   * player turns the camera to third person.
+   */
   #pair(leader: Fighter, victimRef: number, event: string): void {
     const victim = this.#fighters.get(victimRef);
-    const feet = this.#feet(leader);
-    if (!victim || !feet) return;
+    if (!victim || !this.#feet(leader)) return;
+    const runtime = this.#options.session.scriptsReady;
     leader.state.paired = 'lead';
     victim.state.paired = 'support';
-    // A killmove (pa_...) until the graph's KillMoveEnd (a feeding bite is none).
-    const killMove = leader.state.current?.killMove === true;
-    leader.state.killMove = killMove;
-    victim.state.killMove = killMove;
+    const killMove = event.toLowerCase().startsWith('pa_kill');
+    if (killMove) {
+      for (const fighter of [leader, victim]) {
+        fighter.state.killMove = true;
+        fighter.pairedFor = 0;
+        runtime?.actors.startDeferredKill(fighter.reference);
+      }
+      victim.killer = leader.reference;
+      if (leader.state.current) leader.state.attack = AttackState.draw;
+    }
+    // Whatever the victim did ends.
     victim.state.current = undefined;
+    victim.state.attack = AttackState.none;
+    victim.state.blocking = false;
     // The leader plays the clip's first side, the victim its "2_" side (one skeleton both:
     // the side is theirs to set, src/animation/paired-clips.ts).
     for (const graph of this.#graphs(leader)) graph.pairedSide = 'first';
     for (const graph of this.#graphs(victim)) {
       graph.pairedSide = 'second';
-      graph.sendEvent(event.slice(3));
+      graph.sendEvent(event.slice(PAIRED_PREFIX.length));
+    }
+    victim.toMark = { leader: leader.reference, since: this.#clock, from: undefined };
+    if (!victim.player) this.#options.movers.request(victimRef, undefined);
+    if (killMove && leader.player) this.#killCamera(leader, victim);
+    if (killMove && victim.player) this.#play?.player.setPov('third');
+  }
+
+  /**
+   * The partner of a paired clip goes to its mark (observed in the original: the
+   * synchronized clip's get-to-mark): where the clip puts it from its leader as it begins
+   * (src/animation/paired-clips.ts partnerMark: a killmove's victim 72.8 units before a man,
+   * 157 before a bear), turned as the clip turns it (bReorientSupportChar), over the clip's
+   * fGetToMarkTime (the vanilla killmoves: at once, the vampire lord's feeding 0.05 s), unless the clip ignores its mark
+   * (bSyncClipIgnoreMarkPlacement). Read as the clip begins to play; not there after
+   * [Animation] fMaxTimeToMarkSec, the scene plays where they stand.
+   */
+  #followMark(fighter: Fighter): void {
+    const mark = fighter.toMark;
+    if (!mark) return;
+    const leader = this.#fighters.get(mark.leader);
+    const leaderFeet = leader && this.#feet(leader);
+    if (!leader || !leaderFeet || fighter.state.paired !== 'support') {
+      fighter.toMark = undefined;
+      return;
+    }
+    const maxTime = this.#options.session.ini.number('Animation', 'fMaxTimeToMarkSec');
+    if (this.#clock - mark.since > maxTime) {
+      fighter.toMark = undefined;
+      return;
+    }
+    // The synchronized clip its graph (else its leader's) plays now, once its clip is loaded.
+    let sync: ReturnType<BehaviorRuntime['synchronizedClip']>;
+    let binding: AnimationBinding | undefined;
+    for (const graph of [...this.#graphs(fighter), ...this.#graphs(leader)]) {
+      sync = graph.synchronizedClip();
+      binding = sync?.binding;
+      if (sync && binding) break;
+    }
+    if (!sync || !binding) return;
+    const place = partnerMark(binding);
+    if (!place || sync.ignoreMarkPlacement) {
+      fighter.toMark = undefined;
+      return;
     }
     const heading = this.#heading(leader);
+    const [x, y, z] = place.offset;
+    const cos = Math.cos(heading);
+    const sin = Math.sin(heading);
     const at: Vec3 = [
-      feet[0] + Math.sin(heading) * PAIRED_DISTANCE,
-      feet[1] + Math.cos(heading) * PAIRED_DISTANCE,
-      feet[2],
+      leaderFeet[0] + x * cos + y * sin,
+      leaderFeet[1] - x * sin + y * cos,
+      leaderFeet[2] + z,
     ];
-    const staged = this.#options.get(victimRef);
-    if (staged) {
-      staged.position = at;
-      staged.heading = heading + Math.PI;
-      this.#options.movers.teleport(staged);
-      this.#options.movers.request(victimRef, undefined);
+    // The yaw is counter-clockwise, the heading clockwise.
+    const facing = sync.reorientSupport ? heading - place.yaw : this.#heading(fighter);
+    const now = this.#feet(fighter) ?? at;
+    mark.from ??= { position: now, heading: this.#heading(fighter), at: this.#clock };
+    const share =
+      sync.getToMarkTime > 0 ? Math.min(1, (this.#clock - mark.from.at) / sync.getToMarkTime) : 1;
+    const from = mark.from.position;
+    const position: Vec3 = [
+      from[0] + (at[0] - from[0]) * share,
+      from[1] + (at[1] - from[1]) * share,
+      from[2] + (at[2] - from[2]) * share,
+    ];
+    const turned = mark.from.heading + turnBetween(mark.from.heading, facing) * share;
+    if (fighter.player) {
+      this.#play?.player.teleport(position, turned);
+    } else {
+      const staged = this.#options.get(fighter.reference);
+      if (staged) {
+        staged.position = position;
+        staged.heading = turned;
+        this.#options.movers.teleport(staged);
+      }
     }
-    if ((leader.player || victim.player) && this.#play?.player.pov === 'third') {
-      void KillmoveCamera.choose(this.#options.session, {
-        attacker: () => this.#feet(leader),
-        attackerHeading: () => this.#heading(leader),
-        target: () => this.#feet(victim),
-        attackerRef: leader.reference,
-        targetRef: victimRef,
-        physics: this.#play.physics,
-      }).then((camera) => {
-        if (camera && leader.state.paired === 'lead') this.#camera = camera;
-      });
+    if (share >= 1) fighter.toMark = undefined;
+  }
+
+  /** A killmove's end (KillMoveEnd): its victim dies by its killer, deaths deferred come. */
+  async #endKillMove(fighter: Fighter): Promise<void> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    fighter.state.killMove = false;
+    const killer = fighter.killer;
+    fighter.killer = undefined;
+    if (killer !== undefined && !(await runtime.actors.isDead(fighter.reference))) {
+      await runtime.actors.kill(fighter.reference, killer);
     }
+    await runtime.actors.endDeferredKill(fighter.reference);
+  }
+
+  /** A killmove's hit frame: its victim takes the blow (#hit: × fCombatKillMoveDamageMult). */
+  async #killMoveStrike(leader: Fighter): Promise<void> {
+    const victim = this.#victimOf(leader);
+    const from = this.#feet(leader);
+    const at = victim && this.#feet(victim);
+    if (!victim || !from || !at || victim.state.life === LifeState.dead) return;
+    const chest: Vec3 = [from[0], from[1], from[2] + this.#size(leader).height * CHEST];
+    const point: Vec3 = [at[0], at[1], at[2] + this.#size(victim).height * CHEST];
+    const way: Vec3 = [point[0] - chest[0], point[1] - chest[1], point[2] - chest[2]];
+    const length = Math.hypot(...way) || 1;
+    await this.#hit(leader.reference, victim.reference, {
+      power: true,
+      bash: false,
+      sneak: false,
+      ranged: false,
+      point,
+      direction: [way[0] / length, way[1] / length, way[2] / length],
+      shot: undefined,
+    });
+  }
+
+  /**
+   * The kill camera of a killmove the player leads (observed in the original: the
+   * player's melee action with a paired target event starts the kill camera, whatever the
+   * view): the kill cameras' tree gives its shots (killmove-camera.ts); a first-person shot
+   * keeps the player's own view.
+   */
+  #killCamera(leader: Fighter, victim: Fighter): void {
+    const play = this.#play;
+    if (!play) return;
+    void KillmoveCamera.choose(this.#options.session, {
+      attacker: () => this.#feet(leader),
+      attackerHeading: () => this.#heading(leader),
+      target: () => this.#feet(victim),
+      targetHeading: () => this.#heading(victim),
+      attackerRef: leader.reference,
+      targetRef: victim.reference,
+      physics: play.physics,
+      maxSeconds: this.#settings.vatsSafetyMaxTime,
+    }).then((camera) => {
+      if (camera && leader.state.paired === 'lead') this.#camera = camera;
+    });
+  }
+
+  /**
+   * The kill camera of the player's bow or crossbow shot (observed in the original): as
+   * the shot leaves, if no kill camera plays, [VATS] bVATSDisable is off and the player does
+   * not ride, and at most one actor fights the player ([VATS] bVATSMultipleCombatants: any),
+   * the living actor the shot flies at within its projectile's range, with a bow drawn to at
+   * least 0.8 of its power (a crossbow: always), whom the shot is predicted to kill ([VATS]
+   * bVATSAllowNoKill: any), on the odds of a selective ranged kill camera ([VATS]
+   * bVATSRangedSelective; ranged-kill-camera.ts), the shot's way to it clear ([VATS]
+   * bVATSIgnoreProjectileTest: not tested). The camera then rides the projectile through the
+   * kill cameras' tree, for at most fVATSSafetyMaxTimeRanged.
+   */
+  async #rangedKillCamera(
+    fighter: Fighter,
+    from: Vec3,
+    aim: Vec3,
+    power: number,
+    key: object | undefined,
+  ): Promise<void> {
+    const play = this.#play;
+    const session = this.#options.session;
+    const runtime = session.scriptsReady;
+    const gear = fighter.gear;
+    if (!play || !runtime || !gear?.projectile || key === undefined || this.#camera) return;
+    const vats = (name: keyof (typeof INI_DEFAULTS)['VATS']): number =>
+      session.ini.number('VATS', name);
+    if (vats('bVATSDisable') !== 0) return;
+    if (runtime.world.mountOf?.(fighter.reference) !== undefined) return;
+    if (this.enemiesOfPlayer().length > 1 && vats('bVATSMultipleCombatants') === 0) return;
+    const speed = gear.projectile.speed * Math.min(1, Math.max(0.35, power));
+    const victim = this.#shotAt(fighter, from, aim, Math.min(10000, gear.projectile.range), {
+      speed,
+      gravity: WORLD_GRAVITY * gear.projectile.gravity,
+    });
+    if (!victim || victim.state.life === LifeState.dead) return;
+    const bow = gear.right.weaponType === WeaponType.bow;
+    if (bow && power < 0.8) return;
+    const allowNoKill = vats('bVATSAllowNoKill') !== 0;
+    const fatal = await this.#predictedKill(fighter, victim, gear.right.shotDamage * power);
+    if (!fatal && !allowNoKill) return;
+    if (vats('bVATSRangedSelective') !== 0) {
+      const feet = this.#feet(fighter);
+      const at = this.#feet(victim);
+      if (!feet || !at) return;
+      const senses = this.#options.senses?.();
+      const detected = senses
+        ? senses.detects(victim.reference, fighter.reference)
+        : victim.target === fighter.reference;
+      const health = await runtime.actors.value(fighter.reference, ActorValue.health);
+      const plays = rangedKillCameraPlays(
+        {
+          distance: Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]),
+          playerLevel: await runtime.actors.level(fighter.reference),
+          targetLevel: await runtime.actors.level(victim.reference),
+          playerHealth: health.max > 0 ? health.current / health.max : 1,
+          sneakKill: play.player.sneaking && !detected,
+          threat: victim.target === fighter.reference && victim.state.life === LifeState.alive,
+        },
+        {
+          longDistance: vats('fVATSRangedLongDistance'),
+          lowHealthPercent: vats('fVATSRangedLowHealthPercent'),
+          percentMin: vats('fVATSRangedPercentMin'),
+          percentSneakKill: vats('fVATSRangedPercentSneakKill'),
+          percentTargetNoThreat: vats('fVATSRangedPercentTargetNoThreat'),
+          targetLowLevelMult: vats('fVATSRangedTargetLowLevelMult'),
+        },
+      );
+      if (!plays) return;
+    }
+    if (vats('bVATSIgnoreProjectileTest') === 0 && !this.#seen(fighter, victim)) return;
+    const projectile = (): { position: Vec3; heading: number } | undefined => {
+      for (const shot of this.#projectiles.flying()) {
+        if (shot.key !== key) continue;
+        const [vx, vy] = shot.velocity;
+        return { position: shot.position, heading: Math.atan2(vx, vy) };
+      }
+      return undefined;
+    };
+    const camera = await KillmoveCamera.choose(session, {
+      attacker: () => this.#feet(fighter),
+      attackerHeading: () => this.#heading(fighter),
+      target: () => this.#feet(victim),
+      targetHeading: () => this.#heading(victim),
+      projectile,
+      projectileType: gear.projectile.type,
+      maxSeconds: this.#settings.vatsSafetyMaxTimeRanged,
+      fatal,
+      attackerRef: fighter.reference,
+      targetRef: victim.reference,
+      physics: play.physics,
+    });
+    // Another may have begun while this one was chosen.
+    if (camera && this.camera === undefined) this.#camera = camera;
+  }
+
+  /**
+   * The actor a shot from a point along an aim flies at within a range: the nearest along it
+   * whose body (an upright cylinder) its flight passes through, falling under its gravity (not
+   * the shooter or its mount).
+   */
+  #shotAt(
+    fighter: Fighter,
+    from: Vec3,
+    aim: Vec3,
+    range: number,
+    flight: { readonly speed: number; readonly gravity: number },
+  ): Fighter | undefined {
+    const mount = this.#options.session.scriptsReady?.world.mountOf?.(fighter.reference);
+    let best: { fighter: Fighter; along: number } | undefined;
+    for (const other of this.#fighters.values()) {
+      if (other === fighter || other.reference === mount) continue;
+      const feet = this.#feet(other);
+      if (!feet) continue;
+      const size = this.#size(other);
+      const middle: Vec3 = [feet[0], feet[1], feet[2] + size.height / 2];
+      const along =
+        (middle[0] - from[0]) * aim[0] +
+        (middle[1] - from[1]) * aim[1] +
+        (middle[2] - from[2]) * aim[2];
+      if (along < 0 || along > range) continue;
+      const x = from[0] + aim[0] * along;
+      const y = from[1] + aim[1] * along;
+      const seconds = flight.speed > 0 ? along / flight.speed : 0;
+      const z = from[2] + aim[2] * along - 0.5 * flight.gravity * seconds * seconds;
+      if (Math.hypot(x - feet[0], y - feet[1]) > size.radius) continue;
+      if (z < feet[2] || z > feet[2] + size.height) continue;
+      if (!best || along < best.along) best = { fighter: other, along };
+    }
+    return best?.fighter;
   }
 
   // --- The combat AI's view --------------------------------------------------------------------
@@ -2529,16 +2932,37 @@ export class ActorCombat implements CombatBridge {
     const graph = await this.#graphKey(body.look.behavior);
     if (!parent || graph === undefined) return undefined;
     const subject = new ObjectHandle(fighter.reference, 'actor');
-    const context = target === undefined ? {} : { target: runtime.referenceHandle(target) };
-    const idle = await tree.resolveAsync(parent.formId, graph, (candidate) =>
-      runtime.conditionsHold(candidate.conditions, subject, undefined, context),
-    );
+    const resolve = (on: number | undefined): Promise<IdleRecord | undefined> => {
+      const context = on === undefined ? {} : { target: runtime.referenceHandle(on) };
+      return tree.resolveAsync(parent.formId, graph, (candidate) =>
+        runtime.conditionsHold(candidate.conditions, subject, undefined, context),
+      );
+    };
+    let idle = await resolve(target);
+    // A paired idle ("pa_<name>") plays only if its target's graph takes "<name>" now (observed
+    // in the original: the target's side is played first, the leader's only once it
+    // was taken; the player's attack is then asked again without its target: a plain attack).
+    // A killmove's victim with its weapon sheathed has none.
+    if (
+      target !== undefined &&
+      idle?.event?.toLowerCase().startsWith(PAIRED_PREFIX) === true &&
+      !this.#partnerTakes(target, idle.event.slice(PAIRED_PREFIX.length))
+    ) {
+      idle = await resolve(undefined);
+    }
     const event = idle?.event;
     if (event === undefined) return undefined;
     let taken = false;
     for (const runtimeGraph of this.#graphs(fighter))
       taken = runtimeGraph.sendEvent(event) || taken;
     return taken ? event : undefined;
+  }
+
+  /** Whether a paired idle's target would take its side's event now (its body's graph). */
+  #partnerTakes(target: number, event: string): boolean {
+    const partner = this.#fighters.get(target);
+    const graph = partner?.body?.behavior;
+    return graph?.wouldHandle(event) === true;
   }
 
   /**
@@ -2639,7 +3063,7 @@ export class ActorCombat implements CombatBridge {
   #attackData(fighter: Fighter, event: string): AttackData {
     const data = fighter.gear?.attacks.of(event);
     if (data) return data;
-    return event.toLowerCase().startsWith('pa_') ? POWER_ATTACK_DEFAULT : DEFAULT_ATTACK;
+    return event.toLowerCase().startsWith(PAIRED_PREFIX) ? POWER_ATTACK_DEFAULT : DEFAULT_ATTACK;
   }
 
   /** Stamina for a power attack or bash (the skill progression's costs). */
@@ -2739,32 +3163,72 @@ export class ActorCombat implements CombatBridge {
     return x >= 0 ? 2 : 4;
   }
 
-  /** The actor the player strikes at: the nearest in front of them within reach. */
+  /**
+   * The actor the player's attack is aimed at (the attack action's target: its idles'
+   * conditions run on it), observed in the original: the actors near (not the player's
+   * mount; the dead too) within the reach of the player's weapon (fists: their race's; a bash's
+   * reach; mounted, [Combat] fMountedAttackRange) between the two bodies' edges, inside
+   * fCombatHitConeAngle of the player's facing (the dead: fCombatDeadActorHitConeMult times as
+   * wide), the one nearest that facing; its current target first if it still is in reach.
+   */
   #aimedAt(fighter: Fighter): number | undefined {
     const feet = this.#feet(fighter);
     if (!feet) return undefined;
     const heading = this.#play?.player.yaw ?? this.#heading(fighter);
-    let best: { reference: number; distance: number } | undefined;
-    const reach = this.#reach(fighter, false) * 2;
-    for (const other of this.#fighters.values()) {
-      if (other === fighter || other.state.life === LifeState.dead) continue;
+    const mount = this.#options.session.scriptsReady?.world.mountOf?.(fighter.reference);
+    const reach =
+      mount !== undefined
+        ? this.#options.session.ini.number('Combat', 'fMountedAttackRange')
+        : this.#reach(fighter, false);
+    const radius = this.#size(fighter).radius;
+    const cone = this.#settings.combatHitConeAngle;
+    /** How far off the facing an actor in reach is (degrees), if it may be struck. */
+    const off = (other: Fighter): number | undefined => {
+      if (other === fighter || other.reference === mount) return undefined;
       const at = this.#feet(other);
-      if (!at) continue;
-      const distance = Math.hypot(at[0] - feet[0], at[1] - feet[1]);
-      if (distance > reach) continue;
-      if (Math.abs(turnBetween(heading, headingTo(feet, at))) > Math.PI / 3) continue;
-      if (!best || distance < best.distance) best = { reference: other.reference, distance };
+      if (!at) return undefined;
+      const between =
+        Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]) -
+        radius -
+        this.#size(other).radius;
+      if (between > reach) return undefined;
+      const angle = Math.abs(turnBetween(heading, headingTo(feet, at))) * (180 / Math.PI);
+      const dead = other.state.life === LifeState.dead;
+      return angle <= (dead ? cone * this.#settings.deadActorHitConeMult : cone)
+        ? angle
+        : undefined;
+    };
+    const current = fighter.target === undefined ? undefined : this.#fighters.get(fighter.target);
+    if (current && off(current) !== undefined) return current.reference;
+    let best: { reference: number; angle: number; fighter: Fighter } | undefined;
+    for (const other of this.#fighters.values()) {
+      const angle = off(other);
+      if (angle === undefined) continue;
+      if (!best || angle <= best.angle)
+        best = { reference: other.reference, angle, fighter: other };
     }
-    return best?.reference;
+    // The player must see it (a wall between: none).
+    return best && this.#seen(fighter, best.fighter) ? best.reference : undefined;
   }
 
-  /** Whether the fighter's target is the last actor that fights it. */
-  #lastHostile(fighter: Fighter): boolean {
-    let hostile = 0;
-    for (const other of this.#fighters.values()) {
-      if (other.target === fighter.reference && other.state.life !== LifeState.dead) hostile++;
-    }
-    return hostile <= 1;
+  /** Whether nothing but actors stands between two fighters' chests. */
+  #seen(from: Fighter, to: Fighter): boolean {
+    const physics = this.#play?.physics;
+    const a = this.#feet(from);
+    const b = this.#feet(to);
+    if (!physics?.queriesCurrent || !a || !b) return true;
+    const start: Vec3 = [a[0], a[1], a[2] + this.#size(from).height * CHEST];
+    const end: Vec3 = [b[0], b[1], b[2] + this.#size(to).height * CHEST];
+    const way: Vec3 = [end[0] - start[0], end[1] - start[1], end[2] - start[2]];
+    const length = Math.hypot(way[0], way[1], way[2]);
+    if (length < 1) return true;
+    const hit = physics.raycast(
+      start,
+      [way[0] / length, way[1] / length, way[2] / length],
+      length,
+      Layer.weapon,
+    );
+    return !hit || hit.owner?.kind === 'actor';
   }
 
   /** Whether someone fights the player now (the wait menu's sNoWaitHostileActorsNear). */
@@ -3221,8 +3685,9 @@ function newFighter(reference: number, player: boolean): Fighter {
     drawSounded: false,
     down: 0,
     pairedFor: 0,
-    killing: false,
-    estimating: false,
+    killer: undefined,
+    synced: false,
+    toMark: undefined,
     bleeding: false,
     unbled: 0,
     lastCritical: false,

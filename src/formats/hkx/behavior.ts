@@ -314,6 +314,20 @@ export type BehaviorGenerator =
       readonly kind: 'synchronized-clip';
       readonly name: string;
       readonly generator: BehaviorGenerator | undefined;
+      /** SyncAnimPrefix: the prefix of the partner's tracks and events ("2_"), if any. */
+      readonly syncPrefix: string | undefined;
+      /** bSyncClipIgnoreMarkPlacement: the partner is not moved to its mark. */
+      readonly ignoreMarkPlacement: boolean;
+      /** fGetToMarkTime: seconds the partner takes to its mark (0: at once). */
+      readonly getToMarkTime: number;
+      /** fMarkErrorThreshold: how near its mark the partner counts as there. */
+      readonly markErrorThreshold: number;
+      /** bLeadCharacter: this side leads (its actor places the other). */
+      readonly leadCharacter: boolean;
+      /** bReorientSupportChar: the supporting side is turned to its mark's facing. */
+      readonly reorientSupport: boolean;
+      /** bApplyMotionFromRoot. */
+      readonly applyMotionFromRoot: boolean;
     }
   | {
       /** BSOffsetAnimationGenerator: a clip whose frame a variable picks, laid on another. */
@@ -1151,8 +1165,21 @@ class GraphReader {
             ];
           }),
         };
+      // Its members after the clip (the 2010.2 layout, as the vanilla graphs hold them: the
+      // killmoves' lead sides prefix "2_", every paired clip gets to its mark at once).
       case 'BSSynchronizedClipGenerator':
-        return { kind: 'synchronized-clip', name, generator: child(80) };
+        return {
+          kind: 'synchronized-clip',
+          name,
+          generator: child(80),
+          syncPrefix: file.string(at + 88),
+          ignoreMarkPlacement: file.u8(at + 96) !== 0,
+          getToMarkTime: file.f32(at + 100),
+          markErrorThreshold: file.f32(at + 104),
+          leadCharacter: file.u8(at + 108) !== 0,
+          reorientSupport: file.u8(at + 109) !== 0,
+          applyMotionFromRoot: file.u8(at + 110) !== 0,
+        };
       case 'BSOffsetAnimationGenerator':
         return {
           kind: 'offset-animation',

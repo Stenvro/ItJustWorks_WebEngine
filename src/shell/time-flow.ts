@@ -40,6 +40,11 @@ const BOW_SPEED_BONUS = actorValueIndex('BowSpeedBonus') ?? 0;
 export class TimeFlow {
   /** How fast the world's clock runs now (1: as the real one). */
   multiplier = 1;
+  /**
+   * The kill camera's shot's pace (src/shell/killmove-camera.ts; 1: none plays): while one
+   * plays, it is the world's clock (the engine's VATS playback sets the global time multiplier).
+   */
+  killCam = 1;
   /** The player's own pace against the world's clock (Player.pace). */
   playerPace = 1;
   /** The bow's zoom (the view's factor) while it is held, and whether it is held now. */
@@ -73,9 +78,10 @@ export class TimeFlow {
     const magic = runtime.magic.timeMultiplier();
     const zoomed = this.bowZoomed;
     const bow = zoomed ? Math.min(1, Math.max(0.05, 1 + this.#bowSpeed)) : 1;
-    this.multiplier = Math.min(magic, bow);
-    // In Slow Time the player keeps their pace; a zoom slows them with the world.
-    const pace = magic < 1 ? this.#slowedPace : this.multiplier;
+    this.multiplier = this.killCam !== 1 ? this.killCam : Math.min(magic, bow);
+    // In Slow Time the player keeps their pace; a zoom slows them with the world, so does a kill
+    // camera's shot.
+    const pace = magic < 1 && this.killCam === 1 ? this.#slowedPace : this.multiplier;
     this.playerPace = this.multiplier > 0 ? pace / this.multiplier : 1;
     if (zoomed && realSeconds > 0) void this.#spendZoom(runtime, realSeconds);
     this.#wait -= realSeconds;

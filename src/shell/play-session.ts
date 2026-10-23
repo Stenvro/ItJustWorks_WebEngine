@@ -641,6 +641,11 @@ export class PlaySession {
    * neither move nor activate anything meanwhile.
    */
   knocked = false;
+  /**
+   * The player is in a paired animation (a killmove, src/shell/actor-combat.ts): its clip
+   * places them; their keys do not move them meanwhile.
+   */
+  heldByPair = false;
 
   /** Lights a menu adds to the world while it is open (the race menu's two). */
   extraLights: readonly PointLight[] = [];
@@ -756,7 +761,10 @@ export class PlaySession {
       };
       // Where the ground has not loaded yet (streaming ahead of a fast player), the player
       // waits instead of falling through.
-      this.player.update(deltaSeconds, this.seated || !this.#groundReady(this.player.feet));
+      this.player.update(
+        deltaSeconds,
+        this.seated || this.heldByPair || !this.#groundReady(this.player.feet),
+      );
       // What the player walked into moves from now on (held objects wait for a touch).
       for (const collider of this.player.character.touched) this.physics.touch(collider);
       // An actor nearer than what the physics pick found is the target. The pick meets actors'

@@ -22,6 +22,9 @@ export const INI_DEFAULTS = {
     fMotionFeedbackMinSpeed: 5,
     fMotionFeedbackMinSpeedDelta: 25,
     fMotionFeedbackMinTime: 0.5,
+    // A paired clip's partner not at its mark after this long plays where it stands
+    // (src/shell/actor-combat.ts: killmoves).
+    fMaxTimeToMarkSec: 3,
     // How often actors' graphs update by their distance from the camera, their poses
     // interpolated between (src/animation/animated-skeleton.ts, animationRate).
     bAnimInterpEnable: 1,
@@ -165,6 +168,8 @@ export const INI_DEFAULTS = {
   Combat: {
     // A cut head flies off at this speed (game units a second; src/shell/actor-dismemberment.ts).
     fDecapInitialSpeed: 250,
+    // The player's attack mounted aims at actors this near (src/shell/actor-combat.ts).
+    fMountedAttackRange: 135,
     f1PArrowTiltUpAngle: 2,
     f1PBoltTiltUpAngle: 1,
     f3PArrowTiltUpAngle: 2.5,
@@ -286,6 +291,21 @@ export const INI_DEFAULTS = {
     fMinFailureDistance: 50,
     fWarpPathOffset: 100,
     fWarpMaxTime: 5,
+  },
+  // The kill cameras of the player's shots and casts (src/shell/actor-combat.ts: whether one
+  // plays; the executable's defaults).
+  VATS: {
+    bVATSDisable: 0,
+    bVATSMultipleCombatants: 0,
+    bVATSAllowNoKill: 0,
+    bVATSRangedSelective: 1,
+    bVATSIgnoreProjectileTest: 0,
+    fVATSRangedLongDistance: 2500,
+    fVATSRangedLowHealthPercent: 5,
+    fVATSRangedPercentSneakKill: 20,
+    fVATSRangedPercentTargetNoThreat: 10,
+    fVATSRangedTargetLowLevelMult: 0.3,
+    fVATSRangedPercentMin: 50,
   },
   HAVOK: {
     fInAirFallingCharGravityMult: 1.35,

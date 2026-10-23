@@ -1368,10 +1368,11 @@ meanwhile.
 - **Actions** go through the idle tree as the engine's do: ActionDraw, ActionSheath,
   ActionRightAttack, ActionLeftAttack, ActionRightPowerAttack, ActionLeftPowerAttack,
   ActionDualAttack, ActionDualPowerAttack, ActionRightRelease, ActionLeftRelease,
-  ActionStaggerStart, ActionRecoil(Large), ActionBlockHit, ActionBleedoutStart / Stop: the first
-  idle under the action whose conditions hold (run on the actor, its combat target the
-  conditions' Target) sends its event to the actor's graphs (the player's first-person graph
-  too). A sheathed weapon is drawn by the attack's own tree (DrawWeapon: WeapEquip). The engine
+  ActionStaggerStart, ActionRecoil(Large), ActionBlockHit, ActionBleedoutStart / Stop: the idle
+  the engine's search of the tree gives ([esm.md](formats/esm.md#idles-and-actions); its
+  conditions run on the actor, the attack's target their Target: an NPC's combat target, the
+  player's the actor they aim at, [gameplay.md](gameplay.md#killmoves)) sends its event to the
+  actor's graphs (the player's first-person graph too). A sheathed weapon is drawn by the attack's own tree (DrawWeapon: WeapEquip). The engine
   sets the graphs' iRightHandType / iLeftHandType (GetEquippedItemType's codes),
   iRightHandEquipped, iLeftHandEquipped, weaponSpeedMult and leftWeaponSpeedMult from the equip
   system, and IsAttacking, IsBlocking, IsBashing, iWantBlock, IsEquipping and IsUnequipping as
@@ -1386,16 +1387,14 @@ meanwhile.
   arrowAttach, bowDrawn and, on attackRelease, arrowRelease). The conditions IsWeaponOut,
   IsWeaponMagicOut, IsShieldOut, GetAttackState, IsAttacking, IsPowerAttacking, IsBlocking,
   GetWantBlocking, IsStaggered, IsRecoiling, IsBleedingOut, GetKnockStateEnum, GetKnockedState,
-  GetPairedAnimation, GetMovementDirection, GetLastHitCritical, ShouldAttackKill,
-  GetTargetHeight, IsLastHostileActor, IsInCombat, GetCombatState, IsPC1stPerson and the
-  conditions run on the combat target read it, as do the natives IsWeaponDrawn, DrawWeapon,
-  SheatheWeapon, IsBleedingOut, IsInKillMove, IsInCombat, GetCombatState and GetCombatTarget.
-  ShouldAttackKill is valued now and then (about 4 times a game second per fighter): its
-  target's health against the strike's damage less the target's armor, the armor read through
-  each worn piece's perks and kept 2 s. A fighter's work that awaits the scripts (this
-  estimate, the bleedout's regain) runs one at a time: started every frame, long frames
-  started more of it than finished and the backlog of perk conditions froze a fight for
-  seconds.
+  GetPairedAnimation, GetMovementDirection, GetLastHitCritical, IsInCombat, GetCombatState,
+  IsPC1stPerson and the conditions run on the combat target read it, as do the natives
+  IsWeaponDrawn, DrawWeapon, SheatheWeapon, IsBleedingOut, IsInKillMove, IsInCombat,
+  GetCombatState and GetCombatTarget. ShouldAttackKill, IsLastHostileActor and GetTargetHeight
+  are the killmoves' ([gameplay.md](gameplay.md#killmoves)): valued when asked, on the
+  condition's target. A fighter's work that awaits the scripts (the bleedout's regain) runs
+  one at a time: started every frame, long frames started more of it than finished and the
+  backlog of perk conditions froze a fight for seconds.
 - **Weapons on the body** (`src/shell/actor-weapons.ts`): the right hand's weapon model hangs on
   its sheath node (the equip system's: the models' "Prn", WeaponSword, WeaponDagger,
   WeaponAxe, WeaponMace, WeaponBack, WeaponBow) and goes to WEAPON at weaponDraw, back at
@@ -1560,19 +1559,11 @@ meanwhile.
   body lying. TODO(M13): Resurrect on the player; GMST sMiscPlayerDead\* (a message box the
   data still has: "Reloading the most recent save game", Reload / Main Menu) is not known to
   show.
-- **Killmoves**: an attack whose idle is a paired one (the tree's killmove branches: their
-  conditions ShouldAttackKill, GetGlobalValue(KillMove), the target's race, the weapon, random
-  chances) plays "pa_<name>" on the attacker and "<name>" on the target, each its part of the
-  paired clip (its tracks named by bone, the target's prefixed "2_": src/animation/paired-clips.ts, the victim's side set by combat as both share a skeleton); the
-  target stands 72.8 units before the attacker facing it (Paired_1HMKillMoveB's start;
-  TODO(M13): each clip's own offset) and dies at its clip's KillActor. Seen by the player in
-  third person, the kill cameras' tree shows it (`src/shell/killmove-camera.ts`: from
-  PairedKillTest the first path whose conditions hold, with the kill as their context: the VATS
-  sides by rays beside the target or the attacker (the condition's run-on), GetVATSValue's weapon,
-  action and distance (docs/scripting.md, "Conditions"); its shots' ExportCam in the attacker's
-  frame looking at the target). TODO(M13): the shots' time multipliers (slow motion) and
-  image-space modifiers; the ranged and magic kill cameras (the tree's MagicOrBowCams: a bow's
-  or a spell's killing blow followed; their conditions are valued).
+- **Killmoves**: an attack whose idle is a paired one ("pa_<name>" for the attacker, "<name>"
+  for the target) plays only if the target's graph takes its side; the target goes to its mark
+  in the paired clip and dies at its KillActor or KillMoveEnd; the player's play in the kill
+  camera, with its slow motion. When they happen: [gameplay.md](gameplay.md#killmoves); how
+  they play, end and are shown: [animation.md](animation.md#killmoves).
 - **Combat music**: while anyone fights the player the default battle music (DOBJ BTMS) plays,
   ending with its finale as the fight does.
 

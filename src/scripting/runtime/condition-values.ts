@@ -391,13 +391,16 @@ export interface ConditionContext {
     input: number,
     reference: number,
   ) => Promise<boolean | undefined> | boolean | undefined;
-  /** What the subject acts on (the object it activates: GetActivationHeight, IsCarryable). */
+  /**
+   * What the subject acts on (the object it activates: GetActivationHeight, IsCarryable; an
+   * attack's target). Conditions run on the target fail without one, as the engine's do.
+   */
   readonly target?: ObjectHandle;
   /**
-   * It acts on nothing (an idle tree's action asked without a target): conditions run on the
-   * target fail, as the engine has none to run them on (not unknown, which holds).
+   * The condition's other (ScriptRuntime.conditionsHold: the target when it runs on the
+   * subject, the subject when it runs on the target): an empty reference parameter is it.
    */
-  readonly targetless?: boolean;
+  readonly other?: ObjectHandle;
   /** The active magic effect whose conditions these are (magic-conditions.ts). */
   readonly effectKey?: string;
   /** The item a tempering recipe would improve (EPTemperingItemIsEnchanted, ...HasKeyword). */
@@ -634,12 +637,14 @@ async function conditionValue(
   /**
    * The first parameter where it names a reference or an actor (xEdit ptReference, ptActor):
    * an alias of the condition's quest (Use aliases), the reference a data input of the running
-   * package names (Use packdata), else the form.
+   * package names (Use packdata), else the form; left empty, the condition's other (observed in
+   * the original: an empty reference parameter is the other of what it runs on).
    */
   const referenceParameter = (): number | undefined => {
     if (condition.useAliases) return alias(condition.raw1);
     if (condition.usePackData) return context.packageTarget?.(condition.raw1);
-    return form === 0 ? undefined : runtime.reference(new ObjectHandle(form, 'form'));
+    if (form === 0) return context.other && runtime.reference(context.other);
+    return runtime.reference(new ObjectHandle(form, 'form'));
   };
   const base = async (): Promise<number | undefined> =>
     reference === undefined
@@ -1275,10 +1280,7 @@ async function conditionValue(
     case Fn.getKnockedState:
     case Fn.getPairedAnimation:
     case Fn.getLastHitCritical:
-    case Fn.getMovementDirection:
-    case Fn.isLastHostileActor:
-    case Fn.shouldAttackKill:
-    case Fn.getTargetHeight: {
+    case Fn.getMovementDirection: {
       if (reference === undefined) return undefined;
       const now = runtime.world.combat?.(reference);
       if (!now) return 0;
@@ -1321,15 +1323,32 @@ async function conditionValue(
           return flag(now.paired);
         case Fn.getLastHitCritical:
           return flag(now.lastHitCritical);
-        case Fn.getMovementDirection:
-          return now.movementDirection;
-        case Fn.isLastHostileActor:
-          return flag(now.lastHostile);
-        case Fn.shouldAttackKill:
-          return flag(now.shouldAttackKill);
         default:
-          return now.targetHeight;
+          return now.movementDirection;
       }
+    }
+    // The killmoves' functions, observed in the original. ShouldAttackKill(actor): the
+    // subject's next strike would kill the actor (left empty: the condition's other, the
+    // attack's target); IsLastHostileActor: no actor near the player is hostile to them but,
+    // perhaps, the subject; GetTargetHeight(reference): how far above the subject's feet the
+    // reference's are.
+    case Fn.shouldAttackKill: {
+      const target = referenceParameter();
+      if (reference === undefined || target === undefined) return 0;
+      return flag((await runtime.world.attackKills?.(reference, target)) === true);
+    }
+    case Fn.isLastHostileActor:
+      return reference === undefined
+        ? undefined
+        : flag(runtime.world.lastHostileActor?.(reference) ?? true);
+    case Fn.getTargetHeight: {
+      const target = referenceParameter();
+      if (reference === undefined || target === undefined) return 0;
+      const [self, other] = await Promise.all([
+        runtime.placement(reference),
+        runtime.placement(target),
+      ]);
+      return self && other ? other.position[2] - self.position[2] : 0;
     }
     // The player looks through their own eyes.
     case Fn.isPC1stPerson:
@@ -1367,12 +1386,13 @@ async function conditionValue(
       );
     }
     // Whom it would attack, whether it is hostile to another (src/ai/combat-reactions.ts): the
-    // other its parameter, else (dialogue) the player. TODO(M13): what a condition without the
-    // parameter means. GetFactionRelation and IsGuard are crime's (crime-conditions.ts).
+    // other its parameter; left empty, the condition's other (in dialogue, the one spoken to).
+    // GetFactionRelation and IsGuard are crime's (crime-conditions.ts).
     case Fn.getShouldAttack:
     case Fn.isHostileToActor: {
       if (reference === undefined) return undefined;
-      const other = referenceParameter() ?? PLAYER_REF;
+      const other = referenceParameter();
+      if (other === undefined) return 0;
       if (condition.function === Fn.getShouldAttack) {
         return flag(await shouldAttack(runtime, reference, other));
       }
@@ -1526,21 +1546,23 @@ async function moreConditionValue(
       if (!self || !other) return 0;
       return halfCircle(headingTo(self.position, other.position) - self.heading);
     }
-    // GetRelativeAngle(reference, axis): where the other is from it, 0..360 clockwise from its
-    // facing (Z), or its elevation (X: pitch, Y: none in Skyrim's references). TODO(M13): the X
-    // and Y readings are inferred (the data asks Z only).
+    // GetRelativeAngle(reference, axis), observed in the original: how far its rotation on
+    // the axis (the second parameter: 'X', 'Y', 'Z') is turned from the reference's, 0..360
+    // degrees: not where the reference stands. The killmoves' front side asks 90..270 of the
+    // two facing each other (the reference left empty: the attack's target).
     case Fn.getRelativeAngle: {
-      const [self, other] = await Promise.all([placed(reference), placed(referenceParameter())]);
-      if (!self || !other) return 0;
-      const axis = axisOf(condition.raw1);
-      if (axis === 2) return fullCircle(headingTo(self.position, other.position) - self.heading);
-      if (axis === 1) return 0;
-      const dz = other.position[2] - self.position[2];
-      const flat = Math.hypot(
-        other.position[0] - self.position[0],
-        other.position[1] - self.position[1],
-      );
-      return fullCircle(Math.atan2(dz, flat));
+      const target = referenceParameter();
+      if (reference === undefined || target === undefined) return 0;
+      const axis = axisOf(condition.param2);
+      if (axis === 2) {
+        const [self, other] = await Promise.all([placed(reference), placed(target)]);
+        return self && other ? fullCircle(self.heading - other.heading) : 0;
+      }
+      const [self, other] = await Promise.all([
+        runtime.placement(reference),
+        runtime.placement(target),
+      ]);
+      return self && other ? fullCircle(self.rotation[axis] - other.rotation[axis]) : 0;
     }
     // GetWithinDistance(reference, distance).
     case Fn.getWithinDistance: {
