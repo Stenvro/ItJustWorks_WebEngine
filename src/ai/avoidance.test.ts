@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { avoid, type Avoider, type Neighbour } from './avoidance.ts';
+import {
+  avoid,
+  avoidance,
+  avoidanceNeighbours,
+  type Avoider,
+  type Neighbour,
+} from './avoidance.ts';
 
 /** An actor at the origin going north at walking speed. */
 const walker: Avoider = { position: [0, 0], radius: 20, speed: 80, direction: [0, 10] };
@@ -49,5 +55,29 @@ describe('avoidance', () => {
     // The near one to the right of its way wins over the far one to the left.
     const [x] = avoid(walker, [standing(-10, 200), standing(10, 70)]);
     expect(x).toBeLessThan(0);
+  });
+});
+
+describe('whom it goes round', () => {
+  const settings = { maxActors: 2, timeDelta: 3, minRadius: 256, maxRadius: 512 };
+
+  it('looks at the nearest iMaxActorsToAvoid within its avoidance radius', () => {
+    // Speed 80 × 3 s is below fMinAvoidanceRadius: 256, and its radius 20.
+    const near = avoidanceNeighbours(
+      walker,
+      [standing(0, 250), standing(0, 100), standing(0, 270), standing(0, 50)],
+      settings,
+    );
+    expect(near.map((other) => other.position[1])).toEqual([50, 100]);
+    // A runner (speed 300 × 3 s) looks as far as fMaxAvoidanceRadius.
+    const runner = { ...walker, speed: 300 };
+    expect(avoidanceNeighbours(runner, [standing(0, 530)], settings)).toHaveLength(1);
+    expect(avoidanceNeighbours(runner, [standing(0, 540)], settings)).toHaveLength(0);
+  });
+
+  it('tells whom it goes round', () => {
+    const ahead = standing(0, 60);
+    expect(avoidance(walker, [ahead]).blocker).toBe(ahead);
+    expect(avoidance(walker, [standing(0, -60)]).blocker).toBeUndefined();
   });
 });

@@ -319,6 +319,48 @@ describe('the detection formula', () => {
   });
 });
 
+describe("the engine's sleep, ambush and size terms", () => {
+  // The engine's built-in values (Skyrim.esm sets the sleep ones and the non-target one to 0).
+  const engine = readDetectionSettings({
+    number: (id) =>
+      ({ fSneakSleepMod: -0.2, fSneakSleepBonus: -0.5, fSneakAmbushNonTargetMod: -0.25 })[id],
+  });
+  const at = (observer: Partial<typeof guard>, target: Partial<typeof player> = {}) =>
+    detectionLevel(engine, {
+      ...facing,
+      observer: { ...guard, ...observer },
+      target: { ...player, ...target },
+    });
+
+  it('an asleep observer perceives less (fSneakSleepMod) and hears × (1 + fSneakSleepBonus)', () => {
+    const awake = at({}, { moving: true });
+    const asleep = at({ sleeping: true }, { moving: true });
+    expect(asleep.sound).toBeCloseTo(awake.sound * 0.5, 9);
+    expect(asleep.visual).toBe(0);
+    const attenuation = awake.attenuation;
+    expect(asleep.skill).toBeCloseTo(engine.skillMult * (25 * 0.8 * attenuation - 15), 9);
+  });
+
+  it('one in ambush watches its target better and others worse', () => {
+    const plain = at({});
+    const target = at({ ambush: 'target' });
+    const other = at({ ambush: 'other' });
+    const attenuation = plain.attenuation;
+    expect(target.skill - plain.skill).toBeCloseTo(engine.skillMult * 25 * 2.5 * attenuation, 9);
+    expect(other.skill - plain.skill).toBeCloseTo(-engine.skillMult * 25 * 0.25 * attenuation, 9);
+  });
+
+  it('reads the new settings with their built-in values', () => {
+    const builtIn = readDetectionSettings();
+    expect(builtIn.projectileDistancePlayer).toBe(1024);
+    expect(builtIn.projectileDistanceNpc).toBe(512);
+    expect(builtIn.updateTimeMinComplex).toBe(2.5);
+    expect(builtIn.complexSceneActors).toBe(20);
+    expect(builtIn.lowAlarmDistance).toBe(2000);
+    expect(builtIn.largeActorSizeMult).toBe(1);
+  });
+});
+
 describe('detection events', () => {
   it('carry fDetectEventDistancePlayer from the player, fDetectEventDistanceNPC from others', () => {
     const heard = (byPlayer: boolean, soundLevel: number, distance: number) =>

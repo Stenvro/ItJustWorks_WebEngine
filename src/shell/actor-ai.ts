@@ -19,6 +19,9 @@ import {
   type PackageTarget,
 } from '../ai/package-records.ts';
 import { PROCEDURES } from '../ai/procedure-runs.ts';
+import { aiSettingsOf } from '../ai/ai-settings.ts';
+import { patrolIdleTime } from '../ai/package-records.ts';
+import { ActorValue } from '../world/actor-values.ts';
 import { isOfObjectType, ObjectType } from '../ai/object-types.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { parseIdleMarker } from '../ai/idle-records.ts';
@@ -46,12 +49,11 @@ import type { GameSession } from './game-session.ts';
 /** An "in cell" place reaches this far round where the actor is (game units). */
 const IN_CELL_RADIUS = 1024;
 /**
- * An object (or a type of object) as a package's place: the nearest one within this of the actor
- * (units). TODO(M13): the engine's own search radius is not documented.
+ * The base objects of the markers a place may be at (XMarker, XMarkerHeading): a place at one
+ * is reached within fAIMarkerDestinationRadius (observed in the original).
  */
-const OBJECT_PLACE_RADIUS = 4096;
-/** A target named by object or object type is the nearest within this of the actor. */
-const TARGET_SEARCH_RADIUS = 4096;
+const XMARKER = 0x3b;
+const XMARKER_HEADING = 0x34;
 /** The size of an exterior cell (units). */
 const CELL_SIZE = 4096;
 /** A way to another space that failed holds its package this long (milliseconds). */
@@ -663,7 +665,11 @@ export class ActorAi {
           const other = this.#actors.get(actor)?.staged;
           return other ? [{ reference: actor, position: other.position }] : [];
         });
-        return followDistance(0, followerRanks(at, others).get(reference) ?? 0);
+        return followDistance(
+          0,
+          followerRanks(at, others).get(reference) ?? 0,
+          aiSettingsOf(this.#session).followSpacing,
+        );
       },
       greet: (topic) => {
         const scripts = this.#session.scriptsReady;
@@ -899,7 +905,10 @@ export class ActorAi {
               value: location.form,
               count: 0,
             };
-            const around = { position: self.position, radius: OBJECT_PLACE_RADIUS };
+            const around = {
+              position: self.position,
+              radius: aiSettingsOf(this.#session).acquireObjectDistance,
+            };
             const [nearest] = await this.#mind.search(criteria, around, actor, false);
             const at = nearest === undefined ? undefined : await placementOf(nearest);
             return at && { ...at, radius: location.radius, reference: nearest };
@@ -928,7 +937,7 @@ export class ActorAi {
               actor,
               from: self.position,
               center: self.position,
-              radius: TARGET_SEARCH_RADIUS,
+              radius: aiSettingsOf(this.#session).acquireObjectDistance,
             });
             return found[0];
           }
@@ -1009,6 +1018,30 @@ export class ActorAi {
       },
       running: (reference) =>
         this.#session.scriptsReady?.world.motion?.(reference)?.running === true,
+      motion: (reference) => this.#session.scriptsReady?.world.motion?.(reference),
+      livePosition: (reference) => this.#session.scriptWorld.livePlacement(reference)?.position,
+      settings: () => aiSettingsOf(this.#session),
+      energy: async (actor) => {
+        const scripts = runtime();
+        return scripts ? (await scripts.actors.value(actor, ActorValue.energy)).current : 50;
+      },
+      patrolPoint: async (reference) => {
+        const scripts = runtime();
+        const record = await scripts?.forms.record(reference);
+        const base = await scripts?.baseOf(reference);
+        const baseRecord = base === undefined ? undefined : await scripts?.forms.record(base);
+        return {
+          idleTime: (record && patrolIdleTime(record)) ?? 0,
+          furniture: baseRecord?.type === 'FURN',
+        };
+      },
+      destinationKind: async (reference) => {
+        const scripts = runtime();
+        const base = await scripts?.baseOf(reference);
+        if (base === XMARKER || base === XMARKER_HEADING) return 'marker';
+        const record = base === undefined ? undefined : await scripts?.forms.record(base);
+        return record?.type === 'FURN' ? 'furniture' : 'other';
+      },
       packageEvent: (actor, event, pack) => {
         // A scene's package action is done when its package completes.
         if (event === 'end') runtime()?.scenes.packageEnded(actor, pack.formId);

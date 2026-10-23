@@ -3,7 +3,8 @@
 // Kit's names and its parameters; what they do here follows the names and parameters, and
 // where the engine's own rule is not known it is marked TODO(M13). Platform-independent.
 
-import { followGait } from './followers.ts';
+import { AI_DEFAULTS, type AiSettings } from './ai-settings.ts';
+import { followGait, followRadii, followSpeed } from './followers.ts';
 import { IdleCollectionFlag } from './idle-records.ts';
 import { sameSpace } from './package-start.ts';
 import { TargetType } from './package-records.ts';
@@ -19,8 +20,16 @@ import type {
 
 type Vec3 = readonly [number, number, number];
 
-/** An actor counts as at a place within this of it when the place has no radius. */
-const AT_PLACE = 64;
+/** The AI's game settings of a run. */
+const settingsOf = (run: ProcedureRun): AiSettings => run.settings ?? AI_DEFAULTS;
+/**
+ * An actor is at a place within its radius, at least fAIDistanceRadiusMinLocation (observed in the
+ * original: a place at a marker is reached within fAIMarkerDestinationRadius, at furniture
+ * within fAIFurnitureDestinationRadius).
+ */
+const atPlace = (run: ProcedureRun): number => settingsOf(run).distanceRadiusMinLocation;
+/** Keep Eye On and Escort go this near their target (units; ours). */
+const NEAR_TARGET = 128;
 /** Standing actors look round for something to do this often (seconds). */
 const IDLE_SECONDS = 1;
 /** The player's reference. */
@@ -30,16 +39,11 @@ const REACH = 96;
 const GREET_DISTANCE = 128;
 /** A meal and a line said take this long (seconds). TODO(M13): the idle's and line's own. */
 const EAT_SECONDS = 6;
-/** Furniture of an empty object list is looked for this far round the actor (units). */
-const FURNITURE_SEARCH = 2048;
 /** Food, as a package target names it (object type Food). */
 const FOOD = { type: TargetType.objectType, value: ObjectType.food, count: 0 } as const;
 const SAY_SECONDS = 3;
 /** LockDoors' warning: the TimeToGo subtype, then the game's fAITrespassWarningTimer (s). */
 const TIME_TO_GO = 'TITG';
-const TRESPASS_WARNING_SECONDS = 5;
-/** An actor is at an idle marker within this of it. */
-const ARRIVE_AT_MARKER = 24;
 /** At an idle marker, an idle at least this long apart (its timer when longer; seconds). */
 const MARKER_PAUSE = 4;
 /**
@@ -120,9 +124,30 @@ async function goTo(
   options?: TravelOptions,
 ): Promise<boolean> {
   const here = run.body.position();
-  const reach = arrive ?? Math.max(AT_PLACE, place.radius);
+  const reach = arrive ?? (await destinationRadius(run, place.reference, place.radius));
   if (here && horizontal(here, place.position) <= reach) return true;
   return run.body.travel(place.position, run.gait, reach, place.space, options);
+}
+
+/**
+ * The radius a place is reached within (observed in the original): its own, at least
+ * fAIMarkerDestinationRadius at a marker, fAIFurnitureDestinationRadius at furniture, else
+ * fAIDistanceRadiusMinLocation.
+ */
+async function destinationRadius(
+  run: ProcedureRun,
+  reference: number | undefined,
+  radius: number,
+): Promise<number> {
+  const settings = settingsOf(run);
+  const kind = reference === undefined ? 'other' : await run.mind.destinationKind?.(reference);
+  const least =
+    kind === 'marker'
+      ? settings.markerDestinationRadius
+      : kind === 'furniture'
+        ? settings.furnitureDestinationRadius
+        : settings.distanceRadiusMinLocation;
+  return Math.max(radius, least);
 }
 
 /**
@@ -133,8 +158,27 @@ async function goTo(
 const travel: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
   if (!place) return hold(run);
-  return (await goTo(run, place)) ? 'success' : 'failure';
+  return (await goTo(run, place, undefined, movingTo(run, place.reference)))
+    ? 'success'
+    : 'failure';
 };
+
+/**
+ * A travel to a reference that may move: its path is searched again once the reference moved
+ * fAIMoveDistanceToRecalcTravelPath from where it led, an actor fAIMoveDistanceToRecalcTravelToActor
+ * (observed in the original).
+ */
+function movingTo(run: ProcedureRun, reference: number | undefined): TravelOptions | undefined {
+  if (reference === undefined || !run.mind.livePosition) return undefined;
+  const settings = settingsOf(run);
+  const actor = run.mind.motion?.(reference) !== undefined;
+  return {
+    moving: {
+      position: () => run.mind.livePosition?.(reference),
+      recalc: actor ? settings.recalcTravelToActor : settings.recalcTravelPath,
+    },
+  };
+}
 
 /** HoldPosition: to its place, then stays there while the package runs. */
 const holdPosition: ProcedureRunner = async (run) => {
@@ -168,15 +212,18 @@ const guard: ProcedureRunner = async (run) => {
 /**
  * Patrol: from its start along the references each links to (XLKR without a keyword), going to
  * each within the point radius; with "repeatable" it goes round again from its start, else it
- * succeeds at the end. "Start at nearest": it begins at the point of the patrol nearest it. At
- * an idle marker on the way it stays for the marker's timer, playing its idles. TODO(M13): the
- * engine's own stay at a patrol's idle marker (its timer once, or each idle's length).
+ * succeeds at the end. "Start at nearest": it begins at the point of the patrol nearest it. Each
+ * point is reached within the point radius, at least the radius of what the point is
+ * (destinationRadius). At an idle marker on the way it stays for the marker's timer, playing its
+ * idles; at a point with an idle time (XPRD) it waits that long, in furniture at least
+ * fAIPatrolMinSecondsAtNormalFurniture (observed in the original). TODO(M13): the engine's
+ * own stay at a patrol's idle marker (its timer once, or each idle's length).
  */
 const patrol: ProcedureRunner = async (run) => {
   const target = run.inputs.target(0);
   const start = target && (await run.mind.target(target, run.actor, run.context));
   if (start === undefined) return hold(run);
-  const radius = run.inputs.number(1, AT_PLACE) || AT_PLACE;
+  const pointRadius = run.inputs.number(1);
   const repeatable = run.inputs.bool(2);
   // Static pathing: straight from point to point (MQ101's carts follow their road so: no
   // navmesh joins some of its points).
@@ -212,6 +259,7 @@ const patrol: ProcedureRunner = async (run) => {
       const point = points[index];
       const at = point === undefined ? undefined : await run.mind.placement(point);
       if (!at) continue;
+      const radius = await destinationRadius(run, point, pointRadius);
       const here = run.body.position();
       if (!here || horizontal(here, at.position) > radius) spent = true;
       if (!(await goTo(run, { position: at.position, radius, space: at.space }, radius, options))) {
@@ -227,9 +275,11 @@ const patrol: ProcedureRunner = async (run) => {
       // marker taken by another: it walks on).
       if (point === undefined || run.stopped()) continue;
       const marker = await run.mind.idleMarker(point);
-      if (marker && (await atIdleMarker(run, point, Math.max(marker.timer, MARKER_PAUSE)))) {
-        spent = true;
+      if (marker) {
+        if (await atIdleMarker(run, point, Math.max(marker.timer, MARKER_PAUSE))) spent = true;
+        continue;
       }
+      if (await stayAtPatrolPoint(run, point)) spent = true;
     }
     if (!repeatable) return 'success';
     if (!spent) await run.wait(IDLE_SECONDS);
@@ -238,43 +288,112 @@ const patrol: ProcedureRunner = async (run) => {
 };
 
 /**
+ * A patrol's stay at a point it reached: its idle time (XPRD); furniture it uses for at least
+ * fAIPatrolMinSecondsAtNormalFurniture, then gets up. Whether it stayed.
+ */
+async function stayAtPatrolPoint(run: ProcedureRun, point: number): Promise<boolean> {
+  const at = await run.mind.patrolPoint?.(point);
+  if (!at) return false;
+  if (!at.furniture) {
+    if (at.idleTime <= 0) return false;
+    await waitFor(run, at.idleTime);
+    return true;
+  }
+  if (!(await run.body.useFurniture(point))) return false;
+  await waitFor(run, Math.max(at.idleTime, settingsOf(run).patrolMinSecondsAtNormalFurniture));
+  if (!run.stopped()) await run.body.leaveFurniture();
+  return true;
+}
+
+/**
  * Follow: keeps within its maximum radius of its target, closing to the minimum when it falls
  * behind (one fFollowSpaceBetweenFollowers farther for each of the leader's followers nearer
  * it), running when far behind or when the leader runs; stands, facing it, between. Through
  * load doors and on fast travel the player's followers come along (src/shell/actor-followers.ts);
- * its horse it rides where the package lets it (body.ride). TODO(M13): Need LOS (it follows
- * the leader whether it sees it or not) and Accompany are not documented.
+ * its horse it rides where the package lets it (body.ride). Its radii without its own are the
+ * engine's (followRadii); on its way its path follows the leader as it moves (searched again
+ * once the leader moved fAIMoveDistanceToRecalcFollowPath), its speed matched to the leader's
+ * (followSpeed), sprinting after the player (followGait). TODO(M13): Need LOS (it follows the
+ * leader whether it sees it or not) and Accompany are not documented.
  */
 const follow: ProcedureRunner = async (run) => {
   const target = run.inputs.target(0);
   const leader = target && (await run.mind.target(target, run.actor, run.context));
   if (leader === undefined) return hold(run);
-  const min = Math.max(run.inputs.number(1, 128), 64);
-  const max = Math.max(run.inputs.number(2, 256), min);
+  const radii = followRadii(settingsOf(run), numberIn(run, 1), numberIn(run, 2));
   try {
-    while (!run.stopped()) {
-      const near = min + (run.body.following?.(leader) ?? 0);
-      const far = Math.max(max, near);
-      const at = await run.mind.placement(leader);
-      const here = run.body.position();
-      const distance = at && here ? horizontal(here, at.position) : 0;
-      if (at && here && distance > far) {
-        const gait = followGait(distance, far, run.gait, run.mind.running?.(leader) === true);
-        if (!(await run.body.travel(at.position, gait, near, at.space))) {
-          await run.wait(IDLE_SECONDS);
-        }
-      } else if (at && here) {
-        run.body.face(Math.atan2(at.position[0] - here[0], at.position[1] - here[1]));
-        await run.wait(IDLE_SECONDS / 2);
-      } else {
-        await run.wait(IDLE_SECONDS);
-      }
-    }
+    while (!run.stopped()) await followStep(run, leader, radii);
   } finally {
     run.body.following?.(undefined);
   }
   return 'failure';
 };
+
+/** A number input's value (undefined: the slot has none). */
+const numberIn = (run: ProcedureRun, slot: number): number | undefined => {
+  const value = run.inputs.slot(slot)?.value;
+  return value?.kind === 'int' || value?.kind === 'float' ? value.value : undefined;
+};
+
+/**
+ * One step of following a leader within radii (Follow, FollowTo): farther than its maximum
+ * (one fFollowSpaceBetweenFollowers farther for each of the leader's followers nearer it) it
+ * goes after it until within its minimum; else it stands facing it a moment.
+ */
+async function followStep(
+  run: ProcedureRun,
+  leader: number,
+  radii: { readonly min: number; readonly max: number },
+): Promise<void> {
+  const settings = settingsOf(run);
+  const near = radii.min + (run.body.following?.(leader) ?? 0);
+  const far = Math.max(radii.max, near);
+  const at = await run.mind.placement(leader);
+  const here = run.body.position();
+  if (!at || !here) {
+    await run.wait(IDLE_SECONDS);
+    return;
+  }
+  const distance = horizontal(here, at.position);
+  if (distance <= far) {
+    run.body.face(Math.atan2(at.position[0] - here[0], at.position[1] - here[1]));
+    await run.wait(IDLE_SECONDS / 2);
+    return;
+  }
+  const moves = run.mind.motion?.(leader);
+  const gait = followGait(
+    distance,
+    far,
+    run.gait,
+    {
+      running: moves?.running ?? run.mind.running?.(leader) === true,
+      sprinting: moves?.sprinting === true,
+      player: leader === PLAYER,
+    },
+    settings.followStartSprintDistance,
+  );
+  const options: TravelOptions = {
+    moving: {
+      position: () => run.mind.livePosition?.(leader),
+      recalc: settings.recalcFollowPath,
+    },
+    speedMult: (gaitSpeed) => {
+      const there = run.mind.livePosition?.(leader);
+      const self = run.body.position();
+      if (!there || !self || gaitSpeed <= 0) return 1;
+      return followSpeed(settings, {
+        distance: horizontal(self, there),
+        inner: near,
+        outer: far,
+        running: gait !== 'walk',
+        leaderRatio: (run.mind.motion?.(leader)?.speed ?? 0) / gaitSpeed,
+      });
+    },
+  };
+  if (!(await run.body.travel(at.position, gait, near, at.space, options))) {
+    await run.wait(IDLE_SECONDS);
+  }
+}
 
 /** A random point within a place's radius (the place itself without one). */
 function pointIn(run: ProcedureRun, place: PackagePlace): Vec3 {
@@ -288,15 +407,57 @@ function pointIn(run: ProcedureRun, place: PackagePlace): Vec3 {
 }
 
 /**
- * Wander: goes from one random point of its place to another, pausing between, for as long as
- * the package runs. TODO(M13): how far and how long the engine's wander goes.
+ * A point to wander to within a place: at least `least` from where the actor stands (Min
+ * Wander Distance), as far as the place reaches (a few tries, else the farthest found).
+ */
+function wanderPoint(run: ProcedureRun, place: PackagePlace, least: number): Vec3 {
+  const here = run.body.position();
+  let best = pointIn(run, place);
+  if (!here) return best;
+  for (let i = 0; i < WANDER_TRIES && horizontal(here, best) < least; i++) {
+    const next = pointIn(run, place);
+    if (horizontal(here, next) > horizontal(here, best)) best = next;
+  }
+  return best;
+}
+
+/** A wander point is looked for this many times to lie Min Wander Distance away. */
+const WANDER_TRIES = 8;
+/** A wanderer is at its point within this (units). */
+const WANDER_ARRIVE = 48;
+
+/**
+ * How long a wanderer pauses between its walks (observed in the original): up to
+ * (fAIMaxWanderTime − (Energy × fAIEngergyLevelMult + fAIEnergyLevelBase)) / 2 seconds, at random.
+ */
+function wanderPause(run: ProcedureRun, energy: number): number {
+  const settings = settingsOf(run);
+  const most =
+    (settings.maxWanderTime - (energy * settings.energyLevelMult + settings.energyLevelBase)) / 2;
+  return Math.max(0, most) * run.random();
+}
+
+/** The actor's Energy (its AI data's; 50 where it is not known). */
+async function energyOf(run: ProcedureRun): Promise<number> {
+  return (await run.mind.energy?.(run.actor)) ?? DEFAULT_ENERGY;
+}
+
+const DEFAULT_ENERGY = 50;
+
+/**
+ * Wander: goes from one random point of its place to another, each at least its Min Wander
+ * Distance (fAIWanderDefaultMinDist without one) from the last, pausing between (wanderPause),
+ * for as long as the package runs.
  */
 const wander: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
   if (!place) return hold(run);
+  const least = numberIn(run, 3) ?? settingsOf(run).wanderDefaultMinDist;
+  const energy = await energyOf(run);
   while (!run.stopped()) {
-    await run.body.travel(pointIn(run, place), 'walk', 48);
-    await run.wait(3 + run.random() * 6);
+    await run.body.travel(wanderPoint(run, place, least), 'walk', WANDER_ARRIVE);
+    // At least until the next update (a pause of 0 is no endless loop).
+    await run.wait(wanderPause(run, energy));
   }
   return 'failure';
 };
@@ -321,7 +482,14 @@ async function atIdleMarker(
   const at = await run.mind.idleMarker(marker);
   if (!at || !run.body.takeIdleMarker(marker)) return false;
   try {
-    if (!(await goTo(run, { position: at.position, radius: 0 }, ARRIVE_AT_MARKER))) return false;
+    if (
+      !(await goTo(
+        run,
+        { position: at.position, radius: 0 },
+        settingsOf(run).markerDestinationRadius,
+      ))
+    )
+      return false;
     run.body.face(at.heading);
     await run.wait(1);
     run.body.face(undefined);
@@ -385,8 +553,11 @@ const sandboxing: ProcedureRunner = async (run) => {
   };
   const eats = run.inputs.bool(1, false);
   const wanders = run.inputs.bool(6, true);
-  const energy = Math.min(100, Math.max(0, run.inputs.number(8, 50)));
-  const radius = Math.max(place.radius, AT_PLACE);
+  // Its Energy, without one the actor's own (observed in the original); its walks go at
+  // least its Min Wander Distance (fAIWanderDefaultMinDist without one).
+  const energy = Math.min(100, Math.max(0, numberIn(run, 8) ?? (await energyOf(run))));
+  const least = numberIn(run, 10) ?? settingsOf(run).wanderDefaultMinDist;
+  const radius = Math.max(place.radius, atPlace(run));
   while (!run.stopped()) {
     // An active actor (high energy) moves on sooner.
     const stay =
@@ -418,7 +589,7 @@ const sandboxing: ProcedureRunner = async (run) => {
         await run.wait(IDLE_SECONDS);
       }
     } else if (choices > 0) {
-      await run.body.travel(pointIn(run, place), 'walk', 48);
+      await run.body.travel(wanderPoint(run, place, least), 'walk', WANDER_ARRIVE);
       await waitFor(run, stay / 4);
     } else {
       await waitFor(run, stay / 4);
@@ -435,7 +606,7 @@ const sandboxing: ProcedureRunner = async (run) => {
  * the chopping block completes. Furniture it cannot use (taken, no way in from where it stood):
  * to it, then once more from there; else it stands there facing its way.
  * Given an object list no Find filled, it looks round itself (as far as the list's value, else
- * FURNITURE_SEARCH) for furniture of its kinds, nearest first.
+ * fAIFindBedChairsDistance) for furniture of its kinds, nearest first.
  */
 const useFurniture =
   (types: number, seated: 'success' | 'hold' = 'hold'): ProcedureRunner =>
@@ -446,7 +617,7 @@ const useFurniture =
     const list = run.inputs.slot(0)?.value;
     const here = run.body.position();
     if (candidates.length === 0 && list?.kind === 'objectList' && here) {
-      const radius = list.value > 0 ? list.value : FURNITURE_SEARCH;
+      const radius = list.value > 0 ? list.value : settingsOf(run).findBedChairsDistance;
       candidates = (await run.mind.around(here, radius, run.actor))
         .filter((spot) => spot.kind !== 'idle' && (SPOT_MARKERS[spot.kind] & types) !== 0)
         .sort((a, b) => horizontal(here, a.position) - horizontal(here, b.position))
@@ -470,7 +641,11 @@ const useFurniture =
     if (run.stopped()) return 'failure';
     const at = first === undefined ? undefined : await run.mind.placement(first);
     if (at) {
-      await goTo(run, { position: at.position, radius: 0 }, AT_PLACE);
+      await goTo(
+        run,
+        { position: at.position, radius: 0 },
+        settingsOf(run).furnitureDestinationRadius,
+      );
       if (await sit()) return inIt();
       run.body.face(at.heading);
     }
@@ -489,7 +664,7 @@ const standing =
  * LockDoors, UnlockDoors: the load doors within its place are locked (a door without a lock
  * gets a novice one) or unlocked; done at once. With Warn Before Locking and the player within
  * the place, the actor first tells them to go (its TimeToGo line, to them) and locks after the
- * game's fAITrespassWarningTimer (5 s). A player who stays is trespassing: the home is off
+ * game's fAITrespassWarningTimer (Skyrim.esm: 5 s). A player who stays is trespassing: the home is off
  * limits to them (crime-engine.ts doorsLocked), those who see them warn them (the Trespass
  * lines, GetTrespassWarningLevel) and then report it (src/shell/actor-crime.ts).
  */
@@ -500,7 +675,7 @@ const doors =
     if (!place) return 'failure';
     if (locked && run.inputs.bool(1) && (await playerWithin(run, place))) {
       await run.body.say(TIME_TO_GO, { target: PLAYER });
-      await waitFor(run, TRESPASS_WARNING_SECONDS);
+      await waitFor(run, settingsOf(run).trespassWarningTimer);
       if (run.stopped()) return 'failure';
     }
     await run.mind.lockDoors(place, locked);
@@ -509,7 +684,7 @@ const doors =
 
 /**
  * Whether the player is within a place: in its cell or worldspace (the actor's, for a place
- * without one) and within its radius (at least AT_PLACE).
+ * without one) and within its radius (at least fAIDistanceRadiusMinLocation).
  */
 async function playerWithin(run: ProcedureRun, place: PackagePlace): Promise<boolean> {
   const [player, self] = await Promise.all([
@@ -519,7 +694,7 @@ async function playerWithin(run: ProcedureRun, place: PackagePlace): Promise<boo
   if (!player) return false;
   const space = place.space ?? self?.space;
   if (space && player.space && !sameSpace(space, player.space)) return false;
-  return horizontal(player.position, place.position) <= Math.max(place.radius, AT_PLACE);
+  return horizontal(player.position, place.position) <= Math.max(place.radius, atPlace(run));
 }
 
 /**
@@ -630,7 +805,7 @@ const forceGreet: ProcedureRunner = async (run) => {
   if (waitAt) await goTo(run, waitAt);
   while (!run.stopped()) {
     const player = await run.mind.placement(PLAYER);
-    const reach = Math.max(trigger?.radius ?? 0, AT_PLACE);
+    const reach = Math.max(trigger?.radius ?? 0, atPlace(run));
     const inside = player && (!trigger || horizontal(player.position, trigger.position) <= reach);
     if (player && inside) {
       const here = run.body.position();
@@ -679,7 +854,7 @@ const keepAnEyeOn: ProcedureRunner = async (run) => {
   const area = await placeIn(run, 1);
   const pursuit = await placeIn(run, 2);
   const within = (place: PackagePlace | undefined, at: Vec3): boolean =>
-    !place || horizontal(place.position, at) <= Math.max(place.radius, AT_PLACE);
+    !place || horizontal(place.position, at) <= Math.max(place.radius, atPlace(run));
   while (!run.stopped()) {
     const at = await run.mind.placement(target);
     if (!at) {
@@ -689,7 +864,7 @@ const keepAnEyeOn: ProcedureRunner = async (run) => {
     if (within(area, at.position)) {
       await faceReference(run, target);
     } else if (within(pursuit, at.position)) {
-      if (!(await run.body.travel(at.position, run.gait, AT_PLACE * 2, at.space))) {
+      if (!(await run.body.travel(at.position, run.gait, NEAR_TARGET, at.space))) {
         await run.wait(IDLE_SECONDS);
       }
     } else {
@@ -700,70 +875,92 @@ const keepAnEyeOn: ProcedureRunner = async (run) => {
 };
 
 /**
- * Escort: leads its target to the destination; where it falls behind (farther than the
- * distance to wait for followers) it stops and waits for it, facing it.
+ * Escort: leads its target to the destination; where the target falls behind it stops and
+ * waits for it, facing it (observed in the original): behind by more than the Distance To
+ * Wait For Followers (without one: fAIEscortWaitDistanceInterior inside, outside
+ * fAIEscortWaitDistanceExterior times the destination's radius, at least 200), going on once
+ * it is that near again; under way it stops only fAIEscortHysteresisWidth farther, and it
+ * starts or stops at most every fAIEscortStartStopDelayTime seconds.
  */
 const escort: ProcedureRunner = async (run) => {
+  const settings = settingsOf(run);
   const follower = (await targetsIn(run, 0))[0];
   const destination = await placeIn(run, 2);
   if (!destination) return hold(run);
-  const waitDistance = Math.max(run.inputs.number(3, 512), AT_PLACE * 2);
-  const reach = Math.max(destination.radius, AT_PLACE);
+  const reach = await destinationRadius(run, destination.reference, destination.radius);
+  const own = numberIn(run, 3) ?? 0;
+  const self = await run.mind.placement(run.actor);
+  const space = destination.space ?? self?.space;
+  const waitDistance =
+    own > 0
+      ? own
+      : space?.kind === 'interior'
+        ? settings.escortWaitDistanceInterior
+        : Math.max(destination.radius || ESCORT_RADIUS, ESCORT_RADIUS_MIN) *
+          settings.escortWaitDistanceExterior;
   let going: Promise<boolean> | undefined;
+  // When it last started or stopped (its clock: the waits' seconds).
+  let clock = 0;
+  let changed = -Infinity;
   while (!run.stopped()) {
     const here = run.body.position();
     if (here && horizontal(here, destination.position) <= reach) return 'success';
     const at = follower === undefined ? undefined : await run.mind.placement(follower);
-    if (at && here && horizontal(at.position, here) > waitDistance) {
-      if (going) run.body.stop();
+    const behind = at && here ? horizontal(at.position, here) : 0;
+    const settled = clock - changed >= settings.escortStartStopDelayTime;
+    if (going && settled && behind > waitDistance + settings.escortHysteresisWidth) {
+      run.body.stop();
       going = undefined;
-      run.body.face(Math.atan2(at.position[0] - here[0], at.position[1] - here[1]));
+      changed = clock;
+    } else if (!going && (behind > waitDistance || !settled)) {
+      if (at && here) {
+        run.body.face(Math.atan2(at.position[0] - here[0], at.position[1] - here[1]));
+      }
     } else if (!going) {
       run.body.face(undefined);
+      changed = clock;
       going = run.body
         .travel(destination.position, run.gait, reach, destination.space)
         .finally(() => {
           going = undefined;
         });
     }
-    await run.wait(IDLE_SECONDS);
+    await run.wait(ESCORT_CHECK_SECONDS);
+    clock += ESCORT_CHECK_SECONDS;
   }
   return 'failure';
 };
 
+/** An escort looks at its followers this often (seconds). */
+const ESCORT_CHECK_SECONDS = 0.25;
+/** A destination without a radius counts as this wide for the escort's waiting (the engine's). */
+const ESCORT_RADIUS = 256;
+const ESCORT_RADIUS_MIN = 200;
+
 /**
  * FollowTo: follows its target (between its radii, kept apart from the leader's other
- * followers as Follow does) until one of them reaches the destination.
+ * followers, as Follow does) until one of them reaches the destination.
  */
 const followTo: ProcedureRunner = async (run) => {
   const leader = (await targetsIn(run, 0))[0];
   if (leader === undefined) return hold(run);
   const destination = await placeIn(run, 1);
-  const min = Math.max(run.inputs.number(2, 128), 64);
-  const max = Math.max(run.inputs.number(3, 256), min);
+  const radii = followRadii(settingsOf(run), numberIn(run, 2), numberIn(run, 3));
+  const reach =
+    destination && (await destinationRadius(run, destination.reference, destination.radius));
   try {
     while (!run.stopped()) {
-      const near = min + (run.body.following?.(leader) ?? 0);
-      const far = Math.max(max, near);
       const at = await run.mind.placement(leader);
       const here = run.body.position();
-      const reach = Math.max(destination?.radius ?? 0, AT_PLACE);
       if (
         destination &&
+        reach !== undefined &&
         ((here && horizontal(here, destination.position) <= reach) ||
           (at && horizontal(at.position, destination.position) <= reach))
       ) {
         return 'success';
       }
-      const distance = at && here ? horizontal(here, at.position) : 0;
-      if (at && here && distance > far) {
-        const gait = followGait(distance, far, run.gait, run.mind.running?.(leader) === true);
-        if (!(await run.body.travel(at.position, gait, near, at.space))) {
-          await run.wait(IDLE_SECONDS);
-        }
-      } else {
-        await run.wait(IDLE_SECONDS / 2);
-      }
+      await followStep(run, leader, radii);
     }
   } finally {
     run.body.following?.(undefined);
@@ -793,7 +990,7 @@ const fleeAway: ProcedureRunner = async (run) => {
   if (!goal && here) {
     const threat = (await targetsIn(run, 0))[0];
     const from = threat === undefined ? undefined : await run.mind.placement(threat);
-    const distance = Math.max(run.inputs.number(5, 1024), AT_PLACE);
+    const distance = Math.max(run.inputs.number(5, 1024), atPlace(run));
     const dx = from ? here[0] - from.position[0] : 0;
     const dy = from ? here[1] - from.position[1] : 1;
     const length = Math.hypot(dx, dy) || 1;
@@ -803,7 +1000,7 @@ const fleeAway: ProcedureRunner = async (run) => {
   const arrived = await run.body.travel(
     goal,
     'run',
-    Math.max(to?.radius ?? 0, AT_PLACE),
+    Math.max(to?.radius ?? 0, atPlace(run)),
     to?.space,
   );
   return arrived ? 'success' : 'failure';

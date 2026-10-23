@@ -18,6 +18,7 @@
 // Activate asks it to land (refused while Game.SetAllowFlyingMountLandingRequests forbids it),
 // the player getting off once it stands.
 
+import { aiSettingsOf } from '../ai/ai-settings.ts';
 import { Locomotion, type LocomotionGraph } from '../ai/locomotion.ts';
 import type { GraphEvent } from '../animation/graph-events.ts';
 import type { ActorGraphSource } from './actor-graph-events.ts';
@@ -89,8 +90,6 @@ const DISMOUNTED = `${PAIRED_PREFIX}HorseExitOut`;
  * and 2.1 s). TODO(M13): the engine ends them by the clip.
  */
 const PAIRED_TIMEOUT = 4;
-/** An actor mounts its horse within this of it (units); farther it walks on foot. */
-const HORSE_REACH = 2048;
 /** The mount offsets the race data leaves out (xEdit's defaults). */
 const DEFAULT_OFFSETS: MountOffsets = {
   mountOffset: [-63.479, 0, 0],
@@ -387,8 +386,16 @@ export class ActorMounts {
   }
 
   /**
+   * An actor takes its horse within fAIHorseSearchDistance of it (observed in the original:
+   * the engine looks for horses that near); farther it goes on foot.
+   */
+  #horseReach(): number {
+    return aiSettingsOf(this.#options.session).horseSearchDistance;
+  }
+
+  /**
    * An actor whose package lets it ride gets on its horse (its XHOR) where it is near (within
-   * HORSE_REACH) and free: at once (HorseEnterInstant), or walking to it and mounting.
+   * fAIHorseSearchDistance) and free: at once (HorseEnterInstant), or walking to it and mounting.
    */
   async seat(staged: StagedActor, instant: boolean): Promise<void> {
     const reference = staged.reference;
@@ -400,7 +407,7 @@ export class ActorMounts {
       mount.position[0] - staged.position[0],
       mount.position[1] - staged.position[1],
     );
-    if (away > HORSE_REACH || this.#rides.has(reference)) return;
+    if (away > this.#horseReach() || this.#rides.has(reference)) return;
     if (instant) await this.#pair(reference, horse, true);
     else await this.mount(staged, horse);
   }
@@ -906,7 +913,7 @@ export class ActorMounts {
       !mount ||
       mount.dead ||
       Math.hypot(mount.position[0] - staged.position[0], mount.position[1] - staged.position[1]) >
-        HORSE_REACH
+        this.#horseReach()
     ) {
       return reference;
     }

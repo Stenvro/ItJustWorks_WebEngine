@@ -798,7 +798,9 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   (OnStoryCrimeGold), Assault Actor, Trespass, Pick Lock and Kill Actor (crime status 0 none, 1
   unseen, 2 seen) events. Each witness says its line to the criminal (Steal, Assault, Murder,
   Trespass, PickpocketCombat; the NC lines, StealFromNC, AssaultNC, ..., for those that are no
-  guards; WereTransformCrime) and raises an alarm (those within iCrimeAlarmRecDistance).
+  guards; WereTransformCrime) and raises an alarm (those within iCrimeAlarmRecDistance of the
+  criminal; beyond the high process, within iCrimeAlarmLowRecDistance of the witness: observed in
+  the original).
 - Killing the last witness before the crime is reported takes its bounty back
   (sWitnessKilled, "Last witness killed."). A crime is reported once a guard saw it or after
   REPORT_HOURS (a game day; TODO(M13): the engine's report rule). GetCrimeKnown answers from the
@@ -854,7 +856,9 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   answer `guardResponse`: an enemy of their faction or one resisting its arrest they attack; a
   bounty they pursue when a crime alarmed them, or on sight at
   CrimeArrestOnSightViolentThreshold (999) / ...NonViolentThreshold (1000): they arrest where
-  the faction arrests (CRVA), else attack where it attacks on sight. A guard told to let it go
+  the faction arrests (CRVA), else attack where it attacks on sight; at most
+  iNumberGuardsCrimeResponse (4) attack at once (observed in the original: the others
+  leave it to them). A guard told to let it go
   (SetLastArrestTime: its Variable03) waits a day.
 - An arrest: the guard runs up and force-greets with DialogueCrimeGuards' ForceGreet topic; its
   lines' scripts do the rest: PlayerPayCrimeGold (the gold and stolen items taken; with
