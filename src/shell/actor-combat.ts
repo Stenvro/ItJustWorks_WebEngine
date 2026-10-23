@@ -190,6 +190,8 @@ interface Fighter {
   heldSince: number | undefined;
   /** The weapon state it was in when its drawn models last followed it. */
   inHand: boolean;
+  /** Its draw's or sheathing's sound played at the graph's BeginWeaponDraw / BeginWeaponSheathe. */
+  drawSounded: boolean;
   /** Bleeding out: seconds down; in a paired animation: seconds in it. */
   down: number;
   pairedFor: number;
@@ -1336,17 +1338,27 @@ export class ActorCombat implements CombatBridge {
   #effect(fighter: Fighter, effect: CombatEffect): void {
     const gear = fighter.gear;
     switch (effect.kind) {
+      // The draw's and sheathing's sounds go as the graph begins them (BeginWeaponDraw,
+      // BeginWeaponSheathe); graphs whose draw raises neither (an NPC's WeapEquip, creatures')
+      // sound them as the weapon reaches the hand or the sheath. TODO(M13): where the engine
+      // plays them for draws without the begin events is inferred.
       case 'draw-begin':
         this.#playSound(gear?.rightRecord?.sounds.equip, fighter);
+        fighter.drawSounded = true;
         break;
       case 'sheathe-begin':
         this.#playSound(gear?.rightRecord?.sounds.unequip, fighter);
+        fighter.drawSounded = true;
         break;
       case 'hand':
         fighter.inHand = true;
+        if (!fighter.drawSounded) this.#playSound(gear?.rightRecord?.sounds.equip, fighter);
+        fighter.drawSounded = false;
         break;
       case 'sheath':
         fighter.inHand = false;
+        if (!fighter.drawSounded) this.#playSound(gear?.rightRecord?.sounds.unequip, fighter);
+        fighter.drawSounded = false;
         break;
       case 'swing': {
         const left = effect.hand === 'left';
@@ -3004,6 +3016,7 @@ function newFighter(reference: number, player: boolean): Fighter {
     target: undefined,
     heldSince: undefined,
     inHand: false,
+    drawSounded: false,
     down: 0,
     pairedFor: 0,
     killing: false,

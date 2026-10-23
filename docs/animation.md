@@ -185,22 +185,20 @@ one, `Game.DisablePlayerControls`' camera switch is off. Our poses take the hand
 the clips (1), so the female hand rule changes nothing here. TODO(M13): if the hands get the
 skeleton's 0.85, apply the rule.
 
-The graph event dispatch calls `ActorAnimObjects.animObject(reference, 'load' | 'draw',
-editorId)` for the two events with their payloads, and `graphEvents(reference, events)` hears
-every raised event for the unload events (`animObject(reference, 'unequip', undefined)` is the
-same for `AnimObjectUnequip`). TEMPORARY, until the behavior runtime carries payloads: the
-props module listens to the graphs itself and finds the payload in the graph's definition (the
-events the states just entered raise, and those of the clips playing at their triggers:
-`animObjectPayloads`), or after the dot of an annotation.
+The graph event dispatch ([Graph events](#graph-events)) calls
+`ActorAnimObjects.animObject(reference, 'load' | 'draw', editorId)` for the two events with
+their payloads (an event's own, or an annotation's text after its dot), from every actor's graph
+and the player's two, and `graphEvents(reference, names)` hears every raised event for the
+unload events (`animObject(reference, 'unequip', undefined)` is the same for
+`AnimObjectUnequip`).
 
 Seen in the browser: Mikael on a bar stool with a tankard, a standing drinker cheering with
 his, Mila Valentina sweeping with a broom, a lute on its player's chest, the forge hammer at a
 hammering wall, the axe at a chopping block (and, in the list, bread while eating, the broom
-for Saadia). The order of events matters: our runtime raises the exit events of a machine
-left by its parent's transition after the new state's enter events (as it deactivates nodes at
-the end of the update), so an actor going straight from StandingBarDrinking into WoodChop_State
-loses the axe to the old state's `AnimObjectUnequip`. TODO(M13): when Havok raises a nested
-machine's exit events relative to the new state's (a behavior runtime question).
+for Saadia). The order of events matters: a state left at once has its nodes deactivated before
+the new state is entered (Behavior runtime, below), so an actor going straight from
+StandingBarDrinking into WoodChop_State drops the tankard (the old nested state's
+`AnimObjectUnequip`) before it loads the axe, and keeps the axe.
 
 ## Actors
 
@@ -324,6 +322,94 @@ a rider's graph gets moveStart, and SprintStart is not refused while sneaking or
 movement controller's acceleration (it ramps the speed by the race's acceleration and deceleration
 rates, RACE DATA: a factor 1 / rate, the scale it applies to not known) is not reproduced; the
 per-actor divisor of Speed; the hold flag.
+
+## Graph events
+
+What an actor's behavior graph raises reaches the engine as an event with a tag and a payload
+(`src/animation/graph-events.ts`). The payload is the event's own string payload
+(hkbStringEventPayload: AnimObjLoad's animation object, StartAnimatedCamera's camera node,
+PairedKillTarget), else the text after the first dot of a name that has one: a clip annotation
+such as `SoundPlay.NPCGiantAttackStomp`, `CameraShake.0.5` or
+`AnimObjLoad.DecapitationHeadGore` (the graphs declare the whole text as an event, which the
+graph itself handles by that name; 661 such names in the vanilla graphs). Scripts register for
+the whole text (`RegisterForAnimationEvent(…, "SoundPlay.NPCGiantAttackStomp")` in a vanilla
+script), so OnAnimationEvent gets it whole. Events sent to a graph may carry a payload too
+(`sendEvent(name, payload)`); the graph's own handling does not read it.
+
+**The dispatch.** The engine answers a raised event by a handler class:
+`meshes\responses\actorresponse.txt` maps tags to them for every actor (weaponSwing :
+WeaponRightSwingHandler; AttackWinStart and AttackWinStartLeft : AttackWinStartHandler),
+`playercharacterresponse.txt` for the player (idleChairSitting : PlayerChairEnterHandler, the
+actors' list behind it through BackupResponse). Ours: every placed actor's graph, the player's
+body and first-person arms hand what they raise to the stage's dispatch
+(`src/shell/actor-graph-events.ts`). Its listeners hear every event (footsteps and SoundPlay,
+the scripts, the systems that follow events by name: flight states, get-ups, a ride's paired end,
+a cart rider's exit, a held weapon's own graph, the casting art, the animation objects' unload
+events); then each event goes, in the order raised, to its handler class's implementations, or,
+without one, to the actor's own answers (the combat state's WeapEquip_Out, blockStop, bowEnd).
+The handler classes are registered in that one module; a class asked for that nothing
+implements is listed (`dispatch.unanswered()`: in Riverwood only MTStateHandler). Events that
+come before the response files are read wait for them.
+
+**The handlers** (observed in the original, in our words; ours after each):
+
+| Handler (events)                                                  | The engine                                                                                                                                                            | Ours                                                                                                                                                                                                                                           |
+| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AnimationDriven, MotionDriven, AllowRotation (Start…)             | switch the actor's movement controller at once: animation-driven, controller-driven, animation-driven with the controller turning it                                  | the movers' drive (`src/ai/movement-drive.ts`); bAnimationDriven and bAllowRotation switch it too as they change; allowed to rotate, the steering turns an actor its root motion moves                                                         |
+| AddRagdoll (AddRagdollToWorld)                                    | adds the actor's ragdoll to the physics world, with its collision group                                                                                               | a dying actor's ragdoll is driven by its graph ([Animation] bDriveRagdollWithGraph, 1): its bodies follow the pose while the graph keyframes or powers them (AnimateToRagdoll), and go limp as it stops (FullyRagdoll); undriven, limp at once |
+| RemoveRagdoll (RemoveRagdollFromWorld)                            | removes it                                                                                                                                                            | a dying body follows its graph again                                                                                                                                                                                                           |
+| DeathStop (deathStop)                                             | ends the actor's dying (dead)                                                                                                                                         | its body goes limp from where it is                                                                                                                                                                                                            |
+| DeathEmote (DeathEmote)                                           | queues the actor's Death line (the combat dialogue's Death subtype), once a death                                                                                     | a death whose graph has DeathEmote says its Death line then (else at once; at most 2 s after)                                                                                                                                                  |
+| VoiceSpellCast (BeginCastVoice)                                   | the voice's cast begins charging                                                                                                                                      | an NPC holds its shout's words (fShoutTime1 / 2) from then (a graph without it: after 1 s)                                                                                                                                                     |
+| VoiceSpellFire (Voice_SpellFire_Event)                            | releases the voice's cast (the shout's spell), its recovery set by the variation's time × ShoutRecoveryMult                                                           | the released shout's spell leaves the head then (a breath starts spraying); without the event, 1 s after the release                                                                                                                           |
+| Left/RightHandSpellFire, InterruptCast                            | a hand's released spell; the actor's casting interrupted                                                                                                              | as the engine (InterruptCast: every hand and the voice)                                                                                                                                                                                        |
+| WeaponRight/LeftSwing (weaponSwing, weaponLeftSwing)              | the attack state becomes swinging; that hand's weapon's swing sound; the swing callback                                                                               | as the engine (the left weapon's sound for the left hand)                                                                                                                                                                                      |
+| AttackWinStart/End (also …Left)                                   | the next attack's window (a bow's next shot), the follow-through                                                                                                      | as the engine                                                                                                                                                                                                                                  |
+| WeaponBeginDrawRight, WeaponBeginSheatheRight (BeginWeaponDraw/…) | the right weapon's equip / unequip sound; a draw turns the camera to its combat position when it follows the actor                                                    | the sounds; graphs whose draw raises neither (an NPC's WeapEquip) sound them at weaponDraw / weaponSheathe (inferred). TODO(M13): the camera's combat position                                                                                 |
+| KillMoveStart, KillMoveEnd                                        | nothing; the killmove ends (IsInKillMove), its partner released                                                                                                       | the combat state's killmove flag (IsInKillMove) until KillMoveEnd or the paired end. TODO(M13): what the end does with the partner                                                                                                             |
+| IdleDialogueEnter/Exit (IdleDialogueLock/Unlock)                  | the lock does nothing itself; the unlock plays the dialogue idle the actor's process holds                                                                            | dialogue idles (a line's speaker and listener idles, ActionTalking's) are held while locked, the last played at the unlock                                                                                                                     |
+| Enable/DisableCharacterPitch, Enable/DisableCharacterBumper       | the character controller may pitch the actor (disabled: its pitch zeroed); its bumper on or off                                                                       | recorded per actor. TODO(M13): our controllers keep actors upright and have no bumper                                                                                                                                                          |
+| ChairEnter, BedEnter, PlayerChair/BedEnter (idleChairSitting, …)  | unless it gets up already, the sit state becomes sitting (sleeping); the player's also switch the camera and controls                                                 | an entering furniture use is in (at its marker, OnSit). TODO(M13): the player's camera and controls                                                                                                                                            |
+| MountDismountEnd (MountEnd, DismountEnd)                          | ends the mount or dismount under way for rider and horse                                                                                                              | the ride's phase ends (as at its paired end)                                                                                                                                                                                                   |
+| EndSummonAnimation (summonStop)                                   | a summoned actor's arrival is over: it takes its commander's combat target                                                                                            | as the engine                                                                                                                                                                                                                                  |
+| ActionActivateDone (ActivationDone)                               | the object the actor's process holds is activated, the procedure done                                                                                                 | an NPC's activation with an ActionActivate idle waits for it (3 s at most)                                                                                                                                                                     |
+| VampireFeedEnd                                                    | a vampire feeding procedure is done                                                                                                                                   | TODO(M11): our AI runs no feeding procedure                                                                                                                                                                                                    |
+| NPCAttach / NPCDetach                                             | attach the actor to its furniture's node the payload names, or detach it                                                                                              | recorded. TODO(M13): our furniture keeps markers, not animated nodes                                                                                                                                                                           |
+| CameraShake (payload: strength)                                   | shakes the camera from the actor's place (src/shell/camera-shake.ts)                                                                                                  | as the engine                                                                                                                                                                                                                                  |
+| AnimatedCameraStart / DeltaStart / End (player)                   | the camera goes over (iAnimatedTransitionMillis) to ride the node the payload names in the player's body, or the third-person camera adds its motion; the end returns | as the engine in third person. TODO(M13): the node's view axis (+y inferred)                                                                                                                                                                   |
+| PitchOverrideStart/End, ZeroPitch (player)                        | a flag on the third-person camera; the camera's pitch to level                                                                                                        | the flag is kept (TODO(M13): what reads it); the pitch set to 0                                                                                                                                                                                |
+| AnimationObjectLoad / Draw (AnimObjLoad, AnimObjDraw)             | load / show the animation object the payload names                                                                                                                    | the animation objects ([above](#animation-objects))                                                                                                                                                                                            |
+| PickNewIdle                                                       | picks the actor's next idle                                                                                                                                           | the stage's `pickNewIdle` hook (ambient idles: a later phase)                                                                                                                                                                                  |
+| StopHorseCamera, RemoveCharacterController                        | named in the files, but the executable has no handler class of that name (only the name)                                                                              | nothing                                                                                                                                                                                                                                        |
+
+**A death** (`ActorGraphEvents.died`): the engine plays it through the idle tree: ActionDeath
+(creatures: DeathAnimation, a bleeding-out or paired one Ragdoll), else ActionDeathWait (humans:
+DeathAnimationRoot's MS12BedDeath, then Ragdoll if the killer holds a bow, a staff or magic, the
+victim is paired, in furniture, bleeding out, swimming, or half the time, else DeathAnim). The
+idles' conditions on their target see the killer (inferred, TODO(M13)). A Ragdoll idle, or none,
+lets the ragdoll go at once; an animated death keeps the body on its graph (still animating
+while dead) until the graph adds the ragdoll; one whose graph did not take the idle (its states
+unchanged 0.3 s on) goes limp, and so does one whose graph never adds it (8 s). A killmove's
+victim dies in its paired clip. Seen in the browser (Riverwood): a villager's DeathAnim,
+AddRagdollToWorld 0.06 s in, AnimateToRagdoll with 18 bones keyframed, limp as FullyRagdoll
+began at 1.2 s; a cow and a dog took DeathAnimation and lay as ragdolls within 0.7 s.
+
+**The camera's shake** (`src/shell/camera-shake.ts`, also `Game.ShakeCamera`: its strength
+kept within 0 and 1, from its source's place or the player's): within fCameraShakeDistFadeStart ×
+strength of the camera (at least fCameraShakeDistMin) the strength is kept, beyond it fades over
+fCameraShakeDistFadeDelta × strength, past that no shake starts; then kept within
+fCameraShakeMultMin and 1, for the time asked (else fCameraShakeTime, 1.25 s), fading over the
+last fCameraShakeFadeTime. Each frame the view turns by the rotation
+`meshes\actors\character\camerashake.nif`'s animation has then against its first key (Euler
+angles about x, y, z: pitch, roll, yaw), times the strength. A new shake replaces the one under
+way. Explosions shake it too in the engine (fCameraShakeExplosionDistMult × the explosion's
+size): TODO(M13), not wired.
+
+Verified in the browser: an NPC's shout (Unrelenting Force) launched its projectile at its
+graph's Voice_SpellFire_Event (1.2 s after shoutStart, MT_BreathExhaleShort's exhale); a
+dual-wielding NPC's left attack raised weaponLeftSwing (WeaponLeftSwingHandler: swinging), then
+AttackWinStartLeft and AttackWinEndLeft; Game.ShakeCamera(None, 0.5) turned the view by up to
+0.6° for 1 s.
 
 ## The player
 
@@ -559,8 +645,10 @@ them by name (a variable keeps the first file's initial value). Each frame:
    vanilla ones read as higher wins), then in order. Its own events return to the previous
    state, take a random state or the next higher / lower state id. Leaving a state raises its
    exit events, entering one its enter events and the machine's change event; a transition
-   with a blending effect (duration, curve) plays both states and blends them, an instant one
-   switches; a self transition starts the state over (unless its effect continues); a
+   with a blending effect (duration, curve) plays both states and blends them (the old one's
+   nodes deactivate as the blend ends), an instant one switches, the old state's active nodes
+   deactivated then, before the new state's enter events (their nested machines' exit events
+   first: TODO(M13), Havok's order is not documented; this is the one the vanilla props need); a self transition starts the state over (unless its effect continues); a
    transition into a nested state sets that machine's start. A global wildcard (flag 0x400) of
    a machine nested in another state of a machine is that machine's too: taken, it goes to the
    state holding the nested machine, which starts in the wildcard's state (Master_Behavior has

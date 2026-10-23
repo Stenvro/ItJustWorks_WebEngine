@@ -1678,8 +1678,9 @@ walkers.
 - **Its breath** (`ActorCasting.shoutAt`): a shout it knows (its spell list's SHOU, one at
   random) in its voice, ActionVoice (shoutStart, or shoutStartFireball for a fireball shout:
   the neck states of its flight, hover, perch or ground), its words let out after their hold
-  time (ActionVoiceRelease: shoutRelease, the exhale); a concentration shout (the breaths)
-  sprays from its head's magic node ("NPC Head MagicNode [Hmag]") every relaunch interval of its
+  time from its graph's BeginCastVoice (ActionVoiceRelease: shoutRelease, the exhale); as the
+  exhale raises Voice_SpellFire_Event (docs/animation.md, "Graph events") a concentration shout
+  (the breaths) sprays from its head's magic node ("NPC Head MagicNode [Hmag]") every relaunch interval of its
   flame projectile until the graph's shoutStop or 3 s (the exhale clips' length). Those it
   breathes at may sidestep it ([Combat AI](#combat-ai): Threats).
 - **Perches**: the furniture the idle tree's ActionFlyStop lands on (GetIsID of its target:
