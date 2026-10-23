@@ -55,15 +55,30 @@ const GROUND_WAIT_SECONDS = 60;
 /** Seconds on the renderer's clock (sequences and their collision run on it). */
 const clock = (): number => performance.now() / 1000;
 
+/** How long ago a door that comes in open opened (seconds): past any open sequence's end. */
+const OPENED_LONG_AGO = 1e6;
+
 /**
  * A door that is not a load door, or a container, whose model has an open sequence: its
  * sequence state (doors open and close as they are activated, containers while their menu is
- * open).
+ * open). A door comes in open as the scripts left it (`openState`, GetOpenState's 1 open .. 4
+ * closing), else as placed (ONAM): its open sequence played long ago, held at its end.
  */
-export function openable(object: CellObject, hasOpen: boolean): Playback | undefined {
-  return ((object.baseType === 'DOOR' && !object.teleport) || object.baseType === 'CONT') && hasOpen
-    ? { sequence: undefined, start: 0 }
-    : undefined;
+export function openable(
+  object: CellObject,
+  hasOpen: boolean,
+  openState?: number,
+): Playback | undefined {
+  if (!(
+    ((object.baseType === 'DOOR' && !object.teleport) || object.baseType === 'CONT') &&
+    hasOpen
+  )) {
+    return undefined;
+  }
+  const open =
+    object.baseType === 'DOOR' &&
+    (openState === undefined ? object.openByDefault === true : openState === 1 || openState === 2);
+  return open ? { sequence: 'open', start: -OPENED_LONG_AGO } : { sequence: undefined, start: 0 };
 }
 
 /** What activating containers and items does in a running game (Play). */
@@ -326,8 +341,15 @@ export interface CollisionGroup {
     readonly instance: ModelInstance;
     readonly motion: InstanceMotion;
   }[];
-  /** Objects playing sequences (doors): their keyframed bodies follow the animation. */
-  readonly animated: { readonly placed: PlacedCollision; readonly instance: ModelInstance }[];
+  /**
+   * Objects playing sequences (doors): their keyframed bodies follow the animation; `held`: the
+   * start of the sequence whose end pose they were put in last.
+   */
+  readonly animated: {
+    readonly placed: PlacedCollision;
+    readonly instance: ModelInstance;
+    held?: number;
+  }[];
   /** Objects whose behavior graph moves their nodes: those nodes' bodies follow the pose. */
   readonly posed: PosedCollision[];
   /** Objects whose bodies move their nodes one by one (ragdolls, hinged signs, chains). */
@@ -1039,13 +1061,18 @@ export class PlaySession {
           this.physics.moveBody(placed, body, multiply(world, offset), instance.world);
         }
       }
-      for (const { placed, instance } of group.animated) {
+      for (const entry of group.animated) {
+        const { placed, instance } = entry;
         const playback = instance.playback;
         const sequences = instance.model.sequences;
         if (!playback?.sequence || !sequences) continue;
-        // Past its end the sequence holds its last pose: nothing moves any more.
+        // Past its end the sequence holds its last pose: nothing moves any more, once the
+        // bodies are there (a door that came in open: its sequence ended before it loaded).
         const duration = sequences.byName.get(playback.sequence)?.duration ?? 0;
-        if (now - playback.start > duration + 0.5) continue;
+        if (now - playback.start > duration + 0.5) {
+          if (entry.held === playback.start) continue;
+          entry.held = playback.start;
+        }
         const frame = playSequence(sequences, playback, now);
         for (const body of placed.bodies) {
           if (body.data.motion !== 'keyframed') continue;

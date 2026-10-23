@@ -1,188 +1,188 @@
-// Vehicles (docs/ai.md, "Followers, mounts and vehicles"): the carts a horse pulls and the
-// actors that ride on them (Actor.SetVehicle). Platform-independent.
+// Vehicles (docs/ai.md, "Vehicles"): the carts a horse pulls and the actors that ride them
+// (Actor.SetVehicle). The rules as read from the engine; the shell applies them
+// (src/shell/actor-vehicles.ts). Platform-independent.
 //
-// A cart is tethered to its horse (ObjectReference.TetherToHorse) and pulled along behind it.
-// The opening's prisoner carriage (PrisonerCarriage01.nif) is a wagon: its model's origin is
-// the pivot of its front axle on the ground, where the FrontBar body (the shafts and the front
-// wheels) turns about the vertical within its limited hinge (±40°); its rear wheels turn on an
-// axle 214.85 units behind. Pulled, the front pivot trails the horse at the shafts' length and
-// the rear axle trails the front pivot: the body turns towards the shafts as a trailer does.
-// TODO(M13): the engine pulls the cart's simulated bodies by a constraint to the horse; here
-// they are keyframed along this geometry.
+// TetherToHorse puts the horse fHorseOffsetY:Cart ahead of the cart and joins the two: a
+// keyframed body that follows the horse's spine (sHorseConnect:Cart) pulls the cart's FrontBar
+// (its shafts and front axle) by a prismatic joint, turning it as the spine turns and letting it
+// slide a little up and down. Everything else is simulated: the cart's body hangs on the FrontBar
+// by its own limited hinge, the wheels on their hinges roll on the ground. The cart's pole turns
+// to point at the horse, and the horse's harness bones hang on the pole, so the harness reaches
+// from the horse to the cart.
 //
-// An actor riding a vehicle stands at the vehicle's root (its position and rotation): the
-// riding idles are made in the vehicle's frame (IdleCartPrisonerASway seats the actor's pelvis
-// 200 units behind and 139 above the cart's origin, the driver's 11 behind it), and an exit
-// idle's root motion takes it from there (CartPrisonerAExit: 380 units out of the back).
+// A rider's root is the vehicle's root body (where it is and how it is turned): its riding idles
+// seat it in the vehicle's frame (CartPrisonerASway puts the pelvis 200 units behind and 139
+// above the cart's origin). The animation's own movement does not move it there. Its exit idle
+// lets go of the vehicle (ExitCartBegin) and moves it out by its root motion; ExitCartEnd ends
+// the ride (SetVehicle None).
+
+import { HAVOK_SCALE } from '../physics/collision-data.ts';
 
 type Vec3 = readonly [number, number, number];
+
+/** The [Cart] settings the tether reads (src/world/ini-settings.ts has their defaults). */
+export interface CartSettings {
+  /** The horse ahead of the cart's origin as it is hitched (game units, the cart's frame). */
+  readonly horseOffset: Vec3;
+  /** The joint's point on the FrontBar body and on the horse's spine (Havok units). */
+  readonly cartPivot: Vec3;
+  readonly horsePivot: Vec3;
+  /** The slide axis's tilt from the FrontBar's up and from the spine's y (degrees). */
+  readonly cartRot1: number;
+  readonly cartRot2: number;
+  /** How far the FrontBar slides along it (Havok units). */
+  readonly limitMin: number;
+  readonly limitMax: number;
+  /** Every simulated body of the cart weighs this (kg). */
+  readonly mass: number;
+  /** The wheels' friction and angular damping; gravity pulls them this much more. */
+  readonly wheelFriction: number;
+  readonly wheelAngularDamping: number;
+  readonly wheelGravity: number;
+  /** The angular impulse that rights a cart tipping over (Havok units). */
+  readonly tipImpulse: number;
+  /** The harness bones on the pole: ±x, y, z (game units, the pole's frame). */
+  readonly tetherOffset: Vec3;
+  /** The pole points at the horse's spine this much higher (game units). */
+  readonly poleZOffset: number;
+}
+
+/** A place and its turn (radians: x, y, z as a reference's angles). */
+export interface Placement {
+  readonly position: Vec3;
+  readonly rotation: Vec3;
+}
+
+/**
+ * TetherToHorse: where the horse goes. Turned as the cart is, its offset from the cart's origin
+ * turned by the cart's heading; it keeps its own height (raised by the offset's z).
+ */
+export function hitchPlace(cart: Placement, horseZ: number, settings: CartSettings): Placement {
+  const heading = cart.rotation[2];
+  const [ox, oy, oz] = settings.horseOffset;
+  const sin = Math.sin(heading);
+  const cos = Math.cos(heading);
+  return {
+    position: [
+      cart.position[0] + ox * cos + oy * sin,
+      cart.position[1] - ox * sin + oy * cos,
+      horseZ + oz,
+    ],
+    rotation: [...cart.rotation],
+  };
+}
+
+/** A joint's frame on one body: its point and its axes (slide axis, a perpendicular, their cross). */
+export interface TetherFrame {
+  readonly pivot: Vec3;
+  readonly axes: readonly [Vec3, Vec3, Vec3];
+}
+
+const cross = (a: Vec3, b: Vec3): Vec3 => [
+  a[1] * b[2] - a[2] * b[1],
+  a[2] * b[0] - a[0] * b[2],
+  a[0] * b[1] - a[1] * b[0],
+];
+
+/**
+ * The tether's prismatic joint in game units: on the FrontBar body its pivot and the slide axis
+ * (its up, tilted forward by fCartRot1:Cart about its x), on the hitch (the horse's spine) its
+ * pivot and the same axis (the spine's y, tilted by fCartRot2:Cart about its x); x is
+ * perpendicular to both. The limits are the slide's.
+ */
+export function tetherJoint(settings: CartSettings): {
+  readonly a: TetherFrame;
+  readonly b: TetherFrame;
+  readonly minDistance: number;
+  readonly maxDistance: number;
+} {
+  const r1 = (settings.cartRot1 * Math.PI) / 180;
+  const r2 = (settings.cartRot2 * Math.PI) / 180;
+  const perp: Vec3 = [1, 0, 0];
+  const axisA: Vec3 = [0, -Math.sin(r1), Math.cos(r1)];
+  const axisB: Vec3 = [0, Math.cos(r2), Math.sin(r2)];
+  const game = (v: Vec3): Vec3 => [v[0] * HAVOK_SCALE, v[1] * HAVOK_SCALE, v[2] * HAVOK_SCALE];
+  return {
+    a: { pivot: game(settings.cartPivot), axes: [axisA, perp, cross(axisA, perp)] },
+    b: { pivot: game(settings.horsePivot), axes: [axisB, perp, cross(axisB, perp)] },
+    minDistance: settings.limitMin * HAVOK_SCALE,
+    maxDistance: settings.limitMax * HAVOK_SCALE,
+  };
+}
+
+/**
+ * How the tether holds the FrontBar's turn against the spine: a spring back to how it was
+ * hitched (accelerations: stiffness 1/s², damping 1/s; about 3 a second, nearly critically
+ * damped). TODO(M13): the engine's joint holds it outright and Havok's solver gives way to the
+ * wheels' extra pull (fGravMult:Cart) and the horse's sharp turns; how far it gives is not
+ * known: this keeps the wheels on the ground and the cart on them.
+ */
+export const TETHER_TURN_SPRING = { stiffness: 400, damping: 32 } as const;
+
+/**
+ * The pole's turn in its parent's frame: the shortest turn that takes its length (+y) to point
+ * from where it hangs (`origin`) at `target` (both in its parent's frame), as a 3x3 matrix
+ * (column-major: the turned x, y and z axes).
+ */
+export function poleTurn(origin: Vec3, target: Vec3): number[] {
+  let dx = target[0] - origin[0];
+  let dy = target[1] - origin[1];
+  let dz = target[2] - origin[2];
+  const length = Math.hypot(dx, dy, dz);
+  if (length < 1e-6) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+  dx /= length;
+  dy /= length;
+  dz /= length;
+  // The quaternion from +y to d: axis y × d, angle between them.
+  let qx = dz;
+  let qy = 0;
+  let qz = -dx;
+  let qw = 1 + dy;
+  if (qw < 1e-6) {
+    // Straight back: half a turn about z.
+    qx = 0;
+    qy = 0;
+    qz = 1;
+    qw = 0;
+  }
+  const n = Math.hypot(qx, qy, qz, qw);
+  qx /= n;
+  qy /= n;
+  qz /= n;
+  qw /= n;
+  return [
+    1 - 2 * (qy * qy + qz * qz),
+    2 * (qx * qy + qz * qw),
+    2 * (qx * qz - qy * qw),
+    2 * (qx * qy - qz * qw),
+    1 - 2 * (qx * qx + qz * qz),
+    2 * (qy * qz + qx * qw),
+    2 * (qx * qz + qy * qw),
+    2 * (qy * qz - qx * qw),
+    1 - 2 * (qx * qx + qy * qy),
+  ];
+}
+
+/** A cart's body leans over this far sideways (its up's sideways share) before it is righted. */
+const TIP_LEAN = 0.71;
+
+/**
+ * The tilt prevention on a tethered cart's body: where its up leans more than TIP_LEAN to a
+ * side, or points down, an angular impulse of fTipImpulse:Cart about its forward axis (Havok
+ * units; positive turns its up towards its right). Undefined while it stands.
+ */
+export function tipImpulse(up: Vec3, right: Vec3, settings: CartSettings): number | undefined {
+  const lean = up[0] * right[0] + up[1] * right[1] + up[2] * right[2];
+  if (Math.abs(lean) <= TIP_LEAN && up[2] >= 0) return undefined;
+  // Leaning right (or upside down to the right): turned back to the left.
+  return lean > 0 ? -settings.tipImpulse : settings.tipImpulse;
+}
 
 /** A vehicle's place: its root, its compass heading and its pitch (radians, nose up). */
 export interface VehiclePose {
   readonly position: Vec3;
   readonly heading: number;
   readonly pitch: number;
-}
-
-/** What towing needs of a wagon's model. */
-export interface WagonGeometry {
-  /** The horse's root ahead of the front pivot along the shafts (units). */
-  readonly tether: number;
-  /** The rear axle behind the front pivot (units). */
-  readonly wheelbase: number;
-  /** The front axle turns at most this far from the body (radians). */
-  readonly maxSteer: number;
-  /** The wheels' radii (units): they turn by the way they roll. */
-  readonly frontWheelRadius: number;
-  readonly rearWheelRadius: number;
-}
-
-/**
- * The opening's prisoner carriage: its rear axle 214.85 behind the pivot (the rear wheels'
- * nodes), the FrontBar's limited hinge ±0.698 rad, wheels of 49.5 and 59.4 units (their shapes'
- * bounds). The tether: the first cart's horse stands 210.6 units from its pivot in the editor
- * (MQ101Cart1HorseREF to MQ101Cart1Ref), hitched. TODO(M13): the engine's tether frame.
- */
-export const PRISONER_CARRIAGE: WagonGeometry = {
-  tether: 210.6,
-  wheelbase: 214.85,
-  maxSteer: 0.698,
-  frontWheelRadius: 49.5,
-  rearWheelRadius: 59.4,
-};
-
-/** A wagon being towed: where its axles are, how its front axle is turned, its wheels. */
-export interface WagonState {
-  /** The front pivot (the model's origin), on the ground. */
-  readonly front: Vec3;
-  /** The middle of the rear axle, on the ground. */
-  readonly rear: Vec3;
-  /** The front axle's turn from the body (radians, clockwise as the compass). */
-  readonly steer: number;
-  /** How far the wheels have turned (radians, forward positive). */
-  readonly frontSpin: number;
-  readonly rearSpin: number;
-}
-
-/** The ground's height under a point, if known (the shell's ray down). */
-export type GroundAt = (x: number, y: number, z: number) => number | undefined;
-
-const forwardOf = (heading: number): [number, number] => [Math.sin(heading), Math.cos(heading)];
-
-const angleBetween = (from: number, to: number): number => {
-  const delta = to - from;
-  return Math.atan2(Math.sin(delta), Math.cos(delta));
-};
-
-/** A wagon's state where it stands (its wheels as they are). */
-export function wagonAt(pose: VehiclePose, geometry: WagonGeometry): WagonState {
-  const [fx, fy] = forwardOf(pose.heading);
-  const [x, y, z] = pose.position;
-  const drop = Math.sin(pose.pitch) * geometry.wheelbase;
-  return {
-    front: [x, y, z],
-    rear: [
-      x - fx * geometry.wheelbase * Math.cos(pose.pitch),
-      y - fy * geometry.wheelbase * Math.cos(pose.pitch),
-      z - drop,
-    ],
-    steer: 0,
-    frontSpin: 0,
-    rearSpin: 0,
-  };
-}
-
-/** A wagon's pose: its root at the front pivot, heading from the rear axle to it. */
-export function wagonPose(state: WagonState): VehiclePose {
-  const dx = state.front[0] - state.rear[0];
-  const dy = state.front[1] - state.rear[1];
-  const dz = state.front[2] - state.rear[2];
-  return {
-    position: state.front,
-    heading: Math.atan2(dx, dy),
-    pitch: Math.atan2(dz, Math.hypot(dx, dy)),
-  };
-}
-
-/**
- * Where a tethered horse stands for a wagon: if it is already within the shafts' reach (its
- * root at most the tether from the pivot, within the front axle's turn), where it is; else the
- * tether ahead of the pivot on the wagon's heading, facing it. The opening's second cart stands
- * 411 units behind its horse in the editor: tethered, the horse comes to it (its passengers
- * were placed at the cart, not at the horse). TODO(M13): the engine's TetherToHorse.
- */
-export function tetherPlace(
-  wagon: VehiclePose,
-  horse: { readonly position: Vec3; readonly heading: number },
-  geometry: WagonGeometry,
-): { position: Vec3; heading: number; moved: boolean } {
-  const dx = horse.position[0] - wagon.position[0];
-  const dy = horse.position[1] - wagon.position[1];
-  const distance = Math.hypot(dx, dy);
-  const turn = Math.abs(angleBetween(wagon.heading, Math.atan2(dx, dy)));
-  if (Math.abs(distance - geometry.tether) <= geometry.tether * 0.1 && turn <= geometry.maxSteer) {
-    return { position: horse.position, heading: horse.heading, moved: false };
-  }
-  const [fx, fy] = forwardOf(wagon.heading);
-  return {
-    position: [
-      wagon.position[0] + fx * geometry.tether,
-      wagon.position[1] + fy * geometry.tether,
-      horse.position[2],
-    ],
-    heading: wagon.heading,
-    moved: true,
-  };
-}
-
-/**
- * A point trailing another at a length: on the line from where it was to the leader, on the
- * ground there (where no ground is known, at the leader's height).
- */
-function trail(
-  from: Vec3,
-  leader: Vec3,
-  length: number,
-  ground: GroundAt | undefined,
-): [number, number, number] {
-  const dx = leader[0] - from[0];
-  const dy = leader[1] - from[1];
-  const distance = Math.hypot(dx, dy);
-  const x = distance > 1e-6 ? leader[0] - (dx / distance) * length : from[0];
-  const y = distance > 1e-6 ? leader[1] - (dy / distance) * length : from[1];
-  return [x, y, ground?.(x, y, Math.max(from[2], leader[2])) ?? leader[2]];
-}
-
-/**
- * One step of towing: the horse's root is at `horse` now. The front pivot trails it at the
- * tether's length, the rear axle the front pivot at the wheelbase (each on the line from where
- * it was to what pulls it, on the ground there); the front axle turns towards the horse
- * (within its hinge's limit), the wheels by the way they rolled.
- */
-export function tow(
-  state: WagonState,
-  horse: Vec3,
-  geometry: WagonGeometry,
-  ground?: GroundAt,
-): WagonState {
-  const front = trail(state.front, horse, geometry.tether, ground);
-  const rear = trail(state.rear, front, geometry.wheelbase, ground);
-  const body = Math.atan2(front[0] - rear[0], front[1] - rear[1]);
-  const shafts = Math.atan2(horse[0] - front[0], horse[1] - front[1]);
-  const steer = Math.max(
-    -geometry.maxSteer,
-    Math.min(geometry.maxSteer, angleBetween(body, shafts)),
-  );
-  // Rolled forward (along the body) or back.
-  const [bx, by] = forwardOf(body);
-  const rolled = (from: Vec3, to: Vec3): number => (to[0] - from[0]) * bx + (to[1] - from[1]) * by;
-  return {
-    front,
-    rear,
-    steer,
-    frontSpin: state.frontSpin + rolled(state.front, front) / geometry.frontWheelRadius,
-    rearSpin: state.rearSpin + rolled(state.rear, rear) / geometry.rearWheelRadius,
-  };
 }
 
 /** A place in a vehicle's frame: an offset (x right, y forward, z up) and a heading against it. */
@@ -241,4 +241,20 @@ export function movedBy(
     ],
     heading: offset.heading - motion.yaw,
   };
+}
+
+/**
+ * What a rider's graph event does to its ride: ExitCartBegin lets go of the vehicle (its exit's
+ * root motion moves it from there), NPCDetach too; ExitCartEnd ends the ride.
+ */
+export function riderEvent(event: string): 'detach' | 'end' | undefined {
+  switch (event.toLowerCase()) {
+    case 'exitcartbegin':
+    case 'npcdetach':
+      return 'detach';
+    case 'exitcartend':
+      return 'end';
+    default:
+      return undefined;
+  }
 }

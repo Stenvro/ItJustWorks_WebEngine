@@ -472,6 +472,9 @@ export class ModelViewer {
     triggerCount: (reference) =>
       (this.#play?.triggerCount(reference) ?? 0) +
       (this.#stage?.movers.triggerCount(reference) ?? 0),
+    openChanged: (reference, open) => {
+      this.#stage?.doors.setOpen(reference, open);
+    },
     lookChanged: (reference) => this.#lookChanged(reference),
     killed: (reference, killer, silent) => {
       // The dead player's furniture lets go of them first (their body falls from it).
@@ -1334,7 +1337,11 @@ export class ModelViewer {
           ...(graph && { graph }),
           ...(posed && { pose: posed.pose, poseNodes: posed.poseNodes }),
           ...(this.#play && {
-            playback: openable(object, model.sequences?.byName.has('open') === true),
+            playback: openable(
+              object,
+              model.sequences?.byName.has('open') === true,
+              this.#session?.scriptsReady?.state.references.get(object.reference)?.openState,
+            ),
           }),
           ...(water && { water }),
           ...(directional && { directional }),
