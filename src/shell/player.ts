@@ -278,6 +278,13 @@ export class Player implements Camera {
   /** What the third-person camera passes through (the cart the player rides). */
   cameraIgnores: ((owner: PhysicsOwner | undefined) => boolean) | undefined;
   /**
+   * Whether the player's weapons or magic are drawn: the third-person camera then moves to its
+   * combat offsets (behind the back instead of over the shoulder).
+   */
+  weaponDrawn: (() => boolean) | undefined;
+  /** The third-person camera's offset now (x right, y back, z up), easing to its target. */
+  #shoulder: [number, number, number] | undefined;
+  /**
    * Where the player may stand (the worldspace's border regions); undefined: anywhere.
    * Movement across the border stops at it and calls onBorder.
    */
@@ -555,7 +562,37 @@ export class Player implements Camera {
     const zoom = this.bowZoom;
     this.#bowZoom += (zoom - this.#bowZoom) * Math.min(1, deltaSeconds * BOW_ZOOM_RATE);
     if (Math.abs(this.#bowZoom - zoom) < 1e-3) this.#bowZoom = zoom;
+    this.#moveShoulder(deltaSeconds);
     this.#placeCamera(physics.alpha);
+  }
+
+  /**
+   * The third-person camera's offset eases toward its target (fShoulderDollySpeed of the way a
+   * second): over the shoulder (fOverShoulderPosX, fOverShoulderPosZ), or with the weapon drawn
+   * behind the back (fOverShoulderCombatPosX, fOverShoulderCombatPosZ) and
+   * fOverShoulderCombatAddY farther.
+   */
+  #moveShoulder(deltaSeconds: number): void {
+    const ini = this.#setup.ini;
+    const drawn = this.weaponDrawn?.() === true;
+    const target: [number, number, number] = drawn
+      ? [
+          ini.number('Camera', 'fOverShoulderCombatPosX'),
+          -ini.number('Camera', 'fOverShoulderCombatAddY'),
+          ini.number('Camera', 'fOverShoulderCombatPosZ'),
+        ]
+      : [ini.number('Camera', 'fOverShoulderPosX'), 0, ini.number('Camera', 'fOverShoulderPosZ')];
+    const now = this.#shoulder;
+    if (!now || this.pov === 'first') {
+      this.#shoulder = target;
+      return;
+    }
+    const share = Math.min(1, ini.number('Camera', 'fShoulderDollySpeed') * deltaSeconds);
+    this.#shoulder = [
+      now[0] + (target[0] - now[0]) * share,
+      now[1] + (target[1] - now[1]) * share,
+      now[2] + (target[2] - now[2]) * share,
+    ];
   }
 
   /** One physics step of movement. */
@@ -741,10 +778,13 @@ export class Player implements Camera {
     ];
     const min = ini.number('Camera', 'fVanityModeMinDist');
     const max = ini.number('Camera', 'fVanityModeMaxDist');
-    const distance = Math.max(0, min + this.#zoom * (max - min));
+    const [shoulderX, shoulderBack, shoulderZ] = this.#shoulder ?? [
+      ini.number('Camera', 'fOverShoulderPosX'),
+      0,
+      ini.number('Camera', 'fOverShoulderPosZ'),
+    ];
+    const distance = Math.max(0, min + this.#zoom * (max - min) + shoulderBack);
     const right: Vec3 = [Math.cos(this.yaw), -Math.sin(this.yaw), 0];
-    const shoulderX = ini.number('Camera', 'fOverShoulderPosX');
-    const shoulderZ = ini.number('Camera', 'fOverShoulderPosZ');
     const pivot: Vec3 = [
       target[0] + right[0] * shoulderX,
       target[1] + right[1] * shoulderX,

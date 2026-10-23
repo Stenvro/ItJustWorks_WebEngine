@@ -36,7 +36,9 @@
 import type { ObjectGraph } from '../animation/object-graph.ts';
 import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { castStartEvent } from '../gameplay/magic/casting.ts';
-import { aimDirection, normalize } from '../gameplay/magic/projectile-flight.ts';
+import { AIM_HEIGHT } from '../gameplay/combat/aim.ts';
+import { ProjectileFlag } from '../world/projectile-data.ts';
+import { aimDirection, normalize, WORLD_GRAVITY } from '../gameplay/magic/projectile-flight.ts';
 import { wordsByHold } from '../gameplay/magic/shouts.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { SoundLevel } from '../ai/detection.ts';
@@ -63,6 +65,7 @@ import type { StagedActor } from './actor-stage.ts';
 import type { PlacedActor } from './actors.ts';
 import type { GameSession } from './game-session.ts';
 import type { MagicProjectiles } from './magic-projectiles.ts';
+import type { AimTarget, AimVariance, ProjectileAim, ShotKind } from './projectile-aim.ts';
 import type { PlayerView } from './race-menu.ts';
 import type { Terminal } from './terminal.ts';
 import { cellLight, type MagicFx } from './magic-fx.ts';
@@ -76,6 +79,8 @@ export interface ActorCastingOptions {
   readonly terminal: Terminal;
   readonly furniture: ActorFurniture;
   readonly projectiles: MagicProjectiles;
+  /** Where the casts go: the player's aim assistance, an NPC's aim at its target. */
+  readonly aim?: ProjectileAim;
   readonly get: (reference: number) => StagedActor | undefined;
   readonly userOf: (staged: StagedActor) => FurnitureUser;
   readonly player?: () => PlayerView | undefined;
@@ -196,9 +201,15 @@ const HELD_INTERVAL = 0.25;
 /** The BSDirectAtModifiers' kind for bows and spells (userInfo), and how far off the aimed point is. */
 const AIM = 2;
 const AIM_DISTANCE = 2048;
-/** An actor's eyes and chest without a controller (units over its feet; a human's). */
-const EYE_HEIGHT = 110;
-const CHEST_HEIGHT = 90;
+/** An actor's height without a controller (units; a human's). */
+const ACTOR_HEIGHT = 128;
+/**
+ * Where a cast leaves an actor without its source's node: this share of its height over its
+ * feet (the engine's: its bound's 0.7).
+ */
+const CAST_HEIGHT = 0.7;
+/** A shot aimed without its projectile known: straight, at once. */
+const STRAIGHT: ShotKind = { speed: 0, gravity: 0 };
 
 /** A cast the world shows: its sounds, its art, its sprays. */
 interface Shown {
@@ -289,11 +300,6 @@ export class ActorCasting {
       spray: number;
     }
   >();
-  /**
-   * The player's aim, set by the player's casting: the point under the crosshair (what the
-   * camera's ray meets, else far along it). Their casts leave the hand toward it.
-   */
-  playerTarget: (() => Vec3 | undefined) | undefined;
   /** The hands' casting art, by "actor:source". */
   readonly #arts = new Map<string, HandArt>();
   /** Released casts waiting for their graph's SpellFire event, by "actor:source". */
@@ -452,32 +458,55 @@ export class ActorCasting {
     return staged && { feet: staged.position, heading: staged.heading };
   }
 
-  /** A source's node in the world (a hand's magic node, the head), else at the actor's eyes. */
+  /** An actor's height (its controller's; the player's character's), else a human's. */
+  #height(actor: number): number {
+    if (actor === PLAYER_REF) {
+      const player = this.#options.player?.()?.play.player;
+      if (player) return player.character.shape.height;
+    }
+    return this.#options.height?.(actor) ?? ACTOR_HEIGHT;
+  }
+
+  /** A source's node in the world (a hand's magic node, the head), else up the actor's body. */
   origin(actor: number, source: number): Vec3 | undefined {
     const world = this.#node(actor, source);
     if (world) return [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0];
     const place = this.#place(actor);
     if (!place) return undefined;
-    const eye = this.#options.height?.(actor) ?? EYE_HEIGHT;
-    return [place.feet[0], place.feet[1], place.feet[2] + eye];
+    return [place.feet[0], place.feet[1], place.feet[2] + this.#height(actor) * CAST_HEIGHT];
   }
 
   /**
-   * Where an actor aims from a point: the player at the point under the crosshair (from the
-   * hand, so the spell goes where the crosshair shows in either view), an NPC at its target's
-   * chest.
+   * Which way an actor's cast leaves a point (src/shell/projectile-aim.ts): the player's along
+   * the view, turned by the aim assistance toward what the crosshair is on; an NPC's at its
+   * target, led (its projectile's speed and fall) and off by its aim variance; else ahead.
    */
-  #aim(actor: number, from: Vec3, target: number | undefined): Vec3 {
-    const aimed = actor === PLAYER_REF ? this.playerTarget?.() : undefined;
-    if (aimed) {
-      const way: Vec3 = [aimed[0] - from[0], aimed[1] - from[1], aimed[2] - from[2]];
-      if (Math.hypot(...way) > 1) return normalize(way);
+  #aim(
+    actor: number,
+    from: Vec3,
+    target: number | undefined,
+    shot: ShotKind = STRAIGHT,
+    variance: AimVariance = 'none',
+  ): Vec3 {
+    const aim = this.#options.aim;
+    if (actor === PLAYER_REF) {
+      const aimed = aim?.player(from, shot);
+      if (aimed) return aimed;
     }
     const at = target === undefined ? undefined : this.#place(target);
-    if (at) {
-      const chest =
-        (this.#options.height?.(target ?? 0) ?? EYE_HEIGHT) * (CHEST_HEIGHT / EYE_HEIGHT);
-      return normalize([at.feet[0] - from[0], at.feet[1] - from[1], at.feet[2] + chest - from[2]]);
+    if (at && target !== undefined) {
+      const aimed: AimTarget = {
+        reference: target,
+        feet: at.feet,
+        height: this.#height(target),
+        radius: 0,
+      };
+      if (aim) return aim.npc(from, aimed, shot, variance);
+      return normalize([
+        at.feet[0] - from[0],
+        at.feet[1] - from[1],
+        at.feet[2] + aimed.height * AIM_HEIGHT.upper - from[2],
+      ]);
     }
     return aimDirection(this.#place(actor)?.heading ?? 0, 0);
   }
@@ -823,8 +852,8 @@ export class ActorCasting {
     const actor = delivered.caster;
     const origin = this.origin(actor, source);
     if (!origin) return;
+    const main = await runtime.casting.mainEffect(delivered.item);
     if (seconds === undefined) {
-      const main = await runtime.casting.mainEffect(delivered.item);
       const release = main && effectSound(main, EffectSound.release);
       if (release !== undefined) void this.#sound(release, actor, source);
       const kind =
@@ -843,7 +872,26 @@ export class ActorCasting {
         heard === 0 ? SoundLevel.silent : (main?.castingSoundLevel ?? 1),
       );
     }
-    const aim = this.#aim(actor, origin, target);
+    // The aim knows the projectile's speed and fall (it leads a target, lifts onto the arc);
+    // a concentration spell's spray is aimed with its own variance.
+    const projectile =
+      main?.projectile === undefined
+        ? undefined
+        : await runtime.casting.projectile(main.projectile);
+    const shot: ShotKind = projectile
+      ? {
+          speed: projectile.speed,
+          gravity: projectile.gravity * WORLD_GRAVITY,
+          uncorrected: (projectile.flags & ProjectileFlag.disableCombatAimCorrection) !== 0,
+        }
+      : STRAIGHT;
+    const aim = this.#aim(
+      actor,
+      origin,
+      target,
+      shot,
+      seconds === undefined ? 'immediate' : 'concentration',
+    );
     // The player's Touch spell reaches the actor aimed at, as far as such spells reach.
     if (target === undefined && delivered.item.delivery === Delivery.touch) {
       target = this.#options.aimedActor?.(origin, aim, MAGIC_REACH, actor);

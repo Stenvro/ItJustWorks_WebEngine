@@ -67,6 +67,7 @@ import { PlayerDeath } from './player-death.ts';
 import type { PlayerFurniture } from './player-furniture.ts';
 import { PlayerPilot } from './player-pilot.ts';
 import { reactionsOf } from '../ai/combat-reactions.ts';
+import { ProjectileAim } from './projectile-aim.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -221,6 +222,8 @@ export class ActorStage {
   readonly effects: ActorEffects;
   /** Casting and shouting, the player's and the NPCs' (src/shell/actor-casting.ts). */
   readonly casting: ActorCasting;
+  /** Where the actors' shots go (the player's aim assistance, an NPC's aim at its target). */
+  readonly aim: ProjectileAim;
   /** The player's attack buttons and voice key casting (src/shell/player-casting.ts). */
   readonly playerCasting: PlayerCasting | undefined;
   /** Crime on the stage: witnesses, guards arresting, trespass warnings, jail. */
@@ -289,6 +292,28 @@ export class ActorStage {
       bodies: this.bodies,
       player: () => options.player?.(),
     });
+    this.aim = new ProjectileAim({
+      session: options.session,
+      player: () => options.player?.(),
+      targets: () =>
+        [...this.#projectileTargets()].map((target) => ({
+          reference: target.reference,
+          ...target.shape,
+        })),
+      hostile: (actor, target) => this.combat.hostile(actor, target),
+      velocity: (reference) =>
+        reference === PLAYER_REF
+          ? options.player?.()?.play.playerMotion().velocity
+          : this.movers.motion(reference)?.velocity,
+      sneaking: (reference) =>
+        reference === PLAYER_REF
+          ? options.player?.()?.play.player.sneaking === true
+          : this.movers.motion(reference)?.sneaking === true,
+      aspect: () => {
+        const [width, height] = options.renderer.size;
+        return width / Math.max(1, height);
+      },
+    });
     this.combat = new ActorCombat({
       session: options.session,
       renderer: options.renderer,
@@ -316,6 +341,7 @@ export class ActorStage {
       flight: () => this.flight,
       knockdowns: () => this.knockdowns,
       threats: () => [...this.projectiles.threats(), ...this.casting.threats()],
+      aim: () => this.aim,
     });
     this.search = new ActorSearch({
       session: options.session,
@@ -509,6 +535,7 @@ export class ActorStage {
       terminal: options.terminal,
       furniture: this.furniture,
       projectiles: this.projectiles,
+      aim: this.aim,
       fx: this.fx,
       get: (reference) => this.#actors.get(reference),
       userOf: (staged) => this.userOf(staged),
