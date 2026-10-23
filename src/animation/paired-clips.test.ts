@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { AnimationBinding } from '../formats/hkx/animation.ts';
-import { bindPaired, isPaired, pairedSide, pairedTrackBones } from './paired-clips.ts';
+import { TRANSFORM_FLOATS, type AnimationBinding } from '../formats/hkx/animation.ts';
+import { bindPaired, isPaired, pairedSide, pairedTrackBones, partnerMark } from './paired-clips.ts';
 
 /** The human and horse mount's layout (Paired_Mount.hkx), shortened. */
 const TRACKS = [
@@ -72,5 +72,35 @@ describe('paired clips', () => {
     expect(paired.trackToBone).toBeUndefined();
     const plain = binding(['NPC Root [Root]'], 'NPC Root [Root]');
     expect(bindPaired(plain, HUMAN)).toBe(plain);
+  });
+
+  it("reads the partner's mark from the clip's placement tracks", () => {
+    // A killmove's layout: the partner's placement ("2_") 72.8 ahead of the pair's root, turned
+    // about; the lead's ("NPC") at the root, or turned a quarter to the left and moved.
+    const names = ['PairedRoot', '2_', '2_NPC Root [Root]', 'NPC', 'NPC Root [Root]'];
+    const killmove = (lead: readonly number[]): AnimationBinding => {
+      const base = binding(names);
+      return {
+        ...base,
+        animation: {
+          ...base.animation,
+          sample: (_time: number, out: Float32Array) => {
+            out.set([0, 72.8, 0, 0, 0, 1, 0], 1 * TRANSFORM_FLOATS);
+            out.set(lead, 3 * TRANSFORM_FLOATS);
+          },
+        },
+      };
+    };
+    const straight = partnerMark(killmove([0, 0, 0, 0, 0, 0, 1]));
+    expect(straight?.offset[0]).toBeCloseTo(0);
+    expect(straight?.offset[1]).toBeCloseTo(72.8);
+    expect(Math.abs(straight?.yaw ?? 0)).toBeCloseTo(Math.PI);
+    // The lead 10 units ahead turned 90° to the left: the partner 62.8 to its right.
+    const half = Math.SQRT1_2;
+    const turned = partnerMark(killmove([0, 10, 0, 0, 0, half, half]));
+    expect(turned?.offset[0]).toBeCloseTo(62.8);
+    expect(turned?.offset[1]).toBeCloseTo(0);
+    expect(turned?.yaw).toBeCloseTo(Math.PI / 2);
+    expect(partnerMark(binding(TRACKS))).toBeUndefined();
   });
 });

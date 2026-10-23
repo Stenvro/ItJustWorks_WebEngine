@@ -22,6 +22,9 @@ export const INI_DEFAULTS = {
     fMotionFeedbackMinSpeed: 5,
     fMotionFeedbackMinSpeedDelta: 25,
     fMotionFeedbackMinTime: 0.5,
+    // A paired clip's partner not at its mark after this long plays where it stands
+    // (src/shell/actor-combat.ts: killmoves).
+    fMaxTimeToMarkSec: 3,
   },
   Audio: {
     fASFadeInTime: 3,
@@ -157,6 +160,8 @@ export const INI_DEFAULTS = {
   Combat: {
     // A cut head flies off at this speed (game units a second; src/shell/actor-dismemberment.ts).
     fDecapInitialSpeed: 250,
+    // The player's attack mounted aims at actors this near (src/shell/actor-combat.ts).
+    fMountedAttackRange: 135,
     f1PArrowTiltUpAngle: 2,
     f1PBoltTiltUpAngle: 1,
     f3PArrowTiltUpAngle: 2.5,

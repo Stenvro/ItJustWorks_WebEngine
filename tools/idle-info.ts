@@ -7,6 +7,8 @@
 //                                                        behavior graph (matching the filter)
 //   node tools/idle-info.ts --idlm                      idle markers with their idles
 //   node tools/idle-info.ts --furn                      the furniture's AI data: distinct values
+//   node tools/idle-info.ts --cameras                   the kill cameras' tree (CPTH) with its
+//                                                        shots (CAMS): conditions, times, models
 
 import {
   behaviorGraphKey,
@@ -28,6 +30,11 @@ import {
   parseFurniture,
 } from '../src/world/furniture-records.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
+import {
+  parseCameraPath,
+  parseCameraShot,
+  type CameraPathRecord,
+} from '../src/gameplay/combat/combat-records.ts';
 import { openGameFolder } from './gamedata-path.ts';
 
 const args = process.argv.slice(2);
@@ -56,7 +63,19 @@ const list = <K>(map: Map<K, number>, show: (key: K) => string = String, top = I
     .join(', ');
 const shortGraph = (graph: string): string => graph.split('\\').pop() ?? graph;
 
-/** "GetIsRace(DraugrRace)==1 OR ..." */
+/** ConditionRunOn's values by name (src/scripting/conditions.ts). */
+const RUN_ON_NAMES = [
+  'subject',
+  'target',
+  'reference',
+  'combatTarget',
+  'linkedReference',
+  'questAlias',
+  'packageData',
+  'eventData',
+];
+
+/** "GetIsRace(DraugrRace)@target==1 OR ..." */
 async function describeConditions(conditions: readonly Condition[]): Promise<string> {
   const parts: string[] = [];
   for (const condition of conditions) {
@@ -75,8 +94,17 @@ async function describeConditions(conditions: readonly Condition[]): Promise<str
           : condition.raw1 !== 0
             ? String(condition.raw1)
             : '';
+    // What it runs on when not the subject: "@target", "@combatTarget", "@<reference>", ...;
+    // "swap" for Swap Subject and Target.
+    const runOn =
+      condition.runOn === 0
+        ? ''
+        : condition.runOn === 2
+          ? `@${await name(condition.reference)}`
+          : `@${RUN_ON_NAMES[condition.runOn] ?? String(condition.runOn)}`;
+    const swap = condition.swapSubjectAndTarget === true ? '(swap)' : '';
     parts.push(
-      `${conditionFunctionName(condition.function)}(${param})${operator}${comparand}${condition.or ? ' OR' : ''}`,
+      `${conditionFunctionName(condition.function)}(${param})${runOn}${swap}${operator}${comparand}${condition.or ? ' OR' : ''}`,
     );
   }
   return parts.join(' ');
@@ -410,11 +438,52 @@ async function showFurniture(): Promise<void> {
   console.log(`FNPR type: ${list(counts.types)}; entry points: ${list(counts.entries)}`);
 }
 
+/** The kill cameras' tree: every root path, then its children in order, with their shots. */
+async function showCameras(): Promise<void> {
+  const paths: CameraPathRecord[] = [];
+  for (const formId of db.formIdsOfType('CPTH')) {
+    const record = await db.get(formId);
+    if (record && !record.deleted) paths.push(parseCameraPath(record));
+  }
+  const shotText = async (formId: number): Promise<string | undefined> => {
+    const record = await db.get(formId);
+    if (record?.type !== 'CAMS') return undefined;
+    const shot = parseCameraShot(record);
+    const imad =
+      shot.imageSpaceModifier === undefined ? '' : ` imad ${await name(shot.imageSpaceModifier)}`;
+    return (
+      `${shot.editorId}(${shot.model ?? 'first person'} max ${shot.maxTime.toFixed(2)} ` +
+      `min ${shot.minTime.toFixed(2)} time x${shot.globalTimeMult.toFixed(2)} ` +
+      `player x${shot.playerTimeMult.toFixed(2)} target x${shot.targetTimeMult.toFixed(2)} ` +
+      `at ${String(shot.location)} looks ${String(shot.target)} flags ${shot.flags.toString(16)}${imad})`
+    );
+  };
+  const print = async (path: CameraPathRecord, depth: number): Promise<void> => {
+    const conditions = await describeConditions(path.conditions);
+    const shots: string[] = [];
+    for (const shot of path.shots) {
+      const text = await shotText(shot);
+      if (text !== undefined) shots.push(text);
+    }
+    const indent = '  '.repeat(depth);
+    const after = path.previous === undefined ? '' : ` after ${await name(path.previous)}`;
+    console.log(
+      `${indent}${path.editorId} [${hex(path.formId)}] zoom ${String(path.zoom)}${after}` +
+        (conditions ? `  if ${conditions}` : ''),
+    );
+    if (shots.length > 0) console.log(`${indent}    shots ${shots.join(', ')}`);
+    for (const child of paths.filter((other) => other.parent === path.formId))
+      await print(child, depth + 1);
+  };
+  for (const root of paths.filter((path) => path.parent === undefined)) await print(root, 0);
+}
+
 if (args[0] === '--parse') await parseAll();
+else if (args[0] === '--cameras') await showCameras();
 else if (args[0] === '--tree') await showTree(args[1] ?? 'ActionIdle', args[2] ?? '');
 else if (args[0] === '--idlm') await showMarkers();
 else if (args[0] === '--furn') await showFurniture();
 else
   console.log(
-    'usage: node tools/idle-info.ts --parse | --tree <action or idle> [graph] | --idlm | --furn',
+    'usage: node tools/idle-info.ts --parse | --tree <action or idle> [graph] | --idlm | --furn | --cameras',
   );

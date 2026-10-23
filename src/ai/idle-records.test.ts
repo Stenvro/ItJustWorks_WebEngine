@@ -256,13 +256,46 @@ describe('the idle tree', () => {
     expect(tree.resolve(1, master, holds(0x10, 0x13, 0x15))?.formId).toBe(0x15);
     // Only the actor's graph: the dog's root comes first but is not a character's.
     expect(tree.resolve(1, behaviorGraphKey(DOG), () => true)?.event).toBe('dogDraw');
-    // A group taken, none of its children: the group, which plays nothing; its next sibling
-    // is not tried.
-    const group = tree.resolve(1, master, holds(0x10, 0x11, 0x16));
-    expect(group?.formId).toBe(0x11);
-    expect(group?.event).toBeUndefined();
+    // A group whose conditions hold, none of its children's: the search goes back up and on
+    // to its next sibling (the engine's depth-first search).
+    expect(tree.resolve(1, master, holds(0x10, 0x11, 0x16))?.formId).toBe(0x16);
+    // A group with nothing playable under it plays nothing.
+    expect(tree.resolve(1, master, holds(0x10, 0x11, 0x13))).toBeUndefined();
     // Nothing under the action qualifies.
     expect(tree.resolve(1, master, holds())).toBeUndefined();
+  });
+
+  it('tries the children of an idle with an event before the idle itself', () => {
+    const tree = new IdleTree(
+      [action(1, 'ActionRightPowerAttack')],
+      [
+        idle(0x60, 1, undefined, { event: 'pa_KillMoveSneak' }),
+        idle(0x61, 0x60, undefined, { event: 'pa_KillMoveSneakThroatSlit' }),
+        idle(0x62, 1, 0x60, { event: 'attackPowerStart' }),
+      ],
+    );
+    const holds =
+      (...passing: number[]) =>
+      (entry: IdleRecord): boolean =>
+        passing.includes(entry.formId);
+    expect(tree.resolve(1, '', holds(0x60, 0x61, 0x62))?.formId).toBe(0x61);
+    expect(tree.resolve(1, '', holds(0x60, 0x62))?.formId).toBe(0x60);
+    expect(tree.resolve(1, '', holds(0x61, 0x62))?.formId).toBe(0x62);
+  });
+
+  it('plays the first step of a sequence', async () => {
+    const tree = new IdleTree(
+      [action(1, 'ActionRightPowerAttack')],
+      [
+        idle(0x70, 1, undefined, { event: undefined, flags: IdleFlag.sequence }),
+        idle(0x71, 0x70, undefined, { event: 'to_Flight_Kill_Grab_Enter' }),
+        idle(0x72, 0x70, 0x71, { event: 'to_Flight_Kill_Grab_Action' }),
+      ],
+    );
+    expect(tree.resolve(1, '', () => true)?.formId).toBe(0x71);
+    // The step plays though its own conditions fail: it is the sequence's.
+    const step = await tree.resolveAsync(1, '', (entry) => Promise.resolve(entry.formId !== 0x71));
+    expect(step?.formId).toBe(0x71);
   });
 
   it('checks an idle with the idles above it', () => {

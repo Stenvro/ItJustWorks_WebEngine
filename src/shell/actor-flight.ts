@@ -1074,7 +1074,7 @@ export class ActorFlight {
   ): void {
     flier.asked = { what, at: this.#clock };
     void this.#options.furniture
-      .playAction(this.#options.userOf(flier.staged), action, target, target === undefined)
+      .playAction(this.#options.userOf(flier.staged), action, target)
       .then((played) => {
         if (!played && flier.asked?.what === what) flier.asked = undefined;
       })

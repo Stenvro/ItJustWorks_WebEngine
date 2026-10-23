@@ -238,6 +238,10 @@ export interface WorldBridge {
   stopCombat?(actor: number): void;
   /** An actor's combat state now (src/shell/actor-combat.ts), if it is loaded. */
   combat?(actor: number): ActorCombatState | undefined;
+  /** ShouldAttackKill: an attacker's next strike would kill a target (src/shell/actor-combat.ts). */
+  attackKills?(attacker: number, target: number): Promise<boolean>;
+  /** IsLastHostileActor: no actor near the player is hostile to them but, perhaps, this one. */
+  lastHostileActor?(actor: number): boolean;
   /** Whether a loaded actor fights or holds another an enemy (the combat AI). */
   hostile?(actor: number, other: number): boolean;
   /** Whether the player looks through their own eyes (first person). */
@@ -492,7 +496,7 @@ export interface ActorInteraction {
 
 /**
  * An actor's combat state as its conditions (IsWeaponOut, GetAttackState, IsBlocking,
- * IsBleedingOut, GetKnockStateEnum, ShouldAttackKill, ...) and natives (IsWeaponDrawn,
+ * IsBleedingOut, GetKnockStateEnum, GetPairedAnimation, ...) and natives (IsWeaponDrawn,
  * IsInCombat, GetCombatTarget, IsInKillMove) read it (CommonLibSSE ActorState).
  */
 export interface ActorCombatState {
@@ -526,12 +530,6 @@ export interface ActorCombatState {
   /** GetFriendHit: the blows from friends it let pass; GetCombatGroupMemberCount. */
   readonly friendHits: number;
   readonly groupSize: number;
-  /** Its next attack would kill its combat target (ShouldAttackKill). */
-  readonly shouldAttackKill: boolean;
-  /** Its combat target's height against its own (GetTargetHeight, game units). */
-  readonly targetHeight: number;
-  /** Its combat target is the last actor hostile to it (IsLastHostileActor). */
-  readonly lastHostile: boolean;
 }
 
 /**
@@ -1380,14 +1378,21 @@ export class ScriptRuntime implements VmHost {
       reference = record?.type === 'REFR' || record?.type === 'ACHR' || record?.type === 'PGRE';
       base = reference ? record?.formIdField('NAME') : formId;
     }
+    // An actor's keywords: its base's, then its race's (observed in the original: the
+    // actor's HasKeyword asks its race after its base; ActorTypeNPC is a race's keyword).
+    let race: number | undefined;
     if (reference) {
       const info = await this.actors.info(formId);
-      if (info) base = info.keywords.formId;
+      if (info) {
+        base = info.keywords.formId;
+        race = await this.actors.raceOf(formId);
+      }
     }
     const own = base === undefined ? [] : await this.#formKeywords(base);
     const aliases = reference ? this.aliasesHolding(formId) : [];
-    if (aliases.length === 0) return own;
+    if (aliases.length === 0 && race === undefined) return own;
     const all = [...own];
+    if (race !== undefined) all.push(...(await this.#formKeywords(race)));
     for (const { quest, alias } of aliases) {
       all.push(...((await this.forms.alias(quest, alias))?.keywords ?? []));
     }
@@ -2828,7 +2833,17 @@ export class ScriptRuntime implements VmHost {
 
   // --- Conditions -------------------------------------------------------------------------
 
-  /** Whether conditions hold for a subject, grouped as the engine does (unknowns hold). */
+  /**
+   * Whether conditions hold for a subject and its target (`context.target`: what it acts on),
+   * grouped as the engine does. Observed in the original: each condition runs on one
+   * reference (its run-on: the subject, the target, a reference, the subject's combat target,
+   * ...) and has an "other" (the target when it runs on the subject or a reference, the subject
+   * when it runs on the target or the combat target); Swap Subject and Target exchanges the
+   * two when both are there. A reference parameter left empty (ShouldAttackKill,
+   * GetRelativeAngle and GetTargetHeight in the killmove idles, IsHostileToActor in dialogue) is
+   * the other. A condition with nothing to run on fails (a target run-on asked without a
+   * target); only what is not valued yet holds.
+   */
   async conditionsHold(
     conditions: readonly Condition[],
     subject: ObjectHandle,
@@ -2837,27 +2852,29 @@ export class ScriptRuntime implements VmHost {
   ): Promise<boolean> {
     let group: boolean | undefined;
     for (const condition of conditions) {
-      // Swap Subject and Target: what runs on the one runs on the other.
-      const swap = condition.swapSubjectAndTarget === true ? context.target : undefined;
-      const self = swap ?? subject;
-      const around: ConditionsContext = swap ? { ...context, target: subject } : context;
-      const on = await this.#runsOn(condition, self, event, around);
+      const ran = await this.#runsOn(condition, subject, event, context);
       let holds: boolean;
-      if (on === 'unknown') {
+      if (ran === 'unknown') {
         this.vm.warn(
           `conditions run on ${RUN_ON[condition.runOn] ?? String(condition.runOn)} are not valued yet`,
         );
         holds = true;
-      } else if (on === 'none') {
+      } else if (ran === 'none') {
         // Nothing to run on: it fails, but DoesNotExist (an event's member that is not there)
         // is 1.
         holds =
           condition.function === Fn.doesNotExist &&
           (await compareConditionValue(this, condition, 1));
       } else {
-        const quest = around.quest ?? (subject.type === 'quest' ? subject.formId : undefined);
+        // Swap Subject and Target: what runs on the one runs on the other.
+        const swapped = condition.swapSubjectAndTarget === true ? ran.other : undefined;
+        const on = swapped ?? ran.on;
+        const other = swapped ? ran.on : ran.other;
+
+        const quest = context.quest ?? (subject.type === 'quest' ? subject.formId : undefined);
         holds = await evaluateCondition(this, condition, on, {
-          ...around,
+          ...context,
+          ...(other && { other }),
           ...(event && { event }),
           ...(quest !== undefined && { quest }),
         });
@@ -2875,46 +2892,54 @@ export class ScriptRuntime implements VmHost {
     return group ?? true;
   }
 
-  /** What a condition runs on: a handle, nothing (it fails), or what is not known yet. */
+  /**
+   * What a condition runs on and its other (see conditionsHold): handles, nothing (it fails), or
+   * what is not known yet.
+   */
   async #runsOn(
     condition: Condition,
     subject: ObjectHandle,
     event: StoryEventData | undefined,
     context: {
       readonly target?: ObjectHandle;
-      readonly targetless?: boolean;
       readonly quest?: number;
       readonly packageTarget?: (input: number) => number | undefined;
     },
-  ): Promise<ObjectHandle | 'none' | 'unknown'> {
+  ): Promise<{ readonly on: ObjectHandle; readonly other?: ObjectHandle } | 'none' | 'unknown'> {
+    const only = (on: ObjectHandle): { readonly on: ObjectHandle } => ({ on });
     switch (condition.runOn) {
       case ConditionRunOn.subject:
-        return subject;
+        return { on: subject, ...(context.target && { other: context.target }) };
       case ConditionRunOn.target:
-        return context.target ?? (context.targetless === true ? 'none' : 'unknown');
+        return context.target ? { on: context.target, other: subject } : 'none';
       case ConditionRunOn.reference:
-        return condition.reference === 0 ? 'none' : this.referenceHandle(condition.reference);
+        return condition.reference === 0
+          ? 'none'
+          : {
+              on: this.referenceHandle(condition.reference),
+              ...(context.target && { other: context.target }),
+            };
       case ConditionRunOn.linkedReference: {
         const reference = this.reference(subject);
         const linked =
           reference === undefined ? undefined : await this.linkedReference(reference, 0);
-        return linked === undefined ? 'none' : this.referenceHandle(linked);
+        return linked === undefined ? 'none' : only(this.referenceHandle(linked));
       }
       case ConditionRunOn.questAlias: {
         const quest = context.quest ?? (subject.type === 'quest' ? subject.formId : undefined);
         if (quest === undefined) return 'unknown';
         const filled = this.state.quests.get(quest)?.aliases.get(condition.param3);
-        return filled === undefined ? 'none' : this.referenceHandle(filled);
+        return filled === undefined ? 'none' : only(this.referenceHandle(filled));
       }
       case ConditionRunOn.eventData: {
         const member = event?.forms.get(condition.eventMember);
-        return member === undefined ? 'none' : this.referenceHandle(member);
+        return member === undefined ? 'none' : only(this.referenceHandle(member));
       }
       case ConditionRunOn.packageData: {
         // The reference a data input of the running package names (its index: param 3).
         if (!context.packageTarget) return 'unknown';
         const reference = context.packageTarget(condition.param3);
-        return reference === undefined ? 'none' : this.referenceHandle(reference);
+        return reference === undefined ? 'none' : only(this.referenceHandle(reference));
       }
       case ConditionRunOn.combatTarget: {
         // Its combat target now (src/shell/actor-combat.ts).
@@ -2923,7 +2948,7 @@ export class ScriptRuntime implements VmHost {
         if (!target) return 'unknown';
         return target.combatTarget === undefined
           ? 'none'
-          : this.referenceHandle(target.combatTarget);
+          : { on: this.referenceHandle(target.combatTarget), other: subject };
       }
       default:
         return 'unknown';
