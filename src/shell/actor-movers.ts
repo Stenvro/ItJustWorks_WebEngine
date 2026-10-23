@@ -1415,6 +1415,11 @@ export class ActorMovers {
       );
       // Blocked on its way, it seeks a way round (a crease, a corner).
       character.seeksAround = true;
+      // It steps up onto ground actors walk as the player does (the engine's controller's
+      // TryStep: onto the navmesh), not only up stairs: a chicken sent onto a Riverwood porch
+      // stood before its edge, its path over the navmesh, its controller stopped by the step.
+      character.walkable = (x, y, z) =>
+        this.#options.navmeshes?.()?.locate([x, y, z]) !== undefined;
       // Out of what it stands in (set on the floor, its shape may touch it), as the player.
       if (world.physics.queriesCurrent) character.recover();
       this.#movers.set(reference, {

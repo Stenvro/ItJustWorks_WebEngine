@@ -901,8 +901,9 @@ from the original game's behaviour only (in our words):
   the reachable triangles within the place by their area, a random point in the one picked; an
   across-the-place point is taken only where a path reaches it (up to 8 tried at once, else it
   waits a moment). Before, any point of the circle was taken unchecked, inside houses and
-  behind the garden fences: Riverwood's chickens walked into the wattle (QA: a chicken stuck
-  26 s 687 units from its point, in every run).
+  behind the garden fences, and the first walk went anywhere within it (QA: a Riverwood chicken
+  beyond the high process stood 26 s 687 units short of its point, in every run; with this and
+  the walkers' idles stopped, above in "Movement", none).
 - **Follow:** its radii without its own are fFollowSlowdownZoneWidth (150) and
   fFollowMatchSpeedZoneWidth (128), the smaller the minimum. Its speed is matched to the
   leader's (`followSpeed`): at least the leader's; from the middle of its radii to the outer one
