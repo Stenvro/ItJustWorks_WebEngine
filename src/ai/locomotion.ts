@@ -23,6 +23,88 @@ export interface MoveRequest {
   readonly face?: number | undefined;
   /** Its speed against its gait's (a follower matching its leader's); 1 without. */
   readonly speedMult?: number | undefined;
+  /**
+   * Its speed on the engine's normalized scale (1 its movement type's walk, 2 its run, each in
+   * the way it goes; between them linear): the combat paths' speeds (fCombatSpeedValueWalk 1,
+   * FastWalk 1.33, Jog 1.66, Run 2). Undefined: its gait's speed.
+   */
+  readonly pace?: number | undefined;
+  /** How it turns (undefined: as any actor out of combat, DEFAULT_TURNING). */
+  readonly turning?: TurnParameters | undefined;
+  /**
+   * Standing (no direction), its graph's root motion moves it (a melee attack's lunge) while
+   * its controller turns it to `face`.
+   */
+  readonly rootMotion?: boolean | undefined;
+}
+
+/**
+ * How an actor turns (observed in the original: its movement parameters and the facing its
+ * planner keeps). Standing, it turns until it faces the heading it keeps within 1°, then holds
+ * its facing until that heading is more than `tolerance` off; moving, it keeps turning to it.
+ * Its turn rate is its movement type's × `rateMult`, reached and given up at its angular
+ * acceleration: its race's (RACE DATA angular acceleration rate: 1 / that, in its movement
+ * type's turn-while-moving rates a second) × `accelerationMult`.
+ */
+export interface TurnParameters {
+  /** Radians (fDefaultAngleTolerance; fCombatAngleTolerance in combat). */
+  readonly tolerance: number;
+  /** At least its race's aim angle tolerance (RACE DATA; the combat facing's). */
+  readonly raceTolerance?: boolean;
+  readonly rateMult: number;
+  readonly accelerationMult: number;
+}
+
+/** Out of combat: fDefaultAngleTolerance (5°), its movement type's rates. */
+export const DEFAULT_TURNING: TurnParameters = {
+  tolerance: (5 * Math.PI) / 180,
+  rateMult: 1,
+  accelerationMult: 1,
+};
+
+/** What an actor's turning keeps from step to step (its mover's). */
+export class Turning {
+  /** Its turn rate now (radians per second, clockwise). */
+  rate = 0;
+  /** Standing, it faces the heading it keeps (within 1°) and holds its facing. */
+  settled = false;
+
+  reset(): void {
+    this.rate = 0;
+    this.settled = false;
+  }
+}
+
+/** The angle controller's dead band: nearer than this, turning slower than this a second, it stops. */
+const TURN_DEAD_BAND = Math.PI / 180;
+
+/**
+ * One step of the engine's angle controller (observed in the original): the turn rate that brings the
+ * heading onto its goal soonest without passing it, at most `maxRate`, the rate changing by at
+ * most `acceleration` a second; within 1° of its goal and slower than 1° a second, none.
+ * `delta` is the turn still to make (radians, clockwise positive).
+ */
+export function turnRate(
+  delta: number,
+  rate: number,
+  maxRate: number,
+  acceleration: number,
+  seconds: number,
+): number {
+  if (!(seconds > 0)) return rate;
+  if (Math.abs(delta) < TURN_DEAD_BAND && Math.abs(rate) < TURN_DEAD_BAND) return 0;
+  if (!(acceleration > 0)) return Math.max(-maxRate, Math.min(maxRate, delta / seconds));
+  // The fastest rate from which it still stops on the goal after this step, decelerating as
+  // fast as it may (v·dt + v² / 2a = the turn left), and not past the goal in this step.
+  const left = Math.abs(delta);
+  const sign = Math.sign(delta);
+  const stopping =
+    acceleration * (-seconds + Math.sqrt(seconds * seconds + (2 * left) / acceleration));
+  const wanted = Math.min(stopping, maxRate, left / seconds);
+  // Faster than that the way it turns: it brakes to it; else it speeds up at most so much.
+  if (Math.sign(rate) === sign && Math.abs(rate) > wanted) return sign * wanted;
+  const change = acceleration * seconds;
+  return rate + Math.max(-change, Math.min(change, sign * wanted - rate));
 }
 
 /**
@@ -33,6 +115,12 @@ export interface MovementTypes {
   readonly walk: MovementType;
   readonly run: MovementType;
   readonly sprint?: MovementType | undefined;
+  /**
+   * Its race's angular acceleration (RACE DATA: 1 / its angular acceleration rate, in turn-
+   * while-moving rates a second; 1 where the race gives none) and aim angle tolerance (radians).
+   */
+  readonly angularAcceleration?: number | undefined;
+  readonly aimTolerance?: number | undefined;
 }
 
 /** One step of steering: the velocity to move with and the heading after the step. */
@@ -143,12 +231,19 @@ export class MotionFeedback {
  * ellipse through the four directional speeds). Not strafing, it goes where it faces: the speed
  * falls with the cosine of the turn still to make, so a turn of a right angle or more is made
  * standing (the engine's NPCs do not walk sideways out of combat).
+ *
+ * With `turning` (its mover's state) it turns as the engine's movement controller does
+ * (TurnParameters): at an angular acceleration, holding its facing within its tolerance while
+ * it stands (`carried`: its graph moves it, a lunge: it does not stand); without, it turns at
+ * its full rate from the first step (walkers beyond the high process, the tests).
  */
 export function steer(
   request: MoveRequest,
   heading: number,
   types: MovementTypes,
   seconds: number,
+  turning?: Turning,
+  carried = false,
 ): Steering {
   const type =
     request.gait === 'walk'
@@ -161,20 +256,55 @@ export function steer(
   const moving = direction !== undefined && length > 1e-6;
   const way = moving ? headingOf(direction[0], direction[1]) : heading;
   const target = request.face ?? (moving ? way : heading);
-  const rate = moving
-    ? type.rotateWhileMoving
-    : request.gait === 'walk'
-      ? type.rotateInPlace.walk
-      : type.rotateInPlace.run;
-  const turn = angleBetween(heading, target);
-  const step = Math.max(0, rate) * seconds;
-  const next = heading + (Math.abs(turn) <= step ? turn : Math.sign(turn) * step);
+  const parameters = request.turning ?? DEFAULT_TURNING;
+  const rate =
+    (moving
+      ? type.rotateWhileMoving
+      : request.gait === 'walk'
+        ? type.rotateInPlace.walk
+        : type.rotateInPlace.run) * (turning ? parameters.rateMult : 1);
+  let turn = angleBetween(heading, target);
+  let next: number;
+  if (turning) {
+    // Standing it settles on the heading within 1° and holds its facing until that heading is
+    // more than its tolerance off (the engine's planner; moving, it follows the heading).
+    if (!moving && !carried) {
+      const tolerance = Math.max(
+        parameters.tolerance,
+        parameters.raceTolerance === true ? (types.aimTolerance ?? 0) : 0,
+      );
+      if (turning.settled) {
+        if (Math.abs(turn) > tolerance) turning.settled = false;
+        else turn = 0;
+      } else if (Math.abs(turn) <= TURN_DEAD_BAND) {
+        turning.settled = true;
+      }
+    }
+    const acceleration =
+      (types.angularAcceleration ?? 1) * parameters.accelerationMult * type.rotateWhileMoving;
+    turning.rate = turnRate(turn, turning.rate, Math.max(0, rate), acceleration, seconds);
+    next = heading + turning.rate * seconds;
+  } else {
+    const step = Math.max(0, rate) * seconds;
+    next = heading + (Math.abs(turn) <= step ? turn : Math.sign(turn) * step);
+  }
   if (!moving) return { velocity: [0, 0], heading: next };
-  const speeds = request.gait === 'walk' ? type.walk : type.run;
   // The way against the facing: x right, y forward.
   const against = angleBetween(next, way);
-  let speed =
-    directionalSpeed(speeds, Math.sin(against), Math.cos(against)) * (request.speedMult ?? 1);
+  const across = Math.sin(against);
+  const ahead = Math.cos(against);
+  const walkSpeed = directionalSpeed(type.walk, across, ahead);
+  const runSpeed = directionalSpeed(type.run, across, ahead);
+  const pace = request.pace;
+  const gaitSpeed =
+    pace === undefined
+      ? request.gait === 'walk'
+        ? walkSpeed
+        : runSpeed
+      : pace <= 1
+        ? walkSpeed * Math.max(0, pace)
+        : walkSpeed + (runSpeed - walkSpeed) * (pace - 1);
+  let speed = gaitSpeed * (request.speedMult ?? 1);
   if (request.face === undefined) {
     // Not strafing it goes ahead, the way it faces (its graph's Direction is 0: a sideways
     // remainder of the turn it still makes swayed walkers into their walk-left and walk-right
@@ -262,6 +392,15 @@ const ACTION_EVENTS = {
   moveBackward: 'moveBackward',
 } as const;
 
+/** Actions performed through the actor's idle tree (its conditions run on the actor). */
+export interface LocomotionActions {
+  /** Performs an action; resolves whether its graph took one of its idles. */
+  perform(action: string): Promise<boolean>;
+}
+
+/** A fall its idle tree did not take is asked for again this often while it falls (seconds). */
+const FALL_RETRY_SECONDS = 0.1;
+
 /** iSyncTurnState as the engine sets it with each turn action. */
 const TURN_STATE = { right: 0, stop: 1, left: 2 } as const;
 
@@ -286,10 +425,31 @@ const TURN_STATE = { right: 0, stop: 1, left: 2 } as const;
  *   SprintStop 0). A graph coming back to its locomotion (landing, an idle ended) so starts
  *   as the actor moves.
  *
- * Besides: IsSprinting, IsSneaking, SneakStart / Stop, SwimStart / Stop, JumpFall, JumpLand /
- * JumpLandDirectional; the player's CyclicFreeze and CyclicCrossBlend (`freezeDirection`).
+ * Besides: IsSprinting, IsSneaking, SneakStart / Stop, SwimStart / Stop, falls and landings
+ * (with `actions`: ActionFall and ActionLand through the actor's idle tree, else JumpFall,
+ * JumpLand / JumpLandDirectional); the player's CyclicFreeze and CyclicCrossBlend
+ * (`freezeDirection`).
  */
 export class Locomotion {
+  readonly #actions: LocomotionActions | undefined;
+  /** Its fall: not asked for, asked (the idle tree resolving), taken by its graph. */
+  #fall: 'none' | 'asking' | 'taken' = 'none';
+  /** When its fall may be asked for again (its seconds driven). */
+  #fallRetry = 0;
+  #driven = 0;
+  /** Its vertical speed in the air last, and as it landed (while its landing resolves). */
+  #impact = 0;
+  #landing: number | undefined;
+
+  /**
+   * `actions`: the movement actions the idle tree resolves (an NPC's falls and landings: the
+   * engine performs ActionFall and ActionLand, whose idles' conditions decide: 0_master's
+   * JumpFall only falling faster than 350 units a second, its landing only in its jump state).
+   */
+  constructor(actions?: LocomotionActions) {
+    this.#actions = actions;
+  }
+
   #told = {
     moving: false,
     sprinting: false,
@@ -423,9 +583,43 @@ export class Locomotion {
     if (frame.swimming !== told.swimming) send(frame.swimming ? 'SwimStart' : 'SwimStop');
     // In the air: falling once it comes down; landing when it stands again.
     const falling = airborne && frame.verticalSpeed < 0;
-    if (falling && !told.falling) send('JumpFall');
     const landed = !airborne && told.airborne;
-    if (landed) send(moving ? 'JumpLandDirectional' : 'JumpLand');
+    const actions = this.#actions;
+    if (actions) {
+      // The engine's actions (its character's fall and landing are ActionFall and ActionLand):
+      // its idle tree decides by their conditions (falling fast enough, in its jump state), so
+      // a stumble off a kerb or a step without ground under it plays nothing. VelocityZ, which
+      // the landing idles read, is its vertical speed (inferred: what feeds it is not known).
+      this.#driven += frame.seconds;
+      // Landed, the speed it came down with holds until its landing is resolved.
+      if (airborne) this.#impact = frame.verticalSpeed;
+      set('VelocityZ', this.#landing ?? frame.verticalSpeed);
+      if (falling && this.#fall === 'none' && this.#driven >= this.#fallRetry) {
+        this.#fall = 'asking';
+        this.#fallRetry = this.#driven + FALL_RETRY_SECONDS;
+        void actions
+          .perform('ActionFall')
+          .catch(() => false)
+          .then((took) => {
+            if (this.#fall === 'asking') this.#fall = took ? 'taken' : 'none';
+          });
+      }
+      if (landed) {
+        this.#fall = 'none';
+        const landing = this.#impact;
+        this.#landing = landing;
+        set('VelocityZ', landing);
+        void actions
+          .perform('ActionLand')
+          .catch(() => false)
+          .then(() => {
+            if (this.#landing === landing) this.#landing = undefined;
+          });
+      }
+    } else {
+      if (falling && !told.falling) send('JumpFall');
+      if (landed) send(moving ? 'JumpLandDirectional' : 'JumpLand');
+    }
     this.#told = {
       moving,
       sprinting: frame.sprinting,
@@ -475,6 +669,10 @@ export class Locomotion {
     };
     this.#heading = undefined;
     this.#direction = undefined;
+    this.#fall = 'none';
+    this.#fallRetry = 0;
+    this.#impact = 0;
+    this.#landing = undefined;
   }
 }
 

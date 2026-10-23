@@ -424,7 +424,11 @@ while a clip moves it) an actor stands to its graph. Held by an animation-driven
 AI sends it away it is told moveStart (which ends such idles); as the graph lets go
 (bAnimationDriven back to 0) it is told again what it does (`Locomotion.resume`: the engine's
 re-performed action after an idle stop). Riders copy the horse's HorseSpeedSampled and
-iSyncIdleLocomotion (`src/shell/actor-mounts.ts`).
+iSyncIdleLocomotion (`src/shell/actor-mounts.ts`). An NPC's falls and landings are the
+engine's ActionFall and ActionLand through its idle tree (0_master's JumpFall only falling faster
+than 350 units a second, its landings only in its jump state: [ai.md](ai.md#combat-movement)),
+not a JumpFall for every step without ground; its turning is the engine's angle controller (the
+same section), so TurnDelta rises and falls smoothly instead of dropping to 0 between steps.
 
 What this fixed (gliding): turning in place had no turnLeft / turnRight / turnStop at all, so
 standing actors and horses rotated stiffly on their idles (measured: a Whiterun guard now plays

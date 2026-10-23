@@ -46,6 +46,28 @@ import {
 } from '../ai/combat-groups.ts';
 import { CombatProfiles, NO_STYLE, type CombatProfile } from '../ai/combat-profile.ts';
 import { FightReaction, reactionOf } from '../ai/combat-reactions.ts';
+import {
+  abortsRun,
+  aimUpdateTime,
+  around,
+  backoffGoal,
+  bearing,
+  chooseCloseMovement,
+  circleAngle,
+  circleDistantGoals,
+  circleGoals,
+  combatTurning,
+  COMBAT_MOVEMENT_DEFAULTS,
+  fallbackGoal,
+  readCombatMovementSettings,
+  strafeGoal,
+  surroundGoal,
+  TargetLocations,
+  type CloseBehaviour,
+  type CombatMovementSettings,
+  type MovementRun,
+  type MovementTarget,
+} from '../ai/combat-movement.ts';
 import { CombatSearch } from '../ai/combat-search.ts';
 import { readDetectionSettings } from '../ai/detection.ts';
 import {
@@ -60,6 +82,9 @@ import {
   chooseSupport,
   chooseManeuver,
   choosesBlock,
+  circleChance,
+  circleDistantChance,
+  fallbackChance,
   dodgeDirection,
   flankDistance,
   maneuverDirection,
@@ -76,9 +101,10 @@ import {
   type Threat,
 } from '../ai/combat-tactics.ts';
 import { InterruptFlag, PackageFlag } from '../ai/package-records.ts';
+import { CombatStyleFlag } from '../ai/combat-style-records.ts';
 import type { CombatStyleFlight } from '../ai/combat-style-records.ts';
 import { withinReach } from '../ai/flight.ts';
-import type { Gait } from '../ai/locomotion.ts';
+import type { Gait, MoveRequest, TurnParameters } from '../ai/locomotion.ts';
 import {
   AttackState,
   attacking,
@@ -268,6 +294,20 @@ interface Mind {
   maneuver: Maneuver;
   maneuverUntil: number;
   side: number;
+  /**
+   * The movement behaviour under way (combat-movement.ts: an advance, a circle, a fallback, ...),
+   * and when the selector runs next.
+   */
+  run: MovementRun | undefined;
+  nextRun: number;
+  /** Its travel over the navmeshes to a run's goal (a way round what the straight line meets). */
+  runTravel: Vec3 | undefined;
+  /** Where it stood when its run last made way, and when (it gives up a run it is stuck in). */
+  runFrom: Vec3 | undefined;
+  runFromAt: number;
+  /** The point it faces (its aim controller's: its target's place), and when it is taken again. */
+  aim: Vec3 | undefined;
+  nextAim: number;
   nextAttack: number;
   /** When it last attacked, shot or cast (its clock; undefined: not yet in this fight). */
   lastAttack: number | undefined;
@@ -368,6 +408,18 @@ const WARN_SECONDS = 3;
 const TEAMMATE_FOLLOW_RADIUS = 512;
 /** A fleeing actor that got nowhere cowers this long before it tries again (seconds). */
 const COWER_SECONDS = 2;
+/**
+ * A movement behaviour gives up after this long (seconds; TODO(M13): the engine's combat paths
+ * end at their goal or by their abort rules, with no time of their own).
+ */
+const ADVANCE_SECONDS = 5;
+/** A behaviour has reached its goal within the pathing radius and this (units). */
+const RUN_ARRIVE_SLACK = 6;
+/** A behaviour's abort rule is checked this often (seconds; the engine's behaviours' 0.1 s). */
+const RUN_CHECK_SECONDS = 0.1;
+/** A behaviour that made no more than this way (units) in this long (seconds) is stuck. */
+const RUN_PROGRESS = 8;
+const RUN_STUCK_SECONDS = 1;
 
 const flat = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1]);
 
@@ -385,6 +437,12 @@ export class ActorCombatAi {
   readonly #random = seededRandom(0xc0ba7);
   readonly #spectating = new Set<number>();
   #settings: CombatAiSettings = COMBAT_AI_DEFAULTS;
+  #movement: CombatMovementSettings = COMBAT_MOVEMENT_DEFAULTS;
+  #turning: TurnParameters = combatTurning(COMBAT_MOVEMENT_DEFAULTS);
+  /** [Combat] bCombatPathSprinting: an advance from afar sprints. */
+  #sprints = true;
+  /** The places round each target its attackers hold (combat-movement.ts). */
+  readonly #locations = new TargetLocations();
   #settingsRead = false;
   /** The running game its reactions were valued in. */
   #runtime: ScriptRuntime | undefined;
@@ -549,6 +607,7 @@ export class ActorCombatAi {
       this.#minds.delete(reference);
     }
     this.#groups.forget(reference);
+    this.#locations.release(reference);
     this.#health.delete(reference);
     this.#spectating.delete(reference);
     for (const other of this.#minds.values()) {
@@ -564,6 +623,7 @@ export class ActorCombatAi {
     for (const mind of this.#minds.values()) mind.search?.cancel();
     this.#minds.clear();
     this.#groups.clear();
+    this.#locations.clear();
     this.#reactions.clear();
     this.#health.clear();
     this.#spectating.clear();
@@ -746,6 +806,13 @@ export class ActorCombatAi {
         maneuver: 'advance',
         maneuverUntil: 0,
         side: 1,
+        run: undefined,
+        nextRun: 0,
+        runTravel: undefined,
+        runFrom: undefined,
+        runFromAt: 0,
+        aim: undefined,
+        nextAim: 0,
         nextAttack: 0,
         lastAttack: undefined,
         damagedAt: undefined,
@@ -1224,6 +1291,11 @@ export class ActorCombatAi {
   }
 
   #setTarget(mind: Mind, target: number): void {
+    if (mind.target !== target) {
+      this.#stopRun(mind);
+      this.#locations.release(mind.reference);
+      mind.aim = undefined;
+    }
     mind.target = target;
     mind.maneuverUntil = 0;
     this.#options.host.setTarget(mind.reference, target);
@@ -1337,6 +1409,10 @@ export class ActorCombatAi {
     if (!silent && how === 'lost') this.#bark(reference, 'LostToNormal', target);
     mind.mode = 'idle';
     mind.target = undefined;
+    mind.run = undefined;
+    mind.runTravel = undefined;
+    mind.aim = undefined;
+    this.#locations.release(reference);
     mind.search?.cancel();
     mind.search = undefined;
     mind.chase = undefined;
@@ -1493,7 +1569,18 @@ export class ActorCombatAi {
       return;
     }
     if (state.weapon !== WeaponState.drawn) return;
-    if (this.#dodge(mind, view, facing)) return;
+    // Where it faces: its aim point (its aim controller's), not its target's place this frame.
+    const ranged =
+      view.gear?.bow === true || mind.equipped?.kind === 'magic' || mind.equipped?.kind === 'staff';
+    const face = this.#aimFace(
+      mind,
+      view,
+      target,
+      there,
+      ranged,
+      distance <= view.reach + target.radius,
+    );
+    if (this.#dodge(mind, view, face)) return;
     // Its combat override package's place: back to it, and fight from there.
     const leash = mind.leash;
     const tethered = leash !== undefined && flat(feet, leash.center) > leash.radius;
@@ -1519,7 +1606,7 @@ export class ActorCombatAi {
     const casts =
       option && (option.kind === 'magic' || option.kind === 'staff' || option.kind === 'shout');
     if (casts) {
-      this.#cast(mind, view, target.reference, option, distance, facing);
+      this.#cast(mind, view, target.reference, option, distance, facing, face);
       return;
     }
     if (view.gear?.bow === true) {
@@ -1534,7 +1621,7 @@ export class ActorCombatAi {
     }
   }
 
-  /** Close combat: the style's maneuvers about its reach, and its attacks. */
+  /** Close combat: its close movement about its reach (combat-movement.ts), and its attacks. */
   #melee(
     mind: Mind,
     view: FighterView,
@@ -1549,15 +1636,18 @@ export class ActorCombatAi {
     const reference = mind.reference;
     const reach = view.reach + target.radius;
     if (tethered) return;
+    const face = this.#aimFace(mind, view, target, there, false, distance <= reach);
     // Its combat override package's place: it does not leave it for a target beyond.
     const leash = mind.leash;
     if (leash && flat(there, leash.center) > leash.radius + reach) {
-      movers.request(reference, { gait: 'walk', face: facing });
+      this.#stopRun(mind);
+      movers.request(reference, this.#standing(face));
       return;
     }
     // Far: over the navmeshes, running, its way taken again as the target moves.
     if (distance > reach + CHASE_BEYOND) {
-      this.#chase(mind, there, reach * 0.8);
+      this.#stopRun(mind);
+      this.#chase(mind, there, reach * 0.8, distance);
       return;
     }
     if (mind.chase) {
@@ -1579,44 +1669,30 @@ export class ActorCombatAi {
       },
       this.#settings,
     );
-    if (this.#clock >= mind.maneuverUntil) {
-      mind.maneuver = chooseManeuver(
-        style,
-        {
-          distance,
-          reach,
-          ranged: false,
-          allies: opponent.allies,
-          previous: mind.maneuver,
-          radii,
-        },
-        this.#random,
-        this.#settings,
-      );
-      mind.maneuverUntil =
-        this.#clock + maneuverTime(style, mind.maneuver, this.#random, this.#settings);
-      mind.side = this.#random() < 0.5 ? -1 : 1;
-    }
+    // Where it fights from: its reach and its inner advance radius.
+    const range = reach + radii.inner;
     const state = view.state;
     const feet = view.feet ?? there;
-    const standing =
-      attacking(state) ||
-      (mind.maneuver === 'advance' && distance <= reach * 0.85 + radii.inner) ||
-      (mind.maneuver === 'stalk' && distance <= reach * 1.5 && distance > reach) ||
-      mind.maneuver === 'hold';
-    if (standing) {
-      movers.request(reference, { gait: 'walk', face: facing });
-    } else {
-      const direction = maneuverDirection(
-        mind.maneuver,
-        feet,
-        there,
-        mind.side,
-        reach + flankDistance(style, this.#settings),
+    const moving = this.#movementTarget(target, there);
+    this.#updateRun(mind, view, moving, range, distance);
+    if (!mind.run && this.#clock >= mind.nextRun && !attacking(state)) {
+      mind.nextRun = this.#clock + DECIDE_SECONDS;
+      mind.run = this.#chooseRun(
+        mind,
+        view,
+        target,
+        moving,
+        style,
+        opponent,
+        radii,
+        range,
+        distance,
       );
-      const gait: Gait = mind.maneuver === 'advance' && distance > reach * 2 ? 'run' : 'walk';
-      movers.request(reference, { direction, gait, face: facing });
     }
+    // An attack plays where it stands: its controller does not move it meanwhile.
+    // (its clip's own root motion carries it: a forward power attack's lunge).
+    if (attacking(state)) movers.request(reference, { ...this.#standing(face), rootMotion: true });
+    else this.#driveRun(mind, feet, face, distance);
     // Its attack: within reach and facing it, in its own time; not at one above its reach (a
     // flier overhead: it waits for it to come down).
     if (distance > reach || Math.abs(turnBetween(view.heading, facing)) > STRIKE_ANGLE) return;
@@ -1675,19 +1751,478 @@ export class ActorCombatAi {
   }
 
   /**
-   * After a far target over the navmeshes, running; the way taken again as it moves on, and a
-   * moment after a way that could not be found.
+   * After a far target over the navmeshes, running (sprinting while it is farther than
+   * fCombatApproachTargetSprintStopRange, [Combat] bCombatPathSprinting); the way taken again as
+   * it moves on, and a moment after a way that could not be found.
    */
-  #chase(mind: Mind, there: Vec3, arrive: number): void {
+  #chase(mind: Mind, there: Vec3, arrive: number, distance: number): void {
     if (this.#clock < mind.chaseRetry) return;
     if (mind.chase && flat(mind.chase, there) <= CHASE_SLACK) return;
     const to: Vec3 = [there[0], there[1], there[2]];
     mind.chase = to;
-    void this.#options.movers.travel(mind.reference, to, 'run', arrive).then((arrived) => {
+    const gait: Gait =
+      this.#sprints && distance > this.#movement.approachSprintStopRange ? 'sprint' : 'run';
+    void this.#options.movers.travel(mind.reference, to, gait, arrive).then((arrived) => {
       if (mind.chase !== to) return;
       mind.chase = undefined;
       if (!arrived) mind.chaseRetry = this.#clock + CHASE_RETRY;
     });
+  }
+
+  // --- How it moves and faces near its target (combat-movement.ts) -------------------------------
+
+  /**
+   * The heading it faces: towards its aim point, its target's place as its aim controller took
+   * it last (again every fCombatAimMeleeUpdateTime; fCombatAimProjectileUpdateTime for a shooter;
+   * observed in the original), not where the target is this frame.
+   */
+  #aimFace(
+    mind: Mind,
+    view: FighterView,
+    target: FighterView,
+    there: Vec3,
+    ranged: boolean,
+    withinReach: boolean,
+  ): number {
+    if (!mind.aim || this.#clock >= mind.nextAim) {
+      mind.aim = [there[0], there[1], there[2]];
+      mind.nextAim =
+        this.#clock + aimUpdateTime(ranged, target.player, withinReach, this.#movement);
+    }
+    const feet = view.feet ?? there;
+    return headingTo(feet, mind.aim);
+  }
+
+  /** Standing where it is, facing `face`, turning as the combat movement does. */
+  #standing(face: number | undefined): MoveRequest {
+    return { gait: 'walk', face, turning: this.#turning };
+  }
+
+  /** Its target as the movement behaviours read it. */
+  #movementTarget(target: FighterView, there: Vec3): MovementTarget {
+    const velocity = this.#options.movers.motion(target.reference)?.velocity;
+    const ahead = this.#movement.anticipateTime;
+    return {
+      feet: there,
+      heading: target.heading,
+      anticipated: velocity
+        ? [there[0] + velocity[0] * ahead, there[1] + velocity[1] * ahead, there[2]]
+        : there,
+      isPlayer: target.player,
+    };
+  }
+
+  /** Its movement behaviour ends (and its travel to it, if it went round something). */
+  #stopRun(mind: Mind): void {
+    mind.run = undefined;
+    mind.runFrom = undefined;
+    if (mind.runTravel) {
+      mind.runTravel = undefined;
+      this.#options.movers.stop(mind.reference);
+    }
+  }
+
+  /** A behaviour run to a goal at a pace (normalized combat speed), for at most `seconds`. */
+  #newRun(
+    behaviour: MovementRun['behaviour'],
+    goal: Vec3 | undefined,
+    pace: number,
+    seconds: number,
+    options: { readonly sprint?: boolean; readonly wait?: number } = {},
+  ): MovementRun {
+    return {
+      behaviour,
+      goal,
+      pace,
+      sprint: options.sprint === true,
+      until: this.#clock + seconds,
+      wait: 0,
+      waitTime: options.wait ?? 0,
+      check: this.#clock,
+    };
+  }
+
+  /**
+   * How far straight from `from` to `to` the navmesh allows (a goal cut short there), or
+   * undefined when it cannot get `least` units along it.
+   */
+  #straightGoal(mind: Mind, from: Vec3, to: Vec3, least: number): Vec3 | undefined {
+    const whole = flat(from, to);
+    const got = this.#options.movers.straightReach(mind.reference, to, from);
+    if (got >= whole - 1) return to;
+    if (got < least) return undefined;
+    const t = got / Math.max(1, whole);
+    return [from[0] + (to[0] - from[0]) * t, from[1] + (to[1] - from[1]) * t, to[2]];
+  }
+
+  /**
+   * The close movement selector (combat-movement.ts chooseCloseMovement; a flanking style's
+   * stalk and flank, chooseManeuver): the first behaviour of its tries whose goal can be found.
+   */
+  #chooseRun(
+    mind: Mind,
+    view: FighterView,
+    target: FighterView,
+    moving: MovementTarget,
+    style: CombatProfile['style'],
+    opponent: Opponent,
+    radii: { readonly inner: number; readonly outer: number },
+    range: number,
+    distance: number,
+  ): MovementRun | undefined {
+    mind.side = this.#random() < 0.5 ? -1 : 1;
+    const feet = view.feet ?? moving.feet;
+    if ((style.flags & CombatStyleFlag.flanking) !== 0) {
+      mind.maneuver = chooseManeuver(
+        style,
+        {
+          distance,
+          reach: view.reach + target.radius,
+          ranged: false,
+          allies: opponent.allies,
+          previous: mind.maneuver,
+          radii,
+        },
+        this.#random,
+        this.#settings,
+      );
+      const seconds = maneuverTime(style, mind.maneuver, this.#random, this.#settings);
+      if (mind.maneuver === 'flank') {
+        return this.#newRun('flank', feet, this.#movement.speedRun, seconds);
+      }
+      if (mind.maneuver === 'stalk') {
+        // Round it just out of its reach for its stalk time: a circle at its distance.
+        const run = this.#startRun('circle', mind, view, target, moving, style, range, distance);
+        if (run) return { ...run, behaviour: 'stalk', until: this.#clock + seconds };
+      }
+    }
+    const tries = chooseCloseMovement(
+      {
+        distance,
+        range,
+        outer: radii.outer,
+        outOfPosition: this.#locations.outOfPosition(
+          mind.reference,
+          target.reference,
+          feet,
+          moving.feet,
+          this.#movement,
+        ),
+        fallbackChance: fallbackChance(style, this.#settings),
+        circleChance: circleChance(style, this.#settings),
+        circleDistantChance: circleDistantChance(style, this.#settings),
+      },
+      this.#random,
+      this.#movement,
+    );
+    for (const behaviour of tries) {
+      const run = this.#startRun(behaviour, mind, view, target, moving, style, range, distance);
+      if (run) return run;
+    }
+    return undefined;
+  }
+
+  /** A behaviour started: its goal, or undefined when it has none now (the next is tried). */
+  #startRun(
+    behaviour: CloseBehaviour,
+    mind: Mind,
+    view: FighterView,
+    target: FighterView,
+    moving: MovementTarget,
+    style: CombatProfile['style'],
+    range: number,
+    distance: number,
+  ): MovementRun | undefined {
+    const settings = this.#movement;
+    const reference = mind.reference;
+    const movers = this.#options.movers;
+    const feet = view.feet;
+    if (!feet) return undefined;
+    const self = { feet, heading: view.heading, radius: view.radius };
+    const least = Math.max(view.radius, settings.circleMinMovementDistance);
+    switch (behaviour) {
+      case 'advance':
+      case 'reposition': {
+        // A place round its target (its target locations), at its range less the pathing radius.
+        const place = this.#locations.choose(
+          reference,
+          feet,
+          target.reference,
+          moving.feet,
+          Math.max(view.radius + target.radius, range - settings.targetLocationPathingRadius),
+          view.radius,
+          (from, to) => movers.straightReach(reference, to, from),
+          settings,
+        );
+        if (!place) return undefined;
+        this.#locations.reserve(reference, place.reservation);
+        const run = this.#newRun(behaviour, place.point, settings.speedRun, ADVANCE_SECONDS, {
+          sprint: this.#sprints,
+        });
+        // A straight line there the navmesh does not allow: over the navmeshes round it.
+        if (movers.straightReach(reference, place.point) < flat(feet, place.point) - 1) {
+          const to = place.point;
+          mind.runTravel = to;
+          void movers
+            .travel(reference, to, 'run', settings.targetLocationPathingRadius)
+            .then(() => {
+              if (mind.runTravel === to) mind.runTravel = undefined;
+            });
+        }
+        return run;
+      }
+      case 'surround': {
+        const wanted = surroundGoal(self, moving, range, settings);
+        const goal = wanted && this.#straightGoal(mind, feet, wanted, least);
+        return goal && this.#newRun('surround', goal, settings.speedRun, ADVANCE_SECONDS);
+      }
+      case 'circle': {
+        const angle = circleAngle(
+          style.closeRange.circleMult,
+          moving.isPlayer,
+          view.radius,
+          distance,
+          this.#random,
+          settings,
+        );
+        for (const wanted of circleGoals(self, moving, range, angle, mind.side, settings)) {
+          const goal = this.#straightGoal(mind, feet, wanted, least);
+          if (!goal) continue;
+          // The place it goes to round its target is its reservation (others keep off it).
+          const at = bearing(moving.feet, goal);
+          const width = this.#locations.of(reference)?.width ?? 0;
+          if (!this.#locations.free(reference, target.reference, at, width)) continue;
+          this.#locations.reserve(reference, { target: target.reference, angle: at, width });
+          return this.#newRun('circle', goal, settings.speedFastWalk, ADVANCE_SECONDS);
+        }
+        return undefined;
+      }
+      case 'circleDistant': {
+        const angle = circleAngle(
+          style.closeRange.circleMult,
+          moving.isPlayer,
+          view.radius,
+          distance,
+          this.#random,
+          settings,
+        );
+        for (const wanted of circleDistantGoals(self, moving, angle, mind.side, settings)) {
+          const goal = this.#straightGoal(mind, feet, wanted, least);
+          if (goal)
+            return this.#newRun('circleDistant', goal, settings.speedFastWalk, ADVANCE_SECONDS);
+        }
+        return undefined;
+      }
+      case 'fallback': {
+        const wanted = fallbackGoal(self, moving, this.#random, settings);
+        const goal =
+          wanted &&
+          this.#straightGoal(
+            mind,
+            feet,
+            wanted,
+            Math.max(view.radius, settings.fallbackMinMovementDistance),
+          );
+        if (!goal) return undefined;
+        const wait =
+          settings.fallbackWaitTimeMin +
+          this.#random() * (settings.fallbackWaitTimeMax - settings.fallbackWaitTimeMin);
+        return this.#newRun('fallback', goal, settings.speedFastWalk, ADVANCE_SECONDS, { wait });
+      }
+      case 'backoff': {
+        const wanted = backoffGoal(self, moving, range, settings);
+        const goal =
+          wanted && this.#straightGoal(mind, feet, wanted, settings.fallbackMinMovementDistance);
+        return goal && this.#newRun('backoff', goal, settings.speedFastWalk, ADVANCE_SECONDS);
+      }
+      case 'idle':
+        return this.#newRun('idle', undefined, settings.speedWalk, DECIDE_SECONDS);
+    }
+  }
+
+  /**
+   * The behaviour under way, checked: it ends at its goal (a fallback waits there first), at its
+   * time, by its abort rule (every 0.1 s), stuck (no way made for a while), or (an advance) once
+   * its target is within its range; an advance's place follows its target.
+   */
+  #updateRun(
+    mind: Mind,
+    view: FighterView,
+    target: MovementTarget,
+    range: number,
+    distance: number,
+  ): void {
+    const run = mind.run;
+    const feet = view.feet;
+    if (!run || !feet) return;
+    const end = (): void => {
+      this.#stopRun(mind);
+    };
+    if (this.#clock >= run.until) {
+      end();
+      return;
+    }
+    if (run.wait > 0) {
+      if (this.#clock >= run.wait) end();
+      return;
+    }
+    const advancing = run.behaviour === 'advance' || run.behaviour === 'reposition';
+    // Its approach stops within its range (the approach speed controller's inner radius), its
+    // place's pathing radius inside it (it is out of range again only beyond its range).
+    if (advancing && distance <= range - this.#movement.targetLocationPathingRadius) {
+      end();
+      return;
+    }
+    if (run.behaviour === 'flank') {
+      // A quarter round its target, its flank distance beyond its reach (it follows the target).
+      const style = mind.profile?.style ?? NO_STYLE;
+      const direction = maneuverDirection(
+        'flank',
+        feet,
+        target.feet,
+        mind.side,
+        range + flankDistance(style, this.#settings),
+      );
+      run.goal = [feet[0] + direction[0] * 64, feet[1] + direction[1] * 64, feet[2]];
+      if (distance <= range) end();
+      return;
+    }
+    // At its goal: an advance within the pathing radius of its place (so within its range).
+    const goal = run.goal;
+    const arrive = this.#movement.targetLocationPathingRadius + (advancing ? 0 : RUN_ARRIVE_SLACK);
+    if (goal && flat(feet, goal) <= arrive) {
+      if (run.waitTime > 0) {
+        run.goal = undefined;
+        run.wait = this.#clock + run.waitTime;
+      } else {
+        end();
+      }
+      return;
+    }
+    if (this.#clock >= run.check) {
+      run.check = this.#clock + RUN_CHECK_SECONDS;
+      if (
+        abortsRun(
+          run,
+          { feet, heading: view.heading, radius: view.radius },
+          target,
+          range,
+          this.#movement,
+        )
+      ) {
+        end();
+        return;
+      }
+      // Stuck: no way made towards its goal for a while (something the navmesh did not show).
+      if (goal) {
+        if (!mind.runFrom || flat(mind.runFrom, feet) > RUN_PROGRESS) {
+          mind.runFrom = [...feet];
+          mind.runFromAt = this.#clock;
+        } else if (this.#clock - mind.runFromAt > RUN_STUCK_SECONDS) {
+          end();
+          return;
+        }
+      }
+      // An advance's place moves with its target.
+      const own = advancing && !mind.runTravel ? this.#locations.of(mind.reference) : undefined;
+      if (own) {
+        const away = Math.max(view.radius, range - this.#movement.targetLocationPathingRadius);
+        run.goal = this.#straightGoal(mind, feet, around(target.feet, own.angle, away), 0) ?? goal;
+      }
+    }
+  }
+
+  /** It goes the way of its behaviour, or stands, facing `face`. */
+  #driveRun(mind: Mind, feet: Vec3, face: number, distance: number): void {
+    const movers = this.#options.movers;
+    const run = mind.run;
+    if (mind.runTravel) return;
+    const goal = run?.goal;
+    if (!run || !goal) {
+      movers.request(mind.reference, this.#standing(face));
+      return;
+    }
+    const dx = goal[0] - feet[0];
+    const dy = goal[1] - feet[1];
+    const left = Math.hypot(dx, dy);
+    if (left < 1e-3) {
+      movers.request(mind.reference, this.#standing(face));
+      return;
+    }
+    const settings = this.#movement;
+    // An advance runs (sprints from afar), walking the last of its way; the others at their pace.
+    const advancing = run.behaviour === 'advance' || run.behaviour === 'reposition';
+    const pace =
+      advancing && left <= settings.approachSlowdownDistance ? settings.speedWalk : run.pace;
+    const gait: Gait =
+      run.sprint && left > settings.approachSprintStopRange ? 'sprint' : pace >= 2 ? 'run' : 'walk';
+    // Far from its target an advance faces the way it goes (its aim tracks within
+    // fCombatCloseRangeTrackTargetDistance).
+    const facing =
+      advancing && distance > settings.closeRangeTrackTargetDistance ? undefined : face;
+    movers.request(mind.reference, {
+      direction: [dx / left, dy / left],
+      gait,
+      ...(gait === 'walk' && { pace }),
+      face: facing,
+      turning: this.#turning,
+    });
+  }
+
+  /**
+   * A shooter's movement (combat-tactics chooseManeuver at range): to its optimal range, back
+   * (a fallback's way and wait), aside by fCombatStrafeDistanceMin .. Max, or standing; each a
+   * straight way the navmesh allows, else it stands. TODO(M13): the ranged movement tree (Use
+   * Cover, Find Attack Location, Maintain Optimal Range, Strafe) is not read; the speeds are the
+   * close movement's.
+   */
+  #rangedRun(
+    mind: Mind,
+    view: FighterView,
+    target: MovementTarget,
+    maneuver: Maneuver,
+    optimal: number,
+    seconds: number,
+  ): MovementRun {
+    const settings = this.#movement;
+    const feet = view.feet ?? target.feet;
+    const self = { feet, heading: view.heading, radius: view.radius };
+    const least = Math.max(view.radius, settings.fallbackMinMovementDistance);
+    let goal: Vec3 | undefined;
+    switch (maneuver) {
+      case 'advance':
+        goal = this.#straightGoal(
+          mind,
+          feet,
+          around(target.feet, bearing(target.feet, feet), optimal),
+          least,
+        );
+        if (goal) return this.#newRun('advance', goal, settings.speedWalk, seconds);
+        break;
+      case 'fallback': {
+        const wanted = fallbackGoal(self, target, this.#random, settings);
+        goal = wanted && this.#straightGoal(mind, feet, wanted, least);
+        if (goal) {
+          const wait =
+            settings.fallbackWaitTimeMin +
+            this.#random() * (settings.fallbackWaitTimeMax - settings.fallbackWaitTimeMin);
+          return this.#newRun('fallback', goal, settings.speedFastWalk, seconds, { wait });
+        }
+        break;
+      }
+      case 'strafe':
+        goal = this.#straightGoal(
+          mind,
+          feet,
+          strafeGoal(self, target, mind.side, this.#random, settings),
+          least,
+        );
+        if (goal) return this.#newRun('strafe', goal, settings.speedFastWalk, seconds);
+        break;
+      default:
+        break;
+    }
+    return this.#newRun('hold', undefined, settings.speedWalk, seconds);
   }
 
   /**
@@ -1710,16 +2245,22 @@ export class ActorCombatAi {
     const style = profile.style;
     const opponent = this.#opponent(mind, target.reference);
     const range = view.gear?.range ?? this.#settings.maximumProjectileRange;
+    const face = this.#aimFace(mind, view, target, there, true, false);
     if (!tethered) {
       if (distance > range) {
-        this.#chase(mind, there, range * 0.8);
+        this.#stopRun(mind);
+        this.#chase(mind, there, range * 0.8, distance);
         return;
       }
       if (mind.chase) {
         mind.chase = undefined;
         movers.stop(reference);
       }
-      if (this.#clock >= mind.maneuverUntil) {
+      const optimal = Math.min(range, maxOptimalRange(style, opponent, this.#settings));
+      const moving = this.#movementTarget(target, there);
+      this.#updateRun(mind, view, moving, optimal, distance);
+      if (!mind.run && this.#clock >= mind.nextRun) {
+        mind.nextRun = this.#clock + DECIDE_SECONDS;
         mind.maneuver = chooseManeuver(
           style,
           {
@@ -1728,22 +2269,16 @@ export class ActorCombatAi {
             ranged: true,
             allies: opponent.allies,
             previous: mind.maneuver,
-            optimalRange: maxOptimalRange(style, opponent, this.#settings),
+            optimalRange: optimal,
           },
           this.#random,
           this.#settings,
         );
-        mind.maneuverUntil =
-          this.#clock + maneuverTime(style, mind.maneuver, this.#random, this.#settings);
         mind.side = this.#random() < 0.5 ? -1 : 1;
+        const seconds = maneuverTime(style, mind.maneuver, this.#random, this.#settings);
+        mind.run = this.#rangedRun(mind, view, moving, mind.maneuver, optimal, seconds);
       }
-      const feet = view.feet ?? there;
-      if (mind.maneuver === 'hold') {
-        movers.request(reference, { gait: 'walk', face: facing });
-      } else {
-        const direction = maneuverDirection(mind.maneuver, feet, there, mind.side);
-        movers.request(reference, { direction, gait: 'walk', face: facing });
-      }
+      this.#driveRun(mind, view.feet ?? there, face, 0);
     }
     const state = view.state;
     if (Math.abs(turnBetween(view.heading, facing)) > STRIKE_ANGLE) return;
@@ -1784,18 +2319,21 @@ export class ActorCombatAi {
     option: EquipOption,
     distance: number,
     facing: number,
+    face: number,
   ): void {
     const movers = this.#options.movers;
     const reference = mind.reference;
+    this.#stopRun(mind);
     if (distance > option.range) {
       movers.request(reference, {
         direction: [Math.sin(facing), Math.cos(facing)],
         gait: 'run',
-        face: facing,
+        face,
+        turning: this.#turning,
       });
       return;
     }
-    movers.request(reference, { gait: 'walk', face: facing });
+    movers.request(reference, this.#standing(face));
     if (this.#clock < mind.nextAttack || Math.abs(turnBetween(view.heading, facing)) > STRIKE_ANGLE)
       return;
     const casting = this.#options.casting?.();
@@ -1929,9 +2467,12 @@ export class ActorCombatAi {
         direction: mind.dodge,
         gait: 'run',
         face: facing,
+        turning: this.#turning,
       });
       return true;
     }
+    // An attack under way is not broken off for a threat (its controller does not move it).
+    if (attacking(view.state)) return false;
     const style = mind.profile?.style ?? NO_STYLE;
     for (const threat of this.#options.host.threats()) {
       if (threat.source === mind.reference || mind.dodged.has(threat.key)) continue;
@@ -1940,6 +2481,8 @@ export class ActorCombatAi {
       if (!avoidsThreat(style, this.#random, this.#settings)) continue;
       mind.dodge = dodgeDirection(threat, feet);
       mind.dodgeUntil = this.#clock + DODGE_SECONDS;
+      // The dodge takes its movement over (the combat tree's Interrupt Movement Resource).
+      this.#stopRun(mind);
       this.#bark(mind.reference, 'AvoidThreat', threat.source);
       return true;
     }
@@ -2289,6 +2832,9 @@ export class ActorCombatAi {
     this.#settingsRead = true;
     void this.#options.session.settings().then((settings) => {
       this.#settings = readCombatAiSettings((name) => settings.number(name));
+      this.#movement = readCombatMovementSettings((name) => settings.number(name));
+      this.#sprints = this.#options.session.ini.bool('Combat', 'bCombatPathSprinting');
+      this.#turning = combatTurning(this.#movement);
       this.#groups.settings = readCombatGroupSettings((name) => settings.number(name));
     });
   }

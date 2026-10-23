@@ -31,6 +31,7 @@ export type RaceMovement = Pick<
   | 'accelerationRate'
   | 'decelerationRate'
   | 'angularAccelerationRate'
+  | 'aimAngleTolerance'
   | 'size'
 >;
 
@@ -119,7 +120,16 @@ export class MovementCatalog {
       taggedType ?? own(race?.movementTypes.sprint) ?? this.#defaults.sprint,
     );
     if (!walk || !run) return undefined;
-    return { walk, run, ...(sprint && { sprint }) };
+    // Its turning: 1 / its race's angular acceleration rate (the engine's; 1 for none), its aim
+    // angle tolerance in radians.
+    const rate = race?.angularAccelerationRate ?? 0;
+    return {
+      walk,
+      run,
+      ...(sprint && { sprint }),
+      angularAcceleration: Math.abs(rate) > 0.0001 ? 1 / rate : 1,
+      aimTolerance: ((race?.aimAngleTolerance ?? 0) * Math.PI) / 180,
+    };
   }
 
   /** A race's movement data, read once per race. */

@@ -299,6 +299,13 @@ export class ActorStage {
         const staged = this.#actors.get(actor);
         if (staged) void this.furniture.playAction(this.userOf(staged), 'ActionIdleStop');
       },
+      // Its falls and landings (ActionFall, ActionLand) through its idle tree.
+      performAction: (actor, action) => {
+        const staged = this.#actors.get(actor);
+        return staged
+          ? this.furniture.playAction(this.userOf(staged), action)
+          : Promise.resolve(false);
+      },
       onBump: (actor) => {
         const staged = this.#actors.get(actor);
         if (staged) void this.furniture.playAction(this.userOf(staged), 'ActionBumpedInto');

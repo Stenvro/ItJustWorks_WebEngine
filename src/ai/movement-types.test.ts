@@ -38,6 +38,7 @@ const race = (overrides: Partial<RaceMovement>): RaceMovement => ({
   accelerationRate: 0,
   decelerationRate: 0,
   angularAccelerationRate: 0,
+  aimAngleTolerance: 0,
   size: 1,
   ...overrides,
 });
