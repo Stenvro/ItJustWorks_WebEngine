@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { TRANSFORM_FLOATS } from '../formats/hkx/animation.ts';
 import type { FootIkSetup } from '../formats/hkx/behavior.ts';
 import {
+  directAt,
   footIk,
   footIkState,
   gainStep,
@@ -9,6 +10,7 @@ import {
   lookAtState,
   ModelSpace,
   twist,
+  type DirectAtValues,
   type FootIkGainValues,
   type LookAtValues,
 } from './procedural.ts';
@@ -181,6 +183,76 @@ describe('twist (hkbTwistModifier)', () => {
     expect(heading(space, 1)).toBeCloseTo(10, 3);
     expect(heading(space, 2)).toBeCloseTo(30, 3);
     expect(heading(space, 3)).toBeCloseTo(60, 3);
+  });
+});
+
+describe('direct-at (BSDirectAtModifier)', () => {
+  // Root, spine, chest (the source: 20 ahead of it, 100 up).
+  const parents = Int16Array.from([-1, 0, 1]);
+  const local = (): Float32Array =>
+    pose([
+      [0, 0, 0],
+      [0, 0, 80],
+      [0, 20, 20],
+    ]);
+  const values = (over: Partial<DirectAtValues> = {}): DirectAtValues => ({
+    sourceBone: 2,
+    startBone: 1,
+    endBone: 2,
+    limitHeading: 90 * DEG,
+    limitPitch: 90 * DEG,
+    offsetHeading: 0,
+    offsetPitch: 0,
+    onGain: 1,
+    offGain: 1,
+    ...over,
+  });
+  const run = (v: DirectAtValues, target: readonly [number, number, number] | undefined) => {
+    const space = new ModelSpace(parents);
+    const p = local();
+    space.update(p);
+    return directAt(v, { heading: 0, pitch: 0 }, p, space, target, true, 1 / 30, true);
+  };
+
+  it('turns by the way from its source bone to the target', () => {
+    // The chest at (0, 20, 100): a target 100 to its right and 100 ahead is 45° right.
+    const turned = run(values(), [100, 120, 100]);
+    expect(turned.heading / DEG).toBeCloseTo(45, 3);
+    expect(turned.pitch / DEG).toBeCloseTo(0, 3);
+  });
+
+  it("measures from the character's origin without a source bone, offsets after the limits", () => {
+    // Block anticipation: no source bone, limits 60° and 30°, offsets 20° and -20°.
+    const v = values({
+      sourceBone: -1,
+      limitHeading: 60 * DEG,
+      limitPitch: 30 * DEG,
+      offsetHeading: 20 * DEG,
+      offsetPitch: -20 * DEG,
+    });
+    // From the origin: 90° right, 45° up; clamped to 60° and 30°, then offset.
+    const turned = run(v, [100, 0, 100]);
+    expect(turned.heading / DEG).toBeCloseTo(80, 3);
+    expect(turned.pitch / DEG).toBeCloseTo(10, 3);
+  });
+
+  it('eases off to none without a target, snapping the last of it', () => {
+    const space = new ModelSpace(parents);
+    const p = local();
+    space.update(p);
+    const state = { heading: 0.005, pitch: 0.2 };
+    const turned = directAt(
+      values({ offGain: 0.5 }),
+      state,
+      p,
+      space,
+      undefined,
+      true,
+      1 / 30,
+      true,
+    );
+    expect(turned.heading).toBe(0);
+    expect(turned.pitch).toBeCloseTo(0.1, 6);
   });
 });
 

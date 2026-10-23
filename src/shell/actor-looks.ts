@@ -51,7 +51,12 @@ export interface ActorLooksOptions {
    * combat target; src/shell/actor-flight.ts), if any.
    */
   readonly passByTarget?: (reference: number) => Vec3 | undefined;
+  /** Where an actor's WEAPON node is in the world (src/shell/actor-combat.ts), if it is shown. */
+  readonly weaponPoint?: (reference: number) => Vec3 | undefined;
 }
+
+/** The graphs' BSDirectAtModifier kind of block anticipation (userInfo). */
+const BLOCK_AIM = 1;
 
 export class ActorLooks {
   readonly #options: ActorLooksOptions;
@@ -108,14 +113,30 @@ export class ActorLooks {
         behavior.setVariable('camerafromy', camera[1]);
         behavior.setVariable('camerafromz', camera[2]);
       }
-      const aim = this.#aim(staged, behavior, dt);
+      const { aim, looked } = this.#aim(staged, behavior, dt);
       behavior.setVariable('bHeadTracking', aim ? 1 : 0);
       if (aim) behavior.setVector('TargetLocation', [aim[0], aim[1], aim[2], 0]);
+      // Block anticipation (blockbehavior's BlockAnticipate_*_BSDirectAtModifier, userInfo 1;
+      // observed in the original): the spine turns toward the weapon of the actor it head
+      // tracks, the highest kind's target as asked (not the eased look), if that is another
+      // actor; its WEAPON node.
+      const other =
+        typeof looked === 'number' && looked !== staged.reference
+          ? this.#options.weaponPoint?.(looked)
+          : undefined;
+      behavior.setDirectAtTarget(BLOCK_AIM, other);
     }
   }
 
-  /** The point an actor's look-at aims at now, or undefined if it looks at nothing. */
-  #aim(staged: StagedActor, behavior: BehaviorRuntime, dt: number): Vec3 | undefined {
+  /**
+   * The point an actor's look-at aims at now (undefined: it looks at nothing), and what it head
+   * tracks.
+   */
+  #aim(
+    staged: StagedActor,
+    behavior: BehaviorRuntime,
+    dt: number,
+  ): { readonly aim: Vec3 | undefined; readonly looked: LookTarget | undefined } {
     const reference = staged.reference;
     let tracker = this.#trackers.get(reference);
     if (!tracker) {
@@ -130,7 +151,10 @@ export class ActorLooks {
       behavior.headTrackingAllowed;
     const chosen = allowed ? this.#target(staged, dt) : undefined;
     const point = chosen && this.#point(chosen.target);
-    return tracker.update(dt, head, forward, point, this.#settings, chosen?.kind === 'dialogue');
+    return {
+      aim: tracker.update(dt, head, forward, point, this.#settings, chosen?.kind === 'dialogue'),
+      looked: chosen?.target,
+    };
   }
 
   /**

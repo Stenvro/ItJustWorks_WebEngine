@@ -338,7 +338,10 @@ export interface WeaponNodes {
    * (staves: vanilla's skeleton has no WeaponStaff node, so a sheathed staff is not shown).
    */
   readonly sheathed: string | undefined;
-  /** Drawn: WEAPON in the right hand, SHIELD in the left (shields and torches too). */
+  /**
+   * Drawn: WEAPON in the right hand, SHIELD in the left (shields and torches too), and a bow in
+   * SHIELD whichever hand holds it (docs/animation.md, "Held weapons").
+   */
   readonly drawn: string;
 }
 
@@ -358,10 +361,13 @@ const SHEATH_NODES: Readonly<Record<number, string>> = {
 /** The skeleton nodes of a weapon held in a hand. */
 export function weaponNodes(weaponType: number, hand: Hand): WeaponNodes {
   // The left hand's weapon is not shown sheathed (the vanilla skeleton has no left-hand sheath
-  // nodes); drawn, it is in the left hand's SHIELD node.
+  // nodes); drawn, it is in the left hand's SHIELD node. So is a bow (observed in the
+  // original: the drawn node is SHIELD for the left hand or the bow type, else WEAPON): the bow
+  // animations hold the bow in the left hand and carry the WEAPON bone to where the nocked arrow
+  // lies, pointing along the shot (the arrow hangs on WEAPON). Crossbows stay on WEAPON.
   return {
     sheathed: hand === 'right' ? SHEATH_NODES[weaponType] : undefined,
-    drawn: hand === 'right' ? 'WEAPON' : 'SHIELD',
+    drawn: hand === 'left' || weaponType === WeaponType.bow ? 'SHIELD' : 'WEAPON',
   };
 }
 
