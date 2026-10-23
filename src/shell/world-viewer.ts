@@ -259,6 +259,30 @@ const NEIGHBOURHOOD: readonly (readonly [number, number])[] = [
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+type PlacedEntry = LoadedCell['placed'][number];
+
+/**
+ * Each cell list of placed objects by reference, made on first use (a cell's list is replaced,
+ * never changed in place). The scripts ask where references are (their conditions' locations,
+ * the quest markers) many times a frame; a search of every placed object of every loaded cell
+ * for each was a large share of a fight's frames.
+ */
+const placedIndexes = new WeakMap<readonly PlacedEntry[], ReadonlyMap<number, PlacedEntry>>();
+
+/** A cell's placed object of a reference (its first, as a search in order finds it). */
+function placedIn(cell: LoadedCell, reference: number): PlacedEntry | undefined {
+  let index = placedIndexes.get(cell.placed);
+  if (!index) {
+    const made = new Map<number, PlacedEntry>();
+    for (const entry of cell.placed) {
+      if (!made.has(entry.object.reference)) made.set(entry.object.reference, entry);
+    }
+    placedIndexes.set(cell.placed, made);
+    index = made;
+  }
+  return index.get(reference);
+}
+
 export class WorldViewer {
   readonly #renderer: Renderer;
   readonly #canvas: HTMLElement;
@@ -552,7 +576,7 @@ export class WorldViewer {
       return found.door;
     this.#doorsFound.delete(reference);
     for (const cell of this.#cells.values()) {
-      const placed = cell.placed.find((entry) => entry.object.reference === reference);
+      const placed = placedIn(cell, reference);
       if (!placed) continue;
       const door: DoorObject = { object: placed.object, instance: placed.instance };
       this.#doorsFound.set(reference, { cell, door });
@@ -639,7 +663,7 @@ export class WorldViewer {
       if (actor) return actor;
       for (const cell of this.#cells.values()) {
         if (!cell.ready) continue;
-        const placed = cell.placed.find((entry) => entry.object.reference === reference);
+        const placed = placedIn(cell, reference);
         const world = placed?.instance.motion ? placed.instance.world : undefined;
         if (world) return { position: [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] };
       }
@@ -665,7 +689,7 @@ export class WorldViewer {
     },
     graphOf: (reference) => {
       for (const cell of this.#cells.values()) {
-        const placed = cell.placed.find((entry) => entry.object.reference === reference);
+        const placed = placedIn(cell, reference);
         const skeleton = cell.objectSkeletons.find((entry) => entry.reference === reference);
         const graph = placedScriptGraph(placed?.instance.graph, skeleton?.skeleton.behavior, clock);
         if (graph) return graph;
@@ -696,7 +720,7 @@ export class WorldViewer {
       (this.#stage?.movers.triggerCount(reference) ?? 0),
     nodeWorld: (reference, node) => {
       for (const cell of this.#cells.values()) {
-        const placed = cell.placed.find((entry) => entry.object.reference === reference);
+        const placed = placedIn(cell, reference);
         if (placed) return instanceNodeWorld(placed.instance, node);
       }
       return undefined;
@@ -803,7 +827,7 @@ export class WorldViewer {
    */
   #adoptVehicle(reference: number): AdoptedVehicle | undefined {
     for (const cell of this.#cells.values()) {
-      const entry = cell.placed.find((placed) => placed.object.reference === reference);
+      const entry = placedIn(cell, reference);
       if (!entry || !cell.ready) continue;
       cell.placed = cell.placed.filter((placed) => placed !== entry);
       cell.sceneInstances = cell.sceneInstances.filter((instance) => instance !== entry.instance);
@@ -864,7 +888,7 @@ export class WorldViewer {
       return;
     }
     for (const cell of this.#cells.values()) {
-      const placed = cell.placed.find((entry) => entry.object.reference === reference);
+      const placed = placedIn(cell, reference);
       if (!placed) continue;
       const world = referenceMatrix({
         position: at.position,
