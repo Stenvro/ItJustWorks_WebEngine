@@ -103,6 +103,7 @@ function world() {
     },
     gameSetting: () => Promise.resolve(undefined),
     forms: {
+      db: { formIdsOfType: (type: string) => (type === 'SHOU' ? [SHOUT] : []) },
       record: (formId: number) =>
         Promise.resolve(
           formId === SHOUT ? shoutRecord() : ITEMS.has(formId) ? { type: 'SPEL' } : undefined,
@@ -144,6 +145,12 @@ function world() {
       },
       isActor: () => Promise.resolve(true),
       isDead: () => Promise.resolve(false),
+      addSpell: (actor: number, spell: number) => {
+        const spells = state.actor(actor).spells;
+        if (spells.get(spell) === true) return Promise.resolve(false);
+        spells.set(spell, true);
+        return Promise.resolve(true);
+      },
       restore: (actor: number, index: number, amount: number) => {
         set(actor, index, value(actor, index) + amount);
       },
@@ -180,11 +187,38 @@ function world() {
     detach: (work: Promise<unknown>) => {
       void work;
     },
+    // The story manager's Cast Magic each cast raises.
+    storyEvents: {
+      castMagic: (caster: number, _target: number | undefined, spell: number) => {
+        castMagic.push({ caster, spell });
+        return Promise.resolve(false);
+      },
+      newVoicePower: (actor: number, power: number) => {
+        voicePowers.push({ actor, power });
+        return Promise.resolve(false);
+      },
+    },
   };
+  const castMagic: { caster: number; spell: number }[] = [];
+  const voicePowers: { actor: number; power: number }[] = [];
   const engine = new CastingEngine(runtime as unknown as ScriptRuntime);
   const events: CastEvent[] = [];
   engine.listeners.add((event) => events.push(event));
-  return { engine, state, set, value, loadouts, applied, blinks, hits, used, events, wordsLearned };
+  return {
+    engine,
+    state,
+    set,
+    value,
+    loadouts,
+    applied,
+    blinks,
+    hits,
+    used,
+    events,
+    wordsLearned,
+    castMagic,
+    voicePowers,
+  };
 }
 
 /** A value the test needs to be there. */
@@ -204,6 +238,8 @@ describe('casting a spell', () => {
     w.set(PLAYER_REF, DESTRUCTION, 100);
     expect(await w.engine.begin(PLAYER_REF, CastingSource.right)).toBe('started');
     expect(w.engine.isCasting(PLAYER_REF)).toBe(true);
+    // The story manager's Cast Magic as the cast begins.
+    expect(w.castMagic).toEqual([{ caster: PLAYER_REF, spell: FIREBOLT }]);
     expect(await w.engine.castingType(PLAYER_REF, CastingSource.right)).toBe(
       CastType.fireAndForget,
     );
@@ -225,6 +261,8 @@ describe('casting a spell', () => {
     w.set(PLAYER_REF, ActorValue.magicka, 10);
     expect(await w.engine.begin(PLAYER_REF, CastingSource.right)).toBe('magicka');
     expect(w.blinks).toEqual([PLAYER_REF]);
+    // A refused cast is no Cast Magic.
+    expect(w.castMagic).toEqual([]);
     w.set(PLAYER_REF, ActorValue.magicka, 100);
     await w.engine.begin(PLAYER_REF, CastingSource.right);
     w.engine.update(0.2);
@@ -318,6 +356,8 @@ describe('shouting', () => {
     // Held for three words, only one is unlocked.
     const shouted = await w.engine.releaseShout(PLAYER_REF, 3);
     expect(shouted?.item.formId).toBe(SPELLS[0]);
+    // Cast Magic with the word's spell.
+    expect(w.castMagic).toEqual([{ caster: PLAYER_REF, spell: SPELLS[0] }]);
     expect(w.state.actors.get(PLAYER_REF)?.voiceRecoveryTime).toBe(20);
     expect(w.engine.shoutVariation(PLAYER_REF)).toBe(0);
     expect(w.engine.voiceMeter(PLAYER_REF)).toBe(0);
@@ -337,6 +377,18 @@ describe('shouting', () => {
     await w.engine.beginShout(PLAYER_REF);
     expect((await w.engine.releaseShout(PLAYER_REF, 2))?.item.formId).toBe(SPELLS[1]);
     expect(w.state.actors.get(PLAYER_REF)?.voiceRecoveryTime).toBe(30);
+  });
+
+  it('gives the player a shout as TeachWord teaches its first word: a New Voice Power', async () => {
+    const w = world();
+    // The second word first: the shout is not theirs yet.
+    await w.engine.teachWord(need(WORDS[1]));
+    expect(w.state.actors.get(PLAYER_REF)?.spells.get(SHOUT)).toBeUndefined();
+    await w.engine.teachWord(need(WORDS[0]));
+    expect(w.wordsLearned.get(need(WORDS[0]))).toBe(false);
+    expect(w.state.actors.get(PLAYER_REF)?.spells.get(SHOUT)).toBe(true);
+    await w.engine.teachWord(need(WORDS[2]));
+    expect(w.voicePowers).toEqual([{ actor: PLAYER_REF, power: SHOUT }]);
   });
 
   it('lets NPCs shout every word', async () => {
