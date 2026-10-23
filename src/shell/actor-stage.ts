@@ -71,6 +71,7 @@ import { PlayerPilot } from './player-pilot.ts';
 import { reactionsOf } from '../ai/combat-reactions.ts';
 import { ProjectileAim } from './projectile-aim.ts';
 import { ActorAnimObjects } from './actor-anim-objects.ts';
+import { outOfSight } from '../ai/followers.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -291,6 +292,14 @@ export class ActorStage {
         if (staged) void this.furniture.playAction(this.userOf(staged), 'ActionBumpedInto');
         this.talk.bumped(actor);
       },
+      // What the player sees (an actor that cannot find its way is warped unseen).
+      seen: (point) => {
+        const player = options.player?.()?.play.player;
+        return (
+          player !== undefined &&
+          !outOfSight({ position: player.position, forward: player.forward }, point)
+        );
+      },
     });
     this.bodies = new ActorBodies(options.session);
     this.knockdowns = new ActorKnockdowns({
@@ -477,6 +486,7 @@ export class ActorStage {
       camera: () => options.renderer.view?.camera,
       bark: (actor, subtype, target) => this.talk.bark(actor, subtype, target),
       flying: (actor) => this.flight.isFlying(actor),
+      projectiles: () => [...this.combat.shots(), ...this.projectiles.threats()],
     });
     this.actorScenes = new ActorScenes({
       session: options.session,

@@ -6,6 +6,7 @@
 // the player sneaks (teammates), and one left far behind out of the player's sight catches up.
 // Platform-independent.
 
+import type { AiSettings } from './ai-settings.ts';
 import type { Gait } from './locomotion.ts';
 
 type Vec3 = readonly [number, number, number];
@@ -16,14 +17,8 @@ export interface FollowPlace {
   readonly heading: number;
 }
 
-/** The game settings followers keep their distance by. */
-export interface FollowSettings {
-  /** fFollowSpaceBetweenFollowers: between one follower and the next (units). */
-  readonly spacing: number;
-}
-
-/** Skyrim.esm's values. */
-export const FOLLOW_SETTINGS: FollowSettings = { spacing: 192 };
+/** A follower running beyond its maximum radius goes this many times as fast (the engine's). */
+const RUN_BEYOND_MULT = 1.25;
 
 /**
  * A follower farther than this from its leader, out of the leader's sight for CATCH_UP_SECONDS,
@@ -39,23 +34,107 @@ export const VIEW_HALF_ANGLE = (55 * Math.PI) / 180;
  * (fFollowSpaceBetweenFollowers) farther for each follower nearer the leader than it (its
  * rank), so several follow one behind another.
  */
-export function followDistance(min: number, rank: number, settings = FOLLOW_SETTINGS): number {
-  return min + Math.max(0, rank) * settings.spacing;
+export function followDistance(min: number, rank: number, spacing: number): number {
+  return min + Math.max(0, rank) * spacing;
 }
 
 /**
- * The gait a follower closes the distance at: farther behind than twice its maximum radius it
- * runs (also to keep up with a running leader), else its package's. TODO(M13): the engine's
- * follower speeds (fFollowRunMinSlowdownMultiplier slows a follower running near its leader).
+ * Follow's radii (observed in the original): its Min and Max Radius, without them
+ * fFollowSlowdownZoneWidth and fFollowMatchSpeedZoneWidth; the smaller is the minimum.
+ */
+export function followRadii(
+  settings: Pick<AiSettings, 'followSlowdownZoneWidth' | 'followMatchSpeedZoneWidth'>,
+  min: number | undefined,
+  max: number | undefined,
+): { readonly min: number; readonly max: number } {
+  const inner = min ?? settings.followSlowdownZoneWidth;
+  const outer = max ?? settings.followMatchSpeedZoneWidth;
+  return { min: Math.min(inner, outer), max: Math.max(inner, outer) };
+}
+
+/** The leader as a follower's gait sees it. */
+export interface FollowLeader {
+  readonly running: boolean;
+  readonly sprinting: boolean;
+  /** The leader is the player (a follower sprints only after the player). */
+  readonly player: boolean;
+}
+
+/**
+ * The gait a follower closes the distance at. After the running player it sprints while they
+ * sprint or once farther behind than fFollowStartSprintDistance (observed in the original);
+ * farther behind than twice its maximum radius it runs, as with a running leader; else its
+ * package's. TODO(M13): the engine's walk zone (fFollowWalkZoneMult times a radius) is not
+ * read yet.
  */
 export function followGait(
   distance: number,
   max: number,
   packageGait: Gait,
-  leaderRunning: boolean,
+  leader: FollowLeader,
+  sprintDistance: number,
 ): Gait {
-  if (leaderRunning || distance > max * 2) return packageGait === 'sprint' ? 'sprint' : 'run';
+  if (leader.player && leader.running && (leader.sprinting || distance > sprintDistance)) {
+    return 'sprint';
+  }
+  if (leader.running || leader.sprinting || distance > max * 2) {
+    return packageGait === 'sprint' ? 'sprint' : 'run';
+  }
   return packageGait;
+}
+
+/** What a follower's speed is matched by. */
+export interface FollowSpeedInput {
+  /** Between it and its leader (units). */
+  readonly distance: number;
+  /** Its radii: it slows within the middle of them, speeds up beyond it. */
+  readonly inner: number;
+  readonly outer: number;
+  /** It runs (or sprints). */
+  readonly running: boolean;
+  /** Its leader's speed against its own gait's (0: the leader stands). */
+  readonly leaderRatio: number;
+}
+
+/**
+ * A follower's speed, as a share of its gait's (observed in the original): it goes at
+ * least as fast as its leader; beyond the middle of its radii up to fFollowExtraCatchUpSpeedMult
+ * faster at the outer one (running beyond it, 1.25 times); nearer than the middle slower, down
+ * to nothing at the inner one; always between fFollow{Walk,Run}MinSlowdownMultiplier and
+ * …MaxSpeedupMultiplier times that speed. TODO(M13): which of its zones (fFollowSlowdownZoneWidth,
+ * fFollowMatchSpeedZoneWidth round its radii) the engine passes as inner and outer is inferred:
+ * here its minimum and maximum radius.
+ */
+export function followSpeed(
+  settings: Pick<
+    AiSettings,
+    | 'followExtraCatchUpSpeedMult'
+    | 'followWalkMaxSpeedup'
+    | 'followWalkMinSlowdown'
+    | 'followRunMaxSpeedup'
+    | 'followRunMinSlowdown'
+  >,
+  input: FollowSpeedInput,
+): number {
+  const { distance, inner, outer, running } = input;
+  const base = Math.max(1, input.leaderRatio);
+  const most = base * (running ? settings.followRunMaxSpeedup : settings.followWalkMaxSpeedup);
+  const least = base * (running ? settings.followRunMinSlowdown : settings.followWalkMinSlowdown);
+  const middle = (inner + outer) / 2;
+  let speed: number;
+  if (distance >= middle) {
+    if (distance >= outer && running) speed = base * RUN_BEYOND_MULT;
+    else if (outer - middle <= 0) speed = base;
+    else
+      speed =
+        base *
+        (1 + ((distance - middle) / (outer - middle)) * settings.followExtraCatchUpSpeedMult);
+  } else if (middle - inner <= 0) {
+    speed = least;
+  } else {
+    speed = (Math.max(0, distance - inner) / (middle - inner)) * Math.min(1, base);
+  }
+  return Math.min(most, Math.max(least, speed));
 }
 
 /** Whether a point is out of a viewer's sight: behind it or beyond its view's half-angle. */
@@ -90,22 +169,20 @@ export function catchUpTime(
 
 /**
  * Places for followers coming along with their leader (through a load door, on fast travel,
- * catching up): beside and behind where the leader stands, one spacing apart, on alternating
- * sides, the next row a spacing further back; facing the leader's way. TODO(M13): where the
- * engine puts them (here: kept off the arrival point the player stands on).
+ * catching up): beside and behind where the leader stands, `spacing` apart (through a door
+ * doorSpacing, else fFollowSpaceBetweenFollowers), on alternating sides, the next row a spacing
+ * further back; facing the leader's way. TODO(M13): where the engine puts them (observed in the original:
+ * through a door, one behind another along the way back from the arrival; here kept off the
+ * arrival point the player stands on).
  */
-export function placesBeside(
-  leader: FollowPlace,
-  count: number,
-  settings = FOLLOW_SETTINGS,
-): FollowPlace[] {
+export function placesBeside(leader: FollowPlace, count: number, spacing: number): FollowPlace[] {
   const sin = Math.sin(leader.heading);
   const cos = Math.cos(leader.heading);
   const places: FollowPlace[] = [];
   for (let i = 0; i < count; i++) {
     const row = Math.floor(i / 2);
-    const side = (i % 2 === 0 ? -1 : 1) * settings.spacing * 0.5;
-    const back = -row * settings.spacing;
+    const side = (i % 2 === 0 ? -1 : 1) * spacing * 0.5;
+    const back = -row * spacing;
     // Right (cos, −sin), forward (sin, cos).
     places.push({
       position: [
@@ -117,6 +194,18 @@ export function placesBeside(
     });
   }
   return places;
+}
+
+/** An actor's width taken for followers' spacing at doors (units; a human's radius × 2). */
+const FOLLOWER_WIDTH = 40;
+
+/**
+ * The spacing of followers coming through a door after their leader (observed in the
+ * original): fFollowerSpacingAtDoors between one and the next, besides their widths. TODO(M13): each
+ * follower's own width (here a human's).
+ */
+export function doorSpacing(settings: Pick<AiSettings, 'followerSpacingAtDoors'>): number {
+  return settings.followerSpacingAtDoors + FOLLOWER_WIDTH;
 }
 
 /**

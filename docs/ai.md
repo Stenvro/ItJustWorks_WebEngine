@@ -137,21 +137,38 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   it is set on its path's next point if that lies within 64 units and has a floor within 48 of
   it (logged; back where it was if that took it off the floor). TODO(M13): the engine's own
   way out is not documented.
-- **Others in the way** (`src/ai/avoidance.ts`): an actor on its way goes round the actors
-  with controllers and the player that its way would bring within reach (both radii and 8
-  units) in the next 1.5 seconds, the first it would meet: on the side away from it (right of
-  one straight ahead), two that meet head-on both keeping right, turning just as far as passing
-  needs (at most 1.2 radians). TODO(M13): the engine's avoidance is not documented.
+- **Warped** (observed in the original; the INI's [Pathfinding]): a travel given up (no
+  way there, stuck after its searches, shut doors) counts as a path failure, the count starting
+  over where the actor stands more than fMinFailureDistance (50) from the last failure. At
+  iWarpMaxPathFailureCount (3) failures in a row (bWarpOnConsecutiveFailures) the actor is
+  warped to a point fWarpPathOffset (100) short of where it was going, on the navmesh: once
+  neither it nor that point is in the player's view, at most fWarpMaxTime (5 s) later (logged).
+- **A destination that moves** (observed in the original): a path to a reference is
+  searched again once the reference moved from where the path leads, an actor more than
+  fAIMoveDistanceToRecalcTravelToActor (100), another reference more than
+  fAIMoveDistanceToRecalcTravelPath (300), a leader followed more than
+  fAIMoveDistanceToRecalcFollowPath (300); the travel goes on to where it is now.
+- **Others in the way** (`src/ai/avoidance.ts`): an actor on its way looks at the nearest
+  iMaxActorsToAvoid (10; at most 32) actors with controllers and the player within its
+  avoidance radius (its speed times fAvoidanceTimeDelta, 3 s, between fMinAvoidanceRadius 256
+  and fMaxAvoidanceRadius 512, and its radius: observed in the original), and goes round
+  those its way would bring within reach (both radii and 8 units) in the next 1.5 seconds, the
+  first it would meet: on the side away from it (right of one straight ahead), two that meet
+  head-on both keeping right, turning just as far as passing needs (at most 1.2 radians).
+  Kept from going on by one in its way (slower than 16 units a second) for longer than
+  fMaxTimeBlockedByActors (1 s), it searches its path again round that one. TODO(M13): how the
+  engine's own avoidance turns the way is not read yet.
 - **Bumped** (`src/shell/actor-movers.ts`): the player walking into an actor's controller (at
   40 units a second or more, towards it) is a bump: where the player came from, clockwise from
-  the actor's facing (GetLastBumpDirection), and whether it was small (IsSmallBump: walking).
+  the actor's facing (GetLastBumpDirection), and whether it was small (IsSmallBump; observed in
+  the original: big when the actor goes at fBigBumpSpeed, 600, or faster, or the player
+  sprints into it; fSmallBumpSpeed the engine never reads).
   The actor plays ActionBumpedInto's idle (NPC_BumpFromFront, _BumpedFromLeft, ...: its tree
   picks by the direction), then, if it stood, steps off the player's way to the side it is on
   after the game's fBumpReactionSmallDelayTime (1 s), fBumpReactionIdealMoveDist (125) away or
   at least fBumpReactionMinMoveDist (75) where the navmesh has room, waits
   fBumpReactionSmallWaitTimer (3 s), and its package goes on. It says its ActorCollidewithActor
-  line ([Talking](#talking)). TODO(M13): when the engine counts a bump small, and whether
-  actors bumping each other react too.
+  line ([Talking](#talking)). TODO(M13): whether actors bumping each other react too.
 - **Doors** (`src/shell/actor-doors.ts`): the navmeshes mark only load doors (all 1,220 door
   triangles of the interiors' navmeshes are load doors), so an actor finds a door in its way by
   a ray at its chest along its way, 96 units beyond its shape. A door that is shut opens with
@@ -222,8 +239,9 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   with another actor and a greeting it stops for ([Talking](#talking)); the package's interrupt
   flags say whether it greets, chatters, talks with others and comments. In combat its packages
   wait; its combat override list (ECOR) keeps it to its package's place ([Combat AI](#combat-ai)).
-- **When:** as the hour changes, every 2 seconds (TODO(M13): the engine's rate), when its package
-  ends, and when a script asks (EvaluatePackage). One that must complete (PKDT flag 0x4) is not
+- **When** (observed in the original): as the game's hour changes, every
+  fEvaluatePackageTimer (15 s), every frame while it has none, and when a script asks
+  (EvaluatePackage); here also as its package ends. One that must complete (PKDT flag 0x4) is not
   left before it has. One that completed ends and stays, done, while it is still the one chosen:
   it does not run again until another has run (a branch that repeats when complete is what goes
   round; a patrol not repeatable stops at its end). TODO(M13): the fallout behaviour of one
@@ -263,7 +281,10 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   Sandbox passes the time in its place (below); Sit, Sleep and UseIdleMarker use their furniture
   (their target, or the first free one a Find found) or idle marker and stay while the package
   runs (Sit succeeds once the actor sits, which MQ101's execution waits for; it stays seated). A
-  Patrol point it was blocked from is tried again a few times before it goes on. Find keeps what its criteria name within its place in its object list (nearest first;
+  Patrol point it was blocked from is tried again a few times before it goes on. The rest is in
+  [The AI's game settings](#the-ais-game-settings): the radii places are reached within, the
+  patrol's stay at its points, Wander's distances and pauses, Follow's radii and speed, Escort's
+  waiting. Find keeps what its criteria name within its place in its object list (nearest first;
   without Allow Stealing only what the actor may use: below); Acquire picks those up; Activate
   goes to its target and activates it (furniture: uses it); Eat plays its eating idle with food
   it carries (one used up) or, with Create Fake Food, food made for the meal (ActionIdle's
@@ -456,8 +477,10 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   and, for a child, that children may use: chairs, benches and counters to lean on (Allow
   Sitting), beds (Allow Sleeping), furniture with the FurnitureSpecial keyword — workbenches, the
   forge, the wood chopping block (Allow Special Furniture), idle markers (Allow Idle Markers) —
-  or wanders (Allow Wandering). One thing at a time, for 15 s plus 0.6 s per point of energy
-  below 100 (half to one and a half times that). TODO(M13): the engine's choice and timing.
+  or wanders (Allow Wandering: at least its Min Wander Distance, fAIWanderDefaultMinDist
+  without one). One thing at a time, for 15 s plus 0.6 s per point of energy (its Energy,
+  without one the actor's own) below 100 (half to one and a half times that). TODO(M13): the
+  engine's choice and timing (its daily plan and fSandbox\* settings: phase 4).
 - **The player** (`src/shell/player-furniture.ts`) sits on chairs and benches ("Sit", sSit) and
   stands at workbenches the same way: the idle tree gives the player's own idles where it has
   them (IdleStoolEnterPlayer, IdleTableEnterPlayer: GetIsID(Player)); the engine slides and turns
@@ -553,11 +576,14 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
 - **Followers:** an actor whose package follows a leader (Follow, FollowTo) keeps within its
   maximum radius, closing to its minimum plus fFollowSpaceBetweenFollowers (192) for each of
   the leader's followers nearer it, so they go one behind another; it runs when more than twice
-  its radius behind or when the leader runs. The player's followers (DialogueFollower's
+  its radius behind or when the leader runs, and sprints after the running player while they
+  sprint or once more than fFollowStartSprintDistance (500) behind; its speed is matched to the
+  leader's ([The AI's game settings](#the-ais-game-settings)). The player's followers (DialogueFollower's
   FollowerPackageTemplate follows while WaitingForPlayer is 0 and waits while it is 1: waiting
   is the scripts') come along through load doors and on fast travel: they are put beside the
-  player's arrival (one spacing apart, row behind row) in the game state, and show as that place
-  loads; on fast travel to an exterior the player's last ridden horse comes too. Teammates
+  player's arrival (through a door fFollowerSpacingAtDoors, 200, and their widths apart; on fast
+  travel one spacing apart; row behind row) in the game state, and show as that place loads; on
+  fast travel to an exterior the player's last ridden horse comes too. Teammates
   (SetPlayerTeammate) sneak while the player sneaks. One more than 2048 units behind and out of
   the player's sight (beyond 55° of their view) for 3 seconds is put 512 units behind them on
   the navmesh. TODO(M13): the engine's catch-up rule, where it puts those coming along, Need
@@ -608,7 +634,7 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   the path tweener to the mount place, mounting from the right.
 - **Actors riding:** a procedure that lets an actor ride ("Ride Horse If Possible": Travel,
   Patrol, Follow, ...) mounts its horse (its ACHR's XHOR: General Tullius' MQ101TulliusHorse)
-  within 2048 units as it starts, also where it need not go anywhere (MQ101TulliusHoldPosition:
+  within fAIHorseSearchDistance (3000) as it starts, also where it need not go anywhere (MQ101TulliusHoldPosition:
   Tullius waits in the saddle, so he leads the column as it sets off); one just come onto the
   stage (3 s) is put on at once (HorseEnterInstant; TODO(M13): the engine's rule for actors
   loaded with a horse). Its travel moves the horse; one that does not gets
@@ -734,6 +760,51 @@ one point the actor stands on was one) is stopped after 100,000 rounds within on
 package ends as failed and is chosen again later, so a fault in one actor's AI does not hang
 the game.
 
+## The AI's game settings
+
+The AI outside combat reads the engine's game settings by name (`src/ai/ai-settings.ts`: the
+load order's value, else the engine's built-in default; the INI's [Pathfinding], [HeadTracking]
+and [General] ones through `src/world/ini-settings.ts`). What the engine does with each was read
+from the original game's behaviour only (in our words):
+
+- **Package evaluation:** fEvaluatePackageTimer ([Packages](#packages)).
+- **Where an actor is at a place:** within the place's radius, at least
+  fAIMarkerDestinationRadius at a marker (XMarker, XMarkerHeading; Skyrim.esm 50),
+  fAIFurnitureDestinationRadius at furniture (Skyrim.esm 150), fAIDistanceRadiusMinLocation
+  (100) elsewhere: Travel, HoldPosition, Patrol's points, Sandbox's place, FollowTo's and
+  Escort's destinations, an idle marker (the marker radius), furniture gone to (the furniture
+  radius).
+- **Searches:** an object or a type of object a package names (its place, its target) is the
+  nearest within fAIAcquireObjectDistance (4000); furniture an empty object list asks for within
+  fAIFindBedChairsDistance (8000).
+- **Patrol:** at a point with an idle time (REFR XPRD) it waits that long; furniture it uses for
+  at least fAIPatrolMinSecondsAtNormalFurniture (30 s).
+- **Wander:** each walk at least its Min Wander Distance (its slot 3, a number the engine reads;
+  Sandbox's slot 10; fAIWanderDefaultMinDist, 200, without one); between walks a pause of up to
+  (fAIMaxWanderTime − (Energy × fAIEngergyLevelMult + fAIEnergyLevelBase)) / 2 seconds, at
+  random (Energy: the actor's; 100 − 50 → up to 25 s).
+- **Follow:** its radii without its own are fFollowSlowdownZoneWidth (150) and
+  fFollowMatchSpeedZoneWidth (128), the smaller the minimum. Its speed is matched to the
+  leader's (`followSpeed`): at least the leader's; from the middle of its radii to the outer one
+  up to fFollowExtraCatchUpSpeedMult (0.2) faster (running beyond it 1.25 times); nearer than
+  the middle slower, towards nothing at the inner one; always within
+  fFollowWalkMinSlowdownMultiplier–MaxSpeedupMultiplier (0.75–1.5) times that speed walking,
+  fFollowRun… (Skyrim.esm 0.75–1.25) running. TODO(M13): which of its zones the engine passes
+  as inner and outer (here its minimum and maximum radius) and its walk zone
+  (fFollowWalkZoneMult).
+- **Escort:** it waits once the target is more than its Distance To Wait For Followers behind
+  (without one fAIEscortWaitDistanceInterior, 512, inside; outside its destination's radius,
+  at least 200, times fAIEscortWaitDistanceExterior, 2) and goes on once the target is that near;
+  on its way it stops only fAIEscortHysteresisWidth (50) farther; it starts or stops at most
+  every fAIEscortStartStopDelayTime (1 s).
+- **LockDoors' warning:** fAITrespassWarningTimer (Skyrim.esm 5 s).
+- **Paths, avoidance, warps and bumps:** [Paths](#paths); **followers' speeds and doors,
+  horses:** [Followers, mounts and vehicles](#followers-mounts-and-vehicles); **detection, the
+  alarm and the guards' response:** [Detection](#detection) and docs/gameplay.md;
+  **head tracking:** docs/animation.md.
+- **Settings the engine never reads** (only defined): fSmallBumpSpeed, fSneakSizeBase,
+  fCrimeAlarmRespMult, fAIBestHeadTrackDistance, fAIInteriorHeadTrackMult.
+
 ## Detection
 
 What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
@@ -742,7 +813,10 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
 
 - **Who tests whom:** every living actor of the high process tests the player and the other
   actors of the high process, each every fDetectionUpdateTimeMin (1 s) near the player to
-  fDetectionUpdateTimeMax (2 s) at detection's reach; scripts' questions (GetDetected,
+  fDetectionUpdateTimeMax (2 s) at detection's reach; in a complex scene (as many actors as
+  iAINumberActorsComplexScene, 20, or more) fDetectionUpdateTimeMinComplex (2.5 s) to MaxComplex
+  (5 s); at most the INI's iUpdateDetectionsAllowedPerFrame (100) tests a frame, the rest wait
+  for the next (observed in the original). Scripts' questions (GetDetected,
   IsDetectedBy) test anew when the last test is older than a second (the Construction Set
   wiki: GetDetected runs the formula). Beyond the reach (fSneakMaxDistance 2500, times
   fSneakExteriorDistanceMult 2.1 outside; fSneakFlyingDistanceMult 3 for a target in the air:
@@ -759,16 +833,23 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   the weight of the armour worn) × fSneakRunningMult running or sprinting × (1 −
   MovementNoiseMult, at least 0);
   plus its action's loudness (iSoundLevel\* of the sound level) × fSneakActionMult for
-  fDetectionActionTimer), × fSneakSoundLosMult without line of sight, none swimming;
+  fDetectionActionTimer), × fSneakSoundLosMult without line of sight, × (1 +
+  fSneakSleepBonus) for an observer asleep, none swimming;
 
   visual (seen and awake) = fSneakLightMult (× fSneakLightExteriorMult outside) ×
   (fDetectionSneakLightMod + light, × fDetectionNightEyeBonus with night eye) × (1 +
   fSneakLightMoveMult moving + fSneakLightRunMult running) × fSneakDetectionSize\* of its
-  race's size × (1 − Blindness / 100), × fSneakStealthBoyMult invisible;
+  race's size × fDetectionLargeActorSizeMult × (1 − Blindness / 100), × fSneakStealthBoyMult
+  invisible;
 
   perception = the observer's Sneak within fSneakPerceptionSkillMin and Max, × (1 +
-  fSneakAlertMod alerted + fSneakSleepBonus asleep + fSneakCombatMod in combat with the
-  target).
+  fSneakAlertMod alerted + fSneakSleepMod asleep + fSneakCombatMod in combat with the
+  target + fSneakAmbushTargetMod in ambush against its target, fSneakAmbushNonTargetMod
+  against another).
+
+  Where the asleep, ambush and size settings go was observed in the original (its
+  formula's other terms are still the reconstruction above; fSneakSizeBase the engine never
+  reads). TODO(M13): which observers are in ambush (none yet).
 
   UESP writes the observer's skill twice (attenuated, and unattenuated against the target's);
   with that an observer of middling skill detects a sneaking target in the dark, unseen and
@@ -787,6 +868,11 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
   "noise from armor" reads). `node tools/detection-info.ts --level sneak=15 light=40
 distance=500`: −2.9, noticed; Sneak 100 in light 10 at 300: −48.9, unseen.
 
+- **Projectiles seen** (observed in the original): an observer that sees a target's
+  arrow, bolt or spell pass within fDetectProjectileDistanceNPC (512; the player's:
+  fDetectProjectileDistancePlayer, 1024) of it, in its view cone and line of sight, tests the
+  target as seen where the projectile is, in the light of a detection event
+  (iDetectEventLightLevelInterior / Exterior): noticed, it is alerted there.
 - **Sight:** a ray on the line-of-sight layer (L_LINEOFSIGHT: static, clutter, props, trees,
   terrain, the actors' BIPED bodies, ...; not the character controllers, not transparent
   collision) from the observer's eyes (92% of its controller's height standing, 62% sitting,
@@ -846,7 +932,9 @@ distance=500`: −2.9, noticed; Sneak 100 in light 10 at 300: −48.9, unseen.
 - **Scripts:** the conditions GetDetected, GetLineOfSight, GetLightLevel, GetAlarmed,
   GetAttacked, GetIsAlerted, IsSneaking; the natives IsDetectedBy, HasLOS, GetLightLevel,
   IsAlarmed, StartSneaking, SetNotShowOnStealthMeter, SendAssaultAlarm, SendTrespassAlarm,
-  SendStealAlarm (the actors within iCrimeAlarmRecDistance are alarmed; guards among them pursue:
+  SendStealAlarm (the actors within iCrimeAlarmRecDistance of the criminal are alarmed, those
+  beyond the high process within iCrimeAlarmLowRecDistance of the one who raised it; guards
+  among them pursue, iNumberGuardsCrimeResponse at most:
   [Crime and factions](gameplay.md#crime-and-factions)), StopCombatAlarm, CreateDetectionEvent; OnGainLOS / OnLostLOS for the pairs scripts
   register (every quarter second; the player sees what is on screen with nothing between the
   camera and it; the first look tells how it is).
@@ -1450,7 +1538,7 @@ defaults are the original game's own, described by behaviour only. Some that mat
 | fCombatRestoreHealthPercentMin / Max    | 0, 0.5            | it restores health below this (defensive mult 0, 1)   |
 | fCombatRestoreMagickaPercentMin / Max   | 0.25, 0.4         | it restores magicka below this (defensive mult 0, 1)  |
 | iCrimeAlarmRecDistance                  | 4000              | an alarm reaches the actors this near                 |
-| fEvaluatePackageTimer                   | 15                | between an actor's package evaluations (not yet used) |
+| fEvaluatePackageTimer                   | 15                | between an actor's package evaluations                |
 
 The friendly-hit allowance depends on the reaction (FACT XNAM): a friend uses the iFriendHit
 pair, an ally the iAllyHit pair; more blows than allowed turn it on the attacker, an allowance of
