@@ -43,20 +43,30 @@ import { FightReaction, reactionOf } from '../ai/combat-reactions.ts';
 import { CombatSearch } from '../ai/combat-search.ts';
 import { readDetectionSettings } from '../ai/detection.ts';
 import {
+  advanceRadii,
   ATTACK_DECISION_SECONDS,
-  attackInterval,
   avoidsThreat,
+  blockTime,
+  bowHoldTime,
+  castChance,
   chooseAttack,
   chooseEquipment,
   chooseSupport,
   chooseManeuver,
   choosesBlock,
   dodgeDirection,
+  flankDistance,
   maneuverDirection,
-  MANEUVER_SECONDS,
+  maneuverTime,
+  maxOptimalRange,
+  minEquipTime,
+  offensiveMult,
+  rangedAttackChance,
   threatens,
+  type EquipKind,
   type EquipOption,
   type Maneuver,
+  type Opponent,
   type Threat,
 } from '../ai/combat-tactics.ts';
 import { InterruptFlag, PackageFlag } from '../ai/package-records.ts';
@@ -74,6 +84,7 @@ import {
 } from '../gameplay/combat/combat-state.ts';
 import { headingTo, turnBetween } from '../gameplay/combat/hit-test.ts';
 import type { Vec3 } from '../render/math.ts';
+import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { MagicAiState } from '../scripting/runtime/magic-engine.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -174,8 +185,11 @@ export interface CombatFlight {
   mayFly(actor: number): boolean;
   /** Whether an actor is in the air now. */
   isFlying(actor: number): boolean;
-  /** One frame of a flier's fight: true while the flight has it (the ground fight waits). */
-  fight(actor: number, target: FlightTarget, flight: CombatStyleFlight): boolean;
+  /**
+   * One frame of a flier's fight (its style's flight section, its offensive mult as the engine
+   * weighs it): true while the flight has it (the ground fight waits).
+   */
+  fight(actor: number, target: FlightTarget, flight: CombatStyleFlight, offensive: number): boolean;
   /** Its fight ended (its packages take it on from there). */
   endFight(actor: number): void;
   /** The shape it had on the ground (its size for blows in the air). */
@@ -239,8 +253,10 @@ interface Mind {
   maneuverUntil: number;
   side: number;
   nextAttack: number;
-  /** When it last attacked in melee (its clock; undefined: not yet in this fight). */
+  /** When it last attacked, shot or cast (its clock; undefined: not yet in this fight). */
   lastAttack: number | undefined;
+  /** When it was last hurt (a blow landed or blocked; undefined: not in this fight). */
+  damagedAt: number | undefined;
   /** How long it holds its bow drawn this shot (seconds). */
   bowHold: number;
   blockUntil: number;
@@ -279,7 +295,8 @@ interface Mind {
   armed: boolean;
   /** Its support (heals, potions, summons, wards, buffs): when next weighed, last restored. */
   nextSupport: number;
-  restoredAt: number;
+  healthRestoredAt: number;
+  magickaRestoredAt: number;
   supporting: boolean;
   /** It gets up out of the furniture that holds it. */
   gettingUp: boolean;
@@ -309,8 +326,6 @@ const CHASE_SLACK = 192;
 const CHASE_RETRY = 1;
 /** It strikes when its target is within this of its facing (radians). */
 const STRIKE_ANGLE = Math.PI / 6;
-/** A block lasts at most this long (seconds) without a blow coming. */
-const BLOCK_SECONDS = 1.2;
 /**
  * Its support (heals, potions, summons, wards, buffs) is weighed this often, and its attacks wait
  * this long after a support cast (seconds). TODO(M13): the engine's rates.
@@ -322,8 +337,8 @@ const PICK_UP_REACH = 1024;
 const PICK_UP_ARRIVE = 64;
 /** A dodge lasts this long (seconds). */
 const DODGE_SECONDS = 0.6;
-/** A bow is held drawn this long before it looses (seconds, at random between). */
-const BOW_HOLD = [0.3, 1.2] as const;
+/** A shout is tried this often (the combat tree's wait after Cast Shout; seconds). */
+const SHOUT_DECISION_SECONDS = 1;
 /** After combat it sheathes its weapon this long after (seconds). TODO(M13). */
 const SHEATHE_DELAY = 3;
 /** A cornered actor fights this long before it flees again (seconds). */
@@ -451,6 +466,7 @@ export class ActorCombatAi {
     if (attacker === PLAYER_REF) this.#playerBlow = this.#clock;
     if (victim === PLAYER_REF) return;
     const mind = this.#mind(victim);
+    mind.damagedAt = this.#clock;
     if (mind.mode === 'yield' && attacker === PLAYER_REF) {
       mind.enemies.add(PLAYER_REF);
       mind.mode = 'fight';
@@ -629,6 +645,7 @@ export class ActorCombatAi {
         side: 1,
         nextAttack: 0,
         lastAttack: undefined,
+        damagedAt: undefined,
         bowHold: 0,
         blockUntil: 0,
         blockedSwing: undefined,
@@ -658,7 +675,8 @@ export class ActorCombatAi {
         packageStyle: undefined,
         armed: false,
         nextSupport: 0,
-        restoredAt: -Infinity,
+        healthRestoredAt: -Infinity,
+        magickaRestoredAt: -Infinity,
         supporting: false,
         gettingUp: false,
         told: 0,
@@ -1292,6 +1310,7 @@ export class ActorCombatAi {
         reference,
         { reference: target.reference, feet: there, height: target.height },
         profile.style.flight,
+        offensiveMult(profile.style, this.#opponent(mind, target.reference), this.#settings),
       )
     ) {
       return;
@@ -1304,7 +1323,7 @@ export class ActorCombatAi {
     const facing = headingTo(feet, there);
     // What it fights with (its style's scores), now and then.
     if (this.#clock >= mind.nextEquip && !mind.equipping) {
-      mind.nextEquip = this.#clock + this.#settings.inventoryUpdateTime;
+      mind.nextEquip = this.#clock + this.#equipWait(mind.equipped?.kind);
       void this.#chooseEquipment(mind, view, distance).catch((error: unknown) => {
         mind.equipping = false;
         this.#warn(`${reference.toString(16)} equipment: ${describe(error)}`);
@@ -1349,7 +1368,7 @@ export class ActorCombatAi {
       return;
     }
     if (view.gear?.bow === true) {
-      this.#shoot(mind, view, profile, distance, facing, there, tethered);
+      this.#shoot(mind, view, target, profile, distance, facing, there, tethered);
       return;
     }
     this.#defend(mind, view, target, distance);
@@ -1391,6 +1410,20 @@ export class ActorCombatAi {
       movers.stop(reference);
     }
     const style = profile.style;
+    const opponent = this.#opponent(mind, target.reference);
+    // Its advance radii (its style's defensive against offensive mult; a defensive one keeps its
+    // distance a while after it was hurt).
+    const radii = advanceRadii(
+      style,
+      {
+        ...opponent,
+        targetStaggered: target.state.staggered,
+        reach: view.reach,
+        targetReach: target.reach,
+        sinceDamaged: mind.damagedAt === undefined ? undefined : this.#clock - mind.damagedAt,
+      },
+      this.#settings,
+    );
     if (this.#clock >= mind.maneuverUntil) {
       mind.maneuver = chooseManeuver(
         style,
@@ -1398,26 +1431,34 @@ export class ActorCombatAi {
           distance,
           reach,
           ranged: false,
-          targetAttacking: attacking(target.state) && target.target === reference,
-          allies: this.#alliesOn(mind, target.reference),
+          allies: opponent.allies,
+          previous: mind.maneuver,
+          radii,
         },
         this.#random,
         this.#settings,
       );
-      mind.maneuverUntil = this.#clock + this.#between(...MANEUVER_SECONDS);
+      mind.maneuverUntil =
+        this.#clock + maneuverTime(style, mind.maneuver, this.#random, this.#settings);
       mind.side = this.#random() < 0.5 ? -1 : 1;
     }
     const state = view.state;
     const feet = view.feet ?? there;
     const standing =
       attacking(state) ||
-      (mind.maneuver === 'advance' && distance <= reach * 0.85) ||
+      (mind.maneuver === 'advance' && distance <= reach * 0.85 + radii.inner) ||
       (mind.maneuver === 'stalk' && distance <= reach * 1.5 && distance > reach) ||
       mind.maneuver === 'hold';
     if (standing) {
       movers.request(reference, { gait: 'walk', face: facing });
     } else {
-      const direction = maneuverDirection(mind.maneuver, feet, there, mind.side);
+      const direction = maneuverDirection(
+        mind.maneuver,
+        feet,
+        there,
+        mind.side,
+        reach + flankDistance(style, this.#settings),
+      );
       const gait: Gait = mind.maneuver === 'advance' && distance > reach * 2 ? 'run' : 'walk';
       movers.request(reference, { direction, gait, face: facing });
     }
@@ -1448,8 +1489,7 @@ export class ActorCombatAi {
         blocking: state.blocking,
         canBash: gear?.canBash === true,
         powerChance: gear?.powerChance ?? 0,
-        allies: this.#alliesOn(mind, target.reference),
-        targetIsPlayer: target.reference === PLAYER_REF,
+        ...opponent,
         sinceLastAttack: mind.lastAttack === undefined ? undefined : this.#clock - mind.lastAttack,
       },
       this.#random,
@@ -1488,10 +1528,14 @@ export class ActorCombatAi {
     });
   }
 
-  /** At range with a bow: the style's distance and strafing; draw, hold, loose. */
+  /**
+   * At range with a bow: the style's distance and strafing; draw (by its ranged attack chance,
+   * a decision every ATTACK_DECISION_SECONDS), hold (its hold time), loose.
+   */
   #shoot(
     mind: Mind,
     view: FighterView,
+    target: FighterView,
     profile: Profile,
     distance: number,
     facing: number,
@@ -1501,7 +1545,9 @@ export class ActorCombatAi {
     const movers = this.#options.movers;
     const host = this.#options.host;
     const reference = mind.reference;
-    const range = view.gear?.range ?? 4096;
+    const style = profile.style;
+    const opponent = this.#opponent(mind, target.reference);
+    const range = view.gear?.range ?? this.#settings.maximumProjectileRange;
     if (!tethered) {
       if (distance > range) {
         this.#chase(mind, there, range * 0.8);
@@ -1513,18 +1559,20 @@ export class ActorCombatAi {
       }
       if (this.#clock >= mind.maneuverUntil) {
         mind.maneuver = chooseManeuver(
-          profile.style,
+          style,
           {
             distance,
             reach: range,
             ranged: true,
-            targetAttacking: false,
-            allies: this.#alliesOn(mind, mind.target ?? 0),
+            allies: opponent.allies,
+            previous: mind.maneuver,
+            optimalRange: maxOptimalRange(style, opponent, this.#settings),
           },
           this.#random,
           this.#settings,
         );
-        mind.maneuverUntil = this.#clock + this.#between(...MANEUVER_SECONDS);
+        mind.maneuverUntil =
+          this.#clock + maneuverTime(style, mind.maneuver, this.#random, this.#settings);
         mind.side = this.#random() < 0.5 ? -1 : 1;
       }
       const feet = view.feet ?? there;
@@ -1537,21 +1585,33 @@ export class ActorCombatAi {
     }
     const state = view.state;
     if (Math.abs(turnBetween(view.heading, facing)) > STRIKE_ANGLE) return;
-    // Loose once drawn and held a moment; else draw (TODO(M13): its line of fire).
+    // Loose once drawn and held its hold time; else draw (TODO(M13): its line of fire).
     if (state.attack === AttackState.bowDrawn && state.drawnFor >= mind.bowHold) {
       void host.release(reference, 'ActionRightRelease');
-      mind.nextAttack = this.#clock + attackInterval(profile.style, this.#random);
+      mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS;
     } else if (!attacking(state) && this.#clock >= mind.nextAttack) {
+      mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS;
+      const sinceLastAttack =
+        mind.lastAttack === undefined ? undefined : this.#clock - mind.lastAttack;
+      const chance = rangedAttackChance(style, { ...opponent, sinceLastAttack }, this.#settings);
+      if (this.#random() >= chance) return;
       void host.attack(reference, 'ActionRightAttack');
-      mind.bowHold = this.#between(...BOW_HOLD);
-      mind.nextAttack = this.#clock + 0.5;
+      mind.lastAttack = this.#clock;
+      mind.bowHold = bowHoldTime(
+        style,
+        { ...opponent, distance, radii: view.radius + target.radius },
+        this.#random,
+        this.#settings,
+      );
     }
   }
 
   /**
    * A spell, staff or shout it fights with (5.3's castAt): facing its target within the
-   * option's range, it casts (src/shell/actor-casting.ts castAt and shoutAt: a concentration
-   * spell held while it serves).
+   * option's range and not casting already, it casts at a decision every ATTACK_DECISION_SECONDS
+   * (the combat tree's cast idles) by its cast chance (a spell or staff: castChance; a shout
+   * whenever its voice has recovered), src/shell/actor-casting.ts castAt and shoutAt (a
+   * concentration spell held while it serves).
    */
   #cast(
     mind: Mind,
@@ -1575,17 +1635,26 @@ export class ActorCombatAi {
     if (this.#clock < mind.nextAttack || Math.abs(turnBetween(view.heading, facing)) > STRIKE_ANGLE)
       return;
     const casting = this.#options.casting?.();
-    const style = mind.profile?.style ?? NO_STYLE;
-    mind.nextAttack = this.#clock + attackInterval(style, this.#random) * 2;
-    if (!casting) return;
-    const hand = option.kind === 'shout' ? 'voice' : 'right';
-    void casting.castAt(reference, hand, target, option);
+    const runtime = this.#options.session.scriptsReady;
+    const shout = option.kind === 'shout';
+    mind.nextAttack = this.#clock + (shout ? SHOUT_DECISION_SECONDS : ATTACK_DECISION_SECONDS);
+    if (!casting || !runtime) return;
+    const source = shout ? CastingSource.voice : CastingSource.right;
+    if (runtime.casting.casting(reference, source)) return;
+    if (!shout) {
+      const style = mind.profile?.style ?? NO_STYLE;
+      const opponent = this.#opponent(mind, target);
+      const chance = castChance(style, opponent, option.concentration === true, this.#settings);
+      if (this.#random() >= chance) return;
+    }
+    mind.lastAttack = this.#clock;
+    void casting.castAt(reference, shout ? 'voice' : 'right', target, option);
   }
 
   /**
    * What it does for itself (combat-tactics chooseSupport): a ward against a spell coming at
-   * it, its healing spell or a potion when hurt, a magicka potion when its magic fails it, a
-   * summons when none of its stands, a buff not on it.
+   * it, its healing spell or a potion below its style's restore shares, a summons when none of
+   * its stands, a buff not on it.
    */
   async #support(mind: Mind, view: FighterView, target: number): Promise<void> {
     const runtime = this.#options.session.scriptsReady;
@@ -1606,40 +1675,39 @@ export class ActorCombatAi {
       {
         health: await share(ActorValue.health),
         magicka: await share(ActorValue.magicka),
-        stamina: await share(ActorValue.stamina),
-        sinceRestore: this.#clock - mind.restoredAt,
+        sinceHealthRestore: this.#clock - mind.healthRestoredAt,
+        sinceMagickaRestore: this.#clock - mind.magickaRestoredAt,
         canHeal: (await spells.chooseSpell(reference, 'heal')) !== undefined,
         potions: {
           health: (await spells.choosePotion(reference, ActorValue.health)) !== undefined,
           magicka: (await spells.choosePotion(reference, ActorValue.magicka)) !== undefined,
-          stamina: (await spells.choosePotion(reference, ActorValue.stamina)) !== undefined,
         },
-        outOfMagicka:
-          mind.equipped?.kind === 'magic' &&
-          (await spells.chooseSpell(reference, 'attack', target)) === undefined,
         canSummon: summon !== undefined && (await runtime.magic.summonsOf(reference)).length === 0,
         canBuff: buff !== undefined && !runtime.magic.hasItemOn(reference, buff.formId),
         canWard: ward !== undefined,
       },
+      mind.profile?.style ?? NO_STYLE,
       this.#settings,
     );
     if (!choice || mind.mode !== 'fight') return;
-    let purpose: CombatSupport;
-    if (choice.kind === 'potion') {
-      const value =
-        choice.value === 'health'
-          ? ActorValue.health
-          : choice.value === 'magicka'
-            ? ActorValue.magicka
-            : ActorValue.stamina;
-      purpose = { kind: 'potion', value };
-    } else {
-      purpose = { kind: choice.kind };
-    }
+    const purpose: CombatSupport =
+      choice.kind === 'potion'
+        ? {
+            kind: 'potion',
+            value: choice.value === 'health' ? ActorValue.health : ActorValue.magicka,
+          }
+        : { kind: choice.kind };
     if (!(await casting.support(reference, purpose, target))) return;
-    if (choice.kind === 'heal' || choice.kind === 'potion') mind.restoredAt = this.#clock;
-    // Its attacks wait while it casts for itself.
-    mind.nextAttack = Math.max(mind.nextAttack, this.#clock + SUPPORT_CAST_SECONDS);
+    if (choice.kind === 'heal' || (choice.kind === 'potion' && choice.value === 'health')) {
+      mind.healthRestoredAt = this.#clock;
+    }
+    if (choice.kind === 'potion' && choice.value === 'magicka') {
+      mind.magickaRestoredAt = this.#clock;
+    }
+    // Its attacks wait while it casts for itself, and after a potion the combat tree's wait.
+    const wait =
+      choice.kind === 'potion' ? this.#settings.drinkPotionWaitTime : SUPPORT_CAST_SECONDS;
+    mind.nextAttack = Math.max(mind.nextAttack, this.#clock + wait);
   }
 
   /** Whether a spell or a breath comes at it now (the threats it would dodge). */
@@ -1653,7 +1721,10 @@ export class ActorCombatAi {
     return false;
   }
 
-  /** It blocks a blow coming at it (its style's defensive mult), and lets go after. */
+  /**
+   * It blocks a blow coming at it (its style's block chance), and lets go as the blow ends or
+   * after its block time. TODO(M13): phase 5, the combat tree's sustained Block and Block Attack.
+   */
   #defend(mind: Mind, view: FighterView, target: FighterView, distance: number): void {
     const state = view.state;
     const swing = target.state.current;
@@ -1672,7 +1743,7 @@ export class ActorCombatAi {
     const style = mind.profile?.style ?? NO_STYLE;
     const shield = view.gear.shield;
     if (!choosesBlock(style, shield, this.#random, this.#settings)) return;
-    mind.blockUntil = this.#clock + BLOCK_SECONDS;
+    mind.blockUntil = this.#clock + blockTime(style, this.#settings);
     void this.#options.host.block(mind.reference, true);
   }
 
@@ -1702,7 +1773,7 @@ export class ActorCombatAi {
       if (threat.source === mind.reference || mind.dodged.has(threat.key)) continue;
       if (threatens(threat, feet, view.radius, view.height) === undefined) continue;
       mind.dodged.add(threat.key);
-      if (!avoidsThreat(style, this.#random)) continue;
+      if (!avoidsThreat(style, this.#random, this.#settings)) continue;
       mind.dodge = dodgeDirection(threat, feet);
       mind.dodgeUntil = this.#clock + DODGE_SECONDS;
       this.#bark(mind.reference, 'AvoidThreat', threat.source);
@@ -1773,6 +1844,19 @@ export class ActorCombatAi {
     return count;
   }
 
+  /** Its target as the group offensive mult weighs it (combat-tactics offensiveMult). */
+  #opponent(mind: Mind, target: number): Opponent {
+    return { targetIsPlayer: target === PLAYER_REF, allies: this.#alliesOn(mind, target) };
+  }
+
+  /**
+   * How long what it took up is kept before it weighs again: its kind's
+   * fCombatInventoryMinEquipTime*, and no sooner than what it carries is read again.
+   */
+  #equipWait(kind: EquipKind | undefined): number {
+    return Math.max(minEquipTime(kind, this.#settings), PROFILE_SECONDS);
+  }
+
   /**
    * What it fights with (its style's equipment scores against the range): it takes up the best
    * of what it carries (sheathing first), or fights with its fists.
@@ -1802,9 +1886,11 @@ export class ActorCombatAi {
       if (await this.#pickUpWeapon(mind, view, runtime)) return;
     }
     mind.equipped = best;
+    if (best.equipped) return;
+    // Taken up, it is kept a while (fCombatInventoryMinEquipTime*).
+    mind.nextEquip = this.#clock + this.#equipWait(best.kind);
     // Spells are taken up as they are cast (castAt); a staff is a weapon in the hand.
     if (best.kind === 'magic' || best.kind === 'shout') return;
-    if (best.equipped) return;
     // Another weapon: sheathed first, then taken up (and arrows for a bow), then drawn again.
     mind.equipping = true;
     try {
@@ -1875,7 +1961,7 @@ export class ActorCombatAi {
         await this.#equipAmmo(mind.reference, base, runtime);
       }
       mind.profileRead = -Infinity;
-      mind.nextEquip = this.#clock + this.#settings.inventoryUpdateTime;
+      mind.nextEquip = this.#clock + this.#equipWait('melee');
     } finally {
       mind.equipping = false;
     }

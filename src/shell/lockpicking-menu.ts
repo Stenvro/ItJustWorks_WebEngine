@@ -25,13 +25,13 @@ import {
   lockLevelSetting,
   LOCKPICK_SKILL_USES,
   lockpickSkillUseSetting,
+  lockpickSettings,
   lockShape,
   lockTurnLimit,
   LOCK_OPEN_ANGLE,
   LOCKPICK,
   SKELETON_KEY,
   PICK_RANGE,
-  partialPickSetting,
   type LockShape,
 } from '../gameplay/lockpicking.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
@@ -87,6 +87,11 @@ const LOCK_DEPTH = 6;
 
 /** Each lock's sweet spot, as placed this session (a lock keeps it until the game is loaded). */
 const SWEET_SPOTS = new Map<number, number>();
+/**
+ * The picks broken on each lock this session (fLockpickBrokenPicksMult widens its sweet spot by
+ * them as the menu opens). TODO(M12): kept with the lock in saves.
+ */
+const BROKEN_PICKS = new Map<number, number>();
 
 type InterfaceKey = keyof (typeof INI_DEFAULTS)['Interface'];
 
@@ -145,14 +150,8 @@ export class LockpickingMenu {
     const shape = lockShape(difficulty, skill, {
       perk,
       random,
-      settings: {
-        sweetSpotMult: settings.number('fLockpickSkillSweetSpotMult') ?? 0.006,
-        partialBase: settings.number('fLockpickSkillPartialPickBase') ?? 0.775,
-        partialMult: settings.number('fLockpickSkillPartialPickMult') ?? 0.015,
-        partial: [1, 2, 3, 4, 5].map(
-          (d) => settings.number(partialPickSetting(d)) ?? [22, 18, 14, 10, 6][d - 1] ?? 0,
-        ),
-      },
+      settings: lockpickSettings((name) => settings.number(name)),
+      brokenPicks: BROKEN_PICKS.get(reference) ?? 0,
     });
     const picking = new Picking(this.#host, session, runtime, {
       reference,
@@ -425,6 +424,8 @@ class Picking {
     this.#pickPlayback.sequence = 'pickbreak';
     this.#pickPlayback.start = clock();
     this.#sound('UILockpickingPickBreak');
+    const lock = this.#setup.reference;
+    BROKEN_PICKS.set(lock, (BROKEN_PICKS.get(lock) ?? 0) + 1);
     const runtime = this.#runtime;
     // GetPlayerAction: a lockpick broken (those near may react).
     runtime.playerActed(PlayerAction.lockpickBroken);

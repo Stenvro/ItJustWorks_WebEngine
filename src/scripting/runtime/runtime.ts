@@ -58,6 +58,7 @@ import { HarvestEngine } from './harvest-engine.ts';
 import { HazardEngine } from './hazard-engine.ts';
 import { DestructionEngine } from './destruction-engine.ts';
 import type { DestructionStage } from '../../world/destruction-records.ts';
+import type { BodyPush } from '../../gameplay/magic/explosions.ts';
 import { installPerkHooks } from './perk-hooks.ts';
 import { UsageStats } from './usage-stats.ts';
 import { WarmthEngine } from './warmth-engine.ts';
@@ -123,6 +124,20 @@ export interface WorldBridge {
   /** SetMotionType: the body becomes dynamic, keyframed, ... (and stops waiting for a touch). */
   motionTypeChanged?(reference: number, motionType: number): void;
   impulse?(reference: number, direction: Vec3, magnitude: number): void;
+  /**
+   * An explosion pushes a reference's moving bodies away from `center`: each body's push by its
+   * layer and mass (src/gameplay/magic/explosions.ts explosionBodyPush).
+   */
+  explosionPush?(
+    reference: number,
+    center: Vec3,
+    push: (layer: number, mass: number) => BodyPush,
+  ): void;
+  /**
+   * Whether an explosion seen from `from` reaches an actor: nothing stands between, or what
+   * does lies within `buffer` units of it (undefined: the world cannot tell; it reaches).
+   */
+  explosionReaches?(from: Vec3, target: number, buffer: number): boolean | undefined;
   /** PushActorAway: the actor is knocked down, pushed away from a reference by a force. */
   pushAway?(pushed: number, from: number, force: number): void;
   /** An explosion's knock-down flags: the actor is knocked down, away from where it burst. */
@@ -364,6 +379,8 @@ export interface WorldBridge {
     target?: number,
   ): void;
   effectShader?(shader: number, target: number, play: boolean, duration: number): void;
+  /** An art object (ARTO) shows on an actor for `seconds` (Spell Absorption's: casting-engine). */
+  artEffect?(art: number, target: number, seconds: number): void;
   visualEffect?(
     effect: number,
     target: number,

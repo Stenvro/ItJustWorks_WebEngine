@@ -6,13 +6,14 @@
 //   effects' costs: base cost × (magnitude × duration / 10)^1.1, a magnitude under 1 counted as
 //   1, a duration of 0 (and any for concentration spells) as 10, times 1 + fMagicAreaBaseCostMult
 //   × area (0 in Skyrim.esm: areas cost nothing).
-// - The magicka it costs: base × (1 − (fMagicCasterPCSkillCostBase × skill)^fMagicPCSkillCostScale)
-//   for the player (0.0025, 0.65: UESP's 1 − (skill / 400)^0.65), the skill being the school's
-//   (its costliest effect's) with its fortifications; for NPCs fMagicCasterSkillCostMult and
-//   fMagicSkillCostScale (0.5, 0.5); times the cost modifiers (perks, Fortify <School>: the
-//   perk system's Mod Spell Cost, applied by the casting engine to this cost); dual casting
-//   × fMagicDualCastingCostMult (2.8). A concentration
-//   spell's cost is a second's.
+// - The magicka it costs (observed in the original): base × (1 − (Base × skill)^Scale) ×
+//   Mult, the skill a whole number (the school's: its costliest effect's, with its
+//   fortifications). The player's settings are fMagicCasterPCSkillCostBase, fMagicPCSkillCost
+//   Scale, fMagicCasterPCSkillCostMult (0.0025, 0.65, 1: UESP's 1 − (skill / 400)^0.65), the
+//   NPCs' fMagicCasterSkillCostBase, fMagicSkillCostScale, fMagicCasterSkillCostMult (0.005,
+//   0.5, 0.5: an NPC of skill 50 pays a quarter). Then the cost modifiers (perks, Fortify
+//   <School>: the perk system's Mod Spell Cost, applied by the casting engine to this cost);
+//   dual casting × fMagicDualCastingCostMult (2.8). A concentration spell's cost is a second's.
 // - Charging: a fire and forget spell is ready after its charge time (SPIT @12; dual cast ×
 //   fMagicDualCastingTimeMult, 1), released then it fires, before it is let go without effect;
 //   a concentration spell casts from its charge time on, spending its cost a second while it is
@@ -22,7 +23,11 @@
 //   engine's dual-cast share); a concentration spell a second's at a time. Scrolls and staffs
 //   train nothing (staffs: UESP "Staffs", their school only with perks).
 // - Staffs spend their enchantment's cost from their charge, not magicka; powers are used
-//   once a day (24 game hours), lesser powers whenever; shouts are the voice's (shouts.ts).
+//   once a day (24 game hours), lesser powers again fMagicLesserPowerCooldownTimer seconds
+//   after their last use (observed in the original: 3 s); shouts are the voice's
+//   (shouts.ts).
+// - Magicka does not regenerate while the player casts; NPCs regenerate it while they cast
+//   when bRegenNPCMagickaDuringCast is set (observed in the original; 1 by default).
 //
 // Platform-independent: src/scripting/runtime/casting-engine.ts runs them on the game.
 // Notes: docs/gameplay.md ("Casting and shouts").
@@ -30,41 +35,48 @@
 import type { ItemEffect } from '../../world/item-records.ts';
 import { CastType } from '../../world/spell-records.ts';
 
-/** The settings casting reads (GMSTs; Skyrim.esm's values by default). */
-export interface CastingSettings {
-  /** fMagicCasterPCSkillCostBase, fMagicPCSkillCostScale. */
-  readonly pcSkillCostBase: number;
-  readonly pcSkillCostScale: number;
-  /** fMagicCasterSkillCostMult, fMagicSkillCostScale (NPCs). */
-  readonly npcSkillCostMult: number;
-  readonly npcSkillCostScale: number;
-  /** fMagicDualCastingCostMult, fMagicDualCastingTimeMult. */
-  readonly dualCostMult: number;
-  readonly dualTimeMult: number;
-  /** fMagicAreaBaseCostMult. */
-  readonly areaBaseCostMult: number;
-}
+/**
+ * The settings casting reads (GMSTs), each with its fallback where the load order has none:
+ * Skyrim.esm's value for those it sets, else the engine's built-in default.
+ */
+const CASTING_SETTING_TABLE = {
+  /** The player's cost: fMagicCasterPCSkillCostBase, fMagicPCSkillCostScale, ...Mult. */
+  pcSkillCostBase: ['fMagicCasterPCSkillCostBase', 0.0025],
+  pcSkillCostScale: ['fMagicPCSkillCostScale', 0.65],
+  pcSkillCostMult: ['fMagicCasterPCSkillCostMult', 1],
+  /** The NPCs' cost. */
+  npcSkillCostBase: ['fMagicCasterSkillCostBase', 0.005],
+  npcSkillCostScale: ['fMagicSkillCostScale', 0.5],
+  npcSkillCostMult: ['fMagicCasterSkillCostMult', 0.5],
+  /** Dual casting: its cost and its charge time. */
+  dualCostMult: ['fMagicDualCastingCostMult', 2.8],
+  dualTimeMult: ['fMagicDualCastingTimeMult', 1],
+  areaBaseCostMult: ['fMagicAreaBaseCostMult', 0],
+  /**
+   * How far a Touch spell reaches (units). TODO(M13): the engine registers this setting but
+   * never reads it (original); what it takes a Touch spell's reach from is unknown.
+   */
+  touchDistance: ['fMagicDefaultTouchDistance', 256],
+  /** Seconds before a lesser power is cast again. */
+  lesserPowerCooldown: ['fMagicLesserPowerCooldownTimer', 3],
+  /** NPCs regenerate magicka while they cast (1) or not (0). */
+  regenNpcMagickaDuringCast: ['bRegenNPCMagickaDuringCast', 1],
+  /** Seconds Spell Absorption's art shows (and is not shown again). */
+  absorbVisualTimer: ['fMagicAbsorbVisualTimer', 2.5],
+} as const satisfies Readonly<Record<string, readonly [string, number]>>;
 
-export const CASTING_DEFAULTS: CastingSettings = {
-  pcSkillCostBase: 0.0025,
-  pcSkillCostScale: 0.65,
-  npcSkillCostMult: 0.5,
-  npcSkillCostScale: 0.5,
-  dualCostMult: 2.8,
-  dualTimeMult: 1,
-  areaBaseCostMult: 0,
+export type CastingSettings = {
+  readonly [K in keyof typeof CASTING_SETTING_TABLE]: number;
 };
 
-/** The settings' names, in CastingSettings' order (read from the load order). */
-export const CASTING_SETTING_NAMES: Readonly<Record<keyof CastingSettings, string>> = {
-  pcSkillCostBase: 'fMagicCasterPCSkillCostBase',
-  pcSkillCostScale: 'fMagicPCSkillCostScale',
-  npcSkillCostMult: 'fMagicCasterSkillCostMult',
-  npcSkillCostScale: 'fMagicSkillCostScale',
-  dualCostMult: 'fMagicDualCastingCostMult',
-  dualTimeMult: 'fMagicDualCastingTimeMult',
-  areaBaseCostMult: 'fMagicAreaBaseCostMult',
-};
+export const CASTING_DEFAULTS = Object.fromEntries(
+  Object.entries(CASTING_SETTING_TABLE).map(([key, [, fallback]]) => [key, fallback]),
+) as CastingSettings;
+
+/** The settings' names (read from the load order). */
+export const CASTING_SETTING_NAMES = Object.fromEntries(
+  Object.entries(CASTING_SETTING_TABLE).map(([key, [name]]) => [key, name]),
+) as Readonly<Record<keyof CastingSettings, string>>;
 
 /** SPIT's flag: the cost is SPIT's own (not calculated). */
 const MANUAL_COST = 0x1;
@@ -106,20 +118,21 @@ export function itemBaseCost(
 }
 
 /**
- * What the caster's skill leaves of a cost: the player 1 − (fMagicCasterPCSkillCostBase ×
- * skill)^fMagicPCSkillCostScale, NPCs 1 − fMagicCasterSkillCostMult × (skill / 100)^
- * fMagicSkillCostScale (TODO(M13): the NPCs' formula is inferred from the settings' names and
- * values). Never below 0.
+ * What the caster's skill leaves of a cost (observed in the original): (1 − (Base ×
+ * skill)^Scale) × Mult with the player's settings or the NPCs', the skill taken as a whole
+ * number. Never below 0 (a skill past 1 / Base would make it so).
  */
 export function skillCostFactor(
   skill: number,
   player: boolean,
   settings: CastingSettings = CASTING_DEFAULTS,
 ): number {
-  const level = Math.max(0, skill);
+  const level = Math.max(0, Math.trunc(skill));
   const factor = player
-    ? 1 - (settings.pcSkillCostBase * level) ** settings.pcSkillCostScale
-    : 1 - settings.npcSkillCostMult * (level / 100) ** settings.npcSkillCostScale;
+    ? (1 - (settings.pcSkillCostBase * level) ** settings.pcSkillCostScale) *
+      settings.pcSkillCostMult
+    : (1 - (settings.npcSkillCostBase * level) ** settings.npcSkillCostScale) *
+      settings.npcSkillCostMult;
   return Math.max(0, factor);
 }
 
@@ -259,4 +272,27 @@ export function staffCastsLeft(charge: number, costPerCast: number): number {
 /** A power used at `usedDay` (game days) can be used again from a game day later on. */
 export function powerReady(usedDay: number | undefined, nowDay: number): boolean {
   return usedDay === undefined || nowDay - usedDay >= 1 - 1e-9;
+}
+
+/**
+ * A lesser power used at `usedAt` (seconds) can be cast again once fMagicLesserPowerCooldown
+ * Timer seconds have passed.
+ */
+export function lesserPowerReady(
+  usedAt: number | undefined,
+  now: number,
+  settings: Pick<CastingSettings, 'lesserPowerCooldown'> = CASTING_DEFAULTS,
+): boolean {
+  return usedAt === undefined || now - usedAt >= settings.lesserPowerCooldown - 1e-9;
+}
+
+/**
+ * Whether an actor's magicka regenerates while it casts (observed in the original): never
+ * the player's; an NPC's when bRegenNPCMagickaDuringCast is set.
+ */
+export function regeneratesWhileCasting(
+  player: boolean,
+  settings: Pick<CastingSettings, 'regenNpcMagickaDuringCast'> = CASTING_DEFAULTS,
+): boolean {
+  return !player && settings.regenNpcMagickaDuringCast !== 0;
 }

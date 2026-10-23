@@ -26,6 +26,12 @@ export const DefaultObjectUse = {
   underwaterLoop: 'UWLS',
   /** SNCT spoken lines play in (AudioCategoryVOC). */
   dialogueCategory: 'DDSC',
+  /**
+   * SNCT a conversation turns down: the non-dialogue voices (AudioCategoryNonVOC) and the
+   * effects that fade during dialogue (AudioCategorySFXFadeDuringDialogue).
+   */
+  nonDialogueCategory: 'NDSC',
+  sfxFadeInDialogueCategory: 'SFDC',
   /** SOPM of spoken lines in the world (SOMDialogue3DDefault) and at the listener (2D). */
   dialogueOutput3d: 'DOP2',
   dialogueOutput2d: 'DOP3',
@@ -42,6 +48,8 @@ export const DefaultObjectUse = {
   putDownIngredient: 'PDSI',
   /** SNDR of an activation that fails (a locked door without its key). */
   activateFail: 'NASD',
+  /** ARTO shown on an actor whose Spell Absorption absorbs a spell (AbsorbSpellEffect). */
+  absorbSpellEffect: 'ABSE',
 } as const;
 
 /** Entries of DOBJ DNAM: u32 use code (four characters), form id. */

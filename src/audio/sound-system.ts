@@ -141,6 +141,10 @@ export class SoundSystem {
   readonly #dialogueCategory: number | undefined;
   readonly #dialogueOutput: number | undefined;
   readonly #dialogueOutput2d: number | undefined;
+  /** NDSC and SFDC: the categories a conversation turns down. */
+  readonly #duckedInDialogue: readonly number[];
+  /** Spoken lines playing (speech highlighting), each with whether it is at the listener. */
+  readonly #voices = new Map<SoundInstance, boolean>();
   #underwater: { loop: SoundInstance | undefined; dropped: boolean } | undefined;
   #materials:
     Promise<{ byId: Map<number, MaterialType>; byForm: Map<number, MaterialType> }> | undefined;
@@ -189,6 +193,10 @@ export class SoundSystem {
     this.#dialogueCategory = defaults.get(DefaultObjectUse.dialogueCategory);
     this.#dialogueOutput = defaults.get(DefaultObjectUse.dialogueOutput3d);
     this.#dialogueOutput2d = defaults.get(DefaultObjectUse.dialogueOutput2d);
+    this.#duckedInDialogue = [
+      defaults.get(DefaultObjectUse.nonDialogueCategory),
+      defaults.get(DefaultObjectUse.sfxFadeInDialogueCategory),
+    ].filter((category) => category !== undefined);
     this.#water = new WaterAudio(
       {
         waterSound: (type) => this.#waterSound(type),
@@ -344,8 +352,62 @@ export class SoundSystem {
     return {
       duration: sound.buffer.duration,
       ...(sound.lip && { lip: sound.lip }),
-      play: (place) => this.#start(descriptor, model, place),
+      play: async (place) => {
+        const instance = await this.#start(descriptor, model, place);
+        if (instance) {
+          this.#voices.set(instance, atListener);
+          this.#highlightSpeech();
+        }
+        return instance;
+      },
     };
+  }
+
+  /**
+   * A conversation's menu opens or closes: the non-dialogue voices (DOBJ NDSC) and the effects
+   * that fade during dialogue (SFDC) go down by [Audio] fNonDialogVoiceDucking dB over
+   * fNonDialogVoiceDuckingFadeOut seconds, and back up over fNonDialogVoiceDuckingFadeIn (observed
+   * in the original).
+   */
+  duckForDialogue(on: boolean): void {
+    const ini = this.#ini;
+    this.engine.duck(
+      this.#duckedInDialogue,
+      on ? ini.number('Audio', 'fNonDialogVoiceDucking') : 0,
+      ini.number('Audio', on ? 'fNonDialogVoiceDuckingFadeOut' : 'fNonDialogVoiceDuckingFadeIn'),
+    );
+  }
+
+  /**
+   * Speech highlighting, observed in the original: while a line is spoken within [Audio]
+   * fMaxHighlightRadius of the listener (or at the listener), every other spoken line is
+   * fNonHighlightSpeechAtten dB quieter, each change eased over fHighlightSpeechOverlap seconds
+   * (in an inn the one talking to the player is heard over the others).
+   */
+  #highlightSpeech(): void {
+    if (this.#voices.size === 0) return;
+    const ini = this.#ini;
+    const radius = ini.number('Audio', 'fMaxHighlightRadius');
+    const listener = this.#listener;
+    const near = (instance: SoundInstance, atListener: boolean): boolean => {
+      const at = instance.position;
+      if (atListener || !at) return true;
+      return (
+        (at[0] - listener[0]) ** 2 + (at[1] - listener[1]) ** 2 + (at[2] - listener[2]) ** 2 <
+        radius * radius
+      );
+    };
+    const highlighted = new Set<SoundInstance>();
+    for (const [voice, atListener] of this.#voices) {
+      if (voice.ended) this.#voices.delete(voice);
+      else if (near(voice, atListener)) highlighted.add(voice);
+    }
+    const quieter = 10 ** (-ini.number('Audio', 'fNonHighlightSpeechAtten') / 20);
+    const seconds = ini.number('Audio', 'fHighlightSpeechOverlap');
+    for (const voice of this.#voices.keys()) {
+      const level = highlighted.size > 0 && !highlighted.has(voice) ? quieter : 1;
+      voice.setSpeechLevel(level, seconds);
+    }
   }
 
   /**
@@ -770,6 +832,7 @@ export class SoundSystem {
       }
       instance.update(this.#listener);
     }
+    this.#highlightSpeech();
     for (const state of this.#emitters.values()) this.#updateEmitter(state);
     this.#updateSpace();
     const ambient = this.#ambient;

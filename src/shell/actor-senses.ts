@@ -83,6 +83,11 @@ export interface ActorSensesOptions {
   readonly light?: (at: Vec3) => LightProbe | undefined;
   /** The view shows an interior (detection's reach and light inside). */
   readonly interior: boolean;
+  /** The projectiles in flight (arrows, bolts, spells) and who sent them. */
+  readonly projectiles?: () => Iterable<{
+    readonly position: Vec3;
+    readonly source: number | undefined;
+  }>;
   /**
    * An actor says a line of a topic subtype (by name or code) to a target (src/shell/actor-talk.ts,
    * bark).
@@ -301,15 +306,25 @@ export class ActorSenses implements ScriptSenses {
     const settings = this.#settings;
     const bodies = this.#bodies();
     const player = bodies.get(PLAYER_REF);
+    // A complex scene (iAINumberActorsComplexScene actors or more) tests less often
+    // (fDetectionUpdateTime*Complex); at most iUpdateDetectionsAllowedPerFrame tests a frame,
+    // the rest wait for the next (observed in the original).
+    const complex = bodies.size - 1 >= settings.complexSceneActors;
+    const least = complex ? settings.updateTimeMinComplex : settings.updateTimeMin;
+    const most = complex ? settings.updateTimeMaxComplex : settings.updateTimeMax;
+    const allowed = this.#options.session.ini.number('General', 'iUpdateDetectionsAllowedPerFrame');
+    let tests = 0;
+    const flying = [...(this.#options.projectiles?.() ?? [])];
     for (const body of bodies.values()) {
       if (body.reference === PLAYER_REF) continue;
       const due = this.#due.get(body.reference);
       if (due !== undefined && due > now) continue;
-      // Near the player each second, far ones every two (fDetectionUpdateTimeMin, Max).
+      if (due !== undefined && tests >= allowed) continue;
+      // Near the player at the least time, far ones at the most. TODO(M13): how the engine
+      // picks between them (here by the distance to the player).
       const reach = detectionReach(settings, !this.#options.interior);
       const share = player ? Math.min(1, distance(body.feet, player.feet) / reach) : 1;
-      const interval =
-        settings.updateTimeMin + (settings.updateTimeMax - settings.updateTimeMin) * share;
+      const interval = least + (most - least) * share;
       // The first test is spread over an interval (not all on one frame).
       this.#due.set(
         body.reference,
@@ -317,8 +332,11 @@ export class ActorSenses implements ScriptSenses {
       );
       if (due === undefined) continue;
       for (const target of bodies.values()) {
-        if (target.reference !== body.reference) this.#test(runtime, body, target);
+        if (target.reference === body.reference) continue;
+        this.#test(runtime, body, target);
+        tests++;
       }
+      this.#projectilesSeen(runtime, body, bodies, flying);
       this.#lookForTheDead(body, now);
     }
     this.detections.tick(now);
@@ -410,7 +428,13 @@ export class ActorSenses implements ScriptSenses {
   }
 
   /** The detection formula for a pair (undefined: beyond its reach). */
-  #level(runtime: ScriptRuntime, observer: Body, target: Body): DetectionLevel | undefined {
+  #level(
+    runtime: ScriptRuntime,
+    observer: Body,
+    target: Body,
+    /** The target seen elsewhere (its projectile): there, in that light, in sight. */
+    seenAt?: { readonly at: Vec3; readonly light: number },
+  ): DetectionLevel | undefined {
     const settings = this.#settings;
     const exterior = !this.#options.interior;
     const reach = detectionReach(
@@ -418,11 +442,12 @@ export class ActorSenses implements ScriptSenses {
       exterior,
       this.#options.flying?.(target.reference) === true,
     );
-    const apart = distance(observer.eye, target.chest);
+    const apart = distance(observer.eye, seenAt?.at ?? target.chest);
     if (apart >= reach) return undefined;
-    const lineOfSight = this.#sight(observer, target);
+    const lineOfSight = seenAt !== undefined || this.#sight(observer, target);
     const off = angleOff(observer.heading, observer.feet, target.feet);
-    const seen = lineOfSight && apart < sightReach(settings, off, reach, exterior);
+    const seen =
+      seenAt !== undefined || (lineOfSight && apart < sightReach(settings, off, reach, exterior));
     const watcher = this.#profile(runtime, observer.reference);
     const watched = this.#profile(runtime, target.reference);
     const motion = target.motion;
@@ -447,7 +472,7 @@ export class ActorSenses implements ScriptSenses {
       armourWeight: watched.armourWeight,
       noiseMult: watched.noiseMult,
       actionSound: action && action.until > this.#clock ? action.loudness : 0,
-      light: this.#lightOn(target),
+      light: seenAt?.light ?? this.#lightOn(target),
       size: watched.size,
       invisible: watched.invisible,
     };
@@ -460,6 +485,43 @@ export class ActorSenses implements ScriptSenses {
       lineOfSight,
       seen,
     });
+  }
+
+  /**
+   * The projectiles of the others an observer sees pass (observed in the original): one of
+   * a target's within fDetectProjectileDistanceNPC of the observer (the player's:
+   * …Player), in its view cone (fDetectionViewCone) and its line of sight, is a sight of the
+   * target where the projectile is, in the light of a detection event (iDetectEventLightLevel*):
+   * noticed, the observer is alerted there.
+   */
+  #projectilesSeen(
+    runtime: ScriptRuntime,
+    observer: Body,
+    bodies: Map<number, Body>,
+    flying: readonly { readonly position: Vec3; readonly source: number | undefined }[],
+  ): void {
+    const settings = this.#settings;
+    const exterior = !this.#options.interior;
+    for (const shot of flying) {
+      const source = shot.source;
+      if (source === undefined || source === observer.reference) continue;
+      const target = bodies.get(source);
+      if (!target) continue;
+      const near =
+        source === PLAYER_REF ? settings.projectileDistancePlayer : settings.projectileDistanceNpc;
+      const apart = distance(observer.eye, shot.position);
+      if (apart > near || observer.sleeping) continue;
+      const off = angleOff(observer.heading, observer.feet, shot.position);
+      if ((off * 180) / Math.PI >= settings.viewCone / 2) continue;
+      if (this.#ray(observer.eye, shot.position, observer.reference, source) === false) continue;
+      const result = this.#level(runtime, observer, target, {
+        at: shot.position,
+        light: exterior ? settings.eventLightExterior : settings.eventLightInterior,
+      });
+      if (result?.inReach) {
+        this.detections.hear(observer.reference, shot.position, source, result.level, this.#clock);
+      }
+    }
   }
 
   /** Whether nothing blocks sight between an observer's eyes and a target (head or chest). */
@@ -795,11 +857,26 @@ export class ActorSenses implements ScriptSenses {
     if (!runtime) return;
     const bodies = this.#bodies();
     const at = bodies.get(source)?.feet ?? this.#placementOf(runtime, source);
+    // Observed in the original: the actors of the criminal's process level hear it within
+    // iCrimeAlarmRecDistance of the criminal; the others (here: those beyond the high process)
+    // within iCrimeAlarmLowRecDistance of one who raised it.
+    const by =
+      (criminal === undefined ? undefined : bodies.get(criminal)?.feet) ??
+      (criminal === undefined ? undefined : this.#placementOf(runtime, criminal)) ??
+      at;
     const hearers: number[] = [];
-    if (at) {
+    if (at && by) {
       for (const body of bodies.values()) {
         if (body.reference === PLAYER_REF || body.reference === source) continue;
-        if (distance(body.feet, at) <= this.#settings.alarmDistance) hearers.push(body.reference);
+        if (distance(body.feet, by) <= this.#settings.alarmDistance) hearers.push(body.reference);
+      }
+      for (const staged of this.#options.actors()) {
+        const reference = staged.reference;
+        if (bodies.has(reference) || reference === source || staged.dead) continue;
+        if (!this.#options.movers.runsAi(reference)) continue;
+        if (distance(staged.position, at) <= this.#settings.lowAlarmDistance) {
+          hearers.push(reference);
+        }
       }
     }
     const crime: WitnessedAct = act;

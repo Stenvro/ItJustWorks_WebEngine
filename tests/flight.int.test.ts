@@ -102,6 +102,10 @@ describe.skipIf(!hasGamedata())('flying combat on the local game data', () => {
     expect(settings.groundAttackTimeMin).toBe(8);
     expect(settings.groundAttackTimeMax).toBe(17);
     expect(settings.orbitDistance).toBe(4000);
+    // No plugin sets the flight chances' or the orbit time's scale: the engine's own.
+    expect(settings.diveBombChanceMax).toBe(1);
+    expect(settings.orbitTimeMin).toBe(3);
+    expect(settings.orbitTimeMax).toBe(12);
     // Its style chooses every maneuver it has.
     const seen = new Set<string>();
     let seed = 7;
@@ -110,7 +114,7 @@ describe.skipIf(!hasGamedata())('flying combat on the local game data', () => {
       return seed / 2147483647;
     };
     for (let i = 0; i < 200; i++) {
-      seen.add(chooseFlightManeuver(flight, { canLand: true, perch: true }, random));
+      seen.add(chooseFlightManeuver(flight, { canLand: true, perch: true }, random, settings));
     }
     expect([...seen].sort()).toEqual(['diveBomb', 'hover', 'land', 'orbit', 'perch']);
   });

@@ -65,33 +65,33 @@ These run through every area and explain most of what breaks in play.
 | Form types                  | complete  | VOLI, LENS (render)                                                                                                                                                           |
 | Per-reference state         | partial   | activate parents/children (5,691 references: pressure plates and tripwires fire nothing), physics-moved and animated state lost on unload, partial souls, alias display names |
 | Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell, grid follows the camera                                                                                                       |
-| Respawn, cell reset         | missing   | no reset or respawn, no OnReset, corpses stay, encounter zone levels frozen, vendor restock 48 h (engine: iDaysToRespawnVendor 1)                                             |
+| Respawn, cell reset         | missing   | no reset or respawn, no OnReset, corpses stay, encounter zone levels frozen (vendor restock: iDaysToRespawnVendor, done)                                                      |
 | Papyrus VM                  | different | natives not frame-synced; threads cannot be saved                                                                                                                             |
 | Script events               | partial   | about 20 kinds never sent; OnHit on objects; OnLocationChange for NPCs                                                                                                        |
 | Event sources               | different | no event hub                                                                                                                                                                  |
 | Story manager               | partial   | mechanism complete; most event sources missing (see above)                                                                                                                    |
 | Save and load               | missing   | M12                                                                                                                                                                           |
 | Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                           |
-| Audio                       | partial   | non-dialogue voice ducking, speech highlighting, pause categories and menu fades, Slow Time only for its category, combat music rules                                         |
+| Audio                       | partial   | pause categories by DOBJ (menu fades, ducking and highlighting done), sounds held in menus, Slow Time only for its category, combat music rules                               |
 | Load order, settings        | partial   | plugins.txt and the user's INI files (M12)                                                                                                                                    |
 
 ### AI
 
-| System                       | Status    | Main gaps                                                                                                                                                                           |
-| ---------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Process levels, budget       | different | no time slicing or frame budget, no middle-low tier                                                                                                                                 |
-| Package evaluation           | partial   | 2 s instead of 15 s or the hour; procedure overrides (115 branches) and flags (Weapon Drawn 664, Weapons Unequipped 208, Sleep Outfit, Allow Swimming, Maintain Speed) not honoured |
-| Procedures                   | partial   | all 30 exist; their numbers are ours; engine-only packages (avoid player, react to destroyed object, warnings, movement blocked) missing                                            |
-| Sandbox                      | different | no daily plan (sleep, meals), stays in real seconds, no weighted choice                                                                                                             |
-| Movement, paths              | partial   | no warp after repeated failures, doors not navmesh obstacles, no path idles                                                                                                         |
-| Avoidance                    | different | avoid boxes and re-planning                                                                                                                                                         |
-| Detection                    | partial   | formula reconstructed, single ray, projectiles alert no one                                                                                                                         |
-| Crime                        | partial   | responder cap, NPC crimes                                                                                                                                                           |
-| Dialogue                     | partial   | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away                                                                                                 |
-| Scenes                       | partial   | lines do not wait for facing; repeat pause                                                                                                                                          |
-| Actors away                  | partial   | only one door away, hour steps                                                                                                                                                      |
-| Followers, horses, furniture | partial   | speed matching, door spacing; mount from the right; enter by graph event                                                                                                            |
-| Head tracking                | partial   | actors look only at the player                                                                                                                                                      |
+| System                       | Status    | Main gaps                                                                                                                                          |
+| ---------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Process levels, budget       | different | no time slicing or frame budget, no middle-low tier                                                                                                |
+| Package evaluation           | partial   | procedure overrides (115 branches) and flags (Weapon Drawn 664, Weapons Unequipped 208, Sleep Outfit, Allow Swimming, Maintain Speed) not honoured |
+| Procedures                   | partial   | all 30 exist, their numbers the game settings; engine-only packages (avoid player, react to destroyed object, warnings, movement blocked) missing  |
+| Sandbox                      | different | no daily plan (sleep, meals), stays in real seconds, no weighted choice                                                                            |
+| Movement, paths              | partial   | doors not navmesh obstacles, no path idles                                                                                                         |
+| Avoidance                    | partial   | the engine's way round (who is avoided and re-planning are its)                                                                                    |
+| Detection                    | partial   | formula reconstructed (sleep, ambush, size terms the engine's), single ray, no one in ambush                                                       |
+| Crime                        | partial   | NPC crimes                                                                                                                                         |
+| Dialogue                     | partial   | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away                                                                |
+| Scenes                       | partial   | lines do not wait for facing; repeat pause                                                                                                         |
+| Actors away                  | partial   | only one door away, hour steps                                                                                                                     |
+| Followers, horses, furniture | partial   | walk zone; mount from the right; enter by graph event                                                                                              |
+| Head tracking                | partial   | candidates' scores, look along the path, package target's look                                                                                     |
 
 ### Combat
 
@@ -101,13 +101,13 @@ These run through every area and explain most of what breaks in play.
 | Target selection  | different | additive scores, re-selection timing, crowding, reachability; group stealth points                                                                          |
 | Flee              | different | strength ratio (damage per second × health against armour) instead of health share                                                                          |
 | Behaviour tree    | partial   | per-slot actions (left and dual attacks, shield and weapon, spell and weapon), surround, backoff, reposition, cover, find attack location, hide, low combat |
-| Style values      | partial   | flank distance and stalk time are a distance and a time; advance radii and optimal range curves                                                             |
-| Inventory         | partial   | hand pairs, minimum equip times, torches, ammunition                                                                                                        |
+| Style values      | complete  | (on the engine's scale; the circle distant, special attack, block attack and offensive bash behaviours wait for the tree)                                   |
+| Inventory         | partial   | hand pairs, continuous weighing after the minimum equip times, torches, ammunition                                                                          |
 | Melee choice      | partial   | attacks from attack data while closing in, per-attack angle and cooldown, special attack                                                                    |
 | Block, bash       | different | sustained block, block attack, offensive bash                                                                                                               |
 | Ranged            | partial   | line of fire, optimal range, cover                                                                                                                          |
 | Combat magic      | partial   | casters by purpose, dual casting, reanimate a corpse                                                                                                        |
-| Potions           | different | thresholds by the defensive mult, restriction timers, no stamina potions                                                                                    |
+| Potions           | partial   | the casters' order in the tree; the stop-cast threshold of a held healing spell                                                                             |
 | Damage, stagger   | partial   | sneak attacks by the player only, critical chance actor value, attack damage mult, stagger by the Mass actor value                                          |
 | Combat dialogue   | partial   | per-subtype cooldowns and distance gates                                                                                                                    |
 | Combat music      | different | threat-ratio gate, near-combat radius, stop delay                                                                                                           |

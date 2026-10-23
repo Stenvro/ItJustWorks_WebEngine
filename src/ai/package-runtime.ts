@@ -6,11 +6,12 @@
 // Simultaneous branch all of them at once, a Random branch one that may run at random; a
 // procedure (src/ai/procedure-runs.ts) runs until it succeeds or fails. A branch that repeats
 // when complete starts over; a procedure whose success completes the package ends it. The
-// package is chosen again as the hour changes, every few seconds, when it ends and when a
-// script asks (EvaluatePackage); a package that must complete is not left before it has.
-// Platform-independent.
+// package is chosen again as the game's hour changes, every fEvaluatePackageTimer seconds, while
+// it has none, when it ends and when a script asks (EvaluatePackage); a package that must complete
+// is not left before it has. Platform-independent.
 
 import type { Condition } from '../scripting/conditions.ts';
+import { AI_DEFAULTS, type AiSettings } from './ai-settings.ts';
 import type { FlightRequest } from './flight.ts';
 import type { Gait } from './locomotion.ts';
 import {
@@ -135,6 +136,29 @@ export interface PackageMind {
   lockDoors(place: PackagePlace, locked: boolean): Promise<void>;
   /** Whether a reference runs now (the player's input, an actor's controller), if known. */
   running?(reference: number): boolean;
+  /** How a reference moves now (an actor, the player), if known: as `running`, its speed too. */
+  motion?(
+    reference: number,
+  ): { readonly running: boolean; readonly sprinting: boolean; readonly speed: number } | undefined;
+  /** Where a reference is now, at once (a leader followed as it moves), if known. */
+  livePosition?(reference: number): Vec3 | undefined;
+  /** The AI's game settings (the load order's once read; the engine's built-in values else). */
+  settings?(): AiSettings;
+  /** An actor's Energy actor value (Wander's pauses, Sandbox's Energy without one). */
+  energy?(actor: number): Promise<number>;
+  /**
+   * A patrol point: its idle time (XPRD; 0 without one) and whether it is furniture (a patrol
+   * stays at it on its way, in furniture at least fAIPatrolMinSecondsAtNormalFurniture).
+   */
+  patrolPoint?(
+    reference: number,
+  ): Promise<{ readonly idleTime: number; readonly furniture: boolean }>;
+  /**
+   * What a reference a place is at is, for the radius it is reached within: a marker
+   * (fAIMarkerDestinationRadius), furniture (fAIFurnitureDestinationRadius), else another
+   * (fAIDistanceRadiusMinLocation).
+   */
+  destinationKind?(reference: number): Promise<'marker' | 'furniture' | 'other'>;
   /** OnPackageStart / OnPackageChange / OnPackageEnd and the package's own begin, change and end. */
   packageEvent(
     actor: number,
@@ -303,6 +327,8 @@ export interface ProcedureRun {
   /** Waits real seconds (shorter if the package is left meanwhile). */
   wait(seconds: number): Promise<void>;
   random(): number;
+  /** The AI's game settings (AI_DEFAULTS without). */
+  readonly settings?: AiSettings;
 }
 
 /** How a package's shout went (PackageBody.shout). */
@@ -318,8 +344,6 @@ export type ProcedureRunner = (run: ProcedureRun) => Promise<ProcedureResult>;
 const isStopped = (running: Running): boolean =>
   running.stopped || running.cut || (running.parent !== undefined && isStopped(running.parent));
 
-/** The package chosen again this often (real seconds). TODO(M13): the engine's rate. */
-const EVALUATE_SECONDS = 2;
 /** A package's idles at least this long apart (seconds). */
 const IDLE_PAUSE = 8;
 /**
@@ -369,6 +393,20 @@ interface Running {
 export interface TravelOptions {
   /** Straight there, not along a navmesh path (a patrol's Static Pathing). */
   readonly direct?: boolean;
+  /**
+   * A destination that moves (an actor followed): where it is now, and how far it may move
+   * from where the path leads before the path is searched again (fAIMoveDistanceToRecalc*);
+   * the travel then goes on to where it is.
+   */
+  readonly moving?: {
+    readonly position: () => Vec3 | undefined;
+    readonly recalc: number;
+  };
+  /**
+   * Its speed against its gait's (given its gait's forward speed, units a second), asked as it
+   * goes: a follower matching its leader's.
+   */
+  readonly speedMult?: (gaitSpeed: number) => number;
 }
 
 export class ActorPackages {
@@ -428,7 +466,11 @@ export class ActorPackages {
     );
   }
 
-  /** Every frame (real seconds): the package is chosen again when it is time to. */
+  /**
+   * Every frame (real seconds): the package is chosen again when it is time to (observed in the
+   * original): a script asked (EvaluatePackage), it has none, the game's hour changed,
+   * fEvaluatePackageTimer passed since the last time; and here also once its package completed.
+   */
   update(seconds: number): void {
     this.#clock += seconds;
     if (this.#waiting.length > 0) {
@@ -438,11 +480,13 @@ export class ActorPackages {
     }
     this.#sinceEvaluation += seconds;
     const hour = Math.floor(this.#mind.time().hour);
+    const timer = (this.#mind.settings?.() ?? AI_DEFAULTS).evaluatePackageTimer;
     const due =
       this.#wanted ||
-      this.#sinceEvaluation >= EVALUATE_SECONDS ||
+      this.#running === undefined ||
+      this.#sinceEvaluation >= timer ||
       hour !== this.#hour ||
-      (this.#running?.completed === true && !this.#running.ended);
+      (this.#running.completed && !this.#running.ended);
     if (!due || this.#evaluating) return;
     this.#hour = hour;
     this.#sinceEvaluation = 0;
@@ -504,6 +548,8 @@ export class ActorPackages {
       void this.#runTree(chosen);
       return;
     }
+    // Still none (it is asked again each frame meanwhile): nothing changes.
+    if (!current && !chosen) return;
     if (current) {
       current.stopped = true;
       if (!current.ended) {
@@ -760,6 +806,7 @@ export class ActorPackages {
       stopped: () => this.#looping(running) || isStopped(running),
       wait: (seconds) => this.#wait(running, seconds),
       random: this.#random,
+      settings: this.#mind.settings?.() ?? AI_DEFAULTS,
     });
     if (isStopped(running)) return 'stopped';
     // FNAM 0x1: its success completes the package.

@@ -11,12 +11,7 @@ import { parseNif } from '../src/formats/nif/nif.ts';
 import { decodeWindows1252 } from '../src/formats/text.ts';
 import { CharacterBody } from '../src/physics/character.ts';
 import { buildCollision } from '../src/physics/collision-data.ts';
-import {
-  GRAB_DEFAULTS,
-  GRAB_LIMITS,
-  GrabSpring,
-  TELEKINESIS_DEFAULTS,
-} from '../src/physics/grab.ts';
+import { GRAB_DEFAULTS, GRAB_LIMITS, GrabSpring, TELEKINESIS_SPRING } from '../src/physics/grab.ts';
 import {
   CollisionMatrix,
   Layer,
@@ -298,7 +293,7 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
         grab: GRAB_DEFAULTS,
         fallVelocityMin: 600,
         grabLimits: GRAB_LIMITS,
-        telekinesis: TELEKINESIS_DEFAULTS,
+        telekinesisSpring: TELEKINESIS_SPRING,
         debris: DEBRIS_QUALITY,
         materialFlags: new Map(),
         stairMaterials: new Set(),
@@ -470,7 +465,7 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
         grab: GRAB_DEFAULTS,
         fallVelocityMin: 600,
         grabLimits: GRAB_LIMITS,
-        telekinesis: TELEKINESIS_DEFAULTS,
+        telekinesisSpring: TELEKINESIS_SPRING,
         debris: DEBRIS_QUALITY,
         materialFlags: new Map(),
         stairMaterials: new Set(),

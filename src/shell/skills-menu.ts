@@ -34,6 +34,7 @@ import {
   nearestRing,
   RING_SKILLS,
   ringAxes,
+  ringTurnSpeed,
   SKILL_ANGLE,
   starPlace,
   STAR_DISTANCE,
@@ -76,9 +77,8 @@ const INTRO_SECONDS = 0.63;
  * Fitted (the dome's camera node looks level; the menu shows the constellations above).
  */
 const RING_PITCH = 10;
-/** Seconds the camera takes to look up into a tree or back down, and to turn a skill. */
+/** Seconds the camera takes to look up into a tree or back down. */
 const PITCH_SECONDS = 0.5;
-const TURN_SPEED = 120;
 /** Degrees the view turns per pixel the mouse moves. */
 const MOUSE_DEGREES = 0.15;
 /** The skills' and meters' colours: as they are, fortified, damaged (the item cards' own). */
@@ -136,15 +136,17 @@ interface Tree {
 class SkillsCamera implements Camera {
   position: Vec3 = [0, 0, CAMERA_REST_Z];
   forward: Vec3 = [0, 1, 0];
-  readonly near = 1;
+  /** fStatsCameraNearDistance. */
+  readonly near: number;
   yaw = 0;
   pitch = RING_PITCH;
   z = CAMERA_REST_Z;
   /** Vertical field of view (radians). */
   readonly #fovY: number;
 
-  constructor(fovDegrees: number) {
+  constructor(fovDegrees: number, near: number) {
     this.#fovY = 2 * Math.atan(Math.tan((fovDegrees * Math.PI) / 360) * 0.75);
+    this.near = near;
   }
 
   update(): void {
@@ -263,6 +265,14 @@ class Viewing {
   #previous: OverlayView | undefined;
   /** Where the camera turns to (degrees), and the tree looked into (undefined: the ring). */
   #targetYaw: number;
+  /** Seconds the ring has been turning (its speed rises over fStatsRotationRampTime), its speed. */
+  #turning = 0;
+  #turnSpeed = 0;
+
+  /** A game setting by name: the load order's, else the engine's default. */
+  #setting(name: string, fallback: number): number {
+    return this.#settings.number(name) ?? fallback;
+  }
   #tree: Tree | undefined;
   #selected: PerkStar | undefined;
   /** 0 the ring, 1 up in a tree. */
@@ -285,7 +295,10 @@ class Viewing {
     this.#runtime = runtime;
     this.#settings = settings;
     this.#setup = setup;
-    this.#camera = new SkillsCamera(settings.number('fStatsCameraFOV') ?? 50);
+    this.#camera = new SkillsCamera(
+      this.#setting('fStatsCameraFOV', 50),
+      this.#setting('fStatsCameraNearDistance', 1),
+    );
     this.#targetYaw = setup.ring * SKILL_ANGLE;
     this.#camera.yaw = this.#targetYaw;
     this.#camera.z = -3000;
@@ -648,8 +661,18 @@ class Viewing {
     // Turning.
     const delta = this.#targetYaw - camera.yaw;
     if (Math.abs(delta) > 0.01) {
-      const step = Math.sign(delta) * Math.min(Math.abs(delta), TURN_SPEED * dt);
-      camera.yaw += step;
+      this.#turning += dt;
+      this.#turnSpeed = ringTurnSpeed(this.#turnSpeed, this.#turning, delta, dt, {
+        speedMax: this.#setting('fStatsRotationSpeedMax', 0.5),
+        rampMs: this.#setting('fStatsRotationRampTime', 2000),
+      });
+      camera.yaw =
+        this.#turnSpeed > 0
+          ? camera.yaw + Math.sign(delta) * Math.min(Math.abs(delta), this.#turnSpeed * dt)
+          : this.#targetYaw;
+    } else {
+      this.#turning = 0;
+      this.#turnSpeed = 0;
     }
     // Up into a tree, or down to the ring.
     const target = this.#tree ? 1 : 0;

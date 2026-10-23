@@ -2,7 +2,7 @@
 // see (docs/animation.md, "Head tracking" and "Procedural modifiers"). Every frame, before
 // their graphs run, each living actor's head track target is chosen (src/ai/head-tracking.ts:
 // what scripts, scenes, dialogue and AI asked through ScriptWorld.lookTargets, the player it
-// talks with, else the player near it and in front of it, else another actor it chose every
+// talks with, else the player or another actor near it and in front of it that it chose every
 // second or so: the story manager's Actor Hello as it turns to a new one), eased at the head
 // tracking speed, and given to its graph as the engine's channels do: bHeadTracking and
 // TargetLocation (the BSLookAtModifier's), camerafromx/y/z. Its graph gets its place in the
@@ -13,14 +13,14 @@ import {
   HEAD_TRACK_KINDS,
   HEAD_TRACK_SETTINGS,
   HeadTracker,
-  LOOK_CHOICE_SECONDS,
-  noticesPlayer,
   VANILLA_HEAD_TRACK,
   type HeadTrackKind,
   type HeadTrackSettings,
   type LookTarget,
   type Vec3,
 } from '../ai/head-tracking.ts';
+import { aiSettingsOf } from '../ai/ai-settings.ts';
+import { RaceSize } from '../ai/race-combat-records.ts';
 import type { BehaviorRuntime } from '../animation/behavior-runtime.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
@@ -60,13 +60,18 @@ export class ActorLooks {
   #settingsAsked = false;
   readonly #trackers = new Map<number, HeadTracker>();
   /**
-   * Each actor's choice of another actor to look at when nothing else is asked of it and the
-   * player is not near and in front (made every LOOK_CHOICE_SECONDS), and the seconds to the
-   * next choice.
+   * Each actor's choice of whom to look at when nothing else is asked of it (made every
+   * fUpdateDelaySecondsMin–Max), the seconds to the next choice, and how long a new one is held
+   * (fUpdateDelayNewTargetSecondsMin–Max).
    */
-  readonly #choices = new Map<number, { wait: number; chosen: number | undefined }>();
-  /** fAIMaxHeadTrackDistance: how near another actor must be to be looked at. */
-  #maxLookDistance = 400;
+  readonly #choices = new Map<number, { wait: number; chosen: number | undefined; hold: number }>();
+  /** The choices made this frame (at most iUpdateActorsPerFrame). */
+  #chosenThisFrame = 0;
+  /**
+   * Each actor's script look's clock (seconds): held fAIStayonScriptHeadtrack, below 0 its own
+   * look, at fAIRevertToScriptTracking the script's again.
+   */
+  readonly #scriptLooks = new Map<number, number>();
   /** The graphs given their world (and the engine's foot IK switch) already. */
   readonly #prepared = new WeakSet<BehaviorRuntime>();
 
@@ -81,6 +86,7 @@ export class ActorLooks {
   remove(reference: number): void {
     this.#trackers.delete(reference);
     this.#choices.delete(reference);
+    this.#scriptLooks.delete(reference);
   }
 
   /** Before the actors' graphs run (real seconds since the last frame). */
@@ -91,6 +97,7 @@ export class ActorLooks {
     }
     const camera = this.#options.camera()?.position;
     const all = [...actors];
+    this.#chosenThisFrame = 0;
     for (const staged of all) {
       const behavior = staged.placed.behavior;
       if (staged.dead || staged.visibility.hidden || !behavior) continue;
@@ -121,18 +128,18 @@ export class ActorLooks {
     const allowed =
       this.#options.session.scriptWorld.lookTargets.headTracking(reference) &&
       behavior.headTrackingAllowed;
-    const chosen = allowed ? this.#target(staged, head) : undefined;
+    const chosen = allowed ? this.#target(staged, dt) : undefined;
     const point = chosen && this.#point(chosen.target);
     return tracker.update(dt, head, forward, point, this.#settings, chosen?.kind === 'dialogue');
   }
 
   /**
-   * What an actor looks at: the highest kind asked for (ScriptWorld.lookTargets), the player
-   * it talks with (dialogue), else the player near it and in front of it (default).
+   * What an actor looks at: the highest kind asked for (ScriptWorld.lookTargets; a script's
+   * not all the time), the player it talks with (dialogue), else whom it chose (default).
    */
   #target(
     staged: StagedActor,
-    head: Vec3,
+    dt: number,
   ): { readonly target: LookTarget; readonly kind: HeadTrackKind } | undefined {
     const session = this.#options.session;
     const reference = staged.reference;
@@ -142,68 +149,114 @@ export class ActorLooks {
       if (!chosen || rank(chosen.kind) < rank('dialogue'))
         chosen = { target: PLAYER_REF, kind: 'dialogue' };
     }
+    if (chosen?.kind === 'script' && this.#restsFromScript(reference, dt)) chosen = undefined;
+    else if (chosen?.kind !== 'script') this.#scriptLooks.delete(reference);
     if (chosen) return chosen;
-    // The player near it and in front of it, once it has detected them; else the actor it chose.
-    if (this.#noticesPlayer(staged, head)) return { target: PLAYER_REF, kind: 'default' };
+    // Its own choice: the player (once it has detected them) or another actor.
     const other = this.#choices.get(reference)?.chosen;
+    if (other === PLAYER_REF) {
+      return this.#options.detects?.(reference, PLAYER_REF) !== false
+        ? { target: PLAYER_REF, kind: 'default' }
+        : undefined;
+    }
     const seen = other === undefined ? undefined : this.#options.actor(other);
     return seen && !seen.dead && !seen.visibility.hidden
       ? { target: seen.reference, kind: 'default' }
       : undefined;
   }
 
-  #noticesPlayer(staged: StagedActor, head: Vec3): boolean {
-    const eye = this.#world?.player?.eye;
-    return (
-      eye !== undefined &&
-      noticesPlayer(head, staged.heading, eye) &&
-      this.#options.detects?.(staged.reference, PLAYER_REF) !== false
-    );
+  /**
+   * A script's look is held fAIStayonScriptHeadtrack seconds; then the actor looks as it would
+   * itself until fAIRevertToScriptTracking (below 0) is reached, and the script's look comes
+   * back (observed in the original). Whether it rests from the script's look now.
+   */
+  #restsFromScript(reference: number, dt: number): boolean {
+    const settings = aiSettingsOf(this.#options.session);
+    let left = (this.#scriptLooks.get(reference) ?? settings.stayOnScriptHeadtrack) - dt;
+    if (left < settings.revertToScriptTracking) left = settings.stayOnScriptHeadtrack;
+    this.#scriptLooks.set(reference, left);
+    return left < 0;
+  }
+
+  /** How far an actor looks at others by itself (an extra large race's farther). */
+  #reaches(reference: number): { readonly others: number; readonly fromPlayer: number } {
+    const settings = aiSettingsOf(this.#options.session);
+    const large = this.#options.movers.raceSize(reference) === RaceSize.extraLarge;
+    return large
+      ? {
+          others: settings.maxLargeCreatureHeadTrackDistance,
+          fromPlayer: settings.maxLargeCreatureHeadTrackDistance,
+        }
+      : { others: settings.maxHeadTrackDistance, fromPlayer: settings.maxHeadTrackDistanceFromPC };
   }
 
   /**
-   * Every LOOK_CHOICE_SECONDS an actor chooses its default look (observed in the original):
-   * the player near it and in front, else another actor it detects within
-   * fAIMaxHeadTrackDistance in front of it (chooseLookActor). Turning to another actor than the
-   * one before is the story manager's Actor Hello (the dogs', soldiers' and market's greetings),
-   * unless either is in a scene. TODO(M13): two more conditions of the engine's on the actor
-   * are not read yet.
+   * Every fUpdateDelaySecondsMin–Max an actor chooses its own look (observed in the
+   * original; at most iUpdateActorsPerFrame actors a frame, the others the next): only within
+   * fAIMaxHeadTrackDistanceFromPC of the player (an extra large race:
+   * fAIMaxLargeCreatureHeadTrackDistance), whom it detects within fAIMaxHeadTrackDistance and
+   * 120° of its facing, the player as any other (chooseLookActor). A new one is kept
+   * fUpdateDelayNewTargetSecondsMin–Max while it still may be looked at. Turning to another
+   * actor than the one before is the story manager's Actor Hello (the dogs', soldiers' and
+   * market's greetings), unless either is in a scene. TODO(M13): two more conditions of the
+   * engine's on the actor are not read yet.
    */
   #choose(staged: StagedActor, all: readonly StagedActor[], dt: number): void {
     const reference = staged.reference;
+    const ini = this.#options.session.ini;
+    const min = ini.number('HeadTracking', 'fUpdateDelaySecondsMin');
+    const max = ini.number('HeadTracking', 'fUpdateDelaySecondsMax');
     let choice = this.#choices.get(reference);
     if (!choice) {
       // The first choices spread over the interval (not all on one frame).
-      choice = { wait: Math.random() * LOOK_CHOICE_SECONDS.max, chosen: undefined };
+      choice = { wait: Math.random() * max, chosen: undefined, hold: 0 };
       this.#choices.set(reference, choice);
     }
     choice.wait -= dt;
+    choice.hold -= dt;
     if (choice.wait > 0) return;
-    const { min, max } = LOOK_CHOICE_SECONDS;
+    if (this.#chosenThisFrame >= ini.number('HeadTracking', 'iUpdateActorsPerFrame')) return;
+    this.#chosenThisFrame++;
     choice.wait = min + Math.random() * (max - min);
     const head = headPosition(staged.placed);
-    let chosen: number | undefined;
-    if (this.#noticesPlayer(staged, head)) chosen = PLAYER_REF;
-    else {
-      const detects = this.#options.detects;
-      chosen = chooseLookActor(
-        head,
-        staged.heading,
-        all
-          .filter(
-            (other) =>
-              other !== staged &&
-              !other.dead &&
-              !other.visibility.hidden &&
-              detects?.(reference, other.reference) !== false,
-          )
-          .map((other) => ({ reference: other.reference, head: headPosition(other.placed) })),
-        this.#maxLookDistance,
-      );
-    }
+    const reach = this.#reaches(reference);
+    const eye = this.#world?.player?.eye;
     const before = choice.chosen;
+    let chosen: number | undefined;
+    if (
+      !eye ||
+      Math.hypot(eye[0] - head[0], eye[1] - head[1], eye[2] - head[2]) <= reach.fromPlayer
+    ) {
+      const detects = this.#options.detects;
+      const candidates = all
+        .filter(
+          (other) =>
+            other !== staged &&
+            !other.dead &&
+            !other.visibility.hidden &&
+            detects?.(reference, other.reference) !== false,
+        )
+        .map((other) => ({ reference: other.reference, head: headPosition(other.placed) }));
+      if (eye && detects?.(reference, PLAYER_REF) !== false) {
+        candidates.push({ reference: PLAYER_REF, head: eye });
+      }
+      // A new choice held a while stays while it still may be looked at.
+      const kept =
+        choice.hold > 0 && before !== undefined
+          ? candidates.filter((candidate) => candidate.reference === before)
+          : [];
+      chosen =
+        chooseLookActor(head, staged.heading, kept, reach.others) ??
+        chooseLookActor(head, staged.heading, candidates, reach.others);
+    }
     choice.chosen = chosen;
-    if (chosen === undefined || chosen === before || chosen === PLAYER_REF) return;
+    if (chosen === undefined || chosen === before) return;
+    choice.hold =
+      ini.number('HeadTracking', 'fUpdateDelayNewTargetSecondsMin') +
+      Math.random() *
+        (ini.number('HeadTracking', 'fUpdateDelayNewTargetSecondsMax') -
+          ini.number('HeadTracking', 'fUpdateDelayNewTargetSecondsMin'));
+    if (chosen === PLAYER_REF) return;
     const runtime = this.#options.session.scriptsReady;
     if (!runtime) return;
     if (runtime.scenes.sceneOf(reference) !== undefined) return;
@@ -260,6 +313,5 @@ export class ActorLooks {
     for (const name of HEAD_TRACK_SETTINGS)
       read[name] = settings.number(name) ?? VANILLA_HEAD_TRACK[name];
     this.#settings = { ...VANILLA_HEAD_TRACK, ...read };
-    this.#maxLookDistance = settings.number('fAIMaxHeadTrackDistance') ?? this.#maxLookDistance;
   }
 }

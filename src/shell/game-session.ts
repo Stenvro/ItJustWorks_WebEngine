@@ -882,6 +882,7 @@ export class GameSession {
       if (triggerDelay !== undefined) runtime.triggerVolumes.delayMs = triggerDelay;
       const grids = this.ini.lookup('General', 'uGridsToLoad');
       if (grids !== undefined) runtime.gridsToLoad = grids;
+      runtime.magic.cloakInterval = this.ini.number('General', 'fCloakEffectUpdateInterval');
       await runtime.newGame((what) => {
         if (runtime.retired) return;
         this.scriptsProgress = what;

@@ -843,8 +843,17 @@ dialogue, procedure); the highest set is looked at (TODO(M13): the order is the 
 Scripts' Actor.SetLookAt and ClearLookAt are 'script'; scenes' looks, speakers talking to
 someone and the actor talking with the player are 'dialogue'; other code asks through
 `session.scriptWorld.lookTargets.lookAt(actor, target, kind)` (a reference or a world point;
-undefined lets go). Without any, an actor looks at the player within 512 units in front of it
-once it detects them (detection: docs/ai.md, "Detection"; TODO(M13): the engine's rule).
+undefined lets go). A script's look is held fAIStayonScriptHeadtrack (20 s), then the actor's
+own for −fAIRevertToScriptTracking (3 s), then the script's again. Without any, an actor
+chooses its own look (observed in the original): every [HeadTracking]
+fUpdateDelaySecondsMin–Max (1–1.5 s), at most iUpdateActorsPerFrame (10) actors a frame, only
+within fAIMaxHeadTrackDistanceFromPC (2000; an extra large race fAIMaxLargeCreatureHeadTrackDistance, 12000) of the player, the player or another actor it detects (detection: docs/ai.md,
+"Detection") within fAIMaxHeadTrackDistance (400; extra large 12000) and 120° of its facing,
+the nearest; a new one held fUpdateDelayNewTargetSecondsMin–Max (3–8 s) while it still may be
+looked at. fAIBestHeadTrackDistance and fAIInteriorHeadTrackMult the engine never reads.
+TODO(M13): how the engine scores the candidates (here the nearest), its look along the path
+(fMin/MaxPathLookAtPointDist, fPathLookAtPointTime), a package target's look
+(fAIActorPackTargetHeadTrackMod).
 Actor.SetHeadTracking(false)
 and the graph's HeadTrackingOff (graphs' and clips' events; actorresponse.txt's
 HeadTrackingOffHandler; HeadTrackingOn again) stop it. The point looked at turns towards the

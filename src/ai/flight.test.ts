@@ -18,10 +18,12 @@ import {
   landingApproach,
   maneuverSeconds,
   orbitPoint,
+  orbitSeconds,
   readFlightSettings,
   steerFlight,
   takesOff,
   withinReach,
+  type FlightSituation,
 } from './flight.ts';
 
 const f32s = (...values: number[]): Uint8Array => new Uint8Array(Float32Array.from(values).buffer);
@@ -89,19 +91,23 @@ describe('the flight settings', () => {
 });
 
 describe('the flight maneuvers (CSTY CSFL)', () => {
+  const settings = FLIGHT_DEFAULTS;
+  const choose = (style: CombatStyleFlight, situation: FlightSituation, random: () => number) =>
+    chooseFlightManeuver(style, situation, random, settings);
+
   it('tries its style’s chances in turn: dive bomb, hover, perch, ground attack, else orbit', () => {
     const situation = { canLand: true, perch: true };
-    expect(chooseFlightManeuver(CS_DRAGON, situation, sequence(0.3))).toBe('diveBomb');
-    expect(chooseFlightManeuver(CS_DRAGON, situation, sequence(0.5, 0.4))).toBe('hover');
-    expect(chooseFlightManeuver(CS_DRAGON, situation, sequence(0.5, 0.6, 0.4))).toBe('perch');
-    expect(chooseFlightManeuver(CS_DRAGON, situation, sequence(0.5, 0.6, 0.6, 0.8))).toBe('land');
-    expect(chooseFlightManeuver(CS_DRAGON, situation, sequence(0.5, 0.6, 0.6, 0.9))).toBe('orbit');
+    expect(choose(CS_DRAGON, situation, sequence(0.3))).toBe('diveBomb');
+    expect(choose(CS_DRAGON, situation, sequence(0.5, 0.4))).toBe('hover');
+    expect(choose(CS_DRAGON, situation, sequence(0.5, 0.6, 0.4))).toBe('perch');
+    expect(choose(CS_DRAGON, situation, sequence(0.5, 0.6, 0.6, 0.8))).toBe('land');
+    expect(choose(CS_DRAGON, situation, sequence(0.5, 0.6, 0.6, 0.9))).toBe('orbit');
   });
 
   it('perches only with a perch near and lands only where it can', () => {
     const none = { canLand: false, perch: false };
     // The chances that would have it perch and land pass it by.
-    expect(chooseFlightManeuver(CS_DRAGON, none, sequence(0.5, 0.6, 0.1, 0.1))).toBe('orbit');
+    expect(choose(CS_DRAGON, none, sequence(0.5, 0.6, 0.1, 0.1))).toBe('orbit');
   });
 
   it('never hovers or lands with a style that does not (csDragonNoLanding)', () => {
@@ -109,7 +115,7 @@ describe('the flight maneuvers (CSTY CSFL)', () => {
     let random = 0;
     const counts = new Map<string, number>();
     for (let i = 0; i < 1000; i++) {
-      const maneuver = chooseFlightManeuver(noLanding, { canLand: true, perch: false }, () => {
+      const maneuver = choose(noLanding, { canLand: true, perch: false }, () => {
         random = (random * 9301 + 49297) % 233280;
         return random / 233280;
       });
@@ -123,24 +129,46 @@ describe('the flight maneuvers (CSTY CSFL)', () => {
   });
 
   it('breathes on a pass by its flying attack chance', () => {
-    expect(flyingAttack(CS_DRAGON, () => 0.7)).toBe(true);
-    expect(flyingAttack(CS_DRAGON, () => 0.8)).toBe(false);
+    expect(flyingAttack(CS_DRAGON, () => 0.7, settings)).toBe(true);
+    expect(flyingAttack(CS_DRAGON, () => 0.8, settings)).toBe(false);
   });
 
-  it('times a hover, a perch attack and a ground fight between the settings by the style', () => {
+  it('times a hover, a perch attack and a ground fight from the least up to the style’s time', () => {
     const settings = FLIGHT_DEFAULTS;
-    const even = (): number => 0.5;
-    // Hover time 0.42 of fCombatHoverTimeMin (5.5) .. max.
-    expect(maneuverSeconds('hover', CS_DRAGON, settings, even)).toBeCloseTo(
-      settings.hoverTimeMin + (settings.hoverTimeMax - settings.hoverTimeMin) * 0.42,
+    const longest = (): number => 1;
+    // Hover time 0.42 on fCombatHoverTimeMin (5.5) .. Max (15): up to 9.49 s.
+    const hover = settings.hoverTimeMin + (settings.hoverTimeMax - settings.hoverTimeMin) * 0.42;
+    expect(maneuverSeconds('hover', CS_DRAGON, settings, longest)).toBeCloseTo(hover);
+    expect(maneuverSeconds('hover', CS_DRAGON, settings, () => 0)).toBe(settings.hoverTimeMin);
+    expect(maneuverSeconds('hover', CS_DRAGON, settings, () => 0.5)).toBeCloseTo(
+      (settings.hoverTimeMin + hover) / 2,
     );
-    // Ground attack time 1: the longest.
-    expect(maneuverSeconds('ground', CS_DRAGON, settings, even)).toBeCloseTo(
+    // Ground attack time 1: up to the longest.
+    expect(maneuverSeconds('ground', CS_DRAGON, settings, longest)).toBeCloseTo(
       settings.groundAttackTimeMax,
     );
-    // A style time of 0: the least.
+    // A style time of 0: the least, whatever the roll.
     const quick = flight([0.5, 0.5, 0.5, 0, 0, 0.5, 0, 0.75]);
-    expect(maneuverSeconds('perch', quick, settings, even)).toBe(settings.perchAttackTimeMin);
+    expect(maneuverSeconds('perch', quick, settings, longest)).toBe(settings.perchAttackTimeMin);
+  });
+
+  it('orbits shorter the more offensive it is (fCombatOrbitTimeMin .. Max)', () => {
+    const settings = FLIGHT_DEFAULTS;
+    // Up to 12 s at offensive 0, 3 s at 1; at random from 3 s.
+    expect(orbitSeconds(0, settings, () => 1)).toBeCloseTo(12);
+    expect(orbitSeconds(1, settings, () => 1)).toBeCloseTo(3);
+    expect(orbitSeconds(0.5, settings, () => 1)).toBeCloseTo(7.5);
+    expect(orbitSeconds(0.5, settings, () => 0)).toBeCloseTo(3);
+  });
+
+  it('reads the chances on their settings’ scale', () => {
+    const scaled = readFlightSettings((name) =>
+      name === 'fCombatDiveBombChanceMax' ? 0.5 : undefined,
+    );
+    // Dive bomb 0.36 on 0 .. 0.5: 0.18.
+    const situation = { canLand: true, perch: true };
+    expect(chooseFlightManeuver(CS_DRAGON, situation, sequence(0.2, 0), scaled)).toBe('hover');
+    expect(chooseFlightManeuver(CS_DRAGON, situation, sequence(0.17), scaled)).toBe('diveBomb');
   });
 
   it('takes off once its ground time is over or its target is beyond its orbit', () => {

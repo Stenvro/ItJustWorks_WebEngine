@@ -20,6 +20,8 @@ export interface MoveRequest {
    * (strafing); standing, it turns to it. Undefined: it faces the way it goes.
    */
   readonly face?: number | undefined;
+  /** Its speed against its gait's (a follower matching its leader's); 1 without. */
+  readonly speedMult?: number | undefined;
 }
 
 /**
@@ -170,7 +172,8 @@ export function steer(
   const speeds = request.gait === 'walk' ? type.walk : type.run;
   // The way against the facing: x right, y forward.
   const against = angleBetween(next, way);
-  let speed = directionalSpeed(speeds, Math.sin(against), Math.cos(against));
+  let speed =
+    directionalSpeed(speeds, Math.sin(against), Math.cos(against)) * (request.speedMult ?? 1);
   if (request.face === undefined) speed *= Math.max(0, Math.cos(against));
   return {
     velocity: [(direction[0] / length) * speed, (direction[1] / length) * speed],

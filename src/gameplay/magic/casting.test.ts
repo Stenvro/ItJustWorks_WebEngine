@@ -4,13 +4,16 @@ import {
   advanceCast,
   beginCast,
   CASTING_DEFAULTS,
+  CASTING_SETTING_NAMES,
   castSkillUses,
   castStartEvent,
   chargeSeconds,
   effectItemCost,
   itemBaseCost,
+  lesserPowerReady,
   magickaCost,
   powerReady,
+  regeneratesWhileCasting,
   releaseCast,
   skillCostFactor,
   staffCastsLeft,
@@ -60,10 +63,23 @@ describe('magicka cost', () => {
     expect(skillCostFactor(15, true)).toBeCloseTo(1 - 0.0375 ** 0.65, 9);
     // UESP: at 100 a spell costs about 40 % less.
     expect(skillCostFactor(100, true)).toBeCloseTo(0.594, 3);
-    // NPCs: fMagicCasterSkillCostMult × (skill / 100)^fMagicSkillCostScale.
-    expect(skillCostFactor(100, false)).toBeCloseTo(0.5, 9);
-    expect(skillCostFactor(25, false)).toBeCloseTo(0.75, 9);
     expect(skillCostFactor(1000, true)).toBe(0);
+    // The skill counts as a whole number (the engine's).
+    expect(skillCostFactor(15.9, true)).toBe(skillCostFactor(15, true));
+  });
+
+  it("NPCs pay (1 − (0.005 × skill)^0.5) × 0.5 (the engine's formula, observed in the original)", () => {
+    expect(skillCostFactor(0, false)).toBeCloseTo(0.5, 9);
+    // Skill 50: (1 − 0.5) × 0.5, a quarter.
+    expect(skillCostFactor(50, false)).toBeCloseTo(0.25, 9);
+    expect(skillCostFactor(100, false)).toBeCloseTo((1 - Math.sqrt(0.5)) * 0.5, 9);
+    expect(skillCostFactor(200, false)).toBe(0);
+    expect(skillCostFactor(300, false)).toBe(0);
+    // The player's Mult (fMagicCasterPCSkillCostMult) scales theirs.
+    expect(skillCostFactor(100, true, { ...CASTING_DEFAULTS, pcSkillCostMult: 2 })).toBeCloseTo(
+      2 * (1 - 0.25 ** 0.65),
+      9,
+    );
   });
 
   it('dual casting costs fMagicDualCastingCostMult times as much', () => {
@@ -138,5 +154,27 @@ describe('staffs and powers', () => {
     expect(powerReady(undefined, 3)).toBe(true);
     expect(powerReady(2.5, 3.2)).toBe(false);
     expect(powerReady(2.5, 3.5)).toBe(true);
+  });
+});
+
+describe("lesser powers' cooldown and magicka while casting", () => {
+  it('casts a lesser power again fMagicLesserPowerCooldownTimer seconds after', () => {
+    expect(lesserPowerReady(undefined, 0)).toBe(true);
+    expect(lesserPowerReady(10, 12.9)).toBe(false);
+    expect(lesserPowerReady(10, 13)).toBe(true);
+    expect(lesserPowerReady(10, 11, { lesserPowerCooldown: 1 })).toBe(true);
+  });
+
+  it("holds the player's magicka while casting, not an NPC's (bRegenNPCMagickaDuringCast)", () => {
+    expect(regeneratesWhileCasting(true)).toBe(false);
+    expect(regeneratesWhileCasting(false)).toBe(true);
+    expect(regeneratesWhileCasting(false, { regenNpcMagickaDuringCast: 0 })).toBe(false);
+  });
+
+  it('names each setting with its fallback', () => {
+    expect(CASTING_SETTING_NAMES.npcSkillCostBase).toBe('fMagicCasterSkillCostBase');
+    expect(CASTING_DEFAULTS.npcSkillCostBase).toBe(0.005);
+    expect(CASTING_SETTING_NAMES.touchDistance).toBe('fMagicDefaultTouchDistance');
+    expect(CASTING_DEFAULTS.touchDistance).toBe(256);
   });
 });
