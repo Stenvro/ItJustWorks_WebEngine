@@ -90,6 +90,15 @@ const CORPSE_SECONDS = 5;
 /** A corpse's ragdoll with a body still awake this long (seconds) has not come to rest. */
 const RESTLESS_SECONDS = 20;
 
+/** A corpse's ragdoll as the detail says it: its bodies awake, asleep, keyframed; dying. */
+function ragdollState(state: readonly number[] | undefined, dying: boolean): string {
+  const [awake = 0, asleep = 0, keyframed = 0] = state ?? [];
+  const bodies = state
+    ? `${String(awake)} awake, ${String(asleep)} asleep, ${String(keyframed)} keyframed`
+    : 'none';
+  return dying ? `${bodies}; its graph still plays its death` : bodies;
+}
+
 /** How high a node of a model-space pose (16 floats per node) is in the world. */
 function headHeight(worlds: Float32Array, node: number, world: ArrayLike<number>): number {
   const at = node * 16;
@@ -901,12 +910,21 @@ export class QaHarness {
     const seen = new Set<number>();
     // The awake simulated bodies of each actor's ragdoll.
     const awake = new Map<number, number>();
+    // Each actor's ragdoll bodies by state (simulated awake, asleep, keyframed), for the detail.
+    const states = new Map<number, [number, number, number]>();
     const physics = world.play?.physics;
     physics?.world.bodies.forEach((body) => {
-      if (!body.isDynamic() || body.isSleeping() || body.numColliders() === 0) return;
+      if (body.numColliders() === 0 || body.isFixed()) return;
       const owner = physics.ownerOf(body.collider(0));
-      if (owner?.kind === 'actor')
+      if (owner?.kind !== 'actor') return;
+      const state = states.get(owner.reference) ?? [0, 0, 0];
+      states.set(owner.reference, state);
+      if (!body.isDynamic()) state[2]++;
+      else if (body.isSleeping()) state[1]++;
+      else {
+        state[0]++;
         awake.set(owner.reference, (awake.get(owner.reference) ?? 0) + 1);
+      }
     });
     for (const staged of stage.all()) {
       if (!(staged.dead || staged.placed.actor.startsDead) || staged.visibility.hidden) continue;
@@ -976,7 +994,7 @@ export class QaHarness {
         position: [staged.position[0], staged.position[1], staged.position[2]],
         cell: staged.cell,
         context,
-        detail: `dead, but its head is ${Math.round(span)} units up (${Math.round((100 * span) / (corpse.rest * scale))} % of its standing height): no ragdoll laid it down`,
+        detail: `dead, but its head is ${Math.round(span)} units up (${Math.round((100 * span) / (corpse.rest * scale))} % of its standing height): no ragdoll laid it down (its bodies: ${ragdollState(states.get(reference), stage.graphEvents.dying(reference))})`,
         values: { head: Math.round(span), standing: Math.round(corpse.rest * scale) },
         severity: span,
         duration: corpse.episode.duration,
