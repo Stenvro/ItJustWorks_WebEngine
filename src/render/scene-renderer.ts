@@ -45,6 +45,7 @@ import type {
   PartMaterial,
   VertexLayout,
 } from './model-data.ts';
+import { LightningSimulation } from './lightning.ts';
 import type { ParticleSystemData } from './particle-data.ts';
 import type { PlacedPart } from './raycast.ts';
 import { REFRACTION_FORMAT } from './refraction.ts';
@@ -2329,7 +2330,10 @@ export class SceneRenderer {
         particles.push({
           system,
           simulation:
-            instance.particleSource?.(system.data) ?? new ParticleSimulation(system.data, seed),
+            instance.particleSource?.(system.data) ??
+            (system.data.lightning
+              ? new LightningSimulation(system.data, seed)
+              : new ParticleSimulation(system.data, seed)),
           instanceWorld: instance.world,
           animation,
           ...(graph && { graph }),
@@ -3274,7 +3278,10 @@ export class SceneRenderer {
     return sampler;
   }
 
-  /** Instanced quads (or strip segments) with the effect shader and the system's blending. */
+  /**
+   * Instanced quads (or strip segments, or lightning's ribbons) with the effect shader and the
+   * system's blending.
+   */
   #particlePipeline(system: ParticleSystemData): GPURenderPipeline {
     const material = system.material;
     const flags1 = material?.flags1 ?? SLSF1_ZBUFFER_TEST;
@@ -3283,7 +3290,7 @@ export class SceneRenderer {
     // Blended particles never write depth: their quads overlap unsorted within the system.
     const depthWrite = blend === undefined && (flags2 & SLSF2_ZBUFFER_WRITE) !== 0;
     const depthTest = (flags1 & SLSF1_ZBUFFER_TEST) !== 0;
-    const entryPoint = system.strip ? 'vs_strip' : 'vs_particle';
+    const entryPoint = system.lightning ? 'vs_ribbon' : system.strip ? 'vs_strip' : 'vs_particle';
     const key = ['particle', entryPoint, JSON.stringify(blend), depthWrite, depthTest].join('|');
     let pipeline = this.#pipelines.get(key);
     if (!pipeline) {
