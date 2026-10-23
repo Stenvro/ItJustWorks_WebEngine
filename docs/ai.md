@@ -656,24 +656,31 @@ across, 0; `fHorseOffsetZ` up, 0, on the horse's own height), turned as the cart
 character controller moved there too: a horse is always put in the shafts, wherever it stood
 (the opening's second horse stands 411 ahead in the editor). Then the cart is joined to it:
 
-- every simulated body of the cart weighs `fMass:Cart` (130 kg; the prisoner carriage's body
-  was authored at 12,000);
+- every simulated body of the cart weighs `fMass:Cart` (130 kg). Havok's setMass changes only
+  the mass: the inertia stays as the model has it (the prisoner carriage's body was authored at
+  12,000 kg with an inertia of 23,190 kg·m², which it keeps);
 - the four wheels (WheelBackLeft, WheelBackRight, WheelFrontLeft, WheelFrontRight, on their own
-  hinges) get `fFriction:Cart` (100), an angular damping of `fWheelAngDamp:Cart` (0.01) and a
-  small linear damping, and an action pulls each down with `fGravMult:Cart` times gravity on top
-  of the world's (3.5: they hold the road);
-- an action keeps the cart's body from tipping over: when its up leans more than 0.71 to a side,
-  or points down, it gets an angular impulse of `fTipImpulse:Cart` (500, Havok units) about its
-  forward axis (inferred: in the direction that rights it; the engine takes the sign from the
-  up's world x);
-- a keyframed body (a small sphere in the cart's collision system, so the two never touch)
-  follows the horse's spine node (`sHorseConnect:Cart`, HorseSpine2) and holds the cart's
+  hinges) get `fFriction:Cart` (100; the carriage's front wheels were authored with 0.5), an
+  angular damping of `fWheelAngDamp:Cart` (0.01), a linear damping of 0.005 and an allowed
+  penetration of 0.3 Havok units (21 game units: they are swept only when a step would sink them
+  deeper), and an action that every step pushes each down with its mass times `fGravMult:Cart`
+  times 9.81 m/s², on top of the world's gravity (3.5: they hold the road);
+- the FrontBar gets a linear and angular damping of 0.01;
+- an action keeps the cart's body from tipping over: it looks at the world's up from the body;
+  when that leans more than 0.71 towards the body's side (the body's right axis rises or sinks
+  that far), or the body is upside down, it gives the body an angular impulse of
+  `fTipImpulse:Cart` (500, Havok units) about the body's own forward axis, turning the side
+  that is up down;
+- a keyframed body follows the horse's spine node (`sHorseConnect:Cart`, HorseSpine2), placed
+  where the node is in the world and turned as it is: a sphere of 0.057 Havok units (4 game
+  units) on the BIPED_NO_CC layer, 130 kg, keyframed. The whole cart is put in the horse's
+  collision group, so the cart, the horse and that body never touch. The body holds the cart's
   FrontBar (its shafts and front axle) by a prismatic constraint: the FrontBar's point
   (`fCartPivotX/Y/Z:Cart`, 0, 3, 0.7 Havok units: 210 ahead and 49 up of it) on the spine
   (`fHorsePivot`, its origin), sliding along the FrontBar's up tilted `fCartRot1:Cart` (10°)
-  between `fCartLimitMin/Max:Cart` (±0.75: ±52 units), turning as the spine turns. The cart's
-  body hangs on the FrontBar by the model's own limited hinge (±40° about the vertical), so it
-  turns behind the horse as a wagon does, its wheels rolling on the ground;
+  between `fCartLimitMin/Max:Cart` (±0.75: ±52 units), held across that axis and in all three
+  turns. The cart's body hangs on the FrontBar by the model's own limited hinge (±40° about the
+  vertical), so it turns behind the horse as a wagon does, its wheels rolling on the ground;
 - the horse's harness bones (`sHarnessBoneLeft/Right:Cart`) are taken off the horse and hung
   on the cart's pole (`sHarnessBoneCart:Cart`, FrontHorseCarriage01, under the FrontBar) at
   ∓`fTetherOffsetX` (50), `fTetherOffsetY` (163), `fTetherOffsetZ` (13): the harness mesh,
@@ -681,18 +688,76 @@ character controller moved there too: a horse is always put in the shafts, where
   frame the pole turns (the shortest turn of its length, +y) to point from where it hangs at
   the spine raised by `fPoleZOffset:Cart` (-20).
 
-Here the cart is simulated so with Rapier once its horse stands where the tether put it and the
-ground under the cart is in place (until then its bodies wait). Two things differ, as Rapier's
-joints are stiff where Havok's give way (TODO(M13), how far they give is not known): the
-tether's turns are held by a spring back to how the two stood when hitched (about 3 a second,
-nearly critically damped) instead of outright (held, the rear wheels hung above the ground on
-any slope the horse did not share, and the horse turning on the spot at the hairpin of
-Helgen's road threw the cart over); and the slide axis on the spine is taken from how the
-FrontBar and the spine stand when hitched (read as the engine gives it, the spine's y turned by
-`fCartRot2:Cart`, our spine's y points down and the cart was turned upside down). The cart does
-not touch the actors near it (its horse, its riders, those walking by): their controllers keep
-them off it, but their keyframed bodies, moved into it at any speed, threw it. TODO(M13): how
-strongly the engine's characters push simulated objects.
+Here the cart is simulated so with Rapier (`src/ai/cart-tether.ts`; the physics:
+[physics.md](physics.md#tethered-carts)) once its horse stands where the tether put it and the
+ground under the cart is in place (until then its bodies wait where it was placed). The cart
+does not touch the actors near it (its horse, its riders, those walking by): their controllers
+keep them off it, but their keyframed bodies, moved into it at any speed, threw it. TODO(M13):
+how strongly the engine's characters push simulated objects.
+
+**The ride.** The carts bounced like mad on the opening's road. Measured every physics step
+over the whole ride to Helgen (both carts, about 4 minutes each), with the bounce as the cart
+body's vertical speed against its average over a second (the road's own rise and fall taken
+out; the ground under the horse's feet alone gives 7.4 units a second):
+
+|                                              | before              | now                   |
+| -------------------------------------------- | ------------------- | --------------------- |
+| bounce (RMS, units a second)                 | 15–23               | 7.9                   |
+| bounce at most                               | 211–404             | 82–106                |
+| at the hairpin (RMS / at most)               | 12–27 / 113–338     | 8–9 / 69–72           |
+| vertical acceleration (RMS, units a second²) | 950–1,290           | 560–590               |
+| pitch rate (RMS / at most, radians a second) | 0.12–0.19 / 1.8–3.4 | 0.08 / 0.8–1.2        |
+| roll rate (RMS / at most)                    | 0.15–0.19 / 2.3–2.9 | 0.10 / 0.7–0.8        |
+| the tether's turn away from its frame (RMS)  | 15–19°              | (pitch and roll free) |
+
+The causes, each measured by replaying a recorded ride (the horse's spine every step) over the
+road's collision in Node:
+
+- **The spine jumped.** A horse behind the camera is animated ten times a second, and a frame
+  of several physics steps moves it once: the keyframed body jumped to each new pose in one
+  step and yanked the cart ten times a second. The engine interpolates an actor's pose between
+  its graph's updates; the tether now follows the spine so (`PoseEasing`: each new pose eased
+  into over the time the last one took, from where it was shown). This alone halved the bounce.
+- **The frame fought the wheels.** The joint's frame was taken from how the FrontBar and the
+  spine stood when hitched (the horse's idle leaned its spine up to 8° sideways), and the spine
+  stood upright on a road sloping down up to 25° (the horse leans with the ground, but only as
+  drawn); held by the tether's turns, the cart was pressed into the road or lifted off it on
+  every slope (15° from the frame on average, a wheel in the air on every step). Now the frame
+  is the spine's rest (the cart turned as the horse standing), the spine leans as the horse is
+  drawn leaning (eased: `TETHER_LEAN_EASE`, 0.3 s; the drawn lean jumps from one ground
+  triangle's normal to the next), and the cart's pitch and roll are left to its wheels; its
+  heading is held by a spring (`TETHER_TURN_SPRING`). Held outright (as the engine's joint
+  holds them), Rapier's stiff joint threw the cart off the road whatever the spine did.
+- **The start.** The cart waited where it was placed, a little above the ground, and fell onto
+  it as it was let go, Rapier pushing it back out at 100 units a second; it now starts as the
+  engine's settled cart would (its first half second only moved out of what it overlaps).
+- **The tilt prevention never acted**: it compared the body's up with its own right (always
+  square). It reads the body's right's rise now, as the engine does.
+
+What did not matter (the same replay): the wheels' continuous collision, the landscape's
+internal edges (Rapier's fix for edge bumps), 16 solver iterations instead of 8, restitution (a
+wheel's 0.4 against the landscape's none is none), and the steps per frame: with the browser's
+CPU slowed three times every frame took the 3 steps `uMaxNumPhysicsStepsPerUpdate` allows, and
+the cart bounced 8.7–10.8 units a second (17 seconds of the ride), as at one step a frame (the
+spine's pose, moved once a frame, is eased over the frame's steps). Keeping the inertia as the
+engine does made the cart rock 40% more here: the engine holds the body's attitude by the
+tether, here the wheels do, and a body as heavy to turn as 12,000 kg on a mass of 130 follows
+them late; so the inertia is scaled with the mass. TODO(M13): Havok's solver lets the held
+turns give way to the wheels; how far is not known.
+
+`node tools/cart-ride.ts` drives a cart behind its horse over the real collision of its road
+(the horse walking its linked references, its spine at rest): MQ101's carts down past the
+hairpin (their links end before Helgen) bounce 8.8 units a second (7.0–12.3 per 20 s), their
+pitch rate at most 0.69 radians a second, their up never below 0.895;
+tests/vehicles.int.test.ts rides the first cart's first 40 seconds.
+
+**Its riders** sit still on it: each frame their 3D is placed at the cart's root as it is drawn
+(0.00 units and 0.00° apart for each of the nine riders in every frame measured; the player,
+carried in the physics steps, is within the step's 2 units). **The horses' gait** matches
+the cart's speed: the horse walks at 125 units a second, as fast as its WalkForward clip moves
+(125.1); TODO(M13): its graph blends TrotForward in now and then (its Direction flips between
+0 and 1) and its spine sways up to 10 units sideways and 14 forward and back, which the cart
+feels; that is the horse's animation's.
 
 A door along the cart or just ahead of it is one its horse comes to: it opens to the horse as
 any door on an actor's way, and an actor's door is not shut while a cart is still in it.

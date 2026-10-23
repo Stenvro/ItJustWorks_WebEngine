@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   AT_ROOT,
+  blendPose,
+  easeTowards,
   hitchPlace,
   inVehicle,
+  leaningRoot,
   movedBy,
   poleTurn,
+  PoseEasing,
   riderEvent,
+  TETHER_LEAN_EASE,
   tetherJoint,
   tipImpulse,
   type CartSettings,
@@ -75,12 +80,61 @@ describe('tethering a cart', () => {
   });
 
   it('rights a cart tipping over, and leaves one that stands', () => {
-    expect(tipImpulse([0, 0, 1], [1, 0, 0], CART)).toBeUndefined();
-    expect(tipImpulse([0.5, 0, 0.87], [1, 0, 0], CART)).toBeUndefined();
-    // Leaning right: turned back to the left; upside down too.
-    expect(tipImpulse([0.8, 0, 0.6], [1, 0, 0], CART)).toBe(-500);
-    expect(tipImpulse([-0.8, 0, 0.6], [1, 0, 0], CART)).toBe(500);
-    expect(tipImpulse([0.1, 0, -1], [1, 0, 0], CART)).toBe(-500);
+    // Its right axis level, or rising and sinking up to 0.71.
+    expect(tipImpulse(0, 1, CART)).toBeUndefined();
+    expect(tipImpulse(0.5, 0.87, CART)).toBeUndefined();
+    expect(tipImpulse(-0.7, 0.71, CART)).toBeUndefined();
+    // Its right side up (lying on its left): a positive turn about its forward axis takes that
+    // side down; lying on its right, a negative one; upside down too.
+    expect(tipImpulse(0.8, 0.6, CART)).toBe(500);
+    expect(tipImpulse(-0.8, 0.6, CART)).toBe(-500);
+    expect(tipImpulse(-0.1, -0.99, CART)).toBe(-500);
+  });
+});
+
+describe("following the horse's spine", () => {
+  const at = (x: number): Float32Array =>
+    Float32Array.of(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1);
+
+  it('eases into each new pose over the time the last one took', () => {
+    const easing = new PoseEasing();
+    const step = 1 / 60;
+    expect(easing.step(at(0), step)[12]).toBe(0);
+    // Six steps on (an update ten times a second) the pose moves 6: shown a sixth of the way
+    // each step, there after six.
+    for (let i = 0; i < 5; i++) easing.step(at(0), step);
+    const shown = [1, 2, 3, 4, 5, 6].map(() => easing.step(at(6), step)[12] ?? 0);
+    shown.forEach((x, i) => {
+      expect(x).toBeCloseTo(i + 1, 4);
+    });
+    // Updated every step from then on, it follows at once.
+    easing.step(at(7), step);
+    expect(easing.step(at(8), step)[12]).toBeCloseTo(8, 4);
+  });
+
+  it('keeps a blended pose rigid', () => {
+    const turned = Float32Array.of(0, 1, 0, 0, -1, 0, 0, 0, 0, 0, 1, 0, 10, 0, 0, 1);
+    const half = blendPose(at(0), turned, 0.5);
+    expect(Math.hypot(half[0] ?? 0, half[1] ?? 0, half[2] ?? 0)).toBeCloseTo(1);
+    expect(Math.hypot(half[4] ?? 0, half[5] ?? 0, half[6] ?? 0)).toBeCloseTo(1);
+    expect((half[0] ?? 0) * (half[4] ?? 0) + (half[1] ?? 0) * (half[5] ?? 0)).toBeCloseTo(0);
+    expect(half[12]).toBeCloseTo(5);
+  });
+
+  it('leans as the horse leans, easing towards it', () => {
+    const slope: [number, number, number] = [0, -Math.sin(0.3), Math.cos(0.3)];
+    let lean = easeTowards(undefined, [0, 0, 1], 1 / 60, TETHER_LEAN_EASE);
+    for (let i = 0; i < 18; i++) lean = easeTowards(lean, slope, 1 / 60, TETHER_LEAN_EASE);
+    // After 0.3 s about two thirds of the way.
+    const angle = Math.acos(lean[2]);
+    expect(angle).toBeGreaterThan(0.17);
+    expect(angle).toBeLessThan(0.21);
+    // Its root: facing its heading (north), pitched with the lean, at its feet.
+    const root = leaningRoot([1, 2, 3], 0, slope, 1);
+    expect(root[5]).toBeCloseTo(Math.cos(0.3));
+    expect(root[6]).toBeCloseTo(Math.sin(0.3));
+    expect(root[0]).toBeCloseTo(1);
+    expect([root[12], root[13], root[14]]).toEqual([1, 2, 3]);
   });
 });
 
