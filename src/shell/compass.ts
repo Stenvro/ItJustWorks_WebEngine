@@ -2,7 +2,8 @@
 // north, its alpha 0..100, its icon frame and its scale in percent; then SetCompassMarkers):
 // the targets of the active quests' shown objectives (QOBJ QSTA: the alias's reference) in the
 // player's worldspace or cell, and the map markers near the player in the worldspace: within
-// iMapMarkerVisibleDistance, fading out from iMapMarkerFadeStartDistance, with their discovered
+// iMapMarkerVisibleDistance, each marker fainter and smaller with its distance up to
+// iMapMarkerFadeStartDistance (markerLook; at most 48 at once), with their discovered
 // icon (frame 5 + type) or the undiscovered one (72 + type) of the HUD's "Compass Marker". A map
 // marker comes into view as it is near (visible on the map) and is discovered within
 // iMapMarkerRevealDistance: the HUD says so (its name, sDiscoveredText) and it can be travelled
@@ -18,6 +19,7 @@ import type { Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { Placement, ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { GameSettings } from '../world/game-settings.ts';
+import { markerLook, markerLookSettings, MAX_COMPASS_MARKERS } from './compass-look.ts';
 import { MapMarkerFlag, readMapMarkers, type MapMarker } from '../world/map-markers.ts';
 import { spaceOf } from './actors-away.ts';
 import type { GameSession } from './game-session.ts';
@@ -62,11 +64,10 @@ export function discoveryMusic(markerType: number): number {
   return DiscoveryMusic.generic;
 }
 
-/** A map marker's alpha by its distance (100 near, fading to 0 at the visible distance). */
-export function markerAlpha(distance: number, fadeStart: number, visible: number): number {
-  if (distance >= visible) return 0;
-  if (distance <= fadeStart) return 100;
-  return Math.round((100 * (visible - distance)) / (visible - fadeStart));
+/** A marker for the compass: where it is and its icon's frame. */
+interface CompassMarker {
+  readonly position: readonly number[];
+  readonly frame: number;
 }
 
 export class Compass {
@@ -94,25 +95,36 @@ export class Compass {
     const at = session.scriptWorld.livePlacement(PLAYER_REF);
     if (!runtime || !at) return [];
     const settings = await session.settings();
-    const data = [...(await this.#questTargets(runtime, at))];
+    const number = (name: string, fallback: number): number => settings.number(name) ?? fallback;
+    const look = markerLookSettings((name) => settings.number(name));
+    const markers: CompassMarker[] = [...(await this.#questTargets(runtime, at))];
+    const data = (): number[] =>
+      markers.slice(0, MAX_COMPASS_MARKERS).flatMap(({ position, frame }) => {
+        const quest = frame === CompassFrame.quest || frame === CompassFrame.questDoor;
+        const distance = Math.hypot(
+          (position[0] ?? 0) - at.position[0],
+          (position[1] ?? 0) - at.position[1],
+          (position[2] ?? 0) - at.position[2],
+        );
+        const { alpha, size } = markerLook(distance, quest, look);
+        return [headingTo(at.position, position), alpha, frame, size];
+      });
     // The actors fighting the player (Enemy: a red mark), within the compass's reach.
-    const reach = settings.number('fHUDCompassLocationMaxDist') ?? 20000;
+    const reach = number('fHUDCompassLocationMaxDist', 20000);
     for (const enemy of this.#enemies()) {
       const far = Math.hypot((enemy[0] ?? 0) - at.position[0], (enemy[1] ?? 0) - at.position[1]);
-      if (far <= reach) data.push(headingTo(at.position, enemy), 100, CompassFrame.enemy, 100);
+      if (far <= reach) markers.push({ position: enemy, frame: CompassFrame.enemy });
     }
-    if (at.world === undefined) return data;
+    if (at.world === undefined) return data();
     const own = runtime.state.playerMarker;
     if (own?.world === at.world) {
-      data.push(headingTo(at.position, own.position), 100, CompassFrame.playerSet, 100);
+      markers.push({ position: own.position, frame: CompassFrame.playerSet });
     }
     if (this.#markersOf !== runtime || !this.#markers) {
       this.#markersOf = runtime;
       this.#markers = readMapMarkers(runtime.forms.db);
     }
-    const number = (name: string, fallback: number): number => settings.number(name) ?? fallback;
     const visibleDistance = number('iMapMarkerVisibleDistance', 12500);
-    const fadeStart = number('iMapMarkerFadeStartDistance', 10000);
     const reveal = number('iMapMarkerRevealDistance', 1000);
     for (const marker of await this.#markers) {
       if (marker.world !== at.world) continue;
@@ -132,14 +144,12 @@ export class Compass {
       if (!runtime.mapMarkerVisible(marker.reference)) {
         runtime.mapMarker(marker.reference, true, discovered);
       }
-      data.push(
-        headingTo(at.position, marker.position),
-        markerAlpha(distance, fadeStart, visibleDistance),
-        (discovered ? DISCOVERED_FIRST : UNDISCOVERED_FIRST) + marker.type,
-        100,
-      );
+      markers.push({
+        position: marker.position,
+        frame: (discovered ? DISCOVERED_FIRST : UNDISCOVERED_FIRST) + marker.type,
+      });
     }
-    return data;
+    return data();
   }
 
   #discover(runtime: ScriptRuntime, settings: GameSettings, marker: MapMarker): void {
@@ -156,8 +166,8 @@ export class Compass {
   async #questTargets(
     runtime: ScriptRuntime,
     at: { readonly position: readonly number[]; readonly cell?: number; readonly world?: number },
-  ): Promise<number[]> {
-    const data: number[] = [];
+  ): Promise<CompassMarker[]> {
+    const data: CompassMarker[] = [];
     const doors = new Set<number>();
     for (const target of await questTargets(runtime)) {
       const { placement } = target;
@@ -166,14 +176,14 @@ export class Compass {
           ? placement.world === at.world
           : placement.cell !== undefined && placement.cell === at.cell;
       if (here) {
-        data.push(headingTo(at.position, placement.position), 100, CompassFrame.quest, 100);
+        data.push({ position: placement.position, frame: CompassFrame.quest });
         continue;
       }
       // Elsewhere: the load door of this space the way there goes through (QuestDoor), once.
       const door = await this.#doorToward(at, target.reference, placement);
       if (!door || doors.has(door.door)) continue;
       doors.add(door.door);
-      data.push(headingTo(at.position, door.position), 100, CompassFrame.questDoor, 100);
+      data.push({ position: door.position, frame: CompassFrame.questDoor });
     }
     return data;
   }

@@ -162,6 +162,8 @@ export class DialogueMenu {
         menu.invoke('_root.InitExtensions');
         menu.invoke('_root.SetPlatform', 0, false);
         menu.call('SetSpeakerName', speaker.look.name);
+        // With the speaker named the other voices and effects duck (fNonDialogVoiceDucking).
+        this.#session.soundSystem?.duckForDialogue(true);
       },
     });
     runtime.state.actor(reference).talkedToPlayer = true;
@@ -179,7 +181,10 @@ export class DialogueMenu {
     this.#line = undefined;
     const menu = this.#menu;
     this.#menu = undefined;
-    if (menu) this.#host.close(menu);
+    if (menu) {
+      this.#host.close(menu);
+      this.#session.soundSystem?.duckForDialogue(false);
+    }
     const runtime = this.#session.scriptsReady;
     if (runtime) runtime.dialogueSpeaker = undefined;
     this.#speaker = undefined;

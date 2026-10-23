@@ -1,8 +1,8 @@
 // Waiting and sleeping (interface\sleepwaitmenu.swf: T, or a bed): how many hours, on a slider.
 // The engine tells the menu whether the player sleeps (_root.SleepWaitMenu_mc.SetSleeping: "Rest
 // how long?" or "Wait how long?") and the date and time (SetCurrentTime, as the tween menu
-// shows it); OK(hours) passes the time an hour at a time (the menu's time and hours counting
-// down) and closes the menu, Cancel closes it. A sleep tells the scripts registered for it
+// shows it); OK(hours) passes the time iSecondsToSleepPerUpdate game seconds an update (900:
+// a quarter hour; the menu's time and hours counting down) and closes the menu, Cancel closes it. A sleep tells the scripts registered for it
 // (RegisterForSleep): OnSleepStart(start, desired end) and OnSleepStop(interrupted), in game
 // days. Each hour health, magicka and stamina regenerate as over the real seconds it stands for
 // (the progression engine's passTime). Where the player may not wait the menu does not open and
@@ -24,10 +24,10 @@ import type { Terminal } from './terminal.ts';
 const ROOT = '_root.SleepWaitMenu_mc';
 
 /**
- * How long one game hour takes to pass on screen (ms): the game does not document its pace;
- * the hours count down visibly, a day in a few seconds.
+ * The game's update rate the hours pass at (observed in the original: each update of a
+ * wait or sleep passes iSecondsToSleepPerUpdate game seconds, 900: an hour in four updates).
  */
-const HOUR_MS = 200;
+const UPDATE_MS = 1000 / 60;
 
 const wait = (ms: number): Promise<void> =>
   new Promise((resolve) => {
@@ -101,11 +101,16 @@ export class SleepWaitMenu {
     });
   }
 
-  /** The hours pass one at a time, the scripts' timers with them; a sleep tells its listeners. */
+  /**
+   * The hours pass iSecondsToSleepPerUpdate game seconds an update, the scripts' timers with
+   * them, the menu counting the hours left down; a sleep tells its listeners.
+   */
   async #pass(menu: Menu, hours: number, sleeping: boolean): Promise<void> {
     const session = this.#session;
     const runtime = session.scriptsReady;
     if (!runtime) return;
+    const settings = await session.settings();
+    const perUpdate = Math.max(1, settings.number('iSecondsToSleepPerUpdate') ?? 900) / 3600;
     const start = runtime.state.gameDaysPassed;
     // The hub tells it (TESSleepStartEvent / TESWaitStartEvent: OnSleepStart to those registered).
     if (sleeping) {
@@ -117,22 +122,25 @@ export class SleepWaitMenu {
       });
     } else runtime.events.emit('wait', { started: true, interrupted: false });
     let interrupted = false;
-    for (let left = hours; left > 0; left--) {
-      await wait(HOUR_MS);
+    for (let left = hours; left > 1e-6;) {
+      await wait(UPDATE_MS);
       // Someone attacks: the hours stop there.
       if (session.combatWatch?.fightingPlayer === true) {
         interrupted = true;
         break;
       }
-      session.advanceClock(1);
-      runtime.update(0, 1 / 24);
-      // Health, magicka and stamina regenerate over the hour (its real seconds).
-      await runtime.progression.passTime(1);
-      menu.set(`${ROOT}.HoursSlider.value`, left - 1);
-      menu.set(`${ROOT}.HoursText.text`, String(left - 1));
+      const step = Math.min(perUpdate, left);
+      left -= step;
+      session.advanceClock(step);
+      runtime.update(0, step / 24);
+      // Health, magicka and stamina regenerate over the time (its real seconds).
+      await runtime.progression.passTime(step);
+      const shown = Math.ceil(left - 1e-6);
+      menu.set(`${ROOT}.HoursSlider.value`, shown);
+      menu.set(`${ROOT}.HoursText.text`, String(shown));
       menu.invoke(`${ROOT}.SetCurrentTime`, await this.#now());
     }
-    await wait(HOUR_MS);
+    await wait(UPDATE_MS);
     for (const listener of session.timeSkipped) listener();
     if (sleeping) await runtime.events.emitted('sleep', { started: false, interrupted });
     else runtime.events.emit('wait', { started: false, interrupted });

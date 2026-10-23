@@ -133,3 +133,26 @@ export function placeDecal(decal: DecalData, formId: number, placement: Mat4): P
       : [(quarter % 2) * 0.5, Math.floor(quarter / 2) * 0.5, 0.5, 0.5];
   return { box: multiply(placement, size), rect };
 }
+
+/**
+ * Dynamic decals (a hit's blood) as the engine keeps them (observed in the original): each lasts [Display]
+ * fDecalLifetime seconds (`until`: when it goes), at most [Decals] uMaxDecals at once. Removes
+ * from `decals` (oldest first) those past their time at `now`, then the oldest beyond `max`;
+ * returns those that went.
+ */
+export function expireDecals<T extends { readonly until: number }>(
+  decals: T[],
+  now: number,
+  max: number,
+): T[] {
+  const gone: T[] = [];
+  for (let index = decals.length - 1; index >= 0; index--) {
+    const decal = decals[index];
+    if (decal && decal.until <= now) gone.push(...decals.splice(index, 1));
+  }
+  while (decals.length > Math.max(0, max)) {
+    const oldest = decals.shift();
+    if (oldest) gone.push(oldest);
+  }
+  return gone;
+}

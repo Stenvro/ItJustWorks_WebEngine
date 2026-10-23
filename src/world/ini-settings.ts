@@ -1,7 +1,9 @@
-// INI settings: the defaults compiled into SkyrimSE.exe, overridden by the installation's
-// Skyrim_Default.ini (as the engine reads it). Only the settings the engine uses are listed.
-// The defaults are the values SSE writes with the `saveini` console command (a full dump on the
-// STEP forum, "Skyrim Special Edition default values for all valid INI settings").
+// INI settings as the engine takes them: the default compiled into SkyrimSE.exe (some set as the
+// executable starts: iDifficulty 2, fHUDOpacity 1, the autosaves), then the installation's
+// Skyrim_Default.ini, then the player's INI files (SkyrimPrefs.ini, written from a graphics
+// preset; read in M12: until then the player's changes in the settings menu, Preferences). Only
+// the settings the engine uses are listed. The defaults are the executable's own (its setting
+// objects, checked against a local dump with tools/setting-defaults.ts).
 // Platform-independent. Notes: docs/formats/esm.md ("INI settings").
 
 import { iniValue, type Ini } from '../formats/ini/ini.ts';
@@ -15,6 +17,21 @@ export const INI_DEFAULTS = {
   Audio: {
     fASFadeInTime: 3,
     fASFadeOutTime: 8,
+    // A conversation's menu turns the non-dialogue voices (DOBJ NDSC) and the effects that fade
+    // during dialogue (SFDC) down by fNonDialogVoiceDucking dB (src/shell/dialogue-menu.ts).
+    fNonDialogVoiceDucking: 9,
+    fNonDialogVoiceDuckingFadeIn: 1,
+    fNonDialogVoiceDuckingFadeOut: 1.5,
+    // Menu mode: the categories paused during menus with a fade (DOBJ PDMC) fade out and in
+    // over these seconds (Skyrim_Default.ini: 3 and 1).
+    fMenuModeFadeInTime: 0.5,
+    fMenuModeFadeOutTime: 0.5,
+    // Speech highlighting: while someone within fMaxHighlightRadius of the listener speaks,
+    // every other spoken line is fNonHighlightSpeechAtten dB quieter, eased over
+    // fHighlightSpeechOverlap seconds (src/audio/sound-system.ts).
+    fHighlightSpeechOverlap: 0.5,
+    fMaxHighlightRadius: 250,
+    fNonHighlightSpeechAtten: 12,
     fCollisionSoundHeavyThreshold: 160,
     fMinSoundVel: 60,
     iCollisionSoundTimeDelta: 150,
@@ -36,11 +53,42 @@ export const INI_DEFAULTS = {
     uWaterAudioSamplePointsToUse: 8,
   },
   Camera: {
+    // Holding Toggle POV this long in first person goes to third person (src/shell/player.ts);
+    // a vanity hold in third person returns to first person only with
+    // bReturnTo1stPersonFromVanity.
     f1st3rdSwitchDelay: 0.25,
+    bReturnTo1stPersonFromVanity: 0,
+    // The auto vanity camera (phase 7: its state is not built yet): after
+    // fAutoVanityModeDelay seconds without input in third person it circles the player
+    // (fAutoVanityIncrement radians an update) fDefaultAutoVanityZoom away; never with
+    // bDisableAutoVanityMode, at once with bForceAutoVanityMode.
+    bDisableAutoVanityMode: 0,
+    bForceAutoVanityMode: 0,
+    fAutoVanityIncrement: 0.01,
+    fAutoVanityModeDelay: 120,
     // The bleedout camera, the dead player's too (src/gameplay/combat/player-death.ts).
     fCameraCasterBleedOutSize: 5,
     fCameraCasterSize: 15,
+    // The third-person camera's heading chases its target at fChaseCameraSpeed radians a
+    // second, never more than fChaseCameraMaxAngle degrees behind (phase 7: what sets the
+    // target is not known yet).
+    fChaseCameraMaxAngle: 30,
+    fChaseCameraSpeed: 10,
+    // Freed from a wall, the camera eases back out (fCollisionRecoverySpeed of the way a
+    // second) when it would jump more than √fCollisionRecoveryMinDist units (player.ts).
+    fCollisionRecoveryMinDist: 4000,
+    fCollisionRecoverySpeed: 3,
     fDefaultAutoVanityZoom: 300,
+    // The furniture camera (phase 7): fFurnitureCameraZoom out, pitched fFurnitureCameraAngle
+    // radians; a workbench's own (fWorkbenchCamera*).
+    fFurnitureCameraAngle: 0.39269909262657166,
+    fFurnitureCameraZoom: 250,
+    fWorkbenchCameraPitch: 0.5,
+    fWorkbenchCameraTranslateX: 0,
+    fWorkbenchCameraTranslateY: 50,
+    fWorkbenchCameraTranslateZ: -50,
+    fWorkbenchCameraYaw: -1,
+    fWorkbenchCameraZoom: 100,
     iBleedoutTransitionMillis: 500,
     fMinCurrentZoom: -0.2,
     fMouseWheelZoomIncrement: 0.075,
@@ -50,6 +98,7 @@ export const INI_DEFAULTS = {
     fOverShoulderCombatPosZ: 20,
     fOverShoulderPosX: 30,
     fOverShoulderPosZ: -10,
+    // Looking down, the third-person camera pulls back up to this far (src/shell/player.ts).
     fPitchZoomOutMaxDist: 100,
     // How fast the third-person camera moves to its shoulder offsets (a share a second).
     fShoulderDollySpeed: 3,
@@ -61,6 +110,10 @@ export const INI_DEFAULTS = {
     fTweenCamZoomSpeed: 25,
     fVanityModeMaxDist: 600,
     fVanityModeMinDist: 155,
+    // Flying (a dragon's back; phase 7): the zoom's ends are fVanityModeMinDistFly and
+    // fVanityModeMaxDist × fVanityModeMaxDistFlyMult.
+    fVanityModeMaxDistFlyMult: 4,
+    fVanityModeMinDistFly: 1200,
     // The camera's way into an animated camera (StartAnimatedCamera; the engine's built-in default).
     iAnimatedTransitionMillis: 1000,
   },
@@ -110,44 +163,74 @@ export const INI_DEFAULTS = {
     fMouseHeadingSensitivity: 0.0125,
     fMouseHeadingXScale: 0.02,
     fMouseHeadingYScale: 0.85,
+    // The settings menu's Look Sensitivity slider runs between these.
+    fMouseHeadingSensitivityMax: 0.05,
+    fMouseHeadingSensitivityMin: 0.01,
+    // Toggle POV switches as it is let go after at least this long (src/shell/player.ts).
+    fTogglePOVDelay: 0,
     fZKeyDelay: 0.2,
   },
+  // A dynamic decal (a hit's blood) lasts fDecalLifetime seconds ([Display]); at most
+  // uMaxDecals are kept, the oldest going first (src/shell/combat-impacts.ts).
+  Decals: {
+    uMaxDecals: 1000,
+  },
   Display: {
+    fDecalLifetime: 30,
     fDefault1stPersonFOV: 80,
     fDefaultWorldFOV: 80,
+    // The settings menu's DDOF Intensity and Brightness: the settings and their sliders' ends.
+    fDynamicDOFBlurMultiplier: 0.8,
+    fDynamicDOFBlurMultiplierMax: 1,
+    fDynamicDOFBlurMultiplierMin: 0,
     fGamma: 1,
+    fGammaMax: 1.4,
+    fGammaMin: 0.6,
     // The world map's changes to its imagespace (added to its bloom threshold, brightness and
     // contrast).
     fGlobalMapBloomThresholdBoost: 0.25,
     fGlobalMapBrightnessBoost: 0.25,
     fGlobalMapContrastBoost: -0.3,
-    // Point lights, specular and shadows fade out from these distances (Skyrim_Default.ini).
-    fLightLODStartFade: 3500,
+    // Point lights fade out from this distance: the executable starts it at
+    // fLightLODDefaultStartFade (1000), Skyrim_Default.ini gives 3500.
+    fLightLODStartFade: 1000,
     fNearDistance: 15,
-    fShadowLODStartFade: 1000,
-    fSpecularLODStartFade: 2000,
   },
   GamePlay: {
     bShowFloatingQuestMarkers: 1,
     iDifficulty: 2,
   },
-  // The player's settings that the High preset (High.ini) gives.
+  // Grass fades out from fGrassStartFadeDistance; the settings menu's Grass Fade runs from
+  // fGrassMinStartFadeDistance (Skyrim_Default.ini: 0) to fGrassMaxStartFadeDistance.
   Grass: {
+    fGrassMaxStartFadeDistance: 7000,
+    fGrassMinStartFadeDistance: 400,
     fGrassStartFadeDistance: 7000,
   },
+  // Actor, Item and Object Fade (the graphics presets set them: High.ini 9, 6, 9; Ultra.ini
+  // 15, 10, 30), and the ends of the settings menu's sliders for them.
   LOD: {
-    fLODFadeOutMultActors: 9,
-    fLODFadeOutMultItems: 6,
-    fLODFadeOutMultObjects: 9,
+    fActorLODMax: 15,
+    fActorLODMin: 5,
+    fItemLODMax: 10,
+    fItemLODMin: 1.5,
+    fLODFadeOutMultActors: 6,
+    fLODFadeOutMultItems: 3,
+    fLODFadeOutMultObjects: 5,
+    fObjectLODMax: 30,
+    fObjectLODMin: 5,
   },
+  // The settings the executable names without a section: SkyrimPrefs.ini keeps them in [MAIN].
   Main: {
     bCrosshairEnabled: 1,
+    fHUDOpacity: 1,
     fMapWorldTargetTransitionTime: 0.5,
-  },
-  SaveGame: {
+    bSaveOnPause: 0,
     bSaveOnRest: 1,
     bSaveOnTravel: 1,
     bSaveOnWait: 1,
+  },
+  SaveGame: {
     fAutosaveEveryXMins: 15,
   },
   General: {
@@ -183,7 +266,7 @@ export const INI_DEFAULTS = {
   },
   HAVOK: {
     fInAirFallingCharGravityMult: 1.35,
-    fMaxTime: 0.0167,
+    fMaxTime: 0.016666668,
     fUnsupportedGravMult: 4,
     fWarmStartMaxTime: 4,
     uMaxNumPhysicsStepsPerUpdate: 3,
@@ -194,10 +277,26 @@ export const INI_DEFAULTS = {
     // The tutorials the first time the player does something (the tutorial menu).
     bShowTutorials: 1,
     bGeneralSubtitles: 0,
-    fHUDOpacity: 1,
-    fActivatePickLength: 180,
-    // The enemy's health bar shows this long (ms) after its health last changed.
+    // A general subtitle shows within fMaxSubtitleDistance of its speaker, the speaker's name
+    // first in iSubtitleSpeakerNameColor (0xRRGGBB) with bShowSubtitleSpeakerName
+    // (src/shell/world-lines.ts).
+    bShowSubtitleSpeakerName: 1,
+    fMaxSubtitleDistance: 1250,
+    iSubtitleSpeakerNameColor: 0x888888,
+    // The compass shown (SetCompassAngle's third argument); the HUD's messages
+    // (Debug.Notification, "Autosaving...") shown and sounded.
+    bShowCompass: 1,
+    bShowHUDMessages: 1,
+    // The enemy health bar of an actor not hostile to the player stays iEnemyHealthDisplayTime
+    // ms after its health last changed, while it is within iEnemyHealthDisplayAngle degrees of
+    // the camera's heading (src/shell/actor-combat.ts).
+    iEnemyHealthDisplayAngle: 90,
     iEnemyHealthDisplayTime: 2000,
+    // A direction key held in a menu repeats after fMenuKeyRepeatLong seconds, then every
+    // fMenuKeyRepeatShort (src/ui/menu-host.ts).
+    fMenuKeyRepeatLong: 0.5,
+    fMenuKeyRepeatShort: 0.1,
+    fActivatePickLength: 180,
     // The book menu's 3D book: its tilt, where its middle is on the screen, its two lights
     // (from the book as seen: x right, y away, z up). fBookDistance and fBookOpenTime are the
     // game's; the book's size is fitted (src/shell/book-menu.ts).
@@ -228,8 +327,8 @@ export const INI_DEFAULTS = {
     fInventory3DBoundRadiusScale: 12.5,
     fInventory3DItemPosScale: 1.87,
     fInventory3DItemPosScaleWide: 1.5,
-    fInventory3DItemPosX: -29,
-    fInventory3DItemPosXWide: -22,
+    fInventory3DItemPosX: -38,
+    fInventory3DItemPosXWide: -29,
     fInventory3DItemPosY: -500,
     fInventory3DItemPosYWide: -500,
     fInventory3DItemPosZ: 16,
@@ -243,8 +342,8 @@ export const INI_DEFAULTS = {
     fInventory3DItemZoomZ: 0,
     fMagic3DItemPosScale: 1.87,
     fMagic3DItemPosScaleWide: 1.75,
-    fMagic3DItemPosX: 29,
-    fMagic3DItemPosXWide: 22,
+    fMagic3DItemPosX: 34.7,
+    fMagic3DItemPosXWide: 26,
     fMagic3DItemPosY: -500,
     fMagic3DItemPosYWide: -500,
     fMagic3DItemPosZ: 8,

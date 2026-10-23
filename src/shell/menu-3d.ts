@@ -1,7 +1,7 @@
 // The space the menus' 3D is placed in, as the [Interface] settings give it: the camera at the
 // origin looking along −Y with +Z up (the mist menu's camera looks along −Y too), so +X is the
 // screen's left; the book lies fBookDistance in front of it (fBookXRotation tilting it), the
-// inventory's item at fInventory3DItemPos* (x −29: right of the middle; y −500 in front). Their
+// inventory's item at fInventory3DItemPos* (x −38: right of the middle; y −500 in front). Their
 // lights (fBookLight*, fInventoryMenuLight*, fLockpickLight*) stand in the same space: the
 // inventory's 150 in front of its item (y −350), the book's second 35 in front of it (the
 // first, y −350, behind it, a rim light), and the lock's at y −1000: the lock is placed 150

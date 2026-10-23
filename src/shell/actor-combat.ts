@@ -309,7 +309,8 @@ export class ActorCombat implements CombatBridge {
    * works it out afresh).
    */
   readonly #estimatedArmor = new Map<number, { readonly reduction: number; readonly at: number }>();
-  #enemy: { reference: number; until: number } | undefined;
+  /** The enemy bar's actor, its health shown (percent) and when that last changed. */
+  #enemy: { readonly reference: number; changed: number; health: number } | undefined;
   #music: number | undefined;
   #musicOn = false;
   #equipListening: ScriptRuntime | undefined;
@@ -1830,8 +1831,7 @@ export class ActorCombat implements CombatBridge {
     // a practice's blow without Allow Combat Start On Hit passes (no fight, search or crime).
     const passes = attacker.practice?.combatStartOnHit === false;
     if (!passes) this.#brain.hit(attackerRef, targetRef);
-    if (attacker.player)
-      this.#enemy = { reference: targetRef, until: this.#clock + this.#enemyBarSeconds() };
+    if (attacker.player) this.#struck(targetRef);
     // Detection: the one attacked searches for its attacker; those near watch the fight.
     if (!passes) senses?.attackedBy(targetRef, attackerRef);
     // Crime: a blow on one that was not hostile to its attacker is an assault, reported by the
@@ -2691,22 +2691,71 @@ export class ActorCombat implements CombatBridge {
     }
   }
 
-  /** The HUD's enemy bar: the one the player hit last, while the fight lasts. */
+  /**
+   * The HUD's enemy bar: the one the player hit last. Observed in the original: it shows
+   * while that actor lives and is hostile to the player; one that is not stays
+   * iEnemyHealthDisplayTime ms after its health last changed, and only while it is within
+   * iEnemyHealthDisplayAngle degrees of the camera's heading. Its health shows as 1..100
+   * percent.
+   */
   #enemyBar(): void {
     const hud = this.#options.session.hud;
     const enemy = this.#enemy;
-    if (!enemy || this.#clock > enemy.until) {
-      if (enemy) hud.enemy(undefined);
-      this.#enemy = undefined;
-      return;
-    }
+    if (!enemy) return;
     const fighter = this.#fighters.get(enemy.reference);
     const runtime = this.#options.session.scriptsReady;
-    if (!fighter?.body || !runtime) return;
+    if (!fighter?.body || !runtime || fighter.state.life === LifeState.dead) {
+      this.#hideEnemyBar();
+      return;
+    }
+    const ini = this.#options.session.ini;
+    if (!this.hostile(enemy.reference, PLAYER_REF)) {
+      const shown =
+        (this.#clock - enemy.changed) * 1000 <= ini.number('Interface', 'iEnemyHealthDisplayTime');
+      const feet = this.#feet(fighter);
+      const player = this.#play?.player;
+      let inView = true;
+      if (feet && player) {
+        const heading = Math.atan2(feet[0] - player.feet[0], feet[1] - player.feet[1]);
+        const off = Math.abs(
+          Math.atan2(Math.sin(heading - player.yaw), Math.cos(heading - player.yaw)),
+        );
+        inView = (off * 180) / Math.PI <= ini.number('Interface', 'iEnemyHealthDisplayAngle');
+      }
+      if (!shown || !inView) {
+        this.#hideEnemyBar();
+        return;
+      }
+    }
     const name = fighter.body.look.name || fighter.body.look.editorId;
     void runtime.actors.value(enemy.reference, ActorValue.health).then((value) => {
-      hud.enemy({ name, health: value.max > 0 ? (value.current / value.max) * 100 : 0 });
+      if (this.#enemy !== enemy) return;
+      const fraction = value.max > 0 ? value.current / value.max : 0;
+      const health = fraction > 0 ? Math.min(100, Math.max(1, fraction * 100)) : 0;
+      if (health !== enemy.health) {
+        enemy.health = health;
+        enemy.changed = this.#clock;
+      }
+      if (health <= 0) {
+        this.#hideEnemyBar();
+        return;
+      }
+      hud.enemy({ name, health });
     });
+  }
+
+  #hideEnemyBar(): void {
+    if (this.#enemy) this.#options.session.hud.enemy(undefined);
+    this.#enemy = undefined;
+  }
+
+  /** The player struck an actor: its bar shows (its health changes from now). */
+  #struck(reference: number): void {
+    if (this.#enemy?.reference === reference) {
+      this.#enemy.changed = this.#clock;
+      return;
+    }
+    this.#enemy = { reference, changed: this.#clock, health: Number.NaN };
   }
 
   /** The player's shape for shots (they have no bodies on BIPED). */
@@ -2737,15 +2786,6 @@ export class ActorCombat implements CombatBridge {
 
   #difficulty(): number {
     return this.#options.session.ini.number('GamePlay', 'iDifficulty');
-  }
-
-  /**
-   * How long the enemy bar shows after the player's last blow ([Interface]
-   * iEnemyHealthDisplayTime, ms: the engine's, after the enemy's health last changed).
-   * TODO(M13): the engine also hides it with the enemy beyond iEnemyHealthDisplayAngle of the view.
-   */
-  #enemyBarSeconds(): number {
-    return this.#options.session.ini.number('Interface', 'iEnemyHealthDisplayTime') / 1000;
   }
 
   #readSettings(): void {
@@ -2865,8 +2905,7 @@ export class ActorCombat implements CombatBridge {
     this.#spellHits.set(key, this.#clock);
     if (this.#spellHits.size > 256) this.#spellHits.clear();
     this.#brain.hit(caster, victim);
-    if (caster === PLAYER_REF && victim !== PLAYER_REF)
-      this.#enemy = { reference: victim, until: this.#clock + this.#enemyBarSeconds() };
+    if (caster === PLAYER_REF && victim !== PLAYER_REF) this.#struck(victim);
   }
 
   /**

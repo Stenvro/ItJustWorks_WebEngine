@@ -139,7 +139,10 @@ controllers `getFocusBitmask` names.
 The engine hands the keys over itself (`Menu.pressKey`, `src/ui/menu-host.ts`), as GFx gets
 them from the game: a page key on the topmost menu becomes `InputDelegate.instance
 .handleKeyPress("keyDown" | "keyHold" | "keyUp", code)` with its Flash key code
-(`src/ui/key-codes.ts`), and the page's event stops there. A Flash player takes keys only once
+(`src/ui/key-codes.ts`), and the page's event stops there. A held direction (the arrows, and
+what the bindings make arrows) repeats as the engine's direction handler has it (observed in the original):
+`keyHold` after `[Interface]` fMenuKeyRepeatLong (0.5 s), then every fMenuKeyRepeatShort (0.1
+s), the browser's own repeats dropped (`MenuHost.keyRepeat`). A Flash player takes keys only once
 it has been clicked (Ruffle's own focus, which no script can give it), and a menu opened by a key
 (E on a chest, Tab) must take keys at once. Keys the engine handles first (`onKey`: F to favor,
 R to drop) and keys a menu takes as others come before: its own (`keyAs`), else the control
@@ -340,7 +343,11 @@ show)` (the heading in degrees, 0 north, 90 east; the compass strip is placed by
 `SetCrosshairTarget(abActivate, aName, abShowButton, abTextOnly, abFavorMode, abShowCrosshair,
 aWeight, aCost, aFieldValue, aFieldText)` for what the crosshair is on (the play session's
 activation target, through `HudSignals`), and `ShowMessage` for Debug.Notification (the
-messages at the top left). The shout meter: `SetShoutMeterPercent(aPercent, abForce)` (0..100:
+messages at the top left; none with `[Interface]` bShowHUDMessages off). The enemy bar (observed
+in the original): the actor the player struck last, its health as 1..100 percent; it
+stays while that actor lives and is hostile to the player, else for iEnemyHealthDisplayTime
+(2000) ms after its health last changed and only while it is within iEnemyHealthDisplayAngle
+(90) degrees of the camera's heading (`src/shell/actor-combat.ts`). The shout meter: `SetShoutMeterPercent(aPercent, abForce)` (0..100:
 full once the voice has recovered; the casting engine's `voiceMeter`, sent as it changes by a
 whole percent) and `FlashShoutMeter()` as the player shouts before it has recovered
 (docs/gameplay.md, "Casting and shouts"). The engine's own prompt, notice and loading screen stay
@@ -400,7 +407,14 @@ objectives (QOBJ QSTA, the alias's reference, its conditions run on the target: 
 target in another cell or world at the load door the way there goes through (QuestDoor: the
 first door of the route over the navmeshes and load doors, `src/ai/routes.ts`, searched once per
 target and space); the actors fighting the player (Enemy) within fHUDCompassLocationMaxDist; and
-the map markers within iMapMarkerVisibleDistance, fading from iMapMarkerFadeStartDistance; a
+the map markers within iMapMarkerVisibleDistance. Every marker's alpha and size go with its
+distance (observed in the original, `src/shell/compass-look.ts`): with t = (min(d²,
+F²) − F²) / F² (F = iMapMarkerFadeStartDistance, 10000 in the load order; −1 at the player, 0 from
+F on) the alpha is (min − 100) × t + min and the size min − (max − min) × t, a quest's targets and
+their doors by fMapQuestMarkerMinFadeAlpha 90, fMapQuestMarkerMinPercentSize 100 and
+fMapQuestMarkerMaxPercentSize 150, all others by fMapMarkerMinFadeAlpha 40,
+fMapMarkerMinPercentSize 90 and fMapMarkerMaxPercentSize 130; the compass holds 48 markers. The
+compass shows with the setting bShowCompass (the third argument of `SetCompassAngle`). A
 marker seen so is visible on the map, one reached within iMapMarkerRevealDistance is discovered
 (it can be travelled to) and announced as a quest is: its name and sDiscoveredText, with its
 discovery music (by the marker's type: MUSDiscoveryCity for cities and their castles,
@@ -413,7 +427,10 @@ messages; no crosshair), with the weapon drawn in `WarHorseMode` (the crosshair,
 charge meter and arrow info too).
 
 The HUD also shows: speech around the player (`ShowSubtitle(text)`, `HideSubtitle()`; with
-General Subtitles, `SetSubtitlesEnabled`), the lines actors say from scripts
+General Subtitles, `SetSubtitlesEnabled`; observed in the original: only within
+`[Interface]` fMaxSubtitleDistance, 1250, of the speaker, and with bShowSubtitleSpeakerName the
+speaker's name first, `<font color='#888888'>Name</font>: text` in iSubtitleSpeakerNameColor,
+`src/shell/subtitles.ts`), the lines actors say from scripts
 (`src/shell/world-lines.ts`, ObjectReference.Say: the topic's first valid info in the speaker's
 voice, lips moving); a location the player enters (`SetLocationName(name)`, as the player's
 location changes, their scripts hearing OnLocationChange(old, new)); a load door's prompt kept
@@ -437,7 +454,9 @@ AI, combat, movement, physics and animations), the particles and the sky's hour 
 scripts' clocks stop too, and only `Utility.WaitMenuMode` counts on (`PapyrusScheduler.
 wallTime`; `Utility.Wait` waits out the menu), `Utility.IsInMenuMode` is true; the sound
 categories the data pauses during menus (`AudioCategoryPausedDuringMenu`, `...Fade`, `...Load`)
-go quiet while music and the interface play on; the mouse leaves the 3D view for the menu's
+go quiet while music and the interface play on (the fading one, DOBJ PDMC, over `[Audio]`
+fMenuModeFadeOutTime and back over fMenuModeFadeInTime: 3 and 1 s in Skyrim_Default.ini, 0.5
+compiled in; the others at once); the mouse leaves the 3D view for the menu's
 cursor and comes back after. The world is still drawn behind the menu each frame, as it stood.
 The menus that do not pause (`GameMenus` opens crafting with `pauses` false) only take the
 mouse and the keys. A strike the engine resolved before the menu opened still lands: its blow
@@ -514,9 +533,10 @@ opening does) only the journal opens, and with abJournalTabs its system page alo
 
 `sleepwaitmenu.swf` (`src/shell/sleep-wait-menu.ts`; T, or a bed's Sleep): the engine calls
 `_root.InitExtensions()`, `_root.SetPlatform(0, false)`, then `SleepWaitMenu_mc.SetSleeping(b)`
-("Rest how long?" or "Wait how long?") and `SetCurrentTime(date)`. `OK(hours)` passes the hours
-one at a time (the clock and the scripts' game-time timers with them, the menu's time and hours
-counting down; the game's pace is not documented: 0.2 s an hour), then closes the menu;
+("Rest how long?" or "Wait how long?") and `SetCurrentTime(date)`. `OK(hours)` passes the time
+iSecondsToSleepPerUpdate (900) game seconds an update (observed in the original: an hour in
+four updates; the clock and the scripts' game-time timers with it, the menu's time and hours
+counting down), then closes the menu;
 `Cancel` (Tab, Esc) closes it. A sleep sends `OnSleepStart(start, desired end)` and
 `OnSleepStop(interrupted)` to those registered (`RegisterForSleep`), in game days.
 
@@ -623,21 +643,26 @@ the player when it is another map).
 Settings (`src/shell/journal-settings.ts`, `src/shell/settings-options.ts`): the movie lists each
 page's entries and asks the engine to fill them (`RequestGameplayOptions`, `RequestDisplayOptions`,
 `RequestAudioOptions(entryList)`): an entry the engine has gets its `ID` (the INI setting,
-"Interface:bDialogueSubtitles"), `value` and `defaultVal`; those left without an ID are dropped
-(the console's and Kinect's options, Survival Mode, Tree LOD Fade and DDOF Intensity: TODO(M13)).
-A slider's value is its position 0..1 (the movie moves its bar by value × 20), a stepper's its
-index, a checkbox's 0 or 1. The slider ends are the game's where known: Object, Actor and Item
-Fade from the Low to the Ultra preset of the installation (Low.ini, Ultra.ini: 5–30, 5–15,
-1.5–10), Grass, Light, Specularity and Shadow Fade from 0 to the maxima in Skyrim_Default.ini
-(7000, 3500, 2000, 1000); Brightness and Look Sensitivity are not documented (linear about their
-defaults, Brightness fGamma 0.5–1.5: TODO(M13) check against the game). The audio page lists the master; the engine adds the
-sound categories with a slider (SNCT: on the menu, its name, UNAM its default). `OptionChange(ID,
-value)` changes a setting, `SaveSettings` keeps them (`src/shell/preferences.ts`: in the
-browser, as the game's SkyrimPrefs.ini). The engine reads them through `IniSettings` over the
-INI files and applies them at once: Dialogue Subtitles (the dialogue menu's text; off by default,
-as in the game), Crosshair (`SetCrosshairEnabled`), HUD Opacity, Invert Y, Grass Fade, Light
-Fade, Brightness (fGamma, the final image's gamma), the volumes. TODO(M13): Object, Actor, Item,
-Specularity and Shadow Fade (references and effects fading by distance). Leaving a changed page
+"Interface:bDialogueSubtitles"), `value` and `defaultVal`; those left without an ID are dropped:
+the console's and Kinect's options, Survival Mode, and (observed in the original: the PC's
+Display page fills Brightness, HUD Opacity, Actor, Item, Object and Grass Fade, Crosshair, the
+two subtitles and DDOF Intensity only) Shadow, Light, Specularity and Tree LOD Fade. A slider's
+value is its position 0..1 (the movie moves its bar by value × 20), a stepper's its index, a
+checkbox's 0 or 1. The slider ends are the engine's INI settings: Brightness fGammaMin ..
+fGammaMax (0.6–1.4), Look Sensitivity fMouseHeadingSensitivityMin .. Max (0.01–0.05), Actor,
+Item and Object Fade fActorLODMin .. fActorLODMax (5–15), fItemLODMin .. (1.5–10),
+fObjectLODMin .. (5–30), Grass Fade fGrassMinStartFadeDistance .. fGrassMaxStartFadeDistance
+(0–7000 with Skyrim_Default.ini); HUD Opacity and DDOF Intensity (fDynamicDOFBlurMultiplier)
+show their setting itself. Save on Pause is fAutosaveEveryXMins, shown Disabled while
+bSaveOnPause is off (choosing Disabled turns it off, any time on). The audio page lists the
+master; the engine adds the sound categories with a slider (SNCT: on the menu, its name, UNAM
+its default). `OptionChange(ID, value)` changes a setting, `SaveSettings` keeps them
+(`src/shell/preferences.ts`: in the browser, as the game's SkyrimPrefs.ini). The engine reads
+them through `IniSettings` over the INI files and applies them at once: Dialogue Subtitles (the
+dialogue menu's text; off by default, as in the game), Crosshair (`SetCrosshairEnabled`), HUD
+Opacity, Invert Y, Grass Fade, Brightness (fGamma, the final image's gamma), the volumes.
+TODO(M13): Object, Actor and Item Fade (references fading by distance), DDOF Intensity (no
+dynamic depth of field in play yet). Leaving a changed page
 the menu says "Saving...", calls `SaveSettings` and waits for the engine's `SettingsSaved`.
 
 Controls (`src/shell/journal-controls.ts`, keyboard and mouse): `RequestInputMappings(entryList)`
@@ -806,8 +831,10 @@ buys:
   player's items with a keyword in its list (VEND), or without one when it buys what is not
   listed; its gold the chest's and its own (UESP, "Merchants").
 - `SetBarterMultipliers(buy, sell)`: the menu shows a vendor's item at value × buy and the
-  player's at value × sell. The factor is fBarterMax − (fBarterMax − fBarterMin) × min(Speech, 100) / 100; buying costs at least 1.05 × value, selling gets at most the value (UESP,
-  "Speech").
+  player's at value × sell. Observed in the original: buy is fBarterMax − (fBarterMax −
+  fBarterMin) × min(Speech, 100) / 100, at least fBarterBuyMin (1.05); sell its inverse, at most
+  fBarterSellMax (0.95); the perks' factors on them within the same limits (TODO(M13): where the
+  engine applies those).
 - `UpdatePlayerInfo(playerGold, vendorGold, vendorName, info)`; `ItemSelect(amount, price,
 fromVendor)` trades (the movie's `[aiAmount, itemInfo.value, IsViewingVendorItems()]`: an AS2
   array is pushed last element first, so the disassembly reads backwards; the price is the
@@ -822,8 +849,9 @@ TAKE GIFT; `ItemSelect(amount)` moves them. The function is latent: it returns o
 closes. A conversation's menus show in its place: the dialogue menu steps aside and comes back,
 and keeps the mouse.
 
-The merchant chest restocks 48 game hours after it last did (UESP "Merchants"; reckoned from
-the first trade, checked as the barter menu opens: `ScriptRuntime.restock`): what was sold to it
+The merchant chest restocks once a new day has come iDaysToRespawnVendor (1) days after it last
+did (observed in the original: it keeps the whole day it was stocked; reckoned from the
+first trade, checked as the barter menu opens: `ScriptRuntime.restock`): what was sold to it
 goes (with its references, improvements and stolen marks) and its own goods and gold are there
 again, its leveled lists picked anew (the container's seed moves on with each restock).
 
@@ -870,9 +898,9 @@ Its space (`src/shell/menu-3d.ts`) is the one the [Interface] settings place thi
 camera at the origin looking along −Y with +Z up (the mist menu's camera looks along −Y too), so
 +X is the screen's left. The book lies fBookDistance (110) in front, tilted by fBookXRotation
 (−25: its top away), its middle at fBookPosWidthPercentage / fBookPosHeightPercentage of the
-screen (0.5, 0.445 from the top); the inventory's item at fInventory3DItemPos (−29, −500, 16;
-the Wide values −22, −500, 12 on screens wider than 4:3): right of the middle, the magic menu's
-at fMagic3DItemPos (29, −500, 8): left. Their lights (fBookLight*, fInventoryMenuLight* with
+screen (0.5, 0.445 from the top); the inventory's item at fInventory3DItemPos (−38, −500, 16;
+the Wide values −29, −500, 12 on screens wider than 4:3): right of the middle, the magic menu's
+at fMagic3DItemPos (34.7, −500, 8; Wide 26, −500, 6): left (the executable's defaults). Their lights (fBookLight*, fInventoryMenuLight* with
 fInventoryLight* colours, dimmers and radii, fLockpickLight*) stand in the same space: the
 inventory's 150 in front of its item (y −350 before −500), the book's second 35 in front of it
 (its first, y −350, behind it: a rim light); the lock is placed 150 behind its light (y −1000),
@@ -1009,13 +1037,16 @@ lockpicks)`; the rest is the menus' 3D. `meshes\interface\lockpicking\lockpicksh
 - The control map's Lockpicking context: the mouse sweeps the pick over the keyhole (0..180°,
   fPickMouseRotationSpeed), RotateLock (the movement keys) turns the lock at fLockRotationSpeed
   as far as the pick allows; let go, it turns back. Cancel (Tab, Esc) leaves.
-- The sizes (src/gameplay/lockpicking.ts, UESP "Lockpicking" with the game settings): sweet spot
-  60 × 2^−d × (0.82 + fLockpickSkillSweetSpotMult × skill) × the perks' Mod Lockpick Sweet Spot
-  (the level's perk: 1.75 + 0.25 d); partial zones fPartialPick<level> × (fLockpickSkillPartialPickBase +
+- The sizes (src/gameplay/lockpicking.ts; the rules observed in the original, the values
+  game settings): sweet spot fSweetSpot<level> (30, 15, 7.5, 3.75, 1.875) ×
+  (fLockpickSkillSweetSpotBase 0.82 + fLockpickSkillSweetSpotMult × skill) × the perks' Mod
+  Lockpick Sweet Spot (the level's perk: 1.75 + 0.25 d), + fLockpickBrokenPicksMult (0) × the
+  picks broken on that lock; partial zones fPartialPick<level> × (fLockpickSkillPartialPickBase +
   fLockpickSkillPartialPickMult × skill) each side; in the sweet spot the lock turns all the way
   (90°: open), in a partial zone the less the farther out, beyond not at all. Held against the
-  pick the strain breaks it after 2, 1, 0.75, 0.5, 0.25 s by level × (1 + skill / 200)
-  (Unbreakable and the Skeleton Key: never; Make Lockpicks Unbreakable). Locksmith starts the
+  pick the strain breaks it after fLockpickBreak<Novice..Master> (2, 1, 0.75, 0.5, 0.25 s) ×
+  (fLockpickBreakSkillBase 1 + fLockpickBreakSkillMult 0.005 × skill) (Unbreakable and the
+  Skeleton Key: never; Make Lockpicks Unbreakable). Locksmith starts the
   pick within its starting arc (45°) about the opening (Set Lockpick Starting Arc). A lock's
   sweet spot stays where it is until the game is loaded again. Opened, Wax Key gives its key
   (Mod Lockpicking Key Reward Chance); Quick Hands keeps it unnoticed (Mod Lockpicking Crime
@@ -1032,7 +1063,15 @@ Quick Stats key, and after a level up in its LEVEL_UP state: `SetStatsMode(false
   (the camera: it looks along its local X, here +Y) from z −3000 up to −16.44, CameraOutro back
   down as the menu closes; its own Idle animation moves the nebula meanwhile. While it is open the
   music type MUSSkillsMenu plays (30 s of silence that ducks the other music). The camera turns
-  about the dome's middle; its field of view is fStatsCameraFOV (50, of a 4:3 frame).
+  about the dome's middle; its field of view is fStatsCameraFOV (50, of a 4:3 frame), its near
+  plane fStatsCameraNearDistance (1). Turning (observed in the original,
+  `ringTurnSpeed`): the speed rises to 1 / fStatsRotationSpeedMax radians a second (0.5: 2,
+  about 115°) over fStatsRotationRampTime (2000 ms, along a quarter sine), and toward the skill
+  it goes no faster than that times the share of a skill's 20° left, a lower speed growing by 1.3
+  an update, stopping below 0.01 radians a second. TODO(M13): the look-at points
+  fStatsSkillsLookAt* (0, 0, 5), fStatsStarCameraOffset* (0, −8, 0), fStatsStarLookAt* (0, 0, 1)
+  and the stars' and lines' scales fStatsStarScale (0.15), fStatsLineScale (0.1175) are in the
+  engine's own dome space, which the fitted ring here does not share yet.
 - The ring (`src/gameplay/skills-ring.ts`): the dome's Point00 .. Point17 every 20° clockwise from
   +Y, each with its constellation image (cImage00 .. 17: its quad spans about ±9° about its point,
   7° .. 30° up, about 92 out). The images name the skills (Point01 the anvil: Smithing, Point09

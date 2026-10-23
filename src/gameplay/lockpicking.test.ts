@@ -3,6 +3,7 @@ import {
   LOCK_OPEN_ANGLE,
   lockDifficulty,
   lockLevelSetting,
+  lockpickSettings,
   lockShape,
   lockTurnLimit,
 } from './lockpicking.ts';
@@ -30,6 +31,21 @@ describe('lockpicking', () => {
     expect(novice.sweetSpot).toBeCloseTo(49.2, 3);
     expect(novice.center).toBeCloseTo(24.6, 3);
     expect(novice.breakSeconds).toBe(2);
+  });
+
+  it('takes its sizes and times from the settings by name', () => {
+    const named: Record<string, number> = {
+      fSweetSpotHard: 4,
+      fLockpickBreakExpert: 1,
+      fLockpickBreakSkillMult: 0.01,
+      fLockpickBrokenPicksMult: 2,
+    };
+    const settings = lockpickSettings((name) => named[name]);
+    expect(settings.sweetSpot).toEqual([30, 15, 7.5, 4, 1.875]);
+    const hard = lockShape(4, 50, { random: 0, settings, brokenPicks: 3 });
+    // 4 × (0.82 + 0.006 × 50) + 2 × 3; 1 × (1 + 0.01 × 50).
+    expect(hard.sweetSpot).toBeCloseTo(4 * 1.12 + 6, 5);
+    expect(hard.breakSeconds).toBeCloseTo(1.5, 5);
   });
 
   it('turns the lock fully in the sweet spot, partly beside it, not beyond', () => {

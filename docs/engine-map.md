@@ -65,14 +65,14 @@ These run through every area and explain most of what breaks in play.
 | Form types                  | complete  | VOLI, LENS (render)                                                                                                                                                           |
 | Per-reference state         | partial   | activate parents/children (5,691 references: pressure plates and tripwires fire nothing), physics-moved and animated state lost on unload, partial souls, alias display names |
 | Cell loading                | partial   | no buffered cells, OnAttached/DetachedFromCell, grid follows the camera                                                                                                       |
-| Respawn, cell reset         | missing   | no reset or respawn, no OnReset, corpses stay, encounter zone levels frozen, vendor restock 48 h (engine: iDaysToRespawnVendor 1)                                             |
+| Respawn, cell reset         | missing   | no reset or respawn, no OnReset, corpses stay, encounter zone levels frozen (vendor restock: iDaysToRespawnVendor, done)                                                      |
 | Papyrus VM                  | different | natives not frame-synced; threads cannot be saved                                                                                                                             |
 | Script events               | partial   | about 20 kinds never sent; OnHit on objects; OnLocationChange for NPCs                                                                                                        |
 | Event sources               | different | no event hub                                                                                                                                                                  |
 | Story manager               | partial   | mechanism complete; most event sources missing (see above)                                                                                                                    |
 | Save and load               | missing   | M12                                                                                                                                                                           |
 | Stats, skills, actor values | complete  | tracked-stats event                                                                                                                                                           |
-| Audio                       | partial   | non-dialogue voice ducking, speech highlighting, pause categories and menu fades, Slow Time only for its category, combat music rules                                         |
+| Audio                       | partial   | pause categories by DOBJ (menu fades, ducking and highlighting done), sounds held in menus, Slow Time only for its category, combat music rules                               |
 | Load order, settings        | partial   | plugins.txt and the user's INI files (M12)                                                                                                                                    |
 
 ### AI
