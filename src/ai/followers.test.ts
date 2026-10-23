@@ -1,21 +1,29 @@
 import { describe, expect, it } from 'vitest';
+import { AI_DEFAULTS, readAiSettings } from './ai-settings.ts';
 import {
   CATCH_UP_DISTANCE,
   CATCH_UP_SECONDS,
   catchUpPlace,
   catchUpTime,
-  FOLLOW_SETTINGS,
+  doorSpacing,
   followDistance,
   followerRanks,
   followGait,
+  followRadii,
+  followSpeed,
   outOfSight,
   placesBeside,
 } from './followers.ts';
 
+/** Skyrim.esm's values over the engine's. */
+const ESM = readAiSettings(
+  (name) => ({ fFollowSpaceBetweenFollowers: 192, fFollowRunMinSlowdownMultiplier: 0.75 })[name],
+);
+
 describe('followers', () => {
   it('keep one spacing apart behind their leader', () => {
-    expect(followDistance(256, 0)).toBe(256);
-    expect(followDistance(256, 2)).toBe(256 + 2 * FOLLOW_SETTINGS.spacing);
+    expect(followDistance(256, 0, ESM.followSpacing)).toBe(256);
+    expect(followDistance(256, 2, ESM.followSpacing)).toBe(256 + 2 * 192);
     const ranks = followerRanks(
       [0, 0, 0],
       [
@@ -29,10 +37,38 @@ describe('followers', () => {
     expect(ranks.get(3)).toBe(2);
   });
 
-  it('run to catch up and with a running leader', () => {
-    expect(followGait(300, 384, 'walk', false)).toBe('walk');
-    expect(followGait(900, 384, 'walk', false)).toBe('run');
-    expect(followGait(300, 384, 'walk', true)).toBe('run');
+  it('take the engine radii without their own, the smaller as the minimum', () => {
+    expect(followRadii(AI_DEFAULTS, undefined, undefined)).toEqual({ min: 128, max: 150 });
+    expect(followRadii(AI_DEFAULTS, 300, 100)).toEqual({ min: 100, max: 300 });
+    expect(followRadii(AI_DEFAULTS, 64, undefined)).toEqual({ min: 64, max: 128 });
+  });
+
+  it('run to catch up and with a running leader; sprint after the player', () => {
+    const walking = { running: false, sprinting: false, player: true };
+    const running = { running: true, sprinting: false, player: true };
+    expect(followGait(300, 384, 'walk', walking, 500)).toBe('walk');
+    expect(followGait(900, 384, 'walk', walking, 500)).toBe('run');
+    expect(followGait(300, 384, 'walk', running, 500)).toBe('run');
+    // Farther than fFollowStartSprintDistance behind the running player, or as they sprint.
+    expect(followGait(600, 384, 'walk', running, 500)).toBe('sprint');
+    expect(followGait(300, 384, 'walk', { ...running, sprinting: true }, 500)).toBe('sprint');
+    // Not after another actor.
+    expect(followGait(600, 384, 'walk', { ...running, player: false }, 500)).toBe('run');
+  });
+
+  it('match their speed to the leader between their radii', () => {
+    const at = (distance: number, leaderRatio = 1, running = false): number =>
+      followSpeed(AI_DEFAULTS, { distance, inner: 100, outer: 300, running, leaderRatio });
+    // At the middle as fast as the leader; at the outer radius fFollowExtraCatchUpSpeedMult more.
+    expect(at(200)).toBeCloseTo(1);
+    expect(at(300)).toBeCloseTo(1.2);
+    // Nearer, slower, not below the walk's fFollowWalkMinSlowdownMultiplier.
+    expect(at(150)).toBeCloseTo(0.75);
+    expect(at(100)).toBeCloseTo(0.75);
+    // Running beyond the outer radius, 1.25 times, within fFollowRunMaxSpeedupMultiplier.
+    expect(at(400, 1, true)).toBeCloseTo(1.25);
+    // A faster leader is matched.
+    expect(at(200, 1.4)).toBeCloseTo(1.4);
   });
 
   it('know what the leader cannot see', () => {
@@ -53,11 +89,13 @@ describe('followers', () => {
     expect(place[1]).toBeCloseTo(-300);
   });
 
-  it('come along beside the leader, row by row', () => {
-    const places = placesBeside({ position: [0, 0, 0], heading: 0 }, 3);
+  it('come along beside the leader, row by row, wider through doors', () => {
+    const places = placesBeside({ position: [0, 0, 0], heading: 0 }, 3, ESM.followSpacing);
     expect(places[0]?.position[0]).toBeCloseTo(-96);
     expect(places[1]?.position[0]).toBeCloseTo(96);
     expect(places[2]?.position[1]).toBeCloseTo(-192);
     expect(places.every((place) => place.heading === 0)).toBe(true);
+    // fFollowerSpacingAtDoors and their widths.
+    expect(doorSpacing(AI_DEFAULTS)).toBe(240);
   });
 });

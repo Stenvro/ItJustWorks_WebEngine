@@ -151,6 +151,31 @@ export const INI_DEFAULTS = {
   General: {
     bBorderRegionsEnabled: 1,
     fAutoDoorFadeSecs: 0.5,
+    // At most this many detection tests a frame (src/shell/actor-senses.ts).
+    iUpdateDetectionsAllowedPerFrame: 100,
+  },
+  // Where actors look by themselves (src/shell/actor-looks.ts): at most this many choose a
+  // frame, each again after 1–1.5 s, a new target held 3–8 s (the executable's defaults).
+  HeadTracking: {
+    iUpdateActorsPerFrame: 10,
+    fUpdateDelaySecondsMin: 1,
+    fUpdateDelaySecondsMax: 1.5,
+    fUpdateDelayNewTargetSecondsMin: 3,
+    fUpdateDelayNewTargetSecondsMax: 8,
+  },
+  // Actors on their way (src/shell/actor-movers.ts): those they go round, how long others may
+  // block them, the warp after repeated path failures (the executable's defaults).
+  Pathfinding: {
+    iMaxActorsToAvoid: 10,
+    fAvoidanceTimeDelta: 3,
+    fMinAvoidanceRadius: 256,
+    fMaxAvoidanceRadius: 512,
+    fMaxTimeBlockedByActors: 1,
+    bWarpOnConsecutiveFailures: 1,
+    iWarpMaxPathFailureCount: 3,
+    fMinFailureDistance: 50,
+    fWarpPathOffset: 100,
+    fWarpMaxTime: 5,
   },
   HAVOK: {
     fInAirFallingCharGravityMult: 1.35,
