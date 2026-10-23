@@ -7,9 +7,9 @@
 // fragments before and after; a voice file is followed by fGameplayVoiceFilePadding seconds, a
 // response without one lasts fAIDefaultSpeechMult seconds a character. The HUD shows each
 // response as a subtitle with the setting General Subtitles, or when the info (INFO flag Force
-// Subtitle) or the package's Say forces it, while the speaker is within the distance its voice
-// is heard (the 3D dialogue output model's, DOBJ DOP2: SOMDialogue3DDefault reaches 3000
-// units). An actor says one line at a time: a new one ends the one it says. An actor not on
+// Subtitle) or the package's Say forces it, while the speaker is within fMaxSubtitleDistance
+// (1250) of the player, the speaker's name first with bShowSubtitleSpeakerName (subtitleText).
+// An actor says one line at a time: a new one ends the one it says. An actor not on
 // screen says nothing. A line spoken in the player's head (Say's abSpeakInPlayersHead) plays at
 // the listener (the 2D dialogue output model, DOP3), its subtitle shown wherever the speaker is.
 // Lines are no noise to the actors' detection (src/shell/actor-senses.ts).
@@ -17,17 +17,15 @@
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { SpokenInfo } from '../scripting/runtime/dialogue-engine.ts';
 import { InfoFlag, type InfoResponse } from '../world/dialogue-records.ts';
-import { DefaultObjectUse } from '../world/default-objects.ts';
 import { headPosition, type SpokenLine } from './actors.ts';
 import type { GameSession } from './game-session.ts';
+import { subtitleText } from './subtitles.ts';
 import type { Terminal } from './terminal.ts';
 
 /** Seconds per character of a line without a voice file (GMST fAIDefaultSpeechMult). */
 const DEFAULT_SPEECH_MULT = 0.15;
 /** Seconds after a voice file before the next response (GMST fGameplayVoiceFilePadding). */
 const DEFAULT_VOICE_PADDING = 0.5;
-/** How far a voice is heard without the dialogue output model (SOMDialogue3DDefault's). */
-const DEFAULT_VOICE_REACH = 3000;
 
 /** How a line is said. */
 export interface SpeakOptions {
@@ -74,7 +72,6 @@ export class WorldLines {
   #subtitle: object | undefined;
   /** What each actor says now (its conditions). */
   readonly #saying = new Map<number, Talking>();
-  #reach: Promise<number> | undefined;
 
   constructor(session: GameSession, terminal: Terminal) {
     this.#session = session;
@@ -220,11 +217,7 @@ export class WorldLines {
     const voiceOf =
       options.speakAs === undefined ? placed : (session.placedActor?.(options.speakAs) ?? placed);
     const voice = voiceOf.look.voiceType;
-    const [placer, settings, reach] = await Promise.all([
-      session.actors(),
-      session.settings(),
-      this.#voiceReach(),
-    ]);
+    const [placer, settings] = await Promise.all([session.actors(), session.settings()]);
     const perCharacter = settings.number('fAIDefaultSpeechMult') ?? DEFAULT_SPEECH_MULT;
     const padding = settings.number('fGameplayVoiceFilePadding') ?? DEFAULT_VOICE_PADDING;
     const forced =
@@ -246,10 +239,15 @@ export class WorldLines {
     );
     this.responseBegins(speaker, spoken, response, options.target);
     const subtitle = {};
-    const general = session.ini.bool('Interface', 'bGeneralSubtitles');
+    const ini = session.ini;
+    const general = ini.bool('Interface', 'bGeneralSubtitles');
+    const reach = ini.number('Interface', 'fMaxSubtitleDistance');
     if ((general || forced) && (options.inPlayersHead === true || this.#heard(speaker, reach))) {
       this.#subtitle = subtitle;
-      session.hud.subtitle(response.text);
+      const name = ini.bool('Interface', 'bShowSubtitleSpeakerName') ? placed.look.name : '';
+      session.hud.subtitle(
+        subtitleText(response.text, name, ini.number('Interface', 'iSubtitleSpeakerNameColor')),
+      );
     }
     const seconds = control.line
       ? control.line.duration + padding
@@ -270,23 +268,12 @@ export class WorldLines {
     }
   }
 
-  /** Whether the player is within the reach of a speaker's voice. */
+  /** Whether the player is within `reach` of a speaker (the subtitles' distance). */
   #heard(speaker: number, reach: number): boolean {
     const placed = this.#session.placedActor?.(speaker);
     const player = this.#session.scriptsReady?.world.livePlacement?.(PLAYER_REF)?.position;
     if (!placed || !player) return true;
     const [x, y, z] = headPosition(placed);
     return Math.hypot(x - player[0], y - player[1], z - player[2]) <= reach;
-  }
-
-  /** How far a voice is heard: the 3D dialogue output model's maximum distance (DOBJ DOP2). */
-  #voiceReach(): Promise<number> {
-    this.#reach ??= (async () => {
-      const sounds = await this.#session.sounds();
-      const form = sounds.defaults.get(DefaultObjectUse.dialogueOutput3d);
-      const model = form === undefined ? undefined : await sounds.outputModel(form);
-      return model?.attenuation?.maxDistance ?? DEFAULT_VOICE_REACH;
-    })().catch(() => DEFAULT_VOICE_REACH);
-    return this.#reach;
   }
 }

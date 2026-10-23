@@ -556,9 +556,7 @@ export class Player implements Camera {
   /** Every frame; `held`: the ground is not there yet, the player stays where they are. */
   update(deltaSeconds: number, held = false): void {
     const { physics, ini } = this.#setup;
-    if (this.#take('Toggle POV') && !this.#povFixed) {
-      this.setPov(this.pov === 'first' ? 'third' : 'first');
-    }
+    this.#togglePov(deltaSeconds);
     if (this.#take('Toggle Always Run')) this.#alwaysRun = !this.#alwaysRun;
     if (this.#take('Auto-Move')) this.#autoMove = !this.#autoMove;
     if (this.#take('Sneak') && !this.character.swimming) this.sneaking = !this.sneaking;
@@ -568,17 +566,58 @@ export class Player implements Camera {
       if (!held) this.#move(step);
       this.onStep?.(step);
     });
-    // Third-person zoom eases towards its target (fMouseWheelZoomSpeed).
-    const speed = ini.number('Camera', 'fMouseWheelZoomSpeed');
-    this.#zoom += (this.#zoomTarget - this.#zoom) * Math.min(1, deltaSeconds * speed * 10);
+    // Third-person zoom moves to its target at fMouseWheelZoomSpeed (of the zoom's range) a
+    // second (observed in the original).
+    const speed = ini.number('Camera', 'fMouseWheelZoomSpeed') * deltaSeconds;
+    const toZoom = this.#zoomTarget - this.#zoom;
+    this.#zoom =
+      Math.abs(toZoom) <= speed ? this.#zoomTarget : this.#zoom + Math.sign(toZoom) * speed;
     // The bow's zoom eases in and out (TODO(M13): the engine's rate).
     const zoom = this.bowZoom;
     this.#bowZoom += (zoom - this.#bowZoom) * Math.min(1, deltaSeconds * BOW_ZOOM_RATE);
     if (Math.abs(this.#bowZoom - zoom) < 1e-3) this.#bowZoom = zoom;
     this.#moveShoulder(deltaSeconds);
-    this.#placeCamera(physics.alpha);
+    this.#placeCamera(physics.alpha, deltaSeconds);
     this.shake.step(deltaSeconds);
     if (this.#animated) this.#animated.since += deltaSeconds;
+  }
+
+  /** Seconds Toggle POV has been held (undefined: it is up), and whether the hold switched. */
+  #povHeld: { seconds: number; switched: boolean } | undefined;
+
+  /**
+   * Toggle POV, as the engine's camera states take it (observed in the original): let go after at least
+   * fTogglePOVDelay seconds it switches between first and third person; held in first person
+   * for f1st3rdSwitchDelay seconds it goes to third person at once (and the letting go does no
+   * more). TODO(phase 7): held in third person it turns the camera about the player (the vanity
+   * hold), and then its letting go returns to first person only with
+   * bReturnTo1stPersonFromVanity.
+   */
+  #togglePov(deltaSeconds: number): void {
+    const { ini } = this.#setup;
+    const pressed = this.#take('Toggle POV');
+    const held = this.#held.has('Toggle POV');
+    if (pressed || (held && !this.#povHeld)) this.#povHeld = { seconds: 0, switched: false };
+    const hold = this.#povHeld;
+    if (!hold) return;
+    if (held) {
+      hold.seconds += deltaSeconds;
+      if (
+        this.pov === 'first' &&
+        !hold.switched &&
+        !this.#povFixed &&
+        hold.seconds >= ini.number('Camera', 'f1st3rdSwitchDelay')
+      ) {
+        hold.switched = true;
+        this.setPov('third');
+      }
+      return;
+    }
+    // Let go (or a tap pressed and let go between two frames).
+    this.#povHeld = undefined;
+    if (hold.switched || this.#povFixed) return;
+    if (hold.seconds < ini.number('Controls', 'fTogglePOVDelay')) return;
+    this.setPov(this.pov === 'first' ? 'third' : 'first');
   }
 
   /**
@@ -764,18 +803,59 @@ export class Player implements Camera {
     return [wx * cos - wy * sin, wx * sin + wy * cos];
   }
 
+  /** The third-person camera at `at` (`blocked`: a wall stopped it), eased out of a wall. */
+  #recover(at: Vec3, blocked: boolean, deltaSeconds: number): [number, number, number] {
+    const { ini } = this.#setup;
+    if (blocked) {
+      this.#collided = { at, progress: 0 };
+      return [...at];
+    }
+    const from = this.#collided;
+    if (!from) return [...at];
+    const way = (at[0] - from.at[0]) ** 2 + (at[1] - from.at[1]) ** 2 + (at[2] - from.at[2]) ** 2;
+    if (way > ini.number('Camera', 'fCollisionRecoveryMinDist')) {
+      from.progress = Math.min(
+        1,
+        from.progress + ini.number('Camera', 'fCollisionRecoverySpeed') * deltaSeconds,
+      );
+      if (from.progress < 1) {
+        const t = from.progress;
+        return [
+          from.at[0] + (at[0] - from.at[0]) * t,
+          from.at[1] + (at[1] - from.at[1]) * t,
+          from.at[2] + (at[2] - from.at[2]) * t,
+        ];
+      }
+    }
+    this.#collided = undefined;
+    return [...at];
+  }
+
   /** First or third person (third: zoomed out at least to the shoulder). */
   setPov(pov: Pov): void {
     this.pov = pov;
     if (pov === 'third') this.#zoomTarget = Math.max(this.#zoomTarget, 0);
   }
 
-  /** First person at the eye; third person behind the shoulder, kept out of walls. */
-  #placeCamera(alpha: number): void {
+  /**
+   * Where the third-person camera last met a wall, and how far it has eased back out since
+   * (0..1; fCollisionRecoverySpeed a second). Undefined: it is where it should be.
+   */
+  #collided: { readonly at: Vec3; progress: number } | undefined;
+
+  /**
+   * First person at the eye; third person behind the shoulder, kept out of walls. Observed in the
+   * original: looking down pulls the third-person camera back by up to
+   * fPitchZoomOutMaxDist (in step with the pitch, all of it looking straight down); a camera a
+   * wall pushed in eases back out once the wall is gone, from where it met it, when the way back
+   * is longer than √fCollisionRecoveryMinDist (else it jumps there).
+   */
+  #placeCamera(alpha: number, deltaSeconds = 0): void {
     const { ini, physics } = this.#setup;
     const body = this.#body;
     const feet = this.character.feetAt(alpha);
     if (this.pov === 'first') {
+      this.#collided = undefined;
       // The camera rides the first-person skeleton's Camera1st node (sneaking lowers it).
       const [x, y, z] = this.#eyeOffset();
       const sin = Math.sin(this.yaw);
@@ -798,7 +878,11 @@ export class Player implements Camera {
       0,
       ini.number('Camera', 'fOverShoulderPosZ'),
     ];
-    const distance = Math.max(0, min + this.#zoom * (max - min) + shoulderBack);
+    const pitchZoom =
+      this.pitch < 0
+        ? (-this.pitch / (Math.PI / 2)) * ini.number('Camera', 'fPitchZoomOutMaxDist')
+        : 0;
+    const distance = Math.max(0, min + this.#zoom * (max - min) + shoulderBack + pitchZoom);
     const right: Vec3 = [Math.cos(this.yaw), -Math.sin(this.yaw), 0];
     const pivot: Vec3 = [
       target[0] + right[0] * shoulderX,
@@ -817,11 +901,12 @@ export class Player implements Camera {
       this.character.collider,
       this.cameraIgnores,
     );
-    this.position = [
+    const at: Vec3 = [
       pivot[0] + back[0] * reach,
       pivot[1] + back[1] * reach,
       pivot[2] + back[2] * reach,
     ];
+    this.position = this.#recover(at, reach < distance - 1e-3, deltaSeconds);
     this.#animateCamera();
   }
 

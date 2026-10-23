@@ -122,6 +122,9 @@ function editable(target: EventTarget | null): boolean {
 
 /** CLIK's input manager, which every menu built on CLIK reads its keys from. */
 const INPUT_DELEGATE = 'gfx.managers.InputDelegate.instance';
+/** The Flash key codes of the arrow keys: left 37, up 38, right 39, down 40. */
+const FLASH_LEFT = 37;
+const FLASH_DOWN = 40;
 
 /** The page function the bridge calls (checked against the bridge's name at compile time). */
 const BRIDGE_GLOBAL: typeof BRIDGE_CALL = '__itjwMenuCall';
@@ -800,6 +803,38 @@ export class MenuHost {
   readonly #taken = new Set<string>();
 
   /**
+   * A direction key held in a menu repeats as the engine's direction handler has it (observed in
+   * the original): after `long` seconds, then every `short` ([Interface] fMenuKeyRepeatLong 0.5,
+   * fMenuKeyRepeatShort 0.1; the shell sets them from the INI), not at the browser's pace.
+   */
+  keyRepeat: { readonly long: number; readonly short: number } = { long: 0.5, short: 0.1 };
+  /** The direction key repeating now. */
+  #repeat: { readonly code: string; timer: ReturnType<typeof setTimeout> } | undefined;
+
+  #stopRepeat(): void {
+    if (this.#repeat) clearTimeout(this.#repeat.timer);
+    this.#repeat = undefined;
+  }
+
+  /** Repeats a held direction key into a menu (keyHold) until it is let go or the menu closes. */
+  #startRepeat(menu: Menu, key: string, code: number): void {
+    this.#stopRepeat();
+    const next = (seconds: number): ReturnType<typeof setTimeout> =>
+      setTimeout(
+        () => {
+          if (this.#repeat?.code !== key || menu.closed || this.#topInteractive() !== menu) {
+            this.#stopRepeat();
+            return;
+          }
+          menu.pressKey('keyHold', code);
+          this.#repeat.timer = next(this.keyRepeat.short);
+        },
+        Math.max(0.01, seconds) * 1000,
+      );
+    this.#repeat = { code: key, timer: next(this.keyRepeat.long) };
+  }
+
+  /**
    * The topmost menu's keys: the engine's own first (onKey), then the movie's as GFx gives
    * them (Menu.pressKey: a Flash player takes keys only once it has been clicked, a menu
    * opened by a key must take keys at once), as other keys where the menu says (keyAs). Tab
@@ -835,9 +870,18 @@ export class MenuHost {
     const as =
       top.options.keyAs?.[event.code] ?? (this.menuKeys?.() ?? DEFAULT_MENU_KEYS)[event.code];
     const code = flashKeyCode(as ?? event.code);
+    if (!down && this.#repeat?.code === event.code) this.#stopRepeat();
     if (code === undefined || top.typing) return;
+    // The directions repeat at the engine's pace (keyRepeat), not the browser's.
+    const direction = code >= FLASH_LEFT && code <= FLASH_DOWN;
+    if (direction && down && event.repeat && this.#repeat?.code === event.code) {
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
     const type = !down ? 'keyUp' : event.repeat ? 'keyHold' : 'keyDown';
     if (top.pressKey(type, code)) {
+      if (direction && down) this.#startRepeat(top, event.code, code);
       event.preventDefault();
       event.stopPropagation();
       return;

@@ -32,10 +32,15 @@ export function settingsHandlers(
   );
   // The setting now (the player's over the INI's) and its default (the INI's alone).
   const defaults = new IniSettings(session.vfs.defaultIni);
-  const valueOf = (settings: IniSettings, option: SettingOption): number => {
-    const [section = '', key = ''] = option.id.split(':');
-    return settings.lookup(section, key) ?? 0;
-  };
+  const reader =
+    (settings: IniSettings) =>
+    (id: string): number => {
+      const [section = '', key = ''] = id.split(':');
+      return settings.lookup(section, key) ?? 0;
+    };
+  const now = (id: string): number => reader(session.ini)(id);
+  const valueOf = (settings: IniSettings, option: SettingOption): number =>
+    reader(settings)(option.id);
   /** Fills a page's entries: those this engine has get their ID, value and default. */
   const fill = (menu: Menu, argument: unknown, page: readonly SettingOption[]): void => {
     const list = menu.reference(argument);
@@ -48,10 +53,13 @@ export function settingsHandlers(
       );
       if (!option) continue;
       menu.set(`${list}.${String(index)}.ID`, option.id);
-      menu.set(`${list}.${String(index)}.value`, toMenuValue(option, valueOf(session.ini, option)));
+      menu.set(
+        `${list}.${String(index)}.value`,
+        toMenuValue(option, valueOf(session.ini, option), now),
+      );
       menu.set(
         `${list}.${String(index)}.defaultVal`,
-        toMenuValue(option, valueOf(defaults, option)),
+        toMenuValue(option, valueOf(defaults, option), reader(defaults)),
       );
     }
   };
@@ -95,7 +103,10 @@ export function settingsHandlers(
         return;
       }
       const option = options.get(id);
-      if (option) preferences.set(id, fromMenuValue(option, value));
+      if (!option) return;
+      for (const change of fromMenuValue(option, value, now)) {
+        preferences.set(change.id, change.value);
+      }
     },
     // Kept, the menu hears so (SettingsSaved) and leaves its "Saving..." state.
     SaveSettings: (menu) => {

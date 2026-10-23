@@ -474,6 +474,11 @@ frame, with ambient, sun, shadows and point lights, then fog. Surfaces running a
 projection fade out (no smearing down walls). Alpha testing discards below 0.5; blending uses
 the texture's alpha. One instanced draw per texture set; decals out of view are skipped.
 
+Dynamic decals (a hit's blood: `src/shell/combat-impacts.ts`) last `[Display]` fDecalLifetime
+(30 s); at most `[Decals]` uMaxDecals (1000; the Medium preset 100) are kept, the oldest going
+first (observed in the original: each is made with the lifetime, the count capped by the
+setting; `expireDecals`). TODO(M13): whether one fades at its end or vanishes.
+
 ## Precipitation
 
 Rain and snow (`precipitation.ts`, `shaders/precipitation.wgsl`), as the engine's particle

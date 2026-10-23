@@ -3,9 +3,10 @@
 // material struck (an actor: its race's NAM4, MaterialSkin's blood; the world: the shape's
 // material) an impact (IPCT): its sound (SNAM, NAM1 for a heavy hit: a power attack) at the hit,
 // and its decal (DODT with the texture set DNAM: blood) on the surface behind the target, as far
-// as the blow carries it. The decals of the latest hits stay; older ones go. TODO(M13): the
-// impact's effect model (MODL: the blood spray's particles) and how long the engine keeps
-// decals.
+// as the blow carries it. A decal lasts [Display] fDecalLifetime seconds; at most [Decals]
+// uMaxDecals are kept, the oldest going first (observed in the original: each dynamic decal
+// is made with the lifetime, the count capped by the setting). TODO(M13): whether a decal fades
+// at its end or vanishes; the impact's effect model (MODL: the blood spray's particles).
 
 import { impactAgainst } from '../audio/impacts.ts';
 import { Layer } from '../physics/collision-layers.ts';
@@ -13,14 +14,24 @@ import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { GpuDecals } from '../render/decals.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { Mat4, Vec3 } from '../render/math.ts';
-import { parseTextureSet, placeDecal, type DecalData, type TextureSet } from '../world/decal.ts';
+import {
+  expireDecals,
+  parseTextureSet,
+  placeDecal,
+  type DecalData,
+  type TextureSet,
+} from '../world/decal.ts';
 import type { Impact } from '../world/impact-records.ts';
 import type { GameSession } from './game-session.ts';
 
 /** How far behind a hit its blood lands (game units). */
 const SPLATTER_REACH = 160;
-/** Decals of hits kept at once. */
-const MAX_DECALS = 24;
+
+/** A hit's decal and when it goes (seconds on the impacts' clock). */
+interface LivingDecal {
+  readonly gpu: GpuDecals;
+  readonly until: number;
+}
 
 /** An impact's decal (IPCT DODT and DNAM). */
 interface ImpactDecal {
@@ -45,18 +56,31 @@ export interface HitImpact {
 export class CombatImpacts {
   readonly #session: GameSession;
   readonly #renderer: Renderer;
-  readonly #decals: GpuDecals[] = [];
+  readonly #decals: LivingDecal[] = [];
   readonly #decalData = new Map<number, Promise<ImpactDecal | undefined>>();
+  /** Seconds now (the decals' lifetimes run on it). */
+  readonly #now: () => number;
   #seed = 1;
 
-  constructor(session: GameSession, renderer: Renderer) {
+  constructor(
+    session: GameSession,
+    renderer: Renderer,
+    now: () => number = () => performance.now() / 1000,
+  ) {
     this.#session = session;
     this.#renderer = renderer;
+    this.#now = now;
   }
 
-  /** The decals of hits (the viewers draw them with their cells'). */
-  decals(): Iterable<GpuDecals> {
-    return this.#decals;
+  /** The decals of hits (the viewers draw them with their cells'), those past their time gone. */
+  *decals(): Iterable<GpuDecals> {
+    this.#expire();
+    for (const decal of this.#decals) yield decal.gpu;
+  }
+
+  #expire(): void {
+    const max = this.#session.ini.number('Decals', 'uMaxDecals');
+    for (const gone of expireDecals(this.#decals, this.#now(), max)) gone.gpu.destroy();
   }
 
   /** Sounds a hit and leaves its decal; resolves the impact (IPCT) it was. */
@@ -113,8 +137,9 @@ export class CombatImpacts {
     );
     if (!gpu) return;
     gpu.select(() => true);
-    this.#decals.push(gpu);
-    while (this.#decals.length > MAX_DECALS) this.#decals.shift()?.destroy();
+    const lifetime = this.#session.ini.number('Display', 'fDecalLifetime');
+    this.#decals.push({ gpu, until: this.#now() + lifetime });
+    this.#expire();
   }
 
   #decal(impact: number): Promise<ImpactDecal | undefined> {
@@ -144,7 +169,7 @@ export class CombatImpacts {
   }
 
   clear(): void {
-    for (const decal of this.#decals.splice(0)) decal.destroy();
+    for (const decal of this.#decals.splice(0)) decal.gpu.destroy();
   }
 }
 

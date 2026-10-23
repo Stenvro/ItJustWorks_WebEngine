@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nearestRing, RING_SKILLS, starPlace, treeMiddle } from './skills-ring.ts';
+import { nearestRing, RING_SKILLS, ringTurnSpeed, starPlace, treeMiddle } from './skills-ring.ts';
 import type { SkillRecord } from '../world/perk-trees.ts';
 
 const node = (index: number, column: number, row: number) => ({
@@ -42,5 +42,22 @@ describe('skills ring', () => {
     expect(nearestRing(29)).toBe(1);
     expect(nearestRing(-15)).toBe(17);
     expect(nearestRing(359)).toBe(0);
+  });
+});
+
+describe('ringTurnSpeed', () => {
+  const settings = { speedMax: 0.5, rampMs: 2000 };
+  const most = (2 * 180) / Math.PI;
+
+  it('rises to 1 / fStatsRotationSpeedMax radians a second over the ramp time', () => {
+    expect(ringTurnSpeed(0, 1, 200, 1 / 60, settings)).toBeCloseTo(most * Math.sin(Math.PI / 4));
+    expect(ringTurnSpeed(0, 2, 200, 1 / 60, settings)).toBeCloseTo(most);
+    // A speed below the most grows by 1.3 an update.
+    expect(ringTurnSpeed(10, 0, 200, 1 / 60, settings)).toBeCloseTo(13);
+  });
+
+  it('slows as the skill nears and stops there', () => {
+    expect(ringTurnSpeed(most, 2, 5, 1 / 60, settings)).toBeCloseTo(most / 4);
+    expect(ringTurnSpeed(most, 2, 0.05, 1 / 60, settings)).toBe(0);
   });
 });
