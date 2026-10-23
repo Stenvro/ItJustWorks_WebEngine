@@ -34,6 +34,9 @@ export class SoundInstance {
   /** The world's clock (Slow Time) on its pitch: setTimeRate. */
   #timeRate = 1;
   readonly #volume: GainNode;
+  /** A spoken line's level among the others (speech highlighting: setSpeechLevel). */
+  readonly #speech: GainNode;
+  #speechLevel = 1;
   /** Fades (region and acoustic space loops fade in and out). */
   readonly #fade: GainNode;
   readonly #distance: GainNode;
@@ -67,7 +70,9 @@ export class SoundInstance {
       this.#fade.gain.linearRampToValueAtTime(1, context.currentTime + fadeIn);
     }
     this.#distance = context.createGain();
-    this.#volume.connect(this.#fade);
+    this.#speech = context.createGain();
+    this.#volume.connect(this.#speech);
+    this.#speech.connect(this.#fade);
     this.#fade.connect(this.#distance);
     const output = engine.categoryNode(descriptor.category);
     if (model?.uses3d !== false && place !== undefined) {
@@ -181,6 +186,21 @@ export class SoundInstance {
     gain.cancelScheduledValues(time);
     gain.setValueAtTime(gain.value, time);
     gain.setTargetAtTime(level, time, 0.5);
+  }
+
+  /**
+   * A spoken line's level among the others (0–1), reached in a straight line over `seconds`
+   * (speech highlighting: SoundSystem).
+   */
+  setSpeechLevel(level: number, seconds: number): void {
+    if (Math.abs(level - this.#speechLevel) < 1e-4) return;
+    this.#speechLevel = level;
+    const time = this.#engine.context.currentTime;
+    const gain = this.#speech.gain;
+    gain.cancelScheduledValues(time);
+    gain.setValueAtTime(gain.value, time);
+    if (seconds <= 0) gain.setValueAtTime(level, time);
+    else gain.linearRampToValueAtTime(level, time + seconds);
   }
 
   /** Fades out over `seconds`, then stops (region and acoustic space loops). */

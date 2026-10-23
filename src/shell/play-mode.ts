@@ -254,6 +254,11 @@ export class PlayMode {
     // The menus' navigation keys as the player's bindings say (W, A, S, D as the arrows).
     this.#host.menuKeys = () => menuKeys(this.#playerData?.controls);
     this.#host.passKey = isConsoleKey;
+    // A held direction key repeats at the engine's pace.
+    this.#host.keyRepeat = {
+      long: ini.number('Interface', 'fMenuKeyRepeatLong'),
+      short: ini.number('Interface', 'fMenuKeyRepeatShort'),
+    };
     this.#console = new ConsoleMenu(this.#host, terminal, ini);
     this.#fader = new FaderMenu(this.#host, terminal, () => session.loading);
     this.#titles = new TitleSequence(this.#host, terminal, () => session.loading);
@@ -1018,7 +1023,10 @@ export class PlayMode {
   #setMenuMode(on: boolean, pointer = true): void {
     const session = this.#session;
     session.menuMode = on;
-    session.soundSystem?.engine.setInMenu(on);
+    session.soundSystem?.engine.setInMenu(on, {
+      out: session.ini.number('Audio', 'fMenuModeFadeOutTime'),
+      in: session.ini.number('Audio', 'fMenuModeFadeInTime'),
+    });
     // A conversation, or a menu that does not pause the game, keeps the mouse on its menu.
     const kept = this.#dialogue?.isOpen === true || this.#cursorMenus > 0;
     if (pointer && !(kept && !on)) this.#world.capturePointer(!on);

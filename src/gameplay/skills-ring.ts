@@ -70,6 +70,32 @@ export function starPlace(
   return [out[0] * STAR_DISTANCE + right[0] * x, out[1] * STAR_DISTANCE + right[1] * x, z];
 }
 
+/** Below this speed (degrees a second; 0.01 radians) the ring stops turning. */
+const TURN_STOP = (0.01 * 180) / Math.PI;
+
+/**
+ * How fast the ring turns now (degrees a second; 0: it has arrived), observed in the
+ * original: turning, its speed rises to its most, 1 / fStatsRotationSpeedMax radians a second, over
+ * fStatsRotationRampTime ms (along a quarter sine); toward the skill it turns to it goes no
+ * faster than the most times the share of a skill's angle left, a speed under that growing by
+ * 1.3 an update (at 60 a second); it stops below 0.01 radians a second.
+ */
+export function ringTurnSpeed(
+  previous: number,
+  sinceStart: number,
+  degreesLeft: number,
+  dt: number,
+  settings: { readonly speedMax: number; readonly rampMs: number },
+): number {
+  const most = 180 / Math.PI / Math.max(1e-3, settings.speedMax);
+  const share = Math.min(1, (sinceStart * 1000) / Math.max(1, settings.rampMs));
+  const ramp = most * Math.sin((Math.PI / 2) * share);
+  const cap = most * Math.min(1, Math.abs(degreesLeft) / SKILL_ANGLE);
+  // Slowed to a stop at the skill: arrived.
+  if (cap < TURN_STOP) return 0;
+  return Math.min(cap, Math.max(ramp, TURN_STOP, previous * 1.3 ** (dt * 60)));
+}
+
 /** The ring position nearest to a heading (degrees), 0 .. 17. */
 export function nearestRing(degrees: number): number {
   const count = RING_SKILLS.length;

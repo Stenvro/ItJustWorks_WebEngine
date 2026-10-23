@@ -25,7 +25,7 @@
 // "Merchants": what was sold to it goes, its goods and gold are there again, leveled lists
 // picked anew: ScriptRuntime.restock), checked as the menu opens. Quest items are not offered.
 
-import { barterMultipliers, restockDue, vendorBuys } from '../gameplay/barter.ts';
+import { barterMultipliers, barterSettings, restockDue, vendorBuys } from '../gameplay/barter.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { questItems } from '../scripting/runtime/quest-items.ts';
 import { AcquireType } from '../scripting/runtime/story-events.ts';
@@ -52,21 +52,22 @@ export async function barterModel(
   if (!vendor) terminal.log('ui', `${vendorActor.toString(16)} is in no vendor faction`, 'warn');
   // Without a merchant chest the vendor trades from its own items.
   const chest = vendor?.chest ?? vendorActor;
-  // The merchant chest restocks every 48 hours (what was sold to it goes, its own goods and
-  // gold are there again): reckoned from the first trade, as the menu opens.
+  const settings = await session.settings();
+  // The merchant chest restocks once a new day has come iDaysToRespawnVendor days after it was
+  // last stocked (what was sold to it goes, its own goods and gold are there again): reckoned
+  // from the first trade, as the menu opens.
   if (vendor?.chest !== undefined) {
     const now = game.state.gameDaysPassed;
     const last = game.state.restocked.get(chest);
+    const days = settings.number('iDaysToRespawnVendor') ?? 1;
     if (last === undefined) game.state.restocked.set(chest, { days: now, count: 0 });
-    else if (restockDue(last.days, now)) game.restock(chest);
+    else if (restockDue(last.days, now, days)) game.restock(chest);
   }
   const list = new Set(vendor?.list === undefined ? [] : await game.formList(vendor.list));
-  const settings = await session.settings();
   const speech = actorValueIndex('Speechcraft') ?? 17;
   const multipliers = barterMultipliers(
     (await game.actors.value(PLAYER_REF, speech)).current,
-    settings.number('fBarterMin') ?? 2,
-    settings.number('fBarterMax') ?? 3.3,
+    barterSettings((name) => settings.number(name)),
     await game.perks.barterFactors(PLAYER_REF, vendorActor),
   );
   const bypass = async (name: string): Promise<boolean> =>
