@@ -74,8 +74,17 @@ export class ActorBodies {
   readonly #severed = new Map<number, ReadonlySet<string>>();
   #physics: PhysicsWorld | undefined;
 
-  constructor(session: GameSession) {
+  /**
+   * Whether the ground under an actor has its collision (a dead actor's ragdoll waits for it:
+   * let go over ground not loaded, it fell through the world).
+   */
+  readonly #groundReady: (reference: number) => boolean;
+  /** The dead whose ragdolls wait for the ground under them (#groundReady). */
+  readonly #waiting = new Map<number, BodyHolder>();
+
+  constructor(session: GameSession, groundReady: (reference: number) => boolean = () => true) {
     this.#session = session;
+    this.#groundReady = groundReady;
   }
 
   /** The physics world of the play (undefined: none; the bodies go). */
@@ -87,6 +96,7 @@ export class ActorBodies {
 
   remove(reference: number): void {
     this.#severed.delete(reference);
+    this.#waiting.delete(reference);
     const entry = this.#bodies.get(reference);
     if (entry) this.#free(entry);
   }
@@ -130,6 +140,10 @@ export class ActorBodies {
   frame(actors: Iterable<BodyHolder>, focus: Vec3 | undefined, seconds = 0): void {
     const physics = this.#physics;
     if (!physics) return;
+    for (const [reference, staged] of this.#waiting) {
+      // Its bodies are made again if they went meanwhile (far off).
+      if (this.#groundReady(reference)) void this.kill(staged);
+    }
     for (const staged of actors) {
       const entry = this.#bodies.get(staged.reference);
       if (entry?.articulation) {
@@ -167,6 +181,11 @@ export class ActorBodies {
     }
     const physics = this.#physics;
     if (!entry || !physics) return;
+    if (!this.#groundReady(staged.reference)) {
+      this.#waiting.set(staged.reference, staged);
+      return;
+    }
+    this.#waiting.delete(staged.reference);
     // Knocked down as it died: it lies on as the dead do.
     entry.knocked = false;
     // Observed in the original: a dead actor's ragdoll lies on the dead bodies' layer
@@ -350,6 +369,18 @@ export class ActorBodies {
     };
     this.#bodies.set(reference, entry);
     this.#disableSevered(entry);
+    // Made in the pose it has now: a keyframed body only gets there by the next step, and one
+    // made as its actor dies is let go before that (made where the model's rest pose has it,
+    // the dead stood upright in their bind pose, balanced, until they fell asleep so: Lokir,
+    // a Stormcloak at Helgen's block).
+    const now = new Map(entry.bodies.map((posed) => [posed.body, posed]));
+    physics.poseBodies(bodies.placed, world, (body) => {
+      const posed = now.get(body);
+      return (
+        posed &&
+        multiply(entry.pose.worlds.subarray(posed.node * 16, posed.node * 16 + 16), posed.offset)
+      );
+    });
     this.#follow(entry, physics, true);
   }
 
