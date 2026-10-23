@@ -144,8 +144,11 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
       ride.home ??= [...feet];
       const t = ((now - ride.start) / 1000) % 60;
       const [, forward, walk, sprint, spin] = phases.find((p) => t < p[0]) ?? phases[phases.length - 1];
-      const speed = ride.last ? Math.hypot(feet[0] - ride.last[0], feet[1] - ride.last[1]) / Math.max(dt, 1e-3) : 0;
-      ride.last = [...feet];
+      // The horse's speed (the rider's feet sway with the saddle as the horse's walk plays).
+      const horse = W.actorStage?.get(W.actorStage.mounts.horseOf(0x14) ?? -1);
+      const at = horse ? horse.position : feet;
+      const speed = ride.last ? Math.hypot(at[0] - ride.last[0], at[1] - ride.last[1]) / Math.max(dt, 1e-3) : 0;
+      ride.last = [...at];
       ride.slow = forward && !(ride.backing > 0) && speed < 30 ? ride.slow + dt : 0;
       // Stuck (a wall, another horse): it backs out a moment, as a rider does, and takes a new way.
       if (ride.slow > 1.5) { ride.slow = 0; ride.path = []; ride.backing = 1.2; ride.log.push(Math.round(now / 1000) + ' stuck: backing out'); }
