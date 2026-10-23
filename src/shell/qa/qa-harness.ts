@@ -86,7 +86,7 @@ const FRAMES: QaSubject = { id: 'frames', name: 'frames', kind: 'log' };
  * stands (for CORPSE_SECONDS).
  */
 const CORPSE_UPRIGHT = 0.6;
-const CORPSE_SECONDS = 3;
+const CORPSE_SECONDS = 5;
 
 /** How high a node of a model-space pose (16 floats per node) is in the world. */
 function headHeight(worlds: Float32Array, node: number, world: ArrayLike<number>): number {
@@ -909,7 +909,9 @@ export class QaHarness {
         // Its head (the look's head node, else the usual names): how high it is standing.
         const skeleton = staged.placed.pose.skeleton;
         const head = [look.headNode, 'NPC Head [Head]', 'Head']
-          .map((name) => (name === undefined ? undefined : skeleton.nodeByName.get(name)))
+          .map((name) =>
+            name === undefined ? undefined : skeleton.nodeByName.get(name.toLowerCase()),
+          )
           .find((node) => node !== undefined);
         const rest = head === undefined ? 0 : (new ActorPose(skeleton).worlds[head * 16 + 14] ?? 0);
         corpse = { head, rest, episode: new Episode(CORPSE_SECONDS, 1) };
