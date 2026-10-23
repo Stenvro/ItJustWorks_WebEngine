@@ -1527,18 +1527,18 @@ overrides one. Skyrim.esm overrides a part of them, so for the rest the engine's
 counts (`readCombatAiSettings` and the other settings tables keep it as their fallback). The
 defaults are the original game's own, described by behaviour only. Some that matter here:
 
-| Setting                                 | Default           | Meaning                                               |
-| --------------------------------------- | ----------------- | ----------------------------------------------------- |
-| iFriendHitNonCombatAllowed              | 0                 | a friend turns on the player at their first blow      |
-| iFriendHitCombatAllowed                 | 3 (Skyrim.esm: 4) | blows a friend lets pass in combat                    |
-| iAllyHitNonCombatAllowed                | 3                 | blows an ally lets pass out of combat                 |
-| iAllyHitCombatAllowed                   | 1000              | 1000 or more: an ally lets any number pass in combat  |
-| fCombatYieldTime, fCombatYieldRetryTime | 10, 600           | read where the player yields to those fighting them   |
-| fCombatInventoryMinEquipTime\*          | 5, 3, 3, 5, 0     | weapon, magic, shout, staff, fists: kept at least     |
-| fCombatRestoreHealthPercentMin / Max    | 0, 0.5            | it restores health below this (defensive mult 0, 1)   |
-| fCombatRestoreMagickaPercentMin / Max   | 0.25, 0.4         | it restores magicka below this (defensive mult 0, 1)  |
-| iCrimeAlarmRecDistance                  | 4000              | an alarm reaches the actors this near                 |
-| fEvaluatePackageTimer                   | 15                | between an actor's package evaluations                |
+| Setting                                 | Default           | Meaning                                              |
+| --------------------------------------- | ----------------- | ---------------------------------------------------- |
+| iFriendHitNonCombatAllowed              | 0                 | a friend turns on the player at their first blow     |
+| iFriendHitCombatAllowed                 | 3 (Skyrim.esm: 4) | blows a friend lets pass in combat                   |
+| iAllyHitNonCombatAllowed                | 3                 | blows an ally lets pass out of combat                |
+| iAllyHitCombatAllowed                   | 1000              | 1000 or more: an ally lets any number pass in combat |
+| fCombatYieldTime, fCombatYieldRetryTime | 10, 600           | read where the player yields to those fighting them  |
+| fCombatInventoryMinEquipTime\*          | 5, 3, 3, 5, 0     | weapon, magic, shout, staff, fists: kept at least    |
+| fCombatRestoreHealthPercentMin / Max    | 0, 0.5            | it restores health below this (defensive mult 0, 1)  |
+| fCombatRestoreMagickaPercentMin / Max   | 0.25, 0.4         | it restores magicka below this (defensive mult 0, 1) |
+| iCrimeAlarmRecDistance                  | 4000              | an alarm reaches the actors this near                |
+| fEvaluatePackageTimer                   | 15                | between an actor's package evaluations               |
 
 The friendly-hit allowance depends on the reaction (FACT XNAM): a friend uses the iFriendHit
 pair, an ally the iAllyHit pair; more blows than allowed turn it on the attacker, an allowance of
