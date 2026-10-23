@@ -86,8 +86,12 @@ export interface SceneHost {
   say(line: SceneLine): Promise<void>;
   /** Where an actor looks now (undefined: no scene action holds its head). */
   look(actor: number, look: SceneLook | undefined): void;
-  /** An actor's scene packages changed: its AI chooses its package again. */
-  packagesChanged(actor: number): void;
+  /**
+   * An actor's scene packages changed: its AI chooses its package again. `started`: a package
+   * action started, which starts its package anew even where the actor's AI has it already
+   * and it completed.
+   */
+  packagesChanged(actor: number, started?: boolean): void;
   /** The package an actor runs now, if its AI runs. */
   currentPackage(actor: number): number | undefined;
   /** Whether any of the packages may run for an actor now (its conditions hold). */
@@ -448,7 +452,8 @@ export class SceneDirector {
 
   /**
    * The scenes starting or playing now, for development checks (src/shell/qa/): their phase,
-   * state and cast, and the actions running and not yet complete.
+   * state and cast, the actions running and not yet complete, and what the running phase
+   * waits for (its completion conditions; with none, its actions that end in it).
    */
   snapshot(): {
     readonly scene: number;
@@ -462,6 +467,8 @@ export class SceneDirector {
       readonly actor: number | undefined;
       readonly status: string;
     }[];
+    readonly quest: number | undefined;
+    readonly waits: readonly Condition[];
   }[] {
     return [...this.#playing.values()].map((playing) => ({
       scene: playing.formId,
@@ -473,6 +480,8 @@ export class SceneDirector {
       open: playing.actions
         .filter((run) => !run.complete && run.status === 'running')
         .map((run) => ({ type: run.action.type, actor: run.actor, status: run.status })),
+      quest: playing.record?.quest,
+      waits: playing.record?.phases[playing.phase]?.completionConditions ?? [],
     }));
   }
 
@@ -755,7 +764,11 @@ export class SceneDirector {
             run.complete = true;
             break;
           }
-          this.#host.packagesChanged(actor);
+          // The action starts its package (observed in the original): one the actor ran
+          // and completed already (its alias's, a phase before's) runs again from its root, so
+          // a travel to where the actor stands is done at once (MQ101DragonAttackSceneBPerchTower:
+          // Hadvar at MQ101HadvarMarker8 by his alias's dunCGHadvarToBFromC, its action's).
+          this.#host.packagesChanged(actor, true);
           void this.#checkRunnable(playing, run, actor);
           break;
       }

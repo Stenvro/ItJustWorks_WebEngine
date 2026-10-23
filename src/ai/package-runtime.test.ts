@@ -305,6 +305,31 @@ describe('ActorPackages', () => {
     expect(events.slice(0, 2)).toEqual(['begin Pack1', 'end Pack1']);
   });
 
+  it('runs a package it completed again when a scene action starts it, else keeps it done', async () => {
+    const ran: string[] = [];
+    const { actor, events } = setup([pack(1, branch('Sequence', [procedure('a')]))], {
+      a: () => {
+        ran.push('a');
+        return Promise.resolve('success');
+      },
+    });
+    await tick(actor);
+    await tick(actor);
+    expect(ran).toEqual(['a']);
+    expect(events).toEqual(['begin Pack1', 'end Pack1']);
+    // Asked again (a script's EvaluatePackage): still chosen, it stays done.
+    actor.evaluate();
+    await tick(actor);
+    await tick(actor);
+    expect(ran).toEqual(['a']);
+    // A scene's package action starting it: a new start, its tree from the root.
+    actor.evaluate(true);
+    await tick(actor);
+    await tick(actor);
+    expect(ran).toEqual(['a', 'a']);
+    expect(events).toEqual(['begin Pack1', 'end Pack1', 'begin Pack1', 'end Pack1']);
+  });
+
   it('completes the package with a procedure whose success completes it', async () => {
     const ran: string[] = [];
     const { actor } = setup([pack(1, branch('Sequence', [procedure('a', 0x1), procedure('b')]))], {

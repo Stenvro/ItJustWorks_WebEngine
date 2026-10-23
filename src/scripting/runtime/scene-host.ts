@@ -163,8 +163,8 @@ export class RuntimeSceneHost implements SceneHost {
     }
   }
 
-  packagesChanged(actor: number): void {
-    this.#runtime.world.evaluatePackage?.(actor);
+  packagesChanged(actor: number, started = false): void {
+    this.#runtime.world.evaluatePackage?.(actor, started);
   }
 
   currentPackage(actor: number): number | undefined {

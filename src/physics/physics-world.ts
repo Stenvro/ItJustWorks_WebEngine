@@ -1009,8 +1009,8 @@ export class PhysicsWorld {
   }
 
   /**
-   * A collision primitive: a box (`bounds`: full size) or sphere (`bounds[0]`: radius) placed
-   * at `world` (with its scale), on `layer`.
+   * A collision primitive: a box (`bounds`: its half extents, as XPRM stores them) or sphere
+   * (`bounds[0]`: radius) placed at `world` (with its scale), on `layer`.
    */
   addPrimitive(
     shape: 'box' | 'sphere',
@@ -1028,7 +1028,7 @@ export class PhysicsWorld {
     );
     const desc =
       shape === 'box'
-        ? RAPIER.ColliderDesc.cuboid((bounds[0] / 2) * s, (bounds[1] / 2) * s, (bounds[2] / 2) * s)
+        ? RAPIER.ColliderDesc.cuboid(bounds[0] * s, bounds[1] * s, bounds[2] * s)
         : RAPIER.ColliderDesc.ball(bounds[0] * s);
     // A trigger's volume (a layer the data marks as one: L_TRIGGER) is felt, not solid.
     if ((this.matrix.flags(layer) & LayerFlag.triggerVolume) !== 0) desc.setSensor(true);

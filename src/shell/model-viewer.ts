@@ -560,8 +560,8 @@ export class ModelViewer {
       return motion && { ...motion, water: water && at[2] < water.height ? water.type : undefined };
     },
     furnitureInUse: (reference, marker) => this.#stage?.furniture.inUse(reference, marker) ?? false,
-    evaluatePackage: (reference) => {
-      this.#stage?.evaluatePackage(reference);
+    evaluatePackage: (reference, restart) => {
+      this.#stage?.evaluatePackage(reference, restart);
     },
     combat: () => this.#stage?.combat,
     launchSpell: (spell, source, target, blame) =>

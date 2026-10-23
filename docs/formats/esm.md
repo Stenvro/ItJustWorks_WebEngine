@@ -715,8 +715,14 @@ the speeds of its quadrant.
 - **REFR record flag `0x20000000` "Don't Havok Settle":** a simulated object stays where it was
   placed (even floating) until something touches it; others settle under gravity once their
   cell's collision is complete (the engine's warm start, `[HAVOK] fWarmStartMaxTime`).
-- **XPRM** (32 bytes): bounds vec3 (full size; a sphere's radius in x), colour RGB + f32, type
-  u32 (1 box, 2 sphere, 3 portal box, 4 line). References to the engine's **CollisionMarker**
+- **XPRM** (32 bytes): bounds vec3, colour RGB + f32, type u32 (1 box, 2 sphere, 3 portal box,
+  4 line). The bounds are a box's half extents and a sphere's radius in x (observed in the
+  original: it makes a box primitive of the three values as they are, and the box holds a point
+  within plus or minus each on its axes; a sphere takes x as its radius; a plane x and z, a
+  line x with `[Display] fLinePrimitiveWidth`). Taken as full sizes, every trigger and
+  collision box was half as wide, deep and tall as the game's: MQ101DASetStage25, the strip
+  across Helgen's tower room the player sets stage 25 of MQ101DragonAttack in (330 × 121 × 127),
+  was missed by a player standing in the room by Ralof, and the opening stalled there. References to the engine's **CollisionMarker**
   (STAT 0x21) are invisible collision: boxes and spheres on the layer in **XTRI** (u32), else
   L_COLLISIONBOX. RoomMarker, PortalMarker and PlaneMarker primitives are rooms, portals and
   occlusion planes (no collision); activators' primitives are triggers, whose scripts hear
