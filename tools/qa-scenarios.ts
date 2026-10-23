@@ -144,7 +144,8 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
       ride.home ??= [...feet];
       const t = ((now - ride.start) / 1000) % 60;
       const [, forward, walk, sprint, spin] = phases.find((p) => t < p[0]) ?? phases[phases.length - 1];
-      // The horse's speed (the rider's feet sway with the saddle as the horse's walk plays).
+      // The horse's place, its speed and its way from there (the rider's feet sway with the saddle
+      // as the horse's walk plays: steered from them, the rider's view wavered with the stride).
       const horse = W.actorStage?.get(W.actorStage.mounts.horseOf(0x14) ?? -1);
       const at = horse ? horse.position : feet;
       const speed = ride.last ? Math.hypot(at[0] - ride.last[0], at[1] - ride.last[1]) / Math.max(dt, 1e-3) : 0;
@@ -154,12 +155,12 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
       if (ride.slow > 1.5) { ride.slow = 0; ride.path = []; ride.backing = 1.2; ride.log.push(Math.round(now / 1000) + ' stuck: backing out'); }
       if (ride.backing > 0) ride.backing -= dt;
       const backing = ride.backing > 0;
-      while (ride.path.length > 0 && Math.hypot(ride.path[0][0] - feet[0], ride.path[0][1] - feet[1]) < 150) ride.path.shift();
-      if (ride.path.length === 0) plan(feet);
+      while (ride.path.length > 0 && Math.hypot(ride.path[0][0] - at[0], ride.path[0][1] - at[1]) < 150) ride.path.shift();
+      if (ride.path.length === 0) plan(at);
       let rate = spin;
       const next = ride.path[0];
       if (!spin && next) {
-        const want = Math.atan2(next[0] - feet[0], next[1] - feet[1]);
+        const want = Math.atan2(next[0] - at[0], next[1] - at[1]);
         const off = Math.atan2(Math.sin(want - player.yaw), Math.cos(want - player.yaw));
         rate = Math.max(-1.5, Math.min(1.5, off * 3));
       }
