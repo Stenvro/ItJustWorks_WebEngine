@@ -220,9 +220,10 @@ export class FormIndex {
 
   /**
    * The scripts attached to a form: a reference's own (VMAD) and its base object's (the
-   * reference's property values win for a script both name), a quest's, an alias's.
+   * reference's property values win for a script both name), a quest's, an alias's. `scriptBase`
+   * replaces the reference's base for its scripts (an actor's: the NPC_ it takes them from).
    */
-  async attachedScripts(target: ObjectHandle): Promise<AttachedScriptInfo[]> {
+  async attachedScripts(target: ObjectHandle, scriptBase?: number): Promise<AttachedScriptInfo[]> {
     if (target.alias >= 0) {
       const record = await this.record(target.formId);
       const attachments = await this.attachments(target.formId);
@@ -234,7 +235,7 @@ export class FormIndex {
     const own = (await this.attachments(target.formId))?.scripts ?? [];
     const scripts = own.map((script) => this.#info(record, script));
     if (record.type === 'REFR' || record.type === 'ACHR' || record.type === 'PGRE') {
-      const base = record.formIdField('NAME');
+      const base = scriptBase ?? record.formIdField('NAME');
       const baseRecord = base === undefined ? undefined : await this.record(base);
       const baseScripts = base === undefined ? [] : ((await this.attachments(base))?.scripts ?? []);
       for (const script of baseScripts) {

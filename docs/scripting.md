@@ -21,6 +21,24 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
 
 - Every event an object gets runs on a thread of its own, one per script attached to it,
   in the handler of the state the script is in when the event comes.
+- **One thread runs at a time** (the VM's run token, `#runner`), as the game's VM runs one
+  stack at a time: a thread keeps running until it waits (a latent call, a lock another thread
+  holds, another script's OnInit, the frame's budget) or ends, and the threads waiting to run
+  take turns in the order they came (inferred from the wiki's threading notes, which name
+  these as the points where another thread gets in; TODO(M13): the VM's own scheduling of its
+  stacks was not read from the engine). The awaits JavaScript needs inside a step (a property of
+  another object, an engine native that reads records) are no switch points: the game's
+  natives return at once. An engine native that is still not done after 1000 microtask turns (it
+  reads files, or waits for another thread, which no native of the game does) lets the next
+  thread run meanwhile, so nothing deadlocks (counted in turns: the same in every run).
+  Without the token every await was a switch point and two
+  threads ran a check and its set side by side: CompanionsHousekeepingScript.SetUpCompanions
+  cycles the radiant quests twice, so each questgiver gets a current and a next quest; each
+  quest registers itself twice at once (its OnStoryScript and its start-up stage's Setup), both
+  found it unregistered, the second registration made it its questgiver's next quest too, and
+  the next quest to register stopped the one before (CR06) and then itself (CR07, whose
+  start-up then set a stage of a stopped quest: "attempting to start event scoped quest outside
+  of story manager").
 - A script instance is locked while a thread runs in it. Any **external call** unlocks it until
   the call returns: a function on another object, a global function, another object's native,
   a latent function (Utility.Wait). Calls on self keep the lock. Threads waiting for the lock
@@ -40,6 +58,51 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
   never thrown at the engine, as the game logs it.
 
 TODO(M12): save the threads, variables and registrations.
+
+## Properties
+
+How a script instance gets the plugin's values (VMAD), observed in the original: each
+value is bound by the property's name, looked up in the script and its parents. An auto
+property's variable takes the value; a full property's Set function runs with it, on the
+instance's first thread, before its OnInit, in the plugin's order (`Instance.bound`; vanilla
+gives values to full properties: TrapTriggerBase's TriggerType and TriggerCount on every trap,
+NorPortcullisSCRIPT's isAlreadyOpen, whose Set sets the variable the script reads). A value
+for a name the script has no property for is not bound, and the game logs it ("Property X on
+script Y attached to Z cannot be initialized because the script no longer contains that
+property"): the plugin's fault, kept as the game's (below). TODO(M13): what the engine does
+with a value for a full property without a Set function (none in the vanilla data's runs).
+
+## The log
+
+Problems are logged as the game's Papyrus log has them, with where they happened: the calling
+functions, innermost first, each with its object (`Script.Function [object] < ...`, at most
+three; `NativeCall.where` gives a native the same). Two kinds of lines:
+
+- **Ours** (warnings): something this engine did not do as the original, or a fault that
+  follows from one (a None our natives gave back, a condition function not valued, an
+  unknown run-on). Vanilla play logs none; the QA harness counts them (docs/qa.md, with the
+  boot's: a new game's or a coc's quest starts).
+- **The game's own** (`game data:` lines, `PapyrusVm.gameLog`, not warnings): the plugins' and
+  scripts' own faults, which the original logs the same way and which stay in the data:
+  - a plugin's value for a property its script no longer has (35 in vanilla with the DLCs:
+    DLC1SeranaLevelingScript's 14 perks, DLC2HirelingQuestScript's 8, the Toldar's Tomb plates'
+    PlatePosition, ...);
+  - a call on None through an auto property that neither the plugin nor the script ever set
+    (DLC1VampireCastleControllerScript.SetGateClosed calls pMainGate, which the plugin leaves
+    empty: it fills pDLC1VCMainGateRef);
+  - a call on the None a failed cast gave, the object not having the script by the plugins'
+    attachments (its own, its base's or template's, as the engine reads them): a Fort Neugrad
+    bandit runs PF_CarryFirewood, whose fragment casts it to CarryActorScript, which bandits
+    do not have;
+  - a call on a None the engine gave (an event's argument, passed on or assigned without a
+    check): dragonActorSCRIPT.OnLocationChange hands the new location to
+    WIFunctionsScript.RegisterDragonAttack, which calls HasKeyword on it, and a dragon flying
+    into the wilderness has none (`Frame.engineNones` follows such a None from the event's
+    parameters through calls and assignments);
+  - the engine calling a fragment by the plugin's name for it that the compiled script does
+    not have ("Method Fragment_0 not found on TIF__000D0835. Aborting call and returning
+    None": the bard's lute topic, MQ101's PF_MQ101HadvarUseIdleMarker5);
+  - Enable or Disable of a reference with an enable parent (The world, below).
 
 ## The runtime
 
@@ -101,7 +164,26 @@ is the other: the killmove idles' ShouldAttackKill(), GetRelativeAngle(, Z) and
 GetTargetHeight(), dialogue's IsHostileToActor() ask about the target that way. A condition
 whose run-on has nothing to run on fails, whatever its comparison (a target run-on asked without
 a target: an idle tree asked of no target, RipHeartOut's GetIsID(DLC2Ildari) on it); only a
-function no evaluator values holds. An actor's keywords are its base's, then its race's
+function no evaluator values holds. A quest alias run-on reads the quest the conditions belong
+to, which every caller gives: a dialogue's quest, a scene's, a package's owner quest (PACK
+QNAM), an objective target's quest (the compass). Without one the condition is reported ("not valued here") and holds.
+
+**Subjects of every kind** (observed in the original). The engine's condition functions
+all take a reference and answer 0 when what they are asked of is not of their kind: an actor's
+function of an object (GetRelationshipRank of a chest), a reference parameter left empty with
+no other to stand in, a reference's function with nothing to run on. The comparison then goes
+on with 0 (`== 0` holds), with no warning: the game logs nothing there either. Conditions run
+on a location (a location alias's candidates, a location alias run-on, an event's L1 or L2) run
+on a stand-in reference that has the location both as where it is and where it was placed (the
+engine's current-location and editor-location lookups fall back to the same extra data on a
+reference without a cell): LocationHasKeyword, LocationHasRefType, GetInCurrentLoc and
+GetKeywordDataForCurrentLocation read the location, GetIsEditorLocation(Alias) and
+HasSameEditorLocAsRef(Alias) the location as its editor location (FreeformShipsDawnstar's Cave
+is a cave in the Pale or Hjaalmarch by GetIsEditorLocation(PaleHoldLocation) or
+GetIsEditorLocation(HjaalmarchHoldLocation)), and the actor's and object's
+functions are 0. Run on a reference, LocationHasRefType asks about the location the reference
+is in (CR01's beast victim). Of the location's references of the type it counts those not
+deleted, not disabled and, for an actor, alive. An actor's keywords are its base's, then its race's
 (HasKeyword(ActorTypeNPC): a race's keyword). GetRelativeAngle(reference, axis) is the subject's
 rotation on the axis less the reference's, 0..360 degrees (not where the reference stands:
 GetHeadingAngle says that); GetTargetHeight(reference) how far above the subject's feet the
@@ -136,7 +218,13 @@ As the game starts one (`ScriptRuntime.newGame`): the clock at the plugins' date
 (GameDaysPassed and GameHour), every quest's and alias's scripts started (OnInit) and every
 persistent reference's with scripts, then the quests that start with the game, by priority
 (TODO(M13): the engine's order), their aliases allowed to take reserved references (Creation
-Kit). A start resets a quest that does not run once, so its OnInit runs again. Then the
+Kit). A start resets a quest that does not run once, so its OnInit runs again. Their start-up
+stages' fragments run once all of them have started (`QuestEngine.holdStartUps`): the engine
+starts them in one pass of its main loop and the Papyrus VM runs the fragment calls queued
+meanwhile after it (inferred from the engine's queued fragment calls), so a fragment finds
+every other such quest's aliases filled: BYOHHouseBuilding's start-up asks the jarls of the
+town dialogue quests (DialogueFalkreath's Siddgeir) for their relationship with the player,
+and found their aliases empty when it ran as its own quest started. Then the
 opening: no record or script starts **Unbound** (MQ101); the game does as a new game begins
 (UESP). On the vanilla data with the DLCs and Creation Club items all 443 start (the update
 and DLC set-up quests stop themselves at once) and MQ101 runs; no native is missing. A matching
@@ -165,6 +253,10 @@ quests (the College's MGR quests) may come out differently from one new game to 
 
 - **Start** fills the aliases in order; one that must be filled and stays empty keeps the
   quest from starting. A quest with an event type starts only from that story manager event.
+  Observed in the original: Papyrus's Start on such a quest, and SetStage on one that does
+  not run, do nothing and return false, and the game logs "attempting to start event scoped
+  quest outside of story manager" as an error of the calling script (SetStage on one the story
+  manager started and that runs works as on any other).
   The start-up stage is set as it starts; its fragment runs on a thread of its own. Its scenes
   that begin on quest start start, and they end as it stops ([ai.md](ai.md#scenes)).
 - **SetStage** starts the quest if needed; without "allow repeated stages" a stage is set once;
@@ -209,7 +301,12 @@ worldspaces on screen:
   non-persistent reference's scripts start with its cell), then OnCellAttach, OnLoad and
   OnCellLoad; leaving, OnUnload and OnCellDetach.
 - **Enable state**: what scripts enable and disable shows and hides at once, collision
-  included, without loading the cell again; enable parents follow.
+  included, without loading the cell again; enable parents follow. Observed in the
+  original: a reference with an enable parent (its XESP naming a reference that exists) only
+  follows its parent; Papyrus's Enable and Disable leave it as it is and the game logs "cannot
+  enable (disable) an object with an enable state parent" as an error of the calling script,
+  logged here as the game's own, with the stack. The engine's own disabling (an alias's
+  "initially disabled") leaves it without a line.
 - **Activation**: the player's Activate goes to the reference's OnActivate first; what
   activating does by default (doors, containers, items) follows unless a script blocks it.
   A script's Activate does the same, so an object a script moves first is not left waiting
@@ -431,7 +528,10 @@ DialogueWhiterunArgueScene.
 ## Actors
 
 `actor-engine.ts`: a reference's base resolved as for its look (leveled lists picked once,
-templates per part), its level (fixed, or the player's times its multiplier within its calc
+templates per part; its scripts too: an actor runs the scripts of the NPC_ it takes them from,
+its leveled list's pick and that one's template while it uses the template's scripts, Template
+Data "Use Script", with its reference's own VMAD over them: a placed or created leveled actor
+runs its pick's scripts, not none), its level (fixed, or the player's times its multiplier within its calc
 min and max), its actor values (the record's base: skills and offsets from DNAM, health,
 magicka and stamina as the Creation Kit calculated them, AI values from AIDT, carry weight,
 mass and regeneration from its race; then scripts' permanent modifiers and damage), factions

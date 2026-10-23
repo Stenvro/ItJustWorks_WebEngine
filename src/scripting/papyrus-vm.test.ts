@@ -157,9 +157,62 @@ const SCRIPTS: BuildScript[] = [
   },
 ];
 
+// A gate (0x30): a full property whose Set function the plugin's value goes through, an auto
+// property the plugin leaves empty, and a value for a property the script does not have.
+SCRIPTS.push({
+  name: 'Gate',
+  parent: 'ObjectReference',
+  variables: [
+    ['open', 'Bool', bool(false)],
+    ['::Lever_var', 'ObjectReference', none],
+  ],
+  properties: [['Lever', 'ObjectReference', '::Lever_var']],
+  fullProperties: [
+    {
+      name: 'IsAlreadyOpen',
+      type: 'Bool',
+      get: { name: 'Get', returnType: 'Bool', code: [['return', id('open')]] },
+      set: {
+        name: 'Set',
+        params: [['value', 'Bool']],
+        code: [['assign', id('open'), id('value')]],
+      },
+    },
+  ],
+  functions: [
+    {
+      name: 'Pull',
+      locals: [['::NoneVar', 'None']],
+      code: [['callmethod', id('Enable'), id('::Lever_var'), id('::NoneVar'), bool(false)]],
+    },
+    {
+      // An event's None argument passed on and used unchecked (dragonActorSCRIPT's
+      // OnLocationChange into the wilderness).
+      name: 'OnHit',
+      params: [['akAggressor', 'ObjectReference']],
+      locals: [['::NoneVar', 'None']],
+      code: [['callmethod', id('Check'), id('self'), id('::NoneVar'), id('akAggressor')]],
+    },
+    {
+      name: 'Check',
+      params: [['who', 'ObjectReference']],
+      locals: [
+        ['::NoneVar', 'None'],
+        ['other', 'ObjectReference'],
+      ],
+      code: [
+        ['assign', id('other'), id('who')],
+        ['callmethod', id('Enable'), id('other'), id('::NoneVar'), bool(false)],
+      ],
+    },
+  ],
+});
+
 class TestHost implements VmHost {
   readonly enabled = new Set<number>();
   readonly warnings: string[] = [];
+  /** The game's own faults (PapyrusVm.gameLog). */
+  readonly gameLogged: string[] = [];
   /** Test.Forget: the house's scripts are let go (PapyrusVm.reset). */
   forget: (() => void | Promise<void>) | undefined;
 
@@ -168,6 +221,17 @@ class TestHost implements VmHost {
   }
 
   attachedScripts(target: ObjectHandle): Promise<readonly AttachedScriptInfo[]> {
+    if (target.formId === 0x30) {
+      return Promise.resolve([
+        {
+          name: 'Gate',
+          properties: new Map<string, Value>([
+            ['isalreadyopen', true],
+            ['triggertype', 2],
+          ]),
+        },
+      ]);
+    }
     if (target.formId !== 0x10) return Promise.resolve([]);
     const markers = new PapyrusArray([
       new ObjectHandle(0x20, 'form'),
@@ -205,6 +269,10 @@ class TestHost implements VmHost {
 
   warn(message: string): void {
     this.warnings.push(message);
+  }
+
+  gameLog(message: string): void {
+    this.gameLogged.push(message);
   }
 }
 
@@ -277,6 +345,28 @@ describe('Papyrus VM', () => {
     expect(await vm.call(house, 'Math')).toBe(13);
   });
 
+  it("binds the plugin's values as the game does: full properties through their Set", async () => {
+    const { vm, host } = setup();
+    const gate = new ObjectHandle(0x30, 'Gate');
+    await vm.initialize(gate);
+    expect(await vm.getProperty(gate, 'IsAlreadyOpen')).toBe(true);
+    // A value for a property the script no longer has is the plugin's fault (the game logs it).
+    expect(host.gameLogged).toEqual([
+      'Property triggertype on script Gate attached to [gate 00000030] cannot be initialized because the script no longer contains that property',
+    ]);
+    // A call through an auto property the plugin left empty: None, as in the game.
+    await vm.call(gate, 'Pull');
+    expect(host.gameLogged[1]).toBe(
+      'Gate.Pull [gate 00000030]: call to Enable on None (property Lever is not set in the plugin)',
+    );
+    // An event's None argument the script passes on unchecked: None in the game too.
+    await vm.sendEvent(gate, 'OnHit', [null]);
+    expect(host.gameLogged[2]).toBe(
+      'Gate.Check [gate 00000030] < Gate.OnHit [gate 00000030]: call to Enable on None (other: None as the engine gave it, unchecked)',
+    );
+    expect(host.warnings).toEqual([]);
+  });
+
   it('stops endless loops and reports missing functions and natives', async () => {
     const { vm, host, house } = setup();
     // A runaway thread is stopped and reported, as the game logs a script error.
@@ -284,7 +374,8 @@ describe('Papyrus VM', () => {
     expect(host.warnings.some((w) => w.includes('instructions without waiting'))).toBe(true);
     expect(await vm.call(house, 'NoSuchFunction')).toBeNull();
     expect(await vm.call(new ObjectHandle(0x20, 'objectreference'), 'GetFormID')).toBe(0);
-    expect(host.warnings.some((w) => w.includes('NoSuchFunction'))).toBe(true);
+    // The engine calling a function the script does not have (a plugin's fragment name).
+    expect(host.gameLogged.some((w) => w.includes('Method NoSuchFunction not found'))).toBe(true);
     expect(host.warnings.some((w) => w.includes('Form.GetFormID is not implemented'))).toBe(true);
   });
 });

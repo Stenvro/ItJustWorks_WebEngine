@@ -26,7 +26,7 @@ export function registerReference(n: Register, runtime: ScriptRuntime): void {
   ] as const) {
     n(`objectreference.${name}`, async (call) => {
       const reference = self(call);
-      if (reference !== undefined) await runtime.setEnabled(reference, enable);
+      if (reference !== undefined) await runtime.setEnabled(reference, enable, call.where);
       return null;
     });
   }

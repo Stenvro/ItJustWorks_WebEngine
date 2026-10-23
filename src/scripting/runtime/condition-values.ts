@@ -518,8 +518,8 @@ const number = (value: Value): number =>
 
 /**
  * Whether one condition holds for a subject. A function no evaluator values holds (and is
- * reported: tools/condition-audit.ts lists those the data uses); so does one that has no
- * answer for this subject (a reference's function run on a quest).
+ * reported: tools/condition-audit.ts lists those the data uses); one that does not apply to
+ * this subject (a reference's function run on a quest) is 0.
  */
 export async function evaluateCondition(
   runtime: ScriptRuntime,
@@ -532,13 +532,10 @@ export async function evaluateCondition(
     runtime.vm.warn(`condition ${conditionFunctionName(condition.function)} is not valued yet`);
     return true;
   }
-  if (value === undefined) {
-    runtime.vm.warn(
-      `condition ${conditionFunctionName(condition.function)} has no value for a ${subject.type}`,
-    );
-    return true;
-  }
-  return compareConditionValue(runtime, condition, value);
+  // A function asked of what it does not apply to (an actor's function of an object, a
+  // reference's of a location) is 0, as the engine's condition functions answer then (observed in
+  // the original): the comparison goes on with it.
+  return compareConditionValue(runtime, condition, value ?? 0);
 }
 
 /** A condition's comparison of a value with its comparand (a number or a global's value). */
@@ -655,8 +652,13 @@ async function conditionValue(
   /** An alias of the condition's quest by the id in the first parameter. */
   const alias = (id: number): number | undefined =>
     context.quest === undefined ? undefined : state.quests.get(context.quest)?.aliases.get(id);
+  // Observed in the original: a location's conditions (a location alias's candidates, an
+  // event's location) run on a stand-in reference that is in that location and was placed in
+  // it, so the location is both its current and its editor location.
   const currentLocation = async (): Promise<number | undefined> =>
     location ?? (reference === undefined ? undefined : runtime.locationOf(reference));
+  const editorLocation = async (): Promise<number | undefined> =>
+    location ?? (reference === undefined ? undefined : runtime.editorLocation(reference));
   const actorValue = async (pick: 'base' | 'current' | 'percent'): Promise<number | undefined> => {
     if (reference === undefined) return undefined;
     const value = await actors.value(reference, condition.raw1);
@@ -664,7 +666,7 @@ async function conditionValue(
     return value[pick];
   };
   const editorWithin = async (target: number): Promise<boolean> => {
-    const editor = reference === undefined ? undefined : await runtime.editorLocation(reference);
+    const editor = await editorLocation();
     return editor !== undefined && (await runtime.locationWithin(editor, target));
   };
   /** The same location, or (with a keyword) the same one up their parents that has it. */
@@ -960,7 +962,7 @@ async function conditionValue(
     }
     // The editor location is the location or inside it (Morthal's innkeeper is in its inn).
     case Fn.getIsEditorLocation:
-      return reference === undefined ? undefined : flag(await editorWithin(form));
+      return flag(await editorWithin(form));
     case Fn.getIsEditorLocAlias: {
       const target = alias(condition.raw1);
       return flag(target !== undefined && (await editorWithin(target)));
@@ -971,7 +973,7 @@ async function conditionValue(
         condition.function === Fn.hasSameEditorLocAsRef
           ? referenceParameter()
           : alias(condition.raw1);
-      const mine = reference === undefined ? undefined : await runtime.editorLocation(reference);
+      const mine = await editorLocation();
       const theirs = other === undefined ? undefined : await runtime.editorLocation(other);
       return flag(await sameLocation(mine, theirs, condition.form2));
     }
@@ -995,9 +997,10 @@ async function conditionValue(
         : flag((await runtime.location(at))?.keywords.includes(form) ?? false);
     }
     case Fn.locationHasRefType: {
-      if (location === undefined) return undefined;
+      const at = await currentLocation();
+      if (at === undefined) return 0;
       // Creation Kit: false when the references of the type are dead or disabled.
-      for (const entry of (await runtime.location(location))?.references ?? []) {
+      for (const entry of (await runtime.location(at))?.references ?? []) {
         if (entry.type !== form) continue;
         if (!(await actors.isDead(entry.reference)) && (await runtime.isEnabled(entry.reference)))
           return 1;

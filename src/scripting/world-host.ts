@@ -291,15 +291,16 @@ export class GameHost implements VmHost {
     return this.state.enabled.get(formId) ?? (record.flags & RecordFlag.initiallyDisabled) === 0;
   }
 
-  async #setEnabled(target: Value, enabled: boolean): Promise<void> {
+  async #setEnabled(target: Value, enabled: boolean, where: () => string): Promise<void> {
     if (!(target instanceof ObjectHandle)) return;
     const formId = await this.#reference(target);
     if (formId === undefined) return;
     const record = await this.record(formId);
     if (record?.fields.has('XESP')) {
-      // The engine ignores Enable/Disable on references with an enable parent.
+      // The engine ignores Enable/Disable on references with an enable parent and logs it as
+      // an error of the calling script (src/scripting/runtime/runtime.ts setEnabled).
       this.warn(
-        `${record.editorId ?? formatValue(target)}: has an enable parent, Enable/Disable ignored`,
+        `${where()}: cannot ${enabled ? 'enable' : 'disable'} an object with an enable state parent (${record.editorId ?? formatValue(target)})`,
       );
       return;
     }
@@ -374,15 +375,17 @@ export class GameHost implements VmHost {
 
     n('form.getformid', ({ self }) => self?.formId ?? 0);
 
-    n('objectreference.enable', async ({ self }) => this.#setEnabled(self, true).then(() => null));
-    n('objectreference.enablenowait', async ({ self }) =>
-      this.#setEnabled(self, true).then(() => null),
+    n('objectreference.enable', async ({ self, where }) =>
+      this.#setEnabled(self, true, where).then(() => null),
     );
-    n('objectreference.disable', async ({ self }) =>
-      this.#setEnabled(self, false).then(() => null),
+    n('objectreference.enablenowait', async ({ self, where }) =>
+      this.#setEnabled(self, true, where).then(() => null),
     );
-    n('objectreference.disablenowait', async ({ self }) =>
-      this.#setEnabled(self, false).then(() => null),
+    n('objectreference.disable', async ({ self, where }) =>
+      this.#setEnabled(self, false, where).then(() => null),
+    );
+    n('objectreference.disablenowait', async ({ self, where }) =>
+      this.#setEnabled(self, false, where).then(() => null),
     );
     n('objectreference.isdisabled', async ({ self }) => {
       const formId = self && (await this.#reference(self));
