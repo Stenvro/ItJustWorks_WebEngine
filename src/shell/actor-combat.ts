@@ -2374,6 +2374,13 @@ export class ActorCombat implements CombatBridge {
     };
   }
 
+  /** The arrows and bolts in flight and who loosed them (detection: those who see them pass). */
+  *shots(): Iterable<{ readonly position: Vec3; readonly source: number }> {
+    for (const shot of this.#projectiles.flying()) {
+      yield { position: shot.position, source: shot.shooter };
+    }
+  }
+
   /** What flies at the actors now: the arrows, spells and breath. */
   *#threats(): Iterable<Threat> {
     for (const shot of this.#projectiles.flying()) {

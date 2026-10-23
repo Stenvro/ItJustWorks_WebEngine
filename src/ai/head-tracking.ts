@@ -121,39 +121,23 @@ export const VANILLA_HEAD_TRACK: HeadTrackSettings = {
 /** The setting names of HeadTrackSettings (read from the game settings). */
 export const HEAD_TRACK_SETTINGS = Object.keys(VANILLA_HEAD_TRACK) as (keyof HeadTrackSettings)[];
 
-/**
- * The player is looked at by actors without a target of their own when this near (game
- * units, head to head) and in front of them (within FRONT_ANGLE of their facing). TODO(M13):
- * the engine's rule is not documented. Only once it has detected them (src/shell/actor-looks.ts).
- */
-export const PLAYER_INTEREST_DISTANCE = 512;
-const FRONT_ANGLE = Math.PI / 2;
+/** How far off its facing an actor may choose another actor to look at (120°). */
+const LOOK_CHOICE_ANGLE = (2 * Math.PI) / 3;
 
 /**
  * Whether an actor (its head, facing `heading`: compass, radians) takes the player's eye as
- * its default head track target.
+ * its default head track target: as any other actor it may look at (observed in the
+ * original), within fAIMaxHeadTrackDistance (`maxDistance`, game units, head to head) and 120° of
+ * its facing. Only once it has detected them (src/shell/actor-looks.ts).
  */
-export function noticesPlayer(head: Vec3, heading: number, eye: Vec3): boolean {
-  const dx = eye[0] - head[0];
-  const dy = eye[1] - head[1];
-  const dz = eye[2] - head[2];
-  if (Math.hypot(dx, dy, dz) > PLAYER_INTEREST_DISTANCE) return false;
-  const horizontal = Math.hypot(dx, dy);
-  if (horizontal < 1e-3) return true;
-  // Compass heading: 0 faces +y, turning clockwise.
-  const facing = [Math.sin(heading), Math.cos(heading)] as const;
-  const cosine = (dx * facing[0] + dy * facing[1]) / horizontal;
-  return cosine >= Math.cos(FRONT_ANGLE);
+export function noticesPlayer(
+  head: Vec3,
+  heading: number,
+  eye: Vec3,
+  maxDistance: number,
+): boolean {
+  return chooseLookActor(head, heading, [{ reference: 0, head: eye }], maxDistance) === 0;
 }
-
-/**
- * How often an actor without a target of its own chooses whom it looks at (the INI's
- * [HeadTracking] fUpdateDelaySecondsMin and Max, seconds; observed in the original).
- */
-export const LOOK_CHOICE_SECONDS = { min: 1, max: 1.5 } as const;
-
-/** How far off its facing an actor may choose another actor to look at (120°). */
-const LOOK_CHOICE_ANGLE = (2 * Math.PI) / 3;
 
 /** Another actor's head, as an actor choosing whom to look at sees it. */
 export interface LookCandidate {

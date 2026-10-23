@@ -6,10 +6,12 @@
 // exterior; the player's teammates sneak while the player sneaks; one left far behind out of
 // the player's sight catches up behind the player.
 
+import { aiSettingsOf } from '../ai/ai-settings.ts';
 import {
   CATCH_UP_SECONDS,
   catchUpPlace,
   catchUpTime,
+  doorSpacing,
   outOfSight,
   placesBeside,
 } from '../ai/followers.ts';
@@ -146,9 +148,13 @@ export class ActorFollowers {
     if (horse && arrival.world !== undefined && last !== undefined && !going.includes(last)) {
       if (runtime.state.actors.get(last)?.dead !== true) going.push(last);
     }
+    // Through a door one behind another at fFollowerSpacingAtDoors; on fast travel at
+    // fFollowSpaceBetweenFollowers.
+    const settings = aiSettingsOf(this.#options.session);
     const places = placesBeside(
       { position: arrival.position, heading: arrival.rotation[2] },
       going.length,
+      horse ? settings.followSpacing : doorSpacing(settings),
     );
     going.forEach((reference, i) => {
       const place = places[i];

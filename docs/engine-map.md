@@ -77,21 +77,21 @@ These run through every area and explain most of what breaks in play.
 
 ### AI
 
-| System                       | Status    | Main gaps                                                                                                                                                                           |
-| ---------------------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Process levels, budget       | different | no time slicing or frame budget, no middle-low tier                                                                                                                                 |
-| Package evaluation           | partial   | 2 s instead of 15 s or the hour; procedure overrides (115 branches) and flags (Weapon Drawn 664, Weapons Unequipped 208, Sleep Outfit, Allow Swimming, Maintain Speed) not honoured |
-| Procedures                   | partial   | all 30 exist; their numbers are ours; engine-only packages (avoid player, react to destroyed object, warnings, movement blocked) missing                                            |
-| Sandbox                      | different | no daily plan (sleep, meals), stays in real seconds, no weighted choice                                                                                                             |
-| Movement, paths              | partial   | no warp after repeated failures, doors not navmesh obstacles, no path idles                                                                                                         |
-| Avoidance                    | different | avoid boxes and re-planning                                                                                                                                                         |
-| Detection                    | partial   | formula reconstructed, single ray, projectiles alert no one                                                                                                                         |
-| Crime                        | partial   | responder cap, NPC crimes                                                                                                                                                           |
-| Dialogue                     | partial   | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away                                                                                                 |
-| Scenes                       | partial   | lines do not wait for facing; repeat pause                                                                                                                                          |
-| Actors away                  | partial   | only one door away, hour steps                                                                                                                                                      |
-| Followers, horses, furniture | partial   | speed matching, door spacing; mount from the right; enter by graph event                                                                                                            |
-| Head tracking                | partial   | actors look only at the player                                                                                                                                                      |
+| System                       | Status    | Main gaps                                                                                                                                          |
+| ---------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Process levels, budget       | different | no time slicing or frame budget, no middle-low tier                                                                                                |
+| Package evaluation           | partial   | procedure overrides (115 branches) and flags (Weapon Drawn 664, Weapons Unequipped 208, Sleep Outfit, Allow Swimming, Maintain Speed) not honoured |
+| Procedures                   | partial   | all 30 exist, their numbers the game settings; engine-only packages (avoid player, react to destroyed object, warnings, movement blocked) missing  |
+| Sandbox                      | different | no daily plan (sleep, meals), stays in real seconds, no weighted choice                                                                            |
+| Movement, paths              | partial   | doors not navmesh obstacles, no path idles                                                                                                         |
+| Avoidance                    | partial   | the engine's way round (who is avoided and re-planning are its)                                                                                    |
+| Detection                    | partial   | formula reconstructed (sleep, ambush, size terms the engine's), single ray, no one in ambush                                                       |
+| Crime                        | partial   | NPC crimes                                                                                                                                         |
+| Dialogue                     | partial   | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away                                                                |
+| Scenes                       | partial   | lines do not wait for facing; repeat pause                                                                                                         |
+| Actors away                  | partial   | only one door away, hour steps                                                                                                                     |
+| Followers, horses, furniture | partial   | walk zone; mount from the right; enter by graph event                                                                                              |
+| Head tracking                | partial   | candidates' scores, look along the path, package target's look                                                                                     |
 
 ### Combat
 

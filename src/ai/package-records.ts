@@ -544,3 +544,11 @@ export function parsePackage(record: RecordSource): PackageRecord {
     onChange: events.POCA,
   };
 }
+
+/**
+ * A patrol point's idle time (REFR XPRD, seconds; xEdit "Patrol Data"): a patrol stays this long
+ * at the point (src/ai/procedure-runs.ts); undefined without one.
+ */
+export function patrolIdleTime(record: Pick<GameRecord, 'fields'>): number | undefined {
+  return record.fields.f32('XPRD');
+}
