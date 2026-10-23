@@ -438,3 +438,33 @@ function pullTight(chain: readonly Node[], from: Vec3, to: Vec3, radius: number)
 
 const samePoint = (a: Vec3, b: Vec3): boolean =>
   Math.abs(a[0] - b[0]) < 1e-3 && Math.abs(a[1] - b[1]) < 1e-3;
+
+/** The line's samples are this far apart (units). */
+const STRAIGHT_STEP = 16;
+
+/**
+ * How far the navmeshes let an actor go straight from `from` towards `to` (units, horizontal):
+ * the line and the two lines its radius to either side, sampled every 16 units, stay on the
+ * navmeshes up to there (the engine's straight combat paths, CombatPathRequestStraightPath: a
+ * maneuver's goal the navmesh does not reach is no goal). Off the navmeshes (none loaded under
+ * its start) the whole way counts.
+ */
+export function straightReach(set: NavmeshSet, from: Vec3, to: Vec3, radius: number): number {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const length = Math.hypot(dx, dy);
+  if (length < 1e-6 || !set.locate(from)) return length;
+  const ux = dx / length;
+  const uy = dy / length;
+  // Across the way: (uy, −ux) to the right.
+  const offsets = radius > 0 ? [0, radius, -radius] : [0];
+  for (let along = STRAIGHT_STEP; along < length + STRAIGHT_STEP; along += STRAIGHT_STEP) {
+    const at = Math.min(along, length);
+    const z = from[2] + ((to[2] - from[2]) * at) / length;
+    for (const offset of offsets) {
+      const point: Vec3 = [from[0] + ux * at + uy * offset, from[1] + uy * at - ux * offset, z];
+      if (!set.locate(point)) return Math.max(0, at - STRAIGHT_STEP);
+    }
+  }
+  return length;
+}
