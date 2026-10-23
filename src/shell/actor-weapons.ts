@@ -1,12 +1,13 @@
 // The weapons an actor holds, drawn on its body (docs/ai.md, "Combat"): each weapon's world
 // model (WEAP MODL) hangs on its sheath node while sheathed (its "Prn": WeaponSword,
 // WeaponDagger, WeaponAxe, WeaponMace, WeaponBack, WeaponBow; the equip system's weaponNodes)
-// and on the hand's node while drawn (WEAPON in the right hand, SHIELD in the left), moved
-// across at the graph's weaponDraw and weaponSheathe annotations; its scabbard (the model's
-// "Scb" shape) stays at the sheath. A left-hand weapon is not shown sheathed (vanilla's skeleton
-// has no left-hand sheaths). The ammunition hangs in the quiver (QUIVER: the AMMO model's
-// quiver and arrows, its single "Arrow:0" left out); from arrowAttach to arrowRelease an arrow is
-// on the bow (the AMMO model's "Arrow:0" on WEAPON, where the bow animations hold the bow).
+// and on its drawn node while drawn (WEAPON in the right hand, SHIELD in the left; a bow in
+// SHIELD, the hand that holds it), moved across at the graph's weaponDraw and weaponSheathe
+// annotations; its scabbard (the model's "Scb" shape) stays at the sheath. A left-hand weapon is
+// not shown sheathed (vanilla's skeleton has no left-hand sheaths). The ammunition hangs in the
+// quiver (QUIVER: the AMMO model's quiver and arrows, its single "Arrow:0" left out); from
+// arrowAttach to arrowRelease an arrow is on the bow (the AMMO model's "Arrow:0" on WEAPON, which
+// the bow animations carry to where the nocked arrow lies, pointing along the shot).
 // Shields are worn armour (their addon hangs on SHIELD with the actor's look). A torch (a LIGH
 // that can be carried) is held on SHIELD whether the weapons are drawn or not, an instance of
 // its own placed there every frame (its fire's particles and billboards follow it as a placed
@@ -43,12 +44,19 @@ import type { GameSession } from './game-session.ts';
 
 /** What an actor holds, as its models show it. */
 export interface HeldModels {
-  /** The right hand's weapon: its model and nodes. */
-  readonly right?: { readonly model: string; readonly sheathed: string | undefined } | undefined;
+  /** The right hand's weapon: its model and nodes (sheathed undefined: not shown sheathed). */
+  readonly right?:
+    | { readonly model: string; readonly sheathed: string | undefined; readonly drawn: string }
+    | undefined;
   /** The left hand's one-handed weapon (drawn only). */
   readonly left?: { readonly model: string } | undefined;
   /** The ammunition's model (the quiver). */
   readonly ammo?: string | undefined;
+  /**
+   * The node a nocked shot is held on: an arrow's WEAPON, a bolt's right magic node; none for a
+   * non-playable ammunition (without ammunition data: WEAPON).
+   */
+  readonly ammoNode?: string | null | undefined;
   /** A torch's model (LIGH MODL), held in the left hand whether weapons are drawn or not. */
   readonly torch?: string | undefined;
 }
@@ -239,17 +247,17 @@ export class HeldWeapons {
 
   /**
    * Every frame after the body's pose: the slots go where the body's nodes are (the right
-   * weapon in the hand while `inHand`, the left drawn only, the arrow while nocked); the right
+   * weapon in its drawn node while `inHand`, the left drawn only, the arrow while nocked); the right
    * weapon's graph runs on by `seconds` and moves its nodes.
    */
   update(inHand: boolean, arrowNocked: boolean, seconds = 0): void {
     const held = this.#held;
     const places: (string | undefined)[] = [
-      inHand ? 'WEAPON' : held.right?.sheathed,
+      inHand ? held.right?.drawn : held.right?.sheathed,
       held.right?.sheathed,
       inHand ? 'SHIELD' : undefined,
       'QUIVER',
-      arrowNocked ? 'WEAPON' : undefined,
+      arrowNocked && held.ammoNode !== null ? (held.ammoNode ?? 'WEAPON') : undefined,
     ];
     const pose = this.#pose;
     if (!pose) return;

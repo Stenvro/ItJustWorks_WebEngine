@@ -427,6 +427,9 @@ export function lookAt(
 
 // --- Direct-at (BSDirectAtModifier) --------------------------------------------------------
 
+/** Below this turn (radians) a direct-at easing off is done. */
+const DIRECT_AT_SNAP = 0.01;
+
 export interface DirectAtValues {
   readonly sourceBone: number;
   readonly startBone: number;
@@ -447,12 +450,13 @@ export interface DirectAtState {
 }
 
 /**
- * BSDirectAtModifier: the way from the source bone to the target, as a heading (about the
- * character's up, right +) and a pitch (up +) from the character's forward, plus the offsets,
- * each within its limit, eased in by onGain (out to none by offGain); the chain from the start
- * bone to the end bone shares the turn, heading about model up, pitch about the right axis
- * after it. Returns the turn now. TODO(M13): Bethesda's class is not documented; the engine
- * gives it the aim of a bow or a spell (userInfo) through its target.
+ * BSDirectAtModifier (observed in the original): the way from the source bone to the
+ * target (from the character's origin when it has no source bone, sourceBoneIndex −1: the block
+ * anticipations'), as a heading (about the character's up, right +) and a pitch (up +) from the
+ * character's forward, each within its limit, then the offsets added; eased in by onGain (out to
+ * none by offGain, snapped to none below 0.01); the chain from the start bone to the end bone
+ * shares the turn, heading about model up, pitch about the right axis after it. Returns the turn
+ * now. The engine gives it the aim of its kind (userInfo) through its target.
  */
 export function directAt(
   values: DirectAtValues,
@@ -467,17 +471,26 @@ export function directAt(
   if (advance) {
     let heading = 0;
     let pitch = 0;
-    const source = values.sourceBone >= 0 && values.sourceBone < space.count;
-    const way = on && target && source ? sub(target, space.position(values.sourceBone)) : undefined;
+    const source: ReadonlyVec3 =
+      values.sourceBone >= 0 && values.sourceBone < space.count
+        ? space.position(values.sourceBone)
+        : [0, 0, 0];
+    const way = on && target ? sub(target, source) : undefined;
     if (way && length(way) > EPSILON) {
-      heading = Math.atan2(way[0], way[1]) + values.offsetHeading;
-      pitch = Math.atan2(way[2], Math.hypot(way[0], way[1])) + values.offsetPitch;
+      heading = Math.atan2(way[0], way[1]);
+      pitch = Math.atan2(way[2], Math.hypot(way[0], way[1]));
       heading = Math.min(values.limitHeading, Math.max(-values.limitHeading, heading));
       pitch = Math.min(values.limitPitch, Math.max(-values.limitPitch, pitch));
+      heading += values.offsetHeading;
+      pitch += values.offsetPitch;
     }
     const t = gainStep(way ? values.onGain : values.offGain, dt);
     state.heading += (heading - state.heading) * t;
     state.pitch += (pitch - state.pitch) * t;
+    if (!way) {
+      if (Math.abs(state.heading) < DIRECT_AT_SNAP) state.heading = 0;
+      if (Math.abs(state.pitch) < DIRECT_AT_SNAP) state.pitch = 0;
+    }
   }
   const chain = space.chain(values.startBone, values.endBone);
   if (chain.length === 0 || (Math.abs(state.heading) < 1e-6 && Math.abs(state.pitch) < 1e-6)) {

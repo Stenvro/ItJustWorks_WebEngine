@@ -108,9 +108,93 @@ on the models combat hangs on actors and on the first-person arms: src/shell/act
   `bPerkQuickDraw` (a perk's Set Boolean Graph Variable). `blendDefault` is the graph's own.
 - **Pose:** the graph runs on the model's nodes as a skeletal object's does (its bones matched
   to the nodes by name, `startObjectSkeleton`), stepped with its wielder's combat update; its
-  pose is in the model's space, and the model's root is the node it hangs on (WEAPON in the
-  hand, WeaponBow at the back), so each moved node is that node's matrix times its pose.
-  Sheathed, the bow waits in Idle (Bow_DrawHeavy's first frame, its rest).
+  pose is in the model's space, and the model's root is the node it hangs on (SHIELD in the
+  bow hand, WEAPON for a crossbow, WeaponBow at the back), so each moved node is that node's
+  matrix times its pose. Sheathed, the bow waits in Idle (Bow_DrawHeavy's first frame, its
+  rest).
+
+## Weapons in the hands
+
+Where the drawn weapons hang, what the engine tells the graphs about the hands, and how the
+arms aim (`src/gameplay/equipment.ts` weaponNodes, `src/shell/actor-weapons.ts`,
+`src/shell/actor-combat.ts`, `src/shell/actor-looks.ts`; observed in the original, in our
+words). For NPCs and the player in third person; the first-person arms take the same nodes.
+
+**Nodes.** A drawn weapon hangs on SHIELD when it is in the left hand or is a bow (animation
+type 7), else on WEAPON (the right hand): the engine's attach and detach code picks the node
+by exactly that rule. The bow animations hold the bow in the left hand and carry the WEAPON
+bone (a child of the right hand) to where the nocked arrow lies, its forward along the shot;
+the engine hangs the nocked arrow (the AMMO model's "Arrow:0") on WEAPON. With the bow on WEAPON
+(as here before) it lay along the shot, level with the ground: the "horizontal bow" of
+Helgen's archers. Measured with the human graph offline at full draw: SHIELD's up axis is
+0.81–0.87 upright (the bow's cant) whatever the aim, WEAPON's forward within 0.3° of the aim.
+A crossbow (type 9) stays on WEAPON, as do staves; a torch and a shield are on SHIELD. Detached
+as it is sheathed, a weapon goes to its type's sheath node (sword WeaponSword, dagger
+WeaponDagger, axe WeaponAxe, mace WeaponMace, both two-handed WeaponBack, bow and crossbow
+WeaponBow); the models' own "Prn" names the same nodes (a staff's WeaponStaff is no node of
+the vanilla skeleton: a sheathed staff is not shown).
+
+**Hand variables.** iRightHandType and iLeftHandType are the hands' GetEquippedItemType codes
+(0 hand to hand, 1 sword, 2 dagger, 3 axe, 4 mace, 5 greatsword, 6 battleaxe, 7 bow, 8 staff,
+9 spell or scroll, 10 shield, 11 torch, 12 crossbow; a two-handed weapon both hands'). The
+graphs' state machines and manual selectors start the hand's states by them (the audit below).
+**iRightHandEquipped and iLeftHandEquipped** are not flags: while the weapons are out they
+hold the same codes, while sheathed 0. The engine sets them as the drawn weapon reaches the
+hand (the weaponDraw annotation's handler) and clears them as it is sheathed. Manual selectors
+index by them: the sprint's two sides (a bow's, a torch's, a shield's run), the jumps' and the
+shouts' crossbow variants, a rider's staggers and jumps. Set as 1 for any weapon (as here
+before), a drawn bow sprinted, jumped and shouted as a sword and a torch's run was a weapon's.
+
+**The player's graph.** The engine tells the player's graph IsPlayer 1, IsNPC 0 and iIsPlayer
+1 as it sets it up (NPCs' graphs IsNPC 1). The graphs differ by it: blocking, bashing and
+drawing again while drawn are the player's own transitions (a bow cannot block, its block is
+the zoom; an NPC may attack straight out of a block); the look-at (BSLookAtModifier) and the
+spine's direct-at for bows and spells are NPCs' only; the player's bow attack twists the spine
+instead (1hm_behavior's PlayerBowModList, enabled by IsPlayer: BowAttackSpineTwistModifier,
+Spine to Spine2 about the model's x axis by **Pitch**). Pitch is a graph data channel: the
+actor's process pitch in degrees (observed in the original); the player's is where they look, up positive
+(the body's graph only: the first-person arms are placed pitched with the view already). The
+player's head therefore no longer follows dialogue partners, as the game's player's does not.
+
+**Aim (BSDirectAtModifier).** The engine gives each modifier kind (userInfo) its target
+through one interface, every update:
+
+| Kind | Modifiers                                                                                                                                                           | Target                                                                                                                                               |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | blockbehavior's BlockAnticipate\_\*\_BSDirectAtModifier (no source bone; heading and pitch offsets such as 20° and −20° for one-handed, −40° and −20° for a shield) | the WEAPON node of the actor its head tracks (the highest kind of head track set, as asked, not the eased look), if that is another actor; else none |
+| 2, 3 | BSDirectAtModifier_Bow (bows and crossbows, from Spine2 turning Spine to Spine2), BSDirectAtModifier_Magic, the mounted bow's, the dragon rider's                   | an NPC: the point its combat aim points at (its movement controller's aim); the player: 4000 units along their view                                  |
+
+Ours: an NPC holding a bow or crossbow out with a target (a fighter, or a practice's point)
+aims 2048 units along where its shot would go (docs/gameplay.md, "Aiming projectiles") from the
+moment it draws, so its spine has turned by the time the arrow is nocked (the modifier eases on
+at 0.05 a step); the arrow leaves from WEAPON along that aim. Combat gives an NPC's combat
+target to its combat head track (HEAD_TRACK_TYPE combat), which block anticipation reads.
+
+**Measured in the browser** (Riverwood, `coc`, the shooters' UseWeapon practice at the player
+600 units off, Archery as the actors have it): a bandit archer 5 of 5 arrows on the player, a
+Whiterun guard 3 of 3, an Imperial soldier (MQ101ImperialArcherMale, Helgen's archers' base)
+3 of 3; a bandit in its own combat drew, shot and hit. The nocked arrow pointed within 2–5° of
+the line to the player's chest at full draw (the aim is taken from Spine2, the arrow lies off
+it, and the shot is arced). The player in third person: the nocked arrow within 0.6° of the
+look at 0°, +20° and −17°. In the opening (a new game left to run), as Lokir ran at stage 70
+one of Helgen's archers drew, its spine turned to him (bAimActive 1) and its one arrow killed
+him; the other drew and put its bow away. Poses of every weapon type (drawn, attacking, blocking) checked on
+screenshots; the graph states the hand variables select, offline (`node tools/weapon-poses.ts`):
+
+| Hands                     | Drawn                                                | Attack                             | Block                        |
+| ------------------------- | ---------------------------------------------------- | ---------------------------------- | ---------------------------- |
+| unarmed                   | H2H_Idle                                             | H2H_AttackRight                    | 1HM_BlockIdle                |
+| sword, dagger, axe, mace  | 1HM_Idle (1HM_Readied_Default, Dagger_, Axe_, Mace_) | 1HM_AttackRight                    | 1HM_BlockIdle                |
+| greatsword, battleaxe     | 2HM_Idle, 2HW_Idle                                   | 2HM_AttackRight, 2HW_AttackRight   | 2HM_BlockIdle, 2HW_BlockIdle |
+| bow, crossbow             | Bow_IdleHeld, CrossBow_IdleHeld (lowered)            | Bow_DrawLight, CrossBow_IdleDrawn  | (attack held: drawn)         |
+| staff, spell, both spells | StaffRight_Idle, MRh_Idle, MRh_Idle + MLh_Idle       | the casting states (Casting above) | none                         |
+| weapon and shield, torch  | 1HM_Idle, Tor_1HMPose + 1HM_Idle                     | 1HM_AttackRight                    | Shd_BlockIdle, Tor_BlockIdle |
+| two one-handed weapons    | DW1HM1HMIdle                                         | 1HM_AttackRight                    | DW1HM1HMBlockIdle            |
+| weapon and spell or staff | MLh_Idle or Staff_Idle + 1HM_Idle                    | 1HM_AttackRight                    | 1HM_BlockIdle                |
+
+The nocked shot's node is the ammunition's (observed in the original, from the engine's arrow attaching):
+an arrow (AMMO flag Non-Bolt) on WEAPON, a crossbow's bolt on NPC R MagicNode [RMag]; a
+non-playable ammunition shows none.
 
 ## Animation objects
 
@@ -630,9 +714,10 @@ spine (Spine to Spine2, from Spine2) towards the engine's aim for spells (userIn
 point, docs/ai.md "Magic in combat"), up to AimHeadingMax and AimPitchMax, enabled by IsNPC; its
 outputs are bAimActive, AimHeadingCurrent and AimPitchCurrent (the graph writes them, the engine
 does not). No modifier aims the arms; Pitch is a graph data channel that no human magic node
-reads. TODO(M13): whether the engine sets IsNPC on the player's third-person graph (here it is
-1, so the player's spine aims as an NPC's does) and how it pitches the player's body otherwise
-(the graphs' PitchOverride events) is not reproduced.
+reads. The player's graph is no NPC's (IsNPC 0, observed in the original: [Weapons in
+the hands](#weapons-in-the-hands)), so their spine does not turn to a spell's aim; the
+mounted one's (magicmountedbehavior) does not either. TODO(M13): how the engine pitches the
+player's body while casting (the graphs' PitchOverride events) is not reproduced.
 
 **Casting art** (MGEF casting art: Fireball01HandEffects, ShockHandEffects, ...) carries its own
 graph (BGED `Magic\CastingBasic.hkx`: mIntro → mIdle, mCharge on a start, mReady on
@@ -665,7 +750,19 @@ them by name (a variable keeps the first file's initial value). Each frame:
    nodes deactivate as the blend ends), an instant one switches, the old state's active nodes
    deactivated then, before the new state's enter events (their nested machines' exit events
    first: TODO(M13), Havok's order is not documented; this is the one the vanilla props need); a self transition starts the state over (unless its effect continues); a
-   transition into a nested state sets that machine's start. A global wildcard (flag 0x400) of
+   transition into a nested state sets that machine's start. A node stays active while any
+   active parent still holds it, as in Havok, whose graph activates and deactivates nodes by
+   whether anything active reaches them: the bow attack's blend lays its arms (BowZoomBlend)
+   over its lower body, and the standing lower body holds the same arms again, so an instant
+   step from standing to moving (moveStart) must not deactivate them; it did, and every step
+   an archer took started its draw over (it never shot while strafing). A state entered at
+   once while the machine still blends out of it (an earlier transition's from-state) starts
+   over, its nested machines at their start states, without deactivating it (no exit events):
+   the bow attack's Bow_End state has no way out but the attack's attackStop back to the ready
+   state, and a new bowAttackStart during that 0.2 s blend resumed Bow_End and waited there
+   for good (the idle tree lets the next shot start at once: its condition is only that the
+   attack state is not drawn or releasing). TODO(M13): Havok's own rule for re-entering a
+   state that is blending out is not documented; this is the behaviour the game shows. A global wildcard (flag 0x400) of
    a machine nested in another state of a machine is that machine's too: taken, it goes to the
    state holding the nested machine, which starts in the wildcard's state (Master_Behavior has
    no way into Cart_State but its Cart machine's IdleCartPrisonerASway). Paired animations
@@ -759,14 +856,14 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   the bones keep looking. TODO(M13): Bethesda's class is not documented; this reading of its
   members turns a standing NPC's head about 50° and its eyes the rest to a target 80° to its
   right.
-- **BSDirectAtModifier** (23: bows, spells, the dragon rider): the chain from start to end
-  bone turns by the heading and pitch from the source bone to the target (within the limits,
-  plus the offsets), eased by its gains; its outputs (active, current heading and pitch) go
-  to their variables. The target: a bound vector, the camera, or the aim the engine gives its
-  kind (BehaviorRuntime.setDirectAtTarget by userInfo: 2 bows and spells, 3 the dragon rider).
-  Casting gives the aim of aimed spells (docs/ai.md, "Magic in combat"), combat a drawn bow's
-  (`ActorCombat`'s aimBow: where the shot would go, docs/gameplay.md "Aiming projectiles",
-  2048 units along it).
+- **BSDirectAtModifier** (23: bows and crossbows, spells, the dragon rider, block
+  anticipation; observed in the original): the chain from start to end bone turns by the
+  heading and pitch from the source bone to the target (from the character's origin when it
+  has none, sourceBoneIndex −1), each within its limit and then the offset added, eased by its
+  gains (snapped to none below 0.01 as it eases off); its outputs (active, current heading
+  and pitch) go to their variables. The target: a bound vector, the camera, or the aim the
+  engine gives its kind (BehaviorRuntime.setDirectAtTarget by userInfo: 1 block anticipation,
+  2 bows and spells, 3 the dragon rider): [Weapons in the hands](#weapons-in-the-hands).
 - **hkbTwistModifier** (19: the first-person body's pitch and lean, bow draws, a netch's lean,
   a tail's turn): the chain from start to end bone turns about the axis (in model space in
   every vanilla one) by the angle (degrees: 1stPRot = sin(Direction · 360) · RotMax, RotMax 5),

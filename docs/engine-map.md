@@ -134,6 +134,7 @@ These run through every area and explain most of what breaks in play.
 | Graph runtime        | partial   | interrupted transitions, self-transition blends, transition effect flags, event payloads |
 | Clips                | partial   | mirrored clips (200: every quadruped's right turns)                                      |
 | Engine handlers      | partial   | about 65 of 95 unanswered                                                                |
+| Weapons and aim      | partial   | the player's casting pitch (PitchOverride), a crossbow's launch node                     |
 | Ambient idles        | missing   | no idle picking (PickNewIdle)                                                            |
 | Animation objects    | missing   | no tankards, hammers, brooms, lutes                                                      |
 | Paired animations    | different | victim placed, no get-to-mark, events not routed per side                                |
