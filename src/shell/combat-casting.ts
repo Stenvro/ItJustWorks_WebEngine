@@ -14,6 +14,7 @@ import type { EquipOption } from '../ai/combat-tactics.ts';
 import type { GameSession } from './game-session.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { MagicItemRecord } from '../world/magic-records.ts';
+import { CastType } from '../world/spell-records.ts';
 
 /** The NPCs' casting as the combat AI asks for it. */
 export function combatCasting(
@@ -102,5 +103,12 @@ async function option(
       : await runtime.casting.projectile(effect.projectile);
   const damage = await runtime.casting.spellWorth(actor, item, 'attack', target);
   const range = projectile && projectile.range > 0 ? projectile.range : MAGIC_REACH;
-  return { kind, id, damage, range, equipped: false };
+  return {
+    kind,
+    id,
+    damage,
+    range,
+    equipped: false,
+    concentration: item.castType === CastType.concentration,
+  };
 }

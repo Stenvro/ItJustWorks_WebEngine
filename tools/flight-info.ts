@@ -89,11 +89,12 @@ function describeFlight(flight: CombatStyleFlight): void {
       `${n(flight.groundAttackTime)}), perch attack ${n(flight.perchAttackChance)} (time ` +
       `${n(flight.perchAttackTime)}), flying attack ${n(flight.flyingAttackChance)}`,
   );
-  const even = (): number => 0.5;
+  // The longest of each (a roll of 1: the style's time on its settings' scale).
+  const longest = (): number => 1;
   console.log(
-    `  hovers ${maneuverSeconds('hover', flight, settings, even).toFixed(1)} s, perches ` +
-      `${maneuverSeconds('perch', flight, settings, even).toFixed(1)} s, fights on the ground ` +
-      `${maneuverSeconds('ground', flight, settings, even).toFixed(1)} s`,
+    `  hovers up to ${maneuverSeconds('hover', flight, settings, longest).toFixed(1)} s, ` +
+      `perches up to ${maneuverSeconds('perch', flight, settings, longest).toFixed(1)} s, ` +
+      `fights on the ground up to ${maneuverSeconds('ground', flight, settings, longest).toFixed(1)} s`,
   );
   // How often each maneuver comes up as an orbit ends (a perch and a landing place near).
   let seed = 12345;
@@ -104,7 +105,7 @@ function describeFlight(flight: CombatStyleFlight): void {
   const counts = new Map<FlightManeuver, number>();
   const rolls = 10000;
   for (let i = 0; i < rolls; i++) {
-    const maneuver = chooseFlightManeuver(flight, { canLand: true, perch: true }, random);
+    const maneuver = chooseFlightManeuver(flight, { canLand: true, perch: true }, random, settings);
     counts.set(maneuver, (counts.get(maneuver) ?? 0) + 1);
   }
   console.log(
