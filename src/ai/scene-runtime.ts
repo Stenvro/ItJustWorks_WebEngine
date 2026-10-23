@@ -203,6 +203,8 @@ export class SceneDirector {
   #updates: (() => void)[] = [];
   #clock = 0;
   #order = 0;
+  /** Who hears the trace besides the host (`listen`). */
+  #listener: ((text: string) => void) | undefined;
 
   constructor(host: SceneHost) {
     this.#host = host;
@@ -421,6 +423,8 @@ export class SceneDirector {
     readonly scene: number;
     readonly phase: number;
     readonly paused: boolean;
+    /** The references cast, by alias. */
+    readonly cast: ReadonlyMap<number, number>;
     readonly actions: readonly {
       readonly index: number;
       readonly status: ActionStatus;
@@ -432,6 +436,7 @@ export class SceneDirector {
         scene: playing.formId,
         phase: playing.phase,
         paused: playing.paused,
+        cast: playing.cast,
         actions: playing.actions.map((run) => ({
           index: run.action.index,
           status: run.status,
@@ -1070,8 +1075,19 @@ export class SceneDirector {
     });
   }
 
+  /**
+   * Hears what the scenes do, as the host's trace has it (the browser's scene trace,
+   * src/shell/scene-trace.ts); undefined stops it.
+   */
+  listen(listener: ((text: string) => void) | undefined): void {
+    this.#listener = listener;
+  }
+
   #trace(playing: Playing, text: string): void {
-    this.#host.trace?.(`${playing.record?.editorId ?? hex(playing.formId)}: ${text}`);
+    if (!this.#host.trace && !this.#listener) return;
+    const line = `${playing.record?.editorId ?? hex(playing.formId)}: ${text}`;
+    this.#host.trace?.(line);
+    this.#listener?.(line);
   }
 }
 

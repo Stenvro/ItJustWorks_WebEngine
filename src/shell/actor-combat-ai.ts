@@ -233,6 +233,11 @@ type Profile = CombatProfile;
 interface Mind {
   readonly reference: number;
   mode: Mode;
+  /**
+   * Its package ignores combat (PKDT Ignore Combat): its fight waits while the package runs
+   * (see ActorCombatAi.frame).
+   */
+  ignoring: boolean;
   target: number | undefined;
   /** Those it fights whatever its reaction (attacked by, helping against, StartCombat). */
   readonly enemies: Set<number>;
@@ -388,8 +393,8 @@ export class ActorCombatAi {
 
   /** Whether an actor's combat holds it (its packages wait): fighting, searching, fleeing. */
   engaged(reference: number): boolean {
-    const mode = this.#minds.get(reference)?.mode;
-    return mode !== undefined && mode !== 'idle';
+    const mind = this.#minds.get(reference);
+    return mind !== undefined && mind.mode !== 'idle' && !mind.ignoring;
   }
 
   /** GetCombatState: 0 not in combat, 1 in combat, 2 searching. */
@@ -565,6 +570,7 @@ export class ActorCombatAi {
       if (view.player || runtime.state.actors.get(view.reference)?.dead === true) continue;
       if (this.#options.ridden?.(view.reference) === true) continue;
       const mind = this.#mind(view.reference);
+      if (this.#ignoresCombat(mind)) continue;
       this.#refreshProfile(mind, runtime);
       if (this.#clock >= mind.next) {
         mind.next = this.#clock + DECIDE_SECONDS;
@@ -584,6 +590,36 @@ export class ActorCombatAi {
       const state = this.combatState(mind.reference);
       if (state !== mind.told) this.#tellState(mind, state);
     }
+  }
+
+  /**
+   * Whether an actor's package ignores combat now (PKDT Ignore Combat), so its fight waits.
+   * Observed in the original: as an actor's package changes, its process is marked as
+   * ignoring combat by that flag (a procedure's flag override can set it too: TODO(M13), the
+   * running package's flags here do not take the overrides), and while it is
+   * its combat controller's behaviour tree stands stopped (it neither fights, flees nor
+   * searches; it is still in combat with its enemies); once its package no longer ignores
+   * combat, the tree (Combat, LowCombat) starts again. So an actor attacked while it runs such
+   * a package goes on with it: MQ101's Lokir runs from the archers on MQ101LokirtoMarker2Package
+   * whether or not their first arrow fells him.
+   */
+  #ignoresCombat(mind: Mind): boolean {
+    const running = this.#options.ai?.()?.current(mind.reference);
+    const ignoring = running !== undefined && (running.flags & PackageFlag.ignoreCombat) !== 0;
+    if (ignoring === mind.ignoring) return ignoring;
+    mind.ignoring = ignoring;
+    if (ignoring && mind.mode !== 'idle') {
+      // Its moves stop: its package moves it now.
+      const movers = this.#options.movers;
+      movers.request(mind.reference, undefined);
+      if (movers.travelOf(mind.reference)) movers.stop(mind.reference);
+      this.#releaseBlock(mind, this.#options.host.fighter(mind.reference));
+      this.#options.ai?.()?.evaluate(mind.reference);
+    } else if (!ignoring && mind.mode !== 'idle') {
+      // Its fight takes up again at once.
+      mind.next = 0;
+    }
+    return ignoring;
   }
 
   /**
@@ -628,6 +664,7 @@ export class ActorCombatAi {
       mind = {
         reference,
         mode: 'idle',
+        ignoring: false,
         target: undefined,
         enemies: new Set(),
         friendHits: new Map(),

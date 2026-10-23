@@ -416,7 +416,16 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   marker, turns to its heading there, and its controller goes; its graph's root motion moves it in,
   and what is left to the marker at the end is made up in a quarter of a second (the engine's
   path tweener; its rule is not documented). Leaving, the exit's root motion takes it out; then
-  it stands and its controller is back.
+  it stands and its controller is back. Where no exit idle fits the actor it leaves by the quick
+  exit (IdleForceDefaultState, which the tree gives an instant exit before any furniture
+  branch): the tree sends every child getting up from a chair-type furniture into its
+  ExitChairCHILD group (that branch tests no FurnitureSpecial keyword, unlike the child's
+  enter), which has only front, left and right exits, so Haming could not get up from his
+  cross-legged sit and his graph stayed seated under a package that walked. TODO(M13): the
+  engine's own fallback (inferred).
+- **Activate** (the ActivateSpecialFurniture template) of furniture is a use of it, not a walk
+  to the furniture's place and an activation: an actor in it already stays (Torolf at his porch
+  rail), one standing goes in by its enter.
 - **The height:** the actor's root stays at the furniture's own height. The furniture clips put
   the body on the seat or the bed themselves: seated on a chair the pelvis is 39 above the root,
   on a bar stool 55, lying in a bed 53, in a bedroll 21, and the feet stay 6 above it; their
@@ -746,7 +755,17 @@ has it now (the placement above, from its packages, factions, race and sex, read
   put where its package has it. So too when the player comes into another worldspace or
   interior: what is there is where it should be as it loads.
 - An actor of the loaded area on its way through a load door its package takes leaves the stage
-  through it, and its trip goes on from the door's arrival point.
+  through it, and its trip goes on from the door's arrival point. It walks to the navmesh
+  triangle the navmesh marks in front of the door (else the navmesh point nearest the door), not
+  to the door's own place, which sits in its frame off the walkable floor (HelgenHomestead's
+  door is a hundred units from Torolf's porch).
+- **When its package changes** (a script's EvaluatePackage, a scene's package action starting
+  or ending) an actor away of those spaces is asked again at once and sent where its package now
+  has it. While a scene's package action runs, its packages are the actor's only ones away as
+  on the stage (an action done: it stays). A trip that reaches the place a Travel sent it to
+  completes that package, so a scene waiting on it goes on: MQ101TorriLedgeScene's last phase
+  waits for Haming's walk into his house, which he finishes beyond its door. TODO(M13): the low
+  process's other procedures (a sit, a sandbox) are not done by getting there.
 - Asked 16 at a time: at Whiterun's plains district 449 actors in 38 spaces in 8 seconds at the
   start (the jump as the game loads), 0.6 seconds at an hour's change. At 9:00 Mila Valentia
   steps out of her house's door and walks to her stall at the market; set to 10:00 she stands
@@ -1021,8 +1040,15 @@ after `--package-seconds`).
   ends, the actor's own packages come back. An actor with Run Only Scene Packages (CommonLibSSE;
   no vanilla actor) runs only scene packages for the whole scene. IsScenePackageRunning,
   GetIsCurrentPackage and GetCurrentPackage answer from it (the scene's package where the
-  actor's AI does not run). TODO(M13): the engine's stack during a scene; an actor that is not
-  loaded does not run its scene package (the low process: TODO(M13)).
+  actor's AI does not run). TODO(M13): the engine's stack during a scene. Observed in the
+  original, the action asks nothing of where its actor is: its process runs the package, high or
+  low. So an actor away runs its scene package too ([Actors away](#actors-away): sent where it
+  has it, a Travel done once its trip gets there).
+- **A travel that fails** is not a package done: its Travel procedure searches its way again a
+  second later (the movers warp an actor whose ways keep failing near one spot,
+  bWarpOnConsecutiveFailures), so a phase waiting on a walk waits until the actor is there.
+  Before, a way cut short (Torolf at HelgenHomestead's door frame) ended the package as if it
+  had arrived, and the action was done with him a door's width short.
 - **Timers** are done after their seconds of the scene's clock (real seconds outside menus, not
   while the scene is paused).
 - **Fragments:** the scene's begin and end, each phase's start and completion (a phase
@@ -1056,6 +1082,70 @@ finally awake." to "And it looks like the Thalmor are with him." After a new gam
 in different spaces, or with one placed nowhere yet, is as large as
 ObjectReference.GetDistance's, 1e10, so they wait while the player rides to Helgen;
 `tests/papyrus-runtime.int.test.ts`) or for a script (IvarsteadSSScene).
+
+### Checking a scene against its data
+
+Two halves, one in the browser and one in Node:
+
+- `engineDev.sceneTrace()` (development builds, `src/shell/scene-trace.ts`) traces what the
+  scenes and their actors do, a line per change: the director's own trace (phases starting,
+  skipped and completing, each action starting for its actor, lines said, packages done, actions
+  ending, scenes ending or stopped), each playing scene's phase, and for every actor a scene
+  casts (followed on after its scene) the package it runs, whether it fights, watches a fight,
+  flees, is carried (horse, cart), is in furniture or off the stage, its graph's innermost states
+  and its path (a point each 40 units). The first call begins it; each call returns it so far.
+- `node tools/scene-audit.ts <scene>` (or `--quest <quest>`) lists what the data says each
+  actor does phase by phase: its alias (how it is filled, its own alias packages), each action
+  (a line with its first info's text and whom it looks at, a timer, a package with its procedure
+  tree, every input named and resolved: the reference, its base and where it is placed), the
+  conditions of the scene, its phases, the packages and their branches.
+- `node tools/scene-audit.ts --trace <file> [--quest <quest>]` reads a trace and lists where the
+  actors did otherwise: a scene that did not start; a package action whose actor runs another
+  package (or fights, flees, stands) a few seconds on; a travel-like package done well short of
+  its place; furniture a package should use never entered; a line never said; an actor that
+  walks off while its done package holds it still; a phase that has waited 90 seconds and the
+  actions it waits on (with their actors' state). Notes list what is not the scene's to say: a
+  phase skipped, a package action none of whose packages may run, an actor moving on its own
+  packages between its package actions, a stopped scene's lines cut short.
+
+What MQ101's run (the opening, unattended, to the dragon) showed and how the systems were
+wrong:
+
+- **Torolf (MQ101TorriLedgeScene)** leans on his porch rail (MQ101TorolfUseFurnitureStart,
+  ActivateSpecialFurniture), tells Haming to go in, walks to his start marker, then into the
+  house after him (MQ101TorolfGoesInside); the scene ends once both are in (stage 28), and their
+  aliases' packages take them out again (Torolf to his rail, at stage 120 running to
+  MQ101TorolfMarker8, where Alduin's fire takes him). Ours: the Activate procedure stood him up
+  from the rail first (as every procedure but the furniture ones does) and walked him to the
+  rail's enter point while his graph was still leaning, which it could not leave: he retried
+  every few seconds and never leaned; his later Travel left a furniture he was no longer
+  recorded in, so his graph stayed leaning while his package walked, and the walk failed, which
+  ended his package as done a door's width from the door. Haming's sit had no exit idle for a
+  child (below), so he stayed seated with a Travel he could not walk. Once through the door
+  neither's package went on (the low process did not run scene packages), so the scene's last
+  phase waited for ever and held both. Fixed: Activate of furniture is a use of it (in it
+  already: it stays); a travel that fails searches again; doors are walked to by their navmesh
+  door triangle; an actor away runs its scene package and a Travel completes when its trip gets
+  there; furniture with no exit idle for the actor is left by the quick exit.
+- **Lokir (MQ101Scene4, phase 8)** runs MQ101LokirtoMarker2Package (a static patrol, Ignore
+  Combat) while the archers shoot (MQ101ArcherFireLokirPackage, Always Hit) and dies on the run.
+  Ours ran him; but an arrow that did not kill him at once put him in combat with the archer,
+  and combat held his package: he would stand under fire. Fixed: a package that ignores combat
+  holds the actor's fight ([Combat AI](#combat-ai)).
+- **Package actions done short of their place:** General Tullius's MQ101TulliusToMarker6
+  (getting off his horse), the cart soldiers' and Ulfric's and Ralof's walks to the block ended
+  as done when a way failed once. With a failing way searched again, the final run's audit has
+  none of them; a trip planned by a view that is not shown no longer ends a package either.
+
+Whiterun's market by day (10:00, seven minutes): ADIA's random scenes (Nazeem and Ysolda,
+Carlotta and Ysolda, Anoriath and Ysolda) and WhiterunMarketplaceScene2/3 play through, their
+actors brought together, every line said, no deviation. Left in MQ101's run: Alduin
+(MQ101AlduinAttackScene1) runs his approach patrol rather than MQ101AlduinPerch1 for a while and
+ends his tower shout packages a thousand units from their markers, a flier's (the flight's
+perch and travel); Haming takes 20-30 seconds of failed approaches before he sits cross-legged at
+the start (his enter's start point next to the furniture's own); the cart driver's
+MQ101Guard1ToMarker5 is done at once as its Variable01 (set by the cart's ExitCartEnd) is not
+yet 1, as the engine's rule has it.
 
 ## Talking
 
@@ -1671,7 +1761,12 @@ flanking and ranged movement selectors (ours: in `chooseManeuver`).
   iFriendHitNonCombatAllowed: TODO(M13)), each blow let pass a friendly fire comment (its Hit
   line, GetFriendHit) where its package has the friendly fire interrupt; attacked by one it does
   not detect, it searches. A package with Ignore Combat (PKDT) keeps it out of fights it would
-  pick; calm keeps it out of all; StartCombat sets it on a target whatever its reaction and
+  pick, and holds the fights it is in (observed in the original: as its package changes,
+  the process is marked as ignoring combat by that flag, and meanwhile the combat controller's
+  behaviour tree stands stopped; it starts again, Combat or LowCombat, once the package no
+  longer ignores combat). Attacked, it stays in combat with its attacker but goes on with its
+  package: MQ101's Lokir runs from the archers whether or not their first arrow fells him;
+  calm keeps it out of all; StartCombat sets it on a target whatever its reaction and
   makes it hostile to it (the reaction's scriptHostile: the actor state's combatTargets, until
   StopCombat, StopCombatAlarm or its combat ends: TODO(M13) how long the engine keeps it); a
   hostile spell that takes hold turns its victim on its caster as a blow does. Entering, it says NormalToCombat (AlertToCombat when
