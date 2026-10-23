@@ -112,9 +112,11 @@ interface Mover {
    * How far its steering turned it in the physics steps since it was last drawn (radians,
    * clockwise) and over how long: its graph is told the turn rate of all of them (a frame of two
    * steps whose second had nothing left to turn told it 0, the next frame's single step the
-   * turn: turnLeft and turnStop ten times a second for an actor turning steadily).
+   * turn: turnLeft and turnStop ten times a second for an actor turning steadily), and that rate
+   * (`rate`, what a rider's graph turns with: the steps may run between the horse's frame and its
+   * rider's).
    */
-  turned: { angle: number; seconds: number };
+  turned: { angle: number; seconds: number; rate: number };
   /**
    * How its graph moves it (its clips' root motion: world velocity, the turn in radians per
    * second counter-clockwise) and whether the graph is animation-driven.
@@ -822,7 +824,7 @@ export class ActorMovers {
    * its horse; measured from frame to frame, frames without a step said it stopped turning).
    */
   turnRate(reference: number): number | undefined {
-    return this.#movers.get(reference)?.wish.turnRate;
+    return this.#movers.get(reference)?.turned.rate;
   }
 
   /** How a moved actor moves now (its conditions and natives read it). */
@@ -1433,7 +1435,7 @@ export class ActorMovers {
         drawn: [...staged.position],
         velocity: [0, 0],
         wish: { velocity: [0, 0], turnRate: 0 },
-        turned: { angle: 0, seconds: 0 },
+        turned: { angle: 0, seconds: 0, rate: 0 },
         root: { velocity: [0, 0], turn: 0, driven: false, rotates: false },
         rooted: false,
         heldByGraph: false,
@@ -1612,10 +1614,9 @@ export class ActorMovers {
   #turnRate(mover: Mover): number {
     const turned = mover.turned;
     // No step since the last frame: as it turned then.
-    if (turned.seconds <= 0) return mover.wish.turnRate;
+    if (turned.seconds <= 0) return turned.rate;
     const rate = turned.angle / turned.seconds;
-    mover.wish = { ...mover.wish, turnRate: rate };
-    mover.turned = { angle: 0, seconds: 0 };
+    mover.turned = { angle: 0, seconds: 0, rate };
     return rate;
   }
 
