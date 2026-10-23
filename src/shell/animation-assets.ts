@@ -88,6 +88,11 @@ export class ClipHost implements BehaviorHost {
     return this.data?.rootMotionDelta(generator, from, to);
   }
 
+  /** BSSpeedSamplerModifier's lookup in the project's speed data. */
+  speedParameter(state: number, direction: number, goal: number): number | undefined {
+    return this.data?.speedParameter(state, direction, goal);
+  }
+
   /** Waits for the clips asked for so far. */
   async loaded(): Promise<void> {
     while (this.#pending.size > 0) await Promise.all([...this.#pending]);

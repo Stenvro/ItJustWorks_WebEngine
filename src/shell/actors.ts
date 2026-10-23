@@ -953,6 +953,9 @@ export class ActorPlacer {
         ...(behaviors.character.footIk && { footIk: behaviors.character.footIk }),
         // Its ragdoll's bones (knock-downs, getting up: src/shell/actor-knockdowns.ts).
         ...(ragdollBones && { ragdollBones }),
+        // Mirrored clips, and which states hear events while a transition blends.
+        ...(behaviors.character.mirror && { mirror: behaviors.character.mirror }),
+        defaultEventMode: behaviors.character.defaultEventMode,
       });
       behavior.setVariable('IsNPC', npc);
       behavior.setVariable('IsPlayer', 1 - npc);

@@ -922,6 +922,8 @@ export class ActorFurniture {
       skeleton,
       random: seededRandom(1),
       properties: { IsFemale: female ? 1 : 0, IsMale: female ? 0 : 1, IsNPC: 1 },
+      ...(behaviors.character.mirror && { mirror: behaviors.character.mirror }),
+      defaultEventMode: behaviors.character.defaultEventMode,
     });
     runtime.setVariable('IsNPC', 1);
     const step = 1 / 30;
