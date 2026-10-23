@@ -430,21 +430,61 @@ function pointIn(run: ProcedureRun, place: PackagePlace): Vec3 {
 }
 
 /**
- * A point to wander to within a place: at least `least` from where the actor stands (Min
- * Wander Distance), as far as the place reaches (a few tries, else the farthest found).
+ * Where a wanderer walks next (observed in the original: its Wander, and a Sandbox's
+ * wandering, which runs a Wander in the sandbox's place with its Min Wander Distance). Its place
+ * reaches at least fAIDistanceRadiusMinLocation; outside it, it first goes into it (to its middle).
+ *
+ * - **Its first walk** (`last` undefined): a random point of the navmesh within the place that it
+ *   can walk to, at least its Min Wander Distance from it (the pathing's random location).
+ * - **Each walk after:** from the place's middle, the way from where its last walk led towards
+ *   the middle, turned at random up to 45° either side, as far as a random share of the radius:
+ *   across the place from where it was, at the middle's height. A point it cannot walk to (off
+ *   the navmesh, beyond a fence, on another island) is not taken: the engine's path request
+ *   finds no way and it asks again (inferred: TODO(M13), how its pathing answers a goal off its
+ *   navmesh is not read); here a few points are tried at once.
+ *
+ * Undefined: no point found (it waits a moment and tries again). Before, any point within the
+ * radius was taken, unchecked (inside a house, behind a fence).
  */
-function wanderPoint(run: ProcedureRun, place: PackagePlace, least: number): Vec3 {
+function wanderPoint(
+  run: ProcedureRun,
+  place: PackagePlace,
+  least: number,
+  last: Vec3 | undefined,
+): Vec3 | undefined {
   const here = run.body.position();
-  let best = pointIn(run, place);
-  if (!here) return best;
-  for (let i = 0; i < WANDER_TRIES && horizontal(here, best) < least; i++) {
-    const next = pointIn(run, place);
-    if (horizontal(here, next) > horizontal(here, best)) best = next;
+  const radius = Math.max(place.radius, atPlace(run));
+  if (!here) return pointIn(run, { ...place, radius });
+  // Outside its place it first goes into it.
+  if (horizontal(here, place.position) > radius) return place.position;
+  const mind = run.mind;
+  if (last === undefined) {
+    if (!mind.randomPoint) return pointIn(run, { ...place, radius });
+    return mind.randomPoint(run.actor, place.position, radius, least, () => run.random());
   }
-  return best;
+  const [cx, cy, cz] = place.position;
+  const dx = cx - last[0];
+  const dy = cy - last[1];
+  const length = Math.hypot(dx, dy);
+  const [ux, uy] = length > 1e-6 ? [dx / length, dy / length] : [0, 1];
+  for (let attempt = 0; attempt < WANDER_TRIES; attempt++) {
+    const turn = (run.random() - 0.5) * (Math.PI / 2);
+    const reach = run.random() * radius;
+    const cos = Math.cos(turn);
+    const sin = Math.sin(turn);
+    const point: Vec3 = [
+      cx + (ux * cos + uy * sin) * reach,
+      cy + (uy * cos - ux * sin) * reach,
+      cz,
+    ];
+    if (!mind.walkable) return point;
+    const on = mind.walkable(run.actor, point);
+    if (on) return on;
+  }
+  return undefined;
 }
 
-/** A wander point is looked for this many times to lie Min Wander Distance away. */
+/** Points a wanderer tries at once before it waits and asks again. */
 const WANDER_TRIES = 8;
 /** A wanderer is at its point within this (units). */
 const WANDER_ARRIVE = 48;
@@ -477,8 +517,15 @@ const wander: ProcedureRunner = async (run) => {
   if (!place) return hold(run);
   const least = numberIn(run, 3) ?? settingsOf(run).wanderDefaultMinDist;
   const energy = await energyOf(run);
+  let last: Vec3 | undefined;
   while (!run.stopped()) {
-    await run.body.travel(wanderPoint(run, place, least), 'walk', WANDER_ARRIVE);
+    const point = wanderPoint(run, place, least, last);
+    if (!point) {
+      await run.wait(IDLE_SECONDS);
+      continue;
+    }
+    last = point;
+    await run.body.travel(point, 'walk', WANDER_ARRIVE);
     // At least until the next update (a pause of 0 is no endless loop).
     await run.wait(wanderPause(run, energy));
   }
@@ -581,6 +628,8 @@ const sandboxing: ProcedureRunner = async (run) => {
   const energy = Math.min(100, Math.max(0, numberIn(run, 8) ?? (await energyOf(run))));
   const least = numberIn(run, 10) ?? settingsOf(run).wanderDefaultMinDist;
   const radius = Math.max(place.radius, atPlace(run));
+  // Where its last walk led (its wandering goes on across the place from there).
+  let lastWalk: Vec3 | undefined;
   while (!run.stopped()) {
     // An active actor (high energy) moves on sooner.
     const stay =
@@ -612,8 +661,14 @@ const sandboxing: ProcedureRunner = async (run) => {
         await run.wait(IDLE_SECONDS);
       }
     } else if (choices > 0) {
-      await run.body.travel(wanderPoint(run, place, least), 'walk', WANDER_ARRIVE);
-      await waitFor(run, stay / 4);
+      const point = wanderPoint(run, place, least, lastWalk);
+      if (point) {
+        lastWalk = point;
+        await run.body.travel(point, 'walk', WANDER_ARRIVE);
+        await waitFor(run, stay / 4);
+      } else {
+        await run.wait(IDLE_SECONDS);
+      }
     } else {
       await waitFor(run, stay / 4);
     }

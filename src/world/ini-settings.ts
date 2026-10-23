@@ -183,6 +183,9 @@ export const INI_DEFAULTS = {
     bFreezeDirectionOnLargeDelta: 1,
     fFreezeDirectionDefaultAngleThreshold: 60,
     fFreezeDirectionDefaultSpeedThreshold: 100,
+    // On a horse moving within this of straight back, the back key backs it up on
+    // (src/ai/mounts.ts riddenRequest).
+    fHorseClampAngle: 10,
     bInvertYValues: 0,
     // Both attack buttons pressed within this dual cast (seconds; src/shell/player-casting.ts).
     fDualCastChordTime: 0.05,

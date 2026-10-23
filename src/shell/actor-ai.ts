@@ -36,7 +36,13 @@ import type { ActorPractice } from './actor-practice.ts';
 import type { ActorSearch } from './actor-search.ts';
 import { spaceOf, type AwayPlace } from './actors-away.ts';
 import { findRoute, type RouteDoor } from '../ai/routes.ts';
-import type { NavmeshSet } from '../ai/pathfinding.ts';
+import {
+  findPath,
+  onNavmeshColumn,
+  randomReachablePoint,
+  type NavmeshSet,
+} from '../ai/pathfinding.ts';
+import { RaceSize } from '../ai/race-combat-records.ts';
 import type { Gait } from '../ai/locomotion.ts';
 import type { FlightRequest } from '../ai/flight.ts';
 import { followDistance, followerRanks } from '../ai/followers.ts';
@@ -62,6 +68,10 @@ const ACROSS_FAILED_MS = 1000;
 const DOOR_REACH = 96;
 /** A load door's navmesh point is looked for this far round it (units; ours). */
 const DOOR_APPROACH_REACH = 256;
+/** A wanderer's point is checked by a path this wide where the actor has no controller (a human's radius). */
+const WANDER_PATH_RADIUS = 20;
+/** A wanderer's point is checked by a search of at most this many triangles. */
+const WANDER_SEARCH_LIMIT = 4000;
 /** LockDoors and UnlockDoors reach doors this far round a place without a radius. */
 const DOOR_RADIUS = 256;
 
@@ -1012,6 +1022,28 @@ export class ActorAi {
         }
       },
       carried: (actor, criteria) => this.carried(actor, criteria),
+      // A wanderer's walks (src/ai/procedure-runs.ts wanderPoint): over the navmeshes it can
+      // walk on from where it stands.
+      randomPoint: (actor, center, radius, least, random) => {
+        const set = this.#navmeshes?.();
+        const self = staged(actor);
+        if (!set || !self) return undefined;
+        const large = (this.#movers.raceSize(actor) ?? RaceSize.medium) >= RaceSize.large;
+        return randomReachablePoint(set, self.position, center, radius, least, random, { large });
+      },
+      walkable: (actor, point) => {
+        const set = this.#navmeshes?.();
+        const self = staged(actor);
+        const on = set && onNavmeshColumn(set, point);
+        if (!set || !self || !on) return undefined;
+        const large = (this.#movers.raceSize(actor) ?? RaceSize.medium) >= RaceSize.large;
+        const path = findPath(set, self.position, on, {
+          radius: this.#movers.radius(actor) ?? WANDER_PATH_RADIUS,
+          large,
+          limit: WANDER_SEARCH_LIMIT,
+        });
+        return path?.complete === true ? on : undefined;
+      },
       // The living actor whose items took a reference (Acquire's Allow Killing).
       holder: async (reference) => {
         const scripts = runtime();

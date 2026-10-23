@@ -5,7 +5,13 @@ import {
   type Navmesh,
   type NavmeshTriangle,
 } from '../world/navmesh.ts';
-import { findPath, straightReach, type NavmeshSet } from './pathfinding.ts';
+import {
+  findPath,
+  onNavmeshColumn,
+  randomReachablePoint,
+  straightReach,
+  type NavmeshSet,
+} from './pathfinding.ts';
 
 type Point = [number, number, number];
 
@@ -229,5 +235,56 @@ describe('straightReach', () => {
   it('counts the whole way off the navmeshes', () => {
     const set = setOf([gridMesh(1, L_SQUARES)]);
     expect(straightReach(set, [-500, -500, 0], [-500, 0, 0], 10)).toBeCloseTo(500);
+  });
+});
+
+describe("a random reachable point (a wanderer's first walk)", () => {
+  /** A seeded random (the same points every run). */
+  const seeded = (seed: number): (() => number) => {
+    let state = seed;
+    return () => {
+      state = (state * 1664525 + 1013904223) % 4294967296;
+      return state / 4294967296;
+    };
+  };
+
+  it('lies within the place, on what the actor can walk to, far enough from it', () => {
+    // Two islands: a row of squares the actor stands on, and one apart (a fenced garden).
+    const set = setOf([
+      gridMesh(1, [
+        [0, 0],
+        [1, 0],
+        [2, 0],
+        [3, 0],
+      ]),
+      gridMesh(2, [[0, 2]]),
+    ]);
+    const random = seeded(7);
+    for (let i = 0; i < 40; i++) {
+      const point = randomReachablePoint(set, [50, 50, 0], [100, 150, 0], 200, 150, random);
+      if (!point) throw new Error('no point');
+      // Never in the garden (y 200 to 300), always within the radius of the middle.
+      expect(point[1]).toBeLessThanOrEqual(100);
+      expect(Math.hypot(point[0] - 100, point[1] - 150)).toBeLessThanOrEqual(260);
+    }
+    // Off the navmeshes: none.
+    expect(randomReachablePoint(set, [50, 950, 0], [100, 150, 0], 200, 0, random)).toBeUndefined();
+  });
+});
+
+describe("a point's column on the navmesh (a wander point at its place's middle's height)", () => {
+  it('finds the navmesh above or below the point, the nearest height first', () => {
+    const flat = setOf([gridMesh(1, [[0, 0]])]);
+    // Only within 24 units of its height (0) is a point on it.
+    const set: NavmeshSet = {
+      ...flat,
+      locate: (point) => (Math.abs(point[2]) <= 24 ? flat.locate(point) : undefined),
+    };
+    expect(onNavmeshColumn(set, [50, 50, 10])).toEqual([50, 50, 10]);
+    expect(onNavmeshColumn(set, [50, 50, 500])?.[2]).toBe(20);
+    expect(onNavmeshColumn(set, [50, 50, -300])?.[2]).toBe(-12);
+    // Beyond its reach, or off the mesh: none.
+    expect(onNavmeshColumn(set, [50, 50, 3000])).toBeUndefined();
+    expect(onNavmeshColumn(set, [500, 50, 0])).toBeUndefined();
   });
 });
