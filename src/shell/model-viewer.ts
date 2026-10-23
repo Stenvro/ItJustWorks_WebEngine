@@ -560,7 +560,7 @@ export class ModelViewer {
     },
     furnitureInUse: (reference, marker) => this.#stage?.furniture.inUse(reference, marker) ?? false,
     evaluatePackage: (reference) => {
-      this.#stage?.ai.evaluate(reference);
+      this.#stage?.evaluatePackage(reference);
     },
     combat: () => this.#stage?.combat,
     launchSpell: (spell, source, target, blame) =>
