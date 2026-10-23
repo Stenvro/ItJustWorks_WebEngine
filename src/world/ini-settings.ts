@@ -25,6 +25,14 @@ export const INI_DEFAULTS = {
     // A paired clip's partner not at its mark after this long plays where it stands
     // (src/shell/actor-combat.ts: killmoves).
     fMaxTimeToMarkSec: 3,
+    // How often actors' graphs update by their distance from the camera, their poses
+    // interpolated between (src/animation/animated-skeleton.ts, animationRate).
+    bAnimInterpEnable: 1,
+    fAnimInterpMinTime: 0.08,
+    fAnimInterpMaxTime: 0.25,
+    fAnimInterpNearDist: 400,
+    fAnimInterpFarDist: 800,
+    fAnimInterpSlop: 0.25,
   },
   Audio: {
     fASFadeInTime: 3,

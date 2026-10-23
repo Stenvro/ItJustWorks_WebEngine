@@ -27,6 +27,7 @@ import type { SoundSystem } from '../audio/sound-system.ts';
 import type { SoundInstance } from '../audio/sound-instance.ts';
 import type { ScriptGraph } from '../animation/script-graphs.ts';
 import type { ScreenModifiers } from './screen-modifiers.ts';
+import { SkyMode, type SkyWeather } from '../world/sky-weather.ts';
 import type { Terminal } from './terminal.ts';
 import type { HudSignals } from './hud-signals.ts';
 import type { Talking } from './world-lines.ts';
@@ -829,6 +830,42 @@ export class ScriptWorld implements WorldBridge {
 
   /** The session's image-space modifiers (what ImageSpaceModifier's functions change). */
   modifiers: ScreenModifiers | undefined;
+
+  /** The sky's weather (the session's): what the Weather functions drive and read. */
+  sky: SkyWeather | undefined;
+
+  setWeather(weather: number, force: boolean, override: boolean, accelerate: boolean): void {
+    if (force) this.sky?.forceWeather(weather, override);
+    else this.sky?.setWeather(weather, override, accelerate);
+  }
+
+  releaseWeatherOverride(): void {
+    this.sky?.releaseOverride();
+  }
+
+  currentWeather(): number | undefined {
+    return this.sky?.current;
+  }
+
+  outgoingWeather(): number | undefined {
+    return this.sky?.outgoing;
+  }
+
+  weatherTransition(): number {
+    return this.sky?.transition ?? 1;
+  }
+
+  skyMode(): number {
+    return this.sky?.mode ?? SkyMode.full;
+  }
+
+  findWeather(classification: number): number | undefined {
+    return this.sky?.findWeather(classification);
+  }
+
+  windSpeed(): number {
+    return this.sky?.windSpeed ?? 0;
+  }
 
   imageSpace(
     modifier: number,

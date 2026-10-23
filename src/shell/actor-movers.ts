@@ -914,7 +914,7 @@ export class ActorMovers {
   /** An actor left the stage: its controller goes, and what it was asked to do. */
   remove(reference: number): void {
     this.#drives.delete(reference);
-    this.#walkers.delete(reference);
+    this.#dropWalker(reference);
     this.#reactions.delete(reference);
     this.#sneaking.delete(reference);
     this.#failures.delete(reference);
@@ -978,7 +978,7 @@ export class ActorMovers {
         this.#walk(staged, seconds);
         continue;
       }
-      this.#walkers.delete(reference);
+      this.#dropWalker(reference);
       if (!mover) {
         if (near && !held && this.#moves(staged)) void this.#add(staged);
         continue;
@@ -998,7 +998,7 @@ export class ActorMovers {
       if (travel) this.#travelFrame(mover, travel, seconds);
     }
     for (const reference of [...this.#walkers.keys()]) {
-      if (!seen.has(reference)) this.#walkers.delete(reference);
+      if (!seen.has(reference)) this.#dropWalker(reference);
     }
     for (const reference of [...this.#warps.keys()]) {
       if (!seen.has(reference)) this.#warps.delete(reference);
@@ -1156,6 +1156,8 @@ export class ActorMovers {
         },
       );
     }
+    // No time stepped (a frame between two physics steps): it moves as it did.
+    if (!(seconds > 0)) return;
     const travel = this.#travels.get(reference);
     if (travel && !this.#walkerTravel(walker, travel, seconds)) return;
     const request = this.#requests.get(reference);
@@ -1185,7 +1187,9 @@ export class ActorMovers {
       if (behavior) {
         // Out of an animation-driven idle while it goes on: told again that it moves.
         if (walker.held && !held) walker.locomotion.resume([behavior]);
-        walker.locomotion.drive([behavior], {
+        // Its graph's channels read it as the graph updates (beyond the high process its graph
+        // updates a few times a second).
+        walker.locomotion.latch(behavior, {
           velocity,
           turnRate,
           heading: staged.heading,
@@ -1373,8 +1377,15 @@ export class ActorMovers {
     }
   }
 
+  /** A walker is no longer one: its graph's channels no longer read its movement. */
+  #dropWalker(reference: number): void {
+    this.#walkers.get(reference)?.locomotion.release();
+    this.#walkers.delete(reference);
+  }
+
   #free(mover: Mover): void {
     this.#movers.delete(mover.staged.reference);
+    mover.locomotion.release();
     mover.character.free();
     for (const trigger of mover.triggers) {
       this.#options.onTrigger?.(trigger, mover.staged.reference, false);
@@ -1608,8 +1619,8 @@ export class ActorMovers {
         }
       }
       // What its steering wants (moved by its graph, a canned turn, a lunge: it stands, as far
-      // as its graph is told).
-      mover.locomotion.drive([behavior], {
+      // as its graph is told), read by its graph's channels as the graph updates.
+      mover.locomotion.latch(behavior, {
         velocity: mover.feedback.feed(mover.wish.velocity, velocity, staged.heading, dt),
         turnRate: mover.wish.turnRate,
         heading: staged.heading,

@@ -155,6 +155,10 @@ export class PackageData implements PackageWorld {
       : undefined;
   }
 
+  scenePackages(actor: PackageActor): readonly number[] | undefined {
+    return this.#scripts()?.scenes.packagesOf(actor.reference);
+  }
+
   async aliasPackages(actor: PackageActor): Promise<readonly number[] | undefined> {
     const runtime = this.#scripts();
     if (runtime) {

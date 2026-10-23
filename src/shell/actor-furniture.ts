@@ -614,8 +614,19 @@ export class ActorFurniture {
     }
     use.state = 4;
     use.quickExit = quick;
-    const event = await this.#idleEvent(user, use.furniture).catch(() => undefined);
+    let event = await this.#idleEvent(user, use.furniture).catch(() => undefined);
     if (this.#uses.get(actor) !== use) return;
+    if (event === undefined && !quick) {
+      // No exit idle fits it (a child getting up from the cross-legged sit: the tree's
+      // ExitChairCHILD group takes every child and has no entry of that sit): it is out at once,
+      // as the quick exit has it (IdleForceDefaultState). Else its graph stayed seated, with
+      // nothing holding it there, and it could not walk off. TODO(M13): the engine's own
+      // fallback (inferred).
+      quick = true;
+      use.quickExit = true;
+      event = await this.#idleEvent(user, use.furniture).catch(() => undefined);
+      if (this.#uses.get(actor) !== use) return;
+    }
     const motion =
       event === undefined || quick ? undefined : await this.#motion(user, event, use.events);
     if (this.#uses.get(actor) !== use) return;
@@ -907,6 +918,8 @@ export class ActorFurniture {
       skeleton,
       random: seededRandom(1),
       properties: { IsFemale: female ? 1 : 0, IsMale: female ? 0 : 1, IsNPC: 1 },
+      ...(behaviors.character.mirror && { mirror: behaviors.character.mirror }),
+      defaultEventMode: behaviors.character.defaultEventMode,
     });
     runtime.setVariable('IsNPC', 1);
     const step = 1 / 30;

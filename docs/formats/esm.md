@@ -320,11 +320,14 @@ entries like WLST). The sound tab is followed by RDMO (the region's music type, 
 0x4 rainy, 0x8 snowy — and f32 chance: 1 for every looping sound, 0.01–0.1 for the others).
 A cell's regions are its XCLR form ids.
 
-**Which weather:** the highest-priority weather region of the camera's cell, else the
-climate's list (Tamriel's SkyrimClimate has a single weather: its cells all have weather
-regions, e.g. WeatherTundra around Whiterun, WeatherWhiterun inside the city world). A weather
-is picked by chance; it changes, with a transition, when the camera enters a cell whose list
-does not have it.
+**Which weather:** the weather region around the player among the cell's regions (an area
+of the region holds the player; a tab marked Override beats priority), else the climate's
+list (Tamriel's SkyrimClimate has a single weather: its land cells have weather regions,
+e.g. WeatherTundra around Whiterun, WeatherWhiterun inside the city world). How the sky picks
+from the list, how long a weather lasts (the climate's volatility) and how scripts hold one:
+[rendering.md](../rendering.md) ("Weather"). An interior's XCCM names the region its sky and
+weather come from; CELL DATA `0x80` Show Sky, `0x100` Use Sky Lighting; WRLD LTMP a
+worldspace's lighting template (its sky shows only the dome).
 
 **Time of day** (`src/world/sky-state.ts`): sunrise colours peak halfway through the climate's
 sunrise, sunset colours halfway through its sunset. From sunrise begin, night fades into

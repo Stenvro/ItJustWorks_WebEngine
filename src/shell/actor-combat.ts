@@ -51,6 +51,7 @@ import { SOUL_CAPACITY } from '../gameplay/crafting.ts';
 import { soulSize } from '../gameplay/magic/effect-rules.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import {
+  AmmoFlag,
   parseAmmo,
   parseProjectile,
   parseRaceHits,
@@ -155,9 +156,24 @@ const CHEST = 0.75;
  * often the engine values ShouldAttackKill is not known.
  */
 const ESTIMATED_ARMOR_SECONDS = 2;
-/** The graphs' BSDirectAtModifier kind of bows and spells (userInfo), and how far it aims. */
-const BOW_AIM = 2;
+/**
+ * The graphs' BSDirectAtModifier kinds (userInfo) the engine gives an actor's aim: 2 bows and
+ * spells, 3 the dragon rider's (observed in the original: both get the same point); and how
+ * far along its shot an NPC's aim is put.
+ */
+const AIM_KINDS = [2, 3] as const;
+/** Where a crossbow's bolt is held (the engine's node for ammunition that is no arrow). */
+const BOLT_NODE = 'NPC R MagicNode [RMag]';
+/** The node a nocked shot of ammunition with these AMMO flags is held on (none: not shown). */
+const ammoNode = (flags: number): string | undefined =>
+  (flags & AmmoFlag.nonPlayable) !== 0
+    ? undefined
+    : (flags & AmmoFlag.nonBolt) !== 0
+      ? 'WEAPON'
+      : BOLT_NODE;
 const BOW_AIM_DISTANCE = 2048;
+/** How far along the player's view the engine puts their aim (observed in the original). */
+const PLAYER_AIM_DISTANCE = 4000;
 /** Seconds an attack waits for its graph to answer (see ActorCombat #unanswered). */
 const ATTACK_ANSWER = 1.5;
 /** Fighters this far from the player are left alone (the high process's reach). */
@@ -197,6 +213,8 @@ interface Fighter {
   heldSince: number | undefined;
   /** The weapon state it was in when its drawn models last followed it. */
   inHand: boolean;
+  /** Its hands' GetEquippedItemType codes as its graphs were last told (#graphVariables). */
+  handTypes: { readonly right: number; readonly left: number } | undefined;
   /** Its draw's or sheathing's sound played at the graph's BeginWeaponDraw / BeginWeaponSheathe. */
   drawSounded: boolean;
   /** Bleeding out: seconds down; in a paired animation: seconds in it. */
@@ -235,6 +253,8 @@ interface Fighter {
   practice: Practice | undefined;
   /** Its arms aim a drawn bow (#aimBow). */
   bowAimed: boolean;
+  /** The combat target its combat head track was last set to (#combatLook). */
+  lookedAt: number | undefined;
   /** What its left hand's graph override was told for which body (#graphVariables). */
   leftHand: { readonly body: PlacedActor | undefined; readonly kind: string } | undefined;
 }
@@ -259,6 +279,12 @@ interface Gear {
   readonly shieldRating: number;
   readonly projectile: ProjectileCombat | undefined;
   readonly ammoModel: string | undefined;
+  /**
+   * The node a nocked shot is held on (observed in the original): an arrow (AMMO non-bolt)
+   * on WEAPON, where the bow animations hold it; a crossbow's bolt on NPC R MagicNode [RMag];
+   * a non-playable one on none.
+   */
+  readonly ammoNode: string | undefined;
   readonly attacks: AttackSet;
   readonly race: RaceHits | undefined;
   /** A torch in the left hand (a LIGH that can be carried): its model and its light. */
@@ -843,6 +869,23 @@ export class ActorCombat implements CombatBridge {
     return this.#fighters.get(reference)?.gear?.right.weapon;
   }
 
+  /**
+   * Where a fighter's WEAPON node is in the world (its third-person body): what the graphs'
+   * block anticipation turns toward (BSDirectAtModifier userInfo 1, src/shell/actor-looks.ts).
+   */
+  weaponPoint(reference: number): Vec3 | undefined {
+    const fighter = this.#fighters.get(reference);
+    if (!fighter) return undefined;
+    const pose = fighter.player ? this.#avatar?.body.pose : fighter.body?.pose;
+    const world = fighter.player
+      ? this.#avatar?.placement.world
+      : fighter.body?.instances[0]?.world;
+    const node = pose?.world('WEAPON');
+    return node && world
+      ? transformPoint(world, [node[12] ?? 0, node[13] ?? 0, node[14] ?? 0])
+      : undefined;
+  }
+
   /** A fighter's combat state (the player's input reads it). */
   combatState(reference: number): CombatState | undefined {
     return this.#fighters.get(reference)?.state;
@@ -1050,6 +1093,7 @@ export class ActorCombat implements CombatBridge {
       shieldRating: shieldItem?.armor?.rating ?? 0,
       projectile: projectileRecord?.type === 'PROJ' ? parseProjectile(projectileRecord) : undefined,
       ammoModel: right.ammo === undefined ? undefined : ammo?.model,
+      ammoNode: ammoNode(ammo?.flags ?? AmmoFlag.nonBolt),
       attacks: new AttackSet(raceAttacks, own),
       race: raceRecord?.type === 'RACE' ? parseRaceHits(raceRecord) : undefined,
       torch,
@@ -1087,8 +1131,8 @@ export class ActorCombat implements CombatBridge {
         : type(gear.left, gear.shield !== undefined, gear.spells.left);
     this.#setVariable(fighter, 'iRightHandType', right);
     this.#setVariable(fighter, 'iLeftHandType', left);
-    this.#setVariable(fighter, 'iRightHandEquipped', gear.right.weapon !== undefined ? 1 : 0);
-    this.#setVariable(fighter, 'iLeftHandEquipped', left !== EquippedItemType.handToHand ? 1 : 0);
+    fighter.handTypes = { right, left };
+    this.#handsEquipped(fighter);
     this.#setVariable(fighter, 'weaponSpeedMult', gear.right.speed);
     this.#setVariable(fighter, 'leftWeaponSpeedMult', gear.left.speed);
     // The left hand's override (0_master's MT_LeftHandOverride) changes on the engine's equip
@@ -1115,16 +1159,36 @@ export class ActorCombat implements CombatBridge {
     }
   }
 
+  /**
+   * iRightHandEquipped and iLeftHandEquipped (observed in the original): not flags but the
+   * hands' GetEquippedItemType codes while the weapons are out, 0 while sheathed; the engine sets
+   * them as the drawn weapon reaches the hand (the weaponDraw annotation's handler) and back to 0
+   * as it is sheathed. The graphs' manual selectors index by them: the sprint's sides (a bow's,
+   * a torch's, a shield's run), the jumps and shouts with a crossbow, the rider's staggers.
+   */
+  #handsEquipped(fighter: Fighter): void {
+    const types = fighter.handTypes;
+    this.#setVariable(fighter, 'iRightHandEquipped', fighter.inHand ? (types?.right ?? 0) : 0);
+    this.#setVariable(fighter, 'iLeftHandEquipped', fighter.inHand ? (types?.left ?? 0) : 0);
+  }
+
   /** Its weapons' models on its body (made again for another body or other weapons). */
   async #makeModels(fighter: Fighter, gear: Gear): Promise<void> {
     const body = fighter.body;
     if (!body) return;
     const held: HeldModels = {
       ...(gear.right.model !== undefined && {
-        right: { model: gear.right.model, sheathed: gear.right.nodes.sheathed },
+        right: {
+          model: gear.right.model,
+          sheathed: gear.right.nodes.sheathed,
+          drawn: gear.right.nodes.drawn,
+        },
       }),
       ...(gear.left.model !== undefined && { left: { model: gear.left.model } }),
-      ...(gear.ammoModel !== undefined && { ammo: gear.ammoModel }),
+      ...(gear.ammoModel !== undefined && {
+        ammo: gear.ammoModel,
+        ammoNode: gear.ammoNode ?? null,
+      }),
       ...(gear.torch?.model !== undefined && { torch: gear.torch.model }),
     };
     const key = `${String(gear.right.weapon)}:${String(gear.left.weapon)}:${String(gear.ammoModel)}:${String(gear.torch?.model)}`;
@@ -1192,9 +1256,14 @@ export class ActorCombat implements CombatBridge {
     const rightModel = right ?? gear.right.model;
     const leftModel = left ?? gear.left.model;
     const held: HeldModels = {
-      ...(rightModel !== undefined && { right: { model: rightModel, sheathed: undefined } }),
+      ...(rightModel !== undefined && {
+        right: { model: rightModel, sheathed: undefined, drawn: gear.right.nodes.drawn },
+      }),
       ...(leftModel !== undefined && { left: { model: leftModel } }),
-      ...(gear.ammoModel !== undefined && { ammo: gear.ammoModel }),
+      ...(gear.ammoModel !== undefined && {
+        ammo: gear.ammoModel,
+        ammoNode: gear.ammoNode ?? null,
+      }),
       ...(gear.torch?.model !== undefined && { torch: gear.torch.model }),
     };
     const made = await HeldWeapons.create(
@@ -1234,6 +1303,7 @@ export class ActorCombat implements CombatBridge {
     fighter.blood?.right.advance(seconds);
     fighter.blood?.left.advance(seconds);
     if (state.current?.ranged === true && state.arrowNocked) state.drawnFor += seconds;
+    this.#combatLook(fighter);
     this.#aimBow(fighter);
     this.#followMark(fighter);
     // A synchronized scene lasts as long as its clips (observed in the original: an actor
@@ -1478,11 +1548,13 @@ export class ActorCombat implements CombatBridge {
         break;
       case 'hand':
         fighter.inHand = true;
+        this.#handsEquipped(fighter);
         if (!fighter.drawSounded) this.#playSound(gear?.rightRecord?.sounds.equip, fighter);
         fighter.drawSounded = false;
         break;
       case 'sheath':
         fighter.inHand = false;
+        this.#handsEquipped(fighter);
         if (!fighter.drawSounded) this.#playSound(gear?.rightRecord?.sounds.unequip, fighter);
         fighter.drawSounded = false;
         break;
@@ -1505,6 +1577,10 @@ export class ActorCombat implements CombatBridge {
         void this.#strike(fighter).catch((error: unknown) => {
           this.#warn(`a strike: ${describe(error)}`);
         });
+        break;
+      // Its Archery is read as each arrow is nocked (the shot strays by it as it is loosed).
+      case 'arrow-attach':
+        this.#readArchery(fighter);
         break;
       case 'arrow-release':
         this.#loose(fighter);
@@ -2285,30 +2361,73 @@ export class ActorCombat implements CombatBridge {
   }
 
   /**
-   * While a bow is drawn its arms aim where the shot would go: the graphs' BSDirectAtModifiers
-   * of bows (userInfo 2, as an aimed spell's: src/shell/actor-casting.ts) get a point along the
-   * aim; let go as the draw ends.
+   * The aim the engine gives the graphs' BSDirectAtModifiers of bows (userInfo 2, as an aimed
+   * spell's: src/shell/actor-casting.ts; observed in the original): an NPC's is where its
+   * combat aim points, which here is where its shot would go (a point along it), whenever it
+   * holds a bow or a crossbow out and has something to shoot at, so its spine has turned to it
+   * by the time the arrow is nocked (the modifier eases on by its gain); the player's is the
+   * point 4000 units along their view (their graph's direct-at is off, IsNPC 0, but a mounted
+   * player's bow, horsebehavior's MC_BSDirectAtModifier_Bow, uses it). The modifier turns the
+   * spine so that the WEAPON bone, where the nocked arrow lies, points at it.
    */
   #aimBow(fighter: Fighter): void {
-    const drawing = fighter.state.current?.ranged === true && fighter.state.arrowNocked;
-    const feet = drawing ? this.#feet(fighter) : undefined;
-    if (!feet) {
+    const gear = fighter.gear;
+    const ranged =
+      gear !== undefined &&
+      (gear.right.weaponType === WeaponType.bow || gear.right.weaponType === WeaponType.crossbow);
+    const feet = this.#feet(fighter);
+    let point: Vec3 | undefined;
+    if (fighter.player) {
+      const player = this.#play?.player;
+      if (player && feet) {
+        const eye = player.eye;
+        const look = player.forward;
+        point = [
+          eye[0] + look[0] * PLAYER_AIM_DISTANCE,
+          eye[1] + look[1] * PLAYER_AIM_DISTANCE,
+          eye[2] + look[2] * PLAYER_AIM_DISTANCE,
+        ];
+      }
+    } else if (ranged && fighter.inHand && feet) {
+      const shooting =
+        (fighter.target !== undefined && this.#fighters.has(fighter.target)) ||
+        fighter.practice?.aimAt !== undefined;
+      if (shooting) {
+        const from = this.#bowFrom(fighter, feet);
+        const aim = this.#bowAim(fighter, from, 1, false);
+        point = [
+          from[0] + aim[0] * BOW_AIM_DISTANCE,
+          from[1] + aim[1] * BOW_AIM_DISTANCE,
+          from[2] + aim[2] * BOW_AIM_DISTANCE,
+        ];
+      }
+    }
+    if (!point) {
       if (fighter.bowAimed) {
         fighter.bowAimed = false;
-        for (const graph of this.#graphs(fighter)) graph.setDirectAtTarget(BOW_AIM, undefined);
+        for (const graph of this.#graphs(fighter)) {
+          for (const kind of AIM_KINDS) graph.setDirectAtTarget(kind, undefined);
+        }
       }
       return;
     }
-    if (!fighter.bowAimed) this.#readArchery(fighter);
-    const from = this.#bowFrom(fighter, feet);
-    const aim = this.#bowAim(fighter, from, 1, false);
-    const point: Vec3 = [
-      from[0] + aim[0] * BOW_AIM_DISTANCE,
-      from[1] + aim[1] * BOW_AIM_DISTANCE,
-      from[2] + aim[2] * BOW_AIM_DISTANCE,
-    ];
     fighter.bowAimed = true;
-    for (const graph of this.#graphs(fighter)) graph.setDirectAtTarget(BOW_AIM, point);
+    for (const graph of this.#graphs(fighter)) {
+      for (const kind of AIM_KINDS) graph.setDirectAtTarget(kind, point);
+    }
+  }
+
+  /**
+   * An NPC's combat target is its combat head track (HEAD_TRACK_TYPE combat): it looks at whom
+   * it fights, and its graph's block anticipation turns toward that one's weapon
+   * (src/shell/actor-looks.ts). A practice's target is none (its package's head track is).
+   */
+  #combatLook(fighter: Fighter): void {
+    if (fighter.player) return;
+    const target = this.#brain.engaged(fighter.reference) ? fighter.target : undefined;
+    if (fighter.lookedAt === target) return;
+    fighter.lookedAt = target;
+    this.#options.session.scriptWorld.lookTargets.lookAt(fighter.reference, target, 'combat');
   }
 
   /** The arrow leaves the bow (arrowRelease): a shot along the aim, its damage by the draw. */
@@ -3283,6 +3402,9 @@ export class ActorCombat implements CombatBridge {
   #drop(fighter: Fighter): void {
     fighter.held?.destroy();
     fighter.firstHeld?.destroy();
+    if (fighter.lookedAt !== undefined) {
+      this.#options.session.scriptWorld.lookTargets.lookAt(fighter.reference, undefined, 'combat');
+    }
     this.#fighters.delete(fighter.reference);
     this.#perkVariables.delete(fighter.reference);
   }
@@ -3559,6 +3681,7 @@ function newFighter(reference: number, player: boolean): Fighter {
     target: undefined,
     heldSince: undefined,
     inHand: false,
+    handTypes: undefined,
     drawSounded: false,
     down: 0,
     pairedFor: 0,
@@ -3573,6 +3696,7 @@ function newFighter(reference: number, player: boolean): Fighter {
     deadAttacks: new Set(),
     practice: undefined,
     bowAimed: false,
+    lookedAt: undefined,
     leftHand: undefined,
   };
 }

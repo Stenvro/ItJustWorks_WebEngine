@@ -2038,10 +2038,45 @@ async function readProjectCharacter(
   path: string,
   read: (path: string) => Promise<Uint8Array>,
 ): Promise<Packfile> {
+  return (await readProject(path, read)).character;
+}
+
+/** A behavior project's file and its character's (`path` normalized). */
+async function readProject(
+  path: string,
+  read: (path: string) => Promise<Uint8Array>,
+): Promise<{ readonly project: Packfile; readonly character: Packfile }> {
   const project = Packfile.parse(await readHavokFile(path, read));
-  return Packfile.parse(
+  const character = Packfile.parse(
     await readHavokFile(projectRelative(path, projectCharacterFile(project)), read),
   );
+  return { project, character };
+}
+
+/**
+ * hkbProjectData.defaultEventMode (at 40): how its graphs' transitions pass events on while they
+ * blend where their effect does not say (TransitionEffect.eventMode: 1 to both states, 2 not to
+ * the state left, 3 not to the state entered). Every vanilla actor project has 2.
+ */
+function readDefaultEventMode(project: Packfile): number {
+  const data = project.objectsOf('hkbProjectData')[0];
+  return data ? project.i8(data.offset + 40) : 0;
+}
+
+/**
+ * The character's mirroring (hkbCharacterData.mirroredSkeletonInfo at 160): the mirror axis (a
+ * quaternion; the vanilla characters' (1, 0, 0, 0): across their left and right) and each bone's
+ * mirror partner (empty in 326 of the 355 vanilla characters: every bone its own).
+ */
+function readMirroring(file: Packfile, data: HkxObject): MirrorSetup | undefined {
+  const info = file.object(data.offset + 160);
+  if (info?.className !== 'hkbMirroredSkeletonInfo') return undefined;
+  const pairs = file.array(info.offset + 32);
+  const axis = (i: number): number => file.f32(info.offset + 16 + 4 * i);
+  return {
+    axis: [axis(0), axis(1), axis(2), axis(3)],
+    pairs: Int16Array.from({ length: pairs.size }, (_, i) => file.i16(pairs.data + i * 2)),
+  };
 }
 
 /**
@@ -2122,6 +2157,18 @@ export interface CharacterInfo {
   readonly properties: readonly string[];
   /** Its foot IK (hkbCharacterData.footIkDriverInfo at 136), if it has one. */
   readonly footIk?: FootIkSetup;
+  /** Its mirroring (for mirrored clips), if it has one. */
+  readonly mirror?: MirrorSetup;
+  /** The project's default event mode of blending transitions (readDefaultEventMode). */
+  readonly defaultEventMode: number;
+}
+
+/** A character's mirroring (hkbMirroredSkeletonInfo). */
+export interface MirrorSetup {
+  /** The mirror axis as a quaternion (x, y, z, w). */
+  readonly axis: readonly [number, number, number, number];
+  /** Each bone's partner (empty: every bone its own). */
+  readonly pairs: Int16Array;
 }
 
 /** Reads a behavior project's character: its skeleton, behavior and animations. */
@@ -2130,7 +2177,7 @@ export async function loadCharacterInfo(
   read: (path: string) => Promise<Uint8Array>,
 ): Promise<CharacterInfo> {
   const path = normalizePath(project);
-  const character = await readProjectCharacter(path, read);
+  const { project: projectFile, character } = await readProject(path, read);
   const data = requireObject(character, 'hkbCharacterData');
   const strings = character.object(data.offset + 152);
   if (strings?.className !== 'hkbCharacterStringData') {
@@ -2143,6 +2190,7 @@ export async function loadCharacterInfo(
     return name ? projectRelative(path, name) : undefined;
   };
   const footIk = readFootIkDriverInfo(character, data);
+  const mirror = readMirroring(character, data);
   return {
     name: character.string(strings.offset + 160) ?? '',
     rig: file(168),
@@ -2153,5 +2201,7 @@ export async function loadCharacterInfo(
       .map((name) => projectRelative(path, name)),
     properties: character.stringArray(strings.offset + 80),
     ...(footIk && { footIk }),
+    ...(mirror && { mirror }),
+    defaultEventMode: readDefaultEventMode(projectFile),
   };
 }

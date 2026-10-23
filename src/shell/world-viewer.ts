@@ -80,8 +80,11 @@ import { cellKey, WorldFlag, Worldspace, type Arrival } from '../world/worldspac
 import { LARGE_REFERENCE_GRID, largeReferencesAround } from '../world/large-references.ts';
 import {
   animateSkeletons,
-  animationInterval,
+  animationRate,
+  animationRateSettings,
+  fovAcross,
   type AnimatedSkeleton,
+  type AnimationRate,
 } from '../animation/animated-skeleton.ts';
 import { talkTargets, type PlacedActor } from './actors.ts';
 import { ActorStage } from './actor-stage.ts';
@@ -836,7 +839,7 @@ export class WorldViewer {
     },
     furnitureInUse: (reference, marker) => this.#stage?.furniture.inUse(reference, marker) ?? false,
     evaluatePackage: (reference) => {
-      this.#stage?.ai.evaluate(reference);
+      this.#stage?.evaluatePackage(reference);
     },
     combat: () => this.#stage?.combat,
     launchSpell: (spell, source, target, blame) =>
@@ -1367,9 +1370,9 @@ export class WorldViewer {
         // Pines' branches sway with the weather's wind.
         const wind = this.#sky?.lighting()?.wind ?? 0;
         for (const sway of this.#treeSways.values()) sway?.update(seconds, wind);
-        const interval = this.#animationInterval();
+        const rate = this.#animationRate();
         for (const cell of this.#cells.values())
-          if (cell.ready) animateSkeletons(cell.skeletons, seconds, interval);
+          if (cell.ready) animateSkeletons(cell.skeletons, seconds, rate);
         this.#stage?.animate(seconds);
       },
     });
@@ -1598,19 +1601,24 @@ export class WorldViewer {
     await this.#created.add(runtime, reference, this.#play);
   }
 
-  /** How often each skeleton moves, by where it is seen from (animationInterval). */
-  #animationInterval(): ((animated: AnimatedSkeleton) => number) | undefined {
+  /** How often each skeleton's graph updates, by where it is seen from (animationRate). */
+  #animationRate(): ((animated: AnimatedSkeleton) => AnimationRate) | undefined {
     const camera = this.#renderer.view?.camera;
-    if (!camera) return undefined;
+    const session = this.#session;
+    if (!camera || !session) return undefined;
+    const settings = animationRateSettings(session.ini);
+    const view = {
+      position: camera.position,
+      forward: camera.forward,
+      fov: camera.fovY === undefined ? 80 : fovAcross(camera.fovY),
+    };
     return (animated) => {
       const world = this.#skeletonPlaces.get(animated);
-      return world
-        ? animationInterval(
-            [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0],
-            camera.position,
-            camera.forward,
-          )
-        : 0;
+      return animationRate(
+        world ? [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] : view.position,
+        view,
+        settings,
+      );
     };
   }
 
@@ -1681,7 +1689,7 @@ export class WorldViewer {
     if (this.streamLargeReferences) this.#updateLargeReferences(world, cx, cy);
     this.#pump();
     this.#lod?.update(px, py);
-    this.#sky?.update(world, cx, cy).catch((error: unknown) => {
+    this.#sky?.update(world, cx, cy, [px, py]).catch((error: unknown) => {
       this.#terminal.log('sky', describe(error), 'warn');
     });
     this.#ui.status.hidden = false;

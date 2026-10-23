@@ -28,6 +28,7 @@ import { Vfs } from './vfs/vfs.ts';
 import type { Placement } from './scripting/runtime/runtime.ts';
 import { PLAYER_REF } from './scripting/runtime/forms.ts';
 import { QuestPanel } from './shell/quest-panel.ts';
+import { SceneTrace } from './shell/scene-trace.ts';
 import { PlayMode, type PlayWorld } from './shell/play-mode.ts';
 import { Launcher } from './shell/launcher.ts';
 
@@ -842,6 +843,7 @@ async function main(): Promise<void> {
     showScreen('menu');
   });
   if (import.meta.env.DEV) {
+    let sceneTrace: SceneTrace | undefined;
     window.engineDev = {
       viewer: modelViewer,
       world: worldViewer,
@@ -849,7 +851,32 @@ async function main(): Promise<void> {
       device: gpu.device,
       session: () => session,
       play: () => play,
+      sceneTrace: (on = true) => {
+        const runtime = session?.scriptsReady;
+        if (!on || !runtime) {
+          sceneTrace?.stop();
+          return sceneTrace?.text() ?? '';
+        }
+        // A new game or a game loaded has its own runtime: the trace begins again with it.
+        if (sceneTrace?.runtime !== runtime) {
+          sceneTrace?.stop();
+          sceneTrace = new SceneTrace(runtime, () => worldViewer.actorStage);
+          sceneTrace.start();
+        }
+        return sceneTrace.text();
+      },
     };
+    // The automated QA monitors (docs/qa.md): loaded on the side, idle until started.
+    void import('./shell/qa/qa-harness.ts').then(({ QaHarness }) => {
+      if (window.engineDev)
+        window.engineDev.qa = new QaHarness({
+          // Interiors play in the model viewer, the world outside in the world viewer.
+          world: () => (worldViewer.play ? worldViewer : modelViewer),
+          session: () => session,
+          renderer,
+          terminal,
+        });
+    });
   }
   let lastScriptTick = performance.now() / 1000;
   // Sounds follow the camera; browsers start audio only after a user gesture.

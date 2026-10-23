@@ -73,6 +73,11 @@ export class PlayerPilot {
     return this.#body !== undefined;
   }
 
+  /** Where the player's travel goes now (undefined: none). */
+  get destination(): Vec3 | undefined {
+    return this.#travel?.destination;
+  }
+
   /** Every frame (real seconds): the packages run while the scripts drive the player. */
   frame(seconds: number): void {
     const { session, ai } = this.#options;

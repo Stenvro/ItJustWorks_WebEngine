@@ -219,6 +219,22 @@ describe('where packages put actors', () => {
   });
   const guard = actor([0x100, 0x101], [[0, 0x2c934]]);
 
+  it('runs a scene package action alone, and stays where it got to once the action is done', async () => {
+    // The scene's: to the cell the guard sleeps in, at any hour.
+    const goToBed = { ...sleep, formId: 0x103, schedule: undefined };
+    const scene = (packages: number[]): PackageWorld => ({
+      ...world([patrol, sleep, goToBed], [0x100]),
+      scenePackages: () => packages,
+    });
+    // By day the guard patrols (its alias's package too); a scene's action sends it away.
+    expect(await packageStart(guard, scene([0x103]), at(10))).toMatchObject({
+      kind: 'elsewhere',
+      package: 0x103,
+    });
+    // The action's package done, the scene holds it where it is.
+    expect(await packageStart(guard, scene([]), at(10))).toEqual({ kind: 'here' });
+  });
+
   it('starts a patrol at its start, and sleeps in another cell at night', async () => {
     const data = world([patrol, sleep]);
     expect(await packageStart(guard, data, at(10))).toMatchObject({

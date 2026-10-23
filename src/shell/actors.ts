@@ -49,6 +49,7 @@ import type { PackageStart, Space } from '../ai/package-start.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
 import type { CellRagdoll } from './play-session.ts';
 import { parseTextureSet } from '../world/decal.ts';
+import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { RecordDatabase } from '../world/record-db.ts';
 import type { GameSession } from './game-session.ts';
 import { startObjectGraph } from './object-graphs.ts';
@@ -932,18 +933,33 @@ export class ActorPlacer {
     if (behaviors && havok && !dead) {
       const host = animation.host(behaviors, look.female);
       const random = seededRandom(actor.reference);
+      // The player's graph is no NPC's (observed in the original: the player's graph is
+      // told IsPlayer 1, IsNPC 0, iIsPlayer 1 as it is set up). Its transitions and modifiers
+      // differ by it: blocking, bashing and drawing again while drawn are the player's own, a
+      // bow aims by the spine's twist on its Pitch (not the direct-at), the look-at is off.
+      const npc = actor.reference === PLAYER_REF ? 0 : 1;
       behavior = new BehaviorRuntime({
         root: behaviors.root,
         host,
         skeleton: havok,
         random,
-        properties: { IsFemale: look.female ? 1 : 0, IsMale: look.female ? 0 : 1, IsNPC: 1 },
+        properties: {
+          IsFemale: look.female ? 1 : 0,
+          IsMale: look.female ? 0 : 1,
+          IsNPC: npc,
+          IsPlayer: 1 - npc,
+        },
         // Its feet on the ground (hkbCharacterData's foot IK: src/animation/procedural.ts).
         ...(behaviors.character.footIk && { footIk: behaviors.character.footIk }),
         // Its ragdoll's bones (knock-downs, getting up: src/shell/actor-knockdowns.ts).
         ...(ragdollBones && { ragdollBones }),
+        // Mirrored clips, and which states hear events while a transition blends.
+        ...(behaviors.character.mirror && { mirror: behaviors.character.mirror }),
+        defaultEventMode: behaviors.character.defaultEventMode,
       });
-      behavior.setVariable('IsNPC', 1);
+      behavior.setVariable('IsNPC', npc);
+      behavior.setVariable('IsPlayer', 1 - npc);
+      behavior.setVariable('iIsPlayer', 1 - npc);
       // A third-person graph (the engine's i1stPerson: 1 only for the player's first-person
       // one; the knock-down's Ragdoll transition asks for 0).
       behavior.setVariable('i1stPerson', 0);

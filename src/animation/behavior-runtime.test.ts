@@ -201,6 +201,149 @@ describe('the behavior runtime', () => {
     expect(runtime.pose[0]).toBeCloseTo(0.2);
   });
 
+  it('keeps playing what a state left at once shares with another active parent', () => {
+    // The bow attack's shape: a blend of the lower body (standing holds the arms' draw too,
+    // moving does not) and the arms' draw; a step from standing to moving keeps the draw going.
+    const draw = clip('draw');
+    const lower: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Lower',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'Standing',
+          probability: 1,
+          enable: true,
+          generator: draw,
+          transitions: [transition(0, 1)],
+        },
+        {
+          id: 1,
+          name: 'Moving',
+          probability: 1,
+          enable: true,
+          generator: clip('walk'),
+          transitions: [],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const blend: BehaviorGenerator = {
+      kind: 'blender',
+      name: 'UpperLower',
+      referencePoseWeightThreshold: 0,
+      blendParameter: { value: 1 },
+      minCyclicBlendParameter: 0,
+      maxCyclicBlendParameter: 1,
+      indexOfSyncMasterChild: -1,
+      flags: 0,
+      subtractLastChild: false,
+      children: [
+        { weight: { value: 1 }, generator: lower },
+        { weight: { value: 1 }, generator: draw },
+      ],
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(blend, ['moveStart']),
+      host: host({ draw: animation(0, 2), walk: animation(1) }),
+      skeleton,
+    });
+    runtime.update(0.5);
+    runtime.sendEvent('moveStart');
+    runtime.update(0.1);
+    const playing = runtime.playing();
+    expect(playing.map((entry) => entry.animation).sort()).toEqual(['draw', 'walk']);
+    expect(playing.find((entry) => entry.animation === 'draw')?.time).toBeCloseTo(0.6, 5);
+  });
+
+  it('starts a state over when entered at once while still blending out of it', () => {
+    // The bow attack's shape: Attack (a nested machine Draw -> End on 'release') blends back to
+    // Ready on 'stop' (0.2 s); 'attack' again during that blend enters Attack at once: its
+    // nested machine starts at Draw again, without the exit events a deactivation would raise.
+    // Events: 0 attack, 1 release, 2 stop, 3 endExit.
+    const inner: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Inner',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'Draw',
+          probability: 1,
+          enable: true,
+          generator: clip('draw'),
+          transitions: [transition(1, 1)],
+        },
+        {
+          id: 1,
+          name: 'End',
+          probability: 1,
+          enable: true,
+          generator: clip('end'),
+          transitions: [],
+          exitNotifyEvents: [{ id: 3 }],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const blend = {
+      duration: 0.2,
+      toGeneratorStartTimeFraction: 0,
+      flags: 0,
+      endMode: 0,
+      blendCurve: 0,
+      selfTransitionMode: 0,
+      eventMode: 0,
+    };
+    const outer: BehaviorGenerator = {
+      kind: 'state-machine',
+      name: 'Outer',
+      startStateId: { value: 0 },
+      startStateMode: 0,
+      states: [
+        {
+          id: 0,
+          name: 'Ready',
+          probability: 1,
+          enable: true,
+          generator: clip('ready'),
+          transitions: [transition(0, 1)],
+        },
+        {
+          id: 1,
+          name: 'Attack',
+          probability: 1,
+          enable: true,
+          generator: inner,
+          transitions: [transition(2, 0, { duration: 0.2, effect: blend })],
+        },
+      ],
+      wildcardTransitions: [],
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(outer, ['attack', 'release', 'stop', 'endExit']),
+      host: host({ ready: animation(0), draw: animation(1), end: animation(2) }),
+      skeleton,
+    });
+    const states = (): string[] => runtime.states().map((entry) => entry.state);
+    runtime.update(0.1);
+    runtime.sendEvent('attack');
+    runtime.update(0.1);
+    runtime.sendEvent('release');
+    runtime.update(0.1);
+    runtime.sendEvent('stop');
+    runtime.update(0.05);
+    expect(states()).toEqual(['Ready', 'End']);
+    runtime.takeRaised();
+    runtime.sendEvent('attack');
+    runtime.update(0.05);
+    expect(states()).toEqual(['Attack', 'Draw']);
+    expect(names(runtime.takeRaised())).not.toContain('endExit');
+  });
+
   it("leaves a state at once before entering the next: its nested machine's exit first", () => {
     // Events: 0 go, 1 innerExit, 2 bEnter.
     const inner: BehaviorGenerator = {
@@ -927,5 +1070,195 @@ describe("the dragon's flight modifiers", () => {
     for (let i = 0; i < 3; i++) runtime.update(0.1);
     expect(names(runtime.takeRaised())).toContain('CastStop');
     expect(runtime.states().map((state) => state.state)).toContain('MagicReady');
+  });
+});
+
+describe('transitions as Havok runs them', () => {
+  type Effect = NonNullable<StateTransition['effect']>;
+  const effect = (duration: number, extra: Partial<Effect> = {}): Effect => ({
+    duration,
+    toGeneratorStartTimeFraction: 0,
+    flags: 0,
+    endMode: 0,
+    blendCurve: 1,
+    selfTransitionMode: 0,
+    eventMode: 0,
+    ...extra,
+  });
+  const state = (
+    id: number,
+    name: string,
+    generator: BehaviorGenerator,
+    transitions: StateTransition[] = [],
+  ): {
+    id: number;
+    name: string;
+    probability: number;
+    enable: boolean;
+    generator: BehaviorGenerator;
+    transitions: StateTransition[];
+  } => ({ id, name, probability: 1, enable: true, generator, transitions });
+  const machine = (name: string, states: ReturnType<typeof state>[]): BehaviorGenerator => ({
+    kind: 'state-machine',
+    name,
+    startStateId: { value: 0 },
+    startStateMode: 0,
+    states,
+    wildcardTransitions: [],
+  });
+
+  it('nests an interrupted transition: the pose goes on from the blend, without a pop', () => {
+    const root = machine('Machine', [
+      state(0, 'A', clip('a'), [transition(0, 1, { effect: effect(1) })]),
+      state(1, 'B', clip('b'), [transition(1, 2, { effect: effect(1) })]),
+      state(2, 'C', clip('c')),
+    ]);
+    const runtime = new BehaviorRuntime({
+      root: graph(root, ['toB', 'toC']),
+      host: host({ a: animation(0, 10), b: animation(100, 10), c: animation(200, 10) }),
+      skeleton,
+    });
+    runtime.update(0);
+    runtime.sendEvent('toB');
+    runtime.update(0.5);
+    // Halfway from A (0.5) to B (100.5).
+    expect(runtime.pose[0]).toBeCloseTo(50.5);
+    runtime.sendEvent('toC');
+    runtime.update(0);
+    // Into C from the blend as it was: nothing pops.
+    expect(runtime.pose[0]).toBeCloseTo(50.5);
+    expect(runtime.stats.interrupted).toBe(1);
+    runtime.update(0.5);
+    // The A-to-B blend has ended (B at 101), C halfway in (200.5).
+    expect(runtime.pose[0]).toBeCloseTo((101 + 200.5) / 2);
+  });
+
+  it('blends, resets or continues a state entered from itself by its mode', () => {
+    const run = (mode: number, looping: boolean): number => {
+      const root = machine('Machine', [
+        state(0, 'A', clip('a', looping ? 1 : 0), [
+          transition(0, 0, { effect: effect(1, { selfTransitionMode: mode }) }),
+        ]),
+      ]);
+      const runtime = new BehaviorRuntime({
+        root: graph(root, ['again']),
+        host: host({ a: animation(0, 10) }),
+        skeleton,
+      });
+      runtime.update(0);
+      runtime.update(0.5);
+      runtime.sendEvent('again');
+      runtime.update(0.25);
+      return runtime.pose[0] ?? NaN;
+    };
+    // Blend: from the pose it had (0.5) into the clip started over (0.25), a quarter in.
+    expect(run(3, true)).toBeCloseTo(0.5 * 0.75 + 0.25 * 0.25);
+    // Reset: started over.
+    expect(run(2, true)).toBeCloseTo(0.25);
+    // Continue: as if nothing happened.
+    expect(run(1, true)).toBeCloseTo(0.75);
+    // The default: a looping clip continues, a single-play one blends.
+    expect(run(0, true)).toBeCloseTo(0.75);
+    expect(run(0, false)).toBeCloseTo(0.5 * 0.75 + 0.25 * 0.25);
+  });
+
+  it("keeps events from the state a transition leaves (the project's default event mode)", () => {
+    const nested = machine('Nested', [
+      state(0, 'N0', clip('n0'), [transition(1, 1)]),
+      state(1, 'N1', clip('n1')),
+    ]);
+    const root = machine('Machine', [
+      state(0, 'X', nested, [transition(0, 1, { effect: effect(1) })]),
+      state(1, 'Y', clip('y')),
+    ]);
+    const run = (defaultEventMode: number): string | undefined => {
+      const runtime = new BehaviorRuntime({
+        root: graph(root, ['leave', 'go']),
+        host: host({ n0: animation(0), n1: animation(10), y: animation(20) }),
+        skeleton,
+        defaultEventMode,
+      });
+      runtime.update(0);
+      runtime.sendEvent('leave');
+      runtime.update(0.1);
+      runtime.sendEvent('go');
+      runtime.update(0.1);
+      return runtime.states().find((s) => s.machine === 'Nested')?.state;
+    };
+    expect(run(2)).toBe('N0');
+    expect(run(1)).toBe('N1');
+  });
+
+  it('plays a mirrored clip mirrored, and its motion', () => {
+    const mirrored: BehaviorGenerator = {
+      kind: 'clip',
+      name: 'a',
+      animation: 'a',
+      mode: 1,
+      playbackSpeed: 1,
+      flags: 0x4,
+    };
+    const runtime = new BehaviorRuntime({
+      root: graph(mirrored, []),
+      host: {
+        ...host({ a: animation(5, 10) }),
+        rootMotion: (_generator, from, to) => ({
+          translation: [to - from, 2 * (to - from), 0],
+          rotation: [0, 0, Math.sin((to - from) / 2), Math.cos((to - from) / 2)],
+        }),
+      },
+      skeleton,
+      mirror: { axis: [1, 0, 0, 0], pairs: new Int16Array(0) },
+    });
+    runtime.update(0);
+    runtime.update(0.5);
+    // Across x = 0: 5.5 becomes −5.5; the motion's x and its turn go the other way.
+    expect(runtime.pose[0]).toBeCloseTo(-5.5);
+    const motion = runtime.rootMotion();
+    expect(motion.translation[0]).toBeCloseTo(-0.5);
+    expect(motion.translation[1]).toBeCloseTo(1);
+    expect(motion.yaw).toBeCloseTo(-0.5);
+  });
+
+  it('starts a state over that it blends back into while it still blends out of it', () => {
+    const root = machine('Machine', [
+      state(0, 'A', clip('a', 0), [transition(0, 1, { effect: effect(1) })]),
+      state(1, 'B', clip('b'), [transition(1, 0, { effect: effect(1) })]),
+    ]);
+    const runtime = new BehaviorRuntime({
+      root: graph(root, ['toB', 'toA']),
+      host: host({ a: animation(0, 10), b: animation(100, 10) }),
+      skeleton,
+    });
+    runtime.update(0);
+    runtime.update(0.5);
+    runtime.sendEvent('toB');
+    runtime.update(0.25);
+    const held = runtime.pose[0] ?? NaN;
+    runtime.sendEvent('toA');
+    runtime.update(0);
+    // From the pose it had, into A started over (its clip at 0).
+    expect(runtime.pose[0]).toBeCloseTo(held);
+    expect(runtime.playing().find((p) => p.animation === 'a')?.time).toBeCloseTo(0);
+    runtime.update(0.5);
+    expect(runtime.pose[0]).toBeCloseTo(held * 0.5 + 0.5 * 0.5);
+  });
+
+  it('reads its data channels right before each update', () => {
+    const runtime = new BehaviorRuntime({
+      root: graph(clip('a'), [], [{ name: 'Speed', initial: 0 }]),
+      host: host({ a: animation(0) }),
+      skeleton,
+    });
+    const steps: number[] = [];
+    runtime.channels = {
+      read: (dt) => {
+        steps.push(dt);
+        runtime.setVariable('Speed', 80);
+      },
+    };
+    runtime.update(0.2);
+    expect(steps).toEqual([0.2]);
+    expect(runtime.variable('Speed')).toBe(80);
   });
 });

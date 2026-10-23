@@ -1,9 +1,11 @@
 // Vehicles of the loaded area (docs/ai.md, "Vehicles"; the rules: src/ai/vehicles.ts): carts
 // their horses pull (ObjectReference.TetherToHorse) and the actors riding them
 // (Actor.SetVehicle). A tethered cart is taken out of its cell (src/shell/world-viewer.ts
-// adoptVehicle: it goes wherever its horse takes it, across cells) and simulated here as the
-// engine does: its bodies weigh fMass:Cart, its wheels roll on the ground, and a keyframed body
-// on the horse's spine pulls its FrontBar by a prismatic joint. Every frame its model is drawn
+// adoptVehicle: it goes wherever its horse takes it, across cells) and simulated as the engine
+// does (src/ai/cart-tether.ts): its bodies weigh fMass:Cart, its wheels roll on the ground, and
+// a keyframed body on the horse's spine pulls its FrontBar by a sliding joint; the spine is
+// followed smoothly (eased between the horse's animation updates and leaning with it as the
+// horse's lean eases). Every frame its model is drawn
 // where its bodies are (between the last two steps), its pole turned towards the horse with the
 // horse's harness bones on it, its riders at its root body (their idles seat them:
 // CartPrisonerASway), the player carried in the steps as their camera rides along. A rider's
@@ -14,18 +16,21 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import type { GraphEvent } from '../animation/graph-events.ts';
 import {
   AT_ROOT,
+  blendPose,
+  easeTowards,
   hitchPlace,
   inVehicle,
+  leaningRoot,
   movedBy,
   poleTurn,
+  PoseEasing,
   riderEvent,
-  tetherJoint,
-  TETHER_TURN_SPRING,
-  tipImpulse,
+  TETHER_LEAN_EASE,
   type CartSettings,
   type VehicleOffset,
   type VehiclePose,
 } from '../ai/vehicles.ts';
+import { CartTether } from '../ai/cart-tether.ts';
 import type { DoorPassage } from '../ai/path-follower.ts';
 import { invert } from '../render/frustum.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
@@ -35,7 +40,6 @@ import { HAVOK_SCALE, rigidPart } from '../physics/collision-data.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import {
   poseMatrix as bodyPose,
-  type Hitch,
   type PhysicsWorld,
   type PlacedBody,
   type PlacedCollision,
@@ -72,13 +76,6 @@ const DOOR_AHEAD = 150;
 const DOOR_RAY_HEIGHT = 100;
 /** The events a prisoner's exit clip ends with (it stands bound): see riderEvents. */
 const BOUND_STANDING = new Set(['offsetboundstandingcartstart', 'offsetboundstandingstart']);
-/** The bodies the engine treats as a cart's wheels. */
-const WHEELS = new Set(['wheelbackleft', 'wheelbackright', 'wheelfrontleft', 'wheelfrontright']);
-/** The node a cart's tether pulls (its shafts and front axle). */
-const FRONT_BAR = 'frontbar';
-/** The wheels' linear damping and the FrontBar's damping, as the engine sets them. */
-const WHEEL_LINEAR_DAMPING = 0.005;
-const FRONT_BAR_DAMPING = 0.01;
 
 /** A [Cart] setting's key. */
 type CartKey = keyof (typeof INI_DEFAULTS)['Cart'];
@@ -92,6 +89,10 @@ interface Cart {
   /** Its model drawn and collided here, once its view gave it up. */
   body: CartBody | undefined;
   adopting: boolean;
+  /** The horse's spine as the tether follows it (eased between its animation's updates). */
+  readonly spine: PoseEasing;
+  /** The horse's up as the tether leans with it (eased). */
+  lean: Vec3 | undefined;
 }
 
 /** A simulated body of a cart and the node it places. */
@@ -114,11 +115,10 @@ interface CartBody {
   readonly links: readonly Link[];
   /** The body at the model's root (the vehicle's place). */
   readonly root: Link;
-  readonly frontBar: Link | undefined;
   /** The pole (sHarnessBoneCart:Cart), its parent node and its rest translation there. */
   readonly pole: { readonly node: number; readonly parent: number; readonly at: Vec3 } | undefined;
-  /** The tether's keyframed body on the horse's spine, once simulated. */
-  hitch: Hitch | undefined;
+  /** The tether to the horse's spine, once simulated. */
+  tether: CartTether | undefined;
   /** The colliders the cart does not touch: its horse's and its riders'. */
   readonly ignored: Set<number>;
 }
@@ -199,34 +199,16 @@ function bodyWorld(body: PlacedBody): Mat4 {
   return bodyPose([t.x * HAVOK_SCALE, t.y * HAVOK_SCALE, t.z * HAVOK_SCALE], body.body.rotation());
 }
 
-/**
- * Between two rigid poses: the translation lerped, each axis lerped and made orthonormal again
- * (the steps are short: a sixtieth of a second).
- */
-function between(a: Mat4, b: Mat4, t: number): Mat4 {
-  const out = new Float32Array(16);
-  for (let i = 0; i < 16; i++) out[i] = (a[i] ?? 0) + ((b[i] ?? 0) - (a[i] ?? 0)) * t;
-  const axis = (k: number): [number, number, number] => [
-    out[k * 4] ?? 0,
-    out[k * 4 + 1] ?? 0,
-    out[k * 4 + 2] ?? 0,
-  ];
-  const norm = (v: [number, number, number]): [number, number, number] => {
-    const length = Math.hypot(...v) || 1;
-    return [v[0] / length, v[1] / length, v[2] / length];
-  };
-  const y = norm(axis(1));
-  let z = axis(2);
-  const along = z[0] * y[0] + z[1] * y[1] + z[2] * y[2];
-  z = norm([z[0] - along * y[0], z[1] - along * y[1], z[2] - along * y[2]]);
-  const x: [number, number, number] = [
-    y[1] * z[2] - y[2] * z[1],
-    y[2] * z[0] - y[0] * z[2],
-    y[0] * z[1] - y[1] * z[0],
-  ];
-  out.set([...x, 0, ...y, 0, ...z, 0], 0);
-  out[15] = 1;
-  return out;
+/** A node's rest matrix in its skeleton's model (its local transforms up to the root). */
+function restOf(
+  rig: { readonly parents: Int16Array; readonly local: Float32Array },
+  node: number,
+): Mat4 {
+  let world: Mat4 = rig.local.slice(node * 16, node * 16 + 16);
+  for (let parent = rig.parents[node] ?? -1; parent >= 0; parent = rig.parents[parent] ?? -1) {
+    world = multiply(rig.local.slice(parent * 16, parent * 16 + 16), world);
+  }
+  return world;
 }
 
 const translation = (x: number, y: number, z: number): Mat4 =>
@@ -239,8 +221,8 @@ export class ActorVehicles {
   #physics: PhysicsWorld | undefined;
   #stepHooks: Set<(step: number) => void> | undefined;
   #settings: CartSettings | undefined;
-  readonly #step = (): void => {
-    this.#stepAll();
+  readonly #step = (step: number): void => {
+    this.#stepAll(step);
   };
 
   constructor(options: ActorVehiclesOptions) {
@@ -348,6 +330,8 @@ export class ActorVehicles {
       hitch: hitch.position,
       body: undefined,
       adopting: false,
+      spine: new PoseEasing(),
+      lean: undefined,
     });
     this.#options.terminal.log(
       'actor',
@@ -447,7 +431,7 @@ export class ActorVehicles {
   /** A cart's root now (world, with its scale): between its last two steps. */
   #rootOf(body: CartBody, alpha: number): Mat4 {
     const { root } = body;
-    return multiply(between(root.previous, root.current, alpha), root.toNode);
+    return multiply(blendPose(root.previous, root.current, alpha), root.toNode);
   }
 
   /** A vehicle's pose now: a cart's root between its last two steps, else where it stands. */
@@ -478,14 +462,30 @@ export class ActorVehicles {
     );
   }
 
-  /** Where the horse's spine is (the tether's body follows it): its root as it moves now. */
-  #spineOf(horse: StagedActor, spine: string): Mat4 | undefined {
+  /**
+   * Where the horse's spine is for its tether (`seconds`: the physics step it is for): at the
+   * horse's feet as its controller moves them, turned to its heading and leaning as the horse is
+   * drawn leaning (eased: TETHER_LEAN_EASE), the spine where the horse's pose has it (eased
+   * between the animation's updates: PoseEasing). The engine's tether follows the spine node of
+   * the horse's 3D, whose pose and lean the engine interpolates.
+   */
+  #spineOf(cart: Cart, horse: StagedActor, spine: string, seconds: number): Mat4 | undefined {
     const node = horse.placed.pose.skeleton.nodeByName.get(spine);
     if (node === undefined) return undefined;
     const feet = this.#options.movers.state(horse.reference)?.feet ?? horse.position;
     const scale = horse.placed.actor.scale * horse.placed.look.scale;
-    const root = poseMatrix({ position: feet, heading: horse.heading, pitch: 0 }, scale);
-    return rigidPart(multiply(root, horse.placed.pose.worlds.subarray(node * 16, node * 16 + 16)));
+    const drawn = horse.placed.instances[0]?.world;
+    const length = Math.hypot(drawn?.[8] ?? 0, drawn?.[9] ?? 0, drawn?.[10] ?? 0) || 1;
+    const up: Vec3 = drawn
+      ? [(drawn[8] ?? 0) / length, (drawn[9] ?? 0) / length, (drawn[10] ?? 1) / length]
+      : [0, 0, 1];
+    const lean = easeTowards(cart.lean, up, seconds, TETHER_LEAN_EASE);
+    cart.lean = lean;
+    const model = cart.spine.step(
+      horse.placed.pose.worlds.subarray(node * 16, node * 16 + 16),
+      seconds,
+    );
+    return rigidPart(multiply(leaningRoot(feet, horse.heading, lean, scale), model));
   }
 
   /**
@@ -493,7 +493,7 @@ export class ActorVehicles {
    * its horse stands where the tether put it and the ground under it is in place), the cart
    * righted if it tips, the doors in its way kept open; the player carried on theirs.
    */
-  #stepAll(): void {
+  #stepAll(step: number): void {
     const { get } = this.#options;
     const names = this.#names();
     for (const cart of this.#carts.values()) {
@@ -505,12 +505,12 @@ export class ActorVehicles {
         link.previous = link.current;
         link.current = bodyWorld(link.body);
       }
-      const spine = this.#spineOf(horse, names.spine);
-      if (!body.hitch && spine) this.#hitch(cart, body, horse, spine);
-      if (!body.hitch) continue;
-      if (spine) body.hitch.move(spine);
+      const spine = this.#spineOf(cart, horse, names.spine, step);
+      if (!spine) continue;
+      if (!body.tether) this.#hitch(cart, body, horse, spine, names.spine);
+      if (!body.tether) continue;
+      body.tether.step(spine);
       this.#ignoreRiders(cart, body);
-      this.#upright(body);
       this.#doorsInWay(cart, body);
     }
     const passenger = this.#passengers.get(PLAYER_REF);
@@ -530,60 +530,31 @@ export class ActorVehicles {
 
   /**
    * The cart joins its horse once the horse stands where the tether put it and the ground is
-   * under the cart: its bodies weigh fMass:Cart, the wheels get their friction, damping and
-   * pull down, and the tether's body on the horse's spine holds the FrontBar.
+   * under the cart (src/ai/cart-tether.ts): its bodies weigh fMass:Cart, the wheels get their
+   * friction, damping and pull down, and the tether's body on the horse's spine holds the
+   * FrontBar, in the spine's frame at rest.
    */
-  #hitch(cart: Cart, body: CartBody, horse: StagedActor, spine: Mat4): void {
+  #hitch(cart: Cart, body: CartBody, horse: StagedActor, spine: Mat4, spineName: string): void {
     const physics = this.#physics;
-    const frontBar = body.frontBar;
-    if (!physics || !frontBar) return;
+    if (!physics) return;
     const feet = this.#options.movers.state(horse.reference)?.feet ?? horse.position;
     if (Math.hypot(feet[0] - cart.hitch[0], feet[1] - cart.hitch[1]) > HITCH_REACH) return;
     const root = body.root.current;
     if (!this.#groundUnder([root[12] ?? 0, root[13] ?? 0, root[14] ?? 0])) return;
-    const settings = this.#cart;
-    physics.setMotion(body.collision, false);
-    for (const link of body.links) {
-      const name = link.body.data.node.toLowerCase();
-      const wheel = WHEELS.has(name);
-      physics.tuneBody(body.collision, link.body, {
-        mass: settings.mass,
-        ...(wheel && {
-          friction: settings.wheelFriction,
-          angularDamping: settings.wheelAngularDamping,
-          linearDamping: WHEEL_LINEAR_DAMPING,
-          gravityScale: 1 + settings.wheelGravity,
-        }),
-        ...(name === FRONT_BAR && {
-          angularDamping: FRONT_BAR_DAMPING,
-          linearDamping: FRONT_BAR_DAMPING,
-        }),
-      });
+    const skeleton = horse.placed.pose.skeleton;
+    const node = skeleton.nodeByName.get(spineName);
+    if (node === undefined) return;
+    body.tether = CartTether.tether(
+      physics,
+      body.collision,
+      body.root.body,
+      spine,
+      restOf(skeleton.rig, node),
+      this.#cart,
+    );
+    if (body.tether) {
+      this.#options.terminal.log('actor', `${cart.reference.toString(16)} pulled by its horse`);
     }
-    // The joint's axes on the spine: the FrontBar's, as the two stand now (the horse turned as
-    // the cart is). TODO(M13): the engine gives them as the spine's y turned by fCartRot2:Cart;
-    // read so in our spine's frame (its y points down) the cart would be turned upside down.
-    const joint = tetherJoint(settings);
-    const bar = frontBar.current;
-    const toSpine = (v: Vec3): Vec3 => {
-      const w: Vec3 = [
-        (bar[0] ?? 0) * v[0] + (bar[4] ?? 0) * v[1] + (bar[8] ?? 0) * v[2],
-        (bar[1] ?? 0) * v[0] + (bar[5] ?? 0) * v[1] + (bar[9] ?? 0) * v[2],
-        (bar[2] ?? 0) * v[0] + (bar[6] ?? 0) * v[1] + (bar[10] ?? 0) * v[2],
-      ];
-      const along = (k: number): number =>
-        (spine[k * 4] ?? 0) * w[0] +
-        (spine[k * 4 + 1] ?? 0) * w[1] +
-        (spine[k * 4 + 2] ?? 0) * w[2];
-      return [along(0), along(1), along(2)];
-    };
-    const axes = joint.a.axes;
-    body.hitch = physics.addHitch(frontBar.body, spine, {
-      ...joint,
-      turnSpring: TETHER_TURN_SPRING,
-      b: { pivot: joint.b.pivot, axes: [toSpine(axes[0]), toSpine(axes[1]), toSpine(axes[2])] },
-    });
-    this.#options.terminal.log('actor', `${cart.reference.toString(16)} pulled by its horse`);
   }
 
   /**
@@ -620,21 +591,6 @@ export class ActorVehicles {
       }
     }
     if (fresh.length > 0) physics.ignoreBetween(body.collision.colliders, fresh);
-  }
-
-  /** The tilt prevention: a cart tipping over is turned back about its forward axis. */
-  #upright(body: CartBody): void {
-    const m = body.root.current;
-    const impulse = tipImpulse(
-      [m[8] ?? 0, m[9] ?? 0, m[10] ?? 1],
-      [m[0] ?? 1, m[1] ?? 0, m[2] ?? 0],
-      this.#cart,
-    );
-    if (impulse === undefined) return;
-    body.root.body.body.applyTorqueImpulse(
-      { x: (m[4] ?? 0) * impulse, y: (m[5] ?? 0) * impulse, z: (m[6] ?? 0) * impulse },
-      true,
-    );
   }
 
   /**
@@ -725,7 +681,6 @@ export class ActorVehicles {
         collision,
         links,
         root,
-        frontBar: links.find((link) => link.body.data.node.toLowerCase() === FRONT_BAR),
         pole:
           poleNode !== undefined && poleParent !== undefined && poleParent >= 0
             ? {
@@ -738,7 +693,7 @@ export class ActorVehicles {
                 ],
               }
             : undefined,
-        hitch: undefined,
+        tether: undefined,
         ignored: new Set(),
       };
       // Its horse is hitched to it: the cart is never in the horse's way.
@@ -766,7 +721,7 @@ export class ActorVehicles {
       body.instance.motion.version++;
       const driven = new Map<number, Float32Array>();
       for (const link of body.links) {
-        const world = multiply(between(link.previous, link.current, alpha), link.toNode);
+        const world = multiply(blendPose(link.previous, link.current, alpha), link.toNode);
         driven.set(link.node, multiply(fromWorld, world));
       }
       const horse = this.#options.get(cart.horse);
@@ -918,7 +873,7 @@ export class ActorVehicles {
     cart.body = undefined;
     if (!body) return;
     body.scene.destroy();
-    body.hitch?.remove();
+    body.tether?.remove();
     this.#options.movers.ignore(cart.horse, []);
     if (this.#physics) this.#physics.remove(body.collision);
   }

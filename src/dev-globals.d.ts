@@ -3,6 +3,7 @@ import type { GameSession } from './shell/game-session.ts';
 import type { PlayMode } from './shell/play-mode.ts';
 import type { ModelViewer } from './shell/model-viewer.ts';
 import type { WorldViewer } from './shell/world-viewer.ts';
+import type { QaHarness } from './shell/qa/qa-harness.ts';
 
 declare global {
   interface Window {
@@ -16,6 +17,13 @@ declare global {
       readonly session: () => GameSession | undefined;
       /** Play while it runs. */
       readonly play: () => PlayMode | undefined;
+      /**
+       * The scene trace (src/shell/scene-trace.ts): begins it on the first call, returns it so
+       * far; false stops it.
+       */
+      readonly sceneTrace: (on?: boolean) => string;
+      /** The automated QA monitors (docs/qa.md), once their module has loaded. */
+      qa?: QaHarness;
     };
   }
 }

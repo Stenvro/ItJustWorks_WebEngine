@@ -348,7 +348,10 @@ export interface WorldBridge {
     },
   ): void;
   locationLoaded?(location: number): boolean;
-  /** The sky (M4): a weather made active (forced: at once), released, read. */
+  /**
+   * The sky's weather (src/world/sky-weather.ts): a weather made active (forced: at once, on
+   * the next frame), released, read.
+   */
   setWeather?(weather: number, force: boolean, override: boolean, accelerate: boolean): void;
   releaseWeatherOverride?(): void;
   currentWeather?(): number | undefined;
@@ -357,6 +360,8 @@ export interface WorldBridge {
   skyMode?(): number;
   /** A weather of a classification from the current region's list. */
   findWeather?(classification: number): number | undefined;
+  /** The weathers' wind speed now (0..1; GetWindSpeed). */
+  windSpeed?(): number;
   /** Sounds (M6): an instance id (0: none). */
   playSound?(sound: number, source: number): number;
   playSoundAndWait?(sound: number, source: number): Promise<void>;

@@ -467,6 +467,13 @@ export class PlayerAvatar {
     const skeletons: AnimatedSkeleton[] = [body];
     if (this.#firstPerson) skeletons.push(this.#firstPerson.skeleton);
     this.#look(body, dt);
+    // The Pitch graph data channel (observed in the original: the actor's process pitch, in
+    // degrees, given to every graph before its update): the player's is where they look, up
+    // positive. The player's bow attack twists the spine by it (1hm_behavior's PlayerBowModList,
+    // enabled by IsPlayer: BowAttackSpineTwistModifier), so a drawn bow aims up and down with
+    // the view in third person. Only the body's: the first-person arms are placed pitched with
+    // the view already (FirstPersonBody.place), and their graph's own twist would turn them twice.
+    body.behavior?.setVariable('Pitch', (this.#player.pitch * 180) / Math.PI);
     animateSkeletons(skeletons, this.#clock);
     // Knocked down it lies (and gets up) where it is placed.
     if (this.knocked) return;

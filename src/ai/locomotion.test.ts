@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { GraphChannels } from '../animation/behavior-runtime.ts';
 import type { MovementType } from '../world/movement.ts';
 import {
   Locomotion,
@@ -42,9 +43,11 @@ describe('steer', () => {
     // Facing north, wanting east: it turns 3° in a sixtieth of a second at 180°/s.
     const step = steer({ direction: [1, 0], gait: 'run' }, 0, TYPES, 1 / 60);
     expect(step.heading).toBeCloseTo(degrees(3));
-    // 87° still to turn: it goes on east at cos 87° of the speed of that direction.
-    expect(step.velocity[1]).toBeCloseTo(0);
-    expect(step.velocity[0]).toBeCloseTo(370 * Math.cos(degrees(87)), 3);
+    // 87° still to turn: it goes ahead (the way it faces now) at cos 87° of the speed of the
+    // way it wants to go.
+    const speed = 370 * Math.cos(degrees(87));
+    expect(step.velocity[0]).toBeCloseTo(speed * Math.sin(degrees(3)), 3);
+    expect(step.velocity[1]).toBeCloseTo(speed * Math.cos(degrees(3)), 3);
   });
 
   it('stands while it turns round', () => {
@@ -106,6 +109,27 @@ const frame = (overrides: Partial<LocomotionFrame>): LocomotionFrame => ({
 });
 
 describe('Locomotion', () => {
+  it("drives a latched graph by the movement at its updates (the graph's channels)", () => {
+    const graph: ReturnType<typeof recorder> & { channels: GraphChannels | undefined } = {
+      ...recorder(),
+      channels: undefined,
+    };
+    const locomotion = new Locomotion();
+    locomotion.latch(graph, frame({ velocity: [0, 80] }));
+    // Nothing until the graph updates.
+    expect(graph.events).toEqual([]);
+    graph.channels?.read(0.2);
+    expect(graph.events).toEqual(['moveStart']);
+    // A frame's dip between two updates is not seen.
+    locomotion.latch(graph, frame({ velocity: [0, 0] }));
+    locomotion.latch(graph, frame({ velocity: [0, 80] }));
+    graph.channels?.read(0.2);
+    expect(graph.events).toEqual(['moveStart']);
+    // Released: the graph's channels read nothing of it.
+    locomotion.release();
+    expect(graph.channels).toBeUndefined();
+  });
+
   it('sets the speed and direction and starts and stops moving at 5 units a second', () => {
     const graph = recorder();
     const locomotion = new Locomotion();
