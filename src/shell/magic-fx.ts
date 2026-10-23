@@ -18,7 +18,7 @@ import type {
 } from '../render/scene-renderer.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { meshPath } from '../world/actors.ts';
-import { referenceMatrix, type CellLight } from '../world/cell-loader.ts';
+import type { CellLight } from '../world/cell-loader.ts';
 import { parseLight, type LightRecord } from '../world/cell-records.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -175,7 +175,12 @@ export class MagicFx {
   }
 
   #placement(fx: Fx): Float32Array {
-    return referenceMatrix({ position: fx.position, rotation: [-fx.pitch, 0, fx.yaw], scale: 1 });
+    const c = Math.cos(fx.pitch);
+    return alongMatrix(fx.position, [
+      Math.sin(fx.yaw) * c,
+      Math.cos(fx.yaw) * c,
+      Math.sin(fx.pitch),
+    ]);
   }
 
   /**
@@ -388,6 +393,39 @@ export class MagicFx {
       if (seen.sound !== undefined && seen.sound !== 0) world?.stopSound?.(seen.sound);
     this.#hazards.clear();
   }
+}
+
+/**
+ * The world matrix of a model aimed along `direction` (a unit vector) from `origin`: its Y axis
+ * along it, turned about the world's up axis and then tilted, its X axis level (a projectile's,
+ * a beam's, an effect's facing). A reference rotation [−pitch, 0, yaw] would tilt about the
+ * world's X axis instead, which loses the pitch of anything not facing north or south.
+ */
+export function alongMatrix(origin: Vec3, direction: Vec3): Float32Array {
+  const [dx, dy, dz] = direction;
+  const flat = Math.hypot(dx, dy);
+  // X: level, to the right of the direction (straight up or down: the world's X).
+  const x: Vec3 = flat > 1e-6 ? [dy / flat, -dx / flat, 0] : [1, 0, 0];
+  // Z = X × Y.
+  const z: Vec3 = [x[1] * dz - x[2] * dy, x[2] * dx - x[0] * dz, x[0] * dy - x[1] * dx];
+  return new Float32Array([
+    x[0],
+    x[1],
+    x[2],
+    0,
+    dx,
+    dy,
+    dz,
+    0,
+    z[0],
+    z[1],
+    z[2],
+    0,
+    origin[0],
+    origin[1],
+    origin[2],
+    1,
+  ]);
 }
 
 /** A light record as a CellLight at a point, at a share of its brightness. */

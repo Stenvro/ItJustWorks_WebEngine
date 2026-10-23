@@ -430,6 +430,31 @@ export interface ControllerBlock extends TimeControllerFields {
   readonly visibilityInterpolator: Ref;
 }
 
+/**
+ * BSProceduralLightningController (nif.xml): builds lightning bolts into the empty BSTriShape
+ * below its target node. Its nine interpolators: generation, mutation, subdivision, number of
+ * branches, branch variation, length, length variation, width, arc offset (-1: none).
+ */
+export interface LightningControllerBlock extends TimeControllerFields {
+  readonly kind: 'lightning-controller';
+  readonly interpolators: readonly Ref[];
+  /** Each bolt has 2^subdivisions segments. */
+  readonly subdivisions: number;
+  readonly branches: number;
+  readonly branchesVariation: number;
+  readonly length: number;
+  readonly lengthVariation: number;
+  readonly width: number;
+  /** A branch's width against its parent's. */
+  readonly childWidthMultiplier: number;
+  /** How far the bolt strays from its line. */
+  readonly arcOffset: number;
+  readonly fadeMainBolt: boolean;
+  readonly fadeChildBolts: boolean;
+  readonly animateArcOffset: boolean;
+  readonly shaderProperty: Ref;
+}
+
 export interface ControllerManagerBlock extends TimeControllerFields {
   readonly kind: 'controller-manager';
   readonly cumulative: boolean;
@@ -877,6 +902,7 @@ export type NifBlock =
   | ParticleDataBlock
   | ParticleModifierBlock
   | ControllerBlock
+  | LightningControllerBlock
   | ControllerManagerBlock
   | ControllerSequenceBlock
   | ObjectPaletteBlock

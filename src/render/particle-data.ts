@@ -44,7 +44,35 @@ export type ParticleParam =
   | 'rotationSpeed'
   | 'rotationSpeedVariation'
   | 'rotationAngle'
-  | 'rotationAngleVariation';
+  | 'rotationAngleVariation'
+  | LightningParam;
+
+/** What a procedural lightning controller's interpolators drive (lightning.ts). */
+export type LightningParam =
+  | 'generation'
+  | 'mutation'
+  | 'subdivisions'
+  | 'branches'
+  | 'branchesVariation'
+  | 'length'
+  | 'lengthVariation'
+  | 'width'
+  | 'arcOffset';
+
+/** A procedural lightning controller's own settings (BSProceduralLightningController). */
+export interface LightningSettings {
+  readonly subdivisions: number;
+  readonly branches: number;
+  readonly branchesVariation: number;
+  readonly length: number;
+  readonly lengthVariation: number;
+  readonly width: number;
+  readonly childWidthMultiplier: number;
+  readonly arcOffset: number;
+  readonly fadeMainBolt: boolean;
+  readonly fadeChildBolts: boolean;
+  readonly animateArcOffset: boolean;
+}
 
 /** A controller's value over its time, applied to the modifier named `target`. */
 export type ParticleTrack = {
@@ -256,6 +284,11 @@ export interface ParticleSystemData {
         readonly updateDelta: number;
       }
     | undefined;
+  /**
+   * A procedural lightning controller's bolts (lightning.ts): `block` is its target node, the
+   * material its empty shape's; drawn as ribbons, without emitters.
+   */
+  readonly lightning?: LightningSettings;
   readonly emitters: readonly ParticleEmitter[];
   readonly modifiers: ParticleModifiers;
   readonly tracks: readonly ParticleTrack[];
