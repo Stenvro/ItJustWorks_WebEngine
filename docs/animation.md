@@ -513,8 +513,14 @@ variable names (observed in the original), no other writer of it was found. Its 
   normalisation of an additive child in a non-parametric blender (ours halves it with the body's
   weight of 1: the saddle sits 2.1 units back).
 
-What made the horses walk wrong, besides the syncing blenders (measured with the QA monitors,
-docs/qa.md; the numbers are in the work's notes): the player's horse steered round its own
+Measured with the QA monitors (docs/qa.md; main before and after, the same scenarios): in the
+opening the cart horses' trot restarts and their walk at 900 to 1,300 units a second of root
+motion are gone (0 horse anomalies; the carts' velocity spikes and jitter at the Alduin attack
+went from 15 to 0 in that run), in `creatures` the animals' turn chatter went from 12 to 0,
+their state chatter from 4 to 0, in `creature-combat` the turn chatter from 13 to 2, in
+`combat` (people: the same syncing blenders and turn rates) clip restarts from 7 to 0, state
+chatter from 11 to 1, turn chatter from 39 to 5. What made the horses walk wrong, besides the
+syncing blenders: the player's horse steered round its own
 rider (docs/ai.md, "Paths": the avoidance), TurnDelta read from one physics step of a frame of
 several (docs/ai.md, "Movement"), IsSprinting from the speed physics made of a sprint (a horse
 galloping into a fence flipped in and out of SprintState), and the speed sampler held at its
