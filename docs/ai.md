@@ -1886,9 +1886,9 @@ on its fCombat…ChanceMin .. Max (0 .. 1); a hover, perch attack or ground figh
 from its setting's Min up to the style's time on Min .. Max; an orbit at random from
 fCombatOrbitTimeMin up to offensive on fCombatOrbitTimeMax .. Min (12 .. 3 s).
 
-Not yet run (TODO(M13): phase 5, the combat tree): the circle distant, special attack, block
-attack and offensive bash behaviours (their values are ready); the conditions of the close,
-flanking and ranged movement selectors (ours: in `chooseManeuver`).
+Not yet run (TODO(M13): phase 5, the combat tree): the special attack, block attack and offensive
+bash behaviours (their values are ready); the flanking and ranged movement selectors (ours: in
+`chooseManeuver`). The close movement is the engine's ([Combat movement](#combat-movement)).
 
 - **Reactions** (`reactionsOf(runtime).reaction`, `src/ai/combat-reactions.ts`: the rules crime
   does not weigh, then crime and factions' `runtime.crime.reaction`; `combatReaction` keeps the
@@ -1980,16 +1980,16 @@ flanking and ranged movement selectors (ours: in `chooseManeuver`).
   value); a summons when none of its summons stands; a buff (a lasting Self spell: Oakflesh, a
   cloak) not on it. Its attacks wait 1.5 s after a cast, fCombatMagicDrinkPotionWaitTime (3 s)
   after a potion.
-- **Movement** (`chooseManeuver`, a maneuver for 1–3 s, a stalk for its stalk time): more than
-  512 units beyond its reach it chases its target over the navmeshes, running; beyond its outer
-  advance radius past its reach it advances (to its inner radius: a defensive style recently hurt
-  hangs back); within it dueling styles fall back (fallback chance), circle (circle chance) or
-  advance; flanking styles stalk round it just out of reach for their stalk time, then come at
-  it from the side with allies on the target (round to the point a quarter round it, their flank
-  distance past their reach; from afar too with allies on the target), else advance; at range it
-  closes to its optimal range (Style values), falls back within fCombatAdvanceOuterRadiusMax
-  (fallback chance), strafes (strafe chance) or holds, and chases beyond its range. TODO(M13):
-  phase 5, the combat tree's movement selectors. Its combat override package list (NPC\_ / alias ECOR: the first package
+- **Movement** ([Combat movement](#combat-movement): how it faces and its close movement): more
+  than 512 units beyond its reach it chases its target over the navmeshes, running (sprinting
+  from beyond fCombatApproachTargetSprintStopRange); nearer, the combat tree's close movement:
+  it advances to a place round its target, surrounds a crowded one, circles, falls back, backs
+  off or stands. Flanking styles stalk round it just out of reach for their stalk time (a
+  circle), then come at it from the side with allies on the target (round to the point a quarter
+  round it, their flank distance past their reach), else advance; at range it closes to its
+  optimal range (Style values), falls back within fCombatAdvanceOuterRadiusMax (fallback chance),
+  strafes aside (strafe chance) or holds, and chases beyond its range (TODO(M13): the ranged and
+  flanking movement trees are not read). Its combat override package list (NPC\_ / alias ECOR: the first package
   whose conditions hold) keeps it within that package's place: back there first, no chase of a
   target beyond it.
 - **Attacks** (`chooseAttack`, every 0.25 s: The attack decision): within reach and facing
@@ -2055,6 +2055,126 @@ flanking and ranged movement selectors (ours: in `chooseManeuver`).
 - `node tools/combat-ai-info.ts dunFaldarsToothBetBandit01 HuldaREF C06WolfSpiritREF`: each
   actor's AI values, combat style, what it carries and fights with at 100, 400 and 1500 units,
   and the reactions between them and to the player (`--new-game`: after a new game).
+
+### Combat movement
+
+How a fighter faces and moves near its target (`src/ai/combat-movement.ts`, the turning in
+`src/ai/locomotion.ts`, on the stage `#melee` / `#shoot` of `src/shell/actor-combat-ai.ts`).
+Observed in the original, behaviour only: its combat tree's close movement, the target
+locations, the aim controllers, the movement parameters its combat paths hand the movement
+controller, and the planner's facing. Settings: `readCombatMovementSettings` (the load order's
+GMSTs, else the engine's defaults).
+
+**Facing.** A fighter faces a point, not its target: its aim controller takes the target's place
+as the point every fCombatAimMeleeUpdateTime (0.25 s; fCombatAimMeleeHighPriorityUpdateTime,
+0.1 s, against the player within its reach; a shooter's every fCombatAimProjectileUpdateTime),
+and an advance farther than fCombatCloseRangeTrackTargetDistance (768) from its target faces the
+way it runs. Its planner turns it there as the engine's movement controller does:
+
+- standing, it turns until it faces the point within 1°, then holds its facing until the point
+  is more than its tolerance off: fCombatAngleTolerance (1°) or its race's aim angle tolerance
+  if larger (RACE DATA: trolls 23°, bears 30°, dragons 42°); out of combat fDefaultAngleTolerance
+  (5°). Moving, it keeps turning to it;
+- its turn rate comes from an angle controller: the fastest that still stops on the heading at
+  its angular acceleration (never past it), at most its rate; within 1° of the heading and
+  slower than 1° a second, none. In combat the rate is fCombatPathingNormalizedRotationSpeed
+  (2.25) on the engine's normalized scale (1 its movement type's walking turn rate, 2 its running
+  one, beyond that in running rates: 1.25 × the running rate) and its angular acceleration
+  1 / its race's angular acceleration rate (humans 0.25: 4) × fCombatPathingRotationAccelerationMult
+  (2) in turn-while-moving rates a second (humans: 0.16 s to full speed). Out of combat its
+  movement type's rates and its race's acceleration unscaled (TODO(M13): the movement parameters
+  outside combat are not read).
+
+What this fixed: the heading was snapped to the target's place every physics step, so while a
+fighter or its target moved, its turn rate fell to 0 on the steps that had no turn left and rose
+again on the next (frames and steps at different rates); the graph's TurnDelta channel, which
+has no hysteresis, sent turnLeft / turnStop 12–23 times a second and the idle and drawn-bow turn
+states flipped as often (QA combat: 20 turn-chatter and 6 state-chatter anomalies).
+
+**The close movement** (the combat tree's Close Movement Context; its Movement Repeat runs the
+selector again whenever the behaviour under way ends):
+
+| Where           | Tries, in turn                                                                      |
+| --------------- | ----------------------------------------------------------------------------------- |
+| out of range    | Fallback To Ranged, Advance, Surround, Circle Distant (its chance), idle            |
+| out of position | Reposition, Surround, idle                                                          |
+| in range        | Fallback or Circle (the style's chances), Backoff (fCombatBackoffChance 0.25), idle |
+
+Its range is its reach (with the target's radius) and its inner advance radius; idle is the
+tree's Close Movement Idle, 0.25 s standing. Each behaviour is a straight combat path
+(CombatPathRequestStraightPath) to one goal the navmesh must allow (`straightReach` in
+`src/ai/pathfinding.ts`: the line and the lines its radius to either side stay on the navmeshes;
+a goal cut short where the navmesh ends, if the rest is still worth going), at a combat speed on
+the normalized scale (fCombatSpeedValueWalk 1, FastWalk 1.33, Jog 1.66, Run 2: between the
+movement type's walk and run speeds in the way it goes). It ends at its goal or by its own rule,
+checked every 0.1 s:
+
+- **Advance / Reposition**: to a target location (below) at its range less
+  fCombatTargetLocationPathingRadius (10), running (sprinting from farther than
+  fCombatApproachTargetSprintStopRange, [Combat] bCombatPathSprinting), walking the last
+  fCombatApproachTargetSlowdownDistance (96); its place moves with its target; where the
+  straight line is not clear it goes over the navmeshes. Reposition: it has left its place
+  (its bearing from the target off its reservation by more than
+  fCombatTargetLocationRepositionAngleMult × its width, or another holds it).
+- **Surround**: it keeps within fCombatSurroundDistanceMin .. Max (128 .. 384) beyond its range:
+  nearer it retreats to the band's middle, farther it makes for it, running.
+- **Circle**: facing its target, round it by an angle (at random from fCombatCircleAngleMin up to
+  the style's circle mult on fCombatCircleAngleMin .. Max, 30 .. 90°, × fCombatCircleAnglePlayerMult
+  against the player, at least the angle three of its radii take at its distance) at its
+  distance, one side at random, else the other, to a goal its target sees
+  (fCombatCircleViewConeAngle 150°), at least fCombatCircleMinMovementDistance away, a place
+  there reserved; FastWalk. Given up once its target will be (fCombatAnticipateTime ahead)
+  beyond fCombatCircleDistanceMax past its range, or comes within fCombatCircleMinDistanceMult
+  of its range of the goal. **Circle Distant**: the same out of range, at its own distance, with
+  no sight cone and no place.
+- **Fallback**: facing its target that faces it (120°) and does not move away, straight back by
+  fCombatFallbackDistanceMin .. Max, FastWalk, then it waits fCombatFallbackWaitTimeMin .. Max;
+  given up once its target will be beyond fCombatFallbackDistanceMax past its range or its way
+  turns more than fCombatFallbackMaxAngle off straight away.
+- **Backoff**: facing its target that does not move away, closer than fCombatBackoffMinDistanceMult
+  of its range, straight back to its range, FastWalk.
+
+Every behaviour goes towards a fixed goal while it faces its aim point, so the way it goes
+against its facing changes smoothly and crosses between ahead and behind at most once: before, a
+circle or strafe went exactly sideways every frame (Direction 0.25 or 0.75, on the line between
+the forward and backward halves), so moveForward / moveBackward flipped and the walk-back and
+strafe clips restarted 9–14 times a second.
+
+**Target locations** (`TargetLocations`): round each target its attackers hold places, each an
+angular width (its size, the larger of twice its radius × fCombatTargetLocationRadiusSizeMult and
+its radius × fCombatTargetLocationWidthSizeMult, over the distance, within
+fCombatTargetLocationWidthMin .. Max: 10 .. 180°). An advancing fighter looks at
+iCombatTargetLocationCount (24) bearings round its target, from its own, and takes the free one
+nearest to itself whose way out from the target the navmesh allows (cut short to no less than
+fCombatTargetLocationMinDistanceMult of the distance); its own place counts
+fCombatTargetLocationCurrentReservationDistanceMult nearer. So a group spreads round its target
+instead of piling onto one point. TODO(M13): the second size of the width rule (a cached size of
+the actor's) is read as its radius; the selector's split of out of range, out of position and
+in range, and Fallback To Ranged's condition, are inferred (its behaviour, backing to
+fCombatRangedDistance to shoot, is the equipment choice's here).
+
+**While it attacks** its controller does not move it (it stands, still turning to its aim): a
+standing attack's clip has no root motion and the controller's way made it glide. Its attack
+clip's own root motion carries it instead (`MoveRequest.rootMotion`: a forward power attack's
+lunge, which before played on the spot), and what its graph moves it by is not fed back to the
+graph as its own movement (`MotionFeedback` gets nothing made while the graph moves it: a drawn
+bow's slight root motion was told as walking, the graph took its moving draw, stood again, and
+flipped every frame). A dodge does not start in an attack under way and takes the movement over
+(the tree's Interrupt Movement Resource). Ranged fighters' maneuvers (`#rangedRun`) are such
+goals too: to their optimal range, back (a fallback), aside by fCombatStrafeDistanceMin .. Max,
+or standing.
+
+**Its own bodies** do not push its controller ([physics.md](physics.md#the-character-controller)):
+an archer's own kinematic shape inside its capsule slid it about at 200–600 units a second while
+it drew and stood (QA combat's glides in MT_Idle, Bow_Idle and the landing).
+
+**Falls and landings** (every NPC's, `Locomotion` with the movers' actions): the engine performs
+ActionFall and ActionLand, and the idle tree's conditions decide what plays: 0_master's JumpFall
+only falling faster than 350 units a second (GetVelocity Z), its landings only in its jump state
+(bInJumpState), JumpLand / JumpLandDirectional by the speed it came down with (VelocityZ below
+−200; inferred: VelocityZ is its controller's vertical speed). Before, every step without ground
+under it sent JumpFall and the next JumpLand: placed fighters and those on rocks chattered between
+JumpFall and JumpLand and stood in the landing while they moved.
 
 ## Flying combat
 
