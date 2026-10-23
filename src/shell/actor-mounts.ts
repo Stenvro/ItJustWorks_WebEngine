@@ -19,6 +19,8 @@
 // the player getting off once it stands.
 
 import { Locomotion, type LocomotionGraph } from '../ai/locomotion.ts';
+import type { GraphEvent } from '../animation/graph-events.ts';
+import type { ActorGraphSource } from './actor-graph-events.ts';
 import {
   dismountPlace,
   mountPlace,
@@ -116,8 +118,6 @@ interface Ride {
   done: ((ok: boolean) => void) | undefined;
   /** The rider's graphs driven by the horse's movement. */
   readonly locomotion: Locomotion;
-  /** The rider's event handler before the pair took it (given back after). */
-  readonly listener: ((events: readonly string[]) => void) | undefined;
   /** The horse's feet at the last physics step (the player is carried between steps). */
   feet: Vec3 | undefined;
   /** Activate was held at the last frame (the player gets off on a press). */
@@ -383,7 +383,7 @@ export class ActorMounts {
     const place = mountPlace({ position: mount.position, heading: mount.heading }, offsets);
     if (!(await movers.travel(reference, place.position, 'walk', 32))) return false;
     if (this.ridden(horse) || this.#rides.has(reference)) return false;
-    return this.#pair(staged.reference, staged.placed, horse, false);
+    return this.#pair(staged.reference, horse, false);
   }
 
   /**
@@ -401,7 +401,7 @@ export class ActorMounts {
       mount.position[1] - staged.position[1],
     );
     if (away > HORSE_REACH || this.#rides.has(reference)) return;
-    if (instant) await this.#pair(reference, staged.placed, horse, true);
+    if (instant) await this.#pair(reference, horse, true);
     else await this.mount(staged, horse);
   }
 
@@ -413,7 +413,7 @@ export class ActorMounts {
     view.play.seated = true;
     avatar.seated = true;
     view.play.player.character.solid = false;
-    const ok = await this.#pair(PLAYER_REF, avatar.body, horse, instant);
+    const ok = await this.#pair(PLAYER_REF, horse, instant);
     const runtime = this.#options.session.scriptsReady;
     if (ok && runtime) runtime.lastHorse = horse;
     if (!ok) this.#standPlayer();
@@ -421,7 +421,7 @@ export class ActorMounts {
   }
 
   /** Mounting: rider and horse at the horse's root, their paired animation played. */
-  #pair(rider: number, body: PlacedActor, horse: number, instant: boolean): Promise<boolean> {
+  #pair(rider: number, horse: number, instant: boolean): Promise<boolean> {
     const { movers, get } = this.#options;
     const mount = get(horse);
     if (!mount) return Promise.resolve(false);
@@ -442,12 +442,10 @@ export class ActorMounts {
       elapsed: 0,
       done: undefined,
       locomotion: new Locomotion(),
-      listener: body.onEvents,
       feet: undefined,
       activating: true,
     };
     this.#rides.set(rider, ride);
-    this.#listen(ride, body);
     this.#send(rider, instant ? events.instant : events.mount);
     if (instant) {
       this.#takeOff(ride);
@@ -459,15 +457,28 @@ export class ActorMounts {
     });
   }
 
-  /** The rider's graph's events: the end of the paired animation it plays. */
-  #listen(ride: Ride, body: PlacedActor): void {
-    body.onEvents = (events) => {
-      ride.listener?.(events);
-      for (const event of events) {
-        if (event === MOUNTED && ride.phase === 'mounting') this.#mounted(ride);
-        if (event === DISMOUNTED && ride.phase === 'dismounting') this.#dismounted(ride);
-      }
-    };
+  /**
+   * What a rider's graph raised (the stage's dispatch, src/shell/actor-graph-events.ts): the end
+   * of the paired animation it plays.
+   */
+  graphEvents(source: ActorGraphSource, events: readonly GraphEvent[]): void {
+    const ride = this.#rides.get(source.reference);
+    if (!ride || source.firstPerson || this.#bodyOf(ride.rider) !== source.skeleton) return;
+    for (const event of events) {
+      if (event.text === MOUNTED && ride.phase === 'mounting') this.#mounted(ride);
+      if (event.text === DISMOUNTED && ride.phase === 'dismounting') this.#dismounted(ride);
+    }
+  }
+
+  /**
+   * The engine's MountDismountEndHandler (MountEnd, DismountEnd: the rider's paired mount or
+   * dismount clip ended): observed in the original, it ends the mount or dismount under
+   * way for the rider and its horse. Here the phase ends as at its paired end.
+   */
+  mountDismountEnd(rider: number): void {
+    const ride = this.#rides.get(rider);
+    if (ride?.phase === 'mounting') this.#mounted(ride);
+    else if (ride?.phase === 'dismounting') this.#dismounted(ride);
   }
 
   #mounted(ride: Ride): void {
@@ -552,8 +563,6 @@ export class ActorMounts {
     const at = horse
       ? dismountPlace({ position: horse.position, heading: horse.heading })
       : undefined;
-    const body = this.#bodyOf(ride.rider);
-    if (body) body.onEvents = ride.listener;
     if (ride.rider === PLAYER_REF) {
       if (at) this.#options.player?.()?.play.player.teleport([...at.position]);
       this.#standPlayer();
@@ -868,8 +877,6 @@ export class ActorMounts {
   /** A rider whose horse went: it stands where it is. */
   #abandon(ride: Ride): void {
     this.#rides.delete(ride.rider);
-    const body = this.#bodyOf(ride.rider);
-    if (body) body.onEvents = ride.listener;
     this.#send(ride.rider, 'HorseExitOut');
     this.#stand(ride);
     if (ride.rider === PLAYER_REF) this.#standPlayer();

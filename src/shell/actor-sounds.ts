@@ -6,6 +6,7 @@
 
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { Layer } from '../physics/collision-layers.ts';
+import type { GraphEvent } from '../animation/graph-events.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { ActorLook } from '../world/actors.ts';
@@ -49,30 +50,27 @@ export interface SoundingWorld {
   water(at: Vec3): { readonly height: number; readonly type: number } | undefined;
 }
 
-const SOUND_PLAY = 'soundplay.';
-const NPC_SOUND_PLAY = 'npcsoundplay.';
+const SOUND_PLAY = 'soundplay';
+const NPC_SOUND_PLAY = 'npcsoundplay';
 
 /** The handler of an actor's raised events (AnimatedSkeleton.onEvents). */
 export function actorSounds(
   actor: SoundingActor,
   world: SoundingWorld,
-): (events: readonly string[]) => void {
+): (events: readonly GraphEvent[]) => void {
   return (events) => {
     const sounds = world.sounds();
     if (!sounds) return;
     for (const event of events) {
-      const lower = event.toLowerCase();
-      if (lower.startsWith(SOUND_PLAY)) {
-        void sounds.playNamed(event.slice(SOUND_PLAY.length), () => actor.feet(), actor.reference);
+      const tag = event.name.toLowerCase();
+      if (tag === SOUND_PLAY) {
+        if (event.payload !== undefined)
+          void sounds.playNamed(event.payload, () => actor.feet(), actor.reference);
         continue;
       }
-      if (lower.startsWith(NPC_SOUND_PLAY)) {
-        if (!actor.player)
-          void sounds.playNamed(
-            event.slice(NPC_SOUND_PLAY.length),
-            () => actor.feet(),
-            actor.reference,
-          );
+      if (tag === NPC_SOUND_PLAY) {
+        if (!actor.player && event.payload !== undefined)
+          void sounds.playNamed(event.payload, () => actor.feet(), actor.reference);
         continue;
       }
       const set = actor.look.footstepSet;
@@ -85,7 +83,7 @@ export function actorSounds(
           ? { water: water.type }
           : world.ground(feet, actor.collider);
       if (!ground) continue;
-      void sounds.footstep(set, event, actor.gait(), feet, ground);
+      void sounds.footstep(set, event.name, actor.gait(), feet, ground);
     }
   };
 }
@@ -126,36 +124,34 @@ export function footstepGait(motion: GaitMotion | undefined): FootstepGait {
 }
 
 /**
- * Placed actors' animations sound: their footsteps by their gait as they move (`motion`: how
- * the stage moves them; walking without), their SoundPlay events.
+ * A placed actor's animations sound: its footsteps by its gait as it moves (motion: how the
+ * stage moves it; walking without), its SoundPlay events. The stage hears its graph's events
+ * (src/shell/actor-graph-events.ts) and hands them to this.
  */
-export function soundPlacedActors(
-  actors: readonly PlacedActorLike[],
+export function placedActorSounds(
+  placed: PlacedActorLike,
   world: SoundingWorld,
   motion?: (reference: number) => GaitMotion | undefined,
-): void {
-  for (const placed of actors) {
-    const reference = placed.actor.reference;
-    placed.onEvents = actorSounds(
-      {
-        look: placed.look,
-        feet: () => feetOf(placed),
-        gait: () => footstepGait(motion?.(reference)),
-        player: false,
-        reference: placed.actor.reference,
-      },
-      world,
-    );
-  }
+): (events: readonly GraphEvent[]) => void {
+  const reference = placed.actor.reference;
+  return actorSounds(
+    {
+      look: placed.look,
+      feet: () => feetOf(placed),
+      gait: () => footstepGait(motion?.(reference)),
+      player: false,
+      reference,
+    },
+    world,
+  );
 }
 
-/** What soundPlacedActors needs of a placed actor (PlacedActor). */
+/** What placedActorSounds needs of a placed actor (PlacedActor). */
 interface PlacedActorLike {
   readonly look: ActorLook;
   readonly actor: { readonly position: Vec3; readonly reference: number };
   /** Its placement (its feet are where it was set on the ground). */
   readonly instances: readonly { readonly world: Float32Array }[];
-  onEvents?: (events: readonly string[]) => void;
 }
 
 /** Where a placed actor's feet are: its placement, else its reference. */

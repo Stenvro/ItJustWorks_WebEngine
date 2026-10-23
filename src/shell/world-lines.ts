@@ -110,10 +110,17 @@ export class WorldLines {
       greeting: spoken.topic.subtypeName === HELLO && (listener ?? PLAYER_REF) === PLAYER_REF,
     });
     const world = this.#session.scriptsReady?.world;
-    if (response.speakerIdle) world?.playIdle?.(speaker, response.speakerIdle, listener);
-    else this.#session.actorAction?.(speaker, ACTION_TALKING);
-    if (response.listenerIdle && listener !== undefined && listener !== PLAYER_REF) {
-      world?.playIdle?.(listener, response.listenerIdle, speaker);
+    // An actor whose graph locked dialogue idles (IdleDialogueLock) plays its idle as it unlocks.
+    const idle = (actor: number, play: () => void): void => {
+      if (this.#session.holdDialogueIdle?.(actor, play) !== true) play();
+    };
+    idle(speaker, () => {
+      if (response.speakerIdle) world?.playIdle?.(speaker, response.speakerIdle, listener);
+      else this.#session.actorAction?.(speaker, ACTION_TALKING);
+    });
+    const listenerIdle = response.listenerIdle;
+    if (listenerIdle && listener !== undefined && listener !== PLAYER_REF) {
+      idle(listener, () => world?.playIdle?.(listener, listenerIdle, speaker));
     }
   }
 

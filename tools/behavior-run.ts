@@ -306,7 +306,21 @@ for (let time = 0, frame = 0; time <= total; time += step, frame++) {
       console.log(`  plays ${animation} at ${at.toFixed(2)}`);
     }
     const raised = runtime.takeRaised();
-    if (raised.length > 0) console.log(`  raised ${raised.slice(0, 12).join(', ')}`);
+    if (raised.length > 0) {
+      const shownEvents = raised
+        .slice(0, 12)
+        .map((event) =>
+          event.payload === undefined || event.text !== event.name
+            ? event.text
+            : `${event.name} [${event.payload}]`,
+        );
+      console.log(`  raised ${shownEvents.join(', ')}`);
+    }
+    // The ragdoll controls the graph gives (a death's animated fall: powered, then limp).
+    const force = runtime.poweredRagdollForce();
+    const keyframed = runtime.keyframedRagdollBones().size;
+    if (force > 0 || keyframed > 0)
+      console.log(`  ragdoll powered ${force.toFixed(0)}, keyframed bones ${String(keyframed)}`);
     const shown = procedural();
     if (shown) console.log(`  ${shown}`);
     // The state the graph tags: the movement type whose iState_<name> variable holds it.

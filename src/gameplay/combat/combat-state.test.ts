@@ -13,8 +13,40 @@ import {
 import { AttackFlag, type AttackData } from '../../ai/race-combat-records.ts';
 import { ARROW_TILT, WORLD_GRAVITY, fly, launch, pointing, spent, tiltUp } from './projectile.ts';
 
+/** The engine handlers of the events these tests raise (as the response files map them). */
+const HANDLERS: Readonly<Record<string, string>> = {
+  beginweapondraw: 'WeaponBeginDrawRightHandler',
+  beginweaponsheathe: 'WeaponBeginSheatheRightHandler',
+  weapondraw: 'RightHandWeaponDrawHandler',
+  weaponsheathe: 'RightHandWeaponSheatheHandler',
+  prehitframe: 'AnticipateAttackHandler',
+  weaponswing: 'WeaponRightSwingHandler',
+  weaponleftswing: 'WeaponLeftSwingHandler',
+  hitframe: 'HitFrameHandler',
+  attackwinstart: 'AttackWinStartHandler',
+  attackwinstartleft: 'AttackWinStartHandler',
+  attackwinend: 'AttackWinEndHandler',
+  attackwinendleft: 'AttackWinEndHandler',
+  attackstop: 'AttackStopHandler',
+  bashstop: 'AttackStopHandler',
+  arrowattach: 'ArrowAttachHandler',
+  arrowdetach: 'ArrowDetachHandler',
+  bowreset: 'ArrowDetachHandler',
+  arrowrelease: 'ArrowReleaseHandler',
+  bowdrawn: 'BowDrawnHandler',
+  bowrelease: 'BowReleaseHandler',
+  staggerstop: 'StaggeredStopHandler',
+  recoilstop: 'RecoilStopHandler',
+  pairedstop: 'PairedStopHandler',
+  killmovestart: 'KillMoveStartHandler',
+  killmoveend: 'KillMoveEndHandler',
+};
+
+const effectsOf = (events: string[], state = newCombatState()) =>
+  events.flatMap((event) => graphEvent(state, event, HANDLERS[event.toLowerCase()]));
+
 const kinds = (events: string[], state = newCombatState()): string[] =>
-  events.flatMap((event) => graphEvent(state, event).map((effect) => effect.kind));
+  effectsOf(events, state).map((effect) => effect.kind);
 
 describe('the combat state', () => {
   it('draws at weaponDraw and is drawn at WeapEquip_Out (1HM_Equip), sheathes back', () => {
@@ -89,6 +121,52 @@ describe('the combat state', () => {
     state.paired = 'support';
     expect(kinds(['2_KillActor', '2_PairEnd'], state)).toEqual(['kill-actor', 'pair-end']);
     expect(state.paired).toBeUndefined();
+  });
+
+  it("swings the left hand's weapon at weaponLeftSwing, its window by AttackWin*Left", () => {
+    const state = newCombatState();
+    startAttack(state, { event: 'attackStartLeftHand', hand: 'left', power: false, bash: false });
+    expect(effectsOf(['weaponLeftSwing'], state)).toEqual([{ kind: 'swing', hand: 'left' }]);
+    expect(state.attack).toBe(AttackState.swing);
+    kinds(['AttackWinStartLeft'], state);
+    expect(state.attack).toBe(AttackState.nextAttack);
+    kinds(['AttackWinEndLeft'], state);
+    expect(state.attack).toBe(AttackState.followThrough);
+    // The right hand's swing sounds the right weapon.
+    startAttack(state, { event: 'attackStart', hand: 'right', power: false, bash: false });
+    expect(effectsOf(['weaponSwing'], state)).toEqual([{ kind: 'swing', hand: 'right' }]);
+  });
+
+  it('sounds the draw and the sheathing as they begin (BeginWeaponDraw, BeginWeaponSheathe)', () => {
+    expect(kinds(['BeginWeaponDraw', 'weaponDraw'])).toEqual(['draw-begin', 'hand']);
+    expect(kinds(['BeginWeaponSheathe', 'weaponSheathe'])).toEqual(['sheathe-begin', 'sheath']);
+  });
+
+  it('answers by the handler the response files give, not by the event name', () => {
+    const state = newCombatState();
+    startAttack(state, { event: 'attackStart', hand: 'right', power: false, bash: false });
+    // An event remapped to no handler does nothing; another remapped to the swing swings.
+    expect(graphEvent(state, 'weaponSwing', 'SomeOtherHandler')).toEqual([]);
+    expect(graphEvent(state, 'myEvent', 'WeaponRightSwingHandler')).toEqual([
+      { kind: 'swing', hand: 'right' },
+    ]);
+    // bowReset takes the arrow off as arrowDetach does.
+    state.arrowNocked = true;
+    expect(kinds(['bowReset'], state)).toEqual(['arrow-detach']);
+  });
+
+  it('is in a killmove until KillMoveEnd (KillMoveStart changes nothing)', () => {
+    const state = newCombatState();
+    state.paired = 'lead';
+    state.killMove = true;
+    kinds(['KillMoveStart'], state);
+    expect(state.killMove).toBe(true);
+    kinds(['KillMoveEnd'], state);
+    expect(state.killMove).toBe(false);
+    expect(state.paired).toBe('lead');
+    state.killMove = true;
+    expect(kinds(['pairedStop'], state)).toEqual(['pair-end']);
+    expect(state.killMove).toBe(false);
   });
 });
 

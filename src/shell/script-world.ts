@@ -108,6 +108,8 @@ export interface ScriptView {
   playIdle?(actor: number, idle: number, target: number | undefined): boolean;
   /** ForceFirstPerson / ForceThirdPerson: the player's camera of the view. */
   pointOfView?(pov: 'first' | 'third'): void;
+  /** The camera shakes from a reference's place (none: the player's): Game.ShakeCamera. */
+  shakeCamera?(strength: number, seconds: number, source: number | undefined): void;
   /** Where an actor would use a furniture of the view (its marker), if the view holds it. */
   interactionLocation?(
     furniture: number,
@@ -494,6 +496,10 @@ export class ScriptWorld implements WorldBridge {
 
   pointOfView(pov: 'first' | 'third'): void {
     for (const view of this.#views) view.pointOfView?.(pov);
+  }
+
+  shakeCamera(strength: number, seconds: number, source?: number): void {
+    for (const view of this.#views) view.shakeCamera?.(strength, seconds, source);
   }
 
   playIdle(actor: number, idle: number, target: number | undefined): boolean {

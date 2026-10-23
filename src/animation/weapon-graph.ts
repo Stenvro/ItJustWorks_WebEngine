@@ -14,6 +14,7 @@ import {
   type SkeletonNode,
 } from './animated-skeleton.ts';
 import type { SkeletalGraph } from './behavior-runtime.ts';
+import type { GraphEvent } from './graph-events.ts';
 import { multiply } from '../render/math.ts';
 
 /** A frame longer than this (a hitch) advances the graph by this much. */
@@ -44,11 +45,14 @@ export class WeaponGraph {
     return object && new WeaponGraph(object, placed);
   }
 
-  /** The events the wielder's graph raised (those it does not know it ignores). */
-  hear(events: readonly string[]): void {
+  /**
+   * The events the wielder's graph raised, by their names as the graphs have them (those it does
+   * not know it ignores).
+   */
+  hear(events: readonly GraphEvent[]): void {
     const behavior = this.#object.skeleton.behavior;
     if (!behavior) return;
-    for (const event of events) behavior.sendEvent(event);
+    for (const event of events) behavior.sendEvent(event.text);
   }
 
   /** A variable the engine set on the wielder's graph. */

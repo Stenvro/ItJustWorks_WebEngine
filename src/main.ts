@@ -727,6 +727,9 @@ async function main(): Promise<void> {
     session.actorAction = (reference, action) =>
       worldViewer.actorStage?.act(reference, action) === true ||
       modelViewer.actorStage?.act(reference, action) === true;
+    session.holdDialogueIdle = (reference, play) =>
+      worldViewer.actorStage?.graphEvents.holdDialogueIdle(reference, play) === true ||
+      modelViewer.actorStage?.graphEvents.holdDialogueIdle(reference, play) === true;
     await Promise.all([modelViewer.connect(session), worldViewer.connect(session)]);
     setEntriesReady(true);
   };

@@ -14,16 +14,7 @@
 // payloads (the engine's AnimationObjectLoadHandler and AnimationObjectDrawHandler), and
 // graphEvents() hears every event an actor's graph raises (the unload events).
 
-import {
-  AnimObjectList,
-  animObjectEventKind,
-  animObjectPayloads,
-  annotatedAnimObjectEvent,
-  stateKey,
-  type AnimObjectPayloads,
-  type HeldAnimObject,
-} from '../animation/anim-objects.ts';
-import type { AnimatedSkeleton } from '../animation/animated-skeleton.ts';
+import { AnimObjectList, type HeldAnimObject } from '../animation/anim-objects.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
 import type { ModelTextureSwaps } from '../render/actor-model.ts';
 import { multiply } from '../render/math.ts';
@@ -81,8 +72,6 @@ export interface ActorAnimObjectsOptions {
   readonly renderer: Renderer;
   /** A staged actor by its reference. */
   readonly staged: (reference: number) => StagedActor | undefined;
-  /** The staged actors (TEMPORARY graph hook below). */
-  readonly actors: () => Iterable<StagedActor>;
   /** The player being played, if they are. */
   readonly player: () => PlayerView | undefined;
   readonly warn?: (message: string) => void;
@@ -343,114 +332,4 @@ export class ActorAnimObjects {
       hidden: staged.visibility.hidden,
     };
   }
-
-  // --- TEMPORARY: the graphs' events heard here ------------------------------------------------
-  //
-  // Until the graph event dispatch (the graph events agent's) calls animObject() with the
-  // events' payloads, the actors' graphs are heard here: the behavior runtime raises
-  // AnimObjLoad and AnimObjDraw by name only, so the payload is looked up in the graph's own
-  // definition (src/animation/anim-objects.ts animObjectPayloads): the events the states just
-  // entered raise as they are entered, and those of the clips playing at their triggers. Clip
-  // annotations carry theirs in the name ("AnimObjLoad.AnimObjectSkeletonKey"). The unload
-  // events go to graphEvents(). Remove this part when the dispatch is wired; keep graphEvents
-  // heard from every raised event.
-
-  /** The skeletons heard, with the states they were in at their last events. */
-  readonly #hooked = new WeakMap<AnimatedSkeleton, { states: Set<string> }>();
-  readonly #payloads = new Map<string, Promise<AnimObjectPayloads | undefined>>();
-
-  /**
-   * TEMPORARY: hears the graphs of the staged actors and the player (both of theirs), called
-   * every frame before the graphs run (an actor placed in furniture enters its state then).
-   */
-  listen(): void {
-    for (const staged of this.#options.actors()) {
-      this.#hook(staged.reference, staged.placed, staged.placed.look.behavior);
-    }
-    const avatar = this.#options.player()?.avatar;
-    if (avatar) {
-      this.#hook(PLAYER_REF, avatar.body, avatar.body.look.behavior);
-      const first = avatar.firstPerson;
-      if (first) this.#hook(PLAYER_REF, first, FIRST_PERSON_PROJECT);
-    }
-  }
-
-  /**
-   * TEMPORARY: hears what a skeleton's graph raises as it is taken from the graph (the
-   * systems that listen through onEvents replace one another's listeners as actors are
-   * placed, so the graph's own hand-over is wrapped instead).
-   */
-  #hook(reference: number, skeleton: AnimatedSkeleton, project: string | undefined): void {
-    const behavior = skeleton.behavior;
-    if (!behavior || this.#hooked.has(skeleton) || project === undefined) return;
-    const heard = { states: new Set<string>() };
-    this.#hooked.set(skeleton, heard);
-    const payloads = this.#payloadsOf(project);
-    const take = behavior.takeRaised.bind(behavior);
-    behavior.takeRaised = () => {
-      const events = take();
-      if (events.length > 0) {
-        void payloads.then((table) => {
-          this.#heard(reference, skeleton, heard, events, table);
-        });
-      }
-      return events;
-    };
-  }
-
-  #payloadsOf(project: string): Promise<AnimObjectPayloads | undefined> {
-    const key = project.toLowerCase();
-    let pending = this.#payloads.get(key);
-    if (!pending) {
-      pending = this.#options.session.animation
-        .behaviors(project)
-        .then((behaviors) => (behaviors ? animObjectPayloads(behaviors.files.values()) : undefined))
-        .catch(() => undefined);
-      this.#payloads.set(key, pending);
-    }
-    return pending;
-  }
-
-  /** TEMPORARY: one update's raised events, their payloads found in the graph's definition. */
-  #heard(
-    reference: number,
-    skeleton: AnimatedSkeleton,
-    heard: { states: Set<string> },
-    events: readonly string[],
-    table: AnimObjectPayloads | undefined,
-  ): void {
-    const behavior = skeleton.behavior;
-    const states = new Set(
-      (behavior?.states() ?? []).map(({ machine, state }) => stateKey(machine, state)),
-    );
-    const entered = [...states].filter((state) => !heard.states.has(state));
-    heard.states = states;
-    for (const event of events) {
-      const annotated = annotatedAnimObjectEvent(event);
-      if (annotated) {
-        this.animObject(reference, annotated.kind, annotated.editorId);
-        continue;
-      }
-      const kind = animObjectEventKind(event);
-      if (kind && table) {
-        const named = new Set<string>();
-        for (const state of entered) {
-          for (const found of table.states.get(state) ?? []) {
-            if (found.kind === kind) named.add(found.editorId);
-          }
-        }
-        for (const { animation } of behavior?.playing() ?? []) {
-          for (const found of table.clips.get(animation.toLowerCase()) ?? []) {
-            if (found.kind === kind) named.add(found.editorId);
-          }
-        }
-        for (const editorId of named) this.animObject(reference, kind, editorId);
-        continue;
-      }
-      this.graphEvents(reference, [event]);
-    }
-  }
 }
-
-/** TEMPORARY: the first-person behavior project (src/shell/first-person-body.ts). */
-const FIRST_PERSON_PROJECT = 'meshes\\actors\\character\\_1stperson\\firstperson.hkx';

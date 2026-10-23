@@ -200,6 +200,12 @@ export class GameSession {
   placedActor: ((reference: number) => PlacedActor | undefined) | undefined;
   /** An actor of the loaded area plays the idle an action gives it (ActionTalking as it talks). */
   actorAction: ((reference: number, action: string) => boolean) | undefined;
+  /**
+   * A dialogue idle for an actor of the loaded area (a line's speaker or listener idle,
+   * ActionTalking's): held while its graph locks dialogue idles (IdleDialogueLock), played as
+   * it unlocks them (src/shell/actor-graph-events.ts). Whether it was held.
+   */
+  holdDialogueIdle: ((reference: number, play: () => void) => boolean) | undefined;
   /** Lines actors say outside conversations (Say). */
   readonly lines: WorldLines;
   /** Lines actors say in scenes (src/shell/scene-lines.ts). */

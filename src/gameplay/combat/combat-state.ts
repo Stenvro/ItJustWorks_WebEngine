@@ -95,6 +95,8 @@ export interface CombatState {
   knock: number;
   /** In a paired animation (a killmove): as the one who leads it, or the one it is done to. */
   paired: 'lead' | 'support' | undefined;
+  /** In a killmove (IsInKillMove): from its start until its graph's KillMoveEnd, or its end. */
+  killMove: boolean;
   /** An arrow on the string, and how long the bow has been drawn (seconds). */
   arrowNocked: boolean;
   drawnFor: number;
@@ -116,6 +118,7 @@ export function newCombatState(): CombatState {
     life: LifeState.alive,
     knock: KnockState.normal,
     paired: undefined,
+    killMove: false,
     arrowNocked: false,
     drawnFor: 0,
     lastHitCritical: false,
@@ -128,8 +131,11 @@ export type CombatEffect =
   /** The weapon goes to the hand (weaponDraw) or to its sheath (weaponSheathe). */
   | { readonly kind: 'hand' }
   | { readonly kind: 'sheath' }
-  /** The swing's sound (weaponSwing). */
-  | { readonly kind: 'swing' }
+  /** The right hand's draw or sheathe begins: its weapon's equip or unequip sound. */
+  | { readonly kind: 'draw-begin' }
+  | { readonly kind: 'sheathe-begin' }
+  /** A hand's swing: its weapon's swing sound (weaponSwing, weaponLeftSwing). */
+  | { readonly kind: 'swing'; readonly hand: 'right' | 'left' }
   /** The strike lands now: its targets are looked for (HitFrame). */
   | { readonly kind: 'strike' }
   /** An arrow appears on the string (arrowAttach) or leaves the hand (arrowDetach). */
@@ -139,7 +145,7 @@ export type CombatEffect =
   | { readonly kind: 'arrow-release' }
   /** The attack is over (attackStop). */
   | { readonly kind: 'attack-end' }
-  /** A paired killmove's victim dies now (its graph's KillActor). */
+  /** A paired killmove's victim dies now (its graph's 2_KillActor). */
   | { readonly kind: 'kill-actor' }
   /** The paired animation is over (PairEnd, pairedStop). */
   | { readonly kind: 'pair-end' }
@@ -173,26 +179,152 @@ export function startAttack(
 }
 
 /**
- * The graph raised an event (an annotation of a clip, a trigger): the state moves on, and what
- * the engine has to do comes back.
+ * The engine handler classes the combat state answers (their names in the response files,
+ * meshes\responses\actorresponse.txt: weaponSwing : WeaponRightSwingHandler, AttackWinStart and
+ * AttackWinStartLeft : AttackWinStartHandler, attackStop and bashStop : AttackStopHandler).
  */
-export function graphEvent(state: CombatState, event: string): CombatEffect[] {
+export const COMBAT_HANDLERS = [
+  'RightHandWeaponDrawHandler',
+  'RightHandWeaponSheatheHandler',
+  'WeaponBeginDrawRightHandler',
+  'WeaponBeginSheatheRightHandler',
+  'AnticipateAttackHandler',
+  'WeaponRightSwingHandler',
+  'WeaponLeftSwingHandler',
+  'HitFrameHandler',
+  'AttackWinStartHandler',
+  'AttackWinEndHandler',
+  'AttackStopHandler',
+  'ArrowAttachHandler',
+  'ArrowDetachHandler',
+  'ArrowReleaseHandler',
+  'BowDrawnHandler',
+  'BowReleaseHandler',
+  'StaggeredStopHandler',
+  'RecoilStopHandler',
+  'PairedStopHandler',
+  'KillMoveStartHandler',
+  'KillMoveEndHandler',
+] as const;
+
+/**
+ * The graph raised an event (an annotation of a clip, a trigger): the state moves on, and what
+ * the engine has to do comes back. `handler` is the engine handler class the response files
+ * give the event (src/animation/graph-events.ts); events they name none for are the actor's own
+ * (WeapEquip_Out, blockStop, bowEnd: by their name).
+ */
+export function graphEvent(state: CombatState, event: string, handler?: string): CombatEffect[] {
   const effects: CombatEffect[] = [];
   const ranged = state.current?.ranged === true;
+  if (handler !== undefined) {
+    switch (handler.toLowerCase()) {
+      // Drawing and sheathing (1HM_Equip: BeginWeaponDraw, weaponDraw at 0.6 s, WeapEquip_Out
+      // at its end). Observed in the original: the begin handlers sound the right hand's
+      // weapon's equip or unequip sound; weaponDraw's puts the weapons in the hands.
+      case 'weaponbegindrawrighthandler':
+        effects.push({ kind: 'draw-begin' });
+        break;
+      case 'weaponbeginsheatherighthandler':
+        effects.push({ kind: 'sheathe-begin' });
+        break;
+      case 'righthandweapondrawhandler':
+        effects.push({ kind: 'hand' });
+        break;
+      case 'righthandweaponsheathehandler':
+        effects.push({ kind: 'sheath' });
+        break;
+      // A melee attack: wind-up, swing, the hit, the window for the next, the follow-through.
+      case 'anticipateattackhandler':
+        if (state.current && !ranged && state.attack !== AttackState.bash) {
+          state.attack = AttackState.swing;
+        }
+        break;
+      // Observed in the original: a hand's swing sets the attack state to swinging and
+      // sounds that hand's weapon's swing (the left hand's for weaponLeftSwing: dual wielding).
+      case 'weaponrightswinghandler':
+      case 'weaponleftswinghandler':
+        if (state.current && !ranged) {
+          if (state.attack !== AttackState.bash) state.attack = AttackState.swing;
+          const left = handler.toLowerCase() === 'weaponleftswinghandler';
+          effects.push({ kind: 'swing', hand: left ? 'left' : 'right' });
+        }
+        break;
+      case 'hitframehandler':
+        if (state.current && !ranged) {
+          if (state.attack !== AttackState.bash) state.attack = AttackState.hit;
+          effects.push({ kind: 'strike' });
+        }
+        break;
+      // AttackWinStart and AttackWinStartLeft (the left hand's attacks) share their handlers:
+      // the next attack's window opens (a bow's next shot), then the follow-through.
+      case 'attackwinstarthandler':
+        if (state.current) {
+          state.attack = ranged ? AttackState.bowNextAttack : AttackState.nextAttack;
+        }
+        break;
+      case 'attackwinendhandler':
+        if (state.current) {
+          state.attack = ranged ? AttackState.bowFollowThrough : AttackState.followThrough;
+        }
+        break;
+      // A bow: nocked, drawn, loosed (bowReset takes the arrow off as arrowDetach does).
+      case 'arrowattachhandler':
+        state.arrowNocked = true;
+        if (ranged) state.attack = AttackState.bowAttached;
+        effects.push({ kind: 'arrow-attach' });
+        break;
+      case 'bowdrawnhandler':
+        if (ranged) state.attack = AttackState.bowDrawn;
+        break;
+      case 'bowreleasehandler':
+        if (ranged) state.attack = AttackState.bowReleasing;
+        break;
+      case 'arrowreleasehandler':
+        if (ranged && state.arrowNocked) {
+          state.attack = AttackState.bowReleased;
+          state.arrowNocked = false;
+          effects.push({ kind: 'arrow-release' });
+        }
+        break;
+      case 'arrowdetachhandler':
+        if (state.arrowNocked) {
+          state.arrowNocked = false;
+          effects.push({ kind: 'arrow-detach' });
+        }
+        break;
+      // attackStop and bashStop.
+      case 'attackstophandler':
+        endAttack(state, effects);
+        break;
+      // Staggers and recoils end.
+      case 'staggeredstophandler':
+        state.staggered = false;
+        break;
+      case 'recoilstophandler':
+        state.recoiling = false;
+        break;
+      case 'pairedstophandler':
+        endPaired(state, effects);
+        break;
+      // Observed in the original: KillMoveStart's handler does nothing (the killmove was
+      // marked as it began); KillMoveEnd's ends it (IsInKillMove).
+      case 'killmovestarthandler':
+        break;
+      case 'killmoveendhandler':
+        state.killMove = false;
+        break;
+      default:
+        break;
+    }
+    return effects;
+  }
   switch (lower(event)) {
-    // Drawing and sheathing (1HM_Equip: weaponDraw at 0.6 s, WeapEquip_Out at its end).
-    case 'weapondraw':
-      effects.push({ kind: 'hand' });
-      break;
     // Magic drawn: MRh_and_MLh_Equip raises weaponDraw, then Magic_Equip_Out (0_master.hkx).
     case 'weapequip_out':
     case 'magic_equip_out':
       if (state.weapon === WeaponState.drawing || state.weapon === WeaponState.wantToDraw) {
         state.weapon = WeaponState.drawn;
       }
-      break;
-    case 'weaponsheathe':
-      effects.push({ kind: 'sheath' });
       break;
     // Magic put away: weaponSheathe, then Magic_Unequip_Out.
     case 'unequip_out':
@@ -201,65 +333,8 @@ export function graphEvent(state: CombatState, event: string): CombatEffect[] {
         state.weapon = WeaponState.sheathed;
       }
       break;
-    // A melee attack: wind-up, swing, the hit, the window for the next, the follow-through.
-    case 'prehitframe':
-      if (state.current && !ranged && state.attack !== AttackState.bash) {
-        state.attack = AttackState.swing;
-      }
-      break;
-    case 'weaponswing':
-      if (state.current && !ranged) effects.push({ kind: 'swing' });
-      break;
-    case 'hitframe':
-      if (state.current && !ranged) {
-        if (state.attack !== AttackState.bash) state.attack = AttackState.hit;
-        effects.push({ kind: 'strike' });
-      }
-      break;
-    case 'attackwinstart':
-      if (state.current) {
-        state.attack = ranged ? AttackState.bowNextAttack : AttackState.nextAttack;
-      }
-      break;
-    case 'attackwinend':
-      if (state.current) {
-        state.attack = ranged ? AttackState.bowFollowThrough : AttackState.followThrough;
-      }
-      break;
-    // A bow: nocked, drawn, loosed.
-    case 'arrowattach':
-      state.arrowNocked = true;
-      if (ranged) state.attack = AttackState.bowAttached;
-      effects.push({ kind: 'arrow-attach' });
-      break;
-    case 'bowdrawn':
-      if (ranged) state.attack = AttackState.bowDrawn;
-      break;
-    case 'bowrelease':
-      if (ranged) state.attack = AttackState.bowReleasing;
-      break;
-    case 'arrowrelease':
-      if (ranged && state.arrowNocked) {
-        state.attack = AttackState.bowReleased;
-        state.arrowNocked = false;
-        effects.push({ kind: 'arrow-release' });
-      }
-      break;
-    case 'arrowdetach':
-      if (state.arrowNocked) {
-        state.arrowNocked = false;
-        effects.push({ kind: 'arrow-detach' });
-      }
-      break;
-    case 'attackstop':
-    case 'bashstop':
     case 'bowend':
-      if (state.current) {
-        state.current = undefined;
-        state.attack = AttackState.none;
-        state.drawnFor = 0;
-        effects.push({ kind: 'attack-end' });
-      }
+      endAttack(state, effects);
       break;
     // Blocking (blockStart's state; blockStop leaves it).
     case 'blockstartout':
@@ -268,25 +343,13 @@ export function graphEvent(state: CombatState, event: string): CombatEffect[] {
     case 'blockstop':
       state.blocking = false;
       break;
-    // Staggers and recoils end.
-    case 'staggerstop':
-      state.staggered = false;
-      break;
-    case 'recoilstop':
-      state.recoiling = false;
-      break;
-    // Paired animations.
-    case 'killactor':
+    // Paired animations: the side done to hears its partner's events with "2_".
     case '2_killactor':
       if (state.paired === 'support') effects.push({ kind: 'kill-actor' });
       break;
     case 'pairend':
     case '2_pairend':
-    case 'pairedstop':
-      if (state.paired !== undefined) {
-        state.paired = undefined;
-        effects.push({ kind: 'pair-end' });
-      }
+      endPaired(state, effects);
       break;
     case 'bleedout_transoutend':
       if (state.life === LifeState.bleedout || state.life === LifeState.essentialDown) {
@@ -299,6 +362,23 @@ export function graphEvent(state: CombatState, event: string): CombatEffect[] {
       break;
   }
   return effects;
+}
+
+/** The attack is over (attackStop, bashStop, bowEnd). */
+function endAttack(state: CombatState, effects: CombatEffect[]): void {
+  if (!state.current) return;
+  state.current = undefined;
+  state.attack = AttackState.none;
+  state.drawnFor = 0;
+  effects.push({ kind: 'attack-end' });
+}
+
+/** The paired animation is over (pairedStop, PairEnd): so is a killmove not ended before. */
+function endPaired(state: CombatState, effects: CombatEffect[]): void {
+  if (state.paired === undefined) return;
+  state.paired = undefined;
+  state.killMove = false;
+  effects.push({ kind: 'pair-end' });
 }
 
 /** Whether a weapon (or magic) is out: drawing, drawn, or on its way back. */

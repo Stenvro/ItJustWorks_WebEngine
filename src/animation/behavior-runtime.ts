@@ -57,6 +57,7 @@ import {
   type LookAtState,
 } from './procedural.ts';
 import { isPaired, pairedTrackBones, type PairedSide } from './paired-clips.ts';
+import { graphEvent, type GraphEvent } from './graph-events.ts';
 
 /** What a running graph needs from outside: its clips and referenced behavior files. */
 export interface BehaviorHost {
@@ -284,6 +285,12 @@ interface ModifierState {
   previousError: number;
 }
 
+/** An event waiting to be handled: the character's event id and the payload it came with. */
+interface QueuedEvent {
+  readonly id: number;
+  readonly payload?: string;
+}
+
 /** A pose a generator gave: its values and whether it is additive. */
 interface Generated {
   readonly pose: Float32Array;
@@ -326,10 +333,10 @@ export class BehaviorRuntime {
   /** The events its graphs' files name (lower case). */
   readonly #declared = new Set<string>();
   readonly #properties: Record<string, number>;
-  /** Events waiting to be handled (global ids). */
-  #queue: number[] = [];
-  /** Events the graph raised for the engine since they were last taken (names). */
-  #raised: string[] = [];
+  /** Events waiting to be handled (global ids, with the payload they came with). */
+  #queue: QueuedEvent[] = [];
+  /** Events the graph raised for the engine since they were last taken. */
+  #raised: GraphEvent[] = [];
   readonly #machines = new WeakMap<object, MachineState>();
   readonly #clips = new WeakMap<object, ClipState>();
   /**
@@ -661,16 +668,23 @@ export class BehaviorRuntime {
     else this.#directAtTargets.delete(userInfo);
   }
 
-  /** Sends an event to the graph (handled at the next update): false if it knows none so named. */
-  sendEvent(name: string): boolean {
+  /**
+   * Sends an event to the graph (handled at the next update), with its string payload if it
+   * has one: false if it knows none so named. The graph's own handling does not read payloads
+   * (they are the engine's: src/animation/graph-events.ts).
+   */
+  sendEvent(name: string, payload?: string): boolean {
     const id = this.#eventIndex.get(name.toLowerCase());
     if (id === undefined) return false;
-    this.#queue.push(id);
+    this.#queue.push(payload === undefined ? { id } : { id, payload });
     return true;
   }
 
-  /** The events and annotations the graph raised since the last call (sounds, footsteps). */
-  takeRaised(): string[] {
+  /**
+   * The events and annotations the graph raised since the last call, with their payloads
+   * (src/animation/graph-events.ts: their tags pick the engine's handlers).
+   */
+  takeRaised(): GraphEvent[] {
     const raised = this.#raised;
     this.#raised = [];
     return raised;
@@ -680,19 +694,22 @@ export class BehaviorRuntime {
     const id = typeof event === 'number' ? event : event.id;
     const global = this.#globalEvent(id, scope);
     if (global < 0) return;
-    this.#queue.push(global);
-    this.#emit(this.#eventNames[global] ?? '');
+    const payload = typeof event === 'number' ? undefined : event.payload;
+    this.#queue.push(payload === undefined ? { id: global } : { id: global, payload });
+    this.#emit(this.#eventNames[global] ?? '', payload);
   }
 
   /**
-   * An event the graph raised goes to the engine (takeRaised). HeadTrackingOff and
-   * HeadTrackingOn (raised by graphs and clips' annotations: idles that look elsewhere) turn
-   * the character's head tracking off and on: meshes\responses\actorresponse.txt names their
-   * handlers (HeadTrackingOffHandler, HeadTrackingOnHandler).
+   * An event the graph raised goes to the engine (takeRaised), its tag and payload as the engine
+   * has them (graphEvent). HeadTrackingOff and HeadTrackingOn (raised by graphs and clips'
+   * annotations: idles that look elsewhere) turn the character's head tracking off and on:
+   * meshes\responses\actorresponse.txt names their handlers (HeadTrackingOffHandler,
+   * HeadTrackingOnHandler).
    */
-  #emit(name: string): void {
-    this.#raised.push(name);
-    const key = name.toLowerCase();
+  #emit(text: string, payload?: string): void {
+    const event = graphEvent(text, payload);
+    this.#raised.push(event);
+    const key = event.name.toLowerCase();
     if (key === 'headtrackingoff') this.#headTracking = false;
     else if (key === 'headtrackingon') this.#headTracking = true;
   }
@@ -719,7 +736,7 @@ export class BehaviorRuntime {
     for (let round = 0; round < 4 && this.#queue.length > 0; round++) {
       const events = this.#queue;
       this.#queue = [];
-      for (const event of events) this.#handle(this.#root, event, new Set());
+      for (const event of events) this.#handle(this.#root, event.id, new Set());
     }
     if (handled) this.#activateIsActive(this.#root, new Set());
     const active = new Set<object>();
@@ -1422,6 +1439,10 @@ export class BehaviorRuntime {
       machine.transition = undefined;
       // A self transition resets what the state plays (unless it continues).
       if (from === to && (effect?.selfTransitionMode ?? 2) !== 1) this.#reset(to.generator);
+      // Left at once, the old state's nodes are deactivated now, before the new state is
+      // entered (its nested machines' exit events come before the new state's enter events:
+      // an idle's AnimObjectUnequip does not take the prop the next state just loaded).
+      if (from && from !== to) this.#leave(from.generator, to.generator);
     }
     machine.current = to;
     machine.timeInState = 0;
@@ -1437,6 +1458,38 @@ export class BehaviorRuntime {
     }
     if (transition?.effect && transition.effect.toGeneratorStartTimeFraction > 0) {
       this.#startAt(to.generator, transition.effect.toGeneratorStartTimeFraction);
+    }
+  }
+
+  /**
+   * Deactivates the active nodes under a state's generator left at once (innermost first), but
+   * those the state entered shares; they are no longer active at the update's end.
+   */
+  #leave(left: BehaviorGenerator | undefined, entered: BehaviorGenerator | undefined): void {
+    const under = (root: BehaviorGenerator | undefined): object[] => {
+      const nodes: object[] = [];
+      const seen = new Set<object>();
+      const visitModifier = (modifier: BehaviorModifier): void => {
+        if (seen.has(modifier)) return;
+        seen.add(modifier);
+        for (const child of modifierChildren(modifier)) visitModifier(child);
+        nodes.push(modifier);
+      };
+      const visit = (node: BehaviorGenerator | undefined): void => {
+        if (!node || seen.has(node)) return;
+        seen.add(node);
+        for (const child of children(node)) visit(child);
+        if (node.kind === 'modifier-generator' && node.modifier) visitModifier(node.modifier);
+        nodes.push(node);
+      };
+      visit(root);
+      return nodes;
+    };
+    const kept = new Set(under(entered));
+    for (const node of under(left)) {
+      if (kept.has(node) || !this.#active.has(node)) continue;
+      this.#active.delete(node);
+      this.#deactivate(node);
     }
   }
 
@@ -1774,9 +1827,11 @@ export class BehaviorRuntime {
     if (((node.flags ?? 0) & CLIP_FLAGS.dontConvertAnnotationsToTriggers) === 0) {
       for (const annotation of animation.annotations) {
         if (!passed(annotation.time - (node.cropStart ?? 0))) continue;
+        // A graph declares an annotation's whole text as its event (SoundPlay.NPCCowMoo); the
+        // engine hears it as tag and payload (graphEvent: AnimObjLoad.DecapitationHeadGore).
         this.#emit(annotation.text);
         const id = this.#eventIndex.get(annotation.text.toLowerCase());
-        if (id !== undefined) this.#queue.push(id);
+        if (id !== undefined) this.#queue.push({ id });
       }
     }
   }
@@ -2097,7 +2152,7 @@ export class BehaviorRuntime {
     if (send) {
       state.values[firedKey] = 1;
       this.#emit(expression.event);
-      if (id !== undefined) this.#queue.push(id);
+      if (id !== undefined) this.#queue.push({ id });
     }
   }
 

@@ -7,6 +7,11 @@
 import { iniValue, type Ini } from '../formats/ini/ini.ts';
 
 export const INI_DEFAULTS = {
+  // Death into the ragdoll (src/shell/actor-graph-events.ts): the ragdoll a graph adds to the
+  // world (AddRagdollToWorld) is driven by the graph's pose (the engine's built-in default).
+  Animation: {
+    bDriveRagdollWithGraph: 1,
+  },
   Audio: {
     fASFadeInTime: 3,
     fASFadeOutTime: 8,
@@ -56,6 +61,8 @@ export const INI_DEFAULTS = {
     fTweenCamZoomSpeed: 25,
     fVanityModeMaxDist: 600,
     fVanityModeMinDist: 155,
+    // The camera's way into an animated camera (StartAnimatedCamera; the engine's built-in default).
+    iAnimatedTransitionMillis: 1000,
   },
   // A cart tethered to its horse (src/shell/actor-vehicles.ts; docs/ai.md, "Vehicles"): the
   // engine's built-in defaults (Skyrim_Default.ini has no [Cart] section). Havok units (1 =
