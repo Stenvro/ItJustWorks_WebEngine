@@ -22,6 +22,7 @@ import { floatParam2, NOT_VALUED, type Condition } from '../conditions.ts';
 import { ObjectHandle, type Value } from '../values.ts';
 import type { Vec3 } from './game-state.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
+import { limbGone } from '../../gameplay/combat/dismemberment.ts';
 import { crimeConditionValue } from './crime-conditions.ts';
 import { magicConditionValue } from './magic-conditions.ts';
 import type { ScriptRuntime } from './runtime.ts';
@@ -252,6 +253,7 @@ export const Fn = {
   isProtected: 476,
   getRestrained: 244,
   hasBeenEaten: 127,
+  isLimbGone: 397,
   getPermanentActorValue: 494,
   isOverEncumbered: 734,
   getHighestRelationshipRank: 615,
@@ -1654,6 +1656,12 @@ async function moreConditionValue(
     // Eaten by a cannibal (the player's Cannibalism; the corpse's state).
     case Fn.hasBeenEaten:
       return flag(reference !== undefined && state.actors.get(reference)?.eaten === true);
+    // A limb (its body part type) cut off it (a decapitation: the head, 1).
+    case Fn.isLimbGone:
+      return flag(
+        reference !== undefined &&
+          limbGone(state.actors.get(reference)?.dismembered, condition.raw1),
+      );
     // Its value without temporary changes (base and permanent modifiers, no damage).
     case Fn.getPermanentActorValue: {
       if (reference === undefined) return undefined;

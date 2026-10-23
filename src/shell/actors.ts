@@ -19,6 +19,7 @@ import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import { thinModelPath, type ModelTextureSwaps } from '../render/actor-model.ts';
 import { transformPoint, type Vec3 } from '../render/math.ts';
+import type { ModelPart } from '../render/model-data.ts';
 import type { GpuModel, GpuMorphs, ModelInstance } from '../render/scene-renderer.ts';
 import {
   ActorResolver,
@@ -38,7 +39,7 @@ import {
   standsOnGround,
   type GroundHit,
 } from '../world/actor-ground.ts';
-import { HeadPartType } from '../world/actor-records.ts';
+import { HeadPartType, type RaceRecord } from '../world/actor-records.ts';
 import { referenceMatrix, type CellActor } from '../world/cell-loader.ts';
 import { parseReference } from '../world/cell-records.ts';
 import { activeMarker, furnitureMarkers, markerPlacement } from '../world/furniture.ts';
@@ -73,6 +74,69 @@ export interface PlacedActor extends AnimatedSkeleton {
   readonly instances: readonly ModelInstance[];
   /** Its behavior graph, running (undefined: it stands in its skeleton's rest pose). */
   readonly behavior: BehaviorRuntime | undefined;
+  /** The limbs cut off it (src/shell/actor-dismemberment.ts), as its instances draw it. */
+  readonly severing: Severing;
+}
+
+/**
+ * What came off an actor's body (src/shell/actor-dismemberment.ts), as its instances read it when
+ * its scene is built: the skeleton nodes of the limb cut off (lower-case names; none while it is
+ * whole) and whether its head parts went with it (the engine moves the whole FaceGen node to the
+ * cut piece). Of the body's shapes skinned to those nodes, only the partitions below 100 stay
+ * drawn (a helmet's 130s and the head's 230 neck go; the neck's stump, 51, stays).
+ */
+export interface Severing {
+  readonly nodes: Set<string>;
+  face: boolean;
+  /** The head part models among its instances (its FaceGen node's). */
+  readonly heads: ReadonlySet<GpuModel>;
+}
+
+/** Whether a model part is skinned to one of the nodes named (lower-case). */
+export function skinnedTo(part: ModelPart, nodes: ReadonlySet<string>): boolean {
+  return part.skin?.names.some((name) => nodes.has(name.toLowerCase())) === true;
+}
+
+/**
+ * Whether the body keeps a partition of one of its parts after its limbs came off: observed in the
+ * original, a shape skinned to a cut limb's nodes keeps the partitions below 100 (the
+ * biped slots: the decapitation armor's stump) and hides the others (the 100s go with the piece,
+ * the 200s, the neck under a head, nowhere).
+ */
+export function bodyKeepsPartition(severing: Severing, bodyPart: number, part: ModelPart): boolean {
+  return severing.nodes.size === 0 || bodyPart < 100 || !skinnedTo(part, severing.nodes);
+}
+
+/**
+ * Models put on an actor's body as it is (the decapitation armor): their nodes are the skeleton's
+ * of the same name (the root for those it lacks), on its pose; drawn by its equipment like the
+ * rest of what it wears.
+ */
+export function wornInPlace(
+  placed: PlacedActor,
+  models: readonly { readonly model: GpuModel; readonly addon: number }[],
+): ModelInstance[] {
+  const first = placed.instances[0];
+  const skeleton = placed.pose.skeleton;
+  const { look, severing } = placed;
+  if (!first) return [];
+  return models.map(({ model, addon }): ModelInstance => {
+    const poseNodes = Int16Array.from(
+      model.nodes ?? [],
+      (node) => skeleton.nodeByName.get(node.name.toLowerCase()) ?? 0,
+    );
+    return {
+      model,
+      world: first.world,
+      ...(first.motion && { motion: first.motion }),
+      pose: placed.pose,
+      ...(model.nodes && { poseNodes }),
+      ...(first.tints && { tints: first.tints }),
+      partitionVisible: (bodyPart, part) =>
+        partitionVisible(bodyPart, look.owners, addon) &&
+        bodyKeepsPartition(severing, bodyPart, part),
+    };
+  });
 }
 
 /**
@@ -181,6 +245,7 @@ export async function ragdollsOf(
         world,
         collision: await collision(skeleton),
         pose: placed.pose,
+        severed: placed.severing.nodes,
       };
     }),
   );
@@ -676,6 +741,38 @@ export class ActorPlacer {
     );
   }
 
+  /** A race's record (its decapitation armors and blood), read once. */
+  race(formId: number): Promise<RaceRecord | undefined> {
+    return this.#resolver.race(formId);
+  }
+
+  /**
+   * The models of an armor (ARMO) as an actor wears it now: its addons for the actor's race and
+   * sex, blended by its weight (the race's decapitation armor, put on its body in place).
+   */
+  async armorModels(
+    placed: PlacedActor,
+    armor: number,
+  ): Promise<{ readonly model: GpuModel; readonly addon: number }[]> {
+    const { look, actor } = placed;
+    const dressed = await this.#resolver.resolve(
+      actor.base,
+      actor.reference,
+      await this.#leveledLevel(actor.reference),
+      {
+        race: look.race,
+        female: look.female,
+        weight: look.weight,
+        outfit: null,
+        equipped: [armor],
+      },
+    );
+    const worn = dressed?.worn.filter((addon) => addon.armor === armor && !addon.skin) ?? [];
+    if (!dressed || worn.length === 0) return [];
+    const models = await this.wornModels({ ...dressed, worn });
+    return models.flatMap((entry) => (entry ? [entry] : []));
+  }
+
   async place(
     placedInCell: CellActor,
     made?: MadeLook,
@@ -807,6 +904,8 @@ export class ActorPlacer {
     // Every actor can move (its feet set on the ground, a script's MoveTo, its AI); the
     // dead's ragdolls pose them where they lie (ragdollsOf).
     const motion = { version: 0 };
+    // What came off it (src/shell/actor-dismemberment.ts): read as its scene is built.
+    const severing: Severing = { nodes: new Set(), face: false, heads: new Set(heads) };
     const instances = models.map(({ model, addon }, i): ModelInstance => {
       // What it wears plays its own graph (the steam that flows around automatons' joints).
       const graph = startObjectGraph(model, actor.reference);
@@ -818,7 +917,11 @@ export class ActorPlacer {
         pose,
         ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),
         tints,
-        partitionVisible: (bodyPart) => partitionVisible(bodyPart, look.owners, addon),
+        partitionVisible: (bodyPart, part) =>
+          partitionVisible(bodyPart, look.owners, addon) &&
+          bodyKeepsPartition(severing, bodyPart, part),
+        // Its head parts go with its cut head.
+        ...(heads.includes(model) && { partShown: () => !severing.face }),
         ...(face && heads.includes(model) && { face }),
       };
     });
@@ -876,6 +979,7 @@ export class ActorPlacer {
       pose,
       instances,
       behavior,
+      severing,
       ...(face && { face: face.weights }),
       ...(creatureFace && { face: creatureFace }),
       time: undefined,

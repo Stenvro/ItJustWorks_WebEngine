@@ -363,34 +363,35 @@ come before the response files are read wait for them.
 
 **The handlers** (observed in the original, in our words; ours after each):
 
-| Handler (events)                                                  | The engine                                                                                                                                                            | Ours                                                                                                                                                                                                                                           |
-| ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| AnimationDriven, MotionDriven, AllowRotation (Start…)             | switch the actor's movement controller at once: animation-driven, controller-driven, animation-driven with the controller turning it                                  | the movers' drive (`src/ai/movement-drive.ts`); bAnimationDriven and bAllowRotation switch it too as they change; allowed to rotate, the steering turns an actor its root motion moves                                                         |
-| AddRagdoll (AddRagdollToWorld)                                    | adds the actor's ragdoll to the physics world, with its collision group                                                                                               | a dying actor's ragdoll is driven by its graph ([Animation] bDriveRagdollWithGraph, 1): its bodies follow the pose while the graph keyframes or powers them (AnimateToRagdoll), and go limp as it stops (FullyRagdoll); undriven, limp at once |
-| RemoveRagdoll (RemoveRagdollFromWorld)                            | removes it                                                                                                                                                            | a dying body follows its graph again                                                                                                                                                                                                           |
-| DeathStop (deathStop)                                             | ends the actor's dying (dead)                                                                                                                                         | its body goes limp from where it is                                                                                                                                                                                                            |
-| DeathEmote (DeathEmote)                                           | queues the actor's Death line (the combat dialogue's Death subtype), once a death                                                                                     | a death whose graph has DeathEmote says its Death line then (else at once; at most 2 s after)                                                                                                                                                  |
-| VoiceSpellCast (BeginCastVoice)                                   | the voice's cast begins charging                                                                                                                                      | an NPC holds its shout's words (fShoutTime1 / 2) from then (a graph without it: after 1 s)                                                                                                                                                     |
-| VoiceSpellFire (Voice_SpellFire_Event)                            | releases the voice's cast (the shout's spell), its recovery set by the variation's time × ShoutRecoveryMult                                                           | the released shout's spell leaves the head then (a breath starts spraying); without the event, 1 s after the release                                                                                                                           |
-| Left/RightHandSpellFire, InterruptCast                            | a hand's released spell; the actor's casting interrupted                                                                                                              | as the engine (InterruptCast: every hand and the voice)                                                                                                                                                                                        |
-| WeaponRight/LeftSwing (weaponSwing, weaponLeftSwing)              | the attack state becomes swinging; that hand's weapon's swing sound; the swing callback                                                                               | as the engine (the left weapon's sound for the left hand)                                                                                                                                                                                      |
-| AttackWinStart/End (also …Left)                                   | the next attack's window (a bow's next shot), the follow-through                                                                                                      | as the engine                                                                                                                                                                                                                                  |
-| WeaponBeginDrawRight, WeaponBeginSheatheRight (BeginWeaponDraw/…) | the right weapon's equip / unequip sound; a draw turns the camera to its combat position when it follows the actor                                                    | the sounds; graphs whose draw raises neither (an NPC's WeapEquip) sound them at weaponDraw / weaponSheathe (inferred). TODO(M13): the camera's combat position                                                                                 |
-| KillMoveStart, KillMoveEnd                                        | nothing; the killmove ends (IsInKillMove), its partner released                                                                                                       | the combat state's killmove flag (IsInKillMove) until KillMoveEnd or the paired end. TODO(M13): what the end does with the partner                                                                                                             |
-| IdleDialogueEnter/Exit (IdleDialogueLock/Unlock)                  | the lock does nothing itself; the unlock plays the dialogue idle the actor's process holds                                                                            | dialogue idles (a line's speaker and listener idles, ActionTalking's) are held while locked, the last played at the unlock                                                                                                                     |
-| Enable/DisableCharacterPitch, Enable/DisableCharacterBumper       | the character controller may pitch the actor (disabled: its pitch zeroed); its bumper on or off                                                                       | recorded per actor. TODO(M13): our controllers keep actors upright and have no bumper                                                                                                                                                          |
-| ChairEnter, BedEnter, PlayerChair/BedEnter (idleChairSitting, …)  | unless it gets up already, the sit state becomes sitting (sleeping); the player's also switch the camera and controls                                                 | an entering furniture use is in (at its marker, OnSit). TODO(M13): the player's camera and controls                                                                                                                                            |
-| MountDismountEnd (MountEnd, DismountEnd)                          | ends the mount or dismount under way for rider and horse                                                                                                              | the ride's phase ends (as at its paired end)                                                                                                                                                                                                   |
-| EndSummonAnimation (summonStop)                                   | a summoned actor's arrival is over: it takes its commander's combat target                                                                                            | as the engine                                                                                                                                                                                                                                  |
-| ActionActivateDone (ActivationDone)                               | the object the actor's process holds is activated, the procedure done                                                                                                 | an NPC's activation with an ActionActivate idle waits for it (3 s at most)                                                                                                                                                                     |
-| VampireFeedEnd                                                    | a vampire feeding procedure is done                                                                                                                                   | TODO(M11): our AI runs no feeding procedure                                                                                                                                                                                                    |
-| NPCAttach / NPCDetach                                             | attach the actor to its furniture's node the payload names, or detach it                                                                                              | recorded. TODO(M13): our furniture keeps markers, not animated nodes                                                                                                                                                                           |
-| CameraShake (payload: strength)                                   | shakes the camera from the actor's place (src/shell/camera-shake.ts)                                                                                                  | as the engine                                                                                                                                                                                                                                  |
-| AnimatedCameraStart / DeltaStart / End (player)                   | the camera goes over (iAnimatedTransitionMillis) to ride the node the payload names in the player's body, or the third-person camera adds its motion; the end returns | as the engine in third person. TODO(M13): the node's view axis (+y inferred)                                                                                                                                                                   |
-| PitchOverrideStart/End, ZeroPitch (player)                        | a flag on the third-person camera; the camera's pitch to level                                                                                                        | the flag is kept (TODO(M13): what reads it); the pitch set to 0                                                                                                                                                                                |
-| AnimationObjectLoad / Draw (AnimObjLoad, AnimObjDraw)             | load / show the animation object the payload names                                                                                                                    | the animation objects ([above](#animation-objects))                                                                                                                                                                                            |
-| PickNewIdle                                                       | picks the actor's next idle                                                                                                                                           | the stage's `pickNewIdle` hook (ambient idles: a later phase)                                                                                                                                                                                  |
-| StopHorseCamera, RemoveCharacterController                        | named in the files, but the executable has no handler class of that name (only the name)                                                                              | nothing                                                                                                                                                                                                                                        |
+| Handler (events)                                                  | The engine                                                                                                                                                                    | Ours                                                                                                                                                                                                                                           |
+| ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AnimationDriven, MotionDriven, AllowRotation (Start…)             | switch the actor's movement controller at once: animation-driven, controller-driven, animation-driven with the controller turning it                                          | the movers' drive (`src/ai/movement-drive.ts`); bAnimationDriven and bAllowRotation switch it too as they change; allowed to rotate, the steering turns an actor its root motion moves                                                         |
+| AddRagdoll (AddRagdollToWorld)                                    | adds the actor's ragdoll to the physics world, with its collision group                                                                                                       | a dying actor's ragdoll is driven by its graph ([Animation] bDriveRagdollWithGraph, 1): its bodies follow the pose while the graph keyframes or powers them (AnimateToRagdoll), and go limp as it stops (FullyRagdoll); undriven, limp at once |
+| RemoveRagdoll (RemoveRagdollFromWorld)                            | removes it                                                                                                                                                                    | a dying body follows its graph again                                                                                                                                                                                                           |
+| DeathStop (deathStop)                                             | ends the actor's dying (dead)                                                                                                                                                 | its body goes limp from where it is                                                                                                                                                                                                            |
+| DeathEmote (DeathEmote)                                           | queues the actor's Death line (the combat dialogue's Death subtype), once a death                                                                                             | a death whose graph has DeathEmote says its Death line then (else at once; at most 2 s after)                                                                                                                                                  |
+| VoiceSpellCast (BeginCastVoice)                                   | the voice's cast begins charging                                                                                                                                              | an NPC holds its shout's words (fShoutTime1 / 2) from then (a graph without it: after 1 s)                                                                                                                                                     |
+| VoiceSpellFire (Voice_SpellFire_Event)                            | releases the voice's cast (the shout's spell), its recovery set by the variation's time × ShoutRecoveryMult                                                                   | the released shout's spell leaves the head then (a breath starts spraying); without the event, 1 s after the release                                                                                                                           |
+| Left/RightHandSpellFire, InterruptCast                            | a hand's released spell; the actor's casting interrupted                                                                                                                      | as the engine (InterruptCast: every hand and the voice)                                                                                                                                                                                        |
+| WeaponRight/LeftSwing (weaponSwing, weaponLeftSwing)              | the attack state becomes swinging; that hand's weapon's swing sound; the swing callback                                                                                       | as the engine (the left weapon's sound for the left hand)                                                                                                                                                                                      |
+| AttackWinStart/End (also …Left)                                   | the next attack's window (a bow's next shot), the follow-through                                                                                                              | as the engine                                                                                                                                                                                                                                  |
+| WeaponBeginDrawRight, WeaponBeginSheatheRight (BeginWeaponDraw/…) | the right weapon's equip / unequip sound; a draw turns the camera to its combat position when it follows the actor                                                            | the sounds; graphs whose draw raises neither (an NPC's WeapEquip) sound them at weaponDraw / weaponSheathe (inferred). TODO(M13): the camera's combat position                                                                                 |
+| KillMoveStart, KillMoveEnd                                        | nothing; the killmove ends (IsInKillMove), its partner released                                                                                                               | the combat state's killmove flag (IsInKillMove) until KillMoveEnd or the paired end. TODO(M13): what the end does with the partner                                                                                                             |
+| IdleDialogueEnter/Exit (IdleDialogueLock/Unlock)                  | the lock does nothing itself; the unlock plays the dialogue idle the actor's process holds                                                                                    | dialogue idles (a line's speaker and listener idles, ActionTalking's) are held while locked, the last played at the unlock                                                                                                                     |
+| Enable/DisableCharacterPitch, Enable/DisableCharacterBumper       | the character controller may pitch the actor (disabled: its pitch zeroed); its bumper on or off                                                                               | recorded per actor. TODO(M13): our controllers keep actors upright and have no bumper                                                                                                                                                          |
+| ChairEnter, BedEnter, PlayerChair/BedEnter (idleChairSitting, …)  | unless it gets up already, the sit state becomes sitting (sleeping); the player's also switch the camera and controls                                                         | an entering furniture use is in (at its marker, OnSit). TODO(M13): the player's camera and controls                                                                                                                                            |
+| MountDismountEnd (MountEnd, DismountEnd)                          | ends the mount or dismount under way for rider and horse                                                                                                                      | the ride's phase ends (as at its paired end)                                                                                                                                                                                                   |
+| EndSummonAnimation (summonStop)                                   | a summoned actor's arrival is over: it takes its commander's combat target                                                                                                    | as the engine                                                                                                                                                                                                                                  |
+| ActionActivateDone (ActivationDone)                               | the object the actor's process holds is activated, the procedure done                                                                                                         | an NPC's activation with an ActionActivate idle waits for it (3 s at most)                                                                                                                                                                     |
+| VampireFeedEnd                                                    | a vampire feeding procedure is done                                                                                                                                           | TODO(M11): our AI runs no feeding procedure                                                                                                                                                                                                    |
+| NPCAttach / NPCDetach                                             | attach the actor to its furniture's node the payload names, or detach it                                                                                                      | recorded. TODO(M13): our furniture keeps markers, not animated nodes                                                                                                                                                                           |
+| CameraShake (payload: strength)                                   | shakes the camera from the actor's place (src/shell/camera-shake.ts)                                                                                                          | as the engine                                                                                                                                                                                                                                  |
+| AnimatedCameraStart / DeltaStart / End (player)                   | the camera goes over (iAnimatedTransitionMillis) to ride the node the payload names in the player's body, or the third-person camera adds its motion; the end returns         | as the engine in third person. TODO(M13): the node's view axis (+y inferred)                                                                                                                                                                   |
+| PitchOverrideStart/End, ZeroPitch (player)                        | a flag on the third-person camera; the camera's pitch to level                                                                                                                | the flag is kept (TODO(M13): what reads it); the pitch set to 0                                                                                                                                                                                |
+| AnimationObjectLoad / Draw (AnimObjLoad, AnimObjDraw)             | load / show the animation object the payload names                                                                                                                            | the animation objects ([above](#animation-objects))                                                                                                                                                                                            |
+| Decapitate (Decapitate; a killmove victim's 2_Decapitate)         | the actor wears its race's decapitation armor, its head is recorded gone, the cut is queued: the head copied into a piece of its own that flies off ([below](#dismemberment)) | as the engine                                                                                                                                                                                                                                  |
+| PickNewIdle                                                       | picks the actor's next idle                                                                                                                                                   | the stage's `pickNewIdle` hook (ambient idles: a later phase)                                                                                                                                                                                  |
+| StopHorseCamera, RemoveCharacterController                        | named in the files, but the executable has no handler class of that name (only the name)                                                                                      | nothing                                                                                                                                                                                                                                        |
 
 **A death** (`ActorGraphEvents.died`): the engine plays it through the idle tree: ActionDeath
 (creatures: DeathAnimation, a bleeding-out or paired one Ragdoll), else ActionDeathWait (humans:
@@ -420,6 +421,124 @@ graph's Voice_SpellFire_Event (1.2 s after shoutStart, MT_BreathExhaleShort's ex
 dual-wielding NPC's left attack raised weaponLeftSwing (WeaponLeftSwingHandler: swinging), then
 AttackWinStartLeft and AttackWinEndLeft; Game.ShakeCamera(None, 0.5) turned the view by up to
 0.6° for 1 s.
+
+## Dismemberment
+
+How a head comes off (`src/shell/actor-dismemberment.ts`; the rules:
+`src/gameplay/combat/dismemberment.ts`; the data: `src/world/body-part-data.ts`, RACE DNAM and
+NAM7 in `src/world/actor-records.ts`). Observed in the original; in our words.
+
+**The data.** A race's body part data (BPTD, RACE GNAM) lists its parts, at most one of each
+part type (torso, head, eye, look-at, fly grab, saddle): BPNN the skeleton node, BPNT the node
+a severed part is cut at, BPNI the hit reaction's variable prefix, NAM1 the model that flies off,
+NAM4 the node the gore follows, and BPND: damage multiplier, flags (severable, IK, explodable,
+head, head tracking, absolute to-hit chance), type, health share, actor value, to-hit and
+explosion chances, then for exploding and for severing each a debris (DEBR) with its count and
+scale, an explosion (EXPL), an impact data set (IPDS) and its decal count, the gore's offset and
+the replacement model's scale. `node tools/bodypart-info.ts --gore` lists the severable and
+explodable parts: in the vanilla data there are none. The human head part carries an impact
+data set with four decals and no flags. What decapitates is not the body part data but the
+race: RACE DNAM names a decapitation armor per sex (every playable race: `DecapitatedHead`;
+creatures none) and NAM7 its blood art (`BloodSprayDecap01`). The armor's addons are worn like
+any armor: `DecapitatedNeckAA` (slot 51) a neck stump in partition 51, `DecapitatedHeadAA`
+(slot 50) the cut under the head in partition 150, both skinned to `NPC Head [Head]`
+(Argonian and Khajiit variants).
+
+**Partitions.** A BSDismemberSkinInstance names a body part per partition: the biped slots
+30-61 (what the body keeps), the 100s (130 head, 131 hair, 141 long hair, 143 ears, 150 the
+decapitation cut: what goes with the cut piece) and the 200s (230: the neck under a head). The
+FaceGen heads are 230 (neck), 130 and 143; helmets and hair put their shapes in the 100s.
+
+**Who decapitates.** One path only: the graph event `Decapitate` (actorresponse.txt:
+DecapitateHandler). In the executable nothing else marks a limb gone.
+
+- The opening's execution: the executionee's `AOExecutioneeChop.hkx` clip in
+  `mt_behavior.hkx` raises Decapitate 8.16 s before its end and KillActor 3.39 s before it.
+- Killmoves: the attacker's paired clip raises `2_Decapitate` (and later `2_KillActor`) for its
+  partner; the victim's graph plays the same clip, and the side done to answers the `2_` events
+  as its own (combat-state: the victim decapitated, then killed). Seven clips do so in the
+  one-handed, two-handed and dual-wield behaviors (1HM decap slash at 0.76 s before the kill at
+  1.69 s, the bleed-out decaps, 2HM decap, 2HW A, dual-wield decap).
+- The perks: the idle tree's decapitation killmoves (KillMoveDecapSlash, KillMove2HMDecapSlash,
+  KillMoveDualWieldDecap, the bleed-out decaps, ...) need Savage Strike (one-handed) or
+  Devastating Blow (two-handed), no NoDecapitate keyword, no ghost, and GetRandomPercent at most
+  the global DecapitationChance; a bleeding-out victim's at 75% or always. Nothing else in
+  combat cuts: a killing blow on a targeted body part rolls to explode it (absolute chance, or
+  iCombatExplodePartChance × its explosion chance %) or else dismember it
+  (iCombatDismemberPartChance), as the weapon's hit behavior allows (`rollLimb`), but only for
+  parts flagged explodable (none vanilla), Skyrim's hits never target a part, and the hit's
+  marks are acted on by nothing that cuts.
+
+**The handler.** If the actor's head is not gone yet and its race has a decapitation armor for
+its sex, the actor is given that armor to wear (AddWornItem: into its inventory and worn), the
+head is recorded as gone with what the actor wears then (ExtraDismemberedLimbs; the change is
+saved), and the actor is queued for the cut, which [GamePlay] iActorsDismemberedPerFrame (2)
+actors get each frame. Ours: the armor goes on through the equip system; the look change it
+causes is answered in place (`dressedInPlace`), so a dying body is not made again in the middle
+of its death; anything else worn or taken off meanwhile makes it again.
+
+**The cut.** Unless [General] bDisableAllGore:
+
+- The head's subtree (the head part's node and those under it: on a human `NPC Head [Head]`,
+  `NPC Head MagicNode [Hmag]`, `NPCEyeBone`) is copied into a node of its own in the cell, at
+  the head's place: the copy carries the ragdoll's head body, freed of its constraints, on the
+  dead bodies' layer (L_DEADBIP), simulated. The body's own head node is hidden and its bodies
+  leave collision.
+- Every shape of the actor skinned to those nodes is copied to the piece (re-skinned to the
+  copied nodes), except the FaceGen head node, which is moved there whole. On the body, the
+  shapes skinned to the head keep only their partitions under 100 (the stump), the 100s and
+  200s hidden; on the piece the copies show only 101-199 (the helmet's and hair's 130s, the cut
+  150), whatever the equipment's slots say; the moved FaceGen head only loses its partitions
+  under 100 and its 200s (its neck), keeping what it showed.
+- Unless the actor's 3D was only loaded again, the head flies: along the line from the head's
+  parent node (the neck) to the head, plus the direction the killer's weapon moves (its body's
+  velocity; the killer the actor's myKiller), both as unit vectors, made one again, at
+  [Combat] fDecapInitialSpeed (250 units a second), and spinning about that same axis at the
+  same number in Havok units (3.6 radians a second).
+- The race's blood art (NAM7) plays on the actor for fDecapitateBloodTime (5 s).
+
+Ours: the body's instances read the cut nodes as its scene is built again (`Severing`: the
+partition rule, the head parts left out); the decapitation armor's models are put on its
+pose in place; the piece is the actor's instances skinned to the head on a still copy of the
+pose, drawn where the head's body (the skeleton model's head body, alone) carries it; the
+weapon's motion is read from the killer's weapon node between the blow and the cut (a frame
+or more; the engine reads its weapon body's velocity), the killer being a killmove's leader
+before the kill lands (inferred: the victim's myKiller is set by the kill). The ragdoll's
+head bodies (a dying actor's, a corpse placed in its cell) stay out of collision. The piece
+names no reference (the crosshair finds nothing on it).
+
+**Persistence.** A dismembered corpse stays so: as its 3D is loaded again the engine compares
+what it wears with what the limb's record says it wore and dresses it again if they differ,
+then cuts again without the flight (the head drops from the neck, pushed away from the body's
+root at fCombatDismemberedLimbVelocity) and bleeds again. Ours: the
+game state keeps the limbs (`ActorState.dismembered`, saved with it in M12); an actor placed
+again (its cell loaded again) is drawn without its head and a new piece drops from its neck; one
+made again where it stands (a look change) keeps the piece that lies in the world. TODO(M13):
+the engine's re-dressing from the recorded worn objects (its helper's exact rule is not read).
+IsLimbGone (condition 397) asks the record.
+
+| Setting                                       | Default | Use                                              |
+| --------------------------------------------- | ------- | ------------------------------------------------ |
+| [Combat] fDecapInitialSpeed                   | 250     | the head's launch speed (units a second)         |
+| fDecapitateBloodTime                          | 5       | the neck's blood art (seconds)                   |
+| [GamePlay] iActorsDismemberedPerFrame         | 2       | cuts a frame                                     |
+| [General] bDisableAllGore                     | 0       | no cut (the armor still goes on)                 |
+| iCombatDismemberPartChance, ExplodePartChance | 25, 5   | the fatal-hit roll (never reached)               |
+| fCombatDismemberedLimbVelocity                | 10      | a head cut again on reload: pushed from the root |
+
+Unused by the executable's Skyrim code paths: iDismemberBloodDecalCount, iMessIntactLimb*,
+fExplodeLimbRemovalDelay (Fallout's).
+
+Verified in the browser: the opening, unattended (a new game to MQ101 stage 90): the Stormcloak
+prisoner (MQ101StormcloakCartMaleBroder) lost his head at his chop's Decapitate and died 4.7 s
+later at its KillActor; the head dropped from the block into the basket before it and lay
+there, the body lay headless beside it. A cart driver decapitated by the handler sprayed
+BloodSprayDecap01 from the neck for 5 s. A bandit at Halted Stream Camp in a forced pa_KillMove1HMDecap (the
+player leading): the victim's graph played KillMove1HMDecap, its head came off at 0.8 s
+(2_Decapitate at 0.76 s), the body stood headless with the neck stump and fell headless once
+dead; the head (face, hair, beard and the bloody cut) flew 560 units and rolled to rest. A
+direct Decapitate on an Embershard Mine bandit: three head nodes cut, the FaceGen head moved,
+ten shapes on the piece, the head on the floor asleep within seconds.
 
 ## The player
 
