@@ -7,8 +7,9 @@
 // exponents (LTEX SNAM); snow (LTEX flagged as snow) with a second, 4 times larger normal map
 // sample and the improved-snow rim and sparkles; and near the edge of the loaded cells a blend
 // towards the LOD terrain's texture (LOD_LAND_BLEND) so the seam with the distant land
-// disappears. The vanilla landscape shader has no parallax. Prepended with frame.wgsl and
-// snow.wgsl. ASCII only.
+// disappears. The vanilla landscape shader has no parallax. The colour is unfogged: the snow's
+// scattering and the composite (composite.wgsl: snow rim, AO, fog, sparkles) finish it.
+// Prepended with frame.wgsl and snow.wgsl. ASCII only.
 
 // Landscape textures repeat 6 times per cell (fLandTextureTilingMult 3 per quadrant).
 const TILE_SIZE = 4096.0 / 6.0;
@@ -70,7 +71,7 @@ struct TerrainOut {
   @location(4) weights1: vec4f,
 };
 
-// The colour and the G-buffer (normal and snow mask, see gbuffer.ts).
+// The colour and the G-buffer (normal, snow mask and snow specular, see gbuffer.ts).
 struct TerrainPixel {
   @location(0) color: vec4f,
   @location(1) gbuffer: vec4f,
@@ -201,14 +202,16 @@ fn fs_main(in: TerrainOut) -> TerrainPixel {
   let shadow = sunShadow(in.worldPos, in.normal);
   let light = lightAt(n, in.worldPos, toCamera, max(shininess, 1.0), true, shadow);
   var color = albedo * light.diffuse;
-  // Snow has the rim highlight instead of its specular.
+  // Snow has the rim highlight instead of its specular: the composite adds it (after the
+  // snow's scattering), with the AO, fog and sparkles.
+  var snowSpecular = 0.0;
   if (snowMask > 0.0) {
-    color += vec3f(snowRimSpecular(geometric, n, toCamera) * snowMask);
+    snowSpecular = snowRimSpecular(geometric, n, toCamera);
   } else {
     color += light.specular * glossiness;
   }
   var out: TerrainPixel;
-  out.gbuffer = gbufferValue(n, snowMask);
+  out.gbuffer = gbufferValue(n, snowMask, snowSpecular);
   switch (frame.counts.z) {
     case 1u: {
       out.color = vec4f(albedo, 1.0);
@@ -226,10 +229,7 @@ fn fs_main(in: TerrainOut) -> TerrainPixel {
       out.color = vec4f(geometric * 0.5 + 0.5, 1.0);
     }
     default: {
-      out.color = vec4f(
-        applyFog(color, in.worldPos) + snowSparkles(in.worldPos, shadow) * snowMask,
-        1.0,
-      );
+      out.color = vec4f(color, 1.0);
     }
   }
   return out;

@@ -3451,15 +3451,16 @@ export class SceneRenderer {
         fragment: {
           module: this.#modules[shader],
           entryPoint: refraction ? 'fs_refraction' : 'fs_main',
-          // Opaque parts are drawn in the opaque pass, which also has the G-buffer (written
-          // by the lighting shader); blended ones in the blended pass, which has not;
-          // refraction shapes into the refraction buffer.
+          // Opaque parts are drawn in the opaque pass, which also has the G-buffer; blended
+          // ones in the blended pass, which has not; refraction shapes into the refraction
+          // buffer. Opaque lit parts leave fog and snow highlights to the composite.
           targets: refraction
             ? [{ format: REFRACTION_FORMAT }]
             : [
                 { format: this.#colorFormat, ...(blend && { blend }) },
-                ...(blend === undefined ? [gbufferTarget(shader === 'lighting')] : []),
+                ...(blend === undefined ? [gbufferTarget(true)] : []),
               ],
+          ...(shader === 'lighting' && blend === undefined && { constants: { DEFERRED: 1 } }),
         },
         primitive: { topology: 'triangle-list', cullMode, frontFace: 'ccw' },
         depthStencil: {

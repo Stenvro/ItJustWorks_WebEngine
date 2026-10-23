@@ -237,7 +237,7 @@ export class GrassRenderer {
         fragment: {
           module: this.#module,
           entryPoint: 'fs_grass',
-          targets: [{ format: this.#colorFormat }, gbufferTarget(false)],
+          targets: [{ format: this.#colorFormat }, gbufferTarget(true)],
         },
         primitive: { topology: 'triangle-list', cullMode: 'none' },
         depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'greater' },

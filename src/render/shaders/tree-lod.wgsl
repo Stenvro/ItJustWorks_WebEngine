@@ -1,6 +1,6 @@
 // Distant trees: one billboard per tree from the worldspace's tree LOD atlas, turned towards
-// the camera around the vertical axis, alpha-tested, lit by the sun and ambient light.
-// Prepended with frame.wgsl. ASCII only.
+// the camera around the vertical axis, alpha-tested, lit by the sun and ambient light; fogged
+// by the composite. Prepended with frame.wgsl. ASCII only.
 
 struct TreeType {
   // Width, height (game units), unused.
@@ -50,13 +50,20 @@ fn vs_tree(input: TreeIn, @builtin(vertex_index) index: u32) -> TreeOut {
   return out;
 }
 
+// The colour (unfogged: the composite fogs it) and the G-buffer.
+struct TreePixel {
+  @location(0) color: vec4f,
+  @location(1) gbuffer: vec4f,
+};
+
 @fragment
-fn fs_tree(input: TreeOut) -> @location(0) vec4f {
+fn fs_tree(input: TreeOut) -> TreePixel {
   let texel = textureSample(treeAtlas, treeSampler, input.uv);
   if (texel.a < 0.5 || lodHidden(input.worldPos)) {
     discard;
   }
   let toCamera = safeNormalize(frame.cameraPos.xyz - input.worldPos);
   let light = lightAt(input.normal, input.worldPos, toCamera, 1.0, false, 1.0);
-  return vec4f(applyFog(texel.rgb * light.diffuse, input.worldPos), 1.0);
+  // The engine's distant trees write a normal facing the camera and no snow.
+  return TreePixel(vec4f(texel.rgb * light.diffuse, 1.0), gbufferValue(toCamera, 0.0, 0.0));
 }
