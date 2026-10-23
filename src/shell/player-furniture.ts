@@ -4,7 +4,8 @@
 // idles of the idle tree, whose conditions name the player's own: IdleStoolEnterPlayer, ...),
 // except that the engine moves them to where the enter begins at once (its path tweener: a
 // short slide and turn) instead of letting them walk. While in it, their controls do nothing
-// but look round; a movement key gets them up. Furniture with the FurnitureForce3rdPerson or
+// but look round; a movement key gets them up, and so does their graph leaving the furniture by
+// itself (idleChairGetUp: a script's idle, MQ101's chopping block reaction). Furniture with the FurnitureForce3rdPerson or
 // FurnitureForce1stPerson keyword sets the camera while it is used.
 
 import type { Vec3 } from '../render/math.ts';
@@ -56,6 +57,8 @@ export class PlayerFurniture {
   /** The camera the player had before furniture forced one. */
   #pov: 'first' | 'third' | undefined;
   #leaving: Promise<void> | undefined;
+  /** In the furniture (their use got in), until they stand. */
+  #inside = false;
 
   constructor(options: PlayerFurnitureOptions) {
     const { furniture, play, avatar } = options;
@@ -80,6 +83,13 @@ export class PlayerFurniture {
         avatar.bodyYaw = heading;
       },
       send: (event) => avatar.send(event),
+    };
+    // Their graph's furniture exits end their use (the PlayerFurnitureExitHandler of
+    // idleChairGetUp, idleBedGetUp): its own exit's end, or a graph that left by itself.
+    const previous = avatar.onGraphEvents;
+    avatar.onGraphEvents = (events) => {
+      previous?.(events);
+      furniture.graphEvents(this.user, events, true);
     };
   }
 
@@ -122,6 +132,7 @@ export class PlayerFurniture {
       this.#stand();
       return false;
     }
+    this.#inside = true;
     then?.(() => {
       void this.leave();
     });
@@ -180,6 +191,11 @@ export class PlayerFurniture {
     }
     this.#furniture.animated(this.user, seconds);
     const using = this.#furniture.interaction(PLAYER_REF);
+    if (this.#inside && !this.#leaving && !using) {
+      // Their graph got them up by itself: they move again, no key needed.
+      this.#stand();
+      return;
+    }
     const menuOpen = this.#options.menuOpen();
     if (using?.state === 3 && !menuOpen && GET_UP.some((name) => player.isHeld(name))) {
       void this.leave();
@@ -188,6 +204,7 @@ export class PlayerFurniture {
 
   /** The player moves again (the furniture let go of them, or they never got in). */
   #stand(): void {
+    this.#inside = false;
     this.#slide?.done(false);
     this.#slide = undefined;
     this.#turnTo = undefined;

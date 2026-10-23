@@ -346,4 +346,16 @@ describe('shouting', () => {
     expect((await w.engine.releaseShout(NPC, 3))?.item.formId).toBe(SPELLS[2]);
     expect(w.state.actors.get(NPC)?.voiceRecoveryTime).toBe(45);
   });
+
+  it("lets an AI package's shout skip the voice's recovery, which it sets again", async () => {
+    const w = world();
+    w.loadouts.set(NPC, { voice: SHOUT });
+    expect(await w.engine.beginShout(NPC)).toBe('started');
+    await w.engine.releaseShout(NPC, 1);
+    w.engine.update(5);
+    expect(await w.engine.beginShout(NPC)).toBe('voice');
+    expect(await w.engine.beginShout(NPC, true)).toBe('started');
+    await w.engine.releaseShout(NPC, 1);
+    expect(w.state.actors.get(NPC)?.voiceRecoveryTime).toBe(20);
+  });
 });
