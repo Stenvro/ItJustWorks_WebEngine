@@ -76,7 +76,10 @@ export interface CurrentAttack {
   readonly bash: boolean;
   /** A bow's or crossbow's shot. */
   readonly ranged: boolean;
-  /** A paired killmove (pa_...). */
+  /**
+   * A killmove: the engine counts paired idles whose event begins "pa_Kill" (observed in the original;
+   * the vampire's feeding bite and other paired idles are none).
+   */
   readonly killMove: boolean;
   /** The targets it struck already (each once an attack). */
   readonly struck: Set<number>;
@@ -147,6 +150,11 @@ export type CombatEffect =
   | { readonly kind: 'attack-end' }
   /** A paired killmove's victim dies now (its graph's 2_KillActor). */
   | { readonly kind: 'kill-actor' }
+  /**
+   * Its killmove ends (KillMoveEnd; the victim's 2_KillMoveEnd): the victim dies by its
+   * killer now if it has not yet, and both are in it no more.
+   */
+  | { readonly kind: 'killmove-end' }
   /** A decapitating killmove's victim loses its head now (its graph's 2_Decapitate). */
   | { readonly kind: 'decapitate' }
   /** The paired animation is over (PairEnd, pairedStop). */
@@ -173,7 +181,7 @@ export function startAttack(
   state.current = {
     ...attack,
     ranged,
-    killMove: event.startsWith('pa_'),
+    killMove: event.startsWith('pa_kill'),
     struck: new Set(),
   };
   state.attack = ranged ? AttackState.bowDraw : attack.bash ? AttackState.bash : AttackState.draw;
@@ -251,9 +259,13 @@ export function graphEvent(state: CombatState, event: string, handler?: string):
           effects.push({ kind: 'swing', hand: left ? 'left' : 'right' });
         }
         break;
+      // A killmove's clip strikes its victim at its hit frames too (observed in the
+      // original: the handler strikes whether an attack is under way or not).
       case 'hitframehandler':
         if (state.current && !ranged) {
           if (state.attack !== AttackState.bash) state.attack = AttackState.hit;
+          effects.push({ kind: 'strike' });
+        } else if (!state.current && state.killMove && state.paired === 'lead') {
           effects.push({ kind: 'strike' });
         }
         break;
@@ -309,11 +321,13 @@ export function graphEvent(state: CombatState, event: string, handler?: string):
         endPaired(state, effects);
         break;
       // Observed in the original: KillMoveStart's handler does nothing (the killmove was
-      // marked as it began); KillMoveEnd's ends it (IsInKillMove).
+      // marked as it began); KillMoveEnd's ends it (IsInKillMove), its victim killed by its
+      // killer.
       case 'killmovestarthandler':
         break;
       case 'killmoveendhandler':
         state.killMove = false;
+        effects.push({ kind: 'killmove-end' });
         break;
       default:
         break;
@@ -345,12 +359,19 @@ export function graphEvent(state: CombatState, event: string, handler?: string):
     case 'blockstop':
       state.blocking = false;
       break;
-    // Paired animations: the side done to hears its partner's events with "2_".
+    // Paired animations: the side done to hears its partner's events with "2_" (only its graph
+    // raises them; a clip's last frame may raise its 2_PairEnd before its 2_KillActor).
     case '2_killactor':
-      if (state.paired === 'support') effects.push({ kind: 'kill-actor' });
+      effects.push({ kind: 'kill-actor' });
       break;
     case '2_decapitate':
-      if (state.paired === 'support') effects.push({ kind: 'decapitate' });
+      effects.push({ kind: 'decapitate' });
+      break;
+    case '2_killmoveend':
+      if (state.killMove) {
+        state.killMove = false;
+        effects.push({ kind: 'killmove-end' });
+      }
       break;
     case 'pairend':
     case '2_pairend':
@@ -378,11 +399,13 @@ function endAttack(state: CombatState, effects: CombatEffect[]): void {
   effects.push({ kind: 'attack-end' });
 }
 
-/** The paired animation is over (pairedStop, PairEnd): so is a killmove not ended before. */
+/**
+ * The paired animation is over (pairedStop, PairEnd). A killmove is not (observed in the
+ * original: IsInKillMove ends at KillMoveEnd or at the killmove's timer).
+ */
 function endPaired(state: CombatState, effects: CombatEffect[]): void {
   if (state.paired === undefined) return;
   state.paired = undefined;
-  state.killMove = false;
   effects.push({ kind: 'pair-end' });
 }
 

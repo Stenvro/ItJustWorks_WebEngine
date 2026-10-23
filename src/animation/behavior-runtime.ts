@@ -681,6 +681,49 @@ export class BehaviorRuntime {
   }
 
   /**
+   * Whether an event sent now would move the graph: a transition of an active state machine
+   * from the state it is in (or a machine's own events) that the event triggers and whose
+   * conditions hold. What the engine's NotifyAnimationGraph answers (a killmove's victim whose
+   * graph cannot take its side's event has no killmove), asked without sending it.
+   */
+  wouldHandle(name: string): boolean {
+    const id = this.#eventIndex.get(name.toLowerCase());
+    return id !== undefined && this.#wouldHandle(this.#root, id, new Set());
+  }
+
+  #wouldHandle(node: BehaviorGenerator | undefined, event: number, seen: Set<object>): boolean {
+    if (!node || seen.has(node)) return false;
+    seen.add(node);
+    if (node.kind === 'state-machine') {
+      const machine = this.#machine(node);
+      const scope = this.#scopeOf(node);
+      const blocked = machine.transition && this.#uninterruptible(machine.transition);
+      if (machine.current && !blocked) {
+        const own = [
+          node.returnToPreviousStateEventId,
+          node.randomTransitionEventId,
+          node.transitionToNextHigherStateEventId,
+          node.transitionToNextLowerStateEventId,
+        ].some((id) => id !== undefined && this.#globalEvent(id, scope) === event);
+        const chosen =
+          this.#choose(
+            node,
+            machine,
+            (transition) => this.#globalEvent(transition.eventId, scope) === event,
+          ) ?? this.#chooseGlobal(node, machine, event);
+        if (own || chosen) return true;
+      }
+      if (machine.transition && this.#wouldHandle(machine.transition.from.generator, event, seen))
+        return true;
+      return this.#wouldHandle(machine.current?.generator, event, seen);
+    }
+    for (const child of this.#activeChildren(node)) {
+      if (this.#wouldHandle(child, event, seen)) return true;
+    }
+    return false;
+  }
+
+  /**
    * The events and annotations the graph raised since the last call, with their payloads
    * (src/animation/graph-events.ts: their tags pick the engine's handlers).
    */
@@ -891,6 +934,38 @@ export class BehaviorRuntime {
         clips.push({ animation: clip.animation, time: this.#clips.get(clip)?.time ?? 0 });
     }
     return clips;
+  }
+
+  /**
+   * The synchronized clip (BSSynchronizedClipGenerator) the graph plays now, if any: its clip's
+   * animation (loaded: its binding) and local time, and how its partner gets to its mark (a
+   * killmove's, a mount's).
+   */
+  synchronizedClip():
+    | {
+        readonly animation: string;
+        readonly binding: AnimationBinding | undefined;
+        readonly time: number;
+        readonly lead: boolean;
+        readonly getToMarkTime: number;
+        readonly ignoreMarkPlacement: boolean;
+        readonly reorientSupport: boolean;
+      }
+    | undefined {
+    for (const node of this.#active) {
+      const sync = node as BehaviorGenerator;
+      if (sync.kind !== 'synchronized-clip' || sync.generator?.kind !== 'clip') continue;
+      return {
+        animation: sync.generator.animation,
+        binding: this.#host.clip(sync.generator.animation),
+        time: this.#clips.get(sync.generator)?.time ?? 0,
+        lead: sync.leadCharacter,
+        getToMarkTime: sync.getToMarkTime,
+        ignoreMarkPlacement: sync.ignoreMarkPlacement,
+        reorientSupport: sync.reorientSupport,
+      };
+    }
+    return undefined;
   }
 
   /**

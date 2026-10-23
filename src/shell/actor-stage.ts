@@ -280,12 +280,14 @@ export class ActorStage {
       openDoor: (door, actor) => this.doors.passage(door, actor),
       shutTo: (actor) => this.doors.shutTo(actor),
       shutPlaces: (actor) => this.doors.shutPlaces(actor),
+      // A paired animation (a killmove) holds both actors: their clip places them.
       held: (actor) =>
         this.furniture.holds(actor) ||
         this.mounts.holds(actor) ||
         this.vehicles.holds(actor) ||
         this.flight.holds(actor) ||
-        this.knockdowns.holds(actor),
+        this.knockdowns.holds(actor) ||
+        this.combat.paired(actor),
       // The player walked into an actor: it flinches by where they came from (ActionBumpedInto's
       // idles by GetLastBumpDirection) and says its ActorCollidewithActor line.
       stopIdle: (actor) => {
