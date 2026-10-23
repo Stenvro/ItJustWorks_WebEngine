@@ -59,16 +59,18 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   Object Manager's (DOBJ DMWL and DMRN: NPC_Default_MT; DMSP: AIControlledNPC_Sprinting_MT); a
   race's MTYP + SPED gives a movement type speeds of its own. Walking and standing, the human
   graph tags nothing (NPC_Default_MT).
-- **Its graph** is driven as the engine's graph data channels do (CommonLibSSE
-  `ActorSpeedChannel`, `ActorDirectionChannel`, `ActorTurnDeltaChannel`, ...): Speed (its
-  measured speed, from physics step to step), Direction, TurnDelta (degrees per second, left
-  positive: the unit inferred from bleedoutTurnMult = |TurnDelta| / 20.5 and the horse's
-  turnSpeedMult = |TurnDelta / 112.5|, the sign from the graphs that turn left on
-  TurnDelta > 0.1: the dragon's, the Falmer's, the dwarven spheres' and centurions'), IsSprinting, IsSneaking, iSyncIdleLocomotion and the
-  movement events (moveStart, moveStop, ...). The player's body is driven the same way. The
-  graph's BSSpeedSamplerModifier turns Speed into SpeedSampled, the blend parameter of the
-  locomotion blends. Measured on Orgnar: walking 80 units per second plays MT_WalkForward,
-  running 370 MT_RunForward.
+- **Its graph** is driven as the engine's graph data channels do
+  ([animation.md](animation.md#driving-the-graphs)): Speed, Direction and TurnDelta are what
+  its steering wants in the last physics step (the velocity and the turn rate it asked of its
+  controller, not what physics made of it: an actor walking into a wall walks on the spot, as
+  the engine's do), with the actions their thresholds perform (moveStart, moveStop, turnLeft,
+  turnRight, turnStop, moveForward, moveBackward) and the sync variables they set. The player's
+  body is driven the same way. The graph's BSSpeedSamplerModifier turns Speed into
+  SpeedSampled, the blend parameter of the locomotion blends. Measured on Orgnar: walking 80
+  units per second plays MT_WalkForward, running 370 MT_RunForward. A travel that arrives on
+  the way keeps its request until the next frame, so that the next travel its AI starts at once
+  (a patrol's next point) goes on without a step of standing (a moveStop and moveStart at every
+  patrol point otherwise).
 - **Root motion:** the graph adds up, every update, how its playing clips move the actor (the
   behavior project's animation data, [formats/hkx.md](formats/hkx.md#animation-data)), each by
   its weight on the root bone (camera bobs and other partial poses leave it alone). While the
@@ -80,7 +82,11 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   AnimationDrivenDialogueIdlesStateHH) while its AI sends it somewhere, it is told it moves
   (moveStart, which MT_Standing_State leaves on, as the engine tells it for the way it wants to
   go): by its measured speed alone the idle never ended, and Lokir stood in the line while the
-  archers waited for him to run.
+  archers waited for him to run. As the graph lets go (bAnimationDriven back to 0) while it
+  still goes its way it is told again (moveStart; turnLeft / turnRight turning), as the engine
+  performs the movement action again when it stops an idle. Beyond the high process (no
+  controller) an actor held so does not go its way either: it glided (a chicken sitting in its
+  idle while it went on).
 - **Trigger volumes** see actors with controllers: OnTriggerEnter and OnTriggerLeave with the
   actor, GetTriggerObjectCount counts them; fliers in the air too ([Flying combat](#flying-combat):
   OnTriggerEnter and Leave; TODO(M13): GetTriggerObjectCount counts only those with controllers).

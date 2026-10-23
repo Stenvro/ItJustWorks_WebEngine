@@ -710,6 +710,15 @@ export class ActorMounts {
           sprinting: movers.motion(ride.horse)?.sprinting === true,
           sneaking: false,
         });
+        // As the engine's riders do: their graphs copy the horse graph's sampled speed and its
+        // locomotion sync (copy channels made as the rider mounts) every update, so that the
+        // rider's horse locomotion keeps the horse's gait.
+        const horseGraph = horse.placed.behavior;
+        for (const name of ['HorseSpeedSampled', 'iSyncIdleLocomotion']) {
+          const value = horseGraph?.variable(name);
+          if (value === undefined) continue;
+          for (const graph of graphs) graph.setVariable(name, value);
+        }
       }
     }
   }
