@@ -444,3 +444,49 @@ model holds, down to 85% of the budget. Anything used in the last 10 seconds sta
 may be about to place it), as do models attached to others as add-ons and textures never
 held by a model (terrain, sky, water, decals, precipitation: few and shared). Freed models and
 textures load again when a cell needs them.
+
+## Frame time
+
+Most of the engine's game logic is `async` code over cached records: once its reads are cached,
+a whole search (a quest's alias over the loaded area, the actors away asked where their
+packages have them) runs in microtasks within one task, and the browser draws no frame until it
+ends. Lines and quest updates were where that showed: as a scene's line set a stage, the quests
+it started searched the loaded area's ~2,000 references, and the page stood still for up to 8 s
+in the opening's cart. Measured in the browser (headless Chrome, a CPU profile and the
+long-animation-frame entries over the cart ride from Ralof's first line, 90 s):
+
+|        | worst frame | frames > 50 ms | > 100 ms | 95th / 99th percentile | non-frame work ≥ 30 ms |
+| ------ | ----------- | -------------- | -------- | ---------------------- | ---------------------- |
+| before | 8,013 ms    | 184            | 35       | 61 / 111 ms            | 38 stretches           |
+| after  | 639 ms      | 78             | 5        | 39 / 56 ms             | 3 (at most 43 ms)      |
+
+What changed, and why:
+
+- **Lookups by reference** (`world-viewer.ts`): a reference's live placement, node, graph and
+  whether it is loaded were found by searching every loaded cell's objects (Is3DLoaded built
+  every cell's list of references for each call). Conditions ask them of every candidate
+  (GetInCurrentLocation through the reference's placement): each cell's objects are now
+  indexed by reference once per list.
+- **Conditions** stop at the first failed AND, and who an alias holds and its factions are kept
+  per reference (docs/scripting.md, "Conditions", "Quests").
+- **Searches give way** after 4 ms of work (`PapyrusScheduler.giveWay`, the browser's next task
+  through a message channel): a quest's alias search and the actors away's runs spread over a
+  few frames instead of holding one.
+- **Routes** (docs/ai.md, "Routes"): a door is queued again only by a cheaper way (17 → 3.5 ms
+  a search); the compass's quest door and the actors away route on the main thread.
+- **Actors away**: a worldspace's actors are found in its persistent cell once (200 ms each
+  run before).
+
+After `setstage MQ102 10` in Riverwood (a quest completed, an objective and its compass marker
+shown, the player moved, the actors away asked again) the longest stretches outside the frame
+went from 204 ms (actors away), 159, 149, 119 and 94 ms (routes) to 66 ms (the player's move)
+and 36 ms; what is left above 50 ms is Ruffle starting the titles and fader menus' players
+(AudioContext, WebGL shaders: ~100 ms each).
+
+Voice lines are decoded in the audio worker (docs/audio.md) and subtitles and quest
+notifications cost the HUD's Ruffle player a few ms (it runs ~100 ms a second for its three
+players whatever they show); neither showed as a long task. Twice the first line of the opening
+was followed by a frame of 600–870 ms with the main thread idle (no script, no long task): the
+headless browser's GPU process presenting late, as it did every 3 s for a while in another run
+(`DXGISwapChainImageBacking::Present` blocking 450 ms in a trace). It did not come back under a
+trace: TODO(M13): check on the maintainer's GPU whether the first line's frame stalls there.

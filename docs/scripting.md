@@ -78,7 +78,9 @@ Every condition (CTDA) of the running game is valued by `ScriptRuntime.condition
 package data input, the event's data), the CTDA flags (xEdit: Or; Use aliases and Use packdata,
 which make a reference parameter an alias of the quest or a data input of the running package;
 Use global for the comparand; Swap Subject and Target), the function, the comparison; an
-OR-flagged condition joins the next. A function no evaluator values holds and is reported
+OR-flagged condition joins the next. What follows a failed AND is not valued (it cannot change
+the answer): a quest's alias search asks every reference of the loaded area, and most fail on
+their first condition. A function no evaluator values holds and is reported
 (`NOT_VALUED`): `node tools/condition-audit.ts` scans every record of the load order that has
 conditions (258 functions in use) and asks the evaluator for each with samples of its
 conditions on the player, and `tests/condition-audit.int.test.ts` fails on any it does not
@@ -171,6 +173,15 @@ quests (the College's MGR quests) may come out differently from one new game to 
   JobMerchantFaction so (in their records they are listed at −1, not members), which their
   "What have you got for sale?" asks for; the follower alias does the same with
   CurrentFollowerFaction.
+- **Searches take frames:** a matching-reference or matching-location search checks its
+  candidates 64 at a time and, after 4 ms of work, lets the browser draw a frame before it goes
+  on (`PapyrusScheduler.giveWay`, the browser's next task); a quest therefore starts over a few
+  frames, as the engine's quests start off its main loop (Papyrus waits on Start). In the
+  opening's cart the scenes' quests searched the loaded area's ~2,000 references with
+  GetInCurrentLocation and GetInFaction conditions: 200,000 conditions in one go held the page
+  for up to 8 s. TODO(M13): the engine's own share of a frame for quest start-up. Who an alias
+  holds is kept per reference (`aliasesHolding`; the player is in hundreds of aliases), and the
+  alias factions read from it once per change (`ActorEngine`).
 
 ## The world
 

@@ -735,6 +735,11 @@ export class ScriptRuntime implements VmHost {
   #warn: (message: string) => void;
   /** References → the aliases that hold them ("quest:alias"). */
   readonly #aliasesOf = new Map<number, Set<string>>();
+  /** aliasesHolding's answers, kept until the reference's aliases change (conditions ask often). */
+  readonly #holding = new Map<
+    number,
+    readonly { readonly quest: number; readonly alias: number }[]
+  >();
   readonly #updates = new Map<string, number>();
   #updateToken = 1;
   /** Animation event registrations: sender → event → receivers (handle keys and handles). */
@@ -1002,19 +1007,26 @@ export class ScriptRuntime implements VmHost {
     const set = this.#aliasesOf.get(reference) ?? new Set();
     set.add(`${String(quest)}:${String(alias)}`);
     this.#aliasesOf.set(reference, set);
+    this.#holding.delete(reference);
   }
 
   aliasCleared(quest: number, alias: number, reference: number): void {
     this.#aliasesOf.get(reference)?.delete(`${String(quest)}:${String(alias)}`);
+    this.#holding.delete(reference);
     this.quests.filler.released(quest, alias, reference);
   }
 
   /** The aliases that hold a reference. */
-  aliasesHolding(reference: number): { quest: number; alias: number }[] {
-    return [...(this.#aliasesOf.get(reference) ?? [])].map((key) => {
-      const [quest = 0, alias = 0] = key.split(':').map(Number);
-      return { quest, alias };
-    });
+  aliasesHolding(reference: number): readonly { readonly quest: number; readonly alias: number }[] {
+    let holding = this.#holding.get(reference);
+    if (!holding) {
+      holding = [...(this.#aliasesOf.get(reference) ?? [])].map((key) => {
+        const [quest = 0, alias = 0] = key.split(':').map(Number);
+        return { quest, alias };
+      });
+      this.#holding.set(reference, holding);
+    }
+    return holding;
   }
 
   forceAlias(quest: number, alias: number, filled: number): void {
@@ -1582,7 +1594,7 @@ export class ScriptRuntime implements VmHost {
         Math.floor(at.position[1] / 4096),
       );
     }
-    return cell === undefined ? undefined : (await this.forms.record(cell))?.formIdField('XLCN');
+    return cell === undefined ? undefined : this.#cellLocation(cell);
   }
 
   /**
@@ -2565,7 +2577,6 @@ export class ScriptRuntime implements VmHost {
     event?: StoryEventData,
     context: ConditionsContext = {},
   ): Promise<boolean> {
-    let result = true;
     let group: boolean | undefined;
     for (const condition of conditions) {
       // Swap Subject and Target: what runs on the one runs on the other.
@@ -2595,11 +2606,15 @@ export class ScriptRuntime implements VmHost {
       }
       if (condition.or) group = (group ?? false) || holds;
       else {
-        result = result && (group === undefined ? holds : group || holds);
+        const passed = group === undefined ? holds : group || holds;
         group = undefined;
+        // What comes after is ANDed on: once false, nothing changes the answer. (A quest's
+        // alias search asks this of every reference of the loaded area: 200,000 conditions in
+        // the opening's cart, most of them after the first had failed.)
+        if (!passed) return false;
       }
     }
-    return group === undefined ? result : result && group;
+    return group ?? true;
   }
 
   /** What a condition runs on: a handle, nothing (it fails), or what is not known yet. */
