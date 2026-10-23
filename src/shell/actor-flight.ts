@@ -521,7 +521,7 @@ export class ActorFlight {
     this.#options.movers.release(reference);
     this.#tween(behavior, flier.staged.position, flier.staged.heading, flier.staged.heading);
     void this.#options.furniture
-      .playAction(this.#options.userOf(flier.staged), 'ActionFlyStart', undefined, true)
+      .playAction(this.#options.userOf(flier.staged), 'ActionFlyStart')
       .then((played) => {
         if (!played) behavior.sendEvent('FlyStartCruise');
       })
