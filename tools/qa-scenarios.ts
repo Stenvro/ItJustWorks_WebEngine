@@ -46,6 +46,18 @@ const BANDITS = [0x3de91, 0x3dea5, 0x9a549];
 const GUARDS = [0xaa8fc, 0xaa8fd, 0xaa901];
 
 /**
+ * Actor bases of every kind of skeleton (NPC_ form ids of Skyrim.esm): a bandit, a guard, a
+ * draugr, a skeleton, wolf, bear, horse, dog, cow, deer, skeever, troll, sabre cat, spriggan,
+ * falmer, chaurus, Dwemer spider and sphere, giant, mammoth, hagraven, ice wraith, flame
+ * atronach, werewolf, horker, chicken, fox, elk.
+ */
+const DEATH_ACTORS = [
+  0x3de91, 0xaa8fc, 0xe989e, 0x2d1de, 0x23abe, 0x23a8a, 0x68d5b, 0x23a92, 0x23a90, 0xcf89d, 0x23ab7,
+  0x23aba, 0x23ab5, 0x23ab9, 0x23a99, 0xa5600, 0x10ec86, 0x10ec89, 0x23aae, 0x101580, 0x23ab0,
+  0x23ab3, 0x23aa6, 0x23abc, 0x23ab1, 0xa91a0, 0x829b3, 0x23a91,
+];
+
+/**
  * The follow bot (in the page): it walks the player to the nearest target of the active quests'
  * shown objectives (the compass's quest marker: "Follow Ralof", "Follow Hadvar", the keep's
  * door), along the navmesh (src/ai/pathfinding.ts), through the load door on the way when the
@@ -286,6 +298,44 @@ export const SCENARIOS: readonly Scenario[] = [
         20000,
       );
       ctx.note('combat started: each bandit against a guard');
+    },
+  },
+  {
+    name: 'deaths',
+    description:
+      'Riverwood at 12:00: 28 kinds of actors (people, draugr, skeletons, animals, Dwemer machines, giants, a mammoth, atronachs) placed in a ring around the player and killed by script; their deaths and ragdolls watched.',
+    start: { kind: 'coc', cell: 'Riverwood' },
+    hour: 12,
+    bootSeconds: 240,
+    seconds: 75,
+    setup: async (ctx) => {
+      await ctx.console('tgm');
+      const placed = await ctx.page.eval<string>(
+        `(async () => {
+          const rt = engineDev.play().session.scriptsReady;
+          const at = await rt.placement(0x14);
+          const bases = ${JSON.stringify(DEATH_ACTORS)};
+          const placed = [];
+          for (const [i, base] of bases.entries()) {
+            const a = (i / bases.length) * Math.PI * 2;
+            const reference = await rt.placeAt(base, 0x14, 1);
+            const [x, y, z] = at.position;
+            rt.move(reference, [x + Math.cos(a) * 700, y + Math.sin(a) * 700, z + 40], [...at.rotation], at.cell, at.world);
+            rt.world.moved?.(reference);
+            placed.push(reference);
+          }
+          window.__qaDeaths = placed;
+          return placed.map((r) => r.toString(16)).join(',');
+        })()`,
+        120000,
+      );
+      ctx.note(`placed ${placed}`);
+      await sleepMs(10000);
+      await ctx.page.eval(
+        `(async () => { const rt = engineDev.play().session.scriptsReady; for (const r of window.__qaDeaths) await rt.actors.scriptKill(r, 0x14); return true; })()`,
+        60000,
+      );
+      ctx.note('all killed by script');
     },
   },
   {

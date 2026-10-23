@@ -87,6 +87,8 @@ const FRAMES: QaSubject = { id: 'frames', name: 'frames', kind: 'log' };
  */
 const CORPSE_UPRIGHT = 0.6;
 const CORPSE_SECONDS = 5;
+/** A corpse's ragdoll with a body still awake this long (seconds) has not come to rest. */
+const RESTLESS_SECONDS = 20;
 
 /** How high a node of a model-space pose (16 floats per node) is in the world. */
 function headHeight(worlds: Float32Array, node: number, world: ArrayLike<number>): number {
@@ -897,6 +899,15 @@ export class QaHarness {
     const stage = world.actorStage;
     if (!stage) return;
     const seen = new Set<number>();
+    // The awake simulated bodies of each actor's ragdoll.
+    const awake = new Map<number, number>();
+    const physics = world.play?.physics;
+    physics?.world.bodies.forEach((body) => {
+      if (!body.isDynamic() || body.isSleeping() || body.numColliders() === 0) return;
+      const owner = physics.ownerOf(body.collider(0));
+      if (owner?.kind === 'actor')
+        awake.set(owner.reference, (awake.get(owner.reference) ?? 0) + 1);
+    });
     for (const staged of stage.all()) {
       if (!(staged.dead || staged.placed.actor.startsDead) || staged.visibility.hidden) continue;
       const instance = staged.placed.instances[0];
@@ -914,8 +925,41 @@ export class QaHarness {
           )
           .find((node) => node !== undefined);
         const rest = head === undefined ? 0 : (new ActorPose(skeleton).worlds[head * 16 + 14] ?? 0);
-        corpse = { head, rest, episode: new Episode(CORPSE_SECONDS, 1) };
+        corpse = {
+          head,
+          rest,
+          episode: new Episode(CORPSE_SECONDS, 1),
+          restless: new Episode(RESTLESS_SECONDS, 1),
+        };
         this.#corpses.set(reference, corpse);
+      }
+      const subject: QaSubject = {
+        id: hex(reference),
+        name: look.name || look.editorId || hex(reference),
+        kind: /horse/i.test(look.raceEditorId)
+          ? 'horse'
+          : look.faceGen !== undefined
+            ? 'npc'
+            : 'creature',
+      };
+      const context = staged.placed.actor.startsDead
+        ? `placed dead (${look.editorId})`
+        : 'died here';
+      const stirring = awake.get(reference) ?? 0;
+      if (corpse.restless.update(stirring > 0, dt, stirring) === 'begin') {
+        this.#add({
+          kind: 'ragdoll-restless',
+          subject,
+          time: this.#now(),
+          gameHour: this.#host.session()?.scriptsReady?.gameHour,
+          position: [staged.position[0], staged.position[1], staged.position[2]],
+          cell: staged.cell,
+          context,
+          detail: `dead, its ragdoll still stirs (${String(stirring)} bodies awake) after ${String(RESTLESS_SECONDS)} s`,
+          values: { awake: stirring },
+          severity: stirring,
+          duration: corpse.restless.duration,
+        });
       }
       if (corpse.head === undefined) continue;
       const scale = staged.placed.actor.scale * look.scale;
@@ -926,20 +970,12 @@ export class QaHarness {
       const span = height;
       this.#add({
         kind: 'corpse-upright',
-        subject: {
-          id: hex(reference),
-          name: look.name || look.editorId || hex(reference),
-          kind: /horse/i.test(look.raceEditorId)
-            ? 'horse'
-            : look.faceGen !== undefined
-              ? 'npc'
-              : 'creature',
-        },
+        subject,
         time: this.#now(),
         gameHour: this.#host.session()?.scriptsReady?.gameHour,
         position: [staged.position[0], staged.position[1], staged.position[2]],
         cell: staged.cell,
-        context: staged.placed.actor.startsDead ? `placed dead (${look.editorId})` : 'died here',
+        context,
         detail: `dead, but its head is ${Math.round(span)} units up (${Math.round((100 * span) / (corpse.rest * scale))} % of its standing height): no ragdoll laid it down`,
         values: { head: Math.round(span), standing: Math.round(corpse.rest * scale) },
         severity: span,
@@ -952,7 +988,13 @@ export class QaHarness {
 
   readonly #corpses = new Map<
     number,
-    { readonly head: number | undefined; readonly rest: number; readonly episode: Episode }
+    {
+      readonly head: number | undefined;
+      readonly rest: number;
+      readonly episode: Episode;
+      /** Whether its ragdoll keeps a body awake (ragdoll-restless). */
+      readonly restless: Episode;
+    }
   >();
 
   /** Scenes whose phase stands while none of their actors moves. */

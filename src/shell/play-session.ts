@@ -6,6 +6,7 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
+import { RagdollPenetration } from '../physics/ragdoll-penetration.ts';
 import { HAVOK_SCALE, settlesWhenPlaced, type CollisionData } from '../physics/collision-data.ts';
 import { GrabSpring } from '../physics/grab.ts';
 import {
@@ -38,7 +39,8 @@ import type { ActorMotion, ScriptRuntime } from '../scripting/runtime/runtime.ts
 import type { Player } from './player.ts';
 import { attachPlayerInput } from './player-input.ts';
 import type { HudSignals } from './hud-signals.ts';
-import type { ActorTarget } from './actors.ts';
+import { bodyOnPose, poseRagdoll, type ActorTarget } from './actors.ts';
+import type { RagdollData } from '../world/ragdoll-data.ts';
 
 /**
  * How long the sandbox's notice stays (it has no HUD); also how long a notification repeated
@@ -376,6 +378,8 @@ export interface CollisionGroup {
   readonly posed: PosedCollision[];
   /** Objects whose bodies move their nodes one by one (ragdolls, hinged signs, chains). */
   readonly articulated: Articulation[];
+  /** The dead's ragdolls watched for limbs through the world (src/physics/ragdoll-penetration.ts). */
+  readonly penetrations: RagdollPenetration[];
   /** What waits for all of it to be in place (actors set on the ground). */
   readonly whenComplete: (() => void)[];
 }
@@ -417,6 +421,7 @@ export function collisionGroup(): CollisionGroup {
     animated: [],
     posed: [],
     articulated: [],
+    penetrations: [],
     whenComplete: [],
   };
 }
@@ -458,6 +463,10 @@ export interface CellRagdoll {
    * out of collision (src/shell/actor-dismemberment.ts).
    */
   readonly severed?: ReadonlySet<string>;
+  /** Where the Creation Kit left its bodies (XRGD: src/world/ragdoll-data.ts). */
+  readonly ragdoll?: RagdollData;
+  /** "Don't Havok Settle": without a ragdoll pose, it lies as placed until touched. */
+  readonly dontHavokSettle?: boolean;
 }
 
 export class PlaySession {
@@ -811,7 +820,14 @@ export class PlaySession {
     if (this.#completed.length > 0 && this.physics.queriesCurrent) {
       for (const run of this.#completed.splice(0)) run();
     }
-    // Ragdolls and hinged objects: their nodes go where their bodies went.
+    // The dead's limbs through the world come back; ragdolls and hinged objects: their nodes go
+    // where their bodies went.
+    for (const group of this.#groups) {
+      const watched = group.penetrations;
+      for (let i = watched.length - 1; i >= 0; i--) {
+        if (watched[i]?.update(deltaSeconds) === false) watched.splice(i, 1);
+      }
+    }
     for (const group of this.#groups) for (const entry of group.articulated) entry.update();
     // Simulated objects that move take their drawn models along.
     for (const group of this.#groups) {
@@ -1253,7 +1269,13 @@ export class PlaySession {
       tasks.push(() => {
         const { vertices, indices } = landscapeMesh(land.data, land.x, land.y);
         group.collision.push(
-          physics.addMesh(vertices, indices, Layer.ground, { reference: 0, kind: 'landscape' }),
+          physics.addMesh(
+            vertices,
+            indices,
+            Layer.ground,
+            { reference: 0, kind: 'landscape' },
+            true,
+          ),
         );
       });
     }
@@ -1261,7 +1283,10 @@ export class PlaySession {
       if (!collision || collision.bodies.length === 0) continue;
       tasks.push(() => {
         // Asleep until the cell's collision is complete (nothing to rest on before that).
-        const moved = posedNodes(instance);
+        // The wind sways a tree's look, not its collision: its trunk's body is fixed in the
+        // file, and Havok moves only keyframed bodies with their nodes (a swaying trunk's
+        // kinematic body kept every corpse and loose object against it stirring).
+        const moved = object.treeSway ? undefined : posedNodes(instance);
         const placed = physics.addObject(
           collision,
           object.world,
@@ -1298,21 +1323,38 @@ export class PlaySession {
       const collision = ragdoll.collision;
       if (!collision?.bodies.some((body) => body.motion === 'dynamic' && !body.phantom)) continue;
       tasks.push(() => {
-        // Its bodies start in the skeleton's rest pose, as its nodes do.
+        // Its bodies start in its placed ragdoll pose (XRGD), else the skeleton's rest pose, as
+        // its nodes do.
         ragdoll.pose.update(undefined);
+        const rest = ragdoll.pose.worlds.slice();
+        const posed = poseRagdoll(ragdoll.pose, collision, ragdoll.ragdoll);
         const placed = physics.addObject(
           collision,
           ragdoll.world,
           { reference: ragdoll.reference, kind: 'actor' },
           false,
         );
+        if (posed && posed.locals.size > 0) {
+          physics.poseBodies(placed, ragdoll.world, ({ data }) =>
+            bodyOnPose(ragdoll.pose, rest, data),
+          );
+        }
+        // The dead lie on the dead bodies' layer (observed in the original: set as a dead
+        // actor's Havok is set up).
+        physics.setLayer(placed, Layer.deadBip);
         group.collision.push(placed);
         if (cell.isEnabled?.(ragdoll.reference) === false) physics.setEnabled(placed, false);
         for (const body of placed.bodies) {
           if (ragdoll.severed?.has(body.data.node.toLowerCase())) physics.disableBody(body);
         }
-        if (placed.dynamic) group.settle.push(placed);
+        // Observed in the original: a complete placed pose leaves the bodies where they
+        // are (simulated and at rest: here held until something touches them); one that
+        // stopped at a mismatch sets them going; without one they are set falling (but those
+        // flagged "Don't Havok Settle").
+        const settles = posed ? !posed.complete : ragdoll.dontHavokSettle !== true;
+        if (placed.dynamic && settles) group.settle.push(placed);
         group.articulated.push(new Articulation(placed, ragdoll.pose, ragdoll.world));
+        group.penetrations.push(new RagdollPenetration(physics, placed, ragdoll.reference));
       });
     }
     for (const primitive of cell.primitives) {
@@ -1380,6 +1422,7 @@ export class PlaySession {
     group.animated.length = 0;
     group.posed.length = 0;
     group.articulated.length = 0;
+    group.penetrations.length = 0;
     group.settle.length = 0;
     group.whenComplete.length = 0;
     group.ready = false;

@@ -17,6 +17,7 @@ import {
 } from './collision-data.ts';
 import { Layer, LayerFlag, type CollisionMatrix } from './collision-layers.ts';
 import type { BodyPush } from '../gameplay/magic/explosions.ts';
+import { PENETRATION_DEFAULTS, type PenetrationSettings } from './ragdoll-penetration.ts';
 
 export type Rapier = typeof RAPIER;
 
@@ -101,6 +102,16 @@ const DEPENETRATE_SECONDS = 0.5;
  * pheasant's hook set into a beam would push its body against its hinges for good, swinging.
  */
 const HUNG_OVERLAP = 1 / HAVOK_SCALE;
+/**
+ * Havok's deactivation (PhysicsWorld.#deactivate): how far a body may wander from its reference
+ * (Havok units: hkpWorldCinfo's default deactivation reference distance), how far it may turn
+ * (radians), how often it is checked and how long a system must stay so (seconds). TODO(M13):
+ * Havok's defaults; the engine's own world settings are not read.
+ */
+const DEACTIVATION_DISTANCE = 0.02;
+const DEACTIVATION_TURN = 0.05;
+const DEACTIVATION_CHECK = 0.25;
+const DEACTIVATION_SECONDS = 1;
 
 /** What a collider belongs to: a placed reference, the landscape, an actor. */
 export interface PhysicsOwner {
@@ -393,6 +404,16 @@ interface RawJointLimits {
  */
 const JOINT_FRICTION_GAIN = 1000;
 
+/*
+ * ANGLES_MIRRORED: Rapier measures a joint's angles as its second body's frame turned from its
+ * first's; the files' limits are of the opposite turn. Read from the data (node
+ * tools/ragdoll-info.ts --limits): of 12,149 limited hinges in the 1,257 complete placed ragdoll
+ * poses (XRGD: the Creation Kit's settled Havok state), 60 % lie within their limits as Rapier
+ * measures them, 97 % mirrored; of the ragdoll joints' plane angles 90 % against 97 % (twists
+ * are about symmetric). Unmirrored, knees and elbows bent only the wrong way, and a dying pose's
+ * bent knee started past its limit and snapped back.
+ */
+
 function cross(a: Vec3, b: Vec3): Vec3 {
   return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
 }
@@ -494,6 +515,8 @@ export class PhysicsWorld {
   }[] = [];
   /** Collider pairs that never collide: a hung body and what it was placed into. */
   readonly #ignoredPairs = new Set<string>();
+  /** Colliders that collide with nothing for now (setPassThrough). */
+  readonly #passing = new Set<number>();
   /**
    * Simulated bodies placed to wait (until their cell settles, or for good: "Don't Havok
    * Settle", statics). Havok leaves a deactivated body where it is until an active one touches
@@ -510,6 +533,16 @@ export class PhysicsWorld {
    * maximum linear velocity (Havok units per second) and angular velocity (radians per second).
    */
   readonly #limits = new Map<number, { readonly linear: number; readonly angular: number }>();
+  /**
+   * Where each awake simulated body was when it last moved (its deactivation reference: the
+   * position in Havok units and the rotation), and for how long it has stayed near it.
+   */
+  readonly #still = new Map<
+    number,
+    { x: number; y: number; z: number; rotation: RAPIER.Rotation; seconds: number }
+  >();
+  /** Simulated seconds since the deactivation was last checked. */
+  #sinceDeactivation = 0;
   /** Simulated seconds. */
   #time = 0;
   /** Collision was placed or removed since the last step (queries do not see it yet). */
@@ -533,6 +566,11 @@ export class PhysicsWorld {
    * DEBRIS_QUALITY); set before placing objects.
    */
   debris: DebrisQuality = DEBRIS_QUALITY;
+  /**
+   * How the dead's ragdolls are watched for limbs through the world ([RagdollAnim]
+   * fDetectionUpdateTimeSec, fDesiredVel, fImpulseLimit: src/physics/ragdoll-penetration.ts).
+   */
+  penetration: PenetrationSettings = PENETRATION_DEFAULTS;
 
   /** `gravity`: Havok units per second² (downwards). Call initPhysics() first. */
   constructor(matrix: CollisionMatrix, gravity: number) {
@@ -544,10 +582,12 @@ export class PhysicsWorld {
     const systems = this.#systems;
     // Havok's group filter: layers that collide, and never two bodies of one object's system.
     const ignored = this.#ignoredPairs;
+    const passing = this.#passing;
     const collides = (a: number, b: number): boolean => {
       const system = systems.get(a);
       if (system !== undefined && system === systems.get(b)) return false;
       if (ignored.size > 0 && ignored.has(pairKey(a, b))) return false;
+      if (passing.size > 0 && (passing.has(a) || passing.has(b))) return false;
       return matrix.collides(layers.get(a) ?? 0, layers.get(b) ?? 0);
     };
     this.#hooks = {
@@ -594,6 +634,7 @@ export class PhysicsWorld {
     this.#owners.delete(collider.handle);
     this.#materials.delete(collider.handle);
     this.#objectMaterials.delete(collider.handle);
+    this.#passing.delete(collider.handle);
   }
 
   /** The material id (MATT) of a collider's surface; 0 if unknown. */
@@ -885,7 +926,8 @@ export class PhysicsWorld {
         joint.setLocalFrame1(point(data.a.pivot), frame(data.a.axes));
         joint.setLocalFrame2(point(data.b.pivot), frame(data.b.axes));
         if (data.type === 'limited-hinge') {
-          limit(joint, RAPIER.JointAxis.AngX, data.minAngle, data.maxAngle);
+          // The angles mirrored (ANGLES_MIRRORED).
+          limit(joint, RAPIER.JointAxis.AngX, -data.maxAngle, -data.minAngle);
           friction(joint, [RAPIER.JointAxis.AngX], data.maxFriction);
         }
         return joint;
@@ -909,13 +951,14 @@ export class PhysicsWorld {
         joint.setLocalFrame1(point(data.a.pivot), frame(data.a.axes));
         joint.setLocalFrame2(point(data.b.pivot), frame(data.b.axes));
         const cone = Math.abs(data.coneMaxAngle);
-        limit(joint, RAPIER.JointAxis.AngX, data.twistMinAngle, data.twistMaxAngle);
+        // The twist and the plane's angles mirrored (ANGLES_MIRRORED); the cone is symmetric.
+        limit(joint, RAPIER.JointAxis.AngX, -data.twistMaxAngle, -data.twistMinAngle);
         limit(joint, RAPIER.JointAxis.AngY, -cone, cone);
         limit(
           joint,
           RAPIER.JointAxis.AngZ,
-          Math.max(-cone, data.planeMinAngle),
-          Math.min(cone, data.planeMaxAngle),
+          Math.max(-cone, -data.planeMaxAngle),
+          Math.min(cone, -data.planeMinAngle),
         );
         friction(
           joint,
@@ -1057,18 +1100,29 @@ export class PhysicsWorld {
     body.body.setNextKinematicRotation(matrixQuaternion(pose));
   }
 
-  /** Landscape (or any fixed triangle mesh) in game units, world space. */
+  /**
+   * Landscape (or any fixed triangle mesh) in game units, world space. With `ground`: a landscape,
+   * its triangles facing up (counter-clockwise seen from above): solid from above only, as
+   * Havok's landscape is, so a body that went under it is not held there (its contacts from
+   * below are dropped and its joints bring it back up), and nothing catches on the edges
+   * between its triangles.
+   */
   addMesh(
     vertices: Float32Array,
     indices: Uint32Array,
     layer: number,
     owner: PhysicsOwner,
+    ground = false,
   ): PlacedCollision {
     const body = this.world.createRigidBody(RAPIER.RigidBodyDesc.fixed());
     const scaled = new Float32Array(vertices.length);
     for (let i = 0; i < vertices.length; i++) scaled[i] = (vertices[i] ?? 0) / HAVOK_SCALE;
     const collider = this.world.createCollider(
-      RAPIER.ColliderDesc.trimesh(scaled, indices)
+      RAPIER.ColliderDesc.trimesh(
+        scaled,
+        indices,
+        ground ? RAPIER.TriMeshFlags.FIX_INTERNAL_EDGES : undefined,
+      )
         .setFriction(Math.sqrt(0.5))
         .setFrictionCombineRule(RAPIER.CoefficientCombineRule.Multiply),
       body,
@@ -1110,6 +1164,7 @@ export class PhysicsWorld {
       if (this.#held.size > 0) this.#releaseTouched();
       if (this.#hungToCheck.length > 0) this.#ignoreHungOverlaps();
       if (this.#breakable.size > 0) this.#breakJoints();
+      this.#deactivate();
       this.#collectImpacts();
       this.#accumulator -= this.stepSeconds;
       steps++;
@@ -1470,13 +1525,20 @@ export class PhysicsWorld {
   /**
    * A push that adds the same speed along `direction` to each of a placement's simulated bodies
    * (Havok units a second; set as velocity, so it holds for bodies just made dynamic, whose
-   * masses the next step computes), so a ragdoll flies off as one.
+   * masses the next step computes), so a ragdoll flies off as one; `factor`: a share of it per
+   * body (a death's push by biped part).
    */
-  kick(placed: PlacedCollision, direction: Vec3, speed: number): void {
+  kick(
+    placed: PlacedCollision,
+    direction: Vec3,
+    speed: number,
+    factor?: (body: CollisionBody) => number,
+  ): void {
     const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;
-    const scale = speed / length;
     for (const { body, data } of placed.bodies) {
       if (!dynamicBody(data)) continue;
+      const scale = (speed * (factor ? factor(data) : 1)) / length;
+      if (scale === 0) continue;
       this.release(body);
       const v = body.linvel();
       body.setLinvel(
@@ -1488,6 +1550,97 @@ export class PhysicsWorld {
         true,
       );
     }
+  }
+
+  /**
+   * Moves a placement's simulated bodies to another layer (a death: the ragdoll's bodies go to
+   * L_DEADBIP, which corpses lie on: they meet clutter, weapons, projectiles and one another,
+   * and no character controller). Phantoms keep theirs.
+   */
+  setLayer(placed: PlacedCollision, layer: number): void {
+    for (const { body, data } of placed.bodies) {
+      if (!dynamicBody(data)) continue;
+      for (let i = 0; i < body.numColliders(); i++)
+        this.#layers.set(body.collider(i).handle, layer);
+    }
+    this.#changed = true;
+  }
+
+  /**
+   * Places a placement's bodies at once at poses of their own (`modelPose`: a body's pose in the
+   * model, game units, rotation and translation; undefined: it stays) under the placement
+   * `world`: a placed ragdoll pose's bodies where its nodes are. Simulated bodies keep still.
+   */
+  poseBodies(
+    placed: PlacedCollision,
+    world: Mat4,
+    modelPose: (body: PlacedBody) => Mat4 | undefined,
+  ): void {
+    const pose = new Float32Array(16);
+    for (const entry of placed.bodies) {
+      const model = modelPose(entry);
+      if (!model) continue;
+      const local = rigidPart(model);
+      local[12] = (local[12] ?? 0) * placed.scale;
+      local[13] = (local[13] ?? 0) * placed.scale;
+      local[14] = (local[14] ?? 0) * placed.scale;
+      multiplyInto(rigidPart(world), local, pose);
+      const body = entry.body;
+      body.setTranslation(
+        { x: toHavok(pose[12] ?? 0), y: toHavok(pose[13] ?? 0), z: toHavok(pose[14] ?? 0) },
+        false,
+      );
+      body.setRotation(matrixQuaternion(pose), false);
+    }
+    this.#changed = true;
+  }
+
+  /**
+   * A placement's bodies find their contacts with fixed bodies while they are keyframed too (an
+   * actor's ragdoll following its death animation: its graph waits for a body to touch the
+   * ground, BSRagdollContactListenerModifier; Havok reports such contacts, Rapier computes none
+   * between kinematic and fixed bodies unless asked).
+   */
+  findFixedContacts(placed: PlacedCollision): void {
+    const types = RAPIER.ActiveCollisionTypes.DEFAULT | RAPIER.ActiveCollisionTypes.KINEMATIC_FIXED;
+    for (const { body, data } of placed.bodies) {
+      if (data.phantom) continue;
+      for (let i = 0; i < body.numColliders(); i++) body.collider(i).setActiveCollisionTypes(types);
+    }
+  }
+
+  /**
+   * Takes a simulated body out of collision with anything, or puts it back (its joints hold
+   * on): a ragdoll's limb that went through the ground passes back through it
+   * (src/physics/ragdoll-penetration.ts).
+   */
+  setPassThrough(placed: PlacedBody, through: boolean): void {
+    const body = placed.body;
+    for (let i = 0; i < body.numColliders(); i++) {
+      const handle = body.collider(i).handle;
+      if (through) this.#passing.add(handle);
+      else this.#passing.delete(handle);
+    }
+  }
+
+  /** Whether a body passes through everything (setPassThrough). */
+  passesThrough(placed: PlacedBody): boolean {
+    const body = placed.body;
+    return body.numColliders() > 0 && this.#passing.has(body.collider(0).handle);
+  }
+
+  /**
+   * An impulse (Havok units, kg·m/s) on one body at a point (game units): it turns as well as
+   * moves.
+   */
+  pointImpulse(placed: PlacedBody, impulse: Vec3, point: Vec3): void {
+    const body = placed.body;
+    if (!body.isValid() || !body.isDynamic()) return;
+    body.applyImpulseAtPoint(
+      { x: impulse[0], y: impulse[1], z: impulse[2] },
+      { x: toHavok(point[0]), y: toHavok(point[1]), z: toHavok(point[2]) },
+      true,
+    );
   }
 
   /**
@@ -1535,11 +1688,27 @@ export class PhysicsWorld {
     return found;
   }
 
-  /** A held body moves from now on (settled, touched, taken hold of); others are left. */
+  /**
+   * A held body moves from now on (settled, touched, taken hold of), and so do the other held
+   * bodies of its system (a ragdoll, a hinged object: one of its bodies let go alone hung,
+   * simulated, on its still-held neighbours' joints and shook there for good); others are left.
+   */
   release(body: RAPIER.RigidBody): void {
     if (!this.#held.delete(body.handle)) return;
-    body.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
-    this.#syncJoints([body]);
+    const released = [body];
+    const system =
+      body.numColliders() > 0 ? this.#systems.get(body.collider(0).handle) : undefined;
+    if (system !== undefined) {
+      for (const handle of [...this.#held]) {
+        const other = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
+        if (!other || other.numColliders() === 0) continue;
+        if (this.#systems.get(other.collider(0).handle) !== system) continue;
+        this.#held.delete(handle);
+        released.push(other);
+      }
+    }
+    for (const each of released) each.setBodyType(RAPIER.RigidBodyType.Dynamic, true);
+    this.#syncJoints(released);
   }
 
   /** Something moving (the player's shape) touched a collider: a held body under it moves. */
@@ -1643,6 +1812,80 @@ export class PhysicsWorld {
       if (turn > limit.angular) {
         const k = limit.angular / turn;
         body.setAngvel({ x: w.x * k, y: w.y * k, z: w.z * k }, false);
+      }
+    }
+  }
+
+  /**
+   * Havok's deactivation (inferred from Havok's documented behaviour, TODO(M13): the engine's
+   * world settings are not read): a body is inactive while it stays within
+   * DEACTIVATION_DISTANCE (and DEACTIVATION_TURN) of where it was when it last moved, however
+   * it shakes there, and a system of bodies (a ragdoll, a hinged object) that has been inactive
+   * for DEACTIVATION_SECONDS as a whole goes to sleep, until something wakes it. Rapier sends
+   * bodies to sleep by their speed alone: a ragdoll whose limbs tremble on a slope or against
+   * a rock (stacked joints and contacts never quite at rest) never slept.
+   */
+  #deactivate(): void {
+    this.#sinceDeactivation += this.stepSeconds;
+    if (this.#sinceDeactivation < DEACTIVATION_CHECK) return;
+    const elapsed = this.#sinceDeactivation;
+    this.#sinceDeactivation = 0;
+    const still = this.#still;
+    const seen = new Set<number>();
+    // Per system (its colliders' system; a lone body is its own): awake bodies and whether all
+    // of them have stayed still long enough.
+    const systems = new Map<string, { bodies: RAPIER.RigidBody[]; resting: boolean }>();
+    this.world.bodies.forEach((body) => {
+      if (!body.isDynamic() || body.isSleeping() || !body.isEnabled()) return;
+      const handle = body.handle;
+      seen.add(handle);
+      const t = body.translation();
+      const q = body.rotation();
+      let entry = still.get(handle);
+      const turned =
+        entry === undefined
+          ? Infinity
+          : 2 *
+            Math.acos(
+              Math.min(
+                1,
+                Math.abs(
+                  entry.rotation.x * q.x +
+                    entry.rotation.y * q.y +
+                    entry.rotation.z * q.z +
+                    entry.rotation.w * q.w,
+                ),
+              ),
+            );
+      if (
+        !entry ||
+        Math.hypot(t.x - entry.x, t.y - entry.y, t.z - entry.z) > DEACTIVATION_DISTANCE ||
+        turned > DEACTIVATION_TURN
+      ) {
+        entry = { x: t.x, y: t.y, z: t.z, rotation: q, seconds: 0 };
+        still.set(handle, entry);
+      } else {
+        entry.seconds += elapsed;
+      }
+      const collider = body.numColliders() > 0 ? body.collider(0) : undefined;
+      const system = collider ? this.#systems.get(collider.handle) : undefined;
+      const key = system === undefined ? 'b' + String(handle) : 's' + String(system);
+      let group = systems.get(key);
+      if (!group) {
+        group = { bodies: [], resting: true };
+        systems.set(key, group);
+      }
+      group.bodies.push(body);
+      if (entry.seconds < DEACTIVATION_SECONDS || this.#settling.has(handle)) group.resting = false;
+    });
+    for (const handle of still.keys()) if (!seen.has(handle)) still.delete(handle);
+    for (const { bodies, resting } of systems.values()) {
+      if (!resting) continue;
+      for (const body of bodies) {
+        body.setLinvel({ x: 0, y: 0, z: 0 }, false);
+        body.setAngvel({ x: 0, y: 0, z: 0 }, false);
+        body.sleep();
+        still.delete(body.handle);
       }
     }
   }
@@ -1792,6 +2035,58 @@ export class PhysicsWorld {
       owner: this.ownerOf(hit.collider),
       material: this.materialOf(hit.collider),
     };
+  }
+
+  /**
+   * Whether a surface that `layer` collides with lies between two points (game units), not of
+   * the actor `ignore`: the ray from `from` to `to`, and if it meets nothing the ray back (a
+   * surface met from behind); where, and the surface's normal as the ray met it. Rays start on
+   * surfaces, not in solids (a point inside a rock is no hit).
+   */
+  segmentHit(
+    from: Vec3,
+    to: Vec3,
+    layer: number,
+    ignore?: number,
+  ): { readonly point: Vec3; readonly normal: Vec3 } | undefined {
+    const collides = this.filterFor(layer);
+    const filter = (collider: RAPIER.Collider): boolean => {
+      const owner = this.ownerOf(collider);
+      if (ignore !== undefined && owner?.kind === 'actor' && owner.reference === ignore) {
+        return false;
+      }
+      return collides(collider);
+    };
+    const cast = (a: Vec3, b: Vec3): { point: Vec3; normal: Vec3 } | undefined => {
+      const way: Vec3 = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+      const length = Math.hypot(...way);
+      if (length < 1e-6) return undefined;
+      const ray = new RAPIER.Ray(
+        { x: toHavok(a[0]), y: toHavok(a[1]), z: toHavok(a[2]) },
+        { x: way[0] / length, y: way[1] / length, z: way[2] / length },
+      );
+      const hit = this.world.castRayAndGetNormal(
+        ray,
+        toHavok(length),
+        false,
+        RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+        undefined,
+        undefined,
+        undefined,
+        filter,
+      );
+      if (!hit) return undefined;
+      const along = hit.timeOfImpact * HAVOK_SCALE;
+      return {
+        point: [
+          a[0] + (way[0] / length) * along,
+          a[1] + (way[1] / length) * along,
+          a[2] + (way[2] / length) * along,
+        ],
+        normal: [hit.normal.x, hit.normal.y, hit.normal.z],
+      };
+    };
+    return cast(from, to) ?? cast(to, from);
   }
 
   /**

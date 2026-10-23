@@ -307,6 +307,12 @@ export const INI_DEFAULTS = {
     fVATSRangedTargetLowLevelMult: 0.3,
     fVATSRangedPercentMin: 50,
   },
+  // The dead's ragdolls watched for limbs through the world (src/physics/ragdoll-penetration.ts).
+  RagdollAnim: {
+    fDetectionUpdateTimeSec: 5,
+    fDesiredVel: 1.5,
+    fImpulseLimit: 15,
+  },
   HAVOK: {
     fInAirFallingCharGravityMult: 1.35,
     // The physics step and the steps a frame takes at most (src/physics/physics-world.ts).

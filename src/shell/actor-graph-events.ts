@@ -69,9 +69,10 @@ interface Dying {
 }
 
 /**
- * A death whose graph never adds its ragdoll goes limp this long after it began (seconds; a
- * killmove's victim's clip lasts a few). TODO(M13): what the engine does with a graph that
- * never raises AddRagdollToWorld or deathStop.
+ * A death whose graph never adds its ragdoll, or never lets it go (still keyframing or powering
+ * it), goes limp this long after it began (seconds; a killmove's victim's clip lasts a few).
+ * TODO(M13): what the engine does with a graph that never raises AddRagdollToWorld or deathStop,
+ * or keeps its ragdoll driven.
  */
 const DEATH_WAIT = 8;
 /**
@@ -539,7 +540,7 @@ export class ActorGraphEvents {
         const holds =
           graph !== undefined &&
           (graph.poweredRagdollForce() > 0 || graph.keyframedRagdollBones().size > 0);
-        if (!holds) this.#limp(dying);
+        if (!holds || dying.since >= DEATH_WAIT) this.#limp(dying);
         continue;
       }
       if (dying.before !== undefined && dying.since >= DEATH_TAKEN) {
