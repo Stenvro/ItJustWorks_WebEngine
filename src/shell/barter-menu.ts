@@ -28,6 +28,7 @@
 import { barterMultipliers, restockDue, vendorBuys } from '../gameplay/barter.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { questItems } from '../scripting/runtime/quest-items.ts';
+import { AcquireType } from '../scripting/runtime/story-events.ts';
 import { actorValueIndex } from '../world/actor-values.ts';
 import { parseItem, type ItemRecord } from '../world/item-records.ts';
 import { GOLD } from './inventory-menu.ts';
@@ -137,6 +138,10 @@ export async function barterModel(
         }
         await shelf.move(GOLD, total, PLAYER_REF, chest, false);
         await shelf.move(entry.formId, amount, chest, PLAYER_REF, true, entryStack(entry));
+        // Bought: the story manager's Player Add Item (no owner, no container: the engine's).
+        game.detach(
+          game.storyEvents.addToPlayer(entry.formId, AcquireType.buy, undefined, undefined),
+        );
         await speechUse(entry.formId);
         return;
       }

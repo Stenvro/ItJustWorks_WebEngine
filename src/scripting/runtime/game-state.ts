@@ -411,6 +411,11 @@ export class GameState {
    */
   playerMarker:
     { readonly world: number; readonly position: readonly [number, number, number] } | undefined;
+  /**
+   * The player's current location as the engine keeps it (actor-locations.ts): none at a new
+   * game, set as they enter a cell of another location. TODO(M12): in the save.
+   */
+  playerLocation: number | undefined;
   /** Training sessions the player had at a level (five a level: the training menu). */
   training = { level: 0, sessions: 0 };
   /** Level-ups waiting for the player to choose (the level-up menu). */

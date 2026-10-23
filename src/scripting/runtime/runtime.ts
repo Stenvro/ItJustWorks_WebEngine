@@ -65,6 +65,8 @@ import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
 import { scriptEvent, StoryManager, type StoryEventData } from './story-manager.ts';
+import { StoryEvents } from './story-events.ts';
+import { ActorLocations, type PlacementSnapshot } from './actor-locations.ts';
 import { SceneDirector } from '../../ai/scene-runtime.ts';
 import { RuntimeSceneHost, type SceneSpeech } from './scene-host.ts';
 
@@ -688,6 +690,10 @@ export class ScriptRuntime implements VmHost {
 
   #dialogue: DialogueEngine | undefined;
   readonly storyManager: StoryManager;
+  /** What tells the story manager of the world's happenings (story-events.ts). */
+  readonly storyEvents: StoryEvents;
+  /** Where actors are, location-wise: the actor location change event's producer. */
+  readonly actorLocations: ActorLocations;
   readonly actors: ActorEngine;
   /** What actors hold and wear, and its stats (the equip system). */
   readonly equipment: EquipmentEngine;
@@ -834,6 +840,8 @@ export class ScriptRuntime implements VmHost {
     this.vm = new PapyrusVm(library, this, options.scheduler ?? new PapyrusScheduler());
     this.quests = new QuestEngine(this);
     this.storyManager = new StoryManager(this);
+    this.storyEvents = new StoryEvents(this);
+    this.actorLocations = new ActorLocations(this);
     this.actors = new ActorEngine(this);
     this.equipment = new EquipmentEngine(this);
     this.progression = new ProgressionEngine(this);
@@ -1613,8 +1621,10 @@ export class ScriptRuntime implements VmHost {
 
   move(reference: number, position: Vec3, rotation?: Vec3, cell?: number, world?: number): void {
     const state = this.state.reference(reference);
+    // Where it was (an actor's location may change: actor-locations.ts).
+    const before = this.#placementSnapshot(state);
     // Where it was, for whether it moved into or out of the attached area (below).
-    const before: AreaPlace | 'shown' | undefined =
+    const attachedBefore: AreaPlace | 'shown' | undefined =
       cell === undefined
         ? undefined
         : this.world.livePlacement?.(reference)
@@ -1638,8 +1648,16 @@ export class ScriptRuntime implements VmHost {
       state.world = world;
     }
     this.world.moved?.(reference);
+    const grid = (at: Vec3): string =>
+      `${String(Math.floor(at[0] / 4096))},${String(Math.floor(at[1] / 4096))}`;
+    if (
+      !before ||
+      (cell !== undefined && cell !== before.cell) ||
+      grid(position) !== grid(before.position)
+    )
+      this.actorLocations.moved(reference, before);
     if (cell !== undefined)
-      this.detach(this.#movedAcross(reference, before, { position, cell, world }));
+      this.detach(this.#movedAcross(reference, attachedBefore, { position, cell, world }));
   }
 
   /**
@@ -1676,11 +1694,24 @@ export class ScriptRuntime implements VmHost {
 
   moveToEditorLocation(reference: number): void {
     const state = this.state.reference(reference);
+    const before = this.#placementSnapshot(state);
     delete state.position;
     delete state.rotation;
     delete state.cell;
     delete state.world;
     this.world.moved?.(reference);
+    if (before) this.actorLocations.moved(reference, before);
+  }
+
+  /** Where scripts last put a reference (for its location before it moves again). */
+  #placementSnapshot(state: ReferenceState): PlacementSnapshot | undefined {
+    if (!state.position) return undefined;
+    const cell = state.cell;
+    return {
+      position: state.position,
+      cell,
+      world: state.world ?? (cell === undefined ? undefined : this.forms.db.worldOfCell(cell)),
+    };
   }
 
   /**
@@ -1730,9 +1761,21 @@ export class ScriptRuntime implements VmHost {
 
   /** The location (LCTN) of the cell a reference is in (CELL XLCN). */
   async locationOf(reference: number): Promise<number | undefined> {
-    const at = await this.placement(reference);
+    return this.locationAt(await this.placement(reference));
+  }
+
+  /** The location of a place: in a worldspace, of the exterior cell at the position. */
+  async locationAt(
+    at:
+      | {
+          readonly position?: Vec3 | undefined;
+          readonly cell: number | undefined;
+          readonly world: number | undefined;
+        }
+      | undefined,
+  ): Promise<number | undefined> {
     let cell = at?.cell;
-    if (at?.world !== undefined) {
+    if (at?.world !== undefined && at.position) {
       // A persistent reference of a worldspace: the exterior cell it stands in.
       cell = await this.forms.db.exteriorCell(
         at.world,
@@ -1741,6 +1784,18 @@ export class ScriptRuntime implements VmHost {
       );
     }
     return cell === undefined ? undefined : this.#cellLocation(cell);
+  }
+
+  /** Where the plugin places a reference, with its cell and worldspace. */
+  async editorPlace(reference: number): Promise<{
+    readonly position?: Vec3;
+    readonly cell: number | undefined;
+    readonly world: number | undefined;
+  }> {
+    const cell = this.forms.db.cellOfReference(reference);
+    const world = cell === undefined ? undefined : this.forms.db.worldOfCell(cell);
+    const position = (await this.#editorPlacement(reference))?.position;
+    return { ...(position && { position: [...position] as Vec3 }), cell, world };
   }
 
   /**
@@ -1767,14 +1822,42 @@ export class ScriptRuntime implements VmHost {
     return cell === undefined ? undefined : this.#cellLocation(cell);
   }
 
-  /** A cell's location (XLCN), read once per cell. */
+  /**
+   * A cell's location, read once per cell, as the engine finds it (observed in the
+   * original, docs/scripting.md "Locations"): its encounter zone's location (the cell's own zone, an
+   * exterior cell's else its worldspace's), else its own (XLCN), else an exterior cell's
+   * worldspace's (its XLCN, else its zone's). So the 113 exterior cells of Whiterun's city
+   * without one of their own are in WhiterunLocation, all of Solstheim's in its location.
+   */
   #cellLocation(cell: number): Promise<number | undefined> {
     let pending = this.#cellLocations.get(cell);
     if (!pending) {
-      pending = this.forms.record(cell).then((record) => record?.formIdField('XLCN'));
+      pending = (async () => {
+        const record = await this.forms.record(cell);
+        if (!record) return undefined;
+        const world = this.forms.db.worldOfCell(cell);
+        const worldRecord = world === undefined ? undefined : await this.forms.record(world);
+        const zone = record.formIdField('XEZN') ?? worldRecord?.formIdField('XEZN');
+        return (
+          (await this.#zoneLocation(zone)) ??
+          record.formIdField('XLCN') ??
+          worldRecord?.formIdField('XLCN') ??
+          (await this.#zoneLocation(worldRecord?.formIdField('XEZN')))
+        );
+      })();
       this.#cellLocations.set(cell, pending);
     }
     return pending;
+  }
+
+  /** An encounter zone's location (ECZN DATA: owner, location, ...), if it has one. */
+  async #zoneLocation(zone: number | undefined): Promise<number | undefined> {
+    if (zone === undefined) return undefined;
+    const record = await this.forms.record(zone);
+    const data = record?.fields.first('DATA');
+    if (!record || !data || data.length < 8) return undefined;
+    const location = record.formIdAt(data, 4);
+    return location === 0 ? undefined : location;
   }
 
   /** The size of its base object's bounds (OBND), at its scale. */

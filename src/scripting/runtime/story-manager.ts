@@ -134,8 +134,22 @@ export class StoryManager {
     return this.#trees;
   }
 
-  /** An event: true if it started a quest. */
-  async event(event: StoryEventData): Promise<boolean> {
+  /**
+   * An event: queued behind those raised before it, as the engine's story teller works through
+   * its queue one event at a time (an event whose quests take long to start holds the next
+   * back, so the next sees the quests it started running). Resolves true once it is processed
+   * and started a quest (Keyword.SendStoryEventAndWait waits for that).
+   */
+  event(event: StoryEventData): Promise<boolean> {
+    const processed = this.#queue.then(() => this.#run(event));
+    this.#queue = processed.catch(() => false);
+    return processed;
+  }
+
+  /** The events raised and not yet processed: the last one's processing. */
+  #queue: Promise<unknown> = Promise.resolve();
+
+  async #run(event: StoryEventData): Promise<boolean> {
     const tree = (await this.#load()).get(event.type);
     if (!tree) return false;
     const result = { started: false, consumed: false };

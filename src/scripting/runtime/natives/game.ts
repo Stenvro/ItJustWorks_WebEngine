@@ -119,10 +119,9 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     runtime.perkPoints += int(args[0]);
     return null;
   });
-  n('game.teachword', ({ args }) => {
+  n('game.teachword', async ({ args }) => {
     const word = formOf(args[0]);
-    if (word !== undefined && !runtime.wordsLearned.has(word))
-      runtime.wordsLearned.set(word, false);
+    if (word !== undefined) await runtime.casting.teachWord(word);
     return null;
   });
   n('game.unlockword', ({ args }) => {
