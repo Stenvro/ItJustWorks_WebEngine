@@ -83,6 +83,21 @@ fn vs_strip(in: ParticleIn) -> ParticleOut {
   return particleOut(world, uv, in.color);
 }
 
+// A ribbon of procedural lightning (lightning.ts): one segment of a bolt, across a fixed side
+// (the bolt's X or Z axis, not turned to the camera), its opacity from one end to the other.
+// positionSize: start (xyz), opacity at the start (w); color: colour (rgb), opacity at the end
+// (a); rect: v at the start and the end, side (xy); axisRotation: segment (xyz), side (z).
+@vertex
+fn vs_ribbon(in: ParticleIn) -> ParticleOut {
+  let corner = CORNERS[in.vertex];
+  let t = corner.y * 0.5 + 0.5;
+  let side = vec3f(in.rect.z, in.rect.w, in.axisRotation.w);
+  let world = in.positionSize.xyz + in.axisRotation.xyz * t + side * corner.x;
+  let uv = vec2f(corner.x * 0.5 + 0.5, mix(in.rect.x, in.rect.y, t));
+  let alpha = mix(in.positionSize.w, in.color.a, t);
+  return particleOut(world, uv, vec4f(in.color.rgb, alpha));
+}
+
 @fragment
 fn fs_particle(in: ParticleOut) -> @location(0) vec4f {
   let uv = in.uv * draw.uvTransform.zw + draw.uvTransform.xy;

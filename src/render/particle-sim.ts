@@ -85,7 +85,7 @@ const WARM_UP_SECONDS = 1.5;
 const WARM_UP_STEP = 1 / 15;
 
 /** Deterministic random numbers (mulberry32): the same seed gives the same effect. */
-function random(seed: number): () => number {
+export function random(seed: number): () => number {
   let state = seed >>> 0;
   return () => {
     state = (state + 0x6d2b79f5) >>> 0;

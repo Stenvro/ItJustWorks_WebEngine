@@ -11,6 +11,8 @@
 //   node tools/behavior-run.ts <project> --set bHumanoidFootIKEnable=1 --slope 20 --time 1
 //       foot IK on ground rising to the right (degrees; --ground z: a floor at z): the feet's
 //       and the pelvis's heights
+//   node tools/behavior-run.ts <project> --set iRightHandType=9 --event Magic_Equip
+//       --bone "R MagicNode"      a bone's model-space position (name part) at each printed step
 //   node tools/behavior-run.ts --modifiers      the modifiers of every vanilla behavior file: how
 //       many there are by class, and which the runtime runs
 //   node tools/behavior-run.ts meshesactorsdragondragonproject.hkx --motion
@@ -228,6 +230,14 @@ const procedural = (): string => {
       );
     }
     if (pelvis >= 0) parts.push(`pelvis z ${space.position(pelvis)[2].toFixed(1)}`);
+  }
+  for (const pattern of option('--bone')) {
+    const bone = boneNamed(new RegExp(pattern.replace(/[[\]]/g, '\\$&'), 'i'));
+    if (bone < 0) continue;
+    const at = space.position(bone);
+    parts.push(
+      `${skeleton.bones[bone]?.name ?? ''} at ${[...at].map((v) => v.toFixed(1)).join(', ')}`,
+    );
   }
   return parts.join('; ');
 };

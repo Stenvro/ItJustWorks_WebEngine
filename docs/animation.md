@@ -409,6 +409,39 @@ plays it, for the player's body and first-person graphs alike):
 - A cast whose graph raises no SpellFire event fires 0.5 s on (TODO(M13): the engine's way
   without it).
 
+**The third-person pose** comes from layering, not from an aim: the magic graph's clips
+(MRh_Idle drawn, MRh_PreCharge / MRh_ReadyLoop / MRh_Release and the concentration loops while
+casting) play over the whole body, and the other hand's pose is laid over them by bone weights:
+with nothing in the left hand, 0_master's H2H_MRh_Idle_BoneSwitch_3rdP takes 1HM_Idle for the
+left arm only; with a spell in both, magicbehavior's DualMagicReady_BoneSwitchGen takes MLh_Idle
+for the left arm. Those weights are not in the behavior files: the switch's
+BSBoneSwitchGeneratorBoneData binds its spBoneWeight (a blender child its boneWeights) to a
+character property, and the file holds a one-bone placeholder. The character file gives the
+property its weights (hkbCharacterData.characterPropertyValues: a property of pointer type holds
+the index of its hkbBoneWeightArray among the value set's variants; the humans' LeftArm,
+RightArm, UpperBody, Hands, Arms, ...). `loadBehaviorFiles` reads them from the project's
+character and the parser puts them where the files bind them (`readCharacterBoneWeights`).
+Read as the placeholder (missing bones counting 1), the other hand's clip took the whole body:
+with Flames or Firebolt drawn the casting hand hung at the hip, holding 1HM_Idle's absent
+weapon, and every spell left from there. Measured on the player in Riverwood (NPC R MagicNode
+over the feet; head bone 108 drawn, 94–103 casting): drawn 70 → 88 (30 units ahead of the
+body, was 13 behind), Flames casting 69 → 89–97, Firebolt charged (MRh_ReadyLoop) 89 with the
+hand by the shoulder; an NPC (Embry, given Flames) drawn 98, releasing 102 with the arm thrust
+forward. 355 bound bone weights in 15 projects use them (humans in both persons, wolves and
+dogs, rieklings, falmer, hagravens, trolls, the vampire lord, the werewolf, the dragon priest,
+horses, the dwarven spider and ballista centurions); every one names a property its character defines
+(`tests/casting-pose.int.test.ts`; `node tools/behavior-run.ts <project> --bone "R MagicNode"`
+prints a bone's model-space position).
+
+The graph's own aim while casting is BSDirectAtModifier_Magic on CastingState: it turns the
+spine (Spine to Spine2, from Spine2) towards the engine's aim for spells (userInfo 2: the aimed
+point, docs/ai.md "Magic in combat"), up to AimHeadingMax and AimPitchMax, enabled by IsNPC; its
+outputs are bAimActive, AimHeadingCurrent and AimPitchCurrent (the graph writes them, the engine
+does not). No modifier aims the arms; Pitch is a graph data channel that no human magic node
+reads. TODO(M13): whether the engine sets IsNPC on the player's third-person graph (here it is
+1, so the player's spine aims as an NPC's does) and how it pitches the player's body otherwise
+(the graphs' PitchOverride events) is not reproduced.
+
 **Casting art** (MGEF casting art: Fireball01HandEffects, ShockHandEffects, ...) carries its own
 graph (BGED `Magic\CastingBasic.hkx`: mIntro → mIdle, mCharge on a start, mReady on
 SpellReady, mCast on SpellRelease, back to mIdle on Equipped), which hears the events the
@@ -463,7 +496,8 @@ them by name (a variable keeps the first file's initial value). Each frame:
    value interpolation, events from ranges, modify-once modifiers.
 3. **Pose:** clips are sampled (additive clips hold differences, laid on what is below);
    blenders sum their children's poses by normalised weights (parametric ones by their
-   blend parameter, cyclic ones wrapping), per bone where bone weights limit a child; bone
+   blend parameter, cyclic ones wrapping), per bone where bone weights limit a child (those
+   bound to a character property are the character's: [Casting](#casting)); bone
    switches take the bones of their children over the default's; transitions blend their two
    states by the curve. Nodes that stop being active are deactivated (exit events, modifier
    resets, BSEventOnDeactivateModifier's event).
