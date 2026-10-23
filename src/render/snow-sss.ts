@@ -1,6 +1,7 @@
 // The improved snow's subsurface scattering (ISSnowSSS, shaders/snow-sss.wgsl): reads the
-// resolved opaque scene, its depth and the G-buffer's snow mask, and writes the scattered snow
-// into the multisampled colour target, before the blended pass.
+// resolved opaque scene as lit (before the composite adds the snow highlights, AO and fog),
+// its depth and the G-buffer's snow mask, and writes the scattered snow into the
+// multisampled colour target, which the composite then finishes.
 
 import { HDR_FORMAT } from './post.ts';
 import { SAMPLE_COUNT } from './scene-renderer.ts';
@@ -18,7 +19,7 @@ const SSS_DARK_COLOR = [0, 0, 0.08] as const;
 const SSS_DARK_INTENSITY = 0.1;
 
 export interface SnowScatteringInputs {
-  /** The resolved opaque scene. */
+  /** The resolved opaque scene, unfogged. */
   readonly scene: GPUTexture;
   /** Its depth (r32float, reversed Z). */
   readonly depth: GPUTexture;

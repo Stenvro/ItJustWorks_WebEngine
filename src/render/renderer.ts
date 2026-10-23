@@ -38,6 +38,7 @@ import { TerrainRenderer, type GpuTerrainCell } from './terrain.ts';
 import { TreeLodRenderer, type TreeLodFrame } from './tree-lod.ts';
 import { SnowScattering } from './snow-sss.ts';
 import { Sao } from './sao.ts';
+import { Composite } from './composite.ts';
 import { REFRACTION_FORMAT, RefractionComposite } from './refraction.ts';
 import { GrassRenderer, type GpuGrassField } from './grass.ts';
 import { DecalRenderer, type GpuDecals } from './decals.ts';
@@ -119,8 +120,9 @@ interface RenderTargets {
 
 /**
  * Renders one frame per call, in HDR with 4× multisampling and reversed-Z depth:
- * 1. the shell backdrop or the sky, the terrain and the opaque parts of the scenes;
- * 2. (if there is water) copies of that image's colour and depth for the water shader;
+ * 1. the shell backdrop or the sky, the terrain and the opaque parts of the scenes (unfogged);
+ * 2. the snow's subsurface scattering, the ambient occlusion and the composite (snow
+ *    highlights, AO, fog), then copies of the image's colour and depth for the water shader;
  * 3. water surfaces, then the blended parts back to front;
  * 4. (if refraction shapes are in view) the refraction buffer, and the image-space refraction
  *    of everything drawn so far;
@@ -137,6 +139,8 @@ export class Renderer {
   readonly snowScattering: SnowScattering;
   /** Ambient occlusion of the opaque scene (bSAOEnable). */
   readonly #sao: Sao;
+  /** Snow highlights, AO and fog over the opaque scene (ISSAOComposite). */
+  readonly #composite: Composite;
   /** The image-space refraction (ISRefraction). */
   readonly #refraction: RefractionComposite;
   /** bSAOEnable (on in the launcher presets); off for comparisons. */
@@ -177,7 +181,8 @@ export class Renderer {
     this.treeLod = new TreeLodRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.snowScattering = new SnowScattering(device);
     this.#refraction = new RefractionComposite(device);
-    this.#sao = new Sao(device, this.scene.frameLayout, HDR_FORMAT, SAMPLE_COUNT);
+    this.#sao = new Sao(device, this.scene.frameLayout);
+    this.#composite = new Composite(device, this.scene.frameLayout, HDR_FORMAT, SAMPLE_COUNT);
     this.grass = new GrassRenderer(device, HDR_FORMAT, this.scene);
     this.decals = new DecalRenderer(device, HDR_FORMAT, this.scene.frameLayout);
     this.precipitation = new PrecipitationRenderer(device, HDR_FORMAT, this.scene.frameLayout);
@@ -379,7 +384,8 @@ export class Renderer {
           resolveTarget: targets.gbufferResolved.createView(),
           clearValue: { r: 0, g: 0, b: 0, a: 0 },
           loadOp: 'clear',
-          storeOp: 'discard',
+          // The composite reads it per sample.
+          storeOp: view ? 'store' : 'discard',
         },
       ],
       depthStencilAttachment: {
@@ -415,8 +421,10 @@ export class Renderer {
       const water = this.scene.hasWater(scenes);
       const decals = view.decals ? [...view.decals()] : [];
       const decalsInView = this.decals.visible(decals, this.scene.viewPlanes);
-      // Copies of the opaque scene: for water, soft effects and particles, decals, the depth of
-      // field and the snow's scattering (which reads them every frame).
+      // The opaque scene is finished as the engine does it: the snow's scattering on the lit,
+      // unfogged image, then the composite (snow highlights, ambient occlusion, fog,
+      // sparkles). Then copies of it for water, soft effects and particles, decals and the
+      // depth of field.
       {
         const resolve = encoder.beginRenderPass({
           label: 'depth-resolve',
@@ -428,31 +436,45 @@ export class Renderer {
         resolve.setBindGroup(0, targets.depthResolve);
         resolve.draw(3);
         resolve.end();
-        // Ambient occlusion darkens the opaque scene before anything reads it (the engine's
-        // SAO composite comes before the snow's scattering and the blended objects).
-        if (this.ambientOcclusion && !view.backdrop) {
-          this.#sao.run(encoder, this.scene.frameBindGroup, {
-            width: targets.width,
-            height: targets.height,
-            gbuffer: targets.gbufferResolved,
-            color: colorView,
-            resolve: hdrView,
-          });
+        const hdrTexture = this.post.hdrTexture(targets.width, targets.height);
+        const copyScene = (): void => {
+          encoder.copyTextureToTexture({ texture: hdrTexture }, { texture: targets.sceneColor }, [
+            targets.width,
+            targets.height,
+          ]);
+        };
+        // Snow scattering into the multisampled colour, from a copy of the resolved image.
+        if (this.snowScattering.enabled) {
+          copyScene();
+          this.snowScattering.run(
+            encoder,
+            colorView,
+            {
+              scene: targets.sceneColor,
+              depth: targets.sceneDepth,
+              gbuffer: targets.gbufferResolved,
+            },
+            view.camera.near,
+          );
         }
-        encoder.copyTextureToTexture(
-          { texture: this.post.hdrTexture(targets.width, targets.height) },
-          { texture: targets.sceneColor },
-          [targets.width, targets.height],
+        const occlusion =
+          this.ambientOcclusion && !view.backdrop
+            ? this.#sao.run(encoder, this.scene.frameBindGroup, {
+                width: targets.width,
+                height: targets.height,
+                gbuffer: targets.gbufferResolved,
+              })
+            : undefined;
+        this.#composite.run(
+          encoder,
+          this.scene.frameBindGroup,
+          { occlusion, gbuffer: targets.gbuffer, depth: targets.depth },
+          colorView,
+          hdrView,
         );
+        copyScene();
         this.scene.updateWaterFrame(view.water?.(), targets.width, targets.height);
       }
-      // Snow scattering into the multisampled colour, which the blended pass goes on with.
-      this.snowScattering.run(
-        encoder,
-        colorView,
-        { scene: targets.sceneColor, depth: targets.sceneDepth, gbuffer: targets.gbufferResolved },
-        view.camera.near,
-      );
       // Refraction shapes are depth-tested after the blended pass: it keeps the depth then.
       const refraction = this.scene.hasRefraction(scenes);
       const blended = encoder.beginRenderPass({
@@ -627,7 +649,7 @@ export class Renderer {
         size: [width, height],
         format: GBUFFER_FORMAT,
         sampleCount: SAMPLE_COUNT,
-        usage: GPUTextureUsage.RENDER_ATTACHMENT,
+        usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
       }),
       gbufferResolved: device.createTexture({
         label: 'gbuffer',

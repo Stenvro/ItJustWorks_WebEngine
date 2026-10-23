@@ -195,11 +195,31 @@ fn applyFog(color: vec3f, worldPos: vec3f) -> vec3f {
   return mix(color, fog.rgb, fog.a);
 }
 
-// The G-buffer (gbuffer.ts) of the opaque pass: the world-space normal in octahedral encoding
-// (rg), the snow mask (b) and 1 (a: something opaque wrote here).
-fn gbufferValue(n: vec3f, snowMask: f32) -> vec4f {
+// The world-space normal in octahedral encoding (the G-buffer's rg).
+fn octahedralEncode(n: vec3f) -> vec2f {
   let p = n.xy / max(abs(n.x) + abs(n.y) + abs(n.z), 1e-6);
   let signs = select(vec2f(-1.0), vec2f(1.0), p >= vec2f(0.0));
-  let folded = select(p, (1.0 - abs(p.yx)) * signs, n.z < 0.0);
-  return vec4f(folded, snowMask, 1.0);
+  return select(p, (1.0 - abs(p.yx)) * signs, n.z < 0.0);
+}
+
+fn octahedralDecode(e: vec2f) -> vec3f {
+  var n = vec3f(e, 1.0 - abs(e.x) - abs(e.y));
+  if (n.z < 0.0) {
+    let signs = select(vec2f(-1.0), vec2f(1.0), n.xy >= vec2f(0.0));
+    n = vec3f((1.0 - abs(n.yx)) * signs, n.z);
+  }
+  return safeNormalize(n);
+}
+
+// The G-buffer (gbuffer.ts) of a surface the composite finishes (composite.wgsl): the normal
+// (rg), the snow mask (b, the engine's SnowParameters.y) and 1 + the snow's specular (a: the
+// rim light, SnowParameters.x), which the composite adds with the AO, fog and sparkles.
+fn gbufferValue(n: vec3f, snowMask: f32, snowSpecular: f32) -> vec4f {
+  return vec4f(octahedralEncode(n), snowMask, 1.0 + max(snowSpecular, 0.0));
+}
+
+// The G-buffer of a surface its own shader finished (lit, fogged): the composite and the
+// snow's scattering leave it alone (a = 0, no snow).
+fn gbufferFinished(n: vec3f) -> vec4f {
+  return vec4f(octahedralEncode(n), 0.0, 0.0);
 }

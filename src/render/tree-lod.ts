@@ -89,7 +89,7 @@ export class TreeLodRenderer {
       fragment: {
         module,
         entryPoint: 'fs_tree',
-        targets: [{ format: colorFormat }, gbufferTarget(false)],
+        targets: [{ format: colorFormat }, gbufferTarget(true)],
       },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: DEPTH_FORMAT, depthWriteEnabled: true, depthCompare: 'greater' },
