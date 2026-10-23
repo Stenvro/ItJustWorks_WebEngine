@@ -530,23 +530,89 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   loaded with a horse). Its travel moves the horse; one that does not gets
   it off first, as do using furniture, taking and activating, and load doors
   (sNotAllowedToUseAutoDoorsWhileonHorse).
-- **Carts:** TetherToHorse hitches a cart to a horse; a horse standing off the cart's shafts is
-  put in them, 210.6 units ahead of its front axle (the opening's first cart stands so in the
-  editor, the second 411 behind its horse). The cart is taken out of its cell and towed on every
-  physics step: the prisoner carriage's front axle pivot (its model's origin) trails the horse at
-  that length, its rear axle (214.85 behind) trails the pivot, on the navmesh's height; the
-  FrontBar turns towards the horse within its hinge (±40°) and the wheels roll (49.5 and 59.4
-  units). Its bodies are keyframed there. TODO(M13): the engine pulls the simulated bodies by a
-  constraint. The cart's travel is its horse's packages (the opening's PatrolStaticPathing along
-  58 markers, 29,000 units to Helgen: towed along them its front axle turns at most 25°);
-  `ActorVehicles.startTravel` has the horse choose its package again, as the opening's stage 15
-  and a scene's package action do.
-- **Riding a vehicle** (SetVehicle): the actor's root is the vehicle's (its position, heading and
-  pitch); its riding idles seat it there (IdleCartPrisonerASway: the pelvis 200 units behind and
-  139 above the cart's origin; the driver's 11 behind) and its exit idle's root motion takes it
-  out (CartPrisonerAExit: 380 units out of the back). The idles reach the cart state through
-  Master_Behavior's global wildcards. The player rides so too, carried in the physics steps;
-  their PlayIdle plays as an actor's. An actor's AI that goes somewhere lets it off.
+- **Carts and their riders:** below, "Vehicles".
+
+### Vehicles
+
+A cart a horse pulls and the actors riding it (`src/ai/vehicles.ts`, the stage:
+`src/shell/actor-vehicles.ts`). Observed in the original (the game 1.7.104); what is
+inferred is marked so.
+
+**TetherToHorse** runs a moment later on the main thread (the native queues it). It puts the horse
+`fHorseOffsetY:Cart` (200) ahead of the cart's origin along the cart's heading (`fHorseOffsetX`
+across, 0; `fHorseOffsetZ` up, 0, on the horse's own height), turned as the cart is, its
+character controller moved there too: a horse is always put in the shafts, wherever it stood
+(the opening's second horse stands 411 ahead in the editor). Then the cart is joined to it:
+
+- every simulated body of the cart weighs `fMass:Cart` (130 kg; the prisoner carriage's body
+  was authored at 12,000);
+- the four wheels (WheelBackLeft, WheelBackRight, WheelFrontLeft, WheelFrontRight, on their own
+  hinges) get `fFriction:Cart` (100), an angular damping of `fWheelAngDamp:Cart` (0.01) and a
+  small linear damping, and an action pulls each down with `fGravMult:Cart` times gravity on top
+  of the world's (3.5: they hold the road);
+- an action keeps the cart's body from tipping over: when its up leans more than 0.71 to a side,
+  or points down, it gets an angular impulse of `fTipImpulse:Cart` (500, Havok units) about its
+  forward axis (inferred: in the direction that rights it; the engine takes the sign from the
+  up's world x);
+- a keyframed body (a small sphere in the cart's collision system, so the two never touch)
+  follows the horse's spine node (`sHorseConnect:Cart`, HorseSpine2) and holds the cart's
+  FrontBar (its shafts and front axle) by a prismatic constraint: the FrontBar's point
+  (`fCartPivotX/Y/Z:Cart`, 0, 3, 0.7 Havok units: 210 ahead and 49 up of it) on the spine
+  (`fHorsePivot`, its origin), sliding along the FrontBar's up tilted `fCartRot1:Cart` (10°)
+  between `fCartLimitMin/Max:Cart` (±0.75: ±52 units), turning as the spine turns. The cart's
+  body hangs on the FrontBar by the model's own limited hinge (±40° about the vertical), so it
+  turns behind the horse as a wagon does, its wheels rolling on the ground;
+- the horse's harness bones (`sHarnessBoneLeft/Right:Cart`) are taken off the horse and hung
+  on the cart's pole (`sHarnessBoneCart:Cart`, FrontHorseCarriage01, under the FrontBar) at
+  ∓`fTetherOffsetX` (50), `fTetherOffsetY` (163), `fTetherOffsetZ` (13): the harness mesh,
+  skinned to the horse's spine and to those bones, reaches from the horse to the pole. Every
+  frame the pole turns (the shortest turn of its length, +y) to point from where it hangs at
+  the spine raised by `fPoleZOffset:Cart` (-20).
+
+Here the cart is simulated so with Rapier once its horse stands where the tether put it and the
+ground under the cart is in place (until then its bodies wait). Two things differ, as Rapier's
+joints are stiff where Havok's give way (TODO(M13), how far they give is not known): the
+tether's turns are held by a spring back to how the two stood when hitched (about 3 a second,
+nearly critically damped) instead of outright (held, the rear wheels hung above the ground on
+any slope the horse did not share, and the horse turning on the spot at the hairpin of
+Helgen's road threw the cart over); and the slide axis on the spine is taken from how the
+FrontBar and the spine stand when hitched (read as the engine gives it, the spine's y turned by
+`fCartRot2:Cart`, our spine's y points down and the cart was turned upside down). The cart does
+not touch the actors near it (its horse, its riders, those walking by): their controllers keep
+them off it, but their keyframed bodies, moved into it at any speed, threw it. TODO(M13): how
+strongly the engine's characters push simulated objects.
+
+A door along the cart or just ahead of it is one its horse comes to: it opens to the horse as
+any door on an actor's way, and an actor's door is not shut while a cart is still in it.
+
+**SetVehicle** (an Actor's vehicle that is not an actor; a horse makes it a rider instead)
+keeps the vehicle on the actor, sets its sit state to sitting and attaches a controller to its
+3D (third and first person) that every frame puts it at the vehicle's root body: its 3D turned
+fully as the body is (pitch and roll too), its position the body's and its angle its heading.
+So the actor's own animation movement does not move it in the vehicle: its riding idles seat it
+in the vehicle's frame (CartPrisonerASway puts the pelvis 200 behind and 139 above the cart's
+origin, the B, C and D seats and the driver's bench the others). Two graph events end the ride,
+as the engine handles them: ExitCartBegin (an exit idle starts) takes the controller off, and
+the exit's root motion moves the actor out from where the vehicle was (CartPrisonerAExit: 380
+out of the back); ExitCartEnd sets the vehicle to none. NPCDetach takes the controller off too.
+A prisoner's exit clip ends with OffsetBoundStandingCartStart (seat A's, Ulfric's, with
+OffsetBoundStandingStart): it sends CartExit, the only way out of the human graph's Cart_State,
+whose exit raises ExitCartEnd (inferred from the data). The player rides so too, carried in the
+physics steps (their shape out of the world meanwhile); an actor's AI that goes somewhere lets it
+off. Before, the riders were at the cart's root but moved by their graphs' movement: actors
+still walking or falling (Speed up to 1977) as SetVehicle came drifted up to 634
+units behind the cart (Ulfric "hovering above the next horse").
+
+The cart's travel is its horse's packages (the opening's PatrolStaticPathing along 58 markers to
+Helgen); `ActorVehicles.startTravel` has the horse choose its package again, as the opening's
+stage 15 and a scene's package action do.
+
+**Doors and scripts.** ObjectReference.SetOpen opens or shuts a door of the loaded area: it
+swings with its sound and stays so (no actor's timer shuts it), its collision following its
+sequence; a door comes in as the scripts left it (GetOpenState), else as placed (REFR ONAM,
+"open by default"). The opening's stage 20 opens Helgen's east gate this way before the carts
+reach it (it was ignored: the horses opened it as any door, and it shut 3 seconds after each
+with its cart in it, through which the cart, keyframed then, passed).
 
 ## Actors away
 

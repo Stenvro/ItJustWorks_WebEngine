@@ -55,6 +55,33 @@ export const INI_DEFAULTS = {
     fVanityModeMaxDist: 600,
     fVanityModeMinDist: 155,
   },
+  // A cart tethered to its horse (src/shell/actor-vehicles.ts; docs/ai.md, "Vehicles"): the
+  // engine's built-in defaults (Skyrim_Default.ini has no [Cart] section). Havok units (1 =
+  // 69.99 game units) where the tether's joint reads them: the pivots and the limits.
+  Cart: {
+    fCartLimitMax: 0.75,
+    fCartLimitMin: -0.75,
+    fCartPivotX: 0,
+    fCartPivotY: 3,
+    fCartPivotZ: 0.7,
+    fCartRot1: 10,
+    fCartRot2: 10,
+    fFriction: 100,
+    fGravMult: 3.5,
+    fHorseOffsetX: 0,
+    fHorseOffsetY: 200,
+    fHorseOffsetZ: 0,
+    fHorsePivotX: 0,
+    fHorsePivotY: 0,
+    fHorsePivotZ: 0,
+    fMass: 130,
+    fPoleZOffset: -20,
+    fTetherOffsetX: 50,
+    fTetherOffsetY: 163,
+    fTetherOffsetZ: 13,
+    fTipImpulse: 500,
+    fWheelAngDamp: 0.01,
+  },
   Controls: {
     bAlwaysRunByDefault: 1,
     bInvertYValues: 0,
@@ -295,6 +322,13 @@ export const INI_DEFAULTS = {
 
 /** The text settings the engine uses, with the same defaults' source. */
 export const INI_TEXT_DEFAULTS = {
+  // The nodes a cart's tether joins: the horse's spine, its harness bones, the cart's pole.
+  Cart: {
+    sHarnessBoneCart: 'FrontHorseCarriage01',
+    sHarnessBoneLeft: 'HarnessLeftBone',
+    sHarnessBoneRight: 'HarnessRightBone',
+    sHorseConnect: 'HorseSpine2',
+  },
   Interface: {
     // The idle the player holds while the race menu is open.
     sPosePlayerRaceSexMenu: 'OffsetBoundStandingPlayerInstant',

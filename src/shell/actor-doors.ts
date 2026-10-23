@@ -6,7 +6,7 @@
 // to the others it is shut: their way is blocked there and they search again round it,
 // remembering it a while. Load doors swing open with their sound as an actor steps through
 // (it leaves the game's fTeleportDoorActivateDelayTimer later) and as one comes out of the door
-// on the other side.
+// on the other side. A door a script opens or shuts (SetOpen) swings so and stays.
 
 import type { DoorPassage } from '../ai/path-follower.ts';
 import { findRoute, type Route, type RouteEnd, type RouteMap } from '../ai/routes.ts';
@@ -156,6 +156,23 @@ export class ActorDoors {
   arrive(door: number): void {
     const entry = this.#options.find(door);
     if (entry) this.#swing(door, entry);
+  }
+
+  /**
+   * A script opened or shut a door (ObjectReference.SetOpen): it swings with its sound, and it
+   * stays as the script left it (no actor's timer shuts it); one already so does nothing.
+   */
+  setOpen(door: number, open: boolean): void {
+    const entry = this.#options.find(door);
+    const playback = entry?.instance?.playback;
+    if (!entry || entry.object.teleport) return;
+    clearTimeout(this.#closing.get(door));
+    this.#closing.delete(door);
+    const sequence = open ? 'open' : 'close';
+    if (!playback || (playback.sequence ?? 'close') === sequence) return;
+    this.#play(entry, sequence);
+    playback.sequence = sequence;
+    playback.start = clock();
   }
 
   /** A door opens (if shut) and shuts CLOSE_AFTER after the last actor came: open yet? */
