@@ -105,7 +105,7 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
   const paths = await import('/src/ai/pathfinding.ts');
   const W = engineDev.world;
   const nav = QA_RIDE_NAV;
-  const ride = { start: performance.now(), held: new Set(), home: undefined, last: undefined, slow: 0, path: [], log: [] };
+  const ride = { start: performance.now(), held: new Set(), home: undefined, last: undefined, slow: 0, path: [], planned: 0, log: [] };
   window.__qaRide = ride;
   const press = (name, down) => {
     const player = W.player; if (!player) return;
@@ -115,9 +115,14 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
   };
   ride.release = () => { for (const name of [...ride.held]) press(name, false); };
   // A way to a random point of the navmesh within 1200 of home, at least 600 on.
+  // From the ground under the rider (the saddle is a horse's height above it).
   const plan = (feet) => {
-    const goal = nav && paths.randomReachablePoint(nav, feet, ride.home, 1200, 600, Math.random, { large: true });
-    const found = goal && paths.findPath(nav, feet, goal, { radius: 64, large: true });
+    const now = performance.now();
+    if (now - ride.planned < 500) return;
+    ride.planned = now;
+    const ground = nav && paths.onNavmeshColumn(nav, feet);
+    const goal = ground && paths.randomReachablePoint(nav, ground, ride.home, 1200, 600, Math.random, { large: true });
+    const found = goal && paths.findPath(nav, ground, goal, { radius: 64, large: true });
     ride.path = found && found.points.length > 1 ? found.points.slice(1).map((p) => [...p]) : [];
     ride.log.push(Math.round(performance.now() / 1000) + ' way ' + (goal ? goal.map(Math.round).join(',') : 'none') + ' ' + ride.path.length);
     if (ride.log.length > 40) ride.log.shift();
