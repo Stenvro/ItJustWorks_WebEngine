@@ -130,7 +130,10 @@ Off the stairs the same step is tried — the engine's controller has a TryStep 
 the cells' navigation meshes (`NavmeshSurface`, within 24 units of the mesh). Rubble piles,
 cave rocks and raised floor pieces lie on the navmesh with bumps of 17–32 units; benches
 (30–32 high) and chests are left out of it, so the player walks over the one and not onto the
-other. How far the engine's own TryStep goes is not documented: TODO(M13).
+other. How far the engine's own TryStep goes is not documented: TODO(M13). The actors'
+controllers step so too (`src/shell/actor-movers.ts`, onto the navmeshes of the loaded area):
+before only the player's did, and a Riverwood chicken sent onto a porch the navmesh covers
+stood before its edge.
 
 `node tools/stairs-audit.ts` walks the player up and down every staircase and ramp of the
 interiors as actors walk them: the slopes of the navigation meshes (see

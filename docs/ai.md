@@ -37,7 +37,13 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   controller. Beyond it, in the loaded area, it is in the middle-high process: its AI runs and
   it walks its paths without a controller, kept on the navmesh (its height there), its graph
   driven as a controlled one's; coming near it gets its controller where it stands (on the
-  floor just under or over its feet). TODO(M13): the engine's process levels (CommonLibSSE
+  floor just under or over its feet). What its graph was told goes on from one to the other: a
+  deer that fled past the high process at a run is told it stopped as it stops (before, its
+  graph ran on the spot for minutes, never told). Held there by an animation-driven idle while
+  its AI sends it away, its idle is stopped as a moved actor's is (ActionIdleStop, again each
+  second): a chicken lying down otherwise gave up every walk its sandbox sent it on. Held so, its
+  clips' root motion moves and turns it, as a controlled one's (a deer's canned flee turn
+  carries it on). TODO(M13): the engine's process levels (CommonLibSSE
   `ProcessLists`: high, middle-high, middle-low, low) and how often each moves its actors are
   not documented. The controllers are in the world the
   player moves in: the player bumps into actors and they into each other. The crosshair's pick
@@ -68,7 +74,14 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   turnRight, turnStop, moveForward, moveBackward) and the sync variables they set. The player's
   body is driven the same way. The graph's BSSpeedSamplerModifier turns Speed into
   SpeedSampled, the blend parameter of the locomotion blends. Measured on Orgnar: walking 80
-  units per second plays MT_WalkForward, running 370 MT_RunForward. A travel that arrives on
+  units per second plays MT_WalkForward, running 370 MT_RunForward. Its TurnDelta is the turn
+  its steering made over all the physics steps since its graph was last driven (steps run at 60
+  a second, frames at their own rate): read from the last step alone, a frame of two steps whose
+  second had nothing left to turn said 0 and the next frame's single step said the turn, so an
+  actor turning steadily (a wolf circling its prey, a horse following its rider's view) sent
+  turnLeft and turnStop ten times a second and more (QA: 17 to 23 a second). Its IsSprinting
+  follows its wish too (it asks to go at a sprint), not the speed physics made of it: a horse
+  galloping into a fence went in and out of its SprintState 19 times a second. A travel that arrives on
   the way keeps its request until the next frame, so that the next travel its AI starts at once
   (a patrol's next point) goes on without a step of standing (a moveStop and moveStart at every
   patrol point otherwise).
@@ -155,7 +168,9 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   and fMaxAvoidanceRadius 512, and its radius: observed in the original), and goes round
   those its way would bring within reach (both radii and 8 units) in the next 1.5 seconds, the
   first it would meet: on the side away from it (right of one straight ahead), two that meet
-  head-on both keeping right, turning just as far as passing needs (at most 1.2 radians).
+  head-on both keeping right, turning just as far as passing needs (at most 1.2 radians). The
+  player riding (a horse, a cart) is carried and no one to go round: their own horse went round
+  them every step, its way wavering left and right under its rider.
   Kept from going on by one in its way (slower than 16 units a second) for longer than
   fMaxTimeBlockedByActors (1 s), it searches its path again round that one. TODO(M13): how the
   engine's own avoidance turns the way is not read yet.
@@ -627,7 +642,9 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   horse PairEnd). The rider starts at the race's mount offset (HorseRace DATA: 63.5 units to
   the horse's left, facing it: the clip's "NPC" track says the same) and gets off 111.6 units
   to its left (the dismount's end). Riding, its root is on the horse's SaddleBone (its
-  HorseRider_State poses its pelvis at the root), its graphs driven by the horse's movement;
+  HorseRider_State poses its pelvis at the root), its graphs driven by the horse's movement
+  (its TurnDelta the horse's steering's: measured from frame to frame, frames without a physics
+  step told the rider's graph it stopped turning);
   the horse's own AI waits. Off the horse its graphs stand again (Speed 0, moveStop): what moves
   it on foot starts from a standing graph (a rider let off a walking horse came out of
   HorseExitOut walking on the spot: Elenwen at Helgen's gate). GetSitting answers 2, 3 and 4 for a rider mounting, riding and
@@ -639,9 +656,13 @@ Actors follow the player, ride horses and carts (`src/ai/followers.ts`, `mounts.
   rode: the game asks first (sStealHorse), then riding off is the theft
   (`CrimeEngine.horseTheft`: a steal of iCrimeGoldStealHorse, the horse marked stolen for
   IsHorseStolen; docs/gameplay.md, "Crime and factions"). Mounted, the movement keys send the horse the way the camera
-  looks (it turns as it goes; back alone it backs up), Run and Sprint walk, run and gallop it;
-  Activate gets them off. They are carried on the saddle in the physics steps (their shape out
-  of the world), so their camera rides with the horse. TODO(M13): the engine's horse controls,
+  looks (it turns as it goes), Run and Sprint walk, run and gallop it; Activate gets them off.
+  The back key (observed in the original: the player's movement input on a mount) drops
+  the side keys; a horse that stands, or already backs up (its way within [Controls]
+  fHorseClampAngle, 10°, of straight back), backs up facing on, one that moves otherwise is
+  reined in and stops. They are carried on the saddle in the physics steps (their shape out of
+  the world, and no one for their horse to go round), so their camera rides with the horse.
+  TODO(M13): how the engine turns the horse to the camera (its rate; fHorseMaxAngleBeforeTurn),
   the path tweener to the mount place, mounting from the right.
 - **Actors riding:** a procedure that lets an actor ride ("Ride Horse If Possible": Travel,
   Patrol, Follow, ...) mounts its horse (its ACHR's XHOR: General Tullius' MQ101TulliusHorse)
@@ -869,6 +890,24 @@ from the original game's behaviour only (in our words):
   Sandbox's slot 10; fAIWanderDefaultMinDist, 200, without one); between walks a pause of up to
   (fAIMaxWanderTime − (Energy × fAIEngergyLevelMult + fAIEnergyLevelBase)) / 2 seconds, at
   random (Energy: the actor's; 100 − 50 → up to 25 s).
+- **Where a wanderer walks** (observed in the original: BGSProcedureWander's update; a
+  Sandbox that wanders runs a Wander of its own in the sandbox's place, with its Min Wander
+  Distance). Its place reaches at least fAIDistanceRadiusMinLocation (100). Outside the place
+  it first goes into it. Its first walk is a **random location of the pathing**: a point of the
+  navmesh within the place that it can walk to, at least its Min Wander Distance away. Every
+  walk after that goes **across the place**: from the place's middle, the way from where its
+  last walk led towards the middle, turned at random by up to 45° either side, as far as a random
+  share of the radius (the middle's height). A point it cannot walk to (off the navmesh, behind
+  a fence, on another island) gets no path; its walk is a request to the pathing, which finds
+  its way later, and without one the wander asks again (inferred: TODO(M13), how the engine's
+  pathing answers a goal off its navmesh is not read). Ours
+  (`src/ai/procedure-runs.ts` wanderPoint, `randomReachablePoint` in `src/ai/pathfinding.ts`):
+  the reachable triangles within the place by their area, a random point in the one picked; an
+  across-the-place point is taken only where a path reaches it (up to 8 tried at once, else it
+  waits a moment). Before, any point of the circle was taken unchecked, inside houses and
+  behind the garden fences, and the first walk went anywhere within it (QA: a Riverwood chicken
+  beyond the high process stood 26 s 687 units short of its point, in every run; with this and
+  the walkers' idles stopped, above in "Movement", none).
 - **Follow:** its radii without its own are fFollowSlowdownZoneWidth (150) and
   fFollowMatchSpeedZoneWidth (128), the smaller the minimum. Its speed is matched to the
   leader's (`followSpeed`): at least the leader's; from the middle of its radii to the outer one
