@@ -8,10 +8,13 @@ import { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
 import { HAVOK_SCALE, settlesWhenPlaced, type CollisionData } from '../physics/collision-data.ts';
 import { GrabSpring } from '../physics/grab.ts';
-
-/** Telekinesis: where the object is held before the camera, and how fast it flies let go. */
-const TELEKINESIS_HOLD = 150;
-const TELEKINESIS_THROW = 2000;
+import {
+  beginTelekinesis,
+  stepTelekinesis,
+  telekinesisThrowSpeed,
+  type TelekinesisHold,
+  type TelekinesisSettings,
+} from '../gameplay/magic/telekinesis.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { landscapeMesh } from '../physics/landscape.ts';
 import type {
@@ -62,7 +65,8 @@ const OPENED_LONG_AGO = 1e6;
 interface HeldObject {
   readonly spring: GrabSpring;
   readonly distance: number;
-  readonly telekinesis?: boolean;
+  /** Telekinesis's hold (its distance pulled in from `distance`). */
+  readonly telekinesis?: TelekinesisHold;
   /** Its reference (told as grabbed and released). */
   readonly reference: number | undefined;
 }
@@ -958,10 +962,11 @@ export class PlaySession {
     }
     const camera = this.player.position;
     const forward = this.player.forward;
+    const distance = grab.telekinesis?.distance ?? grab.distance;
     grab.spring.target = [
-      camera[0] + forward[0] * grab.distance,
-      camera[1] + forward[1] * grab.distance,
-      camera[2] + forward[2] * grab.distance,
+      camera[0] + forward[0] * distance,
+      camera[1] + forward[1] * distance,
+      camera[2] + forward[2] * distance,
     ];
     const point = grab.spring.point;
     const gap = Math.hypot(
@@ -978,30 +983,42 @@ export class PlaySession {
   }
 
   /**
-   * Telekinesis held (src/shell/player-casting.ts): the loose object the crosshair finds within
-   * `reach` is taken hold of by the grab spring (the player's grabSpring, as the Z key's:
-   * CommonLibSSE PlayerCharacter GrabbingType kTelekinesis) and pulled to TELEKINESIS_HOLD units
-   * before the camera; let go, it is flung along the view. TODO(M13): the engine's hold distance
-   * and throw speed (fTelekinesis* are not in the plugins), the thrown object's damage (Mod
-   * Telekinesis Damage, Damage Mult).
+   * Telekinesis held (src/shell/player-casting.ts; the rules: src/gameplay/magic/telekinesis.ts):
+   * the loose object the crosshair finds within `reach` is taken hold of by the grab spring (the
+   * player's grabSpring, as the Z key's: CommonLibSSE PlayerCharacter GrabbingType
+   * kTelekinesis) and pulled in before the camera, `seconds` at a time; let go held, it is
+   * thrown along the view (`dual`: dual cast), let go still pulled in, it stops. TODO(M13): the
+   * thrown object's damage (fMagicTelekinesisDamageBase and Mult, Mod Telekinesis Damage and
+   * Damage Mult: the engine adds them to what its collision deals).
    */
-  telekinesis(active: boolean, reach: number): void {
+  telekinesis(
+    active: boolean,
+    reach: number,
+    seconds: number,
+    dual: boolean,
+    settings: TelekinesisSettings,
+  ): void {
     const grab = this.#grab;
     if (!active) {
       if (grab?.telekinesis) {
         this.#setGrab(undefined);
         const body = grab.spring.body;
         const forward = this.player.forward;
+        const speed = telekinesisThrowSpeed(grab.telekinesis, dual, settings) ?? 0;
         if (body.isValid())
           body.setLinvel(
             {
-              x: (forward[0] * TELEKINESIS_THROW) / HAVOK_SCALE,
-              y: (forward[1] * TELEKINESIS_THROW) / HAVOK_SCALE,
-              z: (forward[2] * TELEKINESIS_THROW) / HAVOK_SCALE,
+              x: (forward[0] * speed) / HAVOK_SCALE,
+              y: (forward[1] * speed) / HAVOK_SCALE,
+              z: (forward[2] * speed) / HAVOK_SCALE,
             },
             true,
           );
       }
+      return;
+    }
+    if (grab?.telekinesis) {
+      stepTelekinesis(grab.telekinesis, seconds, reach, settings);
       return;
     }
     if (grab || this.seated || this.dead || this.knocked) return;
@@ -1017,10 +1034,16 @@ export class PlaySession {
     const body = hit && this.physics.grabbable(hit.collider);
     if (!hit || !body) return;
     this.physics.release(body);
+    const camera = this.player.position;
+    const distance = Math.hypot(
+      hit.point[0] - camera[0],
+      hit.point[1] - camera[1],
+      hit.point[2] - camera[2],
+    );
     this.#setGrab({
       spring: new GrabSpring(body, hit.point, this.player.grab),
-      distance: TELEKINESIS_HOLD,
-      telekinesis: true,
+      distance,
+      telekinesis: beginTelekinesis(distance),
       reference: ownReference(hit),
     });
   }

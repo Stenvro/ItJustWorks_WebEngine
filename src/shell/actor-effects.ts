@@ -123,7 +123,11 @@ interface DetectShow {
 const ONCE_SECONDS = 2;
 /** How often Detect Life looks for the living near (seconds). */
 const DETECT_SECONDS = 0.5;
-/** Where an effect's light floats from its actor's feet (Candlelight: over the right shoulder). */
+/**
+ * Where an effect's light floats from its actor's feet (Candlelight: over the right shoulder).
+ * The engine registers fMagicLightForwardOffset, ...SideOffset and ...HeightOffset but never
+ * reads them (original). TODO(M13): where the engine's Light effect hangs its light.
+ */
 const LIGHT_OFFSET: Vec3 = [24, -16, 150];
 const UNITS_PER_FOOT = 21.333;
 
@@ -179,6 +183,11 @@ export class ActorEffects {
       return;
     }
     void this.#startShader(key, target, shader, duration < 0 ? undefined : duration);
+  }
+
+  /** An art object on an actor for `seconds` (WorldBridge.artEffect: Spell Absorption's). */
+  art(art: number, target: number, seconds: number): void {
+    this.#startArt(`art:${String(art)}:${String(target)}`, target, art, Math.max(0, seconds));
   }
 
   /** VisualEffect.Play and Stop (RFCT: its art and its shader) on an actor. */

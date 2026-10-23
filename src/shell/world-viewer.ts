@@ -698,6 +698,9 @@ export class WorldViewer {
     visualEffect: (effect, target, play, duration) => {
       this.#stage?.effects.visual(effect, target, play, duration);
     },
+    artEffect: (art, target, seconds) => {
+      this.#stage?.effects.art(art, target, seconds);
+    },
     graphOf: (reference) => {
       for (const cell of this.#cells.values()) {
         const placed = placedByReference(cell, reference);
@@ -717,6 +720,13 @@ export class WorldViewer {
         this.#play?.physics.impulse(placed, direction, magnitude);
       }
     },
+    explosionPush: (reference, center, push) => {
+      for (const placed of this.#play?.placementsOf(reference) ?? []) {
+        this.#play?.physics.pushFrom(placed, center, push);
+      }
+    },
+    explosionReaches: (from, target, buffer) =>
+      this.#stage?.projectiles.reaches(from, target, buffer),
     destructionChanged: (reference, reached) => {
       this.#destruction?.changed(reference, reached);
     },

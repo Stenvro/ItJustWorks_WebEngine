@@ -64,6 +64,7 @@ import { PlayerCasting } from './player-casting.ts';
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import { combatCasting } from './combat-casting.ts';
 import { aimDirection } from '../gameplay/magic/projectile-flight.ts';
+import { GUIDE_SETTING_TABLE, guideWaypoints } from '../gameplay/magic/effect-rules.ts';
 import { PlayerDeath } from './player-death.ts';
 import type { PlayerFurniture } from './player-furniture.ts';
 import { PlayerPilot } from './player-pilot.ts';
@@ -730,8 +731,20 @@ export class ActorStage {
     if (!best) return;
     const start = navmeshes.locate(from) ? from : (navmeshes.nearest?.(from, SNAP_REACH) ?? from);
     const path = findPath(navmeshes, start, best.at, { radius: 0 });
-    if (path && path.points.length >= 2 && this.#guides.has(key))
-      this.fx.trail(key, hazard, path.points);
+    if (!path || path.points.length < 2 || !this.#guides.has(key)) return;
+    // The trail's waypoints (observed in the original): one every fMagicGuideSpacing
+    // units along the way, iMagicGuideWaypoints of them at most. TODO(M13): the engine puts the
+    // effect's hazard at each waypoint; here its hazard travels them.
+    const setting = async ([name, fallback]: readonly [string, number]): Promise<number> => {
+      const value = await runtime.gameSetting(name);
+      return typeof value === 'number' ? value : fallback;
+    };
+    const points = guideWaypoints(
+      path.points,
+      await setting(GUIDE_SETTING_TABLE.spacing),
+      await setting(GUIDE_SETTING_TABLE.waypoints),
+    );
+    if (points.length >= 2 && this.#guides.has(key)) this.fx.trail(key, hazard, points);
   }
 
   /**

@@ -2937,34 +2937,56 @@ export class ActorCombat implements CombatBridge {
 
   /**
    * Grab Actor (the Vampire Lord's Vampiric Grip): its target goes limp as its ragdoll
-   * (its graph's Ragdoll) and hangs before its caster, at the caster's chest a reach ahead,
-   * while the effect lasts; then it falls and gets up. TODO(M13): the engine's hold point.
+   * (its graph's Ragdoll) and hangs before its caster, at the caster's chest
+   * fMagicGrabActorMinDistance ahead (observed in the original: the hold's distance),
+   * while the effect lasts; then it is flung away from its caster with fMagicGrabActorThrowForce
+   * (as an explosion's knock-down pushes), falls and gets up. TODO(M13): the engine holds it
+   * before the camera (the player's grab); an NPC caster's hold is taken as before its chest.
    */
   grabActor(caster: number | undefined, target: number, on: boolean): void {
     const knockdowns = this.#options.knockdowns?.();
     if (!knockdowns || target === PLAYER_REF) return;
+    const holder = caster === undefined ? undefined : this.#fighters.get(caster);
+    const runtime = this.#options.session.scriptsReady;
+    const setting = async (name: string, fallback: number): Promise<number> => {
+      const value = await runtime?.gameSetting(name);
+      return typeof value === 'number' ? value : fallback;
+    };
     if (!on) {
       knockdowns.hold(target, undefined);
+      const from = holder && this.#feet(holder);
+      const fighter = this.#fighters.get(target);
+      const at = fighter && this.#feet(fighter);
+      if (!from || !at) return;
+      void setting('fMagicGrabActorThrowForce', 25).then((force) => {
+        const way: Vec3 = [at[0] - from[0], at[1] - from[1], at[2] - from[2]];
+        const length = Math.hypot(...way) || 1;
+        void knockdowns.knockDown(target, {
+          direction: [way[0] / length, way[1] / length, way[2] / length],
+          force,
+        });
+      });
       return;
     }
-    const holder = caster === undefined ? undefined : this.#fighters.get(caster);
     const fighter = this.#fighters.get(target);
     if (!holder || !fighter || bleedingOut(fighter.state)) return;
-    const point = (): Vec3 | undefined => {
-      const feet = this.#feet(holder);
-      if (!feet) return undefined;
-      const heading = this.#heading(holder);
-      const scale = this.#scale(holder);
-      const reach = this.#reach(holder, false);
-      return [
-        feet[0] + Math.sin(heading) * reach,
-        feet[1] + Math.cos(heading) * reach,
-        feet[2] + BODY_HEIGHT * scale * CHEST,
-      ];
-    };
     if (!knockdowns.holds(target)) fighter.body?.behavior?.sendEvent('Ragdoll');
-    void knockdowns.knockDown(target).then((down) => {
-      if (down) knockdowns.hold(target, point);
+    void Promise.all([
+      knockdowns.knockDown(target),
+      setting('fMagicGrabActorMinDistance', 90),
+    ]).then(([down, distance]) => {
+      if (!down) return;
+      knockdowns.hold(target, (): Vec3 | undefined => {
+        const feet = this.#feet(holder);
+        if (!feet) return undefined;
+        const heading = this.#heading(holder);
+        const scale = this.#scale(holder);
+        return [
+          feet[0] + Math.sin(heading) * distance,
+          feet[1] + Math.cos(heading) * distance,
+          feet[2] + BODY_HEIGHT * scale * CHEST,
+        ];
+      });
     });
   }
 
