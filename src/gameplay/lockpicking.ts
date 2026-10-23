@@ -5,12 +5,18 @@
 // in the partial zones beside it, not at all beyond them. While the lock is held against a pick
 // that cannot turn it further the pick takes strain, and breaks after the level's time.
 //
-//   sweet spot (°)   = 60 × 2^−difficulty × (0.82 + fLockpickSkillSweetSpotMult × skill) × perk
+//   sweet spot (°)   = fSweetSpot<level> × (fLockpickSkillSweetSpotBase
+//                      + fLockpickSkillSweetSpotMult × skill) × perk
+//                      + fLockpickBrokenPicksMult × the picks broken on the lock
 //   perk             = 1.75 + 0.25 × difficulty with the level's perk (Novice Locks, ...), else 1
 //   partial zone (°) = fPartialPick<level> × (fLockpickSkillPartialPickBase
 //                      + fLockpickSkillPartialPickMult × skill), on each side
-//   break time (s)   = (2, 1, 0.75, 0.5, 0.25 by difficulty) × (1 + 0.5 × skill / 100)
+//   break time (s)   = fLockpickBreak<Novice..Master> × (fLockpickBreakSkillBase
+//                      + fLockpickBreakSkillMult × skill)
 //
+// The sweet spot's and the break time's rules were observed in the original (UESP's
+// figures are these settings'); fSweetSpot<level> in the load order: 30, 15, 7.5, 3.75, 1.875.
+// TODO(M13): the break time's further factor in the engine (1 for all we know) is not known.
 // Opening a lock is fSkillUsageLockPick<level> uses of Lockpicking, a broken pick
 // fSkillUsageLockPickBroken. Platform-independent.
 
@@ -29,11 +35,8 @@ export const PICK_RANGE = 180;
 
 /** Per difficulty (1..5): the game settings' names. */
 const LEVEL_NAMES = ['VeryEasy', 'Easy', 'Average', 'Hard', 'VeryHard'] as const;
-/** Seconds a pick lasts under strain at skill 0 (UESP). */
-const BREAK_SECONDS = [2, 1, 0.75, 0.5, 0.25] as const;
-/** The sweet spot's base and the skill's share of it (UESP; the share is a game setting). */
-const SWEET_SPOT_DEGREES = 60;
-const SWEET_SPOT_BASE = 0.82;
+/** Per difficulty (1..5): the break settings' names (fLockpickBreak<name>). */
+const BREAK_NAMES = ['Novice', 'Apprentice', 'Adept', 'Expert', 'Master'] as const;
 
 /** A lock's difficulty 1 (Novice) .. 5 (Master), or undefined when only its key opens it. */
 export function lockDifficulty(level: number): number | undefined {
@@ -48,27 +51,77 @@ export function lockLevelSetting(difficulty: number | undefined): string {
   return `sLockLevelName${LEVEL_NAMES[clampDifficulty(difficulty) - 1] ?? 'VeryEasy'}`;
 }
 
-/** The settings the sizes come from (GMSTs). */
+/** The settings the sizes and times come from (GMSTs; the load order's, else the engine's). */
 export interface LockpickSettings {
-  /** fLockpickSkillSweetSpotMult (0.006). */
+  /** fSweetSpotVeryEasy .. fSweetSpotVeryHard (30, 15, 7.5, 3.75, 1.875). */
+  readonly sweetSpot: readonly number[];
+  /** fLockpickSkillSweetSpotBase (0.82), fLockpickSkillSweetSpotMult (0.006). */
+  readonly sweetSpotBase: number;
   readonly sweetSpotMult: number;
+  /** fLockpickBrokenPicksMult (0): degrees a broken pick adds to the lock's sweet spot. */
+  readonly brokenPicksMult: number;
   /** fLockpickSkillPartialPickBase (0.775), fLockpickSkillPartialPickMult (0.015). */
   readonly partialBase: number;
   readonly partialMult: number;
   /** fPartialPickVeryEasy .. fPartialPickVeryHard (22, 18, 14, 10, 6). */
   readonly partial: readonly number[];
+  /** fLockpickBreakNovice .. fLockpickBreakMaster (2, 1, 0.75, 0.5, 0.25). */
+  readonly breakSeconds: readonly number[];
+  /** fLockpickBreakSkillBase (1), fLockpickBreakSkillMult (0.005). */
+  readonly breakSkillBase: number;
+  readonly breakSkillMult: number;
 }
 
 export const LOCKPICK_DEFAULTS: LockpickSettings = {
+  sweetSpot: [30, 15, 7.5, 3.75, 1.875],
+  sweetSpotBase: 0.82,
   sweetSpotMult: 0.006,
+  brokenPicksMult: 0,
   partialBase: 0.775,
   partialMult: 0.015,
   partial: [22, 18, 14, 10, 6],
+  breakSeconds: [2, 1, 0.75, 0.5, 0.25],
+  breakSkillBase: 1,
+  breakSkillMult: 0.005,
 };
+
+/**
+ * The lockpicking settings by name (`number`: a game setting, the load order's if it has it),
+ * the engine's defaults where neither has one.
+ */
+export function lockpickSettings(number: (name: string) => number | undefined): LockpickSettings {
+  const setting = (name: string, fallback: number): number => number(name) ?? fallback;
+  const d = LOCKPICK_DEFAULTS;
+  const levels = [1, 2, 3, 4, 5];
+  return {
+    sweetSpot: levels.map((level) => setting(sweetSpotSetting(level), d.sweetSpot[level - 1] ?? 0)),
+    sweetSpotBase: setting('fLockpickSkillSweetSpotBase', 0.82),
+    sweetSpotMult: setting('fLockpickSkillSweetSpotMult', 0.006),
+    brokenPicksMult: setting('fLockpickBrokenPicksMult', 0),
+    partialBase: setting('fLockpickSkillPartialPickBase', 0.775),
+    partialMult: setting('fLockpickSkillPartialPickMult', 0.015),
+    partial: levels.map((level) => setting(partialPickSetting(level), d.partial[level - 1] ?? 0)),
+    breakSeconds: levels.map((level) =>
+      setting(lockpickBreakSetting(level), d.breakSeconds[level - 1] ?? 0),
+    ),
+    breakSkillBase: setting('fLockpickBreakSkillBase', 1),
+    breakSkillMult: setting('fLockpickBreakSkillMult', 0.005),
+  };
+}
 
 /** The partial pick settings' names, by difficulty. */
 export function partialPickSetting(difficulty: number): string {
   return `fPartialPick${LEVEL_NAMES[clampDifficulty(difficulty) - 1] ?? 'VeryEasy'}`;
+}
+
+/** The sweet spot settings' names, by difficulty: fSweetSpot<VeryEasy..VeryHard>. */
+export function sweetSpotSetting(difficulty: number): string {
+  return `fSweetSpot${LEVEL_NAMES[clampDifficulty(difficulty) - 1] ?? 'VeryEasy'}`;
+}
+
+/** The break time settings' names, by difficulty: fLockpickBreak<Novice..Master>. */
+export function lockpickBreakSetting(difficulty: number): string {
+  return `fLockpickBreak${BREAK_NAMES[clampDifficulty(difficulty) - 1] ?? 'Novice'}`;
 }
 
 /**
@@ -109,6 +162,8 @@ export function lockShape(
     readonly perk?: boolean | number;
     readonly random: number;
     readonly settings?: LockpickSettings;
+    /** Picks the player has broken on this lock. */
+    readonly brokenPicks?: number;
   },
 ): LockShape {
   const d = clampDifficulty(difficulty);
@@ -117,7 +172,10 @@ export function lockShape(
     typeof options.perk === 'number' ? options.perk : options.perk === true ? 1.75 + 0.25 * d : 1;
   const sweetSpot = Math.min(
     PICK_RANGE,
-    SWEET_SPOT_DEGREES * 2 ** -d * (SWEET_SPOT_BASE + settings.sweetSpotMult * skill) * perk,
+    (settings.sweetSpot[d - 1] ?? 0) *
+      (settings.sweetSpotBase + settings.sweetSpotMult * skill) *
+      perk +
+      settings.brokenPicksMult * (options.brokenPicks ?? 0),
   );
   const partial =
     (settings.partial[d - 1] ?? 0) * (settings.partialBase + settings.partialMult * skill);
@@ -127,7 +185,9 @@ export function lockShape(
     center,
     sweetSpot,
     partial,
-    breakSeconds: (BREAK_SECONDS[d - 1] ?? 0.25) * (1 + (0.5 * skill) / 100),
+    breakSeconds:
+      (settings.breakSeconds[d - 1] ?? 0) *
+      (settings.breakSkillBase + settings.breakSkillMult * skill),
   };
 }
 

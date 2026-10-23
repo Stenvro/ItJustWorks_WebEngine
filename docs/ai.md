@@ -1274,7 +1274,7 @@ meanwhile.
   scripts (OnHit: aggressor, weapon, projectile, power, sneak, bash, blocked), uses the
   attacker's weapon skill by the weapon's base damage (Sneak by fSneakAttackSkillUsageMelee for
   a sneak attack), and shows the target on the HUD's enemy bar (its name and health) for the
-  player's hits. Health run out kills (the ragdoll pushed by fDeathForce{Ranged}Min..Max by the
+  player's hits (how long: docs/ui.md, "The HUD"). Health run out kills (the ragdoll pushed by fDeathForce{Ranged}Min..Max by the
   damage; its death cry, its Death line, unless the kill was KillSilent's, which reports no
   murder either); an essential actor, and a protected one unless the player themselves dealt
   the blow (a follower's, a summon's or another actor's leaves it down: UESP "Protected

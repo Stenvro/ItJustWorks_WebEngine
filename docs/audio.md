@@ -37,6 +37,25 @@ context.
   loop's pass first. Sounds stopped because their cell unloads stop at once.
 - **The listener** is at the camera, facing along it, Z up.
 
+## Mixing rules
+
+Observed in the original (the settings are `[Audio]` INI settings, `src/world/ini-settings.ts`):
+
+- **Menu mode** (`AudioEngine.setInMenu`): the categories paused during menus go silent; the
+  fading one (DOBJ PDMC, AudioCategoryPausedDuringMenuFade) fades out over fMenuModeFadeOutTime
+  and back in over fMenuModeFadeInTime (3 and 1 s in Skyrim_Default.ini; 0.5 compiled in), the
+  immediate one (PIMC) and the loading one (PDLC) at once.
+- **Dialogue ducking** (`SoundSystem.duckForDialogue`): once the dialogue menu has named its
+  speaker, the non-dialogue voices (DOBJ NDSC, AudioCategoryNonVOC) and the effects that fade
+  during dialogue (SFDC, AudioCategorySFXFadeDuringDialogue) go down by fNonDialogVoiceDucking
+  (9 dB) over fNonDialogVoiceDuckingFadeOut (1.5 s); as the menu closes they come back over
+  fNonDialogVoiceDuckingFadeIn (1 s).
+- **Speech highlighting** (`SoundSystem`, every frame): while a spoken line plays within
+  fMaxHighlightRadius (250) of the listener (or at the listener: a line in the player's head),
+  every other spoken line is fNonHighlightSpeechAtten (12 dB) quieter, each change in a straight
+  line over fHighlightSpeechOverlap (0.5 s): in an inn the one talking to the player is heard
+  over the rest. (iHighlightSpeechOverlap, 500, is not read by the engine.)
+
 ## Placed sounds
 
 The loaded cells' sound markers (SOUN) and the looping sounds of activators, moveable

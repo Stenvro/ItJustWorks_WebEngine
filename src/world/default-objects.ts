@@ -26,6 +26,12 @@ export const DefaultObjectUse = {
   underwaterLoop: 'UWLS',
   /** SNCT spoken lines play in (AudioCategoryVOC). */
   dialogueCategory: 'DDSC',
+  /**
+   * SNCT a conversation turns down: the non-dialogue voices (AudioCategoryNonVOC) and the
+   * effects that fade during dialogue (AudioCategorySFXFadeDuringDialogue).
+   */
+  nonDialogueCategory: 'NDSC',
+  sfxFadeInDialogueCategory: 'SFDC',
   /** SOPM of spoken lines in the world (SOMDialogue3DDefault) and at the listener (2D). */
   dialogueOutput3d: 'DOP2',
   dialogueOutput2d: 'DOP3',

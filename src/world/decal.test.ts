@@ -1,7 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
 import { identity } from '../render/math.ts';
-import { DecalFlag, parseTextureSet, placeDecal } from './decal.ts';
+import { DecalFlag, expireDecals, parseTextureSet, placeDecal } from './decal.ts';
+
+describe('expireDecals', () => {
+  it('lets the decals past their lifetime go, then the oldest beyond the cap', () => {
+    const decals = [
+      { name: 'a', until: 10 },
+      { name: 'b', until: 40 },
+      { name: 'c', until: 41 },
+      { name: 'd', until: 42 },
+    ];
+    const gone = expireDecals(decals, 30, 2);
+    expect(gone.map((decal) => decal.name).sort()).toEqual(['a', 'b']);
+    expect(decals.map((decal) => decal.name)).toEqual(['c', 'd']);
+    expect(expireDecals(decals, 50, 1000).length).toBe(2);
+    expect(decals).toEqual([]);
+  });
+});
 
 const text = (value: string): Uint8Array => new TextEncoder().encode(`${value}\0`);
 

@@ -110,23 +110,50 @@ export class AudioEngine {
 
   /**
    * The game goes into a menu or comes out: the categories the data pauses during menus
-   * (AudioCategoryPausedDuringMenu, ...Fade fading, ...Load) go silent, the others (music,
-   * the interface) play on. TODO(M13): their sounds hold their place instead of playing on
-   * silenced.
+   * (AudioCategoryPausedDuringMenu, ...Fade, ...Load) go silent, the others (music, the
+   * interface) play on. Observed in the original: the fading one (DOBJ PDMC) fades out over
+   * [Audio] fMenuModeFadeOutTime seconds and back in over fMenuModeFadeInTime (`fade`), the
+   * others at once. TODO(M13): their sounds hold their place instead of playing on silenced.
    */
-  setInMenu(inMenu: boolean): void {
+  setInMenu(
+    inMenu: boolean,
+    fade: { readonly out: number; readonly in: number } = { out: 0.5, in: 0.5 },
+  ): void {
     if (inMenu === this.#inMenu) return;
     this.#inMenu = inMenu;
     for (const [formId, node] of this.#categories) {
       const name = this.#categoryData.get(formId)?.editorId.toLowerCase() ?? '';
       if (!name.startsWith(PAUSED_IN_MENUS)) continue;
       const fades = name === `${PAUSED_IN_MENUS}fade`;
-      node.gain.setTargetAtTime(
-        this.#gainOf(formId),
-        this.context.currentTime,
-        fades ? 0.15 : 0.01,
-      );
+      this.#rampTo(node, this.#gainOf(formId), fades ? (inMenu ? fade.out : fade.in) : 0);
     }
+  }
+
+  /** The categories turned down (decibels) and by how much: dialogue's ducking. */
+  readonly #ducked = new Map<number, number>();
+
+  /**
+   * Turns categories down by `decibels` over `seconds` (a conversation ducks the non-dialogue
+   * voices, DOBJ NDSC, and the effects that fade during dialogue, SFDC), or back up (0 dB).
+   */
+  duck(categories: readonly number[], decibels: number, seconds: number): void {
+    for (const category of categories) {
+      if (decibels > 0) this.#ducked.set(category, decibels);
+      else this.#ducked.delete(category);
+      if (this.#categoryData.has(category)) {
+        this.#rampTo(this.#node(category), this.#gainOf(category), seconds);
+      }
+    }
+  }
+
+  /** A gain to `value` in a straight line over `seconds` (0: at once). */
+  #rampTo(node: GainNode, value: number, seconds: number): void {
+    const time = this.context.currentTime;
+    const gain = node.gain;
+    gain.cancelScheduledValues(time);
+    gain.setValueAtTime(gain.value, time);
+    if (seconds > 0) gain.linearRampToValueAtTime(value, time + seconds);
+    else gain.setValueAtTime(value, time);
   }
 
   /** A category's own gain: its volume × the user's, muted under water if it mutes. */
@@ -135,7 +162,8 @@ export class AudioEngine {
     if (data?.muteWhenSubmerged && this.#submerged) return 0;
     if (this.#inMenu && data?.editorId.toLowerCase().startsWith(PAUSED_IN_MENUS)) return 0;
     const user = this.#userVolumes.get(formId) ?? (data?.onMenu ? data.menuVolume : 1);
-    return (data?.volume ?? 1) * user;
+    const ducked = this.#ducked.get(formId);
+    return (data?.volume ?? 1) * user * (ducked === undefined ? 1 : 10 ** (-ducked / 20));
   }
 
   /** The current acoustic space's reverb (undefined or silent: none). */

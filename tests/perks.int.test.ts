@@ -10,7 +10,7 @@ import {
   EntryPoint,
   isValueFunction,
 } from '../src/gameplay/perk-entry-points.ts';
-import { barterMultipliers } from '../src/gameplay/barter.ts';
+import { BARTER_DEFAULTS, barterMultipliers } from '../src/gameplay/barter.ts';
 import { PLAYER_REF } from '../src/scripting/runtime/forms.ts';
 import { ScriptRuntime } from '../src/scripting/runtime/runtime.ts';
 import { ScriptLibrary } from '../src/scripting/script-library.ts';
@@ -153,17 +153,17 @@ describe.skipIf(!hasGamedata())('perks on the local game data', () => {
 
   it('lowers buying and raises selling prices with Haggling', async () => {
     const speech = 30;
+    const settings = { ...BARTER_DEFAULTS, min: 2, max: 3.3 };
     const plain = barterMultipliers(
       speech,
-      2,
-      3.3,
+      settings,
       await runtime.perks.barterFactors(PLAYER_REF, VENDOR),
     );
     await runtime.perks.add(PLAYER_REF, HAGGLING_00);
     const factors = await runtime.perks.barterFactors(PLAYER_REF, VENDOR);
     expect(factors.buy).toBeCloseTo(0.91);
     expect(factors.sell).toBeCloseTo(1.1);
-    const haggling = barterMultipliers(speech, 2, 3.3, factors);
+    const haggling = barterMultipliers(speech, settings, factors);
     expect(haggling.buy).toBeLessThan(plain.buy);
     expect(haggling.sell).toBeGreaterThan(plain.sell);
     await runtime.perks.remove(PLAYER_REF, HAGGLING_00);

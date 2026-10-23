@@ -1,13 +1,12 @@
 // The journal's settings pages (Gameplay, Display, Audio) as the engine fills them: each entry the
 // movie lists (by its text's translation key) is the INI setting it changes, how the menu shows
 // it (a checkbox 0/1, a stepper's index, a slider's 0..1 position) and its default. The movie
-// drops the entries the engine gives no ID (consoles' and Kinect's options; those this engine
-// does not have yet). Where the game's slider ends are known they are its own: Object, Actor and
-// Item Fade from its Low to its Ultra preset (Low.ini, Ultra.ini of the installation), Grass,
-// Light, Specularity and Shadow Fade from the minimum to the maximum the INI gives
-// (fGrassMinStartFadeDistance .. fGrassMaxStartFadeDistance, ..LODMaxStartFade in
-// Skyrim_Default.ini). TODO(M13): Tree LOD Fade and DDOF Intensity (their settings are not
-// documented). Platform-independent.
+// drops the entries the engine gives no ID: the consoles' and Kinect's options, and on the PC's
+// Display page Shadow, Light, Specularity and Tree LOD Fade (observed in the original: it
+// fills the others only). A slider runs between the INI settings the engine takes its ends from
+// (fGammaMin .. fGammaMax, fActorLODMin .. fActorLODMax, ...); HUD Opacity and DDOF Intensity
+// show their setting as it is (0..1). Save on Pause is fAutosaveEveryXMins, Disabled while
+// bSaveOnPause is off. Platform-independent.
 
 /** How an option shows: a slider (0..1), a stepper (an index), a checkbox (0/1). */
 export const OptionKind = { slider: 0, stepper: 1, checkbox: 2 } as const;
@@ -18,10 +17,12 @@ export interface SettingOption {
   /** The INI setting: "Section:key". */
   readonly id: string;
   readonly kind: number;
-  /** A slider: the setting at its two ends. */
-  readonly range?: readonly [number, number];
+  /** A slider: its two ends, each a value or the INI setting ("Section:key") that holds it. */
+  readonly range?: readonly [number | string, number | string];
   /** A stepper: the setting at each of its options. */
   readonly steps?: readonly number[];
+  /** A stepper: the INI setting that turns it off (0: its last option, Disabled). */
+  readonly enabledBy?: string;
 }
 
 /** The settings by page (their defaults: IniSettings, src/world/ini-settings.ts). */
@@ -34,20 +35,21 @@ export const SETTING_OPTIONS: Readonly<Record<'gameplay' | 'display', readonly S
       // The movie lists 5, 10, 15, 30, 45 and 60 minutes, then Disabled (its InitArray takes
       // the values in reverse of their push order).
       steps: [5, 10, 15, 30, 45, 60, 0],
+      enabledBy: 'Main:bSaveOnPause',
     },
     {
       key: '$Save on Travel',
-      id: 'SaveGame:bSaveOnTravel',
+      id: 'Main:bSaveOnTravel',
       kind: OptionKind.checkbox,
     },
     {
       key: '$Save on Wait',
-      id: 'SaveGame:bSaveOnWait',
+      id: 'Main:bSaveOnWait',
       kind: OptionKind.checkbox,
     },
     {
       key: '$Save on Rest',
-      id: 'SaveGame:bSaveOnRest',
+      id: 'Main:bSaveOnRest',
       kind: OptionKind.checkbox,
     },
     {
@@ -62,12 +64,11 @@ export const SETTING_OPTIONS: Readonly<Record<'gameplay' | 'display', readonly S
       kind: OptionKind.stepper,
       steps: [0, 1, 2, 3, 4, 5],
     },
-    // TODO(M13): the game's ends of this slider (not documented; linear about the default).
     {
       key: '$Look Sensitivity',
       id: 'Controls:fMouseHeadingSensitivity',
       kind: OptionKind.slider,
-      range: [0, 0.05],
+      range: ['Controls:fMouseHeadingSensitivityMin', 'Controls:fMouseHeadingSensitivityMax'],
     },
     { key: '$Invert Y', id: 'Controls:bInvertYValues', kind: OptionKind.checkbox },
   ],
@@ -84,79 +85,100 @@ export const SETTING_OPTIONS: Readonly<Record<'gameplay' | 'display', readonly S
     },
     { key: '$Crosshair', id: 'Main:bCrosshairEnabled', kind: OptionKind.checkbox },
     {
-      key: '$Specularity Fade',
-      id: 'Display:fSpecularLODStartFade',
-      kind: OptionKind.slider,
-      range: [0, 2000],
-    },
-    {
-      key: '$Light Fade',
-      id: 'Display:fLightLODStartFade',
-      kind: OptionKind.slider,
-      range: [0, 3500],
-    },
-    {
-      key: '$Shadow Fade',
-      id: 'Display:fShadowLODStartFade',
-      kind: OptionKind.slider,
-      range: [0, 1000],
-    },
-    {
       key: '$Grass Fade',
       id: 'Grass:fGrassStartFadeDistance',
       kind: OptionKind.slider,
-      range: [0, 7000],
+      range: ['Grass:fGrassMinStartFadeDistance', 'Grass:fGrassMaxStartFadeDistance'],
     },
     {
       key: '$Object Fade',
       id: 'LOD:fLODFadeOutMultObjects',
       kind: OptionKind.slider,
-      range: [5, 30],
+      range: ['LOD:fObjectLODMin', 'LOD:fObjectLODMax'],
     },
     {
       key: '$Item Fade',
       id: 'LOD:fLODFadeOutMultItems',
       kind: OptionKind.slider,
-      range: [1.5, 10],
+      range: ['LOD:fItemLODMin', 'LOD:fItemLODMax'],
     },
     {
       key: '$Actor Fade',
       id: 'LOD:fLODFadeOutMultActors',
       kind: OptionKind.slider,
-      range: [5, 15],
+      range: ['LOD:fActorLODMin', 'LOD:fActorLODMax'],
     },
     {
       key: '$HUD Opacity',
-      id: 'Interface:fHUDOpacity',
+      id: 'Main:fHUDOpacity',
       kind: OptionKind.slider,
       range: [0, 1],
     },
-    // TODO(M13): the game's ends of this slider (not documented; linear about the default).
     {
       key: '$Brightness',
       id: 'Display:fGamma',
       kind: OptionKind.slider,
-      range: [0.5, 1.5],
+      range: ['Display:fGammaMin', 'Display:fGammaMax'],
+    },
+    // TODO(M13): the renderer has no dynamic depth of field in play yet to take it.
+    {
+      key: '$DDOF Intensity',
+      id: 'Display:fDynamicDOFBlurMultiplier',
+      kind: OptionKind.slider,
+      range: ['Display:fDynamicDOFBlurMultiplierMin', 'Display:fDynamicDOFBlurMultiplierMax'],
     },
   ],
 };
 
+/** Reads an INI setting by "Section:key" (a slider's ends, a stepper's switch). */
+export type SettingReader = (id: string) => number;
+
+/** A slider's two ends as values. */
+function ends(option: SettingOption, read: SettingReader): [number, number] {
+  const [low = 0, high = 1] = option.range ?? [];
+  return [typeof low === 'string' ? read(low) : low, typeof high === 'string' ? read(high) : high];
+}
+
 /** A setting's value as the menu shows it. */
-export function toMenuValue(option: SettingOption, value: number): number {
+export function toMenuValue(option: SettingOption, value: number, read: SettingReader): number {
   if (option.range) {
-    const [low, high] = option.range;
+    const [low, high] = ends(option, read);
     return high === low ? 0 : Math.min(1, Math.max(0, (value - low) / (high - low)));
   }
-  if (option.steps) return Math.max(0, option.steps.indexOf(value));
+  if (option.steps) {
+    // Turned off: its last option.
+    if (option.enabledBy !== undefined && read(option.enabledBy) === 0) {
+      return option.steps.length - 1;
+    }
+    return Math.max(0, option.steps.indexOf(value));
+  }
   return value !== 0 ? 1 : 0;
 }
 
-/** A menu's value as the setting it stands for. */
-export function fromMenuValue(option: SettingOption, menuValue: number): number {
+/**
+ * A menu's value as the settings it stands for: the option's own, and the switch that turns it
+ * on or off (a stepper's last option is Disabled; the setting keeps its value then).
+ */
+export function fromMenuValue(
+  option: SettingOption,
+  menuValue: number,
+  read: SettingReader,
+): { readonly id: string; readonly value: number }[] {
   if (option.range) {
-    const [low, high] = option.range;
-    return low + (high - low) * Math.min(1, Math.max(0, menuValue));
+    const [low, high] = ends(option, read);
+    return [{ id: option.id, value: low + (high - low) * Math.min(1, Math.max(0, menuValue)) }];
   }
-  if (option.steps) return option.steps[Math.round(menuValue)] ?? option.steps[0] ?? 0;
-  return menuValue !== 0 ? 1 : 0;
+  if (option.steps) {
+    const index = Math.max(0, Math.min(option.steps.length - 1, Math.round(menuValue)));
+    const value = option.steps[index] ?? option.steps[0] ?? 0;
+    if (option.enabledBy === undefined) return [{ id: option.id, value }];
+    const off = index === option.steps.length - 1;
+    return off
+      ? [{ id: option.enabledBy, value: 0 }]
+      : [
+          { id: option.enabledBy, value: 1 },
+          { id: option.id, value },
+        ];
+  }
+  return [{ id: option.id, value: menuValue !== 0 ? 1 : 0 }];
 }
