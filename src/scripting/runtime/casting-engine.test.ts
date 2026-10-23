@@ -6,6 +6,7 @@ import { EffectArchetype, EffectFlag } from '../../world/magic-effects.ts';
 import { Delivery, type MagicItemRecord } from '../../world/magic-records.ts';
 import { CastType } from '../../world/spell-records.ts';
 import { CastingEngine, CastingSource, type CastEvent } from './casting-engine.ts';
+import { EventHub } from './event-hub.ts';
 import { PLAYER_REF } from './forms.ts';
 import { GameState } from './game-state.ts';
 import type { ScriptRuntime } from './runtime.ts';
@@ -178,10 +179,7 @@ function world() {
     },
     itemCount: () => Promise.resolve(1),
     removeItem: () => Promise.resolve(),
-    sendEvent: (target: number) => {
-      hits.push(target);
-      return Promise.resolve();
-    },
+    events: new EventHub(),
     referenceHandle: () => null,
     formHandle: () => null,
     detach: (work: Promise<unknown>) => {
@@ -199,6 +197,10 @@ function world() {
       },
     },
   };
+  // The hits the hub hears (TESHitEvent: the target's OnHit).
+  runtime.events.on('hit', (event) => {
+    hits.push(event.target);
+  });
   const castMagic: { caster: number; spell: number }[] = [];
   const voicePowers: { actor: number; power: number }[] = [];
   const engine = new CastingEngine(runtime as unknown as ScriptRuntime);

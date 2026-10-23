@@ -3,9 +3,11 @@ import type { PlayerAppearance } from '../../gameplay/chargen.ts';
 import { ActorValue } from '../../world/actor-values.ts';
 import { AliasFlag } from '../../world/quest-records.ts';
 import { ActorEngine } from './actor-engine.ts';
+import { EventHub } from './event-hub.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
 import { GameState } from './game-state.ts';
 import type { ScriptRuntime } from './runtime.ts';
+import { relayScriptEvents, type ScriptEventHost } from './script-events.ts';
 
 const NORD = 0x13746;
 const ARGONIAN = 0x13740;
@@ -104,7 +106,10 @@ function dyingEngine(essentialAlias = false): { actors: ActorEngine; log: DeathL
       calls.push(`${event} ${target.toString(16)} (${String(args[0])})`);
       return Promise.resolve();
     },
+    events: new EventHub(),
   };
+  // The hub's events reach the scripts through the relay (script-events.ts).
+  relayScriptEvents(runtime as unknown as ScriptEventHost);
   const actors = new ActorEngine(runtime as unknown as ScriptRuntime);
   actors.setBase(PLAYER_REF, ActorValue.health, 100);
   return { actors, log: { calls, runtime } };

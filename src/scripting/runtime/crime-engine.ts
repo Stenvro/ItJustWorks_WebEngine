@@ -218,16 +218,16 @@ export class CrimeEngine {
     if (gold <= 0) return;
     if (violent) entry.infamyViolent = (entry.infamyViolent ?? 0) + gold;
     else entry.infamy = (entry.infamy ?? 0) + gold;
-    const stats = this.#runtime.stats;
-    stats.set('total lifetime bounty', (stats.get('total lifetime bounty') ?? 0) + gold);
+    const runtime = this.#runtime;
+    runtime.incrementStat('Total Lifetime Bounty', gold);
     const total = entry.crimeGold + entry.crimeGoldViolent;
-    if (total > (stats.get('largest bounty') ?? 0)) stats.set('largest bounty', total);
+    if (total > (runtime.stats.get('largest bounty') ?? 0))
+      runtime.setStat('Largest Bounty', total);
     this.name(faction);
   }
 
   #stat(name: string, by = 1): void {
-    const stats = this.#runtime.stats;
-    stats.set(name, (stats.get(name) ?? 0) + by);
+    this.#runtime.incrementStat(name, by);
   }
 
   // --- Crimes ---------------------------------------------------------------------------------

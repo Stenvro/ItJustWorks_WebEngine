@@ -58,6 +58,21 @@ const clock = (): number => performance.now() / 1000;
 /** How long ago a door that comes in open opened (seconds): past any open sequence's end. */
 const OPENED_LONG_AGO = 1e6;
 
+/** An object the player holds (the Z key's or Telekinesis's grab). */
+interface HeldObject {
+  readonly spring: GrabSpring;
+  readonly distance: number;
+  readonly telekinesis?: boolean;
+  /** Its reference (told as grabbed and released). */
+  readonly reference: number | undefined;
+}
+
+/** The reference a pick met (an object's or an actor's), if it has one (not the landscape). */
+const ownReference = (hit: PickHit): number | undefined =>
+  hit.owner && hit.owner.kind !== 'landscape' && hit.owner.reference !== 0
+    ? hit.owner.reference
+    : undefined;
+
 /**
  * A door that is not a load door, or a container, whose model has an open sequence: its
  * sequence state (doors open and close as they are activated, containers while their menu is
@@ -117,6 +132,8 @@ export interface ObjectUses {
   harvest?(object: CellObject): void;
   /** Whether flora has been harvested (it has not grown again). */
   harvested?(object: CellObject): boolean;
+  /** The player set a door or container swinging (its playback's new sequence: OnOpen, OnClose). */
+  swung?(object: CellObject, instance: ModelInstance): void;
 }
 
 /**
@@ -180,6 +197,7 @@ ${name}`);
     if (!playback) return;
     playback.sequence = name;
     playback.start = clock();
+    uses?.swung?.(object, instance);
   };
   if (uses && object.baseType === 'CONT') {
     return {
@@ -486,12 +504,26 @@ export class PlaySession {
         readonly body: RAPIER.RigidBody;
         readonly point: Vec3;
         readonly target: Activatable | undefined;
+        readonly reference: number | undefined;
       }
     | undefined;
-  /** The object held (its spring) and how far in front of the camera. */
-  #grab:
-    | { readonly spring: GrabSpring; readonly distance: number; readonly telekinesis?: boolean }
-    | undefined;
+  /** The object held (its spring), how far in front of the camera, and its reference. */
+  #grab: HeldObject | undefined;
+
+  /**
+   * The player takes hold of an object or lets it go: the engine tells both (TESGrabReleaseEvent:
+   * the object's OnGrab, OnRelease; observed in the original), the Z key's hold and Telekinesis's alike.
+   */
+  onGrab: ((reference: number, grabbed: boolean) => void) | undefined;
+
+  #setGrab(grab: HeldObject | undefined): void {
+    const before = this.#grab?.reference;
+    this.#grab = grab;
+    const after = grab?.reference;
+    if (before === after) return;
+    if (before !== undefined) this.onGrab?.(before, false);
+    if (after !== undefined) this.onGrab?.(after, true);
+  }
 
   /**
    * The player is put on the ground below their feet (searching from `searchAbove` higher)
@@ -695,7 +727,7 @@ export class PlaySession {
       this.#setTarget(undefined);
     } else if (this.dead || this.knocked) {
       // The world steps on; the player's keys do nothing.
-      this.#grab = undefined;
+      this.#setGrab(undefined);
       this.#hold = undefined;
       this.physics.step(deltaSeconds, (step) => {
         for (const hook of this.stepHooks) hook(step);
@@ -732,7 +764,7 @@ export class PlaySession {
       const favor = this.favorMode;
       if (favor) {
         // A follower's command mode: what the crosshair rests on is commanded, not activated.
-        this.#grab = undefined;
+        this.#setGrab(undefined);
         this.#hold = undefined;
         const target = this.#favorTarget(favor);
         this.#setTarget(target, true);
@@ -874,7 +906,13 @@ export class PlaySession {
     if (player.takePressed('Activate') && !this.#grab) {
       const body = hit && this.physics.grabbable(hit.collider, hit.owner?.kind === 'actor');
       if (hit && body) {
-        this.#hold = { since: clock(), body, point: hit.point, target: this.#target };
+        this.#hold = {
+          since: clock(),
+          body,
+          point: hit.point,
+          target: this.#target,
+          reference: ownReference(hit),
+        };
       } else {
         this.#activateTarget(this.#target);
       }
@@ -891,17 +929,19 @@ export class PlaySession {
         this.physics.release(hold.body);
         // Those near comment on it (ZKeyObject).
         this.player.onAction?.('ZKEY');
-        this.#grab = {
+        this.#setGrab({
           spring: new GrabSpring(hold.body, hold.point, player.grab),
           distance: Math.hypot(
             hold.point[0] - camera[0],
             hold.point[1] - camera[1],
             hold.point[2] - camera[2],
           ),
-        };
+          reference: hold.reference,
+        });
       }
     }
-    if (this.#grab && !this.#grab.telekinesis && !player.isHeld('Activate')) this.#grab = undefined;
+    if (this.#grab && !this.#grab.telekinesis && !player.isHeld('Activate'))
+      this.#setGrab(undefined);
   }
 
   /**
@@ -913,7 +953,7 @@ export class PlaySession {
     const grab = this.#grab;
     if (!grab) return;
     if (!grab.spring.body.isValid()) {
-      this.#grab = undefined;
+      this.#setGrab(undefined);
       return;
     }
     const camera = this.player.position;
@@ -931,7 +971,7 @@ export class PlaySession {
     );
     // A telekinetic hold pulls from afar; a held object left behind drops.
     if (!grab.telekinesis && gap > this.player.ini.number('Interface', 'fActivatePickLength')) {
-      this.#grab = undefined;
+      this.#setGrab(undefined);
       return;
     }
     grab.spring.apply(step);
@@ -949,7 +989,7 @@ export class PlaySession {
     const grab = this.#grab;
     if (!active) {
       if (grab?.telekinesis) {
-        this.#grab = undefined;
+        this.#setGrab(undefined);
         const body = grab.spring.body;
         const forward = this.player.forward;
         if (body.isValid())
@@ -977,11 +1017,12 @@ export class PlaySession {
     const body = hit && this.physics.grabbable(hit.collider);
     if (!hit || !body) return;
     this.physics.release(body);
-    this.#grab = {
+    this.#setGrab({
       spring: new GrabSpring(body, hit.point, this.player.grab),
       distance: TELEKINESIS_HOLD,
       telekinesis: true,
-    };
+      reference: ownReference(hit),
+    });
   }
 
   /**
