@@ -7,12 +7,17 @@
 //   node tools/detection-info.ts --settings     every setting: its value and where it is from
 //   node tools/detection-info.ts --records      sound levels, override lists, interrupt overrides
 //   node tools/detection-info.ts --level sneak=15 light=40 distance=500 [observer=25]
-//        [armour=20] [moving] [running] [standing] [exterior] [unseen] [behind]
-//                                               the detection level of one case, term by term
+//        [armour=20] [moving] [running] [standing] [exterior] [unseen] [behind] [player]
+//        [combat] [other]                       the detection level of one case, term by term
+//                                               (light: as detection weighs it; player: the
+//                                               target's Sneak counts as the player's; combat:
+//                                               the observer in combat; other: not its target)
 
 import {
   detectionLevel,
   detectionReach,
+  detectionSkill,
+  inViewCone,
   detectionSettingNames,
   readDetectionSettings,
   sightReach,
@@ -52,27 +57,27 @@ if (args.includes('--level')) {
   const vfs = await Vfs.mount(openGameFolder());
   const settings = readDetectionSettings(await GameSettings.read(await RecordDatabase.open(vfs)));
   const exterior = flag('exterior');
-  const reach = detectionReach(settings, exterior);
+  const other = flag('other');
+  const reach =
+    detectionReach(settings, exterior) *
+    (other && !flag('player') ? settings.combatNonTargetDistanceMult : 1);
   const distance = value('distance', 500);
-  const seen =
-    !flag('unseen') &&
-    distance < sightReach(settings, flag('behind') ? Math.PI : 0, reach, exterior);
+  const off = flag('behind') ? Math.PI : 0;
+  const lineOfSight = !flag('unseen') && distance < sightReach(settings, off, reach, exterior);
+  const seen = lineOfSight && inViewCone(settings, off);
   const result = detectionLevel(settings, {
     observer: {
       skill: value('observer', 25),
       sleeping: false,
-      alerted: false,
-      combatTarget: false,
+      inCombat: flag('combat') || other,
+      otherThanTarget: other,
       blindness: 0,
-      nightEye: false,
     },
     target: {
       moving: flag('moving') || flag('running'),
       running: flag('running'),
       sneaking: !flag('standing'),
-      inCombat: false,
-      swimming: false,
-      skill: value('sneak', 15),
+      skill: detectionSkill(settings, value('sneak', 15), flag('player')),
       armourWeight: value('armour', 0),
       noiseMult: 1,
       actionSound: 0,
@@ -83,7 +88,7 @@ if (args.includes('--level')) {
     distance,
     reach,
     exterior,
-    lineOfSight: !flag('unseen'),
+    lineOfSight,
     seen,
   });
   const state =
@@ -92,7 +97,7 @@ if (args.includes('--level')) {
     `reach ${num(reach)} · attenuation ${result.attenuation.toFixed(3)} · sound ${result.sound.toFixed(2)} · ` +
       `visual ${result.visual.toFixed(2)} · skills ${result.skill.toFixed(2)}`,
   );
-  console.log(`level ${result.level.toFixed(2)}: ${state}`);
+  console.log(`level ${String(result.level)}: ${state}`);
 } else if (args.includes('--settings')) {
   const vfs = await Vfs.mount(openGameFolder());
   const settings = await GameSettings.read(await RecordDatabase.open(vfs));

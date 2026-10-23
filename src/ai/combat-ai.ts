@@ -211,6 +211,11 @@ export interface CombatAiSettings {
   readonly rangedAttackHoldTimeMax: number;
   readonly rangedAttackHoldTimeAbsoluteMin: number;
   readonly rangedAttackHoldTimeMinDistance: number;
+  /**
+   * fCombatAttackAnimationDrivenDelayTime: an actor still in its last attack chooses no new one
+   * until this long after it chose it (observed in the original).
+   */
+  readonly attackAnimationDrivenDelayTime: number;
 }
 
 /**
@@ -322,6 +327,7 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['rangedAttackHoldTimeMax', 'fCombatRangedAttackHoldTimeMax', 1.5],
   ['rangedAttackHoldTimeAbsoluteMin', 'fCombatRangedAttackHoldTimeAbsoluteMin', 0.1],
   ['rangedAttackHoldTimeMinDistance', 'fCombatRangedAttackHoldTimeMinDistance', 256],
+  ['attackAnimationDrivenDelayTime', 'fCombatAttackAnimationDrivenDelayTime', 1.5],
 ];
 
 export function readCombatAiSettings(

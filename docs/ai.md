@@ -878,100 +878,115 @@ What the actors notice (`src/ai/detection.ts`, `src/ai/detection-states.ts`,
 `src/ai/light-level.ts`, `src/ai/reactions.ts`, wired in `src/shell/actor-senses.ts`; check:
 `node tools/detection-info.ts --settings | --records | --level ...`).
 
-- **Who tests whom:** every living actor of the high process tests the player and the other
-  actors of the high process, each every fDetectionUpdateTimeMin (1 s) near the player to
+- **Who tests whom:** every living actor of the high process whose AI runs (not one a script
+  disabled with EnableAI false: it is still seen) tests the player and the other actors of the
+  high process, each every fDetectionUpdateTimeMin (1 s) near the player to
   fDetectionUpdateTimeMax (2 s) at detection's reach; in a complex scene (as many actors as
   iAINumberActorsComplexScene, 20, or more) fDetectionUpdateTimeMinComplex (2.5 s) to MaxComplex
   (5 s); at most the INI's iUpdateDetectionsAllowedPerFrame (100) tests a frame, the rest wait
   for the next (observed in the original). Scripts' questions (GetDetected,
   IsDetectedBy) test anew when the last test is older than a second (the Construction Set
-  wiki: GetDetected runs the formula). Beyond the reach (fSneakMaxDistance 2500, times
-  fSneakExteriorDistanceMult 2.1 outside; fSneakFlyingDistanceMult 3 for a target in the air:
-  [Flying combat](#flying-combat)) a target is not tested.
-- **The formula** (UESP "Skyrim:Sneak" for its terms; the predecessor engine's documented
-  formula, The Fallout Wiki "Detection Formula" and the Construction Set wiki "Detection", for
-  those UESP leaves open):
+  wiki: GetDetected runs the formula).
+- **The reach** (observed in the original): fSneakMaxDistance (2500 in Skyrim.esm), times
+  fSneakExteriorDistanceMult (2.1) outside, times fSneakFlyingDistanceMult (3) when the
+  observer or the target flies ([Flying combat](#flying-combat)); for an observer in combat and
+  a target other than its combat target (not the player), times
+  fDetectionCombatNonTargetDistanceMult (0.75): a fighter's mind is on its own target. Beyond
+  the reach the level is −1000 (combat's "out of reach").
+- **The formula** (observed in the original; `detectionLevel`):
 
-  level = fSneakBaseValue + A × (sound + visual) + fSneakSkillMult × (perception × A − the
-  target's Sneak while it sneaks out of combat), A = ((reach − distance) / reach) ^
-  fSneakDistanceAttenuationExponent;
+  A = (max(0, reach − distance) / reach) ^ fSneakDistanceAttenuationExponent, the distance
+  between the two actors' positions;
 
-  sound = fSneakSoundsMult × (moving: (fSneakEquippedWeightBase + fSneakEquippedWeightMult ×
-  the weight of the armour worn) × fSneakRunningMult running or sprinting × (1 −
-  MovementNoiseMult, at least 0);
-  plus its action's loudness (iSoundLevel\* of the sound level) × fSneakActionMult for
-  fDetectionActionTimer), × fSneakSoundLosMult without line of sight, × (1 +
-  fSneakSleepBonus) for an observer asleep, none swimming;
+  sound = (int(fSneakActionMult) × the loudness of its last action (iSoundLevel\*, for
+  fDetectionActionTimer) + (running ? fSneakRunningMult : 1) × (fSneakEquippedWeightMult ×
+  the weight of the armour it wears + fSneakEquippedWeightBase) × its movement noise ×
+  moving) × fSneakSoundsMult × A, × fSneakSoundLosMult without a line of sight (unless it is
+  the observer's ambush target), × (1 + fSneakSleepBonus) for an observer asleep, at least 0;
 
-  visual (seen and awake) = fSneakLightMult (× fSneakLightExteriorMult outside) ×
-  (fDetectionSneakLightMod + light, × fDetectionNightEyeBonus with night eye) × (1 +
-  fSneakLightMoveMult moving + fSneakLightRunMult running) × fSneakDetectionSize\* of its
-  race's size × fDetectionLargeActorSizeMult × (1 − Blindness / 100), × fSneakStealthBoyMult
-  invisible;
+  visual = in view × A × motion × (light × fSneakLightMult (fSneakLightExteriorMult outside,
+  instead) + fDetectionSneakLightMod) × (asleep ? 0 : (100 − Blindness) / 100) ×
+  fDetectionLargeActorSizeMult × fSneakDetectionSize\* of its race's size, at least 0, none
+  for a target with Invisibility; motion = 1 + fSneakLightRunMult running +
+  fSneakLightMoveMult moving, then the target's Mod Detection Movement perks;
 
-  perception = the observer's Sneak within fSneakPerceptionSkillMin and Max, × (1 +
-  fSneakAlertMod alerted + fSneakSleepMod asleep + fSneakCombatMod in combat with the
-  target + fSneakAmbushTargetMod in ambush against its target, fSneakAmbushNonTargetMod
-  against another).
+  skill = (A × (1 + fSneakAlertMod for an observer in combat + fSneakSleepMod asleep +
+  fSneakCombatMod when it has a combat target and this is another + fSneakAmbushTargetMod /
+  NonTargetMod in an ambush package) × perception − the target's skill while it sneaks) ×
+  fSneakSkillMult; perception = fSneakPerceptionSkillMin + (Max − Min) × the observer's Sneak
+  / 100; the target's skill its Sneak with its Mod Detection Sneak Skill perks; both counted as
+  fPlayerDetectionSneakMult × Sneak + fPlayerDetectionSneakBase for the player (0.4 and 10 in
+  Skyrim.esm: the player's Sneak 15 counts as 16);
 
-  Where the asleep, ambush and size settings go was observed in the original (its
-  formula's other terms are still the reconstruction above; fSneakSizeBase the engine never
-  reads). TODO(M13): which observers are in ambush (none yet).
+  level = fSneakBaseValue + sound + visual + skill, a whole number (between 0 and 1: 1; else
+  its whole part); a level of 0 from the formula is −1 (0 is kept for an event's place).
+  Detected above 0, in combat too: the engine never reads iAICombatMinDetection; what keeps a
+  fight's target is its combat group ([Combat detection](#combat-detection)). The target's
+  perks are asked (the engine's owner of Mod Detection Light / Movement / Sneak Skill and
+  Ignore Running During Detection is the target, the observer the second): Ignore Running
+  takes its running away, and its moving while it sneaks. Its sneaking counts whenever it
+  sneaks (in combat too). TODO(M13): the perks' conditions on the observer are not given (one
+  profile serves all observers), and which packages are ambushes (the engine's package type 9)
+  is not read yet. Skyrim.esm stores 18 fSneak\* settings and fDetectionSneakLightMod; the
+  others are the engine's built-in values (fSneakEquippedWeightBase 12, Mult 0.5,
+  fSneakLightMoveMult 0.01, fSneakLightRunMult 0.2, fSneakCombatMod −0.4, fDetectionViewCone
+  190, ...: `node tools/detection-info.ts --settings`). In daylight outside a bandit (Sneak 25)
+  sees the player standing 400 units before it at level 29 (`node tools/detection-info.ts
+--level sneak=15 light=50 distance=400 exterior standing player`), where the earlier
+  reconstruction gave −1. **Muffle** (`movementNoise`): the engine multiplies the movement's
+  sound by MovementNoiseMult; here the Value and Peak Value Modifiers on it (its base is 0)
+  take that share off: the Muffle spell (1) and Silence's ability (1) silence it, the Muffle
+  enchantment and Muffled Movement's ability (0.5) halve it (TODO(M13): how the engine's
+  getter turns the modifiers into the multiplier).
 
-  UESP writes the observer's skill twice (attenuated, and unattenuated against the target's);
-  with that an observer of middling skill detects a sneaking target in the dark, unseen and
-  unheard, anywhere in reach, so the predecessor's single attenuated term is taken
-  (TODO(M13)). Skyrim.esm stores 18 fSneak\* settings and fDetectionSneakLightMod; the others
-  are the engine's built-in values (BeermotorWB's "All Skyrim Game Settings", linked from AFK
-  Mods): fSneakEquippedWeightBase 12, Mult 0.5, fSneakLightMoveMult 0.01, fSneakLightRunMult
-  0.2, fSneakNoticeMin −20, iAICombatMinDetection −50, fDetectionViewCone 190, iSoundLevelLoud
-  100, Normal 50, VeryLoud 200 (Silent 10 is Skyrim.esm's), ... The perks: the sneaker's Mod
-  Detection Sneak Skill (Stealth), the observer's Mod Detection Light / Movement factors, worn
-  armour's Mod Armor Weight (docs/gameplay.md, "Perks"). **Muffle** (`movementNoise`,
-  `src/ai/detection.ts`): the Value and Peak Value Modifiers on MovementNoiseMult (its base is 0) take that share of the movement's sound off: the Muffle spell (1) and the Silence perk's
-  ability (1) silence it, the Muffle enchantment (0.5; UESP: it halves the noise whatever its
-  text says) and Muffled Movement's ability (0.5) halve it, together at most all of it
-  (TODO(M13): whether the engine takes it off the armour's share only, as Muffled Movement's
-  "noise from armor" reads). `node tools/detection-info.ts --level sneak=15 light=40
-distance=500`: −2.9, noticed; Sneak 100 in light 10 at 300: −48.9, unseen.
-
-- **Projectiles seen** (observed in the original): an observer that sees a target's
-  arrow, bolt or spell pass within fDetectProjectileDistanceNPC (512; the player's:
-  fDetectProjectileDistancePlayer, 1024) of it, in its view cone and line of sight, tests the
-  target as seen where the projectile is, in the light of a detection event
-  (iDetectEventLightLevelInterior / Exterior): noticed, it is alerted there.
-- **Sight:** a ray on the line-of-sight layer (L_LINEOFSIGHT: static, clutter, props, trees,
-  terrain, the actors' BIPED bodies, ...; not the character controllers, not transparent
-  collision) from the observer's eyes (92% of its controller's height standing, 62% sitting,
-  20% lying) to the target's head or chest, past the observer's own bodies. Seen: in line of
-  sight within its sight's reach: the full reach within fDetectionLOSDistanceAngle (60°, 30°
-  either side) of its facing, fDetectionLOSDistanceMultInterior 0.75 / Exterior 0.5 of it to
-  the edge of the view cone (fDetectionViewCone 190°), none behind. TODO(M13): how the engine
-  reads the angles.
-- **The light on the target** (GetLightLevel): the luminance of the view's lighting at its
-  chest times 100: the mean of the six directional ambients, the directional light where a ray
-  to the sun is clear (inside always), each point light within its radius with the renderer's
-  falloff 1 − (d / r)²; plus iLightLevelInteriorMod (25) inside or iLightLevelExteriorMod (0),
-  at most iLightLevelMax (300). TODO(M13): the engine's own sum (players read 0 to 150 and
-  more). The point lights are those the viewers light the world with, outside and in: the
-  cells', the created objects' and those the actors carry (`ActorStage.lights`): a torch in a
-  hand (its LIGH at its model's AttachLight node: [Combat](#combat), Torches), a spell's
-  casting light in a hand, magic effects' lights (Candlelight), what flies and bursts. So a
-  torch carried or a spell readied lights its bearer, as in the game.
-- **States** per observer and target: detected above 0 (in combat with the target above
-  iAICombatMinDetection), noticed above fSneakNoticeMin, searching once a noticed or detected
-  target is lost (or a noise heard) for fDetectionStateExpireTime (30 s), else unseen. Each
-  change is told (`Detections.listen`: detected, noticed, searching, lost; heard, witnessed,
-  alarm, attacked, corpse).
-- **Noises** (detection events: CreateDetectionEvent, the sound level of an impact that
-  sounded, `ActorSenses.noise`): heard by the actors within fDetectEventDistancePlayer (1536)
-  of the player's, fDetectEventDistanceNPC (512) of others' (fDetectEventDistanceVeryLoudMult
-  2 very loud, fDetectEventSneakDistanceVeryLoud 3072 very loud while sneaking), at
-  fSneakBaseValue + the loudness attenuated over that reach (× fSneakSoundLosMult unseen) +
-  the attenuated perception; above fSneakNoticeMin the hearer is alerted there (GetIsAlerted)
-  and searches. The data: IPCT sound levels normal 659, loud 1, silent 3; every footstep impact
-  (10,686) is normal; WEAP VNAM loud 888, normal 1702, silent 738 (`action`: an attack's noise,
-  5.1); MGEF casting loud 1307, normal 163, silent 170, very loud 91 (5.3).
+- **Sight** (observed in the original): the line of sight is looked for only within its
+  reach off the observer's facing: the full reach within fDetectionLOSDistanceAngle (60°) of
+  the facing, beyond it shrinking evenly to fDetectionLOSDistanceMultInterior (0.75) /
+  Exterior (0.5) of it straight behind. It is a ray on the line-of-sight layer (L_LINEOFSIGHT:
+  static, clutter, props, trees, terrain, the actors' BIPED bodies, ...; not the character
+  controllers, not transparent collision) from the observer's eyes (92% of its controller's
+  height standing, 62% sitting, 20% lying) through its own bodies (its eyes are inside its
+  head's: Havok keeps an actor's bodies in one system group) to the target's head (0.85 of its
+  height); for an important target (the player, the observer's combat target, any for the
+  player) its middle, head and legs (0.5, 0.85, 0.15), each × 0.57 while it sneaks, the first
+  clear one counting. In view: with a line of sight within half of fDetectionViewCone (95°) of
+  the facing. Until this the ray stopped at the observer's own head (it started inside it): no
+  NPC ever saw anyone, and detection rested on the skills alone (−9 at 350 units in daylight).
+- **The light on the target** (observed in the original: `detectionLight`): its light
+  (night eye: × int(fDetectionNightEyeBonus)), less iLightLevelExteriorMod outside or, inside,
+  the lesser of iLightLevelInteriorMod and 100 × the brightest channel of the cell's ambient,
+  between 0 and iLightLevelMax, rounded after its Mod Detection Light perks. GetLightLevel
+  gives that × fSneakLightMult (outside fSneakLightExteriorMult). The light itself
+  (`lightLevel`): the luminance of the view's lighting at its chest times 100: the mean of the
+  six directional ambients, the directional light where a ray to the sun is clear (inside
+  always), each point light within its radius with the renderer's falloff 1 − (d / r)²
+  (TODO(M13): the engine keeps each actor's light from its renderer, a sum not read). The point
+  lights are those the viewers light the world with, outside and in: the cells', the created
+  objects' and those the actors carry (`ActorStage.lights`): a torch in a hand (its LIGH at its
+  model's AttachLight node: [Combat](#combat), Torches), a spell's casting light in a hand,
+  magic effects' lights (Candlelight), what flies and bursts.
+- **States** per observer and target: detected above 0, noticed above fSneakNoticeMin (ours,
+  for the stealth eye and the reactions to something near: the engine never reads it),
+  searching once a noticed or detected target is lost (or a noise heard) for
+  fDetectionStateExpireTime (30 s), else unseen. Each change is told (`Detections.listen`:
+  detected, noticed, searching, lost; heard, witnessed, alarm, attacked, corpse). The places
+  kept are copies (an actor's position is its own, and moves on).
+- **Events** (observed in the original: `eventLevel`): a noise (CreateDetectionEvent, the
+  sound level of an impact that sounded, `ActorSenses.noise`) reaches the actors within
+  fDetectEventDistancePlayer (1536) of the player's, fDetectEventDistanceNPC (512) of others'
+  (× fDetectEventDistanceVeryLoudMult 2 when very loud); a target's projectile seen passing
+  within fDetectProjectileDistancePlayer (1024; an actor's in combat:
+  fDetectProjectileDistanceNPC 512), in the observer's line of sight and view cone, is an
+  event of loudness 50 where it is. Its level: fSneakBaseValue + int(fSneakActionMult) ×
+  loudness × fSneakSoundsMult × A (× fSneakSoundLosMult without a line of sight to the place)
+  - in view × A × (iDetectEventLightLevelInterior / Exterior × fSneakLightMult (outside
+    fSneakLightExteriorMult) + fDetectionSneakLightMod) (none asleep), A over fSneakMaxDistance
+    (fDetectEventSneakDistanceVeryLoud when very loud) × fSneakExteriorDistanceMult outside; no
+    skills. Above 0 the hearer knows its owner is there (its level 0 at the place: combat groups
+    hear of it, [Combat detection](#combat-detection)), is alerted there (GetIsAlerted) and
+    searches. The data: IPCT sound levels normal 659, loud 1, silent 3; every footstep impact
+    (10,686) is normal; WEAP VNAM loud 888, normal 1702, silent 738 (`action`: an attack's noise,
+    5.1); MGEF casting loud 1307, normal 163, silent 170, very loud 91 (5.3).
 - **Reactions:** an actor whose package allows it (PKDT interrupt flags: reactions to the
   player's actions, greeting corpses, observing combat) and that is not talking, in a scene or
   in furniture reacts. Its override list for the situation (the quest aliases' that hold it,
@@ -1007,7 +1022,8 @@ distance=500`: −2.9, noticed; Sneak 100 in light 10 at 300: −48.9, unseen.
   camera and it; the first look tells how it is).
 - **For combat (5.2) and crime (M11):** `ActorSenses.detections` (state, level, detects,
   detectors, known, lastKnown, listen), `noise`, `action`, `attackedBy`, `fight`, `warn`, the
-  hooks `inCombat` and `hostile` (the combat AI sets them), `combatOverrides` (ECOR),
+  hooks `inCombat`, `combatTarget` and `hostile` (the combat AI sets them), `tested` (each
+  test and event told to the combat groups), `combatOverrides` (ECOR),
   `endReaction` (an actor entering combat), and `Detections.witness` / `offence` (the observers
   that detect an actor seeing it steal, attack, trespass: 'witnessed').
 
@@ -1486,6 +1502,96 @@ meanwhile.
 - **Combat music**: while anyone fights the player the default battle music (DOBJ BTMS) plays,
   ending with its finale as the fight does.
 
+## Combat detection
+
+What a fight knows of its targets, and when it may strike again: observed in the original
+(the combat group's per-target update, its stealth point and target timers, the actor's
+detection and its lines of sight, the melee attack choice), implemented in
+`src/ai/combat-groups.ts` and `src/shell/actor-combat-ai.ts`; `src/ai/combat-groups.test.ts`
+runs the rules.
+
+- **The group's targets.** A combat group keeps, for each of its targets, the group's
+  detection level of it (the highest of its members' last ones: a member's lower level does
+  not lower another's until that member tests again), its stealth points, whether it is
+  _known_ (detected and followed) or _lost_, and when and where it was last detected, last
+  known, lost, attacked from and heard. A target joins the group with fCombatStealthPointMax − 1
+  (99) points and no level (−1000). Each detection test a member makes of it (every 1–2 s,
+  [Detection](#detection)) and each event of it the member notices (level 0 at the place)
+  updates it; members out of the high process detect the targets within
+  fCombatDetectionLowDetectionDistance (4096) fully (level 100) every second.
+- **Detected:** a level above 0 detects the target, but while it has stealth points only above
+  iCombatStealthPointDetectionThreshold (25; iCombatStealthPointSneakDetectionThreshold, 70,
+  for a sneaking target); then its points are gone. Detected, it is known: the group follows it
+  (its true place) for fCombatDetectionNoticedTimeLimit (10 s) while it stays within
+  fCombatDetectionNoticedDistanceLimit (768) of where it was detected. Sensed below the
+  threshold, its place is known but it is lost (the group searches while its points drain).
+- **Stealth points** (every 0.1 s): while the group's level is 0 or more and the target has
+  points, they drain by level × fCombatStealthPointDrainMult (3 in Skyrim.esm) a second (at
+  level 0 they stay above 0); so a target at level 10 is detected after 3.3 s. Once lost and
+  below the most, they come back by max(fCombatStealthPointRegenMin (5), −level ×
+  fCombatStealthPointRegenMult (0.2)) a second, but only fCombatStealthPointRegenLostWaitTime
+  (10 s; AlertWaitTime, 10 s, if it was never detected) after it was last known or lost,
+  fCombatStealthPointRegenAttackedWaitTime (15 s) after it last attacked a member and
+  RegenDetectedEventWaitTime (10 s) after it was last heard. An attack caps them at
+  fCombatStealthPointAttackedMaxValue (50) and marks the attacker's place; a noise (an event
+  more than 64 units from the last, a second after it) at DetectedEventMaxValue (75).
+- **Lost and found:** a target not known of for fCombatDetectionLostTimeLimit (10 s) is lost;
+  so is one a member has a line of sight to and does not detect (no longer followed, or
+  invisible), and one whose last known place a member stands within
+  fCombatDetectionLostCheckNoticedDistance (256) of and sees. Detected again, it is found.
+- **Searching:** a group searches once all its targets are lost and a member fights one of
+  them, unless all its members flee; it stops as soon as one is found (or all flee). Its
+  members then search (CombatToLost; GetCombatState 2) where the group last knew the target to
+  be (seen, else where it attacked from or was heard), and fight again when the group finds it
+  (LostToCombat). While a target is known the members go for where it is; known no longer but
+  not lost, for where the group last knew it.
+- **Giving a target up** (every second): one dead or gone; one whose stealth points are full
+  again while the group searches; one lost for fCombatDetectionLostRemoveTime (30 s) that no
+  member fights; one lost for fCombatDetectionLostRemoveDistanceTime (60 s) with no member
+  within fCombatDetectionLostRemoveDistance (4096) of it; one lost for
+  fCombatDetectionFleeingLostRemoveTime (30 s) while all members flee. Its members forget it;
+  a member left with no target ends its combat (LostToNormal after a search). So a player who
+  breaks contact (out of sight, out of reach, sneaking) is lost 10 s after the group last knew
+  them, the search's points come back from 10 s after that, and the fight ends some 20 s
+  later; found during it, the fight goes on. Measured at Embershard Mine (two bandits, the
+  player gone out of reach and sneaking): followed 10 s, lost at 23 s, points back from 33 s,
+  given up and back to their packages at 52 s.
+- **The attack loop** (observed in the original): a fighter chooses no new melee attack
+  while it is still in its last one, but no longer than fCombatAttackAnimationDrivenDelayTime
+  (1.5 s) after it chose that one; in the last one's chain window (nextAttack, followThrough)
+  the next one follows. The attack's time is noted as the graph takes it. An attack (a swing,
+  a bow's draw, a bash) its graph refuses (`BehaviorRuntime.answered`: no state the graph is in
+  answers the event then, or the transition under way may not be interrupted: the last swing
+  still blending out) ends at the next frame, and the fighter asks again at its next decision,
+  the combat tree's attack idle (0.25 s); before this it waited 1.5 s in its wind-up for an
+  answer, so archers loosed with gaps. An event its graph refuses 8 times and never took is not
+  chosen again (a creature's). A draw or sheathe its graph refuses goes back, and one that never
+  reaches its end (4 s without the graph's weaponDraw or weaponSheathe) leaves the weapon away,
+  so that the fighter draws again: a guard waited for good with its bow "sheathing".
+- **Arrows:** an NPC never runs out of arrows while it carries one (UESP "Skyrim:Arrows"); only
+  the player's quiver empties. Before this, bandit archers turned to their fists after their
+  quiver's dozen shots.
+- **Yield:** one that attacked the player by its aggro radius (it warned them off: wolves,
+  bears) does not accept their yield, as one that attacks them on sight; before this, a wolf
+  facing a player with their weapon away entered and left combat every quarter second.
+- **AI disabled** (EnableAI false, observed in the original: it clears the actor's
+  process flag and stills its controller): the actor's AI does nothing (`ActorMovers.runsAi`):
+  no packages, no combat decisions or acts (it neither draws nor equips), no detection of its
+  own (it is still seen), no reactions or talk, no flight steering, no follower catch-up, no
+  travel (its way and its movement wish dropped); its graph animates on. Vanilla uses it on
+  mannequins, statues, the Falmer's ice poses, monks' scenes and summoned staffs.
+- **Measured** (headless Chrome, god mode, `?devdata`): Embershard Mine, two bandits by the
+  player 140–300 units away in torchlight: detected at levels 18–29 (they searched 1–2 s while
+  their points drained, then fought), kept the player 63 s with no loss, melee attacks every
+  2.2 s (one in reach) and every 9.9 s (one its style kept circling out of reach); Riverwood,
+  a bandit archer: 25 shots in 58 s, 2.4 s apart (most 4.3), 0.5 s (most 1.8) between one
+  shot's end and the next draw, no refusal; Whiterun's road, three bandits against three
+  guards and a townsman: the guards' first fight 16 and 33 attacks in 50 s (before: 1 and 7,
+  their bows stuck), all bandits dead in 55 s, every fighter keeping its target throughout; two
+  wolves against the guards: dead in 35 s; a wolf against the player alone: kept them (no
+  flip-flop); a dragon against the guards: kept 90 s by all; every fight ended once its last
+  enemy died or was given up.
+
 ## Magic in combat
 
 Casting in the world, the player's and the NPCs' alike (m10-plan 5.3). The casting engine keeps
@@ -1748,8 +1854,10 @@ flanking and ranged movement selectors (ours: in `chooseManeuver`).
   strength against its group's) move its confidence between fCombatConfidenceModifierMin and
   Max every fCombatThreatRatioUpdateTime.
 - **Combat groups**: an actor entering combat joins the group of an ally or friend fighting;
-  the group shares where its members saw their targets (one sees, all know), counts for the
-  style's group offensive mult and GetCombatGroupMemberCount; one dying, another says
+  its target, and any enemy it detects in combat, becomes the group's; the group keeps what
+  its members know of its targets ([Combat detection](#combat-detection)): a target the group
+  has not lost counts as detected for each member, at the place the group knows; it counts for
+  the style's group offensive mult and GetCombatGroupMemberCount; one dying, another says
   AllyKilled.
 - **What it fights with** (`chooseEquipment`, weighed again once what it took up has been kept
   its kind's fCombatInventoryMinEquipTime: a weapon 5 s, magic and a shout 3 s, a staff 5 s, and
@@ -1823,12 +1931,14 @@ flanking and ranged movement selectors (ours: in `chooseManeuver`).
   the idles IsFleeing picks), fights again cornered (within 192 units, for 10 s), and its combat
   ends once it is that far and detects no enemy. IsFleeing: fleeing in combat, a Flee procedure
   that counts as fleeing, or fear.
-- **Searching** (`CombatSearch`): a target no member of its group detects any more is searched
-  for (CombatToLost; GetCombatState 2): it runs to where it was last known (within
+- **Searching** (`CombatSearch`): once its group has lost all its targets
+  ([Combat detection](#combat-detection)) it searches (CombatToLost; GetCombatState 2): it runs
+  to where the group last knew its target to be (within
   fCombatSearchLocationInvestigateDistance), looks round three times
   (fCombatSearchInvestigateTime), walks to points within 768 units round the place, saying its
-  LostIdle lines (fCombatDetectionDialogueIdle\*); finding it again (LostToCombat) it fights on;
-  after fDetectionStateExpireTime it gives up (LostToNormal; detection's alert ends).
+  LostIdle lines (fCombatDetectionDialogueIdle\*); the group finding one again (LostToCombat) it
+  fights on; the group giving its targets up, it ends its combat (LostToNormal; detection's
+  alert ends).
 - **Yielding**: an actor fighting the player that does not attack them on sight (the fight is
   a quarrel or a brawl) and would flee yields instead: Yield, weapon away, out of the fight for
   fCombatYieldTime (10 s), not again within fCombatYieldRetryTime (600 s); struck again it
@@ -1836,8 +1946,8 @@ flanking and ranged movement selectors (ours: in `chooseManeuver`).
   AcceptYield, and it lets them be; so do guards that took up a fight against the player (a
   crime: their arrest follows) unless their faction attacks the player on sight. TODO(M13): the
   engine's rule.
-- **The end of combat**: no enemy known (CombatToNormal; dead, bleeding out, gone or left
-  behind), StopCombat, calm or a search given up: it leaves its group, stands, sheathes 3 s
+- **The end of combat**: no enemy known (CombatToNormal; dead, bleeding out, gone, left
+  behind, or given up by its group), StopCombat, calm or a search given up: it leaves its group, stands, sheathes 3 s
   later (unless its package keeps its weapon drawn) and chooses its package again. Its own lines
   in the fight: Taunt every fCombatDialogueTaunt\* (10–30 s); 5.1's Attack, Hit, Block, Death.
 - **Spectators**: those detection has watching a fight (their package's observe combat
@@ -1852,9 +1962,10 @@ flanking and ranged movement selectors (ours: in `chooseManeuver`).
   parameter's target: TODO(M13)), GetCombatTargetHasKeyword, GetFriendHit,
   GetCombatGroupMemberCount, IsGuard; the natives StartCombat, StopCombat, StopCombatAlarm,
   IsInCombat, GetCombatState, GetCombatTarget, IsHostileToActor, IsGuard,
-  SetAttackActorOnSight. Detection asks it who is in combat (Sneak not counting), who fights
-  whom (detected down to iAICombatMinDetection) and who is hostile to whom (searching for one
-  noticed or lost before combat).
+  SetAttackActorOnSight. Detection asks it who is in combat (fSneakAlertMod), whom each fights
+  (others are noticed less: fSneakCombatMod, fDetectionCombatNonTargetDistanceMult; the target
+  is looked at three ways) and who is hostile to whom (searching for one noticed or lost before
+  combat), and tells it each test (the groups' knowledge).
 - `node tools/combat-ai-info.ts dunFaldarsToothBetBandit01 HuldaREF C06WolfSpiritREF`: each
   actor's AI values, combat style, what it carries and fights with at 100, 400 and 1500 units,
   and the reactions between them and to the player (`--new-game`: after a new game).

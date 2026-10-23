@@ -37,7 +37,13 @@ import {
   type CombatAiSettings,
   type TargetCandidate,
 } from '../ai/combat-ai.ts';
-import { CombatGroups } from '../ai/combat-groups.ts';
+import {
+  CombatGroups,
+  readCombatGroupSettings,
+  type CombatGroupWorld,
+  type DetectionReport,
+  type GroupTarget,
+} from '../ai/combat-groups.ts';
 import { CombatProfiles, NO_STYLE, type CombatProfile } from '../ai/combat-profile.ts';
 import { FightReaction, reactionOf } from '../ai/combat-reactions.ts';
 import { CombatSearch } from '../ai/combat-search.ts';
@@ -240,6 +246,11 @@ interface Mind {
   readonly friendHits: Map<number, number>;
   /** Those it turned on for their blows (a quarrel the player may yield). */
   readonly quarrels: Set<number>;
+  /**
+   * Those it attacked by its aggro radius (it warned them off): its enemies for the fight, as
+   * those it attacks on sight (it does not accept their yield).
+   */
+  readonly aggroed: Set<number>;
   profile: Profile | undefined;
   profileRead: number;
   profiling: boolean;
@@ -316,8 +327,6 @@ const PROFILE_SECONDS = 3;
 const REACTION_SECONDS = 5;
 /** Without detection, an actor knows those within this (units). */
 const NEAR_SIGHT = 2048;
-/** What its group saw this lately counts as seen (seconds). */
-const GROUP_SIGHT = 2;
 /** A far target is chased over the navmeshes beyond this past its reach (units). */
 const CHASE_BEYOND = 512;
 /** ... its way taken again once the target moved this far from it, or after this long when
@@ -467,6 +476,13 @@ export class ActorCombatAi {
     if (victim === PLAYER_REF) return;
     const mind = this.#mind(victim);
     mind.damagedAt = this.#clock;
+    // Its group knows where the blow came from (the target's stealth points drop).
+    this.#groups.attacked(
+      victim,
+      attacker,
+      this.#options.host.fighter(attacker)?.feet,
+      this.#clock,
+    );
     if (mind.mode === 'yield' && attacker === PLAYER_REF) {
       mind.enemies.add(PLAYER_REF);
       mind.mode = 'fight';
@@ -532,6 +548,7 @@ export class ActorCombatAi {
     this.#spectating.delete(reference);
     for (const other of this.#minds.values()) {
       other.enemies.delete(reference);
+      other.aggroed.delete(reference);
       other.friendHits.delete(reference);
       other.warned.delete(reference);
       other.lastKnown.delete(reference);
@@ -561,6 +578,19 @@ export class ActorCombatAi {
     for (const view of this.#options.host.fighters()) views.set(view.reference, view);
     const player = views.get(PLAYER_REF);
     if (player && player.state.weapon !== WeaponState.sheathed) this.#playerArmed = this.#clock;
+    // The groups' knowledge of their targets: stealth points, searching, targets given up (its
+    // members forget them: what they fight ends with them).
+    for (const { member, target } of this.#groups.update(this.#groupWorld, this.#clock)) {
+      for (const ally of [member, ...this.#groups.allies(member)]) {
+        const mind = this.#minds.get(ally);
+        if (!mind) continue;
+        mind.enemies.delete(target);
+        mind.quarrels.delete(target);
+        mind.aggroed.delete(target);
+        mind.lastKnown.delete(target);
+        mind.next = 0;
+      }
+    }
     for (const view of views.values()) {
       if (view.player || runtime.state.actors.get(view.reference)?.dead === true) continue;
       if (this.#options.ridden?.(view.reference) === true) continue;
@@ -609,11 +639,46 @@ export class ActorCombatAi {
     this.#hooked = senses;
     senses.inCombat = (actor) =>
       actor === PLAYER_REF ? this.#fightingPlayer() : this.combatState(actor) !== 0;
+    senses.combatTarget = (actor) => this.#combatTarget(actor);
     // In combat, its own search for a lost target is the combat AI's.
     senses.hostile = (observer, target) =>
       !this.engaged(observer) && this.hostile(observer, target);
-    senses.detections.inCombat = (observer, target) => this.fights(observer, target);
+    // What a member detects of its group's targets is the group's (combat-groups.ts).
+    senses.tested = (observer, target, report) => {
+      this.#report(observer, target, report);
+    };
   }
+
+  /** An actor's combat target (the player's: whom they fight), undefined: none. */
+  #combatTarget(actor: number): number | undefined {
+    if (actor === PLAYER_REF) return this.#options.host.fighter(PLAYER_REF)?.target;
+    const mind = this.#minds.get(actor);
+    return mind && mind.mode !== 'idle' ? mind.target : undefined;
+  }
+
+  /** A member's detection of a target: its group's knowledge of it moves. */
+  #report(member: number, target: number, report: DetectionReport): void {
+    const mind = this.#minds.get(member);
+    if (!mind || mind.mode === 'idle') return;
+    this.#groups.report(member, target, report, this.#groupWorld, this.#clock);
+  }
+
+  /** What the combat groups ask of the fight (combat-groups.ts CombatGroupWorld). */
+  readonly #groupWorld: CombatGroupWorld = {
+    combatTarget: (member) => this.#combatTarget(member),
+    fleeing: (member) => this.#minds.get(member)?.mode === 'flee',
+    position: (actor) => this.#options.host.fighter(actor)?.feet,
+    present: (actor) => {
+      const view = this.#options.host.fighter(actor);
+      const dead = this.#options.session.scriptsReady?.state.actors.get(actor)?.dead === true;
+      return view !== undefined && !dead && view.state.life !== LifeState.dead;
+    },
+    detects: (member) => this.#options.movers.inHighProcess(member),
+    sneaking: (target) => this.#options.senses?.()?.sneaking(target) === true,
+    invisible: (target) =>
+      this.#options.session.scriptsReady?.magic.aiState(target).invisible ?? false,
+    sees: (member, at) => this.#options.senses?.()?.sees(member, at) ?? false,
+  };
 
   #fightingPlayer(): boolean {
     for (const mind of this.#minds.values()) {
@@ -632,6 +697,7 @@ export class ActorCombatAi {
         enemies: new Set(),
         friendHits: new Map(),
         quarrels: new Set(),
+        aggroed: new Set(),
         profile: undefined,
         profileRead: -Infinity,
         profiling: false,
@@ -732,11 +798,10 @@ export class ActorCombatAi {
         if (target !== undefined) this.#enter(mind, target, alerted);
         return;
       }
+      // Attacked by one it does not detect: into combat, its group knowing only where the blow
+      // came from (it searches: combat-groups.ts).
       const remembered = candidates.find((candidate) => mind.enemies.has(candidate.reference));
-      if (remembered) {
-        this.#enter(mind, remembered.reference, true);
-        this.#search(mind, remembered.reference);
-      }
+      if (remembered) this.#enter(mind, remembered.reference, true);
       return;
     }
     if (mind.mode === 'flee' && mind.scaredFrom) {
@@ -750,15 +815,16 @@ export class ActorCombatAi {
     // Its target: the one target selection picks (it may switch).
     const target = selectTarget(candidates, mind.target, this.#settings);
     if (target !== undefined && target !== mind.target) this.#setTarget(mind, target);
-    const sees = detected.some((candidate) => candidate.reference === mind.target);
-    // Lost and found.
-    if (mind.mode === 'fight' && detected.length === 0 && mind.target !== undefined) {
+    // Lost and found: its group searches once it lost all its targets, and fights again once
+    // it finds one (observed in the original: combat-groups.ts).
+    const searching = this.#groups.searching(mind.reference);
+    if (mind.mode === 'fight' && searching && mind.target !== undefined) {
       this.#bark(mind.reference, 'CombatToLost', mind.target);
       this.#search(mind, mind.target);
       return;
     }
-    if (mind.mode === 'search' && detected.length > 0) {
-      const found = sees ? mind.target : selectTarget(detected, undefined, this.#settings);
+    if (mind.mode === 'search' && !searching) {
+      const found = selectTarget(detected, mind.target, this.#settings) ?? mind.target ?? target;
       mind.search?.cancel();
       mind.search = undefined;
       mind.mode = 'fight';
@@ -783,7 +849,8 @@ export class ActorCombatAi {
       this.#settings,
     );
     const fightsPlayer = mind.target === PLAYER_REF;
-    const playerEnemy = this.#onSight(mind, profile, magic, PLAYER_REF);
+    const playerEnemy =
+      this.#onSight(mind, profile, magic, PLAYER_REF) || mind.aggroed.has(PLAYER_REF);
     if (mind.mode === 'fight') {
       // The player yields a quarrel of their blows: it accepts once they held off a while. So
       // do those that took up the fight against them (the guards of a crime, whose arrest
@@ -840,8 +907,10 @@ export class ActorCombatAi {
   }
 
   /**
-   * Those an actor would fight that it knows of now: detected (or seen by its group), or known
-   * where it last was; with their distance, threat and whether they attack it.
+   * Those an actor would fight that it knows of now: out of combat, those it detects and its
+   * enemies where it last knew them; in combat, its group's targets (detected while the group
+   * has not lost them, where the group last knew them) and new ones it detects (they become its
+   * group's); with their distance, threat and whether they attack it.
    */
   #candidates(
     mind: Mind,
@@ -868,39 +937,32 @@ export class ActorCombatAi {
       ) {
         continue;
       }
-      const known = senses
+      const own = senses
         ? senses.detections.state(mind.reference, reference)
         : flat(feet, other.feet) < NEAR_SIGHT
           ? 'detected'
           : 'unseen';
-      const group = this.#groups.lastSeen(mind.reference, reference);
-      const groupSees = group !== undefined && this.#clock - group.seen < GROUP_SIGHT;
-      const detected = known === 'detected' || groupSees;
-      const lastKnown =
-        known === 'detected'
-          ? other.feet
-          : groupSees
-            ? group.at
-            : (senses?.detections.lastKnown(mind.reference, reference) ??
-              mind.lastKnown.get(reference));
-      // Not detected, it counts where it was last known: one it fights or remembers, or (in
-      // combat) one detection still searches for.
+      const sees = own === 'detected';
+      const tracked =
+        mind.mode === 'idle' ? undefined : this.#groups.target(mind.reference, reference);
+      const lastKnown = sees
+        ? other.feet
+        : (this.#knownPlace(tracked) ??
+          senses?.detections.lastKnown(mind.reference, reference) ??
+          mind.lastKnown.get(reference));
+      const detected = tracked ? !tracked.lost : sees;
       const remembered =
-        lastKnown !== undefined &&
-        (mind.enemies.has(reference) ||
-          (mind.mode !== 'idle' && (mind.target === reference || known !== 'unseen')));
-      if (!detected && !remembered) continue;
-      if (!this.#hostileTo(mind, view, profile, magic, other, views, detected)) continue;
-      if (known === 'detected') {
-        mind.lastKnown.set(reference, other.feet);
-        this.#groups.saw(mind.reference, reference, other.feet, this.#clock);
-      } else if (lastKnown) {
-        mind.lastKnown.set(reference, lastKnown);
-      }
+        tracked !== undefined || (lastKnown !== undefined && mind.enemies.has(reference));
+      if (!sees && !remembered) continue;
+      if (!this.#hostileTo(mind, view, profile, magic, other, views, sees || detected)) continue;
+      if (mind.mode !== 'idle' && !tracked) this.#track(mind, reference);
+      // A copy: the position seen is the actor's own, and it moves on.
+      if (lastKnown) mind.lastKnown.set(reference, [lastKnown[0], lastKnown[1], lastKnown[2]]);
       const health = this.#health.get(reference)?.points ?? 100;
+      const where = sees || tracked?.known === true ? other.feet : (lastKnown ?? other.feet);
       candidates.push({
         reference,
-        distance: flat(feet, detected ? other.feet : (lastKnown ?? other.feet)),
+        distance: flat(feet, where),
         detected,
         attacking: this.#fightTarget(other, views) === mind.reference,
         threat: actorStrength(health, other.gear?.damage ?? 1),
@@ -946,6 +1008,7 @@ export class ActorCombatAi {
       !(running && (running.interrupts & InterruptFlag.aggroRadiusBehavior) === 0) &&
       this.#aggro(mind, view, other, profile.aggroRadius)
     ) {
+      mind.aggroed.add(reference);
       return this.#join(mind, reference);
     }
     // No one takes up a fight against a player who yields (else those who took it up keep each
@@ -1088,8 +1151,7 @@ export class ActorCombatAi {
     mind.sheatheAt = undefined;
     mind.nextLine = this.#clock + this.#between(this.#settings.tauntMin, this.#settings.tauntMax);
     mind.nextEquip = 0;
-    this.#setTarget(mind, target);
-    // Its combat group: of an ally already fighting beside it.
+    // Its combat group: of an ally already fighting beside it; its target becomes the group's.
     const allies: number[] = [];
     for (const other of this.#minds.values()) {
       if (other === mind || other.mode === 'idle') continue;
@@ -1099,6 +1161,7 @@ export class ActorCombatAi {
       }
     }
     this.#groups.join(reference, allies);
+    this.#setTarget(mind, target);
     // Its package's way gives way to the fight; off its horse.
     const movers = this.#options.movers;
     this.#options.senses?.()?.endReaction(reference);
@@ -1127,11 +1190,56 @@ export class ActorCombatAi {
     mind.target = target;
     mind.maneuverUntil = 0;
     this.#options.host.setTarget(mind.reference, target);
+    if (mind.mode !== 'idle') this.#track(mind, target);
   }
 
-  /** Its search for a lost target begins (CombatSearch: to where it was last known). */
+  /**
+   * A target of its group (combat-groups.ts): new ones begin with nearly all their stealth
+   * points; what it detects of it now is told at once (later tests tell the rest).
+   */
+  #track(mind: Mind, target: number): void {
+    const known = this.#groups.addTarget(mind.reference, target);
+    if (!known || known.levels.has(mind.reference)) return;
+    const senses = this.#options.senses?.();
+    const level = senses?.detections.level(mind.reference, target);
+    const at = this.#options.host.fighter(target)?.feet;
+    if (!senses || level === undefined || !at) return;
+    const report: DetectionReport = {
+      level,
+      lineOfSight: senses.detections.detects(mind.reference, target),
+      at,
+    };
+    this.#groups.report(mind.reference, target, report, this.#groupWorld, this.#clock);
+  }
+
+  /** Where a group last knew a target to be: seen, else where it attacked from or was heard. */
+  #knownPlace(known: GroupTarget | undefined): Vec3 | undefined {
+    if (!known) return undefined;
+    const places: [Vec3 | undefined, number][] = [
+      [known.lastKnown, known.lastKnownTime],
+      [known.attackedAt, known.attackedTime],
+      [known.eventAt, known.eventTime],
+    ];
+    let best: Vec3 | undefined;
+    let when = -Infinity;
+    for (const [at, time] of places) {
+      if (at && time > when) {
+        best = at;
+        when = time;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * Its search for its group's lost targets begins (CombatSearch: to where the group last knew
+   * its target to be).
+   */
   #search(mind: Mind, target: number): void {
-    const at = mind.lastKnown.get(target) ?? this.#options.host.fighter(target)?.feet;
+    const at =
+      this.#knownPlace(this.#groups.target(mind.reference, target)) ??
+      mind.lastKnown.get(target) ??
+      this.#options.host.fighter(target)?.feet;
     const movers = this.#options.movers;
     const reference = mind.reference;
     mind.mode = 'search';
@@ -1201,6 +1309,7 @@ export class ActorCombatAi {
     mind.enemies.clear();
     mind.friendHits.clear();
     mind.quarrels.clear();
+    mind.aggroed.clear();
     mind.lastKnown.clear();
     // What a script's StartCombat made it hostile to ends with its combat (crime-engine.ts).
     const actorState = this.#options.session.scriptsReady?.state.actors.get(reference);
@@ -1232,6 +1341,9 @@ export class ActorCombatAi {
   ): void {
     const host = this.#options.host;
     const state = view.state;
+    // Its AI disabled (EnableAI false) or not running: it does nothing of itself, nor draws,
+    // equips or sheathes.
+    if (!this.#options.movers.runsAi(mind.reference)) return;
     if (mind.mode === 'idle') {
       // After combat its weapon goes away (unless its package keeps it drawn).
       if (mind.sheatheAt !== undefined && this.#clock >= mind.sheatheAt) {
@@ -1299,7 +1411,13 @@ export class ActorCombatAi {
     const movers = this.#options.movers;
     const reference = mind.reference;
     const state = view.state;
-    const there = target.feet ?? mind.lastKnown.get(target.reference);
+    // Where its group knows the target to be: where it is while the group follows it (detected
+    // lately, near where), else where the group last knew it (combat-groups.ts).
+    const known = this.#groups.target(reference, target.reference);
+    const there =
+      known === undefined || known.known
+        ? (target.feet ?? mind.lastKnown.get(target.reference))
+        : (this.#knownPlace(known) ?? target.feet);
     if (!there) return;
     const flight = this.#options.flight?.();
     // A flier fights from the air while it may fly (its style's flight section); landed, it
@@ -1474,9 +1592,21 @@ export class ActorCombatAi {
       return;
     }
     if (this.#clock < mind.nextAttack) return;
+    // The engine's rule (observed in the original): a new attack waits while it is still in its last one,
+    // but no longer than fCombatAttackAnimationDrivenDelayTime after it chose that one; in the
+    // last one's chain window the next one follows. Refused by its graph, it asks again at its
+    // next decision (the combat tree's attack idle: ATTACK_DECISION_SECONDS).
     const chaining =
       state.attack === AttackState.nextAttack || state.attack === AttackState.followThrough;
-    if (attacking(state) && !chaining && !state.blocking) return;
+    const sinceLast = mind.lastAttack === undefined ? Infinity : this.#clock - mind.lastAttack;
+    if (
+      attacking(state) &&
+      !chaining &&
+      !state.blocking &&
+      sinceLast <= this.#settings.attackAnimationDrivenDelayTime
+    ) {
+      return;
+    }
     const gear = view.gear;
     const choice = chooseAttack(
       style,
@@ -1496,20 +1626,15 @@ export class ActorCombatAi {
       this.#settings,
     );
     mind.nextAttack = this.#clock + ATTACK_DECISION_SECONDS;
-    if (choice !== 'none') mind.lastAttack = this.#clock;
-    const host = this.#options.host;
-    switch (choice) {
-      case 'attack':
-      case 'bash':
-        void host.attack(reference, 'ActionRightAttack');
-        break;
-      case 'power':
-      case 'powerBash':
-        void host.attack(reference, 'ActionRightPowerAttack');
-        break;
-      default:
-        break;
-    }
+    if (choice === 'none') return;
+    // Its last attack is the one its graph took (the engine notes the time as the action
+    // succeeds).
+    const asked = this.#clock;
+    const action =
+      choice === 'power' || choice === 'powerBash' ? 'ActionRightPowerAttack' : 'ActionRightAttack';
+    void this.#options.host.attack(reference, action).then((began) => {
+      if (began) mind.lastAttack = asked;
+    });
   }
 
   /**
@@ -1595,8 +1720,10 @@ export class ActorCombatAi {
         mind.lastAttack === undefined ? undefined : this.#clock - mind.lastAttack;
       const chance = rangedAttackChance(style, { ...opponent, sinceLastAttack }, this.#settings);
       if (this.#random() >= chance) return;
-      void host.attack(reference, 'ActionRightAttack');
-      mind.lastAttack = this.#clock;
+      const asked = this.#clock;
+      void host.attack(reference, 'ActionRightAttack').then((began) => {
+        if (began) mind.lastAttack = asked;
+      });
       mind.bowHold = bowHoldTime(
         style,
         { ...opponent, distance, radii: view.radius + target.radius },
@@ -2125,6 +2252,7 @@ export class ActorCombatAi {
     this.#settingsRead = true;
     void this.#options.session.settings().then((settings) => {
       this.#settings = readCombatAiSettings((name) => settings.number(name));
+      this.#groups.settings = readCombatGroupSettings((name) => settings.number(name));
     });
   }
 

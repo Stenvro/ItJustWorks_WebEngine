@@ -1740,19 +1740,33 @@ export class PhysicsWorld {
     return this.#accumulator / this.stepSeconds;
   }
 
-  /** The first collider along a ray (game units) that `layer` collides with. */
+  /**
+   * The first collider along a ray (game units) that `layer` collides with; not `exclude`, nor
+   * any of the actor `ignore` (a reference: its own bodies, as an actor's sight passes its own
+   * head; Havok keeps an actor's bodies in one system group that does not collide with itself).
+   */
   raycast(
     origin: Vec3,
     direction: Vec3,
     maxDistance: number,
     layer: number,
     exclude?: RAPIER.Collider,
+    ignore?: number,
   ): RayHit | undefined {
     const length = Math.hypot(...direction) || 1;
     const ray = new RAPIER.Ray(
       { x: toHavok(origin[0]), y: toHavok(origin[1]), z: toHavok(origin[2]) },
       { x: direction[0] / length, y: direction[1] / length, z: direction[2] / length },
     );
+    const collides = this.filterFor(layer);
+    const filter =
+      ignore === undefined
+        ? collides
+        : (collider: RAPIER.Collider): boolean => {
+            const owner = this.ownerOf(collider);
+            if (owner?.kind === 'actor' && owner.reference === ignore) return false;
+            return collides(collider);
+          };
     // Phantoms (trigger volumes) are not surfaces: the character controller passes them too.
     const hit = this.world.castRayAndGetNormal(
       ray,
@@ -1762,7 +1776,7 @@ export class PhysicsWorld {
       undefined,
       exclude,
       undefined,
-      this.filterFor(layer),
+      filter,
     );
     if (!hit) return undefined;
     const distance = hit.timeOfImpact * HAVOK_SCALE;
