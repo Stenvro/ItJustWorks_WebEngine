@@ -63,7 +63,11 @@ const pack = (
 const condition = (form: number): Condition =>
   ({ function: 0, form, runOn: 0, operator: 0, comparand: 1, or: false }) as unknown as Condition;
 
-function setup(packages: PackageRecord[], runners: Record<string, ProcedureRunner>) {
+function setup(
+  packages: PackageRecord[],
+  runners: Record<string, ProcedureRunner>,
+  scene: () => readonly number[] | undefined = () => undefined,
+) {
   const truths = new Set<number>();
   const events: string[] = [];
   let hour = 10;
@@ -72,7 +76,8 @@ function setup(packages: PackageRecord[], runners: Record<string, ProcedureRunne
     time: () => ({ hour, dayOfWeek: 0, month: 7, date: 17 }),
     day: () => day,
     package: (formId) => Promise.resolve(packages.find((entry) => entry.formId === formId)),
-    packagesOf: () => Promise.resolve(packages.map((entry) => entry.formId)),
+    packagesOf: () => Promise.resolve(scene() ?? packages.map((entry) => entry.formId)),
+    scenePackages: () => scene(),
     conditionsHold: (conditions) =>
       Promise.resolve(conditions.every((entry) => truths.has(entry.form))),
     place: () => Promise.resolve(undefined),
@@ -129,6 +134,35 @@ async function tick(actor: ActorPackages, seconds = 0.1): Promise<void> {
 }
 
 describe('ActorPackages', () => {
+  it('keeps a must-complete package when chosen again, but not past a scene’s package action', async () => {
+    const forever: ProcedureRunner = async (run) => {
+      while (!run.stopped()) await run.wait(1);
+      return 'failure';
+    };
+    const scene: { packages?: readonly number[] } = {};
+    const { actor, truths } = setup(
+      [
+        pack(1, procedure('forever'), { conditions: [condition(99)] }),
+        pack(2, procedure('forever'), { flags: PackageFlag.mustComplete }),
+      ],
+      { forever },
+      () => scene.packages,
+    );
+    await tick(actor);
+    expect(actor.current?.id).toBe(2);
+    // Its own choice: the must-complete package holds though the first now may run.
+    truths.add(99);
+    actor.evaluate();
+    await tick(actor);
+    expect(actor.current?.id).toBe(2);
+    // A scene's package action (MQ101AlduinAttackScene1: from Alduin's must-complete approach
+    // patrol to his perch) takes it at once.
+    scene.packages = [1];
+    actor.evaluate();
+    await tick(actor);
+    expect(actor.current?.id).toBe(1);
+  });
+
   it('runs the first package whose conditions hold', async () => {
     const ran: string[] = [];
     const runners: Record<string, ProcedureRunner> = {

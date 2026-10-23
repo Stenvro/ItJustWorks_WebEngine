@@ -21,6 +21,8 @@ declare global {
        * far; false stops it.
        */
       readonly sceneTrace: (on?: boolean) => string;
+      /** The fliers' flight trace (src/shell/actor-flight.ts): their states and fight phases. */
+      readonly flightTrace: () => string;
     };
   }
 }

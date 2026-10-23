@@ -34,7 +34,7 @@ import {
   type Placed,
 } from '../ai/mounts.ts';
 import { parseRaceCombat } from '../ai/race-combat-records.ts';
-import { FLIGHT_DEFAULTS, FlyingState } from '../ai/flight.ts';
+import { FLIGHT_DEFAULTS, FlyingState, ORBIT_PROCEDURE } from '../ai/flight.ts';
 import type { ActorFlight } from './actor-flight.ts';
 import { transformPoint, type Vec3 } from '../render/math.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -508,7 +508,7 @@ export class ActorMounts {
       kind: 'orbit',
       center: [...center],
       radius: FLIGHT_DEFAULTS.orbitDistance,
-      height: FLIGHT_DEFAULTS.orbitHeight,
+      height: ORBIT_PROCEDURE.height,
     });
   }
 

@@ -85,6 +85,11 @@ export interface PackageMind {
   package(formId: number): Promise<PackageRecord | undefined>;
   /** The actor's packages in the order they are tried. */
   packagesOf(actor: number): Promise<readonly number[]>;
+  /**
+   * The packages of the scene package action that holds the actor now, if one does (undefined:
+   * none): a scene's package action sets its package at once, past Must Complete.
+   */
+  scenePackages?(actor: number): readonly number[] | undefined;
   conditionsHold(
     conditions: readonly Condition[],
     actor: number,
@@ -253,6 +258,18 @@ export interface PackageBody {
   fly?(request: FlightRequest | undefined): void;
   /** FlightGrab: it grabs an actor in flight; resolves whether it took it. */
   flightGrab?(target: number): Promise<boolean>;
+  /** Whether it is in the air now (a flier: its arrival is not where it stands under a place). */
+  airborne?(): boolean;
+  /**
+   * Hover: it flies to a point and hovers there facing `face`; resolves true once it hovers
+   * within `radius` of it (it stays hovering).
+   */
+  hover?(at: Vec3, face: Vec3, radius: number): Promise<boolean>;
+  /**
+   * A patrol begins at a point: a flier whose first point is a sky marker starts cruising at
+   * once (observed in the original).
+   */
+  patrolStart?(point: number): Promise<void>;
   /**
    * UseWeapon: a barrage at a target (an archery butt, a training dummy, an actor), its weapon
    * drawn first; resolves once it ended (false: it could not).
@@ -369,6 +386,8 @@ interface Running {
   readonly context: PackageContext;
   /** Its object lists (what a Find found), by input id. */
   readonly found: Map<number, readonly number[]>;
+  /** A scene's package action gave it (not the actor's own choice). */
+  readonly fromScene: boolean;
   /** Set when it is left: its tree stops. */
   stopped: boolean;
   /**
@@ -407,6 +426,8 @@ export interface TravelOptions {
    * goes: a follower matching its leader's.
    */
   readonly speedMult?: (gaitSpeed: number) => number;
+  /** The reference the place is (a flier flies to a sky marker, lands at anything else). */
+  readonly target?: number;
 }
 
 export class ActorPackages {
@@ -515,9 +536,15 @@ export class ActorPackages {
 
   async #evaluate(): Promise<void> {
     const current = this.#running;
-    // A package that must complete is not left before it has.
+    // A package that must complete is not left before it has, when the actor's packages are
+    // chosen again; a scene's package action is not such a choice (observed in the
+    // original): its start sets its package as the actor's at once, past Must Complete
+    // (MQ101AlduinAttackScene1 takes Alduin from his must-complete approach patrol to his perch
+    // as its phase changes).
     if (current && !current.completed && (current.pack.flags & PackageFlag.mustComplete) !== 0) {
-      return;
+      const scene = this.#mind.scenePackages?.(this.actor);
+      // (One a scene's action gave is left once that action ends: its end clears it.)
+      if (scene === undefined ? !current.fromScene : scene.includes(current.id)) return;
     }
     // A package that completed ends (its scripts and its end action hear of it) and stays, done,
     // while it is still the one chosen: it does not run again (a branch that repeats when
@@ -638,6 +665,7 @@ export class ActorPackages {
         data,
         context,
         found: new Map(),
+        fromScene: mind.scenePackages?.(this.actor) !== undefined,
         stopped: false,
         cut: false,
         completed: false,

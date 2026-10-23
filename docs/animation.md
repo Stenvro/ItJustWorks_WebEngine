@@ -1036,7 +1036,7 @@ Tool's 30 Hz, made frame-rate independent (1 − (1 − g)^(30 dt); TODO(M13)).
   data.
 - **hkbRotateCharacterModifier** (6): turns the character at TurnDelta in the equip and unequip
   states; the movers make that turn already, so the graph's root motion leaves it out.
-- **The dragon's flight modifiers** (docs/ai.md, "Flying combat"): BSTweenerModifier carries
+- **The dragon's flight modifiers** (docs/ai.md, "Flying"): BSTweenerModifier carries
   the character to the engine's TweenPosition and TweenRotation (the landing spot, the hover
   point, the actor grabbed) over its tween duration or what was left of the clips below it as
   it began: it overrides the clips' root motion where it tweens (linear; TODO(M13): Havok's

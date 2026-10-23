@@ -865,6 +865,7 @@ async function main(): Promise<void> {
         }
         return sceneTrace.text();
       },
+      flightTrace: () => worldViewer.actorStage?.flight.traceText() ?? '',
     };
   }
   let lastScriptTick = performance.now() / 1000;
