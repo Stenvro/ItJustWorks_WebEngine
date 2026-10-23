@@ -5,6 +5,7 @@
 // game. Platform-independent: Node tools run it without a world.
 // Notes: docs/scripting.md.
 
+import { EventHub } from './event-hub.ts';
 import { RecordFlag } from '../../formats/esm/record.ts';
 import type { HeadTrackKind } from '../../ai/head-tracking.ts';
 import { view } from '../../formats/esm/fields.ts';
@@ -638,6 +639,11 @@ const RUN_ON = [
 export class ScriptRuntime implements VmHost {
   readonly forms: FormIndex;
   readonly state = new GameState();
+  /**
+   * The game's events (event-hub.ts): producers emit each happening once; the relays to the
+   * scripts and the story manager, the stats and the HUD listen.
+   */
+  readonly events = new EventHub();
   readonly vm: PapyrusVm;
   readonly quests: QuestEngine;
   /** The game's dialogue (conversations and lines actors say), read on first use. */
@@ -787,6 +793,9 @@ export class ScriptRuntime implements VmHost {
     this.world = options.world ?? {};
     this.#warn = options.warn ?? (() => undefined);
     this.log = options.log ?? (() => undefined);
+    this.events.onError = (kind, error) => {
+      this.#warn(`event ${kind}: ${error instanceof Error ? error.message : String(error)}`);
+    };
     this.vm = new PapyrusVm(library, this, options.scheduler ?? new PapyrusScheduler());
     this.quests = new QuestEngine(this);
     this.storyManager = new StoryManager(this);
