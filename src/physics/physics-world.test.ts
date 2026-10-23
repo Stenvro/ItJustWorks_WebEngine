@@ -1,9 +1,9 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { Mat4 } from '../render/math.ts';
-import { CharacterBody } from './character.ts';
-import type { CollisionBody, CollisionData } from './collision-data.ts';
+import { CharacterBody, MOVE_LIMIT_MASS } from './character.ts';
+import { smallestExtent, type CollisionBody, type CollisionData } from './collision-data.ts';
 import { CollisionMatrix, Layer, LayerFlag } from './collision-layers.ts';
-import { GRAVITY, initPhysics, PhysicsWorld } from './physics-world.ts';
+import { DEBRIS_QUALITY, GRAVITY, initPhysics, PhysicsWorld, sweptBody } from './physics-world.ts';
 
 const IDENTITY: Mat4 = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -631,5 +631,217 @@ describe('two character controllers', () => {
     player.free();
     actor.free();
     physics.free();
+  });
+});
+
+describe('the engine settings of simulated bodies', () => {
+  const moving = (
+    min: [number, number, number],
+    max: [number, number, number],
+    quality: number,
+  ): CollisionBody => ({
+    ...body({ ...box(min, max), layer: Layer.clutter }),
+    motion: 'dynamic',
+    layer: Layer.clutter,
+    mass: 5,
+    inertia: [0.05, 0.05, 0.05],
+    maxLinearVelocity: 104.4,
+    maxAngularVelocity: 31.57,
+    quality,
+  });
+
+  it('sweeps small, fast bodies (fDebrisMinExtent, fDebrisMaxVelocity), not large or slow ones', () => {
+    // A cup: 10 units thick, debris or moving quality: swept.
+    expect(sweptBody(moving([-5, -5, 0], [5, 5, 12], 2), 1, DEBRIS_QUALITY)).toBe(true);
+    expect(sweptBody(moving([-5, -5, 0], [5, 5, 12], 4), 1, DEBRIS_QUALITY)).toBe(true);
+    // A cart: 150 units (over 2 Havok units) through its thinnest side: debris.
+    expect(sweptBody(moving([-150, -75, 0], [150, 75, 160], 4), 1, DEBRIS_QUALITY)).toBe(false);
+    // Scaled up past it too.
+    expect(sweptBody(moving([-5, -5, 0], [5, 5, 12], 4), 20, DEBRIS_QUALITY)).toBe(false);
+    // Never faster than 0.3 Havok units a second (21 game units): debris.
+    const slow = { ...moving([-5, -5, 0], [5, 5, 12], 4), maxLinearVelocity: 0.3 };
+    expect(sweptBody(slow, 1, DEBRIS_QUALITY)).toBe(false);
+    // Keyframed quality on a simulated body: not swept.
+    expect(sweptBody(moving([-5, -5, 0], [5, 5, 12], 1), 1, DEBRIS_QUALITY)).toBe(false);
+    expect(smallestExtent(moving([-5, -5, 0], [5, 5, 12], 4).shapes)).toBeCloseTo(10);
+  });
+
+  it("holds a body's speed to the file's maximum linear velocity", () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    // At most 2 Havok units a second: it falls no faster.
+    const placed = physics.addObject(
+      collision({ ...moving([-5, -5, 0], [5, 5, 10], 4), maxLinearVelocity: 2 }),
+      IDENTITY,
+      { reference: 1, kind: 'object' },
+      false,
+    );
+    const falling = placed.bodies[0]?.body;
+    if (falling) physics.release(falling);
+    for (let i = 0; i < 60; i++) physics.step(1 / 60);
+    const v = falling?.linvel() ?? { x: 0, y: 0, z: 0 };
+    expect(Math.hypot(v.x, v.y, v.z)).toBeLessThanOrEqual(2.001);
+    expect(Math.hypot(v.x, v.y, v.z)).toBeGreaterThan(1.9);
+    physics.free();
+  });
+
+  it('takes at most uMaxNumPhysicsStepsPerUpdate steps a frame', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    expect(physics.step(1)).toBe(3);
+    physics.maxSteps = 1;
+    expect(physics.step(1)).toBe(1);
+    physics.free();
+  });
+
+  it('holds a hinge by its friction (its maximum friction torque)', () => {
+    // A 10 kg box on a free hinge about x, its centre 60 units out along y: with no friction it
+    // swings down; with more friction than its weight's torque (10 × 9.8 × 0.86 ≈ 84) it holds.
+    const swing = (maxFriction: number): number => {
+      const physics = new PhysicsWorld(matrix, GRAVITY);
+      const bracket = body(box([-5, -5, -5], [5, 5, 5]));
+      const at = new Float32Array(IDENTITY);
+      at[13] = 60;
+      const weight: CollisionBody = {
+        ...moving([-10, -10, -10], [10, 10, 10], 4),
+        node: 'Weight',
+        transform: at,
+        mass: 10,
+        inertia: [1, 1, 1],
+      };
+      const axes: [[number, number, number], [number, number, number], [number, number, number]] = [
+        [1, 0, 0],
+        [0, 1, 0],
+        [0, 0, 1],
+      ];
+      const placed = physics.addObject(
+        {
+          bodies: [bracket, weight],
+          constraints: [
+            {
+              bodyA: 1,
+              bodyB: 0,
+              data: {
+                type: 'limited-hinge',
+                a: { pivot: [0, -60, 0], axes },
+                b: { pivot: [0, 0, 0], axes },
+                minAngle: -Math.PI,
+                maxAngle: Math.PI,
+                maxFriction,
+                motor: { type: 'none' },
+              },
+            },
+          ],
+          skipped: [],
+        },
+        IDENTITY,
+        { reference: 1, kind: 'object' },
+        false,
+      );
+      for (const { body: held } of placed.bodies) physics.release(held);
+      let lowest = 0;
+      for (let i = 0; i < 60; i++) {
+        physics.step(1 / 60);
+        lowest = Math.min(lowest, (placed.bodies[1]?.body.translation().z ?? 0) * 69.99125);
+      }
+      physics.free();
+      return lowest;
+    };
+    expect(swing(0)).toBeLessThan(-50);
+    // Held, it only creeps (the motor's gain gives a little).
+    expect(swing(200)).toBeGreaterThan(-15);
+    // Less than the torque of its weight: it gives way.
+    expect(swing(50)).toBeLessThan(-30);
+  });
+});
+
+describe('the character controller in the world', () => {
+  const both = new CollisionMatrix([
+    {
+      formId: 1,
+      editorId: 'L_STATIC',
+      index: Layer.static,
+      name: '',
+      flags: 0,
+      collidesWith: [2, 4],
+    },
+    {
+      formId: 2,
+      editorId: 'L_CHARCONTROLLER',
+      index: Layer.charController,
+      name: '',
+      flags: 0,
+      collidesWith: [1, 4],
+    },
+    {
+      formId: 4,
+      editorId: 'L_CLUTTER',
+      index: Layer.clutter,
+      name: '',
+      flags: 0,
+      collidesWith: [1, 2, 4],
+    },
+  ]);
+  const shape = { radius: 14.42, height: 131.84 };
+  const floor = (physics: PhysicsWorld): void => {
+    physics.addObject(collision(body(box([-500, -500, -20], [500, 500, 0]))), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    physics.step(1 / 60);
+  };
+
+  it('says how far it fell as it lands', () => {
+    const physics = new PhysicsWorld(both, GRAVITY);
+    floor(physics);
+    const character = new CharacterBody(physics, shape, settings(new Set()), [0, 0, 400], {
+      reference: 0x14,
+      kind: 'actor',
+    });
+    let landed: number | undefined;
+    for (let i = 0; i < 180 && landed === undefined; i++) {
+      character.step(1 / 60);
+      physics.step(1 / 60);
+      landed = character.landedFrom;
+    }
+    expect(landed).toBeGreaterThan(390);
+    expect(landed).toBeLessThan(410);
+    character.step(1 / 60);
+    expect(character.landedFrom).toBeUndefined();
+    character.free();
+    physics.free();
+  });
+
+  it('pushes what weighs less than fMoveLimitMass, not what weighs more', () => {
+    const pushed = (mass: number): number => {
+      const physics = new PhysicsWorld(both, GRAVITY);
+      floor(physics);
+      const crate: CollisionBody = {
+        ...body({ ...box([-10, -10, 0], [10, 10, 20]), layer: Layer.clutter }),
+        motion: 'dynamic',
+        layer: Layer.clutter,
+        mass,
+        inertia: [mass / 10, mass / 10, mass / 10],
+      };
+      const at = new Float32Array(IDENTITY);
+      at[13] = 40;
+      const placed = physics.addObject(collision(crate), at, { reference: 2, kind: 'object' });
+      for (let i = 0; i < 60; i++) physics.step(1 / 60);
+      const character = new CharacterBody(physics, shape, settings(new Set()), [0, 0, 0], {
+        reference: 0x14,
+        kind: 'actor',
+      });
+      for (let i = 0; i < 60; i++) {
+        character.velocity = [0, 200];
+        character.step(1 / 60);
+        for (const collider of character.touched) physics.touch(collider);
+        physics.step(1 / 60);
+      }
+      const y = (placed.bodies[0]?.body.translation().y ?? 0) * 69.99125;
+      character.free();
+      physics.free();
+      return y - 40;
+    };
+    expect(pushed(5)).toBeGreaterThan(50);
+    // (Rapier keeps a mass of 95 as 94.99999: just under the limit.)
+    expect(pushed(MOVE_LIMIT_MASS + 5)).toBeLessThan(5);
   });
 });

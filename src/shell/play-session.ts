@@ -7,11 +7,7 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
 import { HAVOK_SCALE, settlesWhenPlaced, type CollisionData } from '../physics/collision-data.ts';
-import { GrabSpring } from '../physics/grab.ts';
-
-/** Telekinesis: where the object is held before the camera, and how fast it flies let go. */
-const TELEKINESIS_HOLD = 150;
-const TELEKINESIS_THROW = 2000;
+import { GrabSpring, TelekinesisHold } from '../physics/grab.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { landscapeMesh } from '../physics/landscape.ts';
 import type {
@@ -62,7 +58,8 @@ const OPENED_LONG_AGO = 1e6;
 interface HeldObject {
   readonly spring: GrabSpring;
   readonly distance: number;
-  readonly telekinesis?: boolean;
+  /** A telekinetic hold: its pull, its throw, and whether it is dual cast. */
+  readonly telekinesis?: { readonly hold: TelekinesisHold; dual: boolean };
   /** Its reference (told as grabbed and released). */
   readonly reference: number | undefined;
 }
@@ -565,6 +562,13 @@ export class PlaySession {
   }) {
     this.physics = init.physics;
     this.player = init.player;
+    // Holding a heavy object the player walks (fZKeyHeavyWeight).
+    init.player.holdingHeavy = () => {
+      const body = this.#grab?.spring.body;
+      return (
+        body !== undefined && body.isValid() && body.mass() > init.player.grabLimits.heavyWeight
+      );
+    };
     this.camera = init.camera;
     this.#canvas = init.canvas;
     this.#groundReady = init.groundReady;
@@ -924,6 +928,8 @@ export class PlaySession {
         this.#activateTarget(hold.target);
       } else if (clock() - hold.since >= player.ini.number('Controls', 'fZKeyDelay')) {
         this.#hold = undefined;
+        // Heavier than fGrabMaxWeightWalking: it is not taken hold of.
+        if (hold.body.mass() > player.grabLimits.maxWeight) return;
         const camera = player.position;
         // Taken hold of: it moves from now on, even if it was placed asleep.
         this.physics.release(hold.body);
@@ -958,10 +964,13 @@ export class PlaySession {
     }
     const camera = this.player.position;
     const forward = this.player.forward;
+    // A telekinetic hold pulls the object in, then holds it near (TelekinesisHold).
+    grab.telekinesis?.hold.update(step);
+    const distance = grab.telekinesis?.hold.distance ?? grab.distance;
     grab.spring.target = [
-      camera[0] + forward[0] * grab.distance,
-      camera[1] + forward[1] * grab.distance,
-      camera[2] + forward[2] * grab.distance,
+      camera[0] + forward[0] * distance,
+      camera[1] + forward[1] * distance,
+      camera[2] + forward[2] * distance,
     ];
     const point = grab.spring.point;
     const gap = Math.hypot(
@@ -978,32 +987,38 @@ export class PlaySession {
   }
 
   /**
-   * Telekinesis held (src/shell/player-casting.ts): the loose object the crosshair finds within
-   * `reach` is taken hold of by the grab spring (the player's grabSpring, as the Z key's:
-   * CommonLibSSE PlayerCharacter GrabbingType kTelekinesis) and pulled to TELEKINESIS_HOLD units
-   * before the camera; let go, it is flung along the view. TODO(M13): the engine's hold distance
-   * and throw speed (fTelekinesis* are not in the plugins), the thrown object's damage (Mod
-   * Telekinesis Damage, Damage Mult).
+   * Telekinesis held (src/shell/player-casting.ts; `cast` while a hand casts it): the loose
+   * object the crosshair finds within `reach` is taken hold of by the grab spring with
+   * Telekinesis's settings (the player's grabSpring, as the Z key's: CommonLibSSE
+   * PlayerCharacter GrabbingType kTelekinesis) at its middle, pulled in to
+   * fMagicTelekinesisDistanceMin before the camera and held there (TelekinesisHold); let go once
+   * held a moment, it flies along the view at the throw's speed, else it drops (the engine's,
+   * observed in the original). TODO(M13): the thrown object's damage (fMagicTelekinesisDamage*, Mod
+   * Telekinesis Damage Mult) waits for physics damage, which the engine gives thrown objects.
    */
-  telekinesis(active: boolean, reach: number): void {
+  telekinesis(cast: { readonly dual: boolean } | undefined, reach: number): void {
     const grab = this.#grab;
-    if (!active) {
+    if (!cast) {
       if (grab?.telekinesis) {
         this.#setGrab(undefined);
         const body = grab.spring.body;
         const forward = this.player.forward;
+        const speed = grab.telekinesis.hold.throwSpeed(grab.telekinesis.dual);
+        // Thrown, it stops turning; dropped, it falls from rest.
+        if (body.isValid() && speed > 0) body.setAngvel({ x: 0, y: 0, z: 0 }, true);
         if (body.isValid())
           body.setLinvel(
             {
-              x: (forward[0] * TELEKINESIS_THROW) / HAVOK_SCALE,
-              y: (forward[1] * TELEKINESIS_THROW) / HAVOK_SCALE,
-              z: (forward[2] * TELEKINESIS_THROW) / HAVOK_SCALE,
+              x: (forward[0] * speed) / HAVOK_SCALE,
+              y: (forward[1] * speed) / HAVOK_SCALE,
+              z: (forward[2] * speed) / HAVOK_SCALE,
             },
             true,
           );
       }
       return;
     }
+    if (grab?.telekinesis) grab.telekinesis.dual = cast.dual;
     if (grab || this.seated || this.dead || this.knocked) return;
     const ray = this.#pickRay();
     const hit = this.physics.pick(
@@ -1017,10 +1032,18 @@ export class PlaySession {
     const body = hit && this.physics.grabbable(hit.collider);
     if (!hit || !body) return;
     this.physics.release(body);
+    // Held at its middle (the engine's: its shapes' middle), from where the camera saw it.
+    const middle = body.worldCom();
+    const point: Vec3 = [middle.x * HAVOK_SCALE, middle.y * HAVOK_SCALE, middle.z * HAVOK_SCALE];
+    const camera = this.player.position;
+    const distance = Math.hypot(point[0] - camera[0], point[1] - camera[1], point[2] - camera[2]);
     this.#setGrab({
-      spring: new GrabSpring(body, hit.point, this.player.grab),
-      distance: TELEKINESIS_HOLD,
-      telekinesis: true,
+      spring: new GrabSpring(body, point, this.player.telekinesis.spring),
+      distance,
+      telekinesis: {
+        hold: new TelekinesisHold(this.player.telekinesis, distance),
+        dual: cast.dual,
+      },
       reference: ownReference(hit),
     });
   }

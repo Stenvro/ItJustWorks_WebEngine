@@ -139,6 +139,65 @@ export function isArticulated(collision: CollisionData | undefined): boolean {
   return collision.bodies.filter((body) => body.motion !== 'fixed' && !body.phantom).length > 1;
 }
 
+/**
+ * The smallest extent of a body's shapes (game units): the shortest side of the box around them
+ * in the body's space, as the engine measures a body to choose its quality (sweptBody). 0 for
+ * a body without shapes.
+ */
+export function smallestExtent(shapes: readonly CollisionShape[]): number {
+  const min: [number, number, number] = [Infinity, Infinity, Infinity];
+  const max: [number, number, number] = [-Infinity, -Infinity, -Infinity];
+  const add = (x: number, y: number, z: number, grow: number): void => {
+    min[0] = Math.min(min[0], x - grow);
+    min[1] = Math.min(min[1], y - grow);
+    min[2] = Math.min(min[2], z - grow);
+    max[0] = Math.max(max[0], x + grow);
+    max[1] = Math.max(max[1], y + grow);
+    max[2] = Math.max(max[2], z + grow);
+  };
+  const points = (xyz: Float32Array, grow: number): void => {
+    for (let i = 0; i + 2 < xyz.length; i += 3)
+      add(xyz[i] ?? 0, xyz[i + 1] ?? 0, xyz[i + 2] ?? 0, grow);
+  };
+  for (const shape of shapes) {
+    switch (shape.type) {
+      case 'mesh':
+        points(shape.vertices, 0);
+        break;
+      case 'convex':
+        points(shape.points, shape.radius);
+        break;
+      case 'box': {
+        const m = shape.transform;
+        const [hx, hy, hz] = shape.halfExtents;
+        for (const sx of [-hx, hx])
+          for (const sy of [-hy, hy])
+            for (const sz of [-hz, hz])
+              add(
+                (m[0] ?? 0) * sx + (m[4] ?? 0) * sy + (m[8] ?? 0) * sz + (m[12] ?? 0),
+                (m[1] ?? 0) * sx + (m[5] ?? 0) * sy + (m[9] ?? 0) * sz + (m[13] ?? 0),
+                (m[2] ?? 0) * sx + (m[6] ?? 0) * sy + (m[10] ?? 0) * sz + (m[14] ?? 0),
+                shape.radius,
+              );
+        break;
+      }
+      case 'sphere':
+        add(shape.center[0], shape.center[1], shape.center[2], shape.radius);
+        break;
+      case 'capsule':
+        add(shape.a[0], shape.a[1], shape.a[2], shape.radius);
+        add(shape.b[0], shape.b[1], shape.b[2], shape.radius);
+        break;
+      case 'cylinder':
+        add(shape.a[0], shape.a[1], shape.a[2], shape.radius + shape.shell);
+        add(shape.b[0], shape.b[1], shape.b[2], shape.radius + shape.shell);
+        break;
+    }
+  }
+  if (!(max[0] >= min[0])) return 0;
+  return Math.min(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+}
+
 /** A constraint's data with its pivots and lengths times `scaleA` / `scaleB` (per body). */
 function scaleConstraint(data: ConstraintData, scaleA: number, scaleB: number): ConstraintData {
   const point = (v: Vec3, scale: number): Vec3 => [v[0] * scale, v[1] * scale, v[2] * scale];

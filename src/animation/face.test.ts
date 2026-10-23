@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { LipFile } from '../formats/audio/lip.ts';
-import { creatureLipVariables, FACE_MORPHS, FaceAnimation, lipLeadIn } from './face.ts';
+import {
+  creatureLipVariables,
+  EYE_MORPH_PITCH,
+  FACE_MORPHS,
+  FaceAnimation,
+  lipLeadIn,
+} from './face.ts';
 
 const at = (name: string): number => FACE_MORPHS.indexOf(name);
 
@@ -22,30 +28,55 @@ describe('faces', () => {
     expect(face.weights[at('BlinkLeft')]).toBe(0);
   });
 
-  it('hold an expression and bump their version when they change', () => {
+  it('hold the next blink back while the eyes look down (fLookDownDisableBlinkingAmt)', () => {
+    const face = new FaceAnimation(() => 0, blink);
+    // Eyes down a third of the look morph's range (and a little more, wandering): over 0.25.
+    face.lookWith({ heading: 0, pitch: -EYE_MORPH_PITCH / 3 });
+    face.update(1.05);
+    face.update(0.3); // the first blink, as it was due
+    face.update(0.01);
+    expect(face.weights[at('LookDown')]).toBeGreaterThan(0.25);
+    face.update(3);
+    face.update(0.05);
+    expect(face.weights[at('BlinkLeft')]).toBe(0);
+    // Looking ahead again: the next one comes after its delay.
+    face.lookWith(undefined);
+    face.update(0.01);
+    face.update(0.01);
+    face.update(1);
+    face.update(0.05);
+    expect(face.weights[at('BlinkLeft')]).toBeGreaterThan(0);
+  });
+
+  it('move into an expression at fExpressionChangePerSec and bump their version', () => {
     const face = new FaceAnimation(() => 0.5, blink);
     face.setExpression('MoodHappy', 0.7);
-    face.update(0.01);
+    // 2 a second and 1 more times its strength: 2.7 a second.
+    face.update(0.1);
+    expect(face.weights[at('MoodHappy')]).toBeCloseTo(0.27);
+    face.update(1);
     expect(face.weights[at('MoodHappy')]).toBeCloseTo(0.7);
     const version = face.version;
     face.update(0.01);
     expect(face.version).toBe(version);
     face.setExpression(undefined);
-    face.update(0.01);
+    face.update(1);
     expect(face.weights[at('MoodHappy')]).toBe(0);
     expect(face.version).toBeGreaterThan(version);
   });
 
-  it("show a response's emotion over their mood, eased in and out", () => {
+  it("show a response's emotion over their mood, moving in and out", () => {
     const face = new FaceAnimation(() => 0.99, blink);
     face.setExpression('MoodHappy', 0.8);
-    // Anger at 60: three tenths of a second to show.
+    face.update(1);
+    // Anger at 60: 2.6 a second, the mood giving way as fast.
     face.showEmotion(1, 60);
     face.update(0.15);
-    expect(face.weights[at('DialogueAnger')]).toBeCloseTo(0.5);
-    expect(face.weights[at('MoodHappy')]).toBeCloseTo(0.4);
+    expect(face.weights[at('DialogueAnger')]).toBeCloseTo(0.39);
+    expect(face.weights[at('MoodHappy')]).toBeCloseTo(0.41);
     face.update(0.3);
     expect(face.weights[at('DialogueAnger')]).toBeCloseTo(0.6);
+    expect(face.weights[at('MoodHappy')]).toBe(0);
     // Neutral has no expression of its own: the anger goes, the mood comes back.
     face.showEmotion(0, 50);
     face.update(1);

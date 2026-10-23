@@ -1,6 +1,7 @@
 // The animated face of an actor: the weights of its head parts' expression morphs (TRI:
 // src/formats/nif/tri.ts) every frame. Eyes blink on their own (delay, close and open times:
-// the game settings fBlinkDelayMin/Max, fBlinkDownTime, fBlinkUpTime); an expression (a mood)
+// the game settings fBlinkDelayMin/Max, fBlinkDownTime, fBlinkUpTime; not while they look down:
+// fLookDownDisableBlinkingAmt); an expression (a mood, moving in at fExpressionChangePerSec)
 // holds at a strength, a response's emotion shows over it while it is said; a spoken line
 // moves the mouth, brows, eyes and lids by its lip-sync curves (src/formats/audio/lip.ts), a
 // creature's line its graph's mouth (creatureSink). Morph names are FaceGen's (as the TRI files
@@ -96,13 +97,35 @@ function eyeEmotion(expression: number | undefined): EyeEmotion {
   return 'Neutral';
 }
 
-/** Blink timing (seconds), the game settings of the same names. */
+/**
+ * Blink timing (seconds) and how fast expressions change: the game settings of the same names
+ * (those left out: the engine's built-in EXPRESSION_DEFAULTS).
+ */
 export interface BlinkSettings {
   readonly fBlinkDelayMin: number;
   readonly fBlinkDelayMax: number;
   readonly fBlinkDownTime: number;
   readonly fBlinkUpTime: number;
+  /**
+   * An expression's morphs move towards what it shows by fExpressionChangePerSec a second, and
+   * fExpressionStrengthAdd a second more times its strength (the engine's, observed in the original).
+   */
+  readonly fExpressionChangePerSec?: number;
+  readonly fExpressionStrengthAdd?: number;
+  /**
+   * The eyes looking down this far (the LookDown morph) or more, the next blink waits until they
+   * look up again (the engine's blink, observed in the original; inferred: its comparison reads the other
+   * way round, which would let only downcast eyes blink).
+   */
+  readonly fLookDownDisableBlinkingAmt?: number;
 }
+
+/** The engine's built-in expression settings (Skyrim.esm sets none). */
+export const EXPRESSION_DEFAULTS = {
+  fExpressionChangePerSec: 2,
+  fExpressionStrengthAdd: 1,
+  fLookDownDisableBlinkingAmt: 0.25,
+} as const;
 
 /** Skyrim.esm's values. */
 export const VANILLA_BLINK: BlinkSettings = {
@@ -132,9 +155,6 @@ export const EMOTION_EXPRESSIONS: readonly (string | undefined)[] = [
   'DialogueSurprise',
   'DialoguePuzzled',
 ];
-
-/** Seconds a dialogue emotion takes to show and to go. TODO(M13): the engine's blend. */
-const EMOTION_BLEND = 0.3;
 
 /** The phoneme curves of a creature line (dragons, hagravens, rieklings). */
 export const CREATURE_LIP_CURVES = 8;
@@ -173,13 +193,16 @@ export class FaceAnimation implements FaceWeights {
   /** Seconds to the next blink, or into the current one (negative: closing/opening). */
   #untilBlink: number;
   #blinking = -1;
+  /** A blink ended while the eyes looked down: the next one waits until they look up. */
+  #blinkWaits = false;
   #expression: { index: number; strength: number } | undefined;
   #line: { lip: LipFile; time: number } | undefined;
   readonly #curves = new Float32Array(64);
   readonly #previous = new Float32Array(FACE_MORPHS.length);
-  /** The emotion of the response being said (its expression and strength), and as shown. */
+  /** The emotion of the response being said (its expression and strength). */
   #emotion: { index: number; strength: number } | undefined;
-  readonly #emotionShown = new Float32Array(FACE_EXPRESSIONS.length);
+  /** The expressions' morphs as shown (moving towards the mood's or the emotion's). */
+  readonly #shown = new Float32Array(FACE_EXPRESSIONS.length);
   /** A creature line's phoneme curves now (CREATURE_LIP_CURVES). */
   readonly creature = new Float32Array(CREATURE_LIP_CURVES);
   /**
@@ -287,15 +310,25 @@ export class FaceAnimation implements FaceWeights {
     before.set(weights);
     weights.fill(0);
 
-    // Blinking: a delay, then the lids close (down time) and open (up time).
+    // Blinking: a delay, then the lids close (down time) and open (up time); after a blink
+    // the eyes looking down (fLookDownDisableBlinkingAmt) hold the next one back.
     let blink = 0;
-    if (this.#blinking >= 0) {
+    const lookingDown =
+      (before[LOOK_DOWN] ?? 0) >=
+      (this.#blink.fLookDownDisableBlinkingAmt ?? EXPRESSION_DEFAULTS.fLookDownDisableBlinkingAmt);
+    if (this.#blinkWaits) {
+      if (!lookingDown) {
+        this.#blinkWaits = false;
+        this.#untilBlink = this.#blinkDelay();
+      }
+    } else if (this.#blinking >= 0) {
       this.#blinking += dt;
       const { fBlinkDownTime: down, fBlinkUpTime: up } = this.#blink;
       if (this.#blinking < down) blink = this.#blinking / Math.max(down, 1e-3);
       else if (this.#blinking < down + up) blink = 1 - (this.#blinking - down) / Math.max(up, 1e-3);
       else {
         this.#blinking = -1;
+        this.#blinkWaits = lookingDown;
         this.#untilBlink = this.#blinkDelay();
       }
     } else {
@@ -303,22 +336,20 @@ export class FaceAnimation implements FaceWeights {
       if (this.#untilBlink <= 0) this.#blinking = 0;
     }
 
-    // The emotion of the response said, eased in and out; the mood gives way to it.
-    const emotion = this.#emotion;
-    const ease = Math.min(1, dt / EMOTION_BLEND);
-    let shown = 0;
-    for (let i = 0; i < this.#emotionShown.length; i++) {
-      const target = emotion?.index === i ? emotion.strength : 0;
-      const now = this.#emotionShown[i] ?? 0;
-      const next = Math.abs(target - now) <= ease ? target : now + Math.sign(target - now) * ease;
-      this.#emotionShown[i] = next;
-      shown = Math.max(shown, next);
-    }
-    const expression = this.#expression;
-    if (expression) weights[expression.index] = expression.strength * (1 - shown);
-    for (let i = 0; i < this.#emotionShown.length; i++) {
-      const value = this.#emotionShown[i] ?? 0;
-      if (value > 0) weights[i] = Math.max(weights[i] ?? 0, value);
+    // The emotion of the response said, else the mood: its morph moves towards its strength,
+    // the others towards none, by fExpressionChangePerSec a second (and fExpressionStrengthAdd
+    // more times the strength shown).
+    const target = this.#emotion ?? this.#expression;
+    const perSecond =
+      this.#blink.fExpressionChangePerSec ?? EXPRESSION_DEFAULTS.fExpressionChangePerSec;
+    const add = this.#blink.fExpressionStrengthAdd ?? EXPRESSION_DEFAULTS.fExpressionStrengthAdd;
+    const step = Math.max(0, perSecond + add * (target?.strength ?? 0)) * dt;
+    for (let i = 0; i < this.#shown.length; i++) {
+      const goal = target?.index === i ? target.strength : 0;
+      const now = this.#shown[i] ?? 0;
+      const next = Math.abs(goal - now) <= step ? goal : now + Math.sign(goal - now) * step;
+      this.#shown[i] = next;
+      weights[i] = next;
     }
 
     // The line: phonemes, then the modifiers it moves (its blinks join the face's own).

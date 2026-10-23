@@ -5,7 +5,8 @@
 // fZKeySpringElasticity of the distance per step and fZKeySpringDamping of the point's
 // velocity, through the body's effective mass at the point; the impulse is limited to the
 // body's mass × the step × the maximum relative force; then the body's velocities are scaled
-// by fZKeyObjectDamping. Notes: docs/physics.md.
+// by fZKeyObjectDamping. Telekinesis hangs the object on the same spring with its own settings
+// (fMagicTelekinesis*), pulls it in and throws it (TelekinesisHold). Notes: docs/physics.md.
 
 import RAPIER from '@dimforge/rapier3d-compat';
 import { HAVOK_SCALE } from './collision-data.ts';
@@ -27,33 +28,142 @@ export interface GrabSettings {
 }
 
 /**
- * The executable's defaults of the grab settings (a dump of every game setting; the plugins
- * set fZKeyMaxForce and fZKeyMaxForceWeightHigh to the same values).
+ * The executable's built-in grab settings (Skyrim.esm sets fZKeyMaxForce to 100 and
+ * fZKeyMaxForceWeightHigh to 150).
  */
 export const GRAB_DEFAULTS: GrabSettings = {
   springDamping: 0.5,
   springElasticity: 0.2,
   objectDamping: 0.75,
-  maxForce: 100,
+  maxForce: 250,
   maxForceScaleLow: 0.2,
   maxForceScaleHigh: 1,
   maxForceWeightLow: 0,
-  maxForceWeightHigh: 150,
+  maxForceWeightHigh: 300,
 };
 
 /**
- * The spring's maximum relative force (acceleration, m/s²) for an object's weight:
- * fZKeyMaxForce × the scale from fZKeyMaxForceScaleLow at fZKeyMaxForceWeightLow to
- * fZKeyMaxForceScaleHigh at fZKeyMaxForceWeightHigh. The engine's use of the weight is not
- * documented; here the body's Havok mass is the weight. TODO(M13): calibrate against the game.
+ * The spring's maximum relative force (acceleration, m/s²) for an object's weight (the engine
+ * weighs it by its Havok mass, its bodies' together; observed in the original): fZKeyMaxForce ×
+ * fZKeyMaxForceScaleHigh up to fZKeyMaxForceWeightLow, falling to fZKeyMaxForceScaleLow at
+ * fZKeyMaxForceWeightHigh and beyond: heavy objects are held more weakly.
  */
 export function maxRelativeForce(settings: GrabSettings, weight: number): number {
-  const span = settings.maxForceWeightHigh - settings.maxForceWeightLow;
-  const t = span > 0 ? Math.min(1, Math.max(0, (weight - settings.maxForceWeightLow) / span)) : 1;
+  const low = settings.maxForceWeightLow;
+  const high = settings.maxForceWeightHigh;
+  const t = high > low ? (Math.min(high, Math.max(low, weight)) - high) / (low - high) : 1;
   return (
     settings.maxForce *
     (settings.maxForceScaleLow + (settings.maxForceScaleHigh - settings.maxForceScaleLow) * t)
   );
+}
+
+/** What may be grabbed and what a held object hinders (GMST; the engine's built-in values). */
+export interface GrabLimits {
+  /** fGrabMaxWeightWalking: objects heavier (Havok mass, kg) are not taken hold of. */
+  readonly maxWeight: number;
+  /** fZKeyHeavyWeight: holding a heavier object, the player neither runs nor sprints. */
+  readonly heavyWeight: number;
+}
+
+export const GRAB_LIMITS: GrabLimits = { maxWeight: 100, heavyWeight: 75 };
+
+/**
+ * Telekinesis (GMST fMagicTelekinesis*; the engine's built-in values, observed in the original; Skyrim.esm
+ * sets none): its spring (a constant maximum force: no weight scale), the pull that brings the
+ * object in, and the throw.
+ */
+export interface TelekinesisSettings {
+  /** fMagicTelekinesisSpringDamping, ...Elasticity, ObjectDamping, MaxForce. */
+  readonly spring: GrabSettings;
+  /**
+   * The pull: the object comes towards the caster at fMagicTelekinesisMoveBase units a second,
+   * faster by fMagicTelekinesisMoveAccelerate a second up to fMagicTelekinesisMoveMax, until it
+   * is fMagicTelekinesisDistanceMin from the camera, where it is held.
+   */
+  readonly moveBase: number;
+  readonly moveAccelerate: number;
+  readonly moveMax: number;
+  readonly distanceMin: number;
+  /**
+   * The throw: held, it gathers fMagicTelekinesisThrowAccelerate a second up to
+   * fMagicTelekinesisThrowMax; let go after that it flies at fMagicTelekinesisThrow plus what it
+   * gathered (units a second), dual cast × fMagicTelekinesisDualCastThrowMult; let go before
+   * (still being pulled in), it drops.
+   */
+  readonly throwSpeed: number;
+  readonly throwAccelerate: number;
+  readonly throwMax: number;
+  readonly dualCastThrowMult: number;
+}
+
+export const TELEKINESIS_DEFAULTS: TelekinesisSettings = {
+  spring: {
+    springDamping: 0.5,
+    springElasticity: 0.075,
+    objectDamping: 0.95,
+    maxForce: 1000,
+    maxForceScaleLow: 1,
+    maxForceScaleHigh: 1,
+    maxForceWeightLow: 0,
+    maxForceWeightHigh: 0,
+  },
+  moveBase: 50,
+  moveAccelerate: 400,
+  moveMax: 1000,
+  distanceMin: 48,
+  throwSpeed: 1000,
+  throwAccelerate: 10,
+  throwMax: 30,
+  dualCastThrowMult: 2,
+};
+
+/**
+ * A telekinetic hold over time: how far before the camera the object is (pulled in at a
+ * gathering speed, then held at the minimum distance) and the throw it gathers while held.
+ */
+export class TelekinesisHold {
+  readonly #settings: TelekinesisSettings;
+  /** The distance before the camera now (game units). */
+  distance: number;
+  #speed = 0;
+  #held = false;
+  #gathered = 0;
+  #charged = false;
+
+  constructor(settings: TelekinesisSettings, distance: number) {
+    this.#settings = settings;
+    this.distance = distance;
+  }
+
+  /** Advances the pull or the gathering by `seconds`. */
+  update(seconds: number): void {
+    const s = this.#settings;
+    if (!this.#held) {
+      this.#speed = Math.min(
+        s.moveMax,
+        Math.max(this.#speed, s.moveBase) + s.moveAccelerate * seconds,
+      );
+      this.distance -= this.#speed * seconds;
+      if (this.distance < s.distanceMin) {
+        this.distance = s.distanceMin;
+        this.#held = true;
+        this.#gathered = 0;
+      }
+      return;
+    }
+    if (this.#gathered < s.throwMax) {
+      this.#gathered += s.throwAccelerate * seconds;
+      if (this.#gathered > 0) this.#charged = true;
+    }
+  }
+
+  /** How fast it flies let go now (units a second; 0: it drops). */
+  throwSpeed(dualCast: boolean): number {
+    if (!this.#charged) return 0;
+    const s = this.#settings;
+    return (s.throwSpeed + this.#gathered) * (dualCast ? s.dualCastThrowMult : 1);
+  }
 }
 
 /** A held object: the body, the point taken hold of (in the body's frame) and the spring. */

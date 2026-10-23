@@ -134,7 +134,11 @@ const ANIMATE_FAR = 4096;
 /**
  * How often a skeleton at \`at\` is moved (animateSkeletons' interval): every frame near the
  * camera and in front of it, less often far away or behind it, where a coarser pose is not
- * seen. The engine's own scheme (actors' processing levels) is not documented: TODO(M13).
+ * seen. TODO(M13): the engine's scheme (observed in the original): its graph is updated every frame up to
+ * [Animation] fAnimInterpNearDist (400) from the camera (the distance scaled by 80° over the
+ * field of view), every fAnimInterpMinTime (0.08 s) there, rising to fAnimInterpMaxTime (0.25 s)
+ * at fAnimInterpFarDist (800) and beyond or unseen, its pose interpolated between the updates
+ * (fAnimInterpSlop) — which this lacks: with the engine's intervals, poses here would step.
  */
 export function animationInterval(
   at: readonly [number, number, number],

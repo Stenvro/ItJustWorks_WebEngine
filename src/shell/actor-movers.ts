@@ -13,9 +13,11 @@ import { driveOf, type MovementDrive } from '../ai/movement-drive.ts';
 import {
   angleBetween,
   Locomotion,
+  MotionFeedback,
   steer,
   taggedMovementType,
   type Gait,
+  type MotionFeedbackSettings,
   type MoveRequest,
 } from '../ai/locomotion.ts';
 import { avoid, type Neighbour } from '../ai/avoidance.ts';
@@ -31,6 +33,7 @@ import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vec3 } from '../render/math.ts';
 import { groundedPlacement, standsOnGround } from '../world/actor-ground.ts';
+import type { IniSettings } from '../world/ini-settings.ts';
 import { RaceFlag } from '../world/actor-records.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
 import { HUMAN_BOUND, skeletonInfo } from '../world/player-body.ts';
@@ -38,6 +41,7 @@ import type { ActorMotion } from '../scripting/runtime/runtime.ts';
 import type { StagedActor } from './actor-stage.ts';
 import type { GameSession } from './game-session.ts';
 import { controllerSettings, controllerShape } from './player.ts';
+import { actorFell } from './time-flow.ts';
 import type { Terminal } from './terminal.ts';
 
 /** The physics world of a play and its fixed steps (PlaySession). */
@@ -61,11 +65,24 @@ const TILT_AGAIN = 4;
 /** An NPC sprinting pays its stamina this often (seconds of sprinting at a time). */
 const SPRINT_PAYMENT_SECONDS = 0.5;
 
+/** [Animation] bFeedbackToGraphFromCharacterController and fMotionFeedback* (MotionFeedback). */
+function motionFeedbackSettings(ini: IniSettings): MotionFeedbackSettings {
+  return {
+    enabled: ini.bool('Animation', 'bFeedbackToGraphFromCharacterController'),
+    minSpeedDelta: ini.number('Animation', 'fMotionFeedbackMinSpeedDelta'),
+    minAngleDelta: ini.number('Animation', 'fMotionFeedbackMinAngleDelta'),
+    minSpeed: ini.number('Animation', 'fMotionFeedbackMinSpeed'),
+    minTime: ini.number('Animation', 'fMotionFeedbackMinTime'),
+  };
+}
+
 /** An actor moved by its controller. */
 interface Mover {
   readonly staged: StagedActor;
   readonly character: CharacterBody;
   readonly locomotion: Locomotion;
+  /** What its graph is told it moves: what it wanted, or what its controller made of it. */
+  readonly feedback: MotionFeedback;
   readonly race: RaceMovement | undefined;
   /** Its movement types now, and the tagged state they are for. */
   types: MovementTypes | undefined;
@@ -77,7 +94,7 @@ interface Mover {
   /**
    * What its AI's steering wanted in the last physics step: the velocity and the turn rate
    * (radians per second, clockwise): what drives its graph, as the engine's movement controller
-   * does (not what physics made of it).
+   * does, until its controller has made the same for a while (feedback).
    */
   wish: { velocity: readonly [number, number]; turnRate: number };
   /**
@@ -1145,6 +1162,7 @@ export class ActorMovers {
         staged,
         character,
         locomotion: new Locomotion(),
+        feedback: new MotionFeedback(motionFeedbackSettings(session.ini)),
         race,
         types: undefined,
         typesFor: undefined,
@@ -1261,6 +1279,12 @@ export class ActorMovers {
         mover.wish = { velocity: [0, 0], turnRate: 0 };
       }
       mover.character.step(step);
+      // Landed from a fall: the NPCs' falling damage, as the player's (horses too).
+      const fell = mover.character.landedFrom;
+      const runtime = this.#options.session.scriptsReady;
+      if (fell !== undefined && fell > 0 && runtime) {
+        void actorFell(runtime, staged.reference, fell).catch(() => undefined);
+      }
     }
   }
 
@@ -1398,7 +1422,7 @@ export class ActorMovers {
       // What its steering wants (moved by its graph, a canned turn, a lunge: it stands, as far
       // as its graph is told).
       mover.locomotion.drive([behavior], {
-        velocity: mover.wish.velocity,
+        velocity: mover.feedback.feed(mover.wish.velocity, velocity, staged.heading, dt),
         turnRate: mover.wish.turnRate,
         heading: staged.heading,
         seconds: dt,

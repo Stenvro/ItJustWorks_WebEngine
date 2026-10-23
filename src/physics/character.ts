@@ -60,6 +60,55 @@ export interface CharacterSettings {
   readonly stairMaterials: ReadonlySet<number>;
   /** Highest stair it steps up (game units). */
   readonly stairHeight: number;
+  /**
+   * [HAVOK] fMoveLimitMass: bodies this heavy (kg) or heavier are not pushed by it (pushFactor);
+   * MOVE_LIMIT_MASS when not given.
+   */
+  readonly moveLimitMass?: number;
+}
+
+/** [HAVOK] fMoveLimitMass's built-in default (kg). */
+export const MOVE_LIMIT_MASS = 95;
+/**
+ * The most a push may change a body's speed (Havok units per second): a stronger push is scaled
+ * down to it (observed in the original, as pushFactor).
+ */
+const PUSH_MAX_SPEED = 1000;
+
+/**
+ * How much of a character's push a simulated body it walks into takes, by its layer and mass
+ * (the engine's character controller, observed in the original): nothing if it has no mass or weighs
+ * fMoveLimitMass or more, nor a projectile; a prop (L_PROPS) three times if it weighs at most
+ * half of that, else a tenth; a trap a tenth; anything else twice.
+ */
+export function pushFactor(layer: number, mass: number, moveLimitMass: number): number {
+  if (!(mass > 0) || mass >= moveLimitMass) return 0;
+  if (layer === Layer.projectile) return 0;
+  if (layer === Layer.props) return mass <= moveLimitMass * 0.5 ? 3 : 0.1;
+  if (layer === Layer.trap) return 0.1;
+  return 2;
+}
+
+/**
+ * The impulse (Havok units, kg·m/s) a character moving at `velocity` gives a body of `mass` it
+ * pushes along `direction` (unit, into the body) at a point moving at `pointVelocity` (Havok
+ * units per second): what takes the point up to the character's speed along the push (the
+ * character as an immovable pusher; TODO(M13): Havok's character proxy's own impulse is not
+ * known), its speed change held to PUSH_MAX_SPEED, times pushFactor.
+ */
+export function pushImpulse(
+  velocity: Vec3,
+  pointVelocity: Vec3,
+  direction: Vec3,
+  mass: number,
+  factor: number,
+): number {
+  const closing =
+    (velocity[0] - pointVelocity[0]) * direction[0] +
+    (velocity[1] - pointVelocity[1]) * direction[1] +
+    (velocity[2] - pointVelocity[2]) * direction[2];
+  if (!(closing > 0) || !(factor > 0) || !(mass > 0)) return 0;
+  return mass * Math.min(closing, PUSH_MAX_SPEED) * factor;
 }
 
 /** Gap the controller keeps to surfaces (Havok units). */
@@ -143,6 +192,14 @@ export class CharacterBody {
    * goes only where it is steered. TODO(M13): the engine's own controller for NPCs.
    */
   seeksAround = false;
+  /**
+   * How far it fell before landing in the last step (game units: from the highest point since it
+   * left the ground), else undefined; a landing in water is none (falling damage:
+   * src/gameplay/falling.ts).
+   */
+  landedFrom: number | undefined;
+  /** The highest point of its feet since it left the ground, while in the air. */
+  #fallTop: number | undefined;
   /** Standing on something too steep to walk on (sliding off). */
   #unsupported = false;
   /** Something below the shape touched it in the last step (ground, a slope, a step). */
@@ -169,7 +226,8 @@ export class CharacterBody {
     // Steps are climbed by the shape's lower cone, as the engine's shape does; walking down
     // slopes and stairs it stays on the ground for as far as that cone reaches.
     controller.enableSnapToGround(toHavok(shape.radius));
-    controller.setApplyImpulsesToDynamicBodies(true);
+    // What it walks into it pushes by the engine's rule (#push), not by Rapier's.
+    controller.setApplyImpulsesToDynamicBodies(false);
     this.#controller = controller;
     const center = this.#center(feet);
     this.#body = world.createRigidBody(
@@ -228,6 +286,8 @@ export class CharacterBody {
     this.#feet = [...feet];
     this.#previous = [...feet];
     this.verticalSpeed = 0;
+    this.#fallTop = undefined;
+    this.landedFrom = undefined;
     this.#body.setTranslation(this.#center(feet), true);
     this.#body.setNextKinematicTranslation(this.#center(feet));
   }
@@ -240,6 +300,8 @@ export class CharacterBody {
     this.#previous = [...previous];
     this.#feet = [...feet];
     this.verticalSpeed = 0;
+    this.#fallTop = undefined;
+    this.landedFrom = undefined;
     this.#body.setNextKinematicTranslation(this.#center(feet));
   }
 
@@ -512,6 +574,7 @@ export class CharacterBody {
       this.touched.push(collision.collider);
       // normal1: the surface touched, facing the character (up for ground below).
       if (collision.normal1.z > 0.05) below = true;
+      if (seconds > 0) this.#push(collision, desired, seconds);
     }
     // Still blocked: an actor seeks a way round, its way turned a little, then more.
     if (
@@ -542,6 +605,65 @@ export class CharacterBody {
       next.y * HAVOK_SCALE,
       next.z * HAVOK_SCALE - this.shape.height / 2,
     ];
+    this.#watchFall();
+  }
+
+  /**
+   * Falling: the highest point of the feet since leaving the ground; landing (not in water)
+   * sets landedFrom to how far it fell, for this step.
+   */
+  #watchFall(): void {
+    const z = this.#feet[2];
+    this.landedFrom = undefined;
+    if (this.swimming) {
+      this.#fallTop = undefined;
+    } else if (!this.#grounded) {
+      this.#fallTop = Math.max(this.#fallTop ?? z, z);
+    } else if (this.#fallTop !== undefined) {
+      this.landedFrom = Math.max(0, this.#fallTop - z);
+      this.#fallTop = undefined;
+    }
+  }
+
+  /**
+   * A simulated body it walks into is pushed along its way into it, at the contact, by the
+   * engine's rule (pushFactor, pushImpulse); bodies held still, fixed or keyframed are not.
+   */
+  #push(collision: RAPIER.CharacterCollision, desired: RAPIER.Vector, seconds: number): void {
+    const collider = collision.collider;
+    const body = collider?.parent();
+    if (!collider || !body?.isDynamic()) return;
+    const factor = pushFactor(
+      this.physics.layerOf(collider),
+      body.mass(),
+      this.settings.moveLimitMass ?? MOVE_LIMIT_MASS,
+    );
+    if (factor <= 0) return;
+    const n = collision.normal1;
+    const direction: Vec3 = [-n.x, -n.y, -n.z];
+    const at = collision.witness1;
+    const com = body.worldCom();
+    const v = body.linvel();
+    const w = body.angvel();
+    const r = [at.x - com.x, at.y - com.y, at.z - com.z] as const;
+    const pointVelocity: Vec3 = [
+      v.x + w.y * r[2] - w.z * r[1],
+      v.y + w.z * r[0] - w.x * r[2],
+      v.z + w.x * r[1] - w.y * r[0],
+    ];
+    const impulse = pushImpulse(
+      [desired.x / seconds, desired.y / seconds, desired.z / seconds],
+      pointVelocity,
+      direction,
+      body.mass(),
+      factor,
+    );
+    if (impulse <= 0) return;
+    body.applyImpulseAtPoint(
+      { x: direction[0] * impulse, y: direction[1] * impulse, z: direction[2] * impulse },
+      at,
+      true,
+    );
   }
 
   free(): void {

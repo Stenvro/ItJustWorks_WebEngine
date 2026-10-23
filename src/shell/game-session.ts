@@ -878,7 +878,7 @@ export class GameSession {
       // Skill increases and blinking meters go to the HUD.
       runtime.progression.listener = this.hud;
       // The INI's settings the events read: OnTrigger's repeat, the attached area.
-      const triggerDelay = this.ini.lookup('Havok', 'fTriggerEventDelayMS');
+      const triggerDelay = this.ini.lookup('HAVOK', 'fTriggerEventDelayMS');
       if (triggerDelay !== undefined) runtime.triggerVolumes.delayMs = triggerDelay;
       const grids = this.ini.lookup('General', 'uGridsToLoad');
       if (grids !== undefined) runtime.gridsToLoad = grids;

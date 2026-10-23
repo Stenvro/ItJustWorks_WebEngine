@@ -408,8 +408,9 @@ the player in a runtime on the game data, `--audit` reads every record).
   "Combat": Disarm). Paralysis: the target falls as its ragdoll and lies while it lasts.
   Telekinesis: the player's cast held takes hold of
   the loose object aimed at within reach with the grab spring (CommonLibSSE PlayerCharacter
-  GrabbingType kTelekinesis) and pulls it before the camera; let go, it is flung along the view
-  (TODO(M13): the engine's reach, hold distance and throw speed are not in the plugins). Grab
+  GrabbingType kTelekinesis) with Telekinesis's own spring, pulls it in to
+  fMagicTelekinesisDistanceMin before the camera and throws it along the view once held, else
+  drops it (the engine's settings, observed in the original: docs/physics.md, Grabbing). Grab
   Actor holds its target's ragdoll before its caster (docs/ai.md, "Combat").
 - Spawn Hazard places its hazard (HAZD: limit, radius in feet, lifetime, target interval,
   spell, light, impact data set, sound, image-space modifier and radius; flags Affects Player
@@ -1156,8 +1157,10 @@ HasBeenEaten, IsPoison.
   ranks −0.75: 50 % and 75 %, as UESP measures them), the player with it; no zoom without
   stamina or under Slow Time. **Falls** (src/gameplay/falling.ts): landing from higher than
   fJumpFallHeightMin (600) takes ((height − 600) × fJumpFallHeightMult)^fJumpFallHeightExponent
-  (0.1, 1.45) health, through Mod Falling Damage (UESP "Skyrim:Damage"; none in water;
-  TODO(M13): NPCs' falls with their NPC settings, difficulty).
+  (Skyrim.esm: 0.1, 1.45) health, through Mod Falling Damage (UESP "Skyrim:Damage"; none in
+  water); every other actor, horses too, by the NPCs' settings (fJumpFallHeightMinNPC 450,
+  exponent 1.65), and one getting up from a ragdoll against a quarter of the minimum height (the
+  engine's landing and ragdoll end, observed in the original; docs/physics.md). TODO(M13): difficulty.
 
 No vanilla perk uses and no system asks Calculate Mine Explode Chance,
 Adjust Limb Damage, Get Should Attack, Mod Addiction Chance / Duration, Mod Positive Chem
@@ -1312,9 +1315,12 @@ the view: `src/shell/destruction-looks.ts`; check: `node tools/destruction-info.
 - **Debris**: a stage's DEBR throws its debris count of pieces, each one of its models chosen by
   their percentages as weights, from about the object's middle (within its bounds) outward and
   up at 3 m/s, as loose bodies on the small debris layer (the model's own bodies made dynamic,
-  else a sphere of half its bounds; a mass of 5 kg where the file has none) for 15 s.
-  TODO(M13): the engine's debris speed, lifetime, mass and shape (no game setting of the load
-  order names them), and whether a debris' percentages are weights or chances.
+  else a sphere of half its bounds; a mass of 5 kg where the file has none) for 15 s; with
+  more than iDebrisMaxCount (25) pieces lying about, the oldest go (the engine's, observed in
+  the original). TODO(M13): the engine's debris speed, lifetime, mass and shape (no game setting of the
+  load order names them; fDebrisMaxVelocity and fDebrisMinExtent choose which bodies are swept:
+  docs/physics.md), its fade over a piece's last fDebrisFadeTime (1 s: instances have no alpha
+  of their own yet), and whether a debris' percentages are weights or chances.
 - **Explosions** show through the actor stage's projectiles (MagicProjectiles.burst): its
   sounds, model and light, image-space modifier on a player within its image-space radius, its
   placed object (the oil explosion's fire hazard), a noise for detection.
