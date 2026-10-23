@@ -160,8 +160,6 @@ const ENEMY_BAR_SECONDS = 4;
 /** A paired killmove's victim stands this far before the leader (Paired_1HMKillMoveB's "2_"
  * root at its start: 72.8 units ahead, turned to face it). TODO(M13): each clip's own offset. */
 const PAIRED_DISTANCE = 72.8;
-/** A paired animation lasts no longer than this (seconds; the longest vanilla ones: 10). */
-const PAIRED_LIMIT = 12;
 /** How wide a flying arrow is to those it may hit and who dodge it (units). */
 const SHOT_RADIUS = 8;
 
@@ -1150,9 +1148,9 @@ export class ActorCombat implements CombatBridge {
     fighter.blood?.left.advance(seconds);
     if (state.current?.ranged === true && state.arrowNocked) state.drawnFor += seconds;
     this.#aimBow(fighter);
-    // A paired animation that never says it ended lets go after a while (TODO(M13)).
+    // A paired animation that never says it ended lets go after fKillMoveMaxDuration.
     fighter.pairedFor = state.paired === undefined ? 0 : fighter.pairedFor + seconds;
-    if (fighter.pairedFor > PAIRED_LIMIT) {
+    if (fighter.pairedFor > this.#settings.killMoveMaxDuration) {
       state.paired = undefined;
       for (const graph of this.#graphs(fighter)) graph.pairedSide = undefined;
     }

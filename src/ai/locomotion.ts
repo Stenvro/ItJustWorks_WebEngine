@@ -49,6 +49,90 @@ export function headingOf(x: number, y: number): number {
   return Math.atan2(x, y);
 }
 
+/** [Animation] fMotionFeedback* and bFeedbackToGraphFromCharacterController (MotionFeedback). */
+export interface MotionFeedbackSettings {
+  readonly enabled: boolean;
+  /** Units a second the wanted and the made movement may part by, at most, to agree. */
+  readonly minSpeedDelta: number;
+  /** Degrees their directions may part by, at most, to agree. */
+  readonly minAngleDelta: number;
+  /** Slower than this (units a second) the graph is told it stands. */
+  readonly minSpeed: number;
+  /** Seconds they agree before the graph is told the movement made. */
+  readonly minTime: number;
+}
+
+/** The engine's built-in values. */
+export const MOTION_FEEDBACK: MotionFeedbackSettings = {
+  enabled: true,
+  minSpeedDelta: 25,
+  minAngleDelta: 20,
+  minSpeed: 5,
+  minTime: 0.5,
+};
+
+/**
+ * What an actor's graph is told it moves (its Speed and Direction), the engine's feedback from
+ * its character controller (observed in the original): once the movement the controller made has agreed with
+ * the movement wanted (their speeds within fMotionFeedbackMinSpeedDelta a second, their
+ * directions within fMotionFeedbackMinAngleDelta) for fMotionFeedbackMinTime, the movement made
+ * (its direction only above fMotionFeedbackMinSpeed, else the one told before); until then the
+ * movement wanted (none below fMotionFeedbackMinSpeed), its direction turning from the one told
+ * before by at most a full turn a second. Without the feedback, the movement wanted as it is.
+ */
+export class MotionFeedback {
+  readonly #settings: MotionFeedbackSettings;
+  #agreed = 0;
+  /** The direction told last, against the heading (radians, clockwise). */
+  #direction = 0;
+
+  constructor(settings: MotionFeedbackSettings = MOTION_FEEDBACK) {
+    this.#settings = settings;
+  }
+
+  /**
+   * The velocity (world, horizontal; units a second) to tell the graph, from the velocity
+   * wanted and the one made over `seconds`, facing `heading`.
+   */
+  feed(
+    wanted: readonly [number, number],
+    made: readonly [number, number],
+    heading: number,
+    seconds: number,
+  ): [number, number] {
+    const s = this.#settings;
+    if (!s.enabled || !(seconds > 0)) return [wanted[0], wanted[1]];
+    const wantedSpeed = Math.hypot(wanted[0], wanted[1]);
+    const madeSpeed = Math.hypot(made[0], made[1]);
+    const apart = Math.hypot(wanted[0] - made[0], wanted[1] - made[1]);
+    // Directions are compared only when both move (more than a tenth of a unit a step).
+    const both = wantedSpeed * seconds > 0.1 && madeSpeed * seconds > 0.1;
+    const turned = both
+      ? Math.abs(angleBetween(headingOf(made[0], made[1]), headingOf(wanted[0], wanted[1])))
+      : 0;
+    this.#agreed += seconds;
+    if (apart > s.minSpeedDelta || turned > (s.minAngleDelta * Math.PI) / 180) this.#agreed = 0;
+    let speed: number;
+    if (this.#agreed >= s.minTime) {
+      speed = madeSpeed;
+      if (madeSpeed > s.minSpeed)
+        this.#direction = angleBetween(heading, headingOf(made[0], made[1]));
+    } else if (wantedSpeed >= s.minSpeed) {
+      speed = wantedSpeed;
+      const toward = angleBetween(
+        this.#direction,
+        angleBetween(heading, headingOf(wanted[0], wanted[1])),
+      );
+      const most = 2 * Math.PI * seconds;
+      this.#direction += Math.max(-most, Math.min(most, toward));
+    } else {
+      speed = 0;
+    }
+    const way = heading + this.#direction;
+    return [Math.sin(way) * speed, Math.cos(way) * speed];
+  }
+}
+
 /**
  * One step of an actor that wants `request`, from `heading`: it turns towards the heading it
  * keeps (or the way it goes) at its movement type's rate (while moving, else in place: walking

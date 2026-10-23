@@ -28,10 +28,19 @@ const DESTRUCTIBLE = new Set<string>(DESTRUCTIBLE_TYPES);
 
 /**
  * Seconds debris lies before it goes. TODO(M13): the engine's own time (no game setting of the
- * load order names it).
+ * load order names it). The engine fades a piece out over its last fDebrisFadeTime seconds
+ * (observed in the original); instances have no alpha of their own to fade with yet: it goes at once.
  */
 const DEBRIS_SECONDS = 15;
-/** How fast debris pieces fly off (m/s, outward and up). TODO(M13): the engine's speed. */
+/**
+ * iDebrisMaxCount's built-in value: with more pieces lying about, the oldest go (the engine's,
+ * observed in the original; Skyrim.esm sets none).
+ */
+const DEBRIS_MAX_COUNT = 25;
+/**
+ * How fast debris pieces fly off (m/s, outward and up). TODO(M13): the engine's speed
+ * (fDebrisMaxVelocity is not it: it chooses which bodies are swept, src/physics/physics-world.ts).
+ */
 const DEBRIS_SPEED = 3;
 /** A piece's mass (kg) where its file gives none. TODO(M13): the engine's. */
 const DEBRIS_MASS = 5;
@@ -301,8 +310,12 @@ export class DestructionLooks {
     count: number,
   ): Promise<void> {
     const runtime = this.#session.scriptsReady;
-    const debris = runtime && (await runtime.destruction.debris(debrisId));
+    const [debris, settings] = await Promise.all([
+      runtime?.destruction.debris(debrisId),
+      this.#session.settings(),
+    ]);
     if (!runtime || !debris) return;
+    const maxCount = settings.number('iDebrisMaxCount') ?? DEBRIS_MAX_COUNT;
     const at = entry
       ? [entry.world[12] ?? 0, entry.world[13] ?? 0, entry.world[14] ?? 0]
       : (await runtime.placement(reference))?.position;
@@ -373,6 +386,11 @@ export class DestructionLooks {
           });
         }
         this.#debris.add({ scene, group, play, until: performance.now() / 1000 + DEBRIS_SECONDS });
+        // Too many lying about: the oldest go (the set keeps the order they came in).
+        for (const oldest of this.#debris) {
+          if (this.#debris.size <= maxCount) break;
+          this.#dropPiece(oldest);
+        }
       }),
     );
   }

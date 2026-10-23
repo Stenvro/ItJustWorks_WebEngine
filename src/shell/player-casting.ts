@@ -104,8 +104,8 @@ export class PlayerCasting implements CastingButtons {
   /** Spells whose costliest effect is Telekinesis, as read (asynchronously). */
   readonly #telekinesis = new Map<number, boolean>();
 
-  /** Whether a hand casts Telekinesis now (charged and held). */
-  #telekinetic(runtime: ScriptRuntime): boolean {
+  /** Whether a hand casts Telekinesis now (charged and held), and dual cast. */
+  #telekinetic(runtime: ScriptRuntime): { readonly dual: boolean } | undefined {
     for (const source of [CastingSource.left, CastingSource.right]) {
       const cast = runtime.casting.casting(PLAYER_REF, source);
       if (cast?.hand.phase !== 'casting') continue;
@@ -116,9 +116,9 @@ export class PlayerCasting implements CastingButtons {
         void runtime.casting.mainEffect(item).then((main) => {
           this.#telekinesis.set(item.formId, main?.archetype === EffectArchetype.telekinesis);
         });
-      } else if (known) return true;
+      } else if (known) return { dual: cast.dual };
     }
-    return false;
+    return undefined;
   }
 
   /** What the hands hold to cast, read again (once at a time). */

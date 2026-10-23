@@ -104,6 +104,11 @@ export interface CombatSettings {
   readonly deathForceRangedDamageMax: number;
   readonly deathForceRangedForceMin: number;
   readonly deathForceRangedForceMax: number;
+  /**
+   * fKillMoveMaxDuration: a killmove (a paired animation) that has not ended by then is let go
+   * (seconds; the engine's timer, observed in the original).
+   */
+  readonly killMoveMaxDuration: number;
   // --- Weapon blood --------------------------------------------------------------------------
   /** fWeaponBloodLifetime: seconds a weapon's blood stays fresh after a hit. */
   readonly weaponBloodLifetime: number;
@@ -173,6 +178,7 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   deathForceRangedDamageMax: 50,
   deathForceRangedForceMin: 10,
   deathForceRangedForceMax: 30,
+  killMoveMaxDuration: 10,
   weaponBloodLifetime: 10,
   weaponBloodFadeDuration: 60,
   weaponBloodFalloffThreshold: 0.07,
@@ -225,6 +231,7 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   deathForceRangedDamageMax: 'fDeathForceRangedDamageMax',
   deathForceRangedForceMin: 'fDeathForceRangedForceMin',
   deathForceRangedForceMax: 'fDeathForceRangedForceMax',
+  killMoveMaxDuration: 'fKillMoveMaxDuration',
   weaponBloodLifetime: 'fWeaponBloodLifetime',
   weaponBloodFadeDuration: 'fWeaponBloodFadeDuration',
   weaponBloodFalloffThreshold: 'fWeaponBloodFalloffThreshold',

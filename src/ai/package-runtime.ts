@@ -536,7 +536,11 @@ export class ActorPackages {
   /**
    * The package's idles (its own list, else its template's), played while the actor stands
    * still in it: in order or one picked each time (IDLF 0x1), one each time their timer runs
-   * out. TODO(M13): the engine's pause when the timer is 0 (most vanilla lists).
+   * out. TODO(M13): the engine's pause when the timer is 0 (most vanilla lists): as an idle
+   * starts, the engine waits fAIIdleWaitTime (Skyrim.esm: 0.1 s), fAIIdleWaitTimeComplexScene
+   * (3 s) while a scene runs, before it picks another (observed in the original); whether that pick also
+   * waits for the idle to end is not known, and played back to back after 0.1 s every package
+   * idle would loop: IDLE_PAUSE stands in.
    */
   async #playIdles(running: Running): Promise<void> {
     const list = running.pack.idles ?? (await this.#template(running.pack))?.idles;

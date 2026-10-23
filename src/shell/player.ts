@@ -20,8 +20,20 @@ import {
 } from '../physics/character.ts';
 import { HAVOK_SCALE } from '../physics/collision-data.ts';
 import { Layer } from '../physics/collision-layers.ts';
-import { GRAB_DEFAULTS, type GrabSettings } from '../physics/grab.ts';
-import type { PhysicsOwner, PhysicsWorld } from '../physics/physics-world.ts';
+import {
+  GRAB_DEFAULTS,
+  GRAB_LIMITS,
+  TELEKINESIS_DEFAULTS,
+  type GrabLimits,
+  type GrabSettings,
+  type TelekinesisSettings,
+} from '../physics/grab.ts';
+import {
+  DEBRIS_QUALITY,
+  type DebrisQuality,
+  type PhysicsOwner,
+  type PhysicsWorld,
+} from '../physics/physics-world.ts';
 import type { Vfs } from '../vfs/vfs.ts';
 import type { GameSettings } from '../world/game-settings.ts';
 import { IniSettings, type IniOverrides } from '../world/ini-settings.ts';
@@ -48,10 +60,23 @@ export interface PlayerData {
   readonly movement: PlayerMovement;
   /** GMST fJumpHeightMin: how high a jump goes (game units). */
   readonly jumpHeight: number;
+  /**
+   * GMST fJumpFallVelocityMin: falling faster than this (game units a second) the player
+   * neither sprints nor starts to (the engine's sprint, observed in the original).
+   */
+  readonly fallVelocityMin: number;
   /** GMST fZKey*: the spring that holds grabbed objects. */
   readonly grab: GrabSettings;
+  /** GMST fGrabMaxWeightWalking, fZKeyHeavyWeight: what may be grabbed, what hinders. */
+  readonly grabLimits: GrabLimits;
+  /** GMST fMagicTelekinesis*: Telekinesis's spring, pull and throw. */
+  readonly telekinesis: TelekinesisSettings;
+  /** GMST fDebrisMinExtent, fDebrisMaxVelocity: which simulated bodies are swept. */
+  readonly debris: DebrisQuality;
   /** Material ids of stairs (MATT with the stairs flag). */
   readonly stairMaterials: ReadonlySet<number>;
+  /** The flags of every material type (MATT FNAM) by material id. */
+  readonly materialFlags: ReadonlyMap<number, number>;
 }
 
 /** The keyboard, mouse and gamepad bindings. */
@@ -84,16 +109,19 @@ export async function readPlayerData(
   };
   // Stair materials: what the character controller climbs as stairs.
   const stairMaterials = new Set<number>();
+  const materialFlags = new Map<number, number>();
   for (const formId of db.formIdsOfType('MATT')) {
     const record = await db.get(formId);
     if (!record || record.deleted) continue;
     const material = parseMaterialType(record);
+    materialFlags.set(material.id, material.flags);
     if ((material.flags & MaterialFlag.stairs) !== 0) stairMaterials.add(material.id);
   }
   const controls = parseControlMap(decodeWindows1252(controlText));
   return {
     body,
     stairMaterials,
+    materialFlags,
     ini: new IniSettings(vfs.defaultIni, preferences),
     baseControls: controls,
     controls,
@@ -104,8 +132,64 @@ export async function readPlayerData(
       sneak: type('NPCSneaking'),
       swim: type('NPCSwimming'),
     },
-    jumpHeight: settings.number('fJumpHeightMin') ?? 76,
+    jumpHeight: settings.number('fJumpHeightMin') ?? JUMP_HEIGHT_MIN,
+    fallVelocityMin: settings.number('fJumpFallVelocityMin') ?? FALL_VELOCITY_MIN,
     grab: grabSettings(settings),
+    grabLimits: {
+      maxWeight: settings.number('fGrabMaxWeightWalking') ?? GRAB_LIMITS.maxWeight,
+      heavyWeight: settings.number('fZKeyHeavyWeight') ?? GRAB_LIMITS.heavyWeight,
+    },
+    telekinesis: telekinesisSettings(settings),
+    debris: {
+      minExtent: settings.number('fDebrisMinExtent') ?? DEBRIS_QUALITY.minExtent,
+      maxVelocity: settings.number('fDebrisMaxVelocity') ?? DEBRIS_QUALITY.maxVelocity,
+    },
+  };
+}
+
+/**
+ * A play's physics world as the engine's settings make it: its step and the steps a frame takes
+ * at most ([HAVOK] fMaxTime, uMaxNumPhysicsStepsPerUpdate), the warm start, the quietest contact
+ * heard, which bodies are swept. Before objects are placed.
+ */
+export function configurePhysics(
+  physics: PhysicsWorld,
+  data: Pick<PlayerData, 'ini' | 'debris'>,
+): void {
+  physics.stepSeconds = data.ini.number('HAVOK', 'fMaxTime');
+  physics.maxSteps = Math.max(
+    1,
+    Math.round(data.ini.number('HAVOK', 'uMaxNumPhysicsStepsPerUpdate')),
+  );
+  physics.impactSpeed = data.ini.number('Audio', 'fMinSoundVel');
+  physics.settleSeconds = data.ini.number('HAVOK', 'fWarmStartMaxTime');
+  physics.debris = data.debris;
+}
+
+/** fJumpHeightMin's and fJumpFallVelocityMin's built-in values (Skyrim.esm: 76 and 700). */
+const JUMP_HEIGHT_MIN = 64;
+const FALL_VELOCITY_MIN = 600;
+
+/** Telekinesis's settings: GMSTs where the plugins set them, else the engine's values. */
+function telekinesisSettings(settings: GameSettings): TelekinesisSettings {
+  const d = TELEKINESIS_DEFAULTS;
+  const n = (name: string, fallback: number): number => settings.number(name) ?? fallback;
+  return {
+    spring: {
+      ...d.spring,
+      springDamping: n('fMagicTelekinesisSpringDamping', d.spring.springDamping),
+      springElasticity: n('fMagicTelekinesisSpringElasticity', d.spring.springElasticity),
+      objectDamping: n('fMagicTelekinesisObjectDamping', d.spring.objectDamping),
+      maxForce: n('fMagicTelekinesisMaxForce', d.spring.maxForce),
+    },
+    moveBase: n('fMagicTelekinesisMoveBase', d.moveBase),
+    moveAccelerate: n('fMagicTelekinesisMoveAccelerate', d.moveAccelerate),
+    moveMax: n('fMagicTelekinesisMoveMax', d.moveMax),
+    distanceMin: n('fMagicTelekinesisDistanceMin', d.distanceMin),
+    throwSpeed: n('fMagicTelekinesisThrow', d.throwSpeed),
+    throwAccelerate: n('fMagicTelekinesisThrowAccelerate', d.throwAccelerate),
+    throwMax: n('fMagicTelekinesisThrowMax', d.throwMax),
+    dualCastThrowMult: n('fMagicTelekinesisDualCastThrowMult', d.dualCastThrowMult),
   };
 }
 
@@ -166,7 +250,10 @@ export function controllerShape(bound: {
   };
 }
 
-/** How actors' character controllers move: the INI's gravity, the stair materials. */
+/**
+ * How actors' character controllers move: the INI's gravity and push limit, the stair
+ * materials.
+ */
 export function controllerSettings(
   data: Pick<PlayerData, 'ini' | 'stairMaterials'>,
 ): CharacterSettings {
@@ -176,6 +263,7 @@ export function controllerSettings(
     unsupportedGravity: data.ini.number('HAVOK', 'fUnsupportedGravMult'),
     stairMaterials: data.stairMaterials,
     stairHeight: STAIR_HEIGHT,
+    moveLimitMass: data.ini.number('HAVOK', 'fMoveLimitMass'),
   };
 }
 
@@ -308,13 +396,17 @@ export class Player implements Camera {
   pace: (() => number) | undefined;
   /** The player landed after falling this far (units): falling damage. */
   onLanded: ((height: number) => void) | undefined;
-  #fallTop: number | undefined;
   /** The bow's zoom asked for (the field of view's factor: Mod Bow Zoom), and as eased now. */
   bowZoom = 1;
   #bowZoom = 1;
   readonly #fovY: number;
   /** fDefaultWorldFOV: degrees across a 4:3 frame. */
   readonly #fovDegrees: number;
+  /**
+   * Whether the player holds an object heavier than fZKeyHeavyWeight (the play's grab): they
+   * walk, as over-encumbered.
+   */
+  holdingHeavy: (() => boolean) | undefined;
   /**
    * Whether the player carries more than they can (the equip system: GameSession's
    * overEncumbered): they walk, and neither run nor sprint (UESP "Skyrim:Carry Weight").
@@ -404,6 +496,16 @@ export class Player implements Camera {
   }
 
   /** The spring that holds grabbed objects (GMST fZKey*). */
+  /** What may be grabbed, what a held object hinders (GMST). */
+  get grabLimits(): GrabLimits {
+    return this.#setup.grabLimits;
+  }
+
+  /** Telekinesis's spring, pull and throw (GMST). */
+  get telekinesis(): TelekinesisSettings {
+    return this.#setup.telekinesis;
+  }
+
   get grab(): GrabSettings {
     return this.#setup.grab;
   }
@@ -637,7 +739,7 @@ export class Player implements Camera {
     if (swimming) this.sneaking = false;
     // "Run" walks while always-run is on, runs while it is off; over-encumbered, one walks.
     // Piloted, the package's gait.
-    const burdened = this.overEncumbered?.() ?? false;
+    const burdened = (this.overEncumbered?.() ?? false) || (this.holdingHeavy?.() ?? false);
     const running =
       !burdened && (pilot ? pilot.gait !== 'walk' : this.#alwaysRun !== this.#event('Run'));
     const wantsSprint =
@@ -646,7 +748,9 @@ export class Player implements Camera {
       y > 0 &&
       !this.sneaking &&
       !swimming &&
-      character.grounded;
+      // Falling fast (fJumpFallVelocityMin) one does not sprint (a jump or a step down does not
+      // end a sprint).
+      !(character.verticalSpeed < -this.#setup.fallVelocityMin);
     // Without stamina there is no sprinting (the stamina meter blinks as it is tried).
     const allowed = !wantsSprint || (this.canSprint?.() ?? true);
     if (wantsSprint && !allowed && !this.#sprintRefused) this.onSprintRefused?.();
@@ -701,9 +805,9 @@ export class Player implements Camera {
         this.onBorder?.();
       }
     }
-    const airborne = !character.grounded && !swimming;
     character.step(seconds);
-    this.#watchFall(airborne);
+    // Landed from a fall (not in water): its height, for falling damage (GameSession).
+    if (character.landedFrom !== undefined) this.onLanded?.(character.landedFrom);
     if (border) {
       const [nx, ny, nz] = character.feet;
       if (border(nx, ny)) this.#inside = [nx, ny, nz];
@@ -713,23 +817,6 @@ export class Player implements Camera {
         this.onBorder?.();
       }
     }
-  }
-
-  /**
-   * Falling: the highest point since leaving the ground; landing (not in water) tells
-   * onLanded how far the player fell (falling damage: GameSession).
-   */
-  #watchFall(wasAirborne: boolean): void {
-    const character = this.character;
-    const z = character.feet[2];
-    if (!character.grounded && !character.swimming) {
-      this.#fallTop = Math.max(this.#fallTop ?? z, z);
-      return;
-    }
-    const top = this.#fallTop;
-    this.#fallTop = undefined;
-    if (wasAirborne && top !== undefined && character.grounded && !character.swimming)
-      this.onLanded?.(top - z);
   }
 
   /**

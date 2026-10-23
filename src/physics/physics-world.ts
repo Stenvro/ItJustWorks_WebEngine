@@ -9,6 +9,7 @@ import { identity, type Mat4, type Vec3 } from '../render/math.ts';
 import {
   HAVOK_SCALE,
   rigidPart,
+  smallestExtent,
   type CollisionBody,
   type CollisionConstraint,
   type CollisionData,
@@ -32,10 +33,52 @@ export function initPhysics(): Promise<void> {
  */
 export const GRAVITY = 9.8;
 
-/** Fixed simulation step (the engine's Havok runs at 60 Hz, [Havok] fMaxTime 1/60). */
+/**
+ * Fixed simulation step: the engine steps Havok by [HAVOK] fMaxTime (1/60 s); in a "complex"
+ * mode by fMaxTimeComplex, uMaxNumPhysicsStepsPerUpdateComplex times at most (observed in the original;
+ * TODO(M13): what turns that mode on is not known).
+ */
 export const PHYSICS_STEP = 1 / 60;
-/** At most this many steps per frame; a longer frame slows the simulation down instead. */
-const MAX_STEPS = 4;
+/**
+ * At most this many steps per frame ([HAVOK] uMaxNumPhysicsStepsPerUpdate's built-in value; the
+ * sessions set PhysicsWorld.maxSteps from the INI): a longer frame slows the simulation down.
+ */
+export const MAX_STEPS_PER_UPDATE = 3;
+/**
+ * Which simulated bodies are swept continuously (the engine's choice of a body's quality as it
+ * makes it, observed in the original): one whose shape is thicker than fDebrisMinExtent along all three axes
+ * (its smallest extent, Havok units) or whose top speed (its maximum linear velocity, in game
+ * units per second) is below fDebrisMaxVelocity is debris, never swept; of the others, one of
+ * debris quality becomes a "moving" one, swept against what is fixed (Havok's moving quality),
+ * and the rest keep the file's quality. The game settings' built-in defaults; the sessions set the
+ * load order's (PhysicsWorld.debris).
+ */
+export const DEBRIS_QUALITY: DebrisQuality = { minExtent: 2, maxVelocity: 25 };
+/** fDebrisMinExtent (Havok units) and fDebrisMaxVelocity (game units per second). */
+export interface DebrisQuality {
+  readonly minExtent: number;
+  readonly maxVelocity: number;
+}
+/** hkpCollidableQualityType of the files: debris, and moving (swept against fixed bodies). */
+const QUALITY_DEBRIS = 2;
+const QUALITY_MOVING = 4;
+
+/**
+ * Whether a simulated body is swept continuously (Rapier's CCD) by the engine's rule
+ * (DEBRIS_QUALITY): its quality is moving or better once the engine has chosen it. `scale`: the
+ * placement's.
+ */
+export function sweptBody(
+  data: Pick<CollisionBody, 'quality' | 'maxLinearVelocity' | 'shapes'>,
+  scale: number,
+  debris: DebrisQuality,
+): boolean {
+  const extent = (smallestExtent(data.shapes) * scale) / HAVOK_SCALE;
+  if (extent > debris.minExtent || data.maxLinearVelocity * HAVOK_SCALE < debris.maxVelocity)
+    return false;
+  const quality = data.quality === QUALITY_DEBRIS ? QUALITY_MOVING : data.quality;
+  return quality >= QUALITY_MOVING;
+}
 /**
  * Solver iterations per step. Havok's solver holds stacks and hinged bodies (closed books on
  * one another, hanging game) still where Rapier's default 4 lets them creep and jitter: with 8
@@ -335,9 +378,19 @@ interface RawJointLimits {
       stiffness: number,
       damping: number,
     ): void;
+    jointConfigureMotorVelocity(handle: number, axis: number, target: number, factor: number): void;
+    jointSetMotorMaxForce(handle: number, axis: number, maxForce: number): void;
   };
   readonly handle: number;
 }
+
+/**
+ * How firmly a joint's friction holds its axis still (the motor's gain towards no relative
+ * speed, per second): stiff, so that the friction's maximum torque alone decides when the joint
+ * gives way, as Havok's friction (an angular or linear friction atom: no relative motion, up to
+ * the constraint's maximum friction torque or force).
+ */
+const JOINT_FRICTION_GAIN = 1000;
 
 function cross(a: Vec3, b: Vec3): Vec3 {
   return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
@@ -451,6 +504,11 @@ export class PhysicsWorld {
   readonly #held = new Set<number>();
   /** Bodies just placed to settle, until when their overlaps only move them. */
   readonly #depenetrating = new Map<number, number>();
+  /**
+   * The simulated bodies' top speeds, as Havok's motions clamp them every step: the file's
+   * maximum linear velocity (Havok units per second) and angular velocity (radians per second).
+   */
+  readonly #limits = new Map<number, { readonly linear: number; readonly angular: number }>();
   /** Simulated seconds. */
   #time = 0;
   /** Collision was placed or removed since the last step (queries do not see it yet). */
@@ -466,6 +524,14 @@ export class PhysicsWorld {
    * stay silent at most, if they do not fall asleep before.
    */
   settleSeconds = 4;
+  /** At most this many steps per frame (`[HAVOK] uMaxNumPhysicsStepsPerUpdate`). */
+  maxSteps = MAX_STEPS_PER_UPDATE;
+  #step = PHYSICS_STEP;
+  /**
+   * Which simulated bodies are swept continuously (fDebrisMinExtent, fDebrisMaxVelocity:
+   * DEBRIS_QUALITY); set before placing objects.
+   */
+  debris: DebrisQuality = DEBRIS_QUALITY;
 
   /** `gravity`: Havok units per second² (downwards). Call initPhysics() first. */
   constructor(matrix: CollisionMatrix, gravity: number) {
@@ -487,6 +553,17 @@ export class PhysicsWorld {
       filterContactPair: (a, b) => (collides(a, b) ? RAPIER.SolverFlags.COMPUTE_IMPULSE : null),
       filterIntersectionPair: collides,
     };
+  }
+
+  /** The fixed step (seconds; `[HAVOK] fMaxTime`); set before placing objects. */
+  get stepSeconds(): number {
+    return this.#step;
+  }
+
+  set stepSeconds(seconds: number) {
+    if (!(seconds > 0)) return;
+    this.#step = seconds;
+    this.world.timestep = seconds;
   }
 
   /** The layer of a collider. */
@@ -636,12 +713,18 @@ export class PhysicsWorld {
             .setAngularDamping(data.angularDamping)
             .setGravityScale(data.gravityFactor)
             .setSleeping(!settle)
-            .setCcdEnabled(data.quality >= 5)
+            .setCcdEnabled(sweptBody(data, scale, this.debris))
         : keyframed
           ? RAPIER.RigidBodyDesc.kinematicPositionBased()
           : RAPIER.RigidBodyDesc.fixed();
       desc.setTranslation(translation.x, translation.y, translation.z).setRotation(rotation);
       const body = this.world.createRigidBody(desc);
+      if (dynamic && data.maxLinearVelocity > 0 && data.maxAngularVelocity > 0) {
+        this.#limits.set(body.handle, {
+          linear: data.maxLinearVelocity,
+          angular: data.maxAngularVelocity,
+        });
+      }
       if (dynamic && settle) {
         this.#settling.set(body.handle, this.#time + this.settleSeconds);
         this.#depenetrating.set(body.handle, this.#time + DEPENETRATE_SECONDS);
@@ -663,7 +746,9 @@ export class PhysicsWorld {
           // Report contacts that take at least impactSpeed out of the body in one step.
           colliderDesc
             .setActiveEvents(RAPIER.ActiveEvents.CONTACT_FORCE_EVENTS)
-            .setContactForceEventThreshold((data.mass * toHavok(this.impactSpeed)) / PHYSICS_STEP);
+            .setContactForceEventThreshold(
+              (data.mass * toHavok(this.impactSpeed)) / this.stepSeconds,
+            );
         }
         if (data.phantom) colliderDesc.setActiveHooks(RAPIER.ActiveHooks.FILTER_INTERSECTION_PAIRS);
         const collider = this.world.createCollider(colliderDesc, body);
@@ -725,8 +810,10 @@ export class PhysicsWorld {
    * coincide the constraint is at its zero. Bodies held together do not collide with each
    * other. TODO(M13): Havok's ragdoll limits are a cone (twist axis within coneMaxAngle) and
    * two planes; here they are three angle ranges (twist, and the two swings each within the
-   * cone, the one towards the plane axis also within the plane limits). Motors, friction and
-   * malleable strength (softness) are not applied: Rapier's joints are stiff.
+   * cone, the one towards the plane axis also within the plane limits). Friction is a motor
+   * towards no relative speed limited to the friction's maximum (in the file's units: the
+   * placement's scale does not change it); the motors and malleable strength (softness) are not
+   * applied: Rapier's joints are stiff (no vanilla constraint has a motor).
    */
   #createJoint(
     data: ConstraintData,
@@ -763,6 +850,20 @@ export class PhysicsWorld {
       const raw = joint as unknown as RawJointLimits;
       raw.rawSet.jointSetLimits(raw.handle, axis, Math.min(min, max), Math.max(min, max));
     };
+    // A joint's friction: a motor towards no relative speed on its free axes, whose force is
+    // the constraint's maximum friction (torque, kg·m²/s², or force; Havok units).
+    const friction = (
+      joint: RAPIER.ImpulseJoint,
+      axes: readonly RAPIER.JointAxis[],
+      max: number,
+    ): void => {
+      if (!(max > 0)) return;
+      const raw = joint as unknown as RawJointLimits;
+      for (const axis of axes) {
+        raw.rawSet.jointConfigureMotorVelocity(raw.handle, axis, 0, JOINT_FRICTION_GAIN);
+        raw.rawSet.jointSetMotorMaxForce(raw.handle, axis, max);
+      }
+    };
     switch (data.type) {
       case 'ball-and-socket':
         return create(RAPIER.JointData.spherical(point(data.pivotA), point(data.pivotB)));
@@ -784,6 +885,7 @@ export class PhysicsWorld {
         joint.setLocalFrame2(point(data.b.pivot), frame(data.b.axes));
         if (data.type === 'limited-hinge') {
           limit(joint, RAPIER.JointAxis.AngX, data.minAngle, data.maxAngle);
+          friction(joint, [RAPIER.JointAxis.AngX], data.maxFriction);
         }
         return joint;
       }
@@ -798,6 +900,7 @@ export class PhysicsWorld {
         joint.setLocalFrame1(point(data.a.pivot), frame(data.a.axes));
         joint.setLocalFrame2(point(data.b.pivot), frame(data.b.axes));
         limit(joint, RAPIER.JointAxis.LinX, data.minDistance * toLocal, data.maxDistance * toLocal);
+        friction(joint, [RAPIER.JointAxis.LinX], data.friction);
         return joint;
       }
       case 'ragdoll': {
@@ -812,6 +915,11 @@ export class PhysicsWorld {
           RAPIER.JointAxis.AngZ,
           Math.max(-cone, data.planeMinAngle),
           Math.min(cone, data.planeMaxAngle),
+        );
+        friction(
+          joint,
+          [RAPIER.JointAxis.AngX, RAPIER.JointAxis.AngY, RAPIER.JointAxis.AngZ],
+          data.maxFriction,
         );
         return joint;
       }
@@ -880,7 +988,7 @@ export class PhysicsWorld {
         const before = this.#velocities.get(body.handle);
         if (!before || !body.isDynamic()) continue;
         const after = body.linvel();
-        const g = data.gravityFactor * PHYSICS_STEP;
+        const g = data.gravityFactor * this.stepSeconds;
         impulse = Math.max(
           impulse,
           body.mass() *
@@ -976,6 +1084,7 @@ export class PhysicsWorld {
     // Removing a body removes its colliders.
     for (const { body } of placed.bodies) {
       this.#held.delete(body.handle);
+      this.#limits.delete(body.handle);
       this.world.removeRigidBody(body);
     }
     for (const body of placed.fixedBodies) this.world.removeRigidBody(body);
@@ -987,20 +1096,21 @@ export class PhysicsWorld {
    * (characters move there); returns the steps taken.
    */
   step(seconds: number, beforeStep?: (step: number) => void): number {
-    this.#accumulator = Math.min(this.#accumulator + seconds, PHYSICS_STEP * MAX_STEPS);
+    this.#accumulator = Math.min(this.#accumulator + seconds, this.stepSeconds * this.maxSteps);
     let steps = 0;
-    while (this.#accumulator >= PHYSICS_STEP) {
-      beforeStep?.(PHYSICS_STEP);
+    while (this.#accumulator >= this.stepSeconds) {
+      beforeStep?.(this.stepSeconds);
       this.#recordVelocities();
       this.world.step(this.#events, this.#hooks);
       this.#changed = false;
-      this.#time += PHYSICS_STEP;
+      if (this.#limits.size > 0) this.#limitVelocities();
+      this.#time += this.stepSeconds;
       if (this.#depenetrating.size > 0) this.#depenetrate();
       if (this.#held.size > 0) this.#releaseTouched();
       if (this.#hungToCheck.length > 0) this.#ignoreHungOverlaps();
       if (this.#breakable.size > 0) this.#breakJoints();
       this.#collectImpacts();
-      this.#accumulator -= PHYSICS_STEP;
+      this.#accumulator -= this.stepSeconds;
       steps++;
     }
     return steps;
@@ -1455,6 +1565,30 @@ export class PhysicsWorld {
     }
   }
 
+  /** Clamps the moving bodies' speeds to their top speeds (#limits). */
+  #limitVelocities(): void {
+    for (const [handle, limit] of this.#limits) {
+      const body = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
+      if (!body) {
+        this.#limits.delete(handle);
+        continue;
+      }
+      if (!body.isDynamic() || body.isSleeping()) continue;
+      const v = body.linvel();
+      const speed = Math.hypot(v.x, v.y, v.z);
+      if (speed > limit.linear) {
+        const k = limit.linear / speed;
+        body.setLinvel({ x: v.x * k, y: v.y * k, z: v.z * k }, false);
+      }
+      const w = body.angvel();
+      const turn = Math.hypot(w.x, w.y, w.z);
+      if (turn > limit.angular) {
+        const k = limit.angular / turn;
+        body.setAngvel({ x: w.x * k, y: w.y * k, z: w.z * k }, false);
+      }
+    }
+  }
+
   /** Takes from bodies placed a moment ago the speed the step gave them (DEPENETRATE_SECONDS). */
   #depenetrate(): void {
     const still = { x: 0, y: 0, z: 0 };
@@ -1545,7 +1679,7 @@ export class PhysicsWorld {
 
   /** How far into the next step the clock is (0..1), for drawing between steps. */
   get alpha(): number {
-    return this.#accumulator / PHYSICS_STEP;
+    return this.#accumulator / this.stepSeconds;
   }
 
   /** The first collider along a ray (game units) that `layer` collides with. */

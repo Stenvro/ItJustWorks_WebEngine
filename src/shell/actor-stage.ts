@@ -7,6 +7,8 @@
 // whether it is dead (the dead lie as ragdolls when their cell loads again).
 
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { RAGDOLL_FALL_SHARE } from '../gameplay/falling.ts';
+import { actorFell } from './time-flow.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { animateSkeletons, animationInterval } from '../animation/animated-skeleton.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
@@ -299,6 +301,12 @@ export class ActorStage {
       subject: (reference) => this.#knockSubject(reference),
       changed: (reference, state) => {
         this.combat.knockChanged(reference, state);
+      },
+      fell: (reference, height) => {
+        const runtime = options.session.scriptsReady;
+        if (runtime) {
+          void actorFell(runtime, reference, height, RAGDOLL_FALL_SHARE).catch(() => undefined);
+        }
       },
     });
     this.playerDeath = new PlayerDeath({

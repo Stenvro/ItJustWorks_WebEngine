@@ -84,11 +84,6 @@ const DISMOUNT_SWIM = 'HorseExitSwim';
 /** What the rider's graph raises at its paired animation's end (NPC + the event it gets). */
 const MOUNTED = `${PAIRED_PREFIX}pairedStop`;
 const DISMOUNTED = `${PAIRED_PREFIX}HorseExitOut`;
-/**
- * A paired animation not ended by its event within this is ended (seconds; the clips run 1.7
- * and 2.1 s). TODO(M13): the engine ends them by the clip.
- */
-const PAIRED_TIMEOUT = 4;
 /** An actor mounts its horse within this of it (units); farther it walks on foot. */
 const HORSE_REACH = 2048;
 /** The mount offsets the race data leaves out (xEdit's defaults). */
@@ -679,7 +674,11 @@ export class ActorMounts {
         continue;
       }
       ride.elapsed += seconds;
-      if (ride.elapsed > PAIRED_TIMEOUT) {
+      // A mount or dismount whose paired animation never says it ended is ended after
+      // [Animation] fMountDismountTimeout (the engine's timer, observed in the original; the clips run 1.7
+      // and 2.1 s). TODO(M13): the engine gives an NPC on some mounts 45 s (a flag of the
+      // mount's not identified: dragons?).
+      if (ride.elapsed > this.#options.session.ini.number('Animation', 'fMountDismountTimeout')) {
         if (ride.phase === 'mounting') this.#mounted(ride);
         else if (ride.phase === 'dismounting') this.#dismounted(ride);
         if (!this.#rides.has(ride.rider)) continue;

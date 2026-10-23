@@ -14,7 +14,7 @@ import type { CollisionData } from '../physics/collision-data.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
 import { articulatedPose } from '../physics/articulation.ts';
 import { GRAVITY, initPhysics, PhysicsWorld } from '../physics/physics-world.ts';
-import { Player } from './player.ts';
+import { configurePhysics, Player } from './player.ts';
 import {
   collisionGroup,
   objectActivation,
@@ -779,8 +779,7 @@ export class ModelViewer {
     if (token !== this.#loadToken) return;
     this.#stopPlay();
     const physics = new PhysicsWorld(matrix, GRAVITY);
-    physics.impactSpeed = playerData.ini.number('Audio', 'fMinSoundVel');
-    physics.settleSeconds = playerData.ini.number('HAVOK', 'fWarmStartMaxTime');
+    configurePhysics(physics, playerData);
     const player = new Player(
       {
         ...playerData,
