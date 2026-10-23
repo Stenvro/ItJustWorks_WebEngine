@@ -1,21 +1,11 @@
 // Detection (docs/ai.md, "Detection"): how well an actor (the observer) notices another (the
-// target), as the engine's detection formula has it. UESP "Skyrim:Sneak" gives its terms and
-// their game settings: a base, the target's sound and the visual factor attenuated by distance
-// ((reach − distance) / reach to fSneakDistanceAttenuationExponent), and the skills of the two;
-// the sound of moving (fSneakEquippedWeightBase + fSneakEquippedWeightMult × the armour worn,
-// times fSneakRunningMult running) and of actions (their sound level times fSneakActionMult),
-// less without line of sight (fSneakSoundLosMult). What UESP leaves open (the visual factor,
-// the skill factors) is the predecessor engine's documented formula with Skyrim's settings:
-// The Fallout Wiki, "Detection Formula" (light: (fDetectionSneakLightMod + light level, times
-// fDetectionNightEyeBonus with night eye) × fSneakLightMult, movement 1 + fSneakLightMoveMult
-// moving + fSneakLightRunMult running, blindness, Stealth Boy; the observer's perception between
-// fSneakPerceptionSkillMin and Max with fSneakAlertMod, fSneakSleepBonus and fSneakCombatMod)
-// and the Construction Set wiki, "Detection" (Oblivion: the reach, fSneakMaxDistance times
-// fSneakExteriorDistanceMult outside; the target's skill counting only while it sneaks out of
-// combat; no sight while asleep). The settings are the load order's (Skyrim.esm stores 18
-// fSneak* and fDetectionSneakLightMod), else the engine's own: the list of every SSE setting
-// with its built-in value ("All Skyrim Game Settings", BeermotorWB's gist linked from AFK
-// Mods' "TES5: All GMSTs and INI Settings"). Platform-independent.
+// target), as the engine computes it (observed in the original): a base, the target's sound
+// (moving in what it wears, what it does) and how well it is seen (the light on it, how it
+// moves, its size, the observer's eyes), both attenuated by distance, and the observer's
+// perception against the target's sneaking; the reach and the line of sight's reach off the
+// observer's facing; and the levels of detection events (noises, projectiles passing). The
+// settings are the load order's (Skyrim.esm stores 18 fSneak* and fDetectionSneakLightMod),
+// else the engine's built-in values. Platform-independent.
 
 /** The sound levels of WEAP VNAM, MGEF casting, IPCT and CreateDetectionEvent (xEdit). */
 export const SoundLevel = { loud: 0, normal: 1, silent: 2, veryLoud: 3 } as const;
@@ -95,15 +85,27 @@ export interface DetectionSettings {
    * criminal's this near one who raised it (units).
    */
   readonly lowAlarmDistance: number;
-  /** fSneakNoticeMin: above it the observer has noticed the target. */
+  /**
+   * fSneakNoticeMin: above it the observer has noticed the target (ours: the engine never reads
+   * it; see noticesAt).
+   */
   readonly noticeMin: number;
-  /** iAICombatMinDetection: in combat with the target, it detects it down to this. */
-  readonly combatMinDetection: number;
+  /**
+   * fPlayerDetectionSneakMult, Base: the player's Sneak skill counts in detection as Mult ×
+   * skill + Base (detectionSkill).
+   */
+  readonly playerSneakMult: number;
+  readonly playerSneakBase: number;
+  /**
+   * fDetectionCombatNonTargetDistanceMult: an observer in combat notices actors other than its
+   * combat target (not the player) within this share of the reach.
+   */
+  readonly combatNonTargetDistanceMult: number;
   /** fDetectionViewCone: the observer's field of view (degrees, all of it). */
   readonly viewCone: number;
   /**
-   * fDetectionLOSDistanceAngle (degrees, all of it): beyond it, to the edge of the view cone,
-   * sight reaches fDetectionLOSDistanceMultInterior / Exterior as far.
+   * fDetectionLOSDistanceAngle (degrees off the facing): beyond it the reach of the line of
+   * sight shrinks to fDetectionLOSDistanceMultInterior / Exterior straight behind (sightReach).
    */
   readonly losDistanceAngle: number;
   readonly losDistanceMultInterior: number;
@@ -166,33 +168,33 @@ const SETTINGS: readonly (readonly [
   string,
   number,
 ])[] = [
-  ['baseValue', 'fSneakBaseValue', -15],
-  ['maxDistance', 'fSneakMaxDistance', 2500],
-  ['exteriorDistanceMult', 'fSneakExteriorDistanceMult', 2.1],
-  ['flyingDistanceMult', 'fSneakFlyingDistanceMult', 3],
+  ['baseValue', 'fSneakBaseValue', -25],
+  ['maxDistance', 'fSneakMaxDistance', 1500],
+  ['exteriorDistanceMult', 'fSneakExteriorDistanceMult', 2],
+  ['flyingDistanceMult', 'fSneakFlyingDistanceMult', 2],
   ['attenuationExponent', 'fSneakDistanceAttenuationExponent', 2],
-  ['soundsMult', 'fSneakSoundsMult', 1],
-  ['soundLosMult', 'fSneakSoundLosMult', 0.4],
+  ['soundsMult', 'fSneakSoundsMult', 1.6],
+  ['soundLosMult', 'fSneakSoundLosMult', 0.25],
   ['equippedWeightBase', 'fSneakEquippedWeightBase', 12],
   ['equippedWeightMult', 'fSneakEquippedWeightMult', 0.5],
   ['runningMult', 'fSneakRunningMult', 2],
-  ['actionMult', 'fSneakActionMult', 2],
-  ['lightMult', 'fSneakLightMult', 0.33],
-  ['lightExteriorMult', 'fSneakLightExteriorMult', 0.5],
-  ['lightMod', 'fDetectionSneakLightMod', 15],
+  ['actionMult', 'fSneakActionMult', 1],
+  ['lightMult', 'fSneakLightMult', 1.4],
+  ['lightExteriorMult', 'fSneakLightExteriorMult', 1],
+  ['lightMod', 'fDetectionSneakLightMod', 0],
   ['lightMoveMult', 'fSneakLightMoveMult', 0.01],
   ['lightRunMult', 'fSneakLightRunMult', 0.2],
   ['nightEyeBonus', 'fDetectionNightEyeBonus', 3],
   ['stealthBoyMult', 'fSneakStealthBoyMult', 0],
-  ['skillMult', 'fSneakSkillMult', 0.4],
-  ['perceptionMin', 'fSneakPerceptionSkillMin', 0],
-  ['perceptionMax', 'fSneakPerceptionSkillMax', 100],
-  ['alertMod', 'fSneakAlertMod', 0],
-  ['sleepMod', 'fSneakSleepMod', 0],
+  ['skillMult', 'fSneakSkillMult', 0.5],
+  ['perceptionMin', 'fSneakPerceptionSkillMin', 10],
+  ['perceptionMax', 'fSneakPerceptionSkillMax', 90],
+  ['alertMod', 'fSneakAlertMod', 0.2],
+  ['sleepMod', 'fSneakSleepMod', -0.2],
   ['combatMod', 'fSneakCombatMod', -0.4],
-  ['sleepBonus', 'fSneakSleepBonus', 0],
+  ['sleepBonus', 'fSneakSleepBonus', -0.5],
   ['ambushTargetMod', 'fSneakAmbushTargetMod', 2.5],
-  ['ambushNonTargetMod', 'fSneakAmbushNonTargetMod', 0],
+  ['ambushNonTargetMod', 'fSneakAmbushNonTargetMod', -0.25],
   ['largeActorSizeMult', 'fDetectionLargeActorSizeMult', 1],
   ['projectileDistanceNpc', 'fDetectProjectileDistanceNPC', 512],
   ['projectileDistancePlayer', 'fDetectProjectileDistancePlayer', 1024],
@@ -201,7 +203,9 @@ const SETTINGS: readonly (readonly [
   ['complexSceneActors', 'iAINumberActorsComplexScene', 20],
   ['lowAlarmDistance', 'iCrimeAlarmLowRecDistance', 2000],
   ['noticeMin', 'fSneakNoticeMin', -20],
-  ['combatMinDetection', 'iAICombatMinDetection', -50],
+  ['playerSneakMult', 'fPlayerDetectionSneakMult', 1],
+  ['playerSneakBase', 'fPlayerDetectionSneakBase', 0],
+  ['combatNonTargetDistanceMult', 'fDetectionCombatNonTargetDistanceMult', 0.75],
   ['viewCone', 'fDetectionViewCone', 190],
   ['losDistanceAngle', 'fDetectionLOSDistanceAngle', 60],
   ['losDistanceMultInterior', 'fDetectionLOSDistanceMultInterior', 0.75],
@@ -218,14 +222,14 @@ const SETTINGS: readonly (readonly [
   ['eventLightExterior', 'iDetectEventLightLevelExterior', 75],
   ['eventLightInterior', 'iDetectEventLightLevelInterior', 225],
   ['lightLevelExteriorMod', 'iLightLevelExteriorMod', 0],
-  ['lightLevelInteriorMod', 'iLightLevelInteriorMod', 25],
-  ['lightLevelMax', 'iLightLevelMax', 300],
+  ['lightLevelInteriorMod', 'iLightLevelInteriorMod', 50],
+  ['lightLevelMax', 'iLightLevelMax', 100],
   ['spectatorDetectionExterior', 'fAIExteriorSpectatorDetection', 1000],
   ['spectatorDetectionInterior', 'fAIInteriorSpectatorDetection', 600],
   ['spectatorDistanceExterior', 'fAIExteriorSpectatorDistance', 450],
   ['spectatorDistanceInterior', 'fAIInteriorSpectatorDistance', 200],
   ['spectatorShutdownDistance', 'fAISpectatorShutdownDistance', 1000],
-  ['spectatorRememberTimer', 'fAISpectatorRememberThreatTimer', 5],
+  ['spectatorRememberTimer', 'fAISpectatorRememberThreatTimer', 20],
   ['checkDeadBodyTimer', 'fCheckDeadBodyTimer', 20],
   ['hoursToClearCorpses', 'iHoursToClearCorpses', 24],
   ['searchInvestigateDistance', 'fCombatSearchLocationInvestigateDistance', 256],
@@ -246,7 +250,7 @@ const SIZE_SETTINGS = [
 const SOUND_LEVEL_SETTINGS = [
   ['iSoundLevelLoud', 100],
   ['iSoundLevelNormal', 50],
-  ['iSoundLevelSilent', 10],
+  ['iSoundLevelSilent', 0],
   ['iSoundLevelVeryLoud', 200],
 ] as const;
 
@@ -270,7 +274,7 @@ export function readDetectionSettings(settings?: {
   return {
     ...(Object.fromEntries(entries) as Omit<DetectionSettings, 'sizeMults' | 'soundLevels'>),
     sizeMults: [size[0] ?? 0.5, size[1] ?? 1, size[2] ?? 1.5, size[3] ?? 2],
-    soundLevels: [levels[0] ?? 100, levels[1] ?? 50, levels[2] ?? 10, levels[3] ?? 200],
+    soundLevels: [levels[0] ?? 100, levels[1] ?? 50, levels[2] ?? 0, levels[3] ?? 200],
   };
 }
 
@@ -303,12 +307,12 @@ export function distanceAttenuation(
 }
 
 /**
- * How far an observer's sight reaches a point off the way it faces: as far as detection reaches
- * within fDetectionLOSDistanceAngle of its facing; beyond it, to the edge of its view cone
- * (fDetectionViewCone), fDetectionLOSDistanceMultInterior / Exterior as far; behind it, not at
- * all. `off`: the angle off its facing (radians). TODO(M13): whether the engine's angles are
- * whole (as read here: 190° is beyond the half circle) and how it narrows the reach is not
- * documented.
+ * How far an observer's sight reaches a point off the way it faces (observed in the
+ * original): as far as detection reaches within fDetectionLOSDistanceAngle of its facing (the angle
+ * off it, not half of it); beyond, the reach shrinks evenly to fDetectionLOSDistanceMultInterior
+ * / Exterior of it straight behind. Within that reach the observer looks for a line of sight;
+ * it sees the target only within half of fDetectionViewCone (inView). `off`: the angle off its
+ * facing (radians, 0 .. π).
  */
 export function sightReach(
   settings: DetectionSettings,
@@ -316,10 +320,16 @@ export function sightReach(
   reach: number,
   exterior: boolean,
 ): number {
-  const degrees = (Math.abs(off) * 180) / Math.PI;
-  if (degrees <= settings.losDistanceAngle / 2) return reach;
-  if (degrees > settings.viewCone / 2) return 0;
-  return reach * (exterior ? settings.losDistanceMultExterior : settings.losDistanceMultInterior);
+  const angle = (settings.losDistanceAngle * Math.PI) / 180;
+  const off_ = Math.min(Math.PI, Math.abs(off));
+  if (off_ <= angle || angle >= Math.PI) return reach;
+  const mult = exterior ? settings.losDistanceMultExterior : settings.losDistanceMultInterior;
+  return reach * (((off_ - angle) / (Math.PI - angle)) * (mult - 1) + 1);
+}
+
+/** Whether a point `off` radians off an observer's facing is within its view cone. */
+export function inViewCone(settings: DetectionSettings, off: number): boolean {
+  return Math.abs(off) < (settings.viewCone * Math.PI) / 360;
 }
 
 /**
@@ -336,26 +346,37 @@ export function angleOff(heading: number, from: readonly number[], to: readonly 
   return Math.abs(off);
 }
 
+/**
+ * The Sneak skill detection counts for an actor: the player's is fPlayerDetectionSneakMult ×
+ * skill + fPlayerDetectionSneakBase (as observer and as target), another's its skill.
+ */
+export function detectionSkill(
+  settings: DetectionSettings,
+  skill: number,
+  player: boolean,
+): number {
+  return player ? settings.playerSneakMult * skill + settings.playerSneakBase : skill;
+}
+
 /** The observer, as detection weighs it. */
 export interface Observer {
-  /** Its Sneak skill (its perception). */
+  /** Its Sneak skill (its perception), as detectionSkill counts it. */
   readonly skill: number;
-  /** Asleep: it does not see. */
+  /** Asleep: it does not see, and it perceives with fSneakSleepMod, hears with fSneakSleepBonus. */
   readonly sleeping: boolean;
-  /** Alerted (searching for something it noticed or heard). */
-  readonly alerted: boolean;
-  /** In combat with this target. */
-  readonly combatTarget: boolean;
+  /** In combat (with anyone): its perception with fSneakAlertMod. */
+  readonly inCombat: boolean;
+  /**
+   * It has a combat target and this is another: its perception with fSneakCombatMod (its mind
+   * is on its own target).
+   */
+  readonly otherThanTarget: boolean;
   /** Its Blindness actor value (0..100). */
   readonly blindness: number;
-  /** It has night eye (NightEye actor value above 0). */
-  readonly nightEye: boolean;
-  /** Its perks' factors on the sight and the movement sound (Mod Detection Light, Movement). */
-  readonly lightMult?: number;
-  readonly movementMult?: number;
   /**
-   * In ambush: against its ambush's target ('target') or another ('other'). TODO(M13): which
-   * observers the engine has in ambush, and their targets, is not read yet (none here).
+   * In an ambush package: against the package's target ('target': fSneakAmbushTargetMod, and it
+   * hears that target as well without a line of sight) or another ('other':
+   * fSneakAmbushNonTargetMod).
    */
   readonly ambush?: 'target' | 'other' | undefined;
 }
@@ -365,12 +386,9 @@ export interface Target {
   /** It moves of itself; it runs (or sprints). */
   readonly moving: boolean;
   readonly running: boolean;
-  /** It sneaks (its skill counts), in combat (its skill does not). */
+  /** It sneaks: its skill counts against the observer's perception. */
   readonly sneaking: boolean;
-  readonly inCombat: boolean;
-  /** It swims (no sound). */
-  readonly swimming: boolean;
-  /** Its Sneak skill. */
+  /** Its Sneak skill as detectionSkill counts it, then its perks (Mod Detection Sneak Skill). */
   readonly skill: number;
   /** The weight of the armour it wears. */
   readonly armourWeight: number;
@@ -378,11 +396,16 @@ export interface Target {
   readonly noiseMult: number;
   /** The loudness of its last action within fDetectionActionTimer (0: none). */
   readonly actionSound: number;
-  /** The light level on it (src/ai/light-level.ts). */
+  /** The light level on it as detection sees it (detectionLight, then its perks). */
   readonly light: number;
+  /**
+   * How much moving and running add to its sight (1 + fSneakLightRunMult running +
+   * fSneakLightMoveMult moving, then its perks: Mod Detection Movement); undefined: computed.
+   */
+  readonly motion?: number | undefined;
   /** Its race's size (RACE DATA: 0 small .. 3 extra large). */
   readonly size: number;
-  /** Invisible (Invisibility above 0): it is not seen. */
+  /** Invisible (Invisibility above 0): it is not seen at all. */
   readonly invisible: boolean;
 }
 
@@ -392,16 +415,16 @@ export interface DetectionInput {
   readonly target: Target;
   /** Between them (game units). */
   readonly distance: number;
-  /** Detection's reach (detectionReach). */
+  /** Detection's reach (detectionReach, × fDetectionCombatNonTargetDistanceMult if it applies). */
   readonly reach: number;
   readonly exterior: boolean;
-  /** Nothing is in the way between them (eye to eye: sound heard and the target seen). */
+  /** The observer has a line of sight to the target (within sightReach). */
   readonly lineOfSight: boolean;
-  /** The target is within the observer's sight (sightReach) and nothing is in the way. */
+  /** ... and the target is within its view cone (inViewCone): it can see it. */
   readonly seen: boolean;
 }
 
-/** What a test gives: the detection level and its terms (before the distance attenuates them). */
+/** What a test gives: the detection level and its terms. */
 export interface DetectionLevel {
   readonly level: number;
   /** The target is within reach (beyond it the observer does not test it). */
@@ -414,150 +437,203 @@ export interface DetectionLevel {
 }
 
 /**
- * The detection level of a target for an observer:
+ * The engine's rounding of a detection level: a level between 0 and 1 is 1, else its whole part
+ * (towards zero).
+ */
+export function wholeLevel(level: number): number {
+  if (level > 0 && level < 1) return 1;
+  return Math.trunc(level) || 0;
+}
+
+/**
+ * The detection level of a target for an observer, as the engine computes it (observed in the original):
  *
- *   level = fSneakBaseValue + attenuation × (sound + visual)
- *           + fSneakSkillMult × (perception × attenuation − the target's Sneak while sneaking)
+ *   A      = (max(0, reach − distance) / reach) ^ fSneakDistanceAttenuationExponent
+ *   sound  = (int(fSneakActionMult) × action loudness + (running ? fSneakRunningMult : 1) ×
+ *             (fSneakEquippedWeightMult × armour + fSneakEquippedWeightBase) × noise × moving)
+ *            × fSneakSoundsMult × A (× fSneakSoundLosMult without a line of sight, unless it is
+ *            the observer's ambush target) × (1 + fSneakSleepBonus asleep), at least 0
+ *   visual = seen × A × motion × (light × fSneakLightMult (fSneakLightExteriorMult outside) +
+ *            fDetectionSneakLightMod) × (asleep ? 0 : (100 − blindness) / 100) ×
+ *            fDetectionLargeActorSizeMult × fSneakDetectionSize*, at least 0 (none invisible)
+ *   skill  = (A × (1 + fSneakAlertMod in combat + fSneakSleepMod asleep + fSneakCombatMod
+ *            when it is not the observer's combat target + the ambush mod) × perception −
+ *            sneaking × the target's skill) × fSneakSkillMult
+ *   level  = fSneakBaseValue + sound + visual + skill (wholeLevel)
  *
- * sound = fSneakSoundsMult × (moving: (fSneakEquippedWeightBase + fSneakEquippedWeightMult ×
- *   armour) × fSneakRunningMult running × MovementNoiseMult; + the action's sound level ×
- *   fSneakActionMult), × fSneakSoundLosMult without line of sight, × (1 + fSneakSleepBonus)
- *   asleep; none swimming.
- * visual (seen, awake) = fSneakLightMult (× fSneakLightExteriorMult outside) ×
- *   (fDetectionSneakLightMod + light, × fDetectionNightEyeBonus with night eye) ×
- *   (1 + fSneakLightMoveMult moving + fSneakLightRunMult running) × size ×
- *   fDetectionLargeActorSizeMult × (1 − blindness/100), × fSneakStealthBoyMult invisible.
- * perception = the observer's Sneak between fSneakPerceptionSkillMin and Max, × (1 +
- *   fSneakAlertMod alerted + fSneakSleepMod asleep + fSneakCombatMod in combat with it +
- *   fSneakAmbushTargetMod / NonTargetMod in ambush).
- *
- * Where the asleep, ambush and size settings go was observed in the original.
- * UESP writes the observer's skill twice (attenuated, and again unattenuated against the
- * target's); with it an observer of middling skill would detect a sneaking target in the dark,
- * unseen and unheard, anywhere within reach. The predecessor engine's documented formula has it
- * once, as here. TODO(M13): the engine's own terms are not documented.
+ * perception = fSneakPerceptionSkillMin + (Max − Min) × the observer's skill / 100.
  */
 export function detectionLevel(settings: DetectionSettings, input: DetectionInput): DetectionLevel {
   const { observer, target } = input;
   const inReach = input.distance < input.reach;
   const attenuation = distanceAttenuation(settings, input.distance, input.reach);
-  // Sound: moving in what it wears, and what it does.
+  // Sound: what it does, and moving in what it wears.
+  const heard =
+    input.lineOfSight || observer.ambush === 'target'
+      ? attenuation
+      : attenuation * settings.soundLosMult;
   const movement = target.moving
-    ? (settings.equippedWeightBase + settings.equippedWeightMult * target.armourWeight) *
-      (target.running ? settings.runningMult : 1) *
-      target.noiseMult *
-      (observer.movementMult ?? 1)
+    ? (target.running ? settings.runningMult : 1) *
+      (settings.equippedWeightMult * target.armourWeight + settings.equippedWeightBase) *
+      Math.max(0, target.noiseMult)
     : 0;
-  const action = target.actionSound * settings.actionMult;
-  // Asleep it hears × (1 + fSneakSleepBonus).
-  const sound = target.swimming
-    ? 0
-    : settings.soundsMult *
-      (movement + action) *
-      (input.lineOfSight ? 1 : settings.soundLosMult) *
-      (observer.sleeping ? 1 + settings.sleepBonus : 1);
+  const action = Math.trunc(settings.actionMult) * target.actionSound;
+  const sound = Math.max(
+    0,
+    (action + movement) *
+      settings.soundsMult *
+      heard *
+      (1 + (observer.sleeping ? settings.sleepBonus : 0)),
+  );
   // Sight: the light on it, how it moves, its size, the observer's eyes.
   let visual = 0;
-  if (input.seen && !observer.sleeping) {
-    const light =
-      settings.lightMod + target.light * (observer.nightEye ? settings.nightEyeBonus : 1);
+  if (input.seen && !target.invisible) {
     const motion =
+      target.motion ??
       1 +
-      (target.moving ? settings.lightMoveMult : 0) +
-      (target.moving && target.running ? settings.lightRunMult : 0);
-    const size = (settings.sizeMults[target.size] ?? 1) * settings.largeActorSizeMult;
-    const blindness = Math.min(1, Math.max(0, 1 - observer.blindness / 100));
-    visual =
-      settings.lightMult *
-      (input.exterior ? settings.lightExteriorMult : 1) *
-      light *
-      motion *
-      size *
-      blindness *
-      (observer.lightMult ?? 1) *
-      (target.invisible ? settings.stealthBoyMult : 1);
-    visual = Math.max(0, visual);
+        (target.running ? settings.lightRunMult : 0) +
+        (target.moving ? settings.lightMoveMult : 0);
+    const lightMult = input.exterior ? settings.lightExteriorMult : settings.lightMult;
+    const eyes = observer.sleeping ? 0 : (100 - observer.blindness) * 0.01;
+    const size = settings.sizeMults[target.size] ?? 1;
+    visual = Math.max(
+      0,
+      attenuation *
+        motion *
+        (target.light * lightMult + settings.lightMod) *
+        eyes *
+        settings.largeActorSizeMult *
+        size,
+    );
   }
   // The skills: the observer's perception against the target's sneaking.
   const perception =
-    Math.min(settings.perceptionMax, Math.max(settings.perceptionMin, observer.skill)) *
-    (1 +
-      (observer.alerted ? settings.alertMod : 0) +
-      (observer.sleeping ? settings.sleepMod : 0) +
-      (observer.combatTarget ? settings.combatMod : 0) +
-      (observer.ambush === 'target'
-        ? settings.ambushTargetMod
-        : observer.ambush === 'other'
-          ? settings.ambushNonTargetMod
-          : 0));
-  const sneaker = target.sneaking && !target.inCombat ? target.skill : 0;
-  const skill = settings.skillMult * (perception * attenuation - sneaker);
-  const level = settings.baseValue + attenuation * (sound + visual) + skill;
+    settings.perceptionMin +
+    (settings.perceptionMax - settings.perceptionMin) * observer.skill * 0.01;
+  const mods =
+    1 +
+    (observer.inCombat ? settings.alertMod : 0) +
+    (observer.sleeping ? settings.sleepMod : 0) +
+    (observer.otherThanTarget ? settings.combatMod : 0) +
+    (observer.ambush === 'target'
+      ? settings.ambushTargetMod
+      : observer.ambush === 'other'
+        ? settings.ambushNonTargetMod
+        : 0);
+  const skill =
+    (attenuation * mods * perception - (target.sneaking ? target.skill : 0)) * settings.skillMult;
+  const level = wholeLevel(settings.baseValue + sound + visual + skill);
   return { level, inReach, attenuation, sound, visual, skill };
 }
 
 /**
- * How loud an actor's movement is for its MovementNoiseMult actor value: what its Muffle effects
- * add (all Value / Peak Value Modifiers on it: the Muffle spell 1, the Muffle enchantment 0.5,
- * the Muffled Movement perk's ability 0.5, Silence's 1) takes that share of the sound off, so 1
- * or more is silent (UESP: Muffle "move more quietly", Silence "walking and running does not
- * affect detection"; the enchantment halves the noise). TODO(M13): whether the engine takes it
- * off the armour's share only (Muffled Movement: "noise from armor").
+ * The light level on a target as detection weighs it (observed in the original): its light (night eye: ×
+ * int(fDetectionNightEyeBonus)), less iLightLevelExteriorMod outside or, inside, the lesser of
+ * iLightLevelInteriorMod and 100 × the brightest channel of the cell's ambient light, between 0
+ * and iLightLevelMax.
+ */
+export function detectionLight(
+  settings: DetectionSettings,
+  light: number,
+  options: { readonly nightEye: boolean; readonly exterior: boolean; readonly ambient: number },
+): number {
+  const seen = options.nightEye ? light * Math.trunc(settings.nightEyeBonus) : light;
+  const mod = options.exterior
+    ? settings.lightLevelExteriorMod
+    : Math.min(settings.lightLevelInteriorMod, Math.trunc(options.ambient * 100));
+  return Math.min(settings.lightLevelMax, Math.max(0, Math.trunc(seen) - mod));
+}
+
+/**
+ * How loud an actor's movement is for its MovementNoiseMult actor value. The engine multiplies
+ * the movement's sound by the actor value (at least 0); here the value's modifiers are what
+ * Muffle adds (the Muffle spell 1, the Muffle enchantment 0.5, the Muffled Movement perk's
+ * ability 0.5, Silence's 1: all Peak Value Modifiers on it) and they take that share of the
+ * sound off, so 1 or more is silent (UESP: Muffle "move more quietly", Silence "walking and
+ * running does not affect detection"). TODO(M13): how the engine's actor value getter turns
+ * the modifiers into the multiplier was not read.
  */
 export function movementNoise(movementNoiseMult: number): number {
   return Math.max(0, 1 - movementNoiseMult);
 }
 
-/**
- * Whether a detection level detects the target: above 0, or in combat with it above
- * iAICombatMinDetection (Construction Set wiki, "Detection": the thresholds).
- */
-export function detectsAt(settings: DetectionSettings, level: number, combat = false): boolean {
-  return level > (combat ? settings.combatMinDetection : 0);
+/** Whether a detection level detects the target (above 0: the engine's DETECTED). */
+export function detectsAt(level: number): boolean {
+  return level > 0;
 }
 
-/** Whether a detection level notices the target (above fSneakNoticeMin). */
+/**
+ * Whether a detection level notices the target (above fSneakNoticeMin): ours, for the stealth
+ * eye's slightly open look and the reactions to something near; the engine never reads
+ * fSneakNoticeMin.
+ */
 export function noticesAt(settings: DetectionSettings, level: number): boolean {
   return level > settings.noticeMin;
 }
 
 /**
- * How loud a detection event (a noise: CreateDetectionEvent, an impact, a weapon's swing) is
- * for an observer, and how far it carries: fDetectEventDistancePlayer for the player's events,
- * fDetectEventDistanceNPC for others' (and none's), fDetectEventDistanceVeryLoudMult times as
- * far very loud, fDetectEventSneakDistanceVeryLoud very loud from one who sneaks. Its level is
- * fSneakBaseValue + its loudness (iSoundLevel*) × fSneakSoundsMult, × fSneakSoundLosMult
- * unheard in the line of sight, attenuated over its reach, + the observer's perception
- * (attenuated) × fSneakSkillMult. TODO(M13): how the engine weighs events is not documented.
+ * How far a detection event (a noise: CreateDetectionEvent, an impact, a weapon's swing) of a
+ * target reaches an observer (observed in the original): fDetectEventDistancePlayer for the player's
+ * events, fDetectEventDistanceNPC for others' (and none's), fDetectEventDistanceVeryLoudMult
+ * times as far when it is very loud (its loudness iSoundLevelVeryLoud or more).
+ */
+export function eventDistance(
+  settings: DetectionSettings,
+  loudness: number,
+  byPlayer: boolean,
+): number {
+  const veryLoud = loudness >= settings.soundLevels[SoundLevel.veryLoud];
+  return (
+    (byPlayer ? settings.eventDistancePlayer : settings.eventDistanceNpc) *
+    (veryLoud ? settings.eventDistanceVeryLoudMult : 1)
+  );
+}
+
+/**
+ * The detection level of an event (a noise, or a projectile seen passing: loudness 50) for an
+ * observer within eventDistance of it, as the engine computes it (observed in the original); above 0 the
+ * observer knows the target is there (its detection level 0, at the event's place):
+ *
+ *   reach  = fSneakMaxDistance (fDetectEventSneakDistanceVeryLoud when very loud), ×
+ *            fSneakExteriorDistanceMult outside
+ *   A      = (max(0, reach − distance) / reach) ^ fSneakDistanceAttenuationExponent
+ *   sound  = int(fSneakActionMult) × loudness × fSneakSoundsMult × A (× fSneakSoundLosMult
+ *            without a line of sight to the place)
+ *   visual = seen × A × (light × fSneakLightMult (outside fSneakLightExteriorMult) +
+ *            fDetectionSneakLightMod) × (asleep ? 0 : 1); light: iDetectEventLightLevel*
+ *   level  = fSneakBaseValue + sound + visual (wholeLevel)
+ *
+ * The skills do not count.
  */
 export function eventLevel(
   settings: DetectionSettings,
-  event: {
-    readonly soundLevel: number;
-    readonly byPlayer: boolean;
-    readonly sneaking: boolean;
+  event: { readonly loudness: number },
+  observer: { readonly sleeping: boolean },
+  options: {
+    readonly distance: number;
+    readonly exterior: boolean;
+    readonly lineOfSight: boolean;
+    readonly seen: boolean;
   },
-  observer: Observer,
-  distance: number,
-  lineOfSight: boolean,
-): { readonly level: number; readonly reach: number } {
-  const veryLoud = event.soundLevel === SoundLevel.veryLoud;
+): number {
+  const veryLoud = event.loudness >= settings.soundLevels[SoundLevel.veryLoud];
   const reach =
-    veryLoud && event.sneaking
-      ? settings.eventSneakDistanceVeryLoud
-      : (event.byPlayer ? settings.eventDistancePlayer : settings.eventDistanceNpc) *
-        (veryLoud ? settings.eventDistanceVeryLoudMult : 1);
-  const attenuation = distanceAttenuation(settings, distance, reach);
-  if (attenuation <= 0) return { level: -Infinity, reach };
-  const sound =
-    loudness(settings, event.soundLevel) *
-    settings.soundsMult *
-    (lineOfSight ? 1 : settings.soundLosMult);
-  const perception = Math.min(
-    settings.perceptionMax,
-    Math.max(settings.perceptionMin, observer.skill),
+    (veryLoud ? settings.eventSneakDistanceVeryLoud : settings.maxDistance) *
+    (options.exterior ? settings.exteriorDistanceMult : 1);
+  const attenuation = distanceAttenuation(settings, options.distance, reach);
+  const sound = Math.max(
+    0,
+    Math.trunc(settings.actionMult) *
+      event.loudness *
+      settings.soundsMult *
+      attenuation *
+      (options.lineOfSight ? 1 : settings.soundLosMult),
   );
-  const level =
-    settings.baseValue + attenuation * sound + settings.skillMult * perception * attenuation;
-  return { level, reach };
+  const light = options.exterior ? settings.eventLightExterior : settings.eventLightInterior;
+  const lightMult = options.exterior ? settings.lightExteriorMult : settings.lightMult;
+  const visual =
+    options.seen && !observer.sleeping
+      ? Math.max(0, attenuation * (light * lightMult + settings.lightMod))
+      : 0;
+  return wholeLevel(settings.baseValue + sound + visual);
 }

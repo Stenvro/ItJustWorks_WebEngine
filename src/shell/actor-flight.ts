@@ -738,6 +738,8 @@ export class ActorFlight {
       if (staged.dead || staged.visibility.hidden) continue;
       if (!fliesByRace(staged.placed.look.raceFlags)) continue;
       seen.add(staged.reference);
+      // Its AI disabled (EnableAI false), it steers nothing.
+      if (this.#options.movers.aiDisabled(staged.reference)) continue;
       const flier = this.#flier(staged.reference);
       if (!flier) continue;
       flier.staged = staged;

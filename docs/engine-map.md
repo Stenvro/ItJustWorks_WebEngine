@@ -85,7 +85,7 @@ These run through every area and explain most of what breaks in play.
 | Sandbox                      | different | no daily plan (sleep, meals), stays in real seconds, no weighted choice                                                                            |
 | Movement, paths              | partial   | doors not navmesh obstacles, no path idles                                                                                                         |
 | Avoidance                    | partial   | the engine's way round (who is avoided and re-planning are its)                                                                                    |
-| Detection                    | partial   | formula reconstructed (sleep, ambush, size terms the engine's), single ray, no one in ambush                                                       |
+| Detection                    | partial   | formula, reach, lines of sight, light and events the engine's; no one in ambush; the light's sum ours                                              |
 | Crime                        | partial   | NPC crimes                                                                                                                                         |
 | Dialogue                     | partial   | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away                                                                |
 | Scenes                       | partial   | lines do not wait for facing; repeat pause                                                                                                         |
@@ -98,7 +98,7 @@ These run through every area and explain most of what breaks in play.
 | System            | Status    | Main gaps                                                                                                                                                   |
 | ----------------- | --------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Controller, state | different | per-behaviour timers; per-fight confidence roll                                                                                                             |
-| Target selection  | different | additive scores, re-selection timing, crowding, reachability; group stealth points                                                                          |
+| Target selection  | different | additive scores, re-selection timing, crowding, reachability (the group's target knowledge and stealth points are the engine's: ai.md Combat detection)     |
 | Flee              | different | strength ratio (damage per second × health against armour) instead of health share                                                                          |
 | Behaviour tree    | partial   | per-slot actions (left and dual attacks, shield and weapon, spell and weapon), surround, backoff, reposition, cover, find attack location, hide, low combat |
 | Style values      | complete  | (on the engine's scale; the circle distant, special attack, block attack and offensive bash behaviours wait for the tree)                                   |

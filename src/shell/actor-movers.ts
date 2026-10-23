@@ -973,8 +973,8 @@ export class ActorMovers {
       // Beyond it, held by what carries or seats it: its AI goes on (a rider's moves its horse,
       // a walker: MQ101's Tullius rides on to the tower after the player's cart drew away).
       else if (held && this.#lives(staged)) this.#heldAway.add(reference);
-      // Beyond the high process: it walks without a controller.
-      if (!near && !mover && this.#moves(staged)) {
+      // Beyond the high process: it walks without a controller (not with its AI disabled).
+      if (!near && !mover && this.#moves(staged) && !this.aiDisabled(reference)) {
         this.#walk(staged, seconds);
         continue;
       }
@@ -987,6 +987,11 @@ export class ActorMovers {
       if (!near || staged.visibility.hidden || held || !staged.grounded) {
         this.#free(mover);
         continue;
+      }
+      // Its AI disabled (EnableAI false): it stands where it is, its way and wish dropped.
+      if (this.aiDisabled(reference)) {
+        if (this.#travels.has(reference)) this.stop(reference);
+        this.#requests.delete(reference);
       }
       this.#draw(mover, world.physics, seconds);
       const reaction = this.#reactions.get(staged.reference);
@@ -1129,11 +1134,21 @@ export class ActorMovers {
     return undefined;
   }
 
-  /** Whether an actor's AI runs: in the high process, or walking beyond it. */
+  /**
+   * Whether an actor's AI runs: in the high process, or walking beyond it; not while a script
+   * disabled it (EnableAI false: the engine stops processing the actor's AI, its packages,
+   * combat, detection and movement, and stills its controller; its graph animates on).
+   */
   runsAi(reference: number): boolean {
+    if (this.aiDisabled(reference)) return false;
     return (
       this.#high.has(reference) || this.#walkers.has(reference) || this.#heldAway.has(reference)
     );
+  }
+
+  /** Whether a script disabled an actor's AI (EnableAI false). */
+  aiDisabled(reference: number): boolean {
+    return this.#options.session.scriptsReady?.state.actors.get(reference)?.aiEnabled === false;
   }
 
   /** One frame of an actor beyond the high process: its travel, its turning, its graph. */
