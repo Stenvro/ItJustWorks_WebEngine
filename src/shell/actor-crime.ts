@@ -261,6 +261,14 @@ export class ActorCrime {
         }
       } else if (response === 'arrest') {
         this.#pursuedAt = this.#clock;
+        // No arrest mid-fight: guards that fight the player (one struck, those who help it)
+        // fight on until the player yields (the combat AI's AcceptYield ends their fight); the
+        // arrest's conversation comes after. The dialogue menu does not pause the game, so a
+        // conversation opened mid-fight left the player struck while it was open.
+        if (this.#fighting()) {
+          if (this.#arrest && !this.#arrest.talking) this.#endArrest(false);
+          continue;
+        }
         if (!this.#arrest && (this.#arrestAgain.get(guard) ?? 0) <= this.#clock)
           this.#startArrest(runtime, staged);
       } else if (this.#attacking.delete(guard)) {
@@ -297,7 +305,7 @@ export class ActorCrime {
       }
       const line = await runtime.dialogue.subtypeLine(guard, 'PFGT', PLAYER_REF);
       const menus = session.hud.menus;
-      if (!line || !menus || runtime.dialogueSpeaker !== undefined) {
+      if (!line || !menus || runtime.dialogueSpeaker !== undefined || this.#fighting()) {
         this.#endArrest(false);
         return;
       }
@@ -307,6 +315,15 @@ export class ActorCrime {
     run().catch(() => {
       this.#endArrest(false);
     });
+  }
+
+  /**
+   * Whether someone fights the player now. TODO(M13): inferred that the engine's arrest waits
+   * for the whole fight (its force greet is a package, and packages give way to combat); whether
+   * it waits for other factions' fighters too is not known.
+   */
+  #fighting(): boolean {
+    return this.#options.session.combatWatch?.fightingPlayer === true;
   }
 
   /** The arrest ends: settled (paid, jailed, resisted) or given up for a while. */

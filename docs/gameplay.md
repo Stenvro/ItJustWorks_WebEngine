@@ -742,6 +742,11 @@ tools/crime-info.ts` lists the crime factions with their values, jails and chest
   FavorDialogueScript: GetBribeAmount; StopCombatAlarm on the player ends the pursuit).
   GetCrimeGold, ...Violent, ...Nonviolent, CanPayCrimeGold, GetArrestingActor, GetBribeSuccess
   answer them. TODO(M13): the engine's arrest package and pursuit lines (PursueIdleTopic).
+  No arrest mid-fight: while anyone fights the player (a guard struck and the guards who took
+  up its fight) the guards fight on, until the player yields (weapon away, no blow: the guards
+  accept it as the one struck does); then the arrest. The dialogue menu does not pause the
+  game, so a force greet mid-fight left the player struck while they talked (docs/ui.md,
+  "Menu mode").
 - While guards pursue: no waiting or sleeping (sNoWaitWhileAlarm), fast travel
   (sNoFastTravelAlarm) or lockpicking (sNoLockPickIfCrimeAlert).
 - Jail (UESP "Skyrim:Jail"): the stolen items go to the stolen goods chest, with
