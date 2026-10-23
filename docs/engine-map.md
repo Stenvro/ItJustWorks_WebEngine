@@ -90,7 +90,7 @@ These run through every area and explain most of what breaks in play.
 | Dialogue                     | partial   | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away                                                                |
 | Scenes                       | partial   | lines do not wait for facing; repeat pause                                                                                                         |
 | Actors away                  | partial   | only one door away, hour steps                                                                                                                     |
-| Followers, horses, furniture | partial   | walk zone; mount from the right; enter by graph event                                                                                              |
+| Followers, horses, furniture | partial   | walk zone; mount from the right; enter by graph event; the horse's turn to the camera                                                              |
 | Head tracking                | partial   | candidates' scores, look along the path, package target's look                                                                                     |
 
 ### Combat
