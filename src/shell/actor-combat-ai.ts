@@ -76,7 +76,6 @@ import {
   type Threat,
 } from '../ai/combat-tactics.ts';
 import { InterruptFlag, PackageFlag } from '../ai/package-records.ts';
-import type { CombatStyleFlight } from '../ai/combat-style-records.ts';
 import { withinReach } from '../ai/flight.ts';
 import type { Gait } from '../ai/locomotion.ts';
 import {
@@ -101,7 +100,7 @@ import type { ActorAi } from './actor-ai.ts';
 import type { ActorMovers } from './actor-movers.ts';
 import type { ActorSenses } from './actor-senses.ts';
 import type { ActorTalk } from './actor-talk.ts';
-import type { FlightTarget } from './actor-flight.ts';
+import type { FlightFight, FlightTarget } from './actor-flight.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -187,15 +186,18 @@ export interface CombatCasting {
  * air by its combat style's flight section; those on the ground cannot strike one overhead.
  */
 export interface CombatFlight {
-  /** Whether an actor may fly in its fight now (a flier allowed to, where flying is). */
+  /** Whether an actor may fly in its fight now (CanFly: a flier allowed to, unhurt, where flying is). */
   mayFly(actor: number): boolean;
   /** Whether an actor is in the air now. */
   isFlying(actor: number): boolean;
+  /** Whether an actor sits on a perch now. */
+  perched(actor: number): boolean;
   /**
-   * One frame of a flier's fight (its style's flight section, its offensive mult as the engine
-   * weighs it): true while the flight has it (the ground fight waits).
+   * One frame of a flier's fight (the combat tree's Flight subtree: its style's flight section,
+   * its offensive mult and farthest optimal range as the engine weighs them): true while the
+   * flight has it (the ground fight waits).
    */
-  fight(actor: number, target: FlightTarget, flight: CombatStyleFlight, offensive: number): boolean;
+  fight(actor: number, target: FlightTarget, fight: FlightFight): boolean;
   /** Its fight ended (its packages take it on from there). */
   endFight(actor: number): void;
   /** The shape it had on the ground (its size for blows in the air). */
@@ -1457,18 +1459,31 @@ export class ActorCombatAi {
         : (this.#knownPlace(known) ?? target.feet);
     if (!there) return;
     const flight = this.#options.flight?.();
-    // A flier fights from the air while it may fly (its style's flight section); landed, it
-    // fights on the ground here until it takes off again.
+    // A flier's fight is the combat tree's Flight subtree while it can fly or is not on the
+    // ground (observed in the original: the Flight Link); landed for a ground attack, or
+    // unable to fly on the ground, it fights here.
     if (
-      flight?.mayFly(reference) === true &&
-      flight.fight(
-        reference,
-        { reference: target.reference, feet: there, height: target.height },
-        profile.style.flight,
-        offensiveMult(profile.style, this.#opponent(mind, target.reference), this.#settings),
-      )
+      flight !== undefined &&
+      (flight.mayFly(reference) || flight.isFlying(reference) || flight.perched(reference))
     ) {
-      return;
+      const opponent = this.#opponent(mind, target.reference);
+      const flown = flight.fight(
+        reference,
+        {
+          reference: target.reference,
+          feet: there,
+          height: target.height,
+          radius: target.radius,
+          heading: target.heading,
+        },
+        {
+          flight: profile.style.flight,
+          offensive: offensiveMult(profile.style, opponent, this.#settings),
+          styleOptimal: maxOptimalRange(profile.style, opponent, this.#settings),
+          attackedAgo: mind.damagedAt === undefined ? undefined : this.#clock - mind.damagedAt,
+        },
+      );
+      if (flown) return;
     }
     // A target in the air is as far as it is (its height counts: bows and spells reach it).
     const aloft = flight?.isFlying(target.reference) === true;

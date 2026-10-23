@@ -780,7 +780,8 @@ async function auditTrace(
       const track = trackOf(actor);
       track.position = (w[1] ?? '').split(',').map(Number);
       const standing = track.standing;
-      if (!standing || track.flags.has('CARRIED')) continue;
+      // Carried, or in the air (a flier cannot stand there: it circles), it is not walking off.
+      if (!standing || track.flags.has('CARRIED') || track.flags.has('FLYING')) continue;
       // Where it got to as its package was done is where it stands (a sample later).
       if (event.time < standing.since + SAMPLE_LAG) {
         standing.at = track.position;

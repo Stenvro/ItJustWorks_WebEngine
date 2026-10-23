@@ -24,6 +24,8 @@ declare global {
       readonly sceneTrace: (on?: boolean) => string;
       /** The automated QA monitors (docs/qa.md), once their module has loaded. */
       qa?: QaHarness;
+      /** The fliers' flight trace (src/shell/actor-flight.ts): their states and fight phases. */
+      readonly flightTrace: () => string;
     };
   }
 }

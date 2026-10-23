@@ -9,6 +9,7 @@ import { IdleCollectionFlag } from './idle-records.ts';
 import { sameSpace } from './package-start.ts';
 import { TargetType } from './package-records.ts';
 import { ObjectType } from './object-types.ts';
+import { ORBIT_PROCEDURE } from './flight.ts';
 import type {
   PackagePlace,
   ProcedureResult,
@@ -127,8 +128,17 @@ async function goTo(
 ): Promise<boolean> {
   const here = run.body.position();
   const reach = arrive ?? (await destinationRadius(run, place.reference, place.radius));
-  if (here && horizontal(here, place.position) <= reach) return true;
-  return run.body.travel(place.position, run.gait, reach, place.space, options);
+  // A flier in the air is not there by standing under it: it flies there, or lands there.
+  const airborne = run.body.airborne?.() === true;
+  if (here && !airborne && horizontal(here, place.position) <= reach) return true;
+  const target = place.reference;
+  return run.body.travel(
+    place.position,
+    run.gait,
+    reach,
+    place.space,
+    target === undefined ? options : { ...options, target },
+  );
 }
 
 /**
@@ -246,6 +256,8 @@ const patrol: ProcedureRunner = async (run) => {
     next = await run.mind.linked(next, 0);
   }
   let index = 0;
+  // A flier whose patrol begins at a sky marker cruises from there at once.
+  if (points[0] !== undefined) await run.body.patrolStart?.(points[0]);
   if (run.inputs.bool(3)) {
     const here = run.body.position();
     let nearest = Infinity;
@@ -272,7 +284,8 @@ const patrol: ProcedureRunner = async (run) => {
       const radius = await destinationRadius(run, point, pointRadius);
       const here = run.body.position();
       if (!here || horizontal(here, at.position) > radius) spent = true;
-      if (!(await goTo(run, { position: at.position, radius, space: at.space }, radius, options))) {
+      const place = { position: at.position, radius, space: at.space, reference: point };
+      if (!(await goTo(run, place, radius, options))) {
         // Not reached (blocked): a moment, then again; given up, on to the next.
         await run.wait(IDLE_SECONDS);
         spent = true;
@@ -651,9 +664,11 @@ const useFurniture =
     if (run.stopped()) return 'failure';
     const at = first === undefined ? undefined : await run.mind.placement(first);
     if (at) {
+      // To the furniture itself (a flier lands on its perch: observed in the original, the
+      // Sit's way there is a travel to the furniture, landed on in the air).
       await goTo(
         run,
-        { position: at.position, radius: 0 },
+        { position: at.position, radius: 0, reference: first },
         settingsOf(run).furnitureDestinationRadius,
       );
       if (await sit()) return inIt();
@@ -1033,20 +1048,19 @@ const fleeAway: ProcedureRunner = async (run) => {
   return arrived ? 'success' : 'failure';
 };
 
-/** An orbit without radii circles this far from its place (units). TODO(M13): the engine's. */
-const ORBIT_RADIUS = 2048;
 /** A hover faces this far ahead along its place's heading (units). */
 const HOVER_FACE = 1024;
 
 /**
- * Hover: a flier flies to its place, Height above it, and hovers there facing the place's
- * heading while the package runs (src/shell/actor-flight.ts); one that cannot fly holds its
- * place.
+ * Hover (observed in the original): a flier flies to its place, Height above it (0 without
+ * one), and hovers there facing the place's heading; the procedure is done once it hovers within
+ * the place's radius, and it stays hovering (src/shell/actor-flight.ts). One that cannot fly
+ * holds its place.
  */
 const hover: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
   const body = run.body;
-  if (!place || !body.fly || body.flies?.() !== true) return hold(run);
+  if (!place || !body.hover || body.flies?.() !== true) return hold(run);
   const height = run.inputs.number(1, 0);
   const at: Vec3 = [place.position[0], place.position[1], place.position[2] + height];
   const heading = place.heading ?? body.heading();
@@ -1055,31 +1069,25 @@ const hover: ProcedureRunner = async (run) => {
     at[1] + Math.cos(heading) * HOVER_FACE,
     at[2],
   ];
-  body.fly({ kind: 'hover', at, face });
-  try {
-    return await hold(run);
-  } finally {
-    body.fly(undefined);
-  }
+  return (await body.hover(at, face, place.radius)) ? 'success' : 'failure';
 };
 
 /**
- * Orbit: a flier circles its place between the inner and outer radius (their middle), Height
- * above it, while the package runs; one that cannot fly holds its place.
+ * Orbit (observed in the original): a flier circles its place, Height above it (1000 without
+ * one), at a radius at random between its inner and outer radius (3000 and 3500 without them),
+ * lap after lap while the package runs; one that cannot fly holds its place.
  */
 const orbit: ProcedureRunner = async (run) => {
   const place = await placeIn(run, 0);
   const body = run.body;
   if (!place || !body.fly || body.flies?.() !== true) return hold(run);
-  const inner = run.inputs.number(1, 0);
-  const outer = run.inputs.number(2, 0);
-  const radius = inner > 0 || outer > 0 ? (inner + Math.max(inner, outer)) / 2 : ORBIT_RADIUS;
+  const inner = run.inputs.number(1, ORBIT_PROCEDURE.inner);
+  const outer = run.inputs.number(2, ORBIT_PROCEDURE.outer);
   body.fly({
     kind: 'orbit',
     center: place.position,
-    radius: Math.max(radius, place.radius),
-    height: run.inputs.number(3, 0),
-    clockwise: run.random() < 0.5,
+    radius: between(run, inner, outer),
+    height: run.inputs.number(3, ORBIT_PROCEDURE.height),
   });
   try {
     return await hold(run);
