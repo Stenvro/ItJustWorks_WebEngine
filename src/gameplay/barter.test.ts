@@ -1,25 +1,45 @@
 import { describe, expect, it } from 'vitest';
-import { barterMultipliers, restockDue, vendorBuys } from './barter.ts';
+import {
+  BARTER_DEFAULTS,
+  barterMultipliers,
+  barterSettings,
+  restockDue,
+  vendorBuys,
+} from './barter.ts';
+
+/** The load order's fBarterMin and fBarterMax with the engine's limits. */
+const vanilla = { ...BARTER_DEFAULTS, min: 2, max: 3.3 };
 
 describe('barterMultipliers', () => {
-  it('follows UESP: 3.3 without Speech, 2 at 100, no better beyond', () => {
-    expect(barterMultipliers(0, 2, 3.3).buy).toBeCloseTo(3.3);
-    expect(barterMultipliers(0, 2, 3.3).sell).toBeCloseTo(1 / 3.3);
-    expect(barterMultipliers(20, 2, 3.3).buy).toBeCloseTo(3.04);
-    expect(barterMultipliers(100, 2, 3.3)).toEqual({ buy: 2, sell: 0.5 });
-    expect(barterMultipliers(150, 2, 3.3)).toEqual({ buy: 2, sell: 0.5 });
+  it('follows the settings: 3.3 without Speech, 2 at 100, no better beyond', () => {
+    expect(barterMultipliers(0, vanilla).buy).toBeCloseTo(3.3);
+    expect(barterMultipliers(0, vanilla).sell).toBeCloseTo(1 / 3.3);
+    expect(barterMultipliers(20, vanilla).buy).toBeCloseTo(3.04);
+    expect(barterMultipliers(100, vanilla)).toEqual({ buy: 2, sell: 0.5 });
+    expect(barterMultipliers(150, vanilla)).toEqual({ buy: 2, sell: 0.5 });
   });
 
-  it('never buys below 1.05 × value or sells above the value', () => {
-    expect(barterMultipliers(100, 0.5, 0.8)).toEqual({ buy: 1.05, sell: 1 });
+  it('never buys below fBarterBuyMin × value or sells above fBarterSellMax × value', () => {
+    expect(barterMultipliers(100, { ...vanilla, min: 0.5, max: 0.8 })).toEqual({
+      buy: 1.05,
+      sell: 0.95,
+    });
   });
 
   it("takes the perks' factors (Haggling 20: buying × 0.91, selling × 1.1)", () => {
-    const plain = barterMultipliers(50, 2, 3.3);
-    const haggling = barterMultipliers(50, 2, 3.3, { buy: 0.91, sell: 1.1 });
+    const plain = barterMultipliers(50, vanilla);
+    const haggling = barterMultipliers(50, vanilla, { buy: 0.91, sell: 1.1 });
     expect(haggling.buy).toBeCloseTo(plain.buy * 0.91);
     expect(haggling.sell).toBeCloseTo(plain.sell * 1.1);
-    expect(barterMultipliers(100, 2, 3.3, { buy: 0.1, sell: 10 })).toEqual({ buy: 1.05, sell: 1 });
+    expect(barterMultipliers(100, vanilla, { buy: 0.1, sell: 10 })).toEqual({
+      buy: 1.05,
+      sell: 0.95,
+    });
+  });
+
+  it('reads the settings by name, the engine defaults where the load order has none', () => {
+    const named: Record<string, number> = { fBarterMin: 2, fBarterMax: 3.3 };
+    expect(barterSettings((name) => named[name])).toEqual(vanilla);
   });
 });
 
@@ -36,9 +56,10 @@ describe('vendorBuys', () => {
 });
 
 describe('restockDue', () => {
-  it('restocks a merchant chest 48 game hours after it last did', () => {
-    expect(restockDue(10, 11.9)).toBe(false);
-    expect(restockDue(10, 12)).toBe(true);
-    expect(restockDue(10.5, 12.25)).toBe(false);
+  it('restocks a merchant chest once a new day has come iDaysToRespawnVendor days on', () => {
+    expect(restockDue(10.2, 10.9)).toBe(false);
+    expect(restockDue(10.9, 11.05)).toBe(true);
+    expect(restockDue(10.5, 11.25, 2)).toBe(false);
+    expect(restockDue(10.5, 12.25, 2)).toBe(true);
   });
 });

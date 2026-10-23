@@ -13,7 +13,8 @@ import { MAGIC_REACH, type ActorCasting } from './actor-casting.ts';
 import type { EquipOption } from '../ai/combat-tactics.ts';
 import type { GameSession } from './game-session.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
-import type { MagicItemRecord } from '../world/magic-records.ts';
+import { Delivery, type MagicItemRecord } from '../world/magic-records.ts';
+import { CastType } from '../world/spell-records.ts';
 
 /** The NPCs' casting as the combat AI asks for it. */
 export function combatCasting(
@@ -101,6 +102,19 @@ async function option(
       ? undefined
       : await runtime.casting.projectile(effect.projectile);
   const damage = await runtime.casting.spellWorth(actor, item, 'attack', target);
-  const range = projectile && projectile.range > 0 ? projectile.range : MAGIC_REACH;
-  return { kind, id, damage, range, equipped: false };
+  // A Touch spell reaches fMagicDefaultTouchDistance; others their projectile's range.
+  const range =
+    item.delivery === Delivery.touch
+      ? (await runtime.casting.settings()).casting.touchDistance
+      : projectile && projectile.range > 0
+        ? projectile.range
+        : MAGIC_REACH;
+  return {
+    kind,
+    id,
+    damage,
+    range,
+    equipped: false,
+    concentration: item.castType === CastType.concentration,
+  };
 }

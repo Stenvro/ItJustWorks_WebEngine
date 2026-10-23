@@ -107,16 +107,38 @@ export interface CombatAiSettings {
   readonly yieldRetryTime: number;
   /** How long the player must hold off before an actor accepts their yield (seconds). */
   readonly acceptYieldTime: number;
-  /** fCombatInventoryUpdateTimer: what it fights with is weighed again this often. */
-  readonly inventoryUpdateTime: number;
+  /**
+   * fCombatInventoryMinEquipTime*: what it took up it keeps at least this long (Weapon: a melee
+   * weapon or a bow; Magic, Shout, Staff; Default: its fists), then weighs again.
+   */
+  readonly minEquipTimeWeapon: number;
+  readonly minEquipTimeMagic: number;
+  readonly minEquipTimeShout: number;
+  readonly minEquipTimeStaff: number;
+  readonly minEquipTimeDefault: number;
+  /**
+   * fCombatInventoryMaxRangeScoreMult, …MinRangeScoreMult: × the score of an option its target
+   * is beyond the range of, or within the least range of.
+   */
+  readonly inventoryMaxRangeScoreMult: number;
+  readonly inventoryMinRangeScoreMult: number;
+  /** fCombatMaximumProjectileRange: the farthest a shot counts (units). */
+  readonly maximumProjectileRange: number;
   /** A fleeing actor that cannot get away (cornered) fights again within this of its enemy. */
   readonly corneredDistance: number;
-  /** fCombatItemRestoreTimer: it heals or drinks at most this often (seconds). */
-  readonly itemRestoreTime: number;
-  /** iAICombatRestoreHealthPercentage: it heals or drinks below this share of its health (%). */
-  readonly restoreHealthPercent: number;
-  /** iAICombatRestoreMagickaPercentage: it drinks below this share of its magicka (%). */
-  readonly restoreMagickaPercent: number;
+  /**
+   * fCombatRestoreHealthPercentMin / Max, …MagickaPercentMin / Max: the share of its health
+   * (magicka) below which it restores it, at defensive mult 0 and 1.
+   */
+  readonly restoreHealthPercentMin: number;
+  readonly restoreHealthPercentMax: number;
+  readonly restoreMagickaPercentMin: number;
+  readonly restoreMagickaPercentMax: number;
+  /** fCombatRestoreHealthRestrictTime, …MagickaRestrictTime: between two restores (seconds). */
+  readonly restoreHealthRestrictTime: number;
+  readonly restoreMagickaRestrictTime: number;
+  /** fCombatMagicDrinkPotionWaitTime: the combat tree's wait after a potion (seconds). */
+  readonly drinkPotionWaitTime: number;
   /** fCombatAttackChanceMin / Max: a melee attack's chance at offensive mult 0 and 1. */
   readonly attackChanceMin: number;
   readonly attackChanceMax: number;
@@ -130,6 +152,65 @@ export interface CombatAiSettings {
   readonly attackChanceLastAttackBonusTime: number;
   /** fCombatGroupOffensiveMultMin: the group offensive mult's floor against a crowded player. */
   readonly groupOffensiveMultMin: number;
+  // --- The combat style's values on the engine's scale (combat-tactics, "Style values") -------
+  /** fCombatAdvanceInnerRadiusMin / Mid (Max above): the inner advance radius's curve. */
+  readonly advanceInnerRadiusMin: number;
+  readonly advanceInnerRadiusMid: number;
+  /** fCombatAdvanceRadiusStaggerMult: × its defensive mult for the radii, its target staggered. */
+  readonly advanceRadiusStaggerMult: number;
+  /** fCombatAdvanceLastDamagedThreshold: a defensive actor's radii hold this long after a hurt. */
+  readonly advanceLastDamagedThreshold: number;
+  /** fCombatMaximumOptimalRangeMin / Mid / Max: the farthest it wants to shoot from (units). */
+  readonly maximumOptimalRangeMin: number;
+  readonly maximumOptimalRangeMid: number;
+  readonly maximumOptimalRangeMax: number;
+  /** fCombat…ChanceMin / Max: each chance at the style's value 0 and 1. */
+  readonly circleChanceMin: number;
+  readonly circleChanceMax: number;
+  readonly circleDistantChanceMin: number;
+  readonly circleDistantChanceMax: number;
+  readonly fallbackChanceMin: number;
+  readonly fallbackChanceMax: number;
+  readonly strafeChanceMin: number;
+  readonly strafeChanceMax: number;
+  readonly dodgeChanceMin: number;
+  readonly dodgeChanceMax: number;
+  readonly specialAttackChanceMin: number;
+  readonly specialAttackChanceMax: number;
+  readonly blockChanceMin: number;
+  readonly blockChanceMax: number;
+  readonly blockAttackChanceMin: number;
+  readonly blockAttackChanceMax: number;
+  readonly bashChanceMin: number;
+  readonly bashChanceMax: number;
+  readonly offensiveBashChanceMin: number;
+  readonly offensiveBashChanceMax: number;
+  readonly rangedAttackChanceMin: number;
+  readonly rangedAttackChanceMax: number;
+  readonly castImmediateChanceMin: number;
+  readonly castImmediateChanceMax: number;
+  readonly castConcentrationChanceMin: number;
+  readonly castConcentrationChanceMax: number;
+  /** fCombatFlankingDistanceMin / Max: how far beyond its reach it flanks (units). */
+  readonly flankingDistanceMin: number;
+  readonly flankingDistanceMax: number;
+  /** fCombatFlankingStalkTimeMin / Max: how long it stalks (seconds). */
+  readonly flankingStalkTimeMin: number;
+  readonly flankingStalkTimeMax: number;
+  /** fCombatBlockTimeMin / Mid / Max: how long a block lasts (seconds). */
+  readonly blockTimeMin: number;
+  readonly blockTimeMid: number;
+  readonly blockTimeMax: number;
+  /** fCombatBashTargetBlockingMult: × a bash into a target that blocks it. */
+  readonly bashTargetBlockingMult: number;
+  /** fCombatRangedAttackChanceLastAttackBonus, …BonusTime: + this share, so long after an attack. */
+  readonly rangedAttackChanceLastAttackBonus: number;
+  readonly rangedAttackChanceLastAttackBonusTime: number;
+  /** fCombatRangedAttackHoldTimeMin / Max / AbsoluteMin / MinDistance: a bow held drawn. */
+  readonly rangedAttackHoldTimeMin: number;
+  readonly rangedAttackHoldTimeMax: number;
+  readonly rangedAttackHoldTimeAbsoluteMin: number;
+  readonly rangedAttackHoldTimeMinDistance: number;
 }
 
 /**
@@ -170,11 +251,22 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['yieldTime', 'fCombatYieldTime', 10],
   ['yieldRetryTime', 'fCombatYieldRetryTime', 600],
   ['acceptYieldTime', undefined, 3],
-  ['inventoryUpdateTime', 'fCombatInventoryUpdateTimer', 5],
+  ['minEquipTimeWeapon', 'fCombatInventoryMinEquipTimeWeapon', 5],
+  ['minEquipTimeMagic', 'fCombatInventoryMinEquipTimeMagic', 3],
+  ['minEquipTimeShout', 'fCombatInventoryMinEquipTimeShout', 3],
+  ['minEquipTimeStaff', 'fCombatInventoryMinEquipTimeStaff', 5],
+  ['minEquipTimeDefault', 'fCombatInventoryMinEquipTimeDefault', 0],
+  ['inventoryMaxRangeScoreMult', 'fCombatInventoryMaxRangeScoreMult', 0.1],
+  ['inventoryMinRangeScoreMult', 'fCombatInventoryMinRangeScoreMult', 0.1],
+  ['maximumProjectileRange', 'fCombatMaximumProjectileRange', 4096],
   ['corneredDistance', undefined, 192],
-  ['itemRestoreTime', 'fCombatItemRestoreTimer', 3],
-  ['restoreHealthPercent', 'iAICombatRestoreHealthPercentage', 60],
-  ['restoreMagickaPercent', 'iAICombatRestoreMagickaPercentage', 30],
+  ['restoreHealthPercentMin', 'fCombatRestoreHealthPercentMin', 0],
+  ['restoreHealthPercentMax', 'fCombatRestoreHealthPercentMax', 0.5],
+  ['restoreMagickaPercentMin', 'fCombatRestoreMagickaPercentMin', 0.25],
+  ['restoreMagickaPercentMax', 'fCombatRestoreMagickaPercentMax', 0.4],
+  ['restoreHealthRestrictTime', 'fCombatRestoreHealthRestrictTime', 15],
+  ['restoreMagickaRestrictTime', 'fCombatRestoreMagickaRestrictTime', 10],
+  ['drinkPotionWaitTime', 'fCombatMagicDrinkPotionWaitTime', 3],
   ['attackChanceMin', 'fCombatAttackChanceMin', 0.05],
   ['attackChanceMax', 'fCombatAttackChanceMax', 1],
   ['attackChanceBlockingMultMax', 'fCombatAttackChanceBlockingMultMax', 0.67],
@@ -183,6 +275,53 @@ const SETTINGS: readonly (readonly [keyof CombatAiSettings, string | undefined, 
   ['attackChanceLastAttackBonus', 'fCombatAttackChanceLastAttackBonus', 1.5],
   ['attackChanceLastAttackBonusTime', 'fCombatAttackChanceLastAttackBonusTime', 5],
   ['groupOffensiveMultMin', 'fCombatGroupOffensiveMultMin', 0.1],
+  ['advanceInnerRadiusMin', 'fCombatAdvanceInnerRadiusMin', 0],
+  ['advanceInnerRadiusMid', 'fCombatAdvanceInnerRadiusMid', 0],
+  ['advanceRadiusStaggerMult', 'fCombatAdvanceRadiusStaggerMult', 0],
+  ['advanceLastDamagedThreshold', 'fCombatAdvanceLastDamagedThreshold', 10],
+  ['maximumOptimalRangeMin', 'fCombatMaximumOptimalRangeMin', 1024],
+  ['maximumOptimalRangeMid', 'fCombatMaximumOptimalRangeMid', 1280],
+  ['maximumOptimalRangeMax', 'fCombatMaximumOptimalRangeMax', 1536],
+  ['circleChanceMin', 'fCombatCircleChanceMin', 0],
+  ['circleChanceMax', 'fCombatCircleChanceMax', 0.75],
+  ['circleDistantChanceMin', 'fCombatCircleDistantChanceMin', 0.25],
+  ['circleDistantChanceMax', 'fCombatCircleDistantChanceMax', 0.75],
+  ['fallbackChanceMin', 'fCombatFallbackChanceMin', 0],
+  ['fallbackChanceMax', 'fCombatFallbackChanceMax', 0.5],
+  ['strafeChanceMin', 'fCombatStrafeChanceMin', 0],
+  ['strafeChanceMax', 'fCombatStrafeChanceMax', 0.75],
+  ['dodgeChanceMin', 'fCombatDodgeChanceMin', 0],
+  ['dodgeChanceMax', 'fCombatDodgeChanceMax', 1],
+  ['specialAttackChanceMin', 'fCombatSpecialAttackChanceMin', 0],
+  ['specialAttackChanceMax', 'fCombatSpecialAttackChanceMax', 1],
+  ['blockChanceMin', 'fCombatBlockChanceMin', 0],
+  ['blockChanceMax', 'fCombatBlockChanceMax', 1],
+  ['blockAttackChanceMin', 'fCombatBlockAttackChanceMin', 0],
+  ['blockAttackChanceMax', 'fCombatBlockAttackChanceMax', 1],
+  ['bashChanceMin', 'fCombatBashChanceMin', 0.025],
+  ['bashChanceMax', 'fCombatBashChanceMax', 0.2],
+  ['offensiveBashChanceMin', 'fCombatOffensiveBashChanceMin', 0],
+  ['offensiveBashChanceMax', 'fCombatOffensiveBashChanceMax', 0.05],
+  ['rangedAttackChanceMin', 'fCombatRangedAttackChanceMin', 0.05],
+  ['rangedAttackChanceMax', 'fCombatRangedAttackChanceMax', 1],
+  ['castImmediateChanceMin', 'fCombatCastImmediateOffensiveMagicChanceMin', 0.05],
+  ['castImmediateChanceMax', 'fCombatCastImmediateOffensiveMagicChanceMax', 0.75],
+  ['castConcentrationChanceMin', 'fCombatCastConcentrationOffensiveMagicChanceMin', 0.25],
+  ['castConcentrationChanceMax', 'fCombatCastConcentrationOffensiveMagicChanceMax', 1],
+  ['flankingDistanceMin', 'fCombatFlankingDistanceMin', 0],
+  ['flankingDistanceMax', 'fCombatFlankingDistanceMax', 1024],
+  ['flankingStalkTimeMin', 'fCombatFlankingStalkTimeMin', 0.01],
+  ['flankingStalkTimeMax', 'fCombatFlankingStalkTimeMax', 10],
+  ['blockTimeMin', 'fCombatBlockTimeMin', 4],
+  ['blockTimeMid', 'fCombatBlockTimeMid', 8],
+  ['blockTimeMax', 'fCombatBlockTimeMax', 10000],
+  ['bashTargetBlockingMult', 'fCombatBashTargetBlockingMult', 0],
+  ['rangedAttackChanceLastAttackBonus', 'fCombatRangedAttackChanceLastAttackBonus', 0.5],
+  ['rangedAttackChanceLastAttackBonusTime', 'fCombatRangedAttackChanceLastAttackBonusTime', 10],
+  ['rangedAttackHoldTimeMin', 'fCombatRangedAttackHoldTimeMin', 0.25],
+  ['rangedAttackHoldTimeMax', 'fCombatRangedAttackHoldTimeMax', 1.5],
+  ['rangedAttackHoldTimeAbsoluteMin', 'fCombatRangedAttackHoldTimeAbsoluteMin', 0.1],
+  ['rangedAttackHoldTimeMinDistance', 'fCombatRangedAttackHoldTimeMinDistance', 256],
 ];
 
 export function readCombatAiSettings(

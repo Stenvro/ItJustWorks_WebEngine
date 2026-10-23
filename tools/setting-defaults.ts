@@ -4,11 +4,17 @@
 // from a local dump of the executable's setting objects (name, default, ...; tab-separated), made
 // outside the repository and never committed (docs/engine-map.md).
 //
-//   node tools/setting-defaults.ts <settings.tsv>             the differing and unknown ones
-//   node tools/setting-defaults.ts <settings.tsv> --all       every compared setting
-//   node tools/setting-defaults.ts <settings.tsv> --unused P  engine settings starting with P
-//                                                             that the load order lacks and the
-//                                                             code never names
+// The dump reads the setting objects as the executable stores them; a setting its start-up code
+// sets (iDifficulty, fHUDOpacity, the autosaves: stored as 0) is given by a further file of the
+// same form, whose rows replace the dump's. Settings the executable names without a section are
+// [MAIN]'s (SkyrimPrefs.ini keeps them there).
+//
+//   node tools/setting-defaults.ts <settings.tsv> [<more.tsv> ...]   the differing and unknown
+//   node tools/setting-defaults.ts <settings.tsv> --all              every compared setting
+//   node tools/setting-defaults.ts <settings.tsv> --unused P         engine settings starting
+//                                                                    with P that the load order
+//                                                                    lacks and the code never
+//                                                                    names
 
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
@@ -19,20 +25,26 @@ import { Vfs } from '../src/vfs/vfs.ts';
 import { openGameFolder } from './gamedata-path.ts';
 
 const args = process.argv.slice(2);
-const tsv = args[0];
-if (!tsv) {
-  console.error('usage: node tools/setting-defaults.ts <settings.tsv> [--all | --unused <prefix>]');
-  process.exit(1);
-}
 const all = args.includes('--all');
 const unusedAt = args.indexOf('--unused');
 const unusedPrefix = unusedAt >= 0 ? (args[unusedAt + 1] ?? '').toLowerCase() : undefined;
+const tsvs = args.filter(
+  (arg, index) => !arg.startsWith('--') && (unusedAt < 0 || index !== unusedAt + 1),
+);
+if (tsvs.length === 0) {
+  console.error(
+    'usage: node tools/setting-defaults.ts <settings.tsv> [<more.tsv> ...] [--all | --unused <prefix>]',
+  );
+  process.exit(1);
+}
 
 /** Engine defaults: game settings by name, INI settings by "name:section" (lower case). */
 const engine = new Map<string, { name: string; value: string }>();
-for (const line of readFileSync(tsv, 'utf8').split('\n')) {
-  const [name, value] = line.split('\t');
-  if (name && value !== undefined) engine.set(name.toLowerCase(), { name, value });
+for (const tsv of tsvs) {
+  for (const line of readFileSync(tsv, 'utf8').split('\n')) {
+    const [name, value] = line.split('\t');
+    if (name && value !== undefined) engine.set(name.trim().toLowerCase(), { name, value });
+  }
 }
 
 const vfs = await Vfs.mount(openGameFolder());
@@ -85,7 +97,9 @@ for (const { file, text } of code) {
 // INI defaults.
 for (const [section, values] of Object.entries(INI_DEFAULTS)) {
   for (const [name, ours] of Object.entries(values as Record<string, number>)) {
-    const found = engine.get(`${name}:${section}`.toLowerCase());
+    const found =
+      engine.get(`${name}:${section}`.toLowerCase()) ??
+      (section === 'Main' ? engine.get(name.toLowerCase()) : undefined);
     compared++;
     const status = !found ? 'UNKNOWN' : same(found.value, ours) ? 'same' : 'DIFF';
     if (all || status !== 'same')

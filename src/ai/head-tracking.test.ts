@@ -36,13 +36,15 @@ describe('head tracking', () => {
     expect(looks.headTracking(1)).toBe(false);
   });
 
-  it('notices the player near and in front, not behind or far', () => {
+  it('notices the player as any actor: within fAIMaxHeadTrackDistance and 120°', () => {
     const head = [0, 0, 120] as const;
-    expect(noticesPlayer(head, 0, [50, 300, 120])).toBe(true);
-    expect(noticesPlayer(head, 0, [0, -300, 120])).toBe(false);
-    expect(noticesPlayer(head, 0, [0, 2000, 120])).toBe(false);
+    expect(noticesPlayer(head, 0, [50, 300, 120], 400)).toBe(true);
+    expect(noticesPlayer(head, 0, [0, -300, 120], 400)).toBe(false);
+    expect(noticesPlayer(head, 0, [0, 450, 120], 400)).toBe(false);
+    // Beside it (90° off) is within 120°.
+    expect(noticesPlayer(head, 0, [300, 0, 120], 400)).toBe(true);
     // Facing east (compass 90°), the player to the east is in front.
-    expect(noticesPlayer(head, Math.PI / 2, [300, 0, 120])).toBe(true);
+    expect(noticesPlayer(head, Math.PI / 2, [300, 0, 120], 400)).toBe(true);
   });
 
   it('moves the look at the head tracking speed: fast while far off, slow near', () => {

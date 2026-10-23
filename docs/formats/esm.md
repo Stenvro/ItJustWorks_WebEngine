@@ -1350,9 +1350,37 @@ game shows GMST sPlayerLeavingBorderRegion ("You cannot go that way.").
 
 ## INI settings
 
-The engine reads `Skyrim_Default.ini` over defaults compiled into the executable
-(`src/world/ini-settings.ts`; the defaults as SSE's `saveini` writes them). Those used now:
-`[Camera]` fOverShoulderPosX 30, fOverShoulderPosZ −10, fVanityModeMinDist 155,
+**The rule** (`src/world/ini-settings.ts`, `IniSettings`): a setting is its default compiled
+into the executable, then the installation's `Skyrim_Default.ini` (the launcher copies it to the
+player's Skyrim.ini), then the player's own INI files. Observed in the original: the
+executable keeps two collections, the INI settings and the preference settings (those
+SkyrimPrefs.ini holds: Display, LOD, Grass, Decals, GamePlay, SaveGame, the [MAIN] ones); the
+launcher writes SkyrimPrefs.ini from a graphics preset (Low, Medium, High, Ultra.ini in the
+installation) and the game writes its current values back. Skyrim.ini's values reach preference
+settings too (the maintainer's SkyrimPrefs.ini carries Skyrim_Default.ini's fLightLODStartFade
+3500, fGrassMinStartFadeDistance 0, fTreesMidLODSwitchDist 9999999), so this engine reads
+Skyrim_Default.ini for both. The player's INI files are M12's (TODO(M12): Skyrim.ini,
+SkyrimPrefs.ini with their preset); until then the player's own layer is what the settings menu
+changes (`src/shell/preferences.ts`). `INI_DEFAULTS` therefore holds the executable's defaults,
+never a preset's. Some defaults the executable sets as it starts (the dump of its stored values
+shows 0 for them): iDifficulty 2, fHUDOpacity 1, bShowFloatingQuestMarkers 1, bSaveOnRest /
+Wait / Travel 1 (bSaveOnPause 0), fAutosaveEveryXMins 15, fLightLODStartFade = fLightLODDefaultStartFade
+(1000). Settings the executable names without a section are [MAIN]'s (bCrosshairEnabled,
+fHUDOpacity, the bSaveOn*: where SkyrimPrefs.ini keeps them; `tools/setting-defaults.ts` looks
+them up so).
+
+Decisions (2026-10, against the executable's defaults with `tools/setting-defaults.ts`):
+fLODFadeOutMultActors / Items / Objects 6, 3, 5 (the executable's; were High.ini's 9, 6, 9; the
+settings menu's default positions are the executable's too; Ultra.ini: 15, 10, 30);
+fLightLODStartFade 1000 (Skyrim_Default.ini's 3500 applies over it); fInventory3DItemPosX /
+XWide −38 / −29 and fMagic3DItemPosX / XWide 34.7 / 26 (were STEP's Oldrim values −29 / −22, 29
+/ 22); HAVOK fMaxTime 0.016666668 (1/60 as a float); iDifficulty 2, bShowFloatingQuestMarkers 1,
+fHUDOpacity 1, fAutosaveEveryXMins 15 and the bSaveOn* (the executable's start-up values, kept).
+fShadowLODStartFade and fSpecularLODStartFade are gone: SSE has no such settings (Oldrim's;
+Skyrim_Default.ini's fShadowLODMaxStartFade, fSpecularLODMaxStartFade and fLightLODMaxStartFade
+are read by nothing either), and its settings menu gives Shadow, Light and Specularity Fade no
+ID. iHighlightSpeechOverlap and iMessageBoxMaxItems are never read by the engine
+(fHighlightSpeechOverlap is). Those used now: `[Camera]` fOverShoulderPosX 30, fOverShoulderPosZ −10, fVanityModeMinDist 155,
 fVanityModeMaxDist 600, fMinCurrentZoom −0.2, fMouseWheelZoomIncrement 0.075,
 fMouseWheelZoomSpeed 0.8, fCameraCasterSize 15, and for the bleedout camera (the dead player's)
 iBleedoutTransitionMillis 500, fCameraCasterBleedOutSize 5, fDefaultAutoVanityZoom 300; `[Controls]` bAlwaysRunByDefault 1,
@@ -1367,8 +1395,19 @@ fCollisionSoundHeavyThreshold 160, iCollisionSoundTimeDelta 150, fWaterAudioFade
 fWaterAudioFadeOutSeconds 5, uWaterAudioAmbientAttenuation 2200, uWaterAudioAxisSamplePoints 8,
 uWaterAudioSamplePointsToUse 8 (the compiled defaults as Step's INI guide lists them);
 `[Display]` fDefaultWorldFOV 80, fNearDistance 15; `[HAVOK]` fInAirFallingCharGravityMult 1.35,
-fUnsupportedGravMult 4, fMaxTime 0.0167; `[Interface]` fActivatePickLength 180,
-fActivatePickRadius 16.
+fUnsupportedGravMult 4, fMaxTime 1/60; `[Interface]` fActivatePickLength 180,
+fActivatePickRadius 16. Wired in the settings sweep (behaviour observed in the original;
+docs: [physics.md](../physics.md) for the camera, [ui.md](../ui.md), [audio.md](../audio.md),
+[rendering.md](../rendering.md) for decals): `[Camera]` fPitchZoomOutMaxDist,
+fCollisionRecoverySpeed / MinDist, f1st3rdSwitchDelay, `[Controls]` fTogglePOVDelay, and for
+phase 7's camera states the chase, auto vanity, furniture, workbench and flying settings;
+`[Display]` fDecalLifetime, `[Decals]` uMaxDecals; `[Interface]` iEnemyHealthDisplayTime /
+Angle, fMaxSubtitleDistance, bShowSubtitleSpeakerName, iSubtitleSpeakerNameColor,
+bShowCompass, bShowHUDMessages, fMenuKeyRepeatLong / Short; the settings menu's slider ends
+(fGammaMin / Max, fMouseHeadingSensitivityMin / Max, fActorLODMin .. fObjectLODMax,
+fGrassMin / MaxStartFadeDistance, fDynamicDOFBlurMultiplierMin / Max); `[Audio]`
+fMenuModeFadeOutTime / InTime, fNonDialogVoiceDucking (FadeIn, FadeOut), fMaxHighlightRadius,
+fNonHighlightSpeechAtten, fHighlightSpeechOverlap.
 
 ## Items
 
@@ -1702,6 +1741,10 @@ with its values and the NPC\_ naming it, `--audit` counts), after xEdit, CommonL
   attack time, perch attack chance, perch attack time, flying attack chance.
 - **DATA** flags u32: 0x1 dueling, 0x2 flanking, 0x4 allow dual wielding. Record flag 0x80000
   is allow dual wielding too (xEdit, CommonLibSSE).
+
+The engine reads none of these values directly: each is placed on a scale of its own game
+settings (a chance, distance or time is Min + value × (Max − Min); flank distance is a
+distance, stalk time a time), see [ai.md](../ai.md#style-values).
 
 A field may stop early or be missing; what it leaves out has the Creation Kit's defaults
 (UESP): group offensive and the equipment mults 1, avoid threat 0.2; melee 1, special attack

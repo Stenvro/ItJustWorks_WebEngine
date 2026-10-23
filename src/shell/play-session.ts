@@ -7,7 +7,14 @@ import type RAPIER from '@dimforge/rapier3d-compat';
 import { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
 import { HAVOK_SCALE, settlesWhenPlaced, type CollisionData } from '../physics/collision-data.ts';
-import { GrabSpring, TelekinesisHold } from '../physics/grab.ts';
+import { GrabSpring } from '../physics/grab.ts';
+import {
+  beginTelekinesis,
+  stepTelekinesis,
+  telekinesisThrowSpeed,
+  type TelekinesisHold,
+  type TelekinesisSettings,
+} from '../gameplay/magic/telekinesis.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import { landscapeMesh } from '../physics/landscape.ts';
 import type {
@@ -58,8 +65,8 @@ const OPENED_LONG_AGO = 1e6;
 interface HeldObject {
   readonly spring: GrabSpring;
   readonly distance: number;
-  /** A telekinetic hold: its pull, its throw, and whether it is dual cast. */
-  readonly telekinesis?: { readonly hold: TelekinesisHold; dual: boolean };
+  /** Telekinesis's hold (its distance pulled in from `distance`). */
+  readonly telekinesis?: TelekinesisHold;
   /** Its reference (told as grabbed and released). */
   readonly reference: number | undefined;
 }
@@ -964,9 +971,7 @@ export class PlaySession {
     }
     const camera = this.player.position;
     const forward = this.player.forward;
-    // A telekinetic hold pulls the object in, then holds it near (TelekinesisHold).
-    grab.telekinesis?.hold.update(step);
-    const distance = grab.telekinesis?.hold.distance ?? grab.distance;
+    const distance = grab.telekinesis?.distance ?? grab.distance;
     grab.spring.target = [
       camera[0] + forward[0] * distance,
       camera[1] + forward[1] * distance,
@@ -987,24 +992,30 @@ export class PlaySession {
   }
 
   /**
-   * Telekinesis held (src/shell/player-casting.ts; `cast` while a hand casts it): the loose
-   * object the crosshair finds within `reach` is taken hold of by the grab spring with
-   * Telekinesis's settings (the player's grabSpring, as the Z key's: CommonLibSSE
-   * PlayerCharacter GrabbingType kTelekinesis) at its middle, pulled in to
-   * fMagicTelekinesisDistanceMin before the camera and held there (TelekinesisHold); let go once
-   * held a moment, it flies along the view at the throw's speed, else it drops (the engine's,
-   * observed in the original). TODO(M13): the thrown object's damage (fMagicTelekinesisDamage*, Mod
-   * Telekinesis Damage Mult) waits for physics damage, which the engine gives thrown objects.
+   * Telekinesis held (src/shell/player-casting.ts; the rules: src/gameplay/magic/telekinesis.ts):
+   * the loose object the crosshair finds within `reach` is taken hold of at its middle by the grab
+   * spring with Telekinesis's own settings (the player's grabSpring, as the Z key's: CommonLibSSE
+   * PlayerCharacter GrabbingType kTelekinesis; fMagicTelekinesisSpring*, observed in the original) and pulled
+   * in before the camera, `seconds` at a time; let go held, it is thrown along the view (`dual`:
+   * dual cast), its turning stopped; let go still pulled in, it stops. TODO(M13): the
+   * thrown object's damage (fMagicTelekinesisDamageBase and Mult, Mod Telekinesis Damage and
+   * Damage Mult: the engine adds them to what its collision deals).
    */
-  telekinesis(cast: { readonly dual: boolean } | undefined, reach: number): void {
+  telekinesis(
+    active: boolean,
+    reach: number,
+    seconds: number,
+    dual: boolean,
+    settings: TelekinesisSettings,
+  ): void {
     const grab = this.#grab;
-    if (!cast) {
+    if (!active) {
       if (grab?.telekinesis) {
         this.#setGrab(undefined);
         const body = grab.spring.body;
         const forward = this.player.forward;
-        const speed = grab.telekinesis.hold.throwSpeed(grab.telekinesis.dual);
-        // Thrown, it stops turning; dropped, it falls from rest.
+        const speed = telekinesisThrowSpeed(grab.telekinesis, dual, settings) ?? 0;
+        // Thrown, it stops turning (the engine clears both speeds before the throw's impulse).
         if (body.isValid() && speed > 0) body.setAngvel({ x: 0, y: 0, z: 0 }, true);
         if (body.isValid())
           body.setLinvel(
@@ -1018,7 +1029,10 @@ export class PlaySession {
       }
       return;
     }
-    if (grab?.telekinesis) grab.telekinesis.dual = cast.dual;
+    if (grab?.telekinesis) {
+      stepTelekinesis(grab.telekinesis, seconds, reach, settings);
+      return;
+    }
     if (grab || this.seated || this.dead || this.knocked) return;
     const ray = this.#pickRay();
     const hit = this.physics.pick(
@@ -1038,12 +1052,9 @@ export class PlaySession {
     const camera = this.player.position;
     const distance = Math.hypot(point[0] - camera[0], point[1] - camera[1], point[2] - camera[2]);
     this.#setGrab({
-      spring: new GrabSpring(body, point, this.player.telekinesis.spring),
+      spring: new GrabSpring(body, point, this.player.telekinesisSpring),
       distance,
-      telekinesis: {
-        hold: new TelekinesisHold(this.player.telekinesis, distance),
-        dual: cast.dual,
-      },
+      telekinesis: beginTelekinesis(distance),
       reference: ownReference(hit),
     });
   }

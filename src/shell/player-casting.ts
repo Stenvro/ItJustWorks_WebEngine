@@ -8,6 +8,13 @@
 // (src/shell/actor-casting.ts), aimed from the hand along the view and turned by the aim
 // assistance toward what the crosshair is on (src/shell/projectile-aim.ts).
 
+import {
+  TELEKINESIS_DEFAULTS,
+  TELEKINESIS_SETTING_NAMES,
+  telekinesisReach,
+  type TelekinesisSettings,
+} from '../gameplay/magic/telekinesis.ts';
+import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
@@ -22,15 +29,6 @@ export interface PlayerCastingOptions {
   readonly casting: ActorCasting;
   readonly player: () => PlayerView | undefined;
 }
-
-/**
- * How far Telekinesis reaches (units; TODO(M13): the engine's telekinesis distance, not in the
- * plugins; Mod Telekinesis Distance has no vanilla perk).
- */
-const TELEKINESIS_REACH = 2048;
-
-/** Both attack buttons pressed within this dual cast (seconds; TODO(M13): the engine's window). */
-const DUAL_WINDOW = 0.15;
 
 /** The attack buttons by casting source. */
 const BUTTONS: Readonly<Record<number, string>> = {
@@ -98,13 +96,29 @@ export class PlayerCasting implements CastingButtons {
     }
     casting.powersFrame();
     // Telekinesis held: the object aimed at is taken hold of and pulled; let go, thrown.
-    view.play.telekinesis(this.#telekinetic(runtime), TELEKINESIS_REACH);
+    const telekinetic = this.#telekinetic(runtime);
+    if (telekinetic !== undefined) this.#dualTelekinesis = telekinetic.dual;
+    if (telekinetic && !this.#wasTelekinetic) this.#readTelekinesis(runtime);
+    this.#wasTelekinetic = telekinetic !== undefined;
+    view.play.telekinesis(
+      telekinetic !== undefined,
+      this.#telekinesisReach,
+      seconds,
+      this.#dualTelekinesis,
+      this.#telekinesisSettings,
+    );
   }
 
   /** Spells whose costliest effect is Telekinesis, as read (asynchronously). */
   readonly #telekinesis = new Map<number, boolean>();
+  /** Telekinesis's settings and reach (units), as last read (as its cast begins). */
+  #telekinesisSettings: TelekinesisSettings = TELEKINESIS_DEFAULTS;
+  #telekinesisReach = telekinesisReach(TELEKINESIS_DEFAULTS.baseDistance);
+  #wasTelekinetic = false;
+  /** The last telekinesis cast was dual cast (its throw). */
+  #dualTelekinesis = false;
 
-  /** Whether a hand casts Telekinesis now (charged and held), and dual cast. */
+  /** Whether a hand casts Telekinesis now (charged and held): that cast. */
   #telekinetic(runtime: ScriptRuntime): { readonly dual: boolean } | undefined {
     for (const source of [CastingSource.left, CastingSource.right]) {
       const cast = runtime.casting.casting(PLAYER_REF, source);
@@ -119,6 +133,31 @@ export class PlayerCasting implements CastingButtons {
       } else if (known) return { dual: cast.dual };
     }
     return undefined;
+  }
+
+  /**
+   * Telekinesis's settings (GMSTs) and the player's reach: fMagicTelekinesisBaseDistance feet
+   * through their perks (Mod Telekinesis Distance) in units.
+   */
+  #readTelekinesis(runtime: ScriptRuntime): void {
+    void (async () => {
+      const settings: Record<string, number> = {};
+      for (const [key, name] of Object.entries(TELEKINESIS_SETTING_NAMES)) {
+        const value = await runtime.gameSetting(name);
+        settings[key] =
+          typeof value === 'number'
+            ? value
+            : TELEKINESIS_DEFAULTS[key as keyof TelekinesisSettings];
+      }
+      const read = { ...TELEKINESIS_DEFAULTS, ...settings };
+      const feet = await runtime.perks.apply(
+        EntryPoint.modTelekinesisDistance,
+        PLAYER_REF,
+        read.baseDistance,
+      );
+      this.#telekinesisSettings = read;
+      this.#telekinesisReach = telekinesisReach(feet, read);
+    })();
   }
 
   /** What the hands hold to cast, read again (once at a time). */
@@ -147,7 +186,9 @@ export class PlayerCasting implements CastingButtons {
     // The other hand's button pressed at the same moment, with the same spell: a dual cast.
     const other = source === CastingSource.left ? CastingSource.right : CastingSource.left;
     const partner = this.#held.get(other);
-    if (partner && Math.abs(partner.since - entry.since) <= DUAL_WINDOW) {
+    // Within [Controls] fDualCastChordTime of each other (the engine's input chord).
+    const chord = session.ini.number('Controls', 'fDualCastChordTime');
+    if (partner && Math.abs(partner.since - entry.since) <= chord) {
       const theirs = await runtime.casting.castable(PLAYER_REF, other);
       // Only with the Dual Casting perk of the spell's school (Can Dual Cast Spell); without
       // it each hand casts on its own.

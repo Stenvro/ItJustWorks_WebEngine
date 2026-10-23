@@ -194,7 +194,23 @@ fMouseHeadingXScale` radians per count (× fMouseHeadingYScale vertically).
   **Third person:** behind the 3rd-person skeleton's Camera3rd node, moved right by
   fOverShoulderPosX and down by fOverShoulderPosZ, at fVanityModeMinDist … fVanityModeMaxDist
   by the zoom (mouse wheel by fMouseWheelZoomIncrement down to fMinCurrentZoom; further in goes
-  to first person). A sphere of fCameraCasterSize on L_CAMERA keeps it out of walls.
+  to first person). A sphere of fCameraCasterSize on L_CAMERA keeps it out of walls. Observed in
+  the original (`src/shell/player.ts`): the zoom moves to its target at
+  fMouseWheelZoomSpeed (0.8) of its range a second, in a straight line; looking down pulls the
+  camera back by up to fPitchZoomOutMaxDist (100), in step with the pitch (all of it straight
+  down); a camera a wall pushed in eases back out from where it met the wall, fCollisionRecoverySpeed
+  (3) of the way a second, once the wall is gone, when the way back is longer than
+  √fCollisionRecoveryMinDist (√4000, about 63 units; else it jumps). Toggle POV switches as it
+  is let go (after at least fTogglePOVDelay, 0 s); held for f1st3rdSwitchDelay (0.25 s) in first
+  person it goes to third person at once. TODO(phase 7): the camera states that read the other
+  `[Camera]` settings, now in `INI_DEFAULTS`: holding Toggle POV in third person turns the camera
+  about the player (and bReturnTo1stPersonFromVanity), the auto vanity camera (after
+  fAutoVanityModeDelay, 120 s, without input: circling by fAutoVanityIncrement, 0.01 radians an
+  update, fDefaultAutoVanityZoom away; bDisableAutoVanityMode, bForceAutoVanityMode), the
+  heading's chase (fChaseCameraSpeed 10 radians a second, at most fChaseCameraMaxAngle 30°
+  behind: what sets its target is not known yet), the furniture camera (fFurnitureCameraZoom 250,
+  fFurnitureCameraAngle π/8; a workbench's fWorkbenchCamera*), flying (fVanityModeMinDistFly
+  1200, fVanityModeMaxDist × fVanityModeMaxDistFlyMult 4).
 - **Field of view:** fDefaultWorldFOV (80) is the horizontal field of view of a 4:3 frame;
   wider screens see more at the sides (Hor+). The reference aspect is not documented.
 - **Free camera (tfc):** a switch in the shell; the player stays where they are.
@@ -276,16 +292,9 @@ a held ragdoll hangs on the plain spring at the body taken hold of).
 
 **Telekinesis** (observed in the original): the same spring with fMagicTelekinesisSpringDamping (0.5),
 ...SpringElasticity (0.075), ...ObjectDamping (0.95) and ...MaxForce (1000, no weight scale),
-holding the object at its middle. It is pulled in from where it was taken at
-fMagicTelekinesisMoveBase (50 units a second), faster by fMagicTelekinesisMoveAccelerate (400
-a second) up to fMagicTelekinesisMoveMax (1000), to fMagicTelekinesisDistanceMin (48) before the
-camera, where it is held, gathering fMagicTelekinesisThrowAccelerate (10) a second up to
-fMagicTelekinesisThrowMax (30). Let go once held, it is thrown along the view at
-fMagicTelekinesisThrow (1000) plus what it gathered (dual cast × fMagicTelekinesisDualCastThrowMult,
-2), its turning stopped; let go while still coming, it drops. TODO(M13): its damage
-(fMagicTelekinesisDamageBase/Mult and Mod Telekinesis Damage Mult on the thrown object) waits for
-physics damage; the complex spring for ragdolls (fMagicTelekinesisComplex\*);
-fMagicTelekinesisLiftPowerMult is read by nothing.
+holding the object at its middle; thrown, its turning is stopped. Its reach, pull, hold and throw:
+docs/gameplay.md, "Magic effects" (src/gameplay/magic/telekinesis.ts). TODO(M13): the complex
+spring for ragdolls (fMagicTelekinesisComplex*); fMagicTelekinesisLiftPowerMult is read by nothing.
 
 **Constraints and ragdolls** (`physics-world.ts`, `articulation.ts`; the blocks:
 formats/nif.md, Collision): a model's constraints become Rapier impulse joints between its

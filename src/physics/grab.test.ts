@@ -4,8 +4,7 @@ import {
   invert3,
   maxRelativeForce,
   pointInverseMass,
-  TELEKINESIS_DEFAULTS,
-  TelekinesisHold,
+  TELEKINESIS_SPRING,
 } from './grab.ts';
 
 describe('grab spring', () => {
@@ -19,7 +18,7 @@ describe('grab spring', () => {
     const plugins = { ...GRAB_DEFAULTS, maxForce: 100, maxForceWeightHigh: 150 };
     expect(maxRelativeForce(plugins, 75)).toBeCloseTo(60);
     // Telekinesis: no weight scale.
-    expect(maxRelativeForce(TELEKINESIS_DEFAULTS.spring, 500)).toBeCloseTo(1000);
+    expect(maxRelativeForce(TELEKINESIS_SPRING, 500)).toBeCloseTo(1000);
   });
 
   it('builds the effective inverse mass at a point', () => {
@@ -31,21 +30,5 @@ describe('grab spring', () => {
     expect(inverse?.[0]).toBeCloseTo(2);
     expect(inverse?.[4]).toBeCloseTo(0.4);
     expect(invert3([1, 2, 3, 2, 4, 6, 0, 0, 1])).toBeUndefined();
-  });
-});
-
-describe('telekinesis', () => {
-  it('pulls the object in at a gathering speed, holds it, and throws once it gathered', () => {
-    const hold = new TelekinesisHold(TELEKINESIS_DEFAULTS, 1000);
-    // Let go while still coming: it drops.
-    hold.update(0.1);
-    expect(hold.distance).toBeCloseTo(1000 - 90 * 0.1);
-    expect(hold.throwSpeed(false)).toBe(0);
-    for (let i = 0; i < 300; i++) hold.update(1 / 60);
-    expect(hold.distance).toBe(TELEKINESIS_DEFAULTS.distanceMin);
-    // Held a while: 1000 and what it gathered (10 a second, up to 30).
-    for (let i = 0; i < 600; i++) hold.update(1 / 60);
-    expect(hold.throwSpeed(false)).toBeCloseTo(1030, 0);
-    expect(hold.throwSpeed(true)).toBeCloseTo(2060, 0);
   });
 });

@@ -152,7 +152,9 @@ export class HudController implements HudSink {
     menu.call('SetCrosshairEnabled', ini.bool('Main', 'bCrosshairEnabled'));
     menu.call('SetSubtitlesEnabled', ini.bool('Interface', 'bGeneralSubtitles'));
     const element = menu.element;
-    if (element) element.style.opacity = String(ini.number('Interface', 'fHUDOpacity'));
+    if (element) element.style.opacity = String(ini.number('Main', 'fHUDOpacity'));
+    // The compass is sent again (bShowCompass rides on SetCompassAngle).
+    this.#shown.heading = Number.NaN;
   }
 
   #stopSettings: (() => void) | undefined;
@@ -223,7 +225,9 @@ export class HudController implements HudSink {
     );
   }
 
+  /** A message at the top left, unless the setting bShowHUDMessages turns them off. */
   notification(text: string): void {
+    if (!this.#source.ini().bool('Interface', 'bShowHUDMessages')) return;
     this.#menu?.call('ShowMessage', text);
   }
 
@@ -378,7 +382,9 @@ export class HudController implements HudSink {
       // (Not "> 0.05": a heading not shown yet is NaN, which compares false.)
       if (!(Math.abs(degrees - this.#shown.heading) <= 0.05)) {
         this.#shown.heading = degrees;
-        menu.call('SetCompassAngle', degrees, degrees, true);
+        // The third: whether the compass shows (bShowCompass).
+        const compass = this.#source.ini().bool('Interface', 'bShowCompass');
+        menu.call('SetCompassAngle', degrees, degrees, compass);
       }
     }
     // Game.SetHudCartMode (the opening's cart): the HUD's CartMode (only the compass's frame).

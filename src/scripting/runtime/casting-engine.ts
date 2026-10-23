@@ -28,13 +28,25 @@ import {
   castSkillUses,
   chargeSeconds,
   itemBaseCost,
+  lesserPowerReady,
   magickaCost,
   powerReady,
+  regeneratesWhileCasting,
   releaseCast,
   type CastingSettings,
   type HandCast,
 } from '../../gameplay/magic/casting.ts';
 import { MagicValue, UNITS_PER_FOOT } from '../../gameplay/magic/effect-rules.ts';
+import {
+  EXPLOSION_DEFAULTS,
+  EXPLOSION_SETTING_NAMES,
+  explosionBodyPush,
+  explosionKnocksDown,
+  explosionShare,
+  explosionSightStart,
+  knockdownShareEnough,
+  type ExplosionSettings,
+} from '../../gameplay/magic/explosions.ts';
 import { EntryPoint } from '../../gameplay/perk-entry-points.ts';
 import {
   SHOUT_DEFAULTS,
@@ -45,6 +57,7 @@ import {
   type ShoutSettings,
 } from '../../gameplay/magic/shouts.ts';
 import { ActorValue } from '../../world/actor-values.ts';
+import { DefaultObjectUse } from '../../world/default-objects.ts';
 import { EffectArchetype, EffectFlag, type MagicEffectRecord } from '../../world/magic-effects.ts';
 import { Delivery, MagicSpellFlag, type MagicItemRecord } from '../../world/magic-records.ts';
 import {
@@ -124,6 +137,11 @@ export interface DeliverOptions {
   readonly effects?: readonly number[];
   /** The projectile (PROJ) that carried it there: its hit tells it (OnHit's akProjectile). */
   readonly projectile?: number;
+  /**
+   * The share of its strength left: a chain explosion's hop (chainEffectiveness), its effects
+   * at once by that.
+   */
+  readonly effectiveness?: number;
 }
 
 export type CastEventKind = 'ready' | 'fire' | 'cancel' | 'stop' | 'refused' | 'ward' | 'shout';
@@ -153,7 +171,10 @@ export type CastPurpose = 'attack' | 'heal' | 'summon' | 'ward' | 'buff';
 /** How long the AI's and the conditions' ward state lasts after a hit (seconds). */
 const WARD_STATE_SECONDS = 0.5;
 
-/** A cast's magicka regeneration is held while it lasts this much after each frame (seconds). */
+/**
+ * A cast's magicka regeneration is held while it lasts this much after each frame (seconds; the
+ * engine checks its casters each update: a small margin over a frame).
+ */
 const CASTING_HOLD = 0.5;
 
 /** Actor values. */
@@ -183,6 +204,10 @@ export class CastingEngine {
   #clock = 0;
   /** When an actor last began casting an item ("actor:item": the AI's delays). */
   readonly #lastCast = new Map<string, number>();
+  /** When an actor last used a lesser power ("actor:spell": its cooldown; the engine's clock). */
+  readonly #lesserUsed = new Map<string, number>();
+  /** Until when Spell Absorption's art shows on an actor (not shown again meanwhile). */
+  readonly #absorbShown = new Map<number, number>();
   /** What the world hears of casts. */
   readonly listeners = new Set<(event: CastEvent) => void>();
 
@@ -230,15 +255,30 @@ export class CastingEngine {
       const casting: Record<string, number> = {};
       for (const [key, name] of Object.entries(CASTING_SETTING_NAMES))
         casting[key] = await number(name, CASTING_DEFAULTS[key as keyof CastingSettings]);
-      return {
+      const settings = {
         casting: { ...CASTING_DEFAULTS, ...casting },
         shout: {
           time1: await number('fShoutTime1', SHOUT_DEFAULTS.time1),
           time2: await number('fShoutTime2', SHOUT_DEFAULTS.time2),
         },
       };
+      this.#casting = settings.casting;
+      return settings;
     })();
     return this.#settings;
+  }
+
+  /** The casting settings once read (the per-frame work reads them without waiting). */
+  #casting: CastingSettings | undefined;
+
+  /**
+   * A cast holds its caster's magicka regeneration while it lasts (each frame: CASTING_HOLD on):
+   * the player's always, an NPC's unless bRegenNPCMagickaDuringCast (casting.ts
+   * regeneratesWhileCasting).
+   */
+  #holdRegeneration(actor: number): void {
+    if (regeneratesWhileCasting(actor === PLAYER_REF, this.#casting ?? CASTING_DEFAULTS)) return;
+    this.#runtime.progression.holdRegeneration(actor, MAGICKA, CASTING_HOLD);
   }
 
   /** What casting keeps of an actor. */
@@ -482,6 +522,15 @@ export class CastingEngine {
         )
           return this.#refuse(actor, source, 'power');
         break;
+      case 'lesserPower': {
+        // Again only after its cooldown. TODO(M13): what the engine tells the player meanwhile
+        // (the power's refusal here).
+        const { casting } = await this.settings();
+        const used = this.#lesserUsed.get(`${String(actor)}:${String(castable.item.formId)}`);
+        if (!lesserPowerReady(used, this.#clock, casting))
+          return this.#refuse(actor, source, 'power');
+        break;
+      }
       case 'scroll':
         if ((await runtime.itemCount(actor, castable.item.formId)) <= 0) return 'nothing';
         break;
@@ -501,8 +550,7 @@ export class CastingEngine {
     this.#lastCast.set(`${String(actor)}:${String(castable.item.formId)}`, this.#clock);
     // Casting ends invisibility (UESP "Skyrim:Invisibility").
     runtime.magic.acted(actor);
-    if (castable.via === 'spell')
-      runtime.progression.holdRegeneration(actor, MAGICKA, CASTING_HOLD);
+    this.#holdRegeneration(actor);
     // Ready at once (no charge time): told with the next frame, after the world showed its start.
     if (cast.hand.phase !== 'charging') this.#readyAtOnce.add(cast);
     // The story manager's Cast Magic (the engine raises it as a cast begins). TODO(M13): the
@@ -637,6 +685,9 @@ export class CastingEngine {
       case 'power':
         this.state(actor).powersUsed.set(castable.item.formId, runtime.state.gameDaysPassed);
         return true;
+      case 'lesserPower':
+        this.#lesserUsed.set(`${String(actor)}:${String(castable.item.formId)}`, this.#clock);
+        return true;
       default:
         return true;
     }
@@ -676,8 +727,7 @@ export class CastingEngine {
       const atOnce = this.#readyAtOnce.delete(cast);
       const { casting, began } = advanceCast(cast.hand, seconds);
       if (atOnce) this.#emit({ actor: cast.actor, source: cast.source, kind: 'ready', cast });
-      if (cast.castable.via === 'spell')
-        runtime.progression.holdRegeneration(cast.actor, MAGICKA, CASTING_HOLD);
+      this.#holdRegeneration(cast.actor);
       if (began) this.#emit({ actor: cast.actor, source: cast.source, kind: 'ready', cast });
       if (casting > 0 && cast.castable.via === 'spell' && cast.cost.magicka > 0)
         runtime.detach(this.#concentrate(key, cast, cast.cost.magicka * casting));
@@ -723,7 +773,10 @@ export class CastingEngine {
     const { caster, item } = delivered;
     const actor = await runtime.actors.isActor(target);
     const hostile = target !== caster && (await runtime.magic.hostile(item));
-    let scale = options.seconds;
+    let scale =
+      options.effectiveness === undefined
+        ? options.seconds
+        : (options.seconds ?? 1) * Math.max(0, options.effectiveness);
     if (actor && hostile && !(await runtime.actors.isDead(target))) {
       if (await this.#absorbed(delivered, target)) return 0;
       const ward = await this.#ward(delivered, target, options);
@@ -778,7 +831,9 @@ export class CastingEngine {
   /**
    * Spell Absorption: a hostile spell, scroll or staff's (not a power's, a shout's or one that
    * disallows it) is absorbed by the target's AbsorbChance percent: it does nothing, the target
-   * gains its magicka cost (UESP "Skyrim:Spell Absorption"). TODO(M13): the cap and the
+   * gains its magicka cost (UESP "Skyrim:Spell Absorption"). Observed in the original: the
+   * absorbing actor shows the default object AbsorbSpellEffect (ABSE, an ARTO) for
+   * fMagicAbsorbVisualTimer seconds, not again while it shows. TODO(M13): the cap and the
    * magicka gained for staffs and scrolls (their base cost here).
    */
   async #absorbed(delivered: Delivered, target: number): Promise<boolean> {
@@ -792,6 +847,14 @@ export class CastingEngine {
     if (chance <= 0 || Math.random() * 100 >= chance) return false;
     const gained = delivered.cost.magicka > 0 ? delivered.cost.magicka : delivered.cost.base;
     runtime.actors.restore(target, MAGICKA, gained);
+    if ((this.#absorbShown.get(target) ?? -Infinity) <= this.#clock) {
+      const art = await runtime.magic.defaultObject(DefaultObjectUse.absorbSpellEffect);
+      const { casting } = await this.settings();
+      if (art !== undefined) {
+        this.#absorbShown.set(target, this.#clock + casting.absorbVisualTimer);
+        runtime.world.artEffect?.(art, target, casting.absorbVisualTimer);
+      }
+    }
     return true;
   }
 
@@ -847,13 +910,28 @@ export class CastingEngine {
       this.#wards.set(target, { state: 1, until });
       this.#emit({ actor: target, source: CastingSource.instant, kind: 'ward', ward: 1 });
       told(1);
+      // Observed in the original: a ward lowered (not broken) stops growing for a while.
+      if (damage > 0) runtime.magic.holdWards(target);
       return 'absorbed';
     }
     await runtime.actors.damage(target, MagicValue.wardPower, power);
     this.#wards.set(target, { state: 2, until });
     this.#emit({ actor: target, source: CastingSource.instant, kind: 'ward', ward: 2 });
     told(2);
+    // Observed in the original: a broken ward ends the ward spells its actor casts.
+    for (const cast of this.castsOf(target)) {
+      if (await this.#raisesWard(cast.castable.item)) this.interrupt(target, cast.source);
+    }
     return (damage - power) / damage;
+  }
+
+  /** Whether a magic item raises a ward (an effect on WardPower). */
+  async #raisesWard(item: MagicItemRecord): Promise<boolean> {
+    for (const entry of item.effects) {
+      if ((await this.#runtime.magic.effect(entry.effect))?.actorValue === MagicValue.wardPower)
+        return true;
+    }
+    return false;
   }
 
   /**
@@ -913,29 +991,53 @@ export class CastingEngine {
     return reached;
   }
 
+  /** The explosions' settings (GMSTs), read once. */
+  explosionSettings(): Promise<ExplosionSettings> {
+    this.#explosionSettings ??= (async () => {
+      const settings: Record<string, number> = {};
+      for (const [key, name] of Object.entries(EXPLOSION_SETTING_NAMES)) {
+        const value = await this.#runtime.gameSetting(name);
+        settings[key] =
+          typeof value === 'number' ? value : EXPLOSION_DEFAULTS[key as keyof ExplosionSettings];
+      }
+      return { ...EXPLOSION_DEFAULTS, ...settings };
+    })();
+    return this.#explosionSettings;
+  }
+
+  #explosionSettings: Promise<ExplosionSettings> | undefined;
+
   /**
-   * An explosion bursts at a point (a projectile's, an effect's): its enchantment on the actors
-   * within its radius, its damage (Health, less with distance), its force pushing what is there
-   * (the world's impulse); destructible objects within it take its damage and its enchantment
+   * An explosion bursts at a point (a projectile's, an effect's; the rules: src/gameplay/magic/
+   * explosions.ts): the actors within its radius that it sees (unless it ignores line of sight)
+   * take its enchantment and its damage (Health, by its share: 1 − (distance / radius)²); its
+   * force pushes the moving bodies there (the world's explosionPush; its source, `exclude`,
+   * harder); destructible objects within it take its damage and its enchantment
    * (destruction-engine.ts), `exclude` aside (the object whose destruction stage set it off). Its
-   * knock-down flags (EXPL DATA) knock the actors down, pushed away from it by its force: Knock
-   * Down Always all of them, Knock Down By Formula those whose health is below
-   * fKnockdownCurrentHealthThreshold percent (TODO(M13): the engine's formula is not documented;
-   * that setting is the one its name ties to it). Returns the actors reached.
+   * knock-down flags (EXPL DATA) knock the actors down where its share is above
+   * fExplosionForceKnockdownMinimum, pushed away from it by its force: Knock Down Always all of
+   * them, Knock Down By Formula those whose health is below fKnockdownCurrentHealthThreshold
+   * percent (TODO(M13): the engine's formula is not read; that setting is the one its name ties
+   * to it), both flags anyone but the player. `direction`: the way it faces (off the surface it
+   * burst on), where its sight starts from. Returns the actors reached.
    */
   async explode(
     caster: number | undefined,
     explosionId: number,
     point: Point,
     exclude?: number,
+    direction?: Point,
   ): Promise<number[]> {
     const runtime = this.#runtime;
     const explosion = await this.explosion(explosionId);
     if (!explosion || explosion.radius <= 0) return [];
+    const settings = await this.explosionSettings();
     const enchantment =
       explosion.enchantment === undefined
         ? undefined
         : await runtime.magic.item(explosion.enchantment);
+    const sight = explosionSightStart(point, direction, settings);
+    const center: Vec3 = [point[0], point[1], point[2]];
     const reached: number[] = [];
     for (const reference of runtime.world.loadedReferences?.() ?? []) {
       const at = runtime.world.livePlacement?.(reference)?.position;
@@ -943,13 +1045,26 @@ export class CastingEngine {
       const offset: Vec3 = [at[0] - point[0], at[1] - point[1], at[2] - point[2]];
       const distance = Math.hypot(...offset);
       if (distance > explosion.radius) continue;
-      const share = Math.max(0, 1 - distance / explosion.radius);
-      if (explosion.force > 0 && distance > 0)
-        runtime.world.impulse?.(reference, offset, explosion.force * share);
+      const share = explosionShare(distance, explosion.radius);
+      if (explosion.force > 0) {
+        const source = reference === exclude;
+        if (runtime.world.explosionPush) {
+          runtime.world.explosionPush(reference, center, (layer, mass) =>
+            explosionBodyPush(explosion.force, layer, mass, source, settings),
+          );
+        } else if (distance > 0) {
+          runtime.world.impulse?.(reference, offset, explosion.force * share);
+        }
+      }
       if (!(await runtime.actors.isActor(reference)) || (await runtime.actors.isDead(reference)))
         continue;
+      if (
+        (explosion.flags & ExplosionFlag.ignoreLosCheck) === 0 &&
+        runtime.world.explosionReaches?.(sight, reference, settings.losBuffer) === false
+      )
+        continue;
       reached.push(reference);
-      if (await this.#knocksDown(explosion, reference))
+      if (knockdownShareEnough(share, settings) && (await this.#knocksDown(explosion, reference)))
         runtime.world.knockDown?.(reference, [...point], explosion.force * share);
       if (explosion.damage > 0)
         await runtime.actors.damage(reference, HEALTH, explosion.damage * share, caster);
@@ -1170,14 +1285,21 @@ export class CastingEngine {
     return 'unlocked';
   }
 
-  /** Whether an explosion knocks an actor down (its flags; by formula: its health is low). */
+  /**
+   * Whether an explosion knocks an actor down (its flags: explosions.ts explosionKnocksDown; by
+   * formula: its health is low).
+   */
   async #knocksDown(explosion: ExplosionRecord, actor: number): Promise<boolean> {
-    if ((explosion.flags & ExplosionFlag.knockDownAlways) !== 0) return true;
-    if ((explosion.flags & ExplosionFlag.knockDownByFormula) === 0) return false;
+    const flags =
+      explosion.flags & (ExplosionFlag.knockDownAlways | ExplosionFlag.knockDownByFormula);
+    if (flags === 0) return false;
     const threshold = await this.#runtime.gameSetting('fKnockdownCurrentHealthThreshold');
     const health = await this.#runtime.actors.value(actor, HEALTH);
     const percent = health.max > 0 ? (health.current / health.max) * 100 : 100;
-    return percent < (typeof threshold === 'number' ? threshold : 50);
+    return explosionKnocksDown(flags, {
+      player: actor === PLAYER_REF,
+      byFormula: () => percent < (typeof threshold === 'number' ? threshold : 50),
+    });
   }
 
   // --- The AI ------------------------------------------------------------------------------
@@ -1269,8 +1391,8 @@ export class CastingEngine {
   /**
    * The potion an NPC drinks to restore an actor value (Health, Magicka, Stamina): of the
    * potions it carries, the one restoring the most (magnitude × its seconds). When it drinks
-   * is the combat AI's (src/shell/actor-combat-ai.ts: below iAICombatRestoreHealthPercentage,
-   * once every fCombatItemRestoreTimer).
+   * is the combat AI's (src/ai/combat-tactics.ts chooseSupport: below its style's restore share,
+   * not within fCombatRestore*RestrictTime of the last).
    */
   async choosePotion(actor: number, value: number): Promise<number | undefined> {
     const runtime = this.#runtime;

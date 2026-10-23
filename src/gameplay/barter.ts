@@ -8,25 +8,48 @@
 import type { FactionVendor } from '../world/actor-stats-records.ts';
 import type { ItemRecord } from '../world/item-records.ts';
 
-/** UESP's limits on the price factors: buying at least this × value, selling at most value. */
-const BUY_AT_LEAST = 1.05;
-const SELL_AT_MOST = 1;
+/** The settings the price factors come from (GMSTs; the load order's, else the engine's). */
+export interface BarterSettings {
+  /** fBarterMin, fBarterMax: the buying factor at Speech 100 and at 0 (load order 2, 3.3). */
+  readonly min: number;
+  readonly max: number;
+  /** fBarterBuyMin (1.05), fBarterSellMax (0.95): buying at least, selling at most × value. */
+  readonly buyMin: number;
+  readonly sellMax: number;
+}
+
+export const BARTER_DEFAULTS: BarterSettings = { min: 1.4, max: 2.4, buyMin: 1.05, sellMax: 0.95 };
+
+/** The barter settings by name (`number`: a game setting, the load order's if it has it). */
+export function barterSettings(number: (name: string) => number | undefined): BarterSettings {
+  const setting = (name: string, fallback: number): number => number(name) ?? fallback;
+  return {
+    min: setting('fBarterMin', 1.4),
+    max: setting('fBarterMax', 2.4),
+    buyMin: setting('fBarterBuyMin', 1.05),
+    sellMax: setting('fBarterSellMax', 0.95),
+  };
+}
 
 /**
- * The barter multipliers for a Speech skill and the settings fBarterMin / fBarterMax, times
- * what the player's perks make of them (`perks`: the entry points' factors, every vanilla
- * entry a Multiply Value), within UESP's limits.
+ * The barter multipliers for a Speech skill, observed in the original: buying at
+ * fBarterMax less (fBarterMax − fBarterMin) × Speech / 100, at least fBarterBuyMin; selling at
+ * its inverse, at most fBarterSellMax. Then what the player's perks make of them (`perks`: the
+ * entry points' factors, every vanilla entry a Multiply Value), within the same limits.
+ * TODO(M13): where the engine applies the perks' factors (here: on the multipliers).
  */
 export function barterMultipliers(
   speech: number,
-  min: number,
-  max: number,
+  settings: BarterSettings,
   perks: { readonly buy: number; readonly sell: number } = { buy: 1, sell: 1 },
 ): { readonly buy: number; readonly sell: number } {
+  const { min, max, buyMin, sellMax } = settings;
   const factor = max - ((max - min) * Math.min(Math.max(speech, 0), 100)) / 100;
+  const buy = Math.max(buyMin, factor);
+  const sell = Math.min(sellMax, 1 / buy);
   return {
-    buy: Math.max(BUY_AT_LEAST, factor * perks.buy),
-    sell: Math.min(SELL_AT_MOST, (1 / factor) * perks.sell),
+    buy: Math.max(buyMin, buy * perks.buy),
+    sell: Math.min(sellMax, sell * perks.sell),
   };
 }
 
@@ -45,14 +68,11 @@ export function vendorBuys(
   return vendor.notInList ? !listed : listed;
 }
 
-/** A merchant's chest restocks this many game hours after it last did (UESP "Merchants"). */
-export const RESTOCK_HOURS = 48;
-
 /**
- * Whether a merchant's chest restocks now: RESTOCK_HOURS (in game days, as GameDaysPassed counts
- * them) after it was last stocked. TODO(M13): the 48 hours are UESP's; the executable's setting
- * for them is not in the plugins.
+ * Whether a merchant's chest restocks now, observed in the original: it keeps the day
+ * (whole days passed) it was last stocked, and restocks once the day is iDaysToRespawnVendor
+ * (1) days later. `lastDays`, `nowDays`: GameDaysPassed then and now.
  */
-export function restockDue(lastDays: number, nowDays: number): boolean {
-  return nowDays - lastDays >= RESTOCK_HOURS / 24;
+export function restockDue(lastDays: number, nowDays: number, daysToRespawn = 1): boolean {
+  return Math.floor(nowDays) - Math.floor(lastDays) >= daysToRespawn;
 }

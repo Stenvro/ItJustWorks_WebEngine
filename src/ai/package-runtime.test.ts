@@ -151,10 +151,41 @@ describe('ActorPackages', () => {
     expect(actor.current?.id).toBe(2);
     // The first's conditions come to hold: it is chosen at the next evaluation.
     truths.add(99);
-    await tick(actor, 3);
+    await tick(actor, 15);
     expect(actor.current?.id).toBe(1);
     expect(ran).toEqual(['second', 'first']);
     expect(events).toEqual(['begin Pack2', 'change Pack2', 'begin Pack1']);
+  });
+
+  it('chooses again every fEvaluatePackageTimer seconds, and every frame while it has none', async () => {
+    const ran: string[] = [];
+    const forever =
+      (name: string): ProcedureRunner =>
+      async (run) => {
+        ran.push(name);
+        while (!run.stopped()) await run.wait(1);
+        return 'failure';
+      };
+    const { actor, truths } = setup(
+      [
+        pack(1, procedure('first'), { conditions: [condition(99)] }),
+        pack(2, procedure('second'), { conditions: [condition(98)] }),
+      ],
+      { first: forever('first'), second: forever('second') },
+    );
+    // None holds: asked again each frame, so one that comes to hold runs at once.
+    await tick(actor);
+    expect(actor.current).toBeUndefined();
+    truths.add(98);
+    await tick(actor);
+    expect(actor.current?.id).toBe(2);
+    // One running is chosen again only after the timer (15 s).
+    truths.add(99);
+    await tick(actor, 10);
+    expect(actor.current?.id).toBe(2);
+    await tick(actor, 5);
+    expect(actor.current?.id).toBe(1);
+    expect(ran).toEqual(['second', 'first']);
   });
 
   it("takes the tree again as a running branch's conditions no longer hold", async () => {
@@ -207,11 +238,11 @@ describe('ActorPackages', () => {
     );
     truths.add(8);
     await tick(actor);
-    await tick(actor, 3);
+    await tick(actor, 15);
     expect(ran).toEqual(['travel']);
     truths.delete(8);
     truths.add(7);
-    await tick(actor, 3);
+    await tick(actor, 15);
     await tick(actor);
     expect(ran).toEqual(['travel', 'follow']);
   });

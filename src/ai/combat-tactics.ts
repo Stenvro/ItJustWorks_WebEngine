@@ -7,14 +7,239 @@
 // (the defensive mult) and when it gets out of a threat's way (avoid threat chance).
 //
 // The style's values are what the Creation Kit edits (UESP "Skyrim Mod:Mod File Format/CSTY").
-// The melee attack decision follows the engine's (docs/ai.md, "The attack decision"); the other
-// rules read each multiplier as the chance or weight its name gives, at the scale its vanilla
-// values have (TODO(M13)). Platform-independent.
+// The engine reads each on a scale of its own game settings (docs/ai.md, "Style values"): a
+// chance, distance or time is its Min + the value × (Max − Min), the advance radii, the optimal
+// range and the block time a three-point curve of the defensive mult against the offensive one.
+// The melee attack decision follows the engine's (docs/ai.md, "The attack decision"); where a
+// rule's conditions are not known yet (the combat tree's selectors) it is marked TODO(M13).
+// Platform-independent.
 
 import type { CombatAiSettings } from './combat-ai.ts';
 import { CombatStyleFlag, type CombatStyle } from './combat-style-records.ts';
 
 type Vec3 = readonly [number, number, number];
+
+const lerp = (t: number, from: number, to: number): number => from + (to - from) * t;
+const clamp01 = (value: number): number => Math.min(1, Math.max(0, value));
+
+// --- Style values on the engine's scale -------------------------------------------------------
+
+/**
+ * A value on the engine's three-point curve (the advance radii, the optimal range, the block
+ * time): `min` at −1, `mid` at 0, `max` at 1, linear between (and beyond, unclamped).
+ */
+export function curve(t: number, min: number, mid: number, max: number): number {
+  return t > 0 ? mid + (max - mid) * t : min + (mid - min) * (t + 1);
+}
+
+/** Whom it fights, as the group offensive mult weighs it. */
+export interface Opponent {
+  /** Its target is the player. */
+  readonly targetIsPlayer: boolean;
+  /** Others of its combat group fight the same target. */
+  readonly allies: number;
+}
+
+/**
+ * Its offensive mult as the engine weighs it: the style's; against the player while others
+ * attack them too, × the style's group offensive mult once per other (when below 1), not below
+ * fCombatGroupOffensiveMultMin.
+ */
+export function offensiveMult(
+  style: CombatStyle,
+  opponent: Opponent,
+  settings: CombatAiSettings,
+): number {
+  const general = style.general;
+  if (!opponent.targetIsPlayer || opponent.allies <= 0 || general.groupOffensiveMult >= 1) {
+    return general.offensiveMult;
+  }
+  return (
+    general.offensiveMult *
+    Math.max(general.groupOffensiveMult ** opponent.allies, settings.groupOffensiveMultMin)
+  );
+}
+
+/** Its chance to circle its target in reach (CSCR circle mult on fCombatCircleChanceMin .. Max). */
+export function circleChance(style: CombatStyle, settings: CombatAiSettings): number {
+  return lerp(style.closeRange.circleMult, settings.circleChanceMin, settings.circleChanceMax);
+}
+
+/**
+ * Its chance to circle its target from afar (the combat tree's Circle Distant: the circle mult on
+ * fCombatCircleDistantChanceMin .. Max). TODO(M13): phase 5, the behaviour itself.
+ */
+export function circleDistantChance(style: CombatStyle, settings: CombatAiSettings): number {
+  return lerp(
+    style.closeRange.circleMult,
+    settings.circleDistantChanceMin,
+    settings.circleDistantChanceMax,
+  );
+}
+
+/** Its chance to fall back (CSCR fallback mult on fCombatFallbackChanceMin .. Max). */
+export function fallbackChance(style: CombatStyle, settings: CombatAiSettings): number {
+  return lerp(
+    style.closeRange.fallbackMult,
+    settings.fallbackChanceMin,
+    settings.fallbackChanceMax,
+  );
+}
+
+/** How far beyond its reach a flanking actor goes round its target (CSCR flank distance, units). */
+export function flankDistance(style: CombatStyle, settings: CombatAiSettings): number {
+  return lerp(
+    style.closeRange.flankDistance,
+    settings.flankingDistanceMin,
+    settings.flankingDistanceMax,
+  );
+}
+
+/** How long a flanking actor stalks its target (CSCR stalk time, seconds). */
+export function stalkTime(style: CombatStyle, settings: CombatAiSettings): number {
+  return lerp(
+    style.closeRange.stalkTime,
+    settings.flankingStalkTimeMin,
+    settings.flankingStalkTimeMax,
+  );
+}
+
+/** Its chance to strafe while it shoots (CSLR strafe mult on fCombatStrafeChanceMin .. Max). */
+export function strafeChance(style: CombatStyle, settings: CombatAiSettings): number {
+  return lerp(style.longRange.strafeMult, settings.strafeChanceMin, settings.strafeChanceMax);
+}
+
+/** Its chance to dodge a threat (CSGD avoid threat chance on fCombatDodgeChanceMin .. Max). */
+export function dodgeChance(style: CombatStyle, settings: CombatAiSettings): number {
+  return lerp(style.general.avoidThreatChance, settings.dodgeChanceMin, settings.dodgeChanceMax);
+}
+
+/**
+ * Its chance of a special attack (CSME special attack mult on fCombatSpecialAttackChanceMin ..
+ * Max). TODO(M13): phase 5, the combat tree's Special Attack.
+ */
+export function specialAttackChance(style: CombatStyle, settings: CombatAiSettings): number {
+  return lerp(
+    style.melee.specialAttackMult,
+    settings.specialAttackChanceMin,
+    settings.specialAttackChanceMax,
+  );
+}
+
+/**
+ * Its chance to block (the defensive mult on fCombatBlockChanceMin .. Max), ×
+ * fCombatBlockChanceWeaponMult blocking with a weapon rather than a shield.
+ */
+export function blockChance(
+  style: CombatStyle,
+  shield: boolean,
+  settings: CombatAiSettings,
+): number {
+  const chance = lerp(
+    style.general.defensiveMult,
+    settings.blockChanceMin,
+    settings.blockChanceMax,
+  );
+  return shield ? chance : chance * settings.blockChanceWeaponMult;
+}
+
+/**
+ * Its chance to block an attack coming (the defensive mult on fCombatBlockAttackChanceMin ..
+ * Max). TODO(M13): phase 5, the combat tree's Block Attack (a block timed to a swing).
+ */
+export function blockAttackChance(style: CombatStyle, settings: CombatAiSettings): number {
+  return lerp(
+    style.general.defensiveMult,
+    settings.blockAttackChanceMin,
+    settings.blockAttackChanceMax,
+  );
+}
+
+/**
+ * How long a block lasts (seconds): the defensive mult (0 .. 1 read as −1 .. 1) on the curve
+ * fCombatBlockTimeMin, Mid, Max (4, 8, 10000: a defensive style holds its block).
+ */
+export function blockTime(style: CombatStyle, settings: CombatAiSettings): number {
+  return curve(
+    style.general.defensiveMult * 2 - 1,
+    settings.blockTimeMin,
+    settings.blockTimeMid,
+    settings.blockTimeMax,
+  );
+}
+
+/**
+ * The farthest it wants to shoot from (units): the defensive mult less the offensive one on the
+ * curve fCombatMaximumOptimalRangeMin, Mid, Max (a cautious archer keeps farther).
+ */
+export function maxOptimalRange(
+  style: CombatStyle,
+  opponent: Opponent,
+  settings: CombatAiSettings,
+): number {
+  return curve(
+    style.general.defensiveMult - offensiveMult(style, opponent, settings),
+    settings.maximumOptimalRangeMin,
+    settings.maximumOptimalRangeMid,
+    settings.maximumOptimalRangeMax,
+  );
+}
+
+/** How far beyond its reach it advances from (outer) and closes to (inner) (units). */
+export interface AdvanceRadii {
+  readonly inner: number;
+  readonly outer: number;
+}
+
+export interface AdvanceInput extends Opponent {
+  readonly targetStaggered: boolean;
+  /** Its own melee reach and its target's (units). */
+  readonly reach: number;
+  readonly targetReach: number;
+  /** Seconds since it was last hurt (undefined: not in this fight). */
+  readonly sinceDamaged: number | undefined;
+}
+
+/** The advance radii of a style that neither hangs back nor presses (the curves' middle). */
+export function middleRadii(settings: CombatAiSettings): AdvanceRadii {
+  return { inner: settings.advanceInnerRadiusMid, outer: settings.advanceOuterRadiusMid };
+}
+
+/**
+ * Its advance radii: the defensive mult (× fCombatAdvanceRadiusStaggerMult against a staggered
+ * target: 0, it presses) less the offensive one on the curves fCombatAdvanceInnerRadiusMin, Mid,
+ * Max and fCombatAdvanceOuterRadiusMin, Mid, Max. A defensive one keeps its wider radii only
+ * while it was hurt within fCombatAdvanceLastDamagedThreshold and the two reaches differ by no
+ * more than its inner radius; else the middle ones. (The engine compares the target's reach
+ * with one of the attacker's distances, read here as its reach: inferred.)
+ */
+export function advanceRadii(
+  style: CombatStyle,
+  input: AdvanceInput,
+  settings: CombatAiSettings,
+): AdvanceRadii {
+  const defensive =
+    style.general.defensiveMult * (input.targetStaggered ? settings.advanceRadiusStaggerMult : 1);
+  const t = defensive - offensiveMult(style, input, settings);
+  const inner = curve(
+    t,
+    settings.advanceInnerRadiusMin,
+    settings.advanceInnerRadiusMid,
+    settings.advanceInnerRadiusMax,
+  );
+  const outer = curve(
+    t,
+    settings.advanceOuterRadiusMin,
+    settings.advanceOuterRadiusMid,
+    settings.advanceOuterRadiusMax,
+  );
+  if (t > 0) {
+    const unhurt =
+      input.sinceDamaged === undefined || input.sinceDamaged > settings.advanceLastDamagedThreshold;
+    if (unhurt || Math.abs(input.reach - input.targetReach) > inner) return middleRadii(settings);
+  }
+  return { inner, outer };
+}
 
 // --- What it fights with ----------------------------------------------------------------------
 
@@ -32,14 +257,16 @@ export interface EquipOption {
   readonly range: number;
   /** It is in hand (or the voice) now. */
   readonly equipped: boolean;
+  /** A spell or staff cast as long as it is held (MGEF casting type concentration). */
+  readonly concentration?: boolean;
 }
 
-/** An option in hand is kept over one barely better (fCombatInventoryEquippedScoreBonus). */
+/**
+ * An option in hand is kept over one barely better. The engine adds
+ * fCombatInventoryEquippedScoreBonus (0.1) to its own score; ours is on another scale (damage
+ * × the style's mult), so this is ours. TODO(M13): phase 5, the engine's equipment score.
+ */
 const EQUIPPED_BONUS = 1.25;
-/** A ranged option counts this little (at the least) with its target at its feet. */
-const RANGED_CLOSE_FIT = 0.1;
-/** An option that cannot reach its target counts this little (it would have to close). */
-const OUT_OF_RANGE_FIT = 0.1;
 
 /** The style's multiplier for a kind of equipment. */
 export function equipmentMult(style: CombatStyle, kind: EquipKind): number {
@@ -47,10 +274,33 @@ export function equipmentMult(style: CombatStyle, kind: EquipKind): number {
 }
 
 /**
+ * How long what it took up is kept before it weighs again (fCombatInventoryMinEquipTime*:
+ * Weapon for a melee weapon or a bow, Magic, Shout, Staff, Default for its fists).
+ */
+export function minEquipTime(kind: EquipKind | undefined, settings: CombatAiSettings): number {
+  switch (kind) {
+    case 'melee':
+    case 'ranged':
+      return settings.minEquipTimeWeapon;
+    case 'magic':
+      return settings.minEquipTimeMagic;
+    case 'shout':
+      return settings.minEquipTimeShout;
+    case 'staff':
+      return settings.minEquipTimeStaff;
+    default:
+      return settings.minEquipTimeDefault;
+  }
+}
+
+/**
  * How well an option suits the distance to its target (0..1): a melee weapon or fists fully
  * within their reach, less the farther beyond it (to fCombatAbsoluteMaxRangeMult × the reach,
- * then little); a ranged one within its range (the one in hand fCombatCurrentWeaponAbsolute-
- * MaxRangeMult farther), less with its target closer than fCombatAdvanceOuterRadiusMax.
+ * then fCombatInventoryMaxRangeScoreMult); a ranged one within its range (the one in hand
+ * fCombatCurrentWeaponAbsoluteMaxRangeMult farther; beyond it
+ * fCombatInventoryMaxRangeScoreMult), less with its target closer than
+ * fCombatAdvanceOuterRadiusMax (down to fCombatInventoryMinRangeScoreMult at its feet).
+ * TODO(M13): phase 5, the engine's curve (its ranges' bonuses, its least range).
  */
 export function rangeFit(
   option: EquipOption,
@@ -58,18 +308,17 @@ export function rangeFit(
   settings: CombatAiSettings,
 ): number {
   const range = Math.max(1, option.range);
+  const beyond = settings.inventoryMaxRangeScoreMult;
   if (option.kind === 'melee' || option.kind === 'unarmed') {
     if (distance <= range) return 1;
-    return Math.max(
-      OUT_OF_RANGE_FIT,
-      Math.min(1, (range * settings.absoluteMaxRangeMult) / distance) ** 2,
-    );
+    return Math.max(beyond, Math.min(1, (range * settings.absoluteMaxRangeMult) / distance) ** 2);
   }
   const reach = range * (option.equipped ? settings.currentWeaponAbsoluteMaxRangeMult : 1);
-  if (distance > reach) return OUT_OF_RANGE_FIT;
+  if (distance > reach) return beyond;
   const close = settings.advanceOuterRadiusMax;
   if (distance >= close) return 1;
-  return RANGED_CLOSE_FIT + (1 - RANGED_CLOSE_FIT) * (distance / close) ** 2;
+  const least = settings.inventoryMinRangeScoreMult;
+  return least + (1 - least) * (distance / close) ** 2;
 }
 
 /** An option's score: its damage × the style's mult for its kind × its fit to the range. */
@@ -114,26 +363,46 @@ export type Maneuver = 'advance' | 'circle' | 'fallback' | 'flank' | 'stalk' | '
 export interface ManeuverInput {
   /** Horizontal distance to its target (units). */
   readonly distance: number;
-  /** Its reach (melee) or the range it shoots from (ranged). */
+  /** Where its blow reaches the target (melee: its reach and the target's radius), or its range. */
   readonly reach: number;
   /** It fights with a bow, a spell, a staff or its voice. */
   readonly ranged: boolean;
-  /** The target attacks (swings at it). */
-  readonly targetAttacking: boolean;
   /** Others of its combat group fight the same target. */
   readonly allies: number;
+  /** Its maneuver until now. */
+  readonly previous: Maneuver;
+  /** Melee: its advance radii (advanceRadii; else the middle ones). */
+  readonly radii?: AdvanceRadii;
+  /** Ranged: the farthest it wants to shoot from (maxOptimalRange; else its range). */
+  readonly optimalRange?: number;
 }
 
-/** A maneuver lasts this long (seconds, at random between). TODO(M13): the engine's times. */
+/**
+ * A maneuver lasts this long (seconds, at random between); a stalk its style's stalk time.
+ * TODO(M13): phase 5, the combat tree's behaviours end by their own rules.
+ */
 export const MANEUVER_SECONDS = [1, 3] as const;
+
+/** How long a maneuver lasts (seconds). */
+export function maneuverTime(
+  style: CombatStyle,
+  maneuver: Maneuver,
+  random: () => number,
+  settings: CombatAiSettings,
+): number {
+  if (maneuver === 'stalk') return stalkTime(style, settings);
+  return lerp(random(), MANEUVER_SECONDS[0], MANEUVER_SECONDS[1]);
+}
 
 /**
  * The maneuver it takes (CSTY close range for melee, long range for ranged; the dueling and
- * flanking flags): beyond the advance radius it advances (flanking styles, with allies on the
- * target, by its flank distance's chance from the side); near, dueling styles circle (circle
- * mult) or fall back (fallback mult, more as the target swings: × the defensive mult), flanking
- * ones flank or stalk (stalk time); at range it keeps beyond fCombatAdvanceOuterRadiusMax
- * (falling back by the fallback mult) and strafes (strafe mult).
+ * flanking flags). Melee: beyond its outer advance radius past its reach it advances (flanking
+ * styles with allies on the target flank); within, dueling styles fall back (fallbackChance) or
+ * circle (circleChance), else advance; flanking ones stalk (for their stalk time), then flank
+ * with allies on the target, else advance. Ranged: beyond the farthest it wants to shoot from it
+ * advances; closer than fCombatAdvanceOuterRadiusMax it may fall back (fallbackChance); else it
+ * strafes (strafeChance) or holds. TODO(M13): phase 5, the conditions of the combat tree's
+ * close, flanking and ranged movement selectors.
  */
 export function chooseManeuver(
   style: CombatStyle,
@@ -141,42 +410,42 @@ export function chooseManeuver(
   random: () => number,
   settings: CombatAiSettings,
 ): Maneuver {
-  const close = style.closeRange;
   const flanking = (style.flags & CombatStyleFlag.flanking) !== 0;
   if (input.ranged) {
-    if (input.distance > input.reach) return 'advance';
-    if (input.distance < settings.advanceOuterRadiusMax && random() < close.fallbackMult) {
+    if (input.distance > Math.min(input.reach, input.optimalRange ?? input.reach)) return 'advance';
+    if (
+      input.distance < settings.advanceOuterRadiusMax &&
+      random() < fallbackChance(style, settings)
+    ) {
       return 'fallback';
     }
-    return random() < style.longRange.strafeMult ? 'strafe' : 'hold';
+    return random() < strafeChance(style, settings) ? 'strafe' : 'hold';
   }
-  const outer = input.reach + settings.advanceOuterRadiusMid;
-  if (input.distance > outer) {
-    if (flanking && input.allies > 0 && random() < close.flankDistance) return 'flank';
-    return 'advance';
+  const radii = input.radii ?? middleRadii(settings);
+  if (input.distance > input.reach + radii.outer) {
+    return flanking && input.allies > 0 ? 'flank' : 'advance';
   }
   if (flanking) {
-    if (random() < close.flankDistance) return 'flank';
-    if (random() < close.stalkTime) return 'stalk';
-    return 'advance';
+    if (input.previous !== 'stalk' && input.previous !== 'flank') return 'stalk';
+    return input.previous === 'stalk' && input.allies > 0 ? 'flank' : 'advance';
   }
-  const fallback =
-    close.fallbackMult * (input.targetAttacking ? 1 + style.general.defensiveMult : 0.5);
-  if (random() < fallback) return 'fallback';
-  if (random() < close.circleMult * 0.5) return 'circle';
+  if (random() < fallbackChance(style, settings)) return 'fallback';
+  if (random() < circleChance(style, settings)) return 'circle';
   return 'advance';
 }
 
 /**
  * Where a maneuver has it go now (a horizontal direction, unit or zero) from where it stands
  * towards its target: `side` (+1 clockwise, −1 the other way) for circling, flanking and
- * strafing.
+ * strafing; a flank makes for the point a quarter round the target ahead of it, `flankRadius`
+ * from the target (so it swings round its side at that distance).
  */
 export function maneuverDirection(
   maneuver: Maneuver,
   from: Vec3,
   target: Vec3,
   side: number,
+  flankRadius = 0,
 ): readonly [number, number] {
   const dx = target[0] - from[0];
   const dy = target[1] - from[1];
@@ -195,10 +464,10 @@ export function maneuverDirection(
     case 'strafe':
       return [rx, ry];
     case 'flank': {
-      const x = fx + rx;
-      const y = fy + ry;
-      const l = Math.hypot(x, y) || 1;
-      return [x / l, y / l];
+      const x = target[0] + rx * flankRadius - from[0];
+      const y = target[1] + ry * flankRadius - from[1];
+      const l = Math.hypot(x, y);
+      return l < 1 ? [0, 0] : [x / l, y / l];
     }
     case 'stalk': {
       // Round it, drifting neither in nor out.
@@ -211,7 +480,7 @@ export function maneuverDirection(
 
 // --- Attacks, blocks, threats ---------------------------------------------------------------------
 
-export interface AttackInput {
+export interface AttackInput extends Opponent {
   readonly targetStaggered: boolean;
   readonly targetBlocking: boolean;
   readonly targetAttacking: boolean;
@@ -223,44 +492,33 @@ export interface AttackInput {
   readonly canBash: boolean;
   /** Its power attacks' chance (their attack data's ATKD chance; 0: none). */
   readonly powerChance: number;
-  /** Others of its combat group fight the same target. */
-  readonly allies: number;
-  /** Its target is the player. */
-  readonly targetIsPlayer: boolean;
   /** Seconds since its last attack (undefined: none yet in this fight). */
   readonly sinceLastAttack: number | undefined;
 }
 
 export type AttackChoice = 'none' | 'attack' | 'power' | 'bash' | 'powerBash';
 
-/** A melee attack is decided this often: the combat tree's "Attack Idle" (seconds). */
+/** An attack is decided this often: the combat tree's "Attack Idle" (and its ranged and cast idles; seconds). */
 export const ATTACK_DECISION_SECONDS = 0.25;
-
-const lerp = (t: number, from: number, to: number): number => from + (to - from) * t;
 
 /**
  * The chance it attacks at a decision (docs/ai.md, "The attack decision"): its offensive mult
- * mapped onto fCombatAttackChanceMin .. Max (against the player with others on them too, × the
- * group offensive mult per other, not below fCombatGroupOffensiveMultMin); against a staggered
- * or recoiling target × the larger of the attack and power attack staggered mults, else while it
- * blocks × fCombatAttackChanceBlockingSwingMult if the target swings, else × its defensive mult
- * mapped onto fCombatAttackChanceBlockingMultMax .. Min; and × 1 .. the last attack bonus as up
- * to fCombatAttackChanceLastAttackBonusTime passes since its last attack.
+ * (offensiveMult) mapped onto fCombatAttackChanceMin .. Max; against a staggered or recoiling
+ * target × the larger of the attack and power attack staggered mults, else while it blocks ×
+ * fCombatAttackChanceBlockingSwingMult if the target swings, else × its defensive mult mapped
+ * onto fCombatAttackChanceBlockingMultMax .. Min; and × 1 .. the last attack bonus as up to
+ * fCombatAttackChanceLastAttackBonusTime passes since its last attack.
  */
 export function attackChance(
   style: CombatStyle,
   input: AttackInput,
   settings: CombatAiSettings,
 ): number {
-  const general = style.general;
-  let offensive = general.offensiveMult;
-  if (input.targetIsPlayer && input.allies > 0 && general.groupOffensiveMult < 1) {
-    offensive *= Math.max(
-      general.groupOffensiveMult ** input.allies,
-      settings.groupOffensiveMultMin,
-    );
-  }
-  let chance = lerp(offensive, settings.attackChanceMin, settings.attackChanceMax);
+  let chance = lerp(
+    offensiveMult(style, input, settings),
+    settings.attackChanceMin,
+    settings.attackChanceMax,
+  );
   if (input.targetStaggered || input.targetRecoiling) {
     chance *= Math.max(style.melee.attackStaggeredMult, style.melee.powerAttackStaggeredMult);
   } else if (input.blocking) {
@@ -268,27 +526,68 @@ export function attackChance(
     chance *= input.targetAttacking
       ? settings.attackChanceBlockingSwingMult
       : lerp(
-          general.defensiveMult,
+          style.general.defensiveMult,
           settings.attackChanceBlockingMultMax,
           settings.attackChanceBlockingMultMin,
         );
   }
   if (input.sinceLastAttack !== undefined) {
     const passed = input.sinceLastAttack / settings.attackChanceLastAttackBonusTime;
-    chance *= lerp(Math.min(1, Math.max(0, passed)), 1, settings.attackChanceLastAttackBonus);
+    chance *= lerp(clamp01(passed), 1, settings.attackChanceLastAttackBonus);
   }
   return chance;
 }
 
-/** A bash from a block is tried this often (× the bash mults). TODO(M13). */
-const BASH_CHANCE = 0.25;
+/**
+ * The style's bash mult for what the target does: × bash recoil mult as it recoils, else × bash
+ * power attack mult as it power attacks, × bash attack mult as it swings, ×
+ * fCombatBashTargetBlockingMult (0) as it blocks. TODO(M13): the engine also asks that the
+ * blocking target faces it.
+ */
+function bashMult(style: CombatStyle, input: AttackInput, settings: CombatAiSettings): number {
+  const melee = style.melee;
+  if (input.targetRecoiling) return melee.bashMult * melee.bashRecoilMult;
+  if (input.targetPowerAttacking) return melee.bashMult * melee.bashPowerAttackMult;
+  if (input.targetAttacking) return melee.bashMult * melee.bashAttackMult;
+  if (input.targetBlocking) return melee.bashMult * settings.bashTargetBlockingMult;
+  return melee.bashMult;
+}
+
+/** Its chance to bash from a block: its defensive mult on fCombatBashChanceMin .. Max × bashMult. */
+export function bashChance(
+  style: CombatStyle,
+  input: AttackInput,
+  settings: CombatAiSettings,
+): number {
+  return (
+    lerp(style.general.defensiveMult, settings.bashChanceMin, settings.bashChanceMax) *
+    bashMult(style, input, settings)
+  );
+}
+
+/**
+ * Its chance of an offensive bash (the block raised to bash): its offensive mult on
+ * fCombatOffensiveBashChanceMin .. Max × bashMult. TODO(M13): phase 5, the combat tree's
+ * Offensive Bash.
+ */
+export function offensiveBashChance(
+  style: CombatStyle,
+  input: AttackInput,
+  settings: CombatAiSettings,
+): number {
+  return (
+    lerp(
+      offensiveMult(style, input, settings),
+      settings.offensiveBashChanceMin,
+      settings.offensiveBashChanceMax,
+    ) * bashMult(style, input, settings)
+  );
+}
 
 /**
  * Whether and how it attacks now (a decision every ATTACK_DECISION_SECONDS): blocking, it may
- * bash by the bash mult (× bash attack mult as the target swings, bash power attack mult as it
- * power attacks, bash recoil mult as it recoils); else it attacks by attackChance; a power
- * attack by its attack data's chance (× power attack staggered mult on a staggered, power
- * attack blocking mult on a blocking target).
+ * bash (bashChance); else it attacks by attackChance; a power attack by its attack data's chance
+ * (× power attack staggered mult on a staggered, power attack blocking mult on a blocking target).
  */
 export function chooseAttack(
   style: CombatStyle,
@@ -305,41 +604,84 @@ export function chooseAttack(
         : input.targetBlocking
           ? melee.powerAttackBlockingMult
           : 1);
-  if (input.blocking && input.canBash) {
-    const reason = input.targetPowerAttacking
-      ? melee.bashPowerAttackMult
-      : input.targetAttacking
-        ? melee.bashAttackMult
-        : input.targetRecoiling
-          ? melee.bashRecoilMult
-          : 1;
-    if (random() < BASH_CHANCE * melee.bashMult * reason) return power() ? 'powerBash' : 'bash';
+  if (input.blocking && input.canBash && random() < bashChance(style, input, settings)) {
+    return power() ? 'powerBash' : 'bash';
   }
   if (random() >= attackChance(style, input, settings)) return 'none';
   return power() ? 'power' : 'attack';
 }
 
-/**
- * Seconds between a shot's or a cast's decisions: the more offensive, the sooner. TODO(M13):
- * the combat tree's ranged and magic idles (melee: ATTACK_DECISION_SECONDS).
- */
-export function attackInterval(style: CombatStyle, random: () => number): number {
-  const offensive = Math.min(1, Math.max(0, style.general.offensiveMult));
-  return (0.4 + random() * 0.8) * (1.5 - offensive);
+export interface ShotInput extends Opponent {
+  /** Seconds since its last attack (undefined: none yet in this fight). */
+  readonly sinceLastAttack: number | undefined;
 }
 
 /**
- * Whether it blocks a blow coming (the target swings at it within reach): by the defensive mult,
- * × fCombatBlockChanceWeaponMult blocking with a weapon rather than a shield.
+ * The chance it draws its bow at a decision: its offensive mult on fCombatRangedAttackChanceMin
+ * .. Max, after its first attack plus up to fCombatRangedAttackChanceLastAttackBonus of itself
+ * as fCombatRangedAttackChanceLastAttackBonusTime passes since the last.
  */
+export function rangedAttackChance(
+  style: CombatStyle,
+  input: ShotInput,
+  settings: CombatAiSettings,
+): number {
+  const chance = lerp(
+    offensiveMult(style, input, settings),
+    settings.rangedAttackChanceMin,
+    settings.rangedAttackChanceMax,
+  );
+  if (input.sinceLastAttack === undefined) return chance;
+  const passed = clamp01(input.sinceLastAttack / settings.rangedAttackChanceLastAttackBonusTime);
+  return chance + chance * settings.rangedAttackChanceLastAttackBonus * passed;
+}
+
+/**
+ * The chance it casts its offensive spell (or staff) at a decision: its offensive mult on
+ * fCombatCastImmediateOffensiveMagicChanceMin .. Max, a concentration spell's on
+ * fCombatCastConcentrationOffensiveMagicChanceMin .. Max.
+ */
+export function castChance(
+  style: CombatStyle,
+  opponent: Opponent,
+  concentration: boolean,
+  settings: CombatAiSettings,
+): number {
+  const offensive = offensiveMult(style, opponent, settings);
+  return concentration
+    ? lerp(offensive, settings.castConcentrationChanceMin, settings.castConcentrationChanceMax)
+    : lerp(offensive, settings.castImmediateChanceMin, settings.castImmediateChanceMax);
+}
+
+/**
+ * How long it holds its bow drawn before it looses (seconds): at random from
+ * fCombatRangedAttackHoldTimeAbsoluteMin up to its offensive mult on
+ * fCombatRangedAttackHoldTimeMax .. Min (the more offensive, the sooner); a target within
+ * fCombatRangedAttackHoldTimeMinDistance past the two bodies' radii gets the shortest.
+ */
+export function bowHoldTime(
+  style: CombatStyle,
+  input: Opponent & { readonly distance: number; readonly radii: number },
+  random: () => number,
+  settings: CombatAiSettings,
+): number {
+  const close = input.distance < settings.rangedAttackHoldTimeMinDistance + input.radii;
+  const most = lerp(
+    close ? 1 : offensiveMult(style, input, settings),
+    settings.rangedAttackHoldTimeMax,
+    settings.rangedAttackHoldTimeMin,
+  );
+  return lerp(random(), settings.rangedAttackHoldTimeAbsoluteMin, most);
+}
+
+/** Whether it blocks a blow coming (the target swings at it within reach): blockChance. */
 export function choosesBlock(
   style: CombatStyle,
   shield: boolean,
   random: () => number,
   settings: CombatAiSettings,
 ): boolean {
-  const chance = style.general.defensiveMult * (shield ? 1 : settings.blockChanceWeaponMult);
-  return random() < chance;
+  return random() < blockChance(style, shield, settings);
 }
 
 /** Something coming at an actor: a shot's or a breath's line. */
@@ -355,7 +697,10 @@ export interface Threat {
   readonly source: number | undefined;
 }
 
-/** A threat is dodged when it would arrive within this (seconds). TODO(M13). */
+/**
+ * A threat is dodged when it would arrive within this (seconds). TODO(M13): phase 5, the
+ * engine's threat model (its fCombatThreat* settings: view cone, reaction, anticipation).
+ */
 const THREAT_HORIZON = 1.2;
 
 /**
@@ -385,9 +730,13 @@ export function threatens(
   return miss <= radius + threat.radius ? t : undefined;
 }
 
-/** Whether it gets out of a threat's way (CSGD avoid threat chance). */
-export function avoidsThreat(style: CombatStyle, random: () => number): boolean {
-  return random() < style.general.avoidThreatChance;
+/** Whether it gets out of a threat's way (dodgeChance). */
+export function avoidsThreat(
+  style: CombatStyle,
+  random: () => number,
+  settings: CombatAiSettings,
+): boolean {
+  return random() < dodgeChance(style, settings);
 }
 
 /** The way out of a threat's line: sideways from it, to the side the actor already is on. */
@@ -405,24 +754,37 @@ export function dodgeDirection(threat: Threat, feet: Vec3): readonly [number, nu
 
 // --- Its other casting and its potions ---------------------------------------------------------
 
+/**
+ * The share of its health (magicka) below which it restores it: its defensive mult on
+ * fCombatRestoreHealthPercentMin .. Max (fCombatRestoreMagickaPercentMin .. Max). The engine
+ * restores no other value (no stamina potions in combat).
+ */
+export function restoreShare(
+  style: CombatStyle,
+  value: 'health' | 'magicka',
+  settings: CombatAiSettings,
+): number {
+  const defensive = style.general.defensiveMult;
+  return value === 'health'
+    ? lerp(defensive, settings.restoreHealthPercentMin, settings.restoreHealthPercentMax)
+    : lerp(defensive, settings.restoreMagickaPercentMin, settings.restoreMagickaPercentMax);
+}
+
 /** What an actor in combat can do for itself now (read from its spells, items and state). */
 export interface SupportState {
-  /** Its health, magicka and stamina as shares of their maximum. */
+  /** Its health and magicka as shares of their maximum. */
   readonly health: number;
   readonly magicka: number;
-  readonly stamina: number;
-  /** Seconds since it last healed itself or drank a potion. */
-  readonly sinceRestore: number;
+  /** Seconds since it last restored its health, its magicka. */
+  readonly sinceHealthRestore: number;
+  readonly sinceMagickaRestore: number;
   /** It has a healing spell it has the magicka for. */
   readonly canHeal: boolean;
-  /** It carries a potion restoring Health, Magicka, Stamina. */
+  /** It carries a potion restoring Health, Magicka. */
   readonly potions: {
     readonly health: boolean;
     readonly magicka: boolean;
-    readonly stamina: boolean;
   };
-  /** It fights with magic and has no attack spell it has the magicka for. */
-  readonly outOfMagicka: boolean;
   /** It has a summoning spell it can cast, and none of its summons stands. */
   readonly canSummon: boolean;
   /** It has a buff (a Self spell: armour, cloak) it can cast that is not on it. */
@@ -434,36 +796,35 @@ export interface SupportState {
 /** One thing it does for itself: a ward, a heal, a potion, a summons or a buff. */
 export type SupportChoice =
   | { readonly kind: 'ward' | 'heal' | 'summon' | 'buff' }
-  | { readonly kind: 'potion'; readonly value: 'health' | 'magicka' | 'stamina' };
+  | { readonly kind: 'potion'; readonly value: 'health' | 'magicka' };
 
 /**
  * What an actor in combat does for itself now, if anything, in this order: a ward against a
- * spell coming at it; below iAICombatRestoreHealthPercentage of its health its healing spell,
- * else a Health potion, and a Magicka potion below iAICombatRestoreMagickaPercentage of its
- * magicka or when its magic fails it for want of magicka (at most one restore every
- * fCombatItemRestoreTimer seconds); a summons when none of its stands;
- * a buff not on it. TODO(M13): the engine's order and its thresholds for magicka and stamina
- * (a Stamina potion here below the same share as health) are not documented.
+ * spell coming at it; below its health's restore share (restoreShare) its healing spell, else a
+ * Health potion, not within fCombatRestoreHealthRestrictTime of the last; below its magicka's a
+ * Magicka potion, not within fCombatRestoreMagickaRestrictTime; a summons when none of its
+ * stands; a buff not on it. TODO(M13): phase 5, the order of the combat tree's casters.
  */
 export function chooseSupport(
   state: SupportState,
-  settings: Pick<
-    CombatAiSettings,
-    'restoreHealthPercent' | 'restoreMagickaPercent' | 'itemRestoreTime'
-  >,
+  style: CombatStyle,
+  settings: CombatAiSettings,
 ): SupportChoice | undefined {
   if (state.canWard) return { kind: 'ward' };
-  const threshold = settings.restoreHealthPercent / 100;
-  const restore = state.sinceRestore >= settings.itemRestoreTime;
-  if (restore && state.health < threshold) {
+  if (
+    state.health < restoreShare(style, 'health', settings) &&
+    state.sinceHealthRestore >= settings.restoreHealthRestrictTime
+  ) {
     if (state.canHeal) return { kind: 'heal' };
     if (state.potions.health) return { kind: 'potion', value: 'health' };
   }
-  const magickaLow = state.magicka < settings.restoreMagickaPercent / 100;
-  if (restore && (state.outOfMagicka || magickaLow) && state.potions.magicka)
+  if (
+    state.potions.magicka &&
+    state.magicka < restoreShare(style, 'magicka', settings) &&
+    state.sinceMagickaRestore >= settings.restoreMagickaRestrictTime
+  ) {
     return { kind: 'potion', value: 'magicka' };
-  if (restore && state.stamina < threshold && state.potions.stamina)
-    return { kind: 'potion', value: 'stamina' };
+  }
   if (state.canSummon) return { kind: 'summon' };
   if (state.canBuff) return { kind: 'buff' };
   return undefined;

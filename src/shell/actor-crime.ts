@@ -10,6 +10,7 @@
 // see them (the Trespass lines, iGuardWarnings), then reported. Leaving the jail unserved is an
 // escape.
 
+import { aiSettingsOf } from '../ai/ai-settings.ts';
 import { CrimeType, TrespassWarnings, type CrimeSettings } from '../gameplay/crime.ts';
 import type { CrimeAct, CrimeEvent } from '../scripting/runtime/crime-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
@@ -256,6 +257,11 @@ export class ActorCrime {
         this.#pursuedAt = this.#clock;
         if (this.#arrest?.guard === guard) this.#endArrest(true);
         if (!this.#attacking.has(guard)) {
+          // At most iNumberGuardsCrimeResponse guards go after the player at once (observed in the
+          // original); the others leave it to them.
+          if (this.#attacking.size >= aiSettingsOf(this.#options.session).guardsCrimeResponse) {
+            continue;
+          }
           this.#attacking.add(guard);
           runtime.world.startCombat?.(guard, PLAYER_REF);
         }

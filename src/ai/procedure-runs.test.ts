@@ -298,11 +298,67 @@ describe('procedures', () => {
     expect(done).toEqual(['wait 1', 'wait 1', 'wait 1']);
   });
 
+  it('waits at a patrol point its idle time; reaches a marker within its radius', async () => {
+    const reached: number[] = [];
+    const { run, done } = harness(undefined, 10, (to) => {
+      reached.push(to[0] ?? 0);
+      return Promise.resolve(true);
+    });
+    const start: PackageInput = {
+      id: 0,
+      type: 'SingleRef',
+      value: {
+        kind: 'singleRef',
+        target: { type: TargetType.specificReference, value: 0x800, count: 0 },
+      },
+    };
+    const overrides: Partial<PackageMind> = {
+      target: () => Promise.resolve(0x800),
+      linked: () => Promise.resolve(undefined),
+      placement: () =>
+        Promise.resolve({ position: [40, 0, 0] as const, heading: 0, space: undefined }),
+      destinationKind: () => Promise.resolve('marker'),
+      patrolPoint: () => Promise.resolve({ idleTime: 3, furniture: false }),
+    };
+    expect(await run('Patrol', [0], [start], overrides)).toBe('success');
+    // Within fAIMarkerDestinationRadius (25) it is not there yet at 40: it goes; then it waits
+    // the point's idle time (XPRD).
+    expect(reached).toEqual([40]);
+    expect(done).toEqual(['wait 1', 'wait 1', 'wait 1']);
+  });
+
+  it('stays in furniture on its patrol', async () => {
+    const { run, done } = harness();
+    const start: PackageInput = {
+      id: 0,
+      type: 'SingleRef',
+      value: {
+        kind: 'singleRef',
+        target: { type: TargetType.specificReference, value: 0x900, count: 0 },
+      },
+    };
+    const overrides: Partial<PackageMind> = {
+      target: () => Promise.resolve(0x900),
+      linked: () => Promise.resolve(undefined),
+      patrolPoint: () => Promise.resolve({ idleTime: 0, furniture: true }),
+    };
+    await run('Patrol', [0], [start], overrides);
+    expect(done).toEqual(['use 900']);
+  });
+
+  it('wanders, pausing up to (fAIMaxWanderTime − Energy) / 2 between its walks', async () => {
+    const { run, done } = harness(undefined, 2);
+    const overrides: Partial<PackageMind> = { energy: () => Promise.resolve(50) };
+    expect(await run('Wander', [0], [NEAR_HOME], overrides)).toBe('failure');
+    // The harness's random is 0: no pause, but each waits for the next update.
+    expect(done).toEqual(['wait 0', 'wait 0']);
+  });
+
   it('tries a patrol point it was blocked from again before it goes on', async () => {
     // The last point is blocked twice, then reached (MQ101's second cart at Helgen's gate).
     let blocked = 2;
     const { run, done } = harness(undefined, undefined, (to) => {
-      const last = to[0] === 200;
+      const last = to[0] === 600;
       done.push(`travel ${String(to[0])}${last && blocked > 0 ? ' blocked' : ''}`);
       return Promise.resolve(!(last && blocked-- > 0));
     });
@@ -319,13 +375,13 @@ describe('procedures', () => {
       linked: (reference) => Promise.resolve(reference === 0x800 ? 0x801 : undefined),
       placement: (reference) =>
         Promise.resolve({
-          position: [reference === 0x800 ? 100 : 200, 0, 0] as const,
+          position: [reference === 0x800 ? 300 : 600, 0, 0] as const,
           heading: 0,
           space: { kind: 'interior', cell: 1 },
         }),
     };
     expect(await run('Patrol', [0], [start], overrides)).toBe('success');
-    expect(done).toEqual(['travel 100', 'travel 200 blocked', 'travel 200 blocked', 'travel 200']);
+    expect(done).toEqual(['travel 300', 'travel 600 blocked', 'travel 600 blocked', 'travel 600']);
   });
 
   it('locks and unlocks the doors of its place', async () => {

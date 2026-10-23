@@ -6,6 +6,7 @@
 
 import type { Vec3 } from '../scripting/runtime/game-state.ts';
 import type { DestructionStage } from '../world/destruction-records.ts';
+import type { BodyPush } from '../gameplay/magic/explosions.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { MagicEffectShown } from '../scripting/runtime/magic-engine.ts';
 import type { SceneSpeech } from '../scripting/runtime/scene-host.ts';
@@ -49,6 +50,14 @@ export interface ScriptView {
   /** SetMotionType (1 dynamic .. 4 keyframed). */
   motionTypeChanged?(reference: number, motionType: number): void;
   impulse?(reference: number, direction: Vec3, magnitude: number): void;
+  /** An explosion pushes a reference's moving bodies (WorldBridge.explosionPush). */
+  explosionPush?(
+    reference: number,
+    center: Vec3,
+    push: (layer: number, mass: number) => BodyPush,
+  ): void;
+  /** Whether an explosion seen from a point reaches an actor (WorldBridge.explosionReaches). */
+  explosionReaches?(from: Vec3, target: number, buffer: number): boolean | undefined;
   /**
    * A destructible reference's stage changed (src/shell/destruction-looks.ts): its look and
    * collision follow; `reached`: the stage just reached, whose debris is thrown.
@@ -81,6 +90,8 @@ export interface ScriptView {
   /** EffectShader.Play / Stop and VisualEffect.Play / Stop on a reference of the view. */
   effectShader?(shader: number, target: number, play: boolean, duration: number): void;
   visualEffect?(effect: number, target: number, play: boolean, duration: number): void;
+  /** An art object on an actor of the view for a while (WorldBridge.artEffect). */
+  artEffect?(art: number, target: number, seconds: number): void;
   /** The package an actor of the view runs now (its AI), if any. */
   currentPackage?(reference: number): number | undefined;
   /** The procedure its package runs now, by name (GetCurrentAIProcedure). */
@@ -318,6 +329,22 @@ export class ScriptWorld implements WorldBridge {
 
   impulse(reference: number, direction: Vec3, magnitude: number): void {
     for (const view of this.#views) view.impulse?.(reference, direction, magnitude);
+  }
+
+  explosionPush(
+    reference: number,
+    center: Vec3,
+    push: (layer: number, mass: number) => BodyPush,
+  ): void {
+    for (const view of this.#views) view.explosionPush?.(reference, center, push);
+  }
+
+  explosionReaches(from: Vec3, target: number, buffer: number): boolean | undefined {
+    for (const view of this.#views) {
+      const reaches = view.explosionReaches?.(from, target, buffer);
+      if (reaches !== undefined) return reaches;
+    }
+    return undefined;
   }
 
   destructionChanged(reference: number, reached: DestructionStage | undefined): void {
@@ -766,6 +793,10 @@ export class ScriptWorld implements WorldBridge {
   }
 
   /** VisualEffect.Play (seconds; −1 until Stop) and Stop (TODO(M13): facing its target). */
+  artEffect(art: number, target: number, seconds: number): void {
+    for (const view of this.#views) view.artEffect?.(art, target, seconds);
+  }
+
   visualEffect(effect: number, target: number, play: boolean, duration: number): void {
     for (const view of this.#views) view.visualEffect?.(effect, target, play, duration);
   }

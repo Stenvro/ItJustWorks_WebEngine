@@ -155,8 +155,6 @@ const ATTACK_ANSWER = 1.5;
 const FIGHT_REACH = 4096;
 /** How often a fighter's perks' graph variables are read again (seconds). */
 const PERK_VARIABLE_SECONDS = 1;
-/** The enemy bar stays this long after the last hit (seconds). TODO(M13): the engine's time. */
-const ENEMY_BAR_SECONDS = 4;
 /** A paired killmove's victim stands this far before the leader (Paired_1HMKillMoveB's "2_"
  * root at its start: 72.8 units ahead, turned to face it). TODO(M13): each clip's own offset. */
 const PAIRED_DISTANCE = 72.8;
@@ -311,7 +309,8 @@ export class ActorCombat implements CombatBridge {
    * works it out afresh).
    */
   readonly #estimatedArmor = new Map<number, { readonly reduction: number; readonly at: number }>();
-  #enemy: { reference: number; until: number } | undefined;
+  /** The enemy bar's actor, its health shown (percent) and when that last changed. */
+  #enemy: { readonly reference: number; changed: number; health: number } | undefined;
   #music: number | undefined;
   #musicOn = false;
   #equipListening: ScriptRuntime | undefined;
@@ -1148,7 +1147,8 @@ export class ActorCombat implements CombatBridge {
     fighter.blood?.left.advance(seconds);
     if (state.current?.ranged === true && state.arrowNocked) state.drawnFor += seconds;
     this.#aimBow(fighter);
-    // A paired animation that never says it ended lets go after fKillMoveMaxDuration.
+    // A paired animation that never says it ended lets go after fKillMoveMaxDuration (the
+    // engine's killmove timer).
     fighter.pairedFor = state.paired === undefined ? 0 : fighter.pairedFor + seconds;
     if (fighter.pairedFor > this.#settings.killMoveMaxDuration) {
       state.paired = undefined;
@@ -1831,8 +1831,7 @@ export class ActorCombat implements CombatBridge {
     // a practice's blow without Allow Combat Start On Hit passes (no fight, search or crime).
     const passes = attacker.practice?.combatStartOnHit === false;
     if (!passes) this.#brain.hit(attackerRef, targetRef);
-    if (attacker.player)
-      this.#enemy = { reference: targetRef, until: this.#clock + ENEMY_BAR_SECONDS };
+    if (attacker.player) this.#struck(targetRef);
     // Detection: the one attacked searches for its attacker; those near watch the fight.
     if (!passes) senses?.attackedBy(targetRef, attackerRef);
     // Crime: a blow on one that was not hostile to its attacker is an assault, reported by the
@@ -2372,6 +2371,13 @@ export class ActorCombat implements CombatBridge {
     };
   }
 
+  /** The arrows and bolts in flight and who loosed them (detection: those who see them pass). */
+  *shots(): Iterable<{ readonly position: Vec3; readonly source: number }> {
+    for (const shot of this.#projectiles.flying()) {
+      yield { position: shot.position, source: shot.shooter };
+    }
+  }
+
   /** What flies at the actors now: the arrows, spells and breath. */
   *#threats(): Iterable<Threat> {
     for (const shot of this.#projectiles.flying()) {
@@ -2685,22 +2691,71 @@ export class ActorCombat implements CombatBridge {
     }
   }
 
-  /** The HUD's enemy bar: the one the player hit last, while the fight lasts. */
+  /**
+   * The HUD's enemy bar: the one the player hit last. Observed in the original: it shows
+   * while that actor lives and is hostile to the player; one that is not stays
+   * iEnemyHealthDisplayTime ms after its health last changed, and only while it is within
+   * iEnemyHealthDisplayAngle degrees of the camera's heading. Its health shows as 1..100
+   * percent.
+   */
   #enemyBar(): void {
     const hud = this.#options.session.hud;
     const enemy = this.#enemy;
-    if (!enemy || this.#clock > enemy.until) {
-      if (enemy) hud.enemy(undefined);
-      this.#enemy = undefined;
-      return;
-    }
+    if (!enemy) return;
     const fighter = this.#fighters.get(enemy.reference);
     const runtime = this.#options.session.scriptsReady;
-    if (!fighter?.body || !runtime) return;
+    if (!fighter?.body || !runtime || fighter.state.life === LifeState.dead) {
+      this.#hideEnemyBar();
+      return;
+    }
+    const ini = this.#options.session.ini;
+    if (!this.hostile(enemy.reference, PLAYER_REF)) {
+      const shown =
+        (this.#clock - enemy.changed) * 1000 <= ini.number('Interface', 'iEnemyHealthDisplayTime');
+      const feet = this.#feet(fighter);
+      const player = this.#play?.player;
+      let inView = true;
+      if (feet && player) {
+        const heading = Math.atan2(feet[0] - player.feet[0], feet[1] - player.feet[1]);
+        const off = Math.abs(
+          Math.atan2(Math.sin(heading - player.yaw), Math.cos(heading - player.yaw)),
+        );
+        inView = (off * 180) / Math.PI <= ini.number('Interface', 'iEnemyHealthDisplayAngle');
+      }
+      if (!shown || !inView) {
+        this.#hideEnemyBar();
+        return;
+      }
+    }
     const name = fighter.body.look.name || fighter.body.look.editorId;
     void runtime.actors.value(enemy.reference, ActorValue.health).then((value) => {
-      hud.enemy({ name, health: value.max > 0 ? (value.current / value.max) * 100 : 0 });
+      if (this.#enemy !== enemy) return;
+      const fraction = value.max > 0 ? value.current / value.max : 0;
+      const health = fraction > 0 ? Math.min(100, Math.max(1, fraction * 100)) : 0;
+      if (health !== enemy.health) {
+        enemy.health = health;
+        enemy.changed = this.#clock;
+      }
+      if (health <= 0) {
+        this.#hideEnemyBar();
+        return;
+      }
+      hud.enemy({ name, health });
     });
+  }
+
+  #hideEnemyBar(): void {
+    if (this.#enemy) this.#options.session.hud.enemy(undefined);
+    this.#enemy = undefined;
+  }
+
+  /** The player struck an actor: its bar shows (its health changes from now). */
+  #struck(reference: number): void {
+    if (this.#enemy?.reference === reference) {
+      this.#enemy.changed = this.#clock;
+      return;
+    }
+    this.#enemy = { reference, changed: this.#clock, health: Number.NaN };
   }
 
   /** The player's shape for shots (they have no bodies on BIPED). */
@@ -2850,8 +2905,7 @@ export class ActorCombat implements CombatBridge {
     this.#spellHits.set(key, this.#clock);
     if (this.#spellHits.size > 256) this.#spellHits.clear();
     this.#brain.hit(caster, victim);
-    if (caster === PLAYER_REF && victim !== PLAYER_REF)
-      this.#enemy = { reference: victim, until: this.#clock + ENEMY_BAR_SECONDS };
+    if (caster === PLAYER_REF && victim !== PLAYER_REF) this.#struck(victim);
   }
 
   /**
@@ -2929,34 +2983,56 @@ export class ActorCombat implements CombatBridge {
 
   /**
    * Grab Actor (the Vampire Lord's Vampiric Grip): its target goes limp as its ragdoll
-   * (its graph's Ragdoll) and hangs before its caster, at the caster's chest a reach ahead,
-   * while the effect lasts; then it falls and gets up. TODO(M13): the engine's hold point.
+   * (its graph's Ragdoll) and hangs before its caster, at the caster's chest
+   * fMagicGrabActorMinDistance ahead (observed in the original: the hold's distance),
+   * while the effect lasts; then it is flung away from its caster with fMagicGrabActorThrowForce
+   * (as an explosion's knock-down pushes), falls and gets up. TODO(M13): the engine holds it
+   * before the camera (the player's grab); an NPC caster's hold is taken as before its chest.
    */
   grabActor(caster: number | undefined, target: number, on: boolean): void {
     const knockdowns = this.#options.knockdowns?.();
     if (!knockdowns || target === PLAYER_REF) return;
+    const holder = caster === undefined ? undefined : this.#fighters.get(caster);
+    const runtime = this.#options.session.scriptsReady;
+    const setting = async (name: string, fallback: number): Promise<number> => {
+      const value = await runtime?.gameSetting(name);
+      return typeof value === 'number' ? value : fallback;
+    };
     if (!on) {
       knockdowns.hold(target, undefined);
+      const from = holder && this.#feet(holder);
+      const fighter = this.#fighters.get(target);
+      const at = fighter && this.#feet(fighter);
+      if (!from || !at) return;
+      void setting('fMagicGrabActorThrowForce', 25).then((force) => {
+        const way: Vec3 = [at[0] - from[0], at[1] - from[1], at[2] - from[2]];
+        const length = Math.hypot(...way) || 1;
+        void knockdowns.knockDown(target, {
+          direction: [way[0] / length, way[1] / length, way[2] / length],
+          force,
+        });
+      });
       return;
     }
-    const holder = caster === undefined ? undefined : this.#fighters.get(caster);
     const fighter = this.#fighters.get(target);
     if (!holder || !fighter || bleedingOut(fighter.state)) return;
-    const point = (): Vec3 | undefined => {
-      const feet = this.#feet(holder);
-      if (!feet) return undefined;
-      const heading = this.#heading(holder);
-      const scale = this.#scale(holder);
-      const reach = this.#reach(holder, false);
-      return [
-        feet[0] + Math.sin(heading) * reach,
-        feet[1] + Math.cos(heading) * reach,
-        feet[2] + BODY_HEIGHT * scale * CHEST,
-      ];
-    };
     if (!knockdowns.holds(target)) fighter.body?.behavior?.sendEvent('Ragdoll');
-    void knockdowns.knockDown(target).then((down) => {
-      if (down) knockdowns.hold(target, point);
+    void Promise.all([
+      knockdowns.knockDown(target),
+      setting('fMagicGrabActorMinDistance', 90),
+    ]).then(([down, distance]) => {
+      if (!down) return;
+      knockdowns.hold(target, (): Vec3 | undefined => {
+        const feet = this.#feet(holder);
+        if (!feet) return undefined;
+        const heading = this.#heading(holder);
+        const scale = this.#scale(holder);
+        return [
+          feet[0] + Math.sin(heading) * distance,
+          feet[1] + Math.cos(heading) * distance,
+          feet[2] + BODY_HEIGHT * scale * CHEST,
+        ];
+      });
     });
   }
 

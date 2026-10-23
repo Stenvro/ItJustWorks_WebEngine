@@ -85,6 +85,8 @@ export interface CombatSettings {
   readonly essentialDeathTime: number;
   /** fCombatPlayerBleedoutHealthDamageMult: damage the player takes bleeding out. */
   readonly playerBleedoutHealthDamageMult: number;
+  /** fKillMoveMaxDuration: a killmove (a paired animation) ends by this at the latest (seconds). */
+  readonly killMoveMaxDuration: number;
   // --- Arrows --------------------------------------------------------------------------------
   /** iArrowInventoryChance: % of arrows that hit an actor going into its inventory. */
   readonly arrowInventoryChance: number;
@@ -104,11 +106,6 @@ export interface CombatSettings {
   readonly deathForceRangedDamageMax: number;
   readonly deathForceRangedForceMin: number;
   readonly deathForceRangedForceMax: number;
-  /**
-   * fKillMoveMaxDuration: a killmove (a paired animation) that has not ended by then is let go
-   * (seconds; the engine's timer, observed in the original).
-   */
-  readonly killMoveMaxDuration: number;
   // --- Weapon blood --------------------------------------------------------------------------
   /** fWeaponBloodLifetime: seconds a weapon's blood stays fresh after a hit. */
   readonly weaponBloodLifetime: number;
@@ -166,6 +163,7 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   bleedoutRecover: 0.05,
   essentialDeathTime: 20,
   playerBleedoutHealthDamageMult: 0,
+  killMoveMaxDuration: 10,
   arrowInventoryChance: 33,
   attachedArrowAgeMax: 10,
   missileStickDepth: 20,
@@ -178,7 +176,6 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   deathForceRangedDamageMax: 50,
   deathForceRangedForceMin: 10,
   deathForceRangedForceMax: 30,
-  killMoveMaxDuration: 10,
   weaponBloodLifetime: 10,
   weaponBloodFadeDuration: 60,
   weaponBloodFalloffThreshold: 0.07,
@@ -219,6 +216,7 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   bleedoutRecover: 'fBleedoutRecover',
   essentialDeathTime: 'fEssentialDeathTime',
   playerBleedoutHealthDamageMult: 'fCombatPlayerBleedoutHealthDamageMult',
+  killMoveMaxDuration: 'fKillMoveMaxDuration',
   arrowInventoryChance: 'iArrowInventoryChance',
   attachedArrowAgeMax: 'fAttachedArrowAgeMax',
   missileStickDepth: 'fCombatMissileStickDepth',
@@ -231,7 +229,6 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   deathForceRangedDamageMax: 'fDeathForceRangedDamageMax',
   deathForceRangedForceMin: 'fDeathForceRangedForceMin',
   deathForceRangedForceMax: 'fDeathForceRangedForceMax',
-  killMoveMaxDuration: 'fKillMoveMaxDuration',
   weaponBloodLifetime: 'fWeaponBloodLifetime',
   weaponBloodFadeDuration: 'fWeaponBloodFadeDuration',
   weaponBloodFalloffThreshold: 'fWeaponBloodFalloffThreshold',

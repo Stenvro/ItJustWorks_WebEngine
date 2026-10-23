@@ -198,7 +198,9 @@ export const PROCEDURE_PARAMETERS: Readonly<Record<string, readonly ProcedurePar
     p('Location', 'Location'),
     p('Preferred Path Only', 'Bool'),
     p('Allow Horse Wander', 'Bool'),
-    p('Unknown 3', 'Bool'),
+    // Read by the engine as a number (fAIWanderDefaultMinDist without it; original); no vanilla
+    // template sets it.
+    p('Min Wander Distance', 'Float'),
   ],
 };
 

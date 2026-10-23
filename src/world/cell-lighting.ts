@@ -7,7 +7,10 @@ import type { CellData, CellLight } from './cell-loader.ts';
 import type { Rgb } from './cell-records.ts';
 import { FLICKERING_LIGHT_DISTANCE, lightFlicker } from './light-flicker.ts';
 
-/** Point lights fade out from this distance to the camera (fLightLODStartFade, High)... */
+/**
+ * Point lights fade out from this distance to the camera (fLightLODStartFade as
+ * Skyrim_Default.ini gives it; the callers pass the session's)...
+ */
 export const LIGHT_LOD_START_FADE = 3500;
 /** ...over this range (fLightLODRange). */
 export const LIGHT_LOD_RANGE = 500;

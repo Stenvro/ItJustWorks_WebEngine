@@ -7,6 +7,14 @@ import type { IniOverrides } from '../world/ini-settings.ts';
 
 const STORAGE_KEY = 'itjw.skyrimPrefs';
 
+/** Settings kept under an earlier section: the section the executable gives them now. */
+const MOVED: Readonly<Record<string, string>> = {
+  'Interface:fHUDOpacity': 'Main:fHUDOpacity',
+  'SaveGame:bSaveOnRest': 'Main:bSaveOnRest',
+  'SaveGame:bSaveOnTravel': 'Main:bSaveOnTravel',
+  'SaveGame:bSaveOnWait': 'Main:bSaveOnWait',
+};
+
 /** A sound category's volume setting ("Audio:<form id>"): its key in the Audio section. */
 export function audioSettingKey(category: number): string {
   return category.toString(16).toUpperCase().padStart(8, '0');
@@ -29,7 +37,9 @@ export class Preferences implements IniOverrides {
       const saved: unknown = JSON.parse(storage?.getItem(STORAGE_KEY) ?? '{}');
       if (saved && typeof saved === 'object') {
         for (const [key, value] of Object.entries(saved)) {
-          if (typeof value === 'number' && Number.isFinite(value)) this.#values.set(key, value);
+          if (typeof value === 'number' && Number.isFinite(value)) {
+            this.#values.set(MOVED[key] ?? key, value);
+          }
         }
       }
     } catch {
