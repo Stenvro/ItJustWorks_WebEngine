@@ -1289,7 +1289,7 @@ MQ101DragonAttackSceneDToKeep, Hadvar escorting the player to the keep; MQ101 it
 stage 160 until the keep (its next stage is set inside). Left, and seen on the way:
 
 - **The tower's open door** (ImpWoodDoorSingleSmall01, open as placed): its collision, a
-  convex block 206 units wide on the leaf's node (63 beyond its hinge's far side), swung with
+  convex block 206 units wide on the leaf's node (43 of it beyond the hinge), swung with
   the open sequence lies along the way in, its near end across the outer step; the player gets
   past only from some angles (the bot after a few tries, in one run of four never). Whether the
   engine's open leaf leaves more room is not read yet (TODO(M13): the door's open pose against
