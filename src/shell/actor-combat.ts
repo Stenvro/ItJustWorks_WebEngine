@@ -914,6 +914,7 @@ export class ActorCombat implements CombatBridge {
     this.#options.session.time.killCam = this.#camera?.timeMultiplier ?? 1;
     this.#killCamModifier(this.#camera?.imageSpaceModifier);
     if (play) {
+      play.heldByPair = player?.state.paired !== undefined;
       if (this.#camera && play.cameraOverride === undefined) play.cameraOverride = this.#camera;
       else if (!this.#camera && play.cameraOverride instanceof KillmoveCamera) {
         play.cameraOverride = undefined;

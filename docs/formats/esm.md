@@ -1594,21 +1594,21 @@ leaves (WitchlightRagdollInstant, SkeeverIdleWarn, AttackLeftHandForwardSprintin
 idles have an event and children (CowMain_Idle sends IdleStop when none of its random children
 is taken).
 
-**Resolving an action** (`IdleTree.resolve`): among the action's children for the actor's
-graph, in order, the first whose conditions hold is taken; if it has children, the first of
-those whose conditions hold is taken in turn, down the tree. The deepest idle taken is the one
-chosen; its event is sent. If it has none (an empty leaf, or a group none of whose children
-qualified), the action plays nothing: an empty leaf blocks (AttackLeftHandForwardSprinting:
-sprinting with Critical Charge and a one-handed weapon in the left hand, a left attack plays
-nothing; SkeeverIdleWarn, without conditions: skeevers have no warning idle).
-Sources: the Creation Kit wiki "Idle Animations" (idles under an action are evaluated
-hierarchically; an action returns the first valid idle), the Construction Set wiki "Idle
-Manager" (siblings in tree order; an idle whose conditions are met and none of whose children's
-are is the one to play; a chosen idle without an animation plays none, unless a "must return a
-file" flag, which Skyrim's IDLE no longer has, skips it). The vanilla trees end their random
-lists with an unconditioned fail-safe (SpectatorTalkFailSafe, IdleHDFailAll,
-IdleVampireFeedFailsafe): a group taken whose children all fail would play nothing. An actor's
-graph is the root behavior of its race's project (`behaviorGraphKey` of it). An idle played by
+**Resolving an action** (`IdleTree.resolve`), observed in the original: a depth-first search
+of the action's children for the actor's graph, in order. An idle whose conditions fail is
+skipped with everything under it; one whose conditions hold is searched below first, and the
+first child that resolves is the answer; if none does, the idle is the answer itself when it has
+an event (or the blocking flag), and otherwise the search goes back up and on to its next
+sibling. So a group whose conditions hold but none of whose children's do gives way to what
+follows it (the killmoves' KillMoveFrontSideRoot before a mudcrab: the plain power attack after
+it), and an idle with an event and children plays its own event only when no child qualifies
+(KillingMoveSneakBackA). A sequence idle (flag 0x2; one vanilla: the dragon's flying snatch)
+plays its first step (the engine starts the sequence afresh with each action). An answer
+without an event plays nothing (the action fails). The conditions are valued as the engine does
+([scripting.md](../scripting.md#conditions)): on the actor, the action's target as their target.
+The vanilla trees end their random lists with an unconditioned fail-safe
+(SpectatorTalkFailSafe, IdleHDFailAll, IdleVampireFeedFailsafe). An actor's graph is the root
+behavior of its race's project (`behaviorGraphKey` of it). An idle played by
 itself (a package, a script, an idle marker) also needs the conditions of the idles above it
 (CommonLib `TESIdleForm::CheckConditions`, a_checkParentIdle: `IdleTree.holdsWithParents`).
 
