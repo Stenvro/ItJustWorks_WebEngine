@@ -100,12 +100,21 @@ export interface LocomotionGraph {
   sendEvent(name: string): boolean;
 }
 
-/** How the actor moved over the frame. */
+/** How the actor moves in the frame. */
 export interface LocomotionFrame {
-  /** Horizontal velocity it moved with (game units per second): its measured speed. */
+  /**
+   * Horizontal velocity it wants to move with now (game units per second): its movement
+   * controller's, not what physics made of it (the engine's Speed and Direction are its movement
+   * controller's wish; an actor walking into a wall walks on the spot).
+   */
   readonly velocity: readonly [number, number];
   /** Its heading now (radians, compass). */
   readonly heading: number;
+  /**
+   * How fast it turns now (radians per second, compass: clockwise positive), as its movement
+   * controller turns it; undefined: measured from its heading from frame to frame.
+   */
+  readonly turnRate?: number | undefined;
   readonly seconds: number;
   readonly grounded: boolean;
   readonly swimming: boolean;
@@ -118,42 +127,68 @@ export interface LocomotionFrame {
    * told it moves (moveStart), which ends such an idle.
    */
   readonly settingOut?: boolean;
+  /**
+   * The player's controls freeze the direction of a large change (game settings
+   * bFreezeDirectionOnLargeDelta, fFreezeDirectionDefaultAngleThreshold: radians here,
+   * fFreezeDirectionDefaultSpeedThreshold): the cyclic blends hold their pose (CyclicFreeze) and
+   * cross-fade to the new direction (CyclicCrossBlend). NPCs' movement has no such freeze.
+   */
+  readonly freezeDirection?: { readonly angle: number; readonly speed: number } | undefined;
 }
 
-/** Speeds below this are standing (game units per second). */
+/**
+ * The engine's Speed channel: an actor wanting at least this speed moves (ActionMoveStart as
+ * it reaches it, ActionMoveStop as it falls below; game units per second).
+ */
 const MOVING_SPEED = 5;
 
-/**
- * A change of Direction by more than this (of the whole turn, 0..1) went the short way round
- * across 0: the cyclic blends cross-fade it. TODO(M13): the engine's own test is not
- * documented.
- */
-const DIRECTION_WRAP = 0.5;
+/** The engine's TurnDelta channel: turning faster than this turns (ActionTurnLeft / Right). */
+const TURNING_RATE = Math.PI / 180;
 
 /**
- * Movement this near the facing (of the whole turn: 7.2°) is straight ahead, Direction 0. A
- * controller's steps stray a little from its heading as it goes (sliding along what it touches,
- * steering): read as they are, they flip Direction between 0.999 and 0.001, and every flip froze
- * and cross-blended the cyclic blends (a horse pulling a cart stumbled along). TODO(M13): the
- * engine's own smoothing of Direction is not documented.
+ * The movement actions the engine performs as its graph data channels cross their thresholds,
+ * by the event their idles (IDLE under the AACT) send in every vanilla graph that has them:
+ * ActionMoveStart moveStart (the characters' only while not riding: IsRidingHorse() == 0),
+ * ActionTurnLeft turnLeft, ActionMoveForward moveForward, ... ActionMoveLeft and ActionMoveRight
+ * have no idles. TODO(M13): resolve them through the idle tree (their conditions: a rider's
+ * graph gets no moveStart, SprintStart only neither sneaking nor blocking).
  */
-const DIRECTION_AHEAD = 0.02;
+const ACTION_EVENTS = {
+  moveStart: 'moveStart',
+  moveStop: 'moveStop',
+  turnLeft: 'turnLeft',
+  turnRight: 'turnRight',
+  turnStop: 'turnStop',
+  moveForward: 'moveForward',
+  moveBackward: 'moveBackward',
+} as const;
+
+/** iSyncTurnState as the engine sets it with each turn action. */
+const TURN_STATE = { right: 0, stop: 1, left: 2 } as const;
 
 /**
- * Drives an actor's behavior graphs from its movement, frame by frame: the variables the
- * engine keeps (Speed: the measured speed; Direction: the movement against the facing, 0 ahead,
- * 0.25 right, 0.5 behind, 0.75 left; TurnDelta: the turn rate, degrees per second, left
- * positive; IsSprinting, IsSneaking; iSyncIdleLocomotion with the movement) and its events
- * (moveStart, moveStop, SprintStart / Stop, SneakStart / Stop, SwimStart / Stop, JumpFall,
- * JumpLand / JumpLandDirectional; CyclicFreeze and CyclicCrossBlend as Direction wraps). iSyncIdleLocomotion: its name is in the executable and no
- * vanilla graph writes it outside blocking, while 38 state machines start from it and leave
- * state 0 on moveStart and state 1 on moveStop; a graph that comes back (landing from a jump)
- * then starts moving while the actor moves. TurnDelta's unit is inferred from the graphs:
- * bleedoutTurnMult = |TurnDelta| / 20.5, the horse's turnSpeedMult = |TurnDelta / 112.5|; its
- * sign from the graphs that read it: the dragon's, the Falmer's, the dwarven spheres' and
- * centurions' turn left on TurnDelta > 0.1 ("turnLeft if (TurnDelta > 0.1)"), and
- * hkbRotateCharacterModifier's degreesPerSecond bound to it turns counter-clockwise about z
- * (TODO(M13): the engine's smoothing).
+ * Drives an actor's behavior graphs from its movement, as the engine's graph data channels and
+ * the actions they perform do (docs/animation.md, "Driving the graphs"; observed in the
+ * original). Every update:
+ *
+ * - **Speed:** the speed its movement controller wants. Reaching 5 units per second it performs
+ *   ActionMoveStart (moveStart), falling below ActionMoveStop (moveStop).
+ * - **Direction:** the way it wants to go against its facing, the turn wrapped to 0..1 (0
+ *   ahead, 0.25 right, 0.5 behind, 0.75 left), unsmoothed. Crossing between the front half
+ *   (below 0.25 or from 0.75) and the back half it performs ActionMoveForward / Backward;
+ *   between the right (0 to 0.5) and the left ActionMoveRight / Left.
+ * - **TurnDelta:** its turn rate in degrees per second, left positive. Turning faster than 1°
+ *   a second from slower it performs ActionTurnLeft or ActionTurnRight, slower again
+ *   ActionTurnStop.
+ * - Each action sets the sync variable the graphs' state machines start from as they are
+ *   entered, whether or not the graph took its event: iSyncIdleLocomotion (moveStart 1,
+ *   moveStop 0), iSyncTurnState (right 0, stop 1, left 2), iSyncForwardState (forward 0,
+ *   backward 1), iSyncStrafeState (right 0, left 1), iSyncSprintState (SprintStart 1,
+ *   SprintStop 0). A graph coming back to its locomotion (landing, an idle ended) so starts
+ *   as the actor moves.
+ *
+ * Besides: IsSprinting, IsSneaking, SneakStart / Stop, SwimStart / Stop, JumpFall, JumpLand /
+ * JumpLandDirectional; the player's CyclicFreeze and CyclicCrossBlend (`freezeDirection`).
  */
 export class Locomotion {
   #told = {
@@ -163,12 +198,14 @@ export class Locomotion {
     swimming: false,
     airborne: false,
     falling: false,
+    /** ActionTurnLeft (1), ActionTurnRight (−1) or ActionTurnStop (0) last. */
+    turning: 0,
+    forward: true,
+    right: false,
   };
   #heading: number | undefined;
-  /** The Direction last given while it moved (undefined standing). */
+  /** The direction (0..1) last given while it moved faster than the freeze speed. */
   #direction: number | undefined;
-  /** A sprint ended while the graph was out of its locomotion (SprintStop may be lost). */
-  #sprintUnsettled = false;
 
   /** Drives the graphs; returns whether it landed from the air in this frame. */
   drive(graphs: Iterable<LocomotionGraph>, frame: LocomotionFrame): boolean {
@@ -185,43 +222,71 @@ export class Locomotion {
     const speed = Math.hypot(vx, vy);
     const airborne = !frame.grounded && !frame.swimming;
     const relative = headingOf(vx, vy) - frame.heading;
-    const turn = speed > 1 ? (((relative / (2 * Math.PI)) % 1) + 1) % 1 : 0;
-    const direction = turn < DIRECTION_AHEAD || turn > 1 - DIRECTION_AHEAD ? 0 : turn;
-    const turned =
-      this.#heading === undefined || frame.seconds <= 0
+    const direction = speed > 0 ? (((relative / (2 * Math.PI)) % 1) + 1) % 1 : 0;
+    const turnRate =
+      frame.turnRate ??
+      (this.#heading === undefined || frame.seconds <= 0
         ? 0
-        : angleBetween(this.#heading, frame.heading) / frame.seconds;
+        : angleBetween(this.#heading, frame.heading) / frame.seconds);
     this.#heading = frame.heading;
     set('Speed', speed);
-    // Across the wrap (ahead-left to ahead-right: 0.95 to 0.05) a directional blend would sweep
-    // through every direction between: the graphs' BSCyclicBlendTransitionGenerators hold the
-    // pose they had (CyclicFreeze, sent before the new direction) and cross-fade to the new
-    // one (CyclicCrossBlend, after it). Every vanilla one names these two events.
-    const wrapped =
-      this.#direction !== undefined &&
-      speed > MOVING_SPEED &&
-      Math.abs(direction - this.#direction) > DIRECTION_WRAP;
-    if (wrapped) send('CyclicFreeze');
+    // The player's controls: a large change of direction at speed is frozen and cross-faded
+    // (a directional blend would otherwise sweep through every direction between).
+    const freeze = frame.freezeDirection;
+    const fast = freeze !== undefined && speed > freeze.speed;
+    const last = this.#direction;
+    const frozen =
+      fast &&
+      last !== undefined &&
+      Math.abs(angleBetween(last * 2 * Math.PI, direction * 2 * Math.PI)) > freeze.angle;
+    if (frozen) send('CyclicFreeze');
     set('Direction', direction);
-    if (wrapped) send('CyclicCrossBlend');
-    this.#direction = speed > MOVING_SPEED ? direction : undefined;
+    if (frozen) send('CyclicCrossBlend');
+    this.#direction = fast ? direction : undefined;
     // Compass headings turn clockwise; TurnDelta is left (counter-clockwise) positive.
-    set('TurnDelta', (-turned * 180) / Math.PI);
+    set('TurnDelta', (-turnRate * 180) / Math.PI);
     set('IsSprinting', frame.sprinting ? 1 : 0);
     set('IsSneaking', frame.sneaking ? 1 : 0);
     const told = this.#told;
-    const moving = speed > MOVING_SPEED || frame.settingOut === true;
-    set('iSyncIdleLocomotion', moving ? 1 : 0);
+    const moving = speed >= MOVING_SPEED || frame.settingOut === true;
     // A sprint ends before the movement does: the locomotion machine leaves its sprint state
-    // only while it runs (SprintStop after moveStop finds it gone, and its sync variable,
-    // iSyncSprintState, would start it sprinting again at the next moveStart: the body
-    // sprinting while the player runs or walks).
+    // only while it runs (SprintStop after moveStop finds it gone).
     const sprintStop = !frame.sprinting && told.sprinting;
     const sneakStop = !frame.sneaking && told.sneaking;
-    if (sprintStop) send('SprintStop');
+    if (sprintStop) {
+      set('iSyncSprintState', 0);
+      send('SprintStop');
+    }
     if (sneakStop) send('SneakStop');
-    if (moving !== told.moving) send(moving ? 'moveStart' : 'moveStop');
-    if (frame.sprinting && !told.sprinting) send('SprintStart');
+    // The channels in the engine's order: Speed, Direction, TurnDelta.
+    if (moving !== told.moving) {
+      set('iSyncIdleLocomotion', moving ? 1 : 0);
+      send(moving ? ACTION_EVENTS.moveStart : ACTION_EVENTS.moveStop);
+    }
+    const forward = direction < 0.25 || direction >= 0.75;
+    if (forward !== told.forward) {
+      set('iSyncForwardState', forward ? 0 : 1);
+      send(forward ? ACTION_EVENTS.moveForward : ACTION_EVENTS.moveBackward);
+    }
+    const right = direction > 0 && direction <= 0.5;
+    if (right !== told.right) set('iSyncStrafeState', right ? 0 : 1);
+    const wasTurning = told.turning !== 0;
+    const turnsNow = Math.abs(turnRate) > TURNING_RATE;
+    let turning = told.turning;
+    if (!wasTurning && turnsNow) {
+      // Left (counter-clockwise) is a falling compass heading.
+      turning = turnRate < 0 ? 1 : -1;
+      set('iSyncTurnState', turning > 0 ? TURN_STATE.left : TURN_STATE.right);
+      send(turning > 0 ? ACTION_EVENTS.turnLeft : ACTION_EVENTS.turnRight);
+    } else if (wasTurning && !turnsNow) {
+      turning = 0;
+      set('iSyncTurnState', TURN_STATE.stop);
+      send(ACTION_EVENTS.turnStop);
+    }
+    if (frame.sprinting && !told.sprinting) {
+      set('iSyncSprintState', 1);
+      send('SprintStart');
+    }
     if (frame.sneaking && !told.sneaking) send('SneakStart');
     if (frame.swimming !== told.swimming) send(frame.swimming ? 'SwimStart' : 'SwimStop');
     // In the air: falling once it comes down; landing when it stands again.
@@ -229,14 +294,6 @@ export class Locomotion {
     if (falling && !told.falling) send('JumpFall');
     const landed = !airborne && told.airborne;
     if (landed) send(moving ? 'JumpLandDirectional' : 'JumpLand');
-    // A sprint that ended away from the locomotion machine (in the air, or standing) is told
-    // again once it is back in it (moving again, or landing on the move) not sprinting.
-    if (sprintStop && (airborne || !told.moving)) this.#sprintUnsettled = true;
-    if (frame.sprinting) this.#sprintUnsettled = false;
-    if (this.#sprintUnsettled && moving && !airborne && (!told.moving || landed)) {
-      this.#sprintUnsettled = false;
-      send('SprintStop');
-    }
     this.#told = {
       moving,
       sprinting: frame.sprinting,
@@ -244,8 +301,30 @@ export class Locomotion {
       swimming: frame.swimming,
       airborne,
       falling,
+      turning,
+      forward,
+      right,
     };
     return landed;
+  }
+
+  /**
+   * Its graph left an idle (or another state that took no movement events) while the actor
+   * still moves or turns: the engine, stopping an idle, performs the movement action again
+   * (ActionMoveStart while iSyncIdleLocomotion says it moves, else ActionTurnRight / Left while
+   * iSyncTurnState says it turns), so that the graph goes on as the actor does.
+   */
+  resume(graphs: Iterable<LocomotionGraph>): void {
+    const told = this.#told;
+    const event = told.moving
+      ? ACTION_EVENTS.moveStart
+      : told.turning > 0
+        ? ACTION_EVENTS.turnLeft
+        : told.turning < 0
+          ? ACTION_EVENTS.turnRight
+          : undefined;
+    if (event === undefined) return;
+    for (const graph of graphs) graph.sendEvent(event);
   }
 
   /** Forgets what the graphs were told (a body made again starts from its graphs' start). */
@@ -257,10 +336,12 @@ export class Locomotion {
       swimming: false,
       airborne: false,
       falling: false,
+      turning: 0,
+      forward: true,
+      right: false,
     };
     this.#heading = undefined;
     this.#direction = undefined;
-    this.#sprintUnsettled = false;
   }
 }
 

@@ -10,6 +10,7 @@
 
 import type RAPIER from '@dimforge/rapier3d-compat';
 import {
+  angleBetween,
   Locomotion,
   steer,
   taggedMovementType,
@@ -73,6 +74,12 @@ interface Mover {
   /** Its measured horizontal velocity (game units per second of physics time). */
   velocity: [number, number];
   /**
+   * What its AI's steering wanted in the last physics step: the velocity and the turn rate
+   * (radians per second, clockwise): what drives its graph, as the engine's movement controller
+   * does (not what physics made of it).
+   */
+  wish: { velocity: readonly [number, number]; turnRate: number };
+  /**
    * How its graph moves it (its clips' root motion: world velocity, the turn in radians per
    * second counter-clockwise) and whether the graph is animation-driven.
    */
@@ -83,6 +90,8 @@ interface Mover {
   };
   /** Its graph moved it in the last step (not its controller's wish): it stands, to its graph. */
   rooted: boolean;
+  /** Its graph was animation-driven when last drawn (bAnimationDriven). */
+  heldByGraph: boolean;
   tilt: { readonly at: Vec3; readonly normal: Vec3 } | undefined;
   /** The trigger volumes it is in. */
   triggers: Set<number>;
@@ -213,6 +222,8 @@ interface Walker {
   race: RaceMovement | undefined;
   /** It moved last frame (its graph is told when it stops). */
   moving: boolean;
+  /** Its graph was animation-driven last frame (bAnimationDriven). */
+  held: boolean;
 }
 
 export class ActorMovers {
@@ -262,9 +273,9 @@ export class ActorMovers {
 
   readonly #travels = new Map<number, Travel>();
   /**
-   * The way each actor was going as a travel arrived in this frame: a travel its AI starts at
-   * once (a patrol's next point) goes on from it, not from standing (the physics steps before
-   * its path is followed would stop it: moveStop, moveStart at every patrol point).
+   * The way each actor was going as a travel arrived in this frame: it goes on so (its request
+   * kept) until the next frame, and a travel its AI starts at once (a patrol's next point) goes
+   * on from it, not from standing (moveStop, moveStart at every patrol point).
    */
   readonly #arrived = new Map<number, MoveRequest>();
   /** Until then (performance.now ms) a travel ends at once at its place: hours were skipped. */
@@ -306,8 +317,12 @@ export class ActorMovers {
           if (this.#travels.get(reference) !== travel) return;
           this.#travels.delete(reference);
           const request = this.#requests.get(reference);
+          // Arrived on its way, it goes on as it went until the next frame: a travel its AI
+          // starts meanwhile (a patrol's next point) takes over without a step of standing,
+          // which told its graph moveStop and moveStart at every patrol point (its graph is
+          // driven by what it wants, as the engine's).
           if (arrived && request?.direction) this.#arrived.set(reference, request);
-          this.#requests.delete(reference);
+          else this.#requests.delete(reference);
           resolve(arrived);
         },
       };
@@ -688,6 +703,9 @@ export class ActorMovers {
     if (!world) return;
     this.#frames++;
     // A travel that arrived in the last frame and was followed by none: the actor stands.
+    for (const [reference, request] of this.#arrived) {
+      if (this.#requests.get(reference) === request) this.#requests.delete(reference);
+    }
     this.#arrived.clear();
     // Their speed is measured over the physics time stepped (the controllers' own time).
     const seconds = this.#stepped;
@@ -869,7 +887,13 @@ export class ActorMovers {
     const reference = staged.reference;
     let walker = this.#walkers.get(reference);
     if (!walker) {
-      walker = { staged, locomotion: new Locomotion(), race: undefined, moving: false };
+      walker = {
+        staged,
+        locomotion: new Locomotion(),
+        race: undefined,
+        moving: false,
+        held: false,
+      };
       this.#walkers.set(reference, walker);
       const created = walker;
       void Promise.all([this.#movementCatalog(), this.#options.session.db]).then(
@@ -882,10 +906,16 @@ export class ActorMovers {
     if (travel && !this.#walkerTravel(walker, travel, seconds)) return;
     const request = this.#requests.get(reference);
     const types = this.#catalogRead?.forActor(walker.race, undefined);
+    // Held by an animation-driven graph (an idle, sitting down: bAnimationDriven) it does not go
+    // its way: its graph is told it sets out (moveStart ends such an idle) and it goes once the
+    // graph lets it. Moved meanwhile, it glided: a chicken sat in its idle while it went on.
+    const held = staged.placed.behavior?.variable('bAnimationDriven') === 1;
     let velocity: [number, number] = [0, 0];
-    if (request && types && seconds > 0) {
+    let turnRate = 0;
+    if (request && types && seconds > 0 && !held) {
       const steering = steer(request, staged.heading, types, seconds);
       velocity = [steering.velocity[0], steering.velocity[1]];
+      turnRate = angleBetween(staged.heading, steering.heading) / seconds;
       staged.heading = steering.heading;
       const [x, y, z] = staged.position;
       const next: Vec3 = [x + velocity[0] * seconds, y + velocity[1] * seconds, z];
@@ -898,8 +928,11 @@ export class ActorMovers {
       this.#placeWalker(staged);
       const behavior = staged.placed.behavior;
       if (behavior) {
+        // Out of an animation-driven idle while it goes on: told again that it moves.
+        if (walker.held && !held) walker.locomotion.resume([behavior]);
         walker.locomotion.drive([behavior], {
           velocity,
+          turnRate,
           heading: staged.heading,
           seconds: Math.max(seconds, 1e-3),
           grounded: true,
@@ -907,10 +940,12 @@ export class ActorMovers {
           verticalSpeed: 0,
           sprinting: moving && request?.gait === 'sprint',
           sneaking: this.#sneaking.has(reference),
+          settingOut: held && request?.direction !== undefined,
         });
       }
     }
     walker.moving = moving;
+    walker.held = held;
   }
 
   /** A walker's travel: its path searched and followed (false: it ended). */
@@ -1057,8 +1092,10 @@ export class ActorMovers {
         typesFor: undefined,
         drawn: [...staged.position],
         velocity: [0, 0],
+        wish: { velocity: [0, 0], turnRate: 0 },
         root: { velocity: [0, 0], turn: 0, driven: false },
         rooted: false,
+        heldByGraph: false,
         tilt: undefined,
         triggers: new Set(),
         bodyTriggers: new Set(),
@@ -1143,12 +1180,19 @@ export class ActorMovers {
       if (rooted) {
         mover.character.velocity = [root.velocity[0], root.velocity[1]];
         staged.heading -= root.turn * step;
+        // Its graph moves it: to its graph it stands (its walk would feed the root motion).
+        mover.wish = { velocity: [0, 0], turnRate: 0 };
       } else if (request && types) {
         const steering = steer(request, staged.heading, types, step);
         mover.character.velocity = [steering.velocity[0], steering.velocity[1]];
+        mover.wish = {
+          velocity: steering.velocity,
+          turnRate: step > 0 ? angleBetween(staged.heading, steering.heading) / step : 0,
+        };
         staged.heading = steering.heading;
       } else {
         mover.character.velocity = [0, 0];
+        mover.wish = { velocity: [0, 0], turnRate: 0 };
       }
       mover.character.step(step);
     }
@@ -1265,10 +1309,16 @@ export class ActorMovers {
     if (behavior) {
       const request = sprintRequest;
       const moving = Math.hypot(velocity[0], velocity[1]) > 5;
-      // Moved by its graph (a canned turn, a lunge), it stands as far as its speed goes: its
-      // walk would otherwise feed the root motion that moves it.
+      // Out of an animation-driven state (an idle, a stagger, furniture) while it still goes
+      // its way: the engine, stopping an idle, performs the movement action again.
+      const driven = mover.root.driven;
+      if (mover.heldByGraph && !driven) mover.locomotion.resume([behavior]);
+      mover.heldByGraph = driven;
+      // What its steering wants (moved by its graph, a canned turn, a lunge: it stands, as far
+      // as its graph is told).
       mover.locomotion.drive([behavior], {
-        velocity: mover.rooted ? [0, 0] : velocity,
+        velocity: mover.wish.velocity,
+        turnRate: mover.wish.turnRate,
         heading: staged.heading,
         seconds: dt,
         grounded: mover.character.grounded,

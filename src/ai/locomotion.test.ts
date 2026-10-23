@@ -105,22 +105,44 @@ const frame = (overrides: Partial<LocomotionFrame>): LocomotionFrame => ({
 });
 
 describe('Locomotion', () => {
-  it('sets the speed and direction and starts and stops moving', () => {
+  it('sets the speed and direction and starts and stops moving at 5 units a second', () => {
     const graph = recorder();
     const locomotion = new Locomotion();
     locomotion.drive([graph], frame({}));
     expect(graph.events).toEqual([]);
-    // Moving right of the facing.
-    locomotion.drive([graph], frame({ velocity: [100, 0] }));
+    // Slower than 5 units a second it stands.
+    locomotion.drive([graph], frame({ velocity: [0, 4.9] }));
+    expect(graph.events).toEqual([]);
+    // Moving ahead.
+    locomotion.drive([graph], frame({ velocity: [0, 100] }));
     expect(graph.values.get('Speed')).toBeCloseTo(100);
-    expect(graph.values.get('Direction')).toBeCloseTo(0.25);
+    expect(graph.values.get('Direction')).toBe(0);
     expect(graph.values.get('iSyncIdleLocomotion')).toBe(1);
     expect(graph.events).toEqual(['moveStart']);
     locomotion.drive([graph], frame({}));
     expect(graph.events).toEqual(['moveStart', 'moveStop']);
+    expect(graph.values.get('iSyncIdleLocomotion')).toBe(0);
   });
 
-  it('tells a graph that holds it in an idle that it sets out (moveStart ends the idle)', () => {
+  it('tells the graph as the way it goes changes half (forward and backward, left and right)', () => {
+    const graph = recorder();
+    const locomotion = new Locomotion();
+    locomotion.drive([graph], frame({}));
+    // Right of the facing: the back half begins at a quarter turn.
+    locomotion.drive([graph], frame({ velocity: [100, 0] }));
+    expect(graph.values.get('Direction')).toBeCloseTo(0.25);
+    expect(graph.events).toEqual(['moveStart', 'moveBackward']);
+    expect(graph.values.get('iSyncForwardState')).toBe(1);
+    expect(graph.values.get('iSyncStrafeState')).toBe(0);
+    // Ahead-left: the front half again, on the left.
+    graph.events.length = 0;
+    locomotion.drive([graph], frame({ velocity: [-50, 100] }));
+    expect(graph.events).toEqual(['moveForward']);
+    expect(graph.values.get('iSyncForwardState')).toBe(0);
+    expect(graph.values.get('iSyncStrafeState')).toBe(1);
+  });
+
+  it('tells a graph that holds it in an idle that it sets out, and again once it lets go', () => {
     const graph = recorder();
     const locomotion = new Locomotion();
     locomotion.drive([graph], frame({}));
@@ -128,9 +150,15 @@ describe('Locomotion', () => {
     locomotion.drive([graph], frame({ settingOut: true }));
     expect(graph.events).toEqual(['moveStart']);
     expect(graph.values.get('Speed')).toBe(0);
-    // Out of the idle it moves on as measured.
+    // Out of the idle it moves on: told again (the engine's idle stop performs the move again).
+    locomotion.resume([graph]);
     locomotion.drive([graph], frame({ velocity: [0, 120] }));
-    expect(graph.events).toEqual(['moveStart']);
+    expect(graph.events).toEqual(['moveStart', 'moveStart']);
+    // Standing still, nothing to resume.
+    locomotion.drive([graph], frame({}));
+    graph.events.length = 0;
+    locomotion.resume([graph]);
+    expect(graph.events).toEqual([]);
   });
 
   it('drives graphs given once by a generator (the player body and first-person graphs)', () => {
@@ -148,32 +176,26 @@ describe('Locomotion', () => {
     expect(first.values.get('Direction')).toBe(0);
   });
 
-  it('ends a sprint before the movement, and again when a sprint ended in the air', () => {
+  it('ends a sprint before the movement and keeps iSyncSprintState with it', () => {
     const graph = recorder();
     const locomotion = new Locomotion();
     locomotion.drive([graph], frame({}));
     locomotion.drive([graph], frame({ velocity: [0, 500], sprinting: true }));
+    expect(graph.values.get('iSyncSprintState')).toBe(1);
     // Stopping while sprinting: the sprint ends while the locomotion machine still runs.
     locomotion.drive([graph], frame({}));
     expect(graph.events).toEqual(['moveStart', 'SprintStart', 'SprintStop', 'moveStop']);
-    // Moving again: nothing more to tell.
-    graph.events.length = 0;
-    locomotion.drive([graph], frame({ velocity: [0, 370] }));
-    expect(graph.events).toEqual(['moveStart']);
-    // A sprint jump, the sprint let go in the air: told again on landing.
+    expect(graph.values.get('iSyncSprintState')).toBe(0);
+    // A sprint let go in the air: its sync variable has the graph land running.
     graph.events.length = 0;
     locomotion.drive([graph], frame({ velocity: [0, 500], sprinting: true }));
     locomotion.drive([graph], frame({ velocity: [0, 500], grounded: false, verticalSpeed: 10 }));
     locomotion.drive([graph], frame({ velocity: [0, 370] }));
-    expect(graph.events).toEqual([
-      'SprintStart',
-      'SprintStop',
-      'JumpLandDirectional',
-      'SprintStop',
-    ]);
+    expect(graph.events).toEqual(['moveStart', 'SprintStart', 'SprintStop', 'JumpLandDirectional']);
+    expect(graph.values.get('iSyncSprintState')).toBe(0);
   });
 
-  it('freezes and cross-blends the cyclic blends as the direction wraps round', () => {
+  it("freezes and cross-blends the player's cyclic blends on a large change at speed", () => {
     const order: string[] = [];
     const graph: LocomotionGraph = {
       setVariable: (name, value) => {
@@ -184,64 +206,55 @@ describe('Locomotion', () => {
         return true;
       },
     };
+    const freezeDirection = { angle: degrees(60), speed: 100 };
     const locomotion = new Locomotion();
-    // Ahead-left (0.95 of the turn), then ahead-right (0.05): across 0.
-    const at = (turn: number): [number, number] => [
-      100 * Math.sin(turn * 2 * Math.PI),
-      100 * Math.cos(turn * 2 * Math.PI),
+    const at = (turn: number, speed = 370): [number, number] => [
+      speed * Math.sin(turn * 2 * Math.PI),
+      speed * Math.cos(turn * 2 * Math.PI),
     ];
-    locomotion.drive([graph], frame({ velocity: at(0.95) }));
-    locomotion.drive([graph], frame({ velocity: at(0.9) }));
-    locomotion.drive([graph], frame({ velocity: at(0.05) }));
+    locomotion.drive([graph], frame({ velocity: at(0.95), freezeDirection }));
+    // 18° across the wrap: no freeze.
+    locomotion.drive([graph], frame({ velocity: at(0.0), freezeDirection }));
+    // A quarter turn: frozen and cross-blended.
+    locomotion.drive([graph], frame({ velocity: at(0.25), freezeDirection }));
     expect(order).toEqual([
       'Direction=0.95',
-      'Direction=0.90',
+      'Direction=0.00',
       'CyclicFreeze',
-      'Direction=0.05',
+      'Direction=0.25',
       'CyclicCrossBlend',
     ]);
-    // Starting to move from standing is no wrap.
+    // Walking (slower than the freeze speed) and NPCs (no freeze): never.
     order.length = 0;
-    locomotion.drive([graph], frame({}));
-    locomotion.drive([graph], frame({ velocity: at(0.75) }));
-    expect(order).toEqual(['Direction=0.00', 'Direction=0.75']);
+    locomotion.drive([graph], frame({ velocity: at(0.75, 80), freezeDirection }));
+    const npc = new Locomotion();
+    npc.drive([graph], frame({ velocity: at(0) }));
+    npc.drive([graph], frame({ velocity: at(0.5) }));
+    expect(order).toEqual(['Direction=0.75', 'Direction=0.00', 'Direction=0.50']);
   });
 
-  it('reads movement straying a little from the facing as straight ahead (no wrap)', () => {
-    const order: string[] = [];
-    const graph: LocomotionGraph = {
-      setVariable: (name, value) => {
-        if (name === 'Direction') order.push(`Direction=${value.toFixed(3)}`);
-      },
-      sendEvent: (name) => {
-        if (name.startsWith('Cyclic')) order.push(name);
-        return true;
-      },
-    };
-    const locomotion = new Locomotion();
-    for (const stray of [0.999, 0.002, 0.995, 0.004]) {
-      locomotion.drive(
-        [graph],
-        frame({
-          velocity: [125 * Math.sin(stray * 2 * Math.PI), 125 * Math.cos(stray * 2 * Math.PI)],
-        }),
-      );
-    }
-    expect(order).toEqual([
-      'Direction=0.000',
-      'Direction=0.000',
-      'Direction=0.000',
-      'Direction=0.000',
-    ]);
-  });
-
-  it('gives the turn rate in degrees per second (left positive) and lands from the air', () => {
+  it('gives the turn rate in degrees per second (left positive) and turns past 1° a second', () => {
     const graph = recorder();
     const locomotion = new Locomotion();
     locomotion.drive([graph], frame({}));
     locomotion.drive([graph], frame({ heading: degrees(1.5), seconds: 1 / 60 }));
     // A turn to the right (compass headings grow clockwise).
     expect(graph.values.get('TurnDelta')).toBeCloseTo(-90);
+    expect(graph.values.get('iSyncTurnState')).toBe(0);
+    // The turn its steering gives, rather than measured.
+    locomotion.drive([graph], frame({ heading: degrees(1.5), turnRate: degrees(-45) }));
+    expect(graph.values.get('TurnDelta')).toBeCloseTo(45);
+    locomotion.drive([graph], frame({ heading: degrees(1.5), turnRate: degrees(0.5) }));
+    expect(graph.values.get('iSyncTurnState')).toBe(1);
+    locomotion.drive([graph], frame({ heading: degrees(1.5), turnRate: degrees(-30) }));
+    expect(graph.values.get('iSyncTurnState')).toBe(2);
+    expect(graph.events).toEqual(['turnRight', 'turnStop', 'turnLeft']);
+  });
+
+  it('falls and lands', () => {
+    const graph = recorder();
+    const locomotion = new Locomotion();
+    locomotion.drive([graph], frame({}));
     locomotion.drive([graph], frame({ grounded: false, verticalSpeed: -10 }));
     expect(locomotion.drive([graph], frame({}))).toBe(true);
     expect(graph.events).toEqual(['JumpFall', 'JumpLand']);

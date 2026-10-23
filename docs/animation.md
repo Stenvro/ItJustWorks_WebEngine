@@ -149,6 +149,92 @@ their look: [formats/esm.md](formats/esm.md#actors)).
   took the actors' per-frame cost from 6.1 to 0.3 ms. The engine's own scheme (actors'
   processing levels) is not documented: TODO(M13).
 
+## Driving the graphs
+
+How the engine drives an actor's behavior graph while it moves (`Locomotion`,
+`src/ai/locomotion.ts`; observed in the original, in our words; for NPCs, creatures, horses
+and the player alike).
+
+**Where the values come from.** Every movement update the actor's movement controller says what
+it wants: a speed, the direction to go in (an angle against the actor's facing) and a rotation
+speed; the engine keeps them in the actor's process data and moves the actor by them. The graph
+sees these wishes, not what physics made of them: an actor walking into a wall walks on the
+spot. Two graph variables change the source: with **bIsSynced** (paired and synced animations)
+the speed, direction and rotation are taken from the animation's own motion instead; with
+**bSpeedSynced** the speed is taken from the graph's Speed (times the actor's scale). Before
+each movement update the engine reads **bAnimationDriven** and **bAllowRotation** from the graph
+and switches the movement controller between controller-driven (neither set), animation-driven
+(the clips' root motion moves the actor) and animation-driven with the controller still turning
+it (bAllowRotation). For the player the controls are the movement controller: the wanted speed
+is the input's (a drop of more than fMaxMoveRampDownDelta, 500, in one update is limited to it),
+dampened (bDampenPlayerControls) and the direction frozen on a large change (The player, below).
+
+**The graph data channels** copy them into the graph's variables before every graph update:
+
+| Variable                                        | Value                                                                                                                      | Actions as it crosses a threshold                                                                                                                                                                  |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Speed                                           | the wanted speed, units per second (divided by a per-actor factor, 1 unless set)                                           | reaching 5 from below: ActionMoveStart; falling below 5: ActionMoveStop                                                                                                                            |
+| Direction                                       | the wanted direction against the facing, the turn wrapped to 0..1 (0 ahead, 0.25 right, 0.5 behind, 0.75 left), unsmoothed | between the front half (below 0.25, or from 0.75) and the back half: ActionMoveForward / ActionMoveBackward; between the right (above 0, up to 0.5) and the left: ActionMoveRight / ActionMoveLeft |
+| TurnDelta                                       | the rotation speed in degrees per second, left (counter-clockwise) positive                                                | faster than 1° a second from slower: ActionTurnLeft (positive) or ActionTurnRight; slower again: ActionTurnStop (a change of side while turning sends nothing)                                     |
+| TargetSpeed, Pitch, Roll, PitchDelta            | the target speed; the pitch and roll in degrees; the pitch rate                                                            | none                                                                                                                                                                                               |
+| weaponSpeedMult, leftWeaponSpeedMult, TimeDelta | the hands' weapon speeds; the frame's time                                                                                 | none                                                                                                                                                                                               |
+| iWantBlock                                      | the actor's want-block flag (set as ActionLeftAttack plays blockStart, cleared as ActionLeftRelease plays blockStop)       | none                                                                                                                                                                                               |
+| bHeadTracking                                   | whether it tracks a look-at target                                                                                         | none                                                                                                                                                                                               |
+
+The engine never writes IsBlocking or IsSprinting: it reads them back from the graph (IsSprinting
+sets the actor's sprinting state; IsBlocking slows its speed). There is no smoothing in the
+channels: damping is the graphs' own (TurnDeltaDamped, DirectionDamped, SpeedDamped by their
+damping modifiers). The channels hold their last value while a flag of the actor's process is
+set (TODO(M13): what sets it is not known).
+
+**Actions** are queued as the channels cross their thresholds and performed later in the frame,
+each through the idle tree (the action's idle for the actor's graph: ActionMoveStart's is
+moveStart in every vanilla graph that has one, the characters' only while not riding;
+ActionMoveLeft and ActionMoveRight have none). Whether the graph took the event or not, the
+action sets the **sync variable** that the graphs' state machines start from when they are
+entered, so that a graph coming back to its locomotion (landing, an idle ended, a weapon drawn)
+starts as the actor moves:
+
+| Action                                            | Sync variable             |
+| ------------------------------------------------- | ------------------------- |
+| ActionMoveStart / ActionMoveStop                  | iSyncIdleLocomotion 1 / 0 |
+| ActionTurnRight / ActionTurnStop / ActionTurnLeft | iSyncTurnState 0 / 1 / 2  |
+| ActionMoveForward / ActionMoveBackward            | iSyncForwardState 0 / 1   |
+| ActionMoveRight / ActionMoveLeft                  | iSyncStrafeState 0 / 1    |
+| ActionSprintStart / ActionSprintStop              | iSyncSprintState 1 / 0    |
+
+Nothing is retried: an action the graph does not take is lost. When the engine stops an actor's
+idle (IdleStopInstant, else IdleStop) it performs the movement action again: ActionMoveStart while
+iSyncIdleLocomotion says it moves, else ActionTurnRight / ActionTurnLeft while iSyncTurnState
+says it turns. A horse's rider gets copy channels as it mounts: every update its graph copies the
+horse graph's iSyncIdleLocomotion and HorseSpeedSampled.
+
+**Ours.** The movers give `Locomotion` the steering's velocity and turn rate of the last physics
+step (`src/shell/actor-movers.ts`; beyond the high process the walkers' steering; the player its
+controller's velocity), and it sets the variables and sends the actions' vanilla events with the
+sync variables as the table says. Moved by its graph's root motion (animation-driven, or standing
+while a clip moves it) an actor stands to its graph. Held by an animation-driven state while its
+AI sends it away it is told moveStart (which ends such idles); as the graph lets go
+(bAnimationDriven back to 0) it is told again what it does (`Locomotion.resume`: the engine's
+re-performed action after an idle stop). Riders copy the horse's HorseSpeedSampled and
+iSyncIdleLocomotion (`src/shell/actor-mounts.ts`).
+
+What this fixed (gliding): turning in place had no turnLeft / turnRight / turnStop at all, so
+standing actors and horses rotated stiffly on their idles (measured: a Whiterun guard now plays
+MT_TurnRight60, a horse TurnLoopingL; the drawn weapon's, the shield's and the bow's idle turn
+states take the same events); the speed was
+measured from step to step, so a horse tugged by its cart, or anything pushed, fed the graph's
+speed sampler a jittering speed (its walk and trot blend stumbled) and its sync variables were
+written every frame over the graphs'; actors beyond the high process went their way while their
+graph held them in an idle; a graph out of an animation-driven idle stayed standing while the
+actor walked (no new moveStart came).
+
+TODO(M13): the actions are not resolved through the idle tree yet (the vanilla events are sent:
+a rider's graph gets moveStart, and SprintStart is not refused while sneaking or blocking); the
+movement controller's acceleration (it ramps the speed by the race's acceleration and deceleration
+rates, RACE DATA: a factor 1 / rate, the scale it applies to not known) is not reproduced; the
+per-actor divisor of Speed; the hold flag.
+
 ## The player
 
 The player's body (`player-avatar.ts`) is the Player actor (NPC_ 0x7, reference 0x14) placed like
@@ -191,14 +277,17 @@ Two graphs run: the race's (`defaultmale.hkx`) on the body and the first-person 
 (`_1stperson\firstperson.hkx`) on the first-person skeleton (`_1stperson\skeleton.nif` with
 `skeletonfirst.hkx`, 99 bones), whose **Camera1st [Cam1]** bone is the first-person camera:
 120.5 units up at rest, 86.4 in SneakMTIdle (times the race's height). The player's movement
-drives both, as the engine drives them: Speed (the controller's horizontal speed, game units per
-second), Direction (the movement against the facing: 0 ahead, 0.25 right, 0.5 behind, 0.75 left),
-IsSprinting, IsSneaking; moveStart / moveStop when it starts and stops moving (over 5 units per
-second), SprintStart / SprintStop, SneakStart / SneakStop, SwimStart / SwimStop, and
-**iSyncIdleLocomotion** with them (1 moving, 0 standing): the executable names it and no vanilla
-graph writes it outside blocking, while 38 state machines start from it and leave state 0 on
-moveStart and state 1 on moveStop; without it, landing from a jump while running restarted
-`MT_Default_Behavior` standing (no new moveStart comes while the player keeps moving). A jump sends
+drives both, as the engine drives every actor's graph ([Driving the graphs](#driving-the-graphs)):
+Speed (the controls' wish, the controller's horizontal velocity, game units per second),
+Direction, TurnDelta, IsSprinting, IsSneaking; the movement actions (moveStart / moveStop at
+5 units per second, turnLeft / turnRight / turnStop, moveForward / moveBackward) and their sync
+variables (**iSyncIdleLocomotion** 1 moving, 0 standing: 38 state machines start from it; without
+it, landing from a jump while running restarted `MT_Default_Behavior` standing, no new moveStart
+coming while the player keeps moving), SprintStart / SprintStop, SneakStart / SneakStop,
+SwimStart / SwimStop. The controls freeze a large change of direction (more than
+fFreezeDirectionDefaultAngleThreshold, 60°, faster than fFreezeDirectionDefaultSpeedThreshold,
+100 units a second; bFreezeDirectionOnLargeDelta, all [Controls]): CyclicFreeze before the new
+Direction, CyclicCrossBlend after it. A jump sends
 JumpStandingStart or JumpDirectionalStart; the jump clip's **JumpUp** annotation pushes off (the
 controller's take-off speed from fJumpHeightMin), JumpFall goes out once it comes down and
 JumpLand (JumpLandDirectional when moving) when it stands again. In third person the body turns
@@ -375,11 +464,9 @@ all bounded by events.
 wisps, the first-person character's locomotion and attacks):
 its CyclicFreeze event holds its blender's parameter where it is; CyclicCrossBlend fades from
 the pose at that parameter to the live one over its transition duration on its blend curve,
-the children at both parameters playing on meanwhile. The engine sends the events as the
-movement's Direction wraps round (`Locomotion.drive`, `src/ai/locomotion.ts`: a change of more
-than half the turn, ahead-left to ahead-right, sends CyclicFreeze before the new direction and
-CyclicCrossBlend after it; every vanilla generator names these two; TODO(M13): the engine's own
-test). **BSOffsetAnimationGenerator** lays a clip
+the children at both parameters playing on meanwhile. The engine sends the events from the
+player's controls, on a large change of direction ([The player](#the-player); every vanilla
+generator names these two); NPCs' movement sends none. **BSOffsetAnimationGenerator** lays a clip
 on its generator's pose, sampled at the time its variable picks (rangeStart..rangeEnd over the
 clip), additively for additive clips. Its vanilla use is the characters' weapon adjustment:
 weapAdj picks how far `weaponAdjustment.hkx` pushes the sheathed weapons out; the engine sets

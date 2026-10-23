@@ -57,6 +57,11 @@ export const INI_DEFAULTS = {
   },
   Controls: {
     bAlwaysRunByDefault: 1,
+    // A large change of the movement's direction at speed is frozen and cross-faded
+    // (src/ai/locomotion.ts; the executable's defaults).
+    bFreezeDirectionOnLargeDelta: 1,
+    fFreezeDirectionDefaultAngleThreshold: 60,
+    fFreezeDirectionDefaultSpeedThreshold: 100,
     bInvertYValues: 0,
     fMouseHeadingSensitivity: 0.0125,
     fMouseHeadingXScale: 0.02,

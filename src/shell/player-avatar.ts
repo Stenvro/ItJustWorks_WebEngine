@@ -548,8 +548,17 @@ export class PlayerAvatar {
     // Third person: the body turns to the way it moves (weapons sheathed); first person it
     // faces where the camera looks. A menu that shows the player turns it itself (bodyYaw).
     if (!this.animatesInMenus) this.#face(dt);
+    const ini = this.#session.ini;
     const landed = this.#locomotion.drive(this.#graphs(), {
+      // The controls' wish (the controller's velocity), as the engine's movement controller
+      // gives the graphs.
       velocity: character.velocity,
+      ...(ini.bool('Controls', 'bFreezeDirectionOnLargeDelta') && {
+        freezeDirection: {
+          angle: (ini.number('Controls', 'fFreezeDirectionDefaultAngleThreshold') * Math.PI) / 180,
+          speed: ini.number('Controls', 'fFreezeDirectionDefaultSpeedThreshold'),
+        },
+      }),
       heading: this.#bodyYaw,
       seconds: dt,
       grounded: character.grounded,
