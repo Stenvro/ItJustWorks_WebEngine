@@ -11,7 +11,9 @@
 import type RAPIER from '@dimforge/rapier3d-compat';
 import type { ActorPose } from '../animation/skeleton.ts';
 import { Articulation } from '../physics/articulation.ts';
-import type { CollisionData } from '../physics/collision-data.ts';
+import { Layer } from '../physics/collision-layers.ts';
+import { RagdollPenetration } from '../physics/ragdoll-penetration.ts';
+import type { CollisionBody, CollisionData } from '../physics/collision-data.ts';
 import type { PhysicsWorld, PlacedBody, PlacedCollision } from '../physics/physics-world.ts';
 import { invert } from '../render/frustum.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
@@ -58,6 +60,10 @@ interface ActorBody {
   articulation: Articulation | undefined;
   /** Knocked down living: its ragdoll lies until it gets up (src/shell/actor-knockdowns.ts). */
   knocked: boolean;
+  /** Dead: its limbs through the world are brought back for a while (ragdoll-penetration.ts). */
+  penetration: RagdollPenetration | undefined;
+  /** Its bodies find their contacts with fixed bodies while keyframed (touching). */
+  fixedContacts: boolean;
 }
 
 export class ActorBodies {
@@ -121,12 +127,13 @@ export class ActorBodies {
    * where their bodies fell; living actors near `focus` get their bodies, far ones lose them,
    * and the bodies go where the last animated pose puts their nodes (in the next steps).
    */
-  frame(actors: Iterable<BodyHolder>, focus: Vec3 | undefined): void {
+  frame(actors: Iterable<BodyHolder>, focus: Vec3 | undefined, seconds = 0): void {
     const physics = this.#physics;
     if (!physics) return;
     for (const staged of actors) {
       const entry = this.#bodies.get(staged.reference);
       if (entry?.articulation) {
+        if (entry.penetration && !entry.penetration.update(seconds)) entry.penetration = undefined;
         // A knocked-down actor's graph animated its pose meanwhile: the ragdoll's again.
         entry.articulation.update(entry.knocked);
         continue;
@@ -162,6 +169,13 @@ export class ActorBodies {
     if (!entry || !physics) return;
     // Knocked down as it died: it lies on as the dead do.
     entry.knocked = false;
+    // Observed in the original: a dead actor's ragdoll lies on the dead bodies' layer
+    // (L_DEADBIP: it meets clutter, weapons, projectiles and other corpses, no character
+    // controller), and its limbs through the world are brought back for a while.
+    if (!entry.penetration) {
+      physics.setLayer(entry.placed, Layer.deadBip);
+      entry.penetration = new RagdollPenetration(physics, entry.placed, staged.reference);
+    }
     if (entry.articulation) return;
     physics.setMotion(entry.placed, false);
     entry.articulation = new Articulation(entry.placed, entry.pose, entry.world);
@@ -169,12 +183,16 @@ export class ActorBodies {
 
   /**
    * The blow that killed an actor pushes its ragdoll (src/shell/actor-combat.ts: fDeathForce*),
-   * once its bodies are let go (kill).
+   * once its bodies are let go (kill). Observed in the original: every body of the ragdoll
+   * gains `speed` (Havok units a second) along the blow, times its biped part's share
+   * (DEATH_PUSH_SHARES): the limbs' ends less than the trunk.
    */
-  async push(staged: BodyHolder, direction: Vec3, magnitude: number): Promise<void> {
+  async push(staged: BodyHolder, direction: Vec3, speed: number): Promise<void> {
     await this.kill(staged);
     const entry = this.#bodies.get(staged.reference);
-    if (entry?.articulation) this.#physics?.impulse(entry.placed, direction, magnitude);
+    if (entry?.articulation) {
+      this.#physics?.kick(entry.placed, direction, speed, deathPushShare);
+    }
   }
 
   /**
@@ -268,6 +286,12 @@ export class ActorBodies {
     const entry = this.#bodies.get(reference);
     const physics = this.#physics;
     if (!entry || !physics) return false;
+    // Its keyframed bodies' contacts with fixed ones are found from the first ask on (a dying
+    // graph listening; Rapier computes none by default, and for every living actor they cost).
+    if (!entry.fixedContacts) {
+      entry.fixedContacts = true;
+      physics.findFixedContacts(entry.placed);
+    }
     return physics.touching(
       entry.placed,
       nodes.length > 0 ? new Set(nodes.map((node) => node.toLowerCase())) : undefined,
@@ -321,6 +345,8 @@ export class ActorBodies {
       worldVersion: -1,
       articulation: undefined,
       knocked: false,
+      penetration: undefined,
+      fixedContacts: false,
     };
     this.#bodies.set(reference, entry);
     this.#disableSevered(entry);
@@ -370,7 +396,24 @@ export class ActorBodies {
   }
 
   #free(entry: ActorBody): void {
+    entry.penetration?.stop();
     this.#bodies.delete(entry.staged.reference);
     this.#physics?.remove(entry.placed);
   }
+}
+
+/**
+ * The share of a death's push each body of a ragdoll gets, by its biped part (observed in the
+ * original): the trunk, neck, head and upper arms all of it, forearms and thighs three
+ * quarters, hands and calves half, feet a quarter, the parts beyond (tails, wings: 17 to 22)
+ * three quarters, and the parts past those nothing. TODO(M13): the engine gives the head one
+ * and a half when its hit data says so (a field of the hit not known).
+ */
+const DEATH_PUSH_SHARES = [
+  1, 1, 1, 1, 1, 1, 0.75, 0.5, 0.75, 0.5, 0.25, 1, 0.75, 0.5, 0.75, 0.5, 0.25, 0.75, 0.75, 0.75,
+  0.75, 0.75, 0.75,
+];
+
+function deathPushShare(body: CollisionBody): number {
+  return DEATH_PUSH_SHARES[body.part ?? 0] ?? 0;
 }

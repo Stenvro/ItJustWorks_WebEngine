@@ -20,7 +20,7 @@ import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { GpuScene, InstanceVisibility } from '../render/scene-renderer.ts';
-import { referenceMatrix, type CellActor } from '../world/cell-loader.ts';
+import { ragdollOf, referenceMatrix, type CellActor } from '../world/cell-loader.ts';
 import { linkedReferences, parseReference } from '../world/cell-records.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
 import type { GaitMotion, SoundingWorld } from './actor-sounds.ts';
@@ -1614,7 +1614,7 @@ export class ActorStage {
     // Their bodies follow the poses (the dead's poses their bodies, the dead player's too).
     // The knocked down that begin to get up are stood where their get-up was matched.
     this.knockdowns.afterAnimate();
-    this.bodies.frame(this.#withPlayerBody(), this.#options.focus?.());
+    this.bodies.frame(this.#withPlayerBody(), this.#options.focus?.(), frame);
     this.playerDeath.frame(frame);
     // Heads come off (the cuts queued), and those cut off follow their bodies.
     this.dismemberment.frame(frame);
@@ -1827,6 +1827,7 @@ export class ActorStage {
       scale: ref.scale,
       links: linkedReferences(record),
       startsDead: (record.flags & RecordFlag.startsDead) !== 0,
+      ...ragdollOf(record),
     };
   }
 

@@ -163,6 +163,11 @@ export function configurePhysics(
   physics.impactSpeed = data.ini.number('Audio', 'fMinSoundVel');
   physics.settleSeconds = data.ini.number('HAVOK', 'fWarmStartMaxTime');
   physics.debris = data.debris;
+  physics.penetration = {
+    seconds: data.ini.number('RagdollAnim', 'fDetectionUpdateTimeSec'),
+    desiredSpeed: data.ini.number('RagdollAnim', 'fDesiredVel'),
+    impulseLimit: data.ini.number('RagdollAnim', 'fImpulseLimit'),
+  };
 }
 
 /** fJumpHeightMin's and fJumpFallVelocityMin's built-in values (Skyrim.esm: 76 and 700). */
