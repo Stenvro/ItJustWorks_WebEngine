@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { InterruptFlag } from './package-records.ts';
 import {
-  converse,
   NO_PACKAGE_INTERRUPTS,
   TalkPlanner,
   talkSettings,
+  triggerDistance,
   VANILLA_TALK,
   type TalkActor,
   type TalkScene,
@@ -14,8 +14,10 @@ const actor = (reference: number, x: number, more: Partial<TalkActor> = {}): Tal
   reference,
   position: [x, 0, 0],
   interrupts: NO_PACKAGE_INTERRUPTS,
-  sociable: false,
   free: true,
+  inScene: false,
+  canSpeak: true,
+  posture: 'standing',
   seesPlayer: true,
   ...more,
 });
@@ -28,7 +30,7 @@ const scene = (more: Partial<TalkScene> = {}): TalkScene => ({
   ...more,
 });
 
-/** A planner whose chance always succeeds and whose timers start at their least. */
+/** A planner whose timers start (and are drawn) at their least. */
 const planner = (): TalkPlanner => new TalkPlanner(VANILLA_TALK, () => 0);
 
 describe('greetings', () => {
@@ -99,78 +101,110 @@ describe('idle chatter', () => {
   });
 });
 
-describe('conversations between actors', () => {
-  const sociable = (reference: number, x: number, more: Partial<TalkActor> = {}): TalkActor =>
+describe('asks for scenes between actors (the Actor Dialogue event)', () => {
+  const talker = (reference: number, x: number, more: Partial<TalkActor> = {}): TalkActor =>
     actor(reference, x, {
       interrupts: InterruptFlag.randomConversations,
-      sociable: true,
       seesPlayer: false,
       ...more,
     });
 
-  it('starts one on its social timer with the nearest within the radius', () => {
+  it('on its social timer asks the first in order within the radius, with no chance roll', () => {
+    // Every roll would miss a chance: there is none.
+    const talk = new TalkPlanner(VANILLA_TALK, () => 0.99);
+    const fresh = new TalkPlanner(VANILLA_TALK, () => 0);
+    const actors = [talker(1, 0), talker(2, 450), talker(3, 300), talker(4, 900)];
+    expect(fresh.update(9, actors, scene())).toEqual([]);
+    expect(fresh.update(1, actors, scene())).toEqual([{ kind: 'ask', actor: 1, partner: 2 }]);
+    // Timers drawn at the top of fAISocialTimerForConversationsMin .. Max still run out.
+    expect(talk.update(VANILLA_TALK.socialMax, actors, scene())).toEqual([
+      { kind: 'ask', actor: 1, partner: 2 },
+    ]);
+  });
+
+  it('keeps both taken while the ask waits or its scene plays', () => {
     const talk = planner();
-    const actors = [sociable(1, 0), sociable(2, 450), sociable(3, 300), sociable(4, 900)];
+    const actors = [talker(1, 0), talker(2, 100), talker(3, 200)];
+    expect(talk.update(10, actors, scene())).toEqual([{ kind: 'ask', actor: 1, partner: 2 }]);
+    expect(talk.partnerOf(1)).toBe(2);
+    expect(talk.partnerOf(2)).toBe(1);
+    // The third finds neither while they are taken.
+    expect(talk.update(1, actors, scene())).toEqual([]);
+    talk.answered(1, 2, true);
+    expect(talk.update(1, actors, scene())).toEqual([]);
+    // Their scene is over: free again, each with its social timer drawn anew.
+    talk.released(1);
+    expect(talk.partnerOf(2)).toBeUndefined();
+    expect(talk.update(1, actors, scene())).toEqual([{ kind: 'ask', actor: 3, partner: 1 }]);
+  });
+
+  it('without a quest both are free again, but not asking each other until their lists clear', () => {
+    const talk = planner();
+    const actors = [talker(1, 0), talker(2, 100)];
+    expect(talk.update(10, actors, scene())).toEqual([{ kind: 'ask', actor: 1, partner: 2 }]);
+    talk.answered(1, 2, false);
+    expect(talk.partnerOf(1)).toBeUndefined();
+    // The second may ask at once (only the first of the two drew its timer), the first once its
+    // timer ran out; but each has the other on its list until it is cleared
+    // (fAItalktosameNPCtimer, counted while the actor looks).
+    expect(talk.update(1, actors, scene())).toEqual([]);
     expect(talk.update(9, actors, scene())).toEqual([]);
-    expect(talk.update(1, actors, scene())).toEqual([
-      { kind: 'conversation', actor: 1, listener: 3 },
-      { kind: 'conversation', actor: 2, listener: 4 },
+    expect(talk.update(VANILLA_TALK.talkedWithTimer, actors, scene())).toEqual([
+      { kind: 'ask', actor: 1, partner: 2 },
     ]);
   });
 
-  it('needs both to be sociable and free, and not to have talked lately', () => {
+  it('asks only where its package allows random conversations, awake, in no scene', () => {
+    const blocked = [
+      [talker(1, 0, { interrupts: InterruptFlag.hellosToPlayer }), talker(2, 100)],
+      [talker(1, 0, { inScene: true }), talker(2, 100, { inScene: true })],
+      [talker(1, 0, { posture: 'sleeping' }), talker(2, 100, { posture: 'sleeping' })],
+      [talker(1, 0, { canSpeak: false }), talker(2, 100, { canSpeak: false })],
+      [talker(1, 0, { free: false }), talker(2, 100, { free: false })],
+    ];
+    for (const actors of blocked) expect(planner().update(10, actors, scene())).toEqual([]);
+    // Not while the player talks with someone, nor far from them (fDistancetoPlayerforConversations).
+    expect(
+      planner().update(10, [talker(1, 0), talker(2, 100)], scene({ playerBusy: true })),
+    ).toEqual([]);
+    expect(planner().update(10, [talker(1, 4000), talker(2, 4100)], scene())).toEqual([]);
+    // One seated may be asked; one in other furniture or on its way in may not.
+    expect(
+      planner().update(10, [talker(1, 0), talker(2, 100, { posture: 'sitting' })], scene()),
+    ).toEqual([{ kind: 'ask', actor: 1, partner: 2 }]);
+    const settling = [talker(1, 0, { posture: 'other' }), talker(2, 100, { posture: 'other' })];
+    expect(planner().update(10, settling, scene())).toEqual([]);
+  });
+
+  it('inside, asks only one on its floor; out of doors any within the radius', () => {
+    const above = [talker(1, 0), talker(2, 100, { position: [100, 0, 120] })];
+    expect(planner().update(10, above, scene({ interior: true }))).toEqual([]);
+    expect(planner().update(10, above, scene({ interior: false }))).toEqual([
+      { kind: 'ask', actor: 1, partner: 2 },
+    ]);
+    // The radius (fAISocialRadiusToTriggerConversation, 500 in the vanilla load order).
+    expect(planner().update(10, [talker(1, 0), talker(2, 600)], scene())).toEqual([]);
+  });
+
+  it('may still talk as their scene begins: looked at again', () => {
     const talk = planner();
-    const lone = [sociable(1, 0), sociable(2, 100, { sociable: false })];
-    expect(talk.update(10, lone, scene())).toEqual([]);
-    const pair = [sociable(1, 0), sociable(2, 100)];
-    expect(talk.update(30, pair, scene())).toEqual([
-      { kind: 'conversation', actor: 1, listener: 2 },
-    ]);
-    // They talked: not again with each other until the list is cleared.
-    expect(talk.update(30, pair, scene())).toEqual([]);
-    expect(talk.update(VANILLA_TALK.talkedWithTimer, pair, scene())).toEqual([
-      { kind: 'conversation', actor: 1, listener: 2 },
-    ]);
+    const one = talker(1, 0);
+    const two = talker(2, 100);
+    expect(talk.mayTalk(one, two, scene())).toBe(true);
+    expect(talk.mayTalk(one, { ...two, posture: 'sleeping' }, scene())).toBe(false);
+    expect(talk.mayTalk({ ...one, posture: 'sleeping' }, two, scene())).toBe(false);
+    expect(talk.mayTalk(one, two, scene({ playerBusy: true }))).toBe(false);
+    // In their scene already: that does not keep them from it.
+    expect(talk.mayTalk({ ...one, inScene: true }, { ...two, inScene: true }, scene())).toBe(true);
   });
 
-  it('starts one by its chance (fAISocialchanceForConversation)', () => {
-    // The roll misses (above 10 percent).
-    const talk = new TalkPlanner(VANILLA_TALK, () => 0.5);
-    expect(talk.update(30, [sociable(1, 0), sociable(2, 100)], scene())).toEqual([]);
-  });
-
-  it('take turns: Hello each, then Idle lines, until one has nothing to say', async () => {
-    const said: string[] = [];
-    const lines = await converse(
-      1,
-      2,
-      (speaker, listener, subtype) => {
-        said.push(`${String(speaker)}>${String(listener)} ${subtype}`);
-        // The second has no idle chatter.
-        return Promise.resolve(!(speaker === 2 && subtype === 'IDLE'));
-      },
-      () => true,
-      6,
-    );
-    expect(said).toEqual(['1>2 HELO', '2>1 HELO', '1>2 IDLE', '2>1 IDLE']);
-    expect(lines).toBe(3);
-  });
-
-  it('stop when broken off', async () => {
-    let going = true;
-    const said: number[] = [];
-    const lines = await converse(
-      1,
-      2,
-      (speaker) => {
-        said.push(speaker);
-        going = false;
-        return Promise.resolve(true);
-      },
-      () => going,
-    );
-    expect(said).toEqual([1]);
-    expect(lines).toBe(1);
+  it('the one that starts walks up to the trigger distance; both resting, they stay', () => {
+    const s = VANILLA_TALK;
+    expect(triggerDistance(s, 'standing', 'standing')).toBe(s.conversationDistance);
+    expect(triggerDistance(s, 'standing', 'sitting')).toBe(s.conversationDistance);
+    expect(triggerDistance(s, 'sitting', 'standing')).toBe(s.conversationDistance + 20);
+    expect(triggerDistance(s, 'sitting', 'sleeping')).toBe(s.conversationDistanceMax + 20);
+    expect(triggerDistance(s, 'sleeping', 'sitting')).toBe(s.conversationDistanceMax);
   });
 });
 
@@ -196,10 +230,13 @@ describe('comments on what the player does', () => {
 describe('settings', () => {
   it('reads the game settings, keeping vanilla values for those not set', () => {
     const settings = talkSettings((name) =>
-      name === 'fAIGreetingTimer' ? 8 : name === 'fAISocialchanceForConversation' ? 25 : undefined,
+      name === 'fAIGreetingTimer' ? 8 : name === 'fAISocialTimerToWaitForEvent' ? 25 : undefined,
     );
     expect(settings.greetingTimer).toBe(8);
-    expect(settings.conversationChance).toBe(25);
+    expect(settings.waitForEvent).toBe(25);
     expect(settings.exclusiveGreetingTimer).toBe(2.5);
+    // Not in the vanilla load order: the engine's built-in values.
+    expect(settings.dialogueDistance).toBe(170);
+    expect(settings.talkedWithTimer).toBe(120);
   });
 });

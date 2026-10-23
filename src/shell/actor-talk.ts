@@ -1,25 +1,28 @@
 // What the actors of the loaded area say outside the dialogue menu (docs/ai.md, "Talking"): they
-// greet the player as they pass, chatter, talk with each other, say their packages' lines and
-// bark (a topic subtype's line: combat, detection and crime call `bark`); the rules of who talks
-// when are src/ai/talk.ts's, what is said the dialogue engine's (subtype lines,
-// src/scripting/runtime/dialogue-engine.ts), and how a line is said (voice, lips, emotion,
-// subtitle) src/shell/world-lines.ts's.
+// greet the player as they pass, chatter, ask the story manager for scenes with each other (the
+// Actor Dialogue event), say their packages' lines and bark (a topic subtype's line: combat,
+// detection and crime call `bark`); the rules of who talks when are src/ai/talk.ts's, what is
+// said the dialogue engine's (subtype lines, src/scripting/runtime/dialogue-engine.ts) and the
+// scenes' (src/ai/scene-runtime.ts), and how a line is said (voice, lips, emotion, subtitle)
+// src/shell/world-lines.ts's.
 
 import { InterruptFlag } from '../ai/package-records.ts';
 import type { SayOptions } from '../ai/package-runtime.ts';
 import {
-  converse,
   NO_PACKAGE_INTERRUPTS,
   TalkPlanner,
   talkSettings,
+  triggerDistance,
   type TalkActor,
   type TalkIntent,
+  type TalkPosture,
   type TalkScene,
   type TalkSettings,
 } from '../ai/talk.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { SpokenInfo } from '../scripting/runtime/dialogue-engine.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { actorDialogueEvent } from '../scripting/runtime/story-manager.ts';
 import { InfoFlag } from '../world/dialogue-records.ts';
 import { DIALOGUE_SUBTYPES } from '../world/dialogue-subtypes.ts';
 import type { ActorAi } from './actor-ai.ts';
@@ -33,12 +36,20 @@ import type { Terminal } from './terminal.ts';
 const HELLO = 'HELO';
 const IDLE = 'IDLE';
 const ACTOR_COLLIDE = 'ACAC';
-/** Furniture animation type and state of an actor asleep in a bed (ActorInteraction). */
+/** Furniture animation types and the state of an actor in its furniture (ActorInteraction). */
+const SIT_TYPE = 1;
 const SLEEP_TYPE = 2;
+const LEAN_TYPE = 4;
 const IN_FURNITURE = 3;
+/**
+ * Two actors brought together for a scene face each other within the scene's line angle, or
+ * after this long (seconds) they begin all the same. TODO(M13): the engine's own patience.
+ */
+const FACING_PATIENCE = 2;
 
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
+const hex = (formId: number): string => formId.toString(16).padStart(8, '0');
 
 export interface ActorTalkOptions {
   readonly session: GameSession;
@@ -54,10 +65,24 @@ export interface ActorTalkOptions {
    */
   readonly lookAt?: (actor: number, target: number | undefined) => void;
   /**
-   * Whether an actor fights (or flees, searches) now: it greets, chatters and converses no more
-   * (its combat moves it: a greeting would stop a coward fleeing in its tracks).
+   * Whether an actor fights (or flees, searches) now: it greets, chatters and asks for scenes
+   * no more (its combat moves it: a greeting would stop a coward fleeing in its tracks).
    */
   readonly engaged?: (actor: number) => boolean;
+}
+
+/** An ask for a scene (the Actor Dialogue event) and what came of it. */
+interface Ask {
+  /** The one that asked (R1) and the one it asked (R2). */
+  readonly actor: number;
+  readonly partner: number;
+  /**
+   * What asked: an actor's social timer (it walks up to the trigger distance), or its
+   * DialogueActivate procedure (it walks up to fAIDialogueDistance).
+   */
+  readonly by: 'social' | 'procedure';
+  /** The quests the story manager started for it (none yet: it waits for the answer). */
+  quests: readonly number[];
 }
 
 export class ActorTalk {
@@ -70,8 +95,12 @@ export class ActorTalk {
   /** The last frame's view of them (what the player's actions are commented by). */
   #seen: readonly TalkActor[] = [];
   #scene: TalkScene = { player: undefined, playerBusy: false, interior: false, chattering: false };
-  /** Those in a conversation with another actor now. */
-  readonly #conversing = new Set<number>();
+  /** Asks waiting for the story manager, or whose quests run. */
+  readonly #asks = new Set<Ask>();
+  /** Those being brought together for their random scene (they are not free meanwhile). */
+  readonly #approaching = new Set<number>();
+  /** Those held talking in their random scene, by the scene. */
+  readonly #inScene = new Map<number, number>();
   /** Those whose sandbox lets them talk with others (Allow Conversation). */
   readonly #sociable = new Set<number>();
   /** Who says a line of idle chatter now. */
@@ -81,17 +110,25 @@ export class ActorTalk {
   /** Whether the player is in an interior (the conversation settings' interior values). */
   #interior = false;
   #sinceSpace = Infinity;
+  /** Real seconds of frames (what DialogueActivate's wait counts). */
+  #clock = 0;
+  /** What waits for the next frame. */
+  #frames: (() => void)[] = [];
 
   constructor(options: ActorTalkOptions) {
     this.#options = options;
   }
 
   /**
-   * Every frame (real seconds): the actors whose AI runs greet, chatter and start conversations
-   * as src/ai/talk.ts has them.
+   * Every frame (real seconds): the actors whose AI runs greet, chatter and ask for scenes as
+   * src/ai/talk.ts has them.
    */
   frame(actors: Iterable<StagedActor>, seconds: number, player: Vec3 | undefined): void {
-    const { session, ai, movers, furniture } = this.#options;
+    const { session, ai, movers } = this.#options;
+    this.#clock += seconds;
+    const waiting = this.#frames;
+    this.#frames = [];
+    for (const resolve of waiting) resolve();
     const runtime = session.scriptsReady;
     if (!runtime) return;
     const planner = this.#planner ?? this.#start();
@@ -112,15 +149,14 @@ export class ActorTalk {
       const reference = staged.reference;
       if (staged.dead || staged.visibility.hidden || !movers.runsAi(reference)) continue;
       this.#staged.set(reference, staged);
-      const using = furniture.interaction(reference);
-      const asleep = using?.animationType === SLEEP_TYPE && using.state === IN_FURNITURE;
       seen.push({
         reference,
         position: staged.position,
         interrupts: ai.current(reference)?.interrupts ?? NO_PACKAGE_INTERRUPTS,
-        // Not while on its way somewhere. TODO(M13): whether the engine lets walkers talk.
-        sociable: this.#sociable.has(reference) && movers.travelOf(reference) === undefined,
-        free: this.#free(reference) && !asleep,
+        free: this.#available(reference),
+        inScene: runtime.scenes.sceneOf(reference) !== undefined,
+        canSpeak: staged.placed.look.voiceType !== undefined,
+        posture: this.#posture(reference),
         seesPlayer: this.#options.detects?.(reference) ?? true,
       });
     }
@@ -131,6 +167,7 @@ export class ActorTalk {
       interior: this.#interior,
       chattering: this.#chatter !== undefined,
     };
+    this.#settle(planner);
     for (const intent of planner.update(seconds, seen, this.#scene)) this.#act(intent);
   }
 
@@ -152,17 +189,40 @@ export class ActorTalk {
     return undefined;
   }
 
-  /** Whether an actor can say a line now (not saying one, not talking with the player, ...). */
-  #free(reference: number): boolean {
+  /** How an actor is placed (its furniture). */
+  #posture(reference: number): TalkPosture {
+    const using = this.#options.furniture.interaction(reference);
+    if (!using) return 'standing';
+    if (using.state !== IN_FURNITURE) return 'other';
+    if (using.animationType === SLEEP_TYPE) return 'sleeping';
+    return using.animationType === SIT_TYPE || using.animationType === LEAN_TYPE
+      ? 'sitting'
+      : 'other';
+  }
+
+  /**
+   * Whether an actor can talk now (scenes aside): not talking with the player, not fighting,
+   * not saying a line, not on its way to someone it talks with.
+   */
+  #available(reference: number): boolean {
     const runtime = this.#options.session.scriptsReady;
     return (
       runtime !== undefined &&
       runtime.dialogueSpeaker !== reference &&
-      runtime.scenes.sceneOf(reference) === undefined &&
       this.#options.engaged?.(reference) !== true &&
-      !this.#conversing.has(reference) &&
+      !this.#approaching.has(reference) &&
       !this.#looking.has(reference) &&
       !this.#options.session.lines.speaking(reference)
+    );
+  }
+
+  /** Whether an actor can say a line now (available and in no scene). */
+  #free(reference: number): boolean {
+    const runtime = this.#options.session.scriptsReady;
+    return (
+      runtime !== undefined &&
+      this.#available(reference) &&
+      runtime.scenes.sceneOf(reference) === undefined
     );
   }
 
@@ -192,8 +252,8 @@ export class ActorTalk {
       case 'idle':
         run('idle chatter', this.#chat(intent.actor));
         break;
-      case 'conversation':
-        run('conversation', this.converse(intent.actor, intent.listener));
+      case 'ask':
+        run('actor dialogue', this.#ask(intent.actor, intent.partner, 'social'));
         break;
     }
   }
@@ -250,6 +310,218 @@ export class ActorTalk {
     }
   }
 
+  // --- Conversations between actors ------------------------------------------------------
+
+  /** A reference's name in the log: its editor id, else its form id. */
+  async #name(reference: number): Promise<string> {
+    const runtime = this.#options.session.scriptsReady;
+    const editorId = (await runtime?.forms.record(reference))?.editorId;
+    return editorId === undefined || editorId === '' ? hex(reference) : editorId;
+  }
+
+  /**
+   * An actor asks the story manager for a scene with another (the Actor Dialogue event: its
+   * location, it as R1, the other as R2). The answer is the quests the event started (their
+   * scenes then begin as random scenes); with none nothing else happens: there is no
+   * conversation of the engine's own. Resolves whether a quest started.
+   */
+  async #ask(actor: number, partner: number, by: Ask['by']): Promise<boolean> {
+    const runtime = this.#options.session.scriptsReady;
+    const terminal = this.#options.terminal;
+    if (!runtime) return false;
+    const ask: Ask = { actor, partner, by, quests: [] };
+    this.#asks.add(ask);
+    let quests: readonly number[] = [];
+    try {
+      const [location, names] = await Promise.all([
+        runtime.locationOf(actor),
+        Promise.all([this.#name(actor), this.#name(partner)]),
+      ]);
+      terminal.log('actor', `${names[0]} asking for random scene with ${names[1]}`);
+      quests = await runtime.storyManager.quests(actorDialogueEvent(location, actor, partner));
+      if (quests.length > 0) {
+        const started = await Promise.all(quests.map((quest) => this.#name(quest)));
+        terminal.log('actor', `${names[0]} got a quest back: ${started.join(', ')}`, 'ok');
+      } else {
+        terminal.log('actor', `${names[0]} failed to get a quest`);
+      }
+    } finally {
+      ask.quests = quests;
+      if (quests.length === 0) this.#asks.delete(ask);
+      if (by === 'social') this.#planner?.answered(actor, partner, quests.length > 0);
+    }
+    return quests.length > 0;
+  }
+
+  /**
+   * Every frame: asks whose quests all stopped are over (their actors free again); an actor
+   * held for its random scene is let go once that scene ended, or as the scene gives it a
+   * package (its scene package moves it).
+   */
+  #settle(planner: TalkPlanner): void {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return;
+    for (const ask of [...this.#asks]) {
+      if (ask.quests.length === 0) continue;
+      if (ask.quests.some((quest) => runtime.quests.isRunning(quest))) continue;
+      this.#asks.delete(ask);
+      if (ask.by === 'social') planner.released(ask.actor);
+    }
+    for (const [actor, scene] of [...this.#inScene]) {
+      if (this.#approaching.has(actor)) continue;
+      const ended = runtime.scenes.sceneOf(actor) !== scene;
+      if (!ended && runtime.scenes.packagesOf(actor) === undefined) continue;
+      this.#inScene.delete(actor);
+      this.#options.ai.releaseFromTalk(actor);
+      if (ended && planner.partnerOf(actor) !== undefined) planner.released(actor);
+    }
+  }
+
+  /**
+   * A random scene is about to begin with two actors (src/ai/scene-runtime.ts): the engine
+   * looks again whether they may talk (the second as the one asking), then the one that asked
+   * (else the second) walks up to the other, both stop their packages and face each other, and
+   * the scene holds until they do. They stay so while it plays (the engine's in-game dialogue
+   * package on both). Undefined: not actors of this stage.
+   */
+  randomSceneStarts(scene: number, first: number, second: number): boolean | undefined {
+    const planner = this.#planner;
+    const settings = this.#settings;
+    const one = this.#seen.find((actor) => actor.reference === first);
+    const two = this.#seen.find((actor) => actor.reference === second);
+    if (!planner || !settings || !one || !two) return undefined;
+    if (!planner.mayTalk(one, two, this.#scene)) {
+      void Promise.all([this.#name(first), this.#name(second)]).then(([a, b]) => {
+        this.#options.terminal.log('actor', `${a} and ${b} may no longer talk: scene dropped`);
+      });
+      return false;
+    }
+    const ask = [...this.#asks].find(
+      (entry) =>
+        (entry.actor === first && entry.partner === second) ||
+        (entry.actor === second && entry.partner === first),
+    );
+    const starter = ask?.actor ?? second;
+    const [from, to] = starter === first ? [one, two] : [two, one];
+    const reach =
+      ask?.by === 'procedure'
+        ? settings.dialogueDistance
+        : triggerDistance(settings, from.posture, to.posture);
+    this.#together(scene, from.reference, to.reference, reach).catch((error: unknown) => {
+      this.#options.terminal.log('actor', `random scene: ${describe(error)}`, 'warn');
+    });
+    return true;
+  }
+
+  /**
+   * Brings two actors together for their scene: the scene holds; the one that starts walks up
+   * to within `reach` of the other (seated, the other comes to it; both seated, they talk from
+   * where they are), then they face each other (fAIMinAngleRangeToStartSceneDialogue, a scene
+   * line's own angle) and the scene goes on.
+   */
+  async #together(scene: number, starter: number, other: number, reach: number): Promise<void> {
+    const { ai, movers, furniture, session } = this.#options;
+    const runtime = session.scriptsReady;
+    const settings = this.#settings;
+    if (!runtime || !settings) return;
+    const director = runtime.scenes;
+    const pair = [starter, other];
+    let walking: number | undefined;
+    for (const actor of pair) {
+      const facing = actor === starter ? other : starter;
+      director.hold(actor, true);
+      this.#approaching.add(actor);
+      this.#inScene.set(actor, scene);
+      ai.holdToTalk(actor, () =>
+        walking === actor ? undefined : this.#staged.get(facing)?.position,
+      );
+    }
+    const going = (): boolean =>
+      pair.every((actor) => this.#staged.has(actor) && director.sceneOf(actor) === scene);
+    const apartNow = (): number => {
+      const a = this.#staged.get(starter)?.position;
+      const b = this.#staged.get(other)?.position;
+      return a && b ? Math.hypot(a[0] - b[0], a[1] - b[1]) : Infinity;
+    };
+    try {
+      const [names, title] = await Promise.all([
+        Promise.all([this.#name(starter), this.#name(other)]),
+        this.#name(scene),
+      ]);
+      this.#options.terminal.log(
+        'actor',
+        `${names[0]} comes to ${names[1]} for ${title} (${apartNow().toFixed(0)} apart, to ${reach.toFixed(0)})`,
+      );
+      const a = this.#staged.get(starter);
+      const b = this.#staged.get(other);
+      if (!a || !b) return;
+      const apart = apartNow();
+      if (apart > reach) {
+        // TODO(M13): whether the engine's dialogue package gets a seated starter up
+        // (InitiateGetUpPackage) rather than have the other come.
+        const [walker, to] = furniture.holds(starter) ? [b, a] : [a, b];
+        if (!furniture.holds(walker.reference)) {
+          walking = walker.reference;
+          await movers.travel(walker.reference, to.position, 'walk', reach);
+          walking = undefined;
+        }
+      }
+      // They turn to each other (their talk hold faces them), the scene waits until they do.
+      const started = this.#clock;
+      while (going() && this.#clock - started < FACING_PATIENCE) {
+        const faced = pair.every((actor) => {
+          const self = this.#staged.get(actor);
+          const target = this.#staged.get(actor === starter ? other : starter);
+          if (!self || !target || furniture.holds(actor)) return true;
+          return facingWithin(self, target.position, settings.sceneDialogueAngle);
+        });
+        if (faced) break;
+        await this.#nextFrame();
+      }
+      this.#options.terminal.log(
+        'actor',
+        `${names[0]} and ${names[1]} face each other ${apartNow().toFixed(0)} apart: ${title} goes on`,
+      );
+    } finally {
+      for (const actor of pair) {
+        director.hold(actor, false);
+        this.#approaching.delete(actor);
+      }
+    }
+  }
+
+  /** Resolves at the next frame. */
+  #nextFrame(): Promise<void> {
+    return new Promise((resolve) => {
+      this.#frames.push(resolve);
+    });
+  }
+
+  /**
+   * DialogueActivate between actors (its procedure; observed in the original): the actor
+   * asks the story manager for a scene with its target (the Actor Dialogue event) and waits
+   * fAISocialTimerToWaitForEvent (20 s) for a scene to take it: none, the procedure fails. In
+   * the scene it walks up to within fAIDialogueDistance (170) of its target and both face each
+   * other (`randomSceneStarts`); the procedure succeeds as the scene ends. A dead target fails
+   * it at once.
+   */
+  async dialogueActivate(actor: number, target: number): Promise<boolean> {
+    const runtime = this.#options.session.scriptsReady;
+    const settings = this.#settings;
+    if (!runtime || !settings || actor === target) return false;
+    if (await runtime.actors.isDead(target)) return false;
+    const asked = this.#clock;
+    await this.#ask(actor, target, 'procedure');
+    while (runtime.scenes.sceneOf(actor) === undefined) {
+      if (this.#clock - asked >= settings.waitForEvent || !this.#staged.has(actor)) return false;
+      await this.#nextFrame();
+    }
+    while (runtime.scenes.sceneOf(actor) !== undefined && this.#staged.has(actor)) {
+      await this.#nextFrame();
+    }
+    return true;
+  }
+
   /**
    * An actor says a line of a topic subtype ("OBCO" ObserveCombat, "NOTI" NoticeCorpse, "STEA"
    * Steal, "TRES" Trespass, "PICT" PickpocketTopic, "LOOB" LockedObject, "TITG" TimeToGo,
@@ -291,75 +563,15 @@ export class ActorTalk {
     return spoken ? this.#speak(actor, spoken, target, options) : false;
   }
 
-  /** Whether an actor's sandbox lets it talk with other actors (Allow Conversation). */
+  /**
+   * Whether an actor's sandbox lets it talk with other actors (Allow Conversation). The social
+   * timers' asks do not depend on it (the engine's rule reads the package's Random
+   * Conversations flag). TODO(M13): the sandbox's own conversations (an activity that seeks
+   * someone to talk with: fAIConversationExploreTime).
+   */
   allowConversation(actor: number, allowed: boolean): void {
     if (allowed) this.#sociable.add(actor);
     else this.#sociable.delete(actor);
-  }
-
-  /**
-   * Two actors talk (a conversation the social timers started, DialogueActivate between
-   * actors): their packages wait; the one that starts walks up to the other if it is farther
-   * than the game's iAISocialDistanceToTriggerEvent (one seated stays: the other comes, or
-   * they do not talk), they face each other and take turns (src/ai/talk.ts, converse). It
-   * breaks off when one is wanted elsewhere (the player talks to it, a scene takes it, it
-   * leaves or dies). Resolves whether they talked.
-   */
-  async converse(actor: number, other: number): Promise<boolean> {
-    const { ai, movers, furniture, session } = this.#options;
-    const runtime = session.scriptsReady;
-    const settings = this.#settings;
-    if (!runtime || !settings || actor === other) return false;
-    if (!this.#free(actor) || !this.#free(other)) return false;
-    const first = this.#staged.get(actor);
-    const second = this.#staged.get(other);
-    if (!first || !second) return false;
-    this.#conversing.add(actor);
-    this.#conversing.add(other);
-    // The one walking up is left to go; the other faces it.
-    let walking: StagedActor | undefined;
-    const facing = (from: StagedActor, to: StagedActor) => (): Vec3 | undefined =>
-      walking === from ? undefined : to.position;
-    ai.holdToTalk(actor, facing(first, second));
-    ai.holdToTalk(other, facing(second, first));
-    const goesOn = (): boolean =>
-      [first, second].every(
-        (staged) =>
-          this.#staged.get(staged.reference) === staged &&
-          !staged.dead &&
-          runtime.dialogueSpeaker !== staged.reference &&
-          runtime.scenes.sceneOf(staged.reference) === undefined,
-      );
-    try {
-      const apart = (): number =>
-        Math.hypot(first.position[0] - second.position[0], first.position[1] - second.position[1]);
-      const near = settings.conversationDistance;
-      if (apart() > near) {
-        // The one that starts walks up; seated, the other comes to it.
-        const [walker, to] = furniture.holds(actor) ? [second, first] : [first, second];
-        if (furniture.holds(walker.reference)) return false;
-        walking = walker;
-        const arrived = await movers.travel(walker.reference, to.position, 'walk', near);
-        walking = undefined;
-        if (!arrived || !goesOn()) return false;
-      }
-      const lines = await converse(
-        actor,
-        other,
-        async (speaker, listener, subtype) => {
-          if (!goesOn()) return false;
-          const spoken = await runtime.dialogue.subtypeLine(speaker, subtype, listener);
-          return spoken !== undefined && goesOn() && (await this.#speak(speaker, spoken, listener));
-        },
-        goesOn,
-      );
-      return lines > 0;
-    } finally {
-      this.#conversing.delete(actor);
-      this.#conversing.delete(other);
-      ai.releaseFromTalk(actor);
-      ai.releaseFromTalk(other);
-    }
   }
 
   /**
@@ -395,5 +607,14 @@ export class ActorTalk {
   remove(actor: number): void {
     this.#sociable.delete(actor);
     this.#options.session.lines.stop(actor);
+    if (this.#inScene.delete(actor)) this.#options.ai.releaseFromTalk(actor);
   }
+}
+
+/** Whether an actor faces a point within an angle (degrees; its heading about z from +y). */
+function facingWithin(actor: StagedActor, at: Vec3, degrees: number): boolean {
+  const toward = Math.atan2(at[0] - actor.position[0], at[1] - actor.position[1]);
+  let off = Math.abs(toward - actor.heading) % (2 * Math.PI);
+  if (off > Math.PI) off = 2 * Math.PI - off;
+  return off <= (degrees * Math.PI) / 180;
 }

@@ -1,14 +1,16 @@
 // Talking outside conversations with the player (docs/ai.md, "Talking"): which of the actors
-// near the player greets them as they pass, says a line of idle chatter, starts a conversation
-// with another actor or comments on what the player does, and the turns of a conversation
-// between two actors. What the engine keeps for it per actor is CommonLibSSE's HighProcessData
-// (greetingTimer, exclusiveTimer, idleTimer, checkToTalkTimer "fAISocialTimerForConversationsMin",
-// lastSpokenToArray, clearTalkToListTimer); the running package allows each (PKDT interrupt
-// flags: hellos to the player, random conversations, idle chatter, reactions to the player's
-// actions); the timers are the game settings below. How the engine combines them is not
-// documented: the rules here follow the settings' names and are marked TODO(M13) where they
-// are this file's own. What is said is the dialogue engine's (subtype lines,
-// src/scripting/runtime/dialogue-engine.ts). Platform-independent.
+// near the player greets them as they pass, says a line of idle chatter, asks the story manager
+// for a scene with another actor (the Actor Dialogue event, ADIA) or comments on what the
+// player does, and when a scene the story manager started for two actors may begin. What the
+// engine keeps for it per actor is CommonLibSSE's HighProcessData (greetingTimer,
+// exclusiveTimer, idleTimer, checkToTalkTimer, lastSpokenToArray, clearTalkToListTimer); the
+// running package allows each (PKDT interrupt flags: hellos to the player, random
+// conversations, idle chatter, reactions to the player's actions); the timers are the game
+// settings below. The conversations between actors follow the engine's own rule, observed in
+// it (docs/ai.md, "Conversations between actors"); the greetings and the chatter follow
+// the settings' names, marked TODO(M13) where they are this file's own. What is said is the
+// dialogue engine's (subtype lines, src/scripting/runtime/dialogue-engine.ts) and the scenes'
+// (src/ai/scene-runtime.ts). Platform-independent.
 
 import { InterruptFlag } from './package-records.ts';
 
@@ -30,27 +32,50 @@ export interface TalkSettings {
   /** Idle chatter is said within this of the player (units; TODO(M13): the engine's reach). */
   readonly chatterDistance: number;
   /**
-   * Seconds between an actor's looks for someone to talk to (fAISocialTimerForConversationsMin
-   * .. Max), the percent chance one starts a conversation (fAISocialchanceForConversation,
-   * inside: ...Interior) and how far it looks (fAISocialRadiusToTriggerConversation, inside:
-   * ...Interior).
+   * Seconds between an actor's asks for a scene with another actor
+   * (fAISocialTimerForConversationsMin .. Max): drawn again each time the story manager
+   * answered, counted while the actor is in no scene.
    */
   readonly socialMin: number;
   readonly socialMax: number;
-  readonly conversationChance: number;
-  readonly conversationChanceInterior: number;
+  /**
+   * How far from the one that asks the other may be (fAISocialRadiusToTriggerConversation;
+   * where the one asking is in an interior, ...Interior).
+   */
   readonly conversationRadius: number;
   readonly conversationRadiusInterior: number;
   /**
-   * Two actors talk within this of each other (units): the one that starts walks up to the
-   * other (iAISocialDistanceToTriggerEvent).
+   * Both actors of a conversation are within this of the player (units;
+   * fDistancetoPlayerforConversations).
    */
-  readonly conversationDistance: number;
+  readonly playerConversationDistance: number;
   /**
-   * Seconds before two actors talk with each other again (the engine clears its list of those
-   * it spoke to, lastSpokenToArray, on clearTalkToListTimer; TODO(M13): its time).
+   * Seconds an actor keeps those it asked or was asked by (fAItalktosameNPCtimer): it does not
+   * ask them again until its list is cleared.
    */
   readonly talkedWithTimer: number;
+  /**
+   * The one that starts a random scene walks up to within this of the other
+   * (iAISocialDistanceToTriggerEvent); with both seated or asleep they talk from up to
+   * iAIMaxSocialDistanceToTriggerEvent apart; seated, the one that starts reaches 20 more.
+   */
+  readonly conversationDistance: number;
+  readonly conversationDistanceMax: number;
+  /** Seconds DialogueActivate waits for a scene after its ask (fAISocialTimerToWaitForEvent). */
+  readonly waitForEvent: number;
+  /** DialogueActivate's actor walks up to within this of its target (fAIDialogueDistance). */
+  readonly dialogueDistance: number;
+  /**
+   * A scene's line waits until its speaker faces whom it speaks to within this (degrees;
+   * fAIMinAngleRangeToStartSceneDialogue): two actors brought together face each other so.
+   */
+  readonly sceneDialogueAngle: number;
+  /**
+   * Seconds before the next random scene may begin, drawn as one begins
+   * (fRandomSceneAgainMinTime .. MaxTime).
+   */
+  readonly randomSceneAgainMin: number;
+  readonly randomSceneAgainMax: number;
   /**
    * Seconds between an actor's comments on what the player does (fCommentOnPlayerActionsTimer),
    * on the player knocking things over (fCommentOnPlayerKnockingThings).
@@ -59,7 +84,11 @@ export interface TalkSettings {
   readonly knockingTimer: number;
 }
 
-/** The vanilla values (Skyrim.esm's game settings; the distances this file's own). */
+/**
+ * The values of the vanilla load order: Skyrim.esm's game settings, and for those it does not
+ * set the engine's built-in values (observed in the original); the greeting and chatter distances are
+ * this file's own.
+ */
 export const VANILLA_TALK: TalkSettings = {
   greetingTimer: 5,
   exclusiveGreetingTimer: 2.5,
@@ -69,12 +98,17 @@ export const VANILLA_TALK: TalkSettings = {
   chatterDistance: 1024,
   socialMin: 10,
   socialMax: 30,
-  conversationChance: 10,
-  conversationChanceInterior: 10,
   conversationRadius: 500,
   conversationRadiusInterior: 500,
-  conversationDistance: 200,
+  playerConversationDistance: 3000,
   talkedWithTimer: 120,
+  conversationDistance: 200,
+  conversationDistanceMax: 500,
+  waitForEvent: 20,
+  dialogueDistance: 170,
+  sceneDialogueAngle: 20,
+  randomSceneAgainMin: 10,
+  randomSceneAgainMax: 30,
   playerActionTimer: 20,
   knockingTimer: 40,
 };
@@ -90,13 +124,20 @@ export function talkSettings(setting: (name: string) => number | undefined): Tal
     idleChatterMax: setting('fIdleChatterCommentTimerMax') ?? v.idleChatterMax,
     socialMin: setting('fAISocialTimerForConversationsMin') ?? v.socialMin,
     socialMax: setting('fAISocialTimerForConversationsMax') ?? v.socialMax,
-    conversationChance: setting('fAISocialchanceForConversation') ?? v.conversationChance,
-    conversationChanceInterior:
-      setting('fAISocialchanceForConversationInterior') ?? v.conversationChanceInterior,
     conversationRadius: setting('fAISocialRadiusToTriggerConversation') ?? v.conversationRadius,
     conversationRadiusInterior:
       setting('fAISocialRadiusToTriggerConversationInterior') ?? v.conversationRadiusInterior,
+    playerConversationDistance:
+      setting('fDistancetoPlayerforConversations') ?? v.playerConversationDistance,
+    talkedWithTimer: setting('fAItalktosameNPCtimer') ?? v.talkedWithTimer,
     conversationDistance: setting('iAISocialDistanceToTriggerEvent') ?? v.conversationDistance,
+    conversationDistanceMax:
+      setting('iAIMaxSocialDistanceToTriggerEvent') ?? v.conversationDistanceMax,
+    waitForEvent: setting('fAISocialTimerToWaitForEvent') ?? v.waitForEvent,
+    dialogueDistance: setting('fAIDialogueDistance') ?? v.dialogueDistance,
+    sceneDialogueAngle: setting('fAIMinAngleRangeToStartSceneDialogue') ?? v.sceneDialogueAngle,
+    randomSceneAgainMin: setting('fRandomSceneAgainMinTime') ?? v.randomSceneAgainMin,
+    randomSceneAgainMax: setting('fRandomSceneAgainMaxTime') ?? v.randomSceneAgainMax,
     playerActionTimer: setting('fCommentOnPlayerActionsTimer') ?? v.playerActionTimer,
     knockingTimer: setting('fCommentOnPlayerKnockingThings') ?? v.knockingTimer,
   };
@@ -105,19 +146,25 @@ export function talkSettings(setting: (name: string) => number | undefined): Tal
 /** The interrupt flags of an actor that runs no package: it may do all. TODO(M13). */
 export const NO_PACKAGE_INTERRUPTS = 0xffff;
 
+/** How an actor is placed: on its feet, seated, asleep, or in other furniture or on its way in. */
+export type TalkPosture = 'standing' | 'sitting' | 'sleeping' | 'other';
+
 /** An actor of the high process as talking sees it now. */
 export interface TalkActor {
   readonly reference: number;
   readonly position: Vec3;
   /** The interrupt flags of the package it runs (PKDT, InterruptFlag). */
   readonly interrupts: number;
-  /** It may start or join a conversation (a sandbox's Allow Conversation; not on its way). */
-  readonly sociable: boolean;
   /**
-   * It can talk now: alive, awake, not saying a line, not in a conversation, a scene or combat,
-   * not talking with the player.
+   * It can talk now: alive, not saying a line, not in combat, not talking with the player, not
+   * in a conversation with another actor.
    */
   readonly free: boolean;
+  /** It plays in a scene (GetCurrentScene). */
+  readonly inScene: boolean;
+  /** It speaks at all (it has a voice: the engine's actor flag "can speak"). */
+  readonly canSpeak: boolean;
+  readonly posture: TalkPosture;
   /** It is aware of the player (it detects them). */
   readonly seesPlayer: boolean;
 }
@@ -125,7 +172,7 @@ export interface TalkActor {
 /** What talking sees of the player and the place. */
 export interface TalkScene {
   readonly player: Vec3 | undefined;
-  /** The player talks with someone (no one greets them or chatters at them meanwhile). */
+  /** The player talks with someone (no one greets them, chatters or asks for a scene meanwhile). */
   readonly playerBusy: boolean;
   readonly interior: boolean;
   /** Someone says a line of idle chatter now (one at a time). TODO(M13). */
@@ -135,7 +182,8 @@ export interface TalkScene {
 export type TalkIntent =
   | { readonly kind: 'hello'; readonly actor: number }
   | { readonly kind: 'idle'; readonly actor: number }
-  | { readonly kind: 'conversation'; readonly actor: number; readonly listener: number };
+  /** The actor asks the story manager for a scene with the partner (the ADIA event). */
+  | { readonly kind: 'ask'; readonly actor: number; readonly partner: number };
 
 /** What talking keeps of an actor. */
 interface Talker {
@@ -143,13 +191,20 @@ interface Talker {
   sinceGreeting: number;
   /** It greeted the player since they last came near (it greets again once they left). */
   greeted: boolean;
-  /** Seconds to its next line of idle chatter and its next look for someone to talk to. */
+  /** Seconds to its next line of idle chatter and to its next ask for a scene. */
   idle: number;
   social: number;
   /** Seconds since it commented on what the player does. */
   sinceComment: number;
-  /** Those it talked with lately: seconds since. */
-  readonly talkedWith: Map<number, number>;
+  /** Those it asked or was asked by (lastSpokenToArray), cleared when `sameTimer` runs out. */
+  readonly talkedWith: Set<number>;
+  sameTimer: number;
+  /**
+   * The one it asked or was asked by while the ask waits for the story manager or the scene
+   * the story manager started plays (the engine's "in random scene" flag): it is not asked
+   * again meanwhile.
+   */
+  partner: number | undefined;
 }
 
 const distance = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -157,12 +212,17 @@ const distance = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[
 /** The player has left an actor's greeting distance once this much farther (no churn). */
 const GREETING_LEAVE = 1.25;
 
+/** In an interior, the one asked stands within this height of the one asking (one floor). */
+const SAME_FLOOR = 90;
+
 export class TalkPlanner {
   readonly #settings: TalkSettings;
   readonly #random: () => number;
   readonly #talkers = new Map<number, Talker>();
   /** Seconds before anyone greets the player again (after a greeting). */
   #exclusive = 0;
+  /** The actors of the last update, in their order (the engine's high process list). */
+  #order: readonly number[] = [];
 
   constructor(settings: TalkSettings, random: () => number) {
     this.#settings = settings;
@@ -184,7 +244,9 @@ export class TalkPlanner {
         idle: this.#between(s.idleChatterMin, s.idleChatterMax),
         social: this.#between(s.socialMin, s.socialMax),
         sinceComment: Infinity,
-        talkedWith: new Map(),
+        talkedWith: new Set(),
+        sameTimer: s.talkedWithTimer,
+        partner: undefined,
       };
       this.#talkers.set(reference, talker);
     }
@@ -192,9 +254,9 @@ export class TalkPlanner {
   }
 
   /**
-   * Seconds pass: who greets, chatters and starts a conversation now. At most one greeting (the
-   * nearest of those the player came near), one line of chatter and one conversation start
-   * each time; the actors named are not free until the shell says so again.
+   * Seconds pass: who greets, chatters and asks for a scene now. At most one greeting (the
+   * nearest of those the player came near) and one line of chatter each time; the actors named
+   * are not free until the shell says so again.
    */
   update(seconds: number, actors: readonly TalkActor[], scene: TalkScene): TalkIntent[] {
     const s = this.#settings;
@@ -207,15 +269,13 @@ export class TalkPlanner {
       talker.sinceGreeting += seconds;
       talker.sinceComment += seconds;
       talker.idle -= seconds;
-      talker.social -= seconds;
-      for (const [other, since] of talker.talkedWith) {
-        if (since + seconds >= s.talkedWithTimer) talker.talkedWith.delete(other);
-        else talker.talkedWith.set(other, since + seconds);
-      }
+      // The social timer counts while the actor plays in no scene.
+      if (!actor.inScene) talker.social -= seconds;
     }
     for (const reference of [...this.#talkers.keys()]) {
       if (!present.has(reference)) this.#talkers.delete(reference);
     }
+    this.#order = actors.map((actor) => actor.reference);
     const busy = new Set<number>();
     const player = scene.player;
 
@@ -233,6 +293,7 @@ export class TalkPlanner {
           this.#exclusive > 0 ||
           talker.greeted ||
           !actor.free ||
+          actor.inScene ||
           !actor.seesPlayer ||
           (actor.interrupts & InterruptFlag.hellosToPlayer) === 0 ||
           away > s.greetingDistance ||
@@ -265,6 +326,7 @@ export class TalkPlanner {
         scene.playerBusy ||
         busy.has(actor.reference) ||
         !actor.free ||
+        actor.inScene ||
         !actor.seesPlayer ||
         (actor.interrupts & InterruptFlag.allowIdleChatter) === 0 ||
         distance(actor.position, player) > s.chatterDistance
@@ -276,38 +338,125 @@ export class TalkPlanner {
       intents.push({ kind: 'idle', actor: actor.reference });
     }
 
-    // Conversations: an actor whose timer ran out starts one by chance with the nearest within
-    // its radius who may talk too and with whom it has not talked lately.
-    const chance = scene.interior ? s.conversationChanceInterior : s.conversationChance;
-    const radius = scene.interior ? s.conversationRadiusInterior : s.conversationRadius;
-    const mayConverse = (actor: TalkActor): boolean =>
-      actor.free &&
-      actor.sociable &&
-      !busy.has(actor.reference) &&
-      (actor.interrupts & InterruptFlag.randomConversations) !== 0;
+    // Asks for a scene: an actor whose social timer ran out looks, every update until it finds
+    // one, through the actors in their order for the first it may talk with (no chance roll).
     for (const actor of actors) {
       const talker = this.#talker(actor.reference);
-      if (talker.social > 0) continue;
-      talker.social = this.#between(s.socialMin, s.socialMax);
-      if (!mayConverse(actor) || this.#random() * 100 >= chance) continue;
-      let listener: { actor: TalkActor; away: number } | undefined;
-      for (const other of actors) {
-        if (other === actor || !mayConverse(other) || talker.talkedWith.has(other.reference)) {
-          continue;
-        }
-        const away = distance(actor.position, other.position);
-        if (away <= radius && (!listener || away < listener.away))
-          listener = { actor: other, away };
+      if (busy.has(actor.reference) || !this.#mayAsk(actor, talker, scene)) continue;
+      // The list of those it talked with is cleared every fAItalktosameNPCtimer it looks.
+      talker.sameTimer -= seconds;
+      if (talker.sameTimer <= 0) {
+        talker.talkedWith.clear();
+        talker.sameTimer = s.talkedWithTimer;
       }
-      if (!listener) continue;
-      const reference = listener.actor.reference;
-      talker.talkedWith.set(reference, 0);
-      this.#talker(reference).talkedWith.set(actor.reference, 0);
+      const radius = scene.interior ? s.conversationRadiusInterior : s.conversationRadius;
+      const partner = actors.find(
+        (other) =>
+          !busy.has(other.reference) &&
+          this.#mayBeAsked(other, actor, scene) &&
+          distance(actor.position, other.position) <= radius &&
+          !talker.talkedWith.has(other.reference),
+      );
+      if (!partner) continue;
+      const other = this.#talker(partner.reference);
+      talker.talkedWith.add(partner.reference);
+      other.talkedWith.add(actor.reference);
+      talker.partner = partner.reference;
+      other.partner = actor.reference;
       busy.add(actor.reference);
-      busy.add(reference);
-      intents.push({ kind: 'conversation', actor: actor.reference, listener: reference });
+      busy.add(partner.reference);
+      intents.push({ kind: 'ask', actor: actor.reference, partner: partner.reference });
     }
     return intents;
+  }
+
+  /** Whether an actor may ask for a scene now. */
+  #mayAsk(actor: TalkActor, talker: Talker, scene: TalkScene): boolean {
+    const player = scene.player;
+    return (
+      player !== undefined &&
+      !scene.playerBusy &&
+      talker.social <= 0 &&
+      talker.partner === undefined &&
+      actor.free &&
+      !actor.inScene &&
+      actor.canSpeak &&
+      actor.posture !== 'sleeping' &&
+      (actor.interrupts & InterruptFlag.randomConversations) !== 0 &&
+      distance(actor.position, player) <= this.#settings.playerConversationDistance
+    );
+  }
+
+  /**
+   * Whether another actor may be asked by one: it speaks, is free, on its feet or seated, its
+   * package allows random conversations, it is near the player and, in an interior, on the
+   * asking one's floor; and (unless `again`: the two are already each other's) in no scene and
+   * no other ask.
+   */
+  #mayBeAsked(other: TalkActor, asking: TalkActor, scene: TalkScene, again = false): boolean {
+    const player = scene.player;
+    return (
+      other.reference !== asking.reference &&
+      player !== undefined &&
+      (again || (this.#talker(other.reference).partner === undefined && !other.inScene)) &&
+      other.free &&
+      other.canSpeak &&
+      (other.posture === 'standing' || other.posture === 'sitting') &&
+      (other.interrupts & InterruptFlag.randomConversations) !== 0 &&
+      (!scene.interior || Math.abs(other.position[2] - asking.position[2]) < SAME_FLOOR) &&
+      distance(other.position, player) <= this.#settings.playerConversationDistance
+    );
+  }
+
+  /**
+   * Whether two actors may still talk as the scene the story manager started for them begins:
+   * the engine looks again then, the second as the one asking and the first as the one asked.
+   */
+  mayTalk(first: TalkActor, second: TalkActor, scene: TalkScene): boolean {
+    return (
+      scene.player !== undefined &&
+      !scene.playerBusy &&
+      second.canSpeak &&
+      second.free &&
+      second.posture !== 'sleeping' &&
+      (second.interrupts & InterruptFlag.randomConversations) !== 0 &&
+      this.#mayBeAsked(first, second, scene, true)
+    );
+  }
+
+  /**
+   * The story manager answered an ask. With a quest both draw their social timers again and
+   * stay taken until `released`; without one both are free again and the first of the two in
+   * the actors' order draws its timer (the other may ask at once).
+   */
+  answered(actor: number, partner: number, gotQuest: boolean): void {
+    const s = this.#settings;
+    const draw = (reference: number): void => {
+      const talker = this.#talkers.get(reference);
+      if (talker) talker.social = this.#between(s.socialMin, s.socialMax);
+    };
+    if (gotQuest) {
+      draw(actor);
+      draw(partner);
+      return;
+    }
+    this.released(actor);
+    const first = this.#order.find((reference) => reference === actor || reference === partner);
+    draw(first ?? actor);
+  }
+
+  /** The scene of an actor's ask is over (or never came): it and its partner are free again. */
+  released(actor: number): void {
+    const talker = this.#talkers.get(actor);
+    const partner = talker?.partner;
+    if (talker) talker.partner = undefined;
+    const other = partner === undefined ? undefined : this.#talkers.get(partner);
+    if (other?.partner === actor) other.partner = undefined;
+  }
+
+  /** The one an actor asked or was asked by, while that ask or its scene lasts. */
+  partnerOf(actor: number): number | undefined {
+    return this.#talkers.get(actor)?.partner;
   }
 
   /**
@@ -341,35 +490,20 @@ export class TalkPlanner {
 }
 
 /**
- * The topic subtype of a conversation's turn: each greets the other first (Hello), then they
- * take turns with idle chatter (Idle). TODO(M13): the engine's choice of topics for random
- * conversations is not documented.
+ * Where the one that starts a random scene walks to: within iAISocialDistanceToTriggerEvent of
+ * the other, or iAIMaxSocialDistanceToTriggerEvent with both seated or asleep (they talk from
+ * where they are); seated, the one that starts reaches 20 units more.
  */
-export function conversationSubtype(turn: number): string {
-  return turn < 2 ? 'HELO' : 'IDLE';
-}
-
-/** A conversation between two actors says this many lines at most. TODO(M13). */
-export const CONVERSATION_LINES = 4;
-
-/**
- * A conversation between two actors: they take turns, the first beginning, each saying to the
- * other the line its turn's subtype gives it (`say`: whether it had one to say, resolving once
- * said). It ends when the one whose turn it is has nothing to say, after `lines` lines, or when
- * it is broken off (`goesOn` false: one of them is wanted elsewhere). Resolves to the lines said.
- */
-export async function converse(
-  first: number,
-  second: number,
-  say: (speaker: number, listener: number, subtype: string) => Promise<boolean>,
-  goesOn: () => boolean,
-  lines = CONVERSATION_LINES,
-): Promise<number> {
-  let said = 0;
-  for (let turn = 0; turn < lines && goesOn(); turn++) {
-    const [speaker, listener] = turn % 2 === 0 ? [first, second] : [second, first];
-    if (!(await say(speaker, listener, conversationSubtype(turn)))) break;
-    said++;
-  }
-  return said;
+export function triggerDistance(
+  settings: TalkSettings,
+  starter: TalkPosture,
+  other: TalkPosture,
+): number {
+  const resting = (posture: TalkPosture): boolean =>
+    posture === 'sitting' || posture === 'sleeping';
+  const reach =
+    resting(starter) && resting(other)
+      ? settings.conversationDistanceMax
+      : settings.conversationDistance;
+  return starter === 'sitting' ? reach + 20 : reach;
 }
