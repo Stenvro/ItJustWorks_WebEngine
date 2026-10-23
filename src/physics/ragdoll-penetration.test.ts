@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { Mat4 } from '../render/math.ts';
-import { HAVOK_SCALE, type CollisionBody, type CollisionData } from './collision-data.ts';
+import type { CollisionBody, CollisionData } from './collision-data.ts';
 import { CollisionMatrix, Layer } from './collision-layers.ts';
 import { GRAVITY, initPhysics, PHYSICS_STEP, PhysicsWorld } from './physics-world.ts';
 import { RagdollPenetration } from './ragdoll-penetration.ts';

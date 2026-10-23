@@ -27,8 +27,12 @@ import {
 } from '../src/physics/physics-world.ts';
 import { parseRace } from '../src/world/actor-records.ts';
 import { ActorResolver, meshPath } from '../src/world/actors.ts';
-import { bodyOnPose, poseRagdoll } from '../src/shell/actors.ts';
-import { parseRagdollData, ragdollPoseLocals } from '../src/world/ragdoll-data.ts';
+import {
+  bodyOnPose,
+  parseRagdollData,
+  poseRagdoll,
+  ragdollPoseLocals,
+} from '../src/world/ragdoll-data.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { openGameFolder } from './gamedata-path.ts';
@@ -319,7 +323,12 @@ function jointGap(
  * are in: src/physics/physics-world.ts, ANGLES_MIRRORED).
  */
 async function auditLimits(): Promise<void> {
-  interface Q { x: number; y: number; z: number; w: number }
+  interface Q {
+    x: number;
+    y: number;
+    z: number;
+    w: number;
+  }
   const mul = (a: Q, b: Q): Q => ({
     w: a.w * b.w - a.x * b.x - a.y * b.y - a.z * b.z,
     x: a.w * b.x + a.x * b.w + a.y * b.z - a.z * b.y,
