@@ -453,6 +453,11 @@ export interface CellRagdoll {
   readonly world: Mat4;
   readonly collision: CollisionData | undefined;
   readonly pose: ActorPose;
+  /**
+   * The nodes (lower-case) of a limb cut off it (a decapitated corpse's head): their bodies stay
+   * out of collision (src/shell/actor-dismemberment.ts).
+   */
+  readonly severed?: ReadonlySet<string>;
 }
 
 export class PlaySession {
@@ -1295,6 +1300,9 @@ export class PlaySession {
         );
         group.collision.push(placed);
         if (cell.isEnabled?.(ragdoll.reference) === false) physics.setEnabled(placed, false);
+        for (const body of placed.bodies) {
+          if (ragdoll.severed?.has(body.data.node.toLowerCase())) physics.disableBody(body);
+        }
         if (placed.dynamic) group.settle.push(placed);
         group.articulated.push(new Articulation(placed, ragdoll.pose, ragdoll.world));
       });

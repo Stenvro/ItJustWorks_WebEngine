@@ -1374,6 +1374,29 @@ export class PhysicsWorld {
     this.#syncJoints(placed.bodies.map(({ body }) => body));
   }
 
+  /**
+   * Sets the velocity of a placement's simulated bodies: `linear` in game units a second (made
+   * Havok's here), `angular` in radians a second (a cut head flung off: src/shell/actor-
+   * dismemberment.ts).
+   */
+  setVelocity(placed: PlacedCollision, linear: Vec3, angular: Vec3): void {
+    for (const { body, data } of placed.bodies) {
+      if (!dynamicBody(data)) continue;
+      this.release(body);
+      body.setLinvel({ x: toHavok(linear[0]), y: toHavok(linear[1]), z: toHavok(linear[2]) }, true);
+      body.setAngvel({ x: angular[0], y: angular[1], z: angular[2] }, true);
+    }
+  }
+
+  /**
+   * Takes one body of a placement out of collision (its colliders off; it keeps its joints and
+   * moves with them): the hidden head of a decapitated body.
+   */
+  disableBody(body: PlacedBody): void {
+    for (let i = 0; i < body.body.numColliders(); i++) body.body.collider(i).setEnabled(false);
+    this.#changed = true;
+  }
+
   /** ApplyHavokImpulse: a push (direction and magnitude in Havok units) on its bodies. */
   impulse(placed: PlacedCollision, direction: Vec3, magnitude: number): void {
     const length = Math.hypot(direction[0], direction[1], direction[2]) || 1;

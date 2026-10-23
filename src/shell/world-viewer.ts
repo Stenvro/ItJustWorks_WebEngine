@@ -849,6 +849,8 @@ export class WorldViewer {
    */
   async #lookChanged(reference: number): Promise<void> {
     if (reference === PLAYER_REF) {
+      // The decapitation armor goes on in place (src/shell/actor-dismemberment.ts).
+      if (await this.#stage?.dismemberment.dressedInPlace(reference)) return;
       await this.#avatar?.rebuild();
       // In furniture, the new body's graph is put back in it.
       const seat = this.#seat;

@@ -64,6 +64,8 @@ export class ActorBodies {
   readonly #session: GameSession;
   readonly #bodies = new Map<number, ActorBody>();
   readonly #adding = new Map<number, Promise<void>>();
+  /** The nodes (lower-case) whose bodies are out of collision, by actor: a cut-off head's. */
+  readonly #severed = new Map<number, ReadonlySet<string>>();
   #physics: PhysicsWorld | undefined;
 
   constructor(session: GameSession) {
@@ -78,8 +80,29 @@ export class ActorBodies {
   }
 
   remove(reference: number): void {
+    this.#severed.delete(reference);
     const entry = this.#bodies.get(reference);
     if (entry) this.#free(entry);
+  }
+
+  /**
+   * A limb came off an actor (src/shell/actor-dismemberment.ts): the bodies of its ragdoll on the
+   * limb's nodes (lower-case names) leave collision, now and in the bodies made for it later
+   * (the cut piece has its own); they still hang on their joints, unseen.
+   */
+  sever(reference: number, nodes: ReadonlySet<string>): void {
+    this.#severed.set(reference, nodes);
+    const entry = this.#bodies.get(reference);
+    if (entry) this.#disableSevered(entry);
+  }
+
+  #disableSevered(entry: ActorBody): void {
+    const nodes = this.#severed.get(entry.staged.reference);
+    const physics = this.#physics;
+    if (!nodes || !physics) return;
+    for (const body of entry.placed.bodies) {
+      if (nodes.has(body.data.node.toLowerCase())) physics.disableBody(body);
+    }
   }
 
   /** A living actor's bodies' colliders (none: no bodies, or dead). */
@@ -300,6 +323,7 @@ export class ActorBodies {
       knocked: false,
     };
     this.#bodies.set(reference, entry);
+    this.#disableSevered(entry);
     this.#follow(entry, physics, true);
   }
 

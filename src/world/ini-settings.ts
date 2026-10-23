@@ -155,6 +155,8 @@ export const INI_DEFAULTS = {
   },
   // The player's shots leave tilted up this far (degrees; src/shell/projectile-aim.ts).
   Combat: {
+    // A cut head flies off at this speed (game units a second; src/shell/actor-dismemberment.ts).
+    fDecapInitialSpeed: 250,
     f1PArrowTiltUpAngle: 2,
     f1PBoltTiltUpAngle: 1,
     f3PArrowTiltUpAngle: 2.5,
@@ -208,6 +210,8 @@ export const INI_DEFAULTS = {
   GamePlay: {
     bShowFloatingQuestMarkers: 1,
     iDifficulty: 2,
+    // At most this many dismemberments are cut a frame (src/shell/actor-dismemberment.ts).
+    iActorsDismemberedPerFrame: 2,
   },
   // Grass fades out from fGrassStartFadeDistance; the settings menu's Grass Fade runs from
   // fGrassMinStartFadeDistance (Skyrim_Default.ini: 0) to fGrassMaxStartFadeDistance.
@@ -244,6 +248,8 @@ export const INI_DEFAULTS = {
   },
   General: {
     bBorderRegionsEnabled: 1,
+    // No limb is cut off (src/shell/actor-dismemberment.ts).
+    bDisableAllGore: 0,
     fAutoDoorFadeSecs: 0.5,
     // How often cloaks reach those near (seconds; src/scripting/runtime/magic-engine.ts).
     fCloakEffectUpdateInterval: 0.5,
