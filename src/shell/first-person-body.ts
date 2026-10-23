@@ -90,6 +90,8 @@ export class FirstPersonBody {
       skeleton: havok,
       random: seededRandom(PLAYER_REFERENCE),
       properties: { IsFemale: female ? 1 : 0, IsMale: female ? 0 : 1, IsPlayer: 1 },
+      ...(behaviors.character.mirror && { mirror: behaviors.character.mirror }),
+      defaultEventMode: behaviors.character.defaultEventMode,
     });
     behavior.update(0);
     await host.loaded();

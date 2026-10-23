@@ -8,6 +8,8 @@ export interface Camera {
   readonly near: number;
   /** The direction looked along (the audio listener's facing), if the camera knows it. */
   readonly forward?: Vec3;
+  /** The vertical field of view (radians), if the camera knows it. */
+  readonly fovY?: number;
   update(deltaSeconds: number): void;
   viewProjection(aspect: number, out?: Mat4): Mat4;
 }
