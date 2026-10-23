@@ -427,7 +427,8 @@ function pointIn(run: ProcedureRun, place: PackagePlace): Vec3 {
  *   the middle, turned at random up to 45° either side, as far as a random share of the radius:
  *   across the place from where it was, at the middle's height. A point it cannot walk to (off
  *   the navmesh, beyond a fence, on another island) is not taken: the engine's path request
- *   fails and it asks again; here a few points are tried at once.
+ *   finds no way and it asks again (inferred: TODO(M13), how its pathing answers a goal off its
+ *   navmesh is not read); here a few points are tried at once.
  *
  * Undefined: no point found (it waits a moment and tries again). Before, any point within the
  * radius was taken, unchecked (inside a house, behind a fence).

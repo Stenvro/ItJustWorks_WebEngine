@@ -898,7 +898,9 @@ from the original game's behaviour only (in our words):
   walk after that goes **across the place**: from the place's middle, the way from where its
   last walk led towards the middle, turned at random by up to 45° either side, as far as a random
   share of the radius (the middle's height). A point it cannot walk to (off the navmesh, behind
-  a fence, on another island) fails as a path request, and it asks again. Ours
+  a fence, on another island) gets no path; its walk is a request to the pathing, which finds
+  its way later, and without one the wander asks again (inferred: TODO(M13), how the engine's
+  pathing answers a goal off its navmesh is not read). Ours
   (`src/ai/procedure-runs.ts` wanderPoint, `randomReachablePoint` in `src/ai/pathfinding.ts`):
   the reachable triangles within the place by their area, a random point in the one picked; an
   across-the-place point is taken only where a path reaches it (up to 8 tried at once, else it
