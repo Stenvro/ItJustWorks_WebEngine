@@ -6,7 +6,8 @@
 // to the others it is shut: their way is blocked there and they search again round it,
 // remembering it a while. Load doors swing open with their sound as an actor steps through
 // (it leaves the game's fTeleportDoorActivateDelayTimer later) and as one comes out of the door
-// on the other side. A door a script opens or shuts (SetOpen) swings so and stays.
+// on the other side. A door a script opens or shuts (SetOpen) swings so and stays. Each swing's
+// end is told to the door's scripts with who swung it (OnOpen, OnClose: open-close.ts).
 
 import type { DoorPassage } from '../ai/path-follower.ts';
 import { findRoute, type Route, type RouteEnd, type RouteMap } from '../ai/routes.ts';
@@ -15,6 +16,7 @@ import type { ModelInstance } from '../render/scene-renderer.ts';
 import type { CellObject } from '../world/cell-loader.ts';
 import type { GameSession } from './game-session.ts';
 import { clock } from './object-graphs.ts';
+import { tellSwing } from './open-close.ts';
 
 /** A placed door of the loaded area and its instance (its sequences). */
 export interface DoorObject {
@@ -81,7 +83,7 @@ export class ActorDoors {
         void this.#options.session.scriptsReady?.setLocked(door, false);
       }
     }
-    return this.#open(door, entry);
+    return this.#open(door, entry, actor);
   }
 
   /** The doors found shut to an actor lately (its paths keep off them). */
@@ -145,17 +147,17 @@ export class ActorDoors {
    * An actor steps through a load door of the loaded area: it swings open with its sound (and
    * shuts after); resolves once the actor is through (fTeleportDoorActivateDelayTimer).
    */
-  async through(door: number): Promise<void> {
+  async through(door: number, actor?: number): Promise<void> {
     const entry = this.#options.find(door);
-    if (entry) this.#swing(door, entry);
+    if (entry) this.#swing(door, entry, actor);
     const delay = await this.#delay();
     await new Promise((resolve) => setTimeout(resolve, delay * 1000));
   }
 
   /** An actor comes out of a load door of the loaded area: it swings open and shuts behind. */
-  arrive(door: number): void {
+  arrive(door: number, actor?: number): void {
     const entry = this.#options.find(door);
-    if (entry) this.#swing(door, entry);
+    if (entry) this.#swing(door, entry, actor);
   }
 
   /**
@@ -173,10 +175,11 @@ export class ActorDoors {
     this.#play(entry, sequence);
     playback.sequence = sequence;
     playback.start = clock();
+    this.#told(door, entry, undefined);
   }
 
   /** A door opens (if shut) and shuts CLOSE_AFTER after the last actor came: open yet? */
-  #open(door: number, entry: DoorObject): DoorPassage {
+  #open(door: number, entry: DoorObject, actor: number | undefined): DoorPassage {
     const playback = entry.instance?.playback;
     // A door without sequences has nothing to open.
     if (!playback) return 'open';
@@ -184,6 +187,7 @@ export class ActorDoors {
       this.#play(entry, 'open');
       playback.sequence = 'open';
       playback.start = clock();
+      this.#told(door, entry, actor);
     }
     clearTimeout(this.#closing.get(door));
     this.#closing.set(
@@ -194,6 +198,7 @@ export class ActorDoors {
         this.#play(entry, 'close');
         playback.sequence = 'close';
         playback.start = clock();
+        this.#told(door, entry, actor);
       }, CLOSE_AFTER * 1000),
     );
     const length = entry.instance.model.sequences?.byName.get('open')?.duration ?? OPEN_SECONDS;
@@ -201,12 +206,20 @@ export class ActorDoors {
   }
 
   /** A load door swings open and shut (its sounds; its sequences, if it has them). */
-  #swing(door: number, entry: DoorObject): void {
+  #swing(door: number, entry: DoorObject, actor: number | undefined): void {
     if (entry.instance?.playback) {
-      this.#open(door, entry);
+      this.#open(door, entry, actor);
       return;
     }
     this.#play(entry, 'open');
+  }
+
+  /** Its swing's end is told (OnOpen, OnClose: src/shell/open-close.ts), with who swung it. */
+  #told(door: number, entry: DoorObject, actor: number | undefined): void {
+    const instance = entry.instance;
+    if (!instance?.playback) return;
+    const runtime = this.#options.session.scriptsReady;
+    tellSwing(runtime, door, instance.playback, instance.model.sequences, actor);
   }
 
   #play(entry: DoorObject, sound: 'open' | 'close'): void {

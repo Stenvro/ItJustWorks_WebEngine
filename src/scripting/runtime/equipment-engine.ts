@@ -58,7 +58,6 @@ import {
   type ItemRecord,
 } from '../../world/item-records.ts';
 import { parseSpell, SpellType } from '../../world/spell-records.ts';
-import type { Value } from '../values.ts';
 import { PLAYER_REF } from './forms.ts';
 import type { EquipmentState } from './game-state.ts';
 import type { ScriptRuntime } from './runtime.ts';
@@ -622,16 +621,12 @@ export class EquipmentEngine {
     if (worn) runtime.world.equipmentChanged?.(actor);
     const change: EquipmentChange = { actor, equipped, unequipped, worn };
     for (const listener of this.listeners) listener(change);
-    const self = runtime.actorHandle(actor);
-    const send = async (form: number, actorEvent: string, itemEvent: string): Promise<void> => {
-      const args: Value[] = [runtime.formHandle(form), null];
-      await runtime.sendEvent(actor, actorEvent, args);
-      const type = (await runtime.forms.record(form))?.type;
-      if (type !== 'SPEL' && type !== 'SHOU' && (await runtime.forms.attachments(form)))
-        await runtime.sendEvent(form, itemEvent, [self]);
-    };
-    for (const form of unequipped) await send(form, 'OnObjectUnequipped', 'OnUnequipped');
-    for (const form of equipped) await send(form, 'OnObjectEquipped', 'OnEquipped');
+    // The hub tells each (TESEquipEvent): the relay sends the actor's and the item's events.
+    const events = runtime.events;
+    for (const item of unequipped)
+      await events.emitted('equip', { actor, item, reference: undefined, equipped: false });
+    for (const item of equipped)
+      await events.emitted('equip', { actor, item, reference: undefined, equipped: true });
   }
 
   // --- Equipping -------------------------------------------------------------------------------

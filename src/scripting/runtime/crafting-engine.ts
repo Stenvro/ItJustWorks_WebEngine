@@ -664,8 +664,7 @@ export class CraftingEngine {
   }
 
   #stat(name: string, by = 1): void {
-    const stats = this.#runtime.stats;
-    stats.set(name, (stats.get(name) ?? 0) + by);
+    this.#runtime.incrementStat(name, by);
   }
 
   /** A skill and Fortify <skill> (worn enchantments' and potions' percent) of an actor. */

@@ -54,9 +54,16 @@ function engine(): { crime: CrimeEngine; state: GameState; events: StoryEventDat
     [RIFTEN_CITIZEN, RIFT],
   ]);
   const events: StoryEventData[] = [];
+  const stats = new Map<string, number>();
   const runtime = {
     state,
-    stats: new Map<string, number>(),
+    stats,
+    incrementStat: (name: string, by = 1) => {
+      stats.set(name.toLowerCase(), (stats.get(name.toLowerCase()) ?? 0) + by);
+    },
+    setStat: (name: string, value: number) => {
+      stats.set(name.toLowerCase(), value);
+    },
     actors: {
       crimeFaction: (actor: number) => Promise.resolve(crimeFactions.get(actor)),
       relationshipRank: (actor: number) => Promise.resolve(actor === FRIEND ? 1 : 0),

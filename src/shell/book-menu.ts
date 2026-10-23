@@ -216,7 +216,12 @@ export class BookMenu {
   ): Promise<void> {
     const first = !runtime.state.booksRead.has(read.book);
     runtime.state.booksRead.add(read.book);
-    if (read.reference !== undefined) await runtime.sendEvent(read.reference, 'OnRead');
+    // The hub tells it (TESBookReadEvent: the reference's OnRead).
+    await runtime.events.emitted('bookRead', {
+      book: read.book,
+      reader: PLAYER_REF,
+      reference: read.reference,
+    });
     if (!first || (book.flags & BookFlag.teachesSkill) === 0 || book.teaches < 0) return;
     // The experience the skill lacks to its next level (UESP "Skill Books"); the HUD announces
     // it (sSkillIncreased); the reader's perks may add levels (Adjust Book Skill Points:

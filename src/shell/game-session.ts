@@ -871,6 +871,11 @@ export class GameSession {
       this.scriptsStarting = runtime;
       // Skill increases and blinking meters go to the HUD.
       runtime.progression.listener = this.hud;
+      // The INI's settings the events read: OnTrigger's repeat, the attached area.
+      const triggerDelay = this.ini.lookup('Havok', 'fTriggerEventDelayMS');
+      if (triggerDelay !== undefined) runtime.triggerVolumes.delayMs = triggerDelay;
+      const grids = this.ini.lookup('General', 'uGridsToLoad');
+      if (grids !== undefined) runtime.gridsToLoad = grids;
       await runtime.newGame((what) => {
         if (runtime.retired) return;
         this.scriptsProgress = what;
@@ -1043,12 +1048,14 @@ export class GameSession {
       const last = this.#location;
       this.#location = { runtime, location };
       if (last?.runtime !== runtime || last.location === location) return;
-      const handle = (formId: number | undefined) =>
-        formId === undefined ? null : runtime.formHandle(formId);
-      await runtime.sendEvent(PLAYER_REF, 'OnLocationChange', [
-        handle(last.location),
-        handle(location),
-      ]);
+      // The hub tells it (TESActorLocationChangeEvent: OnLocationChange, the story manager).
+      // TODO(M13): the producer of actorLocationChange for every actor is the story events'
+      // (src/scripting/runtime/story-events.ts); this one, the player's, gives way to it.
+      await runtime.events.emitted('actorLocationChange', {
+        actor: PLAYER_REF,
+        from: last.location,
+        to: location,
+      });
       const name =
         location === undefined ? undefined : (await runtime.forms.record(location))?.text('FULL');
       if (name) this.hud.location(name);

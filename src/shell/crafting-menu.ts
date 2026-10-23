@@ -544,8 +544,8 @@ async function constructibleModel(context: ModelContext): Promise<CraftingModel>
       uiSound(session, 'UISmithingCreateGeneric');
       const made = await item(recipe.created);
       const stat =
-        made?.type === 'WEAP' ? 'weapons made' : made?.type === 'ARMO' ? 'armor made' : undefined;
-      if (stat) runtime.stats.set(stat, (runtime.stats.get(stat) ?? 0) + recipe.createdCount);
+        made?.type === 'WEAP' ? 'Weapons Made' : made?.type === 'ARMO' ? 'Armor Made' : undefined;
+      if (stat) runtime.incrementStat(stat, recipe.createdCount);
       skillUse(runtime, bench, constructibleSkillUse((made?.value ?? 0) * recipe.createdCount));
       await craftEvent(context, recipe.created);
     },
