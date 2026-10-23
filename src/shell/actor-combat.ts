@@ -279,6 +279,8 @@ export interface ActorCombatOptions {
   readonly threats?: () => Iterable<Threat>;
   /** Where shots go: the player's aim assistance, an NPC's aim at its target. */
   readonly aim?: () => ProjectileAim | undefined;
+  /** A killmove's victim loses its head (src/shell/actor-dismemberment.ts). */
+  readonly decapitate?: (actor: number) => void;
 }
 
 const describe = (error: unknown): string =>
@@ -1386,6 +1388,9 @@ export class ActorCombat implements CombatBridge {
           fighter.reference,
           this.killerOf(fighter.reference),
         );
+        break;
+      case 'decapitate':
+        this.#options.decapitate?.(fighter.reference);
         break;
       case 'pair-end':
         for (const graph of this.#graphs(fighter)) graph.pairedSide = undefined;

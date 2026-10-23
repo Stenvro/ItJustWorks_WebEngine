@@ -5,6 +5,7 @@
 // Notes: docs/scripting.md ("Game state").
 
 import type { PlayerAppearance } from '../../gameplay/chargen.ts';
+import type { DismemberedLimb } from '../../gameplay/combat/dismemberment.ts';
 import { emptyLoadout, type Loadout } from '../../gameplay/equipment.ts';
 import type { CreatedForm } from '../../world/created-forms.ts';
 import type { StoryEventData } from './story-manager.ts';
@@ -108,6 +109,11 @@ export interface ActorState {
   restrained?: boolean;
   /** A cannibal fed on its corpse (StartCannibal: HasBeenEaten). */
   eaten?: boolean;
+  /**
+   * The limbs cut off it (the engine's ExtraDismemberedLimbs: a decapitation's head), each with
+   * what it wore then: a dismembered corpse stays so (src/shell/actor-dismemberment.ts).
+   */
+  dismembered?: DismemberedLimb[];
   /** AllowPCDialogue: false, the player cannot talk to it. */
   allowPlayerDialogue?: boolean;
   /** AllowBleedoutDialogue: the player may talk to it while it bleeds out. */

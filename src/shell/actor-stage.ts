@@ -57,6 +57,7 @@ import { ActorFlight } from './actor-flight.ts';
 import { actorShape, MagicProjectiles, type ProjectileTarget } from './magic-projectiles.ts';
 import { MagicFx } from './magic-fx.ts';
 import { ActorEffects, type EffectBody } from './actor-effects.ts';
+import { ActorDismemberment, type SeveredBody } from './actor-dismemberment.ts';
 import { firstDoorToward, questTargets } from './compass.ts';
 import { findPath } from '../ai/pathfinding.ts';
 import type { MagicEffectShown } from '../scripting/runtime/magic-engine.ts';
@@ -243,6 +244,8 @@ export class ActorStage {
    * events dispatched to their handlers (src/shell/actor-graph-events.ts).
    */
   readonly graphEvents: ActorGraphEvents;
+  /** Heads cut off (src/shell/actor-dismemberment.ts): the Decapitate handler and its cut. */
+  readonly dismemberment: ActorDismemberment;
   /** An actor's graph asks for a new idle (PickNewIdle): ambient idle picking answers. */
   pickNewIdle?: (reference: number) => void;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
@@ -375,6 +378,9 @@ export class ActorStage {
       knockdowns: () => this.knockdowns,
       threats: () => [...this.projectiles.threats(), ...this.casting.threats()],
       aim: () => this.aim,
+      decapitate: (actor) => {
+        void this.dismemberment.decapitate(actor);
+      },
     });
     this.search = new ActorSearch({
       session: options.session,
@@ -654,6 +660,19 @@ export class ActorStage {
         options.terminal.log('actor', message, 'warn');
       },
     });
+    this.dismemberment = new ActorDismemberment({
+      session: options.session,
+      renderer: options.renderer,
+      terminal: options.terminal,
+      body: (reference) => this.#severedBody(reference),
+      bodies: this.bodies,
+      art: (art, reference, seconds) => {
+        this.effects.art(art, reference, seconds);
+      },
+      killer: (reference) =>
+        options.session.scriptsReady?.state.actors.get(reference)?.killer ??
+        this.combat.killerOf(reference),
+    });
     this.graphEvents = new ActorGraphEvents({
       session: options.session,
       terminal: options.terminal,
@@ -663,6 +682,42 @@ export class ActorStage {
       ...(options.player && { player: options.player }),
       ...(options.seat && { seat: options.seat }),
     });
+  }
+
+  /**
+   * An actor's body for its dismemberment (the player's avatar's for the player): drawn again by
+   * building its scene again from its instances.
+   */
+  #severedBody(reference: number): SeveredBody | undefined {
+    if (reference === PLAYER_REF) {
+      const avatar = this.#options.player?.()?.avatar;
+      return (
+        avatar && {
+          reference,
+          placed: avatar.body,
+          world: avatar.placement.world,
+          redraw: () => {
+            avatar.redraw();
+          },
+        }
+      );
+    }
+    const staged = this.#actors.get(reference);
+    const world = staged?.placed.instances[0]?.world;
+    return (
+      staged &&
+      world && {
+        reference,
+        placed: staged.placed,
+        world,
+        visibility: staged.visibility,
+        redraw: () => {
+          const previous = staged.scene;
+          staged.scene = this.#scene(staged.placed, staged.visibility);
+          previous?.destroy();
+        },
+      }
+    );
   }
 
   /** An actor's body for the effects on it (the player's avatar's for the player). */
@@ -981,6 +1036,7 @@ export class ActorStage {
   attachPlay(world: SensesWorld | undefined): void {
     this.movers.attach(world);
     this.bodies.attach(world?.physics);
+    this.dismemberment.attach(world?.physics);
     this.#physics = world?.physics;
     if (!world) this.knockdowns.clear();
     // After the movers' step hook: the cart towed and the player carried after the horse moved.
@@ -1129,6 +1185,8 @@ export class ActorStage {
     yield* this.fx.scenes();
     // The props in their hands (animation objects).
     yield* this.animObjects.scenes();
+    // The heads cut off.
+    yield* this.dismemberment.scenes();
   }
 
   /** Where a staged actor stands now (scripts' live placement). */
@@ -1361,6 +1419,8 @@ export class ActorStage {
   async lookChanged(reference: number): Promise<void> {
     const staged = this.#actors.get(reference);
     if (!staged) return;
+    // The decapitation armor goes on in place (src/shell/actor-dismemberment.ts).
+    if (await this.dismemberment.dressedInPlace(reference)) return;
     const session = this.#options.session;
     const race = session.scriptsReady?.state.actors.get(reference)?.race;
     const placer = await session.actors();
@@ -1389,6 +1449,7 @@ export class ActorStage {
     this.graphEvents.attach(staged);
     // Its controller is made again for its new body (its size, its graph).
     this.movers.release(reference);
+    this.dismemberment.prepare(reference, placed);
     const previous = staged.scene;
     staged.scene = this.#scene(placed, staged.visibility);
     previous?.destroy();
@@ -1522,6 +1583,8 @@ export class ActorStage {
     this.knockdowns.afterAnimate();
     this.bodies.frame(this.#withPlayerBody(), this.#options.focus?.());
     this.playerDeath.frame(frame);
+    // Heads come off (the cuts queued), and those cut off follow their bodies.
+    this.dismemberment.frame(frame);
     // The casting art follows the hands as they are posed now, and so do their props.
     this.casting.afterAnimate();
     this.animObjects.frame();
@@ -1598,6 +1661,8 @@ export class ActorStage {
         if (!actor || this.#actors.has(actor.actor.reference)) continue;
         const reference = actor.actor.reference;
         const visibility: InstanceVisibility = { hidden: !enabled(reference) };
+        // A dismembered actor is drawn so (its head cut off again).
+        this.dismemberment.prepare(reference, actor);
         const entry: StagedActor = {
           reference,
           placed: actor,
@@ -1661,6 +1726,7 @@ export class ActorStage {
     this.movers.remove(staged.reference);
     this.knockdowns.remove(staged.reference);
     this.bodies.remove(staged.reference);
+    this.dismemberment.remove(staged.reference);
     this.#actors.delete(staged.reference);
     staged.scene?.destroy();
     staged.scene = undefined;

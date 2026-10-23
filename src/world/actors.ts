@@ -324,7 +324,8 @@ export class ActorResolver {
     this.#db = db;
   }
 
-  async #race(formId: number): Promise<RaceRecord | undefined> {
+  /** A race's record, read once. */
+  async race(formId: number): Promise<RaceRecord | undefined> {
     if (!this.#races.has(formId)) {
       const record = await this.#db.get(formId);
       this.#races.set(formId, record?.type === 'RACE' ? parseRace(record) : undefined);
@@ -549,7 +550,7 @@ export class ActorResolver {
     const traits = withOverrides(own, overrides);
     // Outfits' leveled items: the actor's own draws, after its templates'.
     const random = seededRandom(reference ^ 0x5bd1e995);
-    const race = traits.race === undefined ? undefined : await this.#race(traits.race);
+    const race = traits.race === undefined ? undefined : await this.race(traits.race);
     if (!race) return undefined;
     const female = (traits.flags & NpcFlag.female) !== 0;
     const sex = female ? 1 : 0;

@@ -505,8 +505,8 @@ its HeadChopBlockHookupSCRIPT notes the executioner, the guard (their keywords) 
 as each activates it, and once all three have, plays IdleExecutionerChop on the prisoner (the
 executioner's, guard's and prisoner's graphs, 0_master Behavior36, 78 and 37, all chop on it;
 the player: IdleExecutionerChop_Player, then stage 98). The prisoner's chop raises Decapitate and
-KillActor; a graph's KillActor kills its actor. TODO(M13): the decapitation itself (the head's
-dismemberment piece, the race's decapitation effect).
+KillActor; a graph's KillActor kills its actor; Decapitate takes the prisoner's head off
+(docs/animation.md, "Dismemberment").
 
 ## Where packages put actors
 

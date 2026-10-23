@@ -376,6 +376,23 @@ export class PlayerAvatar {
     keepHeads(this.#session, made);
   }
 
+  /**
+   * Draws the body again from its instances as they are now, on the shared placement (its head
+   * cut off, the decapitation armor put on in place: src/shell/actor-dismemberment.ts).
+   */
+  redraw(): void {
+    const made = this.#made;
+    const scene = this.#renderer.scene.createScene(
+      made.body.instances.map((instance) => ({
+        ...instance,
+        world: this.#world,
+        motion: this.#motion,
+      })),
+    );
+    made.scene.destroy();
+    this.#made = { ...made, scene };
+  }
+
   /** Holds an idle (a behavior event: the race menu's pose) until `hold(undefined)`. */
   hold(pose: string | undefined): void {
     this.#pose = pose;

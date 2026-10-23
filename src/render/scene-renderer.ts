@@ -606,8 +606,11 @@ export interface ModelInstance {
   readonly poseNodes?: Int16Array;
   /** An actor's colours: its skin tone on skin shapes, its hair colour on hair shapes. */
   readonly tints?: ActorTints;
-  /** An actor's equipment: whether a body part's partitions of the model are drawn. */
-  readonly partitionVisible?: (bodyPart: number) => boolean;
+  /**
+   * An actor's equipment and dismemberment: whether a body part's partitions of one of the
+   * model's parts are drawn.
+   */
+  readonly partitionVisible?: (bodyPart: number, part: ModelPart) => boolean;
   /**
    * The parts of the model this instance draws (all without): a weapon's blade in the hand
    * while its scabbard ("Scb") stays at the sheath (src/shell/actor-weapons.ts).
@@ -925,14 +928,14 @@ function writePosePalette(
 /** The index ranges of a part's partitions that are drawn (adjacent ones merged). */
 function visibleRanges(
   part: ModelPart,
-  visible: ((bodyPart: number) => boolean) | undefined,
+  visible: ((bodyPart: number, part: ModelPart) => boolean) | undefined,
 ): IndexRange[] | undefined {
   const partitions = part.skin?.partitions;
   if (!visible || !partitions) return undefined;
   const ranges: IndexRange[] = [];
   let hidden = false;
   for (const partition of partitions) {
-    if (!visible(partition.bodyPart)) {
+    if (!visible(partition.bodyPart, part)) {
       hidden = true;
       continue;
     }
