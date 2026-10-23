@@ -284,6 +284,21 @@ export const INI_DEFAULTS = {
     fWarpPathOffset: 100,
     fWarpMaxTime: 5,
   },
+  // The kill cameras of the player's shots and casts (src/shell/actor-combat.ts: whether one
+  // plays; the executable's defaults).
+  VATS: {
+    bVATSDisable: 0,
+    bVATSMultipleCombatants: 0,
+    bVATSAllowNoKill: 0,
+    bVATSRangedSelective: 1,
+    bVATSIgnoreProjectileTest: 0,
+    fVATSRangedLongDistance: 2500,
+    fVATSRangedLowHealthPercent: 5,
+    fVATSRangedPercentSneakKill: 20,
+    fVATSRangedPercentTargetNoThreat: 10,
+    fVATSRangedTargetLowLevelMult: 0.3,
+    fVATSRangedPercentMin: 50,
+  },
   HAVOK: {
     fInAirFallingCharGravityMult: 1.35,
     // The physics step and the steps a frame takes at most (src/physics/physics-world.ts).

@@ -100,6 +100,9 @@ export interface CombatSettings {
   readonly hostileFlyingActorExteriorDistance: number;
   /** fVATSImageSpaceTransitionTime: a kill camera shot's image-space modifier fades in (s). */
   readonly vatsImageSpaceTransitionTime: number;
+  /** fVATSSafetyMaxTime, fVATSSafetyMaxTimeRanged: a kill camera ends by then (seconds). */
+  readonly vatsSafetyMaxTime: number;
+  readonly vatsSafetyMaxTimeRanged: number;
   // --- Arrows --------------------------------------------------------------------------------
   /** iArrowInventoryChance: % of arrows that hit an actor going into its inventory. */
   readonly arrowInventoryChance: number;
@@ -183,6 +186,8 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   hostileActorInteriorDistance: 2000,
   hostileFlyingActorExteriorDistance: 15000,
   vatsImageSpaceTransitionTime: 0.15,
+  vatsSafetyMaxTime: 20,
+  vatsSafetyMaxTimeRanged: 6,
   arrowInventoryChance: 33,
   attachedArrowAgeMax: 10,
   missileStickDepth: 20,
@@ -242,6 +247,8 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   hostileFlyingActorExteriorDistance: 'fHostileFlyingActorExteriorDistance',
   deadActorHitConeMult: 'fCombatDeadActorHitConeMult',
   vatsImageSpaceTransitionTime: 'fVATSImageSpaceTransitionTime',
+  vatsSafetyMaxTime: 'fVATSSafetyMaxTime',
+  vatsSafetyMaxTimeRanged: 'fVATSSafetyMaxTimeRanged',
   arrowInventoryChance: 'iArrowInventoryChance',
   attachedArrowAgeMax: 'fAttachedArrowAgeMax',
   missileStickDepth: 'fCombatMissileStickDepth',

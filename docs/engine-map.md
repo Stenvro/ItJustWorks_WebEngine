@@ -111,7 +111,7 @@ These run through every area and explain most of what breaks in play.
 | Damage, stagger   | partial   | sneak attacks by the player only, critical chance actor value, attack damage mult, stagger by the Mass actor value                                          |
 | Combat dialogue   | partial   | per-subtype cooldowns and distance gates                                                                                                                    |
 | Combat music      | different | threat-ratio gate, near-combat radius, stop delay                                                                                                           |
-| Kill moves        | partial   | ranged and magic kill cams (rules read: docs/gameplay.md), the kill camera's radial blur between shots                                                      |
+| Kill moves        | partial   | the magic kill cam (rules read: docs/gameplay.md), the kill camera's radial blur between shots                                                              |
 
 ### Magic, effects, perks
 

@@ -805,19 +805,29 @@ are none, or only that actor.
 **Damage.** A blow on an actor in a killmove does fCombatKillMoveDamageMult (10) times its damage
 (both ways: the leader too).
 
-**The kill camera** of a melee killmove: [animation.md](animation.md#killmoves). The ranged and
-magic kill cameras (observed in the original; TODO(M13): not played yet): as the player looses a shot or
-casts (a bow or crossbow, a staff or a spell; not riding; [VATS] bVATSDisable off; no kill camera
-playing), on the actor aimed at, when at most one actor fights the player (unless [VATS]
-bVATSMultipleCombatants), the target is not dead, a bow is drawn to at least 0.8 of its power
-(a crossbow always), the shot is predicted to kill (unless [VATS] bVATSAllowNoKill: then by odds:
-from [VATS] fVATSRangedLongDistance (2500 units) always, nearer when the target is not above the
-player's level and the player has fVATSRangedLowHealthPercent (5%) of their health or more, a roll
-under max(fVATSRangedPercentMin 50, the distance as a percentage of 2500) less
-fVATSRangedPercentSneakKill (20, a sneak's undetected bow shot) or fVATSRangedPercentTargetNoThreat
-(10, a target not hostile), less 10 more for a target under fVATSRangedTargetLowLevelMult (0.3) of
-the player's level), and the shot's path reaches it (unless [VATS] bVATSIgnoreProjectileTest).
-The camera then follows the projectile (CAMS location 1) through the tree's MagicOrBowCams paths.
+**The kill camera** of a melee killmove: [animation.md](animation.md#killmoves). The ranged kill
+camera (observed in the original; `#rangedKillCamera` in `src/shell/actor-combat.ts`, the odds in
+`src/gameplay/combat/ranged-kill-camera.ts`): as the player looses a bow or crossbow shot (not
+riding; [VATS] bVATSDisable off; no kill camera playing), when at most one actor fights the player
+(unless [VATS] bVATSMultipleCombatants), on the living actor the shot flies at within its
+projectile's range (at most 10000 units), with a bow drawn to at least 0.8 of its power (a crossbow
+always), when the shot is predicted to kill (the same prediction as ShouldAttackKill, with the
+shot's damage times its draw; [VATS] bVATSAllowNoKill: any shot), on the odds ([VATS]
+bVATSRangedSelective; off: always), and when the shot's way to the target is clear (unless [VATS]
+bVATSIgnoreProjectileTest). The odds: from [VATS] fVATSRangedLongDistance (2500 units) on always,
+and always against a target above the player's level or when the player has less than
+fVATSRangedLowHealthPercent (5%) of their health; otherwise a roll of 0..100 under max(
+fVATSRangedPercentMin 50, the distance as a percentage of 2500) less fVATSRangedPercentSneakKill
+(20: a sneaking player's bow or crossbow shot the target does not detect) or, otherwise,
+fVATSRangedPercentTargetNoThreat (10: a target not fighting), less fVATSRangedPercentTargetNoThreat
+again for a target under fVATSRangedTargetLowLevelMult (0.3) times the player's level. The camera
+rides the projectile (CAMS location 1) through the kill cameras' tree (GetVATSValue's ranged
+action and arrow projectile type lead it into MagicOrBowCams), for at most
+fVATSSafetyMaxTimeRanged (6 s).
+
+The magic kill camera (TODO(M13): not played yet; the spells' projectiles are another system's):
+the engine starts it the same way for a spell or staff cast whose projectile is predicted to kill,
+with the casting type and delivery in GetVATSValue.
 
 ## Crime and factions
 
