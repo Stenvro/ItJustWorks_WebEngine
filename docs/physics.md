@@ -185,6 +185,40 @@ through the edges' middles, a player walks around it); and a few steps higher th
   from its feet as it fell (raised by however far its ragdoll flew up) to the ground it gets up
   on, against a quarter of the minimum height (the engine's ragdoll end).
 
+## Tethered carts
+
+A cart its horse pulls (TetherToHorse: [ai.md](ai.md#vehicles)) is a simulated model like any
+other, set up as the engine sets it up (`src/ai/cart-tether.ts`) and moved every physics step by
+the stage (`src/shell/actor-vehicles.ts`):
+
+- **Its bodies** become dynamic as it is tethered and start as a settled object does (for half a
+  second the solver's push out of what they overlap only moves them): the cart waited, keyframed,
+  where it was placed, where the engine's had settled on its wheels with its cell. Each weighs
+  `fMass:Cart`; `PhysicsWorld.tuneBody` scales the inertia with the mass (Havok's setMass keeps
+  it: see ai.md for why it is scaled here).
+- **The wheel action** is a gravity scale: 1 + `fGravMult:Cart` × 9.81 / 9.8 (the engine's action
+  adds that force each step; the world's gravity is 9.8). The wheels are not swept (their allowed
+  penetration, 0.3 Havok units, is more than a step moves them); their friction combines with the
+  ground's as any other (√(100 × 0.5) against the landscape).
+- **The tether** is a keyframed body with no shape (`PhysicsWorld.addHitch`) moved every step to
+  the spine (Rapier's next kinematic pose: it gets the velocity that takes it there in the step),
+  and a generic joint: it slides along its x (the slide axis) between the limits, is held along
+  y and z, its turn about x springs back to the joint's frame (a motor towards 0 with the
+  spring's stiffness and damping as accelerations), its turns about y and z are free. The
+  engine's prismatic joint holds all three turns; Rapier's joint held so with a keyframed body
+  on one side and the wheels on the ground on the other has no give: the replayed ride (below)
+  threw the cart off the road at thousands of units a second whatever the spine did.
+- **The spine it follows** is eased (`PoseEasing`, `TETHER_LEAN_EASE` in `src/ai/vehicles.ts`):
+  a kinematic body sent to a new pose jumps there in one step, and the horse's pose comes ten
+  times a second behind the camera, once a frame of three steps at a low frame rate.
+
+`node tools/cart-ride.ts [cart] [horse]` drives a cart behind its horse over the real collision
+of the horse's linked references (the opening's road) and prints the ride: the bounce (vertical
+speed against its average over a second), the pitch and roll rates, the lowest up, the wheels
+off the ground. The browser's measurements (the whole ride, both carts) and the causes:
+[ai.md](ai.md#vehicles). The world's own settings are unchanged by the carts: the solver's 8
+iterations, the landscape's mesh, the step limit (clutter settles and rolls as before).
+
 ## Cameras and input
 
 - **Input:** the bindings of the game's control map (see
