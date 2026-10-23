@@ -232,12 +232,15 @@ export interface PackageBody {
   useWeapon?(target: number, barrage: WeaponBarrage): Promise<boolean>;
   /** UseMagic: one cast at a target (a concentration spell held its cast time). */
   useMagic?(target: number | undefined, cast: MagicCast): Promise<boolean>;
-  /** Shout: its voice's shout (or the one named) at a target; resolves once it was let out. */
+  /**
+   * Shout: its voice's shout (or the one named) at a target: 'shouted' once it was let out,
+   * 'waiting' at once while its voice recovers (or it casts), 'none' when it has no shout.
+   */
   shout?(
     target: number | undefined,
     shout: PackageTarget | undefined,
     turn: boolean,
-  ): Promise<boolean>;
+  ): Promise<ShoutResult>;
   /** Its weapon or magic away again (the procedure that drew it ended). */
   holster?(): void;
   /** Starts a fight with an actor (Acquire's Allow Killing: one who holds what it wants). */
@@ -297,6 +300,9 @@ export interface ProcedureRun {
   wait(seconds: number): Promise<void>;
   random(): number;
 }
+
+/** How a package's shout went (PackageBody.shout). */
+export type ShoutResult = 'shouted' | 'waiting' | 'none';
 
 /** A procedure, by its lower-case name. */
 export type ProcedureRunner = (run: ProcedureRun) => Promise<ProcedureResult>;

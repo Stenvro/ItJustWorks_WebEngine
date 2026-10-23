@@ -918,7 +918,16 @@ const useWeapon: ProcedureRunner = async (run) => {
         combatStartOnHit: inputs.bool(14),
         headtrack: inputs.bool(17, true),
       });
-      if (!ok) return 'failure';
+      if (!ok) {
+        // A barrage that could not be made (its weapon not ready, its body busy) ends a
+        // counted practice; one that never ends tries again a moment later: MQ101's first
+        // archer gave up on Lokir at once and stood, his package over, while the execution
+        // waited for Lokir to die.
+        if (!neverEnd && barrages > 0) return 'failure';
+        await run.wait(IDLE_SECONDS);
+        done--;
+        continue;
+      }
       if (pause) await run.wait(Math.max(0.5, between(run, inputs.number(9), inputs.number(10))));
     }
   } finally {
@@ -958,9 +967,13 @@ const useMagic: ProcedureRunner = async (run) => {
 };
 
 /**
- * Shout: to its place, then shouts its Shout (else its voice's) at its target: the Greybeards'
- * practice, a dragon's breath at a place. With Just Headtrack it only turns its head to the
- * target (not its body). Once a recovery has passed it shouts again while the package runs.
+ * Shout: to its place, then shouts its Shout (else its voice's) at its target once, and
+ * succeeds: the Greybeards' practice, a dragon's breath at a place. While its voice recovers it
+ * waits to shout. With Just Headtrack it only turns its head to the target (not its body). One
+ * shout each: vanilla templates run Shouts one after another (dunCGAlduinDTravelGateBlocker02's
+ * two, dunCGAlduinShoutFromHoverMultipleTargetsRepeatTemplate's three in a repeating
+ * sequence), and MQ101's attack scene waits for Alduin's shout from the tower to complete his
+ * package (dunCGAlduinPerchShoutTemplate: Sit, then a Shout whose success completes it).
  * TODO(M13): Hold When Blocked.
  */
 const shout: ProcedureRunner = async (run) => {
@@ -971,7 +984,9 @@ const shout: ProcedureRunner = async (run) => {
   const target = (await targetsIn(run, 2))[0];
   const turn = !run.inputs.bool(4);
   while (!run.stopped()) {
-    if (!(await body.shout(target, run.inputs.target(1), turn))) return 'failure';
+    const result = await body.shout(target, run.inputs.target(1), turn);
+    if (result === 'none') return 'failure';
+    if (result === 'shouted') return run.stopped() ? 'failure' : 'success';
     await run.wait(1);
   }
   return 'failure';

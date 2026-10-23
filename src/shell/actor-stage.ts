@@ -267,6 +267,10 @@ export class ActorStage {
         this.knockdowns.holds(actor),
       // The player walked into an actor: it flinches by where they came from (ActionBumpedInto's
       // idles by GetLastBumpDirection) and says its ActorCollidewithActor line.
+      stopIdle: (actor) => {
+        const staged = this.#actors.get(actor);
+        if (staged) void this.furniture.playAction(this.userOf(staged), 'ActionIdleStop');
+      },
       onBump: (actor) => {
         const staged = this.#actors.get(actor);
         if (staged) void this.furniture.playAction(this.userOf(staged), 'ActionBumpedInto');
