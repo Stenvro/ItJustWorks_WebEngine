@@ -83,6 +83,7 @@ import { WorldLines } from './world-lines.ts';
 import { SceneLines } from './scene-lines.ts';
 import { PlayerLook } from './player-look.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
+import { ObjectHandle } from '../scripting/values.ts';
 import type { PlacedActor } from './actors.ts';
 import type { Terminal } from './terminal.ts';
 
@@ -952,7 +953,7 @@ export class GameSession {
       runtime.updateInMenu(realSeconds);
       return;
     }
-    this.#watchLocation(runtime, realSeconds);
+    this.#watchLocation(runtime);
     this.#watchSeen(runtime, realSeconds);
     this.#watchEncumbrance(runtime, realSeconds);
     // Slow Time and a bow's zoom set the world's clock and the player's pace.
@@ -1026,33 +1027,31 @@ export class GameSession {
     markSeen(blocks, at.position[0], at.position[1]);
   }
 
-  /** The player's location as last seen, and the time to the next look. */
-  #location: { runtime: ScriptRuntime; location: number | undefined } | undefined;
-  #locationWait = 0;
+  /** The runtime whose location changes the HUD hears. */
+  #locationsHeard: ScriptRuntime | undefined;
 
   /**
-   * The player's location (their cell's, CELL XLCN), looked at every second: as it changes the
-   * player's scripts hear (OnLocationChange(old, new)) and the HUD shows the new one's name
-   * (SetLocationName).
+   * The cell the player is in, told to the runtime every frame (actor-locations.ts: as they
+   * enter a cell of another location, the actor location change event goes out). The HUD
+   * shows the new location's name (SetLocationName).
    */
-  #watchLocation(runtime: ScriptRuntime, realSeconds: number): void {
-    this.#locationWait -= realSeconds;
-    if (this.#locationWait > 0) return;
-    this.#locationWait = 1;
-    void runtime.locationOf(PLAYER_REF).then(async (location) => {
-      const last = this.#location;
-      this.#location = { runtime, location };
-      if (last?.runtime !== runtime || last.location === location) return;
-      const handle = (formId: number | undefined) =>
-        formId === undefined ? null : runtime.formHandle(formId);
-      await runtime.sendEvent(PLAYER_REF, 'OnLocationChange', [
-        handle(last.location),
-        handle(location),
-      ]);
-      const name =
-        location === undefined ? undefined : (await runtime.forms.record(location))?.text('FULL');
-      if (name) this.hud.location(name);
-    });
+  #watchLocation(runtime: ScriptRuntime): void {
+    if (this.#locationsHeard !== runtime) {
+      this.#locationsHeard = runtime;
+      runtime.events.on('actorLocationChange', async ({ actor, from, to }) => {
+        // TODO(merge): the SCRIPT-EVENTS relay (script-events.ts) sends OnLocationChange from
+        // this event; drop this send once it is in, or the actor hears it twice.
+        const handle = (formId: number | undefined) =>
+          formId === undefined ? null : new ObjectHandle(formId, 'location');
+        runtime.detach(runtime.sendEvent(actor, 'OnLocationChange', [handle(from), handle(to)]));
+        if (actor !== PLAYER_REF || to === undefined) return;
+        const name = (await runtime.forms.record(to))?.text('FULL');
+        if (name) this.hud.location(name);
+      });
+    }
+    // The cell the view has them in (an exterior's once the cell at their place has loaded).
+    const cell = this.scriptWorld.livePlacement(PLAYER_REF)?.cell;
+    if (cell !== undefined) runtime.actorLocations.inCell(PLAYER_REF, String(cell));
   }
 
   /**

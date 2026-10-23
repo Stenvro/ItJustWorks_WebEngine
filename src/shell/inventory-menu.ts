@@ -24,6 +24,7 @@ import {
 import { temperLevelOfHealth, temperQualityName } from '../gameplay/crafting.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { questItemCount } from '../scripting/runtime/quest-items.ts';
+import { RemoveType } from '../scripting/runtime/story-events.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import { ActorValue } from '../world/actor-values.ts';
 import type { GameSettings } from '../world/game-settings.ts';
@@ -171,7 +172,9 @@ export function inventoryModel(
         undefined,
         typeof stack === 'number' ? stack : undefined,
       );
-      await dropAtFeet(game, formId, amount);
+      const dropped = await dropAtFeet(game, formId, amount);
+      // The story manager's Player Remove Item, with the item lying in the world.
+      game.detach(game.storyEvents.removeFromPlayer(formId, RemoveType.drop, dropped));
     },
     // Charge (T): the soul gems that could recharge the entry's weapon, on its card.
     soulGemList: async ({ formId, stack }) => {

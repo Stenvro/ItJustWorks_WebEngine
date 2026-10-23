@@ -170,6 +170,29 @@ describe('the story manager', () => {
     expect(limited.started).toEqual([0x100]);
   });
 
+  it('works through its events one at a time, in the order they were raised', async () => {
+    const { runtime, started } = stubRuntime([
+      questNode(0x10, 0, 0, [
+        [0x100, 0],
+        [0x200, 0],
+      ]),
+    ]);
+    // A quest that takes long to start (its aliases, its scripts): the next event waits.
+    const quests = (
+      runtime as unknown as { quests: { start: (quest: number) => Promise<boolean> } }
+    ).quests;
+    const start = quests.start;
+    quests.start = async (quest) => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return start(quest);
+    };
+    const manager = new StoryManager(runtime);
+    const both = await Promise.all([manager.event(event()), manager.event(event())]);
+    // Both raised at once: the second saw the first's quest running and started the other.
+    expect(both).toEqual([true, true]);
+    expect(started).toEqual([0x100, 0x200]);
+  });
+
   it('leaves quests of another event type alone', async () => {
     const { runtime, started } = stubRuntime(
       [

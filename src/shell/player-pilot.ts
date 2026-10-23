@@ -247,6 +247,11 @@ export class PlayerPilot {
         const scripts = session.scriptsReady;
         if (!scripts) return false;
         await scripts.pickUp(target, PLAYER_REF);
+        const base = await scripts.baseOf(target);
+        if (base !== undefined) {
+          const stolen = !(await scripts.crime.mayTake(PLAYER_REF, target));
+          scripts.detach(scripts.storyEvents.pickedUp(base, target, stolen));
+        }
         return true;
       },
       useItem: async (item, consume) => {

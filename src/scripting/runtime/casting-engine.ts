@@ -477,6 +477,9 @@ export class CastingEngine {
       runtime.progression.holdRegeneration(actor, MAGICKA, CASTING_HOLD);
     // Ready at once (no charge time): told with the next frame, after the world showed its start.
     if (cast.hand.phase !== 'charging') this.#readyAtOnce.add(cast);
+    // The story manager's Cast Magic (the engine raises it as a cast begins). TODO(M13): the
+    // cast's target (the engine's desired target) is not known as it begins here.
+    runtime.detach(runtime.storyEvents.castMagic(actor, undefined, castable.item.formId));
     return 'started';
   }
 
@@ -934,6 +937,24 @@ export class CastingEngine {
   // --- Shouts and powers ---------------------------------------------------------------------
 
   /**
+   * Game.TeachWord: the player learns a word of power. Observed in the original: every
+   * shout with the word whose first word the player now knows becomes theirs (in the magic menu,
+   * its words locked until unlocked), and a shout new to them is a New Voice Power story event.
+   */
+  async teachWord(word: number): Promise<void> {
+    const runtime = this.#runtime;
+    if (!runtime.wordsLearned.has(word)) runtime.wordsLearned.set(word, false);
+    for (const formId of runtime.forms.db.formIdsOfType('SHOU')) {
+      const shout = await this.shout(formId);
+      if (!shout?.words.some((entry) => entry.word === word)) continue;
+      const first = shout.words[0]?.word;
+      if (first === undefined || !runtime.wordsLearned.has(first)) continue;
+      if (await runtime.actors.addSpell(PLAYER_REF, formId))
+        runtime.detach(runtime.storyEvents.newVoicePower(PLAYER_REF, formId));
+    }
+  }
+
+  /**
    * The words an actor knows of a shout in a row from the first: the player's learned and
    * unlocked (Game.TeachWord, Game.UnlockWord), an NPC all of them.
    */
@@ -1015,6 +1036,9 @@ export class CastingEngine {
       cost: { base: 0, magicka: 0, charge: 0, school: undefined, chargeTime: 0 },
     };
     this.#emit({ actor, source: CastingSource.voice, kind: 'shout', delivered, words: count });
+    // A shout's word is cast as its spell: the story manager's Cast Magic with that spell (the
+    // College's MG01ShoutNode knows shouts by their words' spells).
+    runtime.detach(runtime.storyEvents.castMagic(actor, undefined, item.formId));
     // The player's thu'um shakes the view as the controller rumbles: fShoutRumbleBigMotor
     // FrequencyV<n> and DurationV<n> by the words (TODO(M13): the camera's shake read from the
     // rumble's settings).
