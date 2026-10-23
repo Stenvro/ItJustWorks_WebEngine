@@ -46,6 +46,14 @@ export interface KillmoveSubjects {
   readonly attackerHeading: () => number;
   readonly target: () => Vec3 | undefined;
   readonly targetHeading: () => number;
+  /** A shot's kill: its projectile, where it flies (CAMS location and target 1). */
+  readonly projectile?: () => { readonly position: Vec3; readonly heading: number } | undefined;
+  /** What the kill was done with, for GetVATSValue: a projectile's type bits (PROJ DATA). */
+  readonly projectileType?: number;
+  /** The camera ends after this long whatever its shots (fVATSSafetyMaxTime{Ranged}, seconds). */
+  readonly maxSeconds?: number;
+  /** Whether the kill is predicted to kill (GetVATSValue's fatal; a killmove always is). */
+  readonly fatal?: boolean;
   readonly attackerRef: number;
   readonly targetRef: number;
   readonly physics: PhysicsWorld;
@@ -68,6 +76,10 @@ export class KillmoveCamera implements Camera {
   readonly #subjects: KillmoveSubjects;
   #shot = 0;
   #time = 0;
+  /** Seconds since it began (its safety time). */
+  #elapsed = 0;
+  /** Where its projectile was last (a shot that hit is gone). */
+  #projectile: { readonly position: Vec3; readonly heading: number } | undefined;
   done = false;
   /** The kill cameras' path it plays (CPTH editor id: development, tools). */
   readonly path: string;
@@ -163,6 +175,11 @@ export class KillmoveCamera implements Camera {
       return;
     }
     this.#time += deltaSeconds;
+    this.#elapsed += deltaSeconds;
+    if (this.#elapsed > (this.#subjects.maxSeconds ?? Infinity)) {
+      this.done = true;
+      return;
+    }
     if (this.#time > Math.max(0.1, shot.record.maxTime)) {
       this.#shot++;
       this.#time = 0;
@@ -179,8 +196,19 @@ export class KillmoveCamera implements Camera {
       this.done = true;
       return;
     }
-    const location = current.record.location === CameraSubject.target ? target : attacker;
-    const heading = subjects.attackerHeading();
+    this.#projectile = subjects.projectile?.() ?? this.#projectile;
+    const projectile = this.#projectile;
+    const location =
+      current.record.location === CameraSubject.target
+        ? target
+        : current.record.location === CameraSubject.projectile && projectile
+          ? projectile.position
+          : attacker;
+    // The frame: the projectile's flight for a shot that rides it, else the attacker's facing.
+    const heading =
+      current.record.location === CameraSubject.projectile && projectile
+        ? projectile.heading
+        : subjects.attackerHeading();
     const [ox, oy, oz] = current.offset;
     // The offset in the location's frame (x right, y forward), turned to its heading.
     const cos = Math.cos(heading);
@@ -190,8 +218,13 @@ export class KillmoveCamera implements Camera {
       location[1] - ox * sin + oy * cos,
       location[2] + oz,
     ];
-    const look = current.record.target === CameraSubject.attacker ? attacker : target;
-    const at: Vec3 = [look[0], look[1], look[2] + CHEST * 0.75];
+    const onProjectile = current.record.target === CameraSubject.projectile && projectile;
+    const look = onProjectile
+      ? projectile.position
+      : current.record.target === CameraSubject.attacker
+        ? attacker
+        : target;
+    const at: Vec3 = [look[0], look[1], look[2] + (onProjectile ? 0 : CHEST * 0.75)];
     const way: Vec3 = [
       at[0] - this.position[0],
       at[1] - this.position[1],
@@ -255,9 +288,9 @@ async function killOf(
         : 0,
     action: actionOf(type),
     critical: false,
-    fatal: true,
+    fatal: subjects.fatal ?? true,
     weaponType: type,
-    projectileType: undefined,
+    projectileType: projectileTypeOf(subjects.projectileType),
     delivery: undefined,
     castingType: undefined,
     areaFree: (reference, side) => areaFree(subjects, smart, reference, side),
@@ -272,6 +305,15 @@ interface SmartCamera {
   /** fVATSSmartCameraCheckStepDistance, fVATSSmartCameraCheckStepCount: the sight's steps. */
   readonly step: number;
   readonly steps: number;
+}
+
+/**
+ * GetVATSValue's projectile type (0 missile, 1 lobber, 2 beam, 3 flame, 4 cone, 5 barrier, 6
+ * arrow: xEdit) of a projectile's type bits (PROJ DATA: 0x1 missile .. 0x40 arrow).
+ */
+function projectileTypeOf(bits: number | undefined): number | undefined {
+  if (bits === undefined || bits <= 0) return undefined;
+  return Math.round(Math.log2(bits & -bits));
 }
 
 /** GetVATSValue's action of a weapon's animation type (WEAP DNAM: 0 hand to hand .. 9). */

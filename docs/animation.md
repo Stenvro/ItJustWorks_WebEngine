@@ -495,7 +495,8 @@ fVATSSmartCameraCheckStepDistance (128) apart toward that side (fVATSSmartCamera
 another actor only within 256 units). TODO(M13): the camera's radial blur as it moves between
 shots (fVATSCamTransRB*: strength fVATSCamTransRBStrengthCap × a triangle of the transition's
 progress, whose source was not read); which distance TargetVisible returns (inferred: the last
-clear step's); the ranged and magic kill cameras ([gameplay.md](gameplay.md#killmoves)).
+clear step's); the magic kill camera ([gameplay.md](gameplay.md#killmoves)). The ranged kill camera
+plays the same tree on the player's bow and crossbow shots (its rules: gameplay.md).
 
 Verified in the browser (Riverwood, spawned bandits, wolves and bears at low health, the player's
 and guards' power attacks): third person with a sword 11 of 11 killmoves played to the victim's

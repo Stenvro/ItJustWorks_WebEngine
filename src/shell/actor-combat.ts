@@ -95,6 +95,8 @@ import {
   turnBetween,
   type StrikeTarget,
 } from '../gameplay/combat/hit-test.ts';
+import { rangedKillCameraPlays } from '../gameplay/combat/ranged-kill-camera.ts';
+import type { INI_DEFAULTS } from '../world/ini-settings.ts';
 import { ARROW_TILT, tiltUp, WORLD_GRAVITY } from '../gameplay/combat/projectile.ts';
 import { anglesOf, directionOf, npcSpread } from '../gameplay/combat/aim.ts';
 import { ProjectileFlag } from '../world/projectile-data.ts';
@@ -1302,9 +1304,20 @@ export class ActorCombat implements CombatBridge {
 
   /** ShouldAttackKill (see attackKills). */
   async #attackKills(fighter: Fighter, victim: Fighter): Promise<boolean> {
-    const runtime = this.#options.session.scriptsReady;
     const gear = fighter.gear;
-    if (!runtime || !gear) return false;
+    if (!gear) return false;
+    const current = fighter.state.current;
+    const mult = current ? this.#attackData(fighter, current.event).damageMult : 1;
+    return this.#predictedKill(fighter, victim, gear.right.damage * mult);
+  }
+
+  /**
+   * The engine's predicted hit: whether a blow of some physical damage kills the victim now
+   * (through its armour and the difficulty, no critical, no sneak attack), which it can.
+   */
+  async #predictedKill(fighter: Fighter, victim: Fighter, physical: number): Promise<boolean> {
+    const runtime = this.#options.session.scriptsReady;
+    if (!runtime) return false;
     const target = victim.reference;
     if (victim.state.life === LifeState.dead || (await runtime.actors.isDead(target))) return false;
     // Who cannot be killed (one raised from the dead always can).
@@ -1323,11 +1336,9 @@ export class ActorCombat implements CombatBridge {
       };
       this.#estimatedArmor.set(target, armor);
     }
-    const current = fighter.state.current;
-    const mult = current ? this.#attackData(fighter, current.event).damageMult : 1;
     const damage = hitDamage(
       {
-        physical: gear.right.damage * mult,
+        physical,
         critical: 0,
         sneakMult: 1,
         armorReduction: armor.reduction,
@@ -2334,6 +2345,8 @@ export class ActorCombat implements CombatBridge {
             const feet = this.#feet(aimed);
             return feet && [feet[0], feet[1], feet[2] + this.#size(aimed).height * CHEST];
           };
+    const before = new Set([...this.#projectiles.flying()].map((shot) => shot.key));
+    // The shot is in flight as soon as it is loosed (its model follows).
     void this.#projectiles.loose({
       shooter: fighter.reference,
       ammo,
@@ -2344,6 +2357,12 @@ export class ActorCombat implements CombatBridge {
       payload,
       ...(homing && { homing }),
     });
+    if (fighter.player) {
+      const shot = [...this.#projectiles.flying()].find((flying) => !before.has(flying.key));
+      this.#rangedKillCamera(fighter, from, aim, power, shot?.key).catch((error: unknown) => {
+        this.#warn(`a shot's kill camera: ${describe(error)}`);
+      });
+    }
     this.#playSound(gear.rightRecord?.sounds.attack, fighter);
     // The player's shot with a bow (not a crossbow) is told with its draw and whether they look
     // into the sun (TESPlayerBowShotEvent: OnPlayerBowShot; observed in the original).
@@ -2545,9 +2564,140 @@ export class ActorCombat implements CombatBridge {
       attackerRef: leader.reference,
       targetRef: victim.reference,
       physics: play.physics,
+      maxSeconds: this.#settings.vatsSafetyMaxTime,
     }).then((camera) => {
       if (camera && leader.state.paired === 'lead') this.#camera = camera;
     });
+  }
+
+  /**
+   * The kill camera of the player's bow or crossbow shot (observed in the original): as
+   * the shot leaves, if no kill camera plays, [VATS] bVATSDisable is off and the player does
+   * not ride, and at most one actor fights the player ([VATS] bVATSMultipleCombatants: any),
+   * the living actor the shot flies at within its projectile's range, with a bow drawn to at
+   * least 0.8 of its power (a crossbow: always), whom the shot is predicted to kill ([VATS]
+   * bVATSAllowNoKill: any), on the odds of a selective ranged kill camera ([VATS]
+   * bVATSRangedSelective; ranged-kill-camera.ts), the shot's way to it clear ([VATS]
+   * bVATSIgnoreProjectileTest: not tested). The camera then rides the projectile through the
+   * kill cameras' tree, for at most fVATSSafetyMaxTimeRanged.
+   */
+  async #rangedKillCamera(
+    fighter: Fighter,
+    from: Vec3,
+    aim: Vec3,
+    power: number,
+    key: object | undefined,
+  ): Promise<void> {
+    const play = this.#play;
+    const session = this.#options.session;
+    const runtime = session.scriptsReady;
+    const gear = fighter.gear;
+    if (!play || !runtime || !gear?.projectile || key === undefined || this.#camera) return;
+    const vats = (name: keyof (typeof INI_DEFAULTS)['VATS']): number =>
+      session.ini.number('VATS', name);
+    if (vats('bVATSDisable') !== 0) return;
+    if (runtime.world.mountOf?.(fighter.reference) !== undefined) return;
+    if (this.enemiesOfPlayer().length > 1 && vats('bVATSMultipleCombatants') === 0) return;
+    const speed = gear.projectile.speed * Math.min(1, Math.max(0.35, power));
+    const victim = this.#shotAt(fighter, from, aim, Math.min(10000, gear.projectile.range), {
+      speed,
+      gravity: WORLD_GRAVITY * gear.projectile.gravity,
+    });
+    if (!victim || victim.state.life === LifeState.dead) return;
+    const bow = gear.right.weaponType === WeaponType.bow;
+    if (bow && power < 0.8) return;
+    const allowNoKill = vats('bVATSAllowNoKill') !== 0;
+    const fatal = await this.#predictedKill(fighter, victim, gear.right.shotDamage * power);
+    if (!fatal && !allowNoKill) return;
+    if (vats('bVATSRangedSelective') !== 0) {
+      const feet = this.#feet(fighter);
+      const at = this.#feet(victim);
+      if (!feet || !at) return;
+      const senses = this.#options.senses?.();
+      const detected = senses
+        ? senses.detects(victim.reference, fighter.reference)
+        : victim.target === fighter.reference;
+      const health = await runtime.actors.value(fighter.reference, ActorValue.health);
+      const plays = rangedKillCameraPlays(
+        {
+          distance: Math.hypot(at[0] - feet[0], at[1] - feet[1], at[2] - feet[2]),
+          playerLevel: await runtime.actors.level(fighter.reference),
+          targetLevel: await runtime.actors.level(victim.reference),
+          playerHealth: health.max > 0 ? health.current / health.max : 1,
+          sneakKill: play.player.sneaking && !detected,
+          threat: victim.target === fighter.reference && victim.state.life === LifeState.alive,
+        },
+        {
+          longDistance: vats('fVATSRangedLongDistance'),
+          lowHealthPercent: vats('fVATSRangedLowHealthPercent'),
+          percentMin: vats('fVATSRangedPercentMin'),
+          percentSneakKill: vats('fVATSRangedPercentSneakKill'),
+          percentTargetNoThreat: vats('fVATSRangedPercentTargetNoThreat'),
+          targetLowLevelMult: vats('fVATSRangedTargetLowLevelMult'),
+        },
+      );
+      if (!plays) return;
+    }
+    if (vats('bVATSIgnoreProjectileTest') === 0 && !this.#seen(fighter, victim)) return;
+    const projectile = (): { position: Vec3; heading: number } | undefined => {
+      for (const shot of this.#projectiles.flying()) {
+        if (shot.key !== key) continue;
+        const [vx, vy] = shot.velocity;
+        return { position: shot.position, heading: Math.atan2(vx, vy) };
+      }
+      return undefined;
+    };
+    const camera = await KillmoveCamera.choose(session, {
+      attacker: () => this.#feet(fighter),
+      attackerHeading: () => this.#heading(fighter),
+      target: () => this.#feet(victim),
+      targetHeading: () => this.#heading(victim),
+      projectile,
+      projectileType: gear.projectile.type,
+      maxSeconds: this.#settings.vatsSafetyMaxTimeRanged,
+      fatal,
+      attackerRef: fighter.reference,
+      targetRef: victim.reference,
+      physics: play.physics,
+    });
+    // Another may have begun while this one was chosen.
+    if (camera && this.camera === undefined) this.#camera = camera;
+  }
+
+  /**
+   * The actor a shot from a point along an aim flies at within a range: the nearest along it
+   * whose body (an upright cylinder) its flight passes through, falling under its gravity (not
+   * the shooter or its mount).
+   */
+  #shotAt(
+    fighter: Fighter,
+    from: Vec3,
+    aim: Vec3,
+    range: number,
+    flight: { readonly speed: number; readonly gravity: number },
+  ): Fighter | undefined {
+    const mount = this.#options.session.scriptsReady?.world.mountOf?.(fighter.reference);
+    let best: { fighter: Fighter; along: number } | undefined;
+    for (const other of this.#fighters.values()) {
+      if (other === fighter || other.reference === mount) continue;
+      const feet = this.#feet(other);
+      if (!feet) continue;
+      const size = this.#size(other);
+      const middle: Vec3 = [feet[0], feet[1], feet[2] + size.height / 2];
+      const along =
+        (middle[0] - from[0]) * aim[0] +
+        (middle[1] - from[1]) * aim[1] +
+        (middle[2] - from[2]) * aim[2];
+      if (along < 0 || along > range) continue;
+      const x = from[0] + aim[0] * along;
+      const y = from[1] + aim[1] * along;
+      const seconds = flight.speed > 0 ? along / flight.speed : 0;
+      const z = from[2] + aim[2] * along - 0.5 * flight.gravity * seconds * seconds;
+      if (Math.hypot(x - feet[0], y - feet[1]) > size.radius) continue;
+      if (z < feet[2] || z > feet[2] + size.height) continue;
+      if (!best || along < best.along) best = { fighter: other, along };
+    }
+    return best?.fighter;
   }
 
   // --- The combat AI's view --------------------------------------------------------------------
