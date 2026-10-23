@@ -292,6 +292,11 @@ interface Walker {
   idleStoppedAt: number;
   /** Its graph has been driven since it became a walker. */
   driven: boolean;
+  /**
+   * How its graph moves it (its clips' root motion: world velocity, the turn in radians per
+   * second counter-clockwise), as a moved actor's (Mover.root).
+   */
+  root: { readonly velocity: readonly [number, number]; readonly turn: number };
 }
 
 export class ActorMovers {
@@ -1186,6 +1191,7 @@ export class ActorMovers {
         held: false,
         idleStoppedAt: -Infinity,
         driven: false,
+        root: { velocity: [0, 0], turn: 0 },
       };
       this.#walkers.set(reference, walker);
       const created = walker;
@@ -1218,7 +1224,20 @@ export class ActorMovers {
     }
     let velocity: [number, number] = [0, 0];
     let turnRate = 0;
-    if (request && types && seconds > 0 && !held) {
+    // Held by its graph, its clips' root motion moves and turns it (as a moved actor's: a deer's
+    // canned flee turn carries it on; before, a walker held so stood while its clips ran).
+    let rooted = false;
+    if (held) {
+      const root = walker.root;
+      rooted = Math.hypot(root.velocity[0], root.velocity[1]) > 1 || root.turn !== 0;
+      if (rooted) {
+        staged.heading -= root.turn * seconds;
+        const [x, y, z] = staged.position;
+        const next: Vec3 = [x + root.velocity[0] * seconds, y + root.velocity[1] * seconds, z];
+        const on = this.#options.navmeshes?.()?.nearest?.(next, WALKER_GROUND);
+        if (on) staged.position = [on[0], on[1], on[2]];
+      }
+    } else if (request && types && seconds > 0) {
       const steering = steer(request, staged.heading, types, seconds);
       velocity = [steering.velocity[0], steering.velocity[1]];
       turnRate = angleBetween(staged.heading, steering.heading) / seconds;
@@ -1232,7 +1251,7 @@ export class ActorMovers {
     const moving = Math.hypot(velocity[0], velocity[1]) > 1;
     // Driven at least once as a walker: what it was told as a moved actor goes on (a deer that
     // fled past the high process ran on the spot for minutes, its graph never told it stopped).
-    if (moving || walker.moving || request || !walker.driven) {
+    if (moving || rooted || walker.moving || request || !walker.driven) {
       walker.driven = true;
       this.#placeWalker(staged);
       const behavior = staged.placed.behavior;
@@ -1430,7 +1449,6 @@ export class ActorMovers {
     }
   }
 
-  /** A walker is no longer one: its graph's channels no longer read its movement. */
   /**
    * An actor's movement as its graph was told it (one for the actor, whether its controller or
    * its walk beyond the high process moves it): what it was told goes on as one gives way to the
@@ -1447,6 +1465,7 @@ export class ActorMovers {
     return locomotion;
   }
 
+  /** A walker is no longer one: its graph's channels no longer read its movement. */
   #dropWalker(reference: number): void {
     this.#walkers.get(reference)?.locomotion.release();
     this.#walkers.delete(reference);
@@ -1614,7 +1633,20 @@ export class ActorMovers {
   animated(staged: StagedActor, seconds: number): void {
     const mover = this.#movers.get(staged.reference);
     const behavior = staged.placed.behavior;
-    if (!mover || !behavior || seconds <= 0) return;
+    const walker = mover ? undefined : this.#walkers.get(staged.reference);
+    if (!behavior || seconds <= 0) return;
+    if (walker) {
+      const motion = behavior.rootMotion();
+      const [x, y] = motion.translation;
+      const sin = Math.sin(staged.heading);
+      const cos = Math.cos(staged.heading);
+      walker.root = {
+        velocity: [(x * cos + y * sin) / seconds, (-x * sin + y * cos) / seconds],
+        turn: motion.yaw / seconds,
+      };
+      return;
+    }
+    if (!mover) return;
     const motion = behavior.rootMotion();
     const drive = this.#readDrive(staged.reference, behavior);
     const [x, y] = motion.translation;
