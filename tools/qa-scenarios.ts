@@ -46,6 +46,110 @@ const BANDITS = [0x3de91, 0x3dea5, 0x9a549];
 const GUARDS = [0xaa8fc, 0xaa8fd, 0xaa901];
 
 /**
+ * Animals (NPC_ form ids of Skyrim.esm) and where they are put around the player (x, y in units):
+ * the tame ones and the game's that flee (EncChicken, EncCow, EncGoatDomestic, EncDog,
+ * EncHorseBrown, EncDeer, EncElk, EncHare).
+ */
+const TAME_ANIMALS: readonly (readonly [number, number, number])[] = [
+  [0xa91a0, 260, 120],
+  [0xa91a0, 320, -80],
+  [0x23a90, -420, 260],
+  [0x4359c, -300, -340],
+  [0x23a92, 200, 420],
+  [0x68d5b, -600, -60],
+  [0xcf89d, 900, 500],
+  [0x23a91, -900, 600],
+  [0x6dc9d, 700, -700],
+];
+/** The predators (EncWolf ×2, EncSabreCat, EncBear, EncMudcrabMedium, EncSkeever). */
+const PREDATORS: readonly (readonly [number, number, number])[] = [
+  [0x23abe, 1100, 200],
+  [0x23abe, 1150, 380],
+  [0x23ab5, -1100, 300],
+  [0x23a8a, 300, 1200],
+  [0xe4010, 500, -500],
+  [0x23ab7, -500, -600],
+];
+/** EncHorseSaddledBrown: the horse the player rides in the `creatures` scenario. */
+const SADDLED_HORSE = 0x23ab2;
+
+/** Places animals around the player (page side): their references, as hex. */
+const placeAnimals = (
+  animals: readonly (readonly [number, number, number])[],
+): string => `(async () => {
+  const rt = engineDev.play().session.scriptsReady;
+  const at = await rt.placement(0x14);
+  const placed = [];
+  for (const [base, dx, dy] of ${JSON.stringify(animals)}) {
+    const reference = await rt.placeAt(base, 0x14, 1);
+    const [x, y, z] = at.position;
+    rt.move(reference, [x + dx, y + dy, z + 40], [0, 0, Math.atan2(-dx, -dy)], at.cell, at.world);
+    rt.world.moved?.(reference);
+    placed.push(reference);
+  }
+  return placed;
+})()`;
+
+/**
+ * The ride (page side): the player on a saddled horse goes through its gaits on a minute's loop,
+ * steering by its yaw as the controls do: a walk, a trot, a gallop, a sprint, a stop, turns
+ * while moving and on the spot, a gallop in a circle, back towards where it started.
+ */
+const RIDE_BOT = `(() => {
+  if (window.__qaRide) return 'running';
+  const W = engineDev.world;
+  const ride = { start: performance.now(), held: new Set(), home: undefined, last: undefined, slow: 0, away: 0 };
+  window.__qaRide = ride;
+  const press = (name, down) => {
+    const player = W.player; if (!player) return;
+    if (down === ride.held.has(name)) return;
+    player.press(name, down);
+    if (down) ride.held.add(name); else ride.held.delete(name);
+  };
+  ride.release = () => { for (const name of [...ride.held]) press(name, false); };
+  // Phases: [until, forward, walk (run toggled off), sprint, turn rate rad/s].
+  const phases = [
+    [8, true, true, false, 0], [16, true, false, false, 0], [22, true, false, true, 0],
+    [26, false, false, false, 0], [34, true, true, false, 0.5], [40, true, false, false, -0.6],
+    [44, false, false, false, 1.2], [56, true, false, false, 0.35], [60, false, false, false, 0],
+  ];
+  // The view turns smoothly, every frame (as a mouse does); home again when it strays, away
+  // from what it runs into (a fence, a wall) when it gets nowhere.
+  let before = performance.now();
+  const frame = (now) => {
+    if (window.__qaRide !== ride) return;
+    const dt = Math.min(0.1, (now - before) / 1000);
+    before = now;
+    const player = W.player;
+    if (player) {
+      const feet = player.feet;
+      ride.home ??= [...feet];
+      const t = ((now - ride.start) / 1000) % 60;
+      const [, forward, walk, sprint, turn] = phases.find((p) => t < p[0]) ?? phases[phases.length - 1];
+      const speed = ride.last ? Math.hypot(feet[0] - ride.last[0], feet[1] - ride.last[1]) / Math.max(dt, 1e-3) : 0;
+      ride.last = [...feet];
+      ride.slow = forward && speed < 30 ? ride.slow + dt : 0;
+      if (ride.slow > 1.5) { ride.away = 1.2; ride.slow = 0; }
+      const toHome = Math.atan2(ride.home[0] - feet[0], ride.home[1] - feet[1]);
+      const far = Math.hypot(ride.home[0] - feet[0], ride.home[1] - feet[1]) > 1500;
+      let rate = turn;
+      if (ride.away > 0) { ride.away -= dt; rate = 2.2; }
+      else if (far) {
+        const off = Math.atan2(Math.sin(toHome - player.yaw), Math.cos(toHome - player.yaw));
+        rate = Math.max(-1.5, Math.min(1.5, off * 2));
+      }
+      player.yaw += rate * dt;
+      press('Forward', forward);
+      press('Run', walk === player.alwaysRun);
+      press('Sprint', sprint);
+    }
+    requestAnimationFrame(frame);
+  };
+  requestAnimationFrame(frame);
+  return 'started';
+})()`;
+
+/**
  * The follow bot (in the page): it walks the player to the nearest target of the active quests'
  * shown objectives (the compass's quest marker: "Follow Ralof", "Follow Hadvar", the keep's
  * door), along the navmesh (src/ai/pathfinding.ts), through the load door on the way when the
@@ -286,6 +390,66 @@ export const SCENARIOS: readonly Scenario[] = [
         20000,
       );
       ctx.note('combat started: each bandit against a guard');
+    },
+  },
+  {
+    name: 'creatures',
+    description:
+      'The Whiterun stables at 10:00: chickens, a cow, a goat, a dog, a horse, a deer, an elk and a hare put around the player (idles, wandering, fleeing), the stables’ own horses; the player rides a saddled horse through its gaits and turns.',
+    start: { kind: 'coc', cell: 'WhiterunExterior01' },
+    hour: 10,
+    bootSeconds: 240,
+    seconds: 180,
+    setup: async (ctx) => {
+      await ctx.console('tgm');
+      const placed = await ctx.page.eval<number[]>(placeAnimals(TAME_ANIMALS), 60000);
+      const horse = await ctx.page.eval<number[]>(placeAnimals([[SADDLED_HORSE, 0, 160]]), 30000);
+      ctx.note(
+        `placed ${placed
+          .concat(horse)
+          .map((r) => r.toString(16))
+          .join(',')}`,
+      );
+      await sleepMs(5000);
+      const mounted = await ctx.page.eval<boolean>(
+        `engineDev.world.actorStage.mounts.mountPlayer(${String(horse[0] ?? 0)}, true)`,
+        30000,
+      );
+      ctx.note(mounted ? 'the player rides the saddled horse' : 'the player could not mount');
+      await sleepMs(2000);
+      await ctx.page.eval(RIDE_BOT, 10000);
+    },
+    finish: async (ctx) => {
+      await ctx.page
+        .eval(
+          `(() => { const r = window.__qaRide; if (r) { window.__qaRide = undefined; r.release(); } return true; })()`,
+          10000,
+        )
+        .catch(() => undefined);
+    },
+  },
+  {
+    name: 'creature-combat',
+    description:
+      'The Whiterun stables at 10:00, the player in god mode: two wolves, a sabre cat, a bear, a mudcrab and a skeever put around them attack; a deer and an elk near flee.',
+    start: { kind: 'coc', cell: 'WhiterunExterior01' },
+    hour: 10,
+    bootSeconds: 240,
+    seconds: 150,
+    setup: async (ctx) => {
+      await ctx.console('tgm');
+      const placed = await ctx.page.eval<number[]>(
+        placeAnimals([...PREDATORS, [0xcf89d, 600, 300], [0x23a91, -600, 400]]),
+        60000,
+      );
+      ctx.note(`placed ${placed.map((r) => r.toString(16)).join(',')}`);
+      await sleepMs(3000);
+      // Set on the player (the wild ones may not have noticed them yet).
+      await ctx.page.eval(
+        `(() => { const sw = engineDev.play().session.scriptWorld; for (const r of ${JSON.stringify(placed.slice(0, PREDATORS.length))}) sw.startCombat(r, 0x14); return true; })()`,
+        20000,
+      );
+      ctx.note('the predators are set on the player');
     },
   },
   {

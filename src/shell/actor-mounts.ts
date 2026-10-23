@@ -19,7 +19,7 @@
 // the player getting off once it stands.
 
 import { aiSettingsOf } from '../ai/ai-settings.ts';
-import { Locomotion, type LocomotionGraph } from '../ai/locomotion.ts';
+import { angleBetween, Locomotion, type LocomotionGraph } from '../ai/locomotion.ts';
 import type { GraphEvent } from '../animation/graph-events.ts';
 import type { ActorGraphSource } from './actor-graph-events.ts';
 import {
@@ -50,6 +50,8 @@ import type { Terminal } from './terminal.ts';
 
 /** KYWD ActorTypeHorse (Skyrim.esm): the races one rides (HorseEvents' condition). */
 const ACTOR_TYPE_HORSE = 0x26110;
+/** A ridden horse moves (for its rider's back key) above this speed (units a second; the engine's "not 0"). */
+const RIDDEN_MOVING_SPEED = 5;
 /** KYWD ActorTypeDragon (Skyrim.esm): the fliers ridden where the perks allow it. */
 const ACTOR_TYPE_DRAGON = 0x35d59;
 /** What one rides. */
@@ -762,6 +764,13 @@ export class ActorMounts {
     ride.activating = activating;
     const x = held('Strafe Right') - held('Strafe Left');
     const y = held('Forward') - held('Back');
+    // How it moves now: moving, and backing up (its way within fHorseClampAngle of straight
+    // back), for the back key (src/ai/mounts.ts riddenRequest).
+    const [vx, vy] = this.#options.movers.state(ride.horse)?.velocity ?? [0, 0];
+    const speed = Math.hypot(vx, vy);
+    const away = Math.abs(angleBetween(horse.heading, Math.atan2(vx, vy)));
+    const clamp =
+      (this.#options.session.ini.number('Controls', 'fHorseClampAngle') * Math.PI) / 180;
     const request = riddenRequest(
       {
         x,
@@ -771,6 +780,10 @@ export class ActorMounts {
       },
       player.yaw,
       horse.heading,
+      {
+        moving: speed > RIDDEN_MOVING_SPEED,
+        backing: speed > RIDDEN_MOVING_SPEED && Math.PI - away <= clamp,
+      },
     );
     this.#options.movers.request(ride.horse, request);
   }

@@ -100,21 +100,34 @@ export interface RiderInput {
   readonly sprinting: boolean;
 }
 
+/** How a ridden horse moves now, for its rider's back key. */
+export interface RiddenMotion {
+  /** It moves (its movement controller's speed is not 0). */
+  readonly moving: boolean;
+  /** It is backing up already (it was asked to, the last time). */
+  readonly backing: boolean;
+}
+
 /**
  * What a ridden horse is asked to do by its rider's controls (the camera's yaw the way the
  * keys point): forward and to the sides it goes that way, turning to it as it goes (a horse
- * does not walk sideways); back alone it backs up, facing on; sprinting it gallops. Without a
- * key it stands. TODO(M13): the engine's horse controls are not documented.
+ * does not walk sideways); sprinting it gallops. Without a key it stands. The back key (observed
+ * in the original: the player's movement input on a mount) drops the side keys: a
+ * horse that stands, or already backs up, backs up, facing on; one that moves otherwise stops
+ * (it is reined in, not turned round). TODO(M13): how the engine turns the horse to the camera
+ * (its turn rate, fHorseMaxAngleBeforeTurn) is not read yet: it turns at its movement type's.
  */
 export function riddenRequest(
   input: RiderInput,
   viewYaw: number,
   horseHeading: number,
+  motion: RiddenMotion = { moving: false, backing: false },
 ): MoveRequest | undefined {
   const { x, y } = input;
   if (x === 0 && y === 0) return undefined;
   const gait: Gait = input.sprinting && y > 0 ? 'sprint' : input.running ? 'run' : 'walk';
-  if (y < 0 && x === 0) {
+  if (y < 0) {
+    if (motion.moving && !motion.backing) return undefined;
     // Backing up: the horse keeps its heading and goes back.
     return {
       direction: [-Math.sin(horseHeading), -Math.cos(horseHeading)],

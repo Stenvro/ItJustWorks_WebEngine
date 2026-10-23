@@ -85,6 +85,18 @@ describe('riding', () => {
     expect(back?.direction?.[0]).toBeCloseTo(-Math.sin(0.5));
     expect(back?.gait).toBe('walk');
   });
+
+  it('reins in a moving horse on the back key, backs up one standing or backing, sides dropped', () => {
+    const moving = { moving: true, backing: false };
+    expect(riddenRequest({ ...still, y: -1 }, 0, 0, moving)).toBeUndefined();
+    expect(riddenRequest({ ...still, x: 1, y: -1 }, 0, 0, moving)).toBeUndefined();
+    const backing = riddenRequest({ ...still, y: -1 }, 0, 0, { moving: true, backing: true });
+    expect(backing?.direction?.[1]).toBeCloseTo(-1);
+    // Standing, back with a side key backs up straight (the side key dropped).
+    const standing = riddenRequest({ ...still, x: 1, y: -1 }, 0, 0);
+    expect(standing?.direction?.[0]).toBeCloseTo(0);
+    expect(standing?.direction?.[1]).toBeCloseTo(-1);
+  });
 });
 
 describe('owning a horse', () => {

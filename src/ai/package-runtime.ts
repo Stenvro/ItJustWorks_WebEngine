@@ -130,6 +130,23 @@ export interface PackageMind {
   carried(actor: number, criteria: PackageTarget): Promise<number | undefined>;
   /** A food to eat where the package makes one (Eat's Create Fake Food). */
   fakeFood(): Promise<number | undefined>;
+  /**
+   * A random point of the navmesh within `radius` of `center` that the actor can walk to, at
+   * least `least` from it where one is found (the pathing's random location: a wanderer's first
+   * walk); undefined: none.
+   */
+  randomPoint?(
+    actor: number,
+    center: Vec3,
+    radius: number,
+    least: number,
+    random: () => number,
+  ): Vec3 | undefined;
+  /**
+   * Where a point lies on the navmesh if the actor can walk there from where it stands (its path
+   * reaches it); undefined: off the navmesh, or not reachable (another island, a fence).
+   */
+  walkable?(actor: number, point: Vec3): Vec3 | undefined;
   /** The living actor whose items hold a reference now (taken into its inventory), if any. */
   holder?(reference: number): Promise<number | undefined>;
   /** Locks or unlocks the doors within a place (LockDoors, UnlockDoors). */

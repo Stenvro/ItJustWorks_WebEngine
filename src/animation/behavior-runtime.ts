@@ -500,6 +500,11 @@ export class BehaviorRuntime {
   #poseMatch: PoseMatch | undefined;
   /** The pose matchers active, by node. */
   readonly #matchStates = new WeakMap<object, MatchState>();
+  /**
+   * A syncing blender's own cycle: its phase (0..1), and the update in which a syncing blender
+   * around it set that phase (it then plays at that phase rather than advancing its own).
+   */
+  readonly #syncPhases = new WeakMap<object, { phase: number; driven: number }>();
   /** Each active hkbGetUpModifier's ragdoll pose, captured as it became active. */
   readonly #getUpFrom = new WeakMap<object, Float32Array>();
   /** The ragdoll controls active in this update. */
@@ -1303,6 +1308,7 @@ export class BehaviorRuntime {
         return;
       case 'blender':
         this.#matchStates.delete(generator);
+        this.#syncPhases.delete(generator);
         return;
       case 'cyclic-blend':
         this.#cyclic.delete(generator);
@@ -2362,40 +2368,146 @@ export class BehaviorRuntime {
   }
 
   /**
-   * A syncing blender plays its clips in step: one phase, advanced by the time divided by
-   * the weighted duration of its children.
+   * A syncing blender (hkbBlenderGenerator FLAG_SYNC) plays what it blends in step: the blender
+   * keeps one cycle of its own, its phase advanced by the time divided by the weighted cycle
+   * duration of its children, and every child plays at that phase. A syncing blender within
+   * (the horse's walk, trot and run blends, each a turn blend of its own, inside its speed blend)
+   * is driven by the outer one's phase. A child that joins (its weight back above zero) starts
+   * at the blender's phase; the cycle goes on.
+   *
+   * Before, the phase was read from the first active child's clip: a turn blend whose turn
+   * changed sides (the left child in, the right one out) read a clip just joined, at phase 0,
+   * and the whole walk started over. A cart horse whose damped TurnDelta wavered about zero
+   * stood in the first tenth of its stride, and every restart counted as a loop of the clips
+   * that stayed: its root motion read 900 to 1300 units a second at a walk of 125.
    */
   #sync(node: Blender, dt: number, scope: Scope): void {
     const weighted = activeChildren(node, this.#blenderRead(node, scope));
-    const clips: [Clip, number][] = [];
-    for (const [child, weight] of weighted) {
-      const clip = leafClip(child.generator);
-      if (clip) clips.push([clip, weight]);
-    }
-    const total = clips.reduce((sum, [, weight]) => sum + weight, 0);
-    if (clips.length === 0 || total <= 0) return;
+    let total = 0;
     let duration = 0;
-    for (const [clip, weight] of clips) {
-      const animation = this.#host.clip(clip.animation)?.animation;
-      const speed =
-        this.#read(clip.speed ?? { value: clip.playbackSpeed }, this.#scopeOf(clip)) || 1;
-      duration += ((animation?.duration ?? 0) / Math.abs(speed)) * (weight / total);
+    for (const [child, weight] of weighted) {
+      const cycle = this.#cycleDuration(child.generator, 0);
+      if (cycle === undefined || !(weight > 0)) continue;
+      total += weight;
+      duration += cycle * weight;
     }
-    if (duration <= 0) return;
-    const first = clips[0]?.[0];
-    const phase0 = first ? (this.#clips.get(first)?.phase ?? 0) : 0;
-    const phase = (phase0 + dt / duration) % 1;
-    for (const [clip] of clips) {
-      const state = this.#clips.get(clip) ?? {
-        time: 0,
-        previous: 0,
-        wrapped: false,
-        updated: -1,
-        backward: false,
-        phase: undefined,
-      };
-      state.phase = phase;
-      this.#clips.set(clip, state);
+    if (total <= 0 || duration <= 0) return;
+    duration /= total;
+    const own = this.#syncPhases.get(node);
+    let phase: number;
+    if (own?.driven === this.#updates) {
+      phase = own.phase;
+    } else {
+      // Entered anew, it starts where its clips were started (a transition that syncs).
+      const start = own?.phase ?? this.#phase(node, 0) ?? 0;
+      phase = (((start + dt / duration) % 1) + 1) % 1;
+    }
+    this.#syncPhases.set(node, { phase, driven: own?.driven ?? -1 });
+    const seen = new Set<object>();
+    for (const [child, weight] of weighted) {
+      if (weight > 0) this.#drivePhase(child.generator, phase, seen, 0);
+    }
+  }
+
+  /**
+   * A generator's cycle (seconds) as a syncing blender weighs it: a clip's (cropped, or its
+   * enforced duration) at its playback speed; a blender's, its active children's weighted.
+   */
+  #cycleDuration(node: BehaviorGenerator | undefined, depth: number): number | undefined {
+    if (!node || depth > 32) return undefined;
+    switch (node.kind) {
+      case 'clip': {
+        const animation = this.#host.clip(node.animation)?.animation;
+        if (!animation) return undefined;
+        const cropped = animation.duration - (node.cropStart ?? 0) - (node.cropEnd ?? 0);
+        const length =
+          node.enforcedDuration && node.enforcedDuration > 0 ? node.enforcedDuration : cropped;
+        const speed = this.#read(node.speed ?? { value: node.playbackSpeed }, this.#scopeOf(node));
+        return length > 0 ? length / Math.abs(speed || 1) : undefined;
+      }
+      case 'blender': {
+        if (node.poseMatching) return undefined;
+        let total = 0;
+        let duration = 0;
+        for (const [child, weight] of activeChildren(
+          node,
+          this.#blenderRead(node, this.#scopeOf(node)),
+        )) {
+          const cycle = this.#cycleDuration(child.generator, depth + 1);
+          if (cycle === undefined || !(weight > 0)) continue;
+          total += weight;
+          duration += cycle * weight;
+        }
+        return total > 0 ? duration / total : undefined;
+      }
+      case 'state-machine':
+        return this.#cycleDuration(this.#machine(node).current?.generator, depth + 1);
+      case 'behavior-reference':
+        return this.#cycleDuration(this.#reference(node), depth + 1);
+      case 'modifier-generator':
+      case 'state-tagging':
+      case 'synchronized-clip':
+      case 'cyclic-blend':
+      case 'bone-switch':
+      case 'offset-animation':
+        return this.#cycleDuration(node.generator, depth + 1);
+      default:
+        return undefined;
+    }
+  }
+
+  /** Puts what a syncing blender plays at its phase (a syncing blender within follows it). */
+  #drivePhase(
+    node: BehaviorGenerator | undefined,
+    phase: number,
+    seen: Set<object>,
+    depth: number,
+  ): void {
+    if (!node || seen.has(node) || depth > 32) return;
+    seen.add(node);
+    switch (node.kind) {
+      case 'clip': {
+        const state = this.#clips.get(node) ?? {
+          time: 0,
+          previous: 0,
+          wrapped: false,
+          updated: -1,
+          backward: false,
+          phase: undefined,
+        };
+        state.phase = phase;
+        this.#clips.set(node, state);
+        return;
+      }
+      case 'blender':
+        if (node.poseMatching) return;
+        if ((node.flags & BLENDER_FLAGS.sync) !== 0) {
+          this.#syncPhases.set(node, { phase, driven: this.#updates });
+          return;
+        }
+        for (const [child, weight] of activeChildren(
+          node,
+          this.#blenderRead(node, this.#scopeOf(node)),
+        )) {
+          if (weight > 0) this.#drivePhase(child.generator, phase, seen, depth + 1);
+        }
+        return;
+      case 'state-machine':
+        this.#drivePhase(this.#machine(node).current?.generator, phase, seen, depth + 1);
+        return;
+      case 'behavior-reference':
+        this.#drivePhase(this.#reference(node), phase, seen, depth + 1);
+        return;
+      case 'modifier-generator':
+      case 'state-tagging':
+      case 'synchronized-clip':
+      case 'cyclic-blend':
+      case 'bone-switch':
+      case 'offset-animation':
+        this.#drivePhase(node.generator, phase, seen, depth + 1);
+        return;
+      default:
+        return;
     }
   }
 
