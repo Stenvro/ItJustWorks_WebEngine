@@ -483,6 +483,8 @@ export class ModelViewer {
     },
     currentPackage: (reference) => this.#stage?.ai.current(reference)?.id,
     currentProcedure: (reference) => this.#stage?.ai.current(reference)?.procedure,
+    randomSceneStarts: (scene, first, second) =>
+      this.#stage?.talk.randomSceneStarts(scene, first, second),
     impactAt: (impactDataSet, from, direction, length) =>
       this.#stage?.combat.impactAt(impactDataSet, from, direction, length) ?? false,
     pathTo: (actor, target, walkRun) => {

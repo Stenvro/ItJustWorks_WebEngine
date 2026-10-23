@@ -85,6 +85,11 @@ export interface ScriptView {
   currentPackage?(reference: number): number | undefined;
   /** The procedure its package runs now, by name (GetCurrentAIProcedure). */
   currentProcedure?(reference: number): string | undefined;
+  /**
+   * A random scene is about to begin with two actors of the view: whether they may still talk;
+   * the view brings them together (undefined: it does not show them).
+   */
+  randomSceneStarts?(scene: number, first: number, second: number): boolean | undefined;
   /** The player passes into another cell or worldspace (a loading screen is up). */
   changingSpace?(): boolean;
   /** The regions of the player's cell (IsPlayerInRegion). */
@@ -417,6 +422,14 @@ export class ScriptWorld implements WorldBridge {
     for (const view of this.#views) {
       const running = view.currentPackage?.(actor);
       if (running !== undefined) return running;
+    }
+    return undefined;
+  }
+
+  randomSceneStarts(scene: number, first: number, second: number): boolean | undefined {
+    for (const view of this.#views) {
+      const answer = view.randomSceneStarts?.(scene, first, second);
+      if (answer !== undefined) return answer;
     }
     return undefined;
   }
