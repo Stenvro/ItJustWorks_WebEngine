@@ -14,6 +14,7 @@ import type {
   PackageMind,
   ProcedureRun,
   SayOptions,
+  ShoutResult,
   WeaponBarrage,
 } from './package-runtime.ts';
 import { PROCEDURES } from './procedure-runs.ts';
@@ -61,6 +62,10 @@ function harness(
   found = new Map<number, readonly number[]>(),
   waits?: number,
   travel: (to: readonly number[]) => Promise<boolean> = () => Promise.resolve(true),
+  /** What its barrages answer, one each (then true): false, one that could not be made. */
+  barrages: boolean[] = [],
+  /** What its shouts answer, one each (then 'shouted'). */
+  shouts: ShoutResult[] = [],
 ) {
   const done: string[] = [];
   let stopped = false;
@@ -111,7 +116,7 @@ function harness(
       done.push(
         `weapon at ${target.toString(16)} x${String(barrage.attacks)}${barrage.doNoDamage ? ' no damage' : ''}${barrage.aimOnly ? ' aim only' : ''}`,
       );
-      return Promise.resolve(true);
+      return Promise.resolve(barrages.shift() ?? true);
     },
     useMagic: (target: number | undefined, cast: MagicCast) => {
       done.push(
@@ -121,7 +126,7 @@ function harness(
     },
     shout: (target: number | undefined, _shout: unknown, turn: boolean) => {
       done.push(`shout at ${String(target?.toString(16))}${turn ? '' : ' headtrack'}`);
-      return Promise.resolve(true);
+      return Promise.resolve(shouts.shift() ?? ('shouted' as const));
     },
     holster: () => {
       done.push('holster');
@@ -433,6 +438,41 @@ describe('combat procedures', () => {
     expect(done).toEqual(['weapon at 900 x3 no damage', 'weapon at 900 x3 no damage', 'holster']);
   });
 
+  it('UseWeapon that never ends tries a barrage it could not make again', async () => {
+    // Stopped after its fourth wait.
+    const { run, done } = harness(new Map(), 4, undefined, [false, false]);
+    const inputs = [
+      selector(0x111),
+      target,
+      bool(3, true),
+      bool(4, true),
+      bool(5, true),
+      int(12, 1),
+      int(13, 1),
+    ];
+    const slots = [255, 1, 2, 3, 4, 5, 255, 255, 255, 255, 255, 255, 12, 13];
+    expect(await run('UseWeapon', slots, inputs, at)).toBe('failure');
+    expect(done).toEqual([
+      'weapon at 900 x1',
+      'wait 1',
+      'weapon at 900 x1',
+      'wait 1',
+      'weapon at 900 x1',
+      'wait 0.5',
+      'weapon at 900 x1',
+      'wait 0.5',
+      'holster',
+    ]);
+  });
+
+  it('UseWeapon with a number of barrages fails on one it could not make', async () => {
+    const { run, done } = harness(new Map(), undefined, undefined, [false]);
+    const inputs = [selector(0x111), target, bool(4, false), int(11, 2), int(12, 1), int(13, 1)];
+    const slots = [255, 1, 2, 255, 4, 255, 255, 255, 255, 255, 255, 11, 12, 13];
+    expect(await run('UseWeapon', slots, inputs, at)).toBe('failure');
+    expect(done).toEqual(['weapon at 900 x1', 'holster']);
+  });
+
   it('UseMagic casts its spell its number of times, held its cast time', async () => {
     const { run, done } = harness();
     const inputs = [
@@ -451,11 +491,16 @@ describe('combat procedures', () => {
     expect(done).toEqual(['magic 222 at 900 for 2 dual', 'magic 222 at 900 for 2 dual', 'holster']);
   });
 
-  it('Shout shouts at its target while the package runs; Just Headtrack keeps its body', async () => {
-    const { run, done } = harness(new Map(), 2);
+  it('Shout shouts at its target once its voice lets it, then succeeds; Just Headtrack keeps its body', async () => {
+    const { run, done } = harness(new Map(), undefined, undefined, [], ['waiting']);
     const inputs = [selector(0x333), target, bool(4, true)];
-    expect(await run('Shout', [255, 1, 2, 255, 4], inputs, at)).toBe('failure');
-    expect(done).toEqual(['shout at 900 headtrack', 'wait 1', 'shout at 900 headtrack', 'wait 1']);
+    expect(await run('Shout', [255, 1, 2, 255, 4], inputs, at)).toBe('success');
+    expect(done).toEqual(['shout at 900 headtrack', 'shout at 900 headtrack']);
+  });
+
+  it('Shout without a shout fails', async () => {
+    const { run } = harness(new Map(), undefined, undefined, [], ['none']);
+    expect(await run('Shout', [255, 1, 2], [selector(0x333), target], at)).toBe('failure');
   });
 
   it('Acquire with Allow Killing fights the one who holds what it wants', async () => {

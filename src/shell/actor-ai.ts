@@ -604,7 +604,7 @@ export class ActorAi {
       },
       shout: async (target, shout, turn) => {
         await alight();
-        return (await this.#practice?.()?.shout(reference, target, shout, turn)) ?? false;
+        return (await this.#practice?.()?.shout(reference, target, shout, turn)) ?? 'none';
       },
       holster: () => {
         this.#practice?.()?.holster(reference);

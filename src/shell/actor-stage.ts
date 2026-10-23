@@ -270,6 +270,10 @@ export class ActorStage {
         this.knockdowns.holds(actor),
       // The player walked into an actor: it flinches by where they came from (ActionBumpedInto's
       // idles by GetLastBumpDirection) and says its ActorCollidewithActor line.
+      stopIdle: (actor) => {
+        const staged = this.#actors.get(actor);
+        if (staged) void this.furniture.playAction(this.userOf(staged), 'ActionIdleStop');
+      },
       onBump: (actor) => {
         const staged = this.#actors.get(actor);
         if (staged) void this.furniture.playAction(this.userOf(staged), 'ActionBumpedInto');
@@ -1320,6 +1324,8 @@ export class ActorStage {
     const previous = staged.scene;
     staged.scene = this.#scene(placed, staged.visibility);
     previous?.destroy();
+    // In furniture, its new graph is put back in it.
+    await this.furniture.bodyReplaced(this.userOf(staged));
   }
 
   /** The references whose animation events go to others too (their dependents), by reference. */

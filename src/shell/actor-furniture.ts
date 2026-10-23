@@ -174,6 +174,13 @@ const entryType = (entry: number): number => entry << 16;
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/** After a script's idle in furniture, its graph is looked at again after this (seconds). */
+const KEEP_IN_SECONDS = 0.7;
+
+/** Whether a use is being left, or in its furniture (read after awaits: they may change). */
+const leaving = (use: Use): boolean => use.phase === 'leaving';
+const inside = (use: Use): boolean => use.phase === 'in';
+
 export class ActorFurniture {
   readonly #options: ActorFurnitureOptions;
   readonly #uses = new Map<number, Use>();
@@ -294,6 +301,8 @@ export class ActorFurniture {
     if (this.#uses.has(user.reference) && options.inFurniture !== true) return false;
     const sent = user.send(event);
     for (const dependent of options.dependents ?? []) dependent.send(event);
+    const use = this.#uses.get(user.reference);
+    if (sent && use && inside(use)) void this.#keepIn(user, use);
     if (sent && target !== undefined && event.toLowerCase().startsWith('pa_'))
       this.#options.paired?.(user.reference, target, event);
     return sent;
@@ -588,6 +597,52 @@ export class ActorFurniture {
       await sleep(0.1);
     }
     return this.#uses.get(actor) === use;
+  }
+
+  /**
+   * A user's body was made again while it uses furniture (its look changed, or a new play made
+   * the player's: a graph that begins anew): its graph is put back in the furniture's state, as
+   * a quick enter puts it there (the events it entered by, then the instant idle), once the use
+   * is in it (one on its way or entering goes on with the old body). TODO(M13): the engine's
+   * own re-sync of a graph made again.
+   */
+  bodyReplaced(user: FurnitureUser): Promise<void> {
+    return this.#restore(user);
+  }
+
+  /**
+   * A script's idle played on an actor in furniture that left its graph standing (not
+   * animation-driven, as the furniture states are): the furniture's state is put back, as a
+   * body made again is. MQ101's player walked to the chopping block in the camera-bob idle
+   * (IdleWalkingCameraStart: the Master machine's MT WalkingCamera, outside the states that
+   * take a furniture's enter), so the block's IdleExecutioneeIdle went unheard; the package's
+   * end fragment then played IdleWalkingCameraEnd, which left the player standing in the
+   * block. TODO(M13): how the engine keeps a graph in its furniture (an enter it holds until
+   * the graph takes it).
+   */
+  async #keepIn(user: FurnitureUser, use: Use): Promise<void> {
+    await sleep(KEEP_IN_SECONDS);
+    if (this.#uses.get(user.reference) !== use || !inside(use)) return;
+    if (user.placed.behavior?.variable('bAnimationDriven') !== 0) return;
+    await this.#restore(user);
+  }
+
+  async #restore(user: FurnitureUser): Promise<void> {
+    const use = this.#uses.get(user.reference);
+    if (!use) return;
+    while (this.#uses.get(user.reference) === use && !inside(use) && !leaving(use)) {
+      await sleep(0.1);
+    }
+    if (this.#uses.get(user.reference) !== use || leaving(use)) return;
+    // The events it entered by (asked again in it, the idle tree gives the instant idle alone,
+    // which the graph takes only within the furniture's state), then the instant idle.
+    const quick = use.quickEnter;
+    use.quickEnter = true;
+    const instant = await this.#idleEvent(user, use.furniture);
+    use.quickEnter = quick;
+    if (this.#uses.get(user.reference) !== use || leaving(use)) return;
+    for (const event of new Set([...use.events, instant]))
+      if (event !== undefined) user.send(event);
   }
 
   /** It is in its furniture: its scripts hear OnSit. */
