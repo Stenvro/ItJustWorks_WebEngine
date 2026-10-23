@@ -104,7 +104,7 @@ export interface RiderInput {
 export interface RiddenMotion {
   /** It moves (its movement controller's speed is not 0). */
   readonly moving: boolean;
-  /** It is backing up already (it was asked to, the last time). */
+  /** It backs up already (its way within [Controls] fHorseClampAngle of straight back). */
   readonly backing: boolean;
 }
 
