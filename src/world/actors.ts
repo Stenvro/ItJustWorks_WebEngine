@@ -40,8 +40,8 @@ export interface WornAddon {
   readonly armor: number;
   readonly editorId: string;
   readonly model: AddonModel;
-  /** Its first-person model (MOD4 / MOD5: the arms the player sees in first person). */
-  readonly firstPerson: AddonModel | undefined;
+  /** What it shows in first person, with its skin texture set (`addonModel`). */
+  readonly firstPerson: { readonly model: AddonModel; readonly skinTexture: number | undefined };
   /** _0 and _1 models blended by the actor's weight. */
   readonly weighted: boolean;
   /** The biped slots it covers (BOD2 flags). */
@@ -149,6 +149,8 @@ export interface ActorLook {
   readonly worn: readonly WornAddon[];
   /** The biped slots armor owns: slot → the addon that owns it. */
   readonly owners: ReadonlyMap<number, number>;
+  /** The biped slots its first-person body shows (its race's BOD2: `inFirstPerson`). */
+  readonly firstPersonSlots: number;
   /**
    * The behavior variable weapAdj: the weapon adjust of what covers its body (slot 32). Only
    * body pieces vary it in the data (0.1 to 0.65; helmets and the rest are 0 or 1), so the
@@ -198,6 +200,68 @@ export function addonsForRace(
   const own = addons.filter((addon) => fits(addon, race));
   if (own.length > 0 || armorRace === undefined) return own;
   return addons.filter((addon) => fits(addon, armorRace));
+}
+
+/**
+ * The model an addon dresses an actor in, in the world or in first person, and the skin texture
+ * set for its skin shapes, as the engine chooses them (observed in the original; docs/
+ * animation.md, "First person"): first person takes the sex's first-person model, a woman's
+ * else the man's; with neither (most gauntlets and shields, a helmet) it takes the world model,
+ * as the world does: the sex's, a woman's else the man's. The skin texture set is that of the
+ * sex whose model it took (NAM0 for a man's model, NAM1 for a woman's). Undefined without any.
+ * TODO(M13): NAM2 / NAM3, a list of skin texture sets the actor's weight picks from when it
+ * holds more than one (no vanilla list does), are not read.
+ */
+export function addonModel(
+  addon: ArmorAddonRecord,
+  female: boolean,
+  firstPerson: boolean,
+): { readonly model: AddonModel; readonly skinTexture: number | undefined } | undefined {
+  const pick = (models: ArmorAddonRecord['models']) => {
+    const sex = female && models[1] ? 1 : 0;
+    const model = models[sex];
+    return model && { model, skinTexture: addon.skinTexture[sex] };
+  };
+  return (firstPerson ? pick(addon.firstPerson) : undefined) ?? pick(addon.models);
+}
+
+/**
+ * An armor piece over the skin: the engine lays the skin into the biped slots first and the
+ * armor over it, and a piece without a skin texture set of its own keeps the one the skin left
+ * in its slot (observed in the original), so the bare arms of a cuirass take the race's
+ * skin (a Khajiit's fur, an Orc's green), in the world and in first person. Its slot: the one
+ * it hangs on, its first (inferred: the engine attaches a piece at the lowest slot it holds).
+ */
+export function underSkin(addon: WornAddon, skin: readonly WornAddon[]): WornAddon {
+  const slot = 2 ** (firstSlot(addon.slots) - 30);
+  const under = skin.find((piece) => (piece.slots & slot) !== 0);
+  if (!under) return addon;
+  return {
+    ...addon,
+    skinTexture: addon.skinTexture ?? under.skinTexture,
+    firstPerson: {
+      model: addon.firstPerson.model,
+      skinTexture: addon.firstPerson.skinTexture ?? under.firstPerson.skinTexture,
+    },
+  };
+}
+
+/**
+ * Whether a piece a look wears is in its first-person body: the first-person body holds only
+ * the slots its race's BOD2 lists (`ActorLook.firstPersonSlots`), so a piece shows there when
+ * it owns one of them (a cuirass by the body, gauntlets by the hands, not boots or a helmet).
+ */
+export function inFirstPerson(
+  addon: WornAddon,
+  look: Pick<ActorLook, 'owners' | 'firstPersonSlots'>,
+): boolean {
+  for (let slot = 30; slot < 62; slot++) {
+    const bit = 2 ** (slot - 30);
+    if ((addon.slots & bit) === 0 || (look.firstPersonSlots & bit) === 0) continue;
+    const owner = look.owners.get(slot);
+    if (owner === undefined || owner === addon.addon) return true;
+  }
+  return false;
 }
 
 /**
@@ -411,19 +475,20 @@ export class ActorResolver {
     );
     const sex = female ? 1 : 0;
     return addonsForRace(addons, race.formId, race.armorRace).flatMap((addon): WornAddon[] => {
-      const model = addon.models[sex];
-      if (!model) return [];
+      const world = addonModel(addon, female, false);
+      const firstPerson = addonModel(addon, female, true);
+      if (!world || !firstPerson) return [];
       return [
         {
           addon: addon.formId,
           armor: armorId,
           editorId: addon.editorId,
-          model,
-          firstPerson: addon.firstPerson[sex],
+          model: world.model,
+          firstPerson,
           weighted: addon.weighted[sex],
           slots: addon.slots,
           priority: addon.priority[sex],
-          skinTexture: addon.skinTexture[sex],
+          skinTexture: world.skinTexture,
           skin,
           weaponAdjust: addon.weaponAdjust,
           footstepSet: addon.footstepSet,
@@ -507,7 +572,9 @@ export class ActorResolver {
     // where no other piece took it (TODO(M13): the engine's biped slot assignment is not
     // documented; this matches every vanilla outfit's look).
     const bare = skin.filter((addon) => !owners.has(firstSlot(addon.slots)));
-    const shown = armor.filter((addon) => owners.get(firstSlot(addon.slots)) === addon.addon);
+    const shown = armor
+      .filter((addon) => owners.get(firstSlot(addon.slots)) === addon.addon)
+      .map((addon) => underSkin(addon, skin));
 
     const hairColorId = traits.hairColor ?? race.hairColor[sex];
     const hairRecord = hairColorId === undefined ? undefined : await this.#db.get(hairColorId);
@@ -556,6 +623,7 @@ export class ActorResolver {
       ),
       worn: [...shown, ...bare],
       owners,
+      firstPersonSlots: race.firstPersonSlots,
       weaponAdjust:
         [...shown, ...bare].find((addon) => firstSlot(addon.slots) === BipedSlot.body)
           ?.weaponAdjust ?? 0,

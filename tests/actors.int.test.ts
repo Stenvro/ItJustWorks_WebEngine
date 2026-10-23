@@ -6,7 +6,7 @@ import { readAnimationContainer } from '../src/formats/hkx/animation.ts';
 import { Packfile } from '../src/formats/hkx/packfile.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
 import { buildModel } from '../src/render/model-data.ts';
-import { ActorResolver, meshPath } from '../src/world/actors.ts';
+import { ActorResolver, inFirstPerson, meshPath, type ActorLook } from '../src/world/actors.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
@@ -62,6 +62,46 @@ describe.skipIf(!hasGamedata())('actor looks on the local game data', () => {
       ['FarmerBoots04AA', false],
       ['NakedHands', true],
     ]);
+  });
+
+  it("dresses the player's first-person body: its race's first-person slots", async () => {
+    const firstPerson = (look: ActorLook | undefined) =>
+      look?.worn
+        .filter((worn) => inFirstPerson(worn, look))
+        .map((worn) => [worn.editorId, worn.firstPerson.model.path.toLowerCase()]);
+    // The iron set: the cuirass in its first-person model, the gauntlets (no first-person
+    // model) in their world model; not the boots or the helmet.
+    const iron = await resolver.resolve(0x7, 0x14);
+    expect(firstPerson(iron)).toEqual([
+      ['IronCuirassAA', 'armor\\iron\\male\\1stpersoncuirasslight_1.nif'],
+      ['IronGlovesAA', 'armor\\iron\\male\\gauntlets_1.nif'],
+    ]);
+    // Naked, a Khajiit woman: her race's first-person hands and body, not its feet or tail.
+    const khajiit = await resolver.resolve(0x7, 0x14, 1, {
+      race: 0x13745,
+      female: true,
+      outfit: null,
+    });
+    const assets = 'actors\\character\\character assets\\';
+    expect(firstPerson(khajiit)).toEqual([
+      ['NakedHandsKhajiit', `${assets}1stpersonfemalehandsargonian_1.nif`],
+      ['NakedTorsoKhajiit', `${assets}1stpersonfemalebody_1.nif`],
+    ]);
+    for (const look of [iron, khajiit])
+      for (const worn of look?.worn ?? [])
+        expect(vfs.has(meshPath(worn.firstPerson.model.path))).toBe(true);
+  });
+
+  it("gives armor's bare skin the race's skin texture set", async () => {
+    // The iron set on a Khajiit: the cuirass's arms take the Khajiit torso's fur (NAM0 of
+    // NakedTorsoKhajiit), the gauntlets the Khajiit hands' (NakedHandsKhajiit).
+    const look = await resolver.resolve(0x7, 0x14, 1, { race: 0x13745 });
+    const skinOf = (editorId: string) => {
+      const worn = look?.worn.find((piece) => piece.editorId === editorId);
+      return [worn?.skinTexture, worn?.firstPerson.skinTexture];
+    };
+    expect(skinOf('IronCuirassAA')).toEqual([0x81b9f, 0x81b9f]);
+    expect(skinOf('IronGlovesAA')).toEqual([0x81ba0, 0x81ba0]);
   });
 
   it("poses the human skeleton: the Havok reference pose is the skeleton model's rest", async () => {
