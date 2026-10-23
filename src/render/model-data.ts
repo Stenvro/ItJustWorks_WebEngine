@@ -20,6 +20,7 @@ import {
   buildSequences,
   type ModelSequences,
 } from './animation.ts';
+import { buildLightningSystem, lightningShapes } from './lightning.ts';
 import { buildParticleSystem, type ParticleSystemData } from './particle-data.ts';
 import { invert } from './frustum.ts';
 import { skinnedGeometry, withDynamicPositions, type PartSkin } from './skinning.ts';
@@ -542,6 +543,9 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
   const billboards: { mode: number; world: Mat4 }[] = [];
   let worlds: Map<Ref, Mat4> | undefined;
   const particleRefs: Ref[] = [];
+  /** Shapes that procedural lightning builds into (by their controller), and those shown. */
+  const lightning = lightningShapes(file);
+  const lightningRefs: Ref[] = [];
   const addons: AddonNode[] = [];
   /** The node tree (for models worn on a skeleton) and the node being visited. */
   const nodes: ModelNode[] = [];
@@ -565,6 +569,12 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
     // A weapon's blood shapes are drawn though culled (they wait for a hit). A BSDamageStage node
     // shows by the object's model damage stage (the files keep every one culled: the engine shows
     // the current one); other nodes by their culled flag.
+    // A procedural lightning controller's shape: kept culled in the files (the engine draws the
+    // bolts it builds below the controller's node instead: lightning.ts).
+    if (lightning.has(ref)) {
+      lightningRefs.push(ref);
+      return;
+    }
     currentWeaponBlood = weaponBloodShape(file, block);
     if (block.kind === 'node' && block.damageStage) {
       if (!shownAtDamageStage(block, options.damageStage ?? 0)) return;
@@ -818,6 +828,23 @@ export function buildModel(file: NifFile, options: BuildOptions = {}): ModelData
       );
       if (built) particles.push(built);
     }
+  }
+  for (const shape of lightningRefs) {
+    worlds ??= nodeWorlds(file);
+    const block = getBlock(file, shape, 'tri-shape');
+    const controller = lightning.get(shape);
+    const world = worlds.get(shape);
+    if (!block || controller === undefined || !world) continue;
+    const built = buildLightningSystem(
+      file,
+      controller,
+      shape,
+      world,
+      material(file, block.shaderProperty),
+      alphaState(getBlock(file, block.alphaProperty, 'alpha')),
+      graphDriven,
+    );
+    if (built) particles.push(built);
   }
 
   // BSTreeNode: the bones the wind moves (pines: their branches).

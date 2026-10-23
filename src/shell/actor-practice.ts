@@ -130,8 +130,8 @@ export class ActorPractice {
 
   /**
    * One shout: its Shout (the one named, into its voice) at the target, facing it unless only
-   * its head turns; 'shouted' once it was let out, 'waiting' at once while its voice recovers
-   * (or it casts), 'none' when it has no shout.
+   * its head turns, whether or not its voice has recovered; 'shouted' once it was let out,
+   * 'waiting' at once while it casts, 'none' when it has no shout.
    */
   async shout(
     actor: number,
@@ -148,7 +148,10 @@ export class ActorPractice {
       this.#options.session.scriptWorld.lookAt(actor, target, 'procedure');
       if (turn) this.#face(actor, target);
     }
-    if (!(await this.#options.casting().shoutAt(actor, target))) return 'waiting';
+    // The engine's Shout procedure lets the voice skip its cast check: it shouts even while
+    // its voice recovers from the last shout (MQ101's Alduin: Storm Call, 60 s, then
+    // Unrelenting Force from the tower at once); the shout sets the recovery again.
+    if (!(await this.#options.casting().shoutAt(actor, target, undefined, true))) return 'waiting';
     await this.#until(() => !runtime.casting.isShouting(actor), STEP_LIMIT + 4);
     return 'shouted';
   }

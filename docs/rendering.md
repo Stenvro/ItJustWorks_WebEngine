@@ -344,6 +344,68 @@ along the velocity (aspect flag `0x1`, height scaled by the aspect ratio), or a 
 facing the camera for strip particles. Blended particles test but never write depth (their
 quads overlap unsorted within a system).
 
+### Procedural lightning
+
+Observed in the original (behaviour only; `src/render/lightning.ts`). The bolts of the
+shock spells, their impacts and explosions and the shock runes and walls (37 controllers in 13
+vanilla meshes, among them `Magic\LightningBolt01`–`04.nif`) are not in the files: a
+**BSProceduralLightningController** on a node builds them at run time into that node's first
+child, a BSTriShape with no vertices (culled in the file). Its settings (docs/formats/nif.md,
+"Animation"): subdivisions, branches and their variation, length and its variation, width, a
+branch's width multiplier, arc offset, whether the main bolt and the branches fade, whether the
+arc offset is animated; and nine interpolators (generation, mutation, subdivision, branches,
+branch variation, length, length variation, width, arc offset), in the vanilla meshes driven
+by the model's sequences (the beams' graph plays `mIdle`, the impacts' and explosions' their
+own); without an interpolator a setting keeps the controller's value, and without a
+generation interpolator nothing is built.
+
+- **Generation** (bool): when it turns on, the engine grows a tree of bolts (on a task, shown
+  from the next frame): a main bolt of 2^subdivisions segments (it builds nothing for fewer
+  than 1 or more than 12 subdivisions), with between branches − variation (at least 0) and
+  branches + variation branches (uniformly), each of one subdivision less and with half the
+  branches and half the variation for its own branches, and so on down. When it turns off the
+  geometry goes; the next generation grows a new tree.
+- **Laying out** (at a generation and whenever the **mutation** bool flips, either way): every
+  bolt runs along the shape's +Y axis, `0.5^depth × length + 0.25^depth × r × length
+variation` long (r uniform in [−1, 1), depth 0 for the main bolt, 1 for its branches…),
+  `childWidthMultiplier^depth × width` wide. It strays from its line by a midpoint
+  displacement in the X–Z plane: along a random direction, a tent over the whole bolt (most
+  in the middle, nothing at the ends) of `0.5^depth × arc offset`, then the same on each half
+  with half the amplitude, down to single segments; so both ends stay on the line. A branch
+  starts at a random point of the first half of its parent's centre line and runs parallel to
+  it (along +Y).
+- **Arc offset between mutations** (with Animate Arc Offset): when its value changes, every
+  point's X and Z are scaled by new / old (the bolts breathe out until the next mutation
+  re-forms them; the vanilla arc tracks are sawtooths that drop at each mutation key).
+- **Geometry:** per point of a bolt four vertices: its centre ± half the width along X and
+  along Z; two crossed ribbons per segment (one across X, one across Z), not turned to the
+  camera. U is 0 → 1 across a ribbon, V = point / segments along the bolt (the material's UV
+  scale tiles it, its V offset controller scrolls it). Vertex colour white; alpha: a main
+  bolt's first point 0, a branch's 1, every bolt's last point 0, the points between 1, or
+  `1 − (k / segments)²` with the bolt's fade flag. The material is the empty shape's
+  (BSEffectShaderProperty and NiAlphaProperty: in the bolts additive, greyscale-to-palette).
+
+Here each controller becomes a particle system of its model (`ParticleSystemData.lightning`;
+`buildModel` takes the empty shape out of the parts) run by a `LightningSimulation` instead of
+a particle simulation: it samples the tracks like a particle system's (free ones on the
+model's clock, managed ones on their sequence's), keeps its bolts in the shape's space and
+writes two ribbon instances per segment into the particle buffer; `vs_ribbon`
+(`shaders/particle.wgsl`) builds each quad from the segment, its fixed side vector (the shape's
+X or Z axis in the world × half the width) and the alphas at both ends, shaded by
+`fs_particle` (the effect shader). Random numbers are seeded per placement. Beams stretch the
+shape (below and docs/gameplay.md, "A hand's cast"): the simulation scales its Y axis by
+`LightningOptions.stretch` and its alpha by `opacity`.
+
+**Beams** (BeamProjectile, observed in the original; `src/shell/magic-beams.ts`): the
+beam's model hangs at the caster's magic node, along the aim, every frame while it lives.
+When the beam meets something, its length is the distance from its origin to the hit; then
+(and again whenever a lightning controller lays out new geometry, which tells the beam) every
+geometry of the model gets its own local Y axis scaled to length / the `BeamEnd` node's Y
+(512 in the vanilla bolts), keeping its X and Z: the bolts reach the hit with their zigzag
+across unchanged, a long beam looks straighter than a short one. TODO(M13): only the procedural
+lightning is stretched here; the meshed beams (Staff of Magnus, Auriel's Bow, the Labyrinthian
+and Dawnguard beams) keep their own length.
+
 **Refraction** (SLSF1 `0x8000` on the lighting shader: heat haze over fires and torches,
 magic barriers, mist; about 360 vanilla shapes, strength 0.05–1): the engine draws these shapes only
 into a refraction buffer and an image-space pass shifts the finished scene by it

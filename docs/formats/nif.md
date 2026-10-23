@@ -127,6 +127,16 @@ Objects animate through controllers (`src/formats/nif/animation-blocks.ts`,
   20–23 U/V offset/scale; colours: effect 0 emissive, lighting 0 specular, 1 emissive.
   NiMultiTargetTransformController has no interpolator: u16 count + target ptrs.
   NiPSys*Ctlr add a modifier name; NiPSysEmitterCtlr also a visibility interpolator.
+- **BSProceduralLightningController** (95 bytes, nif.xml; 37 in 13 vanilla meshes): nine
+  interpolator refs (generation, mutation, subdivision, number of branches, branch variation,
+  length, length variation, width, arc offset; −1 unset), subdivisions, branches, branch
+  variation (u16 each), length, length variation, width, child width multiplier, arc offset
+  (f32 each), fade main bolt, fade child bolts, animate arc offset (u8 each), shader property
+  ref (−1 in all vanilla files). Its target is a node whose first child is an empty BSTriShape
+  (culled) carrying the material; manager-controlled ones (34) take their values from
+  sequences, whose controlled blocks name them by interpolator id (`Generation`, `Mutation`,
+  `ArcOffset`, `Length`, `Width` in the vanilla files). What it builds: docs/rendering.md,
+  "Procedural lightning".
 - **NiControllerManager:** cumulative u8, sequences (ref list), object palette ref.
   **NiControllerSequence:** name, controlled blocks (u32 count, u32 array grow by; each:
   interpolator ref, controller ref, priority u8, node name / property type / controller type /

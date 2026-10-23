@@ -1,6 +1,7 @@
 // Shows the particle systems of NIFs as the engine builds them (emitters, modifiers,
-// controller tracks, add-on nodes) and runs each for a few seconds; with --audit, counts
-// modifier and controller types over every mesh.
+// controller tracks, add-on nodes; procedural lightning: its bolts' settings and tracks) and
+// runs each for a few seconds; with --audit, counts modifier and controller types over every
+// mesh.
 //
 //   node tools/particle-info.ts meshes/mps/mpscandleflame01.nif
 //   node tools/particle-info.ts meshes/clutter/common/torchsconce01.nif --seconds 3
@@ -10,7 +11,12 @@ import { parseArgs } from 'node:util';
 import { parseNif } from '../src/formats/nif/nif.ts';
 import { identity } from '../src/render/math.ts';
 import { buildModel } from '../src/render/model-data.ts';
-import { PARTICLE_FLOATS, ParticleSimulation } from '../src/render/particle-sim.ts';
+import { LightningSimulation } from '../src/render/lightning.ts';
+import {
+  PARTICLE_FLOATS,
+  ParticleSimulation,
+  type ParticleSource,
+} from '../src/render/particle-sim.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { openGameFolder } from './gamedata-path.ts';
 
@@ -81,7 +87,29 @@ if (values.audit) {
           `    track ${track.target}.${track.param} (${track.kind}, ${String(track.source.keys?.keys.length ?? 0)} keys)`,
         );
       }
-      const simulation = new ParticleSimulation(system, 1);
+      const lightning = system.lightning;
+      if (lightning) {
+        console.log(
+          `    procedural lightning: 2^${String(lightning.subdivisions)} segments, ` +
+            `${String(lightning.branches)} ± ${String(lightning.branchesVariation)} branches, ` +
+            `length ${String(round(lightning.length))} ± ${String(round(lightning.lengthVariation))}, ` +
+            `width ${String(round(lightning.width))} (branches × ${String(round(lightning.childWidthMultiplier))}), ` +
+            `arc offset ${String(round(lightning.arcOffset))}` +
+            (lightning.animateArcOffset ? ' (animated)' : '') +
+            (lightning.fadeMainBolt ? ', main bolt fades' : '') +
+            (lightning.fadeChildBolts ? ', branches fade' : ''),
+        );
+        for (const [sequence, tracks] of system.sequenceTracks) {
+          console.log(
+            `    sequence ${sequence}: ${tracks.map((track) => `${track.param} (${String(track.source.keys?.keys.length ?? 0)} keys)`).join(', ')}`,
+          );
+        }
+      }
+      // A graph-driven model's idle sequence (mIdle) plays, as its graph starts it.
+      const idle = system.sequenceTracks.has('midle') ? [{ sequence: 'midle', start: 0 }] : [];
+      const simulation: ParticleSource = lightning
+        ? new LightningSimulation(system, 1)
+        : new ParticleSimulation(system, 1);
       const context = {
         seconds: 0,
         dt: 0,
@@ -89,6 +117,7 @@ if (values.audit) {
         animated: undefined,
         camera: [0, -300, 100] as const,
         wind: [0, 0, 0] as const,
+        sequences: idle,
       };
       for (let t = 0; t <= seconds; t += 1 / 30) {
         simulation.update({ ...context, seconds: t, dt: t === 0 ? 0 : 1 / 30 });

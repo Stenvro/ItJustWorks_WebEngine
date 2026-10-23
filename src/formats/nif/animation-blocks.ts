@@ -25,6 +25,7 @@ import type {
   FloatInterpolatorBlock,
   Key,
   KeyGroup,
+  LightningControllerBlock,
   ObjectPaletteBlock,
   Point3InterpolatorBlock,
   PosDataBlock,
@@ -151,6 +152,25 @@ const parseController: BlockParser = (reader, context, type): ControllerBlock =>
     visibilityInterpolator,
   };
 };
+
+/** BSProceduralLightningController: nine interpolators, then the bolts' own settings. */
+const parseLightningController: BlockParser = (reader): LightningControllerBlock => ({
+  ...readTimeController(reader),
+  kind: 'lightning-controller',
+  interpolators: Array.from({ length: 9 }, () => reader.i32()),
+  subdivisions: reader.u16(),
+  branches: reader.u16(),
+  branchesVariation: reader.u16(),
+  length: reader.f32(),
+  lengthVariation: reader.f32(),
+  width: reader.f32(),
+  childWidthMultiplier: reader.f32(),
+  arcOffset: reader.f32(),
+  fadeMainBolt: readBool(reader),
+  fadeChildBolts: readBool(reader),
+  animateArcOffset: readBool(reader),
+  shaderProperty: reader.i32(),
+});
 
 const parseControllerManager: BlockParser = (reader): ControllerManagerBlock => ({
   ...readTimeController(reader),
@@ -355,6 +375,7 @@ export const ANIMATION_PARSERS: ReadonlyMap<string, BlockParser> = new Map<strin
     'NiPSysEmitterDeclinationCtlr',
     'NiPSysEmitterPlanarAngleCtlr',
   ].map((type): [string, BlockParser] => [type, parseController]),
+  ['BSProceduralLightningController', parseLightningController],
   ['NiControllerManager', parseControllerManager],
   ['NiControllerSequence', parseControllerSequence],
   ['NiDefaultAVObjectPalette', parseObjectPalette],

@@ -146,12 +146,15 @@ export interface AnimationFrame {
 
 /**
  * Sequences that play on their own when an object is placed (first one found). AmIdle is the
- * resting state of furniture-like objects (e.g. the forge's idle smoke; Playing is its use).
+ * resting state of furniture-like objects (e.g. the forge's idle smoke; Playing is its use);
+ * SpecialIdle_AreaEffect is the only sequence of the shock explosions (explosionshock01: its
+ * lightning and particles).
  */
 const IDLE_SEQUENCES = [
   'idle',
   'autoloop',
   'specialidle',
+  'specialidle_areaeffect',
   'waiting',
   'mloop',
   'midle',
