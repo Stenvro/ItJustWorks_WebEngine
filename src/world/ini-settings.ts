@@ -167,6 +167,8 @@ export const INI_DEFAULTS = {
     bGeneralSubtitles: 0,
     fHUDOpacity: 1,
     fActivatePickLength: 180,
+    // The enemy's health bar shows this long (ms) after its health last changed.
+    iEnemyHealthDisplayTime: 2000,
     // The book menu's 3D book: its tilt, where its middle is on the screen, its two lights
     // (from the book as seen: x right, y away, z up). fBookDistance and fBookOpenTime are the
     // game's; the book's size is fitted (src/shell/book-menu.ts).

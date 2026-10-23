@@ -24,10 +24,6 @@ export const NO_STYLE = parseCombatStyle({
   fields: new Fields([]),
 });
 
-/** fCombatDistance: a melee weapon's reach at reach 1 (units). */
-const COMBAT_DISTANCE = 141;
-/** A bow's range before its arrows are known (an iron arrow's PROJ range). TODO(M13). */
-const RANGED_RANGE = 4096;
 /** Fists' reach before the race's is known (RACE DATA unarmed reach, humans'). */
 const UNARMED_RANGE = 96;
 
@@ -114,6 +110,14 @@ export async function weaponOptions(
 ): Promise<EquipOption[]> {
   const equipment = runtime.equipment;
   const options: EquipOption[] = [];
+  const setting = async (name: string, fallback: number): Promise<number> => {
+    const value = await runtime.gameSetting(name);
+    return typeof value === 'number' ? value : fallback;
+  };
+  // A melee weapon's reach at reach 1; a shot's range before the bow's arrows are known (the
+  // farthest a shot counts: the engine caps a projectile's reach there).
+  const combatDistance = await setting('fCombatDistance', 141);
+  const shotRange = await setting('fCombatMaximumProjectileRange', 4096);
   let arrows = false;
   let bolts = false;
   const ranged: { id: number; crossbow: boolean }[] = [];
@@ -137,7 +141,7 @@ export async function weaponOptions(
       kind: 'melee',
       id: form,
       damage: await equipment.weaponDamage(actor, form),
-      range: COMBAT_DISTANCE * Math.max(0.1, weapon.reach),
+      range: combatDistance * Math.max(0.1, weapon.reach),
       equipped: false,
     });
   }
@@ -147,7 +151,7 @@ export async function weaponOptions(
       kind: 'ranged',
       id,
       damage: await equipment.weaponDamage(actor, id),
-      range: held?.weapon === id && held.range > 0 ? held.range : RANGED_RANGE,
+      range: held?.weapon === id && held.range > 0 ? held.range : shotRange,
       equipped: false,
     });
   }

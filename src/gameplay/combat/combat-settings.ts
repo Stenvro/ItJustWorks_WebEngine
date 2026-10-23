@@ -85,6 +85,8 @@ export interface CombatSettings {
   readonly essentialDeathTime: number;
   /** fCombatPlayerBleedoutHealthDamageMult: damage the player takes bleeding out. */
   readonly playerBleedoutHealthDamageMult: number;
+  /** fKillMoveMaxDuration: a killmove (a paired animation) ends by this at the latest (seconds). */
+  readonly killMoveMaxDuration: number;
   // --- Arrows --------------------------------------------------------------------------------
   /** iArrowInventoryChance: % of arrows that hit an actor going into its inventory. */
   readonly arrowInventoryChance: number;
@@ -161,6 +163,7 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   bleedoutRecover: 0.05,
   essentialDeathTime: 20,
   playerBleedoutHealthDamageMult: 0,
+  killMoveMaxDuration: 10,
   arrowInventoryChance: 33,
   attachedArrowAgeMax: 10,
   missileStickDepth: 20,
@@ -213,6 +216,7 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   bleedoutRecover: 'fBleedoutRecover',
   essentialDeathTime: 'fEssentialDeathTime',
   playerBleedoutHealthDamageMult: 'fCombatPlayerBleedoutHealthDamageMult',
+  killMoveMaxDuration: 'fKillMoveMaxDuration',
   arrowInventoryChance: 'iArrowInventoryChance',
   attachedArrowAgeMax: 'fAttachedArrowAgeMax',
   missileStickDepth: 'fCombatMissileStickDepth',
