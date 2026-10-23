@@ -15,6 +15,7 @@ import {
   type CollisionShape,
 } from './collision-data.ts';
 import { Layer, LayerFlag, type CollisionMatrix } from './collision-layers.ts';
+import type { BodyPush } from '../gameplay/magic/explosions.ts';
 
 export type Rapier = typeof RAPIER;
 
@@ -1277,6 +1278,40 @@ export class PhysicsWorld {
         },
         true,
       );
+    }
+  }
+
+  /**
+   * An explosion's push on an object's moving bodies (src/gameplay/magic/explosions.ts): each
+   * along the way from `center` to it (lifted by its up bias), as `push` says for its layer and
+   * mass (game units, made Havok's here), with a random spin of up to its angular impulse.
+   */
+  pushFrom(
+    placed: PlacedCollision,
+    center: Vec3,
+    push: (layer: number, mass: number) => BodyPush,
+  ): void {
+    for (const { body, data } of placed.bodies) {
+      if (!dynamicBody(data)) continue;
+      const t = body.translation();
+      const way: Vec3 = [
+        t.x * HAVOK_SCALE - center[0],
+        t.y * HAVOK_SCALE - center[1],
+        t.z * HAVOK_SCALE - center[2],
+      ];
+      const length = Math.hypot(...way);
+      const unit: Vec3 =
+        length > 1e-6 ? [way[0] / length, way[1] / length, way[2] / length] : [0, 0, 0];
+      const { linear, upBias, angular } = push(data.layer, data.mass);
+      if (linear <= 0 && angular <= 0) continue;
+      this.release(body);
+      const scale = linear / HAVOK_SCALE;
+      body.applyImpulse(
+        { x: unit[0] * scale, y: unit[1] * scale, z: (unit[2] + upBias) * scale },
+        true,
+      );
+      const spin = (): number => (Math.random() * 2 - 1) * (angular / HAVOK_SCALE);
+      body.applyTorqueImpulse({ x: spin(), y: spin(), z: spin() }, true);
     }
   }
 

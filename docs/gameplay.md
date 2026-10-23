@@ -391,9 +391,23 @@ the player in a runtime on the game data, `--audit` reads every record).
   (sPlayerDisarmedMessage); Soul Trap and Actor.TrapSoul put a dead actor's soul (by level:
   iLesserSoulActorLevel 4 .. iGrandSoulActorLevel 38; NPCs black) into the smallest empty gem
   that holds it (its NAM0 form), with the Soul Captured sound (DOBJ SCSD).
-- Cloaks put their spell on actors within the magnitude in feet each second (TODO(M13): the
-  radius read as the magnitude). Invisibility ends as its actor activates. An actor's effects
-  end as it dies but No Death Dispel ones.
+- Cloaks put their spell on the other actors within their magnitude in feet every [General]
+  fCloakEffectUpdateInterval (0.5 s; observed in the original: the radius is the
+  magnitude). Invisibility ends as its actor activates. An actor's effects end as it dies but
+  No Death Dispel ones.
+- Accumulate Magnitude (observed in the original): a ward (WardPower) grows by
+  (fMagicWardPowerMaxMult × its caster's skill in its school + fMagicWardPowerMaxBase) × its
+  magnitude a second (1.3 × in Skyrim.esm), any other such effect by
+  fMagicDefaultAccumulatingModifierEffectRate (1) a second; no further than takes the actor
+  value to its cap (its magnitude; a ward's: the largest of the actor's wards), so a ward a hit
+  lowered grows back, after holding still fMagicAccumulatingModifierEffectHoldDuration (0.5 s).
+- Summon placement (observed in the original): the summon stands ahead of its summoner by
+  both actors' radii (half the wider side of their bounds) and half of
+  fSummonedCreatureSearchRadius (512), facing it; a Target Location spell's where it landed,
+  unless that is within fSummonDistanceCheckThreshold (750) and nearer than the place ahead.
+  TODO(M13): the engine then looks for the navmesh near that place, the way clear of the
+  summoner's line of sight; fMagicSummonMaxAppearTime (4 s: the summon appears at the latest
+  then, whatever its placement art does) is not used.
 - Slow Time (src/shell/time-flow.ts): its magnitude on the player (the slowest) is the world's
   clock: the frame's game clock (main.ts: animations, physics, the actors, particles, what
   flies) and the pitch of the sounds placed in the world run at it (the 2D ones, the interface
@@ -406,11 +420,23 @@ the player in a runtime on the game data, `--audit` reads every record).
   "Combat"). Disarm: the right hand's weapon leaves the inventory and falls from the hand into
   the world, a dual wielder's left goes into its inventory, bound weapons stay (docs/ai.md,
   "Combat": Disarm). Paralysis: the target falls as its ragdoll and lies while it lasts.
-  Telekinesis: the player's cast held takes hold of
-  the loose object aimed at within reach with the grab spring (CommonLibSSE PlayerCharacter
-  GrabbingType kTelekinesis) and pulls it before the camera; let go, it is flung along the view
-  (TODO(M13): the engine's reach, hold distance and throw speed are not in the plugins). Grab
-  Actor holds its target's ragdoll before its caster (docs/ai.md, "Combat").
+  Telekinesis (src/gameplay/magic/telekinesis.ts; observed in the original): the player's
+  cast held takes hold of the loose object aimed at within fMagicTelekinesisBaseDistance feet
+  (2100; the perks' Mod Telekinesis Distance on it) × fMagicUnitsPerFoot (22) with the grab
+  spring (CommonLibSSE PlayerCharacter GrabbingType kTelekinesis) and pulls it in from its own
+  distance at a speed from fMagicTelekinesisMoveBase (50) growing by
+  fMagicTelekinesisMoveAccelerate (400) a second up to fMagicTelekinesisMoveMax (1000), to
+  fMagicTelekinesisDistanceMin (64) before the camera (never farther than the reach ×
+  fMagicTelekinesiDistanceMult); held there its throw gathers fMagicTelekinesisThrowAccelerate
+  (10) a second up to fMagicTelekinesisThrowMax (30). Let go held, it is thrown along the view at
+  fMagicTelekinesisThrow (1000) plus that (dual cast × fMagicTelekinesisDualCastThrowMult, 2);
+  let go while pulled in, it stops. TODO(M13): the thrown object's damage
+  (fMagicTelekinesisDamageBase plus its collision's, × fMagicTelekinesisDamageMult or the dual
+  cast's, Mod Telekinesis Damage / Damage Mult). Grab Actor holds its target's ragdoll
+  fMagicGrabActorMinDistance (120, Dawnguard.esm) before its caster, and flings it away with
+  fMagicGrabActorThrowForce (15) as it ends (docs/ai.md, "Combat"; observed in the
+  original; fMagicGrabActorRange and DrawSpeed's pull are not read: the engine never reads the
+  first).
 - Spawn Hazard places its hazard (HAZD: limit, radius in feet, lifetime, target interval,
   spell, light, impact data set, sound, image-space modifier and radius; flags Affects Player
   Only, Inherit Duration / Radius from Spawn Spell) where the effect lands; the hazard engine
@@ -423,9 +449,10 @@ the player in a runtime on the game data, `--audit` reads every record).
 - What the world shows (src/shell/actor-effects.ts, WorldBridge.magicEffect): the hit shader
   (EFSH) and hit art (ARTO) on the target as the effect takes hold (with FX Persist while it
   lasts, else their own time once), the light of a Light effect over its shoulder (Candlelight;
-  TODO(M13): where the engine floats it), the image-space modifier while an effect acts on the
-  player (aimed at it: radial blur and depth of field that use their target), the On Hit sound
-  at the target. Scripts' EffectShader.Play / Stop and VisualEffect.Play / Stop (RFCT: its art
+  TODO(M13): where the engine floats it; fMagicLightForwardOffset, SideOffset and HeightOffset
+  are registered but never read by the engine, original), the image-space modifier while an effect
+  acts on the player (aimed at it: radial blur and depth of field that use their target), the
+  On Hit sound at the target. Scripts' EffectShader.Play / Stop and VisualEffect.Play / Stop (RFCT: its art
   and shader) show the same.
 - An effect shader (EFSH, xEdit's layout: src/world/effect-shader-records.ts): its membrane is
   the actor's shapes drawn again over themselves (SceneRenderer.createOverlay: the source's
@@ -449,8 +476,11 @@ the player in a runtime on the game data, `--audit` reads every record).
   conditions hold (`MagicEngine.detects`: the spells' friend and enemy, living and undead
   variants; TODO(M13): the rule taken from the vanilla spells), looked at twice a second.
 - Clairvoyance (Guide): its hazard (ClairvoyanceHazard: GuideHazard01.nif, its light, limit 1,
-  10 s) travels along the navmeshes from the player to the nearest target of the shown quest
-  objectives (TODO(M13): its speed), again as each trail ends while the spell is held. A target
+  10 s) travels along the navmeshes from the player toward the nearest target of the shown quest
+  objectives, over the trail's waypoints (observed in the original: one every
+  fMagicGuideSpacing, 46 units, iMagicGuideWaypoints, 44, at most; the engine puts the hazard at
+  each waypoint, TODO(M13); its speed TODO(M13)), again as each trail ends while the spell is
+  held. A target
   in another cell or worldspace: to the load door the way there goes through, as the compass's
   QuestDoor (`firstDoorToward`, src/shell/compass.ts); one in this worldspace beyond the loaded
   area: towards it, to the navmesh nearest a point 6144 units along the way (TODO(M13): how far
@@ -510,16 +540,20 @@ Format/SPEL"; the game settings.
   sum of its effects': base cost × (magnitude × duration / 10)^1.1, a magnitude under 1 counted
   as 1, a duration of 0 (and any for concentration spells) as 10, × (1 + fMagicAreaBaseCostMult
   × area) (0: areas cost nothing). Firebolt 41.39, Flames 24.6 a second.
-- The player pays base × (1 − (fMagicCasterPCSkillCostBase × skill)^fMagicPCSkillCostScale)
-  (0.0025, 0.65: Firebolt 36.5 at 15, 24.6 at 100); NPCs base × (1 − fMagicCasterSkillCostMult
-  × (skill / 100)^fMagicSkillCostScale) (0.5, 0.5; TODO(M13): inferred from the settings). The
-  skill is the school of the costliest effect (base cost × magnitude), with its
-  fortifications; then the perks' Mod Spell Cost (the schools' half-cost perks by the spell's
-  casting perk, Fortify <School> through the skill boost perks: "Perks"). Dual cast: ×
-  fMagicDualCastingCostMult (2.8), only with the school's Dual Casting perk (Can Dual Cast
-  Spell). The magic menu shows this cost.
+- Observed in the original: the caster pays base × (1 − (Base × skill)^Scale) × Mult, the
+  skill a whole number. The player's settings: fMagicCasterPCSkillCostBase,
+  fMagicPCSkillCostScale, fMagicCasterPCSkillCostMult (0.0025, 0.65, 1: Firebolt 36.5 at 15,
+  24.6 at 100); the NPCs': fMagicCasterSkillCostBase, fMagicSkillCostScale,
+  fMagicCasterSkillCostMult (0.005 the engine's, 0.5, 0.5: an NPC pays half at skill 0, a
+  quarter at 50, 0.15 at 100, nothing from 200). The skill is the school of the costliest effect
+  (base cost × magnitude), with its fortifications; then the perks' Mod Spell Cost (the
+  schools' half-cost perks by the spell's casting perk, Fortify <School> through the skill boost
+  perks: "Perks"). Dual cast: × fMagicDualCastingCostMult (2.8), only with the school's Dual
+  Casting perk (Can Dual Cast Spell). The magic menu shows this cost.
 - A fire and forget spell is paid as it fires (released when ready), a concentration spell for
-  the time it is held (its cost a second); regeneration waits while a cast lasts.
+  the time it is held (its cost a second). Observed in the original: the player's magicka
+  does not regenerate while any of their casts lasts; an NPC's does when
+  bRegenNPCMagickaDuringCast is set (1).
 - A staff spends its enchantment's cost from its charge (WEAP EAMT at first; Staff of Fireball
   2000, 133 a cast: 15 casts); the charge is kept on the staff itself (ExtraCharge: "Items of their own"). A scroll is
   used up. Neither, nor powers or shouts, trains a skill.
@@ -561,28 +595,34 @@ Format/SPEL"; the game settings.
   interval (a held beam is cast anew every interval: Sparks every 0.15 s), then fades over its
   fade duration (Lightning Bolt: 0.35 s, then 0.5 s). TODO(M13): how the engine times a beam's
   fade. A chained beam leaves the explosion toward its next target. NPCs' beams are the same.
-- Dual casting: both attack buttons pressed within 0.15 s with one spell in both hands
-  (TODO(M13): the window), with the school's Dual Casting perk (Can Dual Cast Spell; without
-  it each hand casts on its own); its effects are cast with
-  fMagicDualCastingEffectivenessBase (2.2: "Magic effects", EffectWasDualCast).
+- Dual casting: both attack buttons pressed within [Controls] fDualCastChordTime (0.05 s: the
+  engine's input chord, observed in the original) with one spell in both hands, with the school's Dual
+  Casting perk (Can Dual Cast Spell; without it each hand casts on its own); its effects are
+  cast with fMagicDualCastingEffectivenessBase (2.2: "Magic effects", EffectWasDualCast).
 - Skill use: a spell that takes effect on a target gives its school its base cost in uses (dual
   cast × 2.8, TODO(M13)); a concentration spell's hit the share of the time it stands for.
 
 ### Delivery
 
-- Self: on the caster at once. Touch: the actor aimed at, at once, within 2048 units
-  (`MAGIC_REACH`, src/shell/actor-casting.ts: an NPC's combat target, which its AI casts at
-  within that reach; the player's the living actor along their aim, nothing on the spell layer
-  before it; TODO(M13): the engine's reach is not documented). Aimed,
+- Self: on the caster at once. Touch: the actor aimed at, at once, within
+  fMagicDefaultTouchDistance (256 units: an NPC's combat target, which its AI casts at within
+  that reach; the player's the living actor along their aim, nothing on the spell layer before
+  it). TODO(M13): the engine registers that setting but never reads it (original); where its Touch
+  reach comes from is not known. Spells whose projectile has no range reach 2048 units
+  (`MAGIC_REACH`, src/shell/actor-casting.ts). Aimed,
   target actor and target location fly the costliest effect's projectile (docs/ai.md, "Magic in
   combat"); without one they reach the actor aimed at at once.
 - What reaches an actor (`deliver`): a hostile spell, scroll or staff's (not a power's or a
   shout's, nor a spell with 0x200000) is absorbed by the target's AbsorbChance percent (Spell
-  Absorption: it does nothing, the target gains its magicka cost; TODO(M13): the cap); else a
+  Absorption: it does nothing, the target gains its magicka cost; TODO(M13): the cap; observed in
+  the original: the default object AbsorbSpellEffect, an ARTO, shows on the target for
+  fMagicAbsorbVisualTimer seconds, 2.5, and not again meanwhile: WorldBridge.artEffect); else a
   ward (WardPower, grown by a ward spell held: Accumulate Magnitude) meets a hostile spell from
   the front: its damage (its hostile effects' magnitudes on Health, Magicka, Stamina) up to the
-  ward's strength is absorbed and taken off it (IsWardState 1, ActionWardHit: wardAbsorb), more
-  breaks it (IsWardState 2, WardBreak) and the rest passes (UESP "Skyrim:Ward"). Then the magic
+  ward's strength is absorbed and taken off it (IsWardState 1, ActionWardHit: wardAbsorb; the
+  ward then holds still for fMagicAccumulatingModifierEffectHoldDuration before it grows back:
+  "Magic effects"), more breaks it (IsWardState 2, WardBreak; observed in the original: the ward spells its
+  actor casts are interrupted) and the rest passes (UESP "Skyrim:Ward"). Then the magic
   system applies it (resistances, dual casting: "Magic effects"); a hostile spell's target hears
   OnHit (the caster, the spell or staff) and is attacked (detection: it searches for the caster).
 - A concentration spell's hit (a spray of Flames, a held Healing): its effects at once act by the
@@ -591,9 +631,25 @@ Format/SPEL"; the game settings.
   anew (a ward keeps what it has grown).
 - Areas: an effect with an area (feet) reaches the actors within it of where the spell landed
   (each the effects whose area reaches it; TODO(M13): line of sight and SPIT 0x80000).
-  Explosions (the projectile's with its Explosion flag, else the effect's): their enchantment on
-  the actors within their radius, their damage on Health less with distance (linear, TODO(M13)),
-  their force pushing what is there.
+  Explosions (the projectile's with its Explosion flag, else the effect's): below.
+- Explosions (src/gameplay/magic/explosions.ts; observed in the original): an actor within
+  the radius takes the explosion's enchantment and its damage on Health by its share, 1 −
+  (distance / radius)², if the explosion sees it (unless EXPL's Ignore LOS Check): a ray on the
+  spell layer from the burst point moved fExplosionLOSBufferDistance (24) units off the surface
+  it burst on (the hit's normal, else back along the flight) to the actor's middle, a surface
+  met within fExplosionLOSBuffer (3) of the actor not counting (TODO(M13): the engine allows
+  that buffer only for an explosion facing straight down). Its knock-down flags (Always; By
+  Formula; both: anyone but the player) knock an actor down only where its share is above
+  fExplosionForceKnockdownMinimum (0.15). Its force pushes each moving body within the radius
+  (not falling off with distance): force × fGameplayImpulseScale (150) × the layer's
+  fGameplayImpulseMult* (biped 0.04, prop 0.1, trap 0.15, large debris and clutter 1), less for
+  a body under fGameplayImpulseMinMass (5) by its mass's share, at most fExplosionMaxImpulse
+  (8000); the object that blew up (a destruction stage's) × fExplosionSourceRefMult (3) and
+  uncapped; along the way from the burst, ragdolls lifted by fExplosionForceClutterUpBias (0.5),
+  × fExplosionForceMultLinear, with a random spin of up to the impulse ×
+  fExplosionForceMultAngular (src/physics/physics-world.ts pushFrom). A chain explosion's hop is
+  weaker by fMagicChainExplosionEffectivenessDelta (0.1) for each actor the chain reached (its
+  effects at once by that: `DeliverOptions.effectiveness`).
 - Target Location: what it makes (summons, hazards, scripted references) stands where it landed
   (`ApplyOptions.at`: the summon facing the summoner); its other effects reach those near by its
   explosion and area.
@@ -672,8 +728,9 @@ Sources: UESP "Skyrim:Shouts", "Skyrim:Dragon Souls", "Skyrim:Powers"; SHOU and 
   recovered. GetCurrentShoutVariation is the last shout's words less one (the idle tree's
   Whirlwind Sprint variants).
 - Powers in the voice are cast as they are ready (the key need not be held), once a game day
-  (24 hours since the last use); lesser powers whenever. They share the voice key, not its
-  recovery.
+  (24 hours since the last use); lesser powers again fMagicLesserPowerCooldownTimer (3) seconds
+  after their last use (observed in the original; refused meanwhile as a used power,
+  TODO(M13): what the engine tells the player). They share the voice key, not its recovery.
 
 ### Conditions and natives
 

@@ -87,6 +87,7 @@ function world() {
   const blinks: number[] = [];
   const hits: number[] = [];
   const used: number[] = [];
+  const wardsHeld: number[] = [];
   const wordsLearned = new Map<number, boolean>();
   const runtime = {
     state,
@@ -131,6 +132,10 @@ function world() {
               : undefined,
         ),
       acted: () => undefined,
+      holdWards: (actor: number) => {
+        wardsHeld.push(actor);
+      },
+      defaultObject: () => Promise.resolve(undefined),
       hostile: (item: MagicItemRecord) =>
         Promise.resolve(item.effects.some((entry) => entry.effect === FIRE)),
       extendHeld: () => new Set<number>(),
@@ -216,6 +221,7 @@ function world() {
     blinks,
     hits,
     used,
+    wardsHeld,
     events,
     wordsLearned,
     castMagic,
@@ -333,6 +339,8 @@ describe('wards and absorption', () => {
     expect(await w.engine.deliver(firebolt, PLAYER_REF)).toBe(0);
     expect(w.engine.wardState(PLAYER_REF)).toBe(1);
     expect(w.value(PLAYER_REF, 63)).toBe(15);
+    // Lowered, not broken: the wards hold still a while.
+    expect(w.wardsHeld).toEqual([PLAYER_REF]);
     // 25 against 15: it breaks, 10 of 25 passes.
     await w.engine.deliver(firebolt, PLAYER_REF);
     expect(w.engine.wardState(PLAYER_REF)).toBe(2);

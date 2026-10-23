@@ -42,6 +42,8 @@ export const DefaultObjectUse = {
   putDownIngredient: 'PDSI',
   /** SNDR of an activation that fails (a locked door without its key). */
   activateFail: 'NASD',
+  /** ARTO shown on an actor whose Spell Absorption absorbs a spell (AbsorbSpellEffect). */
+  absorbSpellEffect: 'ABSE',
 } as const;
 
 /** Entries of DOBJ DNAM: u32 use code (four characters), form id. */
