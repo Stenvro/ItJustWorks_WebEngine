@@ -105,7 +105,7 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
   const paths = await import('/src/ai/pathfinding.ts');
   const W = engineDev.world;
   const nav = QA_RIDE_NAV;
-  const ride = { start: performance.now(), held: new Set(), home: undefined, last: undefined, slow: 0, path: [], planned: 0, log: [] };
+  const ride = { start: performance.now(), held: new Set(), home: undefined, last: undefined, slow: 0, backing: 0, path: [], planned: 0, log: [] };
   window.__qaRide = ride;
   const press = (name, down) => {
     const player = W.player; if (!player) return;
@@ -146,8 +146,11 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
       const [, forward, walk, sprint, spin] = phases.find((p) => t < p[0]) ?? phases[phases.length - 1];
       const speed = ride.last ? Math.hypot(feet[0] - ride.last[0], feet[1] - ride.last[1]) / Math.max(dt, 1e-3) : 0;
       ride.last = [...feet];
-      ride.slow = forward && speed < 30 ? ride.slow + dt : 0;
-      if (ride.slow > 1.5) { ride.slow = 0; ride.path = []; }
+      ride.slow = forward && !(ride.backing > 0) && speed < 30 ? ride.slow + dt : 0;
+      // Stuck (a wall, another horse): it backs out a moment, as a rider does, and takes a new way.
+      if (ride.slow > 1.5) { ride.slow = 0; ride.path = []; ride.backing = 1.2; ride.log.push(Math.round(now / 1000) + ' stuck: backing out'); }
+      if (ride.backing > 0) ride.backing -= dt;
+      const backing = ride.backing > 0;
       while (ride.path.length > 0 && Math.hypot(ride.path[0][0] - feet[0], ride.path[0][1] - feet[1]) < 150) ride.path.shift();
       if (ride.path.length === 0) plan(feet);
       let rate = spin;
@@ -158,7 +161,8 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
         rate = Math.max(-1.5, Math.min(1.5, off * 3));
       }
       player.yaw += rate * dt;
-      press('Forward', forward);
+      press('Forward', forward && !backing);
+      press('Back', backing);
       press('Run', walk === player.alwaysRun);
       press('Sprint', sprint);
     }
