@@ -116,7 +116,7 @@ import { WorldSky, type SkyElements } from './world-sky.ts';
 import { sunInView } from '../world/sky-state.ts';
 import type { Rgb } from '../world/cell-records.ts';
 import type { Terminal } from './terminal.ts';
-import { Player } from './player.ts';
+import { configurePhysics, Player } from './player.ts';
 import type { LocalMapContent } from './local-map.ts';
 import {
   collisionGroup,
@@ -1208,8 +1208,7 @@ export class WorldViewer {
     ]);
     if (generation !== this.#generation) return;
     const physics = new PhysicsWorld(matrix, GRAVITY);
-    physics.impactSpeed = playerData.ini.number('Audio', 'fMinSoundVel');
-    physics.settleSeconds = playerData.ini.number('HAVOK', 'fWarmStartMaxTime');
+    configurePhysics(physics, playerData);
     const player = new Player(
       {
         ...playerData,

@@ -6,8 +6,8 @@
 // world by the player's BowSpeedBonus (Steady Hand: −0.5, both ranks −0.75; UESP
 // "Skyrim:Archery": 50 % and 75 %), the player with it, and costs stamina each second (Eagle
 // Eye's Mod Power Attack Stamina on bows: 10; UESP: "drains Stamina at 10 per second"); it
-// cannot be held without stamina nor under Slow Time. The player's falls take health
-// (src/gameplay/falling.ts; Mod Falling Damage).
+// cannot be held without stamina nor under Slow Time. Falls take health, the player's and every
+// other actor's (src/gameplay/falling.ts; Mod Falling Damage).
 
 import { fallDamage, fallSettings } from '../gameplay/falling.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
@@ -113,25 +113,37 @@ export class TimeFlow {
     this.#slowedPace = pace;
   }
 
-  /**
-   * The player landed after falling `height` units: the fall's damage (the player's settings,
-   * their perks' Mod Falling Damage) on their health.
-   */
-  async fell(runtime: ScriptRuntime, height: number): Promise<void> {
-    const value = async (name: string): Promise<number | undefined> => {
-      const setting = await runtime.gameSetting(name);
-      return typeof setting === 'number' ? setting : undefined;
-    };
-    const names = ['fJumpFallHeightMin', 'fJumpFallHeightMult', 'fJumpFallHeightExponent'];
-    const values = new Map<string, number | undefined>();
-    for (const name of names) values.set(name, await value(name));
-    const damage = fallDamage(
-      height,
-      fallSettings((name) => values.get(name), false),
-    );
-    if (damage <= 0) return;
-    const taken = await runtime.perks.apply(EntryPoint.modFallingDamage, PLAYER_REF, damage);
-    if (taken <= 0 || (await runtime.actors.isInvulnerable(PLAYER_REF))) return;
-    await runtime.actors.damage(PLAYER_REF, ActorValue.health, taken, undefined);
+  /** The player landed after falling `height` units (actorFell). */
+  fell(runtime: ScriptRuntime, height: number): Promise<void> {
+    return actorFell(runtime, PLAYER_REF, height);
   }
+}
+
+/**
+ * An actor landed after falling `height` units (`share`: of the minimum height that hurts;
+ * RAGDOLL_FALL_SHARE getting up from a ragdoll): the fall's damage (the player's settings for the
+ * player, the NPCs' for any other actor, horses too; its perks' Mod Falling Damage) on its health.
+ */
+export async function actorFell(
+  runtime: ScriptRuntime,
+  reference: number,
+  height: number,
+  share = 1,
+): Promise<void> {
+  const npc = reference !== PLAYER_REF;
+  const suffix = npc ? 'NPC' : '';
+  const values = new Map<string, number | undefined>();
+  for (const name of ['fJumpFallHeightMin', 'fJumpFallHeightMult', 'fJumpFallHeightExponent']) {
+    const setting = await runtime.gameSetting(name + suffix);
+    values.set(name + suffix, typeof setting === 'number' ? setting : undefined);
+  }
+  const damage = fallDamage(
+    height,
+    fallSettings((name) => values.get(name), npc),
+    share,
+  );
+  if (damage <= 0) return;
+  const taken = await runtime.perks.apply(EntryPoint.modFallingDamage, reference, damage);
+  if (taken <= 0 || (await runtime.actors.isInvulnerable(reference))) return;
+  await runtime.actors.damage(reference, ActorValue.health, taken, undefined);
 }

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { MovementType } from '../world/movement.ts';
 import {
   Locomotion,
+  MotionFeedback,
   steer,
   taggedMovementType,
   type LocomotionFrame,
@@ -272,5 +273,30 @@ describe('taggedMovementType', () => {
     };
     expect(taggedMovementType(graph)).toBe('NPCSneaking');
     expect(taggedMovementType({ ...graph, taggedState: () => undefined })).toBeUndefined();
+  });
+});
+
+describe('the motion feedback to the graph', () => {
+  it('tells what was wanted until what was made agrees for a while, then what was made', () => {
+    const feedback = new MotionFeedback();
+    // Facing +Y, wanting 300 ahead, made 290 (within 25): told 300 for half a second.
+    let told = feedback.feed([0, 300], [0, 290], 0, 0.1);
+    expect(told[1]).toBeCloseTo(300);
+    for (let i = 0; i < 5; i++) told = feedback.feed([0, 300], [0, 290], 0, 0.1);
+    expect(told[1]).toBeCloseTo(290);
+    // Blocked: made nothing, far from what is wanted: what was wanted again.
+    told = feedback.feed([0, 300], [0, 0], 0, 0.1);
+    expect(told[1]).toBeCloseTo(300);
+    // Slower than fMotionFeedbackMinSpeed (5): it stands, to its graph.
+    told = feedback.feed([0, 3], [0, 0], 0, 0.1);
+    expect(Math.hypot(...told)).toBe(0);
+  });
+
+  it('turns the direction told by at most a full turn a second', () => {
+    const feedback = new MotionFeedback();
+    feedback.feed([0, 300], [0, 0], 0, 0.1);
+    // Wanting to go right (a quarter turn): a tenth of a second turns it 36° at most.
+    const told = feedback.feed([300, 0], [0, 0], 0, 0.1);
+    expect(Math.atan2(told[0], told[1])).toBeCloseTo((36 * Math.PI) / 180);
   });
 });

@@ -569,6 +569,13 @@ export class PlaySession {
   }) {
     this.physics = init.physics;
     this.player = init.player;
+    // Holding a heavy object the player walks (fZKeyHeavyWeight).
+    init.player.holdingHeavy = () => {
+      const body = this.#grab?.spring.body;
+      return (
+        body !== undefined && body.isValid() && body.mass() > init.player.grabLimits.heavyWeight
+      );
+    };
     this.camera = init.camera;
     this.#canvas = init.canvas;
     this.#groundReady = init.groundReady;
@@ -928,6 +935,8 @@ export class PlaySession {
         this.#activateTarget(hold.target);
       } else if (clock() - hold.since >= player.ini.number('Controls', 'fZKeyDelay')) {
         this.#hold = undefined;
+        // Heavier than fGrabMaxWeightWalking: it is not taken hold of.
+        if (hold.body.mass() > player.grabLimits.maxWeight) return;
         const camera = player.position;
         // Taken hold of: it moves from now on, even if it was placed asleep.
         this.physics.release(hold.body);
@@ -984,10 +993,11 @@ export class PlaySession {
 
   /**
    * Telekinesis held (src/shell/player-casting.ts; the rules: src/gameplay/magic/telekinesis.ts):
-   * the loose object the crosshair finds within `reach` is taken hold of by the grab spring (the
-   * player's grabSpring, as the Z key's: CommonLibSSE PlayerCharacter GrabbingType
-   * kTelekinesis) and pulled in before the camera, `seconds` at a time; let go held, it is
-   * thrown along the view (`dual`: dual cast), let go still pulled in, it stops. TODO(M13): the
+   * the loose object the crosshair finds within `reach` is taken hold of at its middle by the grab
+   * spring with Telekinesis's own settings (the player's grabSpring, as the Z key's: CommonLibSSE
+   * PlayerCharacter GrabbingType kTelekinesis; fMagicTelekinesisSpring*, observed in the original) and pulled
+   * in before the camera, `seconds` at a time; let go held, it is thrown along the view (`dual`:
+   * dual cast), its turning stopped; let go still pulled in, it stops. TODO(M13): the
    * thrown object's damage (fMagicTelekinesisDamageBase and Mult, Mod Telekinesis Damage and
    * Damage Mult: the engine adds them to what its collision deals).
    */
@@ -1005,6 +1015,8 @@ export class PlaySession {
         const body = grab.spring.body;
         const forward = this.player.forward;
         const speed = telekinesisThrowSpeed(grab.telekinesis, dual, settings) ?? 0;
+        // Thrown, it stops turning (the engine clears both speeds before the throw's impulse).
+        if (body.isValid() && speed > 0) body.setAngvel({ x: 0, y: 0, z: 0 }, true);
         if (body.isValid())
           body.setLinvel(
             {
@@ -1034,14 +1046,13 @@ export class PlaySession {
     const body = hit && this.physics.grabbable(hit.collider);
     if (!hit || !body) return;
     this.physics.release(body);
+    // Held at its middle (the engine's: its shapes' middle), from where the camera saw it.
+    const middle = body.worldCom();
+    const point: Vec3 = [middle.x * HAVOK_SCALE, middle.y * HAVOK_SCALE, middle.z * HAVOK_SCALE];
     const camera = this.player.position;
-    const distance = Math.hypot(
-      hit.point[0] - camera[0],
-      hit.point[1] - camera[1],
-      hit.point[2] - camera[2],
-    );
+    const distance = Math.hypot(point[0] - camera[0], point[1] - camera[1], point[2] - camera[2]);
     this.#setGrab({
-      spring: new GrabSpring(body, hit.point, this.player.grab),
+      spring: new GrabSpring(body, point, this.player.telekinesisSpring),
       distance,
       telekinesis: beginTelekinesis(distance),
       reference: ownReference(hit),
