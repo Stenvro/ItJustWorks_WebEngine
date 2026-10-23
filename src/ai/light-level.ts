@@ -1,14 +1,15 @@
-// The light level on an actor (GetLightLevel, the console's GetLightLevel / gll; detection's
-// light: src/ai/detection.ts): how brightly it is lit where it stands, from what lights the
-// scene (the view's lighting: the cell's or the weather's ambient and directional light, the
-// placed lights near it). UESP "Skyrim:Sneak" says only that brighter light makes one easier to
-// see, across the whole range; the readings players quote run from 0 in the dark to 150 and
-// more in daylight (Realistic AI Detection's notes). The engine's settings bound it: plus
-// iLightLevelInteriorMod inside, iLightLevelExteriorMod outside, at most iLightLevelMax.
-// TODO(M13): the engine's sum is not documented; here the light's luminance (Rec. 709) at the
-// actor, as the renderer has it: the mean of the six directional ambients, the directional light
-// unless something stands between it and the actor, each point light within its radius with the
-// renderer's falloff (1 − (d / r)²), all times 100. Platform-independent.
+// The light on an actor (detection's light: src/ai/detection.ts detectionLight; GetLightLevel,
+// the console's GetLightLevel / gll): how brightly it is lit where it stands, from what lights
+// the scene (the view's lighting: the cell's or the weather's ambient and directional light, the
+// placed lights near it). What the engine makes of it is observed in the original (detectionLight): less
+// iLightLevelExteriorMod outside or, inside, the lesser of iLightLevelInteriorMod and 100 × the
+// brightest channel of the cell's ambient light, between 0 and iLightLevelMax; GetLightLevel
+// gives that × fSneakLightMult (fSneakLightExteriorMult outside). TODO(M13): the engine keeps
+// each actor's light from its renderer's lighting, a sum not read yet; here the light's
+// luminance (Rec. 709) at the actor, as the renderer has it: the mean of the six directional
+// ambients, the directional light unless something stands between it and the actor, each point
+// light within its radius with the renderer's falloff (1 − (d / r)²), all times 100.
+// Platform-independent.
 
 type Vec3 = readonly [number, number, number];
 
@@ -33,13 +34,6 @@ export interface LightProbe {
   readonly interior: boolean;
 }
 
-/** The light level's bounds and offsets (DetectionSettings' iLightLevel*). */
-export interface LightLevelSettings {
-  readonly lightLevelExteriorMod: number;
-  readonly lightLevelInteriorMod: number;
-  readonly lightLevelMax: number;
-}
-
 /** A colour's luminance (Rec. 709). */
 export function luminance(color: Vec3): number {
   return 0.2126 * color[0] + 0.7152 * color[1] + 0.0722 * color[2];
@@ -49,15 +43,10 @@ export function luminance(color: Vec3): number {
 const LEVEL_SCALE = 100;
 
 /**
- * The light level at a point: `sunlit` says whether the directional light reaches it (nothing
- * stands between it and the light: the viewer's ray), see the file's comment.
+ * The light at a point (0 or more): `sunlit` says whether the directional light reaches it
+ * (nothing stands between it and the light: the viewer's ray), see the file's comment.
  */
-export function lightLevel(
-  probe: LightProbe,
-  at: Vec3,
-  sunlit: boolean,
-  settings: LightLevelSettings,
-): number {
+export function lightLevel(probe: LightProbe, at: Vec3, sunlit: boolean): number {
   let light = 0;
   if (probe.ambient.length > 0) {
     let sum = 0;
@@ -76,8 +65,19 @@ export function lightLevel(
     if (falloff >= 1) continue;
     light += luminance(point.color) * (1 - falloff * falloff);
   }
-  const level =
-    light * LEVEL_SCALE +
-    (probe.interior ? settings.lightLevelInteriorMod : settings.lightLevelExteriorMod);
-  return Math.min(settings.lightLevelMax, Math.max(0, level));
+  return Math.max(0, light * LEVEL_SCALE);
+}
+
+/** The brightest channel of the mean ambient light of a probe (0..1). */
+export function brightestAmbient(probe: LightProbe): number {
+  if (probe.ambient.length === 0) return 0;
+  let red = 0;
+  let green = 0;
+  let blue = 0;
+  for (const [r, g, b] of probe.ambient) {
+    red += r;
+    green += g;
+    blue += b;
+  }
+  return Math.max(red, green, blue) / probe.ambient.length;
 }

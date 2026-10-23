@@ -19,8 +19,12 @@
 import {
   angleOff,
   detectionLevel,
+  detectionLight,
   detectionReach,
+  detectionSkill,
+  eventDistance,
   eventLevel,
+  inViewCone,
   loudness,
   movementNoise,
   readDetectionSettings,
@@ -32,8 +36,9 @@ import {
 } from '../ai/detection.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { aliasOverrideLists } from '../ai/detection-records.ts';
+import type { DetectionReport } from '../ai/combat-groups.ts';
 import { Detections, type DetectionEvent, type WitnessedAct } from '../ai/detection-states.ts';
-import { lightLevel, type LightProbe } from '../ai/light-level.ts';
+import { brightestAmbient, lightLevel, type LightProbe } from '../ai/light-level.ts';
 import { InterruptFlag, PackageFlag, type PackageRecord } from '../ai/package-records.ts';
 import {
   parseNpcCombat,
@@ -102,6 +107,9 @@ export interface ActorSensesOptions {
 
 /** What detection weighs of an actor that is read now and then (its values, gear, race). */
 interface Profile {
+  /** Its Sneak skill as detection counts it (the player's: detectionSkill). */
+  readonly skill: number;
+  /** ... as a target, with its perks (Mod Detection Sneak Skill). */
   readonly sneak: number;
   readonly blindness: number;
   readonly nightEye: boolean;
@@ -111,12 +119,18 @@ interface Profile {
   readonly size: number;
   readonly teammate: boolean;
   readonly overrides: OverridePackageLists | undefined;
-  /** As an observer, its perks' factors on what it sees and hears (Mod Detection Light, Movement). */
+  /**
+   * As a target, its perks' factors on the light on it and on how its moving shows (Mod
+   * Detection Light, Movement: the engine asks the target's perks), and whether its running
+   * does not count (Ignore Running During Detection; nor its moving while it sneaks).
+   */
   readonly lightMult: number;
   readonly movementMult: number;
+  readonly ignoreRunning: boolean;
 }
 
 const DEFAULT_PROFILE: Profile = {
+  skill: 15,
   sneak: 15,
   blindness: 0,
   nightEye: false,
@@ -128,6 +142,7 @@ const DEFAULT_PROFILE: Profile = {
   overrides: undefined,
   lightMult: 1,
   movementMult: 1,
+  ignoreRunning: false,
 };
 
 /** An actor as the senses see it now. */
@@ -137,6 +152,8 @@ interface Body {
   readonly heading: number;
   readonly eye: Vec3;
   readonly chest: Vec3;
+  /** Its height as it stands, sits or lies (units): where lines of sight aim at it. */
+  readonly height: number;
   readonly sleeping: boolean;
   readonly motion: ActorMotion | undefined;
 }
@@ -160,8 +177,6 @@ const CHEST = { standing: 0.6, sitting: 0.42, lying: 0.15 } as const;
 const SUN_RAY = 8192;
 /** A sight ray counts as reaching what it aimed at within this of it (units). */
 const RAY_SLACK = 16;
-/** A sight ray passes at most this many of the observer's own bodies. */
-const RAY_STEPS = 4;
 /** The camera's frame is about this wide against its height (OnGainLOS for the player). */
 const SCREEN_ASPECT = 16 / 9;
 /** A camera that does not say its field of view sees this far either side (radians). */
@@ -170,6 +185,17 @@ const SCREEN_HALF_WIDTH = (50 * Math.PI) / 180;
 const OBJECT_LIFT = 16;
 /** A fight is over (for spectators) once its last blow is this old with none since (seconds). */
 const FIGHT_SECONDS = 1;
+/** The level of a target beyond detection's reach (the engine's). */
+const OUT_OF_REACH = -1000;
+/** A projectile seen passing is an event of this loudness (the engine's). */
+const PROJECTILE_LOUDNESS = 50;
+/**
+ * Lines of sight aim at these shares of a target's height (the engine's): its head; an
+ * important target's middle, head and legs, in that order. A sneaking target is this much as tall.
+ */
+const LOS_POINTS = [0.85] as const;
+const LOS_POINTS_IMPORTANT = [0.5, 0.85, 0.15] as const;
+const SNEAKING_HEIGHT = 0.57;
 
 const distance = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
 
@@ -180,12 +206,20 @@ export class ActorSenses implements ScriptSenses {
   /** Who knows of whom (the API: src/ai/detection-states.ts). */
   readonly detections: Detections;
   /**
-   * Whether an actor is in combat (its Sneak skill does not count while sneaking), and whether
-   * an observer is hostile to a target (it searches for one it lost): set by the combat AI
-   * (src/shell/actor-combat-ai.ts).
+   * Whether an actor is in combat (it perceives with fSneakAlertMod; it does not react to what
+   * it notices), its combat target (it notices others less: fSneakCombatMod and
+   * fDetectionCombatNonTargetDistanceMult; it looks harder at its target: three points), and
+   * whether an observer is hostile to a target (it searches for one it lost): set by the
+   * combat AI (src/shell/actor-combat-ai.ts).
    */
   inCombat: (actor: number) => boolean = () => false;
+  combatTarget: (actor: number) => number | undefined = () => undefined;
   hostile: (observer: number, target: number) => boolean = () => false;
+  /**
+   * Told of each detection test of a target and each event of it an observer noticed (level 0
+   * at the event's place): the combat groups keep their targets by it (src/ai/combat-groups.ts).
+   */
+  tested: ((observer: number, target: number, report: DetectionReport) => void) | undefined;
   #world: SensesWorld | undefined;
   #clock = 0;
   readonly #due = new Map<number, number>();
@@ -193,7 +227,7 @@ export class ActorSenses implements ScriptSenses {
   readonly #tested = new Map<string, number>();
   readonly #profiles = new Map<number, { profile: Profile; read: number }>();
   readonly #profiling = new Set<number>();
-  readonly #lights = new Map<number, { level: number; at: number }>();
+  readonly #lights = new Map<number, { level: number; ambient: number; at: number }>();
   readonly #sights = new Map<string, { clear: boolean; at: number }>();
   readonly #actions = new Map<number, { loudness: number; until: number }>();
   /** The LOS of the pairs scripts watch, as last told. */
@@ -317,6 +351,8 @@ export class ActorSenses implements ScriptSenses {
     const flying = [...(this.#options.projectiles?.() ?? [])];
     for (const body of bodies.values()) {
       if (body.reference === PLAYER_REF) continue;
+      // Its AI disabled (EnableAI false), it notices nothing (it is still seen).
+      if (!this.#options.movers.runsAi(body.reference)) continue;
       const due = this.#due.get(body.reference);
       if (due !== undefined && due > now) continue;
       if (due !== undefined && tests >= allowed) continue;
@@ -336,7 +372,7 @@ export class ActorSenses implements ScriptSenses {
         this.#test(runtime, body, target);
         tests++;
       }
-      this.#projectilesSeen(runtime, body, bodies, flying);
+      this.#projectilesSeen(body, bodies, flying);
       this.#lookForTheDead(body, now);
     }
     this.detections.tick(now);
@@ -386,6 +422,7 @@ export class ActorSenses implements ScriptSenses {
         heading: player.yaw,
         eye: player.eye,
         chest: [feet[0], feet[1], feet[2] + height * CHEST.standing],
+        height,
         sleeping: false,
         motion: world.playerMotion?.(),
       });
@@ -406,6 +443,7 @@ export class ActorSenses implements ScriptSenses {
         heading: staged.heading,
         eye: [x, y, z + height * EYES[posture]],
         chest: [x, y, z + height * CHEST[posture]],
+        height: (height * EYES[posture]) / EYES.standing,
         sleeping: posture === 'lying',
         motion: movers.motion(reference),
       });
@@ -416,67 +454,95 @@ export class ActorSenses implements ScriptSenses {
   /** One observer tests one target: its state moves (detections.observe). */
   #test(runtime: ScriptRuntime, observer: Body, target: Body): DetectionLevel | undefined {
     const result = this.#level(runtime, observer, target);
-    this.detections.observe(
-      observer.reference,
-      target.reference,
-      result?.inReach === true ? result.level : undefined,
-      target.feet,
-      this.#clock,
-    );
+    const level = result?.inReach === true ? result.level : undefined;
+    this.detections.observe(observer.reference, target.reference, level, target.feet, this.#clock);
     this.#tested.set(`${String(observer.reference)}:${String(target.reference)}`, this.#clock);
+    this.tested?.(observer.reference, target.reference, {
+      level: level ?? OUT_OF_REACH,
+      lineOfSight: result?.lineOfSight === true,
+      at: target.feet,
+    });
     return result;
   }
 
-  /** The detection formula for a pair (undefined: beyond its reach). */
+  /**
+   * The detection formula for a pair (undefined: beyond its reach), with the inputs as the
+   * engine gathers them (observed in the original): the reach (× fDetectionCombatNonTargetDistanceMult for
+   * an observer in combat and a target other than its combat target, not the player); within
+   * the reach of its line of sight off its facing (sightReach), its lines of sight
+   * (#sight); seen within its view cone; the target's light, its moving and running (its perks:
+   * Ignore Running During Detection), its armour, noise, size, invisibility, its skill when it
+   * sneaks; the observer's skill, sleep, blindness, its combat and combat target.
+   */
   #level(
     runtime: ScriptRuntime,
     observer: Body,
     target: Body,
-    /** The target seen elsewhere (its projectile): there, in that light, in sight. */
-    seenAt?: { readonly at: Vec3; readonly light: number },
-  ): DetectionLevel | undefined {
+  ): (DetectionLevel & { readonly lineOfSight: boolean }) | undefined {
     const settings = this.#settings;
     const exterior = !this.#options.interior;
-    const reach = detectionReach(
-      settings,
-      exterior,
-      this.#options.flying?.(target.reference) === true,
-    );
-    const apart = distance(observer.eye, seenAt?.at ?? target.chest);
+    const flying = this.#options.flying;
+    const inCombat = this.inCombat(observer.reference);
+    const combatTarget = this.combatTarget(observer.reference);
+    const otherThanTarget = inCombat && combatTarget !== target.reference;
+    const reach =
+      detectionReach(
+        settings,
+        exterior,
+        flying?.(target.reference) === true || flying?.(observer.reference) === true,
+      ) *
+      (otherThanTarget && target.reference !== PLAYER_REF
+        ? settings.combatNonTargetDistanceMult
+        : 1);
+    const apart = distance(observer.feet, target.feet);
     if (apart >= reach) return undefined;
-    const lineOfSight = seenAt !== undefined || this.#sight(observer, target);
     const off = angleOff(observer.heading, observer.feet, target.feet);
-    const seen =
-      seenAt !== undefined || (lineOfSight && apart < sightReach(settings, off, reach, exterior));
+    const lineOfSight =
+      apart < sightReach(settings, off, reach, exterior) &&
+      this.#sight(
+        observer,
+        target,
+        target.reference === PLAYER_REF ||
+          observer.reference === PLAYER_REF ||
+          combatTarget === target.reference,
+      );
+    const seen = lineOfSight && inViewCone(settings, off);
     const watcher = this.#profile(runtime, observer.reference);
     const watched = this.#profile(runtime, target.reference);
     const motion = target.motion;
+    const sneaking = motion?.sneaking === true;
+    const running =
+      !watched.ignoreRunning && (motion?.running === true || motion?.sprinting === true);
+    const moving = motion?.moving === true && !(watched.ignoreRunning && sneaking);
     const action = this.#actions.get(target.reference);
     const observerInput: Observer = {
-      skill: watcher.sneak,
+      skill: watcher.skill,
       sleeping: observer.sleeping,
-      alerted: this.detections.alerted(observer.reference) !== undefined,
-      combatTarget: this.detections.inCombat(observer.reference, target.reference),
+      inCombat,
+      otherThanTarget: combatTarget !== undefined && combatTarget !== target.reference,
       blindness: watcher.blindness,
-      nightEye: watcher.nightEye,
-      lightMult: watcher.lightMult,
-      movementMult: watcher.movementMult,
     };
+    const light = detectionLight(settings, this.#lightOn(target), {
+      nightEye: watcher.nightEye,
+      exterior,
+      ambient: this.#ambient(target),
+    });
     const targetInput: Target = {
-      moving: motion?.moving === true,
-      running: motion?.running === true || motion?.sprinting === true,
-      sneaking: motion?.sneaking === true,
-      inCombat: this.inCombat(target.reference),
-      swimming: motion?.swimming === true,
+      moving,
+      running,
+      sneaking,
       skill: watched.sneak,
       armourWeight: watched.armourWeight,
       noiseMult: watched.noiseMult,
       actionSound: action && action.until > this.#clock ? action.loudness : 0,
-      light: seenAt?.light ?? this.#lightOn(target),
+      light: Math.round(light * watched.lightMult),
+      motion:
+        (1 + (running ? settings.lightRunMult : 0) + (moving ? settings.lightMoveMult : 0)) *
+        watched.movementMult,
       size: watched.size,
       invisible: watched.invisible,
     };
-    return detectionLevel(settings, {
+    const result = detectionLevel(settings, {
       observer: observerInput,
       target: targetInput,
       distance: apart,
@@ -485,17 +551,18 @@ export class ActorSenses implements ScriptSenses {
       lineOfSight,
       seen,
     });
+    // A level of 0 is none (the engine keeps 0 for an event's place).
+    return { ...result, level: result.level === 0 ? -1 : result.level, lineOfSight };
   }
 
   /**
-   * The projectiles of the others an observer sees pass (observed in the original): one of
-   * a target's within fDetectProjectileDistanceNPC of the observer (the player's:
-   * …Player), in its view cone (fDetectionViewCone) and its line of sight, is a sight of the
-   * target where the projectile is, in the light of a detection event (iDetectEventLightLevel*):
-   * noticed, the observer is alerted there.
+   * The projectiles of a target an observer sees pass (observed in the original): the
+   * player's within fDetectProjectileDistancePlayer of the observer, an actor's in combat within
+   * fDetectProjectileDistanceNPC; in its line of sight and its view cone, the projectile is an
+   * event of loudness 50 in the light of detection events (eventLevel): above 0 the observer
+   * knows the target is where the projectile is.
    */
   #projectilesSeen(
-    runtime: ScriptRuntime,
     observer: Body,
     bodies: Map<number, Body>,
     flying: readonly { readonly position: Vec3; readonly source: number | undefined }[],
@@ -505,44 +572,68 @@ export class ActorSenses implements ScriptSenses {
     for (const shot of flying) {
       const source = shot.source;
       if (source === undefined || source === observer.reference) continue;
-      const target = bodies.get(source);
-      if (!target) continue;
+      if (!bodies.has(source)) continue;
+      if (source !== PLAYER_REF && !this.inCombat(source)) continue;
       const near =
         source === PLAYER_REF ? settings.projectileDistancePlayer : settings.projectileDistanceNpc;
       const apart = distance(observer.eye, shot.position);
-      if (apart > near || observer.sleeping) continue;
+      if (apart > near) continue;
       const off = angleOff(observer.heading, observer.feet, shot.position);
-      if ((off * 180) / Math.PI >= settings.viewCone / 2) continue;
+      if (!inViewCone(settings, off)) continue;
       if (this.#ray(observer.eye, shot.position, observer.reference, source) === false) continue;
-      const result = this.#level(runtime, observer, target, {
-        at: shot.position,
-        light: exterior ? settings.eventLightExterior : settings.eventLightInterior,
-      });
-      if (result?.inReach) {
-        this.detections.hear(observer.reference, shot.position, source, result.level, this.#clock);
-      }
+      const level = eventLevel(
+        settings,
+        { loudness: PROJECTILE_LOUDNESS },
+        { sleeping: observer.sleeping },
+        { distance: apart, exterior, lineOfSight: true, seen: true },
+      );
+      this.#noticed(observer.reference, shot.position, source, level);
     }
   }
 
-  /** Whether nothing blocks sight between an observer's eyes and a target (head or chest). */
-  #sight(observer: Body, target: Body): boolean {
-    const key = `${String(observer.reference)}:${String(target.reference)}`;
-    const kept = this.#sights.get(key);
-    if (kept && this.#clock - kept.at < SIGHT_SECONDS) return kept.clear;
-    const clear =
-      this.#ray(observer.eye, target.eye, observer.reference, target.reference) ??
-      kept?.clear ??
-      false;
-    const result =
-      clear ||
-      (this.#ray(observer.eye, target.chest, observer.reference, target.reference) ?? false);
-    this.#sights.set(key, { clear: result, at: this.#clock });
-    return result;
+  /**
+   * An observer noticed a target's event (a noise, a projectile) at a place at a level: above 0
+   * it is alerted there and knows the target is there (its detection level 0 at the place:
+   * told to the combat groups).
+   */
+  #noticed(observer: number, at: Vec3, owner: number | undefined, level: number): boolean {
+    if (!this.detections.hear(observer, at, owner, level, this.#clock)) return false;
+    if (owner !== undefined && owner !== observer) {
+      this.tested?.(observer, owner, { level: 0, lineOfSight: false, at, event: at });
+    }
+    return true;
   }
 
   /**
-   * Whether a ray on the line-of-sight layer gets from one point to another: past the
-   * observer's own bodies, to the target's (undefined: the physics cannot be asked now).
+   * Whether an observer has a line of sight to a target (observed in the original): from
+   * its eyes to the target's head (0.85 of its height); to an important target (the player, the
+   * observer's combat target, or any for the player) to its middle, head or legs (0.5, 0.85,
+   * 0.15 of its height), each × 0.57 while it sneaks, the first clear one counting.
+   */
+  #sight(observer: Body, target: Body, important: boolean): boolean {
+    const key = `${String(observer.reference)}:${String(target.reference)}`;
+    const kept = this.#sights.get(key);
+    if (kept && this.#clock - kept.at < SIGHT_SECONDS) return kept.clear;
+    const crouch = target.motion?.sneaking === true ? SNEAKING_HEIGHT : 1;
+    const shares = important ? LOS_POINTS_IMPORTANT : LOS_POINTS;
+    let result: boolean | undefined;
+    for (const share of shares) {
+      const [x, y, z] = target.feet;
+      const point: Vec3 = [x, y, z + target.height * crouch * share];
+      const clear = this.#ray(observer.eye, point, observer.reference, target.reference);
+      if (clear === undefined) continue;
+      result = clear;
+      if (clear) break;
+    }
+    const clear = result ?? kept?.clear ?? false;
+    this.#sights.set(key, { clear, at: this.#clock });
+    return clear;
+  }
+
+  /**
+   * Whether a ray on the line-of-sight layer gets from one point to another: through the
+   * observer's own bodies (its eyes are inside its head's), to the target's (undefined: the
+   * physics cannot be asked now).
    */
   #ray(from: Vec3, to: Vec3, own: number, target: number): boolean | undefined {
     const physics = this.#world?.physics;
@@ -554,23 +645,9 @@ export class ActorSenses implements ScriptSenses {
       (to[1] - from[1]) / length,
       (to[2] - from[2]) / length,
     ];
-    let origin = from;
-    let left = length;
-    for (let step = 0; step < RAY_STEPS; step++) {
-      const hit = physics.raycast(origin, direction, left, Layer.lineOfSight);
-      if (!hit || hit.distance >= left - RAY_SLACK) return true;
-      if (hit.owner?.reference === target && hit.owner.kind !== 'landscape') return true;
-      if (hit.owner?.kind !== 'actor' || hit.owner.reference !== own) return false;
-      // Its own body (its head): on past it.
-      const past = hit.distance + 1;
-      origin = [
-        origin[0] + direction[0] * past,
-        origin[1] + direction[1] * past,
-        origin[2] + direction[2] * past,
-      ];
-      left -= past;
-    }
-    return false;
+    const hit = physics.raycast(from, direction, length, Layer.lineOfSight, undefined, own);
+    if (!hit || hit.distance >= length - RAY_SLACK) return true;
+    return hit.owner?.reference === target && hit.owner.kind !== 'landscape';
   }
 
   /** The light level on a body (measured every LIGHT_SECONDS). */
@@ -579,6 +656,7 @@ export class ActorSenses implements ScriptSenses {
     if (kept && this.#clock - kept.at < LIGHT_SECONDS) return kept.level;
     const probe = this.#options.light?.(body.chest);
     let level = 0;
+    let ambient = 0;
     if (probe) {
       // Inside the cell's directional light lights everything; outside only where nothing
       // stands between the sun and the actor.
@@ -596,10 +674,17 @@ export class ActorSenses implements ScriptSenses {
           -1,
         ) ??
           true);
-      level = lightLevel(probe, body.chest, sunlit, this.#settings);
+      level = lightLevel(probe, body.chest, sunlit);
+      ambient = brightestAmbient(probe);
     }
-    this.#lights.set(body.reference, { level, at: this.#clock });
+    this.#lights.set(body.reference, { level, ambient, at: this.#clock });
     return level;
+  }
+
+  /** The brightest channel of the ambient light where a body is (0..1: the interior's mod). */
+  #ambient(body: Body): number {
+    this.#lightOn(body);
+    return this.#lights.get(body.reference)?.ambient ?? 0;
   }
 
   // --- Profiles ---------------------------------------------------------------------------
@@ -645,15 +730,21 @@ export class ActorSenses implements ScriptSenses {
     const staged = this.#options.get(reference);
     // The playable races are all of medium size (RACE DATA).
     const size = staged ? await this.#raceSize(runtime, staged.placed.look.race) : RaceSize.medium;
+    // Its Sneak as detection counts it (the player's: fPlayerDetectionSneakMult × skill +
+    // Base), and as a target its perks on it (Mod Detection Sneak Skill: Stealth), as the
+    // engine applies them (observed in the original).
+    const skill = detectionSkill(this.#settings, sneak.current, reference === PLAYER_REF);
     return {
-      // Its Sneak as its perks make it while it sneaks (Mod Detection Sneak Skill: Stealth adds
-      // to it, Fortify Sneak through the skill boost perks). TODO(M13): whether the engine
-      // adds the Stealth perks' value to the skill or to the detection level.
-      sneak: await perks.apply(EntryPoint.modDetectionSneakSkill, reference, sneak.current),
-      // As an observer, how it sees and hears others (Mod Detection Light / Movement: the
-      // opening's Imperial soldiers). Entries with conditions on the one watched would need it.
+      skill,
+      sneak: await perks.apply(EntryPoint.modDetectionSneakSkill, reference, skill),
+      // As a target, its perks on the light on it and on how its moving shows (Mod Detection
+      // Light / Movement: the engine asks the target's perks), and Ignore Running During
+      // Detection. TODO(M13): conditions on the observer (the perks' second tab) are not
+      // given here: one profile serves all observers.
       lightMult: await perks.apply(EntryPoint.modDetectionLight, reference, 1),
       movementMult: await perks.apply(EntryPoint.modDetectionMovement, reference, 1),
+      ignoreRunning:
+        (await perks.apply(EntryPoint.ignoreRunningDuringDetection, reference, 0)) !== 0,
       blindness: blindness.current,
       nightEye: nightEye.current > 0,
       invisible: invisibility.current > 0,
@@ -734,9 +825,21 @@ export class ActorSenses implements ScriptSenses {
 
   // --- The scripts' questions (ScriptSenses) ------------------------------------------
 
+  /**
+   * GetLightLevel (observed in the original): the light on it as detection weighs it
+   * (detectionLight, without night eye) × fSneakLightMult, outside × fSneakLightExteriorMult.
+   */
   lightLevel(actor: number): number {
     const body = this.#bodies().get(actor);
-    return body ? this.#lightOn(body) : 0;
+    if (!body) return 0;
+    const settings = this.#settings;
+    const exterior = !this.#options.interior;
+    const light = detectionLight(settings, this.#lightOn(body), {
+      nightEye: false,
+      exterior,
+      ambient: this.#ambient(body),
+    });
+    return light * (exterior ? settings.lightExteriorMult : settings.lightMult);
   }
 
   /** Whether an observer detects a target now (a test made anew unless one is fresh). */
@@ -751,6 +854,20 @@ export class ActorSenses implements ScriptSenses {
       if (watcher && watched) this.#test(runtime, watcher, watched);
     }
     return this.detections.detects(observer, target);
+  }
+
+  /** Whether an actor sneaks now (the player: their sneaking; another: its movement). */
+  sneaking(actor: number): boolean {
+    if (actor === PLAYER_REF) return this.#world?.player?.sneaking === true;
+    return this.#options.movers.motion(actor)?.sneaking === true;
+  }
+
+  /** Whether nothing blocks an actor's eyes from a place (combat's lost check). */
+  sees(actor: number, at: Vec3): boolean {
+    const body = this.#bodies().get(actor);
+    if (!body) return false;
+    const point: Vec3 = [at[0], at[1], at[2] + body.height * LOS_POINTS_IMPORTANT[0]];
+    return this.#ray(body.eye, point, actor, -1) ?? false;
   }
 
   /**
@@ -901,39 +1018,32 @@ export class ActorSenses implements ScriptSenses {
 
   /**
    * A detection event: a noise at a place, of an owner (none: of nothing), at a sound level
-   * (0 loud, 1 normal, 2 silent, 3 very loud). The actors of the high process within its reach
-   * test it (src/ai/detection.ts, eventLevel); those that hear it are alerted there. Returns
-   * those that heard it.
+   * (0 loud, 1 normal, 2 silent, 3 very loud). The actors of the high process within its
+   * distance (eventDistance) test it (src/ai/detection.ts, eventLevel: a line of sight to the
+   * place, seen within the view cone); those that hear it are alerted there, and know its owner
+   * is there. Returns those that heard it.
    */
   noise(at: Vec3, owner: number | undefined, soundLevel: number): number[] {
     const runtime = this.#options.session.scriptsReady;
     if (!runtime) return [];
     const heard: number[] = [];
-    const sneaking =
-      owner === PLAYER_REF
-        ? this.#world?.player?.sneaking === true
-        : owner !== undefined && this.#sneaking.has(owner);
+    const settings = this.#settings;
+    const exterior = !this.#options.interior;
+    const loud = loudness(settings, soundLevel);
+    const reach = eventDistance(settings, loud, owner === PLAYER_REF);
     for (const body of this.#bodies().values()) {
       if (body.reference === PLAYER_REF || body.reference === owner) continue;
-      const profile = this.#profile(runtime, body.reference);
+      const apart = distance(body.feet, at);
+      if (apart >= reach) continue;
       const clear = this.#ray(body.eye, at, body.reference, owner ?? -1) ?? true;
-      const { level } = eventLevel(
-        this.#settings,
-        { soundLevel, byPlayer: owner === PLAYER_REF, sneaking },
-        {
-          skill: profile.sneak,
-          sleeping: body.sleeping,
-          alerted: false,
-          combatTarget: false,
-          blindness: profile.blindness,
-          nightEye: profile.nightEye,
-        },
-        distance(body.eye, at),
-        clear,
+      const off = angleOff(body.heading, body.feet, at);
+      const level = eventLevel(
+        settings,
+        { loudness: loud },
+        { sleeping: body.sleeping },
+        { distance: apart, exterior, lineOfSight: clear, seen: clear && inViewCone(settings, off) },
       );
-      if (this.detections.hear(body.reference, at, owner, level, this.#clock)) {
-        heard.push(body.reference);
-      }
+      if (this.#noticed(body.reference, at, owner, level)) heard.push(body.reference);
     }
     return heard;
   }

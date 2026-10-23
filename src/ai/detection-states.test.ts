@@ -49,23 +49,24 @@ describe('detection states', () => {
     expect(detections.observe(BANDIT, PLAYER, 1, there, 2)).toBe('detected');
   });
 
-  it('detect down to iAICombatMinDetection in combat with the target', () => {
+  it('detect above 0 only, in combat too (the engine never reads iAICombatMinDetection)', () => {
     const { detections } = book();
-    detections.inCombat = (observer, target) => observer === BANDIT && target === PLAYER;
-    expect(detections.observe(BANDIT, PLAYER, -40, here, 0)).toBe('detected');
+    expect(detections.observe(BANDIT, PLAYER, 1, here, 0)).toBe('detected');
     expect(detections.observe(GUARD, PLAYER, -40, here, 0)).toBe('unseen');
+    expect(detections.observe(GUARD, PLAYER, 0, here, 0)).toBe('noticed');
   });
 
   it('alert an observer that hears a noise, searching for its owner there', () => {
     const { detections, events } = book();
-    expect(detections.hear(GUARD, there, PLAYER, -30, 0)).toBe(false);
+    expect(detections.hear(GUARD, there, PLAYER, -5, 0)).toBe(false);
+    expect(detections.hear(GUARD, there, PLAYER, 0, 0)).toBe(false);
     expect(detections.alerted(GUARD)).toBeUndefined();
-    expect(detections.hear(GUARD, there, PLAYER, -5, 1)).toBe(true);
+    expect(detections.hear(GUARD, there, PLAYER, 3, 1)).toBe(true);
     expect(detections.alerted(GUARD)).toEqual(there);
     expect(detections.state(GUARD, PLAYER)).toBe('searching');
     expect(events.map((event) => event.kind)).toEqual(['searching', 'heard']);
     // A noise of no one alerts it all the same.
-    expect(detections.hear(BANDIT, here, undefined, 0, 1)).toBe(true);
+    expect(detections.hear(BANDIT, here, undefined, 1, 1)).toBe(true);
     expect(detections.alerted(BANDIT)).toEqual(here);
     detections.tick(40);
     expect(detections.alerted(GUARD)).toBeUndefined();

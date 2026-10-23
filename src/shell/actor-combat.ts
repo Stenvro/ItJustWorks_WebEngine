@@ -176,6 +176,10 @@ const BOW_AIM_DISTANCE = 2048;
 const PLAYER_AIM_DISTANCE = 4000;
 /** Seconds an attack waits for its graph to answer (see ActorCombat #unanswered). */
 const ATTACK_ANSWER = 1.5;
+/** Seconds a draw or sheathe waits for its graph's end (see ActorCombat #unansweredWeapon). */
+const WEAPON_ANSWER = 4;
+/** An attack event its graph refused this often at once and never took is not chosen again. */
+const DEAD_REFUSALS = 8;
 /** Fighters this far from the player are left alone (the high process's reach). */
 const FIGHT_REACH = 4096;
 /** How often a fighter's perks' graph variables are read again (seconds). */
@@ -249,6 +253,14 @@ interface Fighter {
   /** Attack events its graph took (past their wind-up) and those it never did (#unanswered). */
   readonly liveAttacks: Set<string>;
   readonly deadAttacks: Set<string>;
+  /**
+   * The draw or sheathe its graph was asked for and when, while it is under way
+   * (#unansweredWeapon).
+   */
+  weaponAsked: { readonly event: string; readonly since: number } | undefined;
+  /** How often its graph refused each attack event at once, and all refusals (#unanswered). */
+  readonly refusals: Map<string, number>;
+  refusedAttacks: number;
   /** A package's UseWeapon practice it attacks in (src/shell/actor-practice.ts), if any. */
   practice: Practice | undefined;
   /** Its arms aim a drawn bow (#aimBow). */
@@ -710,6 +722,7 @@ export class ActorCombat implements CombatBridge {
       return false;
     }
     fighter.state.weapon = WeaponState.drawing;
+    fighter.weaponAsked = { event: event.toLowerCase(), since: this.#clock };
     this.#setVariable(fighter, 'IsEquipping', 1);
     return true;
   }
@@ -741,6 +754,7 @@ export class ActorCombat implements CombatBridge {
       return false;
     }
     fighter.state.weapon = WeaponState.sheathing;
+    fighter.weaponAsked = { event: event.toLowerCase(), since: this.#clock };
     this.#setVariable(fighter, 'IsUnequipping', 1);
     return true;
   }
@@ -926,6 +940,7 @@ export class ActorCombat implements CombatBridge {
       }
       this.#follow(fighter, staged.placed, runtime);
       this.#unanswered(fighter);
+      this.#unansweredWeapon(fighter);
     }
     const player = this.#fighters.get(PLAYER_REF);
     const avatar = this.#avatar;
@@ -2499,8 +2514,12 @@ export class ActorCombat implements CombatBridge {
     // The shot is heard; the player's commented on (ShootBow).
     this.#options.senses?.()?.action(fighter.reference, gear.rightRecord?.soundLevel ?? 1);
     if (fighter.player) void this.#options.talk?.()?.playerAction('FIWE');
-    // An arrow used (the equip system's count; the player's quiver empties).
-    void runtime.removeItem(fighter.reference, runtime.formHandle(ammo), 1, true, undefined);
+    // An arrow used: the player's quiver empties (the equip system's count); an NPC with one
+    // never runs out (UESP "Skyrim:Arrows": NPCs have unlimited arrows as long as they carry
+    // one), so archers shoot on through a fight.
+    if (fighter.player) {
+      void runtime.removeItem(fighter.reference, runtime.formHandle(ammo), 1, true, undefined);
+    }
     fighter.state.drawnFor = 0;
   }
 
@@ -2966,18 +2985,47 @@ export class ActorCombat implements CombatBridge {
   }
 
   /**
-   * An attack its graph did not take (an event it names but no state of it answers: the canine
-   * graphs' attackStart_AttackRight1, a dog's): still in its wind-up after ATTACK_ANSWER seconds,
-   * the attack ends; an event its graph never took is not chosen again, so that it fights on.
+   * An attack its graph did not take. Refused at once (no state its graph is in answers the
+   * event then: an attack asked for while the last one's end still blends out), the attack
+   * ends at the next frame, and the AI asks again at its next decision (the combat tree's
+   * attack idle), as the engine's action fails when the graph does not take its event. Still
+   * in its wind-up after ATTACK_ANSWER seconds (an event its graph names but no state of it
+   * answers: the canine graphs' attackStart_AttackRight1, a dog's), the attack ends; an event
+   * its graph never took is not chosen again, so that it fights on.
    */
   #unanswered(fighter: Fighter): void {
     const since = fighter.attackSince;
     const current = fighter.state.current;
     if (since === undefined) return;
     const event = current?.event.toLowerCase();
-    if (!current || event === undefined || fighter.state.attack !== AttackState.draw) {
+    // Its wind-up: a swing's draw, a bow's draw, a bash.
+    const attack = fighter.state.attack;
+    const windUp =
+      attack === AttackState.draw || attack === AttackState.bowDraw || attack === AttackState.bash;
+    if (!current || event === undefined || !windUp) {
       if (event !== undefined) fighter.liveAttacks.add(event);
       fighter.attackSince = undefined;
+      return;
+    }
+    const answers = this.#graphs(fighter).map((graph) => graph.answered(event));
+    if (answers.includes(true)) {
+      // Taken: it plays on, however long its wind-up.
+      fighter.liveAttacks.add(event);
+      fighter.attackSince = undefined;
+      return;
+    }
+    if (answers.includes(false)) {
+      fighter.attackSince = undefined;
+      fighter.refusedAttacks++;
+      // One its graph refuses again and again and never took is not chosen again either.
+      const refusals = (fighter.refusals.get(event) ?? 0) + 1;
+      fighter.refusals.set(event, refusals);
+      if (!fighter.liveAttacks.has(event) && refusals >= DEAD_REFUSALS) {
+        fighter.deadAttacks.add(event);
+      }
+      graphEvent(fighter.state, 'attackStop', 'AttackStopHandler');
+      this.#setVariable(fighter, 'IsAttacking', 0);
+      this.#setVariable(fighter, 'IsBashing', 0);
       return;
     }
     if (this.#clock - since < ATTACK_ANSWER) return;
@@ -2986,6 +3034,31 @@ export class ActorCombat implements CombatBridge {
     graphEvent(fighter.state, 'attackStop', 'AttackStopHandler');
     this.#setVariable(fighter, 'IsAttacking', 0);
     this.#setVariable(fighter, 'IsBashing', 0);
+  }
+
+  /**
+   * A draw or sheathe its graph did not take (refused at once: no state it is in answers the
+   * event), or that never got to its end (WEAPON_ANSWER seconds without the graph's weaponDraw
+   * or weaponSheathe: the transition was cut short): the weapon is where it was before (refused)
+   * or away (cut short), so that the AI asks again, as the engine's weapon state follows its
+   * graph. Without this a fighter could wait for good in drawing or sheathing.
+   */
+  #unansweredWeapon(fighter: Fighter): void {
+    const asked = fighter.weaponAsked;
+    if (!asked) return;
+    const state = fighter.state;
+    const drawing = state.weapon === WeaponState.drawing;
+    if (!drawing && state.weapon !== WeaponState.sheathing) {
+      fighter.weaponAsked = undefined;
+      return;
+    }
+    const answers = this.#graphs(fighter).map((graph) => graph.answered(asked.event));
+    const refused = answers.includes(false) && !answers.includes(true);
+    if (!refused && this.#clock - asked.since < WEAPON_ANSWER) return;
+    fighter.weaponAsked = undefined;
+    state.weapon = refused && !drawing ? WeaponState.drawn : WeaponState.sheathed;
+    this.#setVariable(fighter, 'IsEquipping', 0);
+    this.#setVariable(fighter, 'IsUnequipping', 0);
   }
 
   /**
@@ -3694,6 +3767,9 @@ function newFighter(reference: number, player: boolean): Fighter {
     attackSince: undefined,
     liveAttacks: new Set(),
     deadAttacks: new Set(),
+    refusals: new Map(),
+    refusedAttacks: 0,
+    weaponAsked: undefined,
     practice: undefined,
     bowAimed: false,
     lookedAt: undefined,

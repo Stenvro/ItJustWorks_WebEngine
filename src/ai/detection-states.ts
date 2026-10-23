@@ -3,14 +3,18 @@
 // what the observer hears. The stealth eye's four looks (UESP "Skyrim:Sneak": shut, slightly
 // open, half open, open) are the four states: unseen (at or below fSneakNoticeMin), noticed
 // (above it: it knows something is near), searching (it noticed or detected the target and lost
-// it, or heard it: it looks for it for fDetectionStateExpireTime), detected (above 0; in combat
-// with the target above iAICombatMinDetection). What changes is told to listeners: combat
+// it, or heard it: it looks for it for fDetectionStateExpireTime), detected (above 0, as the
+// engine has it; in combat too: what a fight keeps of a target is its combat group's,
+// src/ai/combat-groups.ts). What changes is told to listeners: combat
 // (docs/m10-plan.md 5.2) and crime (M11) build on it, as do the actors' reactions (searching,
 // the dead, alarms). Platform-independent.
 
 import { detectsAt, noticesAt, type DetectionSettings } from './detection.ts';
 
 type Vec3 = readonly [number, number, number];
+
+/** A place kept: a copy (the positions handed in are the actors' own, and they move on). */
+const copy = (at: Vec3): Vec3 => [at[0], at[1], at[2]];
 
 export type DetectionState = 'unseen' | 'noticed' | 'searching' | 'detected';
 
@@ -99,8 +103,6 @@ export class Detections {
   readonly #alarmed = new Map<number, number>();
   /** Actors attacked lately: by whom, until when. */
   readonly #attacked = new Map<number, { attacker: number; until: number }>();
-  /** In combat with a target (5.2): the observer detects it down to iAICombatMinDetection. */
-  inCombat: (observer: number, target: number) => boolean = () => false;
 
   constructor(settings: () => DetectionSettings) {
     this.#settings = settings;
@@ -145,16 +147,15 @@ export class Detections {
     const known = this.#knowledge(observer, target);
     const before = known.state;
     known.level = level;
-    const combat = this.inCombat(observer, target);
-    if (level !== undefined && detectsAt(settings, level, combat)) {
+    if (level !== undefined && detectsAt(level)) {
       known.state = 'detected';
       known.since = now;
-      known.at = at;
+      known.at = copy(at);
     } else if (level !== undefined && noticesAt(settings, level)) {
       // Noticed: something is near. One it detected and no longer does it searches for.
       known.state = before === 'detected' || before === 'searching' ? 'searching' : 'noticed';
       known.since = now;
-      known.at = at;
+      known.at = copy(at);
     } else if (before !== 'unseen' && now - known.since < settings.stateExpireTime) {
       // Lost: it searches where it last knew the target to be, for a while.
       known.state = 'searching';
@@ -183,21 +184,22 @@ export class Detections {
 
   /**
    * An observer heard a detection event (a noise) at a place, of an owner if any, at a level
-   * (src/ai/detection.ts, eventLevel). Above fSneakNoticeMin it is alerted there for
-   * fDetectionStateExpireTime: it searches for the owner (one it does not detect) there.
+   * (src/ai/detection.ts, eventLevel). Above 0 (the engine's rule: the observer then knows the
+   * owner is there) it is alerted there for fDetectionStateExpireTime: it searches for the owner
+   * (one it does not detect) there.
    * Returns whether it heard it.
    */
   hear(observer: number, at: Vec3, owner: number | undefined, level: number, now: number): boolean {
     const settings = this.#settings();
-    if (!noticesAt(settings, level)) return false;
-    this.#alerted.set(observer, { at, until: now + settings.stateExpireTime });
+    if (!detectsAt(level)) return false;
+    this.#alerted.set(observer, { at: copy(at), until: now + settings.stateExpireTime });
     if (owner !== undefined && owner !== observer) {
       const known = this.#knowledge(observer, owner);
       const before = known.state;
       if (before !== 'detected') {
         known.state = 'searching';
         known.since = now;
-        known.at = at;
+        known.at = copy(at);
         known.level = level;
         this.#told(observer, owner, before, known);
       }
@@ -346,7 +348,7 @@ export class Detections {
       const before = known.state;
       known.state = 'searching';
       known.since = now;
-      known.at = at;
+      known.at = copy(at);
       this.#told(victim, attacker, before, known);
     }
     this.#emit({ kind: 'attacked', victim, attacker });
