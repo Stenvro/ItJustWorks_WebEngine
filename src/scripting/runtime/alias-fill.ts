@@ -30,17 +30,31 @@ const key = (quest: number, alias: number): string => `${String(quest)}:${String
 
 /**
  * Candidates of a search checked at once: their records are read side by side (one by one, a
- * search over every persistent reference waited on thousands of reads in a row).
+ * search over every persistent reference waited on thousands of reads in a row). Once read,
+ * checking one is work on the main thread only (conditions over cached records): a batch is
+ * kept small enough to stay within a slice.
  */
-const SEARCH_BATCH = 256;
+const SEARCH_BATCH = 64;
+
+/**
+ * How long a search works before it lets a frame be drawn (ms). The engine fills aliases off
+ * its main loop (a quest starts over several frames; Papyrus waits on Start); a search over the
+ * loaded area's 2,000 references in one go held a frame up for 60–80 ms as a scene's quests
+ * started (docs/scripting.md, "Quests"). TODO(M13): the engine's own share per frame.
+ */
+const SEARCH_SLICE_MS = 4;
 
 /** The candidates `test` takes, in their order; checked a batch at a time. */
 async function filterInBatches(
+  runtime: ScriptRuntime,
   candidates: readonly number[],
   test: (candidate: number) => Promise<boolean>,
 ): Promise<number[]> {
+  const scheduler = runtime.vm.scheduler;
   const taken: number[] = [];
+  let since = scheduler.now();
   for (let start = 0; start < candidates.length; start += SEARCH_BATCH) {
+    since = await scheduler.giveWay(since, SEARCH_SLICE_MS);
     const batch = candidates.slice(start, start + SEARCH_BATCH);
     const results = await Promise.all(batch.map(test));
     batch.forEach((candidate, i) => {
@@ -257,7 +271,7 @@ export class AliasFiller {
     } else {
       candidates = await this.#persistentCandidates(alias);
     }
-    const eligible = await filterInBatches(candidates, (candidate) =>
+    const eligible = await filterInBatches(runtime, candidates, (candidate) =>
       this.#eligible(alias, candidate, context),
     );
     if (eligible.length === 0) return undefined;
@@ -340,6 +354,7 @@ export class AliasFiller {
     const fresh: number[] = [];
     const cleared: number[] = [];
     const matches = await filterInBatches(
+      runtime,
       runtime.forms.db.formIdsOfType('LCTN'),
       async (location) => {
         if (!(await this.#eligible(alias, location, context))) return false;

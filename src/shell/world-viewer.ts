@@ -259,6 +259,41 @@ const NEIGHBOURHOOD: readonly (readonly [number, number])[] = [
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+type PlacedEntry = LoadedCell['placed'][number];
+
+/**
+ * A cell's placed objects by reference, made once per list (a cell's list is replaced, never
+ * changed in place). Scripts ask for references by the thousand (conditions on every candidate
+ * of a quest alias, a line's speaker, the compass's targets): a search through every loaded
+ * cell's objects for each was most of a quest start's time (docs/rendering.md, "Frame time").
+ */
+const placedIndexes = new WeakMap<readonly PlacedEntry[], ReadonlyMap<number, PlacedEntry>>();
+
+function placedByReference(cell: LoadedCell, reference: number): PlacedEntry | undefined {
+  let index = placedIndexes.get(cell.placed);
+  if (!index) {
+    const made = new Map<number, PlacedEntry>();
+    for (const entry of cell.placed) {
+      if (!made.has(entry.object.reference)) made.set(entry.object.reference, entry);
+    }
+    placedIndexes.set(cell.placed, made);
+    index = made;
+  }
+  return index.get(reference);
+}
+
+/** A cell's markers' references (made once per list, as placedByReference). */
+const markerIndexes = new WeakMap<readonly { readonly reference: number }[], ReadonlySet<number>>();
+
+function hasMarker(markers: readonly { readonly reference: number }[], reference: number): boolean {
+  let index = markerIndexes.get(markers);
+  if (!index) {
+    index = new Set(markers.map((marker) => marker.reference));
+    markerIndexes.set(markers, index);
+  }
+  return index.has(reference);
+}
+
 export class WorldViewer {
   readonly #renderer: Renderer;
   readonly #canvas: HTMLElement;
@@ -552,7 +587,7 @@ export class WorldViewer {
       return found.door;
     this.#doorsFound.delete(reference);
     for (const cell of this.#cells.values()) {
-      const placed = cell.placed.find((entry) => entry.object.reference === reference);
+      const placed = placedByReference(cell, reference);
       if (!placed) continue;
       const door: DoorObject = { object: placed.object, instance: placed.instance };
       this.#doorsFound.set(reference, { cell, door });
@@ -614,9 +649,7 @@ export class WorldViewer {
     loadedReferences: () =>
       [...this.#cells.values()].flatMap((cell) => this.#cellLoadedReferences(cell)),
     loaded: (reference) =>
-      [...this.#cells.values()].some((cell) =>
-        this.#cellLoadedReferences(cell).includes(reference),
-      ),
+      [...this.#cells.values()].some((cell) => this.#cellHasLoaded(cell, reference)),
     created: (reference) => {
       void this.#showCreated(reference);
       void this.#stage?.created(reference, this.#play?.physics);
@@ -639,7 +672,7 @@ export class WorldViewer {
       if (actor) return actor;
       for (const cell of this.#cells.values()) {
         if (!cell.ready) continue;
-        const placed = cell.placed.find((entry) => entry.object.reference === reference);
+        const placed = placedByReference(cell, reference);
         const world = placed?.instance.motion ? placed.instance.world : undefined;
         if (world) return { position: [world[12] ?? 0, world[13] ?? 0, world[14] ?? 0] };
       }
@@ -665,7 +698,7 @@ export class WorldViewer {
     },
     graphOf: (reference) => {
       for (const cell of this.#cells.values()) {
-        const placed = cell.placed.find((entry) => entry.object.reference === reference);
+        const placed = placedByReference(cell, reference);
         const skeleton = cell.objectSkeletons.find((entry) => entry.reference === reference);
         const graph = placedScriptGraph(placed?.instance.graph, skeleton?.skeleton.behavior, clock);
         if (graph) return graph;
@@ -696,7 +729,7 @@ export class WorldViewer {
       (this.#stage?.movers.triggerCount(reference) ?? 0),
     nodeWorld: (reference, node) => {
       for (const cell of this.#cells.values()) {
-        const placed = cell.placed.find((entry) => entry.object.reference === reference);
+        const placed = placedByReference(cell, reference);
         if (placed) return instanceNodeWorld(placed.instance, node);
       }
       return undefined;
@@ -803,7 +836,7 @@ export class WorldViewer {
    */
   #adoptVehicle(reference: number): AdoptedVehicle | undefined {
     for (const cell of this.#cells.values()) {
-      const entry = cell.placed.find((placed) => placed.object.reference === reference);
+      const entry = placedByReference(cell, reference);
       if (!entry || !cell.ready) continue;
       cell.placed = cell.placed.filter((placed) => placed !== entry);
       cell.sceneInstances = cell.sceneInstances.filter((instance) => instance !== entry.instance);
@@ -864,7 +897,7 @@ export class WorldViewer {
       return;
     }
     for (const cell of this.#cells.values()) {
-      const placed = cell.placed.find((entry) => entry.object.reference === reference);
+      const placed = placedByReference(cell, reference);
       if (!placed) continue;
       const world = referenceMatrix({
         position: at.position,
@@ -1478,6 +1511,26 @@ export class WorldViewer {
         )
         .map((entry) => entry.reference),
     ];
+  }
+
+  /** Whether a reference is among a cell's loaded references (#cellLoadedReferences). */
+  #cellHasLoaded(cell: LoadedCell, reference: number): boolean {
+    if (!cell.ready) return false;
+    if (
+      (placedByReference(cell, reference) !== undefined ||
+        hasMarker(cell.data?.markers ?? [], reference)) &&
+      cell.isEnabled(reference)
+    ) {
+      return true;
+    }
+    const staged = this.#stage?.get(reference);
+    if (staged?.cell === cellKey(cell.x, cell.y) && !staged.visibility.hidden) return true;
+    const created = this.#created?.get(reference);
+    return (
+      created !== undefined &&
+      !created.visibility.hidden &&
+      this.#cellOfCreated(created.object.world) === cell
+    );
   }
 
   /** The loaded cell a created reference stands in. */

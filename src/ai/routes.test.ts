@@ -125,6 +125,57 @@ describe('routes', () => {
     ]);
   });
 
+  it('take the shorter of two ways, through a hall with doors at both ends', () => {
+    // A street of 2,000 houses (a worldspace's doors), and a hall whose back door comes out
+    // next to the shop: through the hall is shorter than along the street.
+    const HALL: Space = { kind: 'interior', cell: 5 };
+    const navmeshes = new Map<number, RouteNavmesh>([
+      [20, navmesh(TOWN, [0, 0, 0])],
+      [30, navmesh(SHOP, [0, 0, 0])],
+      [50, navmesh(HALL, [0, 0, 0])],
+    ]);
+    const doors: RouteDoor[] = [];
+    for (let i = 0; i < 2000; i++) {
+      const space: Space = { kind: 'interior', cell: 1000 + i };
+      navmeshes.set(1000 + i, navmesh(space, [0, 0, 0]));
+      doors.push(
+        door(
+          10000 + i,
+          { space: TOWN, at: [i * 100, 500, 0], navmesh: 20 },
+          { space, at: [0, 0, 0], navmesh: 1000 + i, door: 20000 + i },
+        ),
+        door(
+          20000 + i,
+          { space, at: [0, 10, 0], navmesh: 1000 + i },
+          { space: TOWN, at: [i * 100, 450, 0], navmesh: 20, door: 10000 + i },
+        ),
+      );
+    }
+    doors.push(
+      door(
+        1,
+        { space: TOWN, at: [0, -100, 0], navmesh: 20 },
+        { space: HALL, at: [0, 0, 0], navmesh: 50, door: 2 },
+      ),
+      door(
+        3,
+        { space: HALL, at: [500, 0, 0], navmesh: 50 },
+        { space: TOWN, at: [90000, 0, 0], navmesh: 20, door: 4 },
+      ),
+      door(
+        5,
+        { space: TOWN, at: [90100, 0, 0], navmesh: 20 },
+        { space: SHOP, at: [0, 0, 0], navmesh: 30, door: 6 },
+      ),
+    );
+    const route = findRoute(
+      new RouteMap(navmeshes, doors),
+      { space: TOWN, position: [0, 0, 0], navmesh: 20 },
+      { space: SHOP, position: [0, 0, 0], navmesh: 30 },
+    );
+    expect(route?.doors.map((step) => step.door)).toEqual([1, 3, 5]);
+  });
+
   it('follow a road where it is not far round', () => {
     const navmeshes = new Map<number, RouteNavmesh>([
       [50, navmesh(TOWN, [0, 0, 0])],
