@@ -1,0 +1,247 @@
+import { describe, expect, it } from 'vitest';
+import {
+  AnomalyLog,
+  BodyWatch,
+  brokenBone,
+  ClipWatch,
+  Episode,
+  FrameStats,
+  isLocomotionClip,
+  isReferencePose,
+  messageKey,
+  RateWindow,
+  SpeedMeter,
+  StateWatch,
+  TravelWatch,
+} from './detectors.ts';
+import { DEFAULT_THRESHOLDS } from './types.ts';
+
+describe('Episode', () => {
+  it('begins after the condition held long enough and ends after its cooldown', () => {
+    const episode = new Episode(0.5, 0.5);
+    const changes: (string | undefined)[] = [];
+    for (let i = 0; i < 10; i++) changes.push(episode.update(true, 0.1, i));
+    expect(changes.indexOf('begin')).toBe(4);
+    expect(changes.filter((c) => c === 'begin')).toHaveLength(1);
+    expect(episode.duration).toBeCloseTo(1);
+    expect(episode.peak).toBe(9);
+    // A short gap does not end it.
+    expect(episode.update(false, 0.2)).toBeUndefined();
+    expect(episode.update(true, 0.1)).toBeUndefined();
+    expect(episode.update(false, 0.3)).toBeUndefined();
+    expect(episode.update(false, 0.3)).toBe('end');
+    expect(episode.active).toBe(false);
+  });
+
+  it('never begins for a condition shorter than its minimum', () => {
+    const episode = new Episode(0.5);
+    for (let i = 0; i < 20; i++) expect(episode.update(i % 4 !== 3, 0.1)).toBeUndefined();
+  });
+});
+
+describe('RateWindow', () => {
+  it('counts the events of the last second', () => {
+    const window = new RateWindow(1);
+    for (let t = 0; t < 2; t += 0.1) window.add(t);
+    expect(window.count(1.95)).toBe(10);
+    expect(window.count(5)).toBe(0);
+  });
+});
+
+describe('SpeedMeter', () => {
+  it('measures over its window', () => {
+    const meter = new SpeedMeter(0.3);
+    expect(meter.ready).toBe(false);
+    for (let i = 0; i < 30; i++) meter.add(1 / 60, 100 / 60);
+    expect(meter.ready).toBe(true);
+    expect(meter.speed).toBeCloseTo(100);
+    for (let i = 0; i < 30; i++) meter.add(1 / 60, 0);
+    expect(meter.speed).toBeCloseTo(0);
+  });
+});
+
+describe('clip names', () => {
+  it('tells locomotion clips from idles', () => {
+    expect(isLocomotionClip('Animations\\male\\MT_WalkForward.hkx')).toBe(true);
+    expect(isLocomotionClip('Animations\\Horse\\Horse_GallopForward.hkx')).toBe(true);
+    expect(isLocomotionClip('Animations\\MT_TurnRight60.hkx')).toBe(true);
+    expect(isLocomotionClip('Animations\\male\\MT_Idle.HKX')).toBe(false);
+    expect(isLocomotionClip('Animations\\IdleStudy_enter.hkx')).toBe(false);
+  });
+});
+
+describe('poses', () => {
+  it('sees the reference pose and broken bones', () => {
+    const reference = new Float32Array([0, 0, 0, 0, 0, 0, 0, 1, 1, 1]);
+    expect(isReferencePose(reference.slice(), reference)).toBe(true);
+    const moved = reference.slice();
+    moved[6] = 0.2;
+    expect(isReferencePose(moved, reference)).toBe(false);
+    const worlds = new Float32Array(32);
+    worlds[12] = 10;
+    expect(brokenBone(worlds, 20000)).toBeUndefined();
+    worlds[16 + 13] = 1e6;
+    expect(brokenBone(worlds, 20000)?.node).toBe(1);
+    worlds[3] = Number.NaN;
+    expect(brokenBone(worlds, 20000)?.node).toBe(0);
+  });
+});
+
+describe('ClipWatch', () => {
+  it('reports a clip restarting over and over before it gets anywhere', () => {
+    const watch = new ClipWatch();
+    let found: ReturnType<ClipWatch['update']>;
+    // Restarted every 0.1 s (about 6 frames), reaching 0.08 s.
+    for (let frame = 0; frame < 120; frame++) {
+      const t = frame / 60;
+      found = watch.update(t, [{ animation: 'Idle.hkx', time: (frame % 6) * 0.016 }], 5, 0.2);
+    }
+    expect(found?.clip).toBe('Idle.hkx');
+    expect(found?.restarts).toBeGreaterThanOrEqual(9);
+  });
+
+  it('takes a short clip that loops for no restart', () => {
+    const watch = new ClipWatch();
+    let found: ReturnType<ClipWatch['update']>;
+    for (let frame = 0; frame < 120; frame++) {
+      const time = (frame % 6) * 0.016;
+      found = watch.update(
+        frame / 60,
+        [{ animation: 'Pose.hkx', time, looped: time === 0 }],
+        5,
+        0.2,
+      );
+    }
+    expect(found).toBeUndefined();
+  });
+
+  it('takes a walk cycle wrapping once a second for no restart', () => {
+    const watch = new ClipWatch();
+    let found: ReturnType<ClipWatch['update']>;
+    for (let frame = 0; frame < 240; frame++) {
+      found = watch.update(
+        frame / 60,
+        [{ animation: 'Walk.hkx', time: (frame % 60) / 60 }],
+        5,
+        0.2,
+      );
+    }
+    expect(found).toBeUndefined();
+  });
+});
+
+describe('StateWatch', () => {
+  it('reports a machine flipping between states', () => {
+    const watch = new StateWatch();
+    let found: ReturnType<StateWatch['update']>;
+    for (let frame = 0; frame < 60; frame++) {
+      const state = frame % 4 < 2 ? 'Idle' : 'Walk';
+      found = watch.update(frame / 60, [{ machine: 'Locomotion', state }], 8);
+    }
+    expect(found?.machine).toBe('Locomotion');
+    expect(found?.visited).toContain('Walk');
+    const calm = new StateWatch();
+    for (let frame = 0; frame < 60; frame++)
+      found = calm.update(
+        frame / 60,
+        [{ machine: 'Locomotion', state: frame < 30 ? 'Idle' : 'Walk' }],
+        8,
+      );
+    expect(found).toBeUndefined();
+  });
+
+  it('tells two machines of one name apart', () => {
+    const watch = new StateWatch();
+    let found: ReturnType<StateWatch['update']>;
+    for (let frame = 0; frame < 60; frame++) {
+      found = watch.update(
+        frame / 60,
+        [
+          { machine: 'LocomotionBehavior', state: 'ForwardLocomotionState' },
+          { machine: 'LocomotionBehavior', state: 'NonCombatForwardLocomotionState_Wolf' },
+        ],
+        8,
+      );
+    }
+    expect(found).toBeUndefined();
+  });
+});
+
+describe('BodyWatch', () => {
+  it('sees a bouncing body jitter and a spike', () => {
+    const watch = new BodyWatch(1);
+    let began = false;
+    for (let frame = 0; frame < 120; frame++) {
+      const vz = frame % 4 < 2 ? 200 : -200;
+      const result = watch.update(frame / 60, 1 / 60, [0, 0, vz], DEFAULT_THRESHOLDS);
+      if (result.jitter === 'begin') began = true;
+    }
+    expect(began).toBe(true);
+    const spiky = new BodyWatch(1);
+    spiky.update(0, 1 / 60, [0, 0, 0], DEFAULT_THRESHOLDS);
+    expect(spiky.update(1 / 60, 1 / 60, [3000, 0, 0], DEFAULT_THRESHOLDS).spike).toBe(3000);
+  });
+
+  it('lets a falling, landing body be', () => {
+    const watch = new BodyWatch(1);
+    for (let frame = 0; frame < 120; frame++) {
+      const vz = frame < 60 ? -frame * 10 : 0;
+      const result = watch.update(frame / 60, 1 / 60, [0, 0, vz], DEFAULT_THRESHOLDS);
+      expect(result.jitter).toBeUndefined();
+    }
+  });
+});
+
+describe('TravelWatch', () => {
+  it('reports a traveller that gets no nearer', () => {
+    const watch = new TravelWatch(10);
+    let change: string | undefined;
+    for (let t = 0; t < 12; t += 0.25) {
+      const result = watch.update(0.25, [0, 0, 0], [1000, 0, 0], 64);
+      if (result.change) change = result.change;
+    }
+    expect(change).toBe('begin');
+  });
+
+  it('lets one that walks on be', () => {
+    const watch = new TravelWatch(10);
+    for (let t = 0; t < 20; t += 0.25) {
+      const result = watch.update(0.25, [t * 40, 0, 0], [1000, 0, 0], 64);
+      expect(result.change).toBeUndefined();
+    }
+  });
+});
+
+describe('FrameStats', () => {
+  it('gives percentiles', () => {
+    const stats = new FrameStats();
+    for (let i = 1; i <= 100; i++) stats.add(i);
+    const result = stats.stats();
+    expect(result.frames).toBe(100);
+    expect(result.p50).toBe(51);
+    expect(result.p99).toBe(100);
+    expect(result.worst).toBe(100);
+    expect(result.over50).toBe(50);
+  });
+});
+
+describe('AnomalyLog', () => {
+  it('marks the first per subject and keeps the worst when full', () => {
+    const log = new AnomalyLog(2);
+    const subject = { id: '00000001', name: 'A', kind: 'npc' as const };
+    const a = log.add({ kind: 'glide', subject, time: 0, detail: 'a', severity: 1 });
+    const b = log.add({ kind: 'glide', subject, time: 1, detail: 'b', severity: 2 });
+    expect(a.first).toBe(true);
+    expect(b.first).toBe(false);
+    log.add({ kind: 'glide', subject, time: 2, detail: 'c', severity: 5 });
+    const kept = log.all.map((x) => x.detail);
+    expect(kept).toEqual(['a', 'c']);
+    expect(log.dropped.glide).toBe(1);
+  });
+});
+
+describe('messageKey', () => {
+  it('puts numbers and form ids as #', () => {
+    expect(messageKey('actor 0001A2B3 at 12.5, -3')).toBe(messageKey('actor 0002FFFF at 1, 7'));
+  });
+});

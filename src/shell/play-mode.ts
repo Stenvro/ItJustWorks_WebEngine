@@ -762,6 +762,16 @@ export class PlayMode {
       });
   };
 
+  /**
+   * Runs a console line as the console would (at the main menu its own commands, else the
+   * game's), without opening it: development checks (tools/qa-run.ts).
+   */
+  runConsole(line: string): Promise<string[]> {
+    const atMainMenu = !this.#menus && this.#startMenu !== undefined && !this.#starting;
+    const runner = atMainMenu ? this.#mainMenuCommands : this.#consoleCommands();
+    return runner ? runner.run(line) : Promise.resolve(['no game is running']);
+  }
+
   /** Every exterior cell by editor id, for the main menu's coc (read once). */
   #exteriorCells: Promise<Map<string, number>> | undefined;
 

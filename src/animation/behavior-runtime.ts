@@ -1107,13 +1107,21 @@ export class BehaviorRuntime {
     return soonest;
   }
 
-  /** The clips playing and their weights in the pose (development, tools). */
-  playing(): { animation: string; time: number }[] {
-    const clips: { animation: string; time: number }[] = [];
+  /**
+   * The clips playing, their local time and whether the last update looped them (development,
+   * tools: a time that went back without looping is a restart).
+   */
+  playing(): { animation: string; time: number; looped: boolean }[] {
+    const clips: { animation: string; time: number; looped: boolean }[] = [];
     for (const node of this.#active) {
       const clip = node as BehaviorGenerator;
-      if (clip.kind === 'clip')
-        clips.push({ animation: clip.animation, time: this.#clips.get(clip)?.time ?? 0 });
+      if (clip.kind !== 'clip') continue;
+      const state = this.#clips.get(clip);
+      clips.push({
+        animation: clip.animation,
+        time: state?.time ?? 0,
+        looped: state?.wrapped === true && state.updated === this.#updates,
+      });
     }
     return clips;
   }
