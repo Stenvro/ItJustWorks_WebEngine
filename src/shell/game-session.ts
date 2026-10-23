@@ -119,6 +119,21 @@ const EVICTION_GRACE_MS = 10_000;
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
+/**
+ * The browser's next task (a message to ourselves: no timer clamping): a frame that is due is
+ * drawn before it. Long engine work gives way with it (PapyrusScheduler.yieldTask).
+ */
+function nextTask(): Promise<void> {
+  return new Promise((resolve) => {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = () => {
+      channel.port1.close();
+      resolve();
+    };
+    channel.port2.postMessage(undefined);
+  });
+}
+
 export class GameSession {
   readonly vfs: Vfs;
   /** The player's own key bindings (the journal's Controls page), kept in the browser. */
@@ -865,6 +880,7 @@ export class GameSession {
       if (runtime.retired) return runtime;
       // From now on threads share each frame's budget ([Papyrus] fUpdateBudgetMS).
       runtime.vm.scheduler.framed = true;
+      runtime.vm.scheduler.yieldTask = nextTask;
       // A new game's clock: the plugins' day and hour.
       this.gameDaysPassed = Math.floor(runtime.state.gameDaysPassed);
       this.gameHour = (runtime.state.gameDaysPassed % 1) * 24;

@@ -179,12 +179,16 @@ Beyond the loaded area an actor's way runs from navmesh to navmesh through load 
 - **Load doors** (XTEL) lead from the area of the navmesh nearest the door to the area of the
   navmesh nearest its arrival point. A route is the cheapest chain of doors (Dijkstra over the
   doors, 256 units a door on top of the walk between them, straight lines within an area).
+  A door is queued again only by a cheaper way to it, and where a door leads is worked out
+  once with the map: a worldspace's area has hundreds of doors, and every way back into it
+  queued them all again (17 ms a search on average in the audit below, now 3.5 ms; the
+  compass's quest doors and the actors away search on the main thread).
 - **Roads:** between two points of an exterior the actor follows the NAVI's precomputed paths
   (NVPP) where that is at most 1.5 times the straight way.
 - `node tools/route-info.ts <from> <to>` prints the route between two references (Mila Valentia
   from her house to her market stall: 1 door, 4,713 units); `--audit` routes from 40 load doors'
   arrivals to every other door: of the 2,153 load doors 1,334 of 1,560 routes are found, 3.2
-  doors a route, 13 ms a search. Those not found start or end where no door leads on: scripted
+  doors a route, 3.5 ms a search. Those not found start or end where no door leads on: scripted
   places reached by a quest's teleport (Skuldafn, Sovngarde, Japhet's Folly, Blackreach's
   elevators).
 
@@ -574,6 +578,10 @@ has it now (the placement above, from its packages, factions, race and sex, read
   steps out of her house's door and walks to her stall at the market; set to 10:00 she stands
   there at once. TODO(M13): the engine's rule for who keeps a schedule while away (persistent
   references, the low process's reach) and its pace are not documented.
+- A run works in slices: after 4 ms of asking it lets the browser draw a frame before it goes
+  on (`PapyrusScheduler.giveWay`), and the plugins' actors of each cell asked about are found
+  once (a worldspace's persistent cell has tens of thousands of references: looking through
+  them took 200 ms each run).
 
 A procedure that would go round without ever waiting (each step ending at once: a patrol of
 one point the actor stands on was one) is stopped after 100,000 rounds within one update: its

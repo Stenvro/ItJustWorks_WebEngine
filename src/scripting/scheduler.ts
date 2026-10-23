@@ -81,6 +81,28 @@ export class PapyrusScheduler {
     return this.framed && this.#now() - this.#frameStart > this.budgetMs;
   }
 
+  /** Milliseconds now, on the clock the frame budget is measured with. */
+  now(): number {
+    return this.#now();
+  }
+
+  /**
+   * Lets the host run what waits (a frame due) before engine work goes on: set by the game
+   * (the browser's next task); without it (Node tools) work goes straight on.
+   */
+  yieldTask: () => Promise<void> = () => Promise.resolve();
+
+  /**
+   * Engine work outside Papyrus threads that runs long (a quest's aliases searched over
+   * thousands of references) gives way after `sliceMs` since `since` (its own clock reading):
+   * resolves to the time it goes on from. A frame never waits for more than one slice of it.
+   */
+  async giveWay(since: number, sliceMs: number): Promise<number> {
+    if (this.#now() - since < sliceMs) return since;
+    await this.yieldTask();
+    return this.#now();
+  }
+
   /** Resolves in the next frame. */
   nextFrame(): Promise<void> {
     if (!this.framed) return Promise.resolve();

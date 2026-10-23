@@ -85,6 +85,12 @@ const WALK_SPEED = 90;
 const SKIP_SECONDS = 600;
 /** Actors asked at once by a run of the schedules. */
 const SCHEDULE_PARALLEL = 16;
+/**
+ * How long a run of the schedules works before it lets a frame be drawn (ms): asking a
+ * worldspace's actors where their packages have them is a long run of cached reads and
+ * conditions (docs/ai.md, "Actors away").
+ */
+const SCHEDULE_SLICE_MS = 4;
 /** The size of an exterior cell (units). */
 const CELL_SIZE = 4096;
 
@@ -101,6 +107,8 @@ const distance = (a: Vec3, b: Vec3): number => Math.hypot(a[0] - b[0], a[1] - b[
 export class ActorsAway {
   readonly #options: ActorsAwayOptions;
   readonly #trips = new Map<number, Trip>();
+  /** The plugins' actor references of each cell asked about (#candidates). */
+  readonly #cellActors = new Map<number, readonly number[]>();
   #walkSpeed: number | undefined;
   #hour: number | undefined;
   #playerSpace: string | undefined;
@@ -254,8 +262,11 @@ export class ActorsAway {
     const run: ScheduleRun = { mode, actors: candidates.length, moved: 0, seconds: 0 };
     // Several at once: each waits on its records more than it works.
     const queue = [...candidates];
+    const scheduler = runtime.vm.scheduler;
+    let since = scheduler.now();
     const next = async (): Promise<void> => {
       for (let actor = queue.pop(); actor !== undefined; actor = queue.pop()) {
+        since = await scheduler.giveWay(since, SCHEDULE_SLICE_MS);
         if (await this.#scheduleActor(runtime, placer, actor, mode)) run.moved++;
       }
     };
@@ -343,10 +354,17 @@ export class ActorsAway {
     for (const space of spaces) {
       const cell = space.kind === 'interior' ? space.cell : db.persistentCell(space.world);
       if (cell === undefined) continue;
-      for (const reference of db.cellReferences(cell)) {
-        const location = db.locate(reference);
-        if (location && db.typeAt(location) === 'ACHR') found.add(reference);
+      // The plugins' actors of a cell, found once: a worldspace's persistent cell has tens of
+      // thousands of references, looked through in 200 ms as each schedule ran.
+      let actors = this.#cellActors.get(cell);
+      if (!actors) {
+        actors = db.cellReferences(cell).filter((reference) => {
+          const location = db.locate(reference);
+          return location !== undefined && db.typeAt(location) === 'ACHR';
+        });
+        this.#cellActors.set(cell, actors);
       }
+      for (const reference of actors) found.add(reference);
     }
     for (const [reference, state] of runtime.state.references) {
       if (!state.position || reference === PLAYER_REF) continue;
@@ -357,7 +375,9 @@ export class ActorsAway {
       if (spaces.some((other) => sameSpace(other, space))) found.add(reference);
     }
     const living: number[] = [];
+    let since = runtime.vm.scheduler.now();
     for (const reference of found) {
+      since = await runtime.vm.scheduler.giveWay(since, SCHEDULE_SLICE_MS);
       if (runtime.state.actors.get(reference)?.dead === true) continue;
       if (!(await runtime.isEnabled(reference))) continue;
       living.push(reference);

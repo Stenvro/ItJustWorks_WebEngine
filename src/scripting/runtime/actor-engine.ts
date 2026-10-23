@@ -75,6 +75,9 @@ const pairKey = (a: number, b: number): string =>
 /** An exterior cell's size (game units). */
 const CELL_UNITS = 4096;
 
+/** No alias factions (a reference no alias holds). */
+const NO_FACTIONS: Promise<ReadonlySet<number>> = Promise.resolve(new Set());
+
 /** Whether two places of a world are in the same exterior cell. */
 function sameGridCell(a: readonly number[], b: readonly number[]): boolean {
   return (
@@ -490,15 +493,29 @@ export class ActorEngine {
    * The factions of the aliases that hold it (Creation Kit: an alias's Alias Factions; the
    * town dialogue quests make their merchants members of JobMerchantFaction so).
    */
-  async #aliasFactions(reference: number): Promise<Set<number>> {
-    const factions = new Set<number>();
-    for (const { quest, alias } of this.#runtime.aliasesHolding(reference)) {
-      for (const faction of (await this.#runtime.forms.alias(quest, alias))?.factions ?? []) {
-        factions.add(faction);
-      }
+  #aliasFactions(reference: number): Promise<ReadonlySet<number>> {
+    // Read once for each set of aliases holding it (the player is in hundreds; faction
+    // conditions ask for every candidate of a quest's alias search).
+    const holding = this.#runtime.aliasesHolding(reference);
+    if (holding.length === 0) return NO_FACTIONS;
+    let factions = this.#aliasFactionSets.get(holding);
+    if (!factions) {
+      factions = (async () => {
+        const found = new Set<number>();
+        for (const { quest, alias } of holding) {
+          for (const faction of (await this.#runtime.forms.alias(quest, alias))?.factions ?? []) {
+            found.add(faction);
+          }
+        }
+        return found;
+      })();
+      this.#aliasFactionSets.set(holding, factions);
     }
     return factions;
   }
+
+  /** #aliasFactions' answers, by the aliases holding a reference (runtime.aliasesHolding). */
+  readonly #aliasFactionSets = new WeakMap<object, Promise<ReadonlySet<number>>>();
 
   /**
    * It offers its services now (GetOffersServicesNow): it is in a vendor faction (rank 0 or
