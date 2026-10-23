@@ -1,4 +1,4 @@
-// The fliers against the real files (docs/ai.md, "Flying combat"): the races that fly (RACE
+// The fliers against the real files (docs/ai.md, "Flying"): the races that fly (RACE
 // DATA Flies) with their movement types and flying speeds (FLMV), flight radius and attacks;
 // the flight game settings; a combat style's flight section (CSFL) with the times it gives and
 // how often each maneuver comes up (src/ai/flight.ts); an actor's shouts (its breath) and how
@@ -11,10 +11,12 @@
 //                                                      ActionFlyStop targets) and its keyword
 
 import {
-  chooseFlightManeuver,
   fliesByRace,
   maneuverSeconds,
+  maneuverWeights,
+  pickManeuver,
   readFlightSettings,
+  shoutRanges,
   type FlightManeuver,
 } from '../src/ai/flight.ts';
 import { parseCombatStyle, type CombatStyleFlight } from '../src/ai/combat-style-records.ts';
@@ -22,7 +24,7 @@ import { DEFAULT_COMBAT_STYLE } from '../src/ai/combat-profile.ts';
 import { readIdleTree } from '../src/ai/idle-records.ts';
 import { parseNpcCombat, parseRaceCombat } from '../src/ai/race-combat-records.ts';
 import { view } from '../src/formats/esm/fields.ts';
-import { parseFurniture } from '../src/world/furniture-records.ts';
+import { FurnitureMarkerFlag, parseFurniture } from '../src/world/furniture-records.ts';
 import { GameSettings } from '../src/world/game-settings.ts';
 import { parseMovementType } from '../src/world/movement.ts';
 import { parseProjectile } from '../src/world/projectile-data.ts';
@@ -96,7 +98,7 @@ function describeFlight(flight: CombatStyleFlight): void {
       `perches up to ${maneuverSeconds('perch', flight, settings, longest).toFixed(1)} s, ` +
       `fights on the ground up to ${maneuverSeconds('ground', flight, settings, longest).toFixed(1)} s`,
   );
-  // How often each maneuver comes up as an orbit ends (a perch and a landing place near).
+  // How often each maneuver is drawn first as an orbit ends (the Attack Selector's weights).
   let seed = 12345;
   const random = (): number => {
     seed = (seed * 1103515245 + 12345) % 2147483648;
@@ -105,8 +107,8 @@ function describeFlight(flight: CombatStyleFlight): void {
   const counts = new Map<FlightManeuver, number>();
   const rolls = 10000;
   for (let i = 0; i < rolls; i++) {
-    const maneuver = chooseFlightManeuver(flight, { canLand: true, perch: true }, random, settings);
-    counts.set(maneuver, (counts.get(maneuver) ?? 0) + 1);
+    const maneuver = pickManeuver(maneuverWeights(flight, settings), new Set(), random);
+    if (maneuver) counts.set(maneuver, (counts.get(maneuver) ?? 0) + 1);
   }
   console.log(
     '  next maneuver: ' +
@@ -135,14 +137,22 @@ async function describeShout(formId: number): Promise<string> {
     `${shout.editorId} "${shout.name}": ${shout.words.length} words, ` +
     `${spell?.editorId ?? '-'} (cast type ${String(spell?.castType ?? '-')}), ` +
     (projectile
-      ? `${projectile.editorId}: speed ${projectile.speed.toFixed(0)}, range ${projectile.range.toFixed(0)}`
+      ? `${projectile.editorId}: speed ${projectile.speed.toFixed(0)}, range ` +
+        `${projectile.range.toFixed(0)} (combat ranges ${describeRanges(projectile.range)})`
       : 'no projectile')
   );
 }
 
+/** A breath's combat ranges (src/ai/flight.ts shoutRanges): nearest, optimal, farthest. */
+function describeRanges(range: number): string {
+  const ranges = shoutRanges(range, 0, settings);
+  return [ranges.min, ranges.optimal, ranges.max].map((v) => v.toFixed(0)).join(' / ');
+}
+
 if (args.includes('--perches')) {
-  // The furniture the idle tree's ActionFlyStop lands on (GetIsID run on the action's target),
-  // and whether a flying race may use it (its interaction keyword).
+  // The perch furniture (FURN MNAM Is Perch: the engine's test) with the idle tree's
+  // ActionFlyStop idle that lands on it (GetIsID run on the action's target) and whether a flying
+  // race may use it (its interaction keyword).
   const keywords = new Set<number>();
   for (const race of await fliers()) for (const keyword of keywordsOf(race)) keywords.add(keyword);
   const tree = await readIdleTree(db);
@@ -159,6 +169,12 @@ if (args.includes('--perches')) {
   };
   const action = tree.action('ActionFlyStop');
   if (action) walk(action.formId, 0);
+  for (const formId of db.formIdsOfType('FURN')) {
+    const record = await db.get(formId);
+    if (record?.type !== 'FURN') continue;
+    if (((parseFurniture(record).markerFlags ?? 0) & FurnitureMarkerFlag.isPerch) === 0) continue;
+    if (!perches.has(formId)) perches.set(formId, '(no landing idle)');
+  }
   for (const [formId, idle] of perches) {
     const record = await db.get(formId);
     const keyword = record?.type === 'FURN' ? parseFurniture(record).interactionKeyword : undefined;

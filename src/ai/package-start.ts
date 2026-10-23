@@ -50,6 +50,8 @@ export interface PackageReference {
   readonly baseType: string;
   /** Where it is placed. */
   readonly position: readonly [number, number, number];
+  /** A sky marker (REFR flag 0x2000): a point in the air. */
+  readonly sky?: boolean;
 }
 
 /** The actor whose package is asked for. */
@@ -121,6 +123,11 @@ export type PackageStart =
        * the navmesh near the reference, not on it (a marker in a hearth's fire).
        */
       readonly radius: number;
+      /**
+       * The reference is a sky marker (a patrol of a flier starting in the air: observed in the
+       * original, its start is not set on the ground).
+       */
+      readonly sky?: boolean;
     }
   /**
    * Its package has it in another cell or world: at a reference there (where one is named; a
@@ -522,5 +529,13 @@ async function referencePlace(
   ) {
     return { kind: 'here', package: id, procedure };
   }
-  return { kind: 'at', package: id, procedure, reference, furniture, radius };
+  return {
+    kind: 'at',
+    package: id,
+    procedure,
+    reference,
+    furniture,
+    radius,
+    ...(placed.sky === true && { sky: true }),
+  };
 }

@@ -865,6 +865,7 @@ async function main(): Promise<void> {
         }
         return sceneTrace.text();
       },
+      flightTrace: () => worldViewer.actorStage?.flight.traceText() ?? '',
     };
     // The automated QA monitors (docs/qa.md): loaded on the side, idle until started.
     void import('./shell/qa/qa-harness.ts').then(({ QaHarness }) => {

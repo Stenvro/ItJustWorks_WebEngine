@@ -80,6 +80,7 @@ import { reactionsOf } from '../ai/combat-reactions.ts';
 import { ProjectileAim } from './projectile-aim.ts';
 import { ActorAnimObjects } from './actor-anim-objects.ts';
 import { outOfSight } from '../ai/followers.ts';
+import { fliesByRace } from '../ai/flight.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -1342,6 +1343,13 @@ export class ActorStage {
       // Put at a reference its package names (not in its furniture): on the navmesh nearest it
       // (a sandbox's marker may lie in a hearth's fire). TODO(M13): the engine's own rule.
       const start = staged.placed.start;
+      // A flier whose package starts it at a sky marker stays in the air there (observed in the
+      // original: a patrol from a sky marker is not set on the ground, and starts it
+      // cruising: MQ101's Alduin over the mountains east of Helgen).
+      if (start?.kind === 'at' && start.sky === true && fliesByRace(staged.placed.look.raceFlags)) {
+        staged.grounded = true;
+        continue;
+      }
       const snap = start?.kind === 'at' && !start.furniture ? start.radius : undefined;
       this.#settle(staged, physics, snap);
     }
