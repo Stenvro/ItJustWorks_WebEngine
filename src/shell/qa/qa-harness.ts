@@ -81,24 +81,20 @@ export interface QaEvent {
 const FRAME_DISTANCE = 260;
 /** The subject of long frames (one, so they are kept as the worst of one kind). */
 const FRAMES: QaSubject = { id: 'frames', name: 'frames', kind: 'log' };
-/** A corpse spanning more than this share of its standing height stands (seconds: for how long). */
-const CORPSE_UPRIGHT = 0.75;
+/**
+ * A corpse whose head is higher above its feet than this share of its standing head height
+ * stands (for CORPSE_SECONDS).
+ */
+const CORPSE_UPRIGHT = 0.6;
 const CORPSE_SECONDS = 3;
-const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
-/** How far a model-space pose (16 floats per node) spans from its lowest to its highest node in the world. */
-function verticalSpan(worlds: Float32Array, world: ArrayLike<number>): number {
-  let low = Infinity;
-  let high = -Infinity;
-  for (let at = 0; at + 16 <= worlds.length; at += 16) {
-    const x = worlds[at + 12] ?? 0;
-    const y = worlds[at + 13] ?? 0;
-    const z = worlds[at + 14] ?? 0;
-    const height = (world[2] ?? 0) * x + (world[6] ?? 0) * y + (world[10] ?? 0) * z;
-    low = Math.min(low, height);
-    high = Math.max(high, height);
-  }
-  return high > low ? high - low : 0;
+/** How high a node of a model-space pose (16 floats per node) is in the world. */
+function headHeight(worlds: Float32Array, node: number, world: ArrayLike<number>): number {
+  const at = node * 16;
+  const x = worlds[at + 12] ?? 0;
+  const y = worlds[at + 13] ?? 0;
+  const z = worlds[at + 14] ?? 0;
+  return (world[2] ?? 0) * x + (world[6] ?? 0) * y + (world[10] ?? 0) * z + (world[14] ?? 0);
 }
 
 /** Seconds between the slower checks (poses, ground, travels, scenes). */
@@ -907,17 +903,25 @@ export class QaHarness {
       if (!instance || !staged.scene) continue;
       const reference = staged.reference;
       seen.add(reference);
+      const look = staged.placed.look;
       let corpse = this.#corpses.get(reference);
       if (!corpse) {
-        const rest = new ActorPose(staged.placed.pose.skeleton).worlds;
-        corpse = { rest: verticalSpan(rest, IDENTITY), episode: new Episode(CORPSE_SECONDS, 1) };
+        // Its head (the look's head node, else the usual names): how high it is standing.
+        const skeleton = staged.placed.pose.skeleton;
+        const head = [look.headNode, 'NPC Head [Head]', 'Head']
+          .map((name) => (name === undefined ? undefined : skeleton.nodeByName.get(name)))
+          .find((node) => node !== undefined);
+        const rest = head === undefined ? 0 : (new ActorPose(skeleton).worlds[head * 16 + 14] ?? 0);
+        corpse = { head, rest, episode: new Episode(CORPSE_SECONDS, 1) };
         this.#corpses.set(reference, corpse);
       }
-      const span = verticalSpan(staged.placed.pose.worlds, instance.world);
-      const scale = staged.placed.actor.scale * staged.placed.look.scale;
-      const upright = corpse.rest > 1 && span > CORPSE_UPRIGHT * corpse.rest * scale;
-      if (corpse.episode.update(upright, dt, span) !== 'begin') continue;
-      const look = staged.placed.look;
+      if (corpse.head === undefined) continue;
+      const scale = staged.placed.actor.scale * look.scale;
+      const height =
+        headHeight(staged.placed.pose.worlds, corpse.head, instance.world) - staged.position[2];
+      const upright = corpse.rest > 1 && height > CORPSE_UPRIGHT * corpse.rest * scale;
+      if (corpse.episode.update(upright, dt, height) !== 'begin') continue;
+      const span = height;
       this.#add({
         kind: 'corpse-upright',
         subject: {
@@ -934,8 +938,8 @@ export class QaHarness {
         position: [staged.position[0], staged.position[1], staged.position[2]],
         cell: staged.cell,
         context: staged.placed.actor.startsDead ? `placed dead (${look.editorId})` : 'died here',
-        detail: `dead, but stands ${Math.round(span)} units tall (${Math.round((100 * span) / (corpse.rest * scale))} % of its height): no ragdoll laid it down`,
-        values: { span: Math.round(span), rest: Math.round(corpse.rest * scale) },
+        detail: `dead, but its head is ${Math.round(span)} units up (${Math.round((100 * span) / (corpse.rest * scale))} % of its standing height): no ragdoll laid it down`,
+        values: { head: Math.round(span), standing: Math.round(corpse.rest * scale) },
         severity: span,
         duration: corpse.episode.duration,
       });
@@ -944,7 +948,10 @@ export class QaHarness {
       if (!seen.has(reference)) this.#corpses.delete(reference);
   }
 
-  readonly #corpses = new Map<number, { readonly rest: number; readonly episode: Episode }>();
+  readonly #corpses = new Map<
+    number,
+    { readonly head: number | undefined; readonly rest: number; readonly episode: Episode }
+  >();
 
   /** Scenes whose phase stands while none of their actors moves. */
   #scenesCheck(world: QaWorld, session: GameSession): void {

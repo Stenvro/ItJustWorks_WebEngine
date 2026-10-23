@@ -298,6 +298,40 @@ async function runScenario(
   return report;
 }
 
+/**
+ * The summary over every scenario report in the output folder (this run's and earlier ones':
+ * one scenario can be run again and the summary still covers all), in the scenarios' order.
+ */
+function writeSummary(out: string): void {
+  const order = (name: string): number => {
+    const at = SCENARIOS.findIndex((scenario) => scenario.name === name);
+    return at < 0 ? SCENARIOS.length : at;
+  };
+  const reports: QaScenarioReport[] = [];
+  for (const entry of fs.readdirSync(out, { withFileTypes: true })) {
+    const file = path.join(out, entry.name, 'report.json');
+    if (!entry.isDirectory() || !fs.existsSync(file)) continue;
+    try {
+      reports.push(JSON.parse(fs.readFileSync(file, 'utf8')) as QaScenarioReport);
+    } catch {
+      // A report half written (a run stopped while writing it): left out.
+    }
+  }
+  reports.sort((a, b) => order(a.scenario) - order(b.scenario));
+  fs.writeFileSync(
+    path.join(out, 'summary.md'),
+    summaryMarkdown(reports, `QA run ${new Date().toISOString()}`),
+  );
+  fs.writeFileSync(
+    path.join(out, 'summary.json'),
+    JSON.stringify(
+      reports.map((report) => ({ ...report, anomalies: undefined })),
+      null,
+      1,
+    ),
+  );
+}
+
 function hangAnomaly(time: number): QaAnomaly {
   return {
     id: 0,
@@ -326,7 +360,6 @@ async function main(): Promise<void> {
   let vite: ChildProcess | undefined;
   let chrome: ChildProcess | undefined;
   let cdp: Cdp | undefined;
-  const reports: QaScenarioReport[] = [];
   const startChromeAndConnect = async (): Promise<Cdp> => {
     stopProcess(chrome);
     chrome = await startChrome({
@@ -367,23 +400,11 @@ async function main(): Promise<void> {
           });
         },
       );
-      reports.push(report);
       console.log(
         `  ${scenario.name}: ${report.outcome}, ${report.total} anomalies (${report.systems.map((s) => `${s.system} ${s.count}`).join(', ')})` +
           (report.frames ? `, ${report.frames.fps} fps, p99 ${report.frames.p99} ms` : ''),
       );
-      fs.writeFileSync(
-        path.join(options.out, 'summary.md'),
-        summaryMarkdown(reports, `QA run ${new Date().toISOString()}`),
-      );
-      fs.writeFileSync(
-        path.join(options.out, 'summary.json'),
-        JSON.stringify(
-          reports.map((report) => ({ ...report, anomalies: undefined })),
-          null,
-          1,
-        ),
-      );
+      writeSummary(options.out);
     }
     console.log(`reports in ${options.out}`);
   } finally {
