@@ -1292,6 +1292,8 @@ export class ActorStage {
     const previous = staged.scene;
     staged.scene = this.#scene(placed, staged.visibility);
     previous?.destroy();
+    // In furniture, its new graph is put back in it.
+    await this.furniture.bodyReplaced(this.userOf(staged));
   }
 
   /** The references whose animation events go to others too (their dependents), by reference. */
