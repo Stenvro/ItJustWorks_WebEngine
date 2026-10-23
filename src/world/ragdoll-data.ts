@@ -17,8 +17,11 @@
 // simulated and wakes them (they fall from the pose so far); a complete one leaves them as they
 // were placed. XRGB, unless it is all zero, turns the first child of an actor's root node.
 
-import type { Mat4, Vec3 } from '../render/math.ts';
-import type { RagdollPoseNode } from '../physics/collision-data.ts';
+import { ActorPose } from '../animation/skeleton.ts';
+import type { ConstraintData } from '../formats/nif/types.ts';
+import type { CollisionBody, CollisionData, RagdollPoseNode } from '../physics/collision-data.ts';
+import { invert } from '../render/frustum.ts';
+import { multiply, transformPoint, type Mat4, type Vec3 } from '../render/math.ts';
 import { referenceMatrix } from './cell-loader.ts';
 
 /** One bone of a placed ragdoll pose. */
@@ -107,4 +110,116 @@ export function ragdollPoseLocals(
     locals.set(index, referenceMatrix({ position: bone.position, rotation: bone.rotation, scale }));
   }
   return { locals, complete: true };
+}
+
+/**
+ * Poses a dead actor's skeleton (in its rest pose) by its placed ragdoll pose (XRGD and XRGB:
+ * src/world/ragdoll-data.ts): the biped's rotation turns its root's first child, then the
+ * entries pose their nodes, up to the first that does not match its node. What it applied
+ * (undefined: it has none, or its skeleton's bodies have no pose order).
+ */
+export function poseRagdoll(
+  pose: ActorPose,
+  collision: CollisionData,
+  data: RagdollData | undefined,
+): RagdollPoseLocals | undefined {
+  const order = collision.poseOrder;
+  if (!data || !order) return undefined;
+  const { rig, nodeByName } = pose.skeleton;
+  const rest = (node: number): Float32Array => rig.local.subarray(node * 16, node * 16 + 16);
+  const apply = (nodes: readonly RagdollPoseNode[]): RagdollPoseLocals => {
+    const result = ragdollPoseLocals(
+      data,
+      nodes,
+      (name) => nodeByName.get(name.toLowerCase()),
+      rest,
+    );
+    const turn = data.bipedRotation;
+    // The engine compares the biped's rotation with zero: a turn of exactly none is no turn.
+    if (turn?.some((angle) => angle !== 0)) {
+      const child = rig.parents.findIndex((parent, node) => node > 0 && parent === 0);
+      if (child > 0 && !result.locals.has(child)) {
+        const own = rest(child);
+        result.locals.set(
+          child,
+          referenceMatrix({
+            position: [own[12] ?? 0, own[13] ?? 0, own[14] ?? 0],
+            rotation: turn,
+            scale: Math.hypot(own[0] ?? 0, own[1] ?? 0, own[2] ?? 0) || 1,
+          }),
+        );
+      }
+    }
+    pose.placeLocals(result.locals);
+    return result;
+  };
+  const restWorlds = new ActorPose(pose.skeleton).worlds;
+  const result = apply(order);
+  // A pose that tears a joint apart (some vanilla horses' and Dwemer spiders' were made on a
+  // skeleton whose nodes differ: their bodies all share one biped part, so the engine's check
+  // passes) is taken as stopping at the joint's later node, as a mismatch stops it: the bodies
+  // fall from the pose so far. Rapier would snap such a joint together in one step.
+  const at = new Map(order.map((entry, i) => [entry.node.toLowerCase(), i]));
+  let cut = order.length;
+  for (const constraint of collision.constraints ?? []) {
+    const pivots = constraintPivots(constraint.data);
+    const a = collision.bodies[constraint.bodyA];
+    const b = collision.bodies[constraint.bodyB];
+    if (!pivots || !a || !b) continue;
+    const gap = (worlds: (body: CollisionBody) => Float32Array | undefined): number => {
+      const ma = worlds(a);
+      const mb = worlds(b);
+      if (!ma || !mb) return 0;
+      const pa = transformPoint(ma, pivots[0]);
+      const pb = transformPoint(mb, pivots[1]);
+      return Math.hypot(pa[0] - pb[0], pa[1] - pb[1], pa[2] - pb[2]);
+    };
+    const torn = gap((body) => bodyOnPose(pose, restWorlds, body)) - gap((body) => body.transform);
+    if (torn <= TORN_JOINT) continue;
+    cut = Math.min(
+      cut,
+      Math.max(at.get(a.node.toLowerCase()) ?? -1, at.get(b.node.toLowerCase()) ?? -1),
+    );
+  }
+  if (cut >= order.length || cut < 0) return result;
+  pose.update(undefined);
+  return { locals: apply(order.slice(0, cut)).locals, complete: false };
+}
+
+/** How much farther apart than at rest a posed joint's pivots may lie (game units). */
+const TORN_JOINT = 16;
+
+/** A constraint's two pivots (each in its body's space), if it has them. */
+function constraintPivots(data: ConstraintData): readonly [Vec3, Vec3] | undefined {
+  switch (data.type) {
+    case 'ragdoll':
+    case 'limited-hinge':
+    case 'hinge':
+    case 'prismatic':
+      return [data.a.pivot, data.b.pivot];
+    case 'ball-and-socket':
+    case 'stiff-spring':
+      return [data.pivotA, data.pivotB];
+    case 'malleable':
+      return constraintPivots(data.inner);
+  }
+}
+
+/**
+ * A ragdoll body's pose in the model with its skeleton posed: its node's pose × its place
+ * relative to its node in the rest pose (`rest`: the rest pose's node matrices).
+ */
+export function bodyOnPose(
+  pose: ActorPose,
+  rest: Float32Array,
+  body: { readonly node: string; readonly transform: Float32Array },
+): Float32Array | undefined {
+  const node = pose.skeleton.nodeByName.get(body.node.toLowerCase());
+  if (node === undefined) return undefined;
+  const restInverse = invert(rest.subarray(node * 16, node * 16 + 16));
+  if (!restInverse) return undefined;
+  return multiply(
+    pose.worlds.subarray(node * 16, node * 16 + 16),
+    multiply(restInverse, body.transform),
+  );
 }

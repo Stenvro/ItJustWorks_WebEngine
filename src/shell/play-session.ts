@@ -39,8 +39,8 @@ import type { ActorMotion, ScriptRuntime } from '../scripting/runtime/runtime.ts
 import type { Player } from './player.ts';
 import { attachPlayerInput } from './player-input.ts';
 import type { HudSignals } from './hud-signals.ts';
-import { bodyOnPose, poseRagdoll, type ActorTarget } from './actors.ts';
-import type { RagdollData } from '../world/ragdoll-data.ts';
+import type { ActorTarget } from './actors.ts';
+import { bodyOnPose, poseRagdoll, type RagdollData } from '../world/ragdoll-data.ts';
 
 /**
  * How long the sandbox's notice stays (it has no HUD); also how long a notification repeated

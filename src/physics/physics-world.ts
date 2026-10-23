@@ -1605,7 +1605,10 @@ export class PhysicsWorld {
     const types = RAPIER.ActiveCollisionTypes.DEFAULT | RAPIER.ActiveCollisionTypes.KINEMATIC_FIXED;
     for (const { body, data } of placed.bodies) {
       if (data.phantom) continue;
-      for (let i = 0; i < body.numColliders(); i++) body.collider(i).setActiveCollisionTypes(types);
+      for (let i = 0; i < body.numColliders(); i++) {
+        // eslint-disable-next-line @typescript-eslint/no-unsafe-enum-assignment -- a mask of its flags
+        body.collider(i).setActiveCollisionTypes(types);
+      }
     }
   }
 
@@ -1696,8 +1699,7 @@ export class PhysicsWorld {
   release(body: RAPIER.RigidBody): void {
     if (!this.#held.delete(body.handle)) return;
     const released = [body];
-    const system =
-      body.numColliders() > 0 ? this.#systems.get(body.collider(0).handle) : undefined;
+    const system = body.numColliders() > 0 ? this.#systems.get(body.collider(0).handle) : undefined;
     if (system !== undefined) {
       for (const handle of [...this.#held]) {
         const other = this.world.getRigidBody(handle) as RAPIER.RigidBody | null;
