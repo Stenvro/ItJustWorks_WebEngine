@@ -259,9 +259,9 @@ part is baked again only when the weights of its own morphs change, and a tint a
 paints the texture again. Its race's height sets the cameras' (TODO(M13): the character
 controller keeps the size it was made with). It is drawn in third person, from the free camera
 and from the race menu's camera; in first person its **first-person body** is drawn instead
-(`src/shell/first-person-body.ts`): the first-person models of what it wears (ARMA MOD4 /
-MOD5: the skin's hands, a cuirass's sleeves, gauntlets, a shield: `ActorPlacer.wornModels`
-with `firstPerson`), dressed on the first-person skeleton as the body's are on its own (the
+(`src/shell/first-person-body.ts`): what it wears in its first-person slots, in their
+first-person models (`ActorPlacer.wornModels` with `firstPerson`; the rule below), dressed on
+the first-person skeleton as the body's are on its own (the
 skeleton takes the models' nodes; dressed again as the look changes, the graph kept), and the
 weapons' first-person models (WEAP WNAM, a STAT's model) in its hands (combat's HeldWeapons on
 its pose: src/shell/actor-combat.ts). It stands on the feet facing the view, scaled by the
@@ -272,6 +272,40 @@ of its own (its own near plane and field of view over the world: here it shares 
 which shows the hands of the resting 1HM pose only looking down); the third-person body's
 shadow, which the game casts in first person too. A menu that shows the player (the race menu)
 animates the body on real time while the game stands still, and turns it itself.
+
+### First person
+
+How the engine dresses the first-person body (observed in the original; implemented in
+`src/world/actors.ts`: `addonModel`, `inFirstPerson`, `underSkin`):
+
+- **Two bipeds, one dressing.** The player has a third-person and a first-person biped (the
+  42 slots of what hangs where), both dressed the same way: the biped is cleared, the skin goes
+  in first (the actor's own WNAM, else its race's), then what it wears over it. Every addon of
+  an armor that fits the race (RNAM or a MODL race) is put in; per slot the usual owner rule
+  decides (armor over skin, the higher DNAM priority).
+- **The first-person slots.** The first-person biped takes and draws only the slots its race's
+  BOD2 lists. Every vanilla playable race lists 32 body, 33 hands, 34 forearms, 36 ring, 39
+  shield and 61 FX01; so boots, helmets, hair and tails never reach the first-person body. A
+  piece shows when it owns one of those slots; its partitions of slots another piece owns are
+  hidden there as on the body (a cuirass's bare forearms under gauntlets).
+- **Which model.** In the first-person biped an addon takes the first-person model of the
+  actor's sex (MOD4 male, MOD5 female); a woman with no MOD5 takes MOD4. With neither, it takes
+  its world model (MOD2 / MOD3, the woman's falling back to the man's), skinned to the
+  first-person skeleton, which has every bone the world models use. Most gauntlets (iron, steel,
+  ebony, daedric...) and most shields have no first-person model and are seen in first person
+  this way; that is why the iron gauntlets showed nothing before.
+- **Skin texture sets.** An addon's skin shapes (skin tint shader) take the NAM0 / NAM1 skin
+  texture set of the sex whose model it took. A piece with none of its own keeps the set the
+  skin left in its slot, the skin being laid first: a cuirass's bare arms take the race's torso
+  skin (a Khajiit's fur, an Orc's green), gauntlets the race's hands. This holds in the world
+  too. Inferred, not seen: the slot is the piece's lowest one. TODO(M13): NAM2 / NAM3 (a list
+  of skin texture sets picked by the actor's weight when it holds more than one; no vanilla
+  list does) are not read.
+
+The beast races need nothing of their own: their skin's hands (NakedHandsKhajiit,
+NakedHandsArgonian: `1stperson…HandsArgonian_1.nif`, claws included) carry first-person models
+and their own skin texture sets, and their gauntlets' beast addons (`…GauntletsLightBeast`)
+do too.
 
 Two graphs run: the race's (`defaultmale.hkx`) on the body and the first-person one
 (`_1stperson\firstperson.hkx`) on the first-person skeleton (`_1stperson\skeleton.nif` with

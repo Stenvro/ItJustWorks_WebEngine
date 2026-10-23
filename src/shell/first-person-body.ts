@@ -5,7 +5,9 @@
 // cuirass's sleeves, gauntlets, a shield), dressed as the world models are. The weapons in its
 // hands are combat's (src/shell/actor-weapons.ts, on this pose). It stands on the player's
 // feet facing their way, turned about the camera by the view's pitch, so the arms stay in
-// view as the player looks up and down. Game.ShowFirstPersonGeometry hides it (the beast
+// view as the player looks up and down. What it wears there: the pieces in its race's
+// first-person slots, a piece without a first-person model in its world model (docs/
+// animation.md, "First person"). Game.ShowFirstPersonGeometry hides it (the beast
 // forms, the carriage ride: src/shell/world-viewer.ts draws it only in first person).
 // TODO(M13): the engine draws first-person geometry in a pass of its own (its own near plane
 // and field of view, over the world); here it shares the view's camera.
@@ -18,7 +20,7 @@ import { firstPersonMatrix } from '../render/first-person-placement.ts';
 import type { Vec3 } from '../render/math.ts';
 import type { Renderer } from '../render/renderer.ts';
 import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
-import { seededRandom, type ActorLook } from '../world/actors.ts';
+import { partitionVisible, seededRandom, type ActorLook } from '../world/actors.ts';
 import { FIRST_PERSON_SKELETON } from '../world/player-body.ts';
 import type { GameSession } from './game-session.ts';
 
@@ -131,13 +133,16 @@ export class FirstPersonBody {
     const pose = new ActorPose(new ActorSkeleton(dressed.rig, this.#havok));
     pose.update(this.#skeleton.behavior.pose);
     const tints = look.skinTone ? { skin: look.skinTone } : {};
-    const instances = made.map(({ model }, i): ModelInstance => ({
+    // A piece's partitions of slots another piece owns are hidden, as on the body (the
+    // cuirass's bare forearms under gauntlets).
+    const instances = made.map(({ model, addon }, i): ModelInstance => ({
       model,
       world: this.world,
       motion: this.motion,
       pose,
       ...(dressed.nodeMaps[i] && { poseNodes: dressed.nodeMaps[i] }),
       tints,
+      partitionVisible: (bodyPart) => partitionVisible(bodyPart, look.owners, addon),
     }));
     const scene = instances.length > 0 ? this.#renderer.scene.createScene(instances) : undefined;
     this.#scene?.destroy();
