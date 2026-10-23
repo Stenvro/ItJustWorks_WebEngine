@@ -1155,8 +1155,9 @@ export class PhysicsWorld {
    * A keyframed body that pulls a placed body by a joint (a cart's tether to its horse:
    * src/shell/actor-vehicles.ts): `at` is where it starts (game units), the frames are in game
    * units, `a` in the pulled body's space and `b` in the hitch's (axes: the slide, the
-   * perpendicular); the pulled body slides along the axis between the limits and turns as the
-   * hitch does (held, or springing back to it: `turnSpring`). It has no shape.
+   * perpendicular); the pulled body slides along the axis between the limits, is held across it,
+   * and turns about it as the hitch does (held, or springing back to it: `turnSpring`); its
+   * other two turns are free (src/ai/cart-tether.ts). It has no shape.
    */
   addHitch(
     pulled: PlacedBody,
@@ -1187,15 +1188,14 @@ export class PhysicsWorld {
       m.set([x[0], x[1], x[2], 0, y[0], y[1], y[2], 0, z[0], z[1], z[2], 0], 0);
       return matrixQuaternion(m);
     };
-    // Along the slide (x) it slides between the limits, across it it is held; its turns spring
-    // back to how the two were joined (turnSpring; without one they are held). TODO(M13): the
-    // engine's joint (a prismatic one) holds them outright, and Havok's solver gives way to the
-    // wheels' extra pull and to the horse's sharp turns; Rapier's joints are stiff, so held the
-    // cart's rear wheels hung above the ground on any slope the horse did not share, and on
-    // Helgen's road's hairpin the horse's turn on the spot threw the cart over.
-    const turns = RAPIER.JointAxesMask.AngX | RAPIER.JointAxesMask.AngY | RAPIER.JointAxesMask.AngZ;
+    // Along the slide (x) it slides between the limits, across it it is held; its turn about
+    // the slide springs back to how the frames meet (turnSpring; without one it is held), the
+    // other two turns are free. The engine's prismatic joint holds all three: see
+    // src/ai/cart-tether.ts for why the cart's pitch and roll are left to its wheels here.
     const locked =
-      RAPIER.JointAxesMask.LinY | RAPIER.JointAxesMask.LinZ | (joint.turnSpring ? 0 : turns);
+      RAPIER.JointAxesMask.LinY |
+      RAPIER.JointAxesMask.LinZ |
+      (joint.turnSpring ? 0 : RAPIER.JointAxesMask.AngX);
     const made = this.world.createImpulseJoint(
       RAPIER.JointData.generic(
         point(joint.a.pivot),
@@ -1218,18 +1218,16 @@ export class PhysicsWorld {
       toHavok(joint.minDistance),
       toHavok(joint.maxDistance),
     );
-    // The turns spring back (accelerations: stiffness in 1/s², damping in 1/s).
+    // The turn about the slide springs back (accelerations: stiffness in 1/s², damping in 1/s).
     const spring = joint.turnSpring;
     if (spring) {
-      for (const axis of [RAPIER.JointAxis.AngX, RAPIER.JointAxis.AngY, RAPIER.JointAxis.AngZ]) {
-        raw.rawSet.jointConfigureMotorPosition(
-          raw.handle,
-          axis,
-          0,
-          spring.stiffness,
-          spring.damping,
-        );
-      }
+      raw.rawSet.jointConfigureMotorPosition(
+        raw.handle,
+        RAPIER.JointAxis.AngX,
+        0,
+        spring.stiffness,
+        spring.damping,
+      );
     }
     pulled.body.wakeUp();
     const world = this.world;
@@ -1253,8 +1251,8 @@ export class PhysicsWorld {
 
   /**
    * Gives a simulated body of a placement other physical properties (a tethered cart's:
-   * src/shell/actor-vehicles.ts): its mass (the inertia scaled with it), its shapes' friction,
-   * its damping and how much gravity pulls it.
+   * src/ai/cart-tether.ts): its mass (the inertia scaled with it), its shapes' friction, its
+   * damping, how much gravity pulls it and whether it is swept (continuous collision).
    */
   tuneBody(
     placed: PlacedCollision,
@@ -1265,9 +1263,11 @@ export class PhysicsWorld {
       readonly linearDamping?: number;
       readonly angularDamping?: number;
       readonly gravityScale?: number;
+      readonly swept?: boolean;
     },
   ): void {
     const { body, data } = target;
+    if (tuning.swept !== undefined) body.enableCcd(tuning.swept);
     if (tuning.mass !== undefined && data.mass > 0) {
       const s = placed.scale / HAVOK_SCALE;
       const share = (tuning.mass / data.mass) * placed.scale * placed.scale;

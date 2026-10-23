@@ -3,7 +3,8 @@
 // data.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { TETHER_TURN_SPRING, tetherJoint, type CartSettings } from '../src/ai/vehicles.ts';
+import { CartTether } from '../src/ai/cart-tether.ts';
+import { tetherJoint, type CartSettings } from '../src/ai/vehicles.ts';
 import { parseNif } from '../src/formats/nif/nif.ts';
 import { buildCollision, HAVOK_SCALE, type CollisionData } from '../src/physics/collision-data.ts';
 import {
@@ -16,6 +17,8 @@ import { GRAVITY, initPhysics, PhysicsWorld, PHYSICS_STEP } from '../src/physics
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { hasGamedata, openGameFolder } from '../tools/gamedata-path.ts';
+import { rideCart, summarize } from '../tools/cart-ride.ts';
+import { PlayWorld } from '../tools/play-world.ts';
 
 const CARRIAGE = 'meshes\\furniture\\prisonercarriage\\prisonercarriage01.nif';
 const HARNESS = 'meshes\\actors\\horse\\character assets\\harness.nif';
@@ -102,23 +105,13 @@ describe.skipIf(!hasGamedata())('a tethered cart on the local game data', () => 
       { reference: 1, kind: 'object' },
       false,
     );
-    physics.setMotion(cart, false);
-    for (const body of cart.bodies) {
-      const wheel = body.data.node.startsWith('Wheel');
-      physics.tuneBody(cart, body, {
-        mass: CART.mass,
-        ...(wheel && {
-          friction: CART.wheelFriction,
-          angularDamping: CART.wheelAngularDamping,
-          gravityScale: 1 + CART.wheelGravity,
-        }),
-      });
-    }
+    physics.keyframe(cart);
     const frontBar = cart.bodies.find((body) => body.data.node === 'FrontBar');
     const root = cart.bodies.find((body) => body.data.node === 'PrisonerCarriage');
     const wheel = cart.bodies.find((body) => body.data.node === 'WheelBackLeft');
     if (!frontBar || !root || !wheel) throw new Error('no FrontBar');
-    // The tether's body where the joint's point on the FrontBar is, turned as the FrontBar.
+    // The tether's body where the joint's point on the FrontBar is, turned as the FrontBar (a
+    // spine whose rest is turned as the horse's model).
     const joint = tetherJoint(CART);
     const t = frontBar.body.translation();
     const at = (y: number): Float32Array =>
@@ -127,20 +120,21 @@ describe.skipIf(!hasGamedata())('a tethered cart on the local game data', () => 
         t.y * HAVOK_SCALE + joint.a.pivot[1] + y,
         t.z * HAVOK_SCALE + joint.a.pivot[2],
       );
-    const hitch = physics.addHitch(frontBar, at(0), {
-      ...joint,
-      b: { ...joint.b, axes: joint.a.axes },
-      turnSpring: TETHER_TURN_SPRING,
-    });
+    const tether = CartTether.tether(physics, cart, root, at(0), place(0, 0, 0), CART);
+    if (!tether) throw new Error('not tethered');
+    // The wheels are not swept (their allowed penetration).
+    expect(wheel.body.isCcdEnabled()).toBe(false);
     // The horse walks north at 150 units a second for 4 seconds.
     let y = 0;
     const steps = Math.round(4 / PHYSICS_STEP);
     for (let i = 0; i < steps; i++) {
       y += 150 * PHYSICS_STEP;
       physics.step(PHYSICS_STEP, () => {
-        hitch.move(at(y));
+        tether.step(at(y));
       });
     }
+    // Every body weighs fMass:Cart.
+    expect(root.body.mass()).toBeCloseTo(CART.mass, 0);
     const moved = root.body.translation().y * HAVOK_SCALE;
     expect(moved).toBeGreaterThan(500);
     expect(moved).toBeLessThan(650);
@@ -163,7 +157,7 @@ describe.skipIf(!hasGamedata())('a tethered cart on the local game data', () => 
     for (let i = 0; i < steps / 4; i++) {
       y -= 150 * PHYSICS_STEP;
       physics.step(PHYSICS_STEP, () => {
-        hitch.move(at(y));
+        tether.step(at(y));
       });
     }
     const rear = cart.bodies.map((body) => body.body.translation().y * HAVOK_SCALE);
@@ -174,4 +168,30 @@ describe.skipIf(!hasGamedata())('a tethered cart on the local game data', () => 
     ).toBeLessThan(100);
     physics.free();
   });
+
+  it("rolls smoothly down the opening's road behind its horse", async () => {
+    // MQ101's first cart down the steep stretch from the start (tools/cart-ride.ts): the ground
+    // under its horse rises and falls by 7 units a second (against its average over a second);
+    // the cart bounced 15-30 on it before its tether left pitch and roll to its wheels and
+    // followed the spine smoothly.
+    const game = await PlayWorld.open();
+    try {
+      const { samples } = await rideCart(game, {
+        cart: 0xb9df3,
+        horse: 0xb9df2,
+        speed: 125,
+        seconds: 40,
+      });
+      const ride = summarize(samples);
+      expect(ride.seconds).toBeGreaterThan(30);
+      expect(ride.bounceRms).toBeLessThan(12);
+      expect(ride.bounceMax).toBeLessThan(150);
+      expect(ride.pitchMax).toBeLessThan(1.2);
+      expect(ride.rollMax).toBeLessThan(1.2);
+      expect(ride.minUpZ).toBeGreaterThan(0.85);
+    } finally {
+      await game.db.close();
+      await game.vfs.close();
+    }
+  }, 120_000);
 });

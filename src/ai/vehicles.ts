@@ -5,9 +5,11 @@
 // TetherToHorse puts the horse fHorseOffsetY:Cart ahead of the cart and joins the two: a
 // keyframed body that follows the horse's spine (sHorseConnect:Cart) pulls the cart's FrontBar
 // (its shafts and front axle) by a prismatic joint, turning it as the spine turns and letting it
-// slide a little up and down. Everything else is simulated: the cart's body hangs on the FrontBar
-// by its own limited hinge, the wheels on their hinges roll on the ground. The cart's pole turns
-// to point at the horse, and the horse's harness bones hang on the pole, so the harness reaches
+// slide a little up and down (src/ai/cart-tether.ts; here its pitch and roll are the wheels').
+// Everything else is simulated: the cart's body hangs on the FrontBar by its own limited hinge,
+// the wheels on their hinges roll on the ground. The spine is followed smoothly: eased between
+// the horse's animation updates and leaning as the horse leans, eased. The cart's pole turns to
+// point at the horse, and the horse's harness bones hang on the pole, so the harness reaches
 // from the horse to the cart.
 //
 // A rider's root is the vehicle's root body (where it is and how it is turned): its riding idles
@@ -111,13 +113,141 @@ export function tetherJoint(settings: CartSettings): {
 }
 
 /**
- * How the tether holds the FrontBar's turn against the spine: a spring back to how it was
- * hitched (accelerations: stiffness 1/s², damping 1/s; about 3 a second, nearly critically
- * damped). TODO(M13): the engine's joint holds it outright and Havok's solver gives way to the
- * wheels' extra pull (fGravMult:Cart) and the horse's sharp turns; how far it gives is not
- * known: this keeps the wheels on the ground and the cart on them.
+ * How the tether holds the FrontBar's turn about the slide axis (the cart's heading) against the
+ * spine: a spring back to the joint's frame (accelerations: stiffness 1/s², damping 1/s; about 3
+ * a second, nearly critically damped). The engine's prismatic joint holds all three turns
+ * outright; held so here (Rapier's joints do not give way as Havok's solver does) the cart was
+ * thrown when the horse turned on the spot at the hairpin of Helgen's road, and the FrontBar's
+ * pitch and roll are left to the wheels (src/ai/cart-tether.ts). TODO(M13): how far Havok's
+ * solver lets the held turn give is not known.
  */
 export const TETHER_TURN_SPRING = { stiffness: 400, damping: 32 } as const;
+
+/**
+ * How fast the tether's frame leans with the horse (seconds: the time constant of its easing
+ * towards the horse's drawn lean). The engine's tether follows the spine node of the horse's
+ * 3D, which leans with the ground (RACE "tilt front/back"); the horse here leans with the
+ * ground's normal under it at once (a triangle's: it jumps from one to the next), which, held
+ * by the tether, shook the cart. TODO(M13): the engine's character controller eases its pitch
+ * and roll (bhkCharacterController's pitch timer and angles); its rate is not read.
+ */
+export const TETHER_LEAN_EASE = 0.3;
+
+/** `previous` (a unit vector) eased towards `target` over `seconds` (time constant `ease`). */
+export function easeTowards(
+  previous: Vec3 | undefined,
+  target: Vec3,
+  seconds: number,
+  ease: number,
+): Vec3 {
+  if (!previous) return target;
+  const share = 1 - Math.exp(-seconds / ease);
+  const v: Vec3 = [
+    previous[0] + (target[0] - previous[0]) * share,
+    previous[1] + (target[1] - previous[1]) * share,
+    previous[2] + (target[2] - previous[2]) * share,
+  ];
+  const length = Math.hypot(v[0], v[1], v[2]) || 1;
+  return [v[0] / length, v[1] / length, v[2] / length];
+}
+
+/**
+ * An actor's root as it leans: at its feet, its up `lean` (a unit vector), its forward its
+ * heading's made square to that, scaled (column-major).
+ */
+export function leaningRoot(feet: Vec3, heading: number, lean: Vec3, scale: number): Float32Array {
+  const fx = Math.sin(heading);
+  const fy = Math.cos(heading);
+  const along = fx * lean[0] + fy * lean[1];
+  const f: Vec3 = [fx - lean[0] * along, fy - lean[1] * along, -lean[2] * along];
+  const length = Math.hypot(f[0], f[1], f[2]) || 1;
+  const forward: Vec3 = [f[0] / length, f[1] / length, f[2] / length];
+  const right = cross(forward, lean);
+  return Float32Array.of(
+    right[0] * scale,
+    right[1] * scale,
+    right[2] * scale,
+    0,
+    forward[0] * scale,
+    forward[1] * scale,
+    forward[2] * scale,
+    0,
+    lean[0] * scale,
+    lean[1] * scale,
+    lean[2] * scale,
+    0,
+    feet[0],
+    feet[1],
+    feet[2],
+    1,
+  );
+}
+
+/** A pose's matrix (column-major, 16 numbers). */
+type Matrix = ArrayLike<number>;
+
+/**
+ * Between two rigid poses: the translation lerped, each axis lerped and made orthonormal again
+ * (the poses are close: a step, an animation update).
+ */
+export function blendPose(a: Matrix, b: Matrix, t: number): Float32Array {
+  const out = new Float32Array(16);
+  for (let i = 0; i < 16; i++) out[i] = (a[i] ?? 0) + ((b[i] ?? 0) - (a[i] ?? 0)) * t;
+  const scaleOf = (m: Matrix): number => Math.hypot(m[4] ?? 0, m[5] ?? 0, m[6] ?? 0);
+  const scale = scaleOf(a) + (scaleOf(b) - scaleOf(a)) * t || 1;
+  const axis = (k: number): Vec3 => [out[k * 4] ?? 0, out[k * 4 + 1] ?? 0, out[k * 4 + 2] ?? 0];
+  const norm = (v: Vec3): Vec3 => {
+    const length = Math.hypot(...v) || 1;
+    return [v[0] / length, v[1] / length, v[2] / length];
+  };
+  const y = norm(axis(1));
+  const z0 = axis(2);
+  const along = z0[0] * y[0] + z0[1] * y[1] + z0[2] * y[2];
+  const z = norm([z0[0] - along * y[0], z0[1] - along * y[1], z0[2] - along * y[2]]);
+  const x = cross(y, z);
+  out.set([x[0] * scale, x[1] * scale, x[2] * scale, 0], 0);
+  out.set([y[0] * scale, y[1] * scale, y[2] * scale, 0], 4);
+  out.set([z[0] * scale, z[1] * scale, z[2] * scale, 0], 8);
+  out[15] = 1;
+  return out;
+}
+
+/** The longest an animation update is eased over (seconds; the slowest actors' interval). */
+const POSE_EASE_MAX = 0.25;
+
+/**
+ * A node of an actor's pose followed smoothly: each new pose (the animation moved the skeleton:
+ * every frame near the camera, less often far away or unseen) is eased into over the time the
+ * last one took, from where it was shown, as the engine interpolates an actor's pose between
+ * its graph's updates (src/animation/animated-skeleton.ts animationInterval); also over the
+ * physics steps of one frame. The tether's keyframed body follows the horse's spine so: it
+ * jumped at every update (ten a second for a horse behind the camera) and shook the cart.
+ */
+export class PoseEasing {
+  #from: Float32Array | undefined;
+  #to: Float32Array | undefined;
+  #shown: Float32Array | undefined;
+  /** Since the last new pose, and the time it is eased over (seconds). */
+  #since = 0;
+  #over = 0;
+
+  /** The node as shown after `seconds` more, its pose now `target` (model space). */
+  step(target: Matrix, seconds: number): Float32Array {
+    const to = this.#to;
+    let changed = !to;
+    for (let i = 0; i < 16 && !changed; i++) changed = (to?.[i] ?? 0) !== (target[i] ?? 0);
+    if (changed) {
+      this.#from = this.#shown ?? Float32Array.from(target);
+      this.#to = Float32Array.from(target);
+      this.#over = Math.min(POSE_EASE_MAX, Math.max(seconds, this.#since));
+      this.#since = 0;
+    }
+    this.#since += seconds;
+    const t = this.#over > 0 ? Math.min(1, this.#since / this.#over) : 1;
+    this.#shown = blendPose(this.#from ?? target, this.#to ?? target, t);
+    return this.#shown;
+  }
+}
 
 /**
  * The pole's turn in its parent's frame: the shortest turn that takes its length (+y) to point
@@ -167,15 +297,20 @@ export function poleTurn(origin: Vec3, target: Vec3): number[] {
 const TIP_LEAN = 0.71;
 
 /**
- * The tilt prevention on a tethered cart's body: where its up leans more than TIP_LEAN to a
- * side, or points down, an angular impulse of fTipImpulse:Cart about its forward axis (Havok
- * units; positive turns its up towards its right). Undefined while it stands.
+ * The tilt prevention on a tethered cart's body (the engine's action, observed in the original): the
+ * world's up seen from the body; where it leans more than TIP_LEAN towards the body's side (the
+ * body's right axis rises or sinks that far: `rightZ`, its world z) or the body's up points
+ * down (`upZ`), an angular impulse of fTipImpulse:Cart about the body's forward axis (Havok
+ * units), positive while its right side is up: it turns that side down. Undefined while it
+ * stands.
  */
-export function tipImpulse(up: Vec3, right: Vec3, settings: CartSettings): number | undefined {
-  const lean = up[0] * right[0] + up[1] * right[1] + up[2] * right[2];
-  if (Math.abs(lean) <= TIP_LEAN && up[2] >= 0) return undefined;
-  // Leaning right (or upside down to the right): turned back to the left.
-  return lean > 0 ? -settings.tipImpulse : settings.tipImpulse;
+export function tipImpulse(
+  rightZ: number,
+  upZ: number,
+  settings: CartSettings,
+): number | undefined {
+  if (Math.abs(rightZ) <= TIP_LEAN && upZ >= 0) return undefined;
+  return rightZ > 0 ? settings.tipImpulse : -settings.tipImpulse;
 }
 
 /** A vehicle's place: its root, its compass heading and its pitch (radians, nose up). */
