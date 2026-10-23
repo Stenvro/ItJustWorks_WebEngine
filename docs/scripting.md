@@ -225,6 +225,45 @@ from a new game's state again (the scene on screen loads again). What came of ea
 says why (it runs once and ran, it starts only from its story manager event, or which alias
 found nobody to fill it).
 
+## Events
+
+The game's event hub (`event-hub.ts`, `runtime.events`) is the one place a happening is told,
+as the original's event sources tell it to the scripts, the story manager, the statistics and
+the interface together. A producer emits a kind once, where the engine raises it; relays listen:
+the scripts' On\* events, and the story manager's (`story-events.ts`, below).
+
+### Locations
+
+A cell's location, as the engine finds it (observed in the original): the location of its
+encounter zone (the cell's own; an exterior cell without one takes its worldspace's), else the
+cell's own (XLCN), else for an exterior cell its worldspace's (the worldspace's XLCN, else its
+zone's). The plugins rely on the fallbacks: 113 of Whiterun's city cells and 146 of Markarth's
+have no location of their own and are in the city's, all of Solstheim's cells are in
+DLC2SolstheimLocation through their worldspace, Sovngarde's and the Soul Cairn's likewise. A
+reference's location is that of the cell it stands in (in a worldspace, the exterior cell at its
+place). GetInCurrentLocation, the aliases and the events all read it so.
+
+### Actor location change
+
+`actor-locations.ts` emits `actorLocationChange` (actor, old location, new; none is the
+wilderness). Observed in the original:
+
+- The engine looks at an actor's location whenever the actor is put into another cell, for
+  every actor: the player as the world takes them into a cell (a door, a cell border, a
+  teleport), an NPC as it walks across an exterior cell's border, is moved by a script or is
+  moved by its packages while away from the player. The event goes out when the location differs
+  from the one before.
+- The engine keeps the player's current location (ours: `GameState.playerLocation`, none at a new
+  game, so the first cell with a location the player is put in tells it: a `coc Riverwood` from the
+  main menu goes from none to RiverwoodLocation). An NPC's is where it stands.
+- Ours: the view tells the player's cell every frame (`GameSession`), the stage each staged
+  actor's (the loaded cell it stands in, `ActorStage`); `ScriptRuntime.move` and
+  `moveToEditorLocation` tell a moved NPC's, from its placement before the move (or the plugin's,
+  for one not seen before). A cell told again is not read again; a new one's location is read
+  and compared.
+- Heard by: the story manager's Change Location (the player's only, below), the actor's
+  OnLocationChange (the scripts' relay), the HUD's location name (the player's).
+
 ## Story manager
 
 `story-manager.ts`, after the Creation Kit's "Story Manager" and "SM Event Node" pages: an
@@ -239,6 +278,43 @@ quest the event is consumed, unless the node shares the event; a node that start
 passes the event on. The started quest gets its OnStory event (OnStoryScript for
 Keyword.SendStoryEvent: keyword, location, two references, two values) and keeps the event's
 data for its conditions.
+
+**The queue.** The engine adds every event to a queue; its story teller works through the queue
+in order, one event at a time, within a time budget a frame (fStoryTellerQuestFindTime), an
+event whose quests take long to start going on the next frame before the next event is looked at.
+Ours: `StoryManager.event` queues behind the events raised before it, so the next sees the quests
+the one before started (two Change Locations in a row do not both start the same quest).
+Keyword.SendStoryEventAndWait waits for its event's turn and processing.
+
+### Story events
+
+What tells the story manager (`story-events.ts`): Change Location from the hub, the others at
+their places. Observed in the original: where each is raised, for whom, with which members
+(each event type registers its members: R references, L locations, F forms, V numbers):
+
+| Event | Raised (the engine)                                                                                                                                                                                                                             | Members                                                                      | Ours                                                                                                                                                   |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| CLOC  | The player is put in a cell of another location (the player only; NPCs' location changes are no story event).                                                                                                                                   | R1 actor, L1 old location, L2 new                                            | `actorLocationChange` of the player                                                                                                                    |
+| AIPL  | The player picks an item up (owned: a theft, type 1, its owner; else type 4), takes one from a container (5), a pocket (3) or a corpse (6), buys one (2).                                                                                       | R1 owner, R2 container, L1 the player's location, F1 item, V1 how            | play-mode take, the AI-driven player's take, the container menu, the barter menu                                                                       |
+| REMP  | The player drops an item (type 4); no other removal raises it in the code read.                                                                                                                                                                 | R1 owner (the player), R2 the item's reference, L1 location, F1 item, V1 how | the inventory's drop                                                                                                                                   |
+| CAST  | Any actor's cast begins, unless it is in combat; a shout's word is cast as its spell.                                                                                                                                                           | R1 caster, R2 target, L1 caster's location, F1 spell                         | `CastingEngine.begin`, `releaseShout` (target: TODO(M13))                                                                                              |
+| DEAD  | An NPC not in combat reacts to a dead actor it detects, within fDeadReactionDistance (400), once per body, as it starts its walk to the body.                                                                                                   | R1 actor, R2 dead actor, L1 the actor's location                             | the senses' reaction to a seen body (from sight: TODO(M13) the 400)                                                                                    |
+| ARRT  | The arresting guard reaches the criminal (within 500 units) and starts the arrest.                                                                                                                                                              | R1 guard, R2 criminal, L1 criminal's location, V1 crime type                 | the guard's arrest as it opens the conversation; the type of the player's latest crime against its crime faction (0 for a bounty alone, as the engine) |
+| AHEL  | Every 1 to 1.5 s (INI fUpdateDelaySeconds) an NPC chooses whom it looks at (the player first, else the best actor within fAIMaxHeadTrackDistance and 120° of its facing); turning to another actor than before, neither in a scene, is a hello. | L1 the actor's location, R1 actor, R2 the other                              | `ActorLooks`: the NPC now looks at the actor it chose (`chooseLookActor`: the nearest; TODO(M13) the engine's score and two more conditions)           |
+| NVPE  | Game.TeachWord: each shout with the word whose first word the player now knows is added to the player; a new one is the event. Also any actor's AddSpell of a Voice Power spell. Papyrus AddShout does not raise it.                            | R1 actor, F1 shout or spell                                                  | `CastingEngine.teachWord` (which now adds the shout, as the engine), `ActorEngine.addSpell`                                                            |
+
+Kill Actor, Assault, Trespass, Crime Gold, Pick Lock, Craft Item, Skill and Level Increase are
+raised by the crime, crafting and progression engines where the engine raises them (Kill Actor
+as the actor is killed, with the crime it made: not from the death event, whose data has no
+crime). Actor Dialogue (ADIA) is the actors' conversations' own.
+
+Measured on the game data (a new game, a morning; `tests/story-events.int.test.ts`): walking
+into Riverwood starts DialogueRiverwoodIntroScene, DialogueRiverwoodKidsScene,
+FreeformRiverwood01, DLC1ScrollHandlingChangeLoc and CRHoldExpansion (MS13LucanCamillaScene runs
+from the game's start); the Sleeping Giant Inn WIGreeting; Whiterun from Riverwood Favor013 and
+Favor017 (Favor253, 110 and 204 find no one for an alias) and DialogueWhiterunHeimskrPreachScene;
+the Bannered Mare BardSongStarter (the bard's song; it stops at once), WIGreeting and
+DialogueWhiterunArgueScene.
 
 ## Actors
 
