@@ -515,6 +515,7 @@ export class ActorStage {
       actor: (reference) => this.#actors.get(reference),
       detects: (observer, target) => this.senses.detects(observer, target),
       passByTarget: (reference) => this.flight.passByTarget(reference),
+      weaponPoint: (reference) => this.combat.weaponPoint(reference),
     });
     // Who greets and chatters: those that detect the player; a speaker looks at whom it
     // speaks to (a dialogue head track).
