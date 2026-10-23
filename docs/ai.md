@@ -79,10 +79,16 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   lunge, a canned turn: NPC_TurnRight90 turns Orgnar 90.1°, NPC_TurnLeft180 180.2°), its root
   motion moves and turns it in the next physics steps instead of its request. TODO(M13): the
   engine's rule is not documented. Held so in an idle (the dialogue idles MotionDrivenIdle plays,
-  AnimationDrivenDialogueIdlesStateHH) while its AI sends it somewhere, it is told it moves
-  (moveStart, which MT_Standing_State leaves on, as the engine tells it for the way it wants to
-  go): by its measured speed alone the idle never ended, and Lokir stood in the line while the
-  archers waited for him to run. As the graph lets go (bAnimationDriven back to 0) while it
+  AnimationDrivenDialogueIdlesStateHH) while its AI sends it somewhere, its idle is stopped
+  (ActionIdleStop: IdleStop for an NPC, which takes the idle machine back to its initial state
+  and clears bAnimationDriven, bBlendOutSlow and bForceIdleStop), again each second until it
+  is gone; then it sets out as any actor does (moveStart by its speed). MT_Standing_State
+  leaves on moveStart only while not both bBlendOutSlow and bForceIdleStop are set, which such
+  an idle sets: told moveStart alone, Lokir never moved, stood in the line, and the execution
+  waited for the archers to kill him (measured in the browser: after IdleStop he ran his
+  patrol). The engine stops an actor's current idle (AIProcess::StopCurrentIdle, with a
+  force flag the graph's bForceIdleStop names); TODO(M13): when exactly it does so for a path
+  is not read from the engine yet. As the graph lets go (bAnimationDriven back to 0) while it
   still goes its way it is told again (moveStart; turnLeft / turnRight turning), as the engine
   performs the movement action again when it stops an idle. Beyond the high process (no
   controller) an actor held so does not go its way either: it glided (a chicken sitting in its
@@ -275,7 +281,10 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   the weapon its Weapon Type names (one it carries of the type; its arrows for a bow), draws,
   faces its target (Headtrack Target: its head too) and attacks in barrages of Min..Max
   Attacks Per Barrage, Min..Max Pause apart, End After Barrages of them (0 or Never End: while
-  the package runs) — a bow drawn, held 0.6 s and loosed (Aim Only: never loosed; Always Hit:
+  the package runs; a barrage it could not make, its weapon not ready, ends a counted
+  practice as failed, and with Never End is tried again a second later: MQ101's first archer
+  gave up on Lokir at once, his package ended and the scene took it as done) — a bow drawn,
+  held 0.6 s and loosed (Aim Only: never loosed; Always Hit:
   no spread, and the arrow flies onto an actor target's chest wherever it runs, without
   gravity: MQ101's archers on Lokir, whose death the execution scene waits for; TODO(M13): the
   engine's way; at a target that is no actor, 48 units over its placement: TODO(M13)), a melee
@@ -284,8 +293,11 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   UseMagic casts its Spell (that spell, else the attack spell it would choose) at its target
   Number To Cast Min..Max times (0: on and on), held Cast Time Min..Max seconds,
   Cooldown Time apart, Dual Cast with both hands. Shout shouts its Shout (put in its voice)
-  at its target whenever its voice has recovered (the Greybeards), Just Headtrack turning only
-  its head. TODO(M13): Crouch To Reload, Hold When Blocked. Acquire leaves what a living actor
+  at its target once, as soon as its voice has recovered, and succeeds (vanilla templates run
+  Shouts one after another: dunCGAlduinDTravelGateBlocker02's two,
+  dunCGAlduinShoutFromHoverMultipleTargetsRepeatTemplate's three in a repeating sequence; and
+  MQ101AlduinAttackScene1 waits for Alduin's shout from the tower, dunCGAlduinPerchShoutTemplate's
+  Sit then a Shout whose success completes the package), Just Headtrack turning only its head. TODO(M13): Crouch To Reload, Hold When Blocked. Acquire leaves what a living actor
   holds; with Allow Pickpocketing it goes to that actor and takes it from its pockets, with
   Allow Killing it fights that actor (StartCombat). Sandbox with Allow Eating eats now and then
   (food it carries, one used up, else a meal made up as Eat's Create Fake Food does: `sandbox`
@@ -371,7 +383,18 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   instant idle (IdleChairEnterInstant, ...), sent after the enter it would have had: the graphs
   take an instant idle only within the furniture's own state, which the enters lead to
   (MT_RootBehavior goes to ChairRoot_State on IdleChairFrontEnter, whose IdleChairEnterInstant
-  goes on to ChairIdleState). Its exit is measured after the same events.
+  goes on to ChairIdleState). Its exit is measured after the same events. Its graph is kept in
+  the furniture's state: a body made again while it uses furniture (its look changed, a new
+  play made the player's) is put back in it by the enter and the instant idle once the use is
+  in it, and so is one a script's idle left standing (not animation-driven, as furniture states
+  are) a moment after it played. MQ101's player walked to Helgen's chopping block in the
+  camera-bob idle (IdleWalkingCameraStart: the Master machine's MT WalkingCamera, outside the
+  states that take a furniture's enter), so the block's IdleExecutioneeIdle went unheard, and
+  the package's end fragment played IdleWalkingCameraEnd, which left them standing in the
+  block: its IdleExecutionerAlduinReactionDeath (Behavior37, within Executionee_State) never
+  played, PlayImod and IdleFurnitureExit never came, and MQ101 never reached stages 145 and
+  160, which give the controls back. TODO(M13): how the engine keeps a graph in its furniture
+  (an enter it holds until the graph takes it).
 - **Idle markers** (IDLM, not drawn; with the furniture markers they are the cells' markers:
   `CellData.markers`): the actor goes to it, faces its way and plays its idles (IDLA), in order or
   one picked each time (IDLF 0x1), once through if so set (0x4), one each time its timer (IDLT)
@@ -839,7 +862,19 @@ after `--package-seconds`).
   with Face Target the actor turns to its target while it stands (`src/shell/actor-scenes.ts`),
   its package's own facing coming back after.
 - **Packages:** while a package action runs, its actor's package stack is that action's
-  packages alone (`ActorAi`'s stack asks the scene first); one whose package completes is done,
+  packages alone (`ActorAi`'s stack asks the scene first). Observed in the original
+  (BGSSceneActionPackage): as the action starts, its actor takes the first of its packages
+  whose conditions hold; with none, or an actor dead, disabled or no actor, the action is done
+  at once (MQ101DragonAttackScene1's first phase waits on Alduin's MQ101AlduinPerch1, whose
+  conditions no longer hold by then). While it runs, the engine looks at it every update: with
+  the actor running the action's package, it is done once the actor is dead or disabled or the
+  package has reached its end; with the actor in the scene but running another package, the
+  action starts again (its packages again; with none that may run, done). Here the stack gives
+  the action's packages back by itself, and an action whose actor runs another package is
+  looked at again each second for packages that may run (`packagesRunnable` in
+  `src/scripting/runtime/scene-host.ts`: the packages' own conditions; TODO(M13): those on the
+  package's data). As it ends, the actor whose package it was leaves it (unless another running
+  action of the scene holds it there) and chooses its package again. One whose package completes is done,
   and its actor stands where it got to until the action ends: MQ101Scene1's Imperial soldier
   waits at the cart's greeting marker while his action spans six more phases. As the action
   ends, the actor's own packages come back. An actor with Run Only Scene Packages (CommonLibSSE;
@@ -1548,7 +1583,10 @@ walkers.
   package that sits it on a dragon perch (MQ101AlduinPerch1, Sit on Helgen's DragonPerchTower)
   flies it there and lands it on the perch (ActionFlyStop with the perch as its target:
   FlyStopPerchTower, whose FlightLanding and TowerLandImpact the quest hears), where it stays
-  until the package lets go. A landing with no perch asks the idle tree of nothing: the
+  until the package lets go. One standing on the ground takes off for its perch however near
+  it stands (a perch is landed on from the air): the Sit template's Travel to the perch's
+  place landed Alduin beside the Helgen tower's perch, and he stood there, his Sit never done,
+  while MQ101AlduinAttackScene1 waited for him to perch. A landing with no perch asks the idle tree of nothing: the
   perches' GetIsID on the target fail (unvalued they held, and every landing dived into a lake:
   Special_WaterDiveEnter). With nothing asked it circles where it began to, 2048 wide.
 - **Trigger volumes**: a flier without a controller (in the air, perched) tells the volumes it

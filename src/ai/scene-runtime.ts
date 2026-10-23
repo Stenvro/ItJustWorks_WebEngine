@@ -89,6 +89,8 @@ export interface SceneHost {
   packagesChanged(actor: number): void;
   /** The package an actor runs now, if its AI runs. */
   currentPackage(actor: number): number | undefined;
+  /** Whether any of the packages may run for an actor now (its conditions hold). */
+  packagesRunnable(actor: number, packages: readonly number[]): Promise<boolean>;
   /** Stops a quest (the scene's Stop Quest on End). */
   stopQuest(quest: number): void;
   random(): number;
@@ -138,8 +140,17 @@ interface Playing {
   paused: boolean;
   /** Its own clock (real seconds while it plays and is not paused). */
   clock: number;
+  /** When its package actions were last looked at again (its clock). */
+  rechecked: number;
   waiters: { readonly until: number; readonly resolve: () => void }[];
 }
+
+/**
+ * A package action whose actor runs another package is looked at again this often (seconds of
+ * the scene's clock): the engine starts such an action again, and one none of whose packages
+ * may run is done.
+ */
+const PACKAGE_RECHECK = 1;
 
 /** How a scene ended: its last phase completed, or it was stopped. */
 type EndReason = 'done' | 'stopped';
@@ -192,6 +203,7 @@ export class SceneDirector {
       state: 'starting',
       paused: false,
       clock: 0,
+      rechecked: 0,
       waiters: [],
     };
     this.#playing.set(scene, playing);
@@ -340,6 +352,10 @@ export class SceneDirector {
           run.complete = true;
           this.#trace(playing, `#${String(run.action.index)} timer done`);
         }
+      }
+      if (playing.clock - playing.rechecked >= PACKAGE_RECHECK) {
+        playing.rechecked = playing.clock;
+        this.#recheckPackages(playing);
       }
       const due = playing.waiters.filter((waiter) => waiter.until <= playing.clock);
       playing.waiters = playing.waiters.filter((waiter) => waiter.until > playing.clock);
@@ -593,8 +609,41 @@ export class SceneDirector {
             break;
           }
           this.#host.packagesChanged(actor);
+          void this.#checkRunnable(playing, run, actor);
           break;
       }
+    }
+  }
+
+  /**
+   * A package action is done at once when none of its packages may run for its actor (their
+   * conditions): observed in the original, an action starting gives its actor the first of
+   * its packages whose conditions hold, and with none it is done. MQ101DragonAttackScene1's
+   * first phase waits on Alduin's MQ101AlduinPerch1, whose conditions (MQ101DragonAttack below
+   * stage 10) no longer hold as that quest's scene starts.
+   */
+  async #checkRunnable(playing: Playing, run: ActionRun, actor: number): Promise<void> {
+    if (run.action.type !== 'package') return;
+    const runnable = await this.#host.packagesRunnable(actor, run.action.packages);
+    if (runnable || !live(playing) || run.status !== 'running' || run.complete) return;
+    run.complete = true;
+    this.#trace(playing, `#${String(run.action.index)} package done (none may run)`);
+    this.#host.packagesChanged(actor);
+  }
+
+  /**
+   * The engine looks at a running package action again while its actor runs some other package
+   * (observed in the original): it starts the action again, so one none of whose packages may run any
+   * longer is done (src/shell/actor-ai.ts gives the actor the action's packages again itself).
+   */
+  #recheckPackages(playing: Playing): void {
+    for (const run of playing.actions) {
+      const actor = run.actor;
+      if (run.status !== 'running' || run.complete || actor === undefined) continue;
+      if (run.action.type !== 'package') continue;
+      const current = this.#host.currentPackage(actor);
+      if (current !== undefined && run.action.packages.includes(current)) continue;
+      void this.#checkRunnable(playing, run, actor);
     }
   }
 

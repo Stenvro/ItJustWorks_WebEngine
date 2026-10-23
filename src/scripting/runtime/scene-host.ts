@@ -6,6 +6,7 @@
 // they talk with the player. Platform-independent: without a world (Node) lines pass silently.
 
 import { RecordFlag } from '../../formats/esm/record.ts';
+import { parsePackage } from '../../ai/package-records.ts';
 import { parseScene, type SceneRecord } from '../../ai/scene-records.ts';
 import type { SceneActorState, SceneHost, SceneLine, SceneLook } from '../../ai/scene-runtime.ts';
 import type { InfoResponse } from '../../world/dialogue-records.ts';
@@ -163,6 +164,27 @@ export class RuntimeSceneHost implements SceneHost {
 
   currentPackage(actor: number): number | undefined {
     return this.#runtime.world.currentPackage?.(actor);
+  }
+
+  /**
+   * Whether any of the packages may run for an actor now: its conditions (PACK CTDA) hold on
+   * the actor. TODO(M13): conditions on the package's own data (GetNumericPackageData) are
+   * read without it here.
+   */
+  async packagesRunnable(actor: number, packages: readonly number[]): Promise<boolean> {
+    const runtime = this.#runtime;
+    for (const pack of packages) {
+      const record = await runtime.forms.record(pack);
+      if (record?.type !== 'PACK') continue;
+      const conditions = parsePackage(record).conditions;
+      if (
+        conditions.length === 0 ||
+        (await runtime.conditionsHold(conditions, runtime.referenceHandle(actor)))
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   stopQuest(quest: number): void {

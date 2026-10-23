@@ -148,6 +148,8 @@ function setup(scenes: SceneRecord[]) {
   const running = new Set([QUEST]);
   const states = new Map<number, Partial<SceneActorState>>();
   const current = new Map<number, number>();
+  /** Packages whose conditions do not hold. */
+  const blocked = new Set<number>();
   /** Lines that wait to be finished by the test (topic → finish). */
   const slow = new Set<number>();
   const pending = new Map<number, () => void>();
@@ -197,6 +199,8 @@ function setup(scenes: SceneRecord[]) {
       events.push(`packages ${who.toString(16)}`);
     },
     currentPackage: (who) => current.get(who),
+    packagesRunnable: (_who, packages) =>
+      Promise.resolve(!packages.every((pack) => blocked.has(pack))),
     stopQuest: (quest) => {
       events.push(`stop quest ${quest.toString(16)}`);
       running.delete(quest);
@@ -216,6 +220,7 @@ function setup(scenes: SceneRecord[]) {
     running,
     states,
     current,
+    blocked,
     slow,
     /** Finishes a slow line. */
     finish: (topic: number) => {
@@ -420,6 +425,32 @@ describe('scene phases and actions', () => {
     await test.tick();
     expect(test.director.packagesOf(0x64)).toBeUndefined();
     expect(test.only('packages').length).toBeGreaterThanOrEqual(3);
+  });
+
+  it('is done with a package action none of whose packages may run, at once or later', async () => {
+    const test = setup([
+      scene(0x10, {
+        actors: [actor(0), actor(1)],
+        phases: [phase()],
+        actions: [packages(1, 0, 0, 0, [0x900]), packages(2, 1, 0, 0, [0x901])],
+      }),
+    ]);
+    test.blocked.add(0x900);
+    test.director.start(0x10);
+    await test.tick();
+    expect(test.director.actionComplete(0x10, 1)).toBe(true);
+    expect(test.director.actionComplete(0x10, 2)).toBe(false);
+    // The second actor runs its scene package; once its conditions fail it is left to its own,
+    // and the action is looked at again.
+    test.current.set(0x65, 0x901);
+    test.blocked.add(0x901);
+    await test.tick(1);
+    expect(test.director.actionComplete(0x10, 2)).toBe(false);
+    test.current.set(0x65, 0x777);
+    await test.tick(1);
+    await test.tick();
+    // Done, its phase (no conditions) completes and the scene ends.
+    expect(test.director.isPlaying(0x10)).toBe(false);
   });
 });
 

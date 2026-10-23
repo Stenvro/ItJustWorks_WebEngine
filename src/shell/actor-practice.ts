@@ -7,7 +7,7 @@
 // AI: it is no fight.
 
 import { attacking, AttackState, WeaponState } from '../gameplay/combat/combat-state.ts';
-import type { MagicCast, WeaponBarrage } from '../ai/package-runtime.ts';
+import type { MagicCast, ShoutResult, WeaponBarrage } from '../ai/package-runtime.ts';
 import { TargetType, type PackageTarget } from '../ai/package-records.ts';
 import { CastingSource } from '../scripting/runtime/casting-engine.ts';
 import type { Vec3 } from '../render/math.ts';
@@ -130,28 +130,27 @@ export class ActorPractice {
 
   /**
    * One shout: its Shout (the one named, into its voice) at the target, facing it unless only
-   * its head turns; resolves once it was let out, or at once while its voice recovers (false
-   * only when it has no shout).
+   * its head turns; 'shouted' once it was let out, 'waiting' at once while its voice recovers
+   * (or it casts), 'none' when it has no shout.
    */
   async shout(
     actor: number,
     target: number | undefined,
     shout: PackageTarget | undefined,
     turn: boolean,
-  ): Promise<boolean> {
+  ): Promise<ShoutResult> {
     const runtime = this.#options.session.scriptsReady;
-    if (!runtime) return false;
+    if (!runtime) return 'none';
     if (shout?.type === TargetType.objectId)
       await runtime.equipment.equipSpell(actor, shout.value, CastingSource.voice);
-    if ((await runtime.equipment.of(actor)).voice === undefined) return false;
+    if ((await runtime.equipment.of(actor)).voice === undefined) return 'none';
     if (target !== undefined) {
       this.#options.session.scriptWorld.lookAt(actor, target, 'procedure');
       if (turn) this.#face(actor, target);
     }
-    if (await this.#options.casting().shoutAt(actor, target)) {
-      await this.#until(() => !runtime.casting.isShouting(actor), STEP_LIMIT + 4);
-    }
-    return true;
+    if (!(await this.#options.casting().shoutAt(actor, target))) return 'waiting';
+    await this.#until(() => !runtime.casting.isShouting(actor), STEP_LIMIT + 4);
+    return 'shouted';
   }
 
   /** The practice is over: its weapon or magic away, its target let go. */

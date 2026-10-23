@@ -828,6 +828,9 @@ export class WorldViewer {
   async #lookChanged(reference: number): Promise<void> {
     if (reference === PLAYER_REF) {
       await this.#avatar?.rebuild();
+      // In furniture, the new body's graph is put back in it.
+      const seat = this.#seat;
+      if (seat?.seated) await this.#stage?.furniture.bodyReplaced(seat.user);
       return;
     }
     await this.#stage?.lookChanged(reference);
@@ -1285,6 +1288,9 @@ export class WorldViewer {
             };
           }
           this.#seat = avatar && this.#makeSeat(play, avatar);
+          // Made while the player uses furniture (a new play: a script moved them), its graph
+          // is put back in it.
+          if (this.#seat) void this.#stage?.furniture.bodyReplaced(this.#seat.user);
           const pending = this.#playerIdle;
           this.#playerIdle = undefined;
           const seat = this.#seat;

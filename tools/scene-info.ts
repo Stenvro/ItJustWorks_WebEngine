@@ -319,6 +319,8 @@ async function play(scene: SceneRecord, quest: QuestRecord | undefined): Promise
       })();
     },
     currentPackage: (actor) => running.get(actor),
+    // Their conditions taken to hold, as the scene's other conditions are.
+    packagesRunnable: () => Promise.resolve(true),
     stopQuest: (formId) => {
       log(`its quest ${hex(formId)} stops`);
     },

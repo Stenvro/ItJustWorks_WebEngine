@@ -92,6 +92,8 @@ interface Mover {
   rooted: boolean;
   /** Its graph was animation-driven when last drawn (bAnimationDriven). */
   heldByGraph: boolean;
+  /** When its idle was last stopped for its AI's way (performance.now ms). */
+  idleStoppedAt: number;
   tilt: { readonly at: Vec3; readonly normal: Vec3 } | undefined;
   /** The trigger volumes it is in. */
   triggers: Set<number>;
@@ -122,7 +124,15 @@ export interface ActorMoversOptions {
   ) => readonly { readonly at: Vec3; readonly radius: number }[];
   /** Whether something else holds an actor now (furniture): it has no controller meanwhile. */
   readonly held?: (actor: number) => boolean;
+  /**
+   * An actor's AI sends it on its way while an animation-driven idle holds it: its idle stops
+   * (ActionIdleStop: the graph's IdleStop), as the engine stops an actor's idle for its path.
+   */
+  readonly stopIdle?: (actor: number) => void;
 }
+
+/** An idle that did not stop for an actor's way is stopped again after this (ms). */
+const IDLE_STOP_AGAIN_MS = 1000;
 
 /** An actor on its way to a place. */
 interface Travel {
@@ -1096,6 +1106,7 @@ export class ActorMovers {
         root: { velocity: [0, 0], turn: 0, driven: false },
         rooted: false,
         heldByGraph: false,
+        idleStoppedAt: -Infinity,
         tilt: undefined,
         triggers: new Set(),
         bodyTriggers: new Set(),
@@ -1314,6 +1325,19 @@ export class ActorMovers {
       const driven = mover.root.driven;
       if (mover.heldByGraph && !driven) mover.locomotion.resume([behavior]);
       mover.heldByGraph = driven;
+      // Held by an animation-driven idle (bAnimationDriven: the dialogue idles MotionDrivenIdle
+      // plays) while its AI sends it somewhere: the idle is stopped (its graph's IdleStop ends
+      // it and clears bForceIdleStop), then it sets out as any actor does. Its graph leaves
+      // standing on moveStart only without bBlendOutSlow and bForceIdleStop, which such an idle
+      // sets: told moveStart alone, it never moved, and the idle never ended (Lokir stood in
+      // the line while the archers waited for him to run).
+      if (mover.rooted && mover.root.driven && request?.direction !== undefined) {
+        const now = performance.now();
+        if (now - mover.idleStoppedAt >= IDLE_STOP_AGAIN_MS) {
+          mover.idleStoppedAt = now;
+          this.#options.stopIdle?.(staged.reference);
+        }
+      }
       // What its steering wants (moved by its graph, a canned turn, a lunge: it stands, as far
       // as its graph is told).
       mover.locomotion.drive([behavior], {
@@ -1326,12 +1350,6 @@ export class ActorMovers {
         verticalSpeed: mover.character.verticalSpeed,
         sprinting: moving && request?.gait === 'sprint',
         sneaking: this.#sneaking.has(staged.reference),
-        // Held by an animation-driven idle (bAnimationDriven: the dialogue idles MotionDrivenIdle
-        // plays) while its AI sends it somewhere: it sets out, as the engine tells the graph
-        // moveStart for the way it wants to go (MT_Standing_State leaves on it). Measured, it
-        // never moved, and the idle never ended: Lokir stood in the line while the archers
-        // waited for him to run.
-        settingOut: mover.rooted && mover.root.driven && request?.direction !== undefined,
       });
     }
     // The trigger volumes it walked into and out of.

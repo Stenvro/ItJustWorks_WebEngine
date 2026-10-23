@@ -1606,7 +1606,11 @@ function animationDriven(behavior: BehaviorRuntime): boolean {
 
 /** Whether a request has a flier in the air (a landing far off: flown to). */
 function wantsAir(request: FlightRequest, here: Vec3): boolean {
-  if (request.kind === 'land') return flat(here, request.at) > IDLE_ORBIT;
+  // A perch is landed on from the air (FlyStopPerch*), however near it stands: MQ101's Alduin
+  // came down by the Helgen tower's perch at the end of his travel there and stood beside it,
+  // his Sit never done, while the attack scene waited for him to perch.
+  if (request.kind === 'land')
+    return request.perch !== undefined || flat(here, request.at) > IDLE_ORBIT;
   return true;
 }
 
