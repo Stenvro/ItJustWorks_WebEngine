@@ -845,3 +845,39 @@ describe('the character controller in the world', () => {
     expect(pushed(MOVE_LIMIT_MASS + 5)).toBeLessThan(5);
   });
 });
+
+describe('deactivation', () => {
+  it('sends a body that trembles in place to sleep, as Havok deactivates it', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    const trembling: CollisionBody = {
+      ...body(box([-5, -5, -5], [5, 5, 5])),
+      motion: 'dynamic',
+      mass: 5,
+      inertia: [0.1, 0.1, 0.1],
+      gravityFactor: 0,
+      maxLinearVelocity: 100,
+      maxAngularVelocity: 30,
+    };
+    // Placed to wait, then let go (not settling: those are left to settle first).
+    const placed = physics.addObject(
+      collision(trembling),
+      IDENTITY,
+      { reference: 1, kind: 'object' },
+      false,
+    );
+    const rigid = placed.bodies[0]?.body;
+    if (!rigid) throw new Error('no body');
+    physics.release(rigid);
+    // Half a metre a second, back and forth every step: too fast for Rapier's own sleep, but it
+    // never leaves the spot it started on.
+    let sign = 1;
+    for (let i = 0; i < 180 && !rigid.isSleeping(); i++) {
+      physics.step(1 / 60, () => {
+        if (!rigid.isSleeping()) rigid.setLinvel({ x: 0.5 * sign, y: 0, z: 0 }, false);
+        sign = -sign;
+      });
+    }
+    expect(rigid.isSleeping()).toBe(true);
+    physics.free();
+  });
+});

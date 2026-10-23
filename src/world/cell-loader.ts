@@ -27,6 +27,7 @@ export { parseTeleport, type Teleport } from './cell-records.ts';
 import { parseTextureSet, placeDecal, type PlacedDecal, type TextureSet } from './decal.ts';
 import { BookFlag, parseItem } from './item-records.ts';
 import { parseStaticDirectional, type StaticDirectional } from './material-object.ts';
+import { parseRagdollData, type RagdollData } from './ragdoll-data.ts';
 import type { GameRecord, RecordDatabase } from './record-db.ts';
 
 export interface CellObject {
@@ -126,6 +127,10 @@ export interface CellActor {
   readonly links: ReadonlyMap<number, number>;
   /** Dead when the game starts (ACHR flag 0x200). */
   readonly startsDead: boolean;
+  /** Where the Creation Kit left its ragdoll's bodies, dead (XRGD: src/world/ragdoll-data.ts). */
+  readonly ragdoll?: RagdollData;
+  /** "Don't Havok Settle" (flag 0x20000000): its ragdoll lies as placed until touched. */
+  readonly dontHavokSettle?: boolean;
 }
 
 /** The sounds an object makes when used (SNDR form ids). */
@@ -201,6 +206,17 @@ export interface CellPrimitive {
 
 /** REFR record flag: "Don't Havok Settle". */
 const DONT_HAVOK_SETTLE = 0x20000000;
+
+/** A placed actor's ragdoll pose and settle flag (its record's XRGD and flags). */
+export function ragdollOf(
+  record: Pick<GameRecord, 'flags' | 'fields'>,
+): Pick<CellActor, 'ragdoll' | 'dontHavokSettle'> {
+  const ragdoll = parseRagdollData(record.fields);
+  return {
+    ...(ragdoll && { ragdoll }),
+    ...((record.flags & DONT_HAVOK_SETTLE) !== 0 && { dontHavokSettle: true }),
+  };
+}
 /** The engine's collision primitive marker (STAT). */
 const COLLISION_MARKER = 0x21;
 /** SkyrimLayer L_TRIGGER: the layer of triggers' primitives without XTRI. */
@@ -609,6 +625,7 @@ export async function loadCellData(
         scale: ref.scale,
         links: linkedReferences(record),
         startsDead: (record.flags & RecordFlag.startsDead) !== 0,
+        ...ragdollOf(record),
       });
       continue;
     }
