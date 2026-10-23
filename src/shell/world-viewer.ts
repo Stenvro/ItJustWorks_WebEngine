@@ -1598,8 +1598,8 @@ export class WorldViewer {
 
   /**
    * Large references of the grid around the camera: the cells beyond the loaded ones get a
-   * scene of only those (the loaded cells show them anyway). A cell's scene is kept until the
-   * full cell is ready there.
+   * scene of only those (the loaded cells show them anyway, those kept just outside the grid
+   * too). A cell's scene is kept until the full cell is ready there.
    */
   #updateLargeReferences(world: Worldspace, cx: number, cy: number): void {
     const wanted = largeReferencesAround(world.largeReferences, cx, cy);
@@ -1607,15 +1607,22 @@ export class WorldViewer {
       Math.max(Math.abs(x - cx), Math.abs(y - cy)) <= GRID_RADIUS;
     const beyond = (x: number, y: number): boolean =>
       Math.max(Math.abs(x - cx), Math.abs(y - cy)) > LARGE_REFERENCE_RADIUS + 1;
+    /** The references of cells reloaded because more of theirs are wanted (kept with the new). */
+    const grown = new Map<string, ReadonlySet<number>>();
     for (const [key, large] of this.#largeCells) {
       const references = wanted.get(key);
-      const covered = inGrid(large.x, large.y) && this.#cells.get(key)?.ready === true;
-      // No longer listed: kept until well outside the grid (no churn at its edge).
+      // A full cell loaded there (in the grid, or kept just outside it) shows them anyway.
+      const covered = this.#cells.get(key)?.ready === true;
+      // No longer listed: kept until well outside the grid (no churn at its edge). Listed with
+      // fewer references (a reference that only reaches into cells at the grid's edge, which the
+      // camera just left): kept as it is. Only one that wants more is loaded again, with what it
+      // had, so a camera going to and fro over a cell border (a fight, a walk along it) loads
+      // each cell at most once more instead of every time.
       const stale = references
-        ? references.size !== large.references.size ||
-          [...references].some((id) => !large.references.has(id))
+        ? [...references].some((id) => !large.references.has(id))
         : beyond(large.x, large.y);
       if (covered || stale) {
+        if (stale && references) grown.set(key, large.references);
         large.scene?.destroy();
         this.#largeCells.delete(key);
       }
@@ -1624,8 +1631,13 @@ export class WorldViewer {
     for (const [key, references] of wanted) {
       if (this.#largeCells.has(key)) continue;
       const [x = 0, y = 0] = key.split(',').map(Number);
-      if (inGrid(x, y)) continue;
-      this.#largeQueue.push({ x, y, references });
+      if (inGrid(x, y) || this.#cells.has(key)) continue;
+      const had = grown.get(key);
+      this.#largeQueue.push({
+        x,
+        y,
+        references: had ? new Set([...had, ...references]) : references,
+      });
     }
     this.#largeQueue.sort(
       (a, b) => Math.hypot(a.x - cx, a.y - cy) - Math.hypot(b.x - cx, b.y - cy),

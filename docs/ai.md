@@ -1348,7 +1348,9 @@ and casts keep their own pace (`attackInterval`, TODO(M13)).
   a quarrel or a brawl) and would flee yields instead: Yield, weapon away, out of the fight for
   fCombatYieldTime (10 s), not again within fCombatYieldRetryTime (60 s); struck again it
   fights on. The player yields a quarrel their blows started by sheathing and holding off 3 s:
-  AcceptYield, and it lets them be. TODO(M13): the engine's rule.
+  AcceptYield, and it lets them be; so do guards that took up a fight against the player (a
+  crime: their arrest follows) unless their faction attacks the player on sight. TODO(M13): the
+  engine's rule.
 - **The end of combat**: no enemy known (CombatToNormal; dead, bleeding out, gone or left
   behind), StopCombat, calm or a search given up: it leaves its group, stands, sheathes 3 s
   later (unless its package keeps its weapon drawn) and chooses its package again. Its own lines

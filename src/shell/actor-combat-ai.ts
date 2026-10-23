@@ -735,10 +735,12 @@ export class ActorCombatAi {
     const fightsPlayer = mind.target === PLAYER_REF;
     const playerEnemy = this.#onSight(mind, profile, magic, PLAYER_REF);
     if (mind.mode === 'fight') {
-      // The player yields a quarrel of their blows: it accepts once they held off a while.
+      // The player yields a quarrel of their blows: it accepts once they held off a while. So
+      // do the guards that took up the fight against them (a crime: their arrest follows,
+      // src/shell/actor-crime.ts); those whose faction wants the player dead stay their enemy.
       if (
         acceptsYield({
-          fightsPlayer: fightsPlayer && mind.quarrels.has(PLAYER_REF),
+          fightsPlayer: fightsPlayer && (mind.quarrels.has(PLAYER_REF) || profile.guard),
           playerEnemy,
           heldOff: this.#clock - Math.max(this.#playerBlow, this.#playerArmed),
           settings: this.#settings,

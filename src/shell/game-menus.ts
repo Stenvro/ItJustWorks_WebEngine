@@ -86,8 +86,11 @@ export class GameMenus {
   readonly #host: MenuHost;
   readonly #session: GameSession;
   readonly #terminal: Terminal;
-  /** Called as a menu opens; returns what ends its menu mode. */
-  readonly #enterMenuMode: () => () => void;
+  /**
+   * Called as a menu opens; returns what ends its part. A menu that pauses the game (all but the
+   * crafting menu: `pauses` false) puts it in menu mode; every menu takes the mouse.
+   */
+  readonly #enterMenuMode: (pauses?: boolean) => () => void;
   /** The menu open (or opening), if any. */
   #open: { menu: Menu | undefined; leave: () => void } | undefined;
   readonly #missing = new Set<string>();
@@ -117,7 +120,7 @@ export class GameMenus {
     host: MenuHost,
     session: GameSession,
     terminal: Terminal,
-    enterMenuMode: () => () => void,
+    enterMenuMode: (pauses?: boolean) => () => void,
     world: MenusWorld,
   ) {
     this.#world = world;
@@ -699,7 +702,8 @@ export class GameMenus {
     }
     const hud = this.#session.hud;
     hud.shown(false);
-    const leave = this.#enterMenuMode();
+    // The one item menu that does not pause the game: the world goes on around the workbench.
+    const leave = this.#enterMenuMode(false);
     const open = { menu: undefined as Menu | undefined, leave: () => undefined as unknown };
     const closed = (): void => {
       if (this.#open === open) this.#open = undefined;

@@ -160,6 +160,8 @@ export class PlayMode {
   #dialogue: DialogueMenu | undefined;
   /** The menus open that pause the game (menu mode while there is one). */
   #pausing = 0;
+  /** The menus open that take the mouse without pausing the game (the crafting menu). */
+  #cursorMenus = 0;
   #starting = false;
   /** The player's data: its bindings (the menus show the keys of the events their texts name). */
   #playerData: PlayerData | undefined;
@@ -433,16 +435,22 @@ export class PlayMode {
     await hud.open();
     const boxes = new MessageBoxes(this.#host, session.settings(), () => this.#enterMenuMode());
     this.#messageBoxes = boxes;
-    const menus = new GameMenus(this.#host, session, this.#terminal, () => this.#enterMenuMode(), {
-      inAir: () => this.#world.inAir(),
-      confirm: (text, buttons) => boxes.show(text, buttons),
-      heading: () => this.#world.heading(),
-      localMap: () => this.#world.localMap(),
-      tweenCamera: () => this.#world.tweenCamera(),
-      noFastTravelReason: () => this.#noFastTravelReason(),
-      fastTravel: (destination, distance) => this.#fastTravel(destination, distance),
-      player: () => this.#world.player(),
-    });
+    const menus = new GameMenus(
+      this.#host,
+      session,
+      this.#terminal,
+      (pauses) => this.#enterMenuMode(pauses),
+      {
+        inAir: () => this.#world.inAir(),
+        confirm: (text, buttons) => boxes.show(text, buttons),
+        heading: () => this.#world.heading(),
+        localMap: () => this.#world.localMap(),
+        tweenCamera: () => this.#world.tweenCamera(),
+        noFastTravelReason: () => this.#noFastTravelReason(),
+        fastTravel: (destination, distance) => this.#fastTravel(destination, distance),
+        player: () => this.#world.player(),
+      },
+    );
     this.#menus = menus;
     menus.onQuit = (toDesktop) => {
       if (toDesktop) {
@@ -967,9 +975,22 @@ export class PlayMode {
   /**
    * A menu that pauses the game opens: the game is in menu mode (the world and its clocks stand
    * still, the sounds paused in menus go quiet, the mouse moves a cursor) until every such
-   * menu has closed. Returns what ends this one's part.
+   * menu has closed. Returns what ends this one's part. A menu that does not pause it
+   * (`pauses` false: the crafting menu, as the engine's flags have it) only takes the mouse
+   * while the world goes on (docs/ui.md, "Menu mode").
    */
-  #enterMenuMode(): (pointer?: boolean) => void {
+  #enterMenuMode(pauses = true): (pointer?: boolean) => void {
+    if (!pauses) {
+      if (this.#cursorMenus++ === 0) this.#world.capturePointer(false);
+      let left = false;
+      return (pointer = true) => {
+        if (left) return;
+        left = true;
+        if (--this.#cursorMenus === 0 && pointer && !this.#session.menuMode) {
+          if (this.#dialogue?.isOpen !== true) this.#world.capturePointer(true);
+        }
+      };
+    }
     if (this.#pausing++ === 0) this.#setMenuMode(true);
     let left = false;
     return (pointer = true) => {
@@ -983,8 +1004,9 @@ export class PlayMode {
     const session = this.#session;
     session.menuMode = on;
     session.soundSystem?.engine.setInMenu(on);
-    // A conversation keeps the mouse on its menu.
-    if (pointer && !(this.#dialogue?.isOpen === true && !on)) this.#world.capturePointer(!on);
+    // A conversation, or a menu that does not pause the game, keeps the mouse on its menu.
+    const kept = this.#dialogue?.isOpen === true || this.#cursorMenus > 0;
+    if (pointer && !(kept && !on)) this.#world.capturePointer(!on);
   }
 
   /** The runtime the session's new game runs in, as soon as it exists. */
