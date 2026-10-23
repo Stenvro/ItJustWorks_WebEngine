@@ -155,13 +155,9 @@ const ATTACK_ANSWER = 1.5;
 const FIGHT_REACH = 4096;
 /** How often a fighter's perks' graph variables are read again (seconds). */
 const PERK_VARIABLE_SECONDS = 1;
-/** The enemy bar stays this long after the last hit (seconds). TODO(M13): the engine's time. */
-const ENEMY_BAR_SECONDS = 4;
 /** A paired killmove's victim stands this far before the leader (Paired_1HMKillMoveB's "2_"
  * root at its start: 72.8 units ahead, turned to face it). TODO(M13): each clip's own offset. */
 const PAIRED_DISTANCE = 72.8;
-/** A paired animation lasts no longer than this (seconds; the longest vanilla ones: 10). */
-const PAIRED_LIMIT = 12;
 /** How wide a flying arrow is to those it may hit and who dodge it (units). */
 const SHOT_RADIUS = 8;
 
@@ -1150,9 +1146,10 @@ export class ActorCombat implements CombatBridge {
     fighter.blood?.left.advance(seconds);
     if (state.current?.ranged === true && state.arrowNocked) state.drawnFor += seconds;
     this.#aimBow(fighter);
-    // A paired animation that never says it ended lets go after a while (TODO(M13)).
+    // A paired animation that never says it ended lets go after fKillMoveMaxDuration (the
+    // engine's killmove timer).
     fighter.pairedFor = state.paired === undefined ? 0 : fighter.pairedFor + seconds;
-    if (fighter.pairedFor > PAIRED_LIMIT) {
+    if (fighter.pairedFor > this.#settings.killMoveMaxDuration) {
       state.paired = undefined;
       for (const graph of this.#graphs(fighter)) graph.pairedSide = undefined;
     }
@@ -1834,7 +1831,7 @@ export class ActorCombat implements CombatBridge {
     const passes = attacker.practice?.combatStartOnHit === false;
     if (!passes) this.#brain.hit(attackerRef, targetRef);
     if (attacker.player)
-      this.#enemy = { reference: targetRef, until: this.#clock + ENEMY_BAR_SECONDS };
+      this.#enemy = { reference: targetRef, until: this.#clock + this.#enemyBarSeconds() };
     // Detection: the one attacked searches for its attacker; those near watch the fight.
     if (!passes) senses?.attackedBy(targetRef, attackerRef);
     // Crime: a blow on one that was not hostile to its attacker is an assault, reported by the
@@ -2735,6 +2732,15 @@ export class ActorCombat implements CombatBridge {
     return this.#options.session.ini.number('GamePlay', 'iDifficulty');
   }
 
+  /**
+   * How long the enemy bar shows after the player's last blow ([Interface]
+   * iEnemyHealthDisplayTime, ms: the engine's, after the enemy's health last changed).
+   * TODO(M13): the engine also hides it with the enemy beyond iEnemyHealthDisplayAngle of the view.
+   */
+  #enemyBarSeconds(): number {
+    return this.#options.session.ini.number('Interface', 'iEnemyHealthDisplayTime') / 1000;
+  }
+
   #readSettings(): void {
     if (this.#settingsRead) return;
     this.#settingsRead = true;
@@ -2853,7 +2859,7 @@ export class ActorCombat implements CombatBridge {
     if (this.#spellHits.size > 256) this.#spellHits.clear();
     this.#brain.hit(caster, victim);
     if (caster === PLAYER_REF && victim !== PLAYER_REF)
-      this.#enemy = { reference: victim, until: this.#clock + ENEMY_BAR_SECONDS };
+      this.#enemy = { reference: victim, until: this.#clock + this.#enemyBarSeconds() };
   }
 
   /**

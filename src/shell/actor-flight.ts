@@ -34,6 +34,7 @@ import {
   landingApproach,
   maneuverSeconds,
   orbitPoint,
+  orbitSeconds,
   readFlightSettings,
   steerFlight,
   takesOff,
@@ -106,6 +107,8 @@ interface FlierCombat {
   landedAt: number | undefined;
   groundTime: number;
   clockwise: boolean;
+  /** Its offensive mult as the engine weighs it (its orbits' length). */
+  offensive: number;
 }
 
 /** One flier. */
@@ -431,9 +434,15 @@ export class ActorFlight {
    * maneuver by its style's flight section as one ends (orbit, dive bomb, hover, perch attack,
    * landing to fight on the ground), its breath at the target. True while the flight has it (in
    * the air, landing, perched); false while it fights on the ground (the combat AI's melee
-   * fights then, until its ground time is over and it takes off again).
+   * fights then, until its ground time is over and it takes off again). `offensive`: its
+   * offensive mult as the engine weighs it (combat-tactics offensiveMult).
    */
-  fight(reference: number, target: FlightTarget, flight: CombatStyleFlight): boolean {
+  fight(
+    reference: number,
+    target: FlightTarget,
+    flight: CombatStyleFlight,
+    offensive: number,
+  ): boolean {
     const flier = this.#flier(reference);
     if (!flier) return false;
     const settings = this.#settings;
@@ -442,16 +451,18 @@ export class ActorFlight {
       combat = {
         target: target.reference,
         maneuver: 'orbit',
-        until: this.#clock + settings.orbitTime * (0.5 + this.#random()),
-        breathes: flyingAttack(flight, this.#random),
+        until: this.#clock + orbitSeconds(offensive, settings, this.#random),
+        breathes: flyingAttack(flight, this.#random, settings),
         pass: undefined,
         landing: undefined,
         landedAt: flier.state === FlyingState.none ? this.#clock : undefined,
         groundTime: maneuverSeconds('ground', flight, settings, this.#random),
         clockwise: this.#random() < 0.5,
+        offensive,
       };
       flier.combat = combat;
     }
+    combat.offensive = offensive;
     const here = flier.staged.position;
     // On the ground: it fights there for its ground time, then takes off (its target far: at once).
     if (flier.state === FlyingState.none && flier.asked?.what !== 'takeoff') {
@@ -527,6 +538,7 @@ export class ActorFlight {
       flight,
       { canLand: spot !== undefined && this.allowed(flier.reference), perch },
       this.#random,
+      this.#settings,
     );
     this.#next(flier, combat, flight, target, maneuver);
   }
@@ -540,7 +552,7 @@ export class ActorFlight {
   ): void {
     const settings = this.#settings;
     combat.maneuver = maneuver;
-    combat.breathes = flyingAttack(flight, this.#random);
+    combat.breathes = flyingAttack(flight, this.#random, settings);
     combat.pass = undefined;
     combat.landing = undefined;
     switch (maneuver) {
@@ -581,7 +593,7 @@ export class ActorFlight {
         break;
       }
       default:
-        combat.until = this.#clock + settings.orbitTime * (0.75 + 0.5 * this.#random());
+        combat.until = this.#clock + orbitSeconds(combat.offensive, settings, this.#random);
         combat.clockwise = this.#random() < 0.5 ? !combat.clockwise : combat.clockwise;
     }
   }

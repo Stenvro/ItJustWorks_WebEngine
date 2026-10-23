@@ -1,21 +1,45 @@
 import { describe, expect, it } from 'vitest';
 import { Fields } from '../formats/esm/fields.ts';
-import { COMBAT_AI_DEFAULTS } from './combat-ai.ts';
+import { COMBAT_AI_DEFAULTS, readCombatAiSettings } from './combat-ai.ts';
 import { CombatStyleFlag, parseCombatStyle, type CombatStyle } from './combat-style-records.ts';
 import {
+  advanceRadii,
   attackChance,
   avoidsThreat,
+  bashChance,
+  blockAttackChance,
+  blockChance,
+  blockTime,
+  bowHoldTime,
+  castChance,
   chooseAttack,
   chooseEquipment,
   chooseManeuver,
   chooseSupport,
   choosesBlock,
+  circleChance,
+  circleDistantChance,
+  curve,
+  dodgeChance,
   dodgeDirection,
+  fallbackChance,
+  flankDistance,
   maneuverDirection,
+  maneuverTime,
+  maxOptimalRange,
+  minEquipTime,
+  offensiveBashChance,
+  offensiveMult,
+  rangedAttackChance,
   rangeFit,
+  restoreShare,
+  specialAttackChance,
+  stalkTime,
+  strafeChance,
   threatens,
   type AttackInput,
   type EquipOption,
+  type ManeuverInput,
   type SupportState,
   type Threat,
 } from './combat-tactics.ts';
@@ -50,6 +74,15 @@ function style(
 // offensive, defensive, group offensive, melee, magic, ranged, shout, unarmed, staff, avoid.
 const melee = style([0.32, 0.11, 0.41, 1, 1, 1, 1, 1, 1, 0.2]);
 const archer = style([0.34, 0.24, 0.61, 0.83, 1, 3.2, 1, 1, 1, 0.2]);
+const duel = style([0.5, 0.5, 1, 1, 1, 1, 1, 1, 1, 0.2], undefined, [0.8, 0.6, 0.2, 0.2]);
+const wolf = style(
+  [0.75, 0.09, 0.74, 1, 1, 1, 1, 1, 1, 0.2],
+  undefined,
+  [0, 0.15, 0.5, 0.4],
+  CombatStyleFlag.flanking,
+);
+const guard = style([0.2, 0.8, 1, 1, 1, 1, 1, 1, 1, 0.2]);
+const alone = { targetIsPlayer: false, allies: 0 };
 
 /** A random source that gives these values in turn (then 0.5). */
 const randoms = (...values: number[]): (() => number) => {
@@ -67,12 +100,104 @@ const fists: EquipOption = {
   equipped: false,
 };
 
+describe('combat tactics: style values on the engine’s scale', () => {
+  it('reads a three-point curve: least at −1, middle at 0, most at 1', () => {
+    expect(curve(-1, 1, 2, 4)).toBe(1);
+    expect(curve(-0.5, 1, 2, 4)).toBe(1.5);
+    expect(curve(0, 1, 2, 4)).toBe(2);
+    expect(curve(0.5, 1, 2, 4)).toBe(3);
+    expect(curve(1, 1, 2, 4)).toBe(4);
+  });
+
+  it('maps each chance onto its fCombat…ChanceMin .. Max', () => {
+    // Circle 0.8 on 0 .. 0.75, circle distant on 0.25 .. 0.75, fallback 0.6 on 0 .. 0.5.
+    expect(circleChance(duel, settings)).toBeCloseTo(0.6);
+    expect(circleDistantChance(duel, settings)).toBeCloseTo(0.65);
+    expect(fallbackChance(duel, settings)).toBeCloseTo(0.3);
+    // Strafe 0.2 on 0 .. 0.75; avoid threat 0.2 on 0 .. 1; special attack 0.1 on 0 .. 1.
+    expect(strafeChance(archer, settings)).toBeCloseTo(0.15);
+    expect(dodgeChance(melee, settings)).toBeCloseTo(0.2);
+    expect(specialAttackChance(melee, settings)).toBeCloseTo(0.1);
+    // Block and block attack: the defensive mult on 0 .. 1.
+    expect(blockChance(guard, true, settings)).toBeCloseTo(0.8);
+    expect(blockChance(guard, false, settings)).toBeCloseTo(0.2);
+    expect(blockAttackChance(guard, settings)).toBeCloseTo(0.8);
+    // A load order's setting moves the scale.
+    const narrow = readCombatAiSettings((name) =>
+      name === 'fCombatCircleChanceMax' ? 0.5 : undefined,
+    );
+    expect(circleChance(duel, narrow)).toBeCloseTo(0.4);
+  });
+
+  it('reads flank distance as a distance and stalk time as a time', () => {
+    // Flank distance 0.5 on fCombatFlankingDistanceMin 0 .. Max 1024.
+    expect(flankDistance(wolf, settings)).toBeCloseTo(512);
+    // Stalk time 0.4 on fCombatFlankingStalkTimeMin 0.01 .. Max 10 s.
+    expect(stalkTime(wolf, settings)).toBeCloseTo(0.01 + 0.4 * 9.99);
+    expect(maneuverTime(wolf, 'stalk', randoms(0), settings)).toBeCloseTo(4.006);
+    expect(maneuverTime(wolf, 'advance', randoms(0.5), settings)).toBe(2);
+  });
+
+  it('times a block by its defensive mult on the curve 4, 8, 10000 s', () => {
+    // Defensive 0.8: 0.6 on the curve, 8 + 9992 × 0.6; defensive 0.11: −0.78, 4 + 4 × 0.22.
+    expect(blockTime(guard, settings)).toBeCloseTo(6003.2);
+    expect(blockTime(melee, settings)).toBeCloseTo(4.88);
+  });
+
+  it('weighs the offensive mult by the group against a crowded player', () => {
+    const pack = style([0.8, 0.2, 0.5, 1, 1, 1, 1, 1, 1, 0.2]);
+    expect(offensiveMult(pack, alone, settings)).toBe(pack.general.offensiveMult);
+    // Two others on the player: × 0.5², not below fCombatGroupOffensiveMultMin 0.1.
+    expect(offensiveMult(pack, { targetIsPlayer: true, allies: 2 }, settings)).toBeCloseTo(0.2);
+    expect(offensiveMult(pack, { targetIsPlayer: true, allies: 5 }, settings)).toBeCloseTo(0.08);
+    expect(offensiveMult(pack, { targetIsPlayer: false, allies: 2 }, settings)).toBeCloseTo(0.8);
+  });
+
+  it('puts the advance radii and the optimal range on the defensive − offensive curves', () => {
+    const near = { ...alone, targetStaggered: false, reach: 141, targetReach: 141 };
+    // Offensive styles: inner 0 (Min = Mid = 0), outer between 128 and 256 (Skyrim.esm's).
+    const pressing = advanceRadii(melee, { ...near, sinceDamaged: undefined }, settings);
+    expect(pressing.inner).toBe(0);
+    expect(pressing.outer).toBeCloseTo(128 + 128 * (1 - 0.21));
+    // A defensive one keeps its wider radii while it was hurt lately and the reaches match.
+    const hurt = advanceRadii(guard, { ...near, sinceDamaged: 2 }, settings);
+    expect(hurt.inner).toBeCloseTo(256 * 0.6);
+    expect(hurt.outer).toBeCloseTo(256 + 256 * 0.6);
+    const middle = { inner: 0, outer: 256 };
+    expect(advanceRadii(guard, { ...near, sinceDamaged: 11 }, settings)).toEqual(middle);
+    expect(advanceRadii(guard, { ...near, sinceDamaged: undefined }, settings)).toEqual(middle);
+    expect(advanceRadii(guard, { ...near, targetReach: 400, sinceDamaged: 2 }, settings)).toEqual(
+      middle,
+    );
+    // A staggered target: its defensive mult × 0, it presses.
+    const pressed = advanceRadii(
+      guard,
+      { ...near, targetStaggered: true, sinceDamaged: 2 },
+      settings,
+    );
+    expect(pressed.inner).toBe(0);
+    expect(pressed.outer).toBeCloseTo(128 + 128 * 0.8);
+    // The archer: 0.24 − 0.34 on 1024, 1280, 1536.
+    expect(maxOptimalRange(archer, alone, settings)).toBeCloseTo(1024 + 256 * 0.9);
+  });
+
+  it('keeps what it took up by its kind’s fCombatInventoryMinEquipTime*', () => {
+    expect(minEquipTime('melee', settings)).toBe(5);
+    expect(minEquipTime('ranged', settings)).toBe(5);
+    expect(minEquipTime('magic', settings)).toBe(3);
+    expect(minEquipTime('shout', settings)).toBe(3);
+    expect(minEquipTime('staff', settings)).toBe(5);
+    expect(minEquipTime('unarmed', settings)).toBe(0);
+  });
+});
+
 describe('combat tactics: what it fights with', () => {
   it('fits melee within reach and ranged at a distance', () => {
     expect(rangeFit(sword, 100, settings)).toBe(1);
     expect(rangeFit(sword, 2000, settings)).toBeLessThan(0.2);
     expect(rangeFit(bow, 1000, settings)).toBe(1);
     expect(rangeFit(bow, 50, settings)).toBeLessThan(0.5);
+    // Beyond its range: fCombatInventoryMaxRangeScoreMult.
     expect(rangeFit(bow, 9000, settings)).toBe(0.1);
   });
 
@@ -98,55 +223,66 @@ describe('combat tactics: what it fights with', () => {
 });
 
 describe('combat tactics: how it moves', () => {
-  const input = { distance: 120, reach: 141, ranged: false, targetAttacking: false, allies: 0 };
+  const input: ManeuverInput = {
+    distance: 120,
+    reach: 141,
+    ranged: false,
+    allies: 0,
+    previous: 'advance',
+  };
 
-  it('advances from afar', () => {
+  it('advances from beyond its outer advance radius', () => {
     expect(chooseManeuver(melee, { ...input, distance: 2000 }, randoms(0), settings)).toBe(
       'advance',
     );
-  });
-
-  it('dueling: falls back or circles by its close range mults', () => {
-    const duel = style([0.5, 0.5, 1, 1, 1, 1, 1, 1, 1, 0.2], undefined, [0.8, 0.6, 0.2, 0.2]);
-    // Fallback chance 0.6 × 0.5 (no swing) = 0.3: 0.2 falls back.
-    expect(chooseManeuver(duel, input, randoms(0.2), settings)).toBe('fallback');
-    // Circle chance 0.8 × 0.5 = 0.4: past the fallback, 0.3 circles.
-    expect(chooseManeuver(duel, input, randoms(0.9, 0.3), settings)).toBe('circle');
-    expect(chooseManeuver(duel, input, randoms(0.9, 0.9), settings)).toBe('advance');
-    // A swing coming: fallback 0.6 × 1.5 = 0.9.
-    expect(chooseManeuver(duel, { ...input, targetAttacking: true }, randoms(0.85), settings)).toBe(
-      'fallback',
-    );
-  });
-
-  it('flanking: flanks with allies on the target, stalks near', () => {
-    const wolf = style(
-      [0.75, 0.09, 0.74, 1, 1, 1, 1, 1, 1, 0.2],
-      undefined,
-      [0, 0.15, 0.5, 0.4],
-      CombatStyleFlag.flanking,
-    );
-    expect(
-      chooseManeuver(wolf, { ...input, distance: 800, allies: 2 }, randoms(0.3), settings),
-    ).toBe('flank');
-    expect(chooseManeuver(wolf, { ...input, distance: 800 }, randoms(0.3), settings)).toBe(
+    // The middle radius (256) past its reach: 441 is out of range; with an outer 512 it is in.
+    expect(chooseManeuver(duel, { ...input, distance: 441 }, randoms(0.2), settings)).toBe(
       'advance',
     );
-    expect(chooseManeuver(wolf, input, randoms(0.9, 0.2), settings)).toBe('stalk');
+    const wide = { ...input, distance: 441, radii: { inner: 0, outer: 512 } };
+    expect(chooseManeuver(duel, wide, randoms(0.2), settings)).toBe('fallback');
   });
 
-  it('at range keeps its distance and strafes', () => {
-    const ranged = { ...input, ranged: true, reach: 4096 };
+  it('dueling: falls back or circles by its chances on the engine’s scale', () => {
+    // Fallback chance 0.6 on 0 .. 0.5 = 0.3; circle 0.8 on 0 .. 0.75 = 0.6.
+    expect(chooseManeuver(duel, input, randoms(0.2), settings)).toBe('fallback');
+    expect(chooseManeuver(duel, input, randoms(0.9, 0.5), settings)).toBe('circle');
+    expect(chooseManeuver(duel, input, randoms(0.9, 0.7), settings)).toBe('advance');
+  });
+
+  it('flanking: stalks for its stalk time, then flanks with allies on the target', () => {
+    expect(chooseManeuver(wolf, { ...input, distance: 800, allies: 2 }, randoms(), settings)).toBe(
+      'flank',
+    );
+    expect(chooseManeuver(wolf, { ...input, distance: 800 }, randoms(), settings)).toBe('advance');
+    expect(chooseManeuver(wolf, input, randoms(), settings)).toBe('stalk');
+    const stalked = { ...input, previous: 'stalk' as const };
+    expect(chooseManeuver(wolf, { ...stalked, allies: 1 }, randoms(), settings)).toBe('flank');
+    expect(chooseManeuver(wolf, stalked, randoms(), settings)).toBe('advance');
+    expect(chooseManeuver(wolf, { ...input, previous: 'flank' }, randoms(), settings)).toBe(
+      'advance',
+    );
+  });
+
+  it('at range keeps within its optimal range, falls back and strafes by its chances', () => {
+    const optimalRange = maxOptimalRange(archer, alone, settings);
+    const ranged = { ...input, ranged: true, reach: 4096, optimalRange };
     expect(chooseManeuver(archer, { ...ranged, distance: 5000 }, randoms(0), settings)).toBe(
       'advance',
     );
-    expect(chooseManeuver(archer, { ...ranged, distance: 300 }, randoms(0.1), settings)).toBe(
+    // Beyond 1254 units it closes in.
+    expect(chooseManeuver(archer, { ...ranged, distance: 1300 }, randoms(0), settings)).toBe(
+      'advance',
+    );
+    // Fallback chance 0.2 on 0 .. 0.5: 0.1 within fCombatAdvanceOuterRadiusMax.
+    expect(chooseManeuver(archer, { ...ranged, distance: 300 }, randoms(0.05), settings)).toBe(
       'fallback',
     );
-    expect(chooseManeuver(archer, { ...ranged, distance: 1500 }, randoms(0.1), settings)).toBe(
+    // Strafe chance 0.2 on 0 .. 0.75: 0.15.
+    expect(chooseManeuver(archer, { ...ranged, distance: 1000 }, randoms(0.1), settings)).toBe(
       'strafe',
     );
-    expect(chooseManeuver(archer, { ...ranged, distance: 1500 }, randoms(0.9), settings)).toBe(
+    expect(chooseManeuver(archer, { ...ranged, distance: 1000 }, randoms(0.2), settings)).toBe(
       'hold',
     );
   });
@@ -159,9 +295,14 @@ describe('combat tactics: how it moves', () => {
     const [x, y] = maneuverDirection('circle', from, target, 1);
     expect(x).toBeCloseTo(1);
     expect(y).toBeCloseTo(0);
-    const [fx, fy] = maneuverDirection('flank', from, target, -1);
+    // A flank makes for the point a quarter round the target ahead, at its flank radius.
+    const [fx, fy] = maneuverDirection('flank', from, target, -1, 100);
     expect(fx).toBeCloseTo(-Math.SQRT1_2);
     expect(fy).toBeCloseTo(Math.SQRT1_2);
+    // Farther out, it heads in towards that radius as it goes round.
+    const [wx, wy] = maneuverDirection('flank', [0, -300, 0], target, -1, 100);
+    expect(wx).toBeCloseTo(-100 / Math.hypot(100, 400));
+    expect(wy).toBeCloseTo(400 / Math.hypot(100, 400));
   });
 });
 
@@ -216,27 +357,61 @@ describe('combat tactics: attacks, blocks, threats', () => {
     ).toBe('attack');
   });
 
-  it('bashes from a block, more as the target swings; attacks from a block less', () => {
+  it('bashes from a block by its defensive mult, more as the target swings; attacks less', () => {
     const blocking = { ...attack, blocking: true };
-    // Bash chance 0.25 × bash mult 2 = 0.5; as the target swings × bash attack mult 2 = 1.
+    // Bash chance: defensive 0.2 on fCombatBashChanceMin 0.025 .. Max 0.2 (0.06) × bash mult 2;
+    // as the target swings × bash attack mult 2.
+    expect(bashChance(brute, blocking, settings)).toBeCloseTo(0.12);
+    expect(bashChance(brute, { ...blocking, targetAttacking: true }, settings)).toBeCloseTo(0.24);
+    // Its recoil counts first (bash recoil mult 1); a blocking target never
+    // (fCombatBashTargetBlockingMult 0).
+    const recoiling = { ...blocking, targetAttacking: true, targetRecoiling: true };
+    expect(bashChance(brute, recoiling, settings)).toBeCloseTo(0.12);
+    expect(bashChance(brute, { ...blocking, targetBlocking: true }, settings)).toBe(0);
+    // The offensive bash: offensive 0.8 on 0 .. 0.05 × bash mult 2.
+    expect(offensiveBashChance(brute, attack, settings)).toBeCloseTo(0.08);
     // No bash: an attack at 0.81 × (defensive 0.2 on 0.67 .. 0.2: 0.576) = 0.467.
     expect(attackChance(brute, blocking, settings)).toBeCloseTo(0.81 * 0.576);
     expect(chooseAttack(brute, blocking, randoms(0.6, 0.6), settings)).toBe('none');
     expect(chooseAttack(brute, blocking, randoms(0.6, 0.4, 0.9), settings)).toBe('attack');
     expect(
-      chooseAttack(brute, { ...blocking, targetAttacking: true }, randoms(0.6, 0.9), settings),
+      chooseAttack(brute, { ...blocking, targetAttacking: true }, randoms(0.2, 0.9), settings),
     ).toBe('bash');
     // Without a bash, never into a swing (fCombatAttackChanceBlockingSwingMult 0).
     const swung = { ...blocking, canBash: false, targetAttacking: true };
     expect(chooseAttack(brute, swung, randoms(0), settings)).toBe('none');
   });
 
-  it('blocks by its defensive mult, less with a weapon than a shield', () => {
-    const guard = style([0.5, 0.8, 1, 1, 1, 1, 1, 1, 1, 0.2]);
-    expect(choosesBlock(guard, true, randoms(0.7), settings)).toBe(true);
+  it('shoots and casts by its offensive mult on their own scales', () => {
+    // Offensive 0.34 on fCombatRangedAttackChanceMin 0.05 .. Max 1: 0.373, then up to half again
+    // over fCombatRangedAttackChanceLastAttackBonusTime 10 s.
+    const shot = { ...alone, sinceLastAttack: undefined };
+    expect(rangedAttackChance(archer, shot, settings)).toBeCloseTo(0.373);
+    expect(rangedAttackChance(archer, { ...shot, sinceLastAttack: 5 }, settings)).toBeCloseTo(
+      0.373 * 1.25,
+    );
+    expect(rangedAttackChance(archer, { ...shot, sinceLastAttack: 20 }, settings)).toBeCloseTo(
+      0.373 * 1.5,
+    );
+    // An immediate spell on 0.05 .. 0.75, a concentration spell on 0.25 .. 1.
+    expect(castChance(archer, alone, false, settings)).toBeCloseTo(0.05 + 0.7 * 0.34);
+    expect(castChance(archer, alone, true, settings)).toBeCloseTo(0.25 + 0.75 * 0.34);
+  });
+
+  it('holds its bow from 0.1 s up to its offensive mult on 1.5 .. 0.25 s, shortest up close', () => {
+    const far = { ...alone, distance: 1000, radii: 40 };
+    expect(bowHoldTime(archer, far, () => 1, settings)).toBeCloseTo(1.5 - 1.25 * 0.34);
+    expect(bowHoldTime(archer, far, () => 0, settings)).toBeCloseTo(0.1);
+    // Within fCombatRangedAttackHoldTimeMinDistance (256) past the radii: up to 0.25 s.
+    expect(bowHoldTime(archer, { ...far, distance: 200 }, () => 1, settings)).toBeCloseTo(0.25);
+  });
+
+  it('blocks by its block chance, less with a weapon than a shield', () => {
+    const shieldBearer = style([0.5, 0.8, 1, 1, 1, 1, 1, 1, 1, 0.2]);
+    expect(choosesBlock(shieldBearer, true, randoms(0.7), settings)).toBe(true);
     // fCombatBlockChanceWeaponMult 0.25: 0.2.
-    expect(choosesBlock(guard, false, randoms(0.3), settings)).toBe(false);
-    expect(choosesBlock(guard, false, randoms(0.1), settings)).toBe(true);
+    expect(choosesBlock(shieldBearer, false, randoms(0.3), settings)).toBe(false);
+    expect(choosesBlock(shieldBearer, false, randoms(0.1), settings)).toBe(true);
   });
 
   it('sees an arrow coming and steps out of its line', () => {
@@ -254,8 +429,8 @@ describe('combat tactics: attacks, blocks, threats', () => {
     const [x, y] = dodgeDirection(arrow, [5, 0, 0]);
     expect(x).toBeCloseTo(1);
     expect(y).toBeCloseTo(0);
-    expect(avoidsThreat(melee, randoms(0.1))).toBe(true);
-    expect(avoidsThreat(melee, randoms(0.3))).toBe(false);
+    expect(avoidsThreat(melee, randoms(0.1), settings)).toBe(true);
+    expect(avoidsThreat(melee, randoms(0.3), settings)).toBe(false);
   });
 });
 
@@ -263,50 +438,58 @@ describe('combat tactics: what it does for itself', () => {
   const base: SupportState = {
     health: 1,
     magicka: 1,
-    stamina: 1,
-    sinceRestore: Infinity,
+    sinceHealthRestore: Infinity,
+    sinceMagickaRestore: Infinity,
     canHeal: false,
-    potions: { health: false, magicka: false, stamina: false },
-    outOfMagicka: false,
+    potions: { health: false, magicka: false },
     canSummon: false,
     canBuff: false,
     canWard: false,
   };
 
-  it('reads iAICombatRestoreHealthPercentage and fCombatItemRestoreTimer', () => {
-    expect(settings.restoreHealthPercent).toBe(60);
-    expect(settings.restoreMagickaPercent).toBe(30);
-    expect(settings.itemRestoreTime).toBe(3);
+  it('restores below its defensive mult on fCombatRestore…PercentMin .. Max', () => {
+    // Defensive 0.8: health below 0.8 × 0.5, magicka below 0.25 + 0.8 × 0.15.
+    expect(restoreShare(guard, 'health', settings)).toBeCloseTo(0.4);
+    expect(restoreShare(guard, 'magicka', settings)).toBeCloseTo(0.37);
+    expect(settings.restoreHealthRestrictTime).toBe(15);
+    expect(settings.restoreMagickaRestrictTime).toBe(10);
+    expect(settings.drinkPotionWaitTime).toBe(3);
   });
 
   it('wards a spell coming at it before anything else', () => {
-    expect(chooseSupport({ ...base, canWard: true, health: 0.1, canHeal: true }, settings)).toEqual(
-      { kind: 'ward' },
-    );
+    expect(
+      chooseSupport({ ...base, canWard: true, health: 0.1, canHeal: true }, guard, settings),
+    ).toEqual({ kind: 'ward' });
   });
 
-  it('heals below the restore share, by spell first, else a potion, once a timer', () => {
-    const hurt = { ...base, health: 0.5, potions: { ...base.potions, health: true } };
-    expect(chooseSupport({ ...hurt, canHeal: true }, settings)).toEqual({ kind: 'heal' });
-    expect(chooseSupport(hurt, settings)).toEqual({ kind: 'potion', value: 'health' });
-    expect(chooseSupport({ ...hurt, sinceRestore: 1 }, settings)).toBeUndefined();
-    expect(chooseSupport({ ...hurt, health: 0.7 }, settings)).toBeUndefined();
+  it('heals below its restore share, by spell first, else a potion, not too often', () => {
+    const hurt = { ...base, health: 0.3, potions: { ...base.potions, health: true } };
+    expect(chooseSupport({ ...hurt, canHeal: true }, guard, settings)).toEqual({ kind: 'heal' });
+    expect(chooseSupport(hurt, guard, settings)).toEqual({ kind: 'potion', value: 'health' });
+    expect(chooseSupport({ ...hurt, sinceHealthRestore: 10 }, guard, settings)).toBeUndefined();
+    expect(chooseSupport({ ...hurt, health: 0.45 }, guard, settings)).toBeUndefined();
+    // A bold style (defensive 0.11) waits until 5.5% of its health.
+    expect(chooseSupport(hurt, melee, settings)).toBeUndefined();
+    expect(chooseSupport({ ...hurt, health: 0.05 }, melee, settings)).toEqual({
+      kind: 'potion',
+      value: 'health',
+    });
   });
 
-  it('drinks for magicka when its magic fails it, summons and buffs when it may', () => {
+  it('drinks for magicka below its share, summons and buffs when it may', () => {
     const potions = { ...base.potions, magicka: true };
-    expect(chooseSupport({ ...base, outOfMagicka: true, potions }, settings)).toEqual({
+    expect(chooseSupport({ ...base, magicka: 0.3, potions }, guard, settings)).toEqual({
       kind: 'potion',
       value: 'magicka',
     });
-    expect(chooseSupport({ ...base, magicka: 0.25, potions }, settings)).toEqual({
-      kind: 'potion',
-      value: 'magicka',
-    });
-    expect(chooseSupport({ ...base, canSummon: true, canBuff: true }, settings)).toEqual({
+    expect(
+      chooseSupport({ ...base, magicka: 0.3, potions, sinceMagickaRestore: 5 }, guard, settings),
+    ).toBeUndefined();
+    expect(chooseSupport({ ...base, magicka: 0.4, potions }, guard, settings)).toBeUndefined();
+    expect(chooseSupport({ ...base, canSummon: true, canBuff: true }, guard, settings)).toEqual({
       kind: 'summon',
     });
-    expect(chooseSupport({ ...base, canBuff: true }, settings)).toEqual({ kind: 'buff' });
-    expect(chooseSupport(base, settings)).toBeUndefined();
+    expect(chooseSupport({ ...base, canBuff: true }, guard, settings)).toEqual({ kind: 'buff' });
+    expect(chooseSupport(base, guard, settings)).toBeUndefined();
   });
 });
