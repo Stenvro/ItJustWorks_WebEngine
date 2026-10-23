@@ -487,9 +487,11 @@ character running at 370 against state 0's curve that ends at 306.
 ### Horses
 
 The horse's graph (`meshes\actors\horse\behaviors\horsebehavior.hkx`) is driven as every
-actor's is: the engine sets no channel of its own for a horse that tows a cart or carries a
-rider (observed in the original: HorseSpeedSampled is written only by the graph's own
-BSSpeedSamplerModifier, from Speed; a rider's graph copies it). Its locomotion:
+actor's is, by its movement (Speed, Direction, TurnDelta, IsSprinting), whether it walks free,
+tows a cart or carries a rider. HorseSpeedSampled is the output of the graph's own
+BSSpeedSamplerModifier (in its root modifier list, bound to iState, Direction, Speed), which a
+rider's graph copies (above); in the engine the name appears only in its table of graph
+variable names (observed in the original), no other writer of it was found. Its locomotion:
 
 - **LocomotionState** plays ForwardLocomotionBlend_Horse, a syncing parametric blend on
   HorseSpeedSampled of five syncing turn blends: WalkForwardSlow (5: the walk at 0.04 of its
@@ -1216,7 +1218,10 @@ children's weighted; a state machine's, its current state's). Every child plays 
 a clip's time is the phase times its duration; a syncing blender within takes the phase from
 the outer one instead of advancing its own (the horse's speed blend, ForwardLocomotionBlend_Horse,
 holds five syncing turn blends: walk-slow, walk, trot-slow, trot and run, each left, straight
-and right on TurnDeltaDamped at 135, 0 and −135). A child whose weight comes back above zero is
+and right on TurnDeltaDamped at 135, 0 and −135; of the vanilla graphs' 1,358 syncing blenders in
+428 behavior files, 162 hold syncing blenders of their own, in 37 files: the characters' MT,
+weapon, bow, magic and block locomotion, the horse, the mudcrab, draugr, troll, giant, dragon,
+werewolf and others). A child whose weight comes back above zero is
 activated anew and starts at the blender's phase; the cycle goes on. A blender entered anew
 starts where its clips were started (a transition that syncs), else at 0.
 
