@@ -1412,6 +1412,11 @@ export class ActorStage {
     this.knockdowns.frame(frame);
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     this.#recell();
+    // The cell each stands in: as it changes, its location is read again (an actor location
+    // change: src/scripting/runtime/actor-locations.ts).
+    const locations = this.#options.session.scriptsReady?.actorLocations;
+    if (locations)
+      for (const staged of this.#actors.values()) locations.inCell(staged.reference, staged.cell);
     // The fliers: in the air they move themselves (no controller), on the ground the movers do.
     this.flight.frame(this.#actors.values(), frame);
     const times = new Map<StagedActor, number | undefined>();

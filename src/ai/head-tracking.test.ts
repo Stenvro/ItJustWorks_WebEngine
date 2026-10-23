@@ -1,7 +1,28 @@
 import { describe, expect, it } from 'vitest';
-import { HeadTracker, LookRequests, noticesPlayer, VANILLA_HEAD_TRACK } from './head-tracking.ts';
+import {
+  chooseLookActor,
+  HeadTracker,
+  LookRequests,
+  noticesPlayer,
+  VANILLA_HEAD_TRACK,
+} from './head-tracking.ts';
 
 describe('head tracking', () => {
+  it('chooses the nearest other actor within reach and 120° of its facing', () => {
+    // Facing +y (heading 0) from the origin.
+    const head = [0, 0, 100] as const;
+    const at = (reference: number, x: number, y: number) => ({
+      reference,
+      head: [x, y, 100] as const,
+    });
+    const candidates = [at(1, 0, 300), at(2, 100, 150), at(3, 0, -200), at(4, 0, 900)];
+    expect(chooseLookActor(head, 0, candidates, 400)).toBe(2);
+    // Behind it (more than 120° off) and beyond fAIMaxHeadTrackDistance: no one.
+    expect(chooseLookActor(head, 0, [at(3, 0, -200), at(4, 0, 900)], 400)).toBeUndefined();
+    // Turned around, the one behind is in front.
+    expect(chooseLookActor(head, Math.PI, candidates, 400)).toBe(3);
+  });
+
   it('looks at the highest kind asked for, and lets go of one kind only', () => {
     const looks = new LookRequests();
     looks.lookAt(1, 0x14, 'script');

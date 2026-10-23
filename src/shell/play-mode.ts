@@ -974,6 +974,7 @@ export class PlayMode {
     await runtime.pickUp(object.reference, PLAYER_REF);
     const taken = runtime.state.references.get(object.reference)?.container?.count ?? 1;
     if (stealing) await runtime.crime.steal(PLAYER_REF, object.base, taken, object.reference);
+    runtime.detach(runtime.storyEvents.pickedUp(object.base, object.reference, stealing));
     const record = await runtime.forms.record(object.base);
     const item = record && parseItem(record);
     const sounds = this.#session.soundSystem;

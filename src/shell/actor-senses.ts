@@ -1159,6 +1159,12 @@ export class ActorSenses implements ScriptSenses {
       if (this.#ray(observer.eye, at, observer.reference, corpse) !== true) continue;
       seen.add(corpse);
       this.detections.corpseSeen(observer.reference, corpse);
+      // The story manager's Dead Body, as the engine raises it with the reaction to a body
+      // (not by one in combat). TODO(M13): the engine reacts within fDeadReactionDistance
+      // (400 units) of the body; ours from where it is seen.
+      const runtime = this.#options.session.scriptsReady;
+      if (runtime && runtime.world.combat?.(observer.reference)?.inCombat !== true)
+        runtime.detach(runtime.storyEvents.deadBody(observer.reference, corpse));
       this.#react('corpse', observer.reference, at, corpse);
       return;
     }
