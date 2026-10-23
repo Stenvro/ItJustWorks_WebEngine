@@ -17,14 +17,15 @@ How a frame is put together (`src/render/renderer.ts`). Everything is drawn in H
    tested where their NiAlphaProperty tests; not LOD; objects smaller than 3 texels of a
    cascade are left out. Receivers (`Receive_Shadows`, SLSF1 `0x100`, and terrain) take 3×3
    PCF with a normal offset of 1.5 texels; the last cascade fades out over its last tenth.
-2. **Opaque pass:** the shell backdrop or the sky, terrain, tree LOD billboards and the opaque
-   parts of all scenes (LOD and cells), into the colour and a G-buffer (`gbuffer.ts`: normal,
-   snow mask). Parts and terrain quadrants outside the view frustum are skipped (bounding
-   spheres).
+2. **Opaque pass:** the shell backdrop or the sky, terrain, tree LOD billboards, grass and the
+   opaque parts of all scenes (LOD and cells), into the colour (unfogged) and a G-buffer
+   (`gbuffer.ts`: normal, snow mask, snow specular). Every opaque pipeline writes the G-buffer,
+   so a pixel holds its front surface's values (grass and distant trees write no snow). Parts
+   and terrain quadrants outside the view frustum are skipped (bounding spheres).
 3. **Screen-space passes and copies of the opaque scene:** the multisampled depth resolved
-   (sample 0) into an `r32float` texture, the ambient occlusion (below) applied to the
-   colour, the resolved colour copied, then the snow's subsurface scattering. The copies are
-   bound in the frame group (`sceneColor`, `sceneDepth`).
+   (sample 0) into an `r32float` texture, the snow's subsurface scattering on the lit,
+   unfogged image, the ambient occlusion, then the composite (below), then the resolved
+   colour copied. The copies are bound in the frame group (`sceneColor`, `sceneDepth`).
 4. **Water and blended pass:** water surfaces, then blended parts and particle systems of all
    scenes back to front (by bounding sphere centre).
 5. **Refraction** (only with refraction shapes in view): the shapes into the refraction
@@ -123,24 +124,26 @@ LANDSCAPE and LOD_LAND_BLEND) does it:
 
 The engine's "improved snow" (bEnableImprovedSnow, `shaders/snow.wgsl`): snow surfaces write
 a rim highlight and a mask into a snow buffer that its ambient-occlusion composite adds. Here
-each shader adds them directly, with the game's default settings:
+the opaque pass writes them into the G-buffer and the [composite](#composite) adds them;
+blended snow parts add them in their own shader. The game's default settings:
 
 - Rim: `0.3 · (1 − saturate(geometry normal · v))³ · (1 − saturate(n · v))²`
   (fSnowRimLightIntensity, fSnowGeometrySpecPower, fSnowNormalSpecPower) × the mask, added to
-  the lit colour before fog.
+  the lit colour before fog (after the subsurface scattering).
 - Sparkles: fixed bright points in world space, `step(0.85, noise²)` of 3D simplex noise at
   `0.07 × 6 × position` (fSparklesDensity, fSparklesSize, fSparklesSpecularPower 2), × lerp(sun
   shadow, 1, 0.25) (fShadowSparkleIntensity), fading out over 1000 units (fSparklesMaxDistance),
   × the mask, added after fog.
 - Subsurface scattering (ISSnowSSS, `snow-sss.ts`, `shaders/snow-sss.wgsl`): after the opaque
-  pass, where the G-buffer's snow mask is above zero, 11 taps along the screen at offsets ±0.08
+  pass, on the lit, unfogged image before the composite (see [Composite](#composite)), where
+  the G-buffer's snow mask is above zero, 11 taps along the screen at offsets ±0.08
   to ±2 × (0.078125, 0.13889) × fSnowSSSStrength (50) / distance, with per-channel weights
   (blue spreads farthest; each channel's weights sum to 1), each tap kept at the centre colour
   in proportion to its depth difference × 0.1 × fSnowSSSDepthDiff (0.5). With L the result's
   luminance (0.3, 0.59, 0.11): snow = lerp(lerp(fSnowSSSColor × fSnowSSSDarkColorIntensity,
   source, L), result, L), blended in by the mask: lit snow softens and dim snow darkens towards
-  a cool tint. It is written into the multisampled colour target, which the blended pass goes
-  on with. (iSnowSSSCurrentColor 2 picks an undocumented preset; the configured colour
+  a cool tint. It is written into the multisampled colour target, which the composite then
+  finishes. (iSnowSSSCurrentColor 2 picks an undocumented preset; the configured colour
   (0, 0, 0.08) and intensity 0.1 are used.)
 
 ## Depth of field
@@ -230,6 +233,38 @@ is as before (the fade is 0 and no effect pass runs).
 - Motion blur: the previous frame's result kept by s / (1 + s) per 60th of a second
   (TODO(M13): calibrate).
 
+## Composite
+
+The engine finishes its opaque scene in this order (observed in the original): the
+geometry pass writes the main colour, normals and, with bEnableImprovedSnow, two more targets
+for the snow; then the ambient occlusion is computed (not yet applied); then ISSnowSSS runs on
+the main colour (a plain copy when the improved snow or its scattering is off); then one
+ISSAOComposite pass reads that result and writes the finished image. The composite's variant
+follows bSAOEnable and whether there is fog (a sky with a fog, and bSAOApplyFog, on by
+default): SAO, Fog or SAOFog; with neither, the image is only copied. Its constants carry the
+fog, the sun's direction, the sparkle settings (fSparklesSize, fSparklesDensity,
+fSparklesIntensity, fSparklesMaxDistance, fShadowSparkleIntensity, ...) and
+bDeactivateAOOnSnow, so the fog and the sparkles are applied there, after the scattering.
+
+What the shaders write is from Community Shaders 0.7.4 (behaviour only): the lighting,
+landscape, grass and distant tree pixel shaders write the lit colour without fog and without
+the snow's specular (the grass and DistantTree shaders have no distance fog; the lighting
+shader leaves the snow's specular out of the colour and exports it as SnowParameters.x). The
+snow's specular is kept out of the main colour so that ISSnowSSS scatters only the snow's
+diffuse light. Here (`composite.ts`,
+`shaders/composite.wgsl`), per sample of the multisampled colour (its own depth and G-buffer,
+so silhouettes against the fog get no fringe): colour + snow specular × snow mask, × AO (1 on
+snow, bDeactivateAOOnSnow; 1 without SAO), fog over it, + sparkles × snow mask. The sky and
+surfaces their own shader finished (G-buffer a = 0: sky objects, effect shapes) are left
+alone; blended parts, decals, water and particles fog themselves. Running the scattering on
+the fogged image instead turned distant snow (snow patches on mountains, and grass and tree
+LOD that took the snowy land's mask under them) near black in fog and dim weather: the
+scattering darkens towards fSnowSSSColor by the luminance, and fogged pixels are dim. The menu
+overlay has no composite: snow there lacks its rim light (menus have no fog). The composite
+always runs here, also without SAO and fog, so the snow keeps its rim and sparkles (TODO(M13):
+whether the engine's lighting shader adds them itself in that case, where its composite is a
+plain copy, is not known; and bSAOApplyFog off is not followed).
+
 ## Ambient occlusion
 
 The engine's SAO (bSAOEnable, `sao.ts`, `shaders/sao.wgsl`) is McGuire, Mara and Luebke's
@@ -249,9 +284,8 @@ and the depth resolve:
    original).
 3. Blur along x, then y: 7 taps 2 pixels apart, the Gaussian weights + 0.3 (fSAOValueDiffFactor),
    cut where the depth keys differ (`1 − 2000 |Δkey|`).
-4. Composite into the multisampled colour before the blended pass: colour × AO under the fog
-   (`src + dst · AO` with src = fog colour · fog · (1 − AO)), none on snow (bDeactivateAOOnSnow)
-   or the sky.
+4. Applied by the composite (above): colour × AO before the fog, none on snow
+   (bDeactivateAOOnSnow) or the sky.
 
 ## Lighting shader
 

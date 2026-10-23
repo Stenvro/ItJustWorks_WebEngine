@@ -135,8 +135,15 @@ fn effectShade(
   return vec4f(color, alpha);
 }
 
+// The colour and, in the opaque pass, the G-buffer: an effect is finished here (lit and
+// fogged), so the composite and the snow's scattering leave it alone.
+struct EffectPixel {
+  @location(0) color: vec4f,
+  @location(1) gbuffer: vec4f,
+};
+
 @fragment
-fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location(0) vec4f {
+fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> EffectPixel {
   // A multi-pass directional material with an effect shader (the engine's PROJECTED_UV with
   // normals): texture coordinates from the projection, shown where the surface faces the
   // material by more than 0.4 to 0.6 (noise), on the triangles within the max angle.
@@ -166,5 +173,5 @@ fn fs_main(in: VertexOut, @builtin(front_facing) frontFacing: bool) -> @location
   if (!frontFacing) {
     n = -n;
   }
-  return effectShade(source, tint, n, in.worldPos, in.position);
+  return EffectPixel(effectShade(source, tint, n, in.worldPos, in.position), gbufferFinished(n));
 }
