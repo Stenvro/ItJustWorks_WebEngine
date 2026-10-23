@@ -484,6 +484,40 @@ at the last parameter (ours before), a galloping horse played its trot with a se
 run at 450 units a second; now it gets 450 and gallops. The same holds for every table: a
 character running at 370 against state 0's curve that ends at 306.
 
+### Horses
+
+The horse's graph (`meshes\actors\horse\behaviors\horsebehavior.hkx`) is driven as every
+actor's is: the engine sets no channel of its own for a horse that tows a cart or carries a
+rider (observed in the original: HorseSpeedSampled is written only by the graph's own
+BSSpeedSamplerModifier, from Speed; a rider's graph copies it). Its locomotion:
+
+- **LocomotionState** plays ForwardLocomotionBlend_Horse, a syncing parametric blend on
+  HorseSpeedSampled of five syncing turn blends: WalkForwardSlow (5: the walk at 0.04 of its
+  speed), WalkForward (125.11), TrotForwardSlow (214: the trot at 0.704), TrotForward (303.9)
+  and RunForward (450), each left, straight and right on TurnDeltaDamped (135, 0, −135; the
+  walk's three are the same clip, the trot's and run's have clips of their own). TurnDeltaDamped
+  is TurnDelta through a PID damping modifier (0.2, 0.015, −0.1). The speed sampler gives a
+  walking horse (125) 125.8: 0.8 % of the slow trot in its walk, in step with it (above,
+  Syncing blenders); 214 trots slowly, 302 trots, 450 gallops (it is past the speed table's last
+  point, 321: the goal itself).
+- **SprintState** (IsSprinting, SprintStart / SprintStop) plays SprintForward, tagged
+  iState_HorseSprint (61: its movement type's sprint speeds).
+- **Standing:** looping turns on TurnDelta (TurnLoopingL / R at turnSpeedMult, |TurnDelta| /
+  112.5, by an expression), the idles; the canned turns (TurnCanned L / R, 90 and 180) are
+  animation-driven.
+- **Saddle_offset** (SaddleOffsetBlend) is an additive clip on the SaddleBone alone (4.2 units
+  forward, 0.8 up; its other tracks hold nothing), blended beside the whole body by the
+  SaddleBone's weight: it moves no body bone and gives no root motion. TODO(M13): Havok's
+  normalisation of an additive child in a non-parametric blender (ours halves it with the body's
+  weight of 1: the saddle sits 2.1 units back).
+
+What made the horses walk wrong, besides the syncing blenders (measured with the QA monitors,
+docs/qa.md; the numbers are in the work's notes): the player's horse steered round its own
+rider (docs/ai.md, "Paths": the avoidance), TurnDelta read from one physics step of a frame of
+several (docs/ai.md, "Movement"), IsSprinting from the speed physics made of a sprint (a horse
+galloping into a fence flipped in and out of SprintState), and the speed sampler held at its
+last parameter past the table (a gallop played as a trot).
+
 TODO(M13): the actions are not resolved through the idle tree yet (the vanilla events are sent:
 a rider's graph gets moveStart, and SprintStart is not refused while sneaking or blocking); the
 movement controller's acceleration (it ramps the speed by the race's acceleration and deceleration

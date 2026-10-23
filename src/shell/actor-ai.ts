@@ -36,7 +36,12 @@ import type { ActorPractice } from './actor-practice.ts';
 import type { ActorSearch } from './actor-search.ts';
 import { spaceOf, type AwayPlace } from './actors-away.ts';
 import { findRoute, type RouteDoor } from '../ai/routes.ts';
-import { findPath, randomReachablePoint, type NavmeshSet } from '../ai/pathfinding.ts';
+import {
+  findPath,
+  onNavmeshColumn,
+  randomReachablePoint,
+  type NavmeshSet,
+} from '../ai/pathfinding.ts';
 import { RaceSize } from '../ai/race-combat-records.ts';
 import type { Gait } from '../ai/locomotion.ts';
 import type { FlightRequest } from '../ai/flight.ts';
@@ -1012,14 +1017,15 @@ export class ActorAi {
       walkable: (actor, point) => {
         const set = this.#navmeshes?.();
         const self = staged(actor);
-        if (!set || !self || !set.locate(point)) return undefined;
+        const on = set && onNavmeshColumn(set, point);
+        if (!set || !self || !on) return undefined;
         const large = (this.#movers.raceSize(actor) ?? RaceSize.medium) >= RaceSize.large;
-        const path = findPath(set, self.position, point, {
+        const path = findPath(set, self.position, on, {
           radius: this.#movers.radius(actor) ?? WANDER_PATH_RADIUS,
           large,
           limit: WANDER_SEARCH_LIMIT,
         });
-        return path?.complete === true ? point : undefined;
+        return path?.complete === true ? on : undefined;
       },
       // The living actor whose items took a reference (Acquire's Allow Killing).
       holder: async (reference) => {

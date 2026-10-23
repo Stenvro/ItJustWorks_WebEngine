@@ -5,7 +5,7 @@ import {
   type Navmesh,
   type NavmeshTriangle,
 } from '../world/navmesh.ts';
-import { findPath, randomReachablePoint, type NavmeshSet } from './pathfinding.ts';
+import { findPath, onNavmeshColumn, randomReachablePoint, type NavmeshSet } from './pathfinding.ts';
 
 type Point = [number, number, number];
 
@@ -241,5 +241,22 @@ describe("a random reachable point (a wanderer's first walk)", () => {
     }
     // Off the navmeshes: none.
     expect(randomReachablePoint(set, [50, 950, 0], [100, 150, 0], 200, 0, random)).toBeUndefined();
+  });
+});
+
+describe("a point's column on the navmesh (a wander point at its place's middle's height)", () => {
+  it('finds the navmesh above or below the point, the nearest height first', () => {
+    const flat = setOf([gridMesh(1, [[0, 0]])]);
+    // Only within 24 units of its height (0) is a point on it.
+    const set: NavmeshSet = {
+      ...flat,
+      locate: (point) => (Math.abs(point[2]) <= 24 ? flat.locate(point) : undefined),
+    };
+    expect(onNavmeshColumn(set, [50, 50, 10])).toEqual([50, 50, 10]);
+    expect(onNavmeshColumn(set, [50, 50, 500])?.[2]).toBe(20);
+    expect(onNavmeshColumn(set, [50, 50, -300])?.[2]).toBe(-12);
+    // Beyond its reach, or off the mesh: none.
+    expect(onNavmeshColumn(set, [50, 50, 3000])).toBeUndefined();
+    expect(onNavmeshColumn(set, [500, 50, 0])).toBeUndefined();
   });
 });

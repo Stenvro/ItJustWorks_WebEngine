@@ -37,7 +37,11 @@ How actors move (`src/ai/locomotion.ts`, `src/ai/movement-types.ts`, `src/shell/
   controller. Beyond it, in the loaded area, it is in the middle-high process: its AI runs and
   it walks its paths without a controller, kept on the navmesh (its height there), its graph
   driven as a controlled one's; coming near it gets its controller where it stands (on the
-  floor just under or over its feet). TODO(M13): the engine's process levels (CommonLibSSE
+  floor just under or over its feet). What its graph was told goes on from one to the other: a
+  deer that fled past the high process at a run is told it stopped as it stops (before, its
+  graph ran on the spot for minutes, never told). Held there by an animation-driven idle while
+  its AI sends it away, its idle is stopped as a moved actor's is (ActionIdleStop, again each
+  second): a chicken lying down otherwise gave up every walk its sandbox sent it on. TODO(M13): the engine's process levels (CommonLibSSE
   `ProcessLists`: high, middle-high, middle-low, low) and how often each moves its actors are
   not documented. The controllers are in the world the
   player moves in: the player bumps into actors and they into each other. The crosshair's pick

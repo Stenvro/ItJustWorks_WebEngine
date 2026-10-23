@@ -722,6 +722,7 @@ export class ActorMounts {
         const frame = {
           velocity,
           heading: horse.heading,
+          turnRate: movers.turnRate(ride.horse),
           seconds: Math.max(seconds, 1e-3),
           grounded: true,
           swimming: false,
