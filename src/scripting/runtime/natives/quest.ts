@@ -13,7 +13,24 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
   const { state, forms, quests } = runtime;
 
   // --- Quest ---------------------------------------------------------------------------
-  n('quest.start', ({ self, latent }) => (self ? latent(quests.start(self.formId)) : false));
+  /**
+   * Observed in the original: Start, and SetStage on a quest that does not run, do
+   * nothing to a quest the story manager starts (one with an event): the game logs it as an
+   * error of the calling script and returns false.
+   */
+  const outsideStoryManager = async (quest: number, where: () => string): Promise<boolean> => {
+    const record = await forms.quest(quest);
+    if (record?.event === undefined || quests.isRunning(quest)) return false;
+    runtime.warn(
+      `${where()}: attempting to start event scoped quest ${record.editorId} outside of story manager`,
+    );
+    quests.notStarted.set(quest, `starts only from the story manager's ${record.event} event`);
+    return true;
+  };
+  n('quest.start', async ({ self, latent, where }) => {
+    if (!self || (await outsideStoryManager(self.formId, where))) return false;
+    return latent(quests.start(self.formId));
+  });
   n('quest.stop', async ({ self, latent }) => {
     if (self) await latent(quests.stop(self.formId));
     return null;
@@ -23,9 +40,10 @@ export function registerQuest(n: Register, runtime: ScriptRuntime): void {
     return null;
   });
   // The caller waits for the stage's fragment (unlocked meanwhile).
-  n('quest.setcurrentstageid', ({ self, args, latent }) =>
-    self ? latent(quests.setStage(self.formId, int(args[0]))) : false,
-  );
+  n('quest.setcurrentstageid', async ({ self, args, latent, where }) => {
+    if (!self || (await outsideStoryManager(self.formId, where))) return false;
+    return latent(quests.setStage(self.formId, int(args[0])));
+  });
   n('quest.getcurrentstageid', ({ self }) =>
     self ? (state.quests.get(self.formId)?.stage ?? 0) : 0,
   );

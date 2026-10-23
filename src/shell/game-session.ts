@@ -933,6 +933,10 @@ export class GameSession {
         warn: (message) => {
           this.#terminal.log('papyrus', message, 'warn');
         },
+        // The game's own faults (its Papyrus log has them too): marked as the game's.
+        gameLog: (message) => {
+          this.#terminal.log('papyrus', `game data: ${message}`);
+        },
         log: (line) => {
           this.#terminal.log('papyrus', line);
         },

@@ -5,6 +5,16 @@ export type LogTone = 'info' | 'ok' | 'warn' | 'error';
 /** Characters per frame while typing out; high enough to never slow things down. */
 const CHARS_PER_FRAME = 7;
 const MAX_LINES = 400;
+/** Warning and error lines kept for the QA harness (docs/qa.md): the latest so many. */
+const MAX_PROBLEMS = 5000;
+
+/** A warning or error line as it was logged (`at`: performance.now()). */
+export interface LoggedProblem {
+  readonly at: number;
+  readonly tag: string;
+  readonly text: string;
+  readonly tone: 'warn' | 'error';
+}
 
 interface PendingLine {
   readonly element: HTMLElement;
@@ -18,6 +28,11 @@ export class Terminal {
   readonly #queue: PendingLine[] = [];
   readonly #instant: boolean;
   #animating = false;
+  /**
+   * The warning and error lines logged so far (the latest MAX_PROBLEMS): the QA harness reports
+   * those of the boot (a new game's or a coc's quest starts) too.
+   */
+  readonly problems: LoggedProblem[] = [];
 
   constructor(list: HTMLElement) {
     this.#list = list;
@@ -25,6 +40,10 @@ export class Terminal {
   }
 
   log(tag: string, text: string, tone: LogTone = 'info'): void {
+    if (tone === 'warn' || tone === 'error') {
+      this.problems.push({ at: performance.now(), tag, text, tone });
+      if (this.problems.length > MAX_PROBLEMS) this.problems.shift();
+    }
     const seconds = ((performance.now() - this.#start) / 1000).toFixed(3).padStart(8, ' ');
     const line = document.createElement('li');
     line.className = `log-line tone-${tone}`;

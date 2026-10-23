@@ -17,6 +17,13 @@ export interface BuildScript {
   readonly variables?: readonly (readonly [string, string, PexValue])[];
   /** Auto properties: name, type, backing variable. */
   readonly properties?: readonly (readonly [string, string, string])[];
+  /** Full properties: name, type, Get and Set functions (their names are not written). */
+  readonly fullProperties?: readonly {
+    readonly name: string;
+    readonly type: string;
+    readonly get?: BuildFunction;
+    readonly set?: BuildFunction;
+  }[];
   readonly functions?: readonly BuildFunction[];
   readonly states?: readonly {
     readonly name: string;
@@ -135,7 +142,7 @@ export function buildPex(script: BuildScript): Uint8Array {
     data.u32(0);
     value(data, initial);
   }
-  data.u16(script.properties?.length ?? 0);
+  data.u16((script.properties?.length ?? 0) + (script.fullProperties?.length ?? 0));
   for (const [name, type, variable] of script.properties ?? []) {
     data.u16(index(name));
     data.u16(index(type));
@@ -143,6 +150,15 @@ export function buildPex(script: BuildScript): Uint8Array {
     data.u32(0);
     data.u8(7);
     data.u16(index(variable));
+  }
+  for (const property of script.fullProperties ?? []) {
+    data.u16(index(property.name));
+    data.u16(index(property.type));
+    data.u16(index(''));
+    data.u32(0);
+    data.u8((property.get ? 1 : 0) | (property.set ? 2 : 0));
+    if (property.get) fn(data, property.get);
+    if (property.set) fn(data, property.set);
   }
   const states = [{ name: '', functions: script.functions ?? [] }, ...(script.states ?? [])];
   data.u16(states.length);
