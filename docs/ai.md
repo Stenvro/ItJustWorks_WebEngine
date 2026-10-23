@@ -293,7 +293,7 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   UseMagic casts its Spell (that spell, else the attack spell it would choose) at its target
   Number To Cast Min..Max times (0: on and on), held Cast Time Min..Max seconds,
   Cooldown Time apart, Dual Cast with both hands. Shout shouts its Shout (put in its voice)
-  at its target once, as soon as its voice has recovered, and succeeds (vanilla templates run
+  at its target once, whether or not its voice has recovered, and succeeds (vanilla templates run
   Shouts one after another: dunCGAlduinDTravelGateBlocker02's two,
   dunCGAlduinShoutFromHoverMultipleTargetsRepeatTemplate's three in a repeating sequence; and
   MQ101AlduinAttackScene1 waits for Alduin's shout from the tower, dunCGAlduinPerchShoutTemplate's
@@ -308,6 +308,30 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
   after fAITrespassWarningTimer (5 s); a player who stays trespasses (the home is off limits to
   them: warned by those who see them, then reported; docs/gameplay.md, "Trespassing"); DialogueActivate with
   another actor as its target talks with it ([Talking](#talking)).
+- **Shouts and the voice's recovery** (observed in the original). Every actor's voice
+  recovers alike: when its graph raises Voice_SpellFire_Event (VoiceSpellFireHandler) the shout
+  goes out and the voice recovers for the shouted word's recovery time × ShoutRecoveryMult, an
+  actor value whose base is always 1 (inverted: the Blessing of Talos's fortify lowers it; ours
+  keeps the actor value at 0 and takes 1 − it, the same product), counted down with the
+  actor's update. A voice power cast while the voice recovers is refused by the caster's cast
+  check (except for the player in god mode), and the combat AI picks its voice's shout only
+  while less than fCombatInventoryShoutMaxRecoveryTime (5 s) of recovery is left. The package
+  Shout procedure does not wait for it: it turns to its target until within
+  fAIShoutToleranceDegrees (5°; with its aim bool, holding the aim fAIShoutMinAimSeconds, 2 s),
+  checks that no one stands in the way (within fAIAimBlockedToleranceDegrees, 10°), puts the
+  shout in the voice and marks the voice's caster to skip its cast check for that cast
+  (SetSkipCheckCast), then begins the shout with all its words; if the shout has not gone out
+  fAIShoutRetryDelaySeconds (4 s) later it begins again; it is done once the shout went out
+  and the voice is idle again. The shout still sets the recovery. So MQ101's Alduin shouts
+  Storm Call from Helgen's tower (60 s each word) and Unrelenting Force
+  (MQ101DragonUnrelentingForceShout) right after it: MQ101AlduinAttackScene1's phase 9, which
+  waits for the second, took 61 s while our Shout waited out the recovery, and takes 6.7 s now
+  (measured in an unattended opening; the second shout leaves 5 s of recovery). The settings
+  fCombatShoutShortRecoveryTime (10) and fCombatShoutLongRecoveryTime (60) are registered but
+  read by no code. Ours: `beginShout(actor, unchecked)` (`src/scripting/runtime/
+casting-engine.ts`), the Shout procedure's shout through `ActorCasting.shoutAt` with
+  `unchecked`; the voice's recovery is still set. TODO(M13): the aim and blocked-line checks,
+  the 4 s retry (ours retries its start each second while the actor casts).
 - **Searching** (`src/shell/actor-search.ts`): a criterion names references by object (a base
   object, a form list of them, a faction's members) or by object type
   (`src/ai/object-types.ts`, xEdit's object type enum: food is ALCH with the food flag, beds and
@@ -395,6 +419,32 @@ Actors use furniture as the engine's furniture handling does, as far as the data
   played, PlayImod and IdleFurnitureExit never came, and MQ101 never reached stages 145 and
   160, which give the controls back. TODO(M13): how the engine keeps a graph in its furniture
   (an enter it holds until the graph takes it).
+- **Getting up: the graph says when** (observed in the original). The engine does not end
+  a use by a timer: it answers the events a graph raises with the handlers
+  `meshes\responses\actorresponse.txt` names (`playercharacterresponse.txt` for the player,
+  falling back to the actors' list). idleChairSitting (ChairEnterHandler) puts a sitting actor
+  in the furniture, unless it already wants to stand; idleBedSleeping (BedEnterHandler) a
+  sleeping one, unless it wants to wake. idleChairGetUp (ChairFurnitureExitHandler) ends the
+  use of an actor in any sit state (about to sit, entering, sitting, about to stand);
+  idleBedGetUp and idleSleepGetUp (BedFurnitureExitHandler) one in any sleep state. For the
+  player both name PlayerFurnitureExitHandler, which ends the use whatever the state (and
+  gives the camera back). Ending the use sets the sit state to none: the furniture is free,
+  the actor's scripts hear OnGetUp, the player's controls come back. The engine also sends
+  idleChairGetUp, or idleBedGetUp and idleSleepGetUp, to a graph itself when it moves an actor
+  out of furniture. The graphs raise idleChairGetUp as they leave a furniture state for the
+  default one: at the end of an exit, or at once on IdleFurnitureExit (0_master's
+  ChairRoot_State goes to MT_Behavior_State on it). So a graph can get up by itself: MQ101's
+  chopping block reaction (IdleExecutionerAlduinReactionDeath) ends with IdleFurnitureExit,
+  and the player stands up and moves again without a key (measured: IdleFurnitureExit,
+  IdleChairGetUp, and the use ends in the same frame, at MQ101 stage 160). Ours
+  (`ActorFurniture.graphEvents`, from the stage actors' and the player's raised events): the
+  handlers by the responses files; a use still on its way to its marker is not in it yet and
+  stays. One got up by its graph while entering or in the furniture stands where its graph put
+  it, on the floor it came from; one leaving stands when its exit raises the event, its exit's
+  root motion having taken it out. TODO(M13): the engine waits for the graph alone; ours
+  stands 1.5 s after an exit's root motion at the latest, for graphs whose exits our runtime
+  does not play to their end. The enter still ends by its root motion's time (the tween to the
+  marker), not on idleChairSitting.
 - **Idle markers** (IDLM, not drawn; with the furniture markers they are the cells' markers:
   `CellData.markers`): the actor goes to it, faces its way and plays its idles (IDLA), in order or
   one picked each time (IDLF 0x1), once through if so set (0x4), one each time its timer (IDLT)

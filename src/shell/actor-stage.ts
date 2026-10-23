@@ -1575,6 +1575,8 @@ export class ActorStage {
     staged.placed.onScriptEvents = (events) => {
       const graph = staged.placed.behavior;
       if (graph) this.vehicles.riderEvents(reference, graph, events);
+      // Its graph's furniture exits end its use of furniture (idleChairGetUp, ...).
+      this.furniture.graphEvents(this.userOf(staged), events);
       const runtime = this.#options.session.scriptsReady;
       if (!runtime) return;
       // A graph's KillActor kills its actor (an executed prisoner's chop: its killmoves in a

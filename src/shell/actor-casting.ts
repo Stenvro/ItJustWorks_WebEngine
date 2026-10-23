@@ -1155,12 +1155,18 @@ export class ActorCasting {
   /**
    * An actor shouts its voice's shout at a target (Greybeards, draugr, dragons' breath):
    * `words` (default all it knows) are let out after their hold time (fShoutTime1 / 2).
+   * `unchecked`: an AI package's Shout, whose voice need not have recovered (beginShout).
    */
-  async shoutAt(actor: number, target: number | undefined, words?: number): Promise<boolean> {
+  async shoutAt(
+    actor: number,
+    target: number | undefined,
+    words?: number,
+    unchecked = false,
+  ): Promise<boolean> {
     const runtime = this.#listen();
     const user = this.#user(actor);
     if (!runtime || !user) return false;
-    if ((await runtime.casting.beginShout(actor)) !== 'started') return false;
+    if ((await runtime.casting.beginShout(actor, unchecked)) !== 'started') return false;
     const voice = (await runtime.equipment.of(actor)).voice;
     const shout = voice === undefined ? undefined : await runtime.casting.shout(voice);
     // A power in the voice was begun as a cast (castable): its cast shows.
