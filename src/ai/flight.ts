@@ -9,10 +9,9 @@
 // it steers there (its flying movement type's turn rate, at the speed its graph flies). The
 // load order's game settings count where it has them (fCombatHoverTimeMin,
 // fCombatPerchAttackTimeMin, fCombatGroundAttackTimeMin and Max, fCombatOrbitDistance,
-// fFlyingActorDefaultTurningSpeed); the
-// engine's own are in no plugin, their values here are ours (TODO(M13)). How the engine weighs
-// the style's chances is not documented: the rules below read each value as its name says
-// (TODO(M13)). Platform-independent.
+// fFlyingActorDefaultTurningSpeed), else the engine's built-in defaults; the style's chances and
+// times are on the engine's scale of its fCombat*Min / Max settings (docs/ai.md, "Style
+// values"). Distances and heights without a setting are ours (TODO(M13)). Platform-independent.
 
 import type { CombatStyleFlight } from './combat-style-records.ts';
 import { RaceFlag } from '../world/actor-records.ts';
@@ -99,8 +98,23 @@ export interface FlightSettings {
   readonly groundClearance: number;
   /** A perch counts for a perch attack within this of its target (units). */
   readonly perchRadius: number;
-  /** A circle of its orbit lasts about this long before it chooses again (seconds). */
-  readonly orbitTime: number;
+  /**
+   * fCombatOrbitTimeMin and Max: an orbit lasts from the least up to its offensive mult on Max ..
+   * Min (the more offensive, the shorter) before it chooses again (seconds).
+   */
+  readonly orbitTimeMin: number;
+  readonly orbitTimeMax: number;
+  /** fCombat…ChanceMin and Max: each flight chance at the style's value 0 and 1. */
+  readonly hoverChanceMin: number;
+  readonly hoverChanceMax: number;
+  readonly diveBombChanceMin: number;
+  readonly diveBombChanceMax: number;
+  readonly groundAttackChanceMin: number;
+  readonly groundAttackChanceMax: number;
+  readonly perchAttackChanceMin: number;
+  readonly perchAttackChanceMax: number;
+  readonly flyingAttackChanceMin: number;
+  readonly flyingAttackChanceMax: number;
 }
 
 /**
@@ -123,7 +137,18 @@ const SETTINGS: readonly (readonly [keyof FlightSettings, string | undefined, nu
   ['landingDistance', undefined, 1024],
   ['groundClearance', undefined, 512],
   ['perchRadius', undefined, 6000],
-  ['orbitTime', undefined, 8],
+  ['orbitTimeMin', 'fCombatOrbitTimeMin', 3],
+  ['orbitTimeMax', 'fCombatOrbitTimeMax', 12],
+  ['hoverChanceMin', 'fCombatHoverChanceMin', 0],
+  ['hoverChanceMax', 'fCombatHoverChanceMax', 1],
+  ['diveBombChanceMin', 'fCombatDiveBombChanceMin', 0],
+  ['diveBombChanceMax', 'fCombatDiveBombChanceMax', 1],
+  ['groundAttackChanceMin', 'fCombatGroundAttackChanceMin', 0],
+  ['groundAttackChanceMax', 'fCombatGroundAttackChanceMax', 1],
+  ['perchAttackChanceMin', 'fCombatPerchAttackChanceMin', 0],
+  ['perchAttackChanceMax', 'fCombatPerchAttackChanceMax', 1],
+  ['flyingAttackChanceMin', 'fCombatFlyingAttackChanceMin', 0],
+  ['flyingAttackChanceMax', 'fCombatFlyingAttackChanceMax', 1],
 ];
 
 export function readFlightSettings(
@@ -180,32 +205,76 @@ export interface FlightSituation {
   readonly perch: boolean;
 }
 
+const lerp = (t: number, from: number, to: number): number => from + (to - from) * t;
+
 /**
- * Its next maneuver as an orbit ends (or a dive bomb, a hover): each chance of its style tried
- * in turn — dive bomb, hover, perch attack (with a perch near), ground attack (with a place to
- * land) — else it circles on. TODO(M13): the engine's order and weighing are not documented.
+ * The style's flight chances on the engine's scale (docs/ai.md, "Style values"): each CSFL
+ * chance on its fCombat…ChanceMin .. Max.
+ */
+export function flightChances(
+  flight: CombatStyleFlight,
+  settings: FlightSettings,
+): {
+  readonly diveBomb: number;
+  readonly hover: number;
+  readonly perchAttack: number;
+  readonly groundAttack: number;
+  readonly flyingAttack: number;
+} {
+  return {
+    diveBomb: lerp(flight.diveBombChance, settings.diveBombChanceMin, settings.diveBombChanceMax),
+    hover: lerp(flight.hoverChance, settings.hoverChanceMin, settings.hoverChanceMax),
+    perchAttack: lerp(
+      flight.perchAttackChance,
+      settings.perchAttackChanceMin,
+      settings.perchAttackChanceMax,
+    ),
+    groundAttack: lerp(
+      flight.groundAttackChance,
+      settings.groundAttackChanceMin,
+      settings.groundAttackChanceMax,
+    ),
+    flyingAttack: lerp(
+      flight.flyingAttackChance,
+      settings.flyingAttackChanceMin,
+      settings.flyingAttackChanceMax,
+    ),
+  };
+}
+
+/**
+ * Its next maneuver as an orbit ends (or a dive bomb, a hover): each chance of its style
+ * (flightChances) tried in turn — dive bomb, hover, perch attack (with a perch near), ground
+ * attack (with a place to land) — else it circles on. TODO(M13): phase 5, the order and the
+ * conditions of the combat tree's flight selector.
  */
 export function chooseFlightManeuver(
   flight: CombatStyleFlight,
   situation: FlightSituation,
   random: () => number,
+  settings: FlightSettings,
 ): FlightManeuver {
-  if (random() < flight.diveBombChance) return 'diveBomb';
-  if (random() < flight.hoverChance) return 'hover';
-  if (situation.perch && random() < flight.perchAttackChance) return 'perch';
-  if (situation.canLand && random() < flight.groundAttackChance) return 'land';
+  const chances = flightChances(flight, settings);
+  if (random() < chances.diveBomb) return 'diveBomb';
+  if (random() < chances.hover) return 'hover';
+  if (situation.perch && random() < chances.perchAttack) return 'perch';
+  if (situation.canLand && random() < chances.groundAttack) return 'land';
   return 'orbit';
 }
 
-/** Whether it breathes at its target on a pass (CSFL flying attack chance). */
-export function flyingAttack(flight: CombatStyleFlight, random: () => number): boolean {
-  return random() < flight.flyingAttackChance;
+/** Whether it breathes at its target on a pass (CSFL flying attack chance, flightChances). */
+export function flyingAttack(
+  flight: CombatStyleFlight,
+  random: () => number,
+  settings: FlightSettings,
+): boolean {
+  return random() < flightChances(flight, settings).flyingAttack;
 }
 
 /**
- * How long a hover, a perch attack or a fight on the ground lasts: between the settings' least
- * and most by the style's time (0: the least, 1: the most), a little at random.
- * TODO(M13): how the engine reads the style's times.
+ * How long a hover, a perch attack or a fight on the ground lasts: at random from its setting's
+ * least up to the style's time on that setting's Min .. Max (fCombatHoverTime*,
+ * fCombatPerchAttackTime*, fCombatGroundAttackTime*).
  */
 export function maneuverSeconds(
   kind: 'hover' | 'perch' | 'ground',
@@ -213,14 +282,30 @@ export function maneuverSeconds(
   settings: FlightSettings,
   random: () => number,
 ): number {
-  const [min, max, mult] =
+  const [min, max, time] =
     kind === 'hover'
       ? [settings.hoverTimeMin, settings.hoverTimeMax, flight.hoverTime]
       : kind === 'perch'
         ? [settings.perchAttackTimeMin, settings.perchAttackTimeMax, flight.perchAttackTime]
         : [settings.groundAttackTimeMin, settings.groundAttackTimeMax, flight.groundAttackTime];
-  const share = Math.min(1, Math.max(0, mult)) * (0.75 + 0.5 * random());
-  return min + (max - min) * Math.min(1, share);
+  return lerp(random(), min, lerp(time, min, max));
+}
+
+/**
+ * How long an orbit lasts before it chooses again: at random from fCombatOrbitTimeMin up to its
+ * offensive mult (as the engine weighs it: combat-tactics offensiveMult) on fCombatOrbitTimeMax
+ * .. Min.
+ */
+export function orbitSeconds(
+  offensive: number,
+  settings: FlightSettings,
+  random: () => number,
+): number {
+  return lerp(
+    random(),
+    settings.orbitTimeMin,
+    lerp(offensive, settings.orbitTimeMax, settings.orbitTimeMin),
+  );
 }
 
 /** Whether it takes off again from the ground: its ground time is over, or its target flies away beyond its reach. */

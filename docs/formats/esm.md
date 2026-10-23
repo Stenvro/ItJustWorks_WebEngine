@@ -1703,6 +1703,10 @@ with its values and the NPC\_ naming it, `--audit` counts), after xEdit, CommonL
 - **DATA** flags u32: 0x1 dueling, 0x2 flanking, 0x4 allow dual wielding. Record flag 0x80000
   is allow dual wielding too (xEdit, CommonLibSSE).
 
+The engine reads none of these values directly: each is placed on a scale of its own game
+settings (a chance, distance or time is Min + value × (Max − Min); flank distance is a
+distance, stalk time a time), see [ai.md](../ai.md#style-values).
+
 A field may stop early or be missing; what it leaves out has the Creation Kit's defaults
 (UESP): group offensive and the equipment mults 1, avoid threat 0.2; melee 1, special attack
 0.1; close range and strafe 0.2; flight 0.5, dive bomb 1, flying attack 0.75. The offensive and

@@ -1269,8 +1269,8 @@ export class CastingEngine {
   /**
    * The potion an NPC drinks to restore an actor value (Health, Magicka, Stamina): of the
    * potions it carries, the one restoring the most (magnitude × its seconds). When it drinks
-   * is the combat AI's (src/shell/actor-combat-ai.ts: below iAICombatRestoreHealthPercentage,
-   * once every fCombatItemRestoreTimer).
+   * is the combat AI's (src/ai/combat-tactics.ts chooseSupport: below its style's restore share,
+   * not within fCombatRestore*RestrictTime of the last).
    */
   async choosePotion(actor: number, value: number): Promise<number | undefined> {
     const runtime = this.#runtime;

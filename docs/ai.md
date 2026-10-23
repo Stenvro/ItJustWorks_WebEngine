@@ -1274,7 +1274,7 @@ meanwhile.
   scripts (OnHit: aggressor, weapon, projectile, power, sneak, bash, blocked), uses the
   attacker's weapon skill by the weapon's base damage (Sneak by fSneakAttackSkillUsageMelee for
   a sneak attack), and shows the target on the HUD's enemy bar (its name and health) for the
-  player's hits. Health run out kills (the ragdoll pushed by fDeathForce{Ranged}Min..Max by the
+  player's hits ([Interface] iEnemyHealthDisplayTime, 2 s, after the last). Health run out kills (the ragdoll pushed by fDeathForce{Ranged}Min..Max by the
   damage; its death cry, its Death line, unless the kill was KillSilent's, which reports no
   murder either); an essential actor, and a protected one unless the player themselves dealt
   the blow (a follower's, a summon's or another actor's leaves it down: UESP "Protected
@@ -1426,8 +1426,9 @@ Who fights whom, and how (`src/ai/combat-ai.ts`, `combat-tactics.ts`, `combat-gr
 mean what the Creation Kit says of them (UESP "Skyrim:AI Data"); the load order's game settings
 count where it has them (fConfidence\*, fCombatConfidenceModifier\*, fFleeDistance\*,
 iFriendHitCombatAllowed, fCombatAdvance\*Radius\*, fCombatBlockChanceWeaponMult,
-fCombatDialogue\*); the others keep the engine's built-in defaults (see below). Where no rule
-is known yet the rules read each value as its name says (TODO(M13)).
+fCombatDialogue\*); the others keep the engine's built-in defaults (see below). The combat
+style's values count on the engine's scale of its settings ([Style values](#style-values));
+where the rule that uses one is not known yet, it is marked TODO(M13).
 
 ### The engine's built-in game settings
 
@@ -1443,14 +1444,24 @@ defaults are the original game's own, described by behaviour only. Some that mat
 | iAllyHitNonCombatAllowed                | 3                 | blows an ally lets pass out of combat                 |
 | iAllyHitCombatAllowed                   | 1000              | 1000 or more: an ally lets any number pass in combat  |
 | fCombatYieldTime, fCombatYieldRetryTime | 10, 600           | read where the player yields to those fighting them   |
-| fCombatInventoryUpdateTimer             | 5                 | what an actor fights with is weighed again this often |
-| iAICombatRestoreMagickaPercentage       | 30                | an actor drinks for magicka below this share          |
+| fCombatInventoryMinEquipTime\*          | 5, 3, 3, 5, 0     | weapon, magic, shout, staff, fists: kept at least     |
+| fCombatRestoreHealthPercentMin / Max    | 0, 0.5            | it restores health below this (defensive mult 0, 1)   |
+| fCombatRestoreMagickaPercentMin / Max   | 0.25, 0.4         | it restores magicka below this (defensive mult 0, 1)  |
 | iCrimeAlarmRecDistance                  | 4000              | an alarm reaches the actors this near                 |
 | fEvaluatePackageTimer                   | 15                | between an actor's package evaluations (not yet used) |
 
 The friendly-hit allowance depends on the reaction (FACT XNAM): a friend uses the iFriendHit
 pair, an ally the iAllyHit pair; more blows than allowed turn it on the attacker, an allowance of
 1000 or more never does.
+
+Some settings the plugins define are never read by the engine: fCombatInventoryUpdateTimer (it
+weighs its equipment continuously, keeping what it took up for its kind's
+fCombatInventoryMinEquipTime), iAICombatRestoreHealthPercentage, iAICombatRestoreMagickaPercentage
+and fCombatItemRestoreTimer (it restores by its style, below: Style values),
+fCombatAvoidThreatsChance (the style's avoid threat chance counts), fCombatSpeakAttackChance and
+fCombatSpeakTauntChance, fCombatTeammateFollowRadiusBase and Min, fCombatThreatExtrudeTime,
+fEnemyHealthBarTimer (the enemy bar is [Interface] iEnemyHealthDisplayTime's: 2 s after the
+enemy's health last changed). Our code does not use them.
 
 ### The attack decision
 
@@ -1471,8 +1482,69 @@ Melee Sequence, Attack Selector, Attack Idle, Flee Selector, Block Selector, ...
 - after its first attack × 1, rising to fCombatAttackChanceLastAttackBonus (1.5) as
   fCombatAttackChanceLastAttackBonusTime (5 s) passes since the last one.
 
-So a civilian with a low offensive mult still attacks about every second while it fights; shots
-and casts keep their own pace (`attackInterval`, TODO(M13)).
+So a civilian with a low offensive mult still attacks about every second while it fights. Shots
+and casts are decided the same way, each 0.25 s (the tree's Ranged Attack Idle and Cast
+Immediate / Concentration Spell Idles) by their own chances (Style values); a shout is tried
+each second while its voice has recovered.
+
+### Style values
+
+Observed in the original: the engine never uses a combat style's (CSTY) value as a chance
+or a distance directly. Each is placed on a scale of two (or three) game settings: a chance,
+distance or time is `Min + v × (Max − Min)` for the style's value `v`; the advance radii, the
+optimal range and the block time are a three-point curve (`curve` in
+`src/ai/combat-tactics.ts`: `Min` at −1, `Mid` at 0, `Max` at 1, linear between, unclamped).
+"Offensive" is the offensive mult as the attack decision weighs it (× the group offensive mult
+against a crowded player, `offensiveMult`). With the engine's defaults (no plugin sets these but
+the outer advance radii and fCombatAdvanceInnerRadiusMax):
+
+| Value (function)                         | Style value            | Settings (Min .. Max)  | Range                    |
+| ---------------------------------------- | ---------------------- | ---------------------- | ------------------------ |
+| attack (`attackChance`)                  | offensive              | fCombatAttackChance\*  | 0.05 .. 1                |
+| ranged attack (`rangedAttackChance`)     | offensive              | …RangedAttackChance\*  | 0.05 .. 1                |
+| immediate spell (`castChance`)           | offensive              | …CastImmediate…\*      | 0.05 .. 0.75             |
+| concentration spell (`castChance`)       | offensive              | …CastConcentration…\*  | 0.25 .. 1                |
+| offensive bash (`offensiveBashChance`)   | offensive × bash mults | …OffensiveBash…\*      | 0 .. 0.05                |
+| bash from a block (`bashChance`)         | defensive × bash mults | fCombatBashChance\*    | 0.025 .. 0.2             |
+| block (`blockChance`)                    | defensive              | fCombatBlockChance\*   | 0 .. 1                   |
+| block attack (`blockAttackChance`)       | defensive              | …BlockAttackChance\*   | 0 .. 1                   |
+| restore health, magicka (`restoreShare`) | defensive              | …RestoreHealth/…\*     | 0 .. 0.5, 0.25 .. 0.4    |
+| dodge (`dodgeChance`)                    | CSGD avoid threat      | fCombatDodgeChance\*   | 0 .. 1                   |
+| special attack (`specialAttackChance`)   | CSME special attack    | …SpecialAttack…\*      | 0 .. 1                   |
+| circle (`circleChance`)                  | CSCR circle            | fCombatCircleChance\*  | 0 .. 0.75                |
+| circle distant (`circleDistantChance`)   | CSCR circle            | …CircleDistant…\*      | 0.25 .. 0.75             |
+| fall back (`fallbackChance`)             | CSCR fallback          | …FallbackChance\*      | 0 .. 0.5                 |
+| flank distance (`flankDistance`, units)  | CSCR flank distance    | …FlankingDistance\*    | 0 .. 1024                |
+| stalk time (`stalkTime`, seconds)        | CSCR stalk time        | …FlankingStalkTime\*   | 0.01 .. 10               |
+| strafe (`strafeChance`)                  | CSLR strafe            | fCombatStrafeChance\*  | 0 .. 0.75                |
+| block time (`blockTime`, curve, s)       | defensive × 2 − 1      | fCombatBlockTime\*     | 4, 8, 10000              |
+| advance radii (`advanceRadii`, curves)   | defensive − offensive  | …AdvanceInner/Outer…   | 0, 0, 256; 128, 256, 512 |
+| optimal range (`maxOptimalRange`, curve) | defensive − offensive  | …MaximumOptimalRange\* | 1024, 1280, 1536         |
+
+More of the same scale: the bash mults (`bashChance`) are the style's bash mult × its bash recoil
+mult as the target recoils, else × its bash power attack mult as it power attacks, × its bash
+attack mult as it swings, × fCombatBashTargetBlockingMult (0) as it blocks. A shot's chance gains
+up to fCombatRangedAttackChanceLastAttackBonus (half of itself) over
+fCombatRangedAttackChanceLastAttackBonusTime (10 s) after the last attack. A bow is held drawn at
+random from fCombatRangedAttackHoldTimeAbsoluteMin (0.1 s) up to offensive on
+fCombatRangedAttackHoldTimeMax .. Min (1.5 .. 0.25 s), the shortest with the target within
+fCombatRangedAttackHoldTimeMinDistance (256) past the two radii. Against a staggered target the
+defensive mult counts × fCombatAdvanceRadiusStaggerMult (0) for the radii; a defensive style
+(radii above the middle) keeps its radii only while it was hurt within
+fCombatAdvanceLastDamagedThreshold (10 s) and its reach and its target's differ by no more than
+its inner radius, else the middle ones (the engine compares the target's reach with a distance of
+the attacker's, read here as its reach: inferred). It advances from beyond its outer radius past
+its reach and stops at its inner radius within it (inferred from the names). Restores: health
+not within fCombatRestoreHealthRestrictTime (15 s) of the last, magicka not within
+fCombatRestoreMagickaRestrictTime (10 s); no other value is restored (no stamina potions); the
+combat tree waits fCombatMagicDrinkPotionWaitTime (3 s) after a potion. Flying: each CSFL chance
+on its fCombat…ChanceMin .. Max (0 .. 1); a hover, perch attack or ground fight lasts at random
+from its setting's Min up to the style's time on Min .. Max; an orbit at random from
+fCombatOrbitTimeMin up to offensive on fCombatOrbitTimeMax .. Min (12 .. 3 s).
+
+Not yet run (TODO(M13): phase 5, the combat tree): the circle distant, special attack, block
+attack and offensive bash behaviours (their values are ready); the conditions of the close,
+flanking and ranged movement selectors (ours: in `chooseManeuver`).
 
 - **Reactions** (`reactionsOf(runtime).reaction`, `src/ai/combat-reactions.ts`: the rules crime
   does not weigh, then crime and factions' `runtime.crime.reaction`; `combatReaction` keeps the
@@ -1522,13 +1594,18 @@ and casts keep their own pace (`attackInterval`, TODO(M13)).
   the group shares where its members saw their targets (one sees, all know), counts for the
   style's group offensive mult and GetCombatGroupMemberCount; one dying, another says
   AllyKilled.
-- **What it fights with** (`chooseEquipment`, every fCombatInventoryUpdateTimer): the weapons
-  it carries (a bow or crossbow only with ammunition) and its fists, each scored by its damage ×
+- **What it fights with** (`chooseEquipment`, weighed again once what it took up has been kept
+  its kind's fCombatInventoryMinEquipTime: a weapon 5 s, magic and a shout 3 s, a staff 5 s, and
+  no sooner than what it carries is read again, 3 s): the weapons
+  it carries (a bow or crossbow only with ammunition; a shot's range before its arrows are known
+  fCombatMaximumProjectileRange) and its fists, each scored by its damage ×
   its combat style's equipment score mult (CSGD melee, ranged, magic, staff, unarmed, shout) ×
   its fit to the distance (melee within its reach, less beyond it to
   fCombatAbsoluteMaxRangeMult × the reach; ranged within its range, the one in hand
-  fCombatCurrentWeaponAbsoluteMaxRangeMult farther, falling to a tenth closer than
-  fCombatAdvanceOuterRadiusMax) × 1.25 for what is in hand. Another weapon is taken up through
+  fCombatCurrentWeaponAbsoluteMaxRangeMult farther, else fCombatInventoryMaxRangeScoreMult,
+  falling to fCombatInventoryMinRangeScoreMult closer than fCombatAdvanceOuterRadiusMax) × 1.25
+  for what is in hand (TODO(M13): phase 5, the engine's score; it adds
+  fCombatInventoryEquippedScoreBonus on a scale of its own). Another weapon is taken up through
   the equip system (sheathed first, then drawn again; arrows or bolts for a bow or crossbow).
   Its combat style: its combat override package's (PACK CNAM), else its NPC\_ ZNAM (of the
   template that gives its AI data), else DefaultCombatstyle (0x3D). With csHumanMissile
@@ -1544,36 +1621,43 @@ and casts keep their own pace (`attackInterval`, TODO(M13)).
   (taken up as a weapon), and its voice's shout. A concentration spell it holds while its
   target is alive, within the spell's range and before it.
 - **Its support** (`chooseSupport`, weighed every second): a ward (MagicWard on the spell or
-  its effect) against a spell or breath coming at it, held while one comes; below
-  iAICombatRestoreHealthPercentage (60%) of its health its healing spell, else the Health
-  potion it carries that restores most, at most once every fCombatItemRestoreTimer (3 s); a
-  Magicka potion when its magic fails it for want of magicka (a Stamina potion below the same
-  share of stamina: TODO(M13)); a summons when none of its summons stands; a buff (a lasting
-  Self spell: Oakflesh, a cloak) not on it. Its attacks wait 1.5 s after.
-- **Movement** (`chooseManeuver`, a maneuver for 1–3 s): more than 512 units beyond its reach
-  it chases its target over the navmeshes, running; near, dueling styles fall back (fallback
-  mult × 0.5, × (1 + defensive mult) as the target swings), circle (circle mult × 0.5) or
-  advance, flanking styles come at it from the side (flank distance; from afar too with allies
-  on the target) or stalk round it just out of reach (stalk time); at range it keeps beyond
-  fCombatAdvanceOuterRadiusMax (fallback mult), strafes (CSLR strafe mult) or holds, and closes
-  beyond its range. Its combat override package list (NPC\_ / alias ECOR: the first package
+  its effect) against a spell or breath coming at it, held while one comes; below its style's
+  health restore share (Style values: 0 .. 50% by its defensive mult) its healing spell, else
+  the Health potion it carries that restores most, not within fCombatRestoreHealthRestrictTime
+  (15 s) of the last; below its magicka restore share (25 .. 40%) a Magicka potion, not within
+  fCombatRestoreMagickaRestrictTime (10 s); no stamina potions (the engine restores no other
+  value); a summons when none of its summons stands; a buff (a lasting Self spell: Oakflesh, a
+  cloak) not on it. Its attacks wait 1.5 s after a cast, fCombatMagicDrinkPotionWaitTime (3 s)
+  after a potion.
+- **Movement** (`chooseManeuver`, a maneuver for 1–3 s, a stalk for its stalk time): more than
+  512 units beyond its reach it chases its target over the navmeshes, running; beyond its outer
+  advance radius past its reach it advances (to its inner radius: a defensive style recently hurt
+  hangs back); within it dueling styles fall back (fallback chance), circle (circle chance) or
+  advance; flanking styles stalk round it just out of reach for their stalk time, then come at
+  it from the side with allies on the target (round to the point a quarter round it, their flank
+  distance past their reach; from afar too with allies on the target), else advance; at range it
+  closes to its optimal range (Style values), falls back within fCombatAdvanceOuterRadiusMax
+  (fallback chance), strafes (strafe chance) or holds, and chases beyond its range. TODO(M13):
+  phase 5, the combat tree's movement selectors. Its combat override package list (NPC\_ / alias ECOR: the first package
   whose conditions hold) keeps it within that package's place: back there first, no chase of a
   target beyond it.
-- **Attacks** (`chooseAttack`, every (0.4–1.2 s) × (1.5 − offensive)): within reach and facing
-  its target within 30°, it attacks by its offensive mult (× group offensive mult with allies on
-  the target, × attack staggered mult on a staggered target), a power attack by its attack
+- **Attacks** (`chooseAttack`, every 0.25 s: The attack decision): within reach and facing
+  its target within 30°, it attacks by its attack chance, a power attack by its attack
   data's chance (ATKD; × power attack staggered mult on a staggered, power attack blocking mult
-  on a blocking target), chaining in the attack's window; blocking, it bashes by bash mult ×
-  0.25 (× bash attack, bash power attack, bash recoil mult as the target swings, power attacks
-  or recoils). A bow is drawn and loosed after 0.3–1.2 s held (TODO(M13): its line of fire).
+  on a blocking target), chaining in the attack's window; blocking, it bashes by its bash chance
+  (Style values). A bow is drawn by its ranged attack chance and loosed after its hold time; a
+  spell or staff is cast by its cast chance when it casts nothing yet (TODO(M13): its line of
+  fire).
 - **Blocks**: a melee swing coming at it within the swinger's reach it blocks once by its
-  defensive mult (× fCombatBlockChanceWeaponMult without a shield), where its left hand blocks
+  block chance (× fCombatBlockChanceWeaponMult without a shield), where its left hand blocks
   (a shield, a two-handed weapon, a one-handed weapon with the left hand free); it lets go as
-  the swing ends or after 1.2 s.
+  the swing ends or after its block time (TODO(M13): phase 5, the sustained Block and Block
+  Attack).
 - **Threats**: an arrow, a spell's projectile (its collision radius) or a breath (a shout
   drawn in or sprayed at a target, from the head: 96 units wide at the breath's 1000 units a
-  second; TODO(M13)) whose line passes through it within 1.2 s it sidesteps by its style's
-  avoid threat chance, out of the line to the side it stands on, saying AvoidThreat.
+  second; TODO(M13)) whose line passes through it within 1.2 s (TODO(M13): phase 5, the
+  engine's fCombatThreat\* model) it sidesteps by its dodge chance, out of the line to the side
+  it stands on, saying AvoidThreat.
 - **Fleeing** (`shouldFlee`): below its confidence's share of health (cowardly at once,
   cautious fConfidenceCautious 37.5%, average fConfidenceAverage 15%, brave fConfidenceBrave
   3.75%, foolhardy never) × (1 − the odds' modifier), or with Fear or Turn Undead on it; Rally
@@ -1590,7 +1674,7 @@ and casts keep their own pace (`attackInterval`, TODO(M13)).
   after fDetectionStateExpireTime it gives up (LostToNormal; detection's alert ends).
 - **Yielding**: an actor fighting the player that does not attack them on sight (the fight is
   a quarrel or a brawl) and would flee yields instead: Yield, weapon away, out of the fight for
-  fCombatYieldTime (10 s), not again within fCombatYieldRetryTime (60 s); struck again it
+  fCombatYieldTime (10 s), not again within fCombatYieldRetryTime (600 s); struck again it
   fights on. The player yields a quarrel their blows started by sheathing and holding off 3 s:
   AcceptYield, and it lets them be; so do guards that took up a fight against the player (a
   crime: their arrest follows) unless their faction attacks the player on sight. TODO(M13): the
@@ -1659,21 +1743,23 @@ walkers.
   cruising (FlyStartCruise). Landed (LandEnd) the movers give it its controller again; its size
   for blows and projectiles in the air is its controller's on the ground (its skeleton's bound).
 - **In combat** (`ActorFlight.fight`, asked by the combat AI for a flier that may fly) its
-  combat style's flight section (CSTY CSFL) decides, each time a maneuver ends, in turn: a dive
+  combat style's flight section (CSTY CSFL, each chance and time on the engine's scale:
+  [Style values](#style-values)) decides, each time a maneuver ends, in turn: a dive
   bomb (dive bomb chance: low over its target, 384 over it, and on beyond), a hover (hover
-  chance: 1280 before its target, 768 above it, for fCombatHoverTimeMin 5.5 ..
-  fCombatHoverTimeMax s by its hover time), a perch attack (perch attack chance, with a free
-  perch within 6000 of its target: for fCombatPerchAttackTimeMin 4 .. Max s by its perch time),
-  a ground attack (ground attack chance, with a landing spot on the navmesh 1024 from the
-  target on its side, or its forced landing marker: it fights there for fCombatGroundAttackTimeMin
-  8 .. Max 17 s by its ground attack time, as the combat AI's melee fights, with its race's
-  bites, tail and wing attacks), else an orbit round its target at fCombatOrbitDistance (4000),
-  1536 above it, for about 8 s. Each maneuver rolls its flying attack chance: it breathes at its
+  chance: 1280 before its target, 768 above it, at random from fCombatHoverTimeMin 5.5 s up to
+  its hover time on that .. fCombatHoverTimeMax 15 s), a perch attack (perch attack chance,
+  with a free perch within 6000 of its target: from fCombatPerchAttackTimeMin 4 s up to its
+  perch time on 4 .. 15 s), a ground attack (ground attack chance, with a landing spot on the
+  navmesh 1024 from the target on its side, or its forced landing marker: it fights there from
+  fCombatGroundAttackTimeMin 8 s up to its ground attack time on 8 .. 17 s, as the combat AI's
+  melee fights, with its race's bites, tail and wing attacks), else an orbit round its target at
+  fCombatOrbitDistance (4000), 1536 above it, from fCombatOrbitTimeMin 3 s up to its offensive
+  mult on fCombatOrbitTimeMax .. Min (12 .. 3 s). Each maneuver rolls its flying attack chance: it breathes at its
   target before it (within 36°) and within its shout's reach (the last word's projectile's
   range: fire and frost breath 2000, fireball and ice storm 10000); hovering and perched it
   breathes whenever its voice has recovered. Hurt below its injured health it lands to fight on
-  the ground (FlyStopInjured). TODO(M13): the engine's order and weighing of the style's
-  chances, its times' scale, the heights and distances (ours, `tools/flight-info.ts` lists
+  the ground (FlyStopInjured). TODO(M13): phase 5, the order and conditions of the combat
+  tree's flight selector, the heights and distances (ours, `tools/flight-info.ts` lists
   them); vanilla's csDragon chooses a dive bomb 36%, a hover 33%, a perch 16%, a landing 13%.
 - **Its breath** (`ActorCasting.shoutAt`): a shout it knows (its spell list's SHOU, one at
   random) in its voice, ActionVoice (shoutStart, or shoutStartFireball for a fireball shout:
