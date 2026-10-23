@@ -5,7 +5,7 @@ import {
   type Navmesh,
   type NavmeshTriangle,
 } from '../world/navmesh.ts';
-import { findPath, type NavmeshSet } from './pathfinding.ts';
+import { findPath, randomReachablePoint, type NavmeshSet } from './pathfinding.ts';
 
 type Point = [number, number, number];
 
@@ -207,5 +207,39 @@ describe('findPath', () => {
       blocked: [{ at: [50, 250, 0], radius: 40 }],
     });
     expect(elsewhere?.complete).toBe(true);
+  });
+});
+
+describe("a random reachable point (a wanderer's first walk)", () => {
+  /** A seeded random (the same points every run). */
+  const seeded = (seed: number): (() => number) => {
+    let state = seed;
+    return () => {
+      state = (state * 1664525 + 1013904223) % 4294967296;
+      return state / 4294967296;
+    };
+  };
+
+  it('lies within the place, on what the actor can walk to, far enough from it', () => {
+    // Two islands: a row of squares the actor stands on, and one apart (a fenced garden).
+    const set = setOf([
+      gridMesh(1, [
+        [0, 0],
+        [1, 0],
+        [2, 0],
+        [3, 0],
+      ]),
+      gridMesh(2, [[0, 2]]),
+    ]);
+    const random = seeded(7);
+    for (let i = 0; i < 40; i++) {
+      const point = randomReachablePoint(set, [50, 50, 0], [100, 150, 0], 200, 150, random);
+      if (!point) throw new Error('no point');
+      // Never in the garden (y 200 to 300), always within the radius of the middle.
+      expect(point[1]).toBeLessThanOrEqual(100);
+      expect(Math.hypot(point[0] - 100, point[1] - 150)).toBeLessThanOrEqual(260);
+    }
+    // Off the navmeshes: none.
+    expect(randomReachablePoint(set, [50, 950, 0], [100, 150, 0], 200, 0, random)).toBeUndefined();
   });
 });

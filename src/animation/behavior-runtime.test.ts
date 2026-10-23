@@ -1268,3 +1268,82 @@ describe('transitions as Havok runs them', () => {
     expect(runtime.variable('Speed')).toBe(80);
   });
 });
+
+describe('syncing blenders', () => {
+  /** A syncing parametric blender of looping clips sitting at their weights. */
+  const syncBlend = (
+    name: string,
+    parameter: number,
+    children: [number, BehaviorGenerator][],
+  ): BehaviorGenerator => ({
+    kind: 'blender',
+    name,
+    flags: 0x11,
+    blendParameter: { value: 0, variable: parameter },
+    children: children.map(([weight, generator]) => ({ weight: { value: weight }, generator })),
+  });
+  /** Root motion: one unit forward a second of clip time (a loop's end and start joined). */
+  const forward: BehaviorHost['rootMotion'] = (_generator, from, to) => ({
+    translation: [0, to >= from ? to - from : 1 - from + to, 0],
+    rotation: [0, 0, 0, 1],
+  });
+
+  it('keeps its cycle while its children change sides (a turn blend wavering about straight)', () => {
+    // Left (1), straight (0), right (-1): a turn that changes sides takes one side out and
+    // the other in. The blender's own phase goes on; before, it was read from the first child
+    // playing and started over each time the right one came in.
+    const turn = syncBlend('Turn', 0, [
+      [1, clip('left')],
+      [0, clip('straight')],
+      [-1, clip('right')],
+    ]);
+    const runtime = new BehaviorRuntime({
+      root: graph(turn, [], [{ name: 'TurnDelta', initial: 0.1 }]),
+      host: {
+        ...host({ left: animation(0), straight: animation(10), right: animation(20) }),
+        rootMotion: forward,
+      },
+      skeleton,
+    });
+    runtime.update(0);
+    let moved = 0;
+    for (let i = 1; i <= 30; i++) {
+      runtime.setVariable('TurnDelta', i % 2 === 0 ? 0.1 : -0.1);
+      runtime.update(0.02);
+      moved += runtime.rootMotion().translation[1];
+    }
+    const straight = runtime.playing().find((c) => c.animation === 'straight');
+    expect(straight?.time).toBeCloseTo(0.6, 5);
+    // A clip that joins starts at the blender's phase: it has not moved the character in that
+    // update (its tenth of the blend each time); the rest moved it as far as they played.
+    expect(moved).toBeCloseTo(0.6 - 30 * 0.1 * 0.02, 5);
+  });
+
+  it('drives a syncing blender within by its own phase (walk and trot in step)', () => {
+    // Walk (1 s) and trot (0.5 s) blended half and half: one cycle of 0.75 s for both.
+    const walk = syncBlend('Walk', 1, [[0, clip('walk')]]);
+    const trot = syncBlend('Trot', 1, [[0, clip('trot')]]);
+    const speed = syncBlend('Speed', 0, [
+      [100, walk],
+      [200, trot],
+    ]);
+    const runtime = new BehaviorRuntime({
+      root: graph(
+        speed,
+        [],
+        [
+          { name: 'Speed', initial: 150 },
+          { name: 'Turn', initial: 0 },
+        ],
+      ),
+      host: host({ walk: animation(0, 1), trot: animation(10, 0.5) }),
+      skeleton,
+    });
+    runtime.update(0);
+    runtime.update(0.375);
+    const time = (name: string): number | undefined =>
+      runtime.playing().find((c) => c.animation === name)?.time;
+    expect(time('walk')).toBeCloseTo(0.5, 5);
+    expect(time('trot')).toBeCloseTo(0.25, 5);
+  });
+});

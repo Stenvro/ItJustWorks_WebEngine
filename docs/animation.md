@@ -472,6 +472,18 @@ gets 125.8, its walk (125.11) with 0.8 % of its slow trot, as in the engine; slo
 the parameter differs more from the speed (a horse at 60 units a second gets 119.7: its walk
 played slower, not a blend with standing). Before, Speed went through as it was.
 
+The lookup itself (observed in the original: the speed sampler database's lookup, behind
+the modifier and the [Animation] bUseSpeedSampler switch): the state's table by iState (none:
+Speed itself); of its curves **one**, the one for exactly that direction, else the next higher,
+and past the last (a direction a hair left of ahead, 0.99) the first: the curves are not
+blended. In that curve the first point at least as fast as the goal, and the parameter linear
+between it and the point before (before the first, a point at speed 0 with parameter 0).
+**Faster than the curve's last point, the goal speed itself.** The horse's curves end at 321
+units a second (parameter 324.5); its run blend's child sits at 450, its gallop's speed. Held
+at the last parameter (ours before), a galloping horse played its trot with a seventh of its
+run at 450 units a second; now it gets 450 and gallops. The same holds for every table: a
+character running at 370 against state 0's curve that ends at 306.
+
 TODO(M13): the actions are not resolved through the idle tree yet (the vanilla events are sent:
 a rider's graph gets moveStart, and SprintStart is not refused while sneaking or blocking); the
 movement controller's acceleration (it ramps the speed by the race's acceleration and deceleration
@@ -1062,8 +1074,11 @@ them by name (a variable keeps the first file's initial value). Each frame:
    taken; clips advance by their playback speed (looping, single play, ping-pong, user
    controlled; an enforced duration plays the clip in that time) and raise their triggers
    and the animation's annotations as they pass them (unless the clip's flag 0x10 says not
-   to); a syncing blender (flag 0x1) plays its clips at one phase, advanced by the time over
-   their weighted duration; modifiers run: expressions assign variables or raise events
+   to); a syncing blender (flag 0x1) keeps a cycle of its own and plays everything it blends
+   at that phase, advanced by the time over its children's weighted cycle (a clip's at its
+   playback speed, a blender's its children's weighted); a syncing blender within one plays
+   at the outer one's phase ([Syncing blenders](#syncing-blenders)); modifiers run:
+   expressions assign variables or raise events
    (once, on true, false to true, every frame once true), BSIsActiveModifier sets its bound
    flags while active, timers, event-driven modifiers, events every N events, damping (PID),
    value interpolation, events from ranges, modify-once modifiers.
@@ -1156,6 +1171,32 @@ behavior files: `node tools/behavior-run.ts --transitions`):
   (0x20) does not move it. A clip that joins a syncing blender's cycle (a horse's trot joining its
   walk) starts at the cycle's phase without moving the character from its start (it jumped a
   stride ahead), as does a clip started at a fraction.
+
+### Syncing blenders
+
+A blender with the sync flag (hkbBlenderGenerator FLAG_SYNC, 0x1) plays what it blends in step:
+one cycle for all its children. Ours (`BehaviorRuntime`, `#sync`): the blender keeps a phase of
+its own (0..1), advanced every update by the time over the weighted cycle of its active
+children (a clip's duration, cropped or enforced, over its playback speed; a blender's, its own
+children's weighted; a state machine's, its current state's). Every child plays at that phase:
+a clip's time is the phase times its duration; a syncing blender within takes the phase from
+the outer one instead of advancing its own (the horse's speed blend, ForwardLocomotionBlend_Horse,
+holds five syncing turn blends: walk-slow, walk, trot-slow, trot and run, each left, straight
+and right on TurnDeltaDamped at 135, 0 and −135). A child whose weight comes back above zero is
+activated anew and starts at the blender's phase; the cycle goes on. A blender entered anew
+starts where its clips were started (a transition that syncs), else at 0.
+
+**What this fixed.** The phase was read from the first active child's clip. In a turn blend
+whose damped TurnDelta wavers about zero, the side children take turns: right and straight, then
+straight and left. Each time the right child came in, its clip was new (phase 0): the whole walk
+started over. Measured offline (`tools/behavior-run.ts`'s runtime, the horse project, Speed 125,
+TurnDelta ±30 every eighth of a second): the walk stood in its first tenth (WalkForward at
+0.08, 0.10, 0.12 after 1, 2, 3 s) and its root motion read 530 units a second, each restart
+counted as a loop of the clips that stayed; the opening's cart horse (MQ101CartHorse2Patrol1)
+read 893 to 1314 units a second at a walk of 125 in the QA sweep, its trot clips restarting 8
+times a second. Now the walk goes through its stride (1.00, 0.91, 0.83 after 1, 2, 3 s, about 1.1 s
+a cycle) and its root motion reads 126 units a second; the walk and the trot within the speed
+blend are in step (before, each turn blend kept its own phase).
 
 The runtime counts what it does (`BehaviorRuntime.stats`: updates, state changes, self
 transitions, interrupted transitions, clip starts) and tells a development hook of every state

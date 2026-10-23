@@ -114,9 +114,17 @@ describe('speed lookups', () => {
     expect(speedParameter(table, 0, 50)).toBeCloseTo(50);
     expect(speedParameter(table, 0, 150)).toBeCloseTo(175);
     expect(speedParameter(table, 0.5, 30)).toBeCloseTo(50);
-    // Below the slowest point: the first parameter; beyond the fastest: the last.
+    // Below the slowest point: towards parameter 0 at speed 0; beyond the fastest: the goal.
     expect(speedParameter(table, 0, 0)).toBe(0);
-    expect(speedParameter(table, 0, 1000)).toBeCloseTo(300);
+    expect(speedParameter(table, 0, 1000)).toBe(1000);
+  });
+
+  it("takes one curve: the direction's, else the next higher, past the last the first", () => {
+    // 0.125 reads the right curve (0.25): its speed 40 is at parameter 50.
+    expect(speedParameter(table, 0.125, 40)).toBeCloseTo(50);
+    expect(speedParameter(table, 0.25, 40)).toBeCloseTo(50);
+    // 0.75 is past the back curve (0.5): the forward one, 30 between (0, 5) and (50, 50).
+    expect(speedParameter(table, 0.75, 30)).toBeCloseTo((25 / 45) * 50);
   });
 
   it('wraps directions past the last curve back to the first', () => {
