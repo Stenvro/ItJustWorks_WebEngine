@@ -68,6 +68,7 @@ import type { PlayerFurniture } from './player-furniture.ts';
 import { PlayerPilot } from './player-pilot.ts';
 import { reactionsOf } from '../ai/combat-reactions.ts';
 import { ProjectileAim } from './projectile-aim.ts';
+import { ActorAnimObjects } from './actor-anim-objects.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -230,6 +231,8 @@ export class ActorStage {
   readonly crime: ActorCrime;
   /** The fliers: dragons taking off, flying, hovering, landing (src/shell/actor-flight.ts). */
   readonly flight: ActorFlight;
+  /** The props their graphs put in their hands (src/shell/actor-anim-objects.ts). */
+  readonly animObjects: ActorAnimObjects;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
   #clock: number | undefined;
   /** Each actor as a user of furniture. */
@@ -614,6 +617,16 @@ export class ActorStage {
       get: (reference) => this.#actors.get(reference),
       bark: (actor, subtype, target) => this.talk.bark(actor, subtype, target),
     });
+    this.animObjects = new ActorAnimObjects({
+      session: options.session,
+      renderer: options.renderer,
+      staged: (reference) => this.#actors.get(reference),
+      actors: () => this.#actors.values(),
+      player: () => options.player?.(),
+      warn: (message) => {
+        options.terminal.log('actor', message, 'warn');
+      },
+    });
   }
 
   /** An actor's body for the effects on it (the player's avatar's for the player). */
@@ -928,6 +941,7 @@ export class ActorStage {
     if (!world) {
       this.playerCasting?.clear();
       this.casting.clear();
+      this.animObjects.clear();
     }
   }
 
@@ -1060,6 +1074,8 @@ export class ActorStage {
     // What magic shows on actors and for a moment in the world.
     yield* this.effects.scenes();
     yield* this.fx.scenes();
+    // The props in their hands (animation objects).
+    yield* this.animObjects.scenes();
   }
 
   /** Where a staged actor stands now (scripts' live placement). */
@@ -1433,6 +1449,8 @@ export class ActorStage {
     this.looks.frame(this.#actors.values(), frame);
     this.moods.frame(this.#faces(), frame);
     const camera = this.#options.renderer.view?.camera;
+    // TEMPORARY (until the graph event dispatch calls them): the props hear the graphs.
+    this.animObjects.listen();
     animateSkeletons(
       this.#living(),
       seconds,
@@ -1453,8 +1471,9 @@ export class ActorStage {
     this.knockdowns.afterAnimate();
     this.bodies.frame(this.#withPlayerBody(), this.#options.focus?.());
     this.playerDeath.frame(frame);
-    // The casting art follows the hands as they are posed now.
+    // The casting art follows the hands as they are posed now, and so do their props.
     this.casting.afterAnimate();
+    this.animObjects.frame();
     // How their graphs moved them (root motion) moves them in the next physics steps; those
     // entering or leaving furniture it moves at once (they have no controller).
     for (const [staged, before] of times) {
@@ -1601,6 +1620,7 @@ export class ActorStage {
   }
 
   #remove(staged: StagedActor): void {
+    this.animObjects.remove(staged.reference);
     this.looks.remove(staged.reference);
     this.moods.forget(staged.reference);
     this.#options.session.scriptsReady?.magic.unloaded(staged.reference);
