@@ -49,9 +49,11 @@ const library = new ScriptLibrary(async (name) => {
   return vfs.has(path) ? vfs.read(path) : undefined;
 });
 const warnings = new Map<string, number>();
+const gameLogged: string[] = [];
 const log: string[] = [];
 const runtime = new ScriptRuntime(db, library, {
   warn: (message) => warnings.set(message, (warnings.get(message) ?? 0) + 1),
+  gameLog: (message) => gameLogged.push(message),
   log: (line) => {
     log.push(line);
     if (values.log) console.log(`  [log] ${line}`);
@@ -239,3 +241,7 @@ const top = Number(values.top);
 console.log(`\n${String(other.length)} other warnings (first ${String(top)}):`);
 for (const [message, count] of other.slice(0, top))
   console.log(`  ${count > 1 ? `${String(count)}× ` : ''}${message}`);
+console.log(
+  `\n${String(gameLogged.length)} faults of the game's own data (its Papyrus log has them too):`,
+);
+for (const message of gameLogged.slice(0, top)) console.log(`  ${message}`);

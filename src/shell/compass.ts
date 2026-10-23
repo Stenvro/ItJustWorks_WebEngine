@@ -266,7 +266,12 @@ export async function questTargets(runtime: ScriptRuntime): Promise<QuestTarget[
         // follower's WaitingForPlayer).
         if (
           target.conditions.length > 0 &&
-          !(await runtime.conditionsHold(target.conditions, runtime.referenceHandle(reference)))
+          !(await runtime.conditionsHold(
+            target.conditions,
+            runtime.referenceHandle(reference),
+            undefined,
+            { quest: formId },
+          ))
         ) {
           continue;
         }

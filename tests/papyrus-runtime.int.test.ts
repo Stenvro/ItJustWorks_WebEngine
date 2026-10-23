@@ -27,6 +27,7 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
   let db: RecordDatabase;
   let runtime: ScriptRuntime;
   const warnings: string[] = [];
+  const gameLogged: string[] = [];
   const world: WorldBridge = {};
 
   beforeAll(async () => {
@@ -39,6 +40,7 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     runtime = new ScriptRuntime(db, library, {
       world,
       warn: (message) => warnings.push(message),
+      gameLog: (message) => gameLogged.push(message),
     });
     await runtime.newGame();
     // Ten seconds of play at TimeScale 20.
@@ -92,6 +94,19 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
 
   it('has every native the scripts call', () => {
     expect(warnings.filter((message) => message.endsWith('is not implemented'))).toEqual([]);
+  });
+
+  it("logs no warning of ours in a new game, only the game's own faults", () => {
+    // docs/scripting.md "The log": what vanilla's own data gets wrong is logged as the game's.
+    expect(warnings).toEqual([]);
+    expect(gameLogged.length).toBeGreaterThan(0);
+    expect(
+      gameLogged.every(
+        (line) =>
+          line.includes('cannot be initialized because the script no longer contains') ||
+          line.includes('is not set in the plugin'),
+      ),
+    ).toBe(true);
   });
 
   it("fills a location's reference of a type from the master's and the DLCs' merged lists", () => {

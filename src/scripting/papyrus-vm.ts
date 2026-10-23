@@ -40,6 +40,8 @@ export interface NativeCall {
   readonly name: string;
   /** The calling thread waits for this (a latent function: Wait, PlayAnimationAndWait). */
   readonly latent: <T>(promise: Promise<T>) => Promise<T>;
+  /** The calling Papyrus stack, for a native's log line (as the game's log gives it). */
+  readonly where: () => string;
 }
 
 export type NativeFunction = (call: NativeCall) => Value | Promise<Value>;
@@ -53,6 +55,11 @@ export interface VmHost {
   native(script: string, fn: string): NativeFunction | undefined;
   /** Something a script did that the VM could not do (logged, never fatal). */
   warn(message: string): void;
+  /**
+   * A fault of the game's own data that the original reports in its Papyrus log too (logged
+   * as the game's; without it, as a warning).
+   */
+  gameLog?(message: string): void;
 }
 
 export class PapyrusError extends Error {
@@ -62,6 +69,13 @@ export class PapyrusError extends Error {
 const MAX_DEPTH = 64;
 /** Instructions a thread may run without waiting at all (an endless loop where no frames come). */
 const MAX_INSTRUCTIONS = 2_000_000;
+/**
+ * How long a thread may hold the VM inside one engine native before a waiting thread runs, in
+ * microtask turns: plenty for a native that only computes (its awaits resolve at once), while
+ * one that reads files or waits for another thread (a macrotask away) lets go in well under a
+ * millisecond. Counted in turns, not on a clock: the same in every run, and no timer API.
+ */
+const NATIVE_PATIENCE_TURNS = 1000;
 /** How often a thread looks at the frame's budget (instructions). */
 const BUDGET_CHECK = 256;
 
@@ -76,6 +90,12 @@ class Thread {
   readonly #changed: () => void;
   /** Instructions since it last waited or yielded. */
   instructions = 0;
+  /** The functions it runs in, outermost first (its Papyrus stack, for the log). */
+  readonly frames: Frame[] = [];
+  /** It awaits an engine native (it may be made to give the VM up meanwhile: #acquire). */
+  inNative = 0;
+  /** Counts the natives it entered (which one the VM's patience is counting for). */
+  natives = 0;
 
   constructor(id: number, initializing: boolean, changed: () => void) {
     this.id = id;
@@ -105,6 +125,13 @@ class Instance {
   readonly waiters: (() => void)[] = [];
   /** While its OnInit runs: resolved when it has finished. */
   initializing: Promise<void> | undefined;
+  /**
+   * The plugin's values for its full (not auto) properties: their Set functions run with them
+   * before its OnInit, in the plugin's order.
+   */
+  bound: { readonly level: LoadedScript; readonly name: string; readonly value: Value }[] = [];
+  /** The auto properties' variables the plugin gave a value (lowercase). */
+  filled = new Set<string>();
 
   constructor(target: ObjectHandle, script: LoadedScript) {
     this.target = target;
@@ -124,12 +151,16 @@ class Instance {
     this.vars.clear();
     for (const [level, vars] of fresh.vars) this.vars.set(level, vars);
     this.state = fresh.state;
+    this.bound = fresh.bound;
+    this.filled = fresh.filled;
     this.initializing = undefined;
   }
 }
 
 interface Frame {
   readonly fn: PexFunction;
+  /** The function's name as called. */
+  readonly name: string;
   /** Script the function belongs to. */
   readonly level: LoadedScript;
   readonly self: ObjectHandle | null;
@@ -138,6 +169,10 @@ interface Frame {
   readonly types: Map<string, string>;
   readonly depth: number;
   readonly thread: Thread;
+  /** Variables a cast of an object left None (variable → what failed), for the log. */
+  readonly casts: Map<string, string>;
+  /** Variables that hold a None the engine gave (an event's argument passed on), for the log. */
+  readonly engineNones: Set<string>;
 }
 
 function literal(value: PexValue, type = ''): Value {
@@ -184,6 +219,17 @@ export class PapyrusVm {
   readonly #natives = new Map<string, Instance>();
   readonly #warned = new Set<string>();
   readonly #threads = new Set<Thread>();
+  /**
+   * The thread that runs now: the VM runs one at a time, and a thread keeps running until it
+   * waits (a latent call, a lock, another script's OnInit, the frame's budget) or ends, as the
+   * game's VM runs a stack. JavaScript's awaits inside a step (a property of another object,
+   * an engine native) are no switch points, so a script's check and set stay together
+   * (CompanionsHousekeepingScript.RegisterRadiantQuest, called twice for one quest at once).
+   */
+  #runner: Thread | undefined;
+  readonly #runQueue: { readonly thread: Thread; readonly resume: () => void }[] = [];
+  /** The VM's patience with a runner held up in a native is being counted (#watchNative). */
+  #watching = false;
   #nextThread = 1;
   /** Resolved when a thread stops running (it waits or ends): idle() looks again then. */
   #change: { promise: Promise<void>; resolve: () => void } = changeSignal();
@@ -198,6 +244,17 @@ export class PapyrusVm {
     if (this.#warned.has(message)) return;
     this.#warned.add(message);
     this.host.warn(message);
+  }
+
+  /**
+   * A fault of the game's own data or scripts that the original's Papyrus log reports the same
+   * way (a plugin's value for a property its script no longer has): logged as the game's, not
+   * as a fault of ours.
+   */
+  gameLog(message: string): void {
+    if (this.#warned.has(message)) return;
+    this.#warned.add(message);
+    (this.host.gameLog ?? this.host.warn).call(this.host, message);
   }
 
   /** Threads that have not finished: running, or waiting for a clock, a lock or a frame. */
@@ -233,16 +290,30 @@ export class PapyrusVm {
         continue;
       }
       const instance = new Instance(target.as(script.name), script);
+      // The plugin's property values, bound as the game binds them (observed in the
+      // original): a property of the script or a parent, auto or not, takes the value; one the
+      // script does not have is the plugin's own fault, which the game's log reports too.
       for (const [name, value] of info.properties) {
         const level = chainOf(script).find((s) => s.properties.has(name));
         const property = level?.properties.get(name);
-        if (!level || !property?.autoVariable) {
-          this.warn(`${script.displayName}: no auto property ${name}`);
+        if (!level || !property) {
+          this.gameLog(
+            `Property ${name} on script ${script.displayName} attached to ${formatValue(target)} cannot be initialized because the script no longer contains that property`,
+          );
           continue;
         }
-        instance.vars
-          .get(level.name)
-          ?.set(property.autoVariable.toLowerCase(), retype(value, property.type));
+        if (property.autoVariable) {
+          instance.vars
+            .get(level.name)
+            ?.set(property.autoVariable.toLowerCase(), retype(value, property.type));
+          instance.filled.add(property.autoVariable.toLowerCase());
+        } else if (property.setter) {
+          instance.bound.push({ level, name: property.name, value: retype(value, property.type) });
+        } else {
+          // TODO(M13): what the engine does with a value for a property without a Set function
+          // (no vanilla plugin gives one).
+          this.warn(`${script.displayName}: property ${property.name} cannot be set`);
+        }
       }
       instances.push(instance);
     }
@@ -329,6 +400,7 @@ export class PapyrusVm {
     });
     this.#threads.add(thread);
     try {
+      await this.#acquire(thread);
       return await body(thread);
     } catch (error) {
       // A script error ends its thread with a warning, as in the game; so does a fault in a
@@ -340,8 +412,75 @@ export class PapyrusVm {
       );
       return fallback;
     } finally {
+      this.#release(thread);
       thread.state = 'done';
       this.#threads.delete(thread);
+    }
+  }
+
+  /**
+   * Waits until the thread may run (the VM's run token). An engine native that takes long (it
+   * reads the game's files, or waits for another thread: the game's natives never do) lets a
+   * waiting thread run after NATIVE_PATIENCE_TURNS: its thread takes the token back when the
+   * native returns.
+   */
+  async #acquire(thread: Thread): Promise<void> {
+    if (this.#runner === undefined || this.#runner === thread) {
+      this.#runner = thread;
+      return;
+    }
+    await new Promise<void>((resume) => {
+      this.#runQueue.push({ thread, resume });
+      this.#watchNative();
+    });
+  }
+
+  /** Gives the run token up (to the thread that waited longest). */
+  #release(thread: Thread): void {
+    if (this.#runner !== thread) {
+      const queued = this.#runQueue.findIndex((entry) => entry.thread === thread);
+      if (queued >= 0) this.#runQueue.splice(queued, 1);
+      return;
+    }
+    this.#runner = undefined;
+    const next = this.#runQueue.shift();
+    if (next) {
+      this.#runner = next.thread;
+      next.resume();
+    }
+  }
+
+  /**
+   * Lets a waiting thread run if the runner stays in one engine native for
+   * NATIVE_PATIENCE_TURNS microtask turns.
+   */
+  #watchNative(): void {
+    const runner = this.#runner;
+    if (this.#watching || !runner || runner.inNative === 0 || this.#runQueue.length === 0) return;
+    this.#watching = true;
+    const native = runner.natives;
+    let turns = NATIVE_PATIENCE_TURNS;
+    const turn = (): void => {
+      const same = this.#runner === runner && runner.inNative > 0 && runner.natives === native;
+      if (same && --turns > 0) {
+        void Promise.resolve().then(turn);
+        return;
+      }
+      this.#watching = false;
+      if (same) this.#release(runner);
+      // Another runner, or another native: count again for it.
+      else this.#watchNative();
+    };
+    void Promise.resolve().then(turn);
+  }
+
+  /** Waits for something with the run token given up meanwhile (a switch point). */
+  async #suspend<T>(thread: Thread, promise: Promise<T>): Promise<T> {
+    this.#release(thread);
+    try {
+      return await promise;
+    } finally {
+      await this.#acquire(thread);
     }
   }
 
@@ -350,12 +489,16 @@ export class PapyrusVm {
    * the thread runs an OnInit itself.
    */
   async #lock(instance: Instance, thread: Thread): Promise<void> {
-    if (instance.initializing && !thread.initializing) await instance.initializing;
+    if (instance.initializing && !thread.initializing)
+      await this.#suspend(thread, instance.initializing);
     while (instance.owner && instance.owner !== thread) {
       thread.state = 'waiting';
-      await new Promise<void>((resume) => {
-        instance.waiters.push(resume);
-      });
+      await this.#suspend(
+        thread,
+        new Promise<void>((resume) => {
+          instance.waiters.push(resume);
+        }),
+      );
       thread.state = 'running';
     }
     instance.owner = thread;
@@ -407,11 +550,13 @@ export class PapyrusVm {
   /** Waits for a latent call on a thread (it counts as waiting meanwhile). */
   async #latent<T>(thread: Thread, promise: Promise<T>): Promise<T> {
     thread.state = 'waiting';
+    this.#release(thread);
     try {
       return await promise;
     } finally {
       thread.state = 'running';
       thread.instructions = 0;
+      await this.#acquire(thread);
     }
   }
 
@@ -421,7 +566,17 @@ export class PapyrusVm {
   call(target: ObjectHandle, name: string, args: readonly Value[] = []): Promise<Value> {
     return this.#spawn(
       false,
-      (thread) => this.#callMethod(target, name, [...args], 0, thread),
+      (thread) =>
+        this.#callMethod(
+          target,
+          name,
+          [...args],
+          0,
+          thread,
+          undefined,
+          undefined,
+          args.map((value) => value === null),
+        ),
       null,
     );
   }
@@ -474,8 +629,27 @@ export class PapyrusVm {
       async (thread) => {
         if (!initializing && instance.initializing) {
           thread.state = 'waiting';
-          await instance.initializing;
+          await this.#suspend(thread, instance.initializing);
           thread.state = 'running';
+        }
+        // The plugin's values for full properties go through their Set functions first.
+        if (initializing) {
+          const bound = instance.bound;
+          instance.bound = [];
+          for (const { level, name, value } of bound) {
+            const setter = level.properties.get(name.toLowerCase())?.setter;
+            if (setter)
+              await this.#invoke(
+                level,
+                setter,
+                name,
+                instance.target,
+                instance,
+                [value],
+                0,
+                thread,
+              );
+          }
         }
         // The handler of the state the script is in when the event comes.
         const found = this.#findFunction(instance, instance.script, event);
@@ -490,6 +664,7 @@ export class PapyrusVm {
           [...args],
           0,
           thread,
+          args.map((value) => value === null),
         );
       },
       null,
@@ -553,12 +728,27 @@ export class PapyrusVm {
     args: Value[],
     depth: number,
     thread: Thread,
-    caller?: string,
     from?: Frame,
+    via?: string,
+    engineNones?: readonly boolean[],
   ): Promise<Value> {
     if (!(target instanceof ObjectHandle)) {
-      // The game logs this as an error of the calling script; the call returns None.
-      this.warn(`${caller ? `${caller}: ` : ''}call to ${name} on ${formatValue(target)}`);
+      // The game logs this as an error of the calling script, with its stack; the call
+      // returns None. Through an auto property the plugin left empty (and the script never
+      // set), the game has None there too: the plugin's own fault.
+      const where = `${this.#where(thread)}: call to ${name} on ${formatValue(target)}`;
+      const unset = from && via !== undefined ? this.#unsetProperty(from, via) : undefined;
+      const variable = via?.toLowerCase();
+      const cast = variable === undefined ? undefined : from?.casts.get(variable);
+      if (unset !== undefined)
+        this.gameLog(`${where} (property ${unset} is not set in the plugin)`);
+      // A cast of an object that does not have the script (by the plugins' attachments, as
+      // the engine reads them: the object's own, its base's or template's).
+      else if (cast !== undefined) this.gameLog(`${where} (${via ?? ''}: ${cast})`);
+      // A None the engine gave (an event about no location) that the script does not check.
+      else if (variable !== undefined && from?.engineNones.has(variable))
+        this.gameLog(`${where} (${via ?? ''}: None as the engine gave it, unchecked)`);
+      else this.warn(`${where}${via ? ` (${via})` : ''}`);
       return null;
     }
     // A script calling its own functions stays on its own instance, even one its object let
@@ -573,9 +763,13 @@ export class PapyrusVm {
     }
     const found = this.#findFunction(instance, instance.script, name);
     if (!found) {
-      // Events nobody handles are normal; other functions are not.
+      // Events nobody handles are normal; other functions are not. One the engine calls by
+      // the plugin's name for it (a stage's, a topic's, a package's fragment) that the
+      // compiled script does not have is the plugin's fault, which the game logs the same way.
       if (!name.toLowerCase().startsWith('on')) {
-        this.warn(`${instance.script.displayName}.${name} not found`);
+        const message = `Method ${name} not found on ${instance.script.displayName}. Aborting call and returning None`;
+        if (from) this.warn(`${this.#where(thread)}: ${message}`);
+        else this.gameLog(message);
       }
       return null;
     }
@@ -588,6 +782,7 @@ export class PapyrusVm {
       args,
       depth,
       thread,
+      engineNones,
     );
   }
 
@@ -600,6 +795,7 @@ export class PapyrusVm {
     args: Value[],
     depth: number,
     thread: Thread,
+    engineNones?: readonly boolean[],
   ): Promise<Value> {
     if (fn.native) {
       const key = `${level.name}.${name.toLowerCase()}`;
@@ -615,30 +811,90 @@ export class PapyrusVm {
         name: key,
         // A latent wait unlocks the script the thread runs in, also for natives on self.
         latent: (promise) => this.#within(thread, null, () => this.#latent(thread, promise)),
+        where: () => this.#where(thread),
       };
       // A native of the object the thread runs in keeps its lock; others' and globals do not.
       const own = self !== null && thread.inside?.target.sameObject(self) === true;
-      const result = own
-        ? native(call)
-        : this.#within(thread, null, () => Promise.resolve(native(call)));
-      return result;
+      thread.inNative++;
+      thread.natives++;
+      // Threads waiting meanwhile count the VM's patience with this native.
+      this.#watchNative();
+      try {
+        return await (own
+          ? native(call)
+          : this.#within(thread, null, () => Promise.resolve(native(call))));
+      } finally {
+        thread.inNative--;
+        // Let go while the native took long: the thread runs again when its turn comes.
+        if (this.#runner !== thread) await this.#acquire(thread);
+      }
     }
     if (depth >= MAX_DEPTH) throw new PapyrusError(`call depth over ${MAX_DEPTH} in ${name}`);
     const locals = new Map<string, Value>();
     const types = new Map<string, string>();
+    const nones = new Set<string>();
     fn.params.forEach((param, i) => {
       const key = param.name.toLowerCase();
       types.set(key, param.type);
       locals.set(key, retype(args[i] ?? defaultValue(param.type), param.type));
+      if (engineNones?.[i] === true && args[i] === null) nones.add(key);
     });
     for (const local of fn.locals) {
       const key = local.name.toLowerCase();
       types.set(key, local.type);
       locals.set(key, defaultValue(local.type));
     }
-    return this.#within(thread, instance, () =>
-      this.#execute({ fn, level, self, instance, locals, types, depth, thread }),
-    );
+    return this.#within(thread, instance, async () => {
+      const frame: Frame = {
+        fn,
+        name,
+        level,
+        self,
+        instance,
+        locals,
+        types,
+        depth,
+        thread,
+        casts: new Map(),
+        engineNones: nones,
+      };
+      thread.frames.push(frame);
+      try {
+        return await this.#execute(frame);
+      } finally {
+        thread.frames.pop();
+      }
+    });
+  }
+
+  /**
+   * The auto property a frame's object variable backs, when neither the plugin nor a script
+   * gave it a value.
+   */
+  #unsetProperty(frame: Frame, variable: string): string | undefined {
+    const lower = variable.toLowerCase();
+    if (!frame.instance || frame.instance.filled.has(lower)) return undefined;
+    for (const level of chainOf(frame.level)) {
+      for (const property of level.properties.values()) {
+        if (property.autoVariable?.toLowerCase() === lower) return property.name;
+      }
+    }
+    return undefined;
+  }
+
+  /**
+   * Where a thread is, for the log as the game's Papyrus log gives a stack: the innermost
+   * functions first ("Script.Function [object]"), at most three.
+   */
+  #where(thread: Thread): string {
+    const frames = thread.frames.slice(-3).reverse();
+    if (frames.length === 0) return 'the engine';
+    return frames
+      .map(
+        (frame) =>
+          `${frame.level.displayName}.${frame.name}${frame.self ? ` ${formatValue(frame.self)}` : ''}`,
+      )
+      .join(' < ');
   }
 
   // --- Variables ----------------------------------------------------------------------
@@ -671,6 +927,7 @@ export class PapyrusVm {
     const vars = this.#varsWith(frame, name) ?? frame.instance?.vars.get(frame.level.name);
     if (vars) {
       vars.set(name, value);
+      frame.instance?.filled.add(name);
       return;
     }
     this.warn(`${frame.level.displayName}: write to unknown variable ${target.name}`);
@@ -723,7 +980,7 @@ export class PapyrusVm {
 
   async #propGet(target: Value, name: string, depth: number, thread: Thread): Promise<Value> {
     if (!(target instanceof ObjectHandle)) {
-      this.warn(`property ${name} of ${formatValue(target)}`);
+      this.warn(`${this.#where(thread)}: property ${name} read on ${formatValue(target)}`);
       return null;
     }
     const instance = await this.#resolve(target);
@@ -731,12 +988,13 @@ export class PapyrusVm {
     const level = instance && chainOf(instance.script).find((s) => s.properties.has(lower));
     const property = level?.properties.get(lower);
     if (!instance || !level || !property) {
-      this.warn(`property ${name} not found on ${formatValue(target)}`);
+      this.warn(`${this.#where(thread)}: property ${name} not found on ${formatValue(target)}`);
       return null;
     }
     if (property.autoVariable) {
       // Reading another script's property waits for its OnInit like a call would.
-      if (instance.initializing && !thread.initializing) await instance.initializing;
+      if (instance.initializing && !thread.initializing)
+        await this.#suspend(thread, instance.initializing);
       return instance.vars.get(level.name)?.get(property.autoVariable.toLowerCase()) ?? null;
     }
     if (!property.getter) return defaultValue(property.type);
@@ -760,7 +1018,7 @@ export class PapyrusVm {
     thread: Thread,
   ): Promise<void> {
     if (!(target instanceof ObjectHandle)) {
-      this.warn(`property ${name} of ${formatValue(target)} set`);
+      this.warn(`${this.#where(thread)}: property ${name} set on ${formatValue(target)}`);
       return;
     }
     const instance = await this.#resolve(target);
@@ -768,11 +1026,12 @@ export class PapyrusVm {
     const level = instance && chainOf(instance.script).find((s) => s.properties.has(lower));
     const property = level?.properties.get(lower);
     if (!instance || !level || !property) {
-      this.warn(`property ${name} not found on ${formatValue(target)}`);
+      this.warn(`${this.#where(thread)}: property ${name} not found on ${formatValue(target)}`);
       return;
     }
     if (property.autoVariable) {
-      if (instance.initializing && !thread.initializing) await instance.initializing;
+      if (instance.initializing && !thread.initializing)
+        await this.#suspend(thread, instance.initializing);
       instance.vars
         .get(level.name)
         ?.set(property.autoVariable.toLowerCase(), retype(value, property.type));
@@ -823,6 +1082,16 @@ export class PapyrusVm {
         this.#write(frame, arg(i), value);
       };
       const rest = (from: number): Value[] => a.slice(from).map((v) => this.#read(frame, v));
+      /** Which of the arguments from `from` on are a None the engine gave. */
+      const nonesOf = (from: number): boolean[] =>
+        a
+          .slice(from)
+          .map(
+            (v) =>
+              v.kind === 'identifier' &&
+              frame.engineNones.has(v.name.toLowerCase()) &&
+              this.#read(frame, v, true) === null,
+          );
       switch (instruction.op) {
         case 'nop':
           break;
@@ -868,12 +1137,32 @@ export class PapyrusVm {
         case 'fneg':
           set(0, -num(get(1)));
           break;
-        case 'assign':
-          set(0, get(1));
+        case 'assign': {
+          const value = get(1);
+          set(0, value);
+          const target = identifier(arg(0)).toLowerCase();
+          const source = arg(1);
+          if (
+            value === null &&
+            source.kind === 'identifier' &&
+            frame.engineNones.has(source.name.toLowerCase())
+          )
+            frame.engineNones.add(target);
+          else frame.engineNones.delete(target);
           break;
-        case 'cast':
-          set(0, await this.#cast(get(1), this.#typeOf(frame, arg(0))));
+        }
+        case 'cast': {
+          const value = get(1);
+          const type = this.#typeOf(frame, arg(0));
+          const cast = await this.#cast(value, type);
+          set(0, cast);
+          // A failed cast of an object, for the log line of a call on the None it gave.
+          const name = identifier(arg(0)).toLowerCase();
+          if (cast === null && value instanceof ObjectHandle)
+            frame.casts.set(name, `${formatValue(value)} is no ${type}`);
+          else frame.casts.delete(name);
           break;
+        }
         case 'cmp_eq':
           set(0, valuesEqual(get(1), get(2)));
           break;
@@ -914,8 +1203,9 @@ export class PapyrusVm {
               rest(3),
               frame.depth + 1,
               thread,
-              frame.level.displayName,
               frame,
+              arg(1).kind === 'identifier' ? identifier(arg(1)) : undefined,
+              nonesOf(3),
             ),
           );
           break;
@@ -936,6 +1226,7 @@ export class PapyrusVm {
                 rest(2),
                 frame.depth + 1,
                 thread,
+                nonesOf(2),
               ),
             );
           } else {
@@ -960,6 +1251,7 @@ export class PapyrusVm {
                 rest(3),
                 frame.depth + 1,
                 thread,
+                nonesOf(3),
               ),
             );
           } else {

@@ -40,6 +40,8 @@ export interface ActorInfo {
   readonly base: number;
   /** GetLeveledActorBase: the NPC_ it came down to. */
   readonly leveled: number;
+  /** The NPC_ whose scripts it runs (TemplateFlag.script: a template's, when it uses those). */
+  readonly scripts: number;
   /** Each part from the NPC_ that gives it (TemplateFlag). */
   readonly stats: NpcStats;
   readonly traits: NpcStats;
@@ -191,6 +193,7 @@ export class ActorEngine {
       reference,
       base,
       leveled: templates.placed,
+      scripts: templates.part(TemplateFlag.script),
       stats,
       traits,
       factions,

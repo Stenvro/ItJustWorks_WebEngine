@@ -36,6 +36,7 @@ import {
 import { PapyrusScheduler } from '../scheduler.ts';
 import type { ScriptLibrary } from '../script-library.ts';
 import { ObjectHandle, type Value } from '../values.ts';
+import { conditionFunctionName } from '../condition-functions.ts';
 import {
   compareConditionValue,
   evaluateCondition,
@@ -810,6 +811,7 @@ export class ScriptRuntime implements VmHost {
   log: (line: string) => void;
   readonly #natives: NativeRegistry = new Map();
   #warn: (message: string) => void;
+  #gameLog: (message: string) => void;
   /** References → the aliases that hold them ("quest:alias"). */
   readonly #aliasesOf = new Map<number, Set<string>>();
   /** aliasesHolding's answers, kept until the reference's aliases change (conditions ask often). */
@@ -857,6 +859,8 @@ export class ScriptRuntime implements VmHost {
       readonly scheduler?: PapyrusScheduler;
       readonly warn?: (message: string) => void;
       readonly log?: (line: string) => void;
+      /** The game's own faults, which its Papyrus log reports too (PapyrusVm.gameLog). */
+      readonly gameLog?: (message: string) => void;
     } = {},
   ) {
     this.forms = new FormIndex(db);
@@ -864,6 +868,11 @@ export class ScriptRuntime implements VmHost {
     this.world = options.world ?? {};
     this.#warn = options.warn ?? (() => undefined);
     this.log = options.log ?? (() => undefined);
+    this.#gameLog =
+      options.gameLog ??
+      ((message) => {
+        this.#warn(`game data: ${message}`);
+      });
     this.events.onError = (kind, error) => {
       this.#warn(`event ${kind}: ${error instanceof Error ? error.message : String(error)}`);
     };
@@ -914,9 +923,14 @@ export class ScriptRuntime implements VmHost {
     // An active magic effect runs its base effect's scripts.
     const effect = this.magic.scriptEffect(target.key);
     if (effect) return this.forms.attachedScripts(new ObjectHandle(effect.effect, 'form'));
+    // An actor runs the scripts of the NPC_ it takes them from: its leveled list's pick, and
+    // that one's template when it uses the template's scripts (TemplateFlag.script), as it
+    // takes its other parts (Creation Kit: Template Data).
+    const scriptBase = await this.#actorScriptBase(target);
     const created = target.alias < 0 ? this.state.created.get(target.formId) : undefined;
     // A created reference runs its base object's scripts.
-    if (created) return this.forms.attachedScripts(new ObjectHandle(created.base, 'form'));
+    if (created)
+      return this.forms.attachedScripts(new ObjectHandle(scriptBase ?? created.base, 'form'));
     // A persistent reference without scripts of its own runs its base's (no read of its own).
     const base = target.alias < 0 ? this.#index?.base.get(target.formId) : undefined;
     if (
@@ -924,9 +938,16 @@ export class ScriptRuntime implements VmHost {
       target.formId !== PLAYER_REF &&
       !this.#index?.scripted.has(target.formId)
     ) {
-      return this.forms.attachedScripts(new ObjectHandle(base, 'form'));
+      return this.forms.attachedScripts(new ObjectHandle(scriptBase ?? base, 'form'));
     }
-    return this.forms.attachedScripts(target);
+    return this.forms.attachedScripts(target, scriptBase);
+  }
+
+  /** For an actor reference (not the player), the NPC_ whose scripts it runs. */
+  async #actorScriptBase(target: ObjectHandle): Promise<number | undefined> {
+    if (target.alias >= 0 || target.formId === PLAYER_REF) return undefined;
+    if ((await this.formType(target)) !== 'actor') return undefined;
+    return (await this.actors.info(target.formId))?.scripts;
   }
 
   native(script: string, fn: string): NativeFunction | undefined {
@@ -935,6 +956,10 @@ export class ScriptRuntime implements VmHost {
 
   warn(message: string): void {
     this.#warn(message);
+  }
+
+  gameLog(message: string): void {
+    this.#gameLog(message);
   }
 
   /**
@@ -949,6 +974,7 @@ export class ScriptRuntime implements VmHost {
     this.retired = true;
     this.world = {};
     this.#warn = () => undefined;
+    this.#gameLog = () => undefined;
     this.log = () => undefined;
   }
 
@@ -1533,13 +1559,23 @@ export class ScriptRuntime implements VmHost {
     return this.#index?.flags.get(reference);
   }
 
-  async setEnabled(reference: number, enabled: boolean): Promise<void> {
+  /**
+   * Enables or disables a reference. Observed in the original: one with an enable parent
+   * (XESP naming a reference that exists) follows its parent only; Papyrus's Enable and
+   * Disable (`where`: the calling script) do nothing to it and the game logs that as an error
+   * of the calling script, which this does in the engine's words, as the game's own. TODO(M13):
+   * whether the engine's own disabling (an alias's "initially disabled") also leaves such a
+   * reference alone, as here (the check read is the Papyrus native's).
+   */
+  async setEnabled(reference: number, enabled: boolean, where?: () => string): Promise<void> {
     const record = await this.forms.record(reference);
-    if (record?.fields.has('XESP')) {
-      // The engine ignores Enable/Disable on references with an enable parent.
-      this.vm.warn(
-        `${record.editorId ?? reference.toString(16)}: has an enable parent, Enable/Disable ignored`,
-      );
+    const xesp = record?.fields.first('XESP');
+    if (record && xesp && xesp.length >= 4 && (await this.forms.record(record.formIdAt(xesp)))) {
+      if (where) {
+        this.vm.gameLog(
+          `${where()}: cannot ${enabled ? 'enable' : 'disable'} an object with an enable state parent (${record.editorId ?? reference.toString(16)})`,
+        );
+      }
       return;
     }
     if ((await this.isEnabled(reference)) === enabled) return;
@@ -2861,7 +2897,7 @@ export class ScriptRuntime implements VmHost {
       let holds: boolean;
       if (ran === 'unknown') {
         this.vm.warn(
-          `conditions run on ${RUN_ON[condition.runOn] ?? String(condition.runOn)} are not valued yet`,
+          `conditions run on ${RUN_ON[condition.runOn] ?? String(condition.runOn)} are not valued here (${conditionFunctionName(condition.function)}, nothing gives what it runs on)`,
         );
         holds = true;
       } else if (ran === 'none') {
@@ -2934,11 +2970,26 @@ export class ScriptRuntime implements VmHost {
         const quest = context.quest ?? (subject.type === 'quest' ? subject.formId : undefined);
         if (quest === undefined) return 'unknown';
         const filled = this.state.quests.get(quest)?.aliases.get(condition.param3);
-        return filled === undefined ? 'none' : only(this.referenceHandle(filled));
+        if (filled === undefined) return 'none';
+        // A location alias's conditions run on its location (condition-values.ts).
+        const alias = (await this.forms.quest(quest))?.aliases.find(
+          (entry) => entry.id === condition.param3,
+        );
+        return only(
+          alias?.location === true
+            ? new ObjectHandle(filled, 'location')
+            : this.referenceHandle(filled),
+        );
       }
       case ConditionRunOn.eventData: {
         const member = event?.forms.get(condition.eventMember);
-        return member === undefined ? 'none' : only(this.referenceHandle(member));
+        if (member === undefined) return 'none';
+        // An event's location members (L1, L2) are locations.
+        return only(
+          condition.eventMember.startsWith('L')
+            ? new ObjectHandle(member, 'location')
+            : this.referenceHandle(member),
+        );
       }
       case ConditionRunOn.packageData: {
         // The reference a data input of the running package names (its index: param 3).
@@ -3029,8 +3080,10 @@ export class ScriptRuntime implements VmHost {
     // TODO(M13): the engine's order of starting them; here by priority, then form id.
     starting.sort((a, b) => b.priority - a.priority || a.formId - b.formId);
     this.startingNewGame = true;
+    this.quests.holdStartUps();
     for (const { formId } of starting) await this.quests.start(formId);
     this.startingNewGame = false;
+    this.quests.releaseStartUps();
     // The opening: no record or script starts Unbound (MQ101); the game does as a new game
     // begins (UESP: "this quest starts automatically when you begin a new game").
     const unbound = opening ? db.formIdOf('Skyrim.esm', OPENING_QUEST) : undefined;
