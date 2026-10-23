@@ -329,7 +329,7 @@ var QA_PLAY = engineDev.world.#play;
         for (const [order, target] of objective.targets.entries()) {
           const reference = quest.aliases.get(target.alias);
           if (reference === undefined) continue;
-          const holds = target.conditions.length === 0 || (await rt.conditionsHold(target.conditions, rt.referenceHandle(reference)));
+          const holds = target.conditions.length === 0 || (await rt.conditionsHold(target.conditions, rt.referenceHandle(reference), undefined, { quest: formId }));
           const placement = await rt.placement(reference);
           if (placement) found.push({ quest: formId, objective: objective.index, order, holds, reference, placement });
         }
@@ -546,6 +546,45 @@ const OPENING_NOW = `(async () => {
   };
 })()`;
 
+/**
+ * The places of the sweep (cells by editor id): the holds' cities inside and out, their keeps
+ * and inns, the College, a dungeon. Each is a game of its own from the main menu's coc (one
+ * game's in-game coc chain through them crashed the physics: Rapier "unreachable" as a
+ * Solitude exterior loaded), run by name or all together as "places".
+ */
+const PLACE_CELLS = [
+  'WhiterunDragonsreach',
+  'SolitudeBluePalace',
+  'SolitudeWinkingSkeever',
+  'SolitudeExterior01',
+  'MarkarthUnderStoneKeep',
+  'MarkarthSilverBloodInn',
+  'MarkarthExterior01',
+  'RiftenMistveilKeep',
+  'RiftenBeeandBarb',
+  'RiftenCityNorth',
+  'WindhelmPalaceoftheKings',
+  'FalkreathExterior01',
+  'FalkreathDeadMansDrink',
+  'DawnstarExterior01',
+  'DawnstarWindpeakInn',
+  'MorthalExterior01',
+  'MorthalHighmoonHall',
+  'WinterholdExterior01',
+  'WinterholdCollegeHallofTheElements',
+  'BleakFallsBarrow01',
+];
+
+/** One scenario per place: in the world at 10:00, watched for 45 s (a run without names skips them). */
+export const PLACES: readonly Scenario[] = PLACE_CELLS.map((cell) => ({
+  name: `at-${cell}`,
+  description: `coc ${cell} at 10:00, watched 45 s.`,
+  start: { kind: 'coc', cell },
+  hour: 10,
+  bootSeconds: 240,
+  seconds: 45,
+}));
+
 /** The scenarios, in the order a run without names plays them (the long opening last). */
 export const SCENARIOS: readonly Scenario[] = [
   {
@@ -699,6 +738,18 @@ export const SCENARIOS: readonly Scenario[] = [
         60000,
       );
       ctx.note('all killed by script');
+    },
+  },
+  {
+    name: 'whiterun-long-day',
+    description:
+      "A Whiterun day in fast time (timescale 120: an hour in 30 s) from 6:00: the town's schedules, shops opening and closing, the evening's inn.",
+    start: { kind: 'coc', cell: 'WhiterunPlainsDistrict03' },
+    hour: 6,
+    bootSeconds: 240,
+    seconds: 600,
+    setup: async (ctx) => {
+      await ctx.console('set timescale to 120');
     },
   },
   {

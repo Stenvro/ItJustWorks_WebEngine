@@ -329,11 +329,11 @@ export class ActorAi {
       if (!pack || !scheduleFits(pack.schedule, time)) continue;
       const template = pack.template === undefined ? pack : await mind.package(pack.template);
       const inputs = mergedInputs(pack, template);
-      if (!(await mind.conditionsHold(pack.conditions, actor, { inputs }))) continue;
       const context = {
         start: this.#actors.get(actor)?.staged.position,
         quest: pack.ownerQuest ?? template?.ownerQuest,
       };
+      if (!(await mind.conditionsHold(pack.conditions, actor, { inputs, context }))) continue;
       let place: PackagePlace | undefined;
       for (const input of inputs.values()) {
         if (input.value?.kind !== 'location') continue;
@@ -874,6 +874,8 @@ export class ActorAi {
         const scripts = runtime();
         if (!scripts || conditions.length === 0) return true;
         return scripts.conditionsHold(conditions, new ObjectHandle(actor, 'actor'), undefined, {
+          // The package's quest (its owner, QNAM): what its quest alias run-ons ask about.
+          ...(data.context?.quest !== undefined && { quest: data.context.quest }),
           packageData: (input) => {
             const value = data.inputs.get(input)?.value;
             if (value?.kind === 'bool') return value.value ? 1 : 0;

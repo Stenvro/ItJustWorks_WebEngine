@@ -21,7 +21,7 @@ import {
 } from '../src/shell/qa/report.ts';
 import type { QaAnomaly, QaSnapshot } from '../src/shell/qa/types.ts';
 import { Cdp, Page, sleep, startChrome, startVite, stopProcess, waitFor } from './qa-cdp.ts';
-import { SCENARIOS, type Scenario, type ScenarioContext } from './qa-scenarios.ts';
+import { PLACES, SCENARIOS, type Scenario, type ScenarioContext } from './qa-scenarios.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 const WIDTH = 1280;
@@ -56,8 +56,9 @@ function parseOptions(argv: readonly string[]): Options | undefined {
     else if (arg === '--vite-port') vitePort = Number(value());
     else if (arg === '--chrome-port') chromePort = Number(value());
     else if (arg === '--list') {
-      for (const scenario of SCENARIOS)
+      for (const scenario of [...SCENARIOS, ...PLACES])
         console.log(`${scenario.name.padEnd(16)} ${scenario.description}`);
+      console.log(`${'places'.padEnd(16)} every at-… scenario, one after the other`);
       return undefined;
     } else names.push(arg);
   }
@@ -70,10 +71,12 @@ function parseOptions(argv: readonly string[]): Options | undefined {
   const scenarios =
     names.length === 0
       ? SCENARIOS
-      : names.map((name) => {
-          const scenario = SCENARIOS.find((s) => s.name === name);
+      : names.flatMap((name) => {
+          // "places": every place of the sweep (PLACES), each a game of its own.
+          if (name === 'places') return PLACES;
+          const scenario = [...SCENARIOS, ...PLACES].find((s) => s.name === name);
           if (!scenario) throw new Error(`no scenario '${name}' (--list shows them)`);
-          return scenario;
+          return [scenario];
         });
   return { out: resolved, scenarios, seconds, url, vitePort, chromePort };
 }
@@ -227,7 +230,7 @@ async function runScenario(
       );
     await scenario.setup?.(ctx);
     const hooked = await page.eval<boolean>(
-      `(engineDev.qa.start(${JSON.stringify({ watchQuests: scenario.watchQuests ?? {} })}), ${SHOT_HOOK})`,
+      `(engineDev.qa.start(${JSON.stringify({ watchQuests: scenario.watchQuests ?? {}, bootLog: true })}), ${SHOT_HOOK})`,
       10000,
     );
     if (!hooked) notes.push('the QA monitors were not there');
@@ -304,8 +307,8 @@ async function runScenario(
  */
 function writeSummary(out: string): void {
   const order = (name: string): number => {
-    const at = SCENARIOS.findIndex((scenario) => scenario.name === name);
-    return at < 0 ? SCENARIOS.length : at;
+    const at = [...SCENARIOS, ...PLACES].findIndex((scenario) => scenario.name === name);
+    return at < 0 ? SCENARIOS.length + PLACES.length : at;
   };
   const reports: QaScenarioReport[] = [];
   for (const entry of fs.readdirSync(out, { withFileTypes: true })) {

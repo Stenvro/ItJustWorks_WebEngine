@@ -70,6 +70,11 @@ export interface QaStartOptions {
   readonly watchQuests?: Readonly<Record<string, number>>;
   /** Anomalies kept per kind (the rest only counted). */
   readonly keep?: number;
+  /**
+   * Also report the log's warnings and errors from before the start (the page's boot: a new
+   * game's or a coc's quest starts), at negative times.
+   */
+  readonly bootLog?: boolean;
 }
 
 /** A notable moment that is no anomaly (a quest stage, a scene's phase): the run's timeline. */
@@ -262,6 +267,10 @@ export class QaHarness {
     this.#startedAt = performance.now();
     this.#lastFrame = undefined;
     this.#running = true;
+    if (options.bootLog === true) {
+      for (const line of this.#host.terminal.problems)
+        this.#logLine(line.tag, line.text, line.tone, (line.at - this.#startedAt) / 1000);
+    }
     this.#wrapLogs();
     this.#raf = requestAnimationFrame(this.#frame);
   }
@@ -1287,7 +1296,7 @@ export class QaHarness {
     }
   }
 
-  #logLine(tag: string, text: string, tone: LogTone): void {
+  #logLine(tag: string, text: string, tone: LogTone, time = this.#now()): void {
     const kind = tone === 'error' ? 'log-error' : 'log-warning';
     const key = `${kind}|${tag}|${messageKey(text)}`;
     const known = this.#logLines.get(key);
@@ -1301,8 +1310,8 @@ export class QaHarness {
       this.#add({
         kind,
         subject: { id: tag, name: tag, kind: 'log' },
-        time: this.#now(),
-        gameHour: this.#host.session()?.scriptsReady?.gameHour,
+        time,
+        gameHour: time < 0 ? undefined : this.#host.session()?.scriptsReady?.gameHour,
         detail: text.slice(0, 400),
         values: { count: 1 },
         severity: 1,

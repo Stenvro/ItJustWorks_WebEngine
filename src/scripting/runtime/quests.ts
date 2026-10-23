@@ -19,10 +19,30 @@ export class QuestEngine {
   readonly filler: AliasFiller;
   /** Why each quest that last failed to start did not (the sandbox's quests show it). */
   readonly notStarted = new Map<number, string>();
+  /** Start-up fragments held while a new game starts its quests (holdStartUps). */
+  #heldStartUps: (() => Promise<void>)[] | undefined;
 
   constructor(runtime: ScriptRuntime) {
     this.#runtime = runtime;
     this.filler = new AliasFiller(runtime);
+  }
+
+  /**
+   * Holds the start-up stages' fragments of the quests started from now on until
+   * releaseStartUps: a new game starts all its quests in one pass of the engine's main loop,
+   * and Papyrus runs the fragments that queued only after it, so every one of those quests has
+   * filled its aliases before any fragment runs (BYOHHouseBuilding's start-up reads the
+   * town dialogue quests' jarls). Inferred from the engine's queued fragment calls.
+   */
+  holdStartUps(): void {
+    this.#heldStartUps ??= [];
+  }
+
+  /** Runs the held start-up fragments, in the order their quests started. */
+  releaseStartUps(): void {
+    const held = this.#heldStartUps ?? [];
+    this.#heldStartUps = undefined;
+    for (const run of held) this.#runtime.detach(run());
   }
 
   isRunning(quest: number): boolean {
@@ -43,7 +63,6 @@ export class QuestEngine {
     if (record.event !== undefined && event?.type !== record.event) {
       const why = `starts only from the story manager's ${record.event} event`;
       this.notStarted.set(quest, why);
-      runtime.warn(`${record.editorId}: ${why}`);
       return false;
     }
     const runOnce = (record.flags & QuestFlag.runOnce) !== 0;
@@ -171,6 +190,7 @@ export class QuestEngine {
       }
     };
     if (wait) await run();
+    else if (this.#heldStartUps) this.#heldStartUps.push(run);
     else runtime.detach(run());
     return true;
   }
