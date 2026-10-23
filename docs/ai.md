@@ -291,8 +291,14 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
 - **Procedures** (`src/ai/procedure-runs.ts`): Travel goes to its place (within its radius) and
   succeeds there; HoldPosition and Guard go to theirs and stay, facing their marker's way; Wait
   stands for its seconds (0: for as long as the package runs); Patrol goes from its start along
-  the references each links to (XLKR without a keyword), round again if repeatable, starting at
-  the nearest point if so set; Follow keeps within its maximum radius of its target, closing to
+  the references each links to (XLKR without a keyword), starting at the nearest point if so
+  set; observed in the original, the patrol's way is built from the links until one comes
+  back to a point already on it, and only such a way goes round again, and only if repeatable
+  (from the point the links come back to; not repeatable, it walks to that point once more and
+  succeeds): a way whose last point links nowhere succeeds at its end, repeatable or not (ours
+  went round any repeatable patrol for ever, so a single marker held its package and the scene
+  phase waiting on it: Hadvar's dunCGHadvarToDragonCWallPerchHide in MQ101's dragon attack);
+  Follow keeps within its maximum radius of its target, closing to
   its minimum; Wander goes from one random point of its place to another between pauses;
   Sandbox passes the time in its place (below); Sit, Sleep and UseIdleMarker use their furniture
   (their target, or the first free one a Find found) or idle marker and stay while the package
@@ -546,9 +552,16 @@ one actor, `--audit` for cells):
   AI packages from, template flag 0x20) whose schedule fits the game's time and whose
   conditions hold. A night that began yesterday counts by yesterday's day of the week.
 - **Its first procedure:** a template's tree (else the package's own) is walked in order. Of a
-  Sequence or Stacked branch the first child whose conditions hold runs; a Simultaneous
-  branch's first child gives the place. The procedure's inputs (PKC2) are the package's data
-  inputs over its template's defaults.
+  Sequence or Stacked branch the first child whose conditions hold runs; of a Simultaneous
+  branch's children that may run (those whose conditions are not known passed over), the first
+  with a place gives it: one whose place is a link the actor lacks does nothing beside the
+  others. CWPatrolAndGuardContestedHold (Sven's SvenRiverwoodIntroPatrol) is a Simultaneous of
+  Guards at the Civil War's linked places and a Patrol from a marker in Riverwood; Sven has none
+  of the links, and taking the first Guard's missing link as "not known" left him in his house,
+  so RiverwoodIntroSceneHildeSoldierScene, which waits for him within 1,000 units of the player,
+  never went on (`node tools/package-info.ts --audit interiors`: 498 actors undecided at 10:00,
+  494 now). The procedure's inputs (PKC2) are the package's data inputs over its template's
+  defaults.
 - **The place:** the procedure's first input that is a location or a target.
   - A reference: the actor is on it (its position and heading) if it is in the actor's cell or
     worldspace, else in another (not in this cell). Near a reference with a radius (a sandbox's
@@ -1144,7 +1157,12 @@ after `--package-seconds`).
 - **Packages:** while a package action runs, its actor's package stack is that action's
   packages alone (`ActorAi`'s stack asks the scene first). Observed in the original
   (BGSSceneActionPackage): as the action starts, its actor takes the first of its packages
-  whose conditions hold; with none, or an actor dead, disabled or no actor, the action is done
+  whose conditions hold, as a new start of that package: one the actor runs already and has
+  completed (its alias's package, the same package of an action a phase before) runs again
+  from its root, so a Travel to where the actor stands is done at once (ours kept a completed
+  package done while it was still the one chosen, and the action waited for an end that had
+  come before it started: Hadvar at MQ101HadvarMarker8, below); with none, or an actor dead,
+  disabled or no actor, the action is done
   at once (MQ101DragonAttackScene1's first phase waits on Alduin's MQ101AlduinPerch1, whose
   conditions no longer hold by then). While it runs, the engine looks at it every update: with
   the actor running the action's package, it is done once the actor is dead or disabled or the
@@ -1257,6 +1275,71 @@ wrong:
   (getting off his horse), the cart soldiers' and Ulfric's and Ralof's walks to the block ended
   as done when a way failed once. With a failing way searched again, the final run's audit has
   none of them; a trip planned by a view that is not shown no longer ends a package either.
+
+What the QA sweep's opening (2026-10-23) showed beyond the dragon, where MQ101 stood at stage
+160 in every run:
+
+- **The tower (MQ101DragonAttackScene1, phase 4)** has Ralof run inside to MQ101RalofMarker9
+  and waits for stage 25 of MQ101DragonAttack, which only the player sets: a
+  defaultSetStageTrigSCRIPT strip across the tower room (MQ101DASetStage25, prerequisite stage
+  10). Its fragment closes the door behind the player and enables the doorway's collision
+  marker (stage 50), and the scene goes on up the stairs. Ralof and the door were never in the
+  way: Ralof stood at his marker, the door open as placed (ONAM), the collision marker
+  disabled as placed. The trigger was half its size: XPRM bounds are a box's half extents
+  (observed in the original: [formats/esm.md](formats/esm.md#doors-arrivals-and-collision-primitives)),
+  and taken as full sizes every trigger and collision box of the game was half as wide, deep
+  and tall; the player stood in the room by Ralof, a few units outside the strip. Fixed in
+  the physics' primitives (`PhysicsWorld.addPrimitive`): the box is its bounds' size each way.
+  The player's bumps were checked on the way: an actor standing (its travel arrived) steps
+  aside after the bump's delay; one still on a travel only flinches, as before.
+- **The street below the inn (MQ101DragonAttackSceneBPerchTower, phase 2)** waits for
+  Hadvar's dunCGHadvarToBFromC, a Travel to MQ101HadvarMarker8. His alias runs the same
+  package from stage 10 and he had got there and completed it before the scene started; the
+  action giving him the package again found it chosen already and done, so it never heard an
+  end and the phase stood ("Still alive, prisoner?" never came). Fixed: a package action
+  starts its package anew ([Packages](#scenes), above).
+- **By the wall (MQ101DragonAttackSceneCPerchWall, phase 1)** waits for Hadvar's
+  dunCGHadvarToDragonCWallPerchHide, a repeatable Patrol of one marker that links nowhere. The
+  engine's patrol goes round only a way whose links come back to a point of it, so this one
+  succeeds once Hadvar is there; ours went round for ever ([Packages](#packages), Patrol).
+- **MQ101TorriLedgeScene, phase 0** (45 s with Torolf's rail package running) is no fault: it
+  waits for stage 32 of MQ101, set by a trigger the prisoners' cart passes
+  (MQ101SetStage32, defaultSetStageTRIGSpecificActor on the cart's horse) about 5,000 units
+  after the gate trigger that started the scene (MQ101CloseNorthGate, stage 25): 45 to 50
+  seconds at the horse's walk (about 110 units a second measured).
+- **RiverwoodIntroSceneHildeSoldierScene, phase 1** (45 s, nothing open): Hilde has run to
+  her marker and the phase completes once Sven is within 1,000 units of the player (GetDistance
+  on his alias). That waits for the player rightly, but Sven was never out to be met: his
+  SvenRiverwoodIntroPatrol (until stage 10 of the scene's quest) patrols from a marker beside
+  Hilde's, and where packages put actors took the first Guard of its Simultaneous, whose link
+  he lacks, for an unknown place, so he stayed in RiverwoodSvensHouse. Fixed ([Where packages
+  put actors](#where-packages-put-actors)): he walks his patrol outside, and with the player
+  within 1,000 units the scene plays through ("A dragon! I saw a dragon!" to Sven's "And I've
+  got better things to do", measured in the browser after `coc Riverwood` at 13:00).
+- The QA monitor's `scene-stall` now says what a phase waits for (its completion conditions
+  written out), starts the wait again when a quest those conditions read moves on, and does
+  not count a phase with nothing of its own open that waits for the player to come (a
+  condition naming the player): [qa.md](qa.md).
+
+Measured with the QA runner (riverwood, combat, opening): scene stalls 3 before (TorriLedge in
+the opening, HildeSoldier in riverwood and in combat), none after. The opening, unattended with
+the follow bot, now runs past the tower (stage 25 some 30 s after the bot reaches the door),
+across the inn's roof, through Hadvar's street and wall scenes to
+MQ101DragonAttackSceneDToKeep, Hadvar escorting the player to the keep; MQ101 itself stays at
+stage 160 until the keep (its next stage is set inside). Left, and seen on the way:
+
+- **The tower's open door** (ImpWoodDoorSingleSmall01, open as placed): its collision, a
+  convex block 206 units wide on the leaf's node (43 of it beyond the hinge), swung with
+  the open sequence lies along the way in, its near end across the outer step; the player gets
+  past only from some angles (the bot after a few tries, in one run of four never). Whether the
+  engine's open leaf leaves more room is not read yet (TODO(M13): the door's open pose against
+  the game's).
+- **AvoidPlayer:** the engine has a procedure that keeps an actor fAvoidPlayerDistance (100)
+  from the player, given to actors within fTriggerAvoidPlayerDistance (400) who see the player
+  do certain things (observed in the original, its comments-on-the-player loop); which actions start it is
+  not read yet (TODO(M13)). The player's bumps already move a standing actor aside.
+- The follow bot's limits: it stands where the debris east of the inn holds it in some runs,
+  and does not loot or equip (the keep's "Find some equipment").
 
 Whiterun's market by day (10:00, seven minutes): ADIA's random scenes (Nazeem and Ysolda,
 Carlotta and Ysolda, Anoriath and Ysolda) and WhiterunMarketplaceScene2/3 play through, their

@@ -235,6 +235,33 @@ describe('where packages put actors', () => {
     expect(await packageStart(guard, scene([]), at(10))).toEqual({ kind: 'here' });
   });
 
+  it('places by the first of a simultaneous branch that has a place', async () => {
+    // A Guard of a link the actor lacks beside a Patrol from a reference (Sven's intro patrol,
+    // CWPatrolAndGuardContestedHold): the Guard does nothing, the Patrol puts it at its start.
+    const both = pack(0x104, {
+      inputs: [
+        linkedTarget(5),
+        {
+          id: 6,
+          type: 'SingleRef',
+          value: {
+            kind: 'singleRef',
+            target: { type: TargetType.specificReference, value: 0x2c934, count: 0 },
+          },
+        },
+      ],
+      tree: {
+        ...sequence(procedure('Guard', [5]), procedure('Patrol', [6])),
+        type: 'Simultaneous',
+      },
+    });
+    expect(await packageStart(actor([0x104]), world([both]), at(10))).toMatchObject({
+      kind: 'at',
+      reference: 0x2c934,
+      procedure: 'Patrol',
+    });
+  });
+
   it('starts a patrol at its start, and sleeps in another cell at night', async () => {
     const data = world([patrol, sleep]);
     expect(await packageStart(guard, data, at(10))).toMatchObject({

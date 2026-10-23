@@ -219,8 +219,12 @@ export interface WorldBridge {
   criticalStage?(actor: number, stage: number): void;
   ashPile?(actor: number, pile: number | undefined): void;
   aiEnabled?(actor: number, enabled: boolean): void;
-  /** EvaluatePackage: the actor picks its package again (its AI: src/shell/actor-ai.ts). */
-  evaluatePackage?(actor: number): void;
+  /**
+   * EvaluatePackage: the actor picks its package again (its AI: src/shell/actor-ai.ts).
+   * `restart`: a scene's package action started: the package it picks starts anew even where
+   * it ran it already and it completed.
+   */
+  evaluatePackage?(actor: number, restart?: boolean): void;
   currentPackage?(actor: number): number | undefined;
   /** The procedure its package runs now, by name ("Travel", "Sandbox": GetCurrentAIProcedure). */
   currentProcedure?(actor: number): string | undefined;

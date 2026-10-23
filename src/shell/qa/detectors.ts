@@ -2,6 +2,8 @@
 // page's harness (src/shell/qa/qa-harness.ts) feeds with what it reads from the engine each
 // frame. Pure (no DOM, no engine): unit-tested on their own.
 
+import { conditionFunctionName } from '../../scripting/condition-functions.ts';
+import type { Condition } from '../../scripting/conditions.ts';
 import type { QaAnomaly, QaFrameStats, QaKind, QaSnapshot, QaSubject, QaSystem } from './types.ts';
 import { KIND_SYSTEM } from './types.ts';
 
@@ -550,6 +552,67 @@ export class AnomalyLog {
       bodiesWatched,
     };
   }
+}
+
+/** What a scene's running phase waits for: its completion conditions, as a stall reports them. */
+export interface SceneWait {
+  /** The conditions written out ("Sven.GetDistance(Player) < 1000"); empty: its actions. */
+  readonly text: string;
+  /**
+   * A condition reads where the player is (names the player as its parameter or reference):
+   * the phase waits for the player to come, which is the run's to do, not the scene's.
+   */
+  readonly onPlayer: boolean;
+  /** The quests whose stage or state a condition reads (it waits for them to move on). */
+  readonly quests: readonly number[];
+}
+
+const OPERATORS = ['==', '!=', '>', '>=', '<', '<='];
+
+/** The player's reference (the engine's 0x14). */
+const PLAYER = 0x14;
+
+/** RunOn values (src/scripting/conditions.ts ConditionRunOn) the text names. */
+const RUN_ON_REFERENCE = 2;
+const RUN_ON_ALIAS = 5;
+
+/**
+ * A phase's completion conditions as text and what they wait on. `name` names a form,
+ * `isQuest` tells a quest's form id (GetStageDone, GetStage, GetQuestRunning, ... take one).
+ */
+export function sceneWait(
+  conditions: readonly Condition[],
+  name: (formId: number) => string,
+  isQuest: (formId: number) => boolean,
+): SceneWait {
+  const quests = new Set<number>();
+  let onPlayer = false;
+  const parts: string[] = [];
+  conditions.forEach((condition, index) => {
+    const on =
+      condition.runOn === RUN_ON_REFERENCE
+        ? `${name(condition.reference)}.`
+        : condition.runOn === RUN_ON_ALIAS
+          ? `alias ${String(condition.param3)}.`
+          : '';
+    const parameter = condition.form !== 0 ? name(condition.form) : '';
+    const comparand =
+      typeof condition.comparand === 'number'
+        ? String(condition.comparand)
+        : name(condition.comparand.global);
+    parts.push(
+      `${on}${conditionFunctionName(condition.function)}(${parameter}) ${OPERATORS[condition.operator] ?? '?'} ${comparand}`,
+    );
+    if (index < conditions.length - 1) parts.push(condition.or ? 'OR' : 'AND');
+    if (
+      condition.form === PLAYER ||
+      (condition.runOn === RUN_ON_REFERENCE && condition.reference === PLAYER)
+    ) {
+      onPlayer = true;
+    }
+    if (condition.form !== 0 && isQuest(condition.form)) quests.add(condition.form);
+  });
+  return { text: parts.join(' '), onPlayer, quests: [...quests] };
 }
 
 /** A log or console line made comparable: numbers and form ids put as '#'. */

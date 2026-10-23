@@ -283,6 +283,27 @@ describe('procedures', () => {
     expect(done).toEqual(['eat 700', 'eat 710 carried']);
   });
 
+  it('ends a repeatable patrol whose way does not come round', async () => {
+    const { run } = harness();
+    const start: PackageInput = {
+      id: 0,
+      type: 'SingleRef',
+      value: {
+        kind: 'singleRef',
+        target: { type: TargetType.specificReference, value: 0x800, count: 0 },
+      },
+    };
+    const repeatable: PackageInput = { id: 1, type: 'Bool', value: { kind: 'bool', value: true } };
+    // One marker linking nowhere (Hadvar's patrol by the wall in MQ101's dragon attack): the
+    // engine goes round only a way whose links come back to a point of it.
+    expect(
+      await run('Patrol', [0, 255, 1], [start, repeatable], {
+        target: () => Promise.resolve(0x800),
+        linked: () => Promise.resolve(undefined),
+      }),
+    ).toBe('success');
+  });
+
   it('patrols round a point it stands at: each round waits a moment', async () => {
     const { run, done } = harness(undefined, 3);
     const start: PackageInput = {
@@ -294,9 +315,10 @@ describe('procedures', () => {
       },
     };
     const repeatable: PackageInput = { id: 1, type: 'Bool', value: { kind: 'bool', value: true } };
+    // A point linking to itself: a way that comes round.
     const overrides: Partial<PackageMind> = {
       target: () => Promise.resolve(0x800),
-      linked: () => Promise.resolve(undefined),
+      linked: () => Promise.resolve(0x800),
     };
     // Without the wait it would go round at once without end (the page hung).
     expect(await run('Patrol', [0, 255, 1], [start, repeatable], overrides)).toBe('failure');

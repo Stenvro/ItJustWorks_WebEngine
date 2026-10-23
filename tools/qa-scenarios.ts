@@ -228,18 +228,80 @@ var QA_RIDE_NAV = engineDev.world.#navmeshes;
  * The follow bot (in the page): it walks the player to the nearest target of the active quests'
  * shown objectives (the compass's quest marker: "Follow Ralof", "Follow Hadvar", the keep's
  * door), along the navmesh (src/ai/pathfinding.ts), through the load door on the way when the
- * target is in another space; a guide near enough is waited for. Stuck, it jumps and searches
- * again; without a path it goes straight (the tower's jump into the inn). Runs as a console
- * line (replMode): the world viewer's navmeshes are a private field.
+ * target is in another space; a guide near enough is waited for, and walked past once they
+ * stand still a while. A target that is a place, reached with nothing moving on for 6 s, leads
+ * on to the objective's next target (the way a player goes on: the burning inn's marker, then
+ * Hadvar in the street). Stuck, it jumps and searches again; without a path, or with one far
+ * longer than the straight line down, it goes straight (the tower's jump into the inn); off the
+ * navmesh above it, it finds a drop onto navmesh that leads on (docs/qa.md). Runs as a console
+ * line (replMode): the world viewer's navmeshes and play session are private fields.
  */
 export const FOLLOW_BOT = `
 var QA_NAV = engineDev.world.#navmeshes;
+var QA_PLAY = engineDev.world.#play;
 (async () => {
   if (window.__qaBot) return 'running';
   const compass = await import('/src/shell/compass.ts');
   const paths = await import('/src/ai/pathfinding.ts');
+  const { Layer } = await import('/src/physics/collision-layers.ts');
   const W = engineDev.world;
   const nav = QA_NAV;
+  // A way to where the floor gives way (150 units or more down), found on a grid of 32 units
+  // round the player (physics rays: the floor under each cell, steps of up to 32, nothing at
+  // chest height between neighbours): of the drops, the one landing nearest the goal that lands
+  // on navmesh with a way on to it (the inn's upper floor has holes nearer down into a room that
+  // rubble shuts), else the one landing nearest.
+  const findDrop = (feet, goal) => {
+    const physics = QA_PLAY?.physics;
+    if (!physics) return undefined;
+    const ray = (from, dir, length) => physics.raycast(from, dir, length, Layer.charController, undefined, 0x14);
+    const CELL = 32; const SPAN = 40;
+    const floor = new Map();
+    const floorAt = (i, j) => {
+      const key = i + ',' + j;
+      if (!floor.has(key)) {
+        const hit = ray([feet[0] + i * CELL, feet[1] + j * CELL, feet[2] + 100], [0, 0, -1], 600);
+        floor.set(key, hit ? hit.point[2] : -Infinity);
+      }
+      return floor.get(key);
+    };
+    const seen = new Map([['0,0', undefined]]);
+    const queue = [[0, 0, feet[2]]];
+    const drops = [];
+    for (let head = 0; head < queue.length; head++) {
+      const [i, j, z] = queue[head];
+      for (const [di, dj] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+        const ni = i + di; const nj = j + dj;
+        const key = ni + ',' + nj;
+        if (seen.has(key) || Math.abs(ni) > SPAN || Math.abs(nj) > SPAN) continue;
+        const from = [feet[0] + i * CELL, feet[1] + j * CELL, z + 50];
+        const length = CELL * Math.hypot(di, dj);
+        if (ray(from, [di, dj, 0], length)) continue;
+        const h = floorAt(ni, nj);
+        if (h > z + 32) continue;
+        seen.set(key, [i, j]);
+        if (h < z - 150) {
+          const landing = [feet[0] + ni * CELL, feet[1] + nj * CELL, h];
+          const score = Math.hypot(goal[0] - landing[0], goal[1] - landing[1]);
+          drops.push({ score, key, landing });
+          continue;
+        }
+        queue.push([ni, nj, h]);
+      }
+    }
+    drops.sort((a, b) => a.score - b.score);
+    const onward = drops.slice(0, 16).find((drop) => Number.isFinite(drop.landing[2]) && nav?.locate(drop.landing) && paths.findPath(nav, drop.landing, goal, { radius: 24 })?.complete);
+    const best = onward ?? drops[0];
+    if (!best) return undefined;
+    const way = [];
+    for (let key = best.key; key !== '0,0'; ) {
+      const [i, j] = key.split(',').map(Number);
+      way.unshift([feet[0] + i * CELL, feet[1] + j * CELL, feet[2]]);
+      const parent = seen.get(key);
+      key = parent[0] + ',' + parent[1];
+    }
+    return way;
+  };
   const bot = { goal: undefined, door: undefined, guide: undefined, path: [], planning: false, lastPlan: 0, last: undefined, still: 0, held: new Set(), log: [], steps: 0 };
   window.__qaBot = bot;
   // The targets of the running quests' shown objectives (as the compass's questTargets, also
@@ -252,18 +314,18 @@ var QA_NAV = engineDev.world.#navmeshes;
       for (const objective of record?.objectives ?? []) {
         const state = quest.objectives.get(objective.index);
         if (!state?.displayed || state.completed || state.failed) continue;
-        for (const target of objective.targets) {
+        for (const [order, target] of objective.targets.entries()) {
           const reference = quest.aliases.get(target.alias);
           if (reference === undefined) continue;
-          if (target.conditions.length > 0 && !(await rt.conditionsHold(target.conditions, rt.referenceHandle(reference)))) continue;
+          const holds = target.conditions.length === 0 || (await rt.conditionsHold(target.conditions, rt.referenceHandle(reference)));
           const placement = await rt.placement(reference);
-          if (placement) found.push({ quest: formId, objective: objective.index, reference, placement });
+          if (placement) found.push({ quest: formId, objective: objective.index, order, holds, reference, placement });
         }
       }
     }
     return found;
   };
-  const say = (text) => { bot.log.push(Math.round(performance.now() / 1000) + ' ' + text); if (bot.log.length > 50) bot.log.shift(); };
+  const say = (text) => { bot.log.push(Math.round(performance.now() / 1000) + ' ' + text); if (bot.log.length > 200) bot.log.shift(); };
   const events = (code) => W.player?.eventsOfKey(code) ?? [];
   const hold = (code, down) => {
     const player = W.player; if (!player) return;
@@ -280,26 +342,105 @@ var QA_NAV = engineDev.world.#navmeshes;
     if (!at) return;
     const targets = await objectiveTargets(rt);
     const here = (p) => at.world !== undefined ? p.world === at.world : p.cell !== undefined && p.cell === at.cell;
-    let best;
-    for (const t of targets) {
+    const measure = (t) => {
       const same = here(t.placement);
       const d = same ? Math.hypot(t.placement.position[0] - at.position[0], t.placement.position[1] - at.position[1]) : 1e9;
-      if (!best || d < best.d) best = { t, d, same };
+      return { t, d, same };
+    };
+    let best;
+    for (const t of targets) {
+      if (!t.holds) continue;
+      const m = measure(t);
+      if (!best || m.d < best.d) best = m;
     }
     if (!best) { bot.goal = undefined; bot.path = []; return; }
+    // A place reached (no guide) where nothing moves on for a while: a player goes on the way
+    // the objective leads, to its next target (MQ101's inn marker, then Hadvar in the street).
+    // It holds while that target is the one shown.
+    const now = performance.now();
+    const guideHere = W.actorStage?.get(best.t.reference) !== undefined;
+    if (bot.reached?.reference !== best.t.reference) bot.reached = undefined;
+    if (!guideHere && best.d < 128) bot.reached ??= { reference: best.t.reference, since: now };
+    if (bot.reached && now - bot.reached.since > 6000) {
+      const next = targets.find((t) => !t.holds && t.quest === best.t.quest && t.objective === best.t.objective && t.order > best.t.order);
+      if (next) {
+        if (bot.ahead !== next.reference) say('target reached, on to the next: ' + next.reference.toString(16));
+        bot.ahead = next.reference;
+        best = measure(next);
+      }
+    }
     let goal = [...best.t.placement.position];
     bot.door = undefined;
     bot.guide = W.actorStage?.get(best.t.reference) ? best.t.reference : undefined;
+    // A guide waited by for 15 s who stays where they are: a player walks on past them, into
+    // the room they lead to (Ralof in Helgen's tower, the stage the player's step sets beyond
+    // him), 160 units on the far side; the place holds while the guide stays.
+    const g = best.t.placement.position;
+    if (bot.pass && (bot.pass.guide !== bot.guide || Math.hypot(g[0] - bot.pass.from[0], g[1] - bot.pass.from[1]) > 64)) bot.pass = undefined;
+    if (!bot.pass && best.same && bot.guide !== undefined && bot.waitSince !== undefined && now - bot.waitSince > 15000) {
+      const dx = g[0] - at.position[0]; const dy = g[1] - at.position[1]; const l = Math.hypot(dx, dy) || 1;
+      const point = nav?.nearest?.([g[0] + (dx / l) * 160, g[1] + (dy / l) * 160, g[2]], 96);
+      if (point) {
+        bot.pass = { guide: bot.guide, from: [...g], point: [...point] };
+        say('the guide waits: on past it to ' + point.map(Math.round).join(','));
+      }
+    }
+    if (bot.pass) goal = [...bot.pass.point];
     if (!best.same) {
       const door = compass.firstDoorToward(await play.session.routeMap(), at, best.t.placement);
       if (!door) { bot.goal = undefined; bot.path = []; return; }
       bot.door = door.door; goal = [...door.position];
     }
     const feet = [...player.feet];
-    const found = nav && paths.findPath(nav, feet, goal, { radius: 24 });
+    // On the navmesh: one at its feet' height (the triangle under the inn's upper floor is the
+    // ground floor's, 300 units down: a way from there is not the player's).
+    const onNav = nav?.nearest?.(feet, 48) !== undefined;
+    // Where it got stuck lately (20 s), here: a way the navmesh has but something shuts (the
+    // inn's rubble, a collision box the quest enabled) is closed there and searched round,
+    // as an actor closes a door it cannot pass.
+    bot.stucks = (bot.stucks ?? []).filter((s) => now - s.time < 20000);
+    const stuckHere = bot.stucks.filter((s) => Math.hypot(s.at[0] - feet[0], s.at[1] - feet[1]) < 64).length;
+    if (bot.blockedFor !== best.t.reference) { bot.blocked = []; bot.blockedFor = best.t.reference; }
+    if (stuckHere >= 4 && onNav && bot.path?.[0]) {
+      const ahead = bot.path[0];
+      const dx = ahead[0] - feet[0]; const dy = ahead[1] - feet[1]; const l = Math.hypot(dx, dy) || 1;
+      const at = [feet[0] + (dx / l) * 64, feet[1] + (dy / l) * 64, feet[2]];
+      if (!bot.blocked.some((b) => Math.hypot(b.at[0] - at[0], b.at[1] - at[1]) < 48)) {
+        bot.blocked.push({ at, radius: 64 });
+        bot.stucks = [];
+        say('the way is shut at ' + at.map(Math.round).join(',') + ': round it');
+      }
+    }
+    const found = onNav ? paths.findPath(nav, feet, goal, { radius: 24, blocked: bot.blocked }) : undefined;
     const changed = !bot.goal || Math.hypot(goal[0] - bot.goal[0], goal[1] - bot.goal[1]) > 64;
     bot.goal = goal;
     bot.path = found && found.points.length > 1 ? found.points.slice(1).map((p) => [...p]) : [goal];
+    // A way over the navmesh far longer than the straight line to a goal not above: a player
+    // jumps down (Helgen's tower: the hole Alduin broke, onto the inn's roof, while the navmesh
+    // leads down the stairs to the door the quest has shut).
+    if (found && !bot.door && goal[2] <= feet[2] + 50) {
+      let length = 0;
+      for (let i = 1; i < found.points.length; i++) length += Math.hypot(found.points[i][0] - found.points[i - 1][0], found.points[i][1] - found.points[i - 1][1]);
+      const straight = Math.hypot(goal[0] - feet[0], goal[1] - feet[1]);
+      if (length > straight * 2 + 300) {
+        if (!bot.straight) say('the way round is ' + Math.round(length) + ' for ' + Math.round(straight) + ' straight: straight on');
+        bot.straight = true;
+        bot.path = [goal];
+      } else bot.straight = false;
+    }
+    // Off the navmesh with the navmesh below (the burning inn's upper floor), its goal below it
+    // or stuck going straight: a player drops down where the floor gives way, the drop landing
+    // nearest the goal with a way on (straight on, a goal not below: the tower's jump).
+    const below = goal[2] < feet[2] - 150;
+    if (!found && (below || stuckHere >= 2) && nav && !onNav && nav.nearest?.([feet[0], feet[1], feet[2] - 300], 600)) {
+      const way = findDrop(feet, goal);
+      const drop = way?.at(-1);
+      if (drop) {
+        bot.path = way;
+        if (Math.hypot(drop[0] - (bot.drop?.[0] ?? 0), drop[1] - (bot.drop?.[1] ?? 0)) > 32) say('drop down at ' + drop.map(Math.round).join(',') + ' (' + way.length + ' steps)');
+        bot.drop = drop;
+      }
+    }
     if (changed) say('goal ' + goal.map(Math.round).join(',') + (bot.door ? ' (door ' + bot.door.toString(16) + ')' : '') + (bot.guide ? ' (guide ' + bot.guide.toString(16) + ')' : '') + ' path ' + (found ? found.points.length + (found.complete ? '' : ' partial') : 'none'));
   };
   bot.timer = setInterval(() => {
@@ -343,6 +484,7 @@ var QA_NAV = engineDev.world.#navmeshes;
     if (last && Math.hypot(feet[0] - last[0], feet[1] - last[1]) < 1.5) bot.still += 0.1; else bot.still = Math.max(0, bot.still - 0.05);
     if (bot.still > 1.2) {
       bot.still = 0; bot.stuckCount = (bot.stuckCount ?? 0) + 1; bot.lastPlan = 0;
+      (bot.stucks ??= []).push({ at: [...feet], time: now });
       const move = ['KeyA', 'KeyD', 'KeyS'][bot.stuckCount % 3];
       bot.dodge = { key: move, until: now + 500 + 200 * (bot.stuckCount % 4) };
       if (bot.stuckCount % 2 === 0) tap('Space');
@@ -512,7 +654,7 @@ export const SCENARIOS: readonly Scenario[] = [
   {
     name: 'opening',
     description:
-      'New game: the cart ride to Helgen, the execution, Alduin, AI-driven until MQ101 stage 160, then a bot following the quest marker into the keep.',
+      'New game: the cart ride to Helgen, the execution, Alduin, AI-driven until MQ101 stage 160, then a bot (god mode) following the quest marker into the keep and on while MQ101 moves.',
     start: { kind: 'new' },
     bootSeconds: 300,
     seconds: 2400,
@@ -524,6 +666,7 @@ export const SCENARIOS: readonly Scenario[] = [
         stage?: number;
         bot?: boolean;
         inside?: number;
+        escaped?: number;
         since?: number;
       };
       if (now.stage !== state.stage) {
@@ -539,13 +682,20 @@ export const SCENARIOS: readonly Scenario[] = [
       }
       if (now.stage >= 160 && !now.driven && state.bot !== true) {
         state.bot = true;
+        // The bot does not fight (the keep's soldiers, its bear and spiders): god mode.
+        await ctx.console('tgm');
         await ctx.page.eval(FOLLOW_BOT, 30000, true);
-        ctx.note('the player is free: the follow bot takes over');
+        ctx.note('the player is free: the follow bot takes over (god mode)');
       }
-      // In the keep (an interior after the bot took over): a minute more there, then done.
-      if (state.bot === true && now.interior && !now.loading) {
-        state.inside ??= Date.now();
-        if (Date.now() - state.inside > 60000) return true;
+      // In the keep (an interior after the bot took over): on through it while MQ101 moves.
+      if (state.bot === true && now.interior && !now.loading && state.inside === undefined) {
+        state.inside = Date.now();
+        ctx.note('in the keep');
+      }
+      // Escaped (MQ101 stage 900: out of Helgen's keep): a minute more, then done.
+      if (now.stage >= 900) {
+        state.escaped ??= Date.now();
+        if (Date.now() - state.escaped > 60000) return true;
       }
       // MQ101 stands for 8 minutes (the opening stalled, or the bot got nowhere): it ends there.
       if (Date.now() - (state.since ?? Date.now()) > 480000) {
