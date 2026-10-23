@@ -3,8 +3,8 @@
 // and IDLM (an idle marker: the idles an actor plays at it). The tree is the Creation Kit's
 // Idle Animations window: each IDLE's parent is an action or another IDLE; under a parent the
 // idles of one behavior graph are ordered by each naming the sibling before it. An action
-// resolves to the first idle under it whose conditions hold. Platform-independent: conditions
-// are valued by the caller.
+// resolves to an idle under it by the engine's depth-first search (IdleTree.resolve).
+// Platform-independent: conditions are valued by the caller.
 // Layouts: xEdit (wbDefinitionsTES5 IDLE / AACT / IDLM, wbIdleAnimation), CommonLibSSE-NG
 // (TESIdleForm, BGSAction, BGSIdleCollection, BGSIdleMarker), UESP "Skyrim Mod:Mod File
 // Format/IDLE". Notes: docs/formats/esm.md ("Idles and actions").
@@ -19,8 +19,9 @@ type RecordSource = Pick<GameRecord, 'formId' | 'editorId' | 'flags' | 'fields' 
 
 /**
  * IDLE DATA byte 2. 0x1 is set on exactly the idles without a parent (xEdit "Loose"; CommonLib
- * calls it kParent). The Creation Kit wiki: sequence, no attacking and blocking are no longer
- * used.
+ * calls it kParent). The Creation Kit wiki calls sequence, no attacking and blocking unused, but
+ * the engine's idle search reads sequence and blocking (IdleTree.resolve); one vanilla idle is a
+ * sequence (the dragon's flying snatch), none is blocking.
  */
 export const IdleFlag = {
   loose: 0x01,
@@ -317,59 +318,72 @@ export class IdleTree {
   }
 
   /**
-   * The idle an action picks for an actor whose behavior graph is `graph`
-   * (behaviorGraphKey): among the action's children for that graph, in order, the first that
-   * `accepts` (its conditions hold on the actor) is taken; if it has children, the first of
-   * those that `accepts` is taken in turn, down the tree. The deepest idle taken is the
-   * result: when it has no animation event (an empty leaf, or a group none of whose children
-   * qualified), the action plays nothing. Undefined: no child of the action qualifies.
-   * Sources: the Creation Kit wiki "Idle Animations" (idles under an action are evaluated
-   * hierarchically, an action returns the first valid idle), the Construction Set wiki "Idle
-   * Manager" (an idle whose conditions are met and none of whose children's are is the idle
-   * chosen; a chosen idle without an animation plays none).
+   * The idle an action (or an idle: a group's) picks for an actor whose behavior graph is
+   * `graph` (behaviorGraphKey), observed in the original: a depth-first search of the
+   * parent's children for that graph, in order. An idle whose conditions fail (`accepts`) is
+   * skipped with all under it. One whose hold is tried below first: the first of its children
+   * that resolves (to an idle of its own subtree) is the result; if none does, it is itself,
+   * when it has an animation event (or is a blocking idle), and otherwise the search goes back
+   * up and on to its next sibling. A sequence idle's children are its steps, not choices: the
+   * action plays its first step (what resolves under that step, else the step itself; the
+   * engine starts the sequence afresh with each action it is asked for). Undefined: nothing
+   * under the parent plays. (So a group that qualifies with nothing qualifying under it, the
+   * killmoves' KillMoveFrontSideRoot before a mudcrab, gives way to the plain power attack
+   * after it.)
    */
-  /** As resolve, with conditions valued asynchronously (the running game's). */
   async resolveAsync(
-    action: number,
+    parent: number,
     graph: string,
     accepts: (idle: IdleRecord) => Promise<boolean>,
   ): Promise<IdleRecord | undefined> {
-    let chosen: IdleRecord | undefined;
     const visited = new Set<number>();
-    let parent = action;
-    for (;;) {
-      let next: IdleRecord | undefined;
-      for (const idle of this.children(parent, graph)) {
-        if (visited.has(idle.formId)) continue;
-        if (await accepts(idle)) {
-          next = idle;
-          break;
-        }
+    const search = async (idle: IdleRecord): Promise<IdleRecord | undefined> => {
+      if (visited.has(idle.formId)) return undefined;
+      visited.add(idle.formId);
+      if (!(await accepts(idle))) return undefined;
+      if ((idle.flags & IdleFlag.sequence) !== 0) {
+        const step = this.children(idle.formId, graph)[0];
+        return step && ((await search(step)) ?? step);
       }
-      if (!next) return chosen;
-      visited.add(next.formId);
-      chosen = next;
-      parent = next.formId;
+      for (const child of this.children(idle.formId, graph)) {
+        const found = await search(child);
+        if (found) return found;
+      }
+      return candidate(idle);
+    };
+    for (const idle of this.children(parent, graph)) {
+      const found = await search(idle);
+      if (found) return found.event === undefined ? undefined : found;
     }
+    return undefined;
   }
 
+  /** As resolveAsync, with conditions valued at once. */
   resolve(
-    action: number,
+    parent: number,
     graph: string,
     accepts: (idle: IdleRecord) => boolean,
   ): IdleRecord | undefined {
-    let chosen: IdleRecord | undefined;
     const visited = new Set<number>();
-    let parent = action;
-    for (;;) {
-      const next = this.children(parent, graph).find(
-        (idle) => !visited.has(idle.formId) && accepts(idle),
-      );
-      if (!next) return chosen;
-      visited.add(next.formId);
-      chosen = next;
-      parent = next.formId;
+    const search = (idle: IdleRecord): IdleRecord | undefined => {
+      if (visited.has(idle.formId)) return undefined;
+      visited.add(idle.formId);
+      if (!accepts(idle)) return undefined;
+      if ((idle.flags & IdleFlag.sequence) !== 0) {
+        const step = this.children(idle.formId, graph)[0];
+        return step && (search(step) ?? step);
+      }
+      for (const child of this.children(idle.formId, graph)) {
+        const found = search(child);
+        if (found) return found;
+      }
+      return candidate(idle);
+    };
+    for (const idle of this.children(parent, graph)) {
+      const found = search(idle);
+      if (found) return found.event === undefined ? undefined : found;
     }
+    return undefined;
   }
 
   /**
@@ -388,6 +402,14 @@ export class IdleTree {
     return true;
   }
 }
+
+/**
+ * An idle whose conditions hold is a result of the search by itself when it plays something:
+ * an animation event, or the blocking flag (observed in the original; a blocking idle
+ * without an event still ends the search, and then plays nothing).
+ */
+const candidate = (idle: IdleRecord): IdleRecord | undefined =>
+  idle.event !== undefined || (idle.flags & IdleFlag.blocking) !== 0 ? idle : undefined;
 
 /** The idle tree of a load order: every action and idle (their winning versions). */
 export async function readIdleTree(db: RecordDatabase): Promise<IdleTree> {
@@ -411,19 +433,26 @@ export async function readIdleTree(db: RecordDatabase): Promise<IdleTree> {
   return new IdleTree(inOrder('AACT', actions), inOrder('IDLE', idles));
 }
 
+/** A record of a tree whose siblings each name the one before them (IDLE, CPTH: ANAM). */
+export interface SiblingRecord {
+  readonly formId: number;
+  readonly previous: number | undefined;
+}
+
 /**
  * Siblings (one parent, one graph) in order: each names the one before it (none: the first).
  * Where several name the same one, the one later in the load order comes first, as if each
  * were put right after the one it names when its plugin loads. Siblings the chains from the
- * first do not reach (their previous is no sibling, a cycle) follow in load order.
+ * first do not reach (their previous is no sibling, a cycle) follow in load order. The kill
+ * cameras' paths (CPTH) are ordered the same way.
  */
-function orderSiblings(
-  list: readonly IdleRecord[],
-  exists: (idle: number) => boolean,
-  problems: IdleTreeProblem[],
-): IdleRecord[] {
+export function orderSiblings<T extends SiblingRecord>(
+  list: readonly T[],
+  exists: (idle: number) => boolean = () => true,
+  problems: IdleTreeProblem[] = [],
+): T[] {
   const ids = new Set(list.map((idle) => idle.formId));
-  const after = new Map<number | undefined, IdleRecord[]>();
+  const after = new Map<number | undefined, T[]>();
   for (const idle of list) {
     const previous = idle.previous;
     if (previous !== undefined && !ids.has(previous)) {
@@ -439,11 +468,11 @@ function orderSiblings(
     if (next.length < 2) continue;
     for (const idle of next) problems.push({ idle: idle.formId, problem: 'previous shared' });
   }
-  const ordered: IdleRecord[] = [];
+  const ordered: T[] = [];
   const placed = new Set<number>();
   // Depth first, iterative: sibling chains run to a hundred idles.
-  const place = (first: IdleRecord): void => {
-    const stack: IdleRecord[] = [first];
+  const place = (first: T): void => {
+    const stack: T[] = [first];
     while (stack.length > 0) {
       const idle = stack.pop();
       if (!idle || placed.has(idle.formId)) continue;

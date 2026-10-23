@@ -165,12 +165,42 @@ describe('the combat state', () => {
     state.killMove = true;
     kinds(['KillMoveStart'], state);
     expect(state.killMove).toBe(true);
-    kinds(['KillMoveEnd'], state);
+    expect(kinds(['KillMoveEnd'], state)).toEqual(['killmove-end']);
     expect(state.killMove).toBe(false);
     expect(state.paired).toBe('lead');
+    // The paired animation's end leaves the killmove to its own end (or its timer).
     state.killMove = true;
     expect(kinds(['pairedStop'], state)).toEqual(['pair-end']);
+    expect(state.killMove).toBe(true);
+  });
+
+  it("ends its victim's killmove at its 2_KillMoveEnd", () => {
+    const state = newCombatState();
+    state.paired = 'support';
+    state.killMove = true;
+    expect(kinds(['2_KillActor', '2_KillMoveEnd', '2_PairEnd'], state)).toEqual([
+      'kill-actor',
+      'killmove-end',
+      'pair-end',
+    ]);
     expect(state.killMove).toBe(false);
+    // A clip's last frame may end the pair first (Paired_1HMKillMoveD).
+    const victim = newCombatState();
+    victim.paired = 'support';
+    victim.killMove = true;
+    expect(kinds(['2_PairEnd', '2_KillMoveEnd', '2_KillActor'], victim)).toEqual([
+      'pair-end',
+      'killmove-end',
+      'kill-actor',
+    ]);
+  });
+
+  it('counts only pa_Kill events as killmoves', () => {
+    const state = newCombatState();
+    startAttack(state, { event: 'pa_KillMoveB', hand: 'right', power: true, bash: false });
+    expect(state.current?.killMove).toBe(true);
+    startAttack(state, { event: 'pa_HugA', hand: 'right', power: true, bash: false });
+    expect(state.current?.killMove).toBe(false);
   });
 });
 

@@ -8,7 +8,7 @@
 // root: the first actor's "NPC" track holds where it is from there (the mount's 63.5 units to
 // the horse's left, as the horse race's mount offset says). Platform-independent.
 
-import type { AnimationBinding } from '../formats/hkx/animation.ts';
+import { TRANSFORM_FLOATS, type AnimationBinding } from '../formats/hkx/animation.ts';
 
 /** The skeleton name of a paired animation's binding. */
 export const PAIRED_ROOT = 'PairedRoot';
@@ -80,6 +80,57 @@ export function pairedTrackBones(
     result[track] = index.get(bone) ?? -1;
   });
   return result;
+}
+
+/** Where a paired clip puts its partner from its lead: in the lead's frame, and turned by. */
+export interface PartnerMark {
+  /** Game units: x to the lead's right, y ahead, z up. */
+  readonly offset: readonly [number, number, number];
+  /** Radians, counter-clockwise seen from above (to the left): the partner's facing less the lead's. */
+  readonly yaw: number;
+}
+
+/**
+ * The partner's mark in a paired clip: where its actor stands from the lead's as the clip
+ * begins. The clip holds both actors' placements from the pair's root: the lead's in its "NPC"
+ * track (a killmove's: at the root), the partner's in the track named the prefix alone ("2_":
+ * Paired_1HMKillMoveB's 72.8 units ahead, turned about; a bear's 157, a wolf's 116.6).
+ * Undefined: the clip names no partner placement.
+ */
+export function partnerMark(
+  binding: AnimationBinding,
+  prefix = PARTNER_PREFIX,
+): PartnerMark | undefined {
+  const names = binding.animation.trackNames;
+  if (!names) return undefined;
+  const lower = names.map((name) => name.toLowerCase());
+  const partner = lower.indexOf(prefix.toLowerCase());
+  if (partner < 0) return undefined;
+  const lead = lower.indexOf('npc');
+  const out = new Float32Array(binding.animation.trackCount * TRANSFORM_FLOATS);
+  // Unwritten (unusable) tracks read as the identity.
+  for (let track = 0; track < binding.animation.trackCount; track++) {
+    out[track * TRANSFORM_FLOATS + 6] = 1;
+  }
+  binding.animation.sample(0, out);
+  const place = (track: number): { x: number; y: number; z: number; yaw: number } => {
+    if (track < 0) return { x: 0, y: 0, z: 0, yaw: 0 };
+    const o = track * TRANSFORM_FLOATS;
+    const qz = out[o + 5] ?? 0;
+    const qw = out[o + 6] ?? 1;
+    return { x: out[o] ?? 0, y: out[o + 1] ?? 0, z: out[o + 2] ?? 0, yaw: 2 * Math.atan2(qz, qw) };
+  };
+  const from = place(lead);
+  const to = place(partner);
+  // Into the lead's frame: its placement's turn undone.
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const cos = Math.cos(-from.yaw);
+  const sin = Math.sin(-from.yaw);
+  return {
+    offset: [dx * cos - dy * sin, dx * sin + dy * cos, to.z - from.z],
+    yaw: to.yaw - from.yaw,
+  };
 }
 
 /**

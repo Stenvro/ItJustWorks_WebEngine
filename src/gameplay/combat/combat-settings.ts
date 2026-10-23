@@ -18,6 +18,8 @@ export interface CombatSettings {
    * 35, not in the plugins).
    */
   readonly combatHitConeAngle: number;
+  /** fCombatDeadActorHitConeMult: the player's strikes find the dead in a cone this much wider. */
+  readonly deadActorHitConeMult: number;
   // --- Damage --------------------------------------------------------------------------------
   /** fDamageSneakAttackMult: times the sneak attack multiplier (1). */
   readonly damageSneakAttackMult: number;
@@ -85,8 +87,22 @@ export interface CombatSettings {
   readonly essentialDeathTime: number;
   /** fCombatPlayerBleedoutHealthDamageMult: damage the player takes bleeding out. */
   readonly playerBleedoutHealthDamageMult: number;
-  /** fKillMoveMaxDuration: a killmove (a paired animation) ends by this at the latest (seconds). */
+  /** fKillMoveMaxDuration: a killmove (IsInKillMove) ends by this at the latest (seconds). */
   readonly killMoveMaxDuration: number;
+  /** fCombatKillMoveDamageMult: a hit on an actor in a killmove does this many times its damage. */
+  readonly killMoveDamageMult: number;
+  /**
+   * fHostileActorExteriorDistance, fHostileActorInteriorDistance, fHostileFlyingActorExterior
+   * Distance: how near the player an actor hostile to them counts (IsLastHostileActor).
+   */
+  readonly hostileActorExteriorDistance: number;
+  readonly hostileActorInteriorDistance: number;
+  readonly hostileFlyingActorExteriorDistance: number;
+  /** fVATSImageSpaceTransitionTime: a kill camera shot's image-space modifier fades in (s). */
+  readonly vatsImageSpaceTransitionTime: number;
+  /** fVATSSafetyMaxTime, fVATSSafetyMaxTimeRanged: a kill camera ends by then (seconds). */
+  readonly vatsSafetyMaxTime: number;
+  readonly vatsSafetyMaxTimeRanged: number;
   // --- Arrows --------------------------------------------------------------------------------
   /** iArrowInventoryChance: % of arrows that hit an actor going into its inventory. */
   readonly arrowInventoryChance: number;
@@ -120,6 +136,7 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   combatDistance: 141,
   combatBashReach: 141,
   combatHitConeAngle: 35,
+  deadActorHitConeMult: 2,
   damageSneakAttackMult: 1,
   sneakMult: {
     hand: 2,
@@ -164,6 +181,13 @@ export const COMBAT_DEFAULTS: CombatSettings = {
   essentialDeathTime: 20,
   playerBleedoutHealthDamageMult: 0,
   killMoveMaxDuration: 10,
+  killMoveDamageMult: 10,
+  hostileActorExteriorDistance: 3000,
+  hostileActorInteriorDistance: 2000,
+  hostileFlyingActorExteriorDistance: 15000,
+  vatsImageSpaceTransitionTime: 0.15,
+  vatsSafetyMaxTime: 20,
+  vatsSafetyMaxTimeRanged: 6,
   arrowInventoryChance: 33,
   attachedArrowAgeMax: 10,
   missileStickDepth: 20,
@@ -217,6 +241,14 @@ const SETTING_NAMES: Readonly<Partial<Record<keyof CombatSettings, string>>> = {
   essentialDeathTime: 'fEssentialDeathTime',
   playerBleedoutHealthDamageMult: 'fCombatPlayerBleedoutHealthDamageMult',
   killMoveMaxDuration: 'fKillMoveMaxDuration',
+  killMoveDamageMult: 'fCombatKillMoveDamageMult',
+  hostileActorExteriorDistance: 'fHostileActorExteriorDistance',
+  hostileActorInteriorDistance: 'fHostileActorInteriorDistance',
+  hostileFlyingActorExteriorDistance: 'fHostileFlyingActorExteriorDistance',
+  deadActorHitConeMult: 'fCombatDeadActorHitConeMult',
+  vatsImageSpaceTransitionTime: 'fVATSImageSpaceTransitionTime',
+  vatsSafetyMaxTime: 'fVATSSafetyMaxTime',
+  vatsSafetyMaxTimeRanged: 'fVATSSafetyMaxTimeRanged',
   arrowInventoryChance: 'iArrowInventoryChance',
   attachedArrowAgeMax: 'fAttachedArrowAgeMax',
   missileStickDepth: 'fCombatMissileStickDepth',

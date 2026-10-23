@@ -522,7 +522,7 @@ come before the response files are read wait for them.
 | WeaponRight/LeftSwing (weaponSwing, weaponLeftSwing)              | the attack state becomes swinging; that hand's weapon's swing sound; the swing callback                                                                                       | as the engine (the left weapon's sound for the left hand)                                                                                                                                                                                      |
 | AttackWinStart/End (also …Left)                                   | the next attack's window (a bow's next shot), the follow-through                                                                                                              | as the engine                                                                                                                                                                                                                                  |
 | WeaponBeginDrawRight, WeaponBeginSheatheRight (BeginWeaponDraw/…) | the right weapon's equip / unequip sound; a draw turns the camera to its combat position when it follows the actor                                                            | the sounds; graphs whose draw raises neither (an NPC's WeapEquip) sound them at weaponDraw / weaponSheathe (inferred). TODO(M13): the camera's combat position                                                                                 |
-| KillMoveStart, KillMoveEnd                                        | nothing; the killmove ends (IsInKillMove), its partner released                                                                                                               | the combat state's killmove flag (IsInKillMove) until KillMoveEnd or the paired end. TODO(M13): what the end does with the partner                                                                                                             |
+| KillMoveStart, KillMoveEnd (also a victim's 2_KillMoveEnd)        | Start nothing; End: the actor is in its killmove no more (IsInKillMove), one done to it (its myKiller set) dies by its killer, its deferred death comes                       | as the engine ([Killmoves](#killmoves))                                                                                                                                                                                                        |
 | IdleDialogueEnter/Exit (IdleDialogueLock/Unlock)                  | the lock does nothing itself; the unlock plays the dialogue idle the actor's process holds                                                                                    | dialogue idles (a line's speaker and listener idles, ActionTalking's) are held while locked, the last played at the unlock                                                                                                                     |
 | Enable/DisableCharacterPitch, Enable/DisableCharacterBumper       | the character controller may pitch the actor (disabled: its pitch zeroed); its bumper on or off                                                                               | recorded per actor. TODO(M13): our controllers keep actors upright and have no bumper                                                                                                                                                          |
 | ChairEnter, BedEnter, PlayerChair/BedEnter (idleChairSitting, …)  | unless it gets up already, the sit state becomes sitting (sleeping); the player's also switch the camera and controls                                                         | an entering furniture use is in (at its marker, OnSit). TODO(M13): the player's camera and controls                                                                                                                                            |
@@ -567,6 +567,96 @@ graph's Voice_SpellFire_Event (1.2 s after shoutStart, MT_BreathExhaleShort's ex
 dual-wielding NPC's left attack raised weaponLeftSwing (WeaponLeftSwingHandler: swinging), then
 AttackWinStartLeft and AttackWinEndLeft; Game.ShakeCamera(None, 0.5) turned the view by up to
 0.6° for 1 s.
+
+## Killmoves
+
+A killmove is a paired idle: the attacker's power attack (or a sneak's) whose idle event begins
+"pa_Kill", played by two actors on one synchronized clip (`src/shell/actor-combat.ts`, Killmoves;
+the clips: `src/animation/paired-clips.ts`; the kill camera: `src/shell/killmove-camera.ts`).
+When one is tried and which: [gameplay.md](gameplay.md#killmoves). Observed in the original;
+in our words. Check: `node tools/idle-info.ts --tree ActionRightPowerAttack 0_master` (the tree
+with each condition's run-on), `node tools/idle-info.ts --cameras` (the kill cameras),
+`tests/killmoves.int.test.ts`.
+
+**The pairing.** A paired idle's event names the leader's side ("pa_KillMoveB"); its partner's is
+the rest ("KillMoveB"). The engine plays the partner's side first: the target's graph must take
+its event (a transition from the state it is in: `BehaviorRuntime.wouldHandle`), and only then
+is the leader's sent. Where the target cannot (a victim with its weapon sheathed: the people's
+killmove victim states hang under the drawn-weapon behaviors), the player's attack is asked
+again without its target: a plain power attack. Once paired, for a "pa_Kill" event:
+
+- the leader's attack state is drawing; both actors are in a killmove (IsInKillMove) until
+  their KillMoveEnd, at most fKillMoveMaxDuration (10 s: the timer clears only IsInKillMove);
+- the victim's killer (myKiller) is the leader;
+- both have their deaths deferred (StartDeferredKill: a blow that empties their health kills
+  them as the deferral ends; its own timer fBetaDeferredKillTimer, 15 s);
+- a killmove on the player turns the camera to third person; one the player leads plays in the
+  kill camera (below).
+
+The vampire's feeding bite (IdleVampireFeed) and the other "pa_" idles pair the same way without
+being killmoves.
+
+**The synchronized clip** (BSSynchronizedClipGenerator, its members after the clip: SyncAnimPrefix,
+bSyncClipIgnoreMarkPlacement, fGetToMarkTime, fMarkErrorThreshold, bLeadCharacter,
+bReorientSupportChar, bApplyMotionFromRoot). The people's graphs hold 226: 63 leader sides (60
+prefix their partner "2_"), the rest partners' (153 killmove victims'); every partner gets to
+its mark at once (fGetToMarkTime 0; the vampire lord's three 0.05 s), turned to it. The mark is in the clip: the partner's placement is the track
+named the prefix alone ("2_"), the leader's the track "NPC" (both from the pair's root, which is
+the leader's place as the clip begins); the partner's bones are its "2_"-prefixed tracks, moving
+from there. Paired_1HMKillMoveB puts the victim 72.8 units ahead, turned about; a bear's clip
+157, a wolf's 116.6. Ours: the partner is moved to its mark as its clip begins (`partnerMark`),
+over fGetToMarkTime; not there within [Animation] fMaxTimeToMarkSec (3 s) the scene plays where
+they stand. While paired, both actors are held (no character controller, no locomotion events:
+a teleported victim would otherwise fall and turn its graph out of the clip; the player's keys
+do not move them). The pair lasts as long as its clips: a graph that leaves its synchronized clip
+is in its pair no more, whether or not it raised PairEnd (a bear killmove's leader raises none).
+
+**The end.** The victim's side raises its events with the prefix: 2_KillActor (KillActorHandler:
+it dies by its killer), 2_KillMoveEnd (KillMoveEndHandler: an actor with a killer dies by it, its
+deferred death comes, it is in its killmove no more), 2_PairEnd; some clips raise all three on
+their last frame with 2_PairEnd first (Paired_1HMKillMoveD, Paired_2HMKillMoveSlash at 0.4 s: the
+slash is the kill). The leader's KillMoveEnd ends its own killmove. A blow on an actor in a
+killmove does fCombatKillMoveDamageMult (10) times its damage; the killmove clips' own hit
+frames are NPCHitFrame, which no handler answers: the victim takes no blows from its clip.
+
+**The kill camera** (the engine's VATS playback). A killmove the player leads always starts it,
+in either view (the player's melee action with a paired target event); the camera path is
+chosen from the kill cameras' tree (CPTH), its roots in order (each names the one before it:
+PlayerDeath, DoVatsAtAll, ExitWeRanOutOfCams, ...), searched depth first: a path whose
+conditions hold (run on the attacker, the victim their target) is tried below first and is the
+answer itself if none below is and it has shots (DATA bit 7 clear: "must have camera shots");
+a path whose shots are optional but has shots gives none, as does one with a shot that lasts no
+time. Under PairedKillTest the dragons' paths come first, then 1stPRandom (33% in first
+person), IsBackClear02 (16%), the close and slow cameras, 1stPFailsafeCam, FailSafeCamera. A
+first-person shot (no model) leaves the player's own view. Each shot plays its Max Time (real
+seconds) from its camera model's ExportCam node in its location's frame, looking at its target;
+the world's clock runs at the shot's global time multiplier (the slow motion: the slow shots'
+0.2 and 0.4), and its image-space modifier (VATSImodDOF) is cross-faded in over
+fVATSImageSpaceTransitionTime (0.15 s), faded out as the camera ends. The VATS side functions
+measure from the reference they run on: GetVATS*AreaFree how far a ray at
+fVATSSmartCameraCheckHeight (96) toward that side of its facing runs before it meets anything
+but the reference itself (10000 units if nothing); GetVATS*TargetVisible from points
+fVATSSmartCameraCheckStepDistance (128) apart toward that side (fVATSSmartCameraCheckStepCount,
+5), whether a ray to the other of the kill gets there (blocked by anything within 85% of the way,
+another actor only within 256 units). TODO(M13): the camera's radial blur as it moves between
+shots (fVATSCamTransRB*: strength fVATSCamTransRBStrengthCap × a triangle of the transition's
+progress, whose source was not read); which distance TargetVisible returns (inferred: the last
+clear step's); the magic kill camera ([gameplay.md](gameplay.md#killmoves)). The ranged kill camera
+plays the same tree on the player's bow and crossbow shots (its rules: gameplay.md).
+
+Verified in the browser (Riverwood, spawned bandits, wolves and bears at low health, the player's
+and guards' power attacks): third person with a sword 11 of 11 killmoves played to the victim's
+death (KillMove1HMGrappleStab, StabUpFace, StabDownChest, RepeatStabDown, BackStab, ShortD, D,
+I), first person 3 of 5 (the other two: victims turned away whose graph could not take the
+back-stab: a plain power attack), a dagger 3 of 4, a battle-axe 2 of 3 (2HWHeadButt, 2HWB), a
+greatsword 1 of 4 (2HMSlash: the kill at 0.4 s), wolves 6 of 6 (1HMWolfA/B), bears 2 of 2 (BearA,
+1HMBearB); the victims stood 78 units before the attacker (StabDownChest's mark), died 0.2 s
+after their pair ended, killed by the attacker; kill cameras chosen: S08BackLeftStart01,
+PlayerFaceBack L/R, KillCamSlow*CloseUp/FarA, FailSafeCamera, the world's clock at 0.2 in the
+slow shots. Two guards against three bandits (each started on the other): two of the three
+deaths were killmoves (pa_KillMove1HMBackStab, pa_KillMoveI). A bandit's killmove on the player
+(pa_KillMoveShortA) turned the first-person view to third person and killed the player at its
+2_KillActor.
 
 ## Dismemberment
 

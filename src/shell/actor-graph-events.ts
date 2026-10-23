@@ -445,7 +445,7 @@ export class ActorGraphEvents {
       const runtime = this.#options.session.scriptsReady;
       const target = killer === undefined || !runtime ? undefined : runtime.referenceHandle(killer);
       for (const action of DEATH_ACTIONS) {
-        event = await stage.furniture.actionEvent(user, action, target, target === undefined);
+        event = await stage.furniture.actionEvent(user, action, target);
         if (event !== undefined) break;
       }
     }

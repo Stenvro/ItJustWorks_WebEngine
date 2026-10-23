@@ -213,6 +213,69 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     expect(await runtime.conditionsHold([distance(0x0001aa6b)], aslfur)).toBe(true);
   });
 
+  it("values the killmove idles' conditions on their subject and target as the engine does", async () => {
+    const tree = await (await import('../src/ai/idle-records.ts')).readIdleTree(db);
+    const idle = (formId: number): readonly Condition[] => tree.idles.get(formId)?.conditions ?? [];
+    const ripHeart = idle(0x0403d2ca);
+    const npcRoot = idle(0x0006440b);
+    const aslfur = 0x0001aa68;
+    const thonnir = 0x0001aa6b;
+    const asked: [number, number][] = [];
+    world.attackKills = (attacker, target) => {
+      asked.push([attacker, target]);
+      return Promise.resolve(true);
+    };
+    const player = runtime.referenceHandle(PLAYER);
+    try {
+      // RipHeartOut: ShouldAttackKill() (its empty parameter: the target) and
+      // GetIsID(DLC2Ildari) on the target: no killmove of Ildari's on Aslfur, none without a
+      // target (a condition run on a missing target fails).
+      expect(ripHeart.length).toBe(2);
+      expect(
+        await runtime.conditionsHold(ripHeart, player, undefined, {
+          target: runtime.referenceHandle(aslfur),
+        }),
+      ).toBe(false);
+      expect(asked).toEqual([[PLAYER, aslfur]]);
+      expect(await runtime.conditionsHold(ripHeart, player)).toBe(false);
+      // HasKeyword(ActorTypeNPC) on the target: a race's keyword.
+      expect(
+        await runtime.conditionsHold(npcRoot, player, undefined, {
+          target: runtime.referenceHandle(aslfur),
+        }),
+      ).toBe(true);
+      // GetRelativeAngle(, 'Z') on the subject: its facing less the target's, 0..360.
+      const angle = (operator: number, comparand: number): Condition => ({
+        function: Fn.getRelativeAngle,
+        operator,
+        or: false,
+        comparand,
+        form: 0,
+        param2: 0x5a,
+        raw1: 0,
+        form2: 0,
+        strings: [],
+        runOn: 0,
+        reference: 0,
+        param3: -1,
+        eventMember: '',
+      });
+      const [a, t] = await Promise.all([runtime.placement(aslfur), runtime.placement(thonnir)]);
+      if (!a || !t) throw new Error('not placed');
+      const degrees = (((((a.rotation[2] - t.rotation[2]) * 180) / Math.PI) % 360) + 360) % 360;
+      const subject = runtime.referenceHandle(aslfur);
+      const context = { target: runtime.referenceHandle(thonnir) };
+      expect(
+        await runtime.conditionsHold([angle(3, degrees - 0.5)], subject, undefined, context),
+      ).toBe(true);
+      expect(
+        await runtime.conditionsHold([angle(5, degrees + 0.5)], subject, undefined, context),
+      ).toBe(true);
+    } finally {
+      world.attackKills = undefined;
+    }
+  });
+
   it("relays the hub's events to the scripts that handle them (a dragon's combat)", async () => {
     // EncDragon04Fire runs dragonActorSCRIPT, which handles OnCombatStateChanged.
     const dragon = await runtime.placeAt(0x000f811b, PLAYER, 1);
