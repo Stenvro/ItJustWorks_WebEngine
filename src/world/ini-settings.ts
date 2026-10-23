@@ -46,6 +46,8 @@ export const INI_DEFAULTS = {
     fOverShoulderPosX: 30,
     fOverShoulderPosZ: -10,
     fPitchZoomOutMaxDist: 100,
+    // How fast the third-person camera moves to its shoulder offsets (a share a second).
+    fShoulderDollySpeed: 3,
     // The tween menu's camera (STEP's SSE default values; src/shell/tween-camera.ts).
     fTweenCamRotAngle: 0.05,
     fTweenCamRotClosingSpeed: 10,
@@ -54,6 +56,12 @@ export const INI_DEFAULTS = {
     fTweenCamZoomSpeed: 25,
     fVanityModeMaxDist: 600,
     fVanityModeMinDist: 155,
+  },
+  // The player's shots leave tilted up this far (degrees; src/shell/projectile-aim.ts).
+  Combat: {
+    f1PArrowTiltUpAngle: 2,
+    f1PBoltTiltUpAngle: 1,
+    f3PArrowTiltUpAngle: 2.5,
   },
   Controls: {
     bAlwaysRunByDefault: 1,

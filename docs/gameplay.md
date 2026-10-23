@@ -586,6 +586,58 @@ Format/SPEL"; the game settings.
   toward the target's chest, or along its facing (WorldBridge.launchSpell); free.
   DoCombatSpellApply delivers at once.
 
+### Aiming projectiles
+
+Observed in the original (behaviour only; src/gameplay/combat/aim.ts, src/shell/
+projectile-aim.ts). Spells, sprays, beams and arrows all go through the same launch and the
+same aim; what differs is where they leave from and, for an NPC, what it aims at.
+
+- Where a shot leaves: a spell from the casting hand's magic node (NPC R / L MagicNode; in first
+  person the first-person skeleton's, the hands the player sees), without one at 0.7 of the
+  caster's height; an arrow or bolt from the WEAPON node (the drawing hand; in first person the
+  first-person arms'). A concentration spell's sprays and a beam's bursts each leave the hand
+  where it is at that relaunch, so they follow the hand.
+- The player's direction: the view's (the camera's heading and pitch), tilted up by [Combat]
+  f1PArrowTiltUpAngle (2°) in first person, f3PArrowTiltUpAngle (2.5°) in third, a bolt in first
+  person f1PBoltTiltUpAngle (1°). The engine applies the tilt to spells too: it is the reference
+  the aim assistance turns from.
+- The aim assistance (the projectile's auto-aim, on for every player shot): what the shot should
+  reach is the hostile living actor within fAutoAimMaxDistance (2500) whose figure on screen
+  reaches into the middle fAutoAimScreenPercentage (7%: ±0.035 of the screen's half-size around
+  its centre) and that the camera sees, the one nearest the middle (its middle is aimed at, or the
+  crosshair's point when the camera's ray is on it already); else the point the camera's ray
+  meets within fAutoAimMaxDistance on the line-of-sight layer, the ray's end without one. The
+  angles from the shot's origin to that point (an arrow: the launch pitch of the flatter arc that
+  passes it, by its speed and the PROJ's gravity) are taken from the tilted view by at most
+  fAutoAimMaxDegrees (1.2°) each way in first person, fAutoAimMaxDegrees3rdPerson (1.5°) in
+  third; a shot of ammunition is never turned down. So shots land under the crosshair at most
+  distances: close by, where the hand and the camera see the point at angles further apart than
+  the assistance allows, they land beside it (as in the original).
+- The third-person camera: with the weapon or magic drawn it moves behind the back
+  (fOverShoulderCombatPosX 0, fOverShoulderCombatPosZ 20) and fOverShoulderCombatAddY (-100)
+  farther out, sheathed over the shoulder (fOverShoulderPosX 30, fOverShoulderPosZ -10), easing
+  there by fShoulderDollySpeed (3) of the way a second. No other correction for the camera's
+  offset exists: the aim assistance is what brings the shot onto the crosshair.
+- An NPC's direction (its combat aim): at its target's upper body (the head-height node, else
+  0.85 of the height; crouched 0.57 of that), off by up to variance × fCombatAimProjectileRandomOffset
+  (16) on each axis and, by a share up to the variance, toward the target's middle (the variance:
+  fCombatRangedAimVariance 0.9 for a bow, fCombatMagicImmediateAimVariance 0.5 for a fire and
+  forget spell, fCombatMagicConcentrationAimVariance 0 for a concentration spell; TODO(M13): the
+  link from these settings to the aim controller's factor is inferred). The target is led: the
+  flight time to the guessed point gives the target's place then (its velocity along the
+  ground), again until the time changes by less than fCombatAimDeltaThreshold (0.05 s), at most
+  iCombatAimMaxIterations (10) times; a falling shot's point is raised onto its arc's launch
+  line, so the NPC's arrows arc onto the target (no tilt for NPCs). A PROJ with Disable Combat Aim
+  Correction keeps the caster's own aim. An NPC's arrow then strays by up to
+  fBowNPCSpreadAngle (5°) times what its Archery lacks of 100 (none at 100), in a random direction
+  around the aim; Always Hit shots fly onto the target.
+- Speeds and falls: missiles and arrows fly at the PROJ's speed (an arrow's times the draw) and
+  fall by the PROJ's gravity × 9.8 m/s²; beams reach their range at once; flames are sprays,
+  one every relaunch interval. fArrowSpeedMult and fArrowGravityBase are not read by the engine.
+- Not done here: the beam's lightning (Magic\LightningBolt01.nif is procedural geometry between
+  its node and BeamEnd, BSProceduralLightningController; the impact is at the hit point but the
+  bolt is not drawn). TODO(M13).
+
 ### Shouts and powers
 
 Sources: UESP "Skyrim:Shouts", "Skyrim:Dragon Souls", "Skyrim:Powers"; SHOU and WOOP.
