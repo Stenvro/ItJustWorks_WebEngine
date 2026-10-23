@@ -6,7 +6,7 @@
 // furniture's enters and exits, mounts' ends); this module registers them all in one place and
 // implements the handlers no system owns: the movement drive, death into the ragdoll, the
 // camera's shake and animated cameras, the character's pitch and bumper, dialogue idle locks,
-// summons, activation, and the hooks animation objects and ambient idles answer.
+// summons, activation; animation objects go to their module, PickNewIdle to a hook.
 
 import {
   GraphEventDispatch,
@@ -38,9 +38,6 @@ export interface ActorGraphSource extends GraphEventSource {
   /** The player's first-person graph. */
   readonly firstPerson: boolean;
 }
-
-/** What an animation object handler does (AnimObjLoad, AnimObjDraw, AnimObjectUnequip). */
-export type AnimObjectKind = 'load' | 'draw' | 'unequip';
 
 export interface ActorGraphEventsOptions {
   readonly session: GameSession;
@@ -156,7 +153,8 @@ export class ActorGraphEvents {
     // Everything an actor's graph raises: its sounds (SoundPlay, footsteps), its scripts
     // (OnAnimationEvent, by the event's name as the graph has it), the systems that follow its
     // events by name (flight states, a get-up, a ride's paired end, a cart's rider, a held
-    // weapon's own graph, the casting art), animation objects' unequip.
+    // weapon's own graph, the casting art), the animation objects (their unload events: the
+    // reference's own event sink in the engine).
     d.listen((source, events) => {
       if (!source.player) this.#sounds.get(source.skeleton)?.(events);
       if (!source.firstPerson) {
@@ -170,12 +168,10 @@ export class ActorGraphEvents {
       stage.mounts.graphEvents(source, events);
       const graph = source.skeleton.behavior;
       if (graph && !source.firstPerson) stage.vehicles.riderEvents(source.reference, graph, events);
-      for (const event of events) {
-        // Not a response handler: the engine's own answer to the event (an animation object
-        // leaves the hand).
-        if (event.name.toLowerCase() === 'animobjectunequip')
-          stage.animObject?.(source.reference, 'unequip', event.payload);
-      }
+      stage.animObjects.graphEvents(
+        source.reference,
+        events.map((event) => event.name),
+      );
     });
     // Events the response files name no handler for are the actor's own (WeapEquip_Out,
     // blockStop, bowEnd: the combat state's).
@@ -333,12 +329,13 @@ export class ActorGraphEvents {
     d.handle('NPCDetachHandler', (source) => {
       this.#attached.delete(source.reference);
     });
-    // Animation objects (ANIO: a tankard, a broom, a hammer) load to the hand or are drawn.
+    // Animation objects (ANIO: a tankard, a broom, a hammer) load to the hand or are drawn,
+    // the object the payload names (src/shell/actor-anim-objects.ts).
     d.handle('AnimationObjectLoadHandler', (source, event) => {
-      stage.animObject?.(source.reference, 'load', event.payload);
+      stage.animObjects.animObject(source.reference, 'load', event.payload);
     });
     d.handle('AnimationObjectDrawHandler', (source, event) => {
-      stage.animObject?.(source.reference, 'draw', event.payload);
+      stage.animObjects.animObject(source.reference, 'draw', event.payload);
     });
     // Ambient idles: the graph asks for a new idle.
     d.handle('PickNewIdleHandler', (source) => {

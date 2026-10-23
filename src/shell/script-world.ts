@@ -58,6 +58,8 @@ export interface ScriptView {
   explosion?(explosion: number, at: Vec3, source: number | undefined): void;
   /** How many are inside a reference's trigger volume now. */
   triggerCount?(reference: number): number;
+  /** Whether a look along a direction meets the sun in the sky (a bow shot's sun gazing). */
+  sunGazed?(direction: readonly [number, number, number]): boolean;
   /** SetOpen: a door of the view swings open or shut (src/shell/actor-doors.ts setOpen). */
   openChanged?(reference: number, open: boolean): void;
   /** A named node of a shown reference's model: where it is in the world. */
@@ -431,6 +433,12 @@ export class ScriptWorld implements WorldBridge {
 
   changingSpace(): boolean {
     for (const view of this.#views) if (view.changingSpace?.() === true) return true;
+    return false;
+  }
+
+  /** Whether a look along a direction meets the sun (TESPlayerBowShotEvent's sun gazing). */
+  sunGazed(direction: readonly [number, number, number]): boolean {
+    for (const view of this.#views) if (view.sunGazed?.(direction) === true) return true;
     return false;
   }
 

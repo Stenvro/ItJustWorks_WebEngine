@@ -140,7 +140,7 @@ export function registerActor(n: Register, runtime: ScriptRuntime): void {
     // Once its 3D stands in the new race, its scripts hear OnRaceSwitchComplete (the werewolf's
     // PlayerWerewolfScript starts its tracking then, or shuts the change down).
     runtime.detach(
-      Promise.resolve(made).then(() => runtime.sendEvent(actor, 'OnRaceSwitchComplete')),
+      Promise.resolve(made).then(() => runtime.events.emitted('switchRaceComplete', { actor })),
     );
   });
   ask('getleveledactorbase', null, async (actor) =>

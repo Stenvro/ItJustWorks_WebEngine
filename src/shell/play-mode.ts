@@ -51,6 +51,7 @@ import { headPosition, type PlacedActor } from './actors.ts';
 import type { PlayerData } from './player.ts';
 import type { PlayerView } from './race-menu.ts';
 import type { Terminal } from './terminal.ts';
+import { tellSwing } from './open-close.ts';
 
 /**
  * The main menu's properties, as its setupMainMenu reads them (sendMenuProperties' arguments
@@ -536,6 +537,17 @@ export class PlayMode {
       openContainer: (reference, closed) => {
         session.hud.menus?.container(reference, closed);
       },
+      // Its swing's end tells the scripts (OnOpen, OnClose: the player opened it).
+      swung: (object, instance) => {
+        if (instance.playback)
+          tellSwing(
+            session.scriptsReady,
+            object.reference,
+            instance.playback,
+            instance.model.sequences,
+            PLAYER_REF,
+          );
+      },
       // Not in another's bed (sNoSleepInOwnedBed).
       sleep: (object) => {
         const runtime = session.scriptsReady;
@@ -661,6 +673,8 @@ export class PlayMode {
     );
     if (hours > 0) session.advanceClock(hours);
     await this.#loadInto(at);
+    // Arrived: the hub tells the time it took (TESFastTravelEndEvent: OnPlayerFastTravelEnd).
+    runtime.events.emit('fastTravelEnd', { hours });
   }
 
   /** Goes to a place behind the loading menu and a loading screen, the HUD away. */
@@ -902,7 +916,7 @@ export class PlayMode {
     };
     if (lock.key !== undefined && (await runtime.itemCount(PLAYER_REF, lock.key)) > 0) {
       runtime.state.reference(reference).locked = false;
-      void runtime.sendEvent(reference, 'OnLockStateChanged');
+      runtime.events.emit('lockChanged', { reference });
       const key = (await runtime.forms.record(lock.key))?.text('FULL') ?? '';
       session.hud.notification((settings.string('sOpenWithKey') ?? '%s').replace('%s', key));
       then();
@@ -960,6 +974,7 @@ export class PlayMode {
     await runtime.pickUp(object.reference, PLAYER_REF);
     const taken = runtime.state.references.get(object.reference)?.container?.count ?? 1;
     if (stealing) await runtime.crime.steal(PLAYER_REF, object.base, taken, object.reference);
+    runtime.detach(runtime.storyEvents.pickedUp(object.base, object.reference, stealing));
     const record = await runtime.forms.record(object.base);
     const item = record && parseItem(record);
     const sounds = this.#session.soundSystem;

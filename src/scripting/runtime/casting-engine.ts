@@ -122,6 +122,8 @@ export interface DeliverOptions {
   readonly at?: Point;
   /** Only these effect items (an area reaching only some). */
   readonly effects?: readonly number[];
+  /** The projectile (PROJ) that carried it there: its hit tells it (OnHit's akProjectile). */
+  readonly projectile?: number;
 }
 
 export type CastEventKind = 'ready' | 'fire' | 'cancel' | 'stop' | 'refused' | 'ward' | 'shout';
@@ -190,6 +192,32 @@ export class CastingEngine {
 
   #emit(event: CastEvent): void {
     for (const listener of this.listeners) listener(event);
+    this.#tellCast(event);
+  }
+
+  /** Concentration casts already told as cast. */
+  readonly #toldCasts = new WeakSet<ActiveCast>();
+
+  /**
+   * The hub hears a cast as the engine tells it (TESSpellCastEvent: the caster's OnSpellCast,
+   * observed in the original: told as the caster's cast takes effect, with its cost): a fire and forget
+   * spell, staff, scroll or power as it fires, a concentration spell as it begins to cast, a
+   * shout (its word's spell) as it is let out. A script's cast (Spell.Cast) is not told.
+   * TODO(M13): the script's cast left out is inferred (the engine's cast without a cost).
+   */
+  #tellCast(event: CastEvent): void {
+    let spell: number | undefined;
+    if ((event.kind === 'fire' || event.kind === 'shout') && event.delivered) {
+      spell = event.delivered.item.formId;
+    } else if (
+      event.kind === 'ready' &&
+      event.cast?.castable.item.castType === CastType.concentration &&
+      !this.#toldCasts.has(event.cast)
+    ) {
+      this.#toldCasts.add(event.cast);
+      spell = event.cast.castable.item.formId;
+    }
+    if (spell !== undefined) this.#runtime.events.emit('spellCast', { caster: event.actor, spell });
   }
 
   /** The settings (GMSTs), read once. */
@@ -477,6 +505,9 @@ export class CastingEngine {
       runtime.progression.holdRegeneration(actor, MAGICKA, CASTING_HOLD);
     // Ready at once (no charge time): told with the next frame, after the world showed its start.
     if (cast.hand.phase !== 'charging') this.#readyAtOnce.add(cast);
+    // The story manager's Cast Magic (the engine raises it as a cast begins). TODO(M13): the
+    // cast's target (the engine's desired target) is not known as it begins here.
+    runtime.detach(runtime.storyEvents.castMagic(actor, undefined, castable.item.formId));
     return 'started';
   }
 
@@ -698,7 +729,7 @@ export class CastingEngine {
       const ward = await this.#ward(delivered, target, options);
       if (ward === 'absorbed') return 0;
       if (ward !== undefined) scale = (scale ?? 1) * ward;
-    }
+    } else if (actor && !hostile) await this.#friendlyWard(delivered, target, options);
     const concentration = options.seconds !== undefined;
     // A concentration spell's effects that last while it is held go on rather than anew.
     const kept = concentration
@@ -720,18 +751,19 @@ export class CastingEngine {
             ...(concentration && { hold: heldSeconds(options.seconds) }),
             ...(options.at && { at: [options.at[0], options.at[1], options.at[2]] }),
           });
-    if (applied > 0 && hostile && actor) {
-      runtime.detach(
-        runtime.sendEvent(target, 'OnHit', [
-          runtime.referenceHandle(caster),
-          runtime.formHandle(delivered.object ?? item.formId),
-          null,
-          false,
-          false,
-          false,
-          false,
-        ]),
-      );
+    // The hit is told (TESHitEvent: OnHit): an actor's by a hostile spell that took hold, an
+    // object's by any spell that reached it (a brazier lit by Flames, a target struck).
+    if ((applied > 0 && hostile && actor) || !actor) {
+      runtime.events.emit('hit', {
+        target,
+        aggressor: caster,
+        source: delivered.object ?? item.formId,
+        projectile: options.projectile,
+        powerAttack: false,
+        sneakAttack: false,
+        bashAttack: false,
+        blocked: false,
+      });
     }
     // The school is used by the spell's base cost (a concentration spell's: by the time).
     if (applied > 0 && delivered.cost.school !== undefined) {
@@ -801,16 +833,48 @@ export class CastingEngine {
       { spell: delivered.item.formId },
     );
     if (absorb > 0) runtime.actors.restore(target, MAGICKA, Math.min(damage, power) * absorb);
+    // The ward's hit is told (TESMagicWardHitEvent: OnWardHit, 1 absorbed, 2 broken).
+    const told = (status: 1 | 2): void => {
+      runtime.events.emit('magicWardHit', {
+        target,
+        caster: delivered.caster,
+        spell: delivered.item.formId,
+        status,
+      });
+    };
     if (damage <= power) {
       await runtime.actors.damage(target, MagicValue.wardPower, damage);
       this.#wards.set(target, { state: 1, until });
       this.#emit({ actor: target, source: CastingSource.instant, kind: 'ward', ward: 1 });
+      told(1);
       return 'absorbed';
     }
     await runtime.actors.damage(target, MagicValue.wardPower, power);
     this.#wards.set(target, { state: 2, until });
     this.#emit({ actor: target, source: CastingSource.instant, kind: 'ward', ward: 2 });
+    told(2);
     return (damage - power) / damage;
+  }
+
+  /**
+   * A spell that is not hostile meets a ward from the front: it passes, told as a friendly hit
+   * (OnWardHit status 0). TODO(M13): when the engine tells a friendly hit is inferred (a ward
+   * up, the spell from the front).
+   */
+  async #friendlyWard(
+    delivered: Delivered,
+    target: number,
+    options: DeliverOptions,
+  ): Promise<void> {
+    const runtime = this.#runtime;
+    if (options.facing === false || target === delivered.caster) return;
+    if ((await runtime.actors.value(target, MagicValue.wardPower)).current <= 0) return;
+    runtime.events.emit('magicWardHit', {
+      target,
+      caster: delivered.caster,
+      spell: delivered.item.formId,
+      status: 0,
+    });
   }
 
   /**
@@ -934,6 +998,24 @@ export class CastingEngine {
   // --- Shouts and powers ---------------------------------------------------------------------
 
   /**
+   * Game.TeachWord: the player learns a word of power. Observed in the original: every
+   * shout with the word whose first word the player now knows becomes theirs (in the magic menu,
+   * its words locked until unlocked), and a shout new to them is a New Voice Power story event.
+   */
+  async teachWord(word: number): Promise<void> {
+    const runtime = this.#runtime;
+    if (!runtime.wordsLearned.has(word)) runtime.wordsLearned.set(word, false);
+    for (const formId of runtime.forms.db.formIdsOfType('SHOU')) {
+      const shout = await this.shout(formId);
+      if (!shout?.words.some((entry) => entry.word === word)) continue;
+      const first = shout.words[0]?.word;
+      if (first === undefined || !runtime.wordsLearned.has(first)) continue;
+      if (await runtime.actors.addSpell(PLAYER_REF, formId))
+        runtime.detach(runtime.storyEvents.newVoicePower(PLAYER_REF, formId));
+    }
+  }
+
+  /**
    * The words an actor knows of a shout in a row from the first: the player's learned and
    * unlocked (Game.TeachWord, Game.UnlockWord), an NPC all of them.
    */
@@ -1015,6 +1097,9 @@ export class CastingEngine {
       cost: { base: 0, magicka: 0, charge: 0, school: undefined, chargeTime: 0 },
     };
     this.#emit({ actor, source: CastingSource.voice, kind: 'shout', delivered, words: count });
+    // A shout's word is cast as its spell: the story manager's Cast Magic with that spell (the
+    // College's MG01ShoutNode knows shouts by their words' spells).
+    runtime.detach(runtime.storyEvents.castMagic(actor, undefined, item.formId));
     // The player's thu'um shakes the view as the controller rumbles: fShoutRumbleBigMotor
     // FrequencyV<n> and DurationV<n> by the words (TODO(M13): the camera's shake read from the
     // rumble's settings).

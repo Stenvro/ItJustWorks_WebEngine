@@ -220,6 +220,8 @@ export function containerModel(
     if (pickpocket) {
       const done = await crime.pickpocket(PLAYER_REF, container, formId, amount, !fromContainer);
       if (!done) close?.();
+      else if (fromContainer)
+        shelf.runtime.detach(shelf.runtime.storyEvents.takenFrom(formId, container, true));
       return;
     }
     if (!fromContainer) {
@@ -228,6 +230,7 @@ export function containerModel(
     }
     await shelf.move(formId, amount, container, PLAYER_REF, audible, stack);
     if (await stealing()) await crime.steal(PLAYER_REF, formId, amount, container);
+    shelf.runtime.detach(shelf.runtime.storyEvents.takenFrom(formId, container, false));
   };
   /** A card with its pickpocket chance (to take one, or to place one). */
   const withChance = async (

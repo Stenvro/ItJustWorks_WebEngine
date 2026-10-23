@@ -734,7 +734,7 @@ export class ActorAi {
     const arrived = await this.#movers.travel(staged.reference, door.position, gait, DOOR_REACH);
     if (!arrived) return false;
     // The door swings open with its sound; it is through a moment later.
-    await this.#doors?.through(door.door);
+    await this.#doors?.through(door.door, staged.reference);
     await this.#leaveThrough(staged, door, destination);
     return false;
   }
@@ -1029,15 +1029,12 @@ export class ActorAi {
     const scripts = this.#session.scriptsReady;
     if (!scripts) return;
     try {
-      const handle = (record: PackageRecord): ObjectHandle =>
-        new ObjectHandle(record.formId, 'package');
-      if (event === 'begin') {
-        await scripts.sendEvent(actor, 'OnPackageStart', [handle(pack)]);
-      } else if (event === 'change') {
-        await scripts.sendEvent(actor, 'OnPackageChange', [handle(pack)]);
-      } else {
-        await scripts.sendEvent(actor, 'OnPackageEnd', [handle(pack)]);
-      }
+      // The hub tells it (TESPackageEvent: OnPackageStart, OnPackageChange, OnPackageEnd).
+      await scripts.events.emitted('package', {
+        actor,
+        package: pack.formId,
+        type: event === 'begin' ? 'start' : event,
+      });
       const attachments = await scripts.forms.attachments(pack.formId);
       for (const fragment of attachments?.fragments ?? []) {
         if (fragment.stage !== event) continue;

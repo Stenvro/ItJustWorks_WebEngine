@@ -6,6 +6,8 @@
 // Notes: docs/scripting.md.
 
 import { EventHub } from './event-hub.ts';
+import { relayScriptEvents } from './script-events.ts';
+import { TriggerVolumes } from './trigger-volumes.ts';
 import { RecordFlag } from '../../formats/esm/record.ts';
 import type { HeadTrackKind } from '../../ai/head-tracking.ts';
 import { view } from '../../formats/esm/fields.ts';
@@ -63,6 +65,8 @@ import { QuestEngine } from './quests.ts';
 import { DialogueEngine } from './dialogue-engine.ts';
 import { questText } from './quest-text.ts';
 import { scriptEvent, StoryManager, type StoryEventData } from './story-manager.ts';
+import { StoryEvents } from './story-events.ts';
+import { ActorLocations, type PlacementSnapshot } from './actor-locations.ts';
 import { SceneDirector } from '../../ai/scene-runtime.ts';
 import { RuntimeSceneHost, type SceneSpeech } from './scene-host.ts';
 
@@ -627,6 +631,34 @@ const ATTACK_STATE_BASH = 6;
  * it until the next action; the reactions that ask (Flinch, ReactionToPlayer) come at once.
  */
 const PLAYER_ACTION_SECONDS = 2;
+/** fRefTranslationAlmostDonePercent's built-in default: a translation's share "almost done". */
+const ALMOST_TRANSLATED = 0.9;
+/** [General] uGridsToLoad's built-in default: the exterior cells loaded round the player's. */
+export const GRIDS_TO_LOAD = 5;
+const CELL_UNITS = 4096;
+
+/** A place in a cell: inside (a cell, no worldspace) or in a worldspace. */
+export interface AreaPlace {
+  readonly position: Vec3;
+  readonly cell: number | undefined;
+  readonly world: number | undefined;
+}
+
+/**
+ * Whether a place is in the attached area round the player: the player's interior cell, or in
+ * the player's worldspace within the uGridsToLoad cells round the player's.
+ */
+export function inAttachedArea(place: AreaPlace, player: AreaPlace, grids: number): boolean {
+  if (place.world === undefined || player.world === undefined)
+    return place.world === undefined && player.world === undefined && place.cell === player.cell;
+  if (place.world !== player.world) return false;
+  const reach = Math.floor(grids / 2);
+  const cell = (value: number): number => Math.floor(value / CELL_UNITS);
+  return (
+    Math.abs(cell(place.position[0]) - cell(player.position[0])) <= reach &&
+    Math.abs(cell(place.position[1]) - cell(player.position[1])) <= reach
+  );
+}
 
 /** Condition run-on names, for reports. */
 const RUN_ON = [
@@ -648,6 +680,10 @@ export class ScriptRuntime implements VmHost {
    * scripts and the story manager, the stats and the HUD listen.
    */
   readonly events = new EventHub();
+  /** Who is inside which trigger volume; their repeated OnTrigger (trigger-volumes.ts). */
+  readonly triggerVolumes = new TriggerVolumes();
+  /** [General] uGridsToLoad (the session sets the INI's): the attached area outside. */
+  gridsToLoad = GRIDS_TO_LOAD;
   readonly vm: PapyrusVm;
   readonly quests: QuestEngine;
   /** The game's dialogue (conversations and lines actors say), read on first use. */
@@ -658,6 +694,10 @@ export class ScriptRuntime implements VmHost {
 
   #dialogue: DialogueEngine | undefined;
   readonly storyManager: StoryManager;
+  /** What tells the story manager of the world's happenings (story-events.ts). */
+  readonly storyEvents: StoryEvents;
+  /** Where actors are, location-wise: the actor location change event's producer. */
+  readonly actorLocations: ActorLocations;
   readonly actors: ActorEngine;
   /** What actors hold and wear, and its stats (the equip system). */
   readonly equipment: EquipmentEngine;
@@ -735,6 +775,7 @@ export class ScriptRuntime implements VmHost {
   /** The actor the player is in a conversation with (IsInDialogueWithPlayer), if any. */
   dialogueSpeaker: number | undefined;
   frameRate = 60;
+  /** The misc stats (Game.QueryStat), by lowercase name: incrementStat and setStat change them. */
   readonly stats = new Map<string, number>();
   /** Words of power: learned (false) or unlocked (true). */
   readonly wordsLearned = new Map<number, boolean>();
@@ -803,6 +844,8 @@ export class ScriptRuntime implements VmHost {
     this.vm = new PapyrusVm(library, this, options.scheduler ?? new PapyrusScheduler());
     this.quests = new QuestEngine(this);
     this.storyManager = new StoryManager(this);
+    this.storyEvents = new StoryEvents(this);
+    this.actorLocations = new ActorLocations(this);
     this.actors = new ActorEngine(this);
     this.equipment = new EquipmentEngine(this);
     this.progression = new ProgressionEngine(this);
@@ -821,6 +864,8 @@ export class ScriptRuntime implements VmHost {
     this.sceneHost = new RuntimeSceneHost(this);
     this.scenes = new SceneDirector(this.sceneHost);
     registerNatives(this.#natives, this);
+    // The scripts hear the hub's events (script-events.ts).
+    relayScriptEvents(this);
   }
 
   // --- VmHost --------------------------------------------------------------------------------
@@ -933,6 +978,40 @@ export class ScriptRuntime implements VmHost {
     await Promise.all(sends);
   }
 
+  /**
+   * A misc stat goes up. The engine's own counts are told with their new value
+   * (TESTrackedStatsEvent: OnTrackedStatsEvent to those registered; observed in the original); a script's
+   * Game.IncrementStat is not (`tell` false). Returns the new value.
+   */
+  incrementStat(name: string, by = 1, tell = true): number {
+    const key = name.toLowerCase();
+    const value = (this.stats.get(key) ?? 0) + by;
+    this.stats.set(key, value);
+    if (tell) this.events.emit('trackedStats', { stat: name, value });
+    return value;
+  }
+
+  /** A misc stat is set (a record: the largest bounty); told as the engine's own counts are. */
+  setStat(name: string, value: number): void {
+    this.stats.set(name.toLowerCase(), value);
+    this.events.emit('trackedStats', { stat: name, value });
+  }
+
+  /** Whether a reference is an actor that lives (the relay: a trap's hits reach only those). */
+  async livingActor(reference: number): Promise<boolean> {
+    return (await this.actors.isActor(reference)) && !(await this.actors.isDead(reference));
+  }
+
+  /** Whether an equipped item's own scripts hear of it (OnEquipped: an item's, with scripts). */
+  async itemScripted(item: number): Promise<boolean> {
+    const type = (await this.forms.record(item))?.type;
+    return type !== 'SPEL' && type !== 'SHOU' && (await this.forms.attachments(item)) !== undefined;
+  }
+
+  deleted(reference: number): boolean {
+    return this.state.references.get(reference)?.deleted === true;
+  }
+
   // --- What the engine tells the scripts ---------------------------------------------------
 
   /**
@@ -955,28 +1034,28 @@ export class ScriptRuntime implements VmHost {
       this.#initialized.add(reference);
       await this.vm.startInitialize(this.referenceHandle(reference));
     }
-    const sends: Promise<void>[] = [];
-    for (const reference of scripted) sends.push(this.sendEvent(reference, 'OnCellAttach'));
+    // The hub tells it (the relay: OnCellAttach, OnLoad, OnCellLoad). TODO(M13): the engine
+    // tells every reference of the cell; ours those with scripts (no other consumer yet).
     for (const reference of scripted)
-      if (loaded(reference)) sends.push(this.sendEvent(reference, 'OnLoad'));
-    for (const reference of scripted)
-      if (loaded(reference)) sends.push(this.sendEvent(reference, 'OnCellLoad'));
-    this.detach(Promise.all(sends));
+      this.events.emit('cellAttachDetach', { reference, attached: true });
+    const shown = scripted.filter((reference) => loaded(reference));
+    for (const reference of shown) this.events.emit('objectLoaded', { reference, loaded: true });
+    this.events.emit('cellFullyLoaded', { cell: undefined, references: shown });
     return scripted;
   }
 
-  /** A cell left the loaded area: OnCellDetach for its references, OnUnload for the loaded. */
+  /** A cell left the loaded area: OnUnload for its loaded references, OnCellDetach for all. */
   async cellDetached(
     references: readonly number[],
     loaded: (reference: number) => boolean,
   ): Promise<void> {
-    const sends: Promise<void>[] = [];
     for (const reference of references) {
       if (!(await this.#hasScripts(reference))) continue;
-      if (loaded(reference)) sends.push(this.sendEvent(reference, 'OnUnload'));
-      sends.push(this.sendEvent(reference, 'OnCellDetach'));
+      if (loaded(reference)) this.events.emit('objectLoaded', { reference, loaded: false });
+      this.events.emit('cellAttachDetach', { reference, attached: false });
+      // What it is no longer in: its trigger volumes are left behind.
+      this.triggerVolumes.forget(reference);
     }
-    this.detach(Promise.all(sends));
   }
 
   /**
@@ -987,7 +1066,7 @@ export class ScriptRuntime implements VmHost {
   playerActivated(reference: number): boolean {
     // Activating ends the player's invisibility.
     this.magic.acted(PLAYER_REF);
-    this.detach(this.sendEvent(reference, 'OnActivate', [this.actorHandle(PLAYER_REF)]));
+    this.events.emit('activate', { target: reference, actor: PLAYER_REF });
     return this.state.references.get(reference)?.activationBlocked !== true;
   }
 
@@ -997,16 +1076,18 @@ export class ScriptRuntime implements VmHost {
    */
   actorActivated(reference: number, actor: number): void {
     this.magic.acted(actor);
-    this.detach(this.sendEvent(reference, 'OnActivate', [this.actorHandle(actor)]));
+    this.events.emit('activate', { target: reference, actor });
   }
 
-  /** Something entered or left a reference's trigger volume (OnTriggerEnter / OnTriggerLeave). */
+  /**
+   * Something entered or left a reference's trigger volume: the hub tells it (OnTriggerEnter,
+   * OnTriggerLeave), and while it is inside the volume tells it again and again (OnTrigger:
+   * trigger-volumes.ts).
+   */
   triggered(reference: number, actor: number, entered: boolean): void {
-    this.detach(
-      this.sendEvent(reference, entered ? 'OnTriggerEnter' : 'OnTriggerLeave', [
-        this.referenceHandle(actor),
-      ]),
-    );
+    if (entered) this.triggerVolumes.enter(reference, actor);
+    else this.triggerVolumes.leave(reference, actor);
+    this.events.emit('triggerEnterLeave', { trigger: reference, reference: actor, entered });
   }
 
   async #hasScripts(reference: number): Promise<boolean> {
@@ -1479,6 +1560,8 @@ export class ScriptRuntime implements VmHost {
     entry.locked = locked;
     if (locked && !before.locked && before.level === 0) entry.lockLevel = 1;
     this.world.lockChanged?.(reference);
+    // The hub tells the lock's change (TESLockChangedEvent: OnLockStateChanged).
+    if (before.locked !== locked) this.events.emit('lockChanged', { reference });
   }
 
   /** XOWN: its owner (an actor base or a faction), as scripts left it. */
@@ -1542,6 +1625,17 @@ export class ScriptRuntime implements VmHost {
 
   move(reference: number, position: Vec3, rotation?: Vec3, cell?: number, world?: number): void {
     const state = this.state.reference(reference);
+    // Where it was (an actor's location may change: actor-locations.ts).
+    const before = this.#placementSnapshot(state);
+    // Where it was, for whether it moved into or out of the attached area (below).
+    const attachedBefore: AreaPlace | 'shown' | undefined =
+      cell === undefined
+        ? undefined
+        : this.world.livePlacement?.(reference)
+          ? 'shown'
+          : state.position && (state.cell !== undefined || state.world !== undefined)
+            ? { position: state.position, cell: state.cell, world: state.world }
+            : undefined;
     // A reference taken into a container comes back out into the world.
     const taken = state.container;
     if (taken) {
@@ -1558,19 +1652,86 @@ export class ScriptRuntime implements VmHost {
       state.world = world;
     }
     this.world.moved?.(reference);
+    const grid = (at: Vec3): string =>
+      `${String(Math.floor(at[0] / 4096))},${String(Math.floor(at[1] / 4096))}`;
+    if (
+      !before ||
+      (cell !== undefined && cell !== before.cell) ||
+      grid(position) !== grid(before.position)
+    )
+      this.actorLocations.moved(reference, before);
+    if (cell !== undefined)
+      this.detach(this.#movedAcross(reference, attachedBefore, { position, cell, world }));
+  }
+
+  /**
+   * A reference moved to another cell (MoveTo, an actor walking away or back): if one of the
+   * two is in the attached area and the other not, the hub tells it (TESMoveAttachDetachEvent:
+   * the scripts' OnAttachedToCell, OnDetachedFromCell), as the engine does when a reference's
+   * parent cell changes (observed in the original). The attached area: the player's cell inside, the cells
+   * round the player's (uGridsToLoad) outside. The player's own cell is always attached.
+   */
+  async #movedAcross(
+    reference: number,
+    before: AreaPlace | 'shown' | undefined,
+    after: AreaPlace,
+  ): Promise<void> {
+    if (reference === PLAYER_REF) return;
+    // Where the player is going, if a script just moved them (the cell they arrive in attaches).
+    const player = await this.placement(PLAYER_REF, false);
+    if (!player) return;
+    let from = before;
+    if (from === undefined) {
+      const editor = await this.#editorPlacement(reference);
+      const cell = this.forms.db.cellOfReference(reference);
+      if (!editor) return;
+      from = {
+        position: editor.position,
+        cell,
+        world: cell === undefined ? undefined : this.forms.db.worldOfCell(cell),
+      };
+    }
+    const was = from === 'shown' || inAttachedArea(from, player, this.gridsToLoad);
+    const is = inAttachedArea(after, player, this.gridsToLoad);
+    if (was !== is) this.events.emit('moveAttachDetach', { reference, attached: is });
   }
 
   moveToEditorLocation(reference: number): void {
     const state = this.state.reference(reference);
+    const before = this.#placementSnapshot(state);
     delete state.position;
     delete state.rotation;
     delete state.cell;
     delete state.world;
     this.world.moved?.(reference);
+    if (before) this.actorLocations.moved(reference, before);
   }
 
-  /** TranslateTo: the engine moves it there; done after the distance at the speed. */
+  /** Where scripts last put a reference (for its location before it moves again). */
+  #placementSnapshot(state: ReferenceState): PlacementSnapshot | undefined {
+    if (!state.position) return undefined;
+    const cell = state.cell;
+    return {
+      position: state.position,
+      cell,
+      world: state.world ?? (cell === undefined ? undefined : this.forms.db.worldOfCell(cell)),
+    };
+  }
+
+  /**
+   * TranslateTo: the engine moves it there; done after the distance at the speed. As the
+   * engine tells it (TESObjectREFRTranslationEvent, observed in the original): failed at once for a
+   * reference without its 3D (not in the loaded area), almost complete as it passes
+   * fRefTranslationAlmostDonePercent of the way, complete at its end. TODO(M13): the move is
+   * not shown on its way (it is there at the end).
+   */
   async translate(reference: number, position: Vec3, rotation: Vec3, speed: number): Promise<void> {
+    const key = `${String(reference)}:translation`;
+    if (this.world.loaded && !this.world.loaded(reference)) {
+      this.#updates.delete(key);
+      this.events.emit('objectTranslation', { reference, result: 0 });
+      return;
+    }
     const from = await this.placement(reference);
     const distance = from
       ? Math.hypot(
@@ -1580,13 +1741,20 @@ export class ScriptRuntime implements VmHost {
         )
       : 0;
     const token = this.#updateToken++;
-    this.#updates.set(`${String(reference)}:translation`, token);
+    this.#updates.set(key, token);
+    const seconds = speed > 0 ? distance / speed : 0;
+    const almost = await this.gameSetting('fRefTranslationAlmostDonePercent');
+    const share = typeof almost === 'number' ? almost : ALMOST_TRANSLATED;
+    const scheduler = this.vm.scheduler;
     this.detach(
-      this.vm.scheduler.waitReal(speed > 0 ? distance / speed : 0).then(async () => {
-        if (this.#updates.get(`${String(reference)}:translation`) !== token) return;
-        this.#updates.delete(`${String(reference)}:translation`);
+      scheduler.waitReal(seconds * share).then(async () => {
+        if (this.#updates.get(key) !== token) return;
+        this.events.emit('objectTranslation', { reference, result: 2 });
+        await scheduler.waitReal(seconds * (1 - share));
+        if (this.#updates.get(key) !== token) return;
+        this.#updates.delete(key);
         this.move(reference, position, rotation);
-        await this.sendEvent(reference, 'OnTranslationComplete');
+        await this.events.emitted('objectTranslation', { reference, result: 1 });
       }),
     );
   }
@@ -1597,9 +1765,21 @@ export class ScriptRuntime implements VmHost {
 
   /** The location (LCTN) of the cell a reference is in (CELL XLCN). */
   async locationOf(reference: number): Promise<number | undefined> {
-    const at = await this.placement(reference);
+    return this.locationAt(await this.placement(reference));
+  }
+
+  /** The location of a place: in a worldspace, of the exterior cell at the position. */
+  async locationAt(
+    at:
+      | {
+          readonly position?: Vec3 | undefined;
+          readonly cell: number | undefined;
+          readonly world: number | undefined;
+        }
+      | undefined,
+  ): Promise<number | undefined> {
     let cell = at?.cell;
-    if (at?.world !== undefined) {
+    if (at?.world !== undefined && at.position) {
       // A persistent reference of a worldspace: the exterior cell it stands in.
       cell = await this.forms.db.exteriorCell(
         at.world,
@@ -1608,6 +1788,18 @@ export class ScriptRuntime implements VmHost {
       );
     }
     return cell === undefined ? undefined : this.#cellLocation(cell);
+  }
+
+  /** Where the plugin places a reference, with its cell and worldspace. */
+  async editorPlace(reference: number): Promise<{
+    readonly position?: Vec3;
+    readonly cell: number | undefined;
+    readonly world: number | undefined;
+  }> {
+    const cell = this.forms.db.cellOfReference(reference);
+    const world = cell === undefined ? undefined : this.forms.db.worldOfCell(cell);
+    const position = (await this.#editorPlacement(reference))?.position;
+    return { ...(position && { position: [...position] as Vec3 }), cell, world };
   }
 
   /**
@@ -1634,14 +1826,42 @@ export class ScriptRuntime implements VmHost {
     return cell === undefined ? undefined : this.#cellLocation(cell);
   }
 
-  /** A cell's location (XLCN), read once per cell. */
+  /**
+   * A cell's location, read once per cell, as the engine finds it (observed in the
+   * original, docs/scripting.md "Locations"): its encounter zone's location (the cell's own zone, an
+   * exterior cell's else its worldspace's), else its own (XLCN), else an exterior cell's
+   * worldspace's (its XLCN, else its zone's). So the 113 exterior cells of Whiterun's city
+   * without one of their own are in WhiterunLocation, all of Solstheim's in its location.
+   */
   #cellLocation(cell: number): Promise<number | undefined> {
     let pending = this.#cellLocations.get(cell);
     if (!pending) {
-      pending = this.forms.record(cell).then((record) => record?.formIdField('XLCN'));
+      pending = (async () => {
+        const record = await this.forms.record(cell);
+        if (!record) return undefined;
+        const world = this.forms.db.worldOfCell(cell);
+        const worldRecord = world === undefined ? undefined : await this.forms.record(world);
+        const zone = record.formIdField('XEZN') ?? worldRecord?.formIdField('XEZN');
+        return (
+          (await this.#zoneLocation(zone)) ??
+          record.formIdField('XLCN') ??
+          worldRecord?.formIdField('XLCN') ??
+          (await this.#zoneLocation(worldRecord?.formIdField('XEZN')))
+        );
+      })();
       this.#cellLocations.set(cell, pending);
     }
     return pending;
+  }
+
+  /** An encounter zone's location (ECZN DATA: owner, location, ...), if it has one. */
+  async #zoneLocation(zone: number | undefined): Promise<number | undefined> {
+    if (zone === undefined) return undefined;
+    const record = await this.forms.record(zone);
+    const data = record?.fields.first('DATA');
+    if (!record || !data || data.length < 8) return undefined;
+    const location = record.formIdAt(data, 4);
+    return location === 0 ? undefined : location;
   }
 
   /** The size of its base object's bounds (OBND), at its scale. */
@@ -1710,7 +1930,7 @@ export class ScriptRuntime implements VmHost {
     defaultOnly: boolean,
   ): Promise<boolean> {
     if (!defaultOnly) {
-      await this.sendEvent(reference, 'OnActivate', [this.referenceHandleOrNone(activator)]);
+      await this.events.emitted('activate', { target: reference, actor: activator });
     }
     if (activator !== undefined) this.magic.acted(activator);
     if (!this.state.references.get(reference)?.activationBlocked)
@@ -1923,20 +2143,7 @@ export class ScriptRuntime implements VmHost {
     const items = await this.inventory(container);
     items.set(base, (items.get(base) ?? 0) + count);
     if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(base, count, true));
-    this.detach(
-      this.sendEvent(reference, 'OnContainerChanged', [
-        this.referenceHandle(container),
-        this.referenceHandleOrNone(from),
-      ]),
-    );
-    this.detach(
-      this.sendEvent(container, 'OnItemAdded', [
-        this.formHandle(base),
-        count,
-        this.referenceHandle(reference),
-        this.referenceHandleOrNone(from),
-      ]),
-    );
+    this.events.emit('containerChanged', { from, to: container, item: base, count, reference });
     await this.equipment.itemsGiven(container, base);
   }
 
@@ -1973,9 +2180,13 @@ export class ScriptRuntime implements VmHost {
         items.set(item, (items.get(item) ?? 0) + count);
       }
       if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(item, count, true));
-      this.detach(
-        this.sendEvent(container, 'OnItemAdded', [this.formHandle(item), count, null, null]),
-      );
+      this.events.emit('containerChanged', {
+        from: undefined,
+        to: container,
+        item,
+        count,
+        reference: undefined,
+      });
       await this.equipment.itemsGiven(container, item);
     }
   }
@@ -1997,41 +2208,51 @@ export class ScriptRuntime implements VmHost {
       // Items with data of their own leave as asked, else after the plain ones.
       this.crafting.itemsMoved(container, to, item, moved, have, stack);
       items.set(item, have - moved);
-      this.#referencesMoved(container, to, item, moved, have);
+      const references = this.#referencesMoved(container, to, item, moved, have);
       // Stolen items leave last and stay stolen where they go (crime-engine.ts).
       this.crime.itemsMoved(container, to, item, moved, have);
       // What it no longer has enough of comes off (the equip system).
       await this.equipment.itemsLeft(container, item);
       if (!silent && container === PLAYER_REF) this.detach(this.#itemMessage(item, moved, false));
-      this.detach(
-        this.sendEvent(container, 'OnItemRemoved', [
-          this.formHandle(item),
-          moved,
-          null,
-          this.referenceHandleOrNone(to),
-        ]),
-      );
       if (to !== undefined) {
         const other = await this.inventory(to);
         other.set(item, (other.get(item) ?? 0) + moved);
-        this.detach(
-          this.sendEvent(to, 'OnItemAdded', [
-            this.formHandle(item),
-            moved,
-            null,
-            this.referenceHandle(container),
-          ]),
-        );
-        await this.equipment.itemsGiven(to, item);
       }
+      // The hub tells each move: the items' references each on their own, the plain rest as one
+      // (OnContainerChanged, OnItemRemoved, OnItemAdded).
+      let plain = moved;
+      for (const { reference, count: own } of references) {
+        plain -= own;
+        this.events.emit('containerChanged', { from: container, to, item, count: own, reference });
+      }
+      if (plain > 0) {
+        this.events.emit('containerChanged', {
+          from: container,
+          to,
+          item,
+          count: plain,
+          reference: undefined,
+        });
+      }
+      if (to !== undefined) await this.equipment.itemsGiven(to, item);
     }
+  }
+
+  /** The reference of an item a container holds that leaves it first (#referencesMoved), if any. */
+  heldReference(container: number, base: number): number | undefined {
+    let last: number | undefined;
+    for (const [reference, state] of this.state.references) {
+      if (state.container?.holder === container && state.container.base === base) last = reference;
+    }
+    return last;
   }
 
   /**
    * References a container holds (an item taken or made in it: a favor's letter, a quest
    * item) go with their base's items as they leave it: the last of them when it keeps some
    * (they are given first: TODO(M13) which the engine moves), all once it has none left; to
-   * the other container, or out of any (dropped, removed).
+   * the other container, or out of any (dropped, removed). Returns those that left, with the
+   * count each stands for.
    */
   #referencesMoved(
     container: number,
@@ -2039,27 +2260,25 @@ export class ScriptRuntime implements VmHost {
     base: number,
     moved: number,
     had: number,
-  ): void {
+  ): { reference: number; count: number }[] {
     const held: { reference: number; state: ReferenceState }[] = [];
     for (const [reference, state] of this.state.references) {
       if (state.container?.holder === container && state.container.base === base)
         held.push({ reference, state });
     }
-    if (held.length === 0) return;
+    if (held.length === 0) return [];
     const leaving = had - moved <= 0 ? held.length : Math.max(0, held.length - (had - moved));
+    const left: { reference: number; count: number }[] = [];
     for (const { reference, state } of held.slice(held.length - leaving)) {
+      const count = state.container?.count ?? 1;
       if (to === undefined) {
         // Removed from the game with the items (RemoveItem without a container to go to).
         delete state.container;
         state.deleted = true;
-      } else state.container = { holder: to, base, count: state.container?.count ?? 1 };
-      this.detach(
-        this.sendEvent(reference, 'OnContainerChanged', [
-          this.referenceHandleOrNone(to),
-          this.referenceHandle(container),
-        ]),
-      );
+      } else state.container = { holder: to, base, count };
+      left.push({ reference, count });
     }
+    return left;
   }
 
   /**
@@ -2077,15 +2296,13 @@ export class ScriptRuntime implements VmHost {
     this.state.reference(reference).container = { holder: by, base, count: Math.max(1, count) };
     this.world.enableChanged?.(reference, false);
     items.set(base, (items.get(base) ?? 0) + Math.max(1, count));
-    this.detach(this.sendEvent(reference, 'OnContainerChanged', [this.referenceHandle(by), null]));
-    this.detach(
-      this.sendEvent(by, 'OnItemAdded', [
-        this.formHandle(base),
-        Math.max(1, count),
-        this.referenceHandle(reference),
-        null,
-      ]),
-    );
+    this.events.emit('containerChanged', {
+      from: undefined,
+      to: by,
+      item: base,
+      count: Math.max(1, count),
+      reference,
+    });
   }
 
   /**
@@ -2382,6 +2599,11 @@ export class ScriptRuntime implements VmHost {
     if (!this.retired) this.hazards.update(realSeconds);
     // Destruction stages' self damage per second.
     if (!this.retired) this.destruction.update(realSeconds);
+    // Those inside trigger volumes are told again (OnTrigger) every fTriggerEventDelayMS.
+    if (!this.retired)
+      this.triggerVolumes.update(realSeconds, (trigger, reference) => {
+        this.events.emit('trigger', { trigger, reference });
+      });
   }
 
   /** A frame in a menu (menu mode): only the wall clock moves on (WaitMenuMode). */

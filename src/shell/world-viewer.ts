@@ -113,6 +113,7 @@ import type { GameSession } from './game-session.ts';
 import { clock, startObjectGraph, startPlacedSkeleton } from './object-graphs.ts';
 import { WorldLod } from './world-lod.ts';
 import { WorldSky, type SkyElements } from './world-sky.ts';
+import { sunInView } from '../world/sky-state.ts';
 import type { Rgb } from '../world/cell-records.ts';
 import type { Terminal } from './terminal.ts';
 import { Player } from './player.ts';
@@ -728,6 +729,10 @@ export class WorldViewer {
     triggerCount: (reference) =>
       (this.#play?.triggerCount(reference) ?? 0) +
       (this.#stage?.movers.triggerCount(reference) ?? 0),
+    sunGazed: (direction) => {
+      const state = this.#sky?.skyFrame()?.state;
+      return state !== undefined && sunInView(state, direction);
+    },
     openChanged: (reference, open) => {
       this.#stage?.doors.setOpen(reference, open);
     },
@@ -1273,6 +1278,10 @@ export class WorldViewer {
     // The player walking into trigger volumes tells their scripts.
     play.onTrigger = (reference, entered) => {
       this.#session?.scriptsReady?.triggered(reference, PLAYER_REF, entered);
+    };
+    // The player taking hold of an object and letting it go tells its scripts (OnGrab, OnRelease).
+    play.onGrab = (reference, grabbed) => {
+      this.#session?.scriptsReady?.events.emit('grabRelease', { reference, grabbed });
     };
     this.#ui.freeCamera.checked = false;
     this.#ui.play.hidden = false;

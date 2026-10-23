@@ -225,6 +225,137 @@ from a new game's state again (the scene on screen loads again). What came of ea
 says why (it runs once and ran, it starts only from its story manager event, or which alias
 found nobody to fill it).
 
+## Events
+
+The game's event hub (`event-hub.ts`, `runtime.events`) is the one place a happening is told,
+as the original's event sources tell it to the scripts, the story manager, the statistics and
+the interface together. A producer emits a kind once, where the engine raises it; relays listen:
+the scripts' On\* events, and the story manager's (`story-events.ts`, below).
+
+### Locations
+
+A cell's location, as the engine finds it (observed in the original): the location of its
+encounter zone (the cell's own; an exterior cell without one takes its worldspace's), else the
+cell's own (XLCN), else for an exterior cell its worldspace's (the worldspace's XLCN, else its
+zone's). The plugins rely on the fallbacks: 113 of Whiterun's city cells and 146 of Markarth's
+have no location of their own and are in the city's, all of Solstheim's cells are in
+DLC2SolstheimLocation through their worldspace, Sovngarde's and the Soul Cairn's likewise. A
+reference's location is that of the cell it stands in (in a worldspace, the exterior cell at its
+place). GetInCurrentLocation, the aliases and the events all read it so.
+
+### Actor location change
+
+`actor-locations.ts` emits `actorLocationChange` (actor, old location, new; none is the
+wilderness). Observed in the original:
+
+- The engine looks at an actor's location whenever the actor is put into another cell, for
+  every actor: the player as the world takes them into a cell (a door, a cell border, a
+  teleport), an NPC as it walks across an exterior cell's border, is moved by a script or is
+  moved by its packages while away from the player. The event goes out when the location differs
+  from the one before.
+- The engine keeps the player's current location (ours: `GameState.playerLocation`, none at a new
+  game, so the first cell with a location the player is put in tells it: a `coc Riverwood` from the
+  main menu goes from none to RiverwoodLocation). An NPC's is where it stands.
+- Ours: the view tells the player's cell every frame (`GameSession`), the stage each staged
+  actor's (the loaded cell it stands in, `ActorStage`); `ScriptRuntime.move` and
+  `moveToEditorLocation` tell a moved NPC's, from its placement before the move (or the plugin's,
+  for one not seen before). A cell told again is not read again; a new one's location is read
+  and compared.
+- Heard by: the story manager's Change Location (the player's only, below), the actor's
+  OnLocationChange (the scripts' relay), the HUD's location name (the player's).
+
+### The scripts' events
+
+**The relay to the scripts** (`script-events.ts`), observed in the original (one event
+sink per source): an event about a reference goes to the reference's scripts, then to the
+aliases holding it and, for an actor, to the scripts of the magic effects on it
+(`ScriptRuntime.sendEvent`). The player's own events go to the player; sleep and tracked
+stats go to every object registered for them. What each kind becomes:
+
+| Kind                                   | Script event, to whom (arguments)                                                                                                                               |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| activate                               | OnActivate to the reference (who activated it)                                                                                                                  |
+| actorLocationChange                    | OnLocationChange to the actor (old, new)                                                                                                                        |
+| bookRead                               | OnRead to the book's reference, when it was one                                                                                                                 |
+| cellAttachDetach, cellFullyLoaded      | OnCellAttach / OnCellDetach; OnCellLoad to each reference whose 3D is in                                                                                        |
+| combat                                 | OnCombatStateChanged to the actor (its target if that is an actor, the state: 0 none, 1 combat, 2 searching)                                                    |
+| containerChanged                       | OnContainerChanged to the item's reference (new, old), OnItemRemoved to the old container, OnItemAdded to the new (item, count, reference, the other container) |
+| death                                  | OnDying (dying), OnDeath (dead) to the actor (killer)                                                                                                           |
+| destructionStageChanged                | OnDestructionStageChanged (old stage, new stage)                                                                                                                |
+| enterBleedout                          | OnEnterBleedout to the actor                                                                                                                                    |
+| equip                                  | OnObjectEquipped / OnObjectUnequipped to the actor (base, reference), then OnEquipped / OnUnequipped to an item with scripts (the actor)                        |
+| fastTravelEnd, playerBowShot, loadGame | OnPlayerFastTravelEnd (game hours), OnPlayerBowShot (bow, arrow, draw, sun gazing), OnPlayerLoadGame: to the player                                             |
+| grabRelease                            | OnGrab / OnRelease to the object                                                                                                                                |
+| hit                                    | OnHit to the target, actor or object (aggressor, source, projectile, power, sneak, bash, blocked)                                                               |
+| lockChanged                            | OnLockStateChanged                                                                                                                                              |
+| magicEffectApply, magicWardHit         | OnMagicEffectApply (caster, effect); OnWardHit (caster, spell, status: 0 friendly, 1 absorbed, 2 broken)                                                        |
+| moveAttachDetach                       | OnAttachedToCell / OnDetachedFromCell                                                                                                                           |
+| objectLoaded                           | OnLoad / OnUnload                                                                                                                                               |
+| objectTranslation                      | result 0 OnTranslationFailed, 1 OnTranslationComplete, 2 OnTranslationAlmostComplete                                                                            |
+| openClose                              | OnOpen / OnClose (who opened or closed it)                                                                                                                      |
+| package                                | OnPackageStart (new), OnPackageChange (old), OnPackageEnd (old)                                                                                                 |
+| reset                                  | OnReset, not for a deleted reference                                                                                                                            |
+| sell                                   | OnSell to the item sold, when it is a reference of its own (the seller)                                                                                         |
+| sleep, trackedStats                    | OnSleepStart (start, desired end) / OnSleepStop (interrupted); OnTrackedStatsEvent (stat, value): to those registered                                           |
+| spellCast                              | OnSpellCast to the caster (the spell)                                                                                                                           |
+| switchRaceComplete                     | OnRaceSwitchComplete                                                                                                                                            |
+| trapHit                                | to the trap, only for a living actor hit: OnTrapHitStart, OnTrapHit (target, velocity, position, material, first hit, motion type), OnTrapHitStop (target)      |
+| trigger, triggerEnterLeave             | OnTrigger, OnTriggerEnter / OnTriggerLeave to the trigger (who is inside)                                                                                       |
+
+**The producers**, each where the engine raises its event (observed in the original):
+
+- **Combat** (`src/shell/actor-combat-ai.ts`): an actor's combat state is told each time it
+  changes (into combat, its group searching and back, out of it), with its target; out of
+  combat with the target it last fought. Only NPCs have a combat controller and are told.
+- **Bleedout** (`actor-combat.ts` bleedout): told as an actor's life state turns to bleeding
+  out, the player's too.
+- **Open and close** (`src/shell/open-close.ts`): the engine tells them when the object's
+  animation raises Open or Close, at the end of its swing, with the one who activated it. Ours:
+  at the end of the open or close sequence, for the player's doors and containers (the lid
+  while the container menu is open), for actors' doors (`actor-doors.ts`) and for a script's
+  SetOpen (no one). Objects without an open sequence, and load doors, tell nothing. A swing
+  turned back before its end tells only the last one.
+- **Triggers** (`trigger-volumes.ts`, `ScriptRuntime.triggered`): entering and leaving are
+  told at once; while something stays inside, the volume tells everyone in it as it finds
+  them, then again once [Havok] fTriggerEventDelayMS (500 ms) has passed since it last told.
+- **Spell casts** (`casting-engine.ts`): told as the cast takes effect with its cost: a fire
+  and forget spell, staff, scroll or power as it fires, a concentration spell as it begins to
+  cast, a shout as it is let out (the word's spell). A script's Spell.Cast is not told.
+- **Grab** (`play-session.ts`): the Z key's hold and Telekinesis tell the object taken and let
+  go.
+- **Moves across the attached area** (`ScriptRuntime.move`): the engine tells a reference
+  whose parent cell changes between an attached cell and a detached one. Ours: a move to
+  another cell (MoveTo, an actor walking away or back) between the attached area (the
+  player's interior cell, or the uGridsToLoad cells round the player's outside, where the
+  player is going if a script just moved them) and the rest. The player is always attached.
+  A cell attaching or detaching with its references is OnCellAttach / OnCellDetach instead.
+- **Translations** (`ScriptRuntime.translate`): failed at once for a reference without its 3D,
+  almost complete as it passes fRefTranslationAlmostDonePercent (0.9) of its way, complete at
+  the end.
+- **The player's bow shot** (`actor-combat.ts`): a bow's (not a crossbow's) arrow leaving,
+  with its draw and whether the player looks into the sun as the sky draws it (TODO(M13): the
+  engine's own sun test).
+- **Wards** (`casting-engine.ts`): a hostile spell absorbed (1) or breaking the ward (2); a
+  spell that is not hostile meeting a ward from the front (0, inferred).
+- **Fast travel** (`play-mode.ts`): its end, with the game hours the way took.
+- **Sales** (`barter-menu.ts`): each item the player sells, with its reference if it has one.
+- **Tracked stats** (`ScriptRuntime.incrementStat`): the engine's own stat counts tell their
+  new value; a script's Game.IncrementStat does not.
+- **Hits on objects**: a weapon's blow on an object, an arrow, a spell reaching an object (any
+  spell; an actor hears only hostile ones that took hold), destructible objects in an
+  explosion's radius. TODO(M13): other objects in an explosion's radius.
+- The happenings that were sent straight to the scripts before go through the hub now:
+  activation, containers, deaths, destruction stages, equipment, magic effects, packages,
+  books read, locks (a script's Lock too), race switches, sleep and waits, cells loading. The
+  actors' location changes are the story events' (above); the relay is their one sender of
+  OnLocationChange.
+- Not produced yet: trap hits (traps do not hit yet; the relay is ready), resets (cell reset,
+  M12 with respawn), loading a game (M12).
+
+`tools/script-events.ts` lists each event's declarations in the base scripts and the scripts
+of the load order that handle it. `PapyrusVm.handled` (debugging) hears every handler that
+runs.
+
 ## Story manager
 
 `story-manager.ts`, after the Creation Kit's "Story Manager" and "SM Event Node" pages: an
@@ -239,6 +370,43 @@ quest the event is consumed, unless the node shares the event; a node that start
 passes the event on. The started quest gets its OnStory event (OnStoryScript for
 Keyword.SendStoryEvent: keyword, location, two references, two values) and keeps the event's
 data for its conditions.
+
+**The queue.** The engine adds every event to a queue; its story teller works through the queue
+in order, one event at a time, within a time budget a frame (fStoryTellerQuestFindTime), an
+event whose quests take long to start going on the next frame before the next event is looked at.
+Ours: `StoryManager.event` queues behind the events raised before it, so the next sees the quests
+the one before started (two Change Locations in a row do not both start the same quest).
+Keyword.SendStoryEventAndWait waits for its event's turn and processing.
+
+### Story events
+
+What tells the story manager (`story-events.ts`): Change Location from the hub, the others at
+their places. Observed in the original: where each is raised, for whom, with which members
+(each event type registers its members: R references, L locations, F forms, V numbers):
+
+| Event | Raised (the engine)                                                                                                                                                                                                                             | Members                                                                      | Ours                                                                                                                                                   |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| CLOC  | The player is put in a cell of another location (the player only; NPCs' location changes are no story event).                                                                                                                                   | R1 actor, L1 old location, L2 new                                            | `actorLocationChange` of the player                                                                                                                    |
+| AIPL  | The player picks an item up (owned: a theft, type 1, its owner; else type 4), takes one from a container (5), a pocket (3) or a corpse (6), buys one (2).                                                                                       | R1 owner, R2 container, L1 the player's location, F1 item, V1 how            | play-mode take, the AI-driven player's take, the container menu, the barter menu                                                                       |
+| REMP  | The player drops an item (type 4); no other removal raises it in the code read.                                                                                                                                                                 | R1 owner (the player), R2 the item's reference, L1 location, F1 item, V1 how | the inventory's drop                                                                                                                                   |
+| CAST  | Any actor's cast begins, unless it is in combat; a shout's word is cast as its spell.                                                                                                                                                           | R1 caster, R2 target, L1 caster's location, F1 spell                         | `CastingEngine.begin`, `releaseShout` (target: TODO(M13))                                                                                              |
+| DEAD  | An NPC not in combat reacts to a dead actor it detects, within fDeadReactionDistance (400), once per body, as it starts its walk to the body.                                                                                                   | R1 actor, R2 dead actor, L1 the actor's location                             | the senses' reaction to a seen body (from sight: TODO(M13) the 400)                                                                                    |
+| ARRT  | The arresting guard reaches the criminal (within 500 units) and starts the arrest.                                                                                                                                                              | R1 guard, R2 criminal, L1 criminal's location, V1 crime type                 | the guard's arrest as it opens the conversation; the type of the player's latest crime against its crime faction (0 for a bounty alone, as the engine) |
+| AHEL  | Every 1 to 1.5 s (INI fUpdateDelaySeconds) an NPC chooses whom it looks at (the player first, else the best actor within fAIMaxHeadTrackDistance and 120° of its facing); turning to another actor than before, neither in a scene, is a hello. | L1 the actor's location, R1 actor, R2 the other                              | `ActorLooks`: the NPC now looks at the actor it chose (`chooseLookActor`: the nearest; TODO(M13) the engine's score and two more conditions)           |
+| NVPE  | Game.TeachWord: each shout with the word whose first word the player now knows is added to the player; a new one is the event. Also any actor's AddSpell of a Voice Power spell. Papyrus AddShout does not raise it.                            | R1 actor, F1 shout or spell                                                  | `CastingEngine.teachWord` (which now adds the shout, as the engine), `ActorEngine.addSpell`                                                            |
+
+Kill Actor, Assault, Trespass, Crime Gold, Pick Lock, Craft Item, Skill and Level Increase are
+raised by the crime, crafting and progression engines where the engine raises them (Kill Actor
+as the actor is killed, with the crime it made: not from the death event, whose data has no
+crime). Actor Dialogue (ADIA) is the actors' conversations' own.
+
+Measured on the game data (a new game, a morning; `tests/story-events.int.test.ts`): walking
+into Riverwood starts DialogueRiverwoodIntroScene, DialogueRiverwoodKidsScene,
+FreeformRiverwood01, DLC1ScrollHandlingChangeLoc and CRHoldExpansion (MS13LucanCamillaScene runs
+from the game's start); the Sleeping Giant Inn WIGreeting; Whiterun from Riverwood Favor013 and
+Favor017 (Favor253, 110 and 204 find no one for an alias) and DialogueWhiterunHeimskrPreachScene;
+the Bannered Mare BardSongStarter (the bard's song; it stops at once), WIGreeting and
+DialogueWhiterunArgueScene.
 
 ## Actors
 

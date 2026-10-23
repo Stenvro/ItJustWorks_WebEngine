@@ -360,8 +360,20 @@ export class ActorCombat implements CombatBridge {
         });
       },
       onWorldHit: (point, direction, material, _ammo, reference, payload) => {
-        // A destructible object takes the shot's damage (destruction-engine.ts).
+        // A destructible object takes the shot's damage (destruction-engine.ts); the hub tells
+        // the object's hit (TESHitEvent: OnHit with the bow and the arrow's projectile).
         const shot = payload as ShotPayload;
+        if (reference !== undefined)
+          this.#options.session.scriptsReady?.events.emit('hit', {
+            target: reference,
+            aggressor: shot.attacker,
+            source: shot.weapon,
+            projectile: shot.projectile,
+            powerAttack: false,
+            sneakAttack: shot.kind.sneak,
+            bashAttack: false,
+            blocked: false,
+          });
         if (reference !== undefined)
           void this.#options.session.scriptsReady?.destruction
             .damage(reference, shot.damage * shot.power, {
@@ -580,6 +592,9 @@ export class ActorCombat implements CombatBridge {
     if (fighter.target === source) fighter.target = undefined;
     void this.#act(fighter, 'ActionBleedoutStart');
     this.#bark(fighter.reference, 'BleedOut', source);
+    // The hub tells it (TESEnterBleedoutEvent: OnEnterBleedout), as the engine does when an
+    // actor's life state turns to bleeding out (observed in the original; the player's too).
+    this.#options.session.scriptsReady?.events.emit('enterBleedout', { actor });
   }
 
   firstPerson(): boolean {
@@ -1470,6 +1485,18 @@ export class ActorCombat implements CombatBridge {
       stats?.weapon === undefined
         ? (stats?.damage ?? 0)
         : await runtime.equipment.weaponDamage(fighter.reference, stats.weapon);
+    // The hub tells the hit (TESHitEvent: the object's OnHit).
+    const current = fighter.state.current;
+    runtime.events.emit('hit', {
+      target: reference,
+      aggressor: fighter.reference,
+      source: stats?.weapon,
+      projectile: undefined,
+      powerAttack: current?.power === true,
+      sneakAttack: false,
+      bashAttack: current?.bash === true,
+      blocked: false,
+    });
     await runtime.destruction.damage(reference, damage * mult, {
       external: true,
       source: fighter.reference,
@@ -1778,17 +1805,18 @@ export class ActorCombat implements CombatBridge {
     // The one hit uses the armour skills of what it wears (Light, Heavy Armor) by the blow's
     // damage before its armour (UESP "Skyrim:Light Armor": the incoming base damage), unblocked.
     if (!blocks && physical > 0) void this.#armourSkills(targetRef, physical);
-    // The target's scripts hear of it (OnHit: aggressor, source, projectile, power, sneak,
-    // bash, blocked).
-    void runtime.sendEvent(targetRef, 'OnHit', [
-      runtime.actorHandle(attackerRef),
-      stats?.weapon === undefined ? null : runtime.formHandle(stats.weapon),
-      hit.shot?.projectile === undefined ? null : runtime.formHandle(hit.shot.projectile),
-      hit.power,
-      sneak,
-      hit.bash,
-      blocks,
-    ]);
+    // The hub tells the hit (TESHitEvent: the target's OnHit with aggressor, source,
+    // projectile, power, sneak, bash, blocked).
+    runtime.events.emit('hit', {
+      target: targetRef,
+      aggressor: attackerRef,
+      source: stats?.weapon,
+      projectile: hit.shot?.projectile,
+      powerAttack: hit.power,
+      sneakAttack: sneak,
+      bashAttack: hit.bash,
+      blocked: blocks,
+    });
     // It fights back, or lets a friend's blow pass (the combat AI: iFriendHitCombatAllowed);
     // a practice's blow without Allow Combat Start On Hit passes (no fight, search or crime).
     const passes = attacker.practice?.combatStartOnHit === false;
@@ -2173,6 +2201,19 @@ export class ActorCombat implements CombatBridge {
       ...(homing && { homing }),
     });
     this.#playSound(gear.rightRecord?.sounds.attack, fighter);
+    // The player's shot with a bow (not a crossbow) is told with its draw and whether they look
+    // into the sun (TESPlayerBowShotEvent: OnPlayerBowShot; observed in the original).
+    if (
+      fighter.player &&
+      gear.right.weaponType === WeaponType.bow &&
+      gear.right.weapon !== undefined
+    )
+      runtime.events.emit('playerBowShot', {
+        weapon: gear.right.weapon,
+        ammo,
+        power,
+        sunGazing: this.#options.session.scriptWorld.sunGazed(aim),
+      });
     // The shot is heard; the player's commented on (ShootBow).
     this.#options.senses?.()?.action(fighter.reference, gear.rightRecord?.soundLevel ?? 1);
     if (fighter.player) void this.#options.talk?.()?.playerAction('FIWE');

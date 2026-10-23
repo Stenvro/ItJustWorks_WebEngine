@@ -112,6 +112,96 @@ on the models combat hangs on actors and on the first-person arms: src/shell/act
   hand, WeaponBow at the back), so each moved node is that node's matrix times its pose.
   Sheathed, the bow waits in Idle (Bow_DrawHeavy's first frame, its rest).
 
+## Animation objects
+
+The props an idle or a furniture animation puts in an actor's hands: the smith's hammer and
+hot iron, the woodcutter's axe and log halves, the drinker's tankard, the bard's lute, flute
+and drum, the broom, the pickaxe, the hoe, the alchemist's pestle and mortar, the cook's
+spoon, the bar rag, books, quills, cuffs. Each is an ANIO record (src/world/anim-object-
+records.ts; `node tools/anim-object-info.ts`): an editor id, a model (MODL, with MODT and
+alternate textures, MODS) and an unload event (BNAM). The load order has 80 (63 in
+Skyrim.esm); 78 are unloaded by `AnimObjectUnequip`, AnimObjectSeekerBook by
+`AnimObjUnequip` (an event no graph raises) and AnimObjectLog by none. Dawnguard and
+Hearthfire each define AnimObjectWoodScrap and AnimObjectDrawBlade (same models); the later
+one in the load order is found (TODO(M13): which one the engine's editor id lookup keeps).
+
+**Where they hang.** A prop's model has no graph and no clips of its own (FXChickenFeeding,
+used by no vanilla graph, is the one with a graph); its root carries a "Prn" string naming the
+skeleton node it goes on, as a shield's or a sheathed weapon's does. The people's skeletons
+(third person, female and first person) have four nodes made for it, AnimObjectR, AnimObjectL,
+AnimObjectA and AnimObjectB, which the props' clips move (`AnimObject*.hkx`, the furniture's
+AO clips): 40 props hang there, the others straight on a body node (NPC R Hand 21, the hands'
+magic nodes 6, NPC L Hand 4, NPC Spine2 for the lute and drum, the forearms for cuffs, the
+head magic node for the Seeker's book, NPC Root, NPC COM for the boat). The Riekling's chisels
+name its hands ("NPC R Hand"). No "2_" nodes are named: in a paired animation each actor
+holds its own props on its own skeleton.
+
+**The events.** The graphs name the props by editor id in the payloads of two events, which
+meshes\responses\actorresponse.txt gives to the engine: `AnimObjLoad`
+(AnimationObjectLoadHandler) and `AnimObjDraw` (AnimationObjectDrawHandler). The people's
+graphs raise them as states are entered (107 states: BlackSmith_State loads the forge hammer
+and the hot iron, then draws both; WoodChop_State the axe and the two log halves;
+AnimObjectLute, StandingBarDrinking, SweepingState, the chair drinking and eating states) and
+from clip triggers (22 clips: the chair drinker's tankard is drawn as the hand reaches it,
+the wood pick-up's logs). The first-person graph has 14 such states, the Riekling's and Dragonborn's
+hmdaedra project's one each. Clip annotations carry the payload after a dot
+(`AnimObjLoad.AnimObjectSkeletonKey`; `AnimObjLoad.DecapitationHeadGore` and
+`...NeckGore`, which no record has, so they do nothing; the gore of a decapitation is the
+Decapitate handler's, not an animation object's). `node tools/anim-object-info.ts --graphs`
+lists them per project; every payload of a graph names a record. `AnimObjectEquip` (the table
+drinking states), `AnimObjectStop`, `AnimObjectIdleStop` and `NPCAnimObjDraw` have no handler:
+they do nothing.
+
+**Observed in the original** (the handlers, the list they feed and the reference's graph
+event sink). Behaviour, in our words:
+
+- One list for all actors, an entry per actor and object with its model as attached and a
+  "draw requested" flag. The load handler finds the form by editor id (only an ANIO counts;
+  an unknown name does nothing) and adds an entry unless the actor has one for that object
+  already, then starts loading its model in the background.
+- When the model is in: an entry whose actor is gone is dropped; one whose actor has 3D has the
+  model cloned and attached to that 3D (the reference's current 3D: the player's first-person
+  skeleton in first person) on its "Prn" node (a model without one is left unattached and
+  never shows), then hidden unless a draw came meanwhile. A female actor holding one whose node
+  is a hand or under one gets both hands' scale set to 1 (the female skeletons give the hands
+  0.85) and back to 0.85 when it goes. While the player holds one, their camera switch is turned
+  off (the control map's POV-switch flag), and turned on again when the last goes.
+- The draw handler shows the actor's entry for that object (one still loading is shown as it
+  attaches); without an entry it does nothing.
+- Every event a reference's graph raises reaches its graph event sink; there, an event that is
+  the unload event of objects the actor holds takes all of them away (detached, the entries
+  dropped). So `AnimObjectUnequip`, raised by the exits of the states that loaded them (and by
+  the entries of the arm states that end a carry), clears every prop of that actor at once.
+- The actor's 3D going (unloaded, made again) drops all of its entries.
+- A save keeps each entry (actor, object, shown or drawn); loading one asks for the load again,
+  and the draw if it was shown. TODO(M12): our saves keep them.
+
+**Ours** (src/animation/anim-objects.ts, the list; src/shell/actor-anim-objects.ts, the models):
+the same list and rules. A prop is a model instance of its own placed every frame at its node's
+matrix (the body's placement times the node's pose), after the poses; its NIF controllers and
+particles play as a placed object's do. The player's go on the skeleton shown when the model
+comes in (`bodyShown`: the body, else the first-person arms) and stay there; while they hold
+one, `Game.DisablePlayerControls`' camera switch is off. Our poses take the hands' scale from
+the clips (1), so the female hand rule changes nothing here. TODO(M13): if the hands get the
+skeleton's 0.85, apply the rule.
+
+The graph event dispatch calls `ActorAnimObjects.animObject(reference, 'load' | 'draw',
+editorId)` for the two events with their payloads, and `graphEvents(reference, events)` hears
+every raised event for the unload events (`animObject(reference, 'unequip', undefined)` is the
+same for `AnimObjectUnequip`). TEMPORARY, until the behavior runtime carries payloads: the
+props module listens to the graphs itself and finds the payload in the graph's definition (the
+events the states just entered raise, and those of the clips playing at their triggers:
+`animObjectPayloads`), or after the dot of an annotation.
+
+Seen in the browser: Mikael on a bar stool with a tankard, a standing drinker cheering with
+his, Mila Valentina sweeping with a broom, a lute on its player's chest, the forge hammer at a
+hammering wall, the axe at a chopping block (and, in the list, bread while eating, the broom
+for Saadia). The order of events matters: our runtime raises the exit events of a machine
+left by its parent's transition after the new state's enter events (as it deactivates nodes at
+the end of the update), so an actor going straight from StandingBarDrinking into WoodChop_State
+loses the axe to the old state's `AnimObjectUnequip`. TODO(M13): when Havok raises a nested
+machine's exit events relative to the new state's (a behavior runtime question).
+
 ## Actors
 
 How placed actors (ACHR) appear and move (`src/shell/actors.ts`, `src/animation/skeleton.ts`;

@@ -95,9 +95,9 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
 
   // --- Stats, skills, perks, shouts ---------------------------------------------------------
   // Skills and perk points: the progression engine (progression-engine.ts).
+  // A script's increment is not told to the tracked stats' listeners (the engine's own are).
   n('game.incrementstat', ({ args }) => {
-    const stat = str(args[0]).toLowerCase();
-    runtime.stats.set(stat, (runtime.stats.get(stat) ?? 0) + int(args[1], 1));
+    runtime.incrementStat(str(args[0]), int(args[1], 1), false);
     return null;
   });
   n('game.querystat', ({ args }) => runtime.stats.get(str(args[0]).toLowerCase()) ?? 0);
@@ -119,10 +119,9 @@ export function registerGame(n: Register, runtime: ScriptRuntime): void {
     runtime.perkPoints += int(args[0]);
     return null;
   });
-  n('game.teachword', ({ args }) => {
+  n('game.teachword', async ({ args }) => {
     const word = formOf(args[0]);
-    if (word !== undefined && !runtime.wordsLearned.has(word))
-      runtime.wordsLearned.set(word, false);
+    if (word !== undefined) await runtime.casting.teachWord(word);
     return null;
   });
   n('game.unlockword', ({ args }) => {

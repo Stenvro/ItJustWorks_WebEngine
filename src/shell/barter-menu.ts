@@ -28,6 +28,7 @@
 import { barterMultipliers, restockDue, vendorBuys } from '../gameplay/barter.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import { questItems } from '../scripting/runtime/quest-items.ts';
+import { AcquireType } from '../scripting/runtime/story-events.ts';
 import { actorValueIndex } from '../world/actor-values.ts';
 import { parseItem, type ItemRecord } from '../world/item-records.ts';
 import { GOLD } from './inventory-menu.ts';
@@ -137,6 +138,10 @@ export async function barterModel(
         }
         await shelf.move(GOLD, total, PLAYER_REF, chest, false);
         await shelf.move(entry.formId, amount, chest, PLAYER_REF, true, entryStack(entry));
+        // Bought: the story manager's Player Add Item (no owner, no container: the engine's).
+        game.detach(
+          game.storyEvents.addToPlayer(entry.formId, AcquireType.buy, undefined, undefined),
+        );
         await speechUse(entry.formId);
         return;
       }
@@ -146,9 +151,18 @@ export async function barterModel(
       if (fromChest > 0) await shelf.move(GOLD, fromChest, chest, PLAYER_REF, false);
       owed -= fromChest;
       if (owed > 0) await shelf.move(GOLD, owed, vendorActor, PLAYER_REF, false);
+      // The item's own reference, if it is one the player carries (a quest's item kept whole).
+      const reference = game.heldReference(PLAYER_REF, entry.formId);
       await shelf.move(entry.formId, amount, PLAYER_REF, chest, true, entryStack(entry));
       game.crime.clearStolen(chest, entry.formId);
       await speechUse(entry.formId);
+      // The sale is told (TESSellEvent: the sold reference's OnSell with the one who sold it).
+      game.events.emit('sell', {
+        seller: PLAYER_REF,
+        item: entry.formId,
+        count: amount,
+        reference,
+      });
     },
     handlers: {
       // (price): sNotEnoughVendorGold, "Transaction value: %d gold. Vendor only has %d gold."

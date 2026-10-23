@@ -17,7 +17,7 @@ import { referenceMatrix, type CellActor } from '../world/cell-loader.ts';
 import { linkedReferences, parseReference } from '../world/cell-records.ts';
 import { RecordFlag } from '../formats/esm/record.ts';
 import type { GaitMotion, SoundingWorld } from './actor-sounds.ts';
-import { ActorGraphEvents, type AnimObjectKind } from './actor-graph-events.ts';
+import { ActorGraphEvents } from './actor-graph-events.ts';
 import { actorOnRay, groundActor, moveActor, ragdollsOf, type PlacedActor } from './actors.ts';
 import { createdEnabled } from './created-objects.ts';
 import type { GameSession } from './game-session.ts';
@@ -69,6 +69,7 @@ import type { PlayerFurniture } from './player-furniture.ts';
 import { PlayerPilot } from './player-pilot.ts';
 import { reactionsOf } from '../ai/combat-reactions.ts';
 import { ProjectileAim } from './projectile-aim.ts';
+import { ActorAnimObjects } from './actor-anim-objects.ts';
 
 /** Where something is: its position, and the cell and worldspace the game state gives it. */
 export interface StagePlace {
@@ -231,17 +232,13 @@ export class ActorStage {
   readonly crime: ActorCrime;
   /** The fliers: dragons taking off, flying, hovering, landing (src/shell/actor-flight.ts). */
   readonly flight: ActorFlight;
+  /** The props their graphs put in their hands (src/shell/actor-anim-objects.ts). */
+  readonly animObjects: ActorAnimObjects;
   /**
    * The engine's answers to the actors' graph events: every placed actor's and the player's
    * events dispatched to their handlers (src/shell/actor-graph-events.ts).
    */
   readonly graphEvents: ActorGraphEvents;
-  /**
-   * Animation objects (ANIO) an actor's graph loads into its hand, draws, or lets go of
-   * (AnimObjLoad, AnimObjDraw, AnimObjectUnequip; the editor id their payload names): the
-   * animation objects' module answers.
-   */
-  animObject?: (reference: number, kind: AnimObjectKind, editorId: string | undefined) => void;
   /** An actor's graph asks for a new idle (PickNewIdle): ambient idle picking answers. */
   pickNewIdle?: (reference: number) => void;
   /** The renderer's clock at the last frame (seconds between frames, for the AI). */
@@ -629,6 +626,15 @@ export class ActorStage {
       get: (reference) => this.#actors.get(reference),
       bark: (actor, subtype, target) => this.talk.bark(actor, subtype, target),
     });
+    this.animObjects = new ActorAnimObjects({
+      session: options.session,
+      renderer: options.renderer,
+      staged: (reference) => this.#actors.get(reference),
+      player: () => options.player?.(),
+      warn: (message) => {
+        options.terminal.log('actor', message, 'warn');
+      },
+    });
     this.graphEvents = new ActorGraphEvents({
       session: options.session,
       terminal: options.terminal,
@@ -886,7 +892,7 @@ export class ActorStage {
       position: door.arrival,
       heading: door.arrivalHeading,
     };
-    if (this.#loaded(arrival)) this.doors.arrive(door.destination);
+    if (this.#loaded(arrival)) this.doors.arrive(door.destination, reference);
     else this.away.depart(reference, arrival, destination);
     await this.away.place(reference, arrival);
   }
@@ -960,6 +966,7 @@ export class ActorStage {
     if (!world) {
       this.playerCasting?.clear();
       this.casting.clear();
+      this.animObjects.clear();
     }
   }
 
@@ -1089,6 +1096,8 @@ export class ActorStage {
     // What magic shows on actors and for a moment in the world.
     yield* this.effects.scenes();
     yield* this.fx.scenes();
+    // The props in their hands (animation objects).
+    yield* this.animObjects.scenes();
   }
 
   /** Where a staged actor stands now (scripts' live placement). */
@@ -1441,6 +1450,11 @@ export class ActorStage {
     this.graphEvents.frame(frame);
     this.movers.frame(this.#actors.values(), this.#options.focus?.());
     this.#recell();
+    // The cell each stands in: as it changes, its location is read again (an actor location
+    // change: src/scripting/runtime/actor-locations.ts).
+    const locations = this.#options.session.scriptsReady?.actorLocations;
+    if (locations)
+      for (const staged of this.#actors.values()) locations.inCell(staged.reference, staged.cell);
     // The fliers: in the air they move themselves (no controller), on the ground the movers do.
     this.flight.frame(this.#actors.values(), frame);
     const times = new Map<StagedActor, number | undefined>();
@@ -1477,8 +1491,9 @@ export class ActorStage {
     this.knockdowns.afterAnimate();
     this.bodies.frame(this.#withPlayerBody(), this.#options.focus?.());
     this.playerDeath.frame(frame);
-    // The casting art follows the hands as they are posed now.
+    // The casting art follows the hands as they are posed now, and so do their props.
     this.casting.afterAnimate();
+    this.animObjects.frame();
     // How their graphs moved them (root motion) moves them in the next physics steps; those
     // entering or leaving furniture it moves at once (they have no controller).
     for (const [staged, before] of times) {
@@ -1598,6 +1613,7 @@ export class ActorStage {
 
   #remove(staged: StagedActor): void {
     this.graphEvents.remove(staged.reference);
+    this.animObjects.remove(staged.reference);
     this.looks.remove(staged.reference);
     this.moods.forget(staged.reference);
     this.#options.session.scriptsReady?.magic.unloaded(staged.reference);

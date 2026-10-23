@@ -147,6 +147,53 @@ export function noticesPlayer(head: Vec3, heading: number, eye: Vec3): boolean {
 }
 
 /**
+ * How often an actor without a target of its own chooses whom it looks at (the INI's
+ * [HeadTracking] fUpdateDelaySecondsMin and Max, seconds; observed in the original).
+ */
+export const LOOK_CHOICE_SECONDS = { min: 1, max: 1.5 } as const;
+
+/** How far off its facing an actor may choose another actor to look at (120°). */
+const LOOK_CHOICE_ANGLE = (2 * Math.PI) / 3;
+
+/** Another actor's head, as an actor choosing whom to look at sees it. */
+export interface LookCandidate {
+  readonly reference: number;
+  readonly head: Vec3;
+}
+
+/**
+ * Whom an actor without a target of its own looks at among the other actors (observed in the
+ * original): one within fAIMaxHeadTrackDistance of it (game units) and within 120° of
+ * its facing (`heading`: compass, radians), the best one. TODO(M13): the engine scores the
+ * candidates by a rule not read yet; here the nearest is the best.
+ */
+export function chooseLookActor(
+  head: Vec3,
+  heading: number,
+  candidates: Iterable<LookCandidate>,
+  maxDistance: number,
+): number | undefined {
+  let best: number | undefined;
+  let bestDistance = Infinity;
+  const facing = [Math.sin(heading), Math.cos(heading)] as const;
+  for (const candidate of candidates) {
+    const dx = candidate.head[0] - head[0];
+    const dy = candidate.head[1] - head[1];
+    const dz = candidate.head[2] - head[2];
+    const distance = Math.hypot(dx, dy, dz);
+    if (distance > maxDistance || distance >= bestDistance) continue;
+    const horizontal = Math.hypot(dx, dy);
+    if (horizontal > 1e-3) {
+      const cosine = (dx * facing[0] + dy * facing[1]) / horizontal;
+      if (cosine < Math.cos(LOOK_CHOICE_ANGLE)) continue;
+    }
+    best = candidate.reference;
+    bestDistance = distance;
+  }
+  return best;
+}
+
+/**
  * One actor's look: the point its look-at aims at, moving towards where the target is at the
  * head tracking speed (an angle about the head), with the random offsets.
  */

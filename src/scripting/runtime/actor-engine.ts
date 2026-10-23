@@ -32,6 +32,7 @@ import { AliasFlag } from '../../world/quest-records.ts';
 import { PLAYER_BASE, PLAYER_REF } from './forms.ts';
 import type { Placement, ScriptRuntime } from './runtime.ts';
 import { LocationType } from '../../ai/package-records.ts';
+import { parseSpell, SpellType } from '../../world/spell-records.ts';
 
 export interface ActorInfo {
   readonly reference: number;
@@ -764,10 +765,17 @@ export class ActorEngine {
     return spells;
   }
 
-  /** AddSpell / AddShout: false if it had it. */
+  /**
+   * AddSpell / AddShout: false if it had it. A spell of the Voice Power type new to the actor is
+   * a New Voice Power story event (observed in the original: its AddSpell raises it for any
+   * actor; AddShout does not, the player's TeachWord does: CastingEngine.teachWord).
+   */
   async addSpell(reference: number, spell: number): Promise<boolean> {
     if (await this.hasSpell(reference, spell)) return false;
     this.#runtime.state.actor(reference).spells.set(spell, true);
+    const record = await this.#runtime.forms.record(spell);
+    if (record?.type === 'SPEL' && parseSpell(record).spellType === SpellType.voice)
+      this.#runtime.detach(this.#runtime.storyEvents.newVoicePower(reference, spell));
     return true;
   }
 
@@ -897,9 +905,10 @@ export class ActorEngine {
       for (const list of lists)
         await this.#runtime.addItem(reference, this.#runtime.formHandle(list), 1, true);
     }
-    const by = killer === undefined ? null : this.#runtime.actorHandle(killer);
-    await this.#runtime.sendEvent(reference, 'OnDying', [by]);
-    await this.#runtime.sendEvent(reference, 'OnDeath', [by]);
+    // The hub tells it dying, then dead (TESDeathEvent: OnDying, OnDeath).
+    const events = this.#runtime.events;
+    await events.emitted('death', { actor: reference, killer, dead: false });
+    await events.emitted('death', { actor: reference, killer, dead: true });
     // Crime: a witness gone, a murder, the story manager's Kill Actor event (crime-engine.ts).
     await this.#runtime.crime.killed(reference, killer, silent);
   }

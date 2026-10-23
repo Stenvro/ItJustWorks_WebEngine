@@ -457,11 +457,10 @@ class Picking {
     const { reference } = this.#setup;
     this.#runtime.playerActed(PlayerAction.lockpickSuccess);
     this.#runtime.state.reference(reference).locked = false;
-    void this.#runtime.sendEvent(reference, 'OnLockStateChanged');
+    this.#runtime.events.emit('lockChanged', { reference });
     void this.#runtime.progression.useSkill(PLAYER_REF, LOCKPICKING, this.#setup.skillUses.opened);
     // An owned lock picked in sight is a crime (crime-engine.ts lockPicked); Locks Picked.
-    const stats = this.#runtime.stats;
-    stats.set('locks picked', (stats.get('locks picked') ?? 0) + 1);
+    this.#runtime.incrementStat('Locks Picked');
     void this.#runtime.crime.lockPicked(PLAYER_REF, reference);
     void this.#waxKey(reference);
     setTimeout(() => {

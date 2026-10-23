@@ -310,6 +310,9 @@ export class ActorCrime {
         return;
       }
       this.#arrest.talking = true;
+      // The story manager's Arrest (TG00ArrestMonitor, DGArrestQuest): the engine raises it as
+      // the arresting guard reaches the criminal, before it speaks.
+      runtime.detach(runtime.storyEvents.guardArrests(guard, PLAYER_REF));
       menus.talk(staged.placed, line.topic.formId);
     };
     run().catch(() => {
