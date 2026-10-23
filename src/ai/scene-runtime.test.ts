@@ -137,7 +137,10 @@ const fragments = (
 /** Lets the scenes' promises run. */
 const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
-function setup(scenes: SceneRecord[]) {
+function setup(
+  scenes: SceneRecord[],
+  more: (director: () => SceneDirector) => Partial<SceneHost> = () => ({}),
+) {
   const events: string[] = [];
   const truths = new Set<number>();
   const aliases = new Map<number, number>([
@@ -209,6 +212,10 @@ function setup(scenes: SceneRecord[]) {
     warn: (message) => {
       events.push(`warn ${message}`);
     },
+    ...more(() => {
+      if (!made.director) throw new Error('no director yet');
+      return made.director;
+    }),
   };
   const scenes_ = new SceneDirector(host);
   made.director = scenes_;
@@ -580,5 +587,98 @@ describe('scene starts, stops and behaviour', () => {
     test.director.questStopped(QUEST);
     expect(test.director.isPlaying(0x10)).toBe(false);
     expect(test.director.sceneOf(0x64)).toBeUndefined();
+  });
+});
+
+describe('random scenes (the Actor Dialogue event)', () => {
+  const OTHER_QUEST = 0x501;
+  const talk = (formId: number, quest: number, flags = 0): SceneRecord =>
+    scene(formId, {
+      quest,
+      flags,
+      actors: [actor(0), actor(1)],
+      phases: [phase()],
+      actions: [line(1, 0, 0, 0, 0x700 + formId)],
+    });
+
+  it('plays one at a time: the next begins as the first ends', async () => {
+    const asked: string[] = [];
+    const test = setup([talk(0x20, QUEST), talk(0x21, OTHER_QUEST)], () => ({
+      randomScene: () => true,
+      randomSceneStarts: (formId, first, second) => {
+        asked.push(`${formId.toString(16)} ${first.toString(16)} ${second.toString(16)}`);
+        return true;
+      },
+      randomSceneAgain: () => 3,
+    }));
+    test.running.add(OTHER_QUEST);
+    test.slow.add(0x720);
+    test.director.start(0x20);
+    await test.tick();
+    expect(test.director.randomScene).toBe(0x20);
+    // The world was asked to bring its first two actors together.
+    expect(asked).toEqual(['20 64 65']);
+    test.director.start(0x21);
+    await test.tick();
+    expect(test.director.waiting).toEqual([0x21]);
+    test.finish(0x720);
+    await test.tick();
+    await test.tick();
+    // The pause drawn as the first began is cleared as it ends (read from the engine).
+    expect(test.director.randomScene).toBe(0x21);
+  });
+
+  it('waits a second when an actor of it plays in another scene', async () => {
+    const test = setup(
+      [
+        talk(0x20, QUEST),
+        scene(0x22, { quest: 0x502, actors: [actor(0)], phases: [phase([], [truth(9)])] }),
+      ],
+      () => ({ randomScene: (quest) => quest !== 0x502, randomSceneStarts: () => true }),
+    );
+    test.running.add(0x502);
+    test.slow.add(0x720);
+    test.director.start(0x22);
+    await test.tick();
+    test.director.start(0x20);
+    await test.tick();
+    expect(test.director.waiting).toEqual([0x20]);
+    test.director.stop(0x22);
+    await test.tick(0.5);
+    expect(test.director.isPlaying(0x20)).toBe(false);
+    await test.tick(0.6);
+    await test.tick();
+    expect(test.director.randomScene).toBe(0x20);
+  });
+
+  it('does not play when its actors may no longer talk; its quest stops with Stop Quest on End', async () => {
+    const test = setup([talk(0x20, QUEST, SceneFlag.stopQuestOnEnd)], () => ({
+      randomScene: () => true,
+      randomSceneStarts: () => false,
+    }));
+    test.director.start(0x20);
+    await test.tick();
+    expect(test.director.isPlaying(0x20)).toBe(false);
+    expect(test.only('say')).toEqual([]);
+    expect(test.only('stop quest')).toEqual(['stop quest 500']);
+  });
+
+  it('holds while its actors come together, then says its lines', async () => {
+    const test = setup([talk(0x20, QUEST)], (director) => ({
+      randomScene: () => true,
+      randomSceneStarts: (_scene, first) => {
+        director().hold(first, true);
+        return true;
+      },
+    }));
+    test.director.start(0x20);
+    await test.tick();
+    await test.tick();
+    expect(test.director.isPlaying(0x20)).toBe(true);
+    expect(test.only('say')).toEqual([]);
+    test.director.hold(0x64, false);
+    await test.tick();
+    await test.tick();
+    expect(test.only('say')).toEqual(['say 64 720']);
   });
 });
