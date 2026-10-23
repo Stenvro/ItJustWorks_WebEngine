@@ -41,14 +41,14 @@ from a camera of the harness's own pointed at the place, `engineDev.qa.frame(id)
 
 ### Scenarios
 
-| name            | what                                                                                                                                                                                                                                                                                                                          |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `opening`       | New game: the cart ride, Helgen, the execution, Alduin. The player is AI-driven until MQ101 stage 160; the race menu is finished as a player would (R, yes, a name). Then a follow bot walks the player to the active quest marker (the guide, or the load door toward it) into the keep. MQ101 is watched (4 min per stage). |
-| `whiterun-day`  | `coc WhiterunPlainsDistrict03` at 9:00: the market.                                                                                                                                                                                                                                                                           |
-| `bannered-mare` | `coc WhiterunBanneredMare` at 20:00.                                                                                                                                                                                                                                                                                          |
-| `riverwood`     | `coc Riverwood` at 13:00.                                                                                                                                                                                                                                                                                                     |
-| `windhelm-snow` | `coc WindhelmMarketplaceExterior` at 11:00, `fw` SkyrimOvercastSnow.                                                                                                                                                                                                                                                          |
-| `combat`        | `coc Riverwood` at 12:00, `tgm`; three bandits and three Imperial guards placed at the player, each bandit set on a guard.                                                                                                                                                                                                    |
+| name            | what                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `opening`       | New game: the cart ride, Helgen, the execution, Alduin. The player is AI-driven until MQ101 stage 160; the race menu is finished as a player would (R, yes, a name). Then a follow bot walks the player (in god mode: it does not fight) to the active quest marker (the guide, or the load door toward it) into the keep and on through it; it ends a minute after MQ101 stage 900 (out of the keep). MQ101 is watched (4 min per stage). |
+| `whiterun-day`  | `coc WhiterunPlainsDistrict03` at 9:00: the market.                                                                                                                                                                                                                                                                                                                                                                                        |
+| `bannered-mare` | `coc WhiterunBanneredMare` at 20:00.                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `riverwood`     | `coc Riverwood` at 13:00.                                                                                                                                                                                                                                                                                                                                                                                                                  |
+| `windhelm-snow` | `coc WindhelmMarketplaceExterior` at 11:00, `fw` SkyrimOvercastSnow.                                                                                                                                                                                                                                                                                                                                                                       |
+| `combat`        | `coc Riverwood` at 12:00, `tgm`; three bandits and three Imperial guards placed at the player, each bandit set on a guard.                                                                                                                                                                                                                                                                                                                 |
 
 The `coc` scenarios start from the main menu's console (`PlayMode.runConsole`, no opening),
 answer the Survival Mode box with No, set the hour and weather, wait until the actors' schedules
@@ -58,17 +58,24 @@ The follow bot (in the page, `FOLLOW_BOT` in `tools/qa-scenarios.ts`) reads the 
 quests' shown objectives as the compass does (`questTargets`, but also for a quest the journal
 has not made the active one: MQ101 is not), finds a navmesh path (`findPath`) to the nearest and
 steers the player by `Player.yaw` and the Forward control. It waits when the guide is within 220
-units (after 8 s it closes in to 90: a trigger may be by them), uses the load door toward a
-target in another space (`firstDoorToward`, aiming and pressing Activate), and when stuck steps
-left, right or back (every other time with a jump) and searches again. A target that is a place
-(no actor), reached with nothing moving on for 6 s, leads on to the same objective's next
-target whose conditions do not hold yet, as a player goes on the way the objective leads
-(MQ101's "Make your way to the Keep" shows the burning inn's marker until stage 120 of
-MQ101DragonAttack, which the street beyond it sets; then Hadvar). Off the navmesh with navmesh
-below (the inn's upper floor) it walks to where the floor gives way, the drop most towards its
-goal (a grid of physics rays round it: the floor under each cell, steps of up to 32 units, nothing at chest height between neighbours; a drop is 150 units or more). The scenario ends a
-minute after the player is in an interior (the keep), or when MQ101's stage stands 8 minutes
-(the opening stalled, or the bot got nowhere). Its log goes into the report's notes.
+units (after 8 s it closes in to 90: a trigger may be by them; after 15 s of a guide standing
+still it walks on 160 units past them, into the room they lead to: Ralof in Helgen's tower, the
+stage-25 strip beyond him), uses the load door toward a target in another space
+(`firstDoorToward`, aiming and pressing Activate), and when stuck steps left, right or back
+(every other time with a jump) and searches again. A target that is a place (no actor),
+reached with nothing moving on for 6 s, leads on to the same objective's next target whose
+conditions do not hold yet, as a player goes on the way the objective leads (MQ101's "Make your
+way to the Keep" shows the burning inn's marker until stage 120 of MQ101DragonAttack; then
+Hadvar). A navmesh way far longer than the straight line (twice it and 300 more) to a goal not
+above is left for the straight line, as a player jumps down (from the tower's broken wall onto
+the inn, while the navmesh leads down the stairs to the door the quest has shut). Off the
+navmesh with navmesh below (the inn's upper floor) it walks to where the floor gives way: a
+grid of physics rays round it (32 units a cell, 900 units each way: the floor under each cell,
+steps of up to 32 units, nothing at chest height between neighbours; a drop is 150 units or
+more), the first drop by the way and towards the goal that lands on navmesh with a way on to
+the goal (holes in the inn's floor lead into rooms rubble shuts). The scenario ends a minute
+after MQ101 reaches stage 900 (out of the keep), or when MQ101's stage stands 8 minutes (the
+opening stalled, or the bot got nowhere). Its log goes into the report's notes.
 
 ## The monitors in the page
 

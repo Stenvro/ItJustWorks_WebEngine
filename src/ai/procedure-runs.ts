@@ -221,8 +221,9 @@ const guard: ProcedureRunner = async (run) => {
 
 /**
  * Patrol: from its start along the references each links to (XLKR without a keyword), going to
- * each within the point radius; with "repeatable" it goes round again from its start, else it
- * succeeds at the end. "Start at nearest": it begins at the point of the patrol nearest it. Each
+ * each within the point radius; with "repeatable" a way whose links come round goes round again
+ * (from the point they come round to), else it succeeds at the end. "Start at nearest": it
+ * begins at the point of the patrol nearest it. Each
  * point is reached within the point radius, at least the radius of what the point is
  * (destinationRadius). At an idle marker on the way it stays for the marker's timer, playing its
  * idles; at a point with an idle time (XPRD) it waits that long, in furniture at least
@@ -238,10 +239,22 @@ const patrol: ProcedureRunner = async (run) => {
   // Static pathing: straight from point to point (MQ101's carts follow their road so: no
   // navmesh joins some of its points).
   const options: TravelOptions = { direct: run.inputs.bool(5) };
-  // The patrol's points: the start, then each one's link, until it ends or comes round.
+  // The patrol's points: the start, then each one's link, until it ends or comes round (observed
+  // in the original). Only a way that comes round goes round again, and only when
+  // repeatable: from the point it comes round to; not repeatable, it walks to that point once
+  // more and ends. A way that ends (a last point linking nowhere, a single marker) ends the
+  // patrol, repeatable or not: MQ101DragonAttackSceneCPerchWall's first phases wait for
+  // Hadvar's repeatable patrol of one marker, by the wall.
   const points: number[] = [start];
+  let loop: number | undefined;
   for (let next = await run.mind.linked(start, 0); next !== undefined;) {
-    if (points.includes(next) || points.length > 256) break;
+    const seen = points.indexOf(next);
+    if (seen >= 0) {
+      if (repeatable) loop = seen;
+      else points.push(next);
+      break;
+    }
+    if (points.length > 256) break;
     points.push(next);
     next = await run.mind.linked(next, 0);
   }
@@ -291,9 +304,9 @@ const patrol: ProcedureRunner = async (run) => {
       }
       if (await stayAtPatrolPoint(run, point)) spent = true;
     }
-    if (!repeatable) return 'success';
+    if (loop === undefined) return 'success';
     if (!spent) await run.wait(IDLE_SECONDS);
-    index = 0;
+    index = loop;
   }
 };
 

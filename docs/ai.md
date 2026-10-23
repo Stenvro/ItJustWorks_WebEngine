@@ -276,8 +276,14 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
 - **Procedures** (`src/ai/procedure-runs.ts`): Travel goes to its place (within its radius) and
   succeeds there; HoldPosition and Guard go to theirs and stay, facing their marker's way; Wait
   stands for its seconds (0: for as long as the package runs); Patrol goes from its start along
-  the references each links to (XLKR without a keyword), round again if repeatable, starting at
-  the nearest point if so set; Follow keeps within its maximum radius of its target, closing to
+  the references each links to (XLKR without a keyword), starting at the nearest point if so
+  set; observed in the original, the patrol's way is built from the links until one comes
+  back to a point already on it, and only such a way goes round again, and only if repeatable
+  (from the point the links come back to; not repeatable, it walks to that point once more and
+  succeeds): a way whose last point links nowhere succeeds at its end, repeatable or not (ours
+  went round any repeatable patrol for ever, so a single marker held its package and the scene
+  phase waiting on it: Hadvar's dunCGHadvarToDragonCWallPerchHide in MQ101's dragon attack);
+  Follow keeps within its maximum radius of its target, closing to
   its minimum; Wander goes from one random point of its place to another between pauses;
   Sandbox passes the time in its place (below); Sit, Sleep and UseIdleMarker use their furniture
   (their target, or the first free one a Find found) or idle marker and stay while the package
@@ -1245,6 +1251,10 @@ What the QA sweep's opening (2026-10-23) showed beyond the dragon, where MQ101 s
   action giving him the package again found it chosen already and done, so it never heard an
   end and the phase stood ("Still alive, prisoner?" never came). Fixed: a package action
   starts its package anew ([Packages](#scenes), above).
+- **By the wall (MQ101DragonAttackSceneCPerchWall, phase 1)** waits for Hadvar's
+  dunCGHadvarToDragonCWallPerchHide, a repeatable Patrol of one marker that links nowhere. The
+  engine's patrol goes round only a way whose links come back to a point of it, so this one
+  succeeds once Hadvar is there; ours went round for ever ([Packages](#packages), Patrol).
 - **MQ101TorriLedgeScene, phase 0** (45 s with Torolf's rail package running) is no fault: it
   waits for stage 32 of MQ101, set by a trigger the prisoners' cart passes
   (MQ101SetStage32, defaultSetStageTRIGSpecificActor on the cart's horse) about 5,000 units
