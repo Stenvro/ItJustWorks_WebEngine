@@ -434,8 +434,13 @@ export class ActorGraphEvents {
     const before = graph && !paired ? statesOf(graph) : undefined;
     if (graph && !knocked && !paired) {
       const user = stage.userOf(staged);
+      // The idles' conditions on their target ask the killer (what it holds: a bow, a staff,
+      // magic drop the dead as a ragdoll); without one, conditions on a target fail.
+      // TODO(M13): the engine's target for the death actions is inferred (the killer).
+      const runtime = this.#options.session.scriptsReady;
+      const target = killer === undefined || !runtime ? undefined : runtime.referenceHandle(killer);
       for (const action of DEATH_ACTIONS) {
-        event = await stage.furniture.actionEvent(user, action);
+        event = await stage.furniture.actionEvent(user, action, target, target === undefined);
         if (event !== undefined) break;
       }
     }
