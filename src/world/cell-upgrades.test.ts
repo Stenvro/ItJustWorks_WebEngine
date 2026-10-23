@@ -49,6 +49,8 @@ const data: CellData = {
     editorId: 'Home',
     name: 'Home',
     interior: true,
+    flags: 0x1,
+    skyRegion: undefined,
     lighting: undefined,
     inheritFlags: 0,
     lightingTemplate: undefined,

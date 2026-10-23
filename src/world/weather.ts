@@ -85,7 +85,10 @@ export interface WeatherRecord {
   readonly fog: WeatherFog;
   /** 0..1. */
   readonly windSpeed: number;
-  /** Fraction of the transition done per second at fWeatherTransAccel 1 (0..0.25). */
+  /**
+   * Trans Delta (0..1): where between fWeatherTransMin and fWeatherTransMax game hours a change
+   * to this weather takes (src/world/sky-weather.ts).
+   */
   readonly transDelta: number;
   readonly sunGlare: number;
   readonly sunDamage: number;
@@ -248,7 +251,7 @@ export function parseWeather(record: WeatherSource): WeatherRecord {
     colors,
     fog,
     windSpeed: unit(0),
-    transDelta: u8(3) / 1020,
+    transDelta: unit(3),
     sunGlare: unit(4),
     sunDamage: unit(5),
     precipitationFadeIn: unit(6),
@@ -396,32 +399,4 @@ export function parseRegionWeather(record: WeatherSource): RegionWeather | undef
     }
   }
   return undefined;
-}
-
-/**
- * The weather list that applies in a cell: the highest-priority weather region among the
- * cell's regions (XCLR), else the climate's list.
- */
-export function cellWeathers(
-  regions: readonly (RegionWeather | undefined)[],
-  climate: ClimateRecord | undefined,
-): readonly WeatherChance[] {
-  let best: RegionWeather | undefined;
-  for (const region of regions) {
-    if (!region || region.weathers.length === 0) continue;
-    if (!best || region.priority > best.priority) best = region;
-  }
-  return best?.weathers ?? climate?.weathers ?? [];
-}
-
-/** Picks a weather from a list by chance; `random` is in [0, 1). */
-export function pickWeather(list: readonly WeatherChance[], random: number): number | undefined {
-  const total = list.reduce((sum, entry) => sum + entry.chance, 0);
-  if (total <= 0) return list[0]?.weather;
-  let remaining = random * total;
-  for (const entry of list) {
-    remaining -= entry.chance;
-    if (remaining < 0) return entry.weather;
-  }
-  return list[list.length - 1]?.weather;
 }
