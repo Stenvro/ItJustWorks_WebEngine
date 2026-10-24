@@ -394,9 +394,24 @@ var QA_PLAY = engineDev.world.#play;
     if (bot.guide !== undefined) bot.lastGuide = bot.guide;
     // A target that is a load door here (MQ101's "Enter the Keep": the keep's doors) is used
     // as a player uses it: walked to and activated.
+    // So is the load door by a place target (the keep's doors stand by MQ101's "Enter the Keep"
+    // markers, which the keep's navmesh does not reach).
     if (best.same && bot.guide === undefined) {
       const record = await (await play.session.db).get(best.t.reference);
       if (record?.fields.has('XTEL')) bot.door = best.t.reference;
+      else {
+        const space = at.world !== undefined ? { kind: 'world', world: at.world } : { kind: 'interior', cell: at.cell ?? 0 };
+        const p = best.t.placement.position;
+        let nearest;
+        for (const door of (await play.session.routeMap()).doorsInSpace(space)) {
+          const d = Math.hypot(door.position[0] - p[0], door.position[1] - p[1], door.position[2] - p[2]);
+          if (d < 300 && (!nearest || d < nearest.d)) nearest = { door, d };
+        }
+        if (nearest) {
+          bot.door = nearest.door.door;
+          goal = [...nearest.door.position];
+        }
+      }
     }
     // A guide waited by for 15 s who stays where they are: a player walks on past them, into
     // the room they lead to (Ralof in Helgen's tower, the stage the player's step sets beyond
