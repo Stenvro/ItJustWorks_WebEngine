@@ -22,6 +22,7 @@ import {
 import type { QaAnomaly, QaSnapshot } from '../src/shell/qa/types.ts';
 import { Cdp, Page, sleep, startChrome, startVite, stopProcess, waitFor } from './qa-cdp.ts';
 import { PLACES, SCENARIOS, STREETS, type Scenario, type ScenarioContext } from './qa-scenarios.ts';
+import { INTERACTION } from './qa-interaction.ts';
 
 const root = path.resolve(import.meta.dirname, '..');
 const WIDTH = 1280;
@@ -56,10 +57,11 @@ function parseOptions(argv: readonly string[]): Options | undefined {
     else if (arg === '--vite-port') vitePort = Number(value());
     else if (arg === '--chrome-port') chromePort = Number(value());
     else if (arg === '--list') {
-      for (const scenario of [...SCENARIOS, ...PLACES, ...STREETS])
+      for (const scenario of [...SCENARIOS, ...PLACES, ...STREETS, ...INTERACTION])
         console.log(`${scenario.name.padEnd(16)} ${scenario.description}`);
       console.log(`${'places'.padEnd(16)} every at-… scenario, one after the other`);
       console.log(`${'streets'.padEnd(16)} every streets-… scenario, one after the other`);
+      console.log(`${'interaction'.padEnd(16)} every interaction-… scenario, one after the other`);
       return undefined;
     } else names.push(arg);
   }
@@ -77,7 +79,11 @@ function parseOptions(argv: readonly string[]): Options | undefined {
           if (name === 'places') return PLACES;
           // "streets": every town of the streets bot (STREETS).
           if (name === 'streets') return STREETS;
-          const scenario = [...SCENARIOS, ...PLACES, ...STREETS].find((s) => s.name === name);
+          // "interaction": every check of what the player does (INTERACTION).
+          if (name === 'interaction') return INTERACTION;
+          const scenario = [...SCENARIOS, ...PLACES, ...STREETS, ...INTERACTION].find(
+            (s) => s.name === name,
+          );
           if (!scenario) throw new Error(`no scenario '${name}' (--list shows them)`);
           return [scenario];
         });
@@ -310,10 +316,10 @@ async function runScenario(
  */
 function writeSummary(out: string): void {
   const order = (name: string): number => {
-    const at = [...SCENARIOS, ...PLACES, ...STREETS].findIndex(
+    const at = [...SCENARIOS, ...PLACES, ...STREETS, ...INTERACTION].findIndex(
       (scenario) => scenario.name === name,
     );
-    return at < 0 ? SCENARIOS.length + PLACES.length + STREETS.length : at;
+    return at < 0 ? SCENARIOS.length + PLACES.length + STREETS.length + INTERACTION.length : at;
   };
   const reports: QaScenarioReport[] = [];
   for (const entry of fs.readdirSync(out, { withFileTypes: true })) {

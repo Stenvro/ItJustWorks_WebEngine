@@ -707,6 +707,19 @@ same aim; what differs is where they leave from and, for an NPC, what it aims at
   fall by the PROJ's gravity × 9.8 m/s²; beams reach their range at once; flames are sprays,
   one every relaunch interval. fArrowSpeedMult and fArrowGravityBase are not read by the engine.
 - The beam's bolt is drawn from the hand to the hit ("A hand's cast", Beams).
+- What shots reach of the world: arrows hit on L_PROJECTILE, bolts, sprays and beams on L_SPELL,
+  and a cone (Unrelenting Force, Fire Breath) meets every object whose collision collides with
+  L_CONEPROJECTILE within its range and spread that its apex sees (trigger volumes too: the
+  Greybeards' and Blackreach's shout triggers). An object a spell reaches takes it: OnHit with the
+  spell and its projectile, OnMagicEffectApply per effect, a destructible's health by its Damage
+  Health effects (Arvel's web in Bleak Falls Barrow: 10 health, its first stage capping the first
+  blow). The aim ray (L_LINEOFSIGHT) passes webs (L_DEBRIS_LARGE): the crosshair's point is the
+  wall behind, and the shot from the hand crosses the web 30-50 units below the crosshair in third
+  person at 150-350 units (measured; the 1.5° assistance cannot close the hand's offset), as in the
+  original. A magic item's keywords include its effects' (CommonLibSSE: MagicItem overrides
+  HasKeyword; TrapExplosiveGas asks the spell of an OnHit for MagicDamageFire).
+  `tools/hit-reactors-audit.ts` counts the objects that react (908 bases, 68,841 references) and
+  the layers that reach them; the QA scenario `interaction-web` burns the web.
 
 ### Shouts and powers
 
