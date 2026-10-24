@@ -145,6 +145,8 @@ export class Renderer {
   readonly #refraction: RefractionComposite;
   /** bSAOEnable (on in the launcher presets); off for comparisons. */
   ambientOcclusion = true;
+  /** Grass is drawn (the console's tg turns it off and on). */
+  showGrass = true;
   readonly grass: GrassRenderer;
   readonly decals: DecalRenderer;
   readonly precipitation: PrecipitationRenderer;
@@ -408,7 +410,7 @@ export class Renderer {
       }
       const trees = view.trees?.();
       if (trees) this.treeLod.draw(opaque, this.scene.frameBindGroup, trees);
-      const grass = view.grass?.();
+      const grass = this.showGrass ? view.grass?.() : undefined;
       if (grass) this.grass.draw(opaque, grass, this.scene.viewPlanes, view.camera.position);
       this.scene.drawOpaque(opaque, scenes);
     }

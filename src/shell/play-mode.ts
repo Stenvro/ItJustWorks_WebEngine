@@ -45,7 +45,7 @@ import { DialogueMenu } from './dialogue-menu.ts';
 import { cellPlacement, exteriorCells } from './cell-placement.ts';
 import { ConsoleMenu, isConsoleKey, type ConsoleRunner } from './console-menu.ts';
 import { ConsoleCommands, parseConsoleLine } from './console-commands.ts';
-import { Compass } from './compass.ts';
+import { Compass, questTargets } from './compass.ts';
 import { MenuHost, type Menu } from '../ui/menu-host.ts';
 import type { GameSession } from './game-session.ts';
 import { headPosition, type PlacedActor } from './actors.ts';
@@ -824,7 +824,32 @@ export class PlayMode {
           toggleMenus: () => {
             this.#menusShown = !this.#menusShown;
             session.hud.shown(this.#menusShown);
+            return this.#menusShown;
           },
+          toggleCollision: () => {
+            const player = this.#world.player()?.play.player;
+            if (!player) return true;
+            player.noClip = !player.noClip;
+            return !player.noClip;
+          },
+          toggleFreeCamera: () => {
+            const play = this.#world.player()?.play;
+            if (!play) return false;
+            const free = play.freeCamera;
+            play.setFreeCamera(!free);
+            return !free;
+          },
+          toggleGrass: () => {
+            this.#renderer.showGrass = !this.#renderer.showGrass;
+            return this.#renderer.showGrass;
+          },
+          setFov: (world) => {
+            // TODO(M13): first person's own field of view (fDefault1stPersonFOV).
+            this.#world.player()?.play.player.setFov(world);
+          },
+          gameSettings: () => session.settings(),
+          questTargets: () => questTargets(runtime),
+          pick: (x, y, aspect) => this.#world.player()?.play.pickAt(x, y, aspect),
           forceWeather: (weather, override) => {
             session.sky.forceWeather(weather, override);
           },

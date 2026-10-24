@@ -823,6 +823,13 @@ export class ScriptRuntime implements VmHost {
    * TODO(M13): its unlimited carry weight and ammunition.
    */
   godMode = false;
+  /**
+   * The console's world-wide switches (src/shell/console-commands.ts; observed in the
+   * original): immortal mode (tim: the player's health never drops to zero, Kill passes them by),
+   * all AI processing (tai without an actor), all combat AI (tcai), detection (tdetect) and the
+   * local map's fog of war (tfow).
+   */
+  readonly debug = { immortal: false, ai: true, combatAi: true, detection: true, fogOfWar: true };
   perkPoints = 0;
   lastHorse: number | undefined;
   inMenuMode = false;
@@ -1623,9 +1630,14 @@ export class ScriptRuntime implements VmHost {
     this.world.notification?.(`${name} ${typeof verb === 'string' ? verb : ''}`.trim());
   }
 
-  async gameSetting(name: string): Promise<number | string | undefined> {
+  /** The game settings the scripts read (the console's setgs changes them). */
+  gameSettingTable(): Promise<GameSettings> {
     this.#settings ??= GameSettings.read(this.forms.db);
-    const settings = await this.#settings;
+    return this.#settings;
+  }
+
+  async gameSetting(name: string): Promise<number | string | undefined> {
+    const settings = await this.gameSettingTable();
     return name.toLowerCase().startsWith('s') ? settings.string(name) : settings.number(name);
   }
 

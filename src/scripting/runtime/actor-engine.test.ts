@@ -82,6 +82,7 @@ function dyingEngine(essentialAlias = false): { actors: ActorEngine; log: DeathL
   const runtime = {
     state,
     godMode: false,
+    debug: { immortal: false },
     forms: {
       record: () => Promise.resolve(undefined),
       alias: () => Promise.resolve({ flags: essentialAlias ? AliasFlag.essential : 0 }),

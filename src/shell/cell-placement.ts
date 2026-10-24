@@ -52,6 +52,22 @@ export async function exteriorCells(db: RecordDatabase): Promise<Map<string, num
   return cells;
 }
 
+/**
+ * The coc spot of a worldspace's exterior cell by its grid (the console's coe and cow); a
+ * message where it has no cell there. TODO(M13): the engine makes a cell where the plugins
+ * have none.
+ */
+export async function gridPlacement(
+  db: RecordDatabase,
+  world: number,
+  x: number,
+  y: number,
+): Promise<Placement | string> {
+  const cell = await (await Worldspace.open(db, world)).cell(x, y);
+  if (cell === undefined) return `Cell '${String(x)}, ${String(y)}' not found.`;
+  return exteriorPlacement(db, cell, world);
+}
+
 /** An exterior cell's coc spot, its worldspace's persistent references there included. */
 async function exteriorPlacement(
   db: RecordDatabase,
