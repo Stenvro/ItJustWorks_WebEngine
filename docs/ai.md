@@ -149,8 +149,23 @@ the meshes: [formats/esm.md](formats/esm.md#navigation-meshes)):
   the market, between a foundation (WRDrayGoodsBase) and the road's embankment
   (WRMainRoadPlains02), now walks out along the embankment. Still stuck on its second search,
   it is set on its path's next point if that lies within 64 units and has a floor within 48 of
-  it (logged; back where it was if that took it off the floor). TODO(M13): the engine's own
-  way out is not documented.
+  it (logged; back where it was if that took it off the floor). The engine's own way out (observed
+  in the original, its numbers not all identified): its path manager's static avoider keeps a window of
+  the actor's recent updates, where it was and where it meant to be; when the window shows it
+  moving well short of its way (fAcceptableErrorRatio, 0.9, against what it covered) it lays an
+  avoid node one radius ahead of the actor (cost fDefaultAvoidNodeCost, 32) and searches again
+  round it; only with bStaticAvoidanceTriggerMovementBlocked (off) does that also tell the actor
+  it is blocked, whose MovementBlocked handler would put it in an engine-made "movement blocked"
+  package (procedure 36; bUseMovementBlockedPackage, off, is read in the actor's update, its role
+  not read).
+  TODO(M13): ours searches wider instead of laying avoid nodes (findPath keeps off places, it has
+  no costs).
+- **Against a wall** (observed in the original): its graph is told what the actor wants,
+  not what its controller made of it, whenever the two disagree (motion feedback:
+  [animation.md](animation.md#driving-the-graphs)), and the player's graph always
+  (bPlayerGraphFeedback 0), so an actor pressed against a wall walks on the spot, and a horse the
+  player rides into a fence gallops on the spot. An NPC's AI notices it as above; the player's
+  controls never do.
 - **Warped** (observed in the original; the INI's [Pathfinding]): a travel given up (no
   way there, stuck after its searches, shut doors) counts as a path failure, the count starting
   over where the actor stands more than fMinFailureDistance (50) from the last failure. At
@@ -270,9 +285,14 @@ there (`src/ai/package-runtime.ts`, `src/shell/actor-ai.ts`), in Play and in the
 - **Its tree** runs from the root (Creation Kit: Procedure Tree; the engine's rules are not
   documented, these are its names'): a Sequence runs its children in order, one whose conditions
   do not hold skipped; a Stacked branch the first child that may run; a Simultaneous branch all
-  of them at once, ending as its first ends (those beside it stop then: the Sleep template
-  finds a bed while it sandboxes, then sleeps; TODO(M13)); a Random branch one that may run,
-  at random. A procedure runs until it
+  those whose conditions hold at once, every update each of them (observed in the original),
+  ending as one of them ends, whichever (those beside it stop then: the Sleep template finds a bed
+  while it sandboxes, then sleeps), or, with PRCB flag 0x2 (xEdit's "Unknown 1"), as all of them
+  have (the Sit template sits and waits; 19 of the 151 vanilla Simultaneous branches have it: `node tools/package-info.ts --simultaneous`). Ended by its first child
+  alone before, the Sit template's search for a seat kept its package running after the Travel
+  beside it, whose success completes the package, had arrived: DialogueRiftenSS02Scene and
+  IvarsteadSSScene never ended. A Random branch runs one that may run, at random. A procedure
+  runs until it
   succeeds or fails; one whose success completes the package (FNAM 0x1) ends it; a branch that
   repeats when complete (PRCB 0x1) starts over. Chosen again (every evaluation, EvaluatePackage)
   while it stays the package chosen, its tree goes on, unless a branch it runs (or, ended, the

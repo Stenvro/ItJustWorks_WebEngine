@@ -785,9 +785,14 @@ export class ActorPackages {
         return 'skipped';
       }
       case 'simultaneous': {
-        // Its children all at once; it ends as its first ends, and those beside it stop then
-        // (the Sleep template finds a bed while it sandboxes, then sleeps). Where the first does
-        // not run (its conditions), it ends as they all have. TODO(M13): the engine's rule.
+        // Observed in the original: its children whose conditions hold run at once, each
+        // update all of them; it ends as one of them ends, whichever (the Sleep template finds a
+        // bed while it sandboxes, then sleeps), and those beside it stop then. With
+        // BranchFlag.allComplete it ends as all of them have ended (the Sit template sits and
+        // waits). A success that completes the package completes it at once. (Ended only by its
+        // first child, the Sit template's search for a seat, while the Travel beside it, whose
+        // success completes the package, had arrived, held Sit packages for ever: the last phases
+        // of DialogueRiftenSS02Scene and IvarsteadSSScene.)
         const views: Running[] = branch.children.map(() => ({
           ...running,
           stopped: false,
@@ -795,16 +800,23 @@ export class ActorPackages {
           parent: running,
         }));
         const runs = branch.children.map((child, i) => this.#branch(views[i] ?? running, child));
-        const first = await runs[0];
-        if (first === undefined) return 'skipped';
-        if (first === 'skipped') {
-          const results = await Promise.all(runs.slice(1));
-          if (results.includes('stopped')) return 'stopped';
-          if (results.includes('complete')) return 'complete';
-          return results.every((result) => result === 'skipped') ? 'skipped' : 'success';
+        const all = (branch.branchFlags & BranchFlag.allComplete) !== 0;
+        const pending = new Map(runs.map((run, i) => [i, run.then((result) => ({ i, result }))]));
+        let ran = false;
+        while (pending.size > 0) {
+          const ended = await Promise.race(pending.values());
+          pending.delete(ended.i);
+          if (ended.result === 'skipped') continue;
+          ran = true;
+          // A procedure's success that completes the package ends it at once, whatever is left.
+          const now = !all || ended.result === 'complete' || ended.result === 'stopped';
+          if (!now) continue;
+          views.forEach((view, i) => {
+            if (i !== ended.i) view.cut = true;
+          });
+          return ended.result;
         }
-        for (const view of views.slice(1)) view.cut = true;
-        return first;
+        return ran ? 'success' : 'skipped';
       }
       case 'random': {
         const open: ProcedureBranch[] = [];
