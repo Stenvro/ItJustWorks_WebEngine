@@ -134,6 +134,8 @@ const CREATURE_RACES = [
   0x41fb4, 0x23ab7, 0x23abe, 0x23a8a, 0x23ab5, 0x23aba, 0x5593b, 0x2d1de, 0x52382, 0xa5600, 0x23ab9,
   0xe4010, 0x23ab1, 0x23ab3, 0x10ec86, 0x10ec89, 0x10f9b9, 0x23aae,
 ];
+/** Bleak Falls Barrow's ceiling spider (MS13FrostbiteSpiderREF). */
+const BLEAK_FALLS_SPIDER = 0x3a1e1;
 /** Bleak Falls Barrow's spider room: into its trigger box, then on toward Arvel's web. */
 const SPIDER_WALK: readonly (readonly [number, number, number])[] = [
   [2395, -3003, -1640],
@@ -911,6 +913,24 @@ QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2)
         await sleepMs(3000);
       }
       ctx.note('the player walked through the spider’s trigger');
+    },
+    // The spider must have come down and fought: one that never attacked (still in its hole,
+    // its ambush never sprung) is reported as a passive creature.
+    finish: async (ctx) => {
+      const line = await ctx.page.eval<string>(
+        `(() => {
+          const stage = engineDev.viewer?.actorStage ?? engineDev.world?.actorStage;
+          const fighter = stage?.combat.qaFighter(${String(BLEAK_FALLS_SPIDER)});
+          const spider = stage?.get(${String(BLEAK_FALLS_SPIDER)});
+          const at = spider?.position.map(Math.round).join(', ') ?? '?';
+          const text = 'the spider: ' + (fighter ? fighter.attacks + ' attacks, ' + fighter.hits + ' hits' : 'no fighter') + ', at ' + at;
+          if (!fighter || fighter.attacks === 0)
+            engineDev.qa.report({ kind: 'creature-passive', subject: { id: '0003A1E1', name: 'Wounded Frostbite Spider', kind: 'creature' }, time: 0, detail: text + ': its ambush never came down to fight', severity: 1, position: spider?.position });
+          return text;
+        })()`,
+        20000,
+      );
+      ctx.note(line);
     },
   },
   {

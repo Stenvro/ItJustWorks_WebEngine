@@ -2625,6 +2625,11 @@ export class ActorCombatAi {
     if (mind.armed && best.kind === 'unarmed' && current === undefined) {
       if (await this.#pickUpWeapon(mind, view, runtime)) return;
     }
+    // Not in the middle of an attack (a bow drawn, a swing): the weapon changes once it is
+    // over. Changed under a drawn bow, the archer's hands held the sword while its graph stood
+    // in the bow's drawn state, whose release and cancel idles ask for a bow: it held the bow
+    // drawn for good (the combat scenario's guards, 39 s).
+    if (!best.equipped && attacking(view.state)) return;
     mind.equipped = best;
     if (best.equipped) return;
     // Taken up, it is kept a while (fCombatInventoryMinEquipTime*).
@@ -2640,6 +2645,11 @@ export class ActorCombatAi {
         await this.#until(
           () => host.fighter(mind.reference)?.state.weapon === WeaponState.sheathed,
         );
+        // Its graph did not put it away (it attacks again, it is staggered): no change now.
+        if (host.fighter(mind.reference)?.state.weapon !== WeaponState.sheathed) {
+          mind.nextEquip = this.#clock;
+          return;
+        }
       }
       const equipment = runtime.equipment;
       if (best.kind === 'unarmed') {
