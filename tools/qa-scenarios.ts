@@ -493,14 +493,14 @@ var QA_PLAY = engineDev.world.#play;
     if (bot.door !== undefined && toGoal < 110) {
       bot.release();
       const dz = goal[2] + 70 - (feet[2] + 120);
-      player.yaw = Math.atan2(goal[0] - feet[0], goal[1] - feet[1]);
+      bot.wantYaw = Math.atan2(goal[0] - feet[0], goal[1] - feet[1]);
       player.pitch = Math.atan2(dz, Math.max(1, toGoal));
       if (now - (bot.usedDoor ?? 0) > 2500) { bot.usedDoor = now; tap('KeyE'); say('use door ' + bot.door.toString(16)); }
       return;
     }
     while (bot.path.length > 1 && Math.hypot(bot.path[0][0] - feet[0], bot.path[0][1] - feet[1]) < 56) bot.path.shift();
     const next = bot.path[0] ?? goal;
-    player.yaw = Math.atan2(next[0] - feet[0], next[1] - feet[1]);
+    bot.wantYaw = Math.atan2(next[0] - feet[0], next[1] - feet[1]);
     player.pitch = 0;
     // Sidestepping or backing off (a door frame, a corner) for a moment.
     const dodging = bot.dodge && now < bot.dodge.until;
@@ -519,6 +519,23 @@ var QA_PLAY = engineDev.world.#play;
       say('stuck at ' + feet.map(Math.round).join(',') + ': ' + { KeyA: 'step left', KeyD: 'step right', KeyS: 'back off' }[move] + (bot.stuckCount % 2 === 0 ? ', jump' : ''));
     }
   }, 100);
+  // The view turns to the way it wants every frame, as a mouse does (set at once ten times a
+  // second, the body's turn rate came and went: turnLeft and turnStop many times a second).
+  let lastFrame = performance.now();
+  const turn = (now) => {
+    if (window.__qaBot !== bot) return;
+    const dt = Math.min(0.1, (now - lastFrame) / 1000);
+    lastFrame = now;
+    const player = W.player;
+    const rt = engineDev.play()?.session.scriptsReady;
+    if (player && rt && !rt.controls.aiDriven && bot.wantYaw !== undefined) {
+      const off = Math.atan2(Math.sin(bot.wantYaw - player.yaw), Math.cos(bot.wantYaw - player.yaw));
+      const rate = Math.max(-3, Math.min(3, off * 6));
+      if (Math.abs(off) > 0.01) player.yaw += rate * dt;
+    }
+    requestAnimationFrame(turn);
+  };
+  requestAnimationFrame(turn);
   return 'started';
 })()`;
 

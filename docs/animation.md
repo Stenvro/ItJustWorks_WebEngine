@@ -568,6 +568,14 @@ by the ground under their two ends, eased by fQuadrupedPitchMult
 ([physics.md](physics.md#actors-on-the-ground), with the numbers); the QA monitor `rocking`
 watches for it (docs/qa.md).
 
+Measured with the QA monitors (b9f6248 with the new monitors against this work, the same
+scenarios, full length): `rocking` in the opening 67 (62 of them its four horses) to 7 (4), in
+`creatures` 34 to 9, in `combat-melee` and `riverwood` 1 to 0 each; `foot-slide` in `riverwood`
+26 to 0, `combat-melee` 21 to 0, `creatures` 14 to 1, the opening 10 to 0, `whiterun-day` 1 to 0.
+The rest of the opening's player anomalies came from the QA follow bot (it set the view's yaw at
+once ten times a second; it turns it every frame now, as a mouse does) and from the third-person
+body in MT WalkingCamera (above, "The player").
+
 TODO(M13): the actions are not resolved through the idle tree yet (the vanilla events are sent:
 a rider's graph gets moveStart, and SprintStart is not refused while sneaking or blocking); the
 movement controller's acceleration (it ramps the speed by the race's acceleration and deceleration
