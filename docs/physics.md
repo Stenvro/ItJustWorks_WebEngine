@@ -81,18 +81,42 @@ and looks (`src/shell/player.ts`, `src/shell/play-session.ts`). Formats:
 
 Actors are set on the ground as a controller puts them when their cell loads
 (`src/world/actor-ground.ts`; near the player they then get a character controller of their own:
-[ai.md](ai.md#movement)): once the cell's collision is complete, a ray straight down from 16
-units above where the actor stands (its reference, where a script moved it, or where its package
-has it: [ai.md](ai.md#where-packages-put-actors)), on what the character controller collides
-with, gives the feet's height. The controller falls, so the
+[ai.md](ai.md#movement)): once the cell's collision is complete, a ray straight down from 32
+units above where the actor stands (its reference, where a script moved it, where it came through
+a door, or where its package has it: [ai.md](ai.md#where-packages-put-actors)), on what the
+character controller collides with, gives the feet's height. **The engine's position check**
+(observed in the original) looks for what an actor stands on from a quarter of its height
+above its feet, at most 32 units, down to fCheckPositionFallDistance (72) below them; the 32 here
+are a human's quarter. It matters where a navmesh lies under the collision it covers: by Whiterun's
+shops the navmesh is 20–25 units under the porch floors, and from 16 (or, for a controller made for
+an actor walking in from beyond the high process, 24) units above a door marker or a navmesh point
+the ray started under the floor and found the ground beneath it: Nazeem, Anoriath and Ahlam came
+out of a door inside a porch and walked on the spot in it for minutes. A controller made for an
+actor (`ActorMovers`) is set on its floor by the same check, from its own height. The controller
+falls, so the
 ground may be any distance below: leveled animals and bandits in the wilderness are placed up
 to 120 units above it. Races that tilt lean with the ground's normal there: RACE DATA flag 0x8
 "tilt front/back" (four-legged animals) about their sideways axis, 0x10 "tilt left/right"
 (spiders, chaurus, mudcrabs, mammoths) about their length too; others stay upright. Races that
 do not walk (0x100 "walks" unset: slaughterfish) stay where they were placed, as do actors in
 the furniture their package uses (the furniture holds them) and actors with nothing under
-them (placed in a cell their package takes them out of). Actors placed below the landscape stay
-there: whether the engine's controller lifts them out is not documented (TODO(M13)).
+them (placed in a cell their package takes them out of).
+
+**Out of the world.** An actor whose controller is in the air with no collision anywhere under it
+(it went through a floor or the landscape) would fall for ever. Ours looks under a falling actor
+every half second of its fall; with nothing there it is set back on the navmesh nearest where it
+last stood (else there), on the floor the position check finds, and its way is searched again
+(`ActorMovers.#watchFall`). TODO(M13): the engine's own rule was not found: no setting, debug text
+or message names it (its warp after repeated path failures, "FailSafe Warp", is the pathing's:
+[ai.md](ai.md#movement)). Actors beyond the high process have no controller and do not fall:
+their walk keeps them on the navmesh.
+
+**Not on each other.** An NPC's controller does not stand on another actor's
+(`CharacterBody.standsOnActors` off): held up by an actor alone (a ray down from its middle and
+its shape cast down by its snap reach find only another actor, or it is still coming off one) it
+is not grounded and moves off that actor at least 100 units a second as it falls; a step up never
+lands on an actor. The player stands on heads, as in the game. TODO(M13): Havok's character
+proxy's own rule was not read; NPCs are not seen standing on one another in the game.
 
 ## Water volumes
 

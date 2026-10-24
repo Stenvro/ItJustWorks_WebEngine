@@ -40,7 +40,13 @@ import { CharacterBody } from '../physics/character.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
 import type { Vec3 } from '../render/math.ts';
-import { groundedPlacement, standsOnGround } from '../world/actor-ground.ts';
+import {
+  CHECK_FALL_DISTANCE,
+  checkAbove,
+  GROUND_BELOW,
+  groundedPlacement,
+  standsOnGround,
+} from '../world/actor-ground.ts';
 import type { IniSettings } from '../world/ini-settings.ts';
 import { RaceFlag } from '../world/actor-records.ts';
 import { referenceMatrix } from '../world/cell-loader.ts';
@@ -139,6 +145,9 @@ interface Mover {
   /** When its idle was last stopped for its AI's way (performance.now ms). */
   idleStoppedAt: number;
   tilt: { readonly at: Vec3; readonly normal: Vec3 } | undefined;
+  /** Where it last stood on something (its feet), and when its fall was last looked under. */
+  stood: Vec3 | undefined;
+  fallCheckedAt: number;
   /** The trigger volumes it is in. */
   triggers: Set<number>;
   /** The trigger volumes its bodies reached at their last check. */
@@ -184,6 +193,8 @@ export interface ActorMoversOptions {
 
 /** An idle that did not stop for an actor's way is stopped again after this (ms). */
 const IDLE_STOP_AGAIN_MS = 1000;
+/** The action that ends an idle at once (AACT; the characters' idle IdleStopInstant). */
+const IDLE_STOP_INSTANT = 'ActionIdleStopInstant';
 
 /** An actor on its way to a place. */
 interface Travel {
@@ -279,12 +290,12 @@ const DOOR_LOOKAHEAD = 96;
 const DOOR_RAY_HEIGHT = 64;
 /** The triangles within this of a door shut to an actor are closed to it (units). */
 const DOOR_BLOCKED = 64;
+/** A falling actor is looked under this often (ms of its fall: ActorMovers.#watchFall). */
+const FALL_CHECK_MS = 500;
 /** A stuck actor is set on its path's next point within this of it (units). */
 const UNSTICK_REACH = 64;
 /** ... on a floor within this over or under that point (units). */
 const UNSTICK_FLOOR = 48;
-/** A controller is set on the floor found from this far above its feet (units). */
-const FLOOR_ABOVE = 24;
 
 /**
  * An actor of the loaded area beyond the high process (the middle-high process): its AI runs,
@@ -497,6 +508,7 @@ export class ActorMovers {
         return;
       }
       travel.follower = new PathFollower(path, { gait: travel.gait, arrive: travel.arrive });
+      this.#newPath(mover.staged);
     }
     // A door in its way (the navmesh marks only load doors): it opens it and waits, or the door
     // is shut to it and it goes round.
@@ -554,6 +566,23 @@ export class ActorMovers {
     if (step.request) {
       this.#requests.set(reference, this.#paced(this.#types(mover), travel, step.request));
     }
+  }
+
+  /**
+   * An actor got a new path over the navmesh (the engine's NewPath movement message, observed in
+   * the original): if its graph's bForceIdleStop is set (idles that must end before the actor goes on set
+   * it: the dialogue idles), its idle is stopped at once (ActionIdleStopInstant, the idle tree's
+   * IdleStopInstant), and as the engine stops an idle so, the movement action is performed again
+   * once the graph took it (ActionMoveStart while it moves).
+   */
+  #newPath(staged: StagedActor): void {
+    const behavior = staged.placed.behavior;
+    const perform = this.#options.performAction;
+    if (!behavior || !perform || (behavior.variable('bForceIdleStop') ?? 0) === 0) return;
+    const reference = staged.reference;
+    void perform(reference, IDLE_STOP_INSTANT).then((taken) => {
+      if (taken) this.#locomotions.get(reference)?.resume([behavior]);
+    });
   }
 
   /**
@@ -908,43 +937,38 @@ export class ActorMovers {
   // --- How its graph drives its movement --------------------------------------------------------
 
   /** Each actor's movement drive (its graph's handlers and variables set it). */
-  readonly #drives = new Map<
-    number,
-    { drive: MovementDrive; animation: number; rotation: number }
-  >();
+  readonly #drives = new Map<number, MovementDrive>();
 
   /**
    * The engine's AnimationDriven, MotionDriven and AllowRotation handlers (the graph's
    * StartAnimationDriven, StartMotionDriven, StartAllowRotation): its movement controller
-   * switches at once.
+   * switches at once, until the next movement update reads the graph's variables again.
    */
   setDrive(reference: number, drive: MovementDrive): void {
-    const entry = this.#drives.get(reference);
-    if (entry) entry.drive = drive;
-    else this.#drives.set(reference, { drive, animation: -1, rotation: -1 });
+    this.#drives.set(reference, drive);
   }
 
   /** How an actor's movement is driven now (its controller unless its graph says otherwise). */
   drive(reference: number): MovementDrive {
-    return this.#drives.get(reference)?.drive ?? 'controller';
+    return this.#drives.get(reference) ?? 'controller';
   }
 
   /**
-   * Its drive before a movement update: the engine reads bAnimationDriven and bAllowRotation
-   * from the graph and switches the controller by them (docs/animation.md, "Driving the
-   * graphs"); here as they change, so that a handler's switch holds until they do.
-   * TODO(M13): whether the engine reads them every update or as they change.
+   * Its drive before a movement update (observed in the original): every update the engine
+   * reads bAnimationDriven and bAllowRotation from the graph and switches the controller to what
+   * they say (docs/animation.md, "Driving the graphs"), so a handler's switch lasts only while the
+   * variables agree. (Kept until they changed, a StartMotionDriven outlived an animation-driven
+   * idle's bAnimationDriven: the controller walked an actor on while its idle played.)
    */
   #readDrive(
     reference: number,
     behavior: { variable(name: string): number | undefined },
   ): MovementDrive {
-    const animation = behavior.variable('bAnimationDriven') ?? 0;
-    const rotation = behavior.variable('bAllowRotation') ?? 0;
-    const entry = this.#drives.get(reference);
-    if (entry?.animation === animation && entry.rotation === rotation) return entry.drive;
-    const drive = driveOf(animation, rotation);
-    this.#drives.set(reference, { drive, animation, rotation });
+    const drive = driveOf(
+      behavior.variable('bAnimationDriven') ?? 0,
+      behavior.variable('bAllowRotation') ?? 0,
+    );
+    this.#drives.set(reference, drive);
     return drive;
   }
 
@@ -1052,6 +1076,7 @@ export class ActorMovers {
         this.#requests.delete(reference);
       }
       this.#draw(mover, world.physics, seconds);
+      this.#watchFall(mover, world.physics);
       const reaction = this.#reactions.get(staged.reference);
       if (reaction) {
         this.#react(mover, reaction, seconds);
@@ -1067,6 +1092,72 @@ export class ActorMovers {
       if (!seen.has(reference)) this.#warps.delete(reference);
     }
     this.#warpFrame(seconds);
+  }
+
+  /**
+   * An actor falling out of the world: in the air with no collision anywhere under it (it went
+   * through a floor or the landscape, or off the loaded area), it would fall for ever. Every
+   * FALL_CHECK_MS of its fall it is looked under; with nothing there it is set back on the
+   * navmesh nearest where it last stood (else there), as an actor that cannot find its way is
+   * warped. TODO(M13): the engine's own rule for an actor below the world was not found (no
+   * setting, debug text or handler names it); an actor beyond the high process has no controller
+   * and never falls (its walk keeps it on the navmesh).
+   */
+  #watchFall(mover: Mover, physics: PhysicsWorld): void {
+    const character = mover.character;
+    if (character.grounded || character.swimming) {
+      if (character.grounded) mover.stood = [...character.feet];
+      return;
+    }
+    const now = performance.now();
+    if (now - mover.fallCheckedAt < FALL_CHECK_MS || !physics.queriesCurrent) return;
+    mover.fallCheckedAt = now;
+    const [x, y, z] = character.feet;
+    const under = physics.raycast(
+      [x, y, z + character.shape.height / 2],
+      [0, 0, -1],
+      character.shape.height / 2 + GROUND_BELOW,
+      Layer.charController,
+      character.collider,
+    );
+    if (under) return;
+    const staged = mover.staged;
+    const back = mover.stood ?? staged.placed.actor.position;
+    const on = this.#options.navmeshes?.()?.nearest?.(back, NAVMESH_REACH);
+    staged.position = on ? [on[0], on[1], on[2]] : [back[0], back[1], back[2]];
+    this.teleport(staged);
+    this.#placeOnFloor(mover);
+    // Its way from where it is now.
+    const travel = this.#travels.get(staged.reference);
+    if (travel) travel.follower = undefined;
+    this.#options.terminal.log(
+      'actor',
+      `${staged.placed.actor.editorId || staged.reference.toString(16)} fell out of the world at ` +
+        `${[x, y, z].map((value) => Math.round(value)).join(', ')}: set back at ` +
+        staged.position.map((value) => Math.round(value)).join(', '),
+      'info',
+    );
+  }
+
+  /** A moved actor's controller set on the floor its position check finds (#add's). */
+  #placeOnFloor(mover: Mover): void {
+    const physics = this.#world?.physics;
+    if (!physics?.queriesCurrent) return;
+    const character = mover.character;
+    const [x, y, z] = character.feet;
+    const above = checkAbove(character.shape.height);
+    const hit = physics.raycast(
+      [x, y, z + above],
+      [0, 0, -1],
+      above + this.#checkFallDistance(),
+      Layer.charController,
+      character.collider,
+    );
+    if (!hit) return;
+    character.teleport([x, y, hit.point[2]]);
+    character.recover();
+    mover.drawn = [...character.feet];
+    mover.staged.position = [...character.feet];
   }
 
   /** The last time the player bumped into an actor: where from, how (its conditions). */
@@ -1114,6 +1205,19 @@ export class ActorMovers {
       this.#requests.delete(owner.reference);
       this.#options.onBump?.(owner.reference, bump);
     }
+  }
+
+  #fallDistance: number | undefined;
+
+  /** fCheckPositionFallDistance, from the game settings once read (its default until then). */
+  #checkFallDistance(): number {
+    if (this.#fallDistance === undefined) {
+      this.#fallDistance = CHECK_FALL_DISTANCE;
+      void this.#options.session.settings().then((settings) => {
+        this.#fallDistance = settings.number('fCheckPositionFallDistance') ?? CHECK_FALL_DISTANCE;
+      });
+    }
+    return this.#fallDistance;
   }
 
   /** The bump reaction's timing, from the game settings once read (vanilla until then). */
@@ -1329,6 +1433,7 @@ export class ActorMovers {
         return false;
       }
       travel.follower = new PathFollower(path, { gait: travel.gait, arrive: travel.arrive });
+      this.#newPath(staged);
     }
     const step = travel.follower.step(staged.position, seconds, (door) =>
       this.#options.openDoor?.(door, reference),
@@ -1417,15 +1522,19 @@ export class ActorMovers {
       if (!this.#moves(staged)) return;
       const scale = look.scale * staged.placed.actor.scale;
       const sized = bound ?? HUMAN_BOUND;
-      // On the floor first (the collision just under or over its feet), so its shape is not in
-      // it: one that walked beyond the high process stood on its navmesh, which may lie a
-      // little under the floor.
+      // On the floor first, as the engine checks a position (src/world/actor-ground.ts
+      // checkAbove): from a quarter of its height above its feet down to
+      // fCheckPositionFallDistance below them, so its shape is not in it. One that walked beyond
+      // the high process stood on its navmesh, which may lie up to 25 units under the floor
+      // (looked for from 24 units above, a point of the navmesh under a Whiterun shop's porch
+      // found the ground beneath it: the actor walked on the spot inside the porch).
       if (world.physics.queriesCurrent) {
         const [x, y, z] = staged.position;
+        const above = checkAbove(sized.halfExtents[2] * 2 * scale);
         const hit = world.physics.raycast(
-          [x, y, z + FLOOR_ABOVE],
+          [x, y, z + above],
           [0, 0, -1],
-          FLOOR_ABOVE * 3,
+          above + this.#checkFallDistance(),
           Layer.charController,
         );
         if (hit) staged.position = [x, y, hit.point[2]];
@@ -1446,6 +1555,9 @@ export class ActorMovers {
       );
       // Blocked on its way, it seeks a way round (a crease, a corner).
       character.seeksAround = true;
+      // Another actor is no ground to it: an NPC pressed against another does not climb onto
+      // it (CharacterBody.standsOnActors).
+      character.standsOnActors = false;
       // It steps up onto ground actors walk as the player does (the engine's controller's
       // TryStep: onto the navmesh), not only up stairs: a chicken sent onto a Riverwood porch
       // stood before its edge, its path over the navmesh, its controller stopped by the step.
@@ -1471,6 +1583,8 @@ export class ActorMovers {
         heldByGraph: false,
         idleStoppedAt: -Infinity,
         tilt: undefined,
+        stood: undefined,
+        fallCheckedAt: -Infinity,
         triggers: new Set(),
         bodyTriggers: new Set(),
       });

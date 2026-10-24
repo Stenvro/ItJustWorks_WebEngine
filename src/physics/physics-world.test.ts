@@ -922,3 +922,57 @@ describe('deactivation', () => {
     physics.free();
   });
 });
+
+describe('characters on characters', () => {
+  /** Static, and character controllers that collide with it and with one another. */
+  const actors = new CollisionMatrix([
+    { formId: 1, editorId: 'L_STATIC', index: Layer.static, name: '', flags: 0, collidesWith: [2] },
+    {
+      formId: 2,
+      editorId: 'L_CHARCONTROLLER',
+      index: Layer.charController,
+      name: '',
+      flags: 0,
+      collidesWith: [1, 2],
+    },
+  ]);
+
+  /** Where an actor set on another's head stands after two seconds (its feet's height). */
+  const onHead = (standsOnActors: boolean): number => {
+    const physics = new PhysicsWorld(actors, GRAVITY);
+    physics.addObject(collision(body(box([-400, -400, -20], [400, 400, 0]))), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    const shape = { radius: 14.42, height: 131.84 };
+    const under = new CharacterBody(physics, shape, settings(new Set()), [0, 0, 0], {
+      reference: 0x20,
+      kind: 'actor',
+    });
+    physics.step(1 / 60);
+    // A little off the other's centre, as one ends up on another.
+    const over = new CharacterBody(physics, shape, settings(new Set()), [4, 0, 133], {
+      reference: 0x21,
+      kind: 'actor',
+    });
+    over.standsOnActors = standsOnActors;
+    for (let i = 0; i < 120; i++) {
+      under.step(1 / 60);
+      over.step(1 / 60);
+      physics.step(1 / 60);
+    }
+    const z = over.feet[2];
+    over.free();
+    under.free();
+    physics.free();
+    return z;
+  };
+
+  it('are no ground to an NPC: it slides off', () => {
+    expect(onHead(false)).toBeLessThan(5);
+  });
+
+  it('are ground to the player, who stands on heads', () => {
+    expect(onHead(true)).toBeGreaterThan(100);
+  });
+});
