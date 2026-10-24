@@ -382,3 +382,120 @@ export function guideWaypoints(
   }
   return points;
 }
+
+// --- Taper -----------------------------------------------------------------------------------
+
+type Tapered = Pick<MagicEffectRecord, 'flags' | 'taperWeight' | 'taperCurve' | 'taperDuration'>;
+
+/**
+ * The seconds an effect's taper adds to its duration (observed in the original: the
+ * active effect lasts its effect item's duration plus the magic effect's taper duration); none
+ * for an effect with No Magnitude or No Duration.
+ */
+export function taperSeconds(effect: Tapered): number {
+  if ((effect.flags & (EffectFlag.noMagnitude | EffectFlag.noDuration)) !== 0) return 0;
+  return Math.max(0, effect.taperDuration);
+}
+
+/**
+ * Whether an effect's magnitude tapers in those last seconds (observed in the original):
+ * not a Recover effect's (it lasts the taper's seconds longer at its whole magnitude), not
+ * without a taper duration.
+ */
+export function tapers(effect: Tapered): boolean {
+  return (effect.flags & EffectFlag.recover) === 0 && taperSeconds(effect) > 0.0001;
+}
+
+/**
+ * An effect's magnitude with `remaining` seconds left of its duration (observed in the
+ * original): whole until its last taper seconds, then magnitude × taper weight × (remaining / taper
+ * duration)^taper curve. FireDamageFFAimed (Firebolt): weight 0.3, curve 2, 1 s.
+ */
+export function taperedMagnitude(magnitude: number, remaining: number, effect: Tapered): number {
+  if (!tapers(effect)) return magnitude;
+  const seconds = taperSeconds(effect);
+  const left = Math.max(0, remaining);
+  if (left >= seconds) return magnitude;
+  return magnitude * effect.taperWeight * (left / seconds) ** effect.taperCurve;
+}
+
+/**
+ * What a value effect gives over [from, to] seconds of its `total` duration (taper included): its
+ * magnitude a second while whole, its tapered magnitude in its last taper seconds (the curve's
+ * integral; the engine adds the frame's magnitude × the frame's time). A curve of −1 or less has
+ * no integral: the middle of the span is taken.
+ */
+export function magnitudeOver(
+  magnitude: number,
+  total: number,
+  effect: Tapered,
+  from: number,
+  to: number,
+): number {
+  const start = Math.max(0, from);
+  const end = Math.min(total, to);
+  if (end <= start) return 0;
+  if (!tapers(effect)) return magnitude * (end - start);
+  const seconds = Math.min(taperSeconds(effect), total);
+  const whole = total - seconds;
+  let sum = magnitude * Math.max(0, Math.min(end, whole) - start);
+  const a = Math.max(start, whole);
+  if (end > a) {
+    const curve = effect.taperCurve;
+    if (curve <= -1) {
+      sum += taperedMagnitude(magnitude, total - (a + end) / 2, effect) * (end - a);
+    } else {
+      // The remaining time r runs from total − a down to total − end:
+      // ∫ (r / D)^c dr = D / (c + 1) × (r / D)^(c + 1).
+      const share = (r: number): number => (Math.max(0, r) / seconds) ** (curve + 1);
+      sum +=
+        magnitude *
+        effect.taperWeight *
+        (seconds / (curve + 1)) *
+        (share(total - a) - share(total - end));
+    }
+  }
+  return sum;
+}
+
+// --- Skill use -------------------------------------------------------------------------------
+
+/**
+ * Archetypes whose effects train their school as they act, by what they did (observed in the
+ * original: the archetypes' table marks them): Value Modifier, Dual Value Modifier,
+ * Bound Weapon, Summon Creature, Detect Life, Telekinesis, Reanimate, Accumulate Magnitude, Peak
+ * Value Modifier. A fire and forget effect of another archetype trains as it takes hold; a
+ * concentration one of another archetype not at all.
+ */
+export const SKILL_BY_EFFECT: ReadonlySet<number> = new Set([
+  EffectArchetype.valueModifier,
+  EffectArchetype.dualValueModifier,
+  EffectArchetype.boundWeapon,
+  EffectArchetype.summonCreature,
+  EffectArchetype.detectLife,
+  EffectArchetype.telekinesis,
+  EffectArchetype.reanimate,
+  EffectArchetype.accumulateMagnitude,
+  EffectArchetype.peakValueModifier,
+]);
+
+/**
+ * The skill uses one effect item of a spell gives its magic effect's school (observed in the
+ * original): the effect item's cost (no more than the spell's own cost when that is not
+ * calculated) × the magic effect's skill usage multiplier (MGEF DATA; 0 for 1,176 of the 1,731
+ * vanilla effects), × the seconds a concentration spell's hit stands for, × the share of its
+ * magnitude it did (a Value Modifier's: what it changed of the value; 1 for the others). Dual
+ * casting adds nothing: the effect item's cost is the same.
+ */
+export function effectSkillUses(use: {
+  readonly effectCost: number;
+  readonly spellCost?: number | undefined;
+  readonly skillUsageMult: number;
+  readonly seconds?: number | undefined;
+  readonly share?: number | undefined;
+}): number {
+  const cost =
+    use.spellCost === undefined ? use.effectCost : Math.min(use.effectCost, use.spellCost);
+  const share = Math.min(1, Math.max(0, use.share ?? 1));
+  return Math.max(0, cost) * use.skillUsageMult * (use.seconds ?? 1) * share;
+}

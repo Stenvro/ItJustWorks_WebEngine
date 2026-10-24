@@ -120,17 +120,17 @@ These run through every area and explain most of what breaks in play.
 
 ### Magic, effects, perks
 
-| System                  | Status    | Main gaps                                                                                                 |
-| ----------------------- | --------- | --------------------------------------------------------------------------------------------------------- |
-| Casting                 | partial   | dual-cast window, lesser power cooldown, NPC magicka regeneration while casting                           |
-| Magicka cost            | different | the NPC formula (NPCs pay 2–4× too much)                                                                  |
-| Active effects          | partial   | taper (all fire spells and fire enchantments linger in the original), displacement rules                  |
-| Archetypes              | partial   | Magelight, invisibility look, summon placement, telekinesis damage, ward growth, cloak pulse              |
-| Skill use               | different | the effect's skill usage multiplier; skill use by what the effect did                                     |
-| Enchanting              | partial   | no glow on enchanted items; enchanted item value                                                          |
-| Projectiles, explosions | partial   | impact force, cone sweep, lobber bounce, line of sight for areas and explosions, wards against explosions |
-| Visual effects          | partial   | effect shaders and art only on actors                                                                     |
-| Perks                   | complete  | 16 entry points unused by vanilla (mods)                                                                  |
+| System                  | Status  | Main gaps                                                                                   |
+| ----------------------- | ------- | ------------------------------------------------------------------------------------------- |
+| Casting                 | partial | MQ101's storm rate in the sim; concentration refusal, NPC ward hold, Touch reach (unread)   |
+| Magicka cost            | partial | an NPC's cast in the sim; the costliest effect that picks the school                        |
+| Active effects          | partial | displacement rules, the conditions' interval, concentration effects a frame at a time       |
+| Archetypes              | partial | Magelight, invisibility look, summon navmesh placement, telekinesis damage, cloak pulse     |
+| Skill use               | partial | staffs with perks, a lasting effect by its first frame                                      |
+| Enchanting              | partial | no glow on enchanted items; the charge without EAMT                                         |
+| Projectiles, explosions | partial | impact force, cone sweep, lobber bounce, line of sight for areas, an explosion's own damage |
+| Visual effects          | partial | effect shaders and art only on actors; RFCT visuals unread                                  |
+| Perks                   | partial | 16 entry points unused by vanilla (mods)                                                    |
 
 ### Animation and bodies
 

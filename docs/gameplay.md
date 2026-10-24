@@ -378,6 +378,14 @@ the player in a runtime on the game data, `--audit` reads every record).
   Modifier changes its second actor value by the weight's share; Absorb's caster gains what
   its target loses; damage to Health names the caster the killer; the invulnerable take none.
   Effects without a magnitude set their value as a flag (1): Paralysis, Invisibility.
+- Taper (observed in the original; effect-rules.ts taperedMagnitude): an active effect lasts
+  its effect item's duration plus its magic effect's taper duration (none with No Magnitude or No
+  Duration). Its magnitude is whole until those last seconds, then magnitude × taper weight ×
+  (remaining / taper duration)^taper curve; a Recover effect lasts them at its whole magnitude.
+  A value effect at once acts at once, then by its tapered magnitude each second of its taper
+  (a concentration spell's hit with the spell's whole magnitude): Firebolt (FireDamageFFAimed:
+  0.3, curve 2, 1 s) burns 25, then 25 × 0.3 / 3 = 2.5 more over a second; 187 vanilla effects
+  taper (86 of them resisted by FireResist; `node tools/magic-census.ts`).
 - Calm, Frenzy, Demoralize, Rally, Turn Undead, Banish move Aggression or Confidence to a
   target value (0 unaggressive, 3 frenzied; 0 cowardly, 4 foolhardy: TODO(M13) inferred) while
   they last; `MagicEngine.aiState` is what the combat AI reads ([ai.md](ai.md#combat-ai)).
@@ -615,8 +623,15 @@ Format/SPEL"; the game settings.
   engine's input chord, observed in the original) with one spell in both hands, with the school's Dual
   Casting perk (Can Dual Cast Spell; without it each hand casts on its own); its effects are
   cast with fMagicDualCastingEffectivenessBase (2.2: "Magic effects", EffectWasDualCast).
-- Skill use: a spell that takes effect on a target gives its school its base cost in uses (dual
-  cast × 2.8, TODO(M13)); a concentration spell's hit the share of the time it stands for.
+- Skill use (observed in the original; effect-rules.ts effectSkillUses): each effect item
+  of a spell (not a power, lesser power, shout, scroll or staff) that takes hold trains its magic
+  effect's school (a skill) by the effect item's cost (no more than the spell's own when that is
+  not calculated) × the magic effect's skill usage multiplier (0 for 1,176 of the 1,731 vanilla
+  effects; Fireball's 0.5). A fire and forget effect trains once, as it takes hold; the
+  archetypes the engine's table marks (Value Modifier, Dual Value Modifier, Bound Weapon, Summon
+  Creature, Detect Life, Telekinesis, Reanimate, Accumulate Magnitude, Peak Value Modifier) by the
+  share of their magnitude their actor value took (a heal on whole health trains nothing), and
+  only they as a concentration spell's effect, by the seconds held. Dual casting adds nothing.
 
 ### Delivery
 
@@ -647,6 +662,9 @@ Format/SPEL"; the game settings.
   anew (a ward keeps what it has grown).
 - Areas: an effect with an area (feet) reaches the actors within it of where the spell landed
   (each the effects whose area reaches it; TODO(M13): line of sight and SPIT 0x80000).
+  A ward meets the hostile effects of a burst (an area's, an explosion's enchantment) whose point
+  lies within half of fWardAngleForExplosions (90°) of its actor's facing (observed in the
+  original; explosions.ts wardFacesBurst).
   Explosions (the projectile's with its Explosion flag, else the effect's): below.
 - Explosions (src/gameplay/magic/explosions.ts; observed in the original): an actor within
   the radius takes the explosion's enchantment and its damage on Health by its share, 1 −
@@ -1130,6 +1148,12 @@ loses its data (the world's references carry none yet); a tempered item's value 
   `usedCharge`: percent) and recharges that row's item, the HUD the meters of those wielded
   (SetChargeMeterPercent per hand). TODO(M13): two of a base in both hands share the one marked
   wielded (the game's ExtraWornLeft).
+- **Value** (observed in the original; crafting.ts enchantedItemValue): an enchanted item is
+  worth its base value (one between 0 and 1 counted as 1), with a constant effect enchantment
+  (apparel) plus the enchantment's cost rounded, with another (weapons) base +
+  fEnchantmentPointsMult (0.12) × its charge + fEnchantmentEffectPointsMult (8) × the
+  enchantment's cost; nothing is added to a base of 0. The item card shows it (the barter menu's
+  prices follow).
 - **Recharging** (the inventory's T: ShowSoulGemList, the card's list of filled soul gems with
   the percent each adds, ItemCardListCallback): the soul's charge is added up to the full
   charge, the gem used up (UIEnchantRecharge); skill use fSkillUsageRechargeMult (0.0002) a
