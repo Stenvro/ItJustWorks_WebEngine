@@ -125,6 +125,7 @@ const GAME_EVENT_KINDS: Readonly<Record<GameEventKind, true>> = {
   grabRelease: true,
   hit: true,
   loadGame: true,
+  locationCleared: true,
   lockChanged: true,
   magicEffectApply: true,
   magicWardHit: true,

@@ -244,7 +244,8 @@ export class AliasFiller {
       if (!otherAlias || (otherAlias.flags & AliasFlag.allowReuse) === 0) return false;
     }
     if (alias.location) {
-      const cleared = runtime.state.locations.get(value)?.cleared ?? false;
+      // The engine counts its bosses as it asks (once a game hour: location-clearing.ts).
+      const cleared = await runtime.locationClearing.isCleared(value);
       if (cleared && (flags & AliasFlag.allowCleared) === 0) return false;
     } else {
       if ((flags & AliasFlag.allowDisabled) === 0 && !(await runtime.isEnabled(value)))
