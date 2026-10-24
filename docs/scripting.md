@@ -538,12 +538,67 @@ stats go to every object registered for them. What each kind becomes:
   books read, locks (a script's Lock too), race switches, sleep and waits, cells loading. The
   actors' location changes are the story events' (above); the relay is their one sender of
   OnLocationChange.
-- Not produced yet: trap hits (traps do not hit yet; the relay is ready), resets (cell reset,
-  M12 with respawn), loading a game (M12).
+- Trap hits come from the traps' contacts with actors ("Traps" below), resets from the cells
+  that reset as they come back ("Cell reset and cleared locations").
+- Not produced yet: loading a game (M12).
 
 `tools/script-events.ts` lists each event's declarations in the base scripts and the scripts
 of the load order that handle it. `PapyrusVm.handled` (debugging) hears every handler that
 runs.
+
+### Cell reset and cleared locations
+
+Observed in the original (`src/scripting/runtime/cell-reset.ts`, `location-clearing.ts`;
+times are whole game hours, 0 for never):
+
+- A cell notes the hour it leaves the loaded area (`GameState.cellDetached`). As it comes back,
+  one that never left is as the plugins made it; one that left resets once more than
+  iHoursToRespawnCell hours have passed (iHoursToRespawnCellCleared where its location is
+  cleared: 72 and 144 built in, 240 and 720 in Skyrim.esm). Its location for that: its encounter
+  zone's, else its own XLCN, else its worldspace's.
+- A cell with an encounter zone (its XEZN; outside, else its worldspace's) resets by the zone:
+  a zone that Never Resets keeps its cells (91 of the 356 zones, 144 interiors); else the zone
+  resets as one of its cells comes in once its cells have been away long enough, and a cell
+  that left before the zone's last reset resets as it comes back. A reset zone is levelled anew.
+- What may reset: a reference not flagged No Respawn (REFR 0x40000000); a container only if its
+  base Respawns (CONT DATA 0x02), an actor only if its base Respawns (ACBS 0x08); a leveled
+  actor unless No Respawn. What a reset does: the reference's lock, open state, destruction and
+  harvest go, a container's inventory is picked anew, an object that is not persistent goes
+  back to its editor place, an actor comes back as its records make it, and the reset is told
+  (TESResetEvent: OnReset, after OnCellAttach). Read but not done yet: the engine also sets the
+  reference's enable state again (whether to the initial one is not read) and keeps a clock of
+  its own on each actor that its respawn waits from.
+- Corpses: as a cell that left comes back, an actor that does not respawn, did not start dead
+  and died more than iHoursToClearCorpses (24) hours ago is removed (disabled); two further
+  checks of the engine's are not identified (a corpse a quest's alias holds is kept here).
+- A location is cleared once each of its bosses (its LCSR/ACSR references of the default
+  object LocRefType - Boss, LRTB) is dead; disabled bosses do not count, a boss dead longer than
+  the respawn wait counts as alive. The engine counts as an actor dies where the player is (the
+  location of the actor's editor cell, unless cleared already), as one respawns, and as a
+  quest's location alias asks (once a game hour). A location that becomes cleared is shown
+  "Cleared" (sCleared) on the maps from then on if it has the default object Keyword -
+  ClearableLocation (KWDO), which also plays Music - Dungeon Cleared (DCMS) and tells
+  LocationCleared (the hub's `locationCleared`): the misc stat Dungeons Cleared counts it.
+  sDungeonCleared ("Dungeon Cleared!") is read by no code: the engine shows no notice.
+- Moved objects (`src/shell/moved-objects.ts`): a cell leaving the loaded area notes where its
+  moving objects are; a cell loading places its objects where the game left them, until its
+  reset puts the non-persistent ones back.
+
+`node tools/world-rules-census.ts` counts the zones and their flags, the locations with bosses
+and those the player can clear, the references that never respawn and the traps.
+
+### Traps
+
+Observed in the original (`src/scripting/runtime/trap-hits.ts`): every physics world has a
+trap listener; bodies on L_TRAP and L_CLOUDTRAP are traps, and a character controller's contact
+with one is a hit. The engine keeps an entry per trap and target: a new contact tells the start
+(TESTrapHitEvent, OnTrapHitStart), a lasting one a hit once more than [Havok]
+fTrapHitEventDelayMS (500 ms) has passed since the entry last told (OnTrapHit), and its end the
+stop (OnTrapHitStop), with the trap body's velocity, the contact's place and the body's motion
+type; the initial-hit flag is false for these contacts. The scripts hear them only on living
+actors. The player's and the actors' controllers are checked each physics step
+(`PhysicsWorld.trapsTouching`). Of the 28 bases with a trap-hit script (TrapHitBase, HazardBase
+and the scripts extending them), 1,797 references.
 
 ## Story manager
 

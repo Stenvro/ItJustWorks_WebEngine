@@ -673,13 +673,13 @@ class OpenMap {
     local.show(title, cleared, markers);
   }
 
-  /** The location's name, and sCleared if it is cleared. */
+  /** The location's name, and sCleared if the maps show it cleared (location-clearing.ts). */
   async #localTitle(): Promise<[string, string | undefined]> {
     const runtime = this.#runtime;
     const location = await runtime.locationOf(PLAYER_REF);
     if (location === undefined) return ['', undefined];
     const name = (await runtime.forms.record(location))?.text('FULL') ?? '';
-    const cleared = runtime.state.locations.get(location)?.cleared === true;
+    const cleared = await runtime.locationClearing.shownCleared(location);
     return [name, cleared ? this.#settings.string('sCleared') : undefined];
   }
 

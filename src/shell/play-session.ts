@@ -17,6 +17,7 @@ import {
   type TelekinesisSettings,
 } from '../gameplay/magic/telekinesis.ts';
 import { Layer } from '../physics/collision-layers.ts';
+import { TRAP_REACH } from '../scripting/runtime/trap-hits.ts';
 import { landscapeMesh } from '../physics/landscape.ts';
 import type {
   PhysicsImpact,
@@ -24,6 +25,7 @@ import type {
   PickHit,
   PlacedBody,
   PlacedCollision,
+  TrapTouch,
 } from '../physics/physics-world.ts';
 import { objectWorld, playSequence, type Playback } from '../render/animation.ts';
 import type { FlyCamera } from '../render/fly-camera.ts';
@@ -1327,6 +1329,8 @@ export class PlaySession {
       if (!inside.has(reference)) this.onTrigger?.(reference, false);
     }
     this.#inTriggers = inside;
+    // The traps they touch (their hits: src/scripting/runtime/trap-hits.ts).
+    this.onTrapTouch?.(this.physics.trapsTouching(this.player.character.collider, TRAP_REACH));
   }
 
   /** How many of the tracked (the player) are in a trigger volume now. */
@@ -1336,6 +1340,8 @@ export class PlaySession {
 
   /** The player entered (true) or left a trigger volume of a reference. */
   onTrigger: ((reference: number, entered: boolean) => void) | undefined;
+  /** The traps the player touches now, each physics step (trap-hits.ts). */
+  onTrapTouch: ((touching: ReadonlyMap<number, TrapTouch>) => void) | undefined;
   /**
    * What runs on every physics step, before the world steps, after the player moved: the
    * actors' character controllers (src/shell/actor-stage.ts).

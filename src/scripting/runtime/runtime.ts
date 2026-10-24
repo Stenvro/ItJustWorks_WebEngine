@@ -9,6 +9,9 @@ import { EventHub } from './event-hub.ts';
 import { relayScriptEvents } from './script-events.ts';
 import { relayStatEvents } from './stat-events.ts';
 import { TriggerVolumes } from './trigger-volumes.ts';
+import { CellResets } from './cell-reset.ts';
+import { LocationClearing } from './location-clearing.ts';
+import { TrapHits } from './trap-hits.ts';
 import { RecordFlag } from '../../formats/esm/record.ts';
 import type { HeadTrackKind } from '../../ai/head-tracking.ts';
 import { view } from '../../formats/esm/fields.ts';
@@ -717,6 +720,8 @@ export class ScriptRuntime implements VmHost {
   readonly events = new EventHub();
   /** Who is inside which trigger volume; their repeated OnTrigger (trigger-volumes.ts). */
   readonly triggerVolumes = new TriggerVolumes();
+  /** Traps touching actors: their hits told (trap-hits.ts). */
+  readonly trapHits: TrapHits;
   /** [General] uGridsToLoad (the session sets the INI's): the attached area outside. */
   gridsToLoad = GRIDS_TO_LOAD;
   readonly vm: PapyrusVm;
@@ -754,6 +759,10 @@ export class ScriptRuntime implements VmHost {
   readonly usage: UsageStats;
   /** Harvesting flora and its regrowth (harvest-engine.ts). */
   readonly harvest: HarvestEngine;
+  /** Cells resetting as they come back, actors respawning, corpses cleared (cell-reset.ts). */
+  readonly cellResets: CellResets;
+  /** Locations cleared as their bosses die (location-clearing.ts). */
+  readonly locationClearing: LocationClearing;
   /** Hazards standing in the world: their lifetimes and spells (hazard-engine.ts). */
   readonly hazards: HazardEngine;
   /** Destructible objects: their health, stages and what they set off (destruction-engine.ts). */
@@ -904,6 +913,10 @@ export class ScriptRuntime implements VmHost {
     this.crafting = new CraftingEngine(this);
     this.perks = new PerkEngine(this);
     this.harvest = new HarvestEngine(this);
+    this.cellResets = new CellResets(this);
+    // The game's real time (outside menus) is the trap hits' clock.
+    this.trapHits = new TrapHits(this.events, () => this.state.realTime * 1000);
+    this.locationClearing = new LocationClearing(this);
     this.hazards = new HazardEngine(this);
     this.destruction = new DestructionEngine(this);
     installPerkHooks(this);
@@ -1104,6 +1117,9 @@ export class ScriptRuntime implements VmHost {
     // tells every reference of the cell; ours those with scripts (no other consumer yet).
     for (const reference of scripted)
       this.events.emit('cellAttachDetach', { reference, attached: true });
+    // Those its cell reset as it came back are told so (OnReset), after they attached.
+    for (const reference of this.cellResets.takeResets(references))
+      this.events.emit('reset', { reference });
     const shown = scripted.filter((reference) => loaded(reference));
     for (const reference of shown) this.events.emit('objectLoaded', { reference, loaded: true });
     this.events.emit('cellFullyLoaded', { cell: undefined, references: shown });
@@ -1119,8 +1135,9 @@ export class ScriptRuntime implements VmHost {
       if (!(await this.#hasScripts(reference))) continue;
       if (loaded(reference)) this.events.emit('objectLoaded', { reference, loaded: false });
       this.events.emit('cellAttachDetach', { reference, attached: false });
-      // What it is no longer in: its trigger volumes are left behind.
+      // What it is no longer in: its trigger volumes are left behind, its traps' contacts end.
       this.triggerVolumes.forget(reference);
+      this.trapHits.forget(reference);
     }
   }
 

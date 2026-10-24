@@ -218,9 +218,26 @@ export interface FactionState {
 }
 
 export interface LocationState {
+  /** Cleared now (its bosses are dead: location-clearing.ts; or Location.SetCleared). */
   cleared?: boolean;
+  /** It has been cleared once (the maps show it "Cleared" from then on). */
+  everCleared?: boolean;
+  /** The game hour its bosses were last counted (once an hour, unless a death forces it). */
+  checkedAt?: number;
   /** Keyword data (SetKeywordData): keyword → value. */
   readonly keywordData: Map<number, number>;
+}
+
+/**
+ * An encounter zone's clocks (the engine's zone game data, CommonLibSSE
+ * ENCOUNTER_ZONE_GAME_DATA) in whole game hours, 0 for never: when its cells last left the
+ * loaded area, when one last came into it, and when it last reset (its cells that left before
+ * then reset as they come back: cell-reset.ts).
+ */
+export interface ZoneTimes {
+  detached: number;
+  attached: number;
+  reset: number;
 }
 
 export interface CellState {
@@ -365,6 +382,15 @@ export class GameState {
   readonly cells = new Map<number, CellState>();
   /** When (game days) the player was last in each cell (cells reset after; TODO(M12): saved). */
   readonly cellVisits = new Map<number, number>();
+  /**
+   * When (whole game hours) each cell last left the loaded area: its reset waits from then
+   * (cell-reset.ts). TODO(M12): in the save.
+   */
+  readonly cellDetached = new Map<number, number>();
+  /** The encounter zones' clocks (cell-reset.ts). TODO(M12): in the save. */
+  readonly zoneTimes = new Map<number, ZoneTimes>();
+  /** When (whole game hours) each actor died: its respawn and its corpse's clearing wait. */
+  readonly deathHours = new Map<number, number>();
   /** Relationship ranks scripts set between two NPC_ bases ("low:high" form ids). */
   readonly relationships = new Map<string, number>();
   /** Crime: stolen items, jail, places off limits, favor (crime-engine.ts). */
