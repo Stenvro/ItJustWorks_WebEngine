@@ -573,7 +573,18 @@ Format/SPEL"; the game settings.
   in the hand (MGEF casting art, on the player's hands while their magic is drawn; dual cast:
   the dual-cast art at its scale) and the casting light there (MGEF light); the spell leaves
   the hand as its graph's release raises SpellFire (docs/animation.md, "Casting"); a projectile carries its light; with the Muzzle Flash flag its
-  muzzle flash model and light show where it leaves for its muzzle flash duration; a cone's
+  muzzle flash model and light show where it leaves for its muzzle flash duration, one per
+  shooter (CommonLibSSE's HighProcessData holds a single MuzzleFlash: a breath's sprays, ten a
+  second, each restart it instead of stacking 25 lights at a dragon's mouth); every effect
+  model with a behavior graph runs it (an explosion's, a projectile's, as every 3D the engine
+  loads does); a flame projectile's sprays fly unseen and show as one stream per caster
+  (src/shell/magic-flames.ts): the projectile's model at the hand or mouth along the aim,
+  following it, its graph's fFlameProjectileLength the share of its range the latest spray
+  reached (FireSprayFX01's Magic\SprayRange.hkx blends its long and short spray by it; the
+  models throw their particles from a fixed node at several times the projectile's speed), gone
+  two relaunch intervals after the last spray (TODO(M13): observed in the original whether the engine
+  keeps one 3D per relaunch at the hand; before, each spray's model flew off on its own, so a
+  dragon's breath was 16 streams drifting away from its mouth); a cone's
   wave (its projectile's model and light) sweeps out at its speed to its range; a beam's model
   reaches from the hand to what it met (below); an explosion shows its model and light (its
   light fading), puts its image-space modifier on the player within its image-space radius
@@ -582,7 +593,11 @@ Format/SPEL"; the game settings.
   TODO(M13)); with the Chain flag and no spawned projectile of its own (Chain Lightning's
   ChainLightningExplosion) it sends on the projectile that burst (TODO(M13): inferred from the
   data, the engine's use of the flag is unread); a spell's impact on a surface (the effect's
-  impact data set) sounds, leaves its decal, model (for its duration) and hazard.
+  impact data set) sounds, leaves its decal, model (for its duration) and hazard, unless one of
+  the same impact still showing lies within its placement radius (IPCT DATA: 16 units for 649
+  of the 663 impacts, 200 for the dragons' fire, whose impact leaves FireDragonHazard, 7 s and no
+  limit, for every spray): then only its sound (TODO(M13): inferred from the data, xEdit only
+  names the field; before, a 3-second breath left some 18 standing fires).
 - Beams (src/shell/magic-beams.ts; observed in the original): Sparks (ShockBoltConAim,
   `Magic\LightningBolt01.nif`), Lightning Bolt and Chain Lightning's bolts (ShockBoltAim,
   ShockBoltAimChain: `LightningBolt02`), Thunderbolt (ShockBoltAimExpert: `LightningBolt04`),
