@@ -854,6 +854,11 @@ export class ScriptRuntime implements VmHost {
   #index: PersistentIndex | undefined;
   readonly #keywordCache = new Map<number, Promise<number[]>>();
   readonly #cellLocations = new Map<number, Promise<number | undefined>>();
+  /** Per cell: the references its references activate (their XAPR names them), with delays. */
+  readonly #activateChildren = new Map<
+    number,
+    Promise<Map<number, { readonly child: number; readonly delay: number }[]>>
+  >();
   #settings: Promise<GameSettings> | undefined;
   #startDate: GameDate | undefined;
   #startDays = 0;
@@ -2031,14 +2036,90 @@ export class ScriptRuntime implements VmHost {
     reference: number,
     activator: number | undefined,
     defaultOnly: boolean,
+    chain: ReadonlySet<number> = new Set(),
   ): Promise<boolean> {
-    if (!defaultOnly) {
-      await this.events.emitted('activate', { target: reference, actor: activator });
-    }
+    // Its scripts' OnActivate is queued, not waited for (Papyrus events run on their own
+    // threads): a trigger's OnTriggerEnter that activates itself (defaultActivateSelf) waited
+    // here for its own object's OnActivate, which waited for that OnTriggerEnter to end.
+    if (!defaultOnly) this.events.emit('activate', { target: reference, actor: activator });
     if (activator !== undefined) this.magic.acted(activator);
     if (!this.state.references.get(reference)?.activationBlocked)
       this.world.activate?.(reference, activator);
+    // Its activate children (the references whose Activate Parents name it) are activated in
+    // turn, by it, each after its delay: a trigger box set off (defaultActivateSelf) wakes the
+    // ambush it is the parent of (masterAmbushScript's OnActivate takes an activator that is
+    // not the player as its trigger: Bleak Falls Barrow's ceiling spider, the coffins'
+    // draugr). Inferred from the data and the scripts: the child is activated by its parent.
+    // A chain that comes back to a reference it went through stops there.
+    const through = new Set([...chain, reference]);
+    for (const { child, delay } of await this.activateChildren(reference)) {
+      if (through.has(child)) continue;
+      const go = (): void => {
+        void this.activate(child, reference, false, through).catch((error: unknown) => {
+          this.#warn(`activating ${child.toString(16)}: ${String(error)}`);
+        });
+      };
+      // Its delay in the game's real seconds (a menu holds it).
+      if (delay > 0) void this.vm.scheduler.waitReal(delay).then(go);
+      else go();
+    }
     return true;
+  }
+
+  /**
+   * XAPR the other way: the references a reference activates as it is activated (those in its
+   * own cell, or its worldspace's persistent cell, whose Activate Parents name it), with their
+   * delays (seconds). Read once per cell.
+   */
+  async activateChildren(
+    reference: number,
+  ): Promise<readonly { readonly child: number; readonly delay: number }[]> {
+    const db = this.forms.db;
+    const cells = new Set<number>();
+    const own = db.cellOfReference(reference);
+    if (own !== undefined) {
+      cells.add(own);
+      const world = db.worldOfCell(own);
+      const persistent = world === undefined ? undefined : db.persistentCell(world);
+      if (persistent !== undefined) cells.add(persistent);
+      // Outside, the exterior cells round its place too (a trigger by a cell's edge: 890 of
+      // the 6,527 vanilla pairs; tools/activate-children-audit.ts).
+      const at = world === undefined ? undefined : (await this.placement(reference))?.position;
+      if (world !== undefined && at) {
+        const x = Math.floor(at[0] / CELL_UNITS);
+        const y = Math.floor(at[1] / CELL_UNITS);
+        for (let dx = -1; dx <= 1; dx++) {
+          for (let dy = -1; dy <= 1; dy++) {
+            const cell = await db.exteriorCell(world, x + dx, y + dy);
+            if (cell !== undefined) cells.add(cell);
+          }
+        }
+      }
+    }
+    const found: { child: number; delay: number }[] = [];
+    for (const cell of cells) {
+      let index = this.#activateChildren.get(cell);
+      if (!index) {
+        index = (async () => {
+          const byParent = new Map<number, { child: number; delay: number }[]>();
+          for (const child of db.cellReferences(cell)) {
+            const record = await this.forms.record(child);
+            for (const data of record?.fields.all('XAPR') ?? []) {
+              const parent = record?.formIdAt(data);
+              if (parent === undefined || parent === 0) continue;
+              const delay = data.length >= 8 ? view(data).getFloat32(4, true) : 0;
+              const list = byParent.get(parent) ?? [];
+              list.push({ child, delay: Number.isFinite(delay) ? Math.max(0, delay) : 0 });
+              byParent.set(parent, list);
+            }
+          }
+          return byParent;
+        })();
+        this.#activateChildren.set(cell, index);
+      }
+      found.push(...((await index).get(reference) ?? []));
+    }
+    return found;
   }
 
   /** A new reference (PlaceAtMe, an alias's Create Reference), at or in another one. */

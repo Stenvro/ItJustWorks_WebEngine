@@ -310,7 +310,19 @@ worldspaces on screen:
 - **Activation**: the player's Activate goes to the reference's OnActivate first; what
   activating does by default (doors, containers, items) follows unless a script blocks it.
   A script's Activate does the same, so an object a script moves first is not left waiting
-  for the player.
+  for the player. The OnActivate it sends is queued, not waited for (Papyrus events run on
+  threads of their own): a trigger's OnTriggerEnter that activates itself (defaultActivateSelf)
+  waited for its own OnActivate, which waited for that OnTriggerEnter to end, and nothing it
+  should set off ever was. **Activate children**: a reference activated activates in turn,
+  each after its delay, the references whose Activate Parents (XAPR) name it, with itself as
+  their activator (inferred from the data and the scripts: masterAmbushScript's OnActivate
+  takes an activator that is not the player as its trigger with ambushOnTrigger). The load
+  order has 6,527 such pairs (5,691 children of 2,782 parents: 1,625 ambushes, 2,000-odd traps,
+  default2StateActivator's doors and gates; `node tools/activate-children-audit.ts`); the
+  runtime finds a parent's children in its own cell, its worldspace's persistent cell and the
+  exterior cells round its place (6,369 of the 6,527; the other 158 lie farther off).
+  Bleak Falls Barrow's frostbite spider drops from its ceiling hole so as the player walks into
+  the trigger by Arvel the Swift.
 - **Triggers**: trigger volumes (activators' primitives and trigger-layer collision) tell
   their scripts when the player enters and leaves (OnTriggerEnter, OnTriggerLeave,
   GetTriggerObjectCount).

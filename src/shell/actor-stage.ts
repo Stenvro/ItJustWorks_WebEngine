@@ -159,6 +159,8 @@ const describe = (error: unknown): string =>
 const TIME_SKIP_MS = 1500;
 /** An actor put at a reference off the navmesh moves this far at most to stand on it. */
 const SNAP_REACH = 512;
+/** How far below a furniture marker its ground is looked for (units). */
+const MARKER_GROUND_REACH = 4096;
 /** Clairvoyance towards a target beyond the loaded area: this far along the way (units). */
 const GUIDE_AHEAD = 6144;
 /** The collision this near an actor (its cell and the neighbours there) must be in place to set it down (units). */
@@ -275,6 +277,15 @@ export class ActorStage {
       ...(options.objects && { objects: options.objects }),
       paired: (actor, target, event) => {
         this.combat.pairIdle(actor, target, event);
+      },
+      ground: (at) => {
+        const hit = this.#physics?.raycast(
+          [at[0], at[1], at[2] - 1],
+          [0, 0, -1],
+          MARKER_GROUND_REACH,
+          Layer.charController,
+        );
+        return hit && hit.owner?.kind !== 'actor' ? hit.point[2] : undefined;
       },
     });
     this.movers = new ActorMovers({

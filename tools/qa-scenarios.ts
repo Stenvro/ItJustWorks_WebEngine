@@ -125,6 +125,22 @@ const PREDATORS: readonly (readonly [number, number, number])[] = [
   [0xe4010, 500, -500],
   [0x23ab7, -500, -600],
 ];
+/**
+ * A creature of each fighting race (NPC_ form ids of Skyrim.esm): frostbite spider, skeever,
+ * wolf, bear, sabre cat, troll, draugr, skeleton, falmer, chaurus, spriggan, mudcrab, horker,
+ * ice wraith, Dwemer spider, sphere and centurion, a giant.
+ */
+const CREATURE_RACES = [
+  0x41fb4, 0x23ab7, 0x23abe, 0x23a8a, 0x23ab5, 0x23aba, 0x5593b, 0x2d1de, 0x52382, 0xa5600, 0x23ab9,
+  0xe4010, 0x23ab1, 0x23ab3, 0x10ec86, 0x10ec89, 0x10f9b9, 0x23aae,
+];
+/** Bleak Falls Barrow's ceiling spider (MS13FrostbiteSpiderREF). */
+const BLEAK_FALLS_SPIDER = 0x3a1e1;
+/** Bleak Falls Barrow's spider room: into its trigger box, then on toward Arvel's web. */
+const SPIDER_WALK: readonly (readonly [number, number, number])[] = [
+  [2395, -3003, -1640],
+  [2950, -3012, -1760],
+];
 /** EncHorseSaddledBrown: the horse the player rides in the `creatures` scenario. */
 const SADDLED_HORSE = 0x23ab2;
 
@@ -879,6 +895,71 @@ export const SCENARIOS: readonly Scenario[] = [
         20000,
       );
       ctx.note('the predators are set on the player');
+    },
+  },
+  {
+    name: 'creature-melee',
+    description:
+      'The Whiterun stables at 10:00, the player in god mode: a creature of each fighting race (frostbite spider, skeever, wolf, bear, sabre cat, troll, draugr, skeleton, falmer, chaurus, spriggan, mudcrab, horker, ice wraith, Dwemer spider, sphere and centurion, a giant) put in a ring around them and set on them: each must close in, attack with its graph’s attacks and hit (the combat monitors).',
+    start: { kind: 'coc', cell: 'WhiterunExterior01' },
+    hour: 10,
+    bootSeconds: 240,
+    seconds: 150,
+    setup: async (ctx) => {
+      await ctx.console('tgm');
+      const ring = CREATURE_RACES.map((base, i): readonly [number, number, number] => {
+        const a = (i / CREATURE_RACES.length) * Math.PI * 2;
+        return [base, Math.cos(a) * 900, Math.sin(a) * 900];
+      });
+      const placed = await ctx.page.eval<number[]>(placeAnimals(ring), 90000);
+      ctx.note(`placed ${placed.map((r) => r.toString(16)).join(',')}`);
+      await sleepMs(3000);
+      await ctx.page.eval(
+        `(() => { const sw = engineDev.play().session.scriptWorld; for (const r of ${JSON.stringify(placed)}) sw.startCombat(r, 0x14); return true; })()`,
+        20000,
+      );
+      ctx.note('each is set on the player');
+    },
+  },
+  {
+    name: 'bleak-falls-spider',
+    description:
+      'Bleak Falls Barrow: the player walks into the trigger by Arvel the Swift’s web (in god mode); the frostbite spider drops from its ceiling hole (its ambush, an activate child of the trigger) and fights them.',
+    start: { kind: 'coc', cell: 'BleakFallsBarrow01' },
+    hour: 10,
+    bootSeconds: 240,
+    seconds: 90,
+    setup: async (ctx) => {
+      await ctx.console('tgm');
+      // Into the room's trigger box (defaultActivateSelfTRIG), then on toward the web.
+      for (const [x, y, z] of SPIDER_WALK) {
+        await ctx.page.eval(
+          `var QA_PLAY = engineDev.viewer.#play ?? engineDev.world.#play;
+QA_PLAY.player.teleport([${String(x)}, ${String(y)}, ${String(z)}], Math.PI / 2); 'ok'`,
+          20000,
+          true,
+        );
+        await sleepMs(3000);
+      }
+      ctx.note('the player walked through the spider’s trigger');
+    },
+    // The spider must have come down and fought: one that never attacked (still in its hole,
+    // its ambush never sprung) is reported as a passive creature.
+    finish: async (ctx) => {
+      const line = await ctx.page.eval<string>(
+        `(() => {
+          const stage = engineDev.viewer?.actorStage ?? engineDev.world?.actorStage;
+          const fighter = stage?.combat.qaFighter(${String(BLEAK_FALLS_SPIDER)});
+          const spider = stage?.get(${String(BLEAK_FALLS_SPIDER)});
+          const at = spider?.position.map(Math.round).join(', ') ?? '?';
+          const text = 'the spider: ' + (fighter ? fighter.attacks + ' attacks, ' + fighter.hits + ' hits' : 'no fighter') + ', at ' + at;
+          if (!fighter || fighter.attacks === 0)
+            engineDev.qa.report({ kind: 'creature-passive', subject: { id: '0003A1E1', name: 'Wounded Frostbite Spider', kind: 'creature' }, time: 0, detail: text + ': its ambush never came down to fight', severity: 1, position: spider?.position });
+          return text;
+        })()`,
+        20000,
+      );
+      ctx.note(line);
     },
   },
   {

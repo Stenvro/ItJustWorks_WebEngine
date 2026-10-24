@@ -9,7 +9,7 @@ import { Fn } from '../src/scripting/runtime/condition-values.ts';
 import { PLACEHOLDER_NATIVES } from '../src/scripting/runtime/natives/placeholders.ts';
 import type { Condition } from '../src/scripting/conditions.ts';
 import { QuestFlag } from '../src/world/quest-records.ts';
-import { ActorValue } from '../src/world/actor-values.ts';
+import { ActorValue, actorValueIndex } from '../src/world/actor-values.ts';
 import { RecordDatabase } from '../src/world/record-db.ts';
 import { Vfs } from '../src/vfs/vfs.ts';
 import { ObjectHandle } from '../src/scripting/values.ts';
@@ -403,6 +403,22 @@ describe.skipIf(!hasGamedata())('the script runtime on the local game data', () 
     } finally {
       delete runtime.world.killed;
     }
+  });
+
+  it('activates the activate children of what is activated (an ambush by its trigger)', async () => {
+    // Bleak Falls Barrow: the trigger box by Arvel's web (defaultActivateSelfTRIG) is the
+    // activate parent of the frostbite spider (masterAmbushScript, ambushOnTrigger).
+    const trigger = 0x000aa83e;
+    const spider = 0x0003a1e1;
+    expect(await runtime.activateChildren(trigger)).toEqual([{ child: spider, delay: 0 }]);
+    await runtime.activate(trigger, PLAYER, false);
+    for (let i = 0; i < 20; i++) {
+      await runtime.vm.idle();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    // Its ambush is sprung: Variable01 1, its aggression 2 (masterAmbushScript's onEndState).
+    const variable01 = actorValueIndex('Variable01') ?? -1;
+    expect((await runtime.actors.value(spider, variable01)).current).toBe(1);
   });
 
   it("gives a scene's quest, not one of its actions' packages", async () => {
