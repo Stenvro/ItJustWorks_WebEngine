@@ -725,7 +725,12 @@ async function main(): Promise<void> {
     setEntriesReady(false);
     session?.dispose();
     sandboxScripts = undefined;
-    session = new GameSession(gpu.device, renderer, vfs, terminal);
+    session = new GameSession(vfs, terminal, {
+      render: renderer,
+      renderer,
+      device: gpu.device,
+      workers: true,
+    });
     session.placedActor = (reference) =>
       worldViewer.placedActor(reference) ?? modelViewer.placedActor(reference);
     session.actorAction = (reference, action) =>

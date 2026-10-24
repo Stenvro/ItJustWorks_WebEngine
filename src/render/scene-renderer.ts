@@ -17,6 +17,12 @@ import {
   type Playback,
 } from './animation.ts';
 import { billboardWorld } from './billboard.ts';
+import {
+  flatAmbient,
+  type PointLight,
+  type SceneFog,
+  type SceneLighting,
+} from './scene-lighting.ts';
 import { GpuModel, type GpuParticleSystem, type GpuPart, type ModelAddon } from './gpu-model.ts';
 import {
   faceMorphIndices,
@@ -67,10 +73,10 @@ import type { TextureCache } from './texture-cache.ts';
 import { CELL_SIZE } from '../world/land.ts';
 
 export { GpuModel, type ModelAddon };
+export { flatAmbient, type PointLight, type SceneFog, type SceneLighting };
 import { gbufferTarget } from './gbuffer.ts';
 import { projectedUVParams, type MaterialObject } from '../world/material-object.ts';
 import type { WaterType } from '../world/water.ts';
-import type { LightCone } from '../world/cell-records.ts';
 
 export const SAMPLE_COUNT = 4;
 export const DEPTH_FORMAT: GPUTextureFormat = 'depth32float';
@@ -273,43 +279,6 @@ const FALLBACK_VERTEX = Uint8Array.from([
   0, 0, 0, 0, 0, 0, 0, 0, 128, 128, 255, 128, 255, 128, 128, 128, 255, 255, 255, 255,
 ]);
 const FALLBACK_OFFSETS = { bitangentX: 0, uv: 4, normal: 8, tangent: 12, color: 16 } as const;
-
-export interface PointLight {
-  readonly position: Vec3;
-  readonly radius: number;
-  /** Already multiplied by the light's fade. */
-  readonly color: Vec3;
-  /** A spot light: it lights only within its cone (undefined: every way). */
-  readonly spot?: LightCone;
-}
-
-export interface SceneFog {
-  readonly nearColor: Vec3;
-  readonly farColor: Vec3;
-  readonly near: number;
-  readonly far: number;
-  readonly power: number;
-  readonly max: number;
-}
-
-export interface SceneLighting {
-  /** Direction towards the directional light. */
-  readonly sunDirection: Vec3;
-  readonly sunColor: Vec3;
-  /** Ambient light from +X, −X, +Y, −Y, +Z, −Z (Skyrim's "directional ambient"). */
-  readonly ambient: readonly [Vec3, Vec3, Vec3, Vec3, Vec3, Vec3];
-  readonly fog: SceneFog | undefined;
-  readonly lights: readonly PointLight[];
-  /** Wind strength 0..1 (weather), for swaying grass. */
-  readonly wind?: number;
-  /** Where the wind blows towards: radians clockwise from north (+Y). */
-  readonly windDirection?: number;
-}
-
-/** Uniform ambient from every direction. */
-export function flatAmbient(color: Vec3): SceneLighting['ambient'] {
-  return [color, color, color, color, color, color];
-}
 
 /**
  * What a pass has bound, as a run of draws goes (drawOpaque, drawShadows): a draw sets only

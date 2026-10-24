@@ -2,7 +2,7 @@
 // renderer uses.
 
 import type { Vec3 } from '../render/math.ts';
-import { flatAmbient, type PointLight, type SceneLighting } from '../render/scene-renderer.ts';
+import { flatAmbient, type PointLight, type SceneLighting } from '../render/scene-lighting.ts';
 import type { CellData, CellLight } from './cell-loader.ts';
 import type { Rgb } from './cell-records.ts';
 import { FLICKERING_LIGHT_DISTANCE, lightFlicker } from './light-flicker.ts';

@@ -584,7 +584,8 @@ export class PlaySession {
   readonly camera: FlyCamera;
   /** What the renderer looks through: the player's camera or the free camera. */
   readonly view: Camera;
-  readonly #canvas: HTMLElement;
+  /** Where the input comes from (none headless: the simulation presses the player's events). */
+  readonly #canvas: HTMLElement | undefined;
   readonly #groundReady: (feet: Vec3) => boolean;
   readonly #searchAbove: number;
   readonly #queue: { readonly group: CollisionGroup; readonly run: () => void }[] = [];
@@ -659,7 +660,8 @@ export class PlaySession {
     physics: PhysicsWorld;
     player: Player;
     camera: FlyCamera;
-    canvas: HTMLElement;
+    /** The element whose keyboard and mouse the player takes (none headless). */
+    canvas?: HTMLElement;
     groundReady: (feet: Vec3) => boolean;
     searchAbove: number;
     /** The player arrives through a door, standing on the floor (which it waits for). */
@@ -1565,6 +1567,8 @@ export class PlaySession {
   /** Takes keyboard and mouse input (the player's, or the free camera's). */
   attach(): void {
     this.#detach?.();
+    this.#detach = undefined;
+    if (!this.#canvas) return;
     this.#detach = this.#freeCamera
       ? this.camera.attach(this.#canvas)
       : attachPlayerInput(

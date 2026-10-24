@@ -45,7 +45,7 @@ import { wordsByHold } from '../gameplay/magic/shouts.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { SoundLevel } from '../ai/detection.ts';
 import { multiply, type Vec3 } from '../render/math.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type { GpuScene, InstanceMotion, ModelInstance } from '../render/scene-renderer.ts';
 import type { SoundInstance } from '../audio/sound-instance.ts';
 import {
@@ -77,7 +77,7 @@ import type { LightRecord } from '../world/cell-records.ts';
 
 export interface ActorCastingOptions {
   readonly session: GameSession;
-  readonly renderer: Renderer;
+  readonly renderer: RenderPort;
   readonly terminal: Terminal;
   readonly furniture: ActorFurniture;
   readonly projectiles: MagicProjectiles;
@@ -231,7 +231,7 @@ interface Shown {
   sounds: Promise<SoundInstance | undefined>[];
   loop: Promise<SoundInstance | undefined> | undefined;
   /** A dual cast's own art (MGEF dual cast art) on the hand, at its scale. */
-  art: { instance: ModelInstance; scene: GpuScene; motion: InstanceMotion } | undefined;
+  art: { instance: ModelInstance; scene: GpuScene | undefined; motion: InstanceMotion } | undefined;
   /** The casting light in the hand (MGEF light), once read. */
   light: LightRecord | undefined;
   /** The art's scale (a dual cast's: MGEF dual cast scale). */
@@ -712,7 +712,7 @@ export class ActorCasting {
   /** Its scenes (the casting art in the hands). */
   *scenes(): Iterable<GpuScene> {
     for (const art of this.#arts.values()) if (art.scene) yield art.scene;
-    for (const shown of this.#shown.values()) if (shown.art) yield shown.art.scene;
+    for (const shown of this.#shown.values()) if (shown.art?.scene) yield shown.art.scene;
   }
 
   #end(key: string): void {
@@ -722,7 +722,7 @@ export class ActorCasting {
     shown.done = true;
     for (const sound of shown.sounds) void sound.then((instance) => instance?.stop());
     void shown.loop?.then((instance) => instance?.stop());
-    shown.art?.scene.destroy();
+    shown.art?.scene?.destroy();
     // Its arms no longer aim (unless the other hand still casts).
     const still = [...this.#shown.values()].some((other) => other.cast.actor === shown.cast.actor);
     if (!still)

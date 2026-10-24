@@ -180,10 +180,17 @@ export class StoryManager {
 
   /** An event, queued as `event`: the quests it started (none: no quest node answered). */
   quests(event: StoryEventData): Promise<readonly number[]> {
-    const processed = this.#queue.then(() => this.#run(event));
+    const processed = this.#queue.then(async () => {
+      const started = await this.#run(event);
+      this.onProcessed?.(event, started);
+      return started;
+    });
     this.#queue = processed.catch(() => []);
     return processed;
   }
+
+  /** Told of every event once processed, with the quests it started (the simulation records it). */
+  onProcessed: ((event: StoryEventData, started: readonly number[]) => void) | undefined;
 
   /** The events raised and not yet processed: the last one's processing. */
   #queue: Promise<unknown> = Promise.resolve();

@@ -9,7 +9,7 @@
 // what carries them; each is a CellLight the viewers light the world with.
 
 import type { Vec3 } from '../render/math.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type {
   GpuModel,
   GpuScene,
@@ -66,7 +66,7 @@ const TRAIL_HEIGHT = 48;
 
 export interface MagicFxOptions {
   readonly session: GameSession;
-  readonly renderer: Renderer;
+  readonly renderer: RenderPort;
   readonly terminal: Terminal;
   /** Where the camera (the player's view) is, for hazards' image-space modifiers. */
   readonly player: () => Vec3 | undefined;
