@@ -494,6 +494,22 @@ at the last parameter (ours before), a galloping horse played its trot with a se
 run at 450 units a second; now it gets 450 and gallops. The same holds for every table: a
 character running at 370 against state 0's curve that ends at 306.
 
+**The state comes from the character's properties.** Nine quadruped projects (bear, dog, wolf and
+fox, cow, deer and elk, goat, horker, mammoth, sabre cat) share the canine folder's quadruped
+behavior, whose root modifier list holds one list per creature (BearModifierList,
+CanineModifierList, ..., SkeeverModifierList), each enabled by a character property (IsBear,
+IsCanine, ... read by the binding's property index) and each setting iState to its creature's
+(iState_WolfDefault 100, iState_SabreCatDefault 80, ...). The property values are the
+character's (hkbCharacterData.characterPropertyValues, by the character string data's
+characterPropertyNames; `readCharacterPropertyValues`, given to every actor's graph before the
+actor's own IsFemale, IsNPC, ...). Without them every list ran (the binding's stored 1) and the
+skeever's, the last, set every one's iState to 90, which no table but the skeever's has: the
+blend took the Speed itself, and a wolf walking 80 units a second played a walk whose stride
+went at half that (QA `foot-slide` in Riverwood: 24 for three wolves). `node
+tools/locomotion-audit.ts --without` runs every race's project told it walks: 47 walk in a state
+their speed data has, 1 does not (the Falmer's 0 against its tables 1 and 2; its own data), and
+these 9 changed from 90 to their own.
+
 ### Horses
 
 The horse's graph (`meshes\actors\horse\behaviors\horsebehavior.hkx`) is driven as every
