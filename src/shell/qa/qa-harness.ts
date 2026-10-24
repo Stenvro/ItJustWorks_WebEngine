@@ -108,6 +108,8 @@ const CORPSE_UPRIGHT = 0.6;
 const CORPSE_SECONDS = 5;
 /** A corpse whose head comes up by this share of its standing head height rises. */
 const CORPSE_RISE = 0.25;
+/** …one that died with its head under this share of its standing height (seated, kneeling). */
+const CORPSE_LOW = 0.75;
 /**
  * The player's camera this far above or below their body's head (game units at race height 1)
  * for PLAYER_CAMERA_SECONDS is off it (the Camera1st node sits a few units from the head's).
@@ -1199,6 +1201,7 @@ export class QaHarness {
           head,
           rest,
           low: Infinity,
+          first: undefined,
           episode: new Episode(CORPSE_SECONDS, 1),
           restless: new Episode(RESTLESS_SECONDS, 1),
           rises: new Episode(0, CORPSE_SECONDS),
@@ -1248,14 +1251,17 @@ export class QaHarness {
       // height over the lowest it had since (a death that stood the body up first, then let it
       // fall: its look made again in a fresh graph, a death animation from a standing pose). Only
       // while its graph moves it (dying, its bodies keyframed): a ragdoll flung or carried (a
-      // dragon's grab) rises by physics.
+      // dragon's grab) rises by physics. And only for one that died low (seated, kneeling,
+      // lying: its head under CORPSE_LOW of its standing height): a bear's death rears it up.
       if (!staged.placed.actor.startsDead && corpse.rest > 1) {
+        corpse.first ??= height;
         corpse.low = Math.min(corpse.low, height);
         const rise = height - corpse.low;
         const [awake = 0, asleep = 0, keyframed = 0] = states.get(reference) ?? [];
         const animated =
           stage.graphEvents.dying(reference) || (keyframed > 0 && awake + asleep === 0);
-        const rose = animated && rise > CORPSE_RISE * corpse.rest * scale;
+        const diedLow = corpse.first < CORPSE_LOW * corpse.rest * scale;
+        const rose = animated && diedLow && rise > CORPSE_RISE * corpse.rest * scale;
         if (corpse.rises.update(rose, dt, rise) === 'begin') {
           const behavior = staged.placed.behavior;
           this.#add({
@@ -1303,6 +1309,8 @@ export class QaHarness {
       readonly rest: number;
       /** The lowest its head was above its feet since it died (corpse-rises). */
       low: number;
+      /** Its head's height above its feet as it was first seen dead (corpse-rises). */
+      first: number | undefined;
       readonly episode: Episode;
       /** Whether its ragdoll keeps a body awake (ragdoll-restless). */
       readonly restless: Episode;
