@@ -296,7 +296,8 @@ constants of Nukem9's decompiled `BSLightingShader`:
 1. Normal: tangent space, or model space stored **x, z, y** (MSN materials and LOD land).
    Specular mask: the normal map's alpha, or with model-space normals the specular map (texture
    set slot 7).
-2. Lights (sun with its shadow, point lights fading as 1 − (d/r)²): diffuse `saturate(n·l)`;
+2. Lights (sun with its shadow, point lights fading as 1 − (d/r)²; a spot light only within
+   its cone, below): diffuse `saturate(n·l)`;
    specular `pow(saturate(h·n), glossiness)` without an n·l test. Anisotropic (hair):
    `h·n` becomes 1 − |a·l − a·h| with a = normalize(0.5 n + vertex normal), times 0.7 l.z.
    With the unshadowed light colour: soft lighting (`SLSF2 0x2000000`, smoothstep of
@@ -370,7 +371,13 @@ Community Shaders sources):
    clear), so an effect faded to alpha 0, like an unlit fire's flames, vanishes.
 6. Colour × base colour scale; Effect_Lighting (SLSF2 `0x40000000`): blended towards colour
    × scene light (directional ambient, the sun at half strength even from behind — smoke
-   scatters it — and point lights) by the lighting influence.
+   scatters it — and point lights, not the spot lights) by the lighting influence. The
+   engine's spot lights are its shadow spotlights, which reach surfaces through their shadow
+   maps; Community Shaders' effect shader leaves shadow-casting lights out of an effect's
+   lights (TODO(M13): the engine's own list is unread). With them, the cobwebs hung beside
+   Bleak Falls Barrow's sunbeams (lit effects with greyscale palettes: 56 web shapes among the
+   1,170 lit effect shapes, `node tools/effect-audit.ts --lit`) were a white sheet over
+   Arvel's door, and the dust in the entrance's shafts a white blob.
 7. Alpha test, then fog: additive effects (destination factor ONE) fade out, multiplicative
    ones (destination SRC_COLOR or source DEST_COLOR: the engine's MULTBLEND) fade to white by
    1.5 × the fog, others blend to the fog colour.
@@ -387,6 +394,19 @@ quad facing the camera (the frame's camera axes, turned by the particle's rotati
 along the velocity (aspect flag `0x1`, height scaled by the aspect ratio), or a ribbon segment
 facing the camera for strip particles. Blended particles test but never write depth (their
 quads overlap unsorted within a system).
+
+### Spot lights
+
+LIGH Shadow Spotlight (`0x400`): 39 vanilla lights, 153 references, nearly all sunbeams through
+ceilings and windows. The cone is the base light's FOV (DATA, 90° in every vanilla light) plus
+the reference's XLIG FOV offset (xEdit `FOV 90+/-`), along the reference's local X axis (the
+Gamebryo spot light's axis: for 123 of the 153 references X is the axis pointing down the most);
+an angle outside 0–180° (two references) leaves the light shining every way. A light's fade is
+its FNAM plus the reference's XLIG fade offset (`Fade 1.35+/-`; 138 spot references have one,
+from −3.7 to +74), its radius DATA's plus XRDS. The lighting shader and the frame's `lightAt`
+light a point only within the cone, its edge softened over a tenth of the rest of the cosine
+range (`lightCone` in `frame.wgsl`; TODO(M13): the engine's edge is its shadow map's frustum,
+and what stands in the beam shadows it). `node tools/effect-audit.ts --spots`.
 
 ### Procedural lightning
 

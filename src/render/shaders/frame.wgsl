@@ -39,8 +39,24 @@ struct PointLight {
   position: vec3f,
   radius: f32,
   color: vec3f,
+  // A spot light's cone: the cosine of half its angle (below -1: no cone, it lights every
+  // way) and its axis.
+  coneCos: f32,
+  coneAxis: vec3f,
   _pad: f32,
 };
+
+// How much of a light reaches a point by its cone: a spot light (the engine's shadow
+// spotlights: sunbeams through a ceiling) lights only within its cone, its edge softened over
+// a tenth of the rest of the cosine range. `offset`: from the point to the light.
+// TODO(M13): the engine's spot edge (its shadow map's frustum) and what stands in the beam.
+fn lightCone(light: PointLight, offset: vec3f) -> f32 {
+  if (light.coneCos < -1.0) {
+    return 1.0;
+  }
+  let along = dot(-safeNormalize(offset), light.coneAxis);
+  return smoothstep(light.coneCos, mix(light.coneCos, 1.0, 0.1), along);
+}
 
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var<storage, read> pointLights: array<PointLight>;
@@ -165,7 +181,7 @@ fn lightAt(
       continue;
     }
     let toLight = offset * inverseSqrt(max(distanceSquared, 1e-4));
-    let attenuation = 1.0 - distanceSquared / radiusSquared;
+    let attenuation = (1.0 - distanceSquared / radiusSquared) * lightCone(light, offset);
     let nDotL = max(dot(n, toLight), 0.0);
     result.diffuse += light.color * nDotL * attenuation;
     if (specular && nDotL > 0.0) {

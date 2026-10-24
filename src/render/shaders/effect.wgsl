@@ -32,6 +32,11 @@ const DRAW_MULTI_PASS = 0x80000u;
 // Light reaching an effect: ambient from its side, the sun (half of it even when facing away:
 // smoke and mist scatter it) and point lights by distance. With external emittance the
 // reference's XEMI colour (draw.effect.rgb, w = 1) stands for the ambient and the sun.
+// Spot lights (the engine's shadow spotlights: sunbeams through ceilings, fade up to 75 with
+// their XLIG offsets) reach the lit surfaces through their shadow maps only; an effect is lit by
+// the others. TODO(M13): inferred (Community Shaders' effect shader leaves the shadow-casting
+// lights out of an effect's lights; the engine's own list is unread): cobwebs hung beside a
+// sunbeam went white with it, the dust in its shaft a white blob.
 fn effectLight(n: vec3f, worldPos: vec3f) -> vec3f {
   let sun = 0.5 + 0.5 * max(dot(n, frame.sunDir.xyz), 0.0);
   var light = directionalAmbient(n) + frame.sunColor.rgb * sun * sunShadow(worldPos, n);
@@ -40,6 +45,9 @@ fn effectLight(n: vec3f, worldPos: vec3f) -> vec3f {
   }
   for (var i = 0u; i < frame.counts.x; i++) {
     let point = pointLights[i];
+    if (point.coneCos >= -1.0) {
+      continue;
+    }
     let offset = point.position - worldPos;
     let distanceSquared = dot(offset, offset);
     let radiusSquared = point.radius * point.radius;
