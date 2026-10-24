@@ -130,6 +130,11 @@ export interface SessionPresentation {
    * the session makes its sound system on first use.
    */
   readonly voices?: VoicePort;
+  /**
+   * Where the player's settings and key bindings are kept: the page's localStorage by default,
+   * null for none (the headless simulation plays with the defaults).
+   */
+  readonly storage?: Storage | null;
 }
 
 /** An emittance colour that the session moves with the hour. */
@@ -181,13 +186,9 @@ function nextTask(): Promise<void> {
 export class GameSession {
   readonly vfs: Vfs;
   /** The player's own key bindings (the journal's Controls page), kept in the browser. */
-  readonly controlSettings = new ControlSettings(
-    typeof localStorage === 'undefined' ? undefined : localStorage,
-  );
+  readonly controlSettings: ControlSettings;
   /** The player's settings (the game's SkyrimPrefs.ini), kept in the browser. */
-  readonly preferences = new Preferences(
-    typeof localStorage === 'undefined' ? undefined : localStorage,
-  );
+  readonly preferences: Preferences;
 
   /** The INI settings: the player's over the installation's over the engine's defaults. */
   get ini(): IniSettings {
@@ -359,6 +360,13 @@ export class GameSession {
 
   constructor(vfs: Vfs, terminal: Terminal, presentation: SessionPresentation) {
     this.vfs = vfs;
+    const storage =
+      presentation.storage === null
+        ? undefined
+        : (presentation.storage ??
+          (typeof localStorage === 'undefined' ? undefined : localStorage));
+    this.controlSettings = new ControlSettings(storage);
+    this.preferences = new Preferences(storage);
     this.render = presentation.render;
     this.#renderer = presentation.renderer;
     this.#voices = presentation.voices;

@@ -192,6 +192,11 @@ export class StoryManager {
   /** Told of every event once processed, with the quests it started (the simulation records it). */
   onProcessed: ((event: StoryEventData, started: readonly number[]) => void) | undefined;
 
+  /** Resolves once every event raised so far is processed. */
+  async idle(): Promise<void> {
+    await this.#queue;
+  }
+
   /** The events raised and not yet processed: the last one's processing. */
   #queue: Promise<unknown> = Promise.resolve();
 
