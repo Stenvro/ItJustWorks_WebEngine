@@ -538,20 +538,18 @@ export class GameHost implements VmHost {
     this.state.stagesDone.set(self.formId, done);
     this.state.currentStage.set(self.formId, stage);
     const attachments = await this.attachments(self.formId);
-    // A fragment belongs to a log entry and only the entry that happens runs its own: the
-    // first whose conditions hold (as src/scripting/runtime/quests.ts).
+    // A fragment belongs to a log entry and each entry whose conditions hold runs its own, in
+    // order (as src/scripting/runtime/quests.ts).
     const record = await this.record(self.formId);
     const entries =
       (record && parseQuest(record).stages.find((s) => s.index === stage)?.logEntries) ?? [];
-    let entry: number | undefined;
+    const chosen = new Set<number>();
     for (const [index, logEntry] of entries.entries()) {
-      if (await evaluateConditions(logEntry.conditions, vm, this, PLAYER_REF)) {
-        entry = index;
-        break;
-      }
+      if (await evaluateConditions(logEntry.conditions, vm, this, PLAYER_REF)) chosen.add(index);
     }
-    for (const fragment of attachments?.fragments ?? []) {
-      if (fragment.stage !== stage || fragment.logEntry !== entry) continue;
+    const fragments = [...(attachments?.fragments ?? [])].sort((a, b) => a.logEntry - b.logEntry);
+    for (const fragment of fragments) {
+      if (fragment.stage !== stage || !chosen.has(fragment.logEntry)) continue;
       await latent(vm.call(new ObjectHandle(self.formId, fragment.script), fragment.function));
     }
     return true;

@@ -157,10 +157,12 @@ export class QuestEngine {
     state.stage = Math.max(state.stage, stage);
     // The engine's stage event (TESQuestStageEvent), as the stage is set.
     runtime.events.emit('questStage', { quest: record.formId, stage });
-    // The first log entry whose conditions hold is the one that happens: its flags and its
-    // fragment (each log entry has its own; the others' do not run).
+    // Every log entry whose conditions hold happens, in order: its flags, its journal text and
+    // its fragment (each log entry has its own). Observed in the original: setting a stage
+    // walks all its items and runs each whose conditions hold. MQ101's keep stages (250 to 450)
+    // have an entry without conditions and one per FactionPath; the route's starts its scene.
     const entries = record.stages.find((s) => s.index === stage)?.logEntries ?? [];
-    let chosen: number | undefined;
+    const chosen = new Set<number>();
     for (const [index, entry] of entries.entries()) {
       if (
         !(await runtime.conditionsHold(
@@ -171,7 +173,7 @@ export class QuestEngine {
       ) {
         continue;
       }
-      chosen = index;
+      chosen.add(index);
       // Its journal text, if it has one, is the quest's latest for the player.
       if (entry.text) {
         state.log.push({ stage, entry: index });
@@ -183,12 +185,11 @@ export class QuestEngine {
       // only as the player leaves Helgen (stage 700/800: MQ102A or MQ102B, then MQ102.Start).
       // Started at the execution, MQ102's Alduin alias took him from the tower (its patrol away
       // outranks MQ101's approach). TODO(M13): what the engine reads it for (the journal's order).
-      break;
     }
     const attachments = await runtime.forms.attachments(record.formId);
-    const fragments = (attachments?.fragments ?? []).filter(
-      (fragment) => fragment.stage === stage && fragment.logEntry === chosen,
-    );
+    const fragments = (attachments?.fragments ?? [])
+      .filter((fragment) => fragment.stage === stage && chosen.has(fragment.logEntry))
+      .sort((a, b) => a.logEntry - b.logEntry);
     const run = async (): Promise<void> => {
       for (const fragment of fragments) {
         await runtime.vm.call(new ObjectHandle(record.formId, fragment.script), fragment.function);
