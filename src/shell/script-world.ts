@@ -357,7 +357,16 @@ export class ScriptWorld implements WorldBridge {
   }
 
   explosion(explosion: number, at: Vec3, source: number | undefined): void {
-    for (const view of this.#views) view.explosion?.(explosion, at, source);
+    // It bursts once, in the view that has its source (the attacker, the object that blew up):
+    // the world viewer kept when an interior is played would show it too, never age it, and
+    // place its hazards a second time.
+    const views = [...this.#views];
+    const own =
+      source === undefined
+        ? undefined
+        : (views.find((view) => view.livePlacement?.(source) !== undefined) ??
+          views.find((view) => view.loaded(source)));
+    for (const view of own ? [own] : views) view.explosion?.(explosion, at, source);
   }
 
   openChanged(reference: number, open: boolean): void {

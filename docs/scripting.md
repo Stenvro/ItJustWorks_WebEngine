@@ -53,7 +53,14 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
 - Each frame, threads run for the [Papyrus] **fUpdateBudgetMS** budget (1.2 ms); a thread
   past it goes on in the next frame, keeping its lock. Without frames (Node tools) threads
   run straight through, and one that runs two million instructions without ever waiting is
-  stopped as an endless loop.
+  stopped as an endless loop. TODO(M13): the game's natives that are not callable from its
+  script threads (most ObjectReference and Actor natives: they run on the main thread) return
+  only at the next frame; here every native returns at once, so a loop of such calls runs
+  faster than in the game. MQ101's dunCGDragonVoiceStormCall (magicProjectileStormScript, an
+  OnUpdate every 0.1 s with some ten object natives in it) sends a meteor every 0.12 s here,
+  about two and a half times the game's rate by that count (the opening's 25 meteors in the air
+  and 24 bursts at once; docs/qa.md effects-flood). Which natives wait is the engine's
+  registration flag, unread (original).
 - A script error (a runaway thread, too deep a call stack) stops its thread and is reported,
   never thrown at the engine, as the game logs it.
 

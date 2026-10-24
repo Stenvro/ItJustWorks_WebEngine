@@ -34,6 +34,7 @@ import {
   type Flight,
 } from '../gameplay/magic/projectile-flight.ts';
 import { chainEffectiveness } from '../gameplay/magic/explosions.ts';
+import { ImpactPlacements } from '../gameplay/magic/impact-placement.ts';
 import { EntryPoint } from '../gameplay/perk-entry-points.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import type { PhysicsWorld } from '../physics/physics-world.ts';
@@ -58,6 +59,8 @@ import type { Impact } from '../world/impact-records.ts';
 import { PLAYER_REF } from '../scripting/runtime/forms.ts';
 import type { HitImpact } from './combat-impacts.ts';
 import { MagicBeams } from './magic-beams.ts';
+import { MagicFlames, type FlameStream } from './magic-flames.ts';
+import { startObjectGraph } from './object-graphs.ts';
 import { alongMatrix, cellLight, type MagicFx } from './magic-fx.ts';
 import type { GameSession } from './game-session.ts';
 import type { Terminal } from './terminal.ts';
@@ -101,6 +104,9 @@ interface Flying {
   sound: Promise<SoundInstance | undefined> | undefined;
   /** Its light (PROJ light), once read. */
   light: LightRecord | undefined;
+  /** A flame's spray: the stream that shows it, and where it left (its reach is measured). */
+  readonly stream: FlameStream | undefined;
+  readonly origin: Vec3;
   done: boolean;
 }
 
@@ -146,11 +152,22 @@ export class MagicProjectiles {
   readonly #options: MagicProjectilesOptions;
   readonly #flying = new Set<Flying>();
   readonly #beams: MagicBeams;
+  readonly #flames: MagicFlames;
   #physics: PhysicsWorld | undefined;
+  /** Seconds the projectiles have run (the impacts' clock). */
+  #clock = 0;
+  /** Impacts placed and still showing (their placement radius keeps others off). */
+  readonly #placements = new ImpactPlacements();
 
   constructor(options: MagicProjectilesOptions) {
     this.#options = options;
     this.#beams = new MagicBeams({
+      session: options.session,
+      renderer: options.renderer,
+      terminal: options.terminal,
+      ...(options.fx && { fx: options.fx }),
+    });
+    this.#flames = new MagicFlames({
       session: options.session,
       renderer: options.renderer,
       terminal: options.terminal,
@@ -187,10 +204,29 @@ export class MagicProjectiles {
     }
   }
 
+  /** What flies now (the QA monitors): each projectile's editor id, where it is, whose. */
+  *flying(): Iterable<{ readonly projectile: string; readonly at: Vec3; readonly caster: number }> {
+    for (const flying of this.#flying) {
+      // A flame's sprays show as their stream (flames()).
+      if (flying.done || flying.stream) continue;
+      yield {
+        projectile: flying.projectile.editorId,
+        at: flying.flight.position,
+        caster: flying.delivered.caster,
+      };
+    }
+  }
+
+  /** The flame streams showing (the QA monitors): each one's projectile and place. */
+  flames(): Iterable<{ readonly projectile: string; readonly at: Vec3 }> {
+    return this.#flames.shown();
+  }
+
   /** Their drawn scenes. */
   *scenes(): Iterable<GpuScene> {
     for (const flying of this.#flying) if (flying.scene) yield flying.scene;
     yield* this.#beams.scenes();
+    yield* this.#flames.scenes();
   }
 
   /**
@@ -251,6 +287,8 @@ export class MagicProjectiles {
     const fx = this.#options.fx;
     if (fx && (projectile.flags & ProjectileFlag.muzzleFlash) !== 0)
       fx.show(projectile.muzzleFlashModel, projectile.muzzleFlashLight, origin, {
+        kind: 'muzzle-flash',
+        owner: delivered.caster,
         direction: aim,
         duration: projectile.muzzleFlashDuration > 0 ? projectile.muzzleFlashDuration : 0.1,
         fades: true,
@@ -265,7 +303,7 @@ export class MagicProjectiles {
         });
         return;
       default:
-        this.#fly(delivered, projectile, effect, origin, aim, seconds);
+        this.#fly(delivered, projectile, effect, origin, aim, seconds, options.follow);
     }
   }
 
@@ -290,7 +328,11 @@ export class MagicProjectiles {
     return applied;
   }
 
-  /** A missile, lobber, bolt or spray takes flight (drawn as its model, with its sound). */
+  /**
+   * A missile, lobber, bolt or spray takes flight (drawn as its model, with its light and
+   * sound). A flame's spray flies unseen: its caster's stream shows it (magic-flames.ts), kept
+   * at the hand or mouth (`follow`).
+   */
   #fly(
     delivered: Delivered,
     projectile: ProjectileRecord,
@@ -298,8 +340,13 @@ export class MagicProjectiles {
     origin: Vec3,
     aim: Vec3,
     seconds: number | undefined,
+    follow?: () => Vec3 | undefined,
   ): void {
     const { session, renderer, terminal } = this.#options;
+    const stream =
+      flightKind(projectile) === 'spray'
+        ? this.#flames.spray(delivered.caster, projectile, origin, aim, follow)
+        : undefined;
     const flying: Flying = {
       delivered,
       projectile,
@@ -311,25 +358,30 @@ export class MagicProjectiles {
       motion: { version: 0 },
       sound: undefined,
       light: undefined,
+      stream,
+      origin: [...origin],
       done: false,
     };
     this.#flying.add(flying);
-    void this.#options.fx?.lightRecord(projectile.light).then((light) => {
-      flying.light = light;
-    });
     if (projectile.sound !== undefined) {
       flying.sound = session.soundSystem?.play(projectile.sound, () => flying.flight.position);
     }
+    if (stream) return;
+    void this.#options.fx?.lightRecord(projectile.light).then((light) => {
+      flying.light = light;
+    });
     const path = projectile.model;
     if (!path) return;
     session
       .model(meshPath(path))
       .then((model) => {
         if (!model || flying.done) return;
+        const graph = startObjectGraph(model, flying.delivered.caster);
         const instance: ModelInstance = {
           model,
           world: placementOf(flying.flight),
           motion: flying.motion,
+          ...(graph && { graph }),
         };
         flying.instance = instance;
         flying.scene = renderer.scene.createScene([instance]);
@@ -420,6 +472,7 @@ export class MagicProjectiles {
       void this.#options.session.soundSystem?.play(projectile.sound, origin);
     const speed = projectile.speed > 0 ? projectile.speed : range;
     this.#options.fx?.show(projectile.model, projectile.light, origin, {
+      kind: 'cone',
       direction: aim,
       speed,
       range,
@@ -543,7 +596,11 @@ export class MagicProjectiles {
 
   /** Every frame: the flying fly on; those that met something or ran out end there. */
   frame(seconds: number): void {
-    if (seconds > 0) this.#beams.frame(seconds);
+    if (seconds > 0) {
+      this.#clock += seconds;
+      this.#beams.frame(seconds);
+      this.#flames.frame(seconds);
+    }
     if (seconds <= 0 || this.#flying.size === 0) return;
     const runtime = this.#options.session.scriptsReady;
     for (const flying of [...this.#flying]) {
@@ -563,6 +620,16 @@ export class MagicProjectiles {
         const point = hit ? pointAt(from, to, hit.t) : to;
         flying.flight.position = point;
         this.#end(flying);
+        // A flame reaches as far as its spray went (its full range when it met nothing).
+        if (flying.stream) {
+          const o = flying.origin;
+          this.#flames.reached(
+            flying.stream,
+            hit || near
+              ? Math.hypot(point[0] - o[0], point[1] - o[1], point[2] - o[2])
+              : flying.projectile.range,
+          );
+        }
         if (runtime) {
           const aim = normalize(flying.flight.velocity);
           void this.#impact(
@@ -707,6 +774,9 @@ export class MagicProjectiles {
     point: Vec3,
     aim: Vec3,
   ): Promise<Impact | undefined> {
+    let placeable: boolean | undefined;
+    const decide = (impact: Impact): boolean =>
+      (placeable ??= this.#placements.place(impact, point, this.#clock));
     const impact = this.#options.impact
       ? await this.#options.impact({
           impactDataSet,
@@ -714,6 +784,7 @@ export class MagicProjectiles {
           position: point,
           direction: aim,
           heavy: false,
+          placeable: decide,
         })
       : await this.#options.session.soundSystem?.impactOfSet(
           impactDataSet,
@@ -722,9 +793,13 @@ export class MagicProjectiles {
           point,
         );
     if (!impact) return undefined;
+    // Within its placement radius of one of its kind still showing: only its sound (a breath's
+    // sprays leave a fire every so far, not one each).
+    if (!decide(impact)) return impact;
     // Its model along the surface's normal (or the way the spell came), for its duration.
     if (impact.model)
       this.#options.fx?.show(impact.model, undefined, point, {
+        kind: 'impact',
         direction: impact.orientation === 0 && hit.normal ? hit.normal : aim,
         ...(impact.duration > 0 && { duration: impact.duration }),
       });
@@ -775,6 +850,7 @@ export class MagicProjectiles {
     const { fx, session } = this.#options;
     const upright = (explosion.flags & ExplosionFlag.alwaysUsesWorldOrientation) !== 0;
     fx?.show(explosion.model, explosion.light, point, {
+      kind: 'explosion',
       ...(!upright && { direction: aim }),
       fades: true,
     });
@@ -840,6 +916,7 @@ export class MagicProjectiles {
       if (flying.light && !flying.done) yield cellLight(0, flying.flight.position, flying.light, 1);
     }
     yield* this.#beams.lights();
+    yield* this.#flames.lights();
   }
 
   #end(flying: Flying): void {
@@ -853,7 +930,9 @@ export class MagicProjectiles {
   /** Every projectile goes (the play ended, the view changed). */
   clear(): void {
     for (const flying of [...this.#flying]) this.#end(flying);
+    this.#placements.clear();
     this.#beams.clear();
+    this.#flames.clear();
   }
 }
 

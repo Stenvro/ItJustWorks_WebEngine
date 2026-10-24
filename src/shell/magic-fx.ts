@@ -21,11 +21,17 @@ import { meshPath } from '../world/actors.ts';
 import type { CellLight } from '../world/cell-loader.ts';
 import { parseLight, type LightRecord } from '../world/cell-records.ts';
 import type { GameSession } from './game-session.ts';
+import { startObjectGraph } from './object-graphs.ts';
 import type { Terminal } from './terminal.ts';
+
+/** What an effect shown is (the QA monitors count them by it). */
+export type FxKind = 'muzzle-flash' | 'cone' | 'explosion' | 'impact' | 'trail';
 
 /** A model (and light) shown for a while. */
 interface Fx {
   readonly key: object;
+  readonly kind: FxKind;
+  readonly model: string | undefined;
   scene: GpuScene | undefined;
   instance: ModelInstance | undefined;
   readonly motion: InstanceMotion;
@@ -66,6 +72,8 @@ export interface MagicFxOptions {
   readonly player: () => Vec3 | undefined;
 }
 
+let seeds = 1;
+
 const describe = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
 
@@ -73,6 +81,8 @@ export class MagicFx {
   readonly #options: MagicFxOptions;
   readonly #fx = new Set<Fx>();
   readonly #trails = new Map<string, Fx>();
+  /** Each shooter's muzzle flash showing. */
+  readonly #muzzles = new Map<number, Fx>();
   readonly #lights = new Map<number, Promise<LightRecord | undefined>>();
   /** Hazards seen standing: their sound playing, their modifier on. */
   readonly #hazards = new Map<
@@ -110,24 +120,35 @@ export class MagicFx {
   /**
    * Shows a model (and a light) at a point: facing `direction` (none: upright), for `duration`
    * seconds (none: the model's own time), moving `speed` units a second along it up to
-   * `range` (a cone's wave). Either may be missing.
+   * `range` (a cone's wave). Either may be missing. A muzzle flash is its shooter's (`owner`):
+   * an actor has one at a time (CommonLibSSE's HighProcessData holds a single MuzzleFlash), so
+   * a new shot's takes the place of the last one's.
    */
   show(
     model: string | undefined,
     light: number | undefined,
     at: Vec3,
     options: {
+      readonly kind: FxKind;
       readonly direction?: Vec3;
       readonly duration?: number;
       readonly speed?: number;
       readonly range?: number;
       readonly fades?: boolean;
-    } = {},
+      readonly owner?: number;
+    },
   ): void {
     if (model === undefined && light === undefined) return;
+    const owner = options.owner;
+    if (owner !== undefined) {
+      const last = this.#muzzles.get(owner);
+      if (last) this.#end(last);
+    }
     const direction = options.direction;
     const fx: Fx = {
       key: {},
+      kind: options.kind,
+      model,
       scene: undefined,
       instance: undefined,
       motion: { version: 0 },
@@ -146,6 +167,7 @@ export class MagicFx {
       done: false,
     };
     this.#fx.add(fx);
+    if (owner !== undefined) this.#muzzles.set(owner, fx);
     void this.lightRecord(light).then((record) => {
       fx.light = record;
     });
@@ -164,7 +186,15 @@ export class MagicFx {
           return;
         }
         fx.duration ??= modelSeconds(model);
-        const instance: ModelInstance = { model, world: this.#placement(fx), motion: fx.motion };
+        // A model with a behavior graph runs it (its sequences: an explosion's burst, a
+        // muzzle flash's flare), as every 3D the engine loads does.
+        const graph = startObjectGraph(model, seeds++);
+        const instance: ModelInstance = {
+          model,
+          world: this.#placement(fx),
+          motion: fx.motion,
+          ...(graph && { graph }),
+        };
         fx.instance = instance;
         fx.scene = renderer.scene.createScene([instance]);
       })
@@ -197,6 +227,8 @@ export class MagicFx {
       const first = path[0] ?? [0, 0, 0];
       const fx: Fx = {
         key: {},
+        kind: 'trail',
+        model: record.model,
         scene: undefined,
         instance: undefined,
         motion: { version: 0 },
@@ -237,6 +269,7 @@ export class MagicFx {
   #end(fx: Fx): void {
     fx.done = true;
     this.#fx.delete(fx);
+    for (const [owner, muzzle] of this.#muzzles) if (muzzle === fx) this.#muzzles.delete(owner);
     fx.scene?.destroy();
     fx.scene = undefined;
   }
@@ -383,6 +416,16 @@ export class MagicFx {
 
   *scenes(): Iterable<GpuScene> {
     for (const fx of this.#fx) if (fx.scene) yield fx.scene;
+  }
+
+  /** How many effects show now. */
+  get size(): number {
+    return this.#fx.size;
+  }
+
+  /** What shows now (the QA monitors): each effect's kind, model and place. */
+  *shown(): Iterable<{ readonly kind: FxKind; readonly model: string | undefined; at: Vec3 }> {
+    for (const fx of this.#fx) yield { kind: fx.kind, model: fx.model, at: fx.position };
   }
 
   clear(): void {
