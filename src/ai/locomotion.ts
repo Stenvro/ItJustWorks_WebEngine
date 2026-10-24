@@ -345,6 +345,13 @@ export interface LocomotionFrame {
    */
   readonly turnRate?: number | undefined;
   readonly seconds: number;
+  /**
+   * Its scale (the reference's times its base's height, the race's by sex times the NPC's: the
+   * engine's GetScale): its Speed channel gives the graph its speed divided by it (observed in the original),
+   * so that a small or large actor's clips, scaled with its skeleton, step as fast as it goes.
+   * The thresholds (moveStart at 5) read the speed itself. 1 without.
+   */
+  readonly scale?: number | undefined;
   readonly grounded: boolean;
   readonly swimming: boolean;
   /** Vertical speed (game units per second, up positive). */
@@ -409,7 +416,7 @@ const TURN_STATE = { right: 0, stop: 1, left: 2 } as const;
  * the actions they perform do (docs/animation.md, "Driving the graphs"; observed in the
  * original). Every update:
  *
- * - **Speed:** the speed its movement controller wants. Reaching 5 units per second it performs
+ * - **Speed:** the speed its movement controller wants, over the actor's scale. Reaching 5 units per second it performs
  *   ActionMoveStart (moveStart), falling below ActionMoveStop (moveStop).
  * - **Direction:** the way it wants to go against its facing, the turn wrapped to 0..1 (0
  *   ahead, 0.25 right, 0.5 behind, 0.75 left), unsmoothed. Crossing between the front half
@@ -521,7 +528,9 @@ export class Locomotion {
         ? 0
         : angleBetween(this.#heading, frame.heading) / frame.seconds);
     this.#heading = frame.heading;
-    set('Speed', speed);
+    // The graph's Speed: the speed over the actor's scale (its clips' strides scale with it).
+    const scale = frame.scale !== undefined && frame.scale > 1e-6 ? frame.scale : 1;
+    set('Speed', speed / scale);
     // The player's controls: a large change of direction at speed is frozen and cross-faded
     // (a directional blend would otherwise sweep through every direction between).
     const freeze = frame.freezeDirection;

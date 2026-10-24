@@ -596,6 +596,7 @@ export class PlayerAvatar {
       }),
       heading: this.#bodyYaw,
       seconds: dt,
+      scale: this.body.look.scale * this.body.actor.scale,
       grounded: character.grounded,
       swimming: character.swimming,
       verticalSpeed: character.verticalSpeed,

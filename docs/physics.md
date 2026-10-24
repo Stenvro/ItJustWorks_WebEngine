@@ -88,8 +88,43 @@ with, gives the feet's height. The controller falls, so the
 ground may be any distance below: leveled animals and bandits in the wilderness are placed up
 to 120 units above it. Races that tilt lean with the ground's normal there: RACE DATA flag 0x8
 "tilt front/back" (four-legged animals) about their sideways axis, 0x10 "tilt left/right"
-(spiders, chaurus, mudcrabs, mammoths) about their length too; others stay upright. Races that
-do not walk (0x100 "walks" unset: slaughterfish) stay where they were placed, as do actors in
+(spiders, chaurus, mudcrabs, mammoths) about their length too; others stay upright.
+
+**Leaning as they move** (observed in the original: its quadruped orientation controller,
+`bhkQuadOrientationController`; ours `probedTilt` and `easeTilt` in `src/world/actor-ground.ts`,
+run by `src/shell/actor-movers.ts`). A moving actor whose race tilts does not take the normal of
+the ground under its middle: the engine probes the ground under the two ends of its controller
+(ahead and behind by half its length, from its radius above its feet, a ray 2.5 Havok units, 175
+game units, down; its contact points, where it has them, give the heights too, each averaged
+with the height its end had), and its pitch is the angle whose tangent is their height difference
+over its length less its two radii, clamped to 47° (a built-in constant); the roll the same across
+for races that tilt left and right. The lean is not taken at once: every update it moves towards
+the probed one by [HAVOK] fQuadrupedPitchMult (10) times the update's time of what is left, and
+falls back to upright the same way for a race that does not tilt that way. Bipeds lean by their
+support's normal (the engine's biped orientation controller, the same clamp and ease); no vanilla
+biped race tilts.
+
+Ours (inferred where the engine's numbers were not read): the probes at the ends of its bound
+(the skeleton's "BBX": half its length ahead and behind, half its width aside), the height
+difference over the distance between them (over its length less its radii, the engine's formula
+with the bound's length, a horse leaned 1.45 times as steep as its road); probed again as it moves
+4 units or turns 0.05 radians, eased every frame. A probe passes other actors and what its
+controller passes (its cart), and a rock it starts inside is met where it leaves it (Havok's rays
+pass what they start in). Without contact points, an uphill end on a steep slope starts under the
+ground (a road met from below) and meets nothing: it is cast again from as high as a 47° lean
+reaches over its half length, and with nothing either way that end is level with its feet (taken
+as 175 units down, a cart horse reared 37° for a third of a second where the road to Helgen
+steepens).
+
+Measured in the opening's ride to Helgen (four horses, the carts' and the riders', every frame
+over 40 to 60 s): before, a horse's drawn pitch jumped up to 70° in one frame (it took the normal
+of the one ground triangle under its middle as it crossed onto it, every 4 units), swung by 6° or
+more 0.55 to 0.83 times a second, in 5 to 10 of 40 seconds twice or more (QA `rocking`,
+docs/qa.md), and averaged 13° to 20° nose down; it rocked as it walked. Now its pitch changes by
+at most 3 to 5.5° in a frame (5° a second on average), swings by 6° 0.2 to 0.3 times a second (in
+0 to 3 of 60 seconds twice), and averages 13° to 15° nose down, the road's own slope.
+
+Races that do not walk (0x100 "walks" unset: slaughterfish) stay where they were placed, as do actors in
 the furniture their package uses (the furniture holds them) and actors with nothing under
 them (placed in a cell their package takes them out of). Actors placed below the landscape stay
 there: whether the engine's controller lifts them out is not documented (TODO(M13)).
