@@ -10,6 +10,7 @@
 // TODO(M12): save state (threads, variables, registrations).
 
 import type { PexFunction, PexValue } from '../formats/pex/pex.ts';
+import { nativeWaitsForFrame } from './native-timing.ts';
 import { PapyrusScheduler } from './scheduler.ts';
 import { chainOf, extendsScript, type LoadedScript, type ScriptLibrary } from './script-library.ts';
 import {
@@ -823,10 +824,16 @@ export class PapyrusVm {
       thread.natives++;
       // Threads waiting meanwhile count the VM's patience with this native.
       this.#watchNative();
+      // A native the game hands to its main thread runs in the next frame (native-timing.ts);
+      // the thread waits meanwhile, keeping the lock of its own object's script.
+      const run = nativeWaitsForFrame(level.name, name)
+        ? async (): Promise<Value> => {
+            await this.#latent(thread, this.scheduler.nextFrame());
+            return native(call);
+          }
+        : (): Promise<Value> => Promise.resolve(native(call));
       try {
-        return await (own
-          ? native(call)
-          : this.#within(thread, null, () => Promise.resolve(native(call))));
+        return await (own ? run() : this.#within(thread, null, run));
       } finally {
         thread.inNative--;
         // Let go while the native took long: the thread runs again when its turn comes.
