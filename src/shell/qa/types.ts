@@ -24,6 +24,8 @@ export type QaKind =
   | 'bind-pose'
   /** A corpse stands upright (no ragdoll laid it down: its bind pose). */
   | 'corpse-upright'
+  /** A corpse's head comes up again after it was down (it stood up before it fell). */
+  | 'corpse-rises'
   /** A corpse's ragdoll has not come to rest long after it fell (a body still awake). */
   | 'ragdoll-restless'
   /** A bone is NaN or absurdly far from the actor. */
@@ -34,6 +36,10 @@ export type QaKind =
   | 'sunk'
   /** An actor with a travel does not get nearer its destination. */
   | 'stuck'
+  /** An actor, or a cart, went through a door or gate that was shut. */
+  | 'door-passed'
+  /** The player's camera is far from their body's head (a graph left behind, a wrong scale). */
+  | 'player-camera'
   /** A simulated body's vertical velocity flips sign many times a second. */
   | 'physics-jitter'
   /** A simulated body's velocity jumps in one frame. */
@@ -62,11 +68,14 @@ export const KIND_SYSTEM: Readonly<Record<QaKind, QaSystem>> = {
   'turn-chatter': 'locomotion',
   'bind-pose': 'animation',
   'corpse-upright': 'physics',
+  'corpse-rises': 'physics',
   'ragdoll-restless': 'physics',
   'bad-bone': 'animation',
   floating: 'physics',
   sunk: 'physics',
   stuck: 'ai',
+  'door-passed': 'physics',
+  'player-camera': 'animation',
   'physics-jitter': 'physics',
   'velocity-spike': 'physics',
   'scene-stall': 'scenes',

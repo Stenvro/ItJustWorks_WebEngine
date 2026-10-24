@@ -101,9 +101,16 @@ match groups.
 
 ## Hidden objects
 
-- Objects named `EditorMarker` (any block type) are helper geometry for the Creation Kit,
-  e.g. activator trigger volumes; the engine never draws them (1,012 vanilla meshes have one).
-- BSXFlags bit `0x20` on the root (editor marker) hides the whole model.
+- Objects whose name contains `EditorMarker`, `LRTMarker`, `AnimInteractionMarker` or
+  `FurnitureMarker` (any case, any block type) are helper geometry for the Creation Kit, e.g.
+  activator trigger volumes; the engine hides them with what is under them (observed in the
+  original: the reference's marker toggle walks its 3D by those names).
+- BSXFlags bit `0x20` on the root (editor marker) hides nothing by itself: 996 vanilla meshes
+  have it, and 683 of them have shapes outside marker nodes that the game shows (the Orc
+  longhouse doors, secret shelf doors, puzzle pillars, Solitude's jail wall, Helgen's tower
+  wall, Honningbrew's mead barrel, nirnroot glows, ambient sand and dust effects). Hiding the
+  whole model left those out, collision and behavior graph included (MQ101's tower wall never
+  opened). A model with the bit and nothing else to show is a marker.
 - The **root node's own transform is ignored** by the engine: placing the object replaces it.
   866 vanilla meshes have a rotated root and 96 a translated one (e.g. Raven Rock's
   `redoranhutintcap01.nif` is turned 90°; applying it leaves gaps between the hut pieces).

@@ -779,7 +779,14 @@ head is recorded as gone with what the actor wears then (ExtraDismemberedLimbs; 
 saved), and the actor is queued for the cut, which [GamePlay] iActorsDismemberedPerFrame (2)
 actors get each frame. Ours: the armor goes on through the equip system; the look change it
 causes is answered in place (`dressedInPlace`), so a dying body is not made again in the middle
-of its death; anything else worn or taken off meanwhile makes it again.
+of its death; it is asked for every look change until something else is worn or taken off
+(putting the armor on may change what the actor wears in several steps, each told on its own;
+answered for the first alone, a later one made the body again). And a body made again for a look change
+(`ActorStage.lookChanged`) takes its old graph over where its race, sex and behavior project
+are the same, as the game keeps an actor's animation going while what it wears changes: before,
+a new graph started at its idle, and a prisoner made again during the chop at Helgen's block
+stood up headless, then fell. The QA monitor `corpse-rises` catches a dead body's head coming
+up again.
 
 **The cut.** Unless [General] bDisableAllGore:
 
