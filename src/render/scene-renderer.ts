@@ -3,11 +3,9 @@
 // vertex layout and material state, per-draw uniforms in one buffer (dynamic offsets),
 // opaque first, then blended parts sorted back to front.
 
-import type { SkeletalGraph } from '../animation/behavior-runtime.ts';
 import type { FaceWeights } from '../animation/face.ts';
 import { sequenceWeight, type ObjectGraph } from '../animation/object-graph.ts';
 import type { ActorPose } from '../animation/skeleton.ts';
-import type { BehaviorGraph } from '../formats/hkx/behavior.ts';
 import {
   animate,
   animateLayers,
@@ -19,6 +17,7 @@ import {
   type Playback,
 } from './animation.ts';
 import { billboardWorld } from './billboard.ts';
+import { GpuModel, type GpuParticleSystem, type GpuPart, type ModelAddon } from './gpu-model.ts';
 import {
   faceMorphIndices,
   MORPH_REGION_BYTES,
@@ -40,7 +39,6 @@ import type {
   LightingMaterial,
   IndexRange,
   ModelData,
-  ModelNode,
   ModelPart,
   PartMaterial,
   VertexLayout,
@@ -67,6 +65,8 @@ import shadowShader from './shaders/shadow.wgsl?raw';
 import waterShader from './shaders/water.wgsl?raw';
 import type { TextureCache } from './texture-cache.ts';
 import { CELL_SIZE } from '../world/land.ts';
+
+export { GpuModel, type ModelAddon };
 import { gbufferTarget } from './gbuffer.ts';
 import { projectedUVParams, type MaterialObject } from '../world/material-object.ts';
 import type { WaterType } from '../world/water.ts';
@@ -305,23 +305,6 @@ export function flatAmbient(color: Vec3): SceneLighting['ambient'] {
   return [color, color, color, color, color, color];
 }
 
-/** When a part is drawn: with the opaque scene, as water after it, or blended last. */
-/** Refraction shapes draw only into the refraction buffer (see refraction.ts). */
-type PartPass = 'opaque' | 'water' | 'transparent' | 'refraction';
-
-interface GpuPart {
-  readonly part: ModelPart;
-  readonly vertexBuffer: GPUBuffer;
-  readonly indexBuffer: GPUBuffer;
-  readonly indexCount: number;
-  readonly pipeline: GPURenderPipeline;
-  /** Material textures (unused by water, which takes its type's bind group). */
-  readonly bindGroup: GPUBindGroup;
-  readonly pass: PartPass;
-  /** Depth-only pipeline for the sun's shadow map (Cast_Shadows parts). */
-  readonly shadowPipeline: GPURenderPipeline | undefined;
-}
-
 /**
  * What a pass has bound, as a run of draws goes (drawOpaque, drawShadows): a draw sets only
  * what differs from the one before it. Consecutive draws are mostly parts of one model (its
@@ -450,116 +433,6 @@ export interface WaterFrame {
   readonly multiplier: Vec3;
   /** Sky dome weights by elevation (ATMOSPHERE_SAMPLES × 4), if there is a sky. */
   readonly profile: Float32Array | undefined;
-}
-
-/** A particle system of a model on the GPU: its data, pipeline and material. */
-interface GpuParticleSystem {
-  readonly data: ParticleSystemData;
-  readonly pipeline: GPURenderPipeline;
-  readonly bindGroup: GPUBindGroup;
-}
-
-/** A model attached at one of another model's AddOnNodes (model space of that model). */
-export interface ModelAddon {
-  readonly model: GpuModel;
-  readonly world: Mat4;
-}
-
-/** A model on the GPU: geometry, materials and pipelines, placed by scenes. */
-export class GpuModel {
-  readonly center: readonly [number, number, number];
-  readonly radius: number;
-  readonly parts: readonly GpuPart[];
-  /** Controllers that play on their own (evaluated every frame). */
-  readonly animation: ModelAnimation | undefined;
-  /** Sequences the game plays on demand (doors) or the behavior graph plays. */
-  readonly sequences: ModelSequences | undefined;
-  /**
-   * The behavior graph that decides which sequences play (ModelData.behaviorGraph), resolved
-   * by the session; every placed instance runs its own (ModelInstance.graph).
-   */
-  graph: BehaviorGraph | undefined = undefined;
-  /**
-   * The graph again, where it plays skeletal clips on the model's nodes (resolved by the
-   * session); every placed instance runs its own on a pose (ModelInstance.pose).
-   */
-  skeletal: SkeletalGraph | undefined = undefined;
-  readonly particles: readonly GpuParticleSystem[];
-  /**
-   * Models the engine attaches at AddOnNodes (ADDN: candle flames, torch fire, smoke),
-   * resolved by the session; placed with every instance of this model.
-   */
-  addons: readonly ModelAddon[] = [];
-  /** GPU bytes of its own buffers (textures are counted by the texture cache). */
-  readonly bytes: number;
-  /** The root is a leaf animation node: Tree_Anim parts flutter (ModelData.leafAnimation). */
-  readonly leafAnimation: boolean;
-  /** Worn on a skeleton: the model's node tree and the node it hangs on (ModelData). */
-  readonly nodes: readonly ModelNode[] | undefined;
-  readonly attachTo: string | undefined;
-  /** Each named node's model-space matrix at rest, by lower-case name (ModelData.nodeWorlds). */
-  readonly nodeWorlds: ReadonlyMap<string, Mat4>;
-  /** BSTreeNode: its trunk and branch bones (ModelData.treeBones). */
-  readonly treeBones: ModelData['treeBones'];
-  /** performance.now() when a scene last took or let go of it (eviction order). */
-  lastUsed = performance.now();
-  readonly #buffers: readonly GPUBuffer[];
-  /** The textures it holds in the cache, let go when it is destroyed. */
-  readonly #textures: { readonly cache: TextureCache; readonly paths: readonly string[] };
-  #users = 0;
-
-  constructor(init: {
-    center: readonly [number, number, number];
-    radius: number;
-    parts: readonly GpuPart[];
-    buffers: readonly GPUBuffer[];
-    animation: ModelAnimation | undefined;
-    sequences?: ModelSequences | undefined;
-    particles: readonly GpuParticleSystem[];
-    textures: { readonly cache: TextureCache; readonly paths: readonly string[] };
-    leafAnimation: boolean;
-    nodes?: readonly ModelNode[] | undefined;
-    nodeWorlds?: ReadonlyMap<string, Mat4> | undefined;
-    attachTo?: string | undefined;
-    treeBones?: ModelData['treeBones'];
-  }) {
-    this.leafAnimation = init.leafAnimation;
-    this.nodes = init.nodes;
-    this.nodeWorlds = init.nodeWorlds ?? new Map();
-    this.attachTo = init.attachTo;
-    this.treeBones = init.treeBones;
-    this.center = init.center;
-    this.radius = init.radius;
-    this.parts = init.parts;
-    this.#buffers = init.buffers;
-    this.animation = init.animation;
-    this.sequences = init.sequences;
-    this.particles = init.particles;
-    this.#textures = init.textures;
-    this.bytes = init.buffers.reduce((sum, buffer) => sum + buffer.size, 0);
-    for (const path of init.textures.paths) init.textures.cache.retain(path);
-  }
-
-  /** Scenes and grass fields that draw it. */
-  get users(): number {
-    return this.#users;
-  }
-
-  /** A scene or field starts drawing it (see `release`). */
-  acquire(): void {
-    this.#users++;
-    this.lastUsed = performance.now();
-  }
-
-  release(): void {
-    this.#users = Math.max(0, this.#users - 1);
-    this.lastUsed = performance.now();
-  }
-
-  destroy(): void {
-    for (const buffer of this.#buffers) buffer.destroy();
-    for (const path of this.#textures.paths) this.#textures.cache.release(path);
-  }
 }
 
 /**

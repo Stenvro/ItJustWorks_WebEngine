@@ -1,6 +1,7 @@
 // GPU textures from DDS files, cached per path. Missing or broken textures fall back to
 // neutral defaults so a model still renders. Models hold the textures they use (retain /
-// release); textures no model holds any more can be evicted under a memory budget.
+// release); textures no model holds any more can be evicted under a memory budget. Without a
+// device (the headless simulation, src/sim/) nothing is drawn: no texture is read or made.
 
 import type { DdsTexture } from '../formats/dds/dds.ts';
 
@@ -102,23 +103,30 @@ interface TextureEntry {
 }
 
 export class TextureCache {
-  readonly defaults: DefaultTextures;
-  readonly #device: GPUDevice;
+  readonly #defaults: DefaultTextures | undefined;
+  readonly #device: GPUDevice | undefined;
   readonly #load: TextureLoader;
   readonly #cache = new Map<string, TextureEntry>();
   readonly #failures: TextureFailure[] = [];
   #bytes = 0;
 
-  constructor(device: GPUDevice, load: TextureLoader) {
+  /** `device` undefined: a headless cache, which reads and makes no textures. */
+  constructor(device: GPUDevice | undefined, load: TextureLoader) {
     this.#device = device;
     this.#load = load;
-    this.defaults = {
+    this.#defaults = device && {
       white: solid(device, 'default-white', [255, 255, 255, 255]),
       black: solid(device, 'default-black', [0, 0, 0, 255]),
       flatNormal: solid(device, 'default-normal', [128, 128, 255, 0]),
       blackCube: solid(device, 'default-cube', [0, 0, 0, 255], 6),
       blankDetail: solid(device, 'default-detail', [64, 64, 64, 255]),
     };
+  }
+
+  /** The textures drawn where a model's are missing (only a cache with a device has them). */
+  get defaults(): DefaultTextures {
+    if (!this.#defaults) throw new Error('A headless texture cache has no textures');
+    return this.#defaults;
   }
 
   /** Textures that failed to load since the last call (for logging), each once. */
@@ -132,7 +140,8 @@ export class TextureCache {
    * of its archives), so a missing file is one the game itself lacks.
    */
   get(path: string, fromGameContent = false): Promise<GPUTexture | undefined> {
-    if (path === '') return Promise.resolve(undefined);
+    const device = this.#device;
+    if (path === '' || !device) return Promise.resolve(undefined);
     let entry = this.#cache.get(path);
     if (!entry) {
       const created: TextureEntry = {
@@ -140,7 +149,7 @@ export class TextureCache {
           (dds) => {
             created.bytes = textureBytes(dds);
             this.#bytes += created.bytes;
-            return createGpuTexture(this.#device, dds, path);
+            return createGpuTexture(device, dds, path);
           },
           (error: unknown) => {
             const missing = error instanceof Error && error.name === 'VfsNotFoundError';
