@@ -47,8 +47,9 @@ These run through every area and explain most of what breaks in play.
    with a built-in default exists. Those defaults are now known.
 3. **Time and budget.** The original updates actors by process level on a per-frame time budget,
    re-evaluates packages every 15 s or on the hour, runs sandboxes on the game clock, and lets most
-   Papyrus natives wait for the main thread. Ours runs every actor every frame, re-evaluates every 2 s,
-   counts sandbox stays in real seconds, and runs natives at once.
+   Papyrus natives wait for the main thread. Ours runs every actor every frame (the budget's rule is
+   read: src/ai/process-levels.ts) and runs natives at once; packages are re-evaluated every 15 s and
+   on the hour, sandbox stays are in game hours (2026-10-24).
 4. **Persistence.** Cells never reset or respawn; objects moved by physics, animated objects and corpses
    return to their editor places when a cell reloads; there are no buffered cells; state the saves need is
    spread outside GameState, and Papyrus threads cannot be saved yet.
@@ -77,21 +78,21 @@ These run through every area and explain most of what breaks in play.
 
 ### AI
 
-| System                       | Status    | Main gaps                                                                                                                                          |
-| ---------------------------- | --------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Process levels, budget       | different | no time slicing or frame budget, no middle-low tier                                                                                                |
-| Package evaluation           | partial   | procedure overrides (115 branches) and flags (Weapon Drawn 664, Weapons Unequipped 208, Sleep Outfit, Allow Swimming, Maintain Speed) not honoured |
-| Procedures                   | partial   | all 30 exist, their numbers the game settings; engine-only packages (avoid player, react to destroyed object, warnings, movement blocked) missing  |
-| Sandbox                      | different | no daily plan (sleep, meals), stays in real seconds, no weighted choice                                                                            |
-| Movement, paths              | partial   | doors not navmesh obstacles, no path idles                                                                                                         |
-| Avoidance                    | partial   | the engine's way round (who is avoided and re-planning are its)                                                                                    |
-| Detection                    | partial   | formula, reach, lines of sight, light and events the engine's; no one in ambush; the light's sum ours                                              |
-| Crime                        | partial   | NPC crimes                                                                                                                                         |
-| Dialogue                     | partial   | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away                                                                |
-| Scenes                       | partial   | lines do not wait for facing; repeat pause                                                                                                         |
-| Actors away                  | partial   | only one door away, hour steps                                                                                                                     |
-| Followers, horses, furniture | partial   | walk zone; mount from the right; enter by graph event; the horse's turn to the camera                                                              |
-| Head tracking                | partial   | candidates' scores, look along the path, package target's look                                                                                     |
+| System                       | Status  | Main gaps                                                                                                                    |
+| ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Process levels, budget       | partial | the budget rule is read, not applied: no time slicing, no middle-low tier, the high process by distance                      |
+| Package evaluation           | partial | flags Offers Services 85, Maintain Speed At Goal 62, Continue If PC Near 4, Skip Fallout Behavior 189, Allow Swimming 85     |
+| Procedures                   | partial | engine-only packages (avoid player, react to destroyed object, warnings, get up, surface); Wear Sleep Outfit has no sim case |
+| Sandbox                      | partial | rescan every 3–6 s, the search radius for a place without one, radius hysteresis, eating at the chair it sits on             |
+| Movement, paths              | partial | navmesh obstacles not cut (cases written), doors not obstacles, no path idles                                                |
+| Avoidance                    | partial | the engine's way round (who is avoided and re-planning are its)                                                              |
+| Detection                    | partial | formula, reach, lines of sight, light and events the engine's; no one in ambush; the light's sum ours                        |
+| Crime                        | partial | NPC crimes                                                                                                                   |
+| Dialogue                     | partial | Invisible Continue (1,534 responses close the menu), Reset Hours (6,999), walk-away                                          |
+| Scenes                       | partial | lines do not wait for facing; repeat pause                                                                                   |
+| Actors away                  | partial | only one door away, hour steps                                                                                               |
+| Followers, horses, furniture | partial | walk zone; mount from the right; enter by graph event; the horse's turn to the camera                                        |
+| Head tracking                | partial | candidates' scores, look along the path, package target's look                                                               |
 
 ### Combat
 

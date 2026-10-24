@@ -1193,8 +1193,9 @@ export class ActorSenses implements ScriptSenses {
           : kind === 'corpse'
             ? InterruptFlag.greetCorpseBehavior
             : InterruptFlag.observeCombatBehavior;
-      if ((pack.interruptFlags & wanted) === 0) return false;
-      if (kind === 'search' && (pack.flags & PackageFlag.noCombatAlert) !== 0) return false;
+      // Its flags as its running procedure's override leaves them.
+      if ((running.interrupts & wanted) === 0) return false;
+      if (kind === 'search' && (running.flags & PackageFlag.noCombatAlert) !== 0) return false;
     }
     const lists = this.#profiles.get(actor)?.profile.overrides;
     const list =

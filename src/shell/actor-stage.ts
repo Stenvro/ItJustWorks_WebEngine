@@ -39,6 +39,7 @@ import { ActorsAway, type AwayPlace } from './actors-away.ts';
 import type { RouteDoor } from '../ai/routes.ts';
 import { ActorBodies, type BodyHolder } from './actor-bodies.ts';
 import { ActorKnockdowns, type KnockSubject } from './actor-knockdowns.ts';
+import { ActorPackageGear } from './actor-package-gear.ts';
 import { ActorPractice } from './actor-practice.ts';
 import { PlayerKnockSubject } from './player-knockdown.ts';
 import { ActorDoors, type DoorObject } from './actor-doors.ts';
@@ -194,6 +195,8 @@ export class ActorStage {
   readonly knockdowns: ActorKnockdowns;
   /** The packages' weapon and magic practice (UseWeapon, UseMagic, Shout). */
   readonly practice: ActorPractice;
+  /** What running packages' flags do to the actors' gear (Weapon Drawn, Wear Sleep Outfit). */
+  readonly packageGear: ActorPackageGear;
   #physics: PhysicsWorld | undefined;
   /** The player's death shown: their ragdoll, the death camera, the reload's wait. */
   readonly playerDeath: PlayerDeath;
@@ -677,6 +680,11 @@ export class ActorStage {
       combat: () => this.combat,
       casting: () => this.casting,
       carried: (actor, criteria) => this.ai.carried(actor, criteria),
+    });
+    this.packageGear = new ActorPackageGear({
+      session: options.session,
+      ai: () => this.ai,
+      combat: () => this.combat,
     });
     this.crime = new ActorCrime({
       session: options.session,
@@ -1605,6 +1613,7 @@ export class ActorStage {
       this.#clock === undefined ? 0 : Math.min(0.25, Math.max(0, seconds - this.#clock));
     this.#clock = seconds;
     this.ai.frame(this.#actors.values(), frame, this.#options.focus?.());
+    this.packageGear.frame(this.ai.running(), frame);
     this.pilot.frame(frame);
     // What they notice (detection), and how they react.
     this.senses.frame(frame);
