@@ -18,6 +18,7 @@
 
 import { parseArgs } from 'node:util';
 import { parseNif } from '../src/formats/nif/nif.ts';
+import { isMarkerNode } from '../src/render/model-data.ts';
 import type { NifFile } from '../src/formats/nif/nif.ts';
 import { referenceMatrix } from '../src/world/cell-loader.ts';
 import { LightFlag, parseLight, parseReference } from '../src/world/cell-records.ts';
@@ -60,7 +61,6 @@ async function* nifs(): AsyncGenerator<[string, NifFile]> {
 }
 
 const BSX_EDITOR_MARKER = 0x20;
-const EDITOR_MARKER = /^editormarker(:[0-2])?$/i;
 const SHAPES = new Set(['tri-shape', 'particle-system']);
 
 if (all || values.markers || values.lit) {
@@ -88,7 +88,7 @@ if (all || values.markers || values.lit) {
     const underMarker = (index: number): boolean => {
       for (let at: number | undefined = index; at !== undefined; at = parents.get(at)) {
         const block = nif.blocks[at];
-        if (block && 'name' in block && EDITOR_MARKER.test(block.name)) return true;
+        if (block && 'name' in block && isMarkerNode(block.name)) return true;
       }
       return false;
     };

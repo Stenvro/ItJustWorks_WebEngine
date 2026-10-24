@@ -11,12 +11,14 @@ import { Layer } from '../../physics/collision-layers.ts';
 import { AttackState, WeaponState } from '../../gameplay/combat/combat-state.ts';
 import { ActorPose } from '../../animation/skeleton.ts';
 import { FlyCamera } from '../../render/fly-camera.ts';
+import type { Vec3 } from '../../render/math.ts';
 import type { Renderer } from '../../render/renderer.ts';
 import { PLAYER_REF } from '../../scripting/runtime/forms.ts';
 import type { ScriptRuntime } from '../../scripting/runtime/runtime.ts';
 import { playerTrigger } from '../../scripting/runtime/trigger-gates.ts';
 import type { ActorStage, StagedActor } from '../actor-stage.ts';
 import type { GameSession } from '../game-session.ts';
+import { clock } from '../object-graphs.ts';
 import type { Terminal, LogTone } from '../terminal.ts';
 import type { PlaySession } from '../play-session.ts';
 import type { PlayerFurniture } from '../player-furniture.ts';
@@ -111,6 +113,22 @@ const FLOOD_END_SECONDS = 2;
  */
 const CORPSE_UPRIGHT = 0.6;
 const CORPSE_SECONDS = 5;
+/** A corpse whose head comes up by this share of its standing head height rises. */
+const CORPSE_RISE = 0.25;
+/** …one that died with its head under this share of its standing height (seated, kneeling). */
+const CORPSE_LOW = 0.75;
+/**
+ * The player's camera this far above or below their body's head (game units at race height 1)
+ * for PLAYER_CAMERA_SECONDS is off it (the Camera1st node sits a few units from the head's).
+ */
+const PLAYER_CAMERA_GAP = 30;
+const PLAYER_CAMERA_SECONDS = 5;
+/** Doors this near an actor or a cart (game units, across) are checked for it going through. */
+const DOOR_NEAR = 600;
+/** The heights above an actor's feet (a cart's root) its way is followed at (game units). */
+const DOOR_RAY_HEIGHTS = [40, 100];
+/** One mover through one door counts once in this long (seconds). */
+const DOOR_REPEAT = 10;
 /** WEAPON_STATE drawn and ATTACK_STATE_ENUM bow drawn (src/gameplay/combat/combat-state.ts). */
 const WEAPON_DRAWN = WeaponState.drawn;
 const BOW_DRAWN = AttackState.bowDrawn;
@@ -326,6 +344,9 @@ export class QaHarness {
     this.#flood = undefined;
     this.#triggerGates.clear();
     this.#entered.clear();
+    this.#doorWays.clear();
+    this.#doorPassed.clear();
+    this.#playerCamera = new Episode(PLAYER_CAMERA_SECONDS, 1);
     this.#enteredFrom = undefined;
     for (const [id, seconds] of Object.entries(options.watchQuests ?? {})) {
       this.#quests.set(Number(id), { stage: -1, since: 0, limit: seconds, reported: false });
@@ -1048,6 +1069,8 @@ export class QaHarness {
       this.#combatCheck(world, now, watched, dt, describe);
     }
     this.#corpsesCheck(world, dt);
+    this.#playerCameraCheck(world, dt);
+    this.#doorsCheck(world, dt);
     this.#scenesCheck(world, session);
     this.#questsCheck(session);
   }
@@ -1289,6 +1312,166 @@ export class QaHarness {
   }
 
   /**
+   * The player's camera (their first-person graph's Camera1st, scaled by their race's height)
+   * far above or below their drawn body's head for a while: a first-person graph left in a
+   * furniture's or a vehicle's state the body has left (the camera at a cart seat's height on
+   * the ground: the player "still a giant"), or the camera and the body at different sizes.
+   */
+  #playerCameraCheck(world: QaWorld, dt: number): void {
+    const player = world.player;
+    const avatar = world.playerView?.avatar;
+    const body = avatar?.body;
+    const headNode = body?.look.headNode;
+    const head =
+      headNode === undefined
+        ? undefined
+        : body?.pose.skeleton.nodeByName.get(headNode.toLowerCase());
+    if (!player || !avatar || !body || head === undefined || avatar.dead || avatar.knocked) {
+      this.#playerCamera.update(false, dt);
+      return;
+    }
+    // The body is drawn at the avatar's placement (its instances share it).
+    const gap = player.eye[2] - headHeight(body.pose.worlds, head, avatar.placement.world);
+    const off = Math.abs(gap) > PLAYER_CAMERA_GAP * player.height;
+    if (this.#playerCamera.update(off, dt, Math.abs(gap)) !== 'begin') return;
+    const first = avatar.firstPerson?.behavior;
+    const feet = player.drawnFeet;
+    this.#add({
+      kind: 'player-camera',
+      subject: { id: hex(PLAYER_REF), name: 'Player', kind: 'player' },
+      time: this.#now(),
+      gameHour: this.#host.session()?.scriptsReady?.gameHour,
+      position: [feet[0], feet[1], feet[2]],
+      cell: undefined,
+      states: first?.states().map((s) => `${s.machine}:${s.state}`),
+      clips: first ? [...new Set(first.playing().map((c) => c.animation))] : undefined,
+      context: `first-person graph (states, clips); body: ${(body.behavior?.states() ?? [])
+        .slice(-3)
+        .map((s) => `${s.machine}:${s.state}`)
+        .join(', ')}`,
+      detail: `the camera is ${Math.round(gap)} units ${gap > 0 ? 'above' : 'below'} the body's head (race height ${player.height.toFixed(2)})`,
+      values: { gap: Math.round(gap), height: Math.round(player.height * 100) },
+      severity: Math.abs(gap),
+      duration: this.#playerCamera.duration,
+    });
+  }
+
+  #playerCamera = new Episode(PLAYER_CAMERA_SECONDS, 1);
+
+  /**
+   * Actors and carts through a shut door: the way each moved since the last check (at two
+   * heights) meets the collision of a door of the loaded area that is shut (its open sequence
+   * not half played, or its close sequence half played or more). A door's collision is solid to
+   * them, so going through it means it was not where its door is drawn, or not in the world.
+   */
+  #doorsCheck(world: QaWorld, dt: number): void {
+    const stage = world.actorStage;
+    const play = world.play;
+    const physics = play?.physics;
+    if (!stage || !play || !physics?.queriesCurrent) return;
+    const now = clock();
+    const doors: { readonly reference: number; readonly at: Vec3; readonly state: string }[] = [];
+    for (const { reference, instance } of play.sequenced()) {
+      const playback = instance.playback;
+      const sequences = instance.model.sequences;
+      if (!playback || !sequences?.byName.has('open') || !stage.doors.swinging(reference)) continue;
+      const sequence = playback.sequence ?? 'close';
+      const length = sequences.byName.get(sequence)?.duration ?? 0;
+      const into = now - playback.start;
+      const shut = sequence === 'open' ? into < length / 2 : into >= length / 2;
+      if (!shut) continue;
+      const w = instance.world;
+      doors.push({
+        reference,
+        at: [w[12] ?? 0, w[13] ?? 0, w[14] ?? 0],
+        state: `${sequence} ${into.toFixed(1)} s in`,
+      });
+    }
+    const movers: { readonly key: string; readonly subject: QaSubject; readonly at: Vec3 }[] = [];
+    for (const staged of stage.all()) {
+      if (staged.dead || staged.visibility.hidden) continue;
+      const look = staged.placed.look;
+      movers.push({
+        key: `a${hex(staged.reference)}`,
+        subject: {
+          id: hex(staged.reference),
+          name: look.name || look.editorId || hex(staged.reference),
+          kind: /horse/i.test(look.raceEditorId)
+            ? 'horse'
+            : look.faceGen !== undefined
+              ? 'npc'
+              : 'creature',
+        },
+        at: [staged.position[0], staged.position[1], staged.position[2]],
+      });
+    }
+    const player = world.player;
+    if (player) {
+      const feet = player.feet;
+      movers.push({
+        key: `a${hex(PLAYER_REF)}`,
+        subject: { id: hex(PLAYER_REF), name: 'Player', kind: 'player' },
+        at: [feet[0], feet[1], feet[2]],
+      });
+    }
+    for (const { reference, at } of stage.vehicles.cartPlaces()) {
+      movers.push({
+        key: `c${hex(reference)}`,
+        subject: { id: hex(reference), name: this.#formName(reference), kind: 'object' },
+        at,
+      });
+    }
+    const seen = new Set<string>();
+    for (const mover of movers) {
+      seen.add(mover.key);
+      const last = this.#doorWays.get(mover.key);
+      this.#doorWays.set(mover.key, mover.at);
+      if (!last || doors.length === 0) continue;
+      const way: Vec3 = [mover.at[0] - last[0], mover.at[1] - last[1], mover.at[2] - last[2]];
+      const length = Math.hypot(...way);
+      // Still, or a teleport (a script's move, out of a load door).
+      if (length < 1 || length > TELEPORT) continue;
+      for (const door of doors) {
+        if (Math.hypot(door.at[0] - mover.at[0], door.at[1] - mover.at[1]) > DOOR_NEAR) continue;
+        const key = `${mover.key}:${hex(door.reference)}`;
+        if ((this.#doorPassed.get(key) ?? -Infinity) > this.#clock - DOOR_REPEAT) continue;
+        const through = DOOR_RAY_HEIGHTS.some((height) =>
+          physics.pick(
+            [last[0], last[1], last[2] + height],
+            way,
+            length,
+            2,
+            Layer.charController,
+            undefined,
+            (owner) => owner?.kind !== 'object' || owner.reference !== door.reference,
+          ),
+        );
+        if (!through) continue;
+        this.#doorPassed.set(key, this.#clock);
+        this.#add({
+          kind: 'door-passed',
+          subject: mover.subject,
+          time: this.#now(),
+          gameHour: this.#host.session()?.scriptsReady?.gameHour,
+          position: [mover.at[0], mover.at[1], mover.at[2]],
+          cell: undefined,
+          context: `door ${this.#formName(door.reference)}`,
+          detail: `went through ${this.#formName(door.reference)} while it was shut (${door.state}), ${Math.round(length / dt)} units a second`,
+          values: { speed: Math.round(length / dt) },
+          severity: length / dt,
+          duration: 0,
+        });
+      }
+    }
+    for (const key of this.#doorWays.keys()) if (!seen.has(key)) this.#doorWays.delete(key);
+  }
+
+  /** Where each actor and cart was at the last door check (door-passed). */
+  readonly #doorWays = new Map<string, Vec3>();
+  /** When each mover went through each door last (door-passed: once in DOOR_REPEAT). */
+  readonly #doorPassed = new Map<string, number>();
+
+  /**
    * The dead shown upright: a corpse whose drawn skeleton spans (top to bottom) most of what it
    * spans standing, for a while, was never laid down by its ragdoll (it stands at its bind pose).
    */
@@ -1338,8 +1521,11 @@ export class QaHarness {
         corpse = {
           head,
           rest,
+          low: Infinity,
+          first: undefined,
           episode: new Episode(CORPSE_SECONDS, 1),
           restless: new Episode(RESTLESS_SECONDS, 1),
+          rises: new Episode(0, CORPSE_SECONDS),
         };
         this.#corpses.set(reference, corpse);
       }
@@ -1382,6 +1568,40 @@ export class QaHarness {
       const height =
         headHeight(staged.placed.pose.worlds, corpse.head, instance.world) -
         Math.min(staged.position[2], lowest.get(reference) ?? Infinity);
+      // Rising: one that died here whose head came up again by CORPSE_RISE of its standing
+      // height over the lowest it had since (a death that stood the body up first, then let it
+      // fall: its look made again in a fresh graph, a death animation from a standing pose). Only
+      // while its graph moves it (dying, its bodies keyframed): a ragdoll flung or carried (a
+      // dragon's grab) rises by physics. And only for one that died low (seated, kneeling,
+      // lying: its head under CORPSE_LOW of its standing height): a bear's death rears it up.
+      if (!staged.placed.actor.startsDead && corpse.rest > 1) {
+        corpse.first ??= height;
+        corpse.low = Math.min(corpse.low, height);
+        const rise = height - corpse.low;
+        const [awake = 0, asleep = 0, keyframed = 0] = states.get(reference) ?? [];
+        const animated =
+          stage.graphEvents.dying(reference) || (keyframed > 0 && awake + asleep === 0);
+        const diedLow = corpse.first < CORPSE_LOW * corpse.rest * scale;
+        const rose = animated && diedLow && rise > CORPSE_RISE * corpse.rest * scale;
+        if (corpse.rises.update(rose, dt, rise) === 'begin') {
+          const behavior = staged.placed.behavior;
+          this.#add({
+            kind: 'corpse-rises',
+            subject,
+            time: this.#now(),
+            gameHour: this.#host.session()?.scriptsReady?.gameHour,
+            position: [staged.position[0], staged.position[1], staged.position[2]],
+            cell: staged.cell,
+            context,
+            states: behavior?.states().map((s) => `${s.machine}:${s.state}`),
+            clips: behavior ? [...new Set(behavior.playing().map((c) => c.animation))] : undefined,
+            detail: `dead, its head rose ${Math.round(rise)} units (to ${Math.round(height)} above its feet) after it was down (its bodies: ${ragdollState(states.get(reference), stage.graphEvents.dying(reference))})`,
+            values: { rise: Math.round(rise), head: Math.round(height) },
+            severity: rise,
+            duration: 0,
+          });
+        }
+      }
       const upright = corpse.rest > 1 && height > CORPSE_UPRIGHT * corpse.rest * scale;
       if (corpse.episode.update(upright, dt, height) !== 'begin') continue;
       const span = height;
@@ -1408,9 +1628,15 @@ export class QaHarness {
     {
       readonly head: number | undefined;
       readonly rest: number;
+      /** The lowest its head was above its feet since it died (corpse-rises). */
+      low: number;
+      /** Its head's height above its feet as it was first seen dead (corpse-rises). */
+      first: number | undefined;
       readonly episode: Episode;
       /** Whether its ragdoll keeps a body awake (ragdoll-restless). */
       readonly restless: Episode;
+      /** Whether its head came up again after it was down (corpse-rises). */
+      readonly rises: Episode;
     }
   >();
 
