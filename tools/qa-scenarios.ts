@@ -891,6 +891,30 @@ export const SCENARIOS: readonly Scenario[] = [
     },
   },
   {
+    name: 'seated-deaths',
+    description:
+      'The Bannered Mare at 20:00: everyone in furniture (seated, leaning, at the counter) killed by script 40 s after the start; their deaths watched (from the pose they sat in: no standing up first, corpse-rises).',
+    start: { kind: 'coc', cell: 'WhiterunBanneredMare' },
+    hour: 20,
+    bootSeconds: 240,
+    seconds: 60,
+    setup: async (ctx) => {
+      await ctx.console('tgm');
+      await sleepMs(40000);
+      const killed = await ctx.page.eval<string>(
+        `(async () => {
+          const rt = engineDev.play().session.scriptsReady;
+          const stage = (engineDev.world.play ? engineDev.world : engineDev.viewer).actorStage;
+          const seated = [...stage.all()].filter((s) => !s.dead && stage.furniture.holds(s.reference));
+          for (const s of seated) await rt.actors.scriptKill(s.reference, 0x14);
+          return seated.map((s) => s.placed.look.editorId).join(', ');
+        })()`,
+        60000,
+      );
+      ctx.note(`killed in furniture: ${killed || 'nobody'}`);
+    },
+  },
+  {
     name: 'whiterun-long-day',
     description:
       "A Whiterun day in fast time (timescale 120: an hour in 30 s) from 6:00: the town's schedules, shops opening and closing, the evening's inn.",
