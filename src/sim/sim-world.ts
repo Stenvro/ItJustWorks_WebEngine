@@ -1276,7 +1276,9 @@ export class SimWorld {
     );
     const eye = play.player.position;
     const to = staged.position;
-    const direction: Vec3 = [to[0] - eye[0], to[1] - eye[1], to[2] + 100 - eye[2]];
+    // At its chest, or at a body lying on the ground (a corpse to loot).
+    const height = staged.dead ? 15 : 100;
+    const direction: Vec3 = [to[0] - eye[0], to[1] - eye[1], to[2] + height - eye[2]];
     const length = Math.hypot(direction[0], direction[1], direction[2]);
     if (length === 0) return undefined;
     const hit = ray(
