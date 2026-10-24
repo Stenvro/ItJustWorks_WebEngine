@@ -112,10 +112,11 @@ or message names it (its warp after repeated path failures, "FailSafe Warp", is 
 their walk keeps them on the navmesh.
 
 **Not on each other.** An NPC's controller does not stand on another actor's
-(`CharacterBody.standsOnActors` off): held up by an actor alone (a ray down from its middle and
-its shape cast down by its snap reach find only another actor, or it is still coming off one) it
-is not grounded and moves off that actor at least 100 units a second as it falls; a step up never
-lands on an actor. The player stands on heads, as in the game. TODO(M13): Havok's character
+(`CharacterBody.standsOnActors` off): held up by an actor alone (nothing else within a stair's
+height, 32 units, under its feet, by a ray down from its middle or its shape cast down, while its
+shape rests on another actor's, or it is still coming off one) it is not grounded and moves off
+that actor at least 100 units a second as it falls; a step up never lands on an actor. Brushing
+past another, its lower shape a little up the other's, it still stands on the floor. The player stands on heads, as in the game. TODO(M13): Havok's character
 proxy's own rule was not read; NPCs are not seen standing on one another in the game.
 
 ## Water volumes

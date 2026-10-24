@@ -274,48 +274,51 @@ export class CharacterBody {
 
   /**
    * What holds it up once it moved by `moved` (Havok units): 'ground' when something that is not
-   * another actor lies just under it (a ray down from its middle meets it near its feet, else its
-   * shape cast down by its shell's width and a unit meets it), else the other actor's shape just
-   * under it, if any (`touched`: another actor touched it from below, the ray is not enough).
+   * another actor lies within a stair's height under its feet (a ray down from its middle meets
+   * it, else its shape cast down meets it: brushing past another, its lower shape a little up the
+   * other's, it still stands on the floor), else the other actor's shape just under it, if any.
    */
   #support(
     moved: RAPIER.Vector,
     predicate: (collider: RAPIER.Collider) => boolean,
-    touched: boolean,
   ): 'ground' | RAPIER.Collider | undefined {
     const at = this.#body.translation();
     const from = { x: at.x + moved.x, y: at.y + moved.y, z: at.z + moved.z };
-    if (!touched) {
-      const ray = this.physics.world.castRay(
-        new RAPIER.Ray(from, { x: 0, y: 0, z: -1 }),
-        toHavok(this.shape.height / 2 + CONTROLLER_SHELL + 1),
-        true,
-        RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
-        undefined,
-        this.#collider,
-        undefined,
-        predicate,
-      );
-      if (ray && !this.#otherActor(ray.collider)) return 'ground';
-    }
-    const cast = (keep: (collider: RAPIER.Collider) => boolean) =>
+    const notActor = (collider: RAPIER.Collider): boolean =>
+      predicate(collider) && !this.#otherActor(collider);
+    const reach = this.settings.stairHeight + CONTROLLER_SHELL + 1;
+    const ray = this.physics.world.castRay(
+      new RAPIER.Ray(from, { x: 0, y: 0, z: -1 }),
+      toHavok(this.shape.height / 2 + reach),
+      true,
+      RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      this.#collider,
+      undefined,
+      notActor,
+    );
+    if (ray) return 'ground';
+    const cast = (keep: (collider: RAPIER.Collider) => boolean, distance: number) =>
       this.physics.world.castShape(
         from,
         NO_ROTATION,
         { x: 0, y: 0, z: -1 },
         this.#collider.shape,
         SKIN,
-        // As far as it snaps to the ground (the radius) and its shell.
-        toHavok(this.shape.radius + CONTROLLER_SHELL + 1),
+        toHavok(distance),
         false,
         RAPIER.QueryFilterFlags.EXCLUDE_SENSORS,
         undefined,
         this.#collider,
         undefined,
-        (collider) => predicate(collider) && keep(collider),
+        keep,
       );
-    if (cast((collider) => !this.#otherActor(collider))) return 'ground';
-    return cast((collider) => this.#otherActor(collider))?.collider;
+    if (cast(notActor, reach)) return 'ground';
+    // As far as it snaps to the ground (the radius) and its shell.
+    return cast(
+      (collider) => predicate(collider) && this.#otherActor(collider),
+      this.shape.radius + CONTROLLER_SHELL + 1,
+    )?.collider;
   }
 
   /** A shape of another actor (its controller, its bodies). */
@@ -687,7 +690,7 @@ export class CharacterBody {
     // Held up by another actor alone (nothing else just under its shape where it goes): no
     // ground; it slides off that actor, falling at the unsupported gravity.
     if (!this.standsOnActors && this.#grounded && !this.swimming) {
-      const support = this.#support(moved, predicate, onActor !== undefined) ?? onActor;
+      const support = this.#support(moved, predicate) ?? onActor;
       // Coming off one, nothing under it yet (it leans on that actor's side): still off it.
       if (support === undefined && this.#offActor) this.#grounded = false;
       if (support !== 'ground' && support !== undefined) {
