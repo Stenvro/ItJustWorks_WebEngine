@@ -269,6 +269,19 @@ export class PapyrusVm {
     return { running, waiting };
   }
 
+  /**
+   * The threads that have not finished, with where each is (its innermost functions first, as
+   * the log gives a stack): for tools and conformance cases that ask which handler did not
+   * return.
+   */
+  pendingThreads(): { readonly id: number; readonly state: string; readonly where: string }[] {
+    return [...this.#threads].map((thread) => ({
+      id: thread.id,
+      state: thread.state,
+      where: this.#where(thread),
+    }));
+  }
+
   // --- Objects ----------------------------------------------------------------------
 
   async #attachedInstances(target: ObjectHandle): Promise<Instance[]> {
