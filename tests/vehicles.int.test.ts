@@ -169,6 +169,72 @@ describe.skipIf(!hasGamedata())('a tethered cart on the local game data', () => 
     physics.free();
   });
 
+  it('is carried along when its horse jumps, and stands still keyframed', () => {
+    const physics = new PhysicsWorld(matrix, GRAVITY);
+    physics.addPrimitive('box', [10000, 10000, 50], place(0, 0, -50), Layer.static, {
+      reference: 0,
+      kind: 'landscape',
+    });
+    const cart = physics.addObject(
+      carriage,
+      place(0, 0, 0),
+      { reference: 1, kind: 'object' },
+      false,
+    );
+    physics.keyframe(cart);
+    const frontBar = cart.bodies.find((body) => body.data.node === 'FrontBar');
+    const root = cart.bodies.find((body) => body.data.node === 'PrisonerCarriage');
+    if (!frontBar || !root) throw new Error('no FrontBar');
+    const joint = tetherJoint(CART);
+    const t = frontBar.body.translation();
+    const at = (x: number, y: number): Float32Array =>
+      place(
+        t.x * HAVOK_SCALE + joint.a.pivot[0] + x,
+        t.y * HAVOK_SCALE + joint.a.pivot[1] + y,
+        t.z * HAVOK_SCALE + joint.a.pivot[2],
+      );
+    const tether = CartTether.tether(physics, cart, root, at(0, 0), place(0, 0, 0), CART);
+    if (!tether) throw new Error('not tethered');
+    const run = (seconds: number, spine: () => Float32Array): void => {
+      for (let i = 0; i < Math.round(seconds / PHYSICS_STEP); i++) {
+        physics.step(PHYSICS_STEP, () => {
+          tether.step(spine());
+        });
+      }
+    };
+    run(1, () => at(0, 0));
+    const speed = (): number =>
+      Math.max(
+        ...cart.bodies.map((body) => {
+          const v = body.body.linvel();
+          return Math.hypot(v.x, v.y, v.z) * HAVOK_SCALE;
+        }),
+      );
+    // The horse is put 3,000 units east: carried, the cart lands there at rest (followed by the
+    // joint it was thrown at thousands of units a second).
+    const before = root.body.translation();
+    tether.carry(physics, cart, at(0, 0), at(3000, 0));
+    let fastest = 0;
+    for (let i = 0; i < Math.round(1 / PHYSICS_STEP); i++) {
+      physics.step(PHYSICS_STEP, () => {
+        tether.step(at(3000, 0));
+      });
+      fastest = Math.max(fastest, speed());
+    }
+    const after = root.body.translation();
+    expect((after.x - before.x) * HAVOK_SCALE).toBeCloseTo(3000, -1);
+    expect(Math.abs(after.y - before.y) * HAVOK_SCALE).toBeLessThan(20);
+    expect(fastest).toBeLessThan(150);
+    // Keyframed (a script's SetMotionType), it stays where it is while its horse walks off.
+    physics.setMotion(cart, true);
+    const held = root.body.translation();
+    let y = 0;
+    run(2, () => at(3000, (y += 150 * PHYSICS_STEP)));
+    const still = root.body.translation();
+    expect(Math.hypot(still.x - held.x, still.y - held.y, still.z - held.z)).toBeLessThan(1e-6);
+    physics.free();
+  });
+
   it("rolls smoothly down the opening's road behind its horse", async () => {
     // MQ101's first cart down the steep stretch from the start (tools/cart-ride.ts): the ground
     // under its horse rises and falls by 7 units a second (against its average over a second);

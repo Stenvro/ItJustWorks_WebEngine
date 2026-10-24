@@ -496,6 +496,45 @@ describe('settling placed objects', () => {
     physics.free();
   });
 
+  it('pushes an object a script enables out of what it lies in without throwing it', () => {
+    const physics = new PhysicsWorld(clutterMatrix, GRAVITY);
+    physics.addObject(collision(body(box([-200, -200, -20], [200, 200, 0]))), IDENTITY, {
+      reference: 1,
+      kind: 'object',
+    });
+    // Disabled where it lies 15 units into the board (a corpse enabled against a cart).
+    const placed = physics.addObject(collision(clutter([-10, -10, -15], [10, 10, 5])), IDENTITY, {
+      reference: 2,
+      kind: 'object',
+    });
+    physics.setEnabled(placed, false);
+    for (let i = 0; i < 30; i++) physics.step(1 / 60);
+    physics.setEnabled(placed, true);
+    const cover = placed.bodies[0]?.body;
+    let fastest = 0;
+    for (let i = 0; i < 120; i++) {
+      physics.step(1 / 60);
+      const v = cover?.linvel() ?? { x: 0, y: 0, z: 0 };
+      fastest = Math.max(fastest, Math.hypot(v.x, v.y, v.z) * 69.99125);
+    }
+    const at = cover?.translation() ?? { x: 0, y: 0, z: 0 };
+    // Out on the board, where it was, never thrown.
+    expect(at.z * 69.99125).toBeGreaterThan(3.5);
+    expect(Math.hypot(at.x, at.y) * 69.99125).toBeLessThan(5);
+    // Rapier's own push threw it out at 46 units a second.
+    expect(fastest).toBeLessThan(5);
+    // Enabled again while it is (a destructible's collision checked now and then), it is not
+    // held: lifted off the board, it falls.
+    if (!cover) throw new Error('no body');
+    cover.setTranslation({ x: 0, y: 0, z: 200 / 69.99125 }, true);
+    for (let i = 0; i < 30; i++) {
+      physics.setEnabled(placed, true);
+      physics.step(1 / 60);
+    }
+    expect(cover.translation().z * 69.99125).toBeLessThan(180);
+    physics.free();
+  });
+
   it('holds what waits where it is until something that moves touches it', () => {
     const physics = new PhysicsWorld(clutterMatrix, GRAVITY);
     // Antlers mounted on a wall: touching it, nothing under them.
