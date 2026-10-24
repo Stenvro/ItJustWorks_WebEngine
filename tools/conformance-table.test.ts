@@ -3,6 +3,7 @@ import {
   conformanceTable,
   countSuite,
   formatTable,
+  knownDifferenceLines,
   knownDifferenceTitles,
   parseEngineMap,
   slugOf,
@@ -84,6 +85,24 @@ describe('the conformance table', () => {
       "test.fails('it\\'s three', () => {});",
     ].join('\n');
     expect([...knownDifferenceTitles(source)]).toEqual(['one', 'two parts', "it's three"]);
+  });
+
+  it('knows an it.fails case by its line when its title is a template string', () => {
+    const source =
+      "it('plain', () => {});\nfor (const x of xs) it.fails(`${x} differs`, () => {});\n";
+    const lines = knownDifferenceLines(source);
+    expect([...lines]).toEqual([2]);
+    const counts = countSuite({
+      file: 'tests/conformance/animation/engine-handlers.test.ts',
+      cases: [
+        { title: 'plain', status: 'passed', line: 1 },
+        { title: 'A differs', status: 'passed', line: 2 },
+        { title: 'B differs', status: 'failed', line: 2 },
+      ],
+      knownDifferences: new Set(),
+      knownDifferenceLines: lines,
+    });
+    expect(counts).toMatchObject({ passing: 1, differs: 1, fixed: 1 });
   });
 
   it('counts cases: it.fails that still fail are known differences, those that pass are fixed', () => {

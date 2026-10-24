@@ -14,6 +14,7 @@ import path from 'node:path';
 import {
   conformanceTable,
   formatTable,
+  knownDifferenceLines,
   knownDifferenceTitles,
   parseEngineMap,
   type SuiteResult,
@@ -27,7 +28,11 @@ const jsonAt = args.indexOf('--json');
 interface VitestReport {
   readonly testResults: readonly {
     readonly name: string;
-    readonly assertionResults: readonly { readonly title: string; readonly status: string }[];
+    readonly assertionResults: readonly {
+      readonly title: string;
+      readonly status: string;
+      readonly location?: { readonly line: number };
+    }[];
   }[];
 }
 
@@ -46,7 +51,14 @@ function runSuites(): string {
   const vitest = path.join(root, 'node_modules', 'vitest', 'vitest.mjs');
   const run = spawnSync(
     process.execPath,
-    [vitest, 'run', 'tests/conformance', '--reporter=json', `--outputFile=${out}`],
+    [
+      vitest,
+      'run',
+      'tests/conformance',
+      '--reporter=json',
+      '--includeTaskLocation',
+      `--outputFile=${out}`,
+    ],
     { cwd: root, stdio: ['ignore', 'ignore', 'inherit'] },
   );
   if (!fs.existsSync(out)) {
@@ -70,8 +82,13 @@ const suites: SuiteResult[] = report.testResults
     }
     return {
       file: path.relative(root, result.name).replaceAll('\\', '/'),
-      cases: result.assertionResults.map(({ title, status }) => ({ title, status })),
+      cases: result.assertionResults.map(({ title, status, location }) => ({
+        title,
+        status,
+        ...(location && { line: location.line }),
+      })),
       knownDifferences: knownDifferenceTitles(source),
+      knownDifferenceLines: knownDifferenceLines(source),
     };
   });
 

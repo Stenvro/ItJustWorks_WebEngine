@@ -42,9 +42,9 @@ These run through every area and explain most of what breaks in play.
      Daedric starts, bards), Cast Magic, Add/Remove Item, Dead Body, Arrest, Actor Hello, New Voice
      Power and Player Activate Actor are raised now; Bribe, Flatter, Intimidate, Cure, Infection,
      Player Gets Favor and Quest Start are not (vanilla has no quests on them);
-   - about 65 of the 95 graph event handlers of the response files are not answered (ambient idles,
-     animation objects, ragdoll on death, camera shake, animated cameras, voice fire, …), and graph event
-     payloads are dropped.
+   - of the 93 graph event handler classes of the response files 80 are answered, 2 do not exist in the
+     executable, and 11 are read but not answered (2026-10-24: BeginCast, the camera override, the bow
+     zoom, JumpBegin, MTState, three flight ends); graph event payloads reach the handlers.
 2. **Guessed numbers where the engine has a setting.** Every area has constants we chose (touch reach,
    dual-cast window, sandbox stays, search radii, block times, debris, decal cap, …) while a game setting
    with a built-in default exists. Those defaults are now known.
@@ -135,20 +135,20 @@ These run through every area and explain most of what breaks in play.
 
 ### Animation and bodies
 
-| System               | Status   | Main gaps                                                                                                                                       |
-| -------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| Graph runtime        | partial  | event payloads                                                                                                                                  |
-| Clips                | complete | mirrored additive clips by our own rule                                                                                                         |
-| Engine handlers      | partial  | about 65 of 95 unanswered                                                                                                                       |
-| Weapons and aim      | partial  | the player's casting pitch (PitchOverride), a crossbow's launch node                                                                            |
-| Ambient idles        | missing  | no idle picking (PickNewIdle)                                                                                                                   |
-| Animation objects    | missing  | no tankards, hammers, brooms, lutes                                                                                                             |
-| Paired animations    | partial  | the support's mark from the clip (engine's, set once), its side kept to the clip's end, death limp at the end: done; events not routed per side |
-| Ragdolls, death      | partial  | no powered ragdoll motors; objects' placed ragdoll poses; the cone limit                                                                        |
-| Dismemberment        | complete | re-dressing a reloaded corpse from its recorded worn objects                                                                                    |
-| Actor build          | complete | first-person render pass, bone LOD                                                                                                              |
-| Faces                | complete | expression change rate                                                                                                                          |
-| Graph state in saves | missing  | M12                                                                                                                                             |
+| System               | Status  | Main gaps                                                                                                                                       |
+| -------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Graph runtime        | partial | bDisableInterp's setter; an event no node takes reported as not handled                                                                         |
+| Clips                | partial | mirrored additive clips by our own rule                                                                                                         |
+| Engine handlers      | partial | 11 of 93 classes read but not answered (BeginCast, camera override, bow zoom, JumpBegin, MTState, three flight ends)                            |
+| Weapons and aim      | partial | the player's casting pitch (PitchOverride), a crossbow's launch node, the bow zoom                                                              |
+| Ambient idles        | partial | which specific idles skip the next PickNewIdle; the complex scene's wait; the frame's budget; the meal gate                                     |
+| Animation objects    | partial | the female hands' scale; the POV switch while the player holds one; saves                                                                       |
+| Paired animations    | partial | the support's mark from the clip (engine's, set once), its side kept to the clip's end, death limp at the end: done; events not routed per side |
+| Ragdolls, death      | partial | no powered ragdoll motors; objects' placed ragdoll poses; the cone limit; a still death in a lean comes to rest standing (joint friction)       |
+| Dismemberment        | partial | re-dressing a reloaded corpse from its recorded worn objects                                                                                    |
+| Actor build          | partial | first-person render pass, bone LOD                                                                                                              |
+| Faces                | partial | expression change rate                                                                                                                          |
+| Graph state in saves | missing | M12                                                                                                                                             |
 
 ### Physics
 
