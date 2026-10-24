@@ -28,7 +28,7 @@ import type { PhysicsWorld, PlacedCollision } from '../physics/physics-world.ts'
 import { invert } from '../render/frustum.ts';
 import type { ModelPart } from '../render/model-data.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type {
   GpuScene,
   InstanceMotion,
@@ -54,7 +54,7 @@ export interface SeveredBody {
 
 export interface ActorDismembermentOptions {
   readonly session: GameSession;
-  readonly renderer: Renderer;
+  readonly renderer: RenderPort;
   readonly terminal: Terminal;
   readonly body: (reference: number) => SeveredBody | undefined;
   readonly bodies: ActorBodies;
@@ -86,7 +86,7 @@ interface Pending {
 /** A cut-off head in the world: its draws, its body, and how its body places them. */
 interface Piece {
   readonly reference: number;
-  readonly scene: GpuScene;
+  readonly scene: GpuScene | undefined;
   readonly collision: PlacedCollision | undefined;
   /** The draws' placement (they share it), rewritten as the body moves. */
   readonly world: Float32Array;
@@ -231,7 +231,7 @@ export class ActorDismemberment {
   }
 
   *scenes(): Iterable<GpuScene> {
-    for (const piece of this.#pieces.values()) yield piece.scene;
+    for (const piece of this.#pieces.values()) if (piece.scene) yield piece.scene;
   }
 
   /** An actor left the stage: its cut head goes with it (it is cut again as it comes back). */
@@ -390,7 +390,7 @@ export class ActorDismemberment {
       else await this.#nudge(body, placedCollision, pose, head);
     }
     if (this.#options.body(body.reference)?.placed !== placed) {
-      scene.destroy();
+      scene?.destroy();
       if (placedCollision) physics?.remove(placedCollision);
       return;
     }
@@ -505,7 +505,7 @@ export class ActorDismemberment {
   }
 
   #drop(piece: Piece): void {
-    piece.scene.destroy();
+    piece.scene?.destroy();
     if (piece.collision) this.#physics?.remove(piece.collision);
   }
 }

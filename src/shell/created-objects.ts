@@ -7,7 +7,7 @@ import { parseLight, LightFlag, baseModelPath } from '../world/cell-records.ts';
 import { referenceMatrix, type CellLight, type CellObject } from '../world/cell-loader.ts';
 import { parseItem } from '../world/item-records.ts';
 import type { GpuScene, InstanceVisibility, ModelInstance } from '../render/scene-renderer.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import type { ScriptRuntime } from '../scripting/runtime/runtime.ts';
 import type { GameSession } from './game-session.ts';
 import { collisionGroup, type CollisionGroup, type PlaySession } from './play-session.ts';
@@ -24,10 +24,10 @@ export interface CreatedObject {
 
 export class CreatedObjects {
   readonly #session: GameSession;
-  readonly #renderer: Renderer;
+  readonly #renderer: RenderPort;
   readonly #entries = new Map<number, CreatedObject>();
 
-  constructor(session: GameSession, renderer: Renderer) {
+  constructor(session: GameSession, renderer: RenderPort) {
     this.#session = session;
     this.#renderer = renderer;
   }

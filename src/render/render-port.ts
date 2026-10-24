@@ -58,6 +58,14 @@ export interface ScenePort {
     mipLevels: number,
     label: string,
   ): GPUTexture | undefined;
+  /** Writes one level of a pixel texture (RGBA8). */
+  writePixels(
+    texture: GPUTexture,
+    mip: number,
+    width: number,
+    height: number,
+    data: Uint8Array,
+  ): void;
   /** A water type ready to draw (undefined headless). */
   createWaterType(
     type: WaterType,

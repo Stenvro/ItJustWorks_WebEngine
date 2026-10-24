@@ -6,7 +6,8 @@ import { loadRouteMap } from '../ai/route-map.ts';
 import type { Space } from '../ai/package-start.ts';
 import type { RouteMap } from '../ai/routes.ts';
 import { AudioLoader } from '../audio/audio-loader.ts';
-import { SoundSystem } from '../audio/sound-system.ts';
+import { SoundSystem, type VoiceLine } from '../audio/sound-system.ts';
+import type { SoundInstance, SoundPlace } from '../audio/sound-instance.ts';
 import { loadBehaviorGraph, type BehaviorGraph } from '../formats/hkx/behavior.ts';
 import { parseNif, type NifFile } from '../formats/nif/nif.ts';
 import type { CollisionData } from '../physics/collision-data.ts';
@@ -16,6 +17,7 @@ import { readPlayerData, type PlayerData } from './player.ts';
 import { readCollisionMatrix, type CollisionMatrix } from '../physics/collision-layers.ts';
 import type { ModelTextureSwaps } from '../render/actor-model.ts';
 import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import { Worldspace } from '../world/worldspace.ts';
 import { markSeen } from '../world/seen-data.ts';
 import { DefaultObjects } from '../world/default-objects.ts';
@@ -95,6 +97,41 @@ import type { Terminal } from './terminal.ts';
 
 const numberFormat = new Intl.NumberFormat('en-US');
 
+/**
+ * How a session is presented: the page draws it with WebGPU and does the asset work in web
+ * workers; the headless simulation (src/sim/) has no screen and works on its own thread.
+ */
+/** A sound the world asked for: its descriptor, where, and the reference sounding it. */
+export interface SoundRequest {
+  readonly descriptor: number;
+  readonly place: SoundPlace;
+  readonly source: number | undefined;
+}
+
+/** What says the actors' lines: the sound system in the page, the headless simulation's own. */
+export interface VoicePort {
+  /** Whether a file holds the sound (any of its names). */
+  hasFile(path: string): boolean;
+  /** A spoken line: its length, its lip data, and its playing at a place. */
+  voiceLine(path: string, atListener?: boolean): Promise<VoiceLine | undefined>;
+}
+
+export interface SessionPresentation {
+  /** What makes the session's models and scenes (src/render/render-port.ts). */
+  readonly render: RenderPort;
+  /** The page's renderer, for its viewers and menus (undefined headless). */
+  readonly renderer?: Renderer;
+  /** The GPU device textures are made on (undefined headless: none are made). */
+  readonly device?: GPUDevice;
+  /** The asset and plugin work runs in web workers (false: on this thread). */
+  readonly workers: boolean;
+  /**
+   * The voices of a session without a sound system (headless: no audio device). Without it
+   * the session makes its sound system on first use.
+   */
+  readonly voices?: VoicePort;
+}
+
 /** An emittance colour that the session moves with the hour. */
 interface MutableEmittance {
   rgb: [number, number, number];
@@ -165,10 +202,26 @@ export class GameSession {
   readonly animation: AnimationAssets;
   /** Indexed once per session (all plugins of the load order). */
   readonly db: Promise<RecordDatabase>;
-  readonly #renderer: Renderer;
+  /**
+   * What the session's models and scenes are made by: the page's renderer, or the headless
+   * simulation's (src/sim/headless-render.ts), which draws nothing.
+   */
+  readonly render: RenderPort;
+  readonly #renderer: Renderer | undefined;
+  /** The voices without a sound system (headless), if so. */
+  readonly #voices: VoicePort | undefined;
 
-  /** The renderer the session's models are drawn by (a menu's 3D: Renderer.overlay). */
+  /** What says the actors' lines: the sound system, or the headless voices. */
+  voices(): Promise<VoicePort> {
+    return this.#voices ? Promise.resolve(this.#voices) : this.sounds();
+  }
+
+  /**
+   * The page's renderer (a menu's 3D: Renderer.overlay); only the page's viewers and menus use
+   * it, and a headless session has none.
+   */
   get renderer(): Renderer {
+    if (!this.#renderer) throw new Error('A headless session has no renderer');
     return this.#renderer;
   }
 
@@ -283,14 +336,32 @@ export class GameSession {
   #audioLoader: AudioLoader | undefined;
   /** The sound system once it exists (the render loop updates it every frame). */
   soundSystem: SoundSystem | undefined;
+  /** Told of every sound the world asks for (the headless simulation records them). */
+  readonly soundRequests = new Set<(request: SoundRequest) => void>();
+
+  /**
+   * Plays a sound descriptor (SNDR) at a place for a reference (its conditions are that
+   * reference's): through the sound system once there is one; the request is told either way.
+   */
+  playSound(
+    descriptor: number,
+    place?: SoundPlace,
+    fadeIn = 0,
+    source?: number,
+  ): Promise<SoundInstance | undefined> | undefined {
+    for (const listener of this.soundRequests) listener({ descriptor, place, source });
+    return this.soundSystem?.play(descriptor, place, fadeIn, source);
+  }
   #actors: Promise<ActorPlacer> | undefined;
   /** Head parts' expression morphs by TRI path (kept for the session: a few dozen files). */
   readonly #morphs = new Map<string, Promise<GpuMorphs | undefined>>();
   #morphBytes = 0;
 
-  constructor(device: GPUDevice, renderer: Renderer, vfs: Vfs, terminal: Terminal) {
+  constructor(vfs: Vfs, terminal: Terminal, presentation: SessionPresentation) {
     this.vfs = vfs;
-    this.#renderer = renderer;
+    this.render = presentation.render;
+    this.#renderer = presentation.renderer;
+    this.#voices = presentation.voices;
     this.#terminal = terminal;
     this.scriptWorld = new ScriptWorld(terminal, this.hud);
     this.lines = new WorldLines(this, terminal);
@@ -311,6 +382,9 @@ export class GameSession {
       await runtime.progression.passTime(hours);
     };
     this.scriptWorld.sounds = () => this.soundSystem;
+    this.scriptWorld.onSound = (descriptor, source) => {
+      for (const listener of this.soundRequests) listener({ descriptor, place: undefined, source });
+    };
     this.scriptWorld.talking = (actor) => this.lines.talking(actor);
     this.sky = new SkyWeather({
       hour: () => this.gameHour,
@@ -320,17 +394,20 @@ export class GameSession {
       random: Math.random,
     });
     this.scriptWorld.sky = this.sky;
-    const loader = new AssetLoader(vfs);
+    const workers = presentation.workers;
+    const loader = workers ? new AssetLoader(vfs) : new AssetLoader(vfs, 0);
     this.loader = loader;
-    this.textures = new TextureCache(device, (path) => loader.loadTexture(path));
+    this.textures = new TextureCache(presentation.device, (path) => loader.loadTexture(path));
     this.animation = new AnimationAssets(vfs, terminal);
-    // The plugins' record headers (~1.2 million) are read in workers.
+    // The plugins' record headers (~1.2 million) are read in workers (on this thread without).
     const start = performance.now();
-    const indexer = new PluginIndexer();
-    const indexed = RecordDatabase.open(vfs, 'english', (source, name) =>
-      indexer.index(name, source),
+    const indexer = workers ? new PluginIndexer() : undefined;
+    const indexed = (
+      indexer
+        ? RecordDatabase.open(vfs, 'english', (source, name) => indexer.index(name, source))
+        : RecordDatabase.open(vfs, 'english')
     ).finally(() => {
-      indexer.dispose();
+      indexer?.dispose();
     });
     this.db = indexed.then((db) => {
       for (const problem of db.problems) terminal.log('esm', problem, 'warn');
@@ -351,10 +428,10 @@ export class GameSession {
     this.scriptWorld.modifiers = this.imageSpaceModifiers;
     // Modifiers that aim at their target see it from the view's camera.
     this.imageSpaceModifiers.view = () => {
-      const camera = this.#renderer.view?.camera;
+      const camera = this.render.view?.camera;
       if (!camera) return undefined;
       return {
-        project: (point) => this.#renderer.project(point),
+        project: (point) => this.render.project(point),
         distance: (point) =>
           Math.hypot(
             point[0] - camera.position[0],
@@ -482,7 +559,7 @@ export class GameSession {
           const addons = withAddons ? await this.addons(data.addons) : [];
           const empty = data.parts.length === 0 && data.particles.length === 0;
           if (data.editorMarker || (empty && addons.length === 0)) return undefined;
-          const model = await this.#renderer.scene.createModel(data, this.textures);
+          const model = await this.render.scene.createModel(data, this.textures);
           model.addons = addons;
           if (data.behaviorGraph !== undefined) {
             model.graph = await this.behaviorGraph(data.behaviorGraph);
@@ -522,7 +599,7 @@ export class GameSession {
         async ({ model: data, problems }) => {
           for (const problem of problems) this.#terminal.log('nif', `${path}: ${problem}`, 'warn');
           if (data.parts.length === 0) return undefined;
-          const model = await this.#renderer.scene.createModel(data, this.textures);
+          const model = await this.render.scene.createModel(data, this.textures);
           // Its sequences play by its own graph (an automaton's steam flowing on its skin).
           if (data.behaviorGraph !== undefined) {
             model.graph = await this.behaviorGraph(data.behaviorGraph);
@@ -596,8 +673,8 @@ export class GameSession {
     if (!entry) {
       entry = this.loader.loadExpressions(path).then(
         (data) => {
-          const morphs = this.#renderer.scene.createMorphs(data);
-          this.#morphBytes += morphs.bytes;
+          const morphs = this.render.scene.createMorphs(data);
+          this.#morphBytes += morphs?.bytes ?? 0;
           return morphs;
         },
         (error: unknown) => {
@@ -739,7 +816,7 @@ export class GameSession {
     const key = flowing ? `${String(formId)}@${flow.texture}` : String(formId);
     let entry = this.#waterTypes.get(key);
     if (!entry) {
-      entry = this.#renderer.scene
+      entry = this.render.scene
         .createWaterType(type, this.textures, flowing ? flow : undefined)
         .catch((error: unknown) => {
           this.#terminal.log('water', describe(error), 'warn');
@@ -796,7 +873,7 @@ export class GameSession {
           const pass = object.singlePass
             ? { material: undefined, alpha: undefined }
             : propertyMaterial(object.properties.map((data) => parseNif(data)));
-          return this.#renderer.scene.createDirectionalMaterial(object, pass, this.textures);
+          return this.render.scene.createDirectionalMaterial(object, pass, this.textures);
         })
         .catch((error: unknown) => {
           this.#terminal.log('material', `MATO ${formId.toString(16)}: ${describe(error)}`, 'warn');
@@ -972,12 +1049,13 @@ export class GameSession {
       );
       this.scriptsReady = runtime;
       // Sounds and music read the running game's globals from now on.
-      void this.sounds().then((sounds) => {
-        sounds.globals = (formId) => runtime.globalNow(formId);
-        // Sounds' conditions (SNDR) on the reference that sounds them, else the player.
-        sounds.conditionsHold = (conditions, source) =>
-          runtime.conditionsHold(conditions, runtime.referenceHandle(source ?? PLAYER_REF));
-      });
+      if (!this.#voices)
+        void this.sounds().then((sounds) => {
+          sounds.globals = (formId) => runtime.globalNow(formId);
+          // Sounds' conditions (SNDR) on the reference that sounds them, else the player.
+          sounds.conditionsHold = (conditions, source) =>
+            runtime.conditionsHold(conditions, runtime.referenceHandle(source ?? PLAYER_REF));
+        });
       this.scriptWorld.enableChanged();
       return runtime;
     });
@@ -998,10 +1076,11 @@ export class GameSession {
     this.scriptsProgress = '';
     this.#runtime = undefined;
     this.cellSelections.clear();
-    void this.sounds().then((sounds) => {
-      sounds.globals = undefined;
-      sounds.conditionsHold = undefined;
-    });
+    if (!this.#voices)
+      void this.sounds().then((sounds) => {
+        sounds.globals = undefined;
+        sounds.conditionsHold = undefined;
+      });
     return this.runtime(opening);
   }
 
@@ -1198,6 +1277,7 @@ export class GameSession {
 
   /** The game's sounds, made once (silent until a user gesture resumes the audio). */
   sounds(): Promise<SoundSystem> {
+    if (this.#voices) return Promise.reject(new Error('A headless session has no sound system'));
     this.#sounds ??= this.db.then(async (db) => {
       const loader = new AudioLoader(this.vfs);
       this.#audioLoader = loader;

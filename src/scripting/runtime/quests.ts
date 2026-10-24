@@ -92,6 +92,8 @@ export class QuestEngine {
     this.notStarted.delete(quest);
     state.running = true;
     state.starts++;
+    // The engine's quest start event (TESQuestStartStopEvent).
+    runtime.events.emit('questStartStop', { quest, started: true });
     state.completed = false;
     state.failed = false;
     // A quest that does not run once is reset as it starts: its scripts start over and their
@@ -117,6 +119,7 @@ export class QuestEngine {
     const shutDown = record.stages.find((stage) => (stage.flags & StageFlag.shutDown) !== 0);
     if (shutDown) await this.#setStageRunning(record, shutDown.index);
     state.running = false;
+    runtime.events.emit('questStartStop', { quest, started: false });
     // Its scenes end with it.
     runtime.scenes.questStopped(quest);
     this.#clearAliases(quest);
@@ -152,6 +155,8 @@ export class QuestEngine {
     // then 14, and the cart horses' packages hold from GetStage >= 15 to 20, so the carts would
     // stop halfway if 14 became the current stage. TODO(M13): confirm against the engine.
     state.stage = Math.max(state.stage, stage);
+    // The engine's stage event (TESQuestStageEvent), as the stage is set.
+    runtime.events.emit('questStage', { quest: record.formId, stage });
     // The first log entry whose conditions hold is the one that happens: its flags and its
     // fragment (each log entry has its own; the others' do not run).
     const entries = record.stages.find((s) => s.index === stage)?.logEntries ?? [];

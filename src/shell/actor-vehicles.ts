@@ -35,7 +35,7 @@ import type { DoorPassage } from '../ai/path-follower.ts';
 import { invert } from '../render/frustum.ts';
 import { multiply, type Mat4, type Vec3 } from '../render/math.ts';
 import type { GpuScene, ModelInstance } from '../render/scene-renderer.ts';
-import type { Renderer } from '../render/renderer.ts';
+import type { RenderPort } from '../render/render-port.ts';
 import { HAVOK_SCALE, rigidPart } from '../physics/collision-data.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import {
@@ -120,7 +120,7 @@ interface Link {
 interface CartBody {
   readonly instance: ModelInstance;
   readonly pose: ActorPose;
-  readonly scene: GpuScene;
+  readonly scene: GpuScene | undefined;
   readonly collision: PlacedCollision;
   readonly links: readonly Link[];
   /** The body at the model's root (the vehicle's place). */
@@ -148,7 +148,7 @@ interface Passenger {
 export interface ActorVehiclesOptions {
   readonly session: GameSession;
   readonly terminal: Terminal;
-  readonly renderer: Renderer;
+  readonly renderer: RenderPort;
   readonly movers: ActorMovers;
   readonly get: (reference: number) => StagedActor | undefined;
   /** The view gives up a cart of its cells (its draws and collision) to be pulled. */
@@ -294,7 +294,7 @@ export class ActorVehicles {
 
   /** The scenes of the carts pulled here. */
   *scenes(): Iterable<GpuScene> {
-    for (const cart of this.#carts.values()) if (cart.body) yield cart.body.scene;
+    for (const cart of this.#carts.values()) if (cart.body?.scene) yield cart.body.scene;
   }
 
   /** Whether a vehicle holds an actor (it rides it: no controller of its own). */
@@ -751,7 +751,7 @@ export class ActorVehicles {
       const root = links.find((link) => (pose.skeleton.rig.parents[link.node] ?? -1) < 0);
       if (!root) {
         physics.remove(collision);
-        scene.destroy();
+        scene?.destroy();
         return;
       }
       const poleNode = nodes.get(this.#names().pole);
@@ -956,7 +956,7 @@ export class ActorVehicles {
     const body = cart.body;
     cart.body = undefined;
     if (!body) return;
-    body.scene.destroy();
+    body.scene?.destroy();
     body.tether?.remove();
     this.#options.movers.ignore(cart.horse, []);
     if (this.#physics) this.#physics.remove(body.collision);

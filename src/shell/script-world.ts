@@ -771,6 +771,9 @@ export class ScriptWorld implements WorldBridge {
   /** The session's sound system (music types scripts add and remove). */
   sounds: (() => SoundSystem | undefined) | undefined;
 
+  /** A script asked for a sound at a reference (the headless simulation records it). */
+  onSound: ((sound: number, source: number) => void) | undefined;
+
   readonly #playing = new Map<number, Promise<SoundInstance | undefined>>();
   #nextSound = 1;
 
@@ -779,6 +782,7 @@ export class ScriptWorld implements WorldBridge {
    * follows the reference as it moves. Its instance id (0: it did not play).
    */
   playSound(sound: number, source: number): number {
+    this.onSound?.(sound, source);
     const system = this.sounds?.();
     if (!system || !this.livePlacement(source)) return 0;
     const id = this.#nextSound++;
