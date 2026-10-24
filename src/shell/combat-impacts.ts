@@ -51,6 +51,11 @@ export interface HitImpact {
   /** Which way the blow went (a unit vector). */
   readonly direction: Vec3;
   readonly heavy: boolean;
+  /**
+   * Whether the impact may be placed here (a spell's: not within its placement radius of a
+   * living one: src/shell/magic-projectiles.ts); not: only its sound, no decal.
+   */
+  readonly placeable?: (impact: Impact) => boolean;
 }
 
 export class CombatImpacts {
@@ -100,6 +105,7 @@ export class CombatImpacts {
     if (!impact) return undefined;
     const sound = hit.heavy ? (impact.heavySound ?? impact.sound) : impact.sound;
     if (sound !== undefined) void sounds.play(sound, hit.position);
+    if (hit.placeable && !hit.placeable(impact)) return impact;
     if (physics) await this.#splatter(impact.formId, hit, physics);
     return impact;
   }

@@ -237,6 +237,38 @@ that the triangles connect is missed; 0.19 ms a search on average, 5.7 ms the lo
 that do not connect lie on islands of their own: Apocrypha's moving books, Dwemer ruins' lifts and
 gates (Bthardamz, Nchuand-Zel), Blackreach's elevators, and the like.
 
+### Navmesh obstacles (not built yet)
+
+The engine cuts the navmesh under obstacles while they are there: its classes say so
+(CommonLibSSE: NavMeshObstacleManager, BSNavmeshObstacleData per triangle and
+BSNavmeshObstacleUndoData to restore the cut, bhkObstacleDeactivationListener for a Havok body
+that comes to rest, DoorObstacleAdapter for doors), and a base object carries TESForm record
+flag bit 25 (`kObstacle`, GetObstacle) when its references are such obstacles. Our paths
+(`findPath`) do not know them: an NPC, or the QA follow bot, finds a way through a quest's
+collision box that its character controller then cannot pass.
+
+`node tools/navmesh-obstacle-audit.ts` (Skyrim.esm with the DLCs and CC, 2026-10-24): 65 flagged
+bases, 6,953 references. Almost all are the collision primitive marker CollisionMarker (STAT
+0x21: 4,664 references, every collision box a quest or an enable parent switches on and off;
+832 references of obstacle bases are initially disabled, 2,474 have an enable parent). The other
+flagged bases are what opens and shuts a way: portcullises and their poles (PortGatePole01 has
+511 references), retractable bridges, secret doors and shelves, Whiterun's drawbridge, falling
+rock traps, destructible spider webs and boulders, catapults, a few movable statics (RuinsPot03,
+HandCart01Wheel). TODO(M13): build it, with the original bridge back up: which shape cuts (a
+collision box's XPRM box or sphere; an activator's collision in its current animation state),
+how a triangle partly covered is cut, when the cut is made again (enable, disable, an animated
+gate's open state, a body coming to rest).
+
+Found in the opening (MQ101DragonAttack, Helgen's burning inn, cell 3,-21): stage 120 and the
+inn's enable markers (dunCGInnCollisionMarker, dunCGRubbleBMarker, dunCGPostBClutterMarker)
+switch on about thirty collision boxes and the rubble round the inn's two floors. The navmesh
+under them is the same before and after, so a way the navmesh still shows (out of the room on
+the ground floor's east side, through the rubble at 16950, -83401) is shut to the player and to
+any actor sent along it. The QA follow bot, choosing the drop from the upper floor whose landing
+has a complete navmesh way on, sometimes chose that room and stood there for the rest of the run
+(three of four runs on 9223b85); the drop farther west leads out to Hadvar (the run of
+2026-10-24 14:20 took it and went on with Hadvar through the town to MQ101DragonAttack stage 170).
+
 ## Routes
 
 Beyond the loaded area an actor's way runs from navmesh to navmesh through load doors

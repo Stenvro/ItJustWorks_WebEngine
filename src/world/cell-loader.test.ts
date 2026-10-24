@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { transformPoint } from '../render/math.ts';
-import { matrixPlacement, referenceMatrix } from './cell-loader.ts';
+import { lightCone, matrixPlacement, referenceMatrix } from './cell-loader.ts';
+import { LightFlag } from './cell-records.ts';
 import type { PlacedReference } from './cell-records.ts';
 
 const reference = (overrides: Partial<PlacedReference>): PlacedReference => ({
@@ -15,6 +16,8 @@ const reference = (overrides: Partial<PlacedReference>): PlacedReference => ({
   initiallyDisabled: false,
   enableParent: undefined,
   radiusOffset: 0,
+  lightFovOffset: 0,
+  lightFadeOffset: 0,
   ...overrides,
 });
 
@@ -63,5 +66,25 @@ describe('matrixPlacement', () => {
         expect(angle).toBeCloseTo(rotation[i] ?? 0, 5);
       });
     }
+  });
+});
+
+describe('lightCone', () => {
+  const spot = { flags: LightFlag.shadowSpotlight, fov: 90 };
+
+  it("shines a spot light along the reference's X axis, its FOV with the XLIG offset", () => {
+    // Turned −90° about Y, as the sunbeams through ceilings are: X points down.
+    const { spot: cone } = lightCone(spot, {
+      rotation: [0, -Math.PI / 2, 0],
+      lightFovOffset: -30,
+    });
+    close(cone?.direction ?? [], [0, 0, -1]);
+    expect(cone?.cosHalfAngle).toBeCloseTo(Math.cos(Math.PI / 6), 5);
+  });
+
+  it('gives other lights, and spots without an angle, no cone', () => {
+    const level = { rotation: [0, 0, 0] as const, lightFovOffset: 0 };
+    expect(lightCone({ flags: 0, fov: 90 }, level)).toEqual({});
+    expect(lightCone(spot, { ...level, lightFovOffset: 268 })).toEqual({});
   });
 });
