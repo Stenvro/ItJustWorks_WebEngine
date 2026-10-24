@@ -263,6 +263,12 @@ export interface ActiveEffectState {
   applied?: { readonly actor: number; readonly value: number; amount: number }[];
   /** What it made or raised: a summoned or reanimated actor, a bound weapon, a hazard. */
   made?: number;
+  /**
+   * The seconds of its duration that are its magic effect's taper (the last ones), and its
+   * magnitude a second then (a concentration spell's hit: the whole, not the hit's share).
+   */
+  readonly taper?: number;
+  readonly taperMagnitude?: number;
 }
 
 /** What the magic system keeps of an actor besides the effects on it. */

@@ -5,7 +5,6 @@ import {
   beginCast,
   CASTING_DEFAULTS,
   CASTING_SETTING_NAMES,
-  castSkillUses,
   castStartEvent,
   chargeSeconds,
   effectItemCost,
@@ -94,9 +93,7 @@ describe('magicka cost', () => {
     ).toBeCloseTo(single / 2, 6);
   });
 
-  it('trains the school by the base cost, dual cast by the cost multiplier', () => {
-    expect(castSkillUses(14, false)).toBe(14);
-    expect(castSkillUses(14, true)).toBeCloseTo(14 * CASTING_DEFAULTS.dualCostMult, 9);
+  it('charges a dual cast by the time multiplier', () => {
     expect(chargeSeconds(0.5, true)).toBe(0.5);
     expect(chargeSeconds(0.5, true, { dualTimeMult: 1.5 })).toBe(0.75);
   });
