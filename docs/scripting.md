@@ -53,14 +53,20 @@ As the Creation Kit wiki's "Threading Notes (Papyrus)" describe them (`papyrus-v
 - Each frame, threads run for the [Papyrus] **fUpdateBudgetMS** budget (1.2 ms); a thread
   past it goes on in the next frame, keeping its lock. Without frames (Node tools) threads
   run straight through, and one that runs two million instructions without ever waiting is
-  stopped as an endless loop. TODO(M13): the game's natives that are not callable from its
-  script threads (most ObjectReference and Actor natives: they run on the main thread) return
-  only at the next frame; here every native returns at once, so a loop of such calls runs
-  faster than in the game. MQ101's dunCGDragonVoiceStormCall (magicProjectileStormScript, an
-  OnUpdate every 0.1 s with some ten object natives in it) sends a meteor every 0.12 s here,
-  about two and a half times the game's rate by that count (the opening's 25 meteors in the air
-  and 24 bursts at once; docs/qa.md effects-flood). Which natives wait is the engine's
-  registration flag, unread (original).
+  stopped as an endless loop.
+- **Natives wait for the frame** (`native-timing.ts`; observed in the original): the game
+  registers each native with two marks, latent and callable from the script's thread. Only the
+  68 of its 669 natives that are callable there and not latent run at once (the Math functions,
+  Debug's traces, GlobalVariable Get / SetValue, Game.GetForm and GetFormFromFile, the aliases'
+  fills and registrations, the inventory event filters, Enable / DisableNoWait, the profiling
+  switches); every other call is handed to the main thread, and its thread waits for the next
+  frame (keeping its own object's lock), so a loop of object natives runs a frame a call. Latent
+  natives (Wait, AddItem, Disable, Cast, ...) then wait for what they started. Without frames
+  (Node tools) nothing waits. TODO(M13): where in its frame the engine runs the calls handed to
+  it (one call a frame per thread is assumed). MQ101's dunCGDragonVoiceStormCall
+  (magicProjectileStormScript: an OnUpdate with some ten such natives, then fRecast) sent a
+  meteor every 0.12 s while every native returned at once, about two and a half times the
+  game's rate.
 - A script error (a runaway thread, too deep a call stack) stops its thread and is reported,
   never thrown at the engine, as the game logs it.
 
