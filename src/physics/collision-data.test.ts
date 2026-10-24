@@ -16,6 +16,7 @@ function meshData(overrides: Partial<CompressedMeshDataBlock> = {}): CompressedM
   return {
     kind: 'compressed-mesh-data',
     error: 0.001,
+    weldingType: 0,
     materials: [
       { material: 11, filter: { layer: 1, flags: 0, group: 0 } },
       { material: 22, filter: { layer: 31, flags: 0, group: 0 } },

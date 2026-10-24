@@ -95,6 +95,10 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
     );
     expect(wall.bodies[0]?.motion).toBe('fixed');
     expect(wall.bodies[0]?.shapes.some((shape) => shape.type === 'mesh')).toBe(true);
+    // Every vanilla compressed mesh is welded one-sided (anticlockwise): met from the front.
+    expect(
+      wall.bodies[0]?.shapes.every((shape) => shape.type !== 'mesh' || shape.oneSided === true),
+    ).toBe(true);
   });
 
   it('reads the control map and the movement types the player moves with', async () => {
@@ -294,6 +298,7 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
         fallVelocityMin: 600,
         grabLimits: GRAB_LIMITS,
         telekinesisSpring: TELEKINESIS_SPRING,
+        havokTauRatio: 0.5,
         debris: DEBRIS_QUALITY,
         materialFlags: new Map(),
         stairMaterials: new Set(),
@@ -350,8 +355,8 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
     // Held where the spring pulls (gravity leaves it a little below).
     const held = spring.point;
     expect(Math.hypot(held[0] - spring.target[0], held[2] - spring.target[2])).toBeLessThan(12);
-    for (let i = 0; i < 120; i++) physics.step(1 / 60);
-    // Let go, it falls back to the floor (it may land on its side).
+    // Let go, it falls back to the floor (it may land on its side and roll a little: 4 s).
+    for (let i = 0; i < 240; i++) physics.step(1 / 60);
     expect(body.translation().z * 69.99125).toBeLessThan(resting * 69.99125 + 20);
     expect(Math.hypot(body.linvel().x, body.linvel().y, body.linvel().z)).toBeLessThan(0.05);
     physics.free();
@@ -466,6 +471,7 @@ describe.skipIf(!hasGamedata())('physics on the local game data', () => {
         fallVelocityMin: 600,
         grabLimits: GRAB_LIMITS,
         telekinesisSpring: TELEKINESIS_SPRING,
+        havokTauRatio: 0.5,
         debris: DEBRIS_QUALITY,
         materialFlags: new Map(),
         stairMaterials: new Set(),

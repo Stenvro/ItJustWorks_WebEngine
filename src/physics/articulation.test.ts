@@ -32,6 +32,7 @@ function body(node: string, z: number, motion: CollisionBody['motion']): Collisi
     maxLinearVelocity: 100,
     maxAngularVelocity: 30,
     quality: 0,
+    solverDeactivation: 1,
     shapes: [
       {
         type: 'convex',

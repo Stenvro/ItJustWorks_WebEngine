@@ -441,6 +441,7 @@ function debrisCollision(
     maxLinearVelocity: 104.4,
     maxAngularVelocity: 31.57,
     quality: 0,
+    solverDeactivation: 1,
     shapes: [
       {
         type: 'sphere',

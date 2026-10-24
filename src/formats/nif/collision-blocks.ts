@@ -456,7 +456,8 @@ const parseCompressedMeshData: BlockParser = (reader): CompressedMeshDataBlock =
   reader.skip(16); // bits per index, bits per winding index, their masks
   const error = reader.f32();
   reader.skip(32); // AABB
-  reader.skip(2); // welding type, material type
+  const weldingType = reader.u8();
+  reader.skip(1); // material type
   for (let i = 0; i < 3; i++) reader.skip(readCount(reader, 4) * 4); // unused material tables
   const materialCount = readCount(reader, 8);
   const materials = Array.from({ length: materialCount }, () => ({
@@ -512,6 +513,7 @@ const parseCompressedMeshData: BlockParser = (reader): CompressedMeshDataBlock =
   return {
     kind: 'compressed-mesh-data',
     error,
+    weldingType,
     materials,
     transforms,
     bigVertices,

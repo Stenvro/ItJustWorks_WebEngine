@@ -19,6 +19,7 @@ import {
   type CharacterShape,
 } from '../physics/character.ts';
 import { HAVOK_SCALE } from '../physics/collision-data.ts';
+import { solverSettings } from '../physics/constraint-solver.ts';
 import { Layer } from '../physics/collision-layers.ts';
 import {
   GRAB_DEFAULTS,
@@ -70,6 +71,8 @@ export interface PlayerData {
   readonly grabLimits: GrabLimits;
   /** GMST fMagicTelekinesisSpring*, ...ObjectDamping, ...MaxForce: Telekinesis's spring. */
   readonly telekinesisSpring: GrabSettings;
+  /** GMST fHavokTauRatio: how the constraint solver's tau follows the step (solverSettings). */
+  readonly havokTauRatio: number;
   /** GMST fDebrisMinExtent, fDebrisMaxVelocity: which simulated bodies are swept. */
   readonly debris: DebrisQuality;
   /** Material ids of stairs (MATT with the stairs flag). */
@@ -139,6 +142,7 @@ export async function readPlayerData(
       heavyWeight: settings.number('fZKeyHeavyWeight') ?? GRAB_LIMITS.heavyWeight,
     },
     telekinesisSpring: telekinesisSpring(settings),
+    havokTauRatio: settings.number('fHavokTauRatio') ?? HAVOK_TAU_RATIO,
     debris: {
       minExtent: settings.number('fDebrisMinExtent') ?? DEBRIS_QUALITY.minExtent,
       maxVelocity: settings.number('fDebrisMaxVelocity') ?? DEBRIS_QUALITY.maxVelocity,
@@ -149,11 +153,12 @@ export async function readPlayerData(
 /**
  * A play's physics world as the engine's settings make it: its step and the steps a frame takes
  * at most ([HAVOK] fMaxTime, uMaxNumPhysicsStepsPerUpdate), the warm start, the quietest contact
- * heard, which bodies are swept. Before objects are placed.
+ * heard, which bodies are swept, the constraint solver's tau and iterations (fHavokTauRatio).
+ * Before objects are placed.
  */
 export function configurePhysics(
   physics: PhysicsWorld,
-  data: Pick<PlayerData, 'ini' | 'debris'>,
+  data: Pick<PlayerData, 'ini' | 'debris' | 'havokTauRatio'>,
 ): void {
   physics.stepSeconds = data.ini.number('HAVOK', 'fMaxTime');
   physics.maxSteps = Math.max(
@@ -163,6 +168,11 @@ export function configurePhysics(
   physics.impactSpeed = data.ini.number('Audio', 'fMinSoundVel');
   physics.settleSeconds = data.ini.number('HAVOK', 'fWarmStartMaxTime');
   physics.debris = data.debris;
+  physics.solver = solverSettings(
+    physics.stepSeconds,
+    data.ini.number('HAVOK', 'fMaxTime'),
+    data.havokTauRatio,
+  );
   physics.penetration = {
     seconds: data.ini.number('RagdollAnim', 'fDetectionUpdateTimeSec'),
     desiredSpeed: data.ini.number('RagdollAnim', 'fDesiredVel'),
@@ -173,6 +183,8 @@ export function configurePhysics(
 /** fJumpHeightMin's and fJumpFallVelocityMin's built-in values (Skyrim.esm: 76 and 700). */
 const JUMP_HEIGHT_MIN = 64;
 const FALL_VELOCITY_MIN = 600;
+/** fHavokTauRatio's built-in value (observed in the original; Skyrim.esm does not set it). */
+const HAVOK_TAU_RATIO = 0.5;
 
 /** Telekinesis's spring: GMSTs where the plugins set them, else the engine's values. */
 function telekinesisSpring(settings: GameSettings): GrabSettings {
