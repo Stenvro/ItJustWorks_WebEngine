@@ -116,7 +116,7 @@ their walk keeps them on the navmesh.
 height, 32 units, under its feet, by a ray down from its middle or its shape cast down, while its
 shape rests on another actor's, or it is still coming off one) it is not grounded and moves off
 that actor at least 100 units a second as it falls; a step up never lands on an actor. Brushing
-past another, its lower shape a little up the other's, it still stands on the floor. The player stands on heads, as in the game. TODO(M13): Havok's character
+past another, its lower shape a little up the other's, it still stands on the floor. One whose fall another actor stops (placed into it: the player set at Highmoon Hall's coc marker where Gorm stood held him 63 units up) is held up by it the same way, and is moved out of what it overlaps first. The player stands on heads, as in the game. TODO(M13): Havok's character
 proxy's own rule was not read; NPCs are not seen standing on one another in the game.
 
 ## Where coc puts the player

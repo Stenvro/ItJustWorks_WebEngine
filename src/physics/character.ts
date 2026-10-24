@@ -685,10 +685,13 @@ export class CharacterBody {
     let below = false;
     // Another actor touched below it (standsOnActors).
     let onActor: RAPIER.Collider | undefined;
+    // Another actor touched at all (its side too).
+    let byActor: RAPIER.Collider | undefined;
     for (let i = 0; i < this.#controller.numComputedCollisions(); i++) {
       const collision = this.#controller.computedCollision(i);
       if (!collision?.collider) continue;
       this.touched.push(collision.collider);
+      if (this.#otherActor(collision.collider)) byActor = collision.collider;
       // normal1: the surface touched, facing the character (up for ground below).
       if (collision.normal1.z > 0.05) {
         below = true;
@@ -716,7 +719,14 @@ export class CharacterBody {
     // In the air, its fall stopped by another actor it is in or on: as held up by it.
     const stopped = !this.#grounded && desired.z < 0 && moved.z > desired.z * 0.5;
     const caught =
-      !this.standsOnActors && stopped ? (onActor ?? this.#overlappedActor(predicate)) : undefined;
+      !this.standsOnActors && stopped
+        ? (onActor ?? byActor ?? this.#overlappedActor(predicate))
+        : undefined;
+    // In one: out of it at once.
+    if (caught !== undefined && !this.swimming && this.#overlappedActor(predicate)) {
+      this.recover();
+      moved = { x: 0, y: 0, z: 0 };
+    }
     if (
       !this.standsOnActors &&
       (this.#grounded || (caught !== undefined && this.#support(moved, predicate) !== 'ground')) &&
