@@ -163,6 +163,8 @@ export class CrimeEngine {
     readonly victim?: number | undefined;
     readonly owner?: { readonly actor: number | undefined; readonly faction: number | undefined };
     readonly place?: number | undefined;
+    /** Without the place's faction (actor crimes: victimCrimeFaction). */
+    readonly noPlace?: boolean;
   }): Promise<number | undefined> {
     const { actors } = this.#runtime;
     if (options.victim !== undefined && options.victim !== PLAYER_REF) {
@@ -178,8 +180,29 @@ export class CrimeEngine {
       const record = await actors.faction(owner.faction);
       if (record && (record.flags & CrimeFlag.trackCrime) !== 0) return owner.faction;
     }
+    if (options.noPlace === true) return undefined;
     const place = options.place ?? options.victim;
     return place === undefined ? undefined : this.placeCrimeFaction(place);
+  }
+
+  /**
+   * The crime faction an assault or a murder goes to: the victim's own (Actor.GetCrimeFaction:
+   * one set by script, else its base's CRIF; none for a commanded actor, a summon or a raised
+   * corpse: CommonLibSSE GetCrimeFactionImpl), else its owner's (the reference's XOWN: an owning
+   * NPC_'s CRIF, or an owning faction that tracks crime). Not the place's: a creature nobody
+   * owns is no one's to avenge. The data shows the rule: no animal base has a CRIF, while the
+   * farms' and inns' chickens, cows and dogs are owned (56 of 102 placed chickens: Lorius Farm,
+   * the Windpeak Inn), and attacking those is the crime UESP "Skyrim:Crime" tells of; none of
+   * the 69 placed EncWolf is owned. TODO(M13): the owner step is inferred from the data.
+   */
+  async victimCrimeFaction(victim: number): Promise<number | undefined> {
+    const runtime = this.#runtime;
+    if (victim === PLAYER_REF || runtime.magic.commander(victim) !== undefined) return undefined;
+    const own = await runtime.actors.crimeFaction(victim);
+    if (own !== undefined) return own;
+    const owner = await runtime.owner(victim);
+    if (owner.actor === undefined && owner.faction === undefined) return undefined;
+    return this.crimeFactionFor({ owner, noPlace: true });
   }
 
   /** The factions sharing a crime faction's crimes (its CRGR list, itself first). */
@@ -644,11 +667,16 @@ export class CrimeEngine {
     if (this.ledger.known(CrimeType.attack, attacker, victim)) return undefined;
     // The one hit knows who hit it, seen or not; those who see the attacker too.
     const others = this.world?.witnesses(attacker, 'attack', victim) ?? [];
-    const crime = await this.commit(CrimeType.attack, attacker, {
-      act: 'attack',
-      victim,
-      witnesses: [victim, ...others.filter((actor) => actor !== victim)],
-    });
+    const faction = await this.victimCrimeFaction(victim);
+    const crime =
+      faction === undefined
+        ? undefined
+        : await this.commit(CrimeType.attack, attacker, {
+            act: 'attack',
+            victim,
+            faction,
+            witnesses: [victim, ...others.filter((actor) => actor !== victim)],
+          });
     if (crime) this.#stat('assaults');
     runtime.detach(
       runtime.storyManager.event(
@@ -672,7 +700,9 @@ export class CrimeEngine {
   async murder(killer: number, victim: number): Promise<Crime | undefined> {
     if (killer !== PLAYER_REF || victim === killer) return undefined;
     if ((await this.reaction(victim, killer)) === 'hostile') return undefined;
-    const crime = await this.commit(CrimeType.murder, killer, { act: 'murder', victim });
+    const faction = await this.victimCrimeFaction(victim);
+    if (faction === undefined) return undefined;
+    const crime = await this.commit(CrimeType.murder, killer, { act: 'murder', victim, faction });
     if (crime) this.#stat('murders');
     return crime;
   }
@@ -689,7 +719,13 @@ export class CrimeEngine {
     const hostile = killer !== undefined && (await this.reaction(victim, killer)) === 'hostile';
     this.witnessDied(victim);
     const crime = killer === undefined || silent ? undefined : await this.murder(killer, victim);
-    const status = killer === PLAYER_REF && !hostile ? (crime ? 2 : 1) : 0;
+    // A kill no crime faction cares for (a wild animal, a summon) is no crime at all.
+    const status =
+      killer === PLAYER_REF && !hostile && (await this.victimCrimeFaction(victim)) !== undefined
+        ? crime
+          ? 2
+          : 1
+        : 0;
     const location = await runtime.locationOf(victim);
     runtime.detach(
       runtime.storyManager.event(
