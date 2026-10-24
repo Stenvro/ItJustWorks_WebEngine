@@ -20,6 +20,8 @@ export interface HudTarget {
   readonly verb: string;
   /** What it is (a door's destination, an item's name). */
   readonly name: string;
+  /** A third line under the name (a lock's level, "Empty"), if any. */
+  readonly detail?: string;
   /** An item's weight and value (shown under its name). */
   readonly item?: { readonly weight: number; readonly value: number };
 }

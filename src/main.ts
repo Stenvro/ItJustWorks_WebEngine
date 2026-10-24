@@ -876,6 +876,7 @@ async function main(): Promise<void> {
           session: () => session,
           renderer,
           terminal,
+          menus: () => play?.host.menus ?? [],
         });
     });
   }
